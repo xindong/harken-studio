@@ -32,7 +32,7 @@ jobs:
   # host tools, and the runtime test suite are built.
   core-windows:
     name: core-windows
-    runs-on: [self-hosted, windows, venus-win]
+    runs-on: [self-hosted, windows, harken-win]
     timeout-minutes: 60
 
     steps:
