@@ -741,7 +741,6 @@ namespace Harken.Unity
                 LastRemoteResult = VnResult.VN_OK;
                 LastRemoteError = string.Empty;
                 if (HarkenProjectSettings.CommunicationEnabled) RetryRemoteCommunication();
-                ApplyApplicationPause();
             }
             else
             {
@@ -763,6 +762,8 @@ namespace Harken.Unity
             string error = LastStartupError;
             try
             {
+                if (completedSession != null && completedSession.IsActive &&
+                    ReferenceEquals(session, completedSession)) ApplyApplicationPause();
                 ObserveResult("PackBootstrap.Start", result);
                 if (result != VnResult.VN_OK) failed.Invoke(error);
                 // Canceling asynchronous preparation cannot release this synchronous notification scope.

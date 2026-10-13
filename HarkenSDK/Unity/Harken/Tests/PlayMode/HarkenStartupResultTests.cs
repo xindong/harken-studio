@@ -167,6 +167,38 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
+        public IEnumerator EarlySuspendObserverCannotReenterAfterCancelingOwnedPreparation()
+        {
+            using (var fixture = new Fixture())
+            {
+                fixture.Activate();
+                NotifyApplicationPause(fixture.Runtime, true);
+                bool canceled = false;
+                VnResult nestedResult = VnResult.VN_OK;
+                fixture.Runtime.OperationCompleted += (owner, operation, result) =>
+                {
+                    if (operation != "HarkenEngine.Suspend" || canceled) return;
+                    canceled = true;
+                    Set(owner, "startupCoroutine", owner.StartCoroutine(WaitWithoutCleanup(() => { })));
+                    Assert.That(owner.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(Get<bool>(owner, "starting"), Is.False);
+                    nestedResult = owner.StartRuntime(fixture.Prepared);
+                };
+                Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(canceled, Is.True);
+                Assert.That(nestedResult, Is.EqualTo(VnResult.VN_ALREADY_INITIALIZED));
+                Assert.That(fixture.Runtime.Session, Is.Null);
+                Assert.That(fixture.StartupReadyCount, Is.Zero);
+                Assert.That(fixture.ReadyCount, Is.Zero);
+                NotifyApplicationPause(fixture.Runtime, false);
+                Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(fixture.StartupReadyCount, Is.EqualTo(1));
+                Assert.That(fixture.ReadyCount, Is.EqualTo(1));
+            }
+            yield return null;
+        }
+
+        [UnityTest]
         public IEnumerator DeferredReadyCanPauseAndResumeWithoutDuplicateNotifications()
         {
             using (var fixture = new Fixture())
