@@ -1,0 +1,16 @@
+Ooura FFT (fft4g)
+
+This product includes FFT code by Takuya OOURA, embedded in the vendored
+r8brain-free-src library at
+HarkenStudio/ThirdParty/r8brain-free-src/fft/fft4g.h (the original fft4g.c
+wrapped into a C++ class by the r8brain-free-src author, who states it is
+"Modified and used with permission granted by the license").
+
+Copyright Takuya OOURA, 1996-2001
+
+Upstream license terms, as published on the author's distribution page
+(https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html):
+
+  You may use, copy, modify and distribute this code for any purpose
+  (include commercial use) and without fee.
+  Please refer to this package when you modify this code.

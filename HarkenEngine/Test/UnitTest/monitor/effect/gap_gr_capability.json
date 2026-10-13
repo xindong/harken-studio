@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-4",
+  "helperVersion": 1,
+  "kind": "gap-gr-capability",
+  "gapId": "G-gr",
+  "reason": "No GR producer in M2. VN_MONITOR_RECORD_GAIN_REDUCTION is M3. Armed/numeric/warm-up must not appear. Publishing 0 as GR is forbidden."
+}

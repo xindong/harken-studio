@@ -1,0 +1,7 @@
+{
+  "name": "Harken.Unity.Editor",
+  "rootNamespace": "Harken.Unity.Editor",
+  "references": ["Harken.Core", "Harken.Unity"],
+  "includePlatforms": ["Editor"],
+  "autoReferenced": true
+}

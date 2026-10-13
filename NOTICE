@@ -1,0 +1,124 @@
+HarkenStudio
+Copyright 2026 XD.
+
+This product includes software developed by XD.
+
+The Installation and Use License Agreement and Privacy Policy are maintained
+in the root `USER_TERMS.md` and `USER_TERMS.zh-CN.md`; the Studio Open-Source
+Release Notice is maintained in the root `OPEN_SOURCE_RELEASE_NOTICE.txt` and
+`OPEN_SOURCE_RELEASE_NOTICE.zh-CN.txt`. Desktop releases include these documents
+under `Legal/`. The supplied documents use the Harken product names and
+September 30, 2026 dates. They do not replace this
+NOTICE or restrict rights granted by applicable open-source licenses.
+
+# Third-Party Notices
+
+Harken itself is released under the Apache License 2.0 (see the root `LICENSE`
+file). This file and the Qt component inventory referenced below list the
+third-party dependencies, per the repository
+dependency policy (permissive-only for the runtime/SDK closure; the Studio
+front end additionally admits weak-copyleft libraries under the conditions
+recorded in `.docs/quality/DEPENDENCY_POLICY.md`).
+
+## Runtime / tooling / tests (permissive-only closure)
+
+| Name | Version | License | Use | How obtained |
+|---|---|---|---|---|
+| GoogleTest | v1.17.0 | BSD-3-Clause | Test framework (tests only, never shipped) | CMake FetchContent, official GitHub release archive |
+| miniaudio | v0.11.22 (2025-02-24), with local WASAPI lifecycle changes | MIT-0 or public domain (dual, caller's choice) | Shared-mode audio device output in the engine's device backend: WASAPI (Windows), Core Audio (macOS/iOS), AAudio with OpenSL ES fallback (Android); wav decoding in the host tool. Studio independently uses the decoder for source media and Pack compilation. Compiled without feature trimming in the Engine, which builds the full upstream feature set; Studio's offline decoder disables device I/O and the high-level engine | Independently vendored at `HarkenEngine/ThirdParty/miniaudio/miniaudio.h` and `HarkenStudio/ThirdParty/miniaudio/miniaudio.h` (both sha256 1ed4f1588d5413b90fa189640e7de5c8082039d2f666ef2dd3a378396954a936); full license text embedded in each header |
+
+## Studio front end only (`HarkenStudio/` subtree, never in the runtime closure)
+
+| Name | Version | License | Use | How obtained |
+|---|---|---|---|---|
+| Qt 6 (Widgets, OpenGLWidgets, Network, Concurrent, Svg) | 6.8.3 in release workflows; developer kits ≥ 6.8.3 via `VENUS_QT_DIR` | LGPL-3.0 (dynamically linked; deployed by windeployqt/macdeployqt) | Editor GUI framework | Official Qt installer kit; exact release source commits in `HarkenStudio/Resources/Legal/Qt6-SOURCES.json` |
+| Qt Advanced Docking System | 4.3.1 | LGPL-2.1, statically linked; source/rebuild materials described below | Dockable editor panel system | Vendored at `HarkenStudio/ThirdParty/QtADS` |
+| QWindowKit | 1.5.1-dev (commit c783b89d119a672b0aa4262b520c0783d0612689) | Apache-2.0 | Frameless window chrome | CMake FetchContent, pinned commit |
+| libogg | 1.3.6 | BSD-3-Clause | Ogg container for editor-side asset pipeline | Vendored at `HarkenStudio/ThirdParty/libogg` |
+| libvorbis / vorbisenc | 1.3.7 | BSD-3-Clause | Vorbis encode/decode for editor-side asset pipeline | Vendored at `HarkenStudio/ThirdParty/libvorbis` |
+| r8brain-free-src | 7.1 | MIT | Sample-rate conversion in the editor asset pipeline (header-only); embeds the two FFT components listed in the next two rows | Vendored at `HarkenStudio/ThirdParty/r8brain-free-src` (bench/DLL payloads trimmed) |
+| Ooura FFT (fft4g), embedded in r8brain-free-src | fft4g (1996-2001) as bundled with r8brain 7.1 | Ooura's permissive terms: use, copy, modify and distribute for any purpose (including commercial) and without fee; refer to the package when modifying | Default FFT backend of r8brain (`R8B_PFFFT`/`R8B_PFFFT_DOUBLE`/`R8B_IPP` all unset); compiled into HarkenEditor via the asset-pipeline resampler | Vendored at `HarkenStudio/ThirdParty/r8brain-free-src/fft/fft4g.h`; upstream terms at https://www.kurims.kyoto-u.ac.jp/~ooura/fft.html, copy kept at `HarkenStudio/Resources/Legal/OouraFFT-NOTICE.txt` |
+| PFFFT, embedded in r8brain-free-src | as bundled with r8brain 7.1 | FFTPACK license (UCAR, BSD-style; Julien Pommier's changes under the same terms) | Optional FFT backend, not compiled by default (`R8B_PFFFT 0`, `R8B_PFFFT_DOUBLE 0` in `r8bconf.h`); redistributed in source form only | Vendored at `HarkenStudio/ThirdParty/r8brain-free-src/fft/pffft*.c/.h`; full license text in each file header |
+| Lucide icons | export version not recorded (SVGs carry Lucide export markup) | ISC; icons derived from the Feather set additionally under MIT (Cole Bemis) | 18 editor UI icons at `HarkenStudio/Resources/icons/` are derived from Lucide SVG exports (regenerated on a 20px grid); the derived files are identifiable by the `class="lucide ..."` markup they retain, and the remaining icons in that directory are original artwork drawn on the same grid | Derived from lucide.dev exports; license text kept at `HarkenStudio/Resources/Legal/Lucide-LICENSE.txt` |
+| LMDB | 0.9.33 | OpenLDAP Public License 2.8 (permissive, non-copyleft) | Persistent search-index backend (optional, `HARKEN_DISABLE_LMDB` falls back to memory) | Vendored at `HarkenStudio/ThirdParty/lmdb` |
+| dr_wav (dr_libs) | 0.14.4 | Public domain / MIT-0 (dual, user's choice) | Editor-side WAV read/write in the asset pipeline, the VST3 offline processor, and the runtime bridge's private preview/pack-source decode, independent of the runtime decoder | Vendored at `HarkenStudio/ThirdParty/dr_wav` (single header; dual license text embedded at end of `dr_wav.h`) |
+
+## Harken Hub only (`HarkenHub/` subtree, never in the runtime closure)
+
+| Name | Version | License | Use | How obtained |
+|---|---|---|---|---|
+| Qt 6 (Widgets, Sql, Network, Svg) | 6.8.3 in release workflows; developer kits ≥ 6.8.3 via `VENUS_QT_DIR` | LGPL-3.0 (dynamically linked; deployed by windeployqt/macdeployqt) | Hub GUI, local project database, update client | Official Qt installer kit; exact release source commits in `HarkenHub/Resources/Legal/Qt6-SOURCES.json` |
+| QWindowKit | 1.5.1-dev (commit c783b89d119a672b0aa4262b520c0783d0612689) | Apache-2.0 | Frameless window chrome (same fetched target as the Studio entry above) | CMake FetchContent, pinned commit |
+| minizip-ng | 4.2.2 (commit 7b2387161c542fa9f427352dcdef76097d0d692b) | zlib | Studio package archive reading and safe extraction | CMake FetchContent, pinned commit |
+| ed25519 (orlp) | commit b1f19fab4aebe607805620d25a5e42566ce46a0e | zlib | Release manifest signature verification (and test-side signing) | CMake FetchContent, pinned commit |
+| zlib (or zlib-ng) | System version when found; fallback zlib-ng 2.3.3 (commit 12731092979c6d07f42da27da673a9f6c7b13586) | zlib | Deflate backend for minizip-ng | System library when present; otherwise minizip-ng fetches the commit fixed by `ZLIB_TAG` in `HarkenHub/CMakeLists.txt` |
+| Apple libcompression | macOS SDK | Apple system library, not redistributed | Default macOS compression backend for minizip-ng | Supplied by macOS |
+| Heroicons | commit 616b7a4dbbf3d011760af8066262cd5c6b3868f3 | MIT | Settings icon at `HarkenHub/Resources/icons/Settings.svg`, adapted to the Hub's 20px grid | Derived from the official `cog-6-tooth` SVG; license text kept at `HarkenHub/Resources/Legal/Heroicons-LICENSE.txt` |
+
+**Qt embedded components:** Qt's desktop binaries also contain third-party
+code and data, such as TinyCBOR (MIT), double-conversion (BSD-3-Clause), Unicode
+data (Unicode-3.0), and public suffix data (MPL-2.0). The component versions,
+selected licenses and immutable source references are recorded in
+`HarkenStudio/Resources/Legal/Qt6-SOURCES.json` and
+`HarkenHub/Resources/Legal/Qt6-SOURCES.json` for their respective products;
+complete upstream notices and license texts are in
+`Qt6-THIRD-PARTY-NOTICES.txt` beside each inventory. The inventories
+cover the Windows/macOS desktop module set; platform-specific applicability
+depends on the deployed kit. These dependencies do not enter the game Runtime.
+
+**Release checklist note (QtADS):** Distribute the matching QtADS and application
+source and build files so recipients can modify QtADS and rebuild Studio,
+as permitted by LGPL-2.1 §6(a). Application source is an alternative to
+precompiled relinkable object files. Preserve the license texts and make the
+complete corresponding source accessible to binary recipients.
+
+## Where each license text is preserved
+
+- **Release artifacts** bundle a `Legal/` directory (the root `LICENSE`, this
+  `NOTICE`, and the third-party license texts for the shipped closure),
+  assembled by `.scripts/release/collect_legal_texts.py` from the release
+  workflows. The Qt LGPL-3.0/GPL-3.0, QWindowKit, Lucide, Heroicons, Ooura FFT,
+  minizip-ng, ed25519 (orlp) and zlib license/notice texts it needs are
+  maintained for each product at `HarkenStudio/Resources/Legal/` or
+  `HarkenHub/Resources/Legal/` (the minizip-ng, ed25519 and zlib copies are
+  taken from the pinned upstream commits recorded above). Each product's
+  directory supplies its Qt embedded-component notices, exact Qt source
+  references. Packaging validates these materials before
+  producing Studio ZIPs and Hub installers; a Qt version change requires
+  reviewing and updating the Qt attribution files.
+
+- **Standalone SDKs** carry Apache-2.0 `LICENSE.md` and an SDK-specific
+  `NOTICE.md` inside each Unity/Unreal `Harken` directory, including the chosen
+  MIT-0 terms for miniaudio. Unreal plugin packaging retains both files through
+  `Config/FilterPlugin.ini`.
+
+- **miniaudio** is vendored, so its full license text travels with the source:
+  the dual Unlicense / MIT-0 notice (including the upstream copyright line) is
+  embedded at the end of both `HarkenEngine/ThirdParty/miniaudio/miniaudio.h`
+  and `HarkenStudio/ThirdParty/miniaudio/miniaudio.h`. No
+  separate copy is required — the notice is preserved in-file as shipped.
+- **GoogleTest** (BSD-3-Clause) is fetched at configure time via CMake
+  `FetchContent` and is **not** redistributed in this repository; its own
+  `LICENSE` file ships with the fetched sources. It is test-only and is never
+  linked into the shipped real-time engine, so no binary distribution of Harken
+  Core carries its code.
+
+## Build tools and compiler runtime materials
+
+| Name | Version | License | Use | How obtained |
+|---|---|---|---|---|
+| qmsetup | commit 4a3ff82d89d3101a77ba8dda52868a930cff5a3d | MIT | QWindowKit build tool; retain its LICENSE with the corresponding source release | QWindowKit submodule `qmsetup`; https://github.com/stdware/qmsetup |
+| syscmdline | commit 0c9f3de8b11bd2f33b03bea5521bf446af4ead69 | MIT | qmsetup build tool; retain its LICENSE with the corresponding source release | QWindowKit submodule `qmsetup/src/syscmdline`; https://github.com/SineStriker/syscmdline |
+
+Android Runtime builds link the Android NDK's libc++ and libc++abi statically.
+The release evidence records the actual NDK revision and preserves its NOTICE
+and NOTICE.toolchain in each SDK plugin's Legal directory. The NDK notices
+contain the applicable LLVM, libc++, libc++abi and other toolchain terms;
+these materials must accompany redistribution of the Android Runtime.
+
+## DSP formulations
+
+The DSP math in the engine (interpolation kernels, biquad/EQ coefficient forms,
+window functions, distance/cone models, the non-cryptographic checksum) uses
+standard, publicly documented formulations with no proprietary origin. These
+are algorithms, not third-party code, so there is no license text to reproduce.

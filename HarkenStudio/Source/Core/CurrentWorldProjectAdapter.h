@@ -1,0 +1,56 @@
+#pragma once
+
+#include "PlatformContext.h"
+#include "RuntimeBridge/CurrentWorldSyncBridge.h"
+
+#include <QString>
+#include <QStringView>
+
+#include <cstdint>
+#include <optional>
+#include <set>
+#include <unordered_map>
+
+namespace VNX {
+
+struct ProjectData;
+struct ProjectItem;
+enum class ProjectItemType;
+
+enum class CurrentWorldMutationKind
+{
+    Structure,
+    Property,
+};
+
+enum class CurrentWorldBuildStatus : std::uint8_t
+{
+    Ready = 0,
+    InvalidAuthoring,
+    CapabilityUnavailable,
+};
+
+struct CurrentWorldBuildOptions
+{
+    const std::set<harkenstudio::ObjectId>* includedActionIds = nullptr;
+    bool skipEmptyActionSteps = false;
+    bool isolateUnavailable = false;
+    const std::unordered_map<harkenstudio::ObjectId, std::uint64_t>* soundContentRevisions = nullptr;
+    std::optional<QString> language;
+    const std::set<harkenstudio::ObjectId>* includedDefinitionIds = nullptr;
+    const ProjectItem* actionRoot = nullptr;
+    const ProjectItem* definitionRoot = nullptr;
+};
+
+HarkenEditor::Bridge::CurrentWorldSyncRequestPtr
+buildCurrentWorldSyncRequest(ProjectData& project, PlatformScope scope,
+                             QString* error = nullptr,
+                             CurrentWorldBuildStatus* status = nullptr,
+                             const CurrentWorldBuildOptions* options = nullptr,
+                             std::uint64_t projectGeneration = 0);
+bool isCurrentWorldPlayable(ProjectData& project, const ProjectItem& item);
+bool affectsCurrentWorld(ProjectItemType itemType,
+                         CurrentWorldMutationKind mutationKind,
+                         QStringView propertyName = {});
+
+} // namespace VNX

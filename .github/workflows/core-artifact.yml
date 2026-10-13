@@ -1,0 +1,304 @@
+name: Core Artifact
+
+on:
+  workflow_call:
+    inputs:
+      build-channel:
+        type: string
+        required: false
+        default: dev
+
+permissions:
+  contents: read
+
+env:
+  HARKEN_BUILD_CHANNEL: ${{ inputs.build-channel }}
+
+jobs:
+  build-windows-runtime:
+    name: Windows x64 runtime
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+
+      - name: Configure Core libraries
+        shell: pwsh
+        run: >-
+          cmake --fresh --preset windows-release -B build-runtime
+          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_SHARED=ON
+
+      - name: Build HarkenCore.dll
+        run: cmake --build build-runtime --config Release --target harken_core_shared --parallel
+
+      - name: Stage Windows runtime
+        shell: pwsh
+        run: |
+          $source = "build-runtime/bin/Release/HarkenCore.dll"
+          $importSource = "build-runtime/lib/Release/HarkenCoreImport.lib"
+          if (-not (Test-Path -LiteralPath $source)) {
+            throw "Windows runtime was not produced at $source"
+          }
+          if (-not (Test-Path -LiteralPath $importSource)) {
+            throw "Windows import library was not produced at $importSource"
+          }
+          $destination = ".temp/runtime/windows-x64"
+          New-Item -ItemType Directory -Force -Path $destination | Out-Null
+          Copy-Item -LiteralPath $source -Destination "$destination/HarkenCore.dll"
+          Copy-Item -LiteralPath $importSource -Destination "$destination/HarkenCoreImport.lib"
+
+      - name: Record Runtime build inputs
+        run: python .scripts/release/release_evidence.py --build-dir build-runtime --runtime-receipt .temp/runtime/windows-x64/runtime-build.json
+
+      - name: Upload Windows transfer artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: transfer-runtime-windows
+          path: .temp/runtime
+          if-no-files-found: error
+          retention-days: 1
+
+  build-macos-runtime:
+    name: macOS universal runtime (x86_64 + arm64)
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Ninja
+        run: brew install ninja
+
+      - name: Configure universal Core libraries
+        shell: bash
+        run: |
+          cmake --fresh --preset macos-release -B build-runtime \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DHARKEN_BUILD_CORE=ON \
+            -DHARKEN_BUILD_SHARED=ON
+
+      - name: Build universal libHarkenCore.dylib
+        run: cmake --build build-runtime --config Release --target harken_core_shared --parallel
+
+      - name: Verify and stage macOS runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          source="build-runtime/bin/Release/libHarkenCore.dylib"
+          test -f "$source"
+          archs=$(lipo -archs "$source")
+          echo "macOS HarkenCore architectures: $archs"
+          for required_arch in arm64 x86_64; do
+            case " $archs " in
+              *" $required_arch "*) ;;
+              *) echo "::error file=$source::missing $required_arch slice; found: $archs"; exit 1 ;;
+            esac
+          done
+          destination=".temp/runtime/macos-universal"
+          mkdir -p "$destination"
+          cp "$source" "$destination/libHarkenCore.dylib"
+
+      - name: Record Runtime build inputs
+        run: python3 .scripts/release/release_evidence.py --build-dir build-runtime --runtime-receipt .temp/runtime/macos-universal/runtime-build.json
+
+      - name: Upload macOS transfer artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: transfer-runtime-macos
+          path: .temp/runtime
+          if-no-files-found: error
+          retention-days: 1
+
+  build-ios-runtime:
+    name: iOS device runtime (arm64)
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure iOS device runtime
+        shell: bash
+        run: |
+          cmake --fresh -S . -B build-ios -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+            -DHARKEN_BUILD_CORE=ON
+
+      - name: Build libHarkenCore.a
+        run: cmake --build build-ios --config Release --target harken_core --parallel
+
+      - name: Verify and stage iOS runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidates=()
+          while IFS= read -r candidate; do
+            candidates+=("$candidate")
+          done < <(find build-ios -type f -name libHarkenCore.a -print)
+          if [ "${#candidates[@]}" -ne 1 ]; then
+            printf '::error::Expected one iOS libHarkenCore.a, found %s\n' "${#candidates[@]}"
+            printf '%s\n' "${candidates[@]}"
+            exit 1
+          fi
+          source="${candidates[0]}"
+          test -s "$source"
+          archs=$(lipo -archs "$source")
+          echo "iOS HarkenCore architectures: $archs"
+          if [ "$archs" != "arm64" ]; then
+            echo "::error file=$source::expected an arm64-only iOS device runtime; found: $archs"
+            exit 1
+          fi
+          destination=".temp/runtime/ios-arm64"
+          mkdir -p "$destination"
+          cp "$source" "$destination/libHarkenCore.a"
+
+      - name: Record Runtime build inputs
+        run: python3 .scripts/release/release_evidence.py --build-dir build-ios --runtime-receipt .temp/runtime/ios-arm64/runtime-build.json
+
+      - name: Upload iOS transfer artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: transfer-runtime-ios
+          path: .temp/runtime
+          if-no-files-found: error
+          retention-days: 1
+
+  build-linux-runtime:
+    name: Linux x64 runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure Core libraries
+        shell: bash
+        run: |
+          cmake --fresh --preset linux-release -B build-runtime \
+            -DHARKEN_BUILD_CORE=ON \
+            -DHARKEN_BUILD_SHARED=ON
+
+      - name: Build libHarkenCore.so
+        run: cmake --build build-runtime --config Release --target harken_core_shared --parallel
+
+      - name: Stage Linux runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          source="build-runtime/bin/Release/libHarkenCore.so"
+          test -f "$source"
+          destination=".temp/runtime/linux-x64"
+          mkdir -p "$destination"
+          cp "$source" "$destination/libHarkenCore.so"
+
+      - name: Record Runtime build inputs
+        run: python3 .scripts/release/release_evidence.py --build-dir build-runtime --runtime-receipt .temp/runtime/linux-x64/runtime-build.json
+
+      - name: Upload Linux transfer artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: transfer-runtime-linux
+          path: .temp/runtime
+          if-no-files-found: error
+          retention-days: 1
+
+  build-android-runtime:
+    name: Android arm64 runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ANDROID_NDK_VERSION: '27.2.12479018'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          packages: 'ndk;${{ env.ANDROID_NDK_VERSION }}'
+
+      - name: Locate Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk_home="${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}"
+          test -f "$ndk_home/build/cmake/android.toolchain.cmake"
+          echo "ANDROID_NDK_HOME=$ndk_home" >> "$GITHUB_ENV"
+
+      - name: Build Android arm64 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --fresh -S . -B build-android-arm64-v8a -G "Ninja Multi-Config" \
+            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+            -DCMAKE_ANDROID_NDK:PATH="$ANDROID_NDK_HOME" \
+            -DANDROID_PLATFORM=android-21 \
+            -DANDROID_STL=c++_static \
+            -DANDROID_ABI=arm64-v8a \
+            -DHARKEN_BUILD_CORE=ON \
+            -DHARKEN_BUILD_SHARED=ON
+          cmake --build build-android-arm64-v8a --config Release --target harken_core_shared --parallel
+
+      - name: Stage Android arm64 runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          source="build-android-arm64-v8a/bin/Release/libHarkenCore.so"
+          test -s "$source"
+          readelf=$(find "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" \
+            -name llvm-readelf -print -quit)
+          if [ -z "$readelf" ] || [ ! -x "$readelf" ]; then
+            echo "::error::Android NDK llvm-readelf was not found or is not executable"
+            exit 1
+          fi
+          if "$readelf" -d "$source" | grep -q 'libc++_shared.so'; then
+            echo "::error file=$source::Android runtime is not self-contained; libc++_shared.so is still required"
+            exit 1
+          fi
+          destination=".temp/runtime/android/arm64-v8a"
+          mkdir -p "$destination"
+          cp "$source" "$destination/libHarkenCore.so"
+
+      - name: Record Runtime build inputs
+        run: >-
+          python3 .scripts/release/release_evidence.py --build-dir build-android-arm64-v8a
+          --runtime-receipt .temp/runtime/android/arm64-v8a/runtime-build.json
+
+      - name: Upload Android transfer artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: transfer-runtime-android
+          path: .temp/runtime
+          if-no-files-found: error
+          retention-days: 1

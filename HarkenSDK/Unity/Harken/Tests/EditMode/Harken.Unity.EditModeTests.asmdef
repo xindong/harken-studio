@@ -1,0 +1,15 @@
+{
+  "name": "Harken.Unity.EditModeTests",
+  "references": [
+    "Harken.Core",
+    "Harken.Unity",
+    "Harken.Unity.Editor"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "autoReferenced": false
+}

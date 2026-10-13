@@ -1,0 +1,18 @@
+{
+  "name": "com.harken.core",
+  "version": "0.3.1",
+  "displayName": "Harken Core",
+  "license": "Apache-2.0",
+  "description": "Unity integration for Harken Core: generated IL2CPP-safe bindings, a single runtime owner, and attachable game-audio components.",
+  "unity": "2022.3",
+  "keywords": [
+    "audio",
+    "middleware",
+    "native",
+    "interop",
+    "harken"
+  ],
+  "author": {
+    "name": "Harken Core"
+  }
+}

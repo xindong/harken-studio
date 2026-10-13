@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-6",
+  "helperVersion": 1,
+  "kind": "gap-observer-cost",
+  "reason": "No on/off observation cost differential producer. callbackCpuUs must not be reported as observer-cost."
+}

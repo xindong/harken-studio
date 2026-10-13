@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="Harken Hub"
+           Manufacturer="XD"
+           Version="$(var.HarkenVersion)"
+           UpgradeCode="4EA0003D-209E-45E6-8343-67529D7E7E5A"
+           Language="1033"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <MajorUpgrade Schedule="afterInstallFinalize"
+                  AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of Harken Hub is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="HARKENSELFUPDATE" Secure="yes" />
+    <Property Id="HARKENBRIDGE" Secure="yes" />
+
+    <ui:WixUI Id="WixUI_InstallDir"
+              InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.HarkenEulaRtf)" />
+    <Icon Id="HarkenHubIco" SourceFile="$(var.HarkenIconIco)" />
+    <Property Id="ARPPRODUCTICON" Value="HarkenHubIco" />
+    <Property Id="INSTALLFOLDER" Secure="yes">
+      <RegistrySearch Id="PreviousInstallFolder"
+                      Root="HKLM"
+                      Key="Software\HarkenSound\HarkenHub"
+                      Name="InstallDir"
+                      Type="raw"
+                      Bitness="always64" />
+    </Property>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="HarkenSoundDir" Name="HarkenSound">
+        <Directory Id="INSTALLFOLDER" Name="HarkenHub" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="HarkenSoundDataDir" Name="HarkenSound">
+        <Directory Id="HubDataDir" Name="HarkenHub">
+          <Directory Id="HandoffDir" Name="handoff" />
+          <Directory Id="PinsDir" Name="pins" />
+          <Directory Id="UpdaterDir" Name="Updater" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <Component Id="HandoffAreaAcl" Directory="HandoffDir"
+               Guid="B595227B-AFB0-4402-8840-BDB70535CDA2">
+      <CreateFolder>
+        <PermissionEx Sddl="$(var.HarkenHandoffSddl)" />
+      </CreateFolder>
+    </Component>
+
+    <Component Id="PinsAreaAcl" Directory="PinsDir"
+               Guid="7D9C41B4-06AF-4E0B-A54B-2FBDBBF9A315">
+      <CreateFolder>
+        <PermissionEx Sddl="$(var.HarkenHandoffSddl)" />
+      </CreateFolder>
+    </Component>
+
+    <Component Id="UpdaterAreaAcl" Directory="UpdaterDir"
+               Guid="0E6C1F09-4A46-4C87-8B7C-1F5B4B6C2D31">
+      <CreateFolder>
+        <PermissionEx Sddl="$(var.HarkenUpdaterSddl)" />
+      </CreateFolder>
+    </Component>
+
+    <Component Id="HarkenProjectAssociation" Directory="INSTALLFOLDER"
+               Guid="53FC615E-9B49-4762-B13C-B81820BDD7DB">
+      <RegistryValue Root="HKLM" Key="Software\HarkenSound\HarkenHub"
+                     Name="InstallDir" Type="string" Value="[INSTALLFOLDER]"
+                     KeyPath="yes" />
+      <ProgId Id="HarkenSound.HarkenProject" Description="Harken Project">
+        <Extension Id="hsp" ContentType="application/x-harken-project">
+          <Verb Id="open" Command="Open" TargetFile="HarkenHubExe"
+                Argument="&quot;%1&quot;" />
+        </Extension>
+      </ProgId>
+    </Component>
+
+    <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder"
+               Guid="3455F7BE-53E0-4D87-8C57-3DC57710C8F9">
+      <Shortcut Id="HarkenHubShortcut" Name="Harken Hub"
+                Target="[INSTALLFOLDER]HarkenHub.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKLM" Key="Software\HarkenSound\HarkenHub"
+                     Name="StartMenuShortcut" Type="integer" Value="1"
+                     KeyPath="yes" />
+    </Component>
+
+    <Component Id="DesktopShortcut" Directory="DesktopFolder"
+               Guid="4682FB52-D840-44F7-9356-E524137D4CE3">
+      <Shortcut Id="HarkenHubDesktopShortcut" Name="Harken Hub"
+                Target="[INSTALLFOLDER]HarkenHub.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RegistryValue Root="HKLM" Key="Software\HarkenSound\HarkenHub"
+                     Name="DesktopShortcut" Type="integer" Value="1"
+                     KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Hub" Level="1">
+      <ComponentGroupRef Id="HubPayload" />
+      <ComponentRef Id="HandoffAreaAcl" />
+      <ComponentRef Id="PinsAreaAcl" />
+      <ComponentRef Id="UpdaterAreaAcl" />
+      <ComponentRef Id="HarkenProjectAssociation" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <CustomAction Id="HarkenHealthHandshake" FileRef="HarkenHubExe"
+                  ExeCommand="--await-health-handshake" Execute="deferred"
+                  Impersonate="yes" Return="check" />
+    <CustomAction Id="HarkenRestartHub" FileRef="HarkenHubExe"
+                  ExeCommand="" Execute="commit" Impersonate="yes"
+                  Return="asyncNoWait" />
+    <CustomAction Id="HarkenRegisterUpdateBridge" FileRef="HarkenHubExe"
+                  ExeCommand="--register-update-bridge" Execute="deferred"
+                  Impersonate="no" Return="check" />
+    <CustomAction Id="HarkenUnregisterUpdateBridge" FileRef="HarkenHubExe"
+                  ExeCommand="--unregister-update-bridge" Execute="deferred"
+                  Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="HarkenUnregisterUpdateBridge" After="InstallInitialize"
+              Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="HarkenRegisterUpdateBridge" After="InstallFiles"
+              Condition="NOT REMOVE" />
+      <Custom Action="HarkenHealthHandshake" Before="HarkenRestartHub"
+              Condition="HARKENSELFUPDATE=1 AND NOT REMOVE" />
+      <Custom Action="HarkenRestartHub" Before="InstallFinalize"
+              Condition="HARKENSELFUPDATE=1 AND NOT HARKENBRIDGE=1 AND NOT REMOVE" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

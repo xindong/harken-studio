@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-5",
+  "helperVersion": 1,
+  "kind": "gap-three-taps",
+  "reason": "Bus pre/post fader and post-effect taps have no Monitor measurement producer in M2. Copying snapshot busPeaks* or Vn_CaptureProperty* is forbidden. Publishing 0 as silence is forbidden."
+}

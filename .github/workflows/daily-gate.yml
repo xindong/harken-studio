@@ -1,0 +1,104 @@
+name: Daily Gate
+
+on:
+  schedule:
+    - cron: '17 19 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: daily-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: '6.8.3'
+  QT_QPA_PLATFORM: offscreen
+  HARKEN_BUILD_CHANNEL: dev
+
+jobs:
+  daily-windows:
+    name: daily-windows
+    runs-on: [self-hosted, windows, venus-win]
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          clean: false
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+
+      - name: Use machine Qt ${{ env.QT_VERSION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${VENUS_QT_DIR:-}" ]; then
+            echo "::error::VENUS_QT_DIR is not set on this runner"
+            exit 1
+          fi
+          found=$("$VENUS_QT_DIR/bin/qmake.exe" -query QT_VERSION)
+          echo "VENUS_QT_DIR=$VENUS_QT_DIR (Qt $found)"
+          if [ "$found" != "${QT_VERSION}" ]; then
+            echo "::error::runner has Qt $found, this gate expects Qt ${QT_VERSION}"
+            exit 1
+          fi
+          echo "$VENUS_QT_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Configure (windows-release, runtime and editor tests)
+        run: >-
+          cmake --fresh --preset windows-release -B build-daily
+          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_TOOLS=ON
+          -DHARKEN_BUILD_EDITOR=ON
+          -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
+          -DHARKEN_BUILD_EDITOR_UNIT_TESTS=ON
+          -DHARKEN_BUILD_HUB=OFF
+          -DHARKEN_BUILD_HUB_UNIT_TESTS=OFF
+          -DHARKEN_BUILD_RUNTIME_BENCHMARKS=OFF
+
+      - name: Build all registered runtime and editor test targets
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in harken_runtime_ci_tests harken_editor_ci_tests; do
+            cmake --build build-daily --config Release --target "$target"
+          done
+
+      - name: Run daily runtime test groups
+        id: runtime_tests
+        if: ${{ steps.build.outcome == 'success' }}
+        run: >-
+          python .scripts/run_test_groups.py
+          --build-dir build-daily/HarkenEngine/Test --config Release --product runtime
+          --mode full --include-label harken-daily --budget-seconds 2000
+          --group-timeout-seconds 300
+          --output-dir .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/runtime
+
+      - name: Run daily editor test groups
+        id: editor_tests
+        if: ${{ steps.build.outcome == 'success' && (success() || failure()) }}
+        run: >-
+          python .scripts/run_test_groups.py
+          --build-dir build-daily/HarkenStudio/Test --config Release --product editor
+          --mode full --include-label harken-daily --budget-seconds 900
+          --group-timeout-seconds 300
+          --output-dir .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/editor
+
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: daily-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/
+          include-hidden-files: true
+          retention-days: 14

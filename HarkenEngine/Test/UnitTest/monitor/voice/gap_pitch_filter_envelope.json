@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-3",
+  "helperVersion": 1,
+  "kind": "gap-pitch-filter-envelope",
+  "reason": "VnMonitorStateUpsert has volumeDb only. Pitch and filter have no frozen envelope fields. Copying render rateScale, biquad, or tapPost* is forbidden.",
+  "permanentGaps": [
+    "pitch",
+    "filter"
+  ]
+}

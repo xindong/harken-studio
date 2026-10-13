@@ -1,0 +1,389 @@
+{
+  "schemaVersion": 1,
+  "producingPackage": "m0-3",
+  "isProvisional": false,
+  "notes": [
+    "Single state table for M0-3 contract fixtures. Plan slots do not run.",
+    "Field mutations are expected JSON facts, not Runtime API results."
+  ],
+  "identity": {
+    "sessionHandle": 1,
+    "monitorSessionEpoch": 1,
+    "engineMonitorInstanceId": 1,
+    "worldGeneration": 1
+  },
+  "capacity": {
+    "contractDefault": {
+      "sessionsPerEngine": 8,
+      "processSessionSlots": 32,
+      "processQueueBytes": 536870912,
+      "remoteClients": 4,
+      "planSlots": 8,
+      "dedicatedStopSlots": 1,
+      "producerRegs": 128,
+      "streams": 512,
+      "tapsPerPlan": 32,
+      "measurementsPerPlan": 128,
+      "controlRecordBytes": 4096,
+      "audioChunkFrames": 1024,
+      "audioChannels": 16,
+      "producerRingBytes": 4194304,
+      "consumerQueueBytes": 16777216,
+      "derivedWorkItems": 1024,
+      "recorderQueueBytes": 67108864,
+      "remoteQueueBytes": 16777216,
+      "captureByteRate": 16777216,
+      "rawAudioByteRate": 8388608,
+      "sessionFileBytes": 8589934592
+    },
+    "hard": {
+      "sessionsPerEngine": 32,
+      "processSessionSlots": 32,
+      "processQueueBytes": 536870912,
+      "remoteClients": 16,
+      "planSlots": 32,
+      "dedicatedStopSlots": 1,
+      "producerRegs": 512,
+      "streams": 2048,
+      "tapsPerPlan": 128,
+      "measurementsPerPlan": 512,
+      "controlRecordBytes": 16384,
+      "audioChunkFrames": 4096,
+      "audioChannels": 64,
+      "producerRingBytes": 67108864,
+      "consumerQueueBytes": 134217728,
+      "derivedWorkItems": 8192,
+      "recorderQueueBytes": 536870912,
+      "remoteQueueBytes": 134217728,
+      "captureByteRate": 134217728,
+      "rawAudioByteRate": 67108864,
+      "sessionFileBytes": 68719476736
+    },
+    "resolvedSample": {
+      "sessionsPerEngine": 4,
+      "processQueueBytes": 268435456,
+      "note": "Build may lower defaults inside hard caps. Do not freeze resolved as public constants."
+    }
+  },
+  "layers": [
+    {
+      "name": "unsupported",
+      "capability": "unsupported",
+      "effectivePlan": "not-requested",
+      "validity": "unsupported",
+      "drop": "none",
+      "numericReadable": 0,
+      "valueBits": 0,
+      "record": {
+        "kind": "time-series",
+        "sourceSequence": 1,
+        "capturePlanGeneration": 1,
+        "executeFrame": 1,
+        "validityFlags": 8,
+        "valueBits": 0
+      }
+    },
+    {
+      "name": "not-armed",
+      "capability": "supported",
+      "effectivePlan": "not-armed",
+      "validity": "not-armed",
+      "drop": "none",
+      "numericReadable": 0,
+      "valueBits": 0,
+      "record": {
+        "kind": "time-series",
+        "sourceSequence": 2,
+        "capturePlanGeneration": 1,
+        "executeFrame": 2,
+        "validityFlags": 2,
+        "valueBits": 0
+      }
+    },
+    {
+      "name": "armed-invalid",
+      "capability": "supported",
+      "effectivePlan": "armed",
+      "validity": "armed-warmup",
+      "drop": "none",
+      "numericReadable": 0,
+      "valueBits": 0,
+      "record": {
+        "kind": "time-series",
+        "sourceSequence": 3,
+        "capturePlanGeneration": 10,
+        "executeFrame": 3,
+        "validityFlags": 7,
+        "valueBits": 0
+      }
+    },
+    {
+      "name": "valid-zero",
+      "capability": "supported",
+      "effectivePlan": "armed",
+      "validity": "armed-numeric",
+      "drop": "none",
+      "numericReadable": 1,
+      "valueBits": 0,
+      "record": {
+        "kind": "time-series",
+        "sourceSequence": 4,
+        "capturePlanGeneration": 10,
+        "executeFrame": 4,
+        "validityFlags": 3,
+        "valueBits": 0
+      }
+    },
+    {
+      "name": "drop-gap",
+      "capability": "supported",
+      "effectivePlan": "armed",
+      "validity": "not-applicable",
+      "drop": "source-producer",
+      "numericReadable": 0,
+      "firstSourceSequence": 4,
+      "lastSourceSequence": 5,
+      "record": {
+        "kind": "drop",
+        "sourceSequence": 5,
+        "capturePlanGeneration": 10,
+        "executeFrame": 5,
+        "firstSourceSequence": 4,
+        "lastSourceSequence": 5
+      }
+    }
+  ],
+  "sequences": [
+    {
+      "id": "registry-revision",
+      "role": "registry",
+      "steps": [
+        {
+          "op": "publish",
+          "tapDescriptorId": 11,
+          "tapDescriptorGeneration": 1,
+          "fingerprint": 111,
+          "version": 1,
+          "selectorMode": 0,
+          "expectedResult": "VN_OK",
+          "sessionHandle": 1
+        },
+        {
+          "op": "publish",
+          "tapDescriptorId": 11,
+          "tapDescriptorGeneration": 2,
+          "fingerprint": 222,
+          "version": 1,
+          "selectorMode": 1,
+          "expectedResult": "VN_OK",
+          "sessionHandle": 1
+        },
+        {
+          "op": "reject",
+          "tapDescriptorId": 11,
+          "tapDescriptorGeneration": 2,
+          "fingerprint": 999,
+          "version": 99,
+          "selectorMode": 0,
+          "expectedResult": "VN_MONITOR_STALE_TAP",
+          "sessionHandle": 0
+        }
+      ]
+    },
+    {
+      "id": "lease-lifecycle",
+      "role": "lease",
+      "steps": [
+        {
+          "op": "acquire",
+          "leaseGeneration": 1,
+          "held": 1,
+          "expectedResult": "VN_OK",
+          "sessionHandle": 1
+        },
+        {
+          "op": "stale",
+          "leaseGeneration": 1,
+          "held": 1,
+          "expectedResult": "VN_MONITOR_STALE_LEASE",
+          "sessionHandle": 0
+        },
+        {
+          "op": "release",
+          "leaseGeneration": 1,
+          "held": 0,
+          "expectedResult": "VN_OK",
+          "sessionHandle": 1
+        },
+        {
+          "op": "acquire",
+          "leaseGeneration": 2,
+          "held": 1,
+          "expectedResult": "VN_OK",
+          "sessionHandle": 1
+        }
+      ]
+    },
+    {
+      "id": "stop-active-to-empty",
+      "role": "stop",
+      "immutable": ["monitorSessionEpoch", "leaseGeneration", "worldGeneration"],
+      "mutable": ["capturePlanGeneration", "activationState", "effectiveFromExecuteFrame"],
+      "before": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10
+      },
+      "after": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 11,
+        "activationState": 1,
+        "planEmpty": 1,
+        "effectiveFromExecuteFrame": 20,
+        "expectedResult": "VN_OK"
+      }
+    },
+    {
+      "id": "stop-already-empty",
+      "role": "stop",
+      "immutable": ["monitorSessionEpoch", "leaseGeneration", "worldGeneration", "capturePlanGeneration", "effectiveFromExecuteFrame"],
+      "mutable": [],
+      "before": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 11,
+        "activationState": 1,
+        "planEmpty": 1,
+        "effectiveFromExecuteFrame": 20
+      },
+      "after": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 11,
+        "activationState": 1,
+        "planEmpty": 1,
+        "effectiveFromExecuteFrame": 20,
+        "expectedResult": "VN_OK"
+      }
+    },
+    {
+      "id": "stop-stale-lease",
+      "role": "stop",
+      "immutable": ["monitorSessionEpoch", "leaseGeneration", "worldGeneration", "capturePlanGeneration", "activationState", "planEmpty", "effectiveFromExecuteFrame"],
+      "mutable": [],
+      "before": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10
+      },
+      "after": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "expectedResult": "VN_MONITOR_STALE_LEASE"
+      }
+    },
+    {
+      "id": "stop-slots-full",
+      "role": "stop",
+      "immutable": ["monitorSessionEpoch", "leaseGeneration", "worldGeneration"],
+      "mutable": ["capturePlanGeneration", "activationState", "effectiveFromExecuteFrame"],
+      "before": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "normalSlotsOccupied": 8,
+        "effectiveFromExecuteFrame": 10
+      },
+      "after": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 11,
+        "activationState": 1,
+        "planEmpty": 1,
+        "normalSlotsOccupied": 8,
+        "effectiveFromExecuteFrame": 20,
+        "expectedResult": "VN_OK"
+      }
+    },
+    {
+      "id": "apply-budget-fail",
+      "role": "apply-fail",
+      "immutable": ["capturePlanGeneration", "leaseGeneration", "activationState", "planEmpty", "measurementIds", "effectiveFromExecuteFrame"],
+      "mutable": [],
+      "before": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "measurementIds": [1, 2]
+      },
+      "after": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "measurementIds": [1, 2],
+        "acceptedMeasurementIds": [],
+        "expectedResult": "VN_MONITOR_BUDGET_EXCEEDED",
+        "sessionHandle": 1
+      }
+    },
+    {
+      "id": "apply-unsupported-fail",
+      "role": "apply-fail",
+      "immutable": ["capturePlanGeneration", "leaseGeneration", "activationState", "planEmpty", "measurementIds", "effectiveFromExecuteFrame"],
+      "mutable": [],
+      "before": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "measurementIds": [1]
+      },
+      "after": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "measurementIds": [1],
+        "acceptedMeasurementIds": [],
+        "expectedResult": "VN_MONITOR_UNSUPPORTED",
+        "sessionHandle": 1
+      }
+    },
+    {
+      "id": "apply-no-lease",
+      "role": "apply-fail",
+      "immutable": ["capturePlanGeneration", "leaseGeneration", "activationState", "planEmpty", "measurementIds", "effectiveFromExecuteFrame"],
+      "mutable": [],
+      "before": {
+        "leaseGeneration": 0,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "measurementIds": [1]
+      },
+      "after": {
+        "leaseGeneration": 0,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "measurementIds": [1],
+        "acceptedMeasurementIds": [],
+        "expectedResult": "VN_MONITOR_PERMISSION_DENIED",
+        "sessionHandle": 0
+      }
+    }
+  ]
+}

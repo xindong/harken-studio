@@ -1,0 +1,238 @@
+{
+  "contentKinds": [
+    {
+      "name": "Layer",
+      "ordinal": 0
+    },
+    {
+      "name": "Sound",
+      "ordinal": 1
+    },
+    {
+      "name": "Container",
+      "ordinal": 2
+    },
+    {
+      "name": "Track",
+      "ordinal": 3
+    },
+    {
+      "name": "Piece",
+      "ordinal": 4
+    }
+  ],
+  "fields": [
+    {
+      "canonicalDefault": "+0.0f",
+      "capabilityRole": "common",
+      "combineRole": "dbSum",
+      "component": "mixnode",
+      "id": 1,
+      "jsonKey": "volume",
+      "name": "volume",
+      "phaseRole": "firstAudible",
+      "present": "maskBit",
+      "referenceRole": "none",
+      "storageField": "volume",
+      "wire": "f32"
+    },
+    {
+      "canonicalDefault": "+0.0f",
+      "capabilityRole": "common",
+      "combineRole": "centSumClamp",
+      "component": "mixnode",
+      "id": 2,
+      "jsonKey": "pitch",
+      "name": "pitch",
+      "phaseRole": "firstAudible",
+      "present": "maskBit",
+      "referenceRole": "none",
+      "storageField": "pitch",
+      "wire": "f32"
+    },
+    {
+      "canonicalDefault": "+0.0f",
+      "capabilityRole": "common",
+      "combineRole": "dbSum",
+      "component": "mixnode",
+      "id": 3,
+      "jsonKey": "makeUpGain",
+      "name": "makeUpGain",
+      "phaseRole": "firstAudible",
+      "present": "maskBit",
+      "referenceRole": "none",
+      "storageField": "makeUpGain",
+      "wire": "f32"
+    },
+    {
+      "canonicalDefault": "1",
+      "capabilityRole": "playback",
+      "combineRole": "objectLocal",
+      "component": "audio",
+      "id": 4,
+      "jsonKey": "loopCount",
+      "name": "loopCount",
+      "phaseRole": "playbackMaterialization",
+      "present": "maskBit",
+      "referenceRole": "none",
+      "storageField": "loopCount",
+      "wire": "u32"
+    },
+    {
+      "canonicalDefault": "0",
+      "capabilityRole": "streaming",
+      "combineRole": "nearestExplicit",
+      "component": "audio",
+      "id": 5,
+      "jsonKey": "streamingMode",
+      "name": "streamingMode",
+      "phaseRole": "leafMaterialization",
+      "present": "maskBit",
+      "referenceRole": "none",
+      "storageField": "streamingMode",
+      "wire": "u32"
+    },
+    {
+      "canonicalDefault": "+0.0f",
+      "capabilityRole": "route",
+      "combineRole": "nearestExplicit",
+      "component": "mixnode",
+      "id": 6,
+      "jsonKey": "outputBusVolume",
+      "name": "outputBusVolume",
+      "phaseRole": "firstAudible",
+      "present": "maskBit",
+      "referenceRole": "none",
+      "storageField": "outputBusVolume",
+      "wire": "f32"
+    },
+    {
+      "canonicalDefault": "0",
+      "capabilityRole": "route",
+      "combineRole": "nearestExplicit",
+      "component": "mixnode",
+      "id": 7,
+      "jsonKey": "mainOutputBusRef",
+      "name": "mainOutputBusRef",
+      "phaseRole": "route",
+      "present": "maskBit",
+      "referenceRole": "mainOutputBus",
+      "storageField": "mainOutputBusRef",
+      "wire": "objectid"
+    },
+    {
+      "canonicalDefault": "empty",
+      "capabilityRole": "send",
+      "combineRole": "sendResolution",
+      "component": "mixnode",
+      "id": 8,
+      "jsonKey": "sends",
+      "name": "sends",
+      "phaseRole": "sameCutInstall",
+      "present": "maskBit",
+      "referenceRole": "none",
+      "storageField": "sends",
+      "wire": "rowSpan"
+    },
+    {
+      "canonicalDefault": "+0.0f",
+      "capabilityRole": "spatial",
+      "combineRole": "nearestExplicit",
+      "component": "spatial",
+      "id": 9,
+      "jsonKey": "spatial.panning",
+      "name": "spatialPanning",
+      "phaseRole": "firstAudible",
+      "present": "maskBit",
+      "referenceRole": "none",
+      "storageField": "panning",
+      "wire": "f32"
+    },
+    {
+      "canonicalDefault": "+0.0f",
+      "capabilityRole": "spatial",
+      "combineRole": "nearestExplicit",
+      "component": "spatial",
+      "id": 10,
+      "jsonKey": "spatial.spread",
+      "name": "spatialSpread",
+      "phaseRole": "firstAudible",
+      "present": "maskBit",
+      "referenceRole": "none",
+      "storageField": "spread",
+      "wire": "f32"
+    },
+    {
+      "canonicalDefault": "0",
+      "capabilityRole": "spatial",
+      "combineRole": "nearestExplicit",
+      "component": "spatial",
+      "id": 11,
+      "jsonKey": "spatial.is3DEnabled",
+      "name": "spatialIs3DEnabled",
+      "phaseRole": "firstAudible",
+      "present": "maskBit",
+      "referenceRole": "none",
+      "storageField": "is3DEnabled",
+      "wire": "u8"
+    },
+    {
+      "canonicalDefault": "1.0f",
+      "capabilityRole": "spatial",
+      "combineRole": "nearestExplicit",
+      "component": "spatial",
+      "id": 12,
+      "jsonKey": "spatial.attenuationDistanceScaling",
+      "name": "spatialAttenuationDistanceScaling",
+      "phaseRole": "firstAudible",
+      "present": "maskBit",
+      "referenceRole": "none",
+      "storageField": "attenuationDistanceScaling",
+      "wire": "f32"
+    },
+    {
+      "canonicalDefault": "0",
+      "capabilityRole": "spatial",
+      "combineRole": "nearestExplicit",
+      "component": "spatial",
+      "id": 14,
+      "jsonKey": "spatial.attenuationRef",
+      "name": "spatialAttenuationRef",
+      "phaseRole": "route",
+      "present": "maskBit",
+      "referenceRole": "attenuation",
+      "storageField": "attenuationRef",
+      "wire": "objectid"
+    },
+    {
+      "canonicalDefault": "empty",
+      "capabilityRole": "effect",
+      "combineRole": "effectSelection",
+      "component": "mixnode",
+      "id": 16,
+      "jsonKey": "signalGraph",
+      "name": "signalGraph",
+      "phaseRole": "sameCutInstall",
+      "present": "maskBit",
+      "referenceRole": "none",
+      "storageField": "signalGraph",
+      "wire": "effectProgram"
+    },
+    {
+      "canonicalDefault": "1.0f",
+      "capabilityRole": "spatial",
+      "combineRole": "nearestExplicit",
+      "component": "spatial",
+      "id": 17,
+      "jsonKey": "spatial.spatializationMix",
+      "name": "spatializationMix",
+      "phaseRole": "firstAudible",
+      "present": "maskBit",
+      "referenceRole": "none",
+      "storageField": "spatializationMix",
+      "wire": "f32"
+    }
+  ],
+  "knownMask": "0x000000000001afff",
+  "vintage": 1
+}

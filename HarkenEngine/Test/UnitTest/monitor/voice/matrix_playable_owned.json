@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-3",
+  "helperVersion": 1,
+  "kind": "matrix-playable-owned",
+  "reason": "PlayableOwnedInternal has no publishable public handle. Classify treats it as Stale. M2-3 publishes zero Voice records for that visibility.",
+  "publishIndependentVoice": false
+}

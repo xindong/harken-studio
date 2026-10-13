@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "envelopeKind": "exported-source-pcm-minmax",
+  "manifestByteLength": 1686,
+  "manifestFnv1a64": "16658139155452375707",
+  "projectId": "11111111-1111-1111-1111-111111111111",
+  "platformId": "7e69e0e2-8d15-52df-a609-ab96fff38750",
+  "basePlatform": "Windows",
+  "language": "",
+  "initPackStableId": "833614827603926865",
+  "initContentHash": "4474088168416751358",
+  "catalogDigest": "5105697509357559133",
+  "actions": [
+    {
+      "name": "Play_Golden",
+      "actionStableId": "3da91a64-b947-4560-0000-000000000004",
+      "nameBindingRevision": "1",
+      "callableFingerprint": "16625703711728748585",
+      "ownerPackStableId": "15851618533179658462",
+      "providerClosureFingerprint": "4473815740735799085",
+      "sourceAvailable": true,
+      "oneShotDurationKnown": true,
+      "source": {
+        "soundStableId": "3da91a64-b947-4560-0000-0000000186a2",
+        "propertyFingerprint": "14509632151834827880",
+        "contentRevision": "16057425089149780307",
+        "ownerPackStableId": "15851618533179658462",
+        "contentHash": "10872779777459488934",
+        "frameCount": "3",
+        "sampleRate": 48000,
+        "channelCount": 2,
+        "bucketCount": 3,
+        "channels": [
+          {
+            "min": [
+              0,
+              0.5,
+              -1
+            ],
+            "max": [
+              0,
+              0.5,
+              -1
+            ]
+          },
+          {
+            "min": [
+              1,
+              -0.25,
+              0
+            ],
+            "max": [
+              1,
+              -0.25,
+              0
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

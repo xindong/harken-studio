@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "producingPackage": "m0-5",
+  "kind": "monitor-functions",
+  "names": [
+    "Vn_MonitorGetCapabilities",
+    "Vn_MonitorOpenSession",
+    "Vn_MonitorCloseSession",
+    "Vn_MonitorGetSubscriptionStatus",
+    "Vn_MonitorCaptureRegistry",
+    "Vn_MonitorRequestStateCut",
+    "Vn_MonitorGetStateCutStatus",
+    "Vn_MonitorAcquireCaptureControl",
+    "Vn_MonitorReleaseCaptureControl",
+    "Vn_MonitorGetCaptureControlStatus",
+    "Vn_MonitorValidateCapturePlan",
+    "Vn_MonitorApplyCapturePlan",
+    "Vn_MonitorStopCapture",
+    "Vn_MonitorGetEffectiveCapturePlan",
+    "Vn_MonitorPoll",
+    "Vn_MonitorGetConsumerStatus",
+    "Vn_MonitorStartRecording",
+    "Vn_MonitorStopRecording",
+    "Vn_MonitorGetRecordingStatus",
+    "Vn_MonitorCompareSessions"
+  ]
+}

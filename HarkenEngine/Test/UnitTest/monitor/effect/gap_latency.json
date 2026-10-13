@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-4",
+  "helperVersion": 1,
+  "kind": "gap-latency",
+  "reason": "latencyFrames has no frozen producer. Copying delayMs into latencyFrames is forbidden. Emit 0 without NUMERIC."
+}

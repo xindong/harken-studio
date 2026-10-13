@@ -1,0 +1,296 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "files": [
+    {
+      "path": "legal_event.bin",
+      "sha256": "8e3754f285bf1981d655c557409bd64de3ebd5db9bdbb57c74d05dcc270d3fc6",
+      "isProvisional": false,
+      "kind": "legal-event"
+    },
+    {
+      "path": "lifecycle/gap_variable_control.json",
+      "sha256": "eb62935e8ed7a926d1753292ef73b6b35363cfb498db8e8212614477cdc0385f",
+      "isProvisional": false,
+      "kind": "gap-variable-control",
+      "producerPackage": "m2-1",
+      "schemaVersion": 1
+    },
+    {
+      "path": "lifecycle/gap_queue_cursor.json",
+      "sha256": "6226f74d2e5a78fbfdb89166abd4e26ae07574029e84e878de075ac61fa0fff5",
+      "isProvisional": false,
+      "kind": "gap-queue-cursor",
+      "producerPackage": "m2-1",
+      "schemaVersion": 1
+    },
+    {
+      "path": "lifecycle/gap_playable_world_generation.json",
+      "sha256": "22b38b3aa85fe4ad02d2c22ee212691fbdf4f248ef1228a9a2b993a512fede07",
+      "isProvisional": false,
+      "kind": "gap-playable-world-generation",
+      "producerPackage": "m2-1",
+      "schemaVersion": 1
+    },
+    {
+      "path": "lifecycle/legal_event.bin",
+      "sha256": "20176227f20d09bd4406fd1a1f2f3f92658c926f74548a4b468745b3c4cff6cd",
+      "isProvisional": false,
+      "kind": "legal-event",
+      "producerPackage": "m2-1",
+      "schemaVersion": 1
+    },
+    {
+      "path": "lineage/gap_layer_g21.json",
+      "sha256": "41fa780f3648177d8b8122fe651d011caa2f8ef800708c450bd27fef6b427670",
+      "isProvisional": false,
+      "kind": "gap-layer-g21",
+      "producerPackage": "m2-2",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "lineage/gap_symbol_fingerprint.json",
+      "sha256": "9511db4a7cb992e83339bc170e1d54302d71561efa972faf2175b3f5fd3b7529",
+      "isProvisional": false,
+      "kind": "gap-symbol-fingerprint",
+      "producerPackage": "m2-2",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "lineage/matrix_world_known.json",
+      "sha256": "88e3673a838fa564d8b59b37d9ec0201add44ec15b1bdb324f93f08852298bb9",
+      "isProvisional": false,
+      "kind": "matrix-world-known",
+      "producerPackage": "m2-2",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "lineage/matrix_world_unavailable.json",
+      "sha256": "a2e7a874d0f22da198900552cf362f3234a0679b33876870b6ffdc7493ccece0",
+      "isProvisional": false,
+      "kind": "matrix-world-unavailable",
+      "producerPackage": "m2-2",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "lineage/matrix_lineage_only.json",
+      "sha256": "7d0398fbaa5832463c68f2b681a66802bc4141c7ebed0f25f9a5b63d27467521",
+      "isProvisional": false,
+      "kind": "matrix-lineage-only",
+      "producerPackage": "m2-2",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "lineage/matrix_symbol_only.json",
+      "sha256": "833ff0babb57b14b3dfb473cd5f4cfeab829a23f6b2fd159e3b065e369b3306b",
+      "isProvisional": false,
+      "kind": "matrix-symbol-only",
+      "producerPackage": "m2-2",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "lineage/matrix_render_clock_only.json",
+      "sha256": "be280a7a78f9c92486c3d801406ad6c5c4a5d7c0014d18e3b9ef749d0d443c2d",
+      "isProvisional": false,
+      "kind": "matrix-render-clock-only",
+      "producerPackage": "m2-2",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "lineage/gap_field_availability.json",
+      "sha256": "9a959e906624d609735b9428e29343d5c7b69076c31d48bc5d3d660d2fbccedd",
+      "isProvisional": false,
+      "kind": "gap-field-availability",
+      "producerPackage": "m2-2",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "lineage/gap_drop_reason_world_replaced.json",
+      "sha256": "b7e3dac2e135109718352551cb2954e872e60003413f0c3447d5808f80663c40",
+      "isProvisional": false,
+      "kind": "gap-drop-reason-world-replaced",
+      "producerPackage": "m2-2",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "lineage/gap_occurrence_ordinal_u32.json",
+      "sha256": "ba57eb55d38527c6b59bb054b18bbf91822050e33ef46efd8e45f7d9a9713422",
+      "isProvisional": false,
+      "kind": "gap-occurrence-ordinal-u32",
+      "producerPackage": "m2-2",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "voice/gap_pitch_filter_envelope.json",
+      "sha256": "7a20c60788fe6c5e5c374401291b8a4e24a2dd7c9ed97dd4296bbe9768843844",
+      "isProvisional": false,
+      "kind": "gap-pitch-filter-envelope",
+      "producerPackage": "m2-3",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "voice/gap_live_volume.json",
+      "sha256": "2d5ed7004bd15030201f06c7c83dd7a1de603490ea0ce05369c2b9cec2aad95f",
+      "isProvisional": false,
+      "kind": "gap-live-volume",
+      "producerPackage": "m2-3",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "voice/gap_world_unavailable.json",
+      "sha256": "c0cebc0ce981d62f93d47a727807d8874d040f88b8e409cc4ca0852631732b3d",
+      "isProvisional": false,
+      "kind": "gap-voice-world-unavailable",
+      "producerPackage": "m2-3",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "voice/gap_g3_cpu.json",
+      "sha256": "e0a35697deba0efef3600a0b2b1ecf17c800d000e5fbbc9c78879f13abfd5885",
+      "isProvisional": false,
+      "kind": "gap-g3-cpu",
+      "producerPackage": "m2-3",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "voice/matrix_breakdown_status.json",
+      "sha256": "eb989b99b66f152fa7b8fce29ec5087e1dfcfe1b8b036e4880ff05321e515a02",
+      "isProvisional": false,
+      "kind": "matrix-breakdown-status",
+      "producerPackage": "m2-3",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "voice/matrix_playable_owned.json",
+      "sha256": "091126627429c9cb2fdafb5d5f55cdb6f4d59e1403f4f4fffe57f3ac34ad3053",
+      "isProvisional": false,
+      "kind": "matrix-playable-owned",
+      "producerPackage": "m2-3",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "voice/gap_helper_version_mismatch.json",
+      "sha256": "ce46e7abaac04dc42ddb29f5e7e894c9c4d99664af6247157d97dec37416c8d3",
+      "isProvisional": false,
+      "kind": "gap-helper-version-mismatch",
+      "producerPackage": "m2-3",
+      "schemaVersion": 1,
+      "helperVersion": 2
+    },
+    {
+      "path": "bus/gap_three_taps.json",
+      "sha256": "e7eaef23a7ed8a62935fc480f04f7b181ecf944be2d069a900e8920441540d11",
+      "isProvisional": false,
+      "kind": "gap-three-taps",
+      "producerPackage": "m2-5",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "bus/gap_child_list.json",
+      "sha256": "232fc2a6114cf14069d5975432c5fa77483f4723760bcaa9c7285fdf8ddab3db",
+      "isProvisional": false,
+      "kind": "gap-child-list",
+      "producerPackage": "m2-5",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "bus/gap_tail_entity.json",
+      "sha256": "8b9c532f5158443eed24fe5e63ec392441264467edcd8cfb9a59350ffcb60cfa",
+      "isProvisional": false,
+      "kind": "gap-tail-entity",
+      "producerPackage": "m2-5",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "bus/gap_g5_emitter.json",
+      "sha256": "fb55782db9b195a7972e881ae1e5df5af754c8eba738817fd39716a7c32cfd30",
+      "isProvisional": false,
+      "kind": "gap-g5-emitter",
+      "producerPackage": "m2-5",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "dsp/gap_g19_critical_path.json",
+      "sha256": "03ef1cf5cf4d6915b5658c4efe7639980fce0b960ac6d24d926303dcf01b57ae",
+      "isProvisional": false,
+      "kind": "gap-g19-critical-path",
+      "producerPackage": "m2-6",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "dsp/gap_three_quantities.json",
+      "sha256": "223e89e42d9f77b99dd5cc93eedbbad23630460fa233443d029c37f9c62340fd",
+      "isProvisional": false,
+      "kind": "gap-three-quantities",
+      "producerPackage": "m2-6",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "dsp/gap_observer_cost.json",
+      "sha256": "82c6c8629d12f2f8568dd37826c8fbb5d6e915c5b0aaa08ecff0b419ea7bb672",
+      "isProvisional": false,
+      "kind": "gap-observer-cost",
+      "producerPackage": "m2-6",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "effect/gap_tri_state_params.json",
+      "sha256": "b6db4940435eedf8b4a51e2375d97991aa8b7d217bf6fd87f65d465bbe1b487c",
+      "isProvisional": false,
+      "kind": "gap-tri-state-params",
+      "producerPackage": "m2-4",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "effect/gap_gr_capability.json",
+      "sha256": "ed52d38670849dc74e789a2972d7bc6ba62ac9fdb3c9aa4144a4dec5743f50e9",
+      "isProvisional": false,
+      "kind": "gap-gr-capability",
+      "producerPackage": "m2-4",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "effect/gap_latency.json",
+      "sha256": "4e4f66e63c49728c24cf48ea4a60210bdeb3303eadf51d0dff1414991111d492",
+      "isProvisional": false,
+      "kind": "gap-latency",
+      "producerPackage": "m2-4",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    },
+    {
+      "path": "tap/gap_device_identity.json",
+      "sha256": "53f73ff3f7670ac78fab6659d1524775b0ba62bb54eb37319457a788696bad03",
+      "isProvisional": false,
+      "kind": "gap-device-identity",
+      "producerPackage": "m3-1",
+      "schemaVersion": 1,
+      "helperVersion": 1
+    }
+  ]
+}

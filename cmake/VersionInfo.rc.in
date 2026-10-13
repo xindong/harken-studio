@@ -1,0 +1,40 @@
+1 VERSIONINFO
+ FILEVERSION @HARKEN_BI_VERSION_MAJOR@,@HARKEN_BI_VERSION_MINOR@,@HARKEN_BI_VERSION_PATCH@,@HARKEN_BI_VERSION_BUILD@
+ PRODUCTVERSION @HARKEN_BI_VERSION_MAJOR@,@HARKEN_BI_VERSION_MINOR@,@HARKEN_BI_VERSION_PATCH@,@HARKEN_BI_VERSION_BUILD@
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS @HARKEN_BI_FILEFLAGS@
+ FILEOS 0x00040004L
+ FILETYPE @HARKEN_RC_FILETYPE@
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "XD\0"
+            VALUE "LegalCopyright", "Copyright (C) @HARKEN_BI_YEAR@ XD.\0"
+            VALUE "FileDescription", "@HARKEN_RC_FILE_DESCRIPTION@\0"
+            VALUE "FileVersion", "@HARKEN_RC_VERSION_QUAD@; @HARKEN_RC_BUILD_ID@\0"
+            VALUE "InternalName", "@HARKEN_RC_INTERNAL_NAME@\0"
+            VALUE "OriginalFilename", "@HARKEN_RC_ORIGINAL_FILENAME@\0"
+            VALUE "ProductName", "Harken Studio\0"
+            VALUE "ProductVersion", "@HARKEN_RC_VERSION@; @HARKEN_RC_BUILD_ID@\0"
+            VALUE "Comments", "BuildId=@HARKEN_RC_BUILD_ID@; BuildType=@HARKEN_RC_BUILD_TYPE@; BuildChannel=@HARKEN_RC_BUILD_CHANNEL@; GitCommit=@HARKEN_RC_GIT_COMMIT@; GitDirty=@HARKEN_RC_GIT_DIRTY@; Target=@HARKEN_RC_TARGET_PLATFORM@\0"
+            VALUE "PrivateBuild", "@HARKEN_RC_BUILD_ID@\0"
+            VALUE "BuildId", "@HARKEN_RC_BUILD_ID@\0"
+            VALUE "BuildType", "@HARKEN_RC_BUILD_TYPE@\0"
+            VALUE "BuildChannel", "@HARKEN_RC_BUILD_CHANNEL@\0"
+            VALUE "GitCommit", "@HARKEN_RC_GIT_COMMIT@\0"
+            VALUE "GitCommitShort", "@HARKEN_RC_GIT_COMMIT_SHORT@\0"
+            VALUE "GitDirty", "@HARKEN_RC_GIT_DIRTY@\0"
+            VALUE "TargetPlatform", "@HARKEN_RC_TARGET_PLATFORM@\0"
+            VALUE "BuildTimestampUtc", "@HARKEN_RC_TIMESTAMP@\0"
+            VALUE "CIRunNumber", "@HARKEN_RC_CI_RUN_NUMBER@\0"
+            VALUE "CIRunAttempt", "@HARKEN_RC_CI_RUN_ATTEMPT@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

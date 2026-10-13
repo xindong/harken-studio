@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-1",
+  "gapId": "G6",
+  "kind": "gap-variable-control",
+  "reason": "Public Monitor entity kinds freeze SESSION/PLAYABLE/ACTION/VOICE/BUS/EFFECT/CONTAINER/QUEUE/TRANSITION/TAP. Runtime VariableControlInstanceTable has no public kind, so M2-1 publishes zero rows and does not invent an entity.",
+  "expectedPollRecords": 0
+}

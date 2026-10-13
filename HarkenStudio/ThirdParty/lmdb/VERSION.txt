@@ -1,0 +1,7 @@
+Library: LMDB (Lightning Memory-Mapped Database)
+Version: 0.9.33 (mdb.master branch)
+Author: Howard Chu, Symas Corp / OpenLDAP Foundation
+License: OpenLDAP Public License
+Source: https://github.com/LMDB/lmdb/tree/mdb.master/libraries/liblmdb
+Downloaded: 2026-03-15
+Files: lmdb.h (1564 lines), mdb.c (10537 lines), midl.h (171 lines), midl.c (366 lines)

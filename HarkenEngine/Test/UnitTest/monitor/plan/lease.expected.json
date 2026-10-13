@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "producingPackage": "m0-3",
+  "isProvisional": false,
+  "contractVerified": true,
+  "steps": [
+    {
+      "op": "acquire",
+      "leaseGeneration": 1,
+      "held": 1,
+      "expectedResult": "VN_OK",
+      "sessionHandle": 1
+    },
+    {
+      "op": "stale",
+      "leaseGeneration": 1,
+      "held": 1,
+      "expectedResult": "VN_MONITOR_STALE_LEASE",
+      "sessionHandle": 0
+    },
+    {
+      "op": "release",
+      "leaseGeneration": 1,
+      "held": 0,
+      "expectedResult": "VN_OK",
+      "sessionHandle": 1
+    },
+    {
+      "op": "acquire",
+      "leaseGeneration": 2,
+      "held": 1,
+      "expectedResult": "VN_OK",
+      "sessionHandle": 1
+    }
+  ]
+}

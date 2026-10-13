@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.21)
+add_library(lmdb STATIC mdb.c midl.c)
+if(MSVC)
+    target_compile_options(lmdb PRIVATE /W0)
+else()
+    target_compile_options(lmdb PRIVATE -w)
+endif()
+target_include_directories(lmdb PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

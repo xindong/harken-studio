@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-3",
+  "helperVersion": 1,
+  "kind": "gap-live-volume",
+  "reason": "Live and Pending DirectVoice rows only have authored VoicePlayFacts.baseVolumeDb. Final volume is copied after Park writes frozenNonSpatialDb plus instanceVolumeDb. Live volumeDb stays 0 without NUMERIC.",
+  "liveVolume": "gap"
+}

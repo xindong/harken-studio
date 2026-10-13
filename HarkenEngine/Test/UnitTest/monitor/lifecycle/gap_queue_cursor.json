@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-1",
+  "kind": "gap-queue-cursor",
+  "reason": "VnMonitorRecordHeader and VnMonitorEventPayload have no public cursor field. Queue cursor remains QueueInstanceTable EffectiveQueueState.cursor / mirrorCursor. Monitor publishes QUEUE events only.",
+  "publicCursorField": null,
+  "owner": "QueueInstanceTable"
+}

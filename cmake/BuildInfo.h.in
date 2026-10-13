@@ -1,0 +1,31 @@
+// GENERATED FILE - do not edit. Populated by cmake/BuildInfo.cmake.
+#pragma once
+
+#include <string_view>
+
+namespace Harken::BuildInfo {
+
+inline constexpr std::string_view BuildId          = "@HARKEN_BI_BUILD_ID@";
+inline constexpr std::string_view Label            = "@HARKEN_BI_LABEL@";
+inline constexpr std::string_view BuildType        = "@HARKEN_BI_BUILD_TYPE@";
+inline constexpr std::string_view BuildTypeValues  = "@HARKEN_BI_BUILD_TYPE_VALUES_TEXT@";
+inline constexpr std::string_view BuildChannel     = "@HARKEN_BI_BUILD_CHANNEL@";
+inline constexpr std::string_view BuildChannelValues = "@HARKEN_BI_BUILD_CHANNEL_VALUES_TEXT@";
+inline constexpr std::string_view Version          = "@HARKEN_VERSION@";
+inline constexpr std::string_view VersionQuad      = "@HARKEN_BI_VERSION_QUAD@";
+inline constexpr std::string_view HubVersion       = "@HARKEN_HUB_VERSION@";
+
+inline constexpr std::string_view GitCommit        = "@HARKEN_BI_GIT_COMMIT@";
+inline constexpr std::string_view GitCommitShort   = "@HARKEN_BI_GIT_COMMIT_SHORT@";
+inline constexpr bool             GitDirty         = @HARKEN_BI_GIT_DIRTY@;
+
+inline constexpr std::string_view TargetPlatform   = "@HARKEN_BI_TARGET_PLATFORM@";
+
+inline constexpr std::string_view Timestamp        = "@HARKEN_BI_TIMESTAMP@";
+inline constexpr std::string_view TimestampCompact = "@HARKEN_BI_TIMESTAMP_COMPACT@";
+inline constexpr std::string_view BuildYear        = "@HARKEN_BI_YEAR@";
+
+inline constexpr std::string_view CIRunNumber      = "@HARKEN_BI_CI_RUN_NUMBER@";
+inline constexpr std::string_view CIRunAttempt     = "@HARKEN_BI_CI_RUN_ATTEMPT@";
+
+}  // namespace Harken::BuildInfo

@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "files": [
+    {
+      "path": "optional_unknown.bin",
+      "sha256": "9f76e20ea04df039de9380cf96d692aac8c938f3aeb45d06120607c8346a68b0",
+      "isProvisional": false,
+      "kind": "optional_unknown",
+      "expected": "ok-optional-skip"
+    },
+    {
+      "path": "required_unknown.bin",
+      "sha256": "5be9007940d6f66972bc947dfa46aaa87e018f45b58fadb0744666854f479f8e",
+      "isProvisional": false,
+      "kind": "required_unknown",
+      "expected": "incompatible"
+    },
+    {
+      "path": "short_header.bin",
+      "sha256": "6d4b225592be79e408ca582087bab87e4a7237478a9bdc3411ced0ec237575a9",
+      "isProvisional": false,
+      "kind": "short_header",
+      "expected": "incompatible"
+    },
+    {
+      "path": "truncated_record.bin",
+      "sha256": "f99ef2620c5be056907b7feb0732974251512cbc77384a2256d28bd78491f733",
+      "isProvisional": false,
+      "kind": "truncated_record",
+      "expected": "incompatible"
+    },
+    {
+      "path": "legal_then_required_unknown.bin",
+      "sha256": "11a9087de688dabb686c730601196b0ddaa2830d76134954f5fb9226860f83c2",
+      "isProvisional": false,
+      "kind": "legal_then_required_unknown",
+      "expected": "incompatible"
+    },
+    {
+      "path": "count_bytes_mismatch.bin",
+      "sha256": "1482e36518ae38a280335d6249266199f768b93e21a80f489f7a7ef730b7f337",
+      "isProvisional": false,
+      "kind": "count_bytes_mismatch",
+      "expected": "incompatible"
+    },
+    {
+      "path": "native_layout.bin",
+      "sha256": "fb1c8523075417ac164247a98c91cc1d49bd330e8253bc2d7d284fce933abcc1",
+      "isProvisional": false,
+      "kind": "native_layout",
+      "expected": "incompatible"
+    },
+    {
+      "path": "be_count_prefix.bin",
+      "sha256": "4999a63e7e3e754481bf71c970ae6e7d50f85f18eda1e4923fc2f02c6e923541",
+      "isProvisional": false,
+      "kind": "be_count_prefix",
+      "expected": "incompatible"
+    },
+    {
+      "path": "empty_batch.bin",
+      "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc",
+      "isProvisional": false,
+      "kind": "empty_batch",
+      "expected": "ok-empty"
+    }
+  ]
+}

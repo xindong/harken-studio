@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-2",
+  "kind": "matrix-lineage-only",
+  "change": "runtimeLineageFingerprint",
+  "replaceInstanceKey": false,
+  "updateProgramFingerprint": false,
+  "updateLineageFingerprint": true,
+  "updateSymbolFingerprint": false,
+  "updateRenderPlanGeneration": false,
+  "updateClockAnchorGeneration": false
+}

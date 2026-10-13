@@ -1,0 +1,55 @@
+{
+  "schema_version": 3,
+  "platformId": "33333333-3333-3333-3333-333333333333",
+  "platformName": "Windows",
+  "basePlatform": "Windows",
+  "language": "",
+  "initPackStableId": "11",
+  "packs": [
+    {
+      "name": "Init",
+      "path": "Init.pack",
+      "platformId": "33333333-3333-3333-3333-333333333333",
+      "packStableId": "11",
+      "contentHash": "15294391721752842644",
+      "packKind": 2,
+      "contentRevision": 1,
+      "language": "",
+      "variantKey": "0",
+      "dependencies": []
+    },
+    {
+      "name": "Play_Golden",
+      "path": "action_4.pack",
+      "platformId": "33333333-3333-3333-3333-333333333333",
+      "packStableId": "22",
+      "contentHash": "263014862619015124",
+      "packKind": 3,
+      "contentRevision": 1,
+      "language": "",
+      "variantKey": "0",
+      "dependencies": [
+        "11"
+      ]
+    }
+  ],
+  "gameplayCatalog": {
+    "schema": 2,
+    "projectId": "11111111-1111-1111-1111-111111111111",
+    "initPackStableId": "11",
+    "initContentRevision": 1,
+    "digest": "1739869579620215100",
+    "actions": [
+      {
+        "name": "Play_Golden",
+        "actionStableId": "3da91a64-b947-4560-0000-000000000004",
+        "nameBindingRevision": "1",
+        "callableFingerprint": "16625703711728748585",
+        "ownerPackStableId": "22",
+        "providerClosureFingerprint": "6501533851897089272"
+      }
+    ],
+    "retired": []
+  },
+  "groups": []
+}

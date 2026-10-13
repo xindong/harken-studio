@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 3,
+  "projectBuildId": 0,
+  "executionCatalogFingerprint": 0,
+  "sdkCatalogFingerprint": 0,
+  "variables": [
+    {
+      "variableId": "67e0c65b-f36e-40d9-80ee-75af00ecf712",
+      "kind": 1,
+      "scopePolicy": 1,
+      "writers": 3,
+      "rangeMinBits": 0,
+      "rangeMaxBits": 1065353216,
+      "defaultBits": 0,
+      "executionFingerprint": 0,
+      "codeName": "VehicleRPM",
+      "displayName": "Vehicle RPM",
+      "description": "",
+      "unit": "",
+      "precision": 0,
+      "displayScale": 0,
+      "deprecated": 0,
+      "replacementId": "00000000-0000-0000-0000-000000000000",
+      "labels": [],
+      "ownerInitPackId": 0
+    }
+  ],
+  "capacity": {
+    "definitionCount": 1,
+    "maxReferencedPerContentPack": 0,
+    "maxVariableBindings": 0,
+    "maxStaticEmitterOverrides": 0,
+    "recommendedMaxEmitters": 0,
+    "recommendedEmitterVariableSlots": 0,
+    "recommendedPendingRows": 0,
+    "reserved": 0
+  }
+}

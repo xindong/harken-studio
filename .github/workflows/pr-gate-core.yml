@@ -1,0 +1,252 @@
+name: PR Gate Core
+
+# Engine-core gate: compiles harken_core everywhere it ships and runs the
+# runtime test suite on Windows. Path-scoped — studio, hub, and SDK changes
+# do not trigger it; they have their own gates. Note these path-filtered
+# gates must NOT be listed as required status checks (a skipped workflow
+# never reports and would block the merge forever).
+
+on:
+  pull_request:
+    paths:
+      - 'HarkenEngine/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+  workflow_dispatch:
+
+concurrency:
+  group: pr-gate-core-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # BuildInfo build type is inferred from GITHUB_ACTIONS; gate builds use dev.
+  HARKEN_BUILD_CHANNEL: dev
+
+jobs:
+  # Editor and hub subtrees are switched off, so the desktop configure
+  # needs no Qt anywhere in this gate — only the runtime targets, the
+  # host tools, and the runtime test suite are built.
+  core-windows:
+    name: core-windows
+    runs-on: [self-hosted, windows, venus-win]
+    timeout-minutes: 60
+
+    steps:
+      # clean:false — the self-hosted workspace is persistent, and the default
+      # clean runs `git clean -ffdx`, whose -x deletes the gitignored build-core/
+      # tree. Without this every run is a cold build and self-hosting buys
+      # nothing but the core count.
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          clean: false
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+
+      - name: Configure (windows-release, runtime tests)
+        run: >-
+          cmake --fresh --preset windows-release -B build-core
+          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_TOOLS=ON
+          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
+
+      - name: Run source contracts before compilation
+        shell: bash
+        run: |
+          mkdir -p .temp/ci-core-${{ github.run_id }}-${{ github.run_attempt }}
+          ctest --test-dir build-core -C Release -L harken-source-contract --no-tests=error --output-on-failure --output-junit "$GITHUB_WORKSPACE/.temp/ci-core-${{ github.run_id }}-${{ github.run_attempt }}/source-contracts.xml"
+
+      # No --parallel: bare --parallel means ninja's own default (cores + 2) and
+      # takes precedence over CMAKE_BUILD_PARALLEL_LEVEL, which each runner's
+      # .env sets so three concurrent jobs share the machine instead of each
+      # claiming all of it.
+      - name: Build Core and all registered runtime test targets
+        shell: bash
+        run: |
+          for target in harken_core harken_core_shared harken_runtime_ci_tests; do
+            cmake --build build-core --config Release --target "$target"
+          done
+
+      - name: Run runtime test groups
+        shell: bash
+        env:
+          HARKEN_TEST_MODE: ${{ github.event_name == 'pull_request' && 'pr' || 'full' }}
+        run: >-
+          python .scripts/run_test_groups.py
+          --build-dir build-core/HarkenEngine/Test --config Release --product runtime
+          --mode "$HARKEN_TEST_MODE" --exclude-label harken-daily --budget-seconds 2000
+          --output-dir .temp/ci-core-${{ github.run_id }}-${{ github.run_attempt }}/groups
+
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: core-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .temp/ci-core-${{ github.run_id }}-${{ github.run_attempt }}/
+          include-hidden-files: true
+          retention-days: 14
+
+  # Runtime-only configure — no Qt, no AGL patching needed.
+  core-macos:
+    name: core-macos-${{ matrix.slug }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            slug: x64
+            runner: macos-26-intel
+          - arch: arm64
+            slug: arm64
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install macOS build deps
+        run: brew install ninja
+
+      - name: Configure (macos-release, ${{ matrix.arch }})
+        run: >-
+          cmake --fresh --preset macos-release -B build-macos-runtime
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_TOOLS=ON
+          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
+
+      - name: Build Core and monitor runtime tests
+        shell: bash
+        run: |
+          for target in harken_core harken_core_shared harken_monitor_runtime_tests; do
+            cmake --build build-macos-runtime --config Release --target "$target" --parallel
+          done
+
+      - name: Run monitor fanout and wake lifecycle tests
+        run: >-
+          ctest --test-dir build-macos-runtime -C Release
+          -R '^MonitorRuntime\.MonitorHubFanout\.' --no-tests=error --output-on-failure
+
+      - name: Verify HarkenCore architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## macOS HarkenCore (${{ matrix.slug }})"
+            echo ""
+            echo "| Artifact | Slices |"
+            echo "| --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          artifacts=$(find build-macos-runtime \( -name 'libHarkenCore.dylib' -o -name 'libHarkenCore.a' \) -type f)
+          if [ -z "$artifacts" ]; then
+            echo "::error::no HarkenCore artifacts found under build-macos-runtime/"
+            exit 1
+          fi
+          status=0
+          while IFS= read -r artifact; do
+            archs=$(lipo -archs "$artifact")
+            echo "$artifact: $archs"
+            echo "| \`${artifact#build-macos-runtime/}\` | $archs |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$archs" != "${{ matrix.arch }}" ]; then
+              echo "::error file=$artifact::expected ${{ matrix.arch }}, got: $archs"
+              status=1
+            fi
+          done <<< "$artifacts"
+          exit $status
+
+  core-linux:
+    name: core-linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Linux build deps
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Configure (linux-release, runtime only)
+        run: >-
+          cmake --fresh --preset linux-release
+          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_SHARED=ON
+
+      - name: Build (harken_core harken_core_shared)
+        run: |
+          for target in harken_core harken_core_shared; do
+            cmake --build --preset linux-release --target "$target" --parallel
+          done
+
+  core-ios:
+    name: core-ios-arm64
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure iOS 13 device runtime
+        run: >-
+          cmake --fresh -S . -B build-ios -G Xcode
+          -DCMAKE_SYSTEM_NAME=iOS
+          -DCMAKE_OSX_SYSROOT=iphoneos
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
+          -DHARKEN_BUILD_CORE=ON
+
+      - name: Build libHarkenCore.a
+        run: cmake --build build-ios --config Release --target harken_core --parallel
+
+  core-android-arm64:
+    name: core-android-arm64
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ANDROID_NDK_VERSION: '27.2.12479018'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          packages: 'ndk;${{ env.ANDROID_NDK_VERSION }}'
+
+      - name: Configure Android API 21 runtime
+        run: >-
+          cmake --fresh -S . -B build-android -G "Ninja Multi-Config"
+          -DCMAKE_TOOLCHAIN_FILE="$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION/build/cmake/android.toolchain.cmake"
+          -DANDROID_PLATFORM=android-21
+          -DANDROID_STL=c++_static
+          -DANDROID_ABI=arm64-v8a
+          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_SHARED=ON
+
+      - name: Build libHarkenCore.so
+        run: cmake --build build-android --config Release --target harken_core_shared --parallel

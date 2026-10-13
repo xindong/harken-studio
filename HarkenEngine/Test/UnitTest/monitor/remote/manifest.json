@@ -1,0 +1,269 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producingPackage": "m0-5",
+  "contractVersion": 1,
+  "files": [
+    {
+      "path": "allowlist_monitor_functions.json",
+      "sha256": "b1ff1814f43ac8a3a75f7ff5e2d01f87cb89b9abcebb824042c2db05577c2e06",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "allowlist"
+    },
+    {
+      "path": "allowlist_wire_opcodes.json",
+      "sha256": "d5cdb2da3221e9df41bc09183aa04e09d21a8cc90f23059b9747b04b76210dce",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "allowlist"
+    },
+    {
+      "path": "contract.expected.json",
+      "sha256": "9d1944e00bf265c827d682aa9bf58905740134cf3436f24da41fc94acbd1b34c",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "expected-view"
+    },
+    {
+      "path": "counter_overflow.bin",
+      "sha256": "e6525ba6cc636e73aeaeed22dc8091a705155755497952a5f150b5a508e00a86",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "counter_start.bin",
+      "sha256": "bd8c70143d84c6aec53461ae34671cd02edcff5e08beca2e8c96d9739317b6a2",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "handshake_disabled.bin",
+      "sha256": "1519e044e5a98e1f8f0a036f0be17414a3fb489d79fd89b5569cc6369fc7743b",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "handshake_lan_mtls.bin",
+      "sha256": "d766622cf6f5c15bc675de37114b5c6d5b1d06d761c51a0a6c4d9de7a63e8c8b",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "handshake_local_acl.bin",
+      "sha256": "12c6e07604ef00fe28e5346b9226cbf43e254c2a027f109f3ebb97789302e90c",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "handshake_mismatch.bin",
+      "sha256": "d8423f46483e1ae4e33d71569c804cbce708771e0f5b5c8e5275cc31607359bd",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "handshake_reserved_nonzero.bin",
+      "sha256": "43a139b80ea6aef072878f30fe4e1338519f83b7d542ec9e72339c9fea78dc90",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "handshake_struct_size_bad.bin",
+      "sha256": "52c27a179e33cd943c10b68c79a1f532ca3e14e783de14007902f2d7dec43903",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "handshake_unknown_permission.bin",
+      "sha256": "73f8fed13c38ec6df8690ff67a762c841436a469c851d28c523219867396f1d3",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "handshake_unknown_profile.bin",
+      "sha256": "9219c71854e94cbe59f80463fe3c79b20154fcfb50427ca28e558586c51c31f0",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_deny_capture_control.bin",
+      "sha256": "07e8dda491c0ced0ad73530f5ad97662897a137bf9e75c802efc339be0f99e2e",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_deny_observe_events.bin",
+      "sha256": "07e8dda491c0ced0ad73530f5ad97662897a137bf9e75c802efc339be0f99e2e",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_deny_observe_measurements.bin",
+      "sha256": "07e8dda491c0ced0ad73530f5ad97662897a137bf9e75c802efc339be0f99e2e",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_deny_observe_state.bin",
+      "sha256": "07e8dda491c0ced0ad73530f5ad97662897a137bf9e75c802efc339be0f99e2e",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_deny_raw_audio.bin",
+      "sha256": "07e8dda491c0ced0ad73530f5ad97662897a137bf9e75c802efc339be0f99e2e",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_deny_record.bin",
+      "sha256": "07e8dda491c0ced0ad73530f5ad97662897a137bf9e75c802efc339be0f99e2e",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_deny_symbols.bin",
+      "sha256": "07e8dda491c0ced0ad73530f5ad97662897a137bf9e75c802efc339be0f99e2e",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_grant_capture_control.bin",
+      "sha256": "1f29dfe33c746c2a08f516f19d11d7b889db5d8fcbbea54c3654c01cf0a73c16",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_grant_observe_events.bin",
+      "sha256": "00940608defa5e6946ba34228716d8058cc17c896e574772b2f162e1978ac6a9",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_grant_observe_measurements.bin",
+      "sha256": "c1980df1a3261b8ba0ab658d7104052d3a52f3b2fb3b8c65201a4494935a22af",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_grant_observe_state.bin",
+      "sha256": "c9ca236038ac7b963be06277da820a0195c837c46d4385952dbfec21696fe3d8",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_grant_raw_audio.bin",
+      "sha256": "fe766c117e8511ee5bfec1e37e0442febc9e80c54586be28241dd8ea92e9b68c",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_grant_record.bin",
+      "sha256": "936ca771cd075ba1a0db16bdda5973847350bea6892979ecbb57c678570be13e",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "perm_grant_symbols.bin",
+      "sha256": "efe72fcdce97eea8b3119fc7ab48892fa4db64fc3f7e2199490a2caa9271276f",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "principal_lan_mtls.bin",
+      "sha256": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    },
+    {
+      "path": "principal_local_acl.bin",
+      "sha256": "e6f48a0036f29213687545ad901eb55949d15e150213f2db8b32f248d55ec411",
+      "isProvisional": false,
+      "producingPackage": "m0-5",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "remote-file"
+    }
+  ]
+}

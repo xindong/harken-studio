@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-2",
+  "kind": "gap-drop-reason-world-replaced",
+  "reason": "VnMonitorDropSummary.reason is an untyped uint32. M2-2 late-world STATE isolation reuses the already frozen VN_ACTION_TERMINAL_WORLD_REPLACED integer rather than minting a Monitor-only code. Epoch, reconnect, and other late batches stay distinct integers; they are not collapsed into Unknown.",
+  "mappedInteger": 3,
+  "publicName": "VN_ACTION_TERMINAL_WORLD_REPLACED"
+}

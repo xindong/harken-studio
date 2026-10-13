@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-2",
+  "kind": "gap-symbol-fingerprint",
+  "reason": "optionalSymbolFingerprint stays 0 when no symbol sidecar is loaded. Numeric instance handle plus generation still locate the record. Name hash is forbidden.",
+  "field": "optionalSymbolFingerprint"
+}

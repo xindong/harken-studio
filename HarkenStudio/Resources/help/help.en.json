@@ -1,0 +1,370 @@
+{
+  "schema": 1,
+  "types": {
+    "Folder": {
+      "title": "Folder",
+      "body": "A Folder organizes physical directories, carries no audio behaviour, and never takes part in playback. Folders can be created in the Layers, Actions, Variables, and Attenuations sections, and can contain other Folders. In Layers, Folders organize audio object trees without changing their mixing hierarchy or inherited properties. A Folder cannot be placed inside an audio object. The Busses section has no Folders; a bus nests inside a bus."
+    },
+    "Sound": {
+      "title": "Sound",
+      "body": "A Sound binds media and is the smallest playable unit — the absolute leaf of the content family, with no children. It holds a list of sources. Each source is a media reference with its own trim and loop region. Which source plays is chosen while authoring, per platform, from the Active column; when Per-language is on, each language keeps its own list. Offset of Start delays every playback of this Sound. Picking a different source on every trigger is a Container's job, not a Sound's."
+    },
+    "Container": {
+      "title": "Container",
+      "body": "A Container decides which of its children play when it is triggered. Its children can be Sounds, Containers, Tracks, or Pieces. Mode is the selection rule: Random, Sequence, Match, or Blend. Random and Sequence have a Play Type choice: Single selects one entry per trigger; Queue plays one complete round. Loop sets the number of rounds. Selections holds the entries used by all four modes. Behavior holds the extra rules the current mode actually uses.\n\nA transition is separate from Mode. It says how playback leaves one child and enters another. Exit can be Immediate, the child's natural end, the next marker, or the Exit marker. Next Beat and Next Bar cannot be added or edited; a rule that still uses them can be deleted or replaced with a supported timing. Entry can start at the Entry marker or at the same position. A rule can fade the source out, play an optional bridge, and fade the target in.\n\nMatch uses one table to choose a winning row from Variable values. In Blend mode, each mixing row contains an optional Variable and a freely editable gain curve for each child. The horizontal axis is the Variable value; the vertical axis is Mix (%), an independent 0–100% gain without automatic normalization. All configured members in Blend mode start together, including members at zero gain; changing gain does not stop or restart them. A child has one curve per mixing row. The first and last points define its active Variable interval; gain is zero outside it. Move either endpoint to adjust the interval, or drag the clip title horizontally to move the whole curve without changing its percentages. The same child can appear in different mixing rows, sharing one playback with the row gains multiplied together. Use nested Containers to combine these rules. Variable Response chooses whether each instance keeps its starting values or follows later changes while playback remains active. It never keeps a completed Container alive."
+    },
+    "Track": {
+      "title": "Track",
+      "body": "A Track schedules Sound, Container, or Piece clips on one lane of absolute time and can be triggered directly. Each clip sets a start position. Playback length, loops, and fades follow the target's own settings. The duration drawn on the lane is a display extent, not a trim, and an existing duration cannot be changed. Known source spans are shown for reference, and unavailable or variable lengths use a placeholder. Overlapping clips play together without an automatic crossfade. A Track has no markers. Its own properties shape everything placed on the lane."
+    },
+    "Piece": {
+      "title": "Piece",
+      "body": "A Piece gives its Track children a shared origin in absolute time. Use several lanes to align and layer those Tracks. A Track on the Piece can itself hold another Piece. Its children are Tracks.\n\nEntry, Exit, and Custom markers mark positions on the Piece. Entry and Exit are the points a transition can aim at. A Custom marker is a named position another operation can wait for. Whether a marker is honored depends on the Action, queue, or transition that uses it. This version does not offer musical time, tempo, meter, or beat/bar scheduling. Existing musical arrangements are preserved and their affected timelines are read-only."
+    },
+    "Layer": {
+      "title": "Layer",
+      "body": "A Layer organizes the objects under it — Layers, Sounds, Containers, Tracks, and Pieces — and shapes them in bulk. It is not a summing node: its values contribute to each descendant voice, so pulling a Layer down 3 dB moves the whole family relative to its own levels rather than merging them into one signal. Reference slots such as the output bus and Attenuation are inherited from the nearest ancestor that names one. A Layer cannot be triggered: it shapes, it never starts playback."
+    },
+    "Bus": {
+      "title": "Bus",
+      "body": "A Bus is a mixing node in the bus tree — the only place where audio signal is actually summed. Every voice routes into a bus; that bus applies its own gain, then passes the result up to its parent bus, and the chain ends at the master. Busses nest inside busses, and that hierarchy is the mix."
+    },
+    "Action": {
+      "title": "Action",
+      "body": "An Action is the proxy a game uses to drive the audio system. It runs its Steps in order, so one trigger from gameplay carries out a whole behaviour. Content objects and Actions are the only things a game can trigger — organization objects only shape what they hold.\n\nEach step is one operation. Play starts a Sound, Container, Track, or Piece. Stop ends one of those and can fade it out. Set Variable writes a Variable in Global or Emitter scope. Post Action runs another Action, but not the Action that contains the step. Reset clears a Container's selection memory, either for one Emitter or globally."
+    },
+    "Variable": {
+      "title": "Variable",
+      "body": "A Variable is a named float input slot through which the game controls audio. Its declaration contains kind, range, default value, and labels. Each write targets Global or an Emitter. Readers in an Emitter context use its local override when present, otherwise the global value. An Emitter override applies to all consumers of that Variable in the same Emitter context, including Layer bindings evaluated for descendant playback. Bus bindings and other readers without an Emitter context read only the global value. A Global write clears every Emitter override for that Variable, even when the global value is unchanged. Bindings shape parameters from the value; Match or Blend containers use it to select or mix children."
+    },
+    "Attenuation": {
+      "title": "Attenuation",
+      "body": "An Attenuation describes how a sound changes with distance. It is a shared asset rather than a per-object setting: one Attenuation can be referenced by many objects at once, so a whole family of sounds can be retuned in one place. The distance axis runs from the listener out to Max Distance. This version has two curves, Volume and Pitch. Volume is a decibel offset from 0 down to -96. Pitch is a cent offset from -1200 to 1200."
+    }
+  },
+  "fields": {
+    "mixnode.volume": {
+      "title": "Volume",
+      "body": "The level of this object, in decibels, from -96 to 24. On a content object, Volume sums in decibels along the shaping chain, so this value is a contribution rather than a final level: an object at -3 dB inside a Layer at -3 dB is heard at -6 dB. 0 dB leaves the level as it arrives.",
+      "byType": {
+        "Bus": "The gain this bus applies to everything summed into it, in decibels, from -96 to 24. A bus is a summing node, so this level moves the whole mix passing through it before the result continues up to the parent bus. 0 dB leaves that mix unchanged."
+      }
+    },
+    "mixnode.pitch": {
+      "title": "Pitch",
+      "body": "The pitch offset of this object, in cents, from -4800 to 4800. 100 cents is one semitone and 1200 cents is one octave. Pitch sums along the shaping chain and is clamped into that range. 0 leaves the pitch unchanged.",
+      "byType": {
+        "Bus": "The pitch offset this bus applies to everything summed into it, in cents, from -4800 to 4800. 100 cents is one semitone and 1200 cents is one octave. 0 leaves the pitch unchanged."
+      }
+    },
+    "mixnode.outputBusId": {
+      "title": "Main Output",
+      "body": "The parent bus this bus feeds. Busses nest inside busses and the chain ends at the master bus, so a bus's output is simply its place in the bus tree. It is shown read-only here: move the bus in the tree to change where it goes."
+    },
+    "mixnode.mainOutputBusRef": {
+      "title": "Output Bus",
+      "body": "The bus this object routes into. Output Bus and Output Volume belong to one group. With Inherit unchecked, choose the bus on this object; the group does not accept an empty bus.\n\nThe Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again."
+    },
+    "mixnode.outputBusVolume": {
+      "title": "Output Volume",
+      "body": "The level applied on the connection into the main output bus, in decibels, from -96 to 24. 0 dB leaves that connection unchanged. It changes how much is sent onward, not the object's own Volume. On a content object it is not added to a parent's output volume.",
+      "byType": {
+        "Bus": "The level applied to this bus's signal as it enters its parent bus, in decibels, from -96 to 24. It trims the connection upward without changing the gain this bus applies to its own inputs. Sends leaving this bus do not follow this trim.",
+        "Sound": "The Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again.",
+        "Container": "The Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again.",
+        "Track": "The Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again.",
+        "Piece": "The Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again.",
+        "Layer": "The Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again."
+      }
+    },
+    "mixnode.sends": {
+      "title": "Sends",
+      "body": "Extra routes from this object into other busses, kept beside the main output rather than instead of it. Each row names a Target bus and a Volume in decibels, from -96 to 24. The same Target cannot appear twice. One source can therefore feed a reverb bus and still reach its own bus.",
+      "byType": {
+        "Bus": "Extra routes from this bus into other busses, each with its own Target and Volume in decibels, from -96 to 24. A send is an additional path alongside the main output, not a replacement for it. This list belongs to the bus itself.",
+        "Sound": "The Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again.",
+        "Container": "The Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again.",
+        "Track": "The Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again.",
+        "Piece": "The Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again.",
+        "Layer": "The Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again."
+      }
+    },
+    "audio.loopCount": {
+      "title": "Loop",
+      "body": "How many times this object plays each time it is triggered. 1 is a single pass, a higher number is that many passes in total, and Infinite repeats without end. The count belongs to this object and is not inherited from a parent. Set it on the object that should repeat.",
+      "byType": {
+        "Container": "On Random or Sequence with Play Type set to Queue, this count is how many times the queue cycles. 1 walks it once, a higher number repeats that walk, and Infinite keeps cycling. The queue keeps its place on each Emitter."
+      }
+    },
+    "spatial.spatialPanning": {
+      "title": "Panning",
+      "body": "The stereo position of this object, from -1 at the left to 1 at the right. Drag left and the sound moves left; drag right and it moves right. Panning is not added to a parent's panning.\n\nThe Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again."
+    },
+    "spatial.spatialIs3DEnabled": {
+      "title": "Enable 3D Spatialization",
+      "body": "Turn this on and the object is placed by its position relative to the listener, including distance attenuation. Turn it off and the object stays a flat stereo image, with no distance change.\n\nThe Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again."
+    },
+    "spatial.spatialAttenuationDistanceScaling": {
+      "title": "Distance Scale",
+      "body": "Stretches or compresses the distance axis of the Attenuation this object uses, from 10% to 1000%. 100% keeps the curve as drawn. 200% makes the same curve reach twice as far. 50% brings the change closer.\n\nThe Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again."
+    },
+    "spatial.spatialAttenuationRef": {
+      "title": "Attenuation",
+      "body": "The Attenuation this object uses as distance changes. While Inherit is off, clearing the reference means this object uses no Attenuation. Clearing it does not switch the object back to a parent's Attenuation.\n\nThe Inherit checkbox beside this group covers the whole group. While it is checked, the group follows the nearest parent and the values cannot be edited here. Uncheck it to keep the group's own values on this object. Right-click this group and choose Rebuild Local from Current Effective Values to copy the result you currently hear onto this object. When a single platform is selected, Reset Inherit makes that platform follow the shared setting again."
+    },
+    "selection.mode": {
+      "title": "Mode",
+      "body": "The rule a Container uses to choose its children. Random uses weighted random selection. Sequence follows list order. On both modes, Play Type Single chooses one entry per trigger; Play Type Queue plays one complete round. Match chooses the winning row from Variable conditions. Blend starts all configured members together and uses mixing rows to control their gains from Variables, including zero gain. Each child has one free gain curve per mixing row. References in different mixing rows share one playback and multiply their gains. Percentages are independent and are not normalized to a total of 100%.\n\nSelection Editor shows a condition table for Match and a mixing table in Blend mode, with an optional Variable and percentage curves in each row. Nest Containers to combine them. Random uses selection weights; Sequence follows list order.\n\nThe Selections add button uses Add Child for Random and Sequence. Match offers Add Child and Add Variable, both opening a selector. Blend mode offers Add Mixing to append a row; the Child table inside each row uses Add Child. The mixing row vertical axis is Mix (%). You can add multiple mixing rows before choosing a Variable for each one. Children in a mixing row without a Variable contribute at 100%."
+    },
+    "bus.pan": {
+      "title": "Pan",
+      "body": "The stereo position of this bus's own output, from -1 at the left to 1 at the right. 0 is center. It belongs to this bus and is not inherited from a parent bus."
+    },
+    "bus.inputs": {
+      "title": "Inputs",
+      "body": "Everything that routes its main output into this bus, with the Volume each one contributes, in decibels. The list is read-only because it is assembled from routing elsewhere in the project. To add, remove, or retune a row, change Output Bus or Output Volume on the source object."
+    },
+    "bus.receives": {
+      "title": "Receives",
+      "body": "Everything that sends into this bus, with the Volume of each send, in decibels. The list is read-only because it is assembled from sends declared on other objects. To add, remove, or retune a row, edit Sends on the sending object."
+    },
+    "variable.kind": {
+      "title": "Kind",
+      "body": "Whether this Variable reads as discrete steps or as a continuous value. Step rounds what it reads to whole steps across the range; Smooth passes the float through. Changing the kind renormalizes the range and the default value to match."
+    },
+    "variable.range": {
+      "title": "Range",
+      "body": "The bottom and the top of this Variable's value range, edited together so the two ends cannot cross or be left half-applied. Neither end can be negative. Whatever the game writes is clamped into the range when read, so the declared range is every value this Variable can express. Widening it here is what lets the Variable carry larger values. A label whose anchor sits outside the window keeps its name and comes back when the range widens again."
+    },
+    "variable.defaultValue": {
+      "title": "Default Value",
+      "body": "The value this Variable reads before the game writes anything. A Variable always has a value — there is no unset state. The default is clamped into the range, and a Step Variable is rounded to a whole step. Changing Kind or Range renormalizes this value so it stays legal."
+    },
+    "variable.labels": {
+      "title": "Labels",
+      "body": "Names pinned to anchors on this Variable's value. Any value takes the name of its nearest anchor, which is what lets a numeric slot read as a name in the editor. Add a row, set the anchor, and name it. Labels are notation only: they do not change the value the game reads, and an anchor left outside the current range is kept until the range covers it again."
+    },
+    "sound.scheduleOffsetSec": {
+      "title": "Offset of Start",
+      "body": "How long this Sound waits after it is triggered before playback starts, in seconds. 0 starts immediately, and the delay cannot be negative. The delay belongs to the Sound, not to any one source row, so it applies to every platform, every language, and every direct trigger."
+    },
+    "item.notes": {
+      "title": "Notes",
+      "body": "Free-form authoring notes on this object, for whoever reads the project next. Notes never reach the runtime and have no effect on playback."
+    },
+    "spatial.spatializationMix": {
+      "title": "Spatialization Mix",
+      "body": "How much of a mono, spatialized sound is a point in space rather than a flat image. 0 is fully flat, 1 is fully positional, and a value between blends the two on each output channel. Raise the value and the sound sits more firmly on its position; lower it and the sound becomes flatter. A sound that is not spatialized keeps the number, but its image does not change. Multichannel sounds are left unchanged. Every platform shares this one value. 1 leaves the sound fully positional."
+    },
+    "selection.selections": {
+      "title": "Selections",
+      "body": "The children this Container can choose, in order, each with a weight. Under Random with Single playback and Draw discipline the weight column is Frequency: a higher number is chosen more often, and 0 keeps that child out of the draw. Under Random with Shuffle discipline or Queue playback, the column is Order: the number biases the shuffled order, and the minimum is 1. The default weight is 50 and the maximum is 100. Sequence ignores the weight and walk the list in order.\n\nThe shared table is the fallback. A platform can keep its own child weights. Changing the list here changes who Mode is allowed to pick; it does not by itself start playback."
+    },
+    "selection.behavior": {
+      "title": "Behavior",
+      "body": "The extra rules for the current Mode and Play Type. Controls that are not used are hidden.\n\nDiscipline is only for Random with Single playback. Draw picks one child by Frequency on every trigger. Shuffle builds an order and walks it without drawing the same child again until the order is spent.\n\nMin Repeat Gap sets how many other selections must occur before the same list entry can be selected again. It applies to Random with either Play Type choice. The gap is measured in selections, not time; 0 adds no restriction on repeats. The maximum is 8, and it cannot exceed one less than the number of eligible entries.\n\nMemory Scope chooses where Random and Sequence remember their place with Single playback. Per Emitter keeps a separate memory on each Emitter. Global shares one memory. Queue always remembers its place per Emitter and hides Memory Scope.\n\nResume From Last, on a queue, continues from that Emitter's saved place instead of the start. If no place has been saved, the queue starts at the beginning. Match or Blend uses none of these rules."
+    },
+    "sound.distinguishLanguage": {
+      "title": "Per-language",
+      "body": "Chooses whether this Sound has one source list or one list per language. Off: every language plays the same rows. On: the rows you edit belong to the language selected in the editor. Each language keeps its own Audio, trim, loop region, and Active choice. A language with no list does not borrow another language's rows. This switch does not change which platform is selected."
+    },
+    "sound.sources": {
+      "title": "Sources",
+      "body": "The media this Sound can play. Add a row by importing a file, or drop audio onto the list. Each row's Audio reference is one file. Wave edits that file: Trim Start and Trim End choose the samples that play, and Loop Region marks the span used when Loop asks this Sound to repeat.\n\nActive chooses the one row that plays. Platforms that do not name their own row use the shared choice. Choosing Active while one platform is selected stores an override for that platform. Choosing it while all platforms are selected sets the shared choice and clears those overrides. It is not a random pick on each trigger. When Per-language is on, the rows and the Active choice belong to the selected language."
+    },
+    "action.steps": {
+      "title": "Steps",
+      "body": "The operations this Action runs, from top to bottom, when the game triggers it. Each row has a Type, a Target, and a Delay. Delay is how many seconds to wait before that step, from 0 to 60. Expand a row for the controls that belong to its type.\n\nPlay starts a Sound, Container, Track, or Piece.\n\nStop ends a Sound, Container, Track, or Piece. Fade Time is the length of that fade, in milliseconds, from 0 to 60000.\n\nSet Variable writes the targeted Variable. Value is clamped into that Variable's range, and a Step Variable is rounded to a whole step. Scope Global writes the shared value and clears every Emitter override. Scope Emitter writes only that Emitter's override.\n\nPost Action runs another Action. It cannot target the Action that contains this step.\n\nReset does not play the Container. On Random or Sequence with Single playback, Scope Emitter clears that Emitter's selection memory, and Scope Global clears the shared memory. With Queue playback, Scope Emitter clears that Emitter's saved place in the queue; Scope Global is not available. On Match or Blend the step does nothing."
+    },
+    "tracktimeline.clips": {
+      "title": "Clips",
+      "body": "The clips on this Track, in lane order. Each row names the Child it plays: a Sound, a Container, or a Piece. A clip's start is a position in absolute time on the lane. Playback length, loops, and fades follow that child's own settings.\n\nThe duration shown on the lane is only how wide the clip is drawn. It does not trim playback, and an existing duration cannot be edited. Overlapping clips play together. This list does not add a crossfade between them."
+    },
+    "attenuation.dimensions": {
+      "title": "Dimensions",
+      "body": "The curves on this Attenuation. Each row is one property and its curve. The properties are Volume and Pitch. Volume is a decibel offset from 0 down to -96. Pitch is a cent offset from -1200 to 1200.\n\nDistance runs from 0 at the listener to Max Distance, the shared far end of every curve. Changing Max Distance moves that far end. A new curve starts at no offset and ends at Max Distance. Drag points in the curve editor to shape the offset over distance. Every object that references this Attenuation uses these same curves."
+    },
+    "selection.discipline": {
+      "title": "Discipline",
+      "body": "How a Random container draws its children. Draw picks one child by its Frequency weight on every trigger. Shuffle builds one order and walks it without repeating a child until that order is finished. This choice is shown only when Mode is Random and Play Type is Single. Queue always builds a weighted order without replacement."
+    },
+    "selection.avoidRepeat": {
+      "title": "Min Repeat Gap",
+      "body": "The minimum number of other selections before the same list entry can be selected again. The gap is measured in selections, not time. At 0, this setting adds no restriction on repeats.\n\nShown for Random with either Play Type choice. The maximum is 8, and it cannot exceed one less than the number of eligible entries. Entries with a Frequency of 0 do not count under Random with Single playback and Draw discipline."
+    },
+    "selection.memoryScope": {
+      "title": "Memory Scope",
+      "body": "Where Random and Sequence remember their selection progress with Single playback. Per Emitter keeps a separate memory on each Emitter. Global shares one memory across every Emitter. Queue always keeps its memory per Emitter, so this field is hidden for Queue."
+    },
+    "selection.resumeFromLast": {
+      "title": "Resume From Last",
+      "body": "Check this and a queue continues from the place saved for that emitter. If nothing has been saved yet, the queue starts at the first child. Leave it unchecked and every trigger starts from the beginning. It is shown only for Random or Sequence with Play Type set to Queue. The value is retained when Play Type is Single."
+    },
+    "selection.variableResponse": {
+      "title": "Variable Response",
+      "body": "How changes to Variables affect a Match or Blend instance that is already playing.\n\nAt Start captures the initial result. Match keeps its selected row; Blend keeps its initial gains. Later Variable changes affect the next Play. Live updates the Match selection or Blend gains while the instance is still playing.\n\nThis setting does not keep completed content alive. All configured members in Blend mode start together and continue at zero gain without restarting when their gain rises. When all selected content and tails finish, the Container ends.\n\nThe same child in different mixing rows shares one playback instance; the row gains multiply. Each mixing row has one curve per child.\n\nVariable Response applies only to this Container's selection or gains. It does not freeze Variables or Bindings, and child Containers keep their own response settings."
+    },
+    "selection.playType": {
+      "title": "Play Type",
+      "body": "How much a trigger plays in Random or Sequence. Single selects one entry per trigger and is the default. Queue plays one complete round; Loop sets the number of rounds. Random Queue builds a weighted order without replacement, so each entry plays once per round. Sequence Queue follows list order.\n\nDiscipline is available for Random Single. Queue always keeps its memory per Emitter and can use Resume From Last, Marker splice, and transitions. Switching to Single preserves those queue settings without applying them. Switching back to Queue uses them again."
+    }
+  },
+  "panels": {
+    "settings": {
+      "title": "Settings",
+      "body": "Choose a category to edit its settings. Apply saves pending changes and closes the window. Cancel discards pending changes. Layout renames and deletions are saved immediately."
+    },
+    "settings.apply": {
+      "title": "Apply",
+      "body": "Save pending settings changes and close the window. Layout renames and deletions are already saved."
+    },
+    "settings.cancel": {
+      "title": "Cancel",
+      "body": "Close the window and discard unapplied settings changes. Layout renames and deletions have already been saved and are not reverted."
+    },
+    "settings.general": {
+      "title": "General",
+      "body": "Choose the editor theme, Information language, and developer options. Changes take effect after Apply."
+    },
+    "settings.general.theme": {
+      "title": "Theme",
+      "body": "Choose the editor's colors and control appearance. Install additional theme packages in %1. The selected theme takes effect after Apply."
+    },
+    "settings.general.language": {
+      "title": "Language",
+      "body": "Choose the language used by Information help content. The editor interface is currently English. This preference is separate from the project's target languages."
+    },
+    "settings.general.developer": {
+      "title": "Developer Mode",
+      "body": "Show the File, Version, and CRC columns and the Preview Pack Structure command in Pack Manager."
+    },
+    "settings.layout": {
+      "title": "Layout",
+      "body": "Manage saved workspace layouts. Rename and delete are saved immediately; Apply and Cancel do not cover these operations. The built-in Default layout cannot be renamed or deleted."
+    },
+    "settings.shortcuts": {
+      "title": "Shortcuts",
+      "body": "Double-click a shortcut and press the new keys to rebind it. Right-click for more options. Changes take effect after Apply."
+    },
+    "settings.ai_agent": {
+      "title": "AI Agent",
+      "body": "Configure the connection, permissions, and tools used by AI Assistant. Apply saves the configuration. Test Connection uses the current fields without saving."
+    },
+    "settings.ai_agent.credentials": {
+      "title": "Credentials",
+      "body": "Set the service's Base URL, API key, model, and context window in tokens. The API key is stored in the operating system credential vault. Leave the key field blank to keep the saved key, enter a new key to replace it, or use Clear Saved Key to remove it. Key changes are saved only after Apply."
+    },
+    "settings.ai_agent.connection": {
+      "title": "Test Connection",
+      "body": "Test the current Base URL and model using the entered API key, or the saved key when the field is blank. The test sends a short request without saving settings."
+    },
+    "settings.ai_agent.permission": {
+      "title": "Permission",
+      "body": "Read-only denies all writes. Ask requests approval before writes that require confirmation. Auto skips confirmation only for reversible commands eligible for automatic approval; no currently enabled command is eligible, so current writes still ask. Legacy Bypass behaves as Ask."
+    },
+    "settings.ai_agent.tools": {
+      "title": "Tool Scope",
+      "body": "Choose which tools AI Assistant can use: Read-only for inspection, Authoring for editing, Pack for export, or Live for testing. Effective tools shows the number available under both the selected profile and permission mode."
+    },
+    "settings.build": {
+      "title": "Build",
+      "body": "Configure the project's target platforms, target languages, and pack output directory. Changes are saved after Apply."
+    },
+    "settings.build.platforms": {
+      "title": "Target Platforms",
+      "body": "Add a target platform or double-click one to edit its name, base platform, and build settings. The project must keep at least one platform. Changes are saved after Apply."
+    },
+    "settings.build.languages": {
+      "title": "Target Languages",
+      "body": "Configure the project's audio languages. Names use letters, digits, and underscores. These languages become available in the Sound Source section when Language is enabled. Changes are saved after Apply."
+    },
+    "settings.build.output": {
+      "title": "Pack Build Output",
+      "body": "Choose where exported packs are written. The directory is stored relative to the project file's directory and must differ from that directory. An empty value uses the default BuildPacks directory."
+    },
+    "BlueprintCanvas": {
+      "title": "Blueprint Canvas",
+      "body": "Blueprint Canvas graphs the objects in the current view and the relationships between them. A card is one object. The rows on a card show authored values such as Volume, Pitch, and Loop. A line is either a parent-child relationship or an audio route into a bus. The Volume node on a route is the level of that connection: the main output, or one send. Point at a card, a row, or a line to read it here. Drag from one pin to another to connect objects."
+    },
+    "Explorer": {
+      "title": "Explorer",
+      "body": "Explorer is the project tree. Create, rename, move, and delete objects here. Point at an object to read its type. The selection drives the Inspector, and objects in the current view also appear on the Blueprint Canvas."
+    },
+    "Inspector": {
+      "title": "Inspector",
+      "body": "Inspector edits the selected object. Point at a label, slider, checkbox, or menu to read what that control changes. While Inherit is checked, that group follows the nearest parent and cannot be edited. Clear Inherit to store the values on this object."
+    },
+    "Information": {
+      "title": "Information",
+      "body": "Information describes the object, property, or command under the pointer. The text follows the pointer. Lock the title bar to hold the current text while editing."
+    },
+    "Audition": {
+      "title": "Audition",
+      "body": "Audition previews the current selection inside the editor. Play and Stop control that preview. The meters and playhead follow the preview, not a running game."
+    },
+    "Log": {
+      "title": "Log",
+      "body": "Log records editor activity: files loaded, commands completed, and failures. Use it when a command does not produce the expected result."
+    },
+    "ExportPacksManager": {
+      "title": "Pack Exporter",
+      "body": "Pack Exporter builds the runtime pack the game loads. Choose the content to include and start the build here. The pack is not a second copy of the editor project."
+    },
+    "MonitorCatalog": {
+      "title": "Monitor Catalog",
+      "body": "Monitor Catalog lists the events captured during this session. Use it to review what was recorded, then open the other monitor views for voices, buses, and levels."
+    },
+    "AIAssistant": {
+      "title": "AI Assistant",
+      "body": "AI Assistant answers questions about the open project. It does not change a property until a suggestion is applied. For the behavior of a control, point at that control in the Inspector or on the Blueprint Canvas."
+    },
+    "blueprint.select": {
+      "title": "Select",
+      "body": "Select chooses objects on the Blueprint Canvas. Click a card to select it. Drag across empty space to select several. Selected cards can be moved. This mode does not draw a new connection."
+    },
+    "blueprint.pan": {
+      "title": "Pan",
+      "body": "Pan moves the Blueprint Canvas without selecting objects. Drag empty space to scroll the view. Use it to reach cards that sit outside the window."
+    },
+    "blueprint.snap": {
+      "title": "Snap to Grid",
+      "body": "Snap to Grid aligns a card to the canvas grid when the card is moved. Turn it off to leave a card at the exact position where it is released."
+    },
+    "blueprint.viewportFilter": {
+      "title": "Viewport Filter",
+      "body": "Viewport Filter excludes matching objects from the Blueprint Canvas. Filter Out All Sounds hides Sound objects and their attached connections without changing routing or collapse states. Expanding or locating an object respects this filter."
+    },
+    "blueprint.viewportVisibility": {
+      "title": "Viewport Visibility",
+      "body": "Viewport Visibility chooses which information appears on cards, including waveforms, Volume, Pitch, Offset of Start, and Loop. Group checkboxes show a partial check when only some fields are visible. Hidden fields retain their authored values."
+    },
+    "blueprint.resetLayout": {
+      "title": "Reset Layout",
+      "body": "Reset Layout discards the manually placed card positions and returns the Blueprint Canvas to its automatic arrangement. Authored property values are not changed."
+    },
+    "blueprint.zoom": {
+      "title": "Zoom",
+      "body": "Zoom sets the scale of the Blueprint Canvas. Choose a percentage, or Zoom to Fit to frame the current cards. The scale does not affect playback."
+    },
+    "list.add": {
+      "title": "Add",
+      "body": "Add appends one row to this list. The new row uses the default values for that list. Fill its reference or value before relying on it in playback."
+    },
+    "list.remove": {
+      "title": "Remove",
+      "body": "Remove deletes the selected row from this list. The referenced object itself remains in the project unless the command is explicitly a delete. The list no longer uses the removed row."
+    },
+    "audition.play": {
+      "title": "Play/Stop",
+      "body": "Play starts a preview of the current selection. If a preview is already running, the same control stops it. The preview uses the authored values currently shown in the editor."
+    },
+    "audition.stop": {
+      "title": "Stop",
+      "body": "Stop ends the current preview. It does not change the selection or any authored value."
+    },
+    "audition.reset": {
+      "title": "Reset Audition",
+      "body": "Reset Audition clears the preview memory of the selected Container, such as its sequence position or shuffle order. The next Play starts from the beginning of that selection rule."
+    }
+  }
+}

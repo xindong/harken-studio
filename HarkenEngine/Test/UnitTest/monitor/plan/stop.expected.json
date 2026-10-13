@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "producingPackage": "m0-3",
+  "isProvisional": false,
+  "contractVerified": true,
+  "sequences": [
+    {
+      "id": "stop-active-to-empty",
+      "role": "stop",
+      "immutable": [
+        "monitorSessionEpoch",
+        "leaseGeneration",
+        "worldGeneration"
+      ],
+      "mutable": [
+        "capturePlanGeneration",
+        "activationState",
+        "effectiveFromExecuteFrame"
+      ],
+      "before": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10
+      },
+      "after": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 11,
+        "activationState": 1,
+        "planEmpty": 1,
+        "effectiveFromExecuteFrame": 20,
+        "expectedResult": "VN_OK"
+      }
+    },
+    {
+      "id": "stop-already-empty",
+      "role": "stop",
+      "immutable": [
+        "monitorSessionEpoch",
+        "leaseGeneration",
+        "worldGeneration",
+        "capturePlanGeneration",
+        "effectiveFromExecuteFrame"
+      ],
+      "mutable": [],
+      "before": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 11,
+        "activationState": 1,
+        "planEmpty": 1,
+        "effectiveFromExecuteFrame": 20
+      },
+      "after": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 11,
+        "activationState": 1,
+        "planEmpty": 1,
+        "effectiveFromExecuteFrame": 20,
+        "expectedResult": "VN_OK"
+      }
+    },
+    {
+      "id": "stop-stale-lease",
+      "role": "stop",
+      "immutable": [
+        "monitorSessionEpoch",
+        "leaseGeneration",
+        "worldGeneration",
+        "capturePlanGeneration",
+        "activationState",
+        "planEmpty",
+        "effectiveFromExecuteFrame"
+      ],
+      "mutable": [],
+      "before": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10
+      },
+      "after": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "expectedResult": "VN_MONITOR_STALE_LEASE"
+      }
+    },
+    {
+      "id": "stop-slots-full",
+      "role": "stop",
+      "immutable": [
+        "monitorSessionEpoch",
+        "leaseGeneration",
+        "worldGeneration"
+      ],
+      "mutable": [
+        "capturePlanGeneration",
+        "activationState",
+        "effectiveFromExecuteFrame"
+      ],
+      "before": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "normalSlotsOccupied": 8,
+        "effectiveFromExecuteFrame": 10
+      },
+      "after": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 11,
+        "activationState": 1,
+        "planEmpty": 1,
+        "normalSlotsOccupied": 8,
+        "effectiveFromExecuteFrame": 20,
+        "expectedResult": "VN_OK"
+      }
+    }
+  ]
+}

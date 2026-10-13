@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "producingPackage": "m0-3",
+  "isProvisional": false,
+  "contractVerified": true,
+  "sequences": [
+    {
+      "id": "apply-budget-fail",
+      "role": "apply-fail",
+      "immutable": [
+        "capturePlanGeneration",
+        "leaseGeneration",
+        "activationState",
+        "planEmpty",
+        "measurementIds",
+        "effectiveFromExecuteFrame"
+      ],
+      "mutable": [],
+      "before": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "measurementIds": [
+          1,
+          2
+        ]
+      },
+      "after": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "measurementIds": [
+          1,
+          2
+        ],
+        "acceptedMeasurementIds": [],
+        "expectedResult": "VN_MONITOR_BUDGET_EXCEEDED",
+        "sessionHandle": 1
+      }
+    },
+    {
+      "id": "apply-unsupported-fail",
+      "role": "apply-fail",
+      "immutable": [
+        "capturePlanGeneration",
+        "leaseGeneration",
+        "activationState",
+        "planEmpty",
+        "measurementIds",
+        "effectiveFromExecuteFrame"
+      ],
+      "mutable": [],
+      "before": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "measurementIds": [
+          1
+        ]
+      },
+      "after": {
+        "leaseGeneration": 4,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "measurementIds": [
+          1
+        ],
+        "acceptedMeasurementIds": [],
+        "expectedResult": "VN_MONITOR_UNSUPPORTED",
+        "sessionHandle": 1
+      }
+    },
+    {
+      "id": "apply-no-lease",
+      "role": "apply-fail",
+      "immutable": [
+        "capturePlanGeneration",
+        "leaseGeneration",
+        "activationState",
+        "planEmpty",
+        "measurementIds",
+        "effectiveFromExecuteFrame"
+      ],
+      "mutable": [],
+      "before": {
+        "leaseGeneration": 0,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "measurementIds": [
+          1
+        ]
+      },
+      "after": {
+        "leaseGeneration": 0,
+        "capturePlanGeneration": 10,
+        "activationState": 1,
+        "planEmpty": 0,
+        "effectiveFromExecuteFrame": 10,
+        "measurementIds": [
+          1
+        ],
+        "acceptedMeasurementIds": [],
+        "expectedResult": "VN_MONITOR_PERMISSION_DENIED",
+        "sessionHandle": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-3",
+  "helperVersion": 1,
+  "kind": "gap-voice-world-unavailable",
+  "reason": "Voice ledger rows have no worldGeneration. Voice records publish world 0 and must not replaceInstanceKey or treat 0 as current-world proof.",
+  "worldAvailability": "Unavailable"
+}

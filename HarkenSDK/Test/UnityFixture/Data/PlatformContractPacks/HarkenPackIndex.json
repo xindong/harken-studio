@@ -1,0 +1,17 @@
+{
+    "platforms": [
+        {
+            "basePlatform": "Android",
+            "id": "88ed79a7-fda5-4494-bca6-14661720456d",
+            "name": "Android_Low",
+            "path": "Android_Low"
+        },
+        {
+            "basePlatform": "Android",
+            "id": "0e7ced1d-0642-4ba2-bd6f-4a11fdf781fc",
+            "name": "Android_High",
+            "path": "Android_High"
+        }
+    ],
+    "schema_version": 3
+}

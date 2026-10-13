@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "producingPackage": "m0-3",
+  "isProvisional": false,
+  "contractVerified": true,
+  "steps": [
+    {
+      "op": "publish",
+      "tapDescriptorId": 11,
+      "tapDescriptorGeneration": 1,
+      "fingerprint": 111,
+      "version": 1,
+      "selectorMode": 0,
+      "expectedResult": "VN_OK",
+      "sessionHandle": 1
+    },
+    {
+      "op": "publish",
+      "tapDescriptorId": 11,
+      "tapDescriptorGeneration": 2,
+      "fingerprint": 222,
+      "version": 1,
+      "selectorMode": 1,
+      "expectedResult": "VN_OK",
+      "sessionHandle": 1
+    },
+    {
+      "op": "reject",
+      "tapDescriptorId": 11,
+      "tapDescriptorGeneration": 2,
+      "fingerprint": 999,
+      "version": 99,
+      "selectorMode": 0,
+      "expectedResult": "VN_MONITOR_STALE_TAP",
+      "sessionHandle": 0
+    }
+  ]
+}

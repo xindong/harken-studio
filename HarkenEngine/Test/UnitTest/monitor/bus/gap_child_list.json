@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-5",
+  "helperVersion": 1,
+  "kind": "gap-child-list",
+  "reason": "VnMonitorStateUpsert has routeBusId for parent only. No child list field. Delayed complete-tree commit is unimplemented because fanout cannot buffer missing parents."
+}

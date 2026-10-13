@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-2",
+  "kind": "matrix-render-clock-only",
+  "change": "renderPlanGeneration+clockAnchorGeneration",
+  "replaceInstanceKey": false,
+  "updateProgramFingerprint": false,
+  "updateLineageFingerprint": false,
+  "updateSymbolFingerprint": false,
+  "updateRenderPlanGeneration": true,
+  "updateClockAnchorGeneration": true
+}

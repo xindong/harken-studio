@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 2,
+  "envelopeKind": "exported-source-pcm-minmax",
+  "manifestByteLength": 1783,
+  "manifestFnv1a64": "16149288554957114526",
+  "projectId": "11111111-1111-1111-1111-111111111111",
+  "platformId": "33333333-3333-3333-3333-333333333333",
+  "basePlatform": "Windows",
+  "language": "",
+  "initPackStableId": "11",
+  "initContentHash": "9858709440165477859",
+  "catalogDigest": "13098445609825787158"
+,"sources":[{
+  "key": "3da91a64-b947-4560-0000-000000000003:16819658343882475787:524563540024626068:33:16480346361453303184",
+  "soundStableId": "3da91a64-b947-4560-0000-000000000003",
+  "propertyFingerprint": "16819658343882475787",
+  "contentRevision": "524563540024626068",
+  "ownerPackStableId": "33",
+  "contentHash": "16480346361453303184",
+  "frameCount": "4",
+  "sampleRate": 48000,
+  "channelCount": 1,
+  "bucketCount": 4,
+  "channels": [
+    {
+      "min": [
+        0.5,
+        -0.5,
+        1,
+        -1
+      ],
+      "max": [
+        0.5,
+        -0.5,
+        1,
+        -1
+      ]
+    }
+  ]
+}
+,{
+  "key": "3da91a64-b947-4560-0000-000000000007:9550864642769459334:7766417791291706110:33:16480346361453303184",
+  "soundStableId": "3da91a64-b947-4560-0000-000000000007",
+  "propertyFingerprint": "9550864642769459334",
+  "contentRevision": "7766417791291706110",
+  "ownerPackStableId": "33",
+  "contentHash": "16480346361453303184",
+  "frameCount": "8",
+  "sampleRate": 24000,
+  "channelCount": 1,
+  "bucketCount": 8,
+  "channels": [
+    {
+      "min": [
+        0.25,
+        0.25,
+        -0.25,
+        -0.25,
+        0,
+        0,
+        0.75,
+        -0.75
+      ],
+      "max": [
+        0.25,
+        0.25,
+        -0.25,
+        -0.25,
+        0,
+        0,
+        0.75,
+        -0.75
+      ]
+    }
+  ]
+}
+],"actions":[{
+  "name": "Play_Golden",
+  "actionStableId": "3da91a64-b947-4560-0000-000000000004",
+  "nameBindingRevision": "1",
+  "callableFingerprint": "16625703711728748585",
+  "ownerPackStableId": "22",
+  "providerClosureFingerprint": "5623673388891724569",
+  "kind": "randomCandidates",
+  "duration": {
+    "kind": "bounded",
+    "minSeconds": 8.3333333333333331e-05,
+    "maxSeconds": 0.00033333333333333332
+  },
+  "candidates": [
+    {
+      "occurrence": "3da91a64-b947-4560-0000-000000000005:1",
+      "sourceKey": "3da91a64-b947-4560-0000-000000000003:16819658343882475787:524563540024626068:33:16480346361453303184"
+    },
+    {
+      "occurrence": "3da91a64-b947-4560-0000-000000000005:2",
+      "sourceKey": "3da91a64-b947-4560-0000-000000000007:9550864642769459334:7766417791291706110:33:16480346361453303184"
+    },
+    {
+      "occurrence": "3da91a64-b947-4560-0000-000000000005:3",
+      "sourceKey": "3da91a64-b947-4560-0000-000000000003:16819658343882475787:524563540024626068:33:16480346361453303184"
+    }
+  ]
+}
+]}

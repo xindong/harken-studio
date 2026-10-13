@@ -1,0 +1,26 @@
+{
+  "FileVersion": 3,
+  "Version": 2,
+  "VersionName": "0.2.0",
+  "FriendlyName": "Harken",
+  "Description": "Harken game-audio runtime integration for Unreal Engine.",
+  "Category": "Audio",
+  "CreatedBy": "X.D. Network",
+  "CanContainContent": false,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "HarkenRuntime",
+      "Type": "Runtime",
+      "LoadingPhase": "PreDefault",
+      "PlatformAllowList": [
+        "Win64",
+        "Mac",
+        "Linux",
+        "Android",
+        "IOS"
+      ]
+    }
+  ]
+}

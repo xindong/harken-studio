@@ -1,0 +1,11 @@
+{
+    "platforms": [
+        {
+            "basePlatform": "Windows",
+            "id": "7e69e0e2-8d15-52df-a609-ab96fff38750",
+            "name": "Windows",
+            "path": "Windows"
+        }
+    ],
+    "schema_version": 3
+}

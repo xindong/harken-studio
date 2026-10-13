@@ -1,0 +1,169 @@
+#ifndef HARKEN_TESTS_PLAYABLE_STORAGE_TEST_SUPPORT_H
+#define HARKEN_TESTS_PLAYABLE_STORAGE_TEST_SUPPORT_H
+
+#include "Common/TestUtil.h"
+
+#include <array>
+#include <utility>
+
+namespace harkentest {
+
+class PlayableCapacityScope {
+public:
+    PlayableCapacityScope(std::uint32_t playable, std::uint32_t modes) {
+        harken::detail::SetPlayableCapacitiesForTests(playable, modes);
+    }
+    ~PlayableCapacityScope() { harken::detail::SetPlayableCapacitiesForTests(0, 0); }
+    PlayableCapacityScope(const PlayableCapacityScope&) = delete;
+    PlayableCapacityScope& operator=(const PlayableCapacityScope&) = delete;
+};
+
+template <typename T>
+auto StorageIdentity(const std::vector<T>& rows) {
+    return std::pair<const void*, std::size_t>{rows.data(), rows.capacity()};
+}
+
+inline auto CapturePlayableStorage(const harken::Engine& engine) {
+    return std::array{
+        StorageIdentity(engine.playableStarts),
+        StorageIdentity(engine.initialFrontierEvents),
+        StorageIdentity(engine.initialFrontierRequests),
+        StorageIdentity(engine.playableServices),
+        StorageIdentity(engine.playableMemberReferences),
+        StorageIdentity(engine.playableScheduleVoices),
+        StorageIdentity(engine.playableScheduleLeaves),
+        StorageIdentity(engine.playableScheduleArms),
+        StorageIdentity(engine.playableScheduleRenderHandles),
+        StorageIdentity(engine.playableScheduleReleaseObservers),
+        StorageIdentity(engine.variableControlMemberCompletions),
+        StorageIdentity(engine.playableScheduleStartFrames),
+        StorageIdentity(engine.variableControlDynamicMembers),
+        StorageIdentity(engine.playableScheduleCompletions),
+        StorageIdentity(engine.playableSchedulePostSourceTailFrames),
+        StorageIdentity(engine.playableSuccessorPayloads),
+        StorageIdentity(engine.playableSuccessorEvents),
+        StorageIdentity(engine.playableSchedulePayloads),
+        StorageIdentity(engine.playableScheduleEvents),
+        StorageIdentity(engine.variableControlRuntimePrograms),
+        StorageIdentity(engine.variableControlSchedules),
+        StorageIdentity(engine.playableScheduleRuntimePrograms),
+        StorageIdentity(engine.playableSchedules),
+        StorageIdentity(engine.playableScheduleOccurrences),
+        StorageIdentity(engine.playableSuccessorVoices),
+        StorageIdentity(engine.playableSuccessorLeaves),
+        StorageIdentity(engine.playableSuccessorRuntimePrograms),
+        StorageIdentity(engine.playableSuccessorSchedules),
+        StorageIdentity(engine.playableSuccessorArms),
+        StorageIdentity(engine.playableSuccessorRenderHandles),
+        StorageIdentity(engine.playableSuccessorOccurrences),
+        StorageIdentity(engine.playableSuccessorCompletions),
+        StorageIdentity(engine.playableSuccessorStartFrames),
+        StorageIdentity(engine.playableSuccessorPostSourceTailFrames),
+        StorageIdentity(engine.variableControlWeightSegments),
+        StorageIdentity(engine.variableControlPendingWeightSegments),
+        StorageIdentity(engine.variableControlInitialContinuousArms),
+        StorageIdentity(engine.variableControlRetargetPayloads),
+        StorageIdentity(engine.variableControlRetargetEvents),
+        StorageIdentity(engine.variableControlRetargetRuntimePrograms),
+        StorageIdentity(engine.variableControlRetargetSchedules),
+        StorageIdentity(engine.variableControlRetargetArms),
+        StorageIdentity(engine.variableControlRetargetMemberKinds),
+        StorageIdentity(engine.variableControlRetargetDesiredOrdinals),
+        StorageIdentity(engine.queueProgramBanks)};
+}
+
+class PlayableStorageObservation {
+public:
+    explicit PlayableStorageObservation(harken::Engine& engine, bool enabled = true)
+        : engine_(engine), enabled_(enabled), backing_(CapturePlayableStorage(engine)) {}
+
+    template <typename Operation>
+    VnResult Measure(Operation&& operation) {
+        if (!enabled_) return operation();
+        harken::memguard::AllocationObservation observed{};
+        VnResult result;
+        {
+            harken::memguard::AllocationObservationScope scope(observed);
+            result = operation();
+        }
+        available_ = available_ && observed.available;
+        Add(logic_, observed.logic);
+        Add(audio_, observed.audio);
+        ++operations_;
+        CheckStorage();
+        return result;
+    }
+
+    void Pump(std::uint32_t blocks) {
+        (void)Measure([&] { engine_.nullBackend.Pump(blocks); return VN_OK; });
+    }
+
+    void CheckStorage() {
+        if (!enabled_) return;
+        EXPECT_EQ(backing_, CapturePlayableStorage(engine_));
+        EXPECT_LE(engine_.playablePartitions.OccupiedCount(), engine_.config.maxPlayableInstances);
+        peakPartitions_ = std::max(peakPartitions_, engine_.playablePartitions.OccupiedCount());
+        std::uint32_t services = 0;
+        for (const auto& row : engine_.playableServices) {
+            if (!row.partition.Valid()) continue;
+            ++services;
+            EXPECT_TRUE(engine_.playablePartitions.Owns(row.partition, row.identity));
+            EXPECT_NE(nullptr, row.invocation);
+            EXPECT_EQ(row.invocationGeneration, row.Invocation().generation);
+        }
+        EXPECT_EQ(services, engine_.playablePartitions.OccupiedCount());
+    }
+
+    void Finish() {
+        if (!enabled_) return;
+        CheckStorage();
+#if defined(_DEBUG) && defined(_MSC_VER)
+        EXPECT_TRUE(available_) << "Debug CRT hook unavailable during service observation";
+#endif
+        EXPECT_GT(operations_, 0u);
+        EXPECT_GT(peakPartitions_, 0u);
+        testing::Test::RecordProperty("storage_observed_operations", std::to_string(operations_));
+        testing::Test::RecordProperty("storage_peak_partitions", std::to_string(peakPartitions_));
+        testing::Test::RecordProperty("storage_backing_vectors", std::to_string(backing_.size()));
+        const bool allocationAvailable = available_ && operations_ > 0;
+        testing::Test::RecordProperty("allocation_observation_available", allocationAvailable ? "true" : "false");
+        if (!allocationAvailable) return;
+        EXPECT_EQ(0u, logic_.allocations);
+        EXPECT_EQ(0u, logic_.reallocations);
+        EXPECT_EQ(0u, logic_.allocationBytes);
+        EXPECT_EQ(0u, logic_.reallocationBytes);
+        EXPECT_EQ(0u, audio_.allocations);
+        EXPECT_EQ(0u, audio_.reallocations);
+        EXPECT_EQ(0u, audio_.allocationBytes);
+        EXPECT_EQ(0u, audio_.reallocationBytes);
+        testing::Test::RecordProperty("logic_alloc_events", std::to_string(logic_.allocations));
+        testing::Test::RecordProperty("logic_realloc_events", std::to_string(logic_.reallocations));
+        testing::Test::RecordProperty("logic_alloc_requested_bytes", std::to_string(logic_.allocationBytes));
+        testing::Test::RecordProperty("logic_realloc_requested_bytes", std::to_string(logic_.reallocationBytes));
+        testing::Test::RecordProperty("audio_alloc_events", std::to_string(audio_.allocations));
+        testing::Test::RecordProperty("audio_realloc_events", std::to_string(audio_.reallocations));
+        testing::Test::RecordProperty("audio_alloc_requested_bytes", std::to_string(audio_.allocationBytes));
+        testing::Test::RecordProperty("audio_realloc_requested_bytes", std::to_string(audio_.reallocationBytes));
+    }
+
+private:
+    static void Add(harken::memguard::AllocationEvents& total,
+                    const harken::memguard::AllocationEvents& value) {
+        total.allocations += value.allocations;
+        total.reallocations += value.reallocations;
+        total.allocationBytes += value.allocationBytes;
+        total.reallocationBytes += value.reallocationBytes;
+    }
+    harken::Engine& engine_;
+    bool enabled_;
+    decltype(CapturePlayableStorage(std::declval<const harken::Engine&>())) backing_;
+    bool available_ = true;
+    std::uint32_t operations_ = 0;
+    std::uint32_t peakPartitions_ = 0;
+    harken::memguard::AllocationEvents logic_{};
+    harken::memguard::AllocationEvents audio_{};
+};
+
+} // namespace harkentest
+
+#endif

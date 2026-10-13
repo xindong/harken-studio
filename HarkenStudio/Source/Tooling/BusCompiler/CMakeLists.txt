@@ -1,0 +1,5 @@
+add_library(harken_bus_compiler STATIC src/BusCompiler.cpp)
+target_include_directories(harken_bus_compiler PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_features(harken_bus_compiler PUBLIC cxx_std_20)
+target_link_libraries(harken_bus_compiler PUBLIC
+    harken_project_schema harken_studio_pack_build)

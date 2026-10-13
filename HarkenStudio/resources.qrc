@@ -1,0 +1,88 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/">
+        <file>Resources/styles/dark_theme.qss</file>
+        <file>Resources/shaders/scene3d_vertex.glsl</file>
+        <file>Resources/shaders/scene3d_fragment.glsl</file>
+        <file>Resources/shaders/scene3d_line_vertex.glsl</file>
+        <file>Resources/shaders/scene3d_line_fragment.glsl</file>
+        <file>Resources/icons/V_256x256.png</file>
+        <file>Resources/help/help.en.json</file>
+        <file>Resources/help/help.zh-CN.json</file>
+    </qresource>
+    <qresource prefix="/icons">
+        <file alias="mouse-pointer.svg">Resources/icons/mouse-pointer.svg</file>
+        <file alias="hand.svg">Resources/icons/hand.svg</file>
+        <file alias="magnet.svg">Resources/icons/magnet.svg</file>
+        <file alias="blueprint-chain-filter.svg">Resources/icons/blueprint-chain-filter.svg</file>
+        <file alias="blueprint-display-visibility.svg">Resources/icons/blueprint-display-visibility.svg</file>
+        <file alias="blueprint-properties-filter.svg">Resources/icons/blueprint-properties-filter.svg</file>
+        <file alias="bus.svg">Resources/icons/bus.svg</file>
+        <file alias="layer.svg">Resources/icons/layer.svg</file>
+        <file alias="attenuation.svg">Resources/icons/attenuation.svg</file>
+        <file alias="chat.svg">Resources/icons/chat.svg</file>
+        <file alias="check-black.png">Resources/icons/check-black.png</file>
+        <file alias="check-black@2x.png">Resources/icons/check-black@2x.png</file>
+        <file alias="check-cyan.png">Resources/icons/check-cyan.png</file>
+        <file alias="check-cyan@2x.png">Resources/icons/check-cyan@2x.png</file>
+        <file alias="check-white.png">Resources/icons/check-white.png</file>
+        <file alias="check-white@2x.png">Resources/icons/check-white@2x.png</file>
+        <file alias="check-dim.png">Resources/icons/check-dim.png</file>
+        <file alias="check-dim@2x.png">Resources/icons/check-dim@2x.png</file>
+        <file alias="checkbox-indeterminate.svg">Resources/icons/checkbox-indeterminate.svg</file>
+        <file alias="chevron-down.svg">Resources/icons/chevron-down.svg</file>
+        <file alias="chevron-right.svg">Resources/icons/chevron-right.svg</file>
+        <file alias="close.svg">Resources/icons/close.svg</file>
+        <file alias="container.svg">Resources/icons/container.svg</file>
+        <file alias="container-random.svg">Resources/icons/container-random.svg</file>
+        <file alias="container-random-queue.svg">Resources/icons/container-random-queue.svg</file>
+        <file alias="container-sequence.svg">Resources/icons/container-sequence.svg</file>
+        <file alias="container-sequence-queue.svg">Resources/icons/container-sequence-queue.svg</file>
+        <file alias="container-match.svg">Resources/icons/container-match.svg</file>
+        <file alias="container-blend.svg">Resources/icons/container-blend.svg</file>
+        <file alias="copy.svg">Resources/icons/copy.svg</file>
+        <file alias="minimize.svg">Resources/icons/minimize.svg</file>
+        <file alias="minus.svg">Resources/icons/minus.svg</file>
+        <file alias="loop.svg">Resources/icons/loop.svg</file>
+        <file alias="maximize.svg">Resources/icons/maximize.svg</file>
+        <file alias="restore.svg">Resources/icons/restore.svg</file>
+        <file alias="detach.svg">Resources/icons/detach.svg</file>
+        <file alias="action.svg">Resources/icons/action.svg</file>
+        <file alias="file-new.svg">Resources/icons/file-new.svg</file>
+        <file alias="file.svg">Resources/icons/file.svg</file>
+        <file alias="folder-open.svg">Resources/icons/folder-open.svg</file>
+        <file alias="folder.svg">Resources/icons/folder.svg</file>
+        <file alias="hard-drive.svg">Resources/icons/hard-drive.svg</file>
+        <file alias="panel-left.svg">Resources/icons/panel-left.svg</file>
+        <file alias="panel-left-off.svg">Resources/icons/panel-left-off.svg</file>
+        <file alias="panel-right.svg">Resources/icons/panel-right.svg</file>
+        <file alias="panel-right-off.svg">Resources/icons/panel-right-off.svg</file>
+        <file alias="panel-bottom.svg">Resources/icons/panel-bottom.svg</file>
+        <file alias="panel-bottom-off.svg">Resources/icons/panel-bottom-off.svg</file>
+        <file alias="piece.svg">Resources/icons/piece.svg</file>
+        <file alias="pin.svg">Resources/icons/pin.svg</file>
+        <file alias="pin-filled.svg">Resources/icons/pin-filled.svg</file>
+        <file alias="pause.svg">Resources/icons/pause.svg</file>
+        <file alias="play.svg">Resources/icons/play.svg</file>
+        <file alias="plus.svg">Resources/icons/plus.svg</file>
+        <file alias="redo.svg">Resources/icons/redo.svg</file>
+        <file alias="refresh.svg">Resources/icons/refresh.svg</file>
+        <file alias="remote-connect.svg">Resources/icons/remote-connect.svg</file>
+        <file alias="monitor-capture.svg">Resources/icons/monitor-capture.svg</file>
+        <file alias="platform-edit-all.svg">Resources/icons/platform-edit-all.svg</file>
+        <file alias="save.svg">Resources/icons/save.svg</file>
+        <file alias="scroll-down.svg">Resources/icons/scroll-down.svg</file>
+        <file alias="search.svg">Resources/icons/search.svg</file>
+        <file alias="send.svg">Resources/icons/send.svg</file>
+        <file alias="sound.svg">Resources/icons/sound.svg</file>
+        <file alias="audio-file.svg">Resources/icons/audio-file.svg</file>
+        <file alias="stop.svg">Resources/icons/stop.svg</file>
+        <file alias="target.svg">Resources/icons/target.svg</file>
+        <file alias="track.svg">Resources/icons/track.svg</file>
+        <file alias="trash.svg">Resources/icons/trash.svg</file>
+        <file alias="undo.svg">Resources/icons/undo.svg</file>
+        <file alias="variable.svg">Resources/icons/variable.svg</file>
+        <file alias="variable-step.svg">Resources/icons/variable-step.svg</file>
+        <file alias="variable-smooth.svg">Resources/icons/variable-smooth.svg</file>
+    </qresource>
+</RCC>

@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Standalone runner for the C# binding's ABI, coordinate, and zero-GC gates.
+    No NuGet dependencies,
+    so it builds offline from the .NET SDK alone. Run it with:
+    dotnet run (project HarkenSDK/Test/ContractTest) — see this folder's README.
+
+    LangVersion is pinned to 9.0 (the Unity 2022.3 LTS C# level) so a
+    successful build here also proves the generated + SDK sources are
+    Unity-2022.3 language-compatible (it does not, and cannot, prove the IL2CPP
+    AOT toolchain build; that stays a Unity/device dependency).
+
+    It compiles the SAME generated + SDK sources the Unity package ships (single
+    source, no copy); the Samples~ scene is intentionally excluded (UnityEngine).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>HarkenAbiFidelity</AssemblyName>
+    <RootNamespace>Harken.Test</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The binding under test: the exact generated + hand-written SDK sources
+         the UPM package ships. -->
+    <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Runtime\Generated\**\*.cs" />
+    <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Runtime\Sdk\**\*.cs" />
+    <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Runtime\Unity\UnityCoordinates.cs" />
+    <Compile Include="..\..\..\HarkenSDK\Unity\Harken\Editor\HarkenActionWaveform.cs" />
+    <!-- The harness itself. -->
+    <Compile Include="Program.cs" />
+    <Compile Include="PackPlatformContract.cs" />
+    <Compile Include="NameFirstSample.cs" />
+    <Compile Include="GameplayPublicationContract.cs" />
+    <Compile Include="VariableSdkContract.cs" />
+    <Compile Include="RemoteCommunicationContract.cs" />
+    <Compile Include="EditorWaveformContract.cs" />
+    <Content Include="..\Fixtures\EditorMetadata\1\**\*.json"
+             Link="EditorMetadata\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Fixtures\EditorMetadata\2\**\*.json"
+             Link="EditorMetadataV2\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\..\HarkenEngine\Source\Tooling\VariableCatalog\variable_catalog.json"
+             Link="VariableCatalog.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,16 @@
+* @Probus-XD
+
+/.github/ @Probus-XD
+/.docs/design/ @Probus-XD
+/.docs/quality/ @liuxin2-sys
+/.scripts/ @liuxin2-sys
+/HarkenEngine/ @zqm-web
+/HarkenHub/ @liuxin2-sys
+/HarkenSDK/ @zqm-web
+/HarkenStudio/ @Probus-XD
+/HarkenSchema/ @Probus-XD @liuxin2-sys
+/LICENSE @liuxin2-sys
+/README* @Probus-XD
+/NOTICE @liuxin2-sys
+/requirements.txt @Probus-XD
+/VERSION @liuxin2-sys

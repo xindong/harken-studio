@@ -1,0 +1,792 @@
+from __future__ import annotations
+
+import copy
+import importlib.util
+import json
+import re
+import shutil
+import subprocess
+import tempfile
+import unittest
+from contextlib import contextmanager
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SPEC = importlib.util.spec_from_file_location("studio_schema_release_audit", REPO_ROOT / ".scripts/studio_schema_release_audit.py")
+MODULE = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+SPEC.loader.exec_module(MODULE)
+
+
+def documents(root: Path) -> dict:
+    return {
+        "root": (root / "Fixture.hsp", {"harkenDocument": {"id": "root", "type": "project.root", "savedStudioVersion": "1.0"},
+            "content": {"metadata": {"description": "Original", "modifiedDate": "2026-09-07T00:00:00Z"},
+                        "extensions": {"future": {"flag": True, "integer": 9007199254740993}}}}),
+        "action": (root / "Actions/Trigger.vp", {"harkenDocument": {"id": "action", "type": "project.action", "savedStudioVersion": "1.0"},
+            "content": {"name": "Trigger", "type": "Action", "extensions": {"future": [True, None, {}, []]}}}),
+        "master": (root / "Busses/Master.vp", {"harkenDocument": {"id": "master", "type": "project.bus", "savedStudioVersion": "1.0"},
+            "content": {"name": "Master", "parentRef": {"kind": "root"}, "extensions": {}}}),
+    }
+
+
+def edited_documents(before: dict) -> tuple[dict, dict]:
+    after = copy.deepcopy(before)
+    edits = []
+    for identity, (_, document) in after.items():
+        document["harkenDocument"]["savedStudioVersion"] = "1.1"
+        if identity == "master":
+            continue
+        path = "/content/metadata/description" if identity == "root" else "/content/name"
+        parent, key = MODULE.pointer_parent(document, path)
+        original = parent[key]
+        parent[key] += "\nSchema compatibility edit" if identity == "root" else "_schema_edit"
+        edits.append({"documentId": identity, "jsonPath": path, "before": original, "after": parent[key]})
+    return after, {"version": "1.1", "edits": edits}
+
+
+def write_documents(values: dict) -> None:
+    for path, document in values.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(document), encoding="utf-8")
+
+
+class SchemaCompatibilityTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.editor = MODULE.schema_archive.load_tree("Editor")["current"]
+        self.pack = MODULE.schema_archive.load_tree("Pack")["current"]
+
+    def test_unconstrained_metadata_addition_is_only_a_candidate(self) -> None:
+        candidate = copy.deepcopy(self.editor)
+        candidate["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["futureNote"] = {}
+        self.assertEqual(MODULE.same_generation_errors("Editor", self.editor, candidate), [])
+        with patch.object(MODULE, "published_releases", return_value={}):
+            with self.assertRaises(ValueError):
+                MODULE.verify_release_readers(Path("missing"), {})
+
+    def test_typed_optional_metadata_still_narrows_old_arbitrary_values(self) -> None:
+        for field in ({"type": "string"}, {"const": True}, {"enum": [1, 2]}):
+            candidate = copy.deepcopy(self.editor)
+            candidate["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["futureNote"] = field
+            self.assertTrue(MODULE.same_generation_errors("Editor", self.editor, candidate))
+
+    def test_optional_behavior_is_not_metadata(self) -> None:
+        candidate = copy.deepcopy(self.editor)
+        candidate["x-harken-documentTypes"][0]["schema"]["properties"]["content"]["properties"]["futureBehavior"] = {}
+        self.assertTrue(MODULE.same_generation_errors("Editor", self.editor, candidate))
+
+    def test_existing_contract_semantics_and_required_fields_cannot_change(self) -> None:
+        candidate = copy.deepcopy(self.editor)
+        candidate["x-harken-documentTypes"][0]["schema"]["properties"]["content"]["required"].remove("name")
+        self.assertTrue(MODULE.same_generation_errors("Editor", self.editor, candidate))
+        candidate = copy.deepcopy(self.editor)
+        candidate["x-harken-projectRules"] = []
+        self.assertTrue(MODULE.same_generation_errors("Editor", self.editor, candidate))
+
+    def test_pack_tracking_changes_reuse_generation_but_behavior_does_not(self) -> None:
+        candidate = copy.deepcopy(self.pack)
+        for field in ("readers", "writers", "validators"):
+            candidate["x-harken-format"][field] = ["MovedSource"]
+        self.assertEqual(MODULE.same_generation_errors("Pack", self.pack, candidate), [])
+        candidate["properties"]["future"] = {}
+        self.assertTrue(MODULE.same_generation_errors("Pack", self.pack, candidate))
+        candidate = copy.deepcopy(self.pack)
+        candidate["x-harken-format"]["versionLocator"] = "other"
+        self.assertTrue(MODULE.same_generation_errors("Pack", self.pack, candidate))
+
+    def test_fixed_normal_edits_preserve_raw_content(self) -> None:
+        before = documents(Path("Fixture"))
+        after, report = edited_documents(before)
+        MODULE.verify_edit(before, after, report)
+
+    def test_action_rename_revision_and_history_are_checked_exactly(self) -> None:
+        self.check_action_rename_history(legacy=True)
+
+    def test_guid_action_rename_revision_and_history_are_checked_exactly(self) -> None:
+        self.check_action_rename_history(legacy=False)
+
+    def check_action_rename_history(self, legacy: bool) -> None:
+        before = documents(Path("Fixture"))
+        before["action"][1]["content"].update({
+            "guid": "action", "nameBindingRevision": 1})
+        created = {"name": "Trigger", "objectGuid": "action",
+                   "nameBindingRevision": 1, "event": "created"}
+        if legacy:
+            before["action"][1]["content"]["runtimeStableId"] = 5
+            created["runtimeStableId"] = "5"
+        before["root"][1]["content"]["actionPublishedNameHistory"] = [created]
+        after, report = edited_documents(before)
+        after["action"][1]["content"]["nameBindingRevision"] = 2
+        renamed = {"name": "Trigger_schema_edit", "objectGuid": "action",
+                   "nameBindingRevision": 2, "event": "renamed_from", "priorName": "Trigger"}
+        if legacy:
+            renamed["runtimeStableId"] = "5"
+        after["root"][1]["content"]["actionPublishedNameHistory"].append(renamed)
+        MODULE.verify_edit(before, after, report)
+        for history in ([], [created], [renamed], [created, renamed, renamed],
+                        [{**created, "name": "Changed"}, renamed]):
+            with self.subTest(history=history):
+                damaged = copy.deepcopy(after)
+                damaged["root"][1]["content"]["actionPublishedNameHistory"] = history
+                with self.assertRaises(ValueError):
+                    MODULE.verify_edit(before, damaged, report)
+        for key, value in (("name", "Wrong"), ("objectGuid", "other"),
+                           ("runtimeStableId", "6"), ("nameBindingRevision", 3),
+                           ("event", "created"), ("priorName", "Wrong")):
+            with self.subTest(field=key):
+                damaged = copy.deepcopy(after)
+                damaged["root"][1]["content"]["actionPublishedNameHistory"][-1][key] = value
+                with self.assertRaises(ValueError):
+                    MODULE.verify_edit(before, damaged, report)
+        for revision in (1, 3, True):
+            with self.subTest(revision=revision):
+                damaged = copy.deepcopy(after)
+                damaged["action"][1]["content"]["nameBindingRevision"] = revision
+                with self.assertRaises(ValueError):
+                    MODULE.verify_edit(before, damaged, report)
+
+    def test_unknown_content_loss_and_boolean_to_number_change_are_rejected(self) -> None:
+        before = documents(Path("Fixture"))
+        for replacement in ({}, {"future": {"flag": 1, "integer": 9007199254740993}}):
+            after, report = edited_documents(before)
+            after["root"][1]["content"]["extensions"] = replacement
+            with self.assertRaises(ValueError):
+                MODULE.verify_edit(before, after, report)
+
+    def test_equivalent_json_numbers_survive_normal_serialization(self) -> None:
+        before = documents(Path("Fixture"))
+        before["root"][1]["content"]["extensions"]["future"]["number"] = 1.0
+        after, report = edited_documents(before)
+        after["root"][1]["content"]["extensions"]["future"]["number"] = 1
+        MODULE.verify_edit(before, after, report)
+
+    def test_large_integer_rounding_is_rejected(self) -> None:
+        before = documents(Path("Fixture"))
+        after, report = edited_documents(before)
+        after["root"][1]["content"]["extensions"]["future"]["integer"] = float(9007199254740993)
+        with self.assertRaises(ValueError):
+            MODULE.verify_edit(before, after, report)
+
+    def test_derived_paths_and_attenuation_name_are_checked_exactly(self) -> None:
+        before = documents(Path("Fixture"))
+        content = before["action"][1]["content"]
+        content.update({"parentRef": {"kind": "item", "id": "master"}, "objectPath": "\\Master\\Trigger"})
+        before["master"][1]["content"]["objectPath"] = "\\Master"
+        attenuation = copy.deepcopy(before["action"][1])
+        attenuation["harkenDocument"].update({"id": "attenuation", "type": "project.attenuation"})
+        attenuation["content"].update({"name": "Curve", "parentRef": {"kind": "root"}, "objectPath": "\\Curve",
+                                         "components": {"attenuation": {"name": "Curve", "points": [1, 2]}}})
+        before["attenuation"] = (Path("Fixture/Attenuations/Curve.vp"), attenuation)
+        after, report = edited_documents(before)
+        after["action"][1]["content"]["objectPath"] = "\\Master\\Trigger_schema_edit"
+        after["attenuation"][1]["content"]["objectPath"] = "\\Curve_schema_edit"
+        after["attenuation"][1]["content"]["components"]["attenuation"]["name"] = "Curve_schema_edit"
+        MODULE.verify_edit(before, after, report)
+        after["attenuation"][1]["content"]["components"]["attenuation"]["points"] = []
+        with self.assertRaises(ValueError):
+            MODULE.verify_edit(before, after, report)
+
+    def test_historical_metadata_injection_respects_old_boundaries(self) -> None:
+        historical = copy.deepcopy(self.editor)
+        for item in historical["x-harken-documentTypes"]:
+            item["schema"]["properties"]["harkenDocument"]["additionalProperties"] = False
+            content = item["schema"]["properties"]["content"]
+            if "$ref" in content:
+                content = historical["$defs"][content["$ref"].removeprefix("#/$defs/")]
+            content["properties"].pop("extensions", None)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = documents(root)
+            for _, document in original.values():
+                document["content"].pop("extensions", None)
+            write_documents(original)
+            MODULE.inject_metadata(root / "Fixture.hsp", historical)
+            result = MODULE.project_documents(root / "Fixture.hsp")
+            for identity, (_, document) in result.items():
+                self.assertNotIn("schemaCompatibilityMetadata", document["harkenDocument"])
+                if identity != "root":
+                    self.assertNotIn("extensions", document["content"])
+
+    def test_probe_cannot_exempt_arbitrary_fields(self) -> None:
+        before = documents(Path("Fixture"))
+        after, report = edited_documents(before)
+        report["edits"].append({"documentId": "root", "jsonPath": "/content/extensions"})
+        with self.assertRaises(ValueError):
+            MODULE.verify_edit(before, after, report)
+
+    def test_every_eligible_document_must_be_edited(self) -> None:
+        before = documents(Path("Fixture"))
+        before["second"] = (Path("Fixture/Actions/Second.vp"), copy.deepcopy(before["action"][1]))
+        before["second"][1]["harkenDocument"]["id"] = "second"
+        after, report = edited_documents(before)
+        report["edits"] = [edit for edit in report["edits"] if edit["documentId"] != "second"]
+        with self.assertRaises(ValueError):
+            MODULE.verify_edit(before, after, report)
+
+    def test_probe_cannot_claim_arbitrary_rename_or_bad_timestamp(self) -> None:
+        before = documents(Path("Fixture"))
+        after, report = edited_documents(before)
+        report["edits"][0]["after"] = "Discarded description"
+        with self.assertRaises(ValueError):
+            MODULE.verify_edit(before, after, report)
+        after, report = edited_documents(before)
+        after["root"][1]["content"]["metadata"]["modifiedDate"] = "invalid"
+        with self.assertRaises(ValueError):
+            MODULE.verify_edit(before, after, report)
+
+    def test_recovery_copies_are_preserved_and_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            before = documents(root)
+            write_documents(before)
+            backup = root / ".harken/backup/Fixture.hsp"
+            backup.parent.mkdir(parents=True)
+            backup.write_text(json.dumps(before["root"][1]), encoding="utf-8")
+            self.assertEqual(set(MODULE.project_documents(root / "Fixture.hsp")), set(before))
+            self.assertTrue(backup.is_file())
+
+    def test_candidate_metadata_names_are_exercised(self) -> None:
+        candidate = copy.deepcopy(self.editor)
+        for entry in candidate["x-harken-documentTypes"]:
+            entry["schema"]["properties"]["harkenDocument"]["properties"]["futureNote"] = {}
+            content = entry["schema"]["properties"]["content"]
+            if "$ref" not in content:
+                content["properties"]["extensions"]["properties"] = {"futureExtension": {}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_documents(documents(root))
+            MODULE.inject_metadata(root / "Fixture.hsp", candidate)
+            for _, value in MODULE.project_documents(root / "Fixture.hsp").values():
+                self.assertIn("futureNote", value["harkenDocument"])
+                self.assertIn("futureExtension", value["content"]["extensions"])
+                self.assertIn("schemaCompatibilityMetadata", value["harkenDocument"])
+
+
+class GitHubPublicationTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tag = "release-123-abcdef"
+        self.package = {"id": 10, "name": "0.4.0-stable-windows-x64-build.zip", "state": "uploaded"}
+        self.catalog_asset = {"id": 11, "name": "harken-manifest.json", "state": "uploaded"}
+        self.release = {"tag_name": self.tag, "draft": False, "published_at": "2026-09-20T12:59:49Z",
+                        "assets": [self.package, self.catalog_asset]}
+        self.entry = {"version": "0.4.0", "releaseTag": self.tag,
+                      "file": "releases/harken/windows-x64/0.4.0/" + self.package["name"]}
+        self.catalog = {"schema_version": 1, "channels": {"windows-x64": [self.entry]}}
+
+    def test_publisher_tag_is_discovered_from_catalog_and_uploaded_package(self) -> None:
+        with patch.object(MODULE, "github_json", side_effect=[[[], [self.release]], self.catalog]) as query:
+            self.assertEqual(MODULE.github_studio_release_tags({self.tag}), {self.tag})
+        self.assertEqual(query.call_args_list[1].args,
+                         (MODULE.REPO_ROOT, "repos/{owner}/{repo}/releases/assets/11", True))
+
+    def test_hub_only_draft_and_unrelated_releases_are_not_baselines(self) -> None:
+        for release in ({**self.release, "assets": [self.catalog_asset]},
+                        {**self.release, "draft": True},
+                        {**self.release, "published_at": None},
+                        {**self.release, "tag_name": "other"}):
+            with self.subTest(release=release):
+                with patch.object(MODULE, "github_json", return_value=[[release]]) as query:
+                    self.assertEqual(MODULE.github_studio_release_tags({self.tag}), set())
+                    query.assert_called_once()
+
+    def test_catalog_reference_must_belong_to_this_release_and_have_an_uploaded_asset(self) -> None:
+        for entry in ({**self.entry, "releaseTag": "older-release"},
+                      {**self.entry, "file": "releases/harken/missing.zip"}):
+            with self.subTest(entry=entry):
+                catalog = {**self.catalog, "channels": {"windows-x64": [entry]}}
+                with patch.object(MODULE, "github_json", side_effect=[[[self.release]], catalog]):
+                    self.assertEqual(MODULE.github_studio_release_tags({self.tag}), set())
+        release = {**self.release, "assets": [{**self.package, "state": "new"}, self.catalog_asset]}
+        with patch.object(MODULE, "github_json", return_value=[[release]]):
+            self.assertEqual(MODULE.github_studio_release_tags({self.tag}), set())
+
+    def test_invalid_catalog_fails_instead_of_dropping_the_baseline(self) -> None:
+        for catalog in ([], {"schema_version": 2},
+                        {**self.catalog, "channels": {"windows-x64": {}}},
+                        {**self.catalog, "channels": {"windows-x64": [None]}},
+                        {**self.catalog, "channels": {"windows-x64": [{"file": None}]}}):
+            with self.subTest(catalog=catalog):
+                with patch.object(MODULE, "github_json", side_effect=[[[self.release]], catalog]):
+                    with self.assertRaises(ValueError):
+                        MODULE.github_studio_release_tags({self.tag})
+
+    def test_github_queries_paginate_releases_and_download_catalog_content(self) -> None:
+        MODULE.github_json.cache_clear()
+        self.addCleanup(MODULE.github_json.cache_clear)
+        replies = [SimpleNamespace(stdout=json.dumps([[self.release]])),
+                   SimpleNamespace(stdout=json.dumps(self.catalog))]
+        with patch.object(MODULE.subprocess, "run", side_effect=replies) as query:
+            self.assertEqual(MODULE.github_studio_release_tags({self.tag}), {self.tag})
+            self.assertEqual(MODULE.github_studio_release_tags({self.tag}), {self.tag})
+        self.assertEqual(query.call_count, 2)
+        self.assertEqual(query.call_args_list[0].args[0],
+                         ["gh", "api", "repos/{owner}/{repo}/releases?per_page=100", "--paginate", "--slurp"])
+        self.assertEqual(query.call_args_list[1].args[0],
+                         ["gh", "api", "repos/{owner}/{repo}/releases/assets/11", "--header", "Accept: application/octet-stream"])
+        self.assertEqual(query.call_args_list[0].kwargs["cwd"], MODULE.REPO_ROOT)
+
+    def test_github_failure_is_not_treated_as_an_empty_release_history(self) -> None:
+        MODULE.github_json.cache_clear()
+        self.addCleanup(MODULE.github_json.cache_clear)
+        for error in (FileNotFoundError("gh"), subprocess.CalledProcessError(1, ["gh", "api"]),
+                      subprocess.TimeoutExpired(["gh", "api"], 60)):
+            with self.subTest(error=error):
+                with patch.object(MODULE.subprocess, "run", side_effect=error):
+                    with self.assertRaises(ValueError):
+                        MODULE.github_studio_release_tags({self.tag})
+
+
+class ReleaseLifecycleTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        shutil.copytree(REPO_ROOT / "HarkenSchema", self.root / "HarkenSchema")
+        (self.root / ".scripts").mkdir()
+        shutil.copy2(REPO_ROOT / MODULE.RELEASE_SCOPE_CONFIG_PATH, self.root / MODULE.RELEASE_SCOPE_CONFIG_PATH)
+        (self.root / MODULE.CONFIG_PATH).write_text('{"auditVersion":4,"product":"HarkenStudio","publication":"unpublished"}', encoding="utf-8")
+        (self.root / "VERSION").write_text("1.0.0", encoding="utf-8")
+        self.patch_root = patch.object(MODULE, "REPO_ROOT", self.root)
+        self.patch_root.start()
+        self.addCleanup(self.patch_root.stop)
+        MODULE.run_git(["init", "--quiet"])
+        self.commit()
+
+    def commit(self) -> None:
+        MODULE.run_git(["add", "."])
+        MODULE.run_git(["-c", "user.name=Schema Test", "-c", "user.email=schema@example.invalid", "commit", "--quiet", "-m", "fixture"])
+
+    def publish_tag(self, tag: str, receipt_tag: str | None = None) -> None:
+        record = {"auditVersion": 4, "product": "HarkenStudio", "publication": "released", "releaseTag": receipt_tag or tag,
+                  "trees": MODULE.tree_summary(self.root / "HarkenSchema")}
+        (self.root / MODULE.CONFIG_PATH).write_text(json.dumps(record), encoding="utf-8")
+        self.commit()
+        MODULE.run_git(["tag", tag])
+
+    def test_development_current_and_version_are_not_frozen(self) -> None:
+        path = self.root / "HarkenSchema/Editor/current/ProjectSerializedSchema.json"
+        source = json.loads(path.read_text(encoding="utf-8"))
+        source["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["newNote"] = {}
+        path.write_text(json.dumps(source), encoding="utf-8")
+        self.assertEqual(MODULE.audit("HEAD", "WORKTREE")["errors"], [])
+        (self.root / "VERSION").write_text("1.0.1", encoding="utf-8")
+        self.assertEqual(MODULE.audit("HEAD", "WORKTREE")["errors"], [])
+
+    def test_unpublished_baseline_cannot_pass_formal_release(self) -> None:
+        errors = MODULE.verify_current_release()["errors"]
+        self.assertTrue(any("no verified release receipt" in error for error in errors))
+
+    def test_release_receipts_without_matching_product_are_not_baselines(self) -> None:
+        for index, product in enumerate((None, "UnrelatedStudio")):
+            tag = f"other-product-{index}"
+            record = {"auditVersion": 4, "publication": "released", "releaseTag": tag,
+                      "trees": MODULE.tree_summary(self.root / "HarkenSchema")}
+            if product is not None:
+                record["product"] = product
+            (self.root / MODULE.CONFIG_PATH).write_text(json.dumps(record), encoding="utf-8")
+            self.commit()
+            MODULE.run_git(["tag", tag])
+        with patch.object(MODULE, "github_studio_release_tags") as query:
+            self.assertEqual(MODULE.published_releases(), {})
+            query.assert_not_called()
+        self.assertTrue(any("no verified release receipt" in error
+                            for error in MODULE.verify_current_release()["errors"]))
+
+    def test_hash_only_receipt_does_not_replace_real_checks(self) -> None:
+        record = {"auditVersion": 4, "product": "HarkenStudio", "publication": "released", "releaseTag": "future",
+                  "trees": MODULE.tree_summary(self.root / "HarkenSchema"),
+                  "sourceFingerprint": MODULE.source_fingerprint("WORKTREE")}
+        (self.root / MODULE.CONFIG_PATH).write_text(json.dumps(record), encoding="utf-8")
+        self.assertTrue(any("controlled reader/writer" in error for error in MODULE.verify_current_release()["errors"]))
+
+    def test_current_tag_is_excluded_without_losing_prior_same_generation(self) -> None:
+        self.publish_tag("first")
+        self.publish_tag("second")
+        self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "second")), {"first"})
+
+    def test_unrelated_tag_does_not_become_a_release(self) -> None:
+        MODULE.run_git(["tag", "internal-build"])
+        self.assertEqual(MODULE.published_releases(), {})
+
+    def test_publisher_tag_freezes_contracts_and_requires_its_reader(self) -> None:
+        tag = "release-123-abcdef"
+        self.publish_tag(tag, "studio-v0.4.0")
+        MODULE.run_git(["tag", "hub-only"])
+        with patch.object(MODULE, "github_studio_release_tags", return_value={tag}):
+            self.assertEqual(set(MODULE.published_releases()), {tag})
+            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-v0.4.0")), {tag})
+            self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenSchema"), [])
+            with self.assertRaisesRegex(ValueError, re.escape(tag)):
+                MODULE.verify_release_readers(Path("missing"), {})
+            path = self.root / "HarkenSchema/Editor/current/ProjectSerializedSchema.json"
+            source = json.loads(path.read_text(encoding="utf-8"))
+            source["x-harken-documentTypes"][0]["schema"]["properties"]["content"]["required"].remove("name")
+            path.write_text(json.dumps(source), encoding="utf-8")
+            errors = MODULE.release_schema_errors(self.root / "HarkenSchema")
+            self.assertTrue(any(tag in error for error in errors))
+            path = self.root / "HarkenSchema/Pack/current/PackManifestSchema.json"
+            source = json.loads(path.read_text(encoding="utf-8"))
+            source["properties"]["future"] = {}
+            path.write_text(json.dumps(source), encoding="utf-8")
+            errors = MODULE.release_schema_errors(self.root / "HarkenSchema")
+            self.assertTrue(any(tag in error for error in errors))
+
+    def test_verifying_a_published_commit_excludes_itself_but_not_prior_readers(self) -> None:
+        first = "release-123-first"
+        second = "release-124-second"
+        self.publish_tag(first, "studio-v0.4.0")
+        self.publish_tag(second, "studio-v0.4.1")
+        with patch.object(MODULE, "github_studio_release_tags", return_value={first, second}):
+            commit = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
+            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-v0.4.1", commit)), {first})
+            (self.root / "VERSION").write_text("1.0.1", encoding="utf-8")
+            self.commit()
+            commit = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
+            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-v0.4.1", commit)), {first, second})
+
+    def test_unrelated_tag_with_a_copied_receipt_is_not_a_baseline(self) -> None:
+        self.publish_tag("studio-v0.4.0")
+        MODULE.run_git(["tag", "internal-build"])
+        with patch.object(MODULE, "github_studio_release_tags", return_value=set()) as discover:
+            self.assertEqual(set(MODULE.published_releases()), {"studio-v0.4.0"})
+            discover.assert_called_once_with({"internal-build"})
+
+    def test_same_generation_rejects_a_lost_published_metadata_property(self) -> None:
+        path = self.root / "HarkenSchema/Editor/current/ProjectSerializedSchema.json"
+        original = json.loads(path.read_text(encoding="utf-8"))
+        source = copy.deepcopy(original)
+        source["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["publishedNote"] = {}
+        path.write_text(json.dumps(source), encoding="utf-8")
+        version = MODULE.schema_archive.load_tree("Editor", self.root / "HarkenSchema")["currentVersion"]
+        contract = MODULE.schema_archive.materialize_source("Editor", source, version)
+        (self.root / f"HarkenSchema/Editor/{version}/ProjectSerializedSchema.json").write_text(json.dumps(contract), encoding="utf-8")
+        self.publish_tag("latest")
+        path.write_text(json.dumps(original), encoding="utf-8")
+        self.assertTrue(any("removed" in error for error in MODULE.release_schema_errors(self.root / "HarkenSchema")))
+
+    def test_sdk_source_changes_are_not_a_generation_hash_lock(self) -> None:
+        reader = self.root / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackManifest.cs"
+        reader.parent.mkdir(parents=True)
+        reader.write_text("old reader", encoding="utf-8")
+        self.publish_tag("sdk-baseline")
+        reader.write_text("changed reader", encoding="utf-8")
+        self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenSchema"), [])
+
+    def test_retired_generation_still_keeps_latest_published_contract(self) -> None:
+        source_root = self.root / "HarkenSchema"
+        path = source_root / "Editor/current/ProjectSerializedSchema.json"
+        original = json.loads(path.read_text(encoding="utf-8"))
+        changed = copy.deepcopy(original)
+        changed["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["releasedNote"] = {}
+        path.write_text(json.dumps(changed), encoding="utf-8")
+        original_version = MODULE.schema_archive.load_tree("Editor", source_root)["currentVersion"]
+        (source_root / f"Editor/{original_version}/ProjectSerializedSchema.json").write_text(
+            json.dumps(MODULE.schema_archive.materialize_source("Editor", changed, original_version)), encoding="utf-8")
+        self.publish_tag("retired")
+        for tree in MODULE.TREE_NAMES:
+            loaded = MODULE.schema_archive.load_tree(tree, source_root)
+            version = loaded["currentVersion"] + 1
+            loaded["manifest"]["published"].append(version)
+            loaded["manifest"]["supportedHistorical"] = []
+            (source_root / tree / "manifest.json").write_text(json.dumps(loaded["manifest"]), encoding="utf-8")
+            target = source_root / tree / str(version) / MODULE.SCHEMA_NAMES[tree]
+            target.parent.mkdir()
+            target.write_text(json.dumps(MODULE.schema_archive.materialize_source(tree, loaded["currentSource"], version)), encoding="utf-8")
+        (source_root / f"Editor/{original_version}/ProjectSerializedSchema.json").write_text(
+            json.dumps(MODULE.schema_archive.materialize_source("Editor", original, original_version)), encoding="utf-8")
+        self.assertEqual(MODULE.required_baselines(source_root), {})
+        self.assertTrue(any("removed" in error for error in MODULE.release_schema_errors(source_root)))
+
+    def prepare_retirement(self, published: bool = True) -> tuple[str, dict]:
+        for tree in MODULE.TREE_NAMES:
+            source = MODULE.schema_archive.load_tree(tree, self.root / "HarkenSchema")["currentSource"]
+            tree_root = self.root / "HarkenSchema" / tree
+            for path in tree_root.iterdir():
+                if path.is_dir() and path.name.isdigit():
+                    shutil.rmtree(path)
+            for version in (1, 2, 3):
+                path = tree_root / str(version) / MODULE.SCHEMA_NAMES[tree]
+                path.parent.mkdir()
+                path.write_text(json.dumps(MODULE.schema_archive.materialize_source(tree, source, version)), encoding="utf-8")
+            (tree_root / "manifest.json").write_text(json.dumps({"manifestVersion": 1, "tip": "current",
+                "published": [1, 2, 3], "supportedHistorical": [1, 2] if tree == "Editor" else []}), encoding="utf-8")
+        if published:
+            self.publish_tag("before-retirement")
+        else:
+            self.commit()
+        base = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
+        for tree in MODULE.TREE_NAMES:
+            tree_root = self.root / "HarkenSchema" / tree
+            for version in (1, 2):
+                shutil.rmtree(tree_root / str(version))
+            (tree_root / "manifest.json").write_text(json.dumps({"manifestVersion": 1, "tip": "current",
+                "published": [3], "supportedHistorical": []}), encoding="utf-8")
+        receipt = {"auditVersion": 4, "product": "HarkenStudio", "publication": "unpublished"}
+        (self.root / MODULE.CONFIG_PATH).write_text(json.dumps(receipt), encoding="utf-8")
+        return base, receipt
+
+    def test_history_retirement_drops_old_packages_but_requires_a_new_verified_release(self) -> None:
+        base, _ = self.prepare_retirement()
+        self.assertEqual(MODULE.audit(base)["errors"], [])
+        self.assertEqual(MODULE.required_baselines(self.root / "HarkenSchema"), {})
+        self.assertTrue(any("no verified release receipt" in error for error in MODULE.verify_current_release()["errors"]))
+        self.publish_tag("after-retirement")
+        self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema")), {"after-retirement"})
+
+    def test_history_retirement_rejects_a_stale_release_receipt(self) -> None:
+        base, receipt = self.prepare_retirement()
+        receipt["verification"] = {"errors": []}
+        (self.root / MODULE.CONFIG_PATH).write_text(json.dumps(receipt), encoding="utf-8")
+        self.assertTrue(any("cleared unpublished" in error for error in MODULE.audit(base)["errors"]))
+
+    def test_unpublished_history_has_the_same_retirement_boundaries(self) -> None:
+        base, receipt = self.prepare_retirement(published=False)
+        self.assertEqual(MODULE.published_releases(), {})
+        self.assertEqual(MODULE.audit(base)["errors"], [])
+        source_root = self.root / "HarkenSchema"
+        for folder in ("current", "3"):
+            path = source_root / "Editor" / folder / MODULE.SCHEMA_NAMES["Editor"]
+            original = path.read_bytes()
+            source = json.loads(original)
+            source["$defs"]["uuid"]["maxLength"] = 36
+            path.write_text(json.dumps(source), encoding="utf-8")
+            self.assertTrue(MODULE.audit(base)["errors"])
+            path.write_bytes(original)
+        (self.root / MODULE.CONFIG_PATH).write_text(json.dumps({**receipt, "releaseTag": "stale"}), encoding="utf-8")
+        self.assertTrue(any("cleared unpublished" in error for error in MODULE.audit(base)["errors"]))
+        (self.root / MODULE.CONFIG_PATH).write_text(json.dumps(receipt), encoding="utf-8")
+        source = MODULE.schema_archive.load_tree("Editor", source_root)["currentSource"]
+        path = source_root / "Editor/1" / MODULE.SCHEMA_NAMES["Editor"]
+        path.parent.mkdir()
+        path.write_text(json.dumps(MODULE.schema_archive.materialize_source("Editor", source, 1)), encoding="utf-8")
+        (source_root / "Editor/manifest.json").write_text(json.dumps({"manifestVersion": 1, "tip": "current",
+            "published": [1, 3], "supportedHistorical": []}), encoding="utf-8")
+        self.assertTrue(any("oldest prefix" in error for error in MODULE.audit(base)["errors"]))
+
+    def test_history_retirement_cannot_change_current_or_retained_contracts(self) -> None:
+        base, _ = self.prepare_retirement()
+        for folder in ("current", "3"):
+            with self.subTest(folder=folder):
+                path = self.root / "HarkenSchema/Editor" / folder / MODULE.SCHEMA_NAMES["Editor"]
+                original = path.read_bytes()
+                source = json.loads(original)
+                source["$defs"]["uuid"]["maxLength"] = 36
+                path.write_text(json.dumps(source), encoding="utf-8")
+                self.assertTrue(MODULE.audit(base)["errors"])
+                path.write_bytes(original)
+
+    def test_history_retirement_cannot_remove_middle_or_current_generations(self) -> None:
+        base, _ = self.prepare_retirement()
+        tree_root = self.root / "HarkenSchema/Editor"
+        current = MODULE.schema_archive.load_tree("Editor", self.root / "HarkenSchema")["currentSource"]
+        for retained in ([1, 3], [2]):
+            with self.subTest(retained=retained):
+                for path in tree_root.iterdir():
+                    if path.is_dir() and path.name.isdigit():
+                        shutil.rmtree(path)
+                for version in retained:
+                    path = tree_root / str(version) / MODULE.SCHEMA_NAMES["Editor"]
+                    path.parent.mkdir()
+                    path.write_text(json.dumps(MODULE.schema_archive.materialize_source("Editor", current, version)), encoding="utf-8")
+                (tree_root / "manifest.json").write_text(json.dumps({"manifestVersion": 1, "tip": "current",
+                    "published": retained, "supportedHistorical": []}), encoding="utf-8")
+                self.assertTrue(any("oldest prefix" in error for error in MODULE.audit(base)["errors"]))
+
+    def test_pack_overlap_cannot_restore_a_package_with_retired_editor_history(self) -> None:
+        self.prepare_retirement()
+        tree_root = self.root / "HarkenSchema/Pack"
+        with MODULE.schema_root_at("before-retirement") as previous_root:
+            shutil.rmtree(tree_root)
+            shutil.copytree(previous_root / "Pack", tree_root)
+        self.assertEqual(MODULE.required_baselines(self.root / "HarkenSchema"), {})
+
+    def test_formal_reader_must_match_committed_sources(self) -> None:
+        head = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
+        reader = {"gitCommit": head, "gitDirty": False}
+        MODULE.require_current_reader({"currentReader": reader})
+        for changed in ({**reader, "gitDirty": True}, {**reader, "gitCommit": "old"}):
+            with self.assertRaises(ValueError):
+                MODULE.require_current_reader({"currentReader": changed})
+        with patch.object(MODULE, "source_fingerprint", side_effect=["changed", "committed"]):
+            with self.assertRaises(ValueError):
+                MODULE.require_current_reader({"currentReader": reader})
+
+    def test_changed_persistence_paths_are_reviewed_without_internal_format_scopes(self) -> None:
+        paths = ["HarkenStudio/Source/Core/ProjectSchemaValidator.cpp", "HarkenSDK/Unity/Harken/Runtime/Sdk/PackManifest.cs",
+                 "HarkenStudio/Source/Core/MigrationManager.cpp", "HarkenStudio/Source/Core/ProjectMigration.cpp",
+                 "HarkenStudio/Source/Core/ProjectMigration.h"]
+        with patch.object(MODULE, "changed_files", return_value=paths):
+            scopes = MODULE.review_scopes("HEAD", "WORKTREE")
+        self.assertEqual({value["scope"] for value in scopes}, {"Editor", "Pack"})
+        editor_files = next(value["files"] for value in scopes if value["scope"] == "Editor")
+        for path in paths[2:]:
+            self.assertIn(path, editor_files)
+
+
+class BaselinePackageTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.bundle = MODULE.schema_archive.build_bundle()
+        binary = self.root / "HarkenStudio.exe"
+        binary.write_bytes(b"released reader")
+        for name, value in self.bundle["installed"].items():
+            path = self.root / "schema" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(value)
+        self.manifest = {"product": "HarkenStudio", "gitCommit": "a" * 40, "gitDirty": False,
+                         "version": "1.0", "buildId": "released", "files": []}
+        self.protect_files()
+
+    def protect_files(self) -> None:
+        self.manifest["files"] = [{"path": path.relative_to(self.root).as_posix(), "size": path.stat().st_size,
+                                   "sha256": MODULE.digest(path.read_bytes())}
+                                  for path in self.root.rglob("*") if path.is_file() and path.name != "package-manifest.json"]
+        (self.root / "package-manifest.json").write_text(json.dumps(self.manifest), encoding="utf-8")
+
+    def check(self) -> tuple:
+        @contextmanager
+        def original_root(_):
+            yield REPO_ROOT / "HarkenSchema"
+        with patch.object(MODULE, "run_git", return_value=SimpleNamespace(stdout="a" * 40)), \
+                patch.object(MODULE, "schema_root_at", original_root):
+            return MODULE.checked_baseline_package("release", self.root)
+
+    def test_old_generated_snapshot_identity_is_not_recomputed_by_new_codegen(self) -> None:
+        manifest = copy.deepcopy(self.bundle["manifest"])
+        manifest["generated"][0]["sha256"] = "b" * 64
+        manifest["snapshotHash"] = MODULE.schema_archive.snapshot_hash(manifest)
+        (self.root / "schema/build.json").write_text(json.dumps(manifest), encoding="utf-8")
+        self.protect_files()
+        _, package = self.check()
+        self.assertEqual(package["_schemaManifest"]["snapshotHash"], manifest["snapshotHash"])
+
+    def test_tampered_binary_is_rejected(self) -> None:
+        (self.root / "HarkenStudio.exe").write_bytes(b"different reader")
+        with self.assertRaises(ValueError):
+            self.check()
+
+    def test_dirty_or_different_source_commit_is_rejected(self) -> None:
+        self.manifest["gitDirty"] = True
+        self.protect_files()
+        with self.assertRaises(ValueError):
+            self.check()
+
+    def test_unprotected_schema_content_is_rejected(self) -> None:
+        (self.root / "schema/extra.json").write_text("{}", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.check()
+
+    def test_unsafe_package_paths_are_rejected(self) -> None:
+        self.manifest["files"][0]["path"] = "../outside"
+        (self.root / "package-manifest.json").write_text(json.dumps(self.manifest), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.check()
+
+    def test_duplicate_baseline_inputs_are_rejected(self) -> None:
+        path = self.root / "readers.json"
+        path.write_text(json.dumps({"release": str(self.root)}), encoding="utf-8")
+        with self.assertRaises(ValueError):
+            MODULE.parse_baseline_readers([f"release={self.root}"], path)
+
+
+class ReaderGateTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.source = self.root / "HarkenSchema"
+        shutil.copytree(REPO_ROOT / "HarkenSchema", self.source)
+        bundle = MODULE.schema_archive.build_bundle(self.source)
+        self.pack_schema_version = bundle["manifest"]["trees"]["Pack"]["currentVersion"]
+        self.binary = self.root / "current/HarkenStudio.exe"
+        self.old_binary = self.root / "baseline/HarkenStudio.exe"
+        self.pack_reader = self.root / "HarkenAbiFidelity.dll"
+        self.pack_root = self.root / "pack"
+        self.pack_root.mkdir()
+        native_name = "HarkenCore.dll" if MODULE.os.name == "nt" else "libHarkenCore.dylib" \
+            if MODULE.sys.platform == "darwin" else "libHarkenCore.so"
+        self.old_source = self.old_binary.parent / "HarkenSDK/Unity/Harken/Runtime/Sdk/PackManifest.cs"
+        for path in (self.binary, self.old_binary, self.old_source, self.pack_reader,
+                     self.binary.parent / native_name, self.pack_root / "Init.pack", self.pack_root / "Content.pack"):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"fixture")
+        self.calls = []
+
+    def probe(self, binary: Path, request: dict, work: Path, expected: dict, package: dict | None = None) -> dict:
+        self.calls.append((binary, request["mode"]))
+        edits = []
+        if request["mode"] == "create":
+            root = Path(request["outputDirectory"])
+            write_documents(documents(root))
+            project = root / "Fixture.hsp"
+        else:
+            project = Path(request["projectPath"])
+            if request["mode"] == "edit":
+                after, changed = edited_documents(MODULE.project_documents(project))
+                write_documents(after)
+                edits = changed["edits"]
+        return {"buildId": "fixture", "version": "1.1", "gitCommit": "a" * 40, "gitDirty": False,
+                "editorSchemaVersion": expected["trees"]["Editor"]["currentVersion"],
+                "packSchemaVersion": expected["trees"]["Pack"]["currentVersion"],
+                "schemaSnapshotHash": expected["snapshotHash"], "projectPath": str(project), "edits": edits}
+
+    def verify(self, old_version: int | None = None, protected: bool = True, sdk_version: int | None = None) -> tuple:
+        if sdk_version is None:
+            sdk_version = self.pack_schema_version
+        expected = copy.deepcopy(MODULE.schema_archive.build_bundle(self.source)["manifest"])
+        if old_version is not None:
+            expected["trees"]["Editor"]["currentVersion"] = old_version
+        baselines = {"baseline": self.old_binary.parent} if old_version is not None else {}
+        package = {"_schemaManifest": expected, "buildId": "released",
+                   "_protectedFiles": {self.old_source.relative_to(self.old_binary.parent).as_posix()} if protected else set()}
+        native = SimpleNamespace(returncode=0, stdout=f"[PackNative] shared Init/content fixture PASS.\n[PackSidecar] schema_version {sdk_version}\n", stderr="")
+        with patch.object(MODULE, "required_baselines", return_value={tag: {} for tag in baselines}), \
+                patch.object(MODULE, "release_schema_errors", return_value=[]), \
+                patch.object(MODULE, "checked_baseline_package", return_value=(self.old_binary, package)), \
+                patch.object(MODULE, "run_probe", side_effect=self.probe), \
+                patch.object(MODULE, "verify_pack_reader", return_value={"ok": True, "schemaVersion": self.pack_schema_version}) as parser, \
+                patch.object(MODULE.subprocess, "run", return_value=native):
+            report = MODULE.verify_release_readers(self.binary, baselines, self.pack_reader, self.pack_root, self.source)
+            return report, parser.call_args_list
+
+    def test_old_same_generation_reader_executes_pack_parser_and_project_edits(self) -> None:
+        report, calls = self.verify(old_version=MODULE.schema_archive.load_tree("Editor", self.source)["currentVersion"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0].args[:3], (self.old_source, self.pack_root, self.pack_schema_version))
+        self.assertIn((self.old_binary, "edit"), self.calls)
+        self.assertIn("old-pack-parser-reads-current-sidecars", report["readers"][1]["checks"])
+
+    def test_pack_only_baseline_does_not_enter_unsupported_editor_chain(self) -> None:
+        path = self.source / "Editor/manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["supportedHistorical"] = []
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        report, calls = self.verify(old_version=1)
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(any(binary == self.old_binary for binary, _ in self.calls))
+        self.assertEqual(report["readers"][1]["checks"], ["old-pack-parser-reads-current-sidecars"])
+
+    def test_unprotected_old_pack_parser_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self.verify(old_version=2, protected=False)
+
+    def test_native_pass_cannot_certify_a_different_sidecar_generation(self) -> None:
+        with self.assertRaises(ValueError):
+            self.verify(sdk_version=self.pack_schema_version - 1)
+        with self.assertRaises(ValueError):
+            self.verify(sdk_version=self.pack_schema_version + 1)
+
+    def test_missing_promised_package_stops_before_current_reader(self) -> None:
+        with patch.object(MODULE, "required_baselines", return_value={"missing": {}}), \
+                patch.object(MODULE, "run_probe") as probe:
+            with self.assertRaises(ValueError):
+                MODULE.verify_release_readers(self.binary, {}, self.pack_reader, self.pack_root, self.source)
+            probe.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

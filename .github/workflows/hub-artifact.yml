@@ -1,0 +1,314 @@
+name: Hub Artifact
+
+# Builds the Harken Hub artifacts: Windows MSI installer and macOS pkg.
+# Called by release-artifacts.yml.
+on:
+  workflow_call:
+    inputs:
+      build-channel:
+        type: string
+        required: false
+        default: dev
+
+concurrency:
+  group: hub-artifact-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: '6.8.3'
+  WIX_VERSION: '6.0.1'
+  HARKEN_BUILD_CHANNEL: ${{ inputs.build-channel }}
+
+jobs:
+  build-msi:
+    name: windows-msi
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+          cache-key-prefix: qt-${{ env.QT_VERSION }}-windows
+
+      - name: Export VENUS_QT_DIR
+        shell: bash
+        run: echo "VENUS_QT_DIR=$QT_ROOT_DIR" >> $GITHUB_ENV
+
+      - name: Configure (windows-release)
+        run: >-
+          cmake --fresh --preset windows-release
+          -DHARKEN_BUILD_HUB=ON
+
+      - name: Build HarkenHub
+        run: cmake --build build --config Release --target harken_hub harken_hub_setup harken_hub_update_bridge --parallel
+
+      - name: Smoke-run the update bridge from its deployed directory
+        shell: pwsh
+        run: |
+          $bridge = Start-Process -FilePath "build/bin/Release/Updater/HarkenHubUpdateBridge.exe" -PassThru -Wait
+          if ($bridge.ExitCode -ne 1) {
+            throw "update bridge smoke run exited with $($bridge.ExitCode) instead of the usage code"
+          }
+
+      - name: Stage legal attribution texts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .scripts/release/collect_legal_texts.py \
+            --product hub \
+            --qt-version "$(qmake -query QT_VERSION)" \
+            --output build/bin/Release/Legal
+
+      - name: Install WiX ${{ env.WIX_VERSION }}
+        run: |
+          dotnet tool install --global wix --version ${{ env.WIX_VERSION }}
+          wix extension add -g WixToolset.UI.wixext/${{ env.WIX_VERSION }}
+
+      - name: Build Harken Hub MSI and setup EXE
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(tr -d '[:space:]' < HarkenHub/VERSION)
+          build_id="run${{ github.run_number }}.${GITHUB_SHA::8}"
+          python .scripts/release/build_hub_installer.py \
+            --input-dir build/bin/Release \
+            --output-dir .temp/hub-installer \
+            --version "$version" \
+            --build-id "$build_id" \
+            --stub-exe build/setup/Release/HarkenHubSetup.exe
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: harken-hub-installer
+          path: |
+            .temp/hub-installer/*.exe
+            .temp/hub-installer/*-evidence
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: ${{ (inputs.build-channel == 'stable' || inputs.build-channel == 'beta') && 90 || 14 }}
+
+  hub-macos:
+    name: harken-hub-macos
+    runs-on: macos-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install macOS build deps
+        run: brew install ninja
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: desktop
+          arch: clang_64
+          cache: true
+          cache-key-prefix: qt-${{ env.QT_VERSION }}-mac
+
+      - name: Patch macOS Qt AGL linkage
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${QT_ROOT_DIR:-}" ] && [ -d "$QT_ROOT_DIR" ]; then
+            python3 <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          root = Path(os.environ["QT_ROOT_DIR"])
+          patterns = [
+              (re.compile(r'"\$<LINK_LIBRARY:FRAMEWORK,AGL>"'), '""'),
+              (re.compile(r"'\$<LINK_LIBRARY:FRAMEWORK,AGL>'"), "''"),
+              (re.compile(r'\$<LINK_LIBRARY:FRAMEWORK,AGL>'), ''),
+              (re.compile(r'SHELL:-framework\s+AGL'), ''),
+              (re.compile(r'LINKER:-framework,AGL'), ''),
+              (re.compile(r'-Xlinker\s+-framework\s+-Xlinker\s+AGL'), ''),
+              (re.compile(r'"-framework\s+AGL"'), '""'),
+              (re.compile(r"'-framework\s+AGL'"), "''"),
+              (re.compile(r'\s*-framework\s+AGL'), ''),
+              (re.compile(r'"-framework"\s*,\s*"AGL"'), ''),
+              (re.compile(r'"-framework"\s+"AGL"'), ''),
+              (re.compile(r';?-framework;?AGL'), ''),
+              (re.compile(r';?AGL(?=;|\s|$)'), ''),
+              (re.compile(r'AGL\.framework'), ''),
+          ]
+          suffixes = {'.cmake', '.prl', '.pc', '.pri'}
+          patched = []
+          for path in root.rglob('*'):
+              if not path.is_file() or path.suffix not in suffixes:
+                  continue
+              try:
+                  text = path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  text = path.read_text(encoding='utf-8', errors='ignore')
+              if 'AGL' not in text:
+                  continue
+              new_text = text
+              for regex, replacement in patterns:
+                  new_text = regex.sub(replacement, new_text)
+              if new_text != text:
+                  path.write_text(new_text, encoding='utf-8')
+                  patched.append(str(path))
+          print(f"Patched {len(patched)} Qt metadata files containing AGL")
+          for item in patched:
+              print(item)
+          PY
+          fi
+
+      - name: Export VENUS_QT_DIR
+        shell: bash
+        run: echo "VENUS_QT_DIR=$QT_ROOT_DIR" >> $GITHUB_ENV
+
+      - name: Configure (macos-release, universal)
+        run: >-
+          cmake --fresh --preset macos-release
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+          -DHARKEN_BUILD_HUB=ON
+
+      - name: Patch generated macOS AGL linkage
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("build")
+          patterns = [
+              (re.compile(r'"\$<LINK_LIBRARY:FRAMEWORK,AGL>"'), '""'),
+              (re.compile(r"'\$<LINK_LIBRARY:FRAMEWORK,AGL>'"), "''"),
+              (re.compile(r'\$<LINK_LIBRARY:FRAMEWORK,AGL>'), ''),
+              (re.compile(r'SHELL:-framework\s+AGL'), ''),
+              (re.compile(r'LINKER:-framework,AGL'), ''),
+              (re.compile(r'-Xlinker\s+-framework\s+-Xlinker\s+AGL'), ''),
+              (re.compile(r'"-framework\s+AGL"'), '""'),
+              (re.compile(r"'-framework\s+AGL'"), "''"),
+              (re.compile(r'\s*-framework\s+AGL'), ''),
+              (re.compile(r'"-framework"\s*,\s*"AGL"'), ''),
+              (re.compile(r'"-framework"\s+"AGL"'), ''),
+              (re.compile(r';?-framework;?AGL'), ''),
+              (re.compile(r';?AGL(?=;|\s|$)'), ''),
+              (re.compile(r'AGL\.framework'), ''),
+          ]
+          names = {"build.ninja", "rules.ninja", "link.txt"}
+          suffixes = {".cmake", ".ninja", ".rsp", ".txt"}
+          patched = []
+          for path in root.rglob("*"):
+              if not path.is_file() or (path.name not in names and path.suffix not in suffixes):
+                  continue
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except UnicodeDecodeError:
+                  text = path.read_text(encoding="utf-8", errors="ignore")
+              if "AGL" not in text:
+                  continue
+              new_text = text
+              for regex, replacement in patterns:
+                  new_text = regex.sub(replacement, new_text)
+              if new_text != text:
+                  path.write_text(new_text, encoding="utf-8")
+                  patched.append(str(path))
+          print(f"Patched {len(patched)} generated build files containing AGL")
+          for item in patched:
+              print(item)
+          PY
+
+      - name: Build HarkenHub
+        run: cmake --build build --config Release --target harken_hub --parallel
+
+      - name: Stage legal attribution texts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .scripts/release/collect_legal_texts.py \
+            --product hub \
+            --qt-version "$(qmake -query QT_VERSION)" \
+            --output "build/bin/Release/HarkenHub.app/Contents/Resources/Legal"
+
+      - name: Verify bundle architecture and layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="build/bin/Release/HarkenHub.app"
+          binary="$bundle/Contents/MacOS/HarkenHub"
+          echo "--- bundle layout (depth 2) ---"
+          find "$bundle" -maxdepth 2 -print
+          echo "-------------------------------"
+          if [ ! -f "$binary" ]; then
+            echo "::error::missing bundle binary: $binary"
+            exit 1
+          fi
+          status=0
+          archs=$(lipo -archs "$binary")
+          echo "HarkenHub architectures: $archs"
+          for want in arm64 x86_64; do
+            case " $archs " in
+              *" $want "*) ;;
+              *) echo "::error file=$binary::missing $want slice, got: $archs"; status=1 ;;
+            esac
+          done
+          for required in \
+            "$bundle/Contents/Library/LaunchDaemons/com.harkensound.harkenhub.updatebridge.plist" \
+            "$bundle/Contents/Resources/HarkenHub.icns" \
+            "$bundle/Contents/Resources/Legal/NOTICE.txt" \
+            "$bundle/Contents/Frameworks" \
+            "$bundle/Contents/PlugIns/platforms"; do
+            if [ ! -e "$required" ]; then
+              echo "::error::missing bundle content: $required"
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Build Harken Hub pkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(tr -d '[:space:]' < HarkenHub/VERSION)
+          build_id="run${{ github.run_number }}.${GITHUB_SHA::8}"
+          python3 .scripts/release/build_hub_pkg.py \
+            --bundle build/bin/Release/HarkenHub.app \
+            --output-dir .temp/hub-macos \
+            --version "$version" \
+            --build-id "$build_id"
+
+      - name: Upload macOS hub artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: harken-hub-macos
+          path: .temp/hub-macos
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: ${{ (inputs.build-channel == 'stable' || inputs.build-channel == 'beta') && 90 || 14 }}

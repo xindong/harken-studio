@@ -1,0 +1,472 @@
+{
+  "schemaVersion": 1,
+  "producingPackage": "m0-5",
+  "kind": "wire-opcodes",
+  "count": 116,
+  "entries": [
+    {
+      "name": "Vn_Init",
+      "opcode": 1
+    },
+    {
+      "name": "Vn_Term",
+      "opcode": 2
+    },
+    {
+      "name": "Vn_RegisterPCM",
+      "opcode": 3
+    },
+    {
+      "name": "Vn_UnregisterPCM",
+      "opcode": 4
+    },
+    {
+      "name": "ReservedLegacyDirectPlay",
+      "opcode": 5
+    },
+    {
+      "name": "Vn_Stop",
+      "opcode": 6
+    },
+    {
+      "name": "Vn_CreateBus",
+      "opcode": 7
+    },
+    {
+      "name": "Vn_SetBusVolume",
+      "opcode": 8
+    },
+    {
+      "name": "Vn_Update",
+      "opcode": 9
+    },
+    {
+      "name": "Vn_SetVoiceVolume",
+      "opcode": 10
+    },
+    {
+      "name": "Vn_SetVoicePitch",
+      "opcode": 11
+    },
+    {
+      "name": "Vn_SetVoicePosition",
+      "opcode": 12
+    },
+    {
+      "name": "Vn_SetValue",
+      "opcode": 13
+    },
+    {
+      "name": "Vn_CaptureSnapshot",
+      "opcode": 14
+    },
+    {
+      "name": "Vn_SetListener",
+      "opcode": 15
+    },
+    {
+      "name": "Vn_RegisterAttenuation",
+      "opcode": 16
+    },
+    {
+      "name": "Vn_BindVoiceAttenuation",
+      "opcode": 17
+    },
+    {
+      "name": "Vn_SetVoiceOrientation",
+      "opcode": 18
+    },
+    {
+      "name": "Vn_LoadPack",
+      "opcode": 19
+    },
+    {
+      "name": "Vn_UnloadPack",
+      "opcode": 20
+    },
+    {
+      "name": "Vn_SetVoiceEffectBypass",
+      "opcode": 21
+    },
+    {
+      "name": "Vn_SetVoiceEffect",
+      "opcode": 22
+    },
+    {
+      "name": "Vn_ClearVoiceEffect",
+      "opcode": 23
+    },
+    {
+      "name": "Vn_SetVoiceEffectParam",
+      "opcode": 24
+    },
+    {
+      "name": "Vn_RegisterStreamFile",
+      "opcode": 25
+    },
+    {
+      "name": "Vn_UnregisterStreamFile",
+      "opcode": 26
+    },
+    {
+      "name": "Vn_CreateEmitter",
+      "opcode": 27
+    },
+    {
+      "name": "Vn_DestroyEmitter",
+      "opcode": 28
+    },
+    {
+      "name": "Vn_SetEmitterPosition",
+      "opcode": 29
+    },
+    {
+      "name": "Vn_SetEmitterOrientation",
+      "opcode": 30
+    },
+    {
+      "name": "Vn_StopEmitter",
+      "opcode": 31
+    },
+    {
+      "name": "Vn_SetEmitterValue",
+      "opcode": 32
+    },
+    {
+      "name": "ReservedEmitterVariableClear",
+      "opcode": 33
+    },
+    {
+      "name": "ReservedLegacyContainerRegister",
+      "opcode": 34
+    },
+    {
+      "name": "ReservedLegacyContainerUnregister",
+      "opcode": 35
+    },
+    {
+      "name": "ReservedLegacyActionRegister",
+      "opcode": 36
+    },
+    {
+      "name": "ReservedLegacyActionUnregister",
+      "opcode": 37
+    },
+    {
+      "name": "ReservedLegacyActionTrigger",
+      "opcode": 38
+    },
+    {
+      "name": "Vn_ConnectBusSend",
+      "opcode": 39
+    },
+    {
+      "name": "Vn_DisconnectBusSend",
+      "opcode": 40
+    },
+    {
+      "name": "Vn_SetBusSendLevel",
+      "opcode": 41
+    },
+    {
+      "name": "Vn_SetVoiceSend",
+      "opcode": 42
+    },
+    {
+      "name": "Vn_ClearVoiceSend",
+      "opcode": 43
+    },
+    {
+      "name": "Vn_SetVoiceSendLevel",
+      "opcode": 44
+    },
+    {
+      "name": "Vn_SetBusEffect",
+      "opcode": 45
+    },
+    {
+      "name": "Vn_ClearBusEffect",
+      "opcode": 46
+    },
+    {
+      "name": "Vn_SetBusEffectParam",
+      "opcode": 47
+    },
+    {
+      "name": "Vn_SetBusEffectBypass",
+      "opcode": 48
+    },
+    {
+      "name": "Vn_SetBusFaderPoint",
+      "opcode": 49
+    },
+    {
+      "name": "ReservedLegacyActionFindByName",
+      "opcode": 50
+    },
+    {
+      "name": "ReservedLegacyActionTriggerByName",
+      "opcode": 51
+    },
+    {
+      "name": "Vn_ReplacePCM",
+      "opcode": 52
+    },
+    {
+      "name": "Vn_ReplaceStreamFile",
+      "opcode": 53
+    },
+    {
+      "name": "Vn_ReplacePack",
+      "opcode": 54
+    },
+    {
+      "name": "Vn_ReplaceAttenuation",
+      "opcode": 55
+    },
+    {
+      "name": "ReservedLegacyActionReplace",
+      "opcode": 56
+    },
+    {
+      "name": "ReservedLegacyContainerReplace",
+      "opcode": 57
+    },
+    {
+      "name": "Vn_SetBusOutputLayout",
+      "opcode": 58
+    },
+    {
+      "name": "Vn_SetBusDownmixMatrix",
+      "opcode": 59
+    },
+    {
+      "name": "Vn_ResetBusDownmixMatrix",
+      "opcode": 60
+    },
+    {
+      "name": "Vn_RegisterBinding",
+      "opcode": 61
+    },
+    {
+      "name": "Vn_UnregisterBinding",
+      "opcode": 62
+    },
+    {
+      "name": "Vn_ReplaceBinding",
+      "opcode": 63
+    },
+    {
+      "name": "Vn_AttachBinding",
+      "opcode": 64
+    },
+    {
+      "name": "Vn_DetachBinding",
+      "opcode": 65
+    },
+    {
+      "name": "Vn_ApplyVoiceBinding",
+      "opcode": 66
+    },
+    {
+      "name": "Vn_ClearVoiceBinding",
+      "opcode": 67
+    },
+    {
+      "name": "Vn_CapturePropertyTargets",
+      "opcode": 71
+    },
+    {
+      "name": "Vn_CapturePropertyBindings",
+      "opcode": 72
+    },
+    {
+      "name": "Vn_SetBusMute",
+      "opcode": 73
+    },
+    {
+      "name": "Vn_SetBusSolo",
+      "opcode": 74
+    },
+    {
+      "name": "Vn_ReparentBus",
+      "opcode": 75
+    },
+    {
+      "name": "Vn_DestroyBus",
+      "opcode": 76
+    },
+    {
+      "name": "Vn_Suspend",
+      "opcode": 77
+    },
+    {
+      "name": "Vn_Resume",
+      "opcode": 78
+    },
+    {
+      "name": "Vn_CaptureEffectCapabilities",
+      "opcode": 79
+    },
+    {
+      "name": "Vn_CaptureEffectParameterCapabilities",
+      "opcode": 80
+    },
+    {
+      "name": "Vn_SetBusEffectDynamicRoute",
+      "opcode": 81
+    },
+    {
+      "name": "Vn_ClearBusEffectDynamicRoute",
+      "opcode": 82
+    },
+    {
+      "name": "Vn_ResetVoiceEffect",
+      "opcode": 83
+    },
+    {
+      "name": "Vn_ResetBusEffect",
+      "opcode": 84
+    },
+    {
+      "name": "Vn_CaptureEffectDynamicCapabilities",
+      "opcode": 85
+    },
+    {
+      "name": "Vn_CaptureEffectDynamicParameterCapabilities",
+      "opcode": 86
+    },
+    {
+      "name": "Vn_CaptureEffectDynamicRoutes",
+      "opcode": 87
+    },
+    {
+      "name": "Vn_CaptureCompressorRuntimeInfo",
+      "opcode": 88
+    },
+    {
+      "name": "ReservedLegacyActionTriggerEx",
+      "opcode": 89
+    },
+    {
+      "name": "ReservedLegacyActionStop",
+      "opcode": 90
+    },
+    {
+      "name": "ReservedLegacyActionInstanceState",
+      "opcode": 91
+    },
+    {
+      "name": "Vn_StopAll",
+      "opcode": 92
+    },
+    {
+      "name": "Vn_ApplyBusTopology",
+      "opcode": 93
+    },
+    {
+      "name": "Vn_LoadCurrentWorld",
+      "opcode": 94
+    },
+    {
+      "name": "Vn_PostAction",
+      "opcode": 95
+    },
+    {
+      "name": "Vn_StopActionFiring",
+      "opcode": 96
+    },
+    {
+      "name": "Vn_QueryActionFiring",
+      "opcode": 97
+    },
+    {
+      "name": "Vn_QueryActionStep",
+      "opcode": 98
+    },
+    {
+      "name": "Vn_ReleaseActionFiring",
+      "opcode": 99
+    },
+    {
+      "name": "Vn_UnloadPackEx",
+      "opcode": 100
+    },
+    {
+      "name": "Vn_SetBusOutputVolume",
+      "opcode": 101
+    },
+    {
+      "name": "Vn_SetVoiceOutputVolume",
+      "opcode": 102
+    },
+    {
+      "name": "Vn_SetVoiceFilter",
+      "opcode": 103
+    },
+    {
+      "name": "Vn_SetBusFilter",
+      "opcode": 104
+    },
+    {
+      "name": "Vn_SetBusOutputFilter",
+      "opcode": 105
+    },
+    {
+      "name": "Vn_PostActionByName",
+      "opcode": 128
+    },
+    {
+      "name": "Vn_ResolveActionByName",
+      "opcode": 129
+    },
+    {
+      "name": "Vn_PostActionPinned",
+      "opcode": 130
+    },
+    {
+      "name": "Vn_PostActionResolved",
+      "opcode": 131
+    },
+    {
+      "name": "Vn_SeekActionFiring",
+      "opcode": 132
+    },
+    {
+      "name": "Vn_QueryActionSeek",
+      "opcode": 133
+    },
+    {
+      "name": "Vn_ReleaseActionSeek",
+      "opcode": 134
+    },
+    {
+      "name": "Vn_SetValues",
+      "opcode": 192
+    },
+    {
+      "name": "Vn_SetEmitterValues",
+      "opcode": 193
+    },
+    {
+      "name": "ReservedEmitterVariableClearBatch",
+      "opcode": 194
+    },
+    {
+      "name": "Vn_ResetValues",
+      "opcode": 195
+    },
+    {
+      "name": "Vn_QueryVariableTicket",
+      "opcode": 196
+    },
+    {
+      "name": "Vn_QueryVariable",
+      "opcode": 197
+    },
+    {
+      "name": "Vn_CreateEmitterEx",
+      "opcode": 198
+    }
+  ]
+}

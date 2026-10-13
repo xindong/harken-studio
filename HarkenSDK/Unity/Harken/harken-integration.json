@@ -1,0 +1,110 @@
+{
+  "schema_version": 3,
+  "package_name": "com.harken.core",
+  "supports_custom_install_path": true,
+  "expected_platforms_by_editor_host": {
+    "Windows": ["Windows", "Linux", "Android"],
+    "macOS": ["Windows", "macOS", "Android", "iOS"],
+    "Linux": ["Windows", "Linux", "Android"]
+  },
+  "required_files": [
+    "package.json",
+    "harken-integration.json",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE.md",
+    "NOTICE.md",
+    "Runtime/Harken.Core.asmdef",
+    "Runtime/Generated/HarkenAbi.g.cs",
+    "Runtime/Generated/HarkenNative.g.cs",
+    "Runtime/Generated/HarkenTypes.g.cs",
+    "Runtime/Sdk/Actions.cs",
+    "Runtime/Sdk/GameplayPublication.cs",
+    "Runtime/Sdk/GameplayCatalogPairing.cs",
+    "Runtime/Sdk/Packs.cs",
+    "Runtime/Sdk/PackManifest.cs",
+    "Runtime/Sdk/PackBootstrap.cs",
+    "Runtime/Sdk/PackByteProvider.cs",
+    "Runtime/Sdk/RemoteCommunication.cs",
+    "Runtime/Sdk/VariableCatalogEmitter.cs",
+    "Runtime/Unity/UnityCoordinates.cs",
+    "Runtime/Unity/HarkenPackStartup.cs",
+    "Runtime/Unity/HarkenAudioSystem.cs",
+    "Runtime/Unity/HarkenAudioSystem.cs.meta",
+    "Runtime/Unity/HarkenLateActionService.cs",
+    "Runtime/Unity/HarkenLateActionService.cs.meta",
+    "Runtime/Unity/HarkenProjectSettings.cs",
+    "Runtime/Unity/HarkenProjectSettings.cs.meta",
+    "Runtime/Unity/HarkenPack.cs",
+    "Runtime/Unity/HarkenPackSource.cs",
+    "Runtime/Unity/HarkenListener.cs",
+    "Runtime/Unity/HarkenListener.cs.meta",
+    "Runtime/Unity/HarkenEmitter.cs",
+    "Runtime/Unity/HarkenEmitter.cs.meta",
+    "Runtime/Unity/HarkenAction.cs",
+    "Runtime/Unity/HarkenAction.cs.meta",
+    "Runtime/Unity/HarkenVariable.cs",
+    "Runtime/Unity/HarkenVariable.cs.meta",
+    "Runtime/Unity/Harken.Unity.asmdef",
+    "Runtime/Unity/UnitySpatial.cs",
+    "Editor/Harken.Unity.Editor.asmdef",
+    "Editor/HarkenActionInspector.cs",
+    "Editor/HarkenEditorCatalog.cs",
+    "Editor/HarkenEditorPublicationBinding.cs",
+    "Editor/HarkenEditorPreview.cs",
+    "Editor/HarkenUnityPublicationReader.cs",
+    "Editor/HarkenVariableCatalogGenerator.cs",
+    "Editor/HarkenEditorLifecycle.cs",
+    "Editor/HarkenPluginImporterSetup.cs",
+    "Editor/HarkenProjectSettingsProvider.cs",
+    "Editor/HarkenProjectSettingsProvider.cs.meta",
+    "Samples~/PlayableDemo/README.md",
+    "Tests/EditMode/HarkenComponentTests.cs",
+    "Tests/EditMode/HarkenEditorServiceTests.cs",
+    "Tests/EditMode/HarkenEditorLifecycleTests.cs",
+    "Tests/EditMode/HarkenUnityFixtureAssets.cs",
+    "Tests/PlayMode/HarkenLifecycleTests.cs",
+    "Tests/PlayMode/HarkenPreparedRuntimeTests.cs"
+  ],
+  "native_plugins": [
+    {
+      "platform": "Windows",
+      "alternatives": [
+        "Runtime/Plugins/x86_64/HarkenCore.dll"
+      ]
+    },
+    {
+      "platform": "macOS",
+      "alternatives": [
+        "Runtime/Plugins/macOS/libHarkenCore.dylib"
+      ]
+    },
+    {
+      "platform": "Linux",
+      "alternatives": [
+        "Runtime/Plugins/x86_64/libHarkenCore.so"
+      ]
+    },
+    {
+      "platform": "Android",
+      "alternatives": [
+        "Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so"
+      ]
+    },
+    {
+      "platform": "iOS",
+      "alternatives": [
+        "Runtime/Plugins/iOS/libHarkenCore.a"
+      ]
+    }
+  ],
+  "native_binary_source": {
+    "target": "harken_core_shared",
+    "workflow": ".github/workflows/core-artifact.yml",
+    "windows_x86_64": "Runtime/Plugins/x86_64/HarkenCore.dll",
+    "linux_x86_64": "Runtime/Plugins/x86_64/libHarkenCore.so",
+    "macos_universal": "Runtime/Plugins/macOS/libHarkenCore.dylib",
+    "android_arm64": "Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so",
+    "ios_arm64": "Runtime/Plugins/iOS/libHarkenCore.a"
+  }
+}

@@ -1,0 +1,16 @@
+{
+    "name": "Harken.Unity",
+    "rootNamespace": "Harken.Unity",
+    "references": [
+        "Harken.Core"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

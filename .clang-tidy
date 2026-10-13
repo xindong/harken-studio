@@ -1,0 +1,16 @@
+---
+Checks: '-*,readability-identifier-naming'
+WarningsAsErrors: 'readability-identifier-naming'
+CheckOptions:
+  readability-identifier-naming.IgnoreMainLikeFunctions: '1'
+  readability-identifier-naming.FunctionCase: CamelCase
+  readability-identifier-naming.FunctionIgnoredRegexp: '^(main|wmain|WinMain|wWinMain|begin|end|cbegin|cend|rbegin|rend|crbegin|crend|size|ssize|empty|data|swap|Vn_[A-Za-z0-9_]+|gtest_[A-Za-z0-9_]+_(EvalGenerator|EvalGenerateName)_)$'
+  readability-identifier-naming.MethodCase: CamelCase
+  readability-identifier-naming.MethodIgnoredRegexp: '^(SetUp|TearDown|SetUpTestSuite|TearDownTestSuite|begin|end|cbegin|cend|rbegin|rend|crbegin|crend|size|ssize|empty|data|swap)$'
+  readability-identifier-naming.ClassMethodCase: CamelCase
+  readability-identifier-naming.ClassMethodIgnoredRegexp: '^(SetUpTestSuite|TearDownTestSuite|begin|end|cbegin|cend|rbegin|rend|crbegin|crend|size|ssize|empty|data|swap)$'
+  readability-identifier-naming.PrivateMethodCase: CamelCase
+  readability-identifier-naming.PrivateMethodIgnoredRegexp: '^(SetUp|TearDown|SetUpTestSuite|TearDownTestSuite|begin|end|cbegin|cend|rbegin|rend|crbegin|crend|size|ssize|empty|data|swap)$'
+  readability-identifier-naming.ProtectedMethodCase: CamelCase
+  readability-identifier-naming.ProtectedMethodIgnoredRegexp: '^(SetUp|TearDown|SetUpTestSuite|TearDownTestSuite|begin|end|cbegin|cend|rbegin|rend|crbegin|crend|size|ssize|empty|data|swap)$'
+...

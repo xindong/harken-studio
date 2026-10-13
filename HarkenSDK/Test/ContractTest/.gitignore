@@ -1,0 +1,3 @@
+# .NET build outputs for the managed binding harness (never committed).
+bin/
+obj/

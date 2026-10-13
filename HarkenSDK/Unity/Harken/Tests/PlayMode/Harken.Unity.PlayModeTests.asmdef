@@ -1,0 +1,12 @@
+{
+  "name": "Harken.Unity.PlayModeTests",
+  "references": [
+    "Harken.Core",
+    "Harken.Unity"
+  ],
+  "includePlatforms": [],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "autoReferenced": false
+}

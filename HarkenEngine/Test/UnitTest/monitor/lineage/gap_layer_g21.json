@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-2",
+  "kind": "gap-layer-g21",
+  "gapId": "G21",
+  "reason": "Layer is an authoring ancestor, not a runtime entity. M2-2 records the missing ancestor as an annotation gap. It does not mint an entityKind, tombstone, or sort key.",
+  "entities": [],
+  "publicEntityKind": null
+}

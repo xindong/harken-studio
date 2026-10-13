@@ -1,0 +1,25 @@
+* text=auto
+*.h text eol=lf
+*.hpp text eol=lf
+*.c text eol=lf
+*.cpp text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.qrc text eol=lf
+*.svg text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+*.inl text eol=lf
+*.def text eol=lf
+*.wav binary
+*.bin binary
+*.pack binary
+*.stream binary
+*.cs text eol=lf
+*.csproj text eol=lf
+*.asmdef text eol=lf

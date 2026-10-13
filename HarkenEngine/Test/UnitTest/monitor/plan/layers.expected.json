@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "producingPackage": "m0-3",
+  "isProvisional": false,
+  "contractVerified": true,
+  "layers": [
+    {
+      "name": "unsupported",
+      "capability": "unsupported",
+      "effectivePlan": "not-requested",
+      "validity": "unsupported",
+      "drop": "none",
+      "numericReadable": 0,
+      "valueBits": 0
+    },
+    {
+      "name": "not-armed",
+      "capability": "supported",
+      "effectivePlan": "not-armed",
+      "validity": "not-armed",
+      "drop": "none",
+      "numericReadable": 0,
+      "valueBits": 0
+    },
+    {
+      "name": "armed-invalid",
+      "capability": "supported",
+      "effectivePlan": "armed",
+      "validity": "armed-warmup",
+      "drop": "none",
+      "numericReadable": 0,
+      "valueBits": 0
+    },
+    {
+      "name": "valid-zero",
+      "capability": "supported",
+      "effectivePlan": "armed",
+      "validity": "armed-numeric",
+      "drop": "none",
+      "numericReadable": 1,
+      "valueBits": 0
+    },
+    {
+      "name": "drop-gap",
+      "capability": "supported",
+      "effectivePlan": "armed",
+      "validity": "not-applicable",
+      "drop": "source-producer",
+      "numericReadable": 0,
+      "firstSourceSequence": 4,
+      "lastSourceSequence": 5
+    }
+  ]
+}

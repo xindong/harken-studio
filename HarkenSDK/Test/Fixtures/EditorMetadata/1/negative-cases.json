@@ -1,0 +1,17 @@
+[
+  { "name": "stale-manifest", "path": "manifestFnv1a64", "value": "0", "result": "VN_PACK_STALE_REVISION" },
+  { "name": "different-project", "path": "projectId", "value": "44444444-4444-4444-4444-444444444444", "result": "VN_PACK_STALE_REVISION" },
+  { "name": "different-language", "path": "language", "value": "ja", "result": "VN_PACK_STALE_REVISION" },
+  { "name": "different-owner-hash", "path": "actions/0/source/contentHash", "value": "0", "result": "VN_PACK_STALE_REVISION" },
+  { "name": "same-id-different-name", "path": "actions/0/name", "value": "Renamed", "result": "VN_PACK_STALE_REVISION" },
+  { "name": "missing-actions", "path": "actions", "value": [], "result": "VN_PACK_STALE_REVISION" },
+  { "name": "zero-frames", "path": "actions/0/source/frameCount", "value": "0", "result": "VN_BAD_PACK" },
+  { "name": "zero-rate", "path": "actions/0/source/sampleRate", "value": 0, "result": "VN_BAD_PACK" },
+  { "name": "channel-budget", "path": "actions/0/source/channelCount", "value": 33, "result": "VN_BAD_PACK" },
+  { "name": "bucket-count", "path": "actions/0/source/bucketCount", "value": 2049, "result": "VN_BAD_PACK" },
+  { "name": "truncated-extrema", "path": "actions/0/source/channels/0/min", "value": [0], "result": "VN_BAD_PACK" },
+  { "name": "inverted-extrema", "path": "actions/0/source/channels/0/min/1", "value": 1, "result": "VN_BAD_PACK" },
+  { "name": "inverted-before-float-rounding", "path": "actions/0/source/channels/0/min/1", "value": 0.50000000001, "result": "VN_BAD_PACK" },
+  { "name": "unknown-header-key", "path": "unknown", "value": 1, "result": "VN_BAD_PACK" },
+  { "name": "string-schema", "path": "schemaVersion", "value": "1", "result": "VN_BAD_PACK" }
+]

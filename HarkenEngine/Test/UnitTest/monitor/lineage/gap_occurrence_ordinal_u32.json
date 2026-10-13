@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-2",
+  "kind": "gap-occurrence-ordinal-u32",
+  "reason": "VnMonitorTelemetryCorrelation.occurrenceOrdinal is a frozen uint32. Queue EffectiveQueueState.version is uint64. Values above UINT32_MAX stay 0 in the published ordinal instead of wrapping. M2-1 lifecycle dedupe still uses the full 64-bit occurrence.",
+  "publicField": "occurrenceOrdinal",
+  "publicWidthBits": 32,
+  "sourceField": "EffectiveQueueState.version"
+}

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-6",
+  "helperVersion": 1,
+  "kind": "gap-g19-critical-path",
+  "gapId": "G19",
+  "reason": "No dependency graph. Critical path is Unsupported. Maximum span must not impersonate critical path."
+}

@@ -1,0 +1,13 @@
+{
+  "vintage": 1,
+  "slots": [
+    { "ordinal": 0, "name": "outputBus", "targetKind": "bus" },
+    { "ordinal": 1, "name": "attenuation", "targetKind": "attenuation" }
+  ],
+  "levels": [
+    { "ordinal": 1, "name": "objectOverride" },
+    { "ordinal": 2, "name": "placementAncestor" },
+    { "ordinal": 3, "name": "organizationalAncestor" },
+    { "ordinal": 4, "name": "slotDefault" }
+  ]
+}

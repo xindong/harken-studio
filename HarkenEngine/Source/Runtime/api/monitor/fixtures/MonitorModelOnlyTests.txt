@@ -1,0 +1,7 @@
+# ModelOnly ids. Never count toward the M0 Runtime exit door.
+# Cross-Term Poll / retirement live behavior belongs to M1 Hub.
+# Keep this list even when no matching TEST() exists yet so a later
+# similarly named case cannot silently enter RuntimeVerified.
+
+MonitorModelOnly.PollAcrossTermRetirement
+MonitorModelOnly.CapturePlanLiveSlotRun

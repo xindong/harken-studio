@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 1,
+  "producingPackage": "m0-5",
+  "isProvisional": false,
+  "contractVerified": true,
+  "packedHandshakeBytes": 120,
+  "packedCounterBytes": 16,
+  "nonceBytes": 32,
+  "spkiBytes": 32,
+  "messageCounterStart": 1,
+  "wireOpcodeCount": 116,
+  "monitorFunctionCount": 20,
+  "statuses": {
+    "disabled": "VN_OK",
+    "local_acl": "VN_OK",
+    "lan_mtls": "VN_OK",
+    "unknown_profile": "VN_MONITOR_INCOMPATIBLE",
+    "reserved_nonzero": "VN_INVALID_ARG",
+    "struct_size_bad": "VN_MONITOR_INCOMPATIBLE",
+    "mismatch": "VN_MONITOR_INCOMPATIBLE",
+    "permission_missing": "VN_MONITOR_PERMISSION_DENIED",
+    "unknown_permission": "VN_INVALID_ARG",
+    "disabled_mismatch": "VN_MONITOR_INCOMPATIBLE",
+    "counter_overflow": "VN_MONITOR_INCOMPATIBLE",
+    "trailing_bytes": "VN_MONITOR_INCOMPATIBLE"
+  },
+  "permissions": [
+    {
+      "name": "observe_state",
+      "bit": 1,
+      "grantRequested": 1,
+      "grantGranted": 1,
+      "grantStatus": "VN_OK",
+      "denyRequested": 1,
+      "denyGranted": 0,
+      "denyStatus": "VN_MONITOR_PERMISSION_DENIED"
+    },
+    {
+      "name": "observe_events",
+      "bit": 2,
+      "grantRequested": 2,
+      "grantGranted": 2,
+      "grantStatus": "VN_OK",
+      "denyRequested": 2,
+      "denyGranted": 0,
+      "denyStatus": "VN_MONITOR_PERMISSION_DENIED"
+    },
+    {
+      "name": "observe_measurements",
+      "bit": 4,
+      "grantRequested": 4,
+      "grantGranted": 4,
+      "grantStatus": "VN_OK",
+      "denyRequested": 4,
+      "denyGranted": 0,
+      "denyStatus": "VN_MONITOR_PERMISSION_DENIED"
+    },
+    {
+      "name": "capture_control",
+      "bit": 8,
+      "grantRequested": 8,
+      "grantGranted": 8,
+      "grantStatus": "VN_OK",
+      "denyRequested": 8,
+      "denyGranted": 0,
+      "denyStatus": "VN_MONITOR_PERMISSION_DENIED"
+    },
+    {
+      "name": "record",
+      "bit": 16,
+      "grantRequested": 16,
+      "grantGranted": 16,
+      "grantStatus": "VN_OK",
+      "denyRequested": 16,
+      "denyGranted": 0,
+      "denyStatus": "VN_MONITOR_PERMISSION_DENIED"
+    },
+    {
+      "name": "raw_audio",
+      "bit": 32,
+      "grantRequested": 32,
+      "grantGranted": 32,
+      "grantStatus": "VN_OK",
+      "denyRequested": 32,
+      "denyGranted": 0,
+      "denyStatus": "VN_MONITOR_PERMISSION_DENIED"
+    },
+    {
+      "name": "symbols",
+      "bit": 64,
+      "grantRequested": 64,
+      "grantGranted": 64,
+      "grantStatus": "VN_OK",
+      "denyRequested": 64,
+      "denyGranted": 0,
+      "denyStatus": "VN_MONITOR_PERMISSION_DENIED"
+    }
+  ],
+  "defaultClosed": {
+    "bannedDefines": [],
+    "endpointName": "",
+    "defaultPort": 0,
+    "defaultPipe": ""
+  }
+}

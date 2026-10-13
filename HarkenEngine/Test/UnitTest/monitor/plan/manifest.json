@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producingPackage": "m0-3",
+  "contractVersion": 1,
+  "files": [
+    {
+      "path": "apply_fail.bin",
+      "sha256": "599ade5981a5620c363d2600b4e8a83af5dfe431937cec01150d1be468f5f983",
+      "isProvisional": false,
+      "producingPackage": "m0-3",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "record-stream"
+    },
+    {
+      "path": "apply_fail.expected.json",
+      "sha256": "762a4064c0086296f37a51208370a4354acc79a56e6d9ff162bb9fe00082e9ec",
+      "isProvisional": false,
+      "producingPackage": "m0-3",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "expected-view"
+    },
+    {
+      "path": "capacity.expected.json",
+      "sha256": "ce1f98d792b3a061a6feba6a6c6ac605c098426650fa8451e1ab2ff57a01605b",
+      "isProvisional": false,
+      "producingPackage": "m0-3",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "expected-view"
+    },
+    {
+      "path": "layers.bin",
+      "sha256": "fa942c790362ad46ef6d7146a978da10e82b054e36fc42c4bcbd5f4080b7a3cb",
+      "isProvisional": false,
+      "producingPackage": "m0-3",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "record-stream"
+    },
+    {
+      "path": "layers.expected.json",
+      "sha256": "c3d1de50c28af7057c599f91ea4f75abfbdcb0305cfc3cec2e6920594aba17eb",
+      "isProvisional": false,
+      "producingPackage": "m0-3",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "expected-view"
+    },
+    {
+      "path": "lease.bin",
+      "sha256": "d6964212613f51fb463b21c1259d39081634afea6a79a97751926b595aa3bb96",
+      "isProvisional": false,
+      "producingPackage": "m0-3",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "record-stream"
+    },
+    {
+      "path": "lease.expected.json",
+      "sha256": "21c7d7b084110449de8d3d83bfbcba5ccd474717096eb3d957bd1f191db77fa9",
+      "isProvisional": false,
+      "producingPackage": "m0-3",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "expected-view"
+    },
+    {
+      "path": "registry.bin",
+      "sha256": "1a90b9cb6300ca93419e8cb2b704b3ddb20aa7843f1166e03fcaca0a0f001908",
+      "isProvisional": false,
+      "producingPackage": "m0-3",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "record-stream"
+    },
+    {
+      "path": "registry.expected.json",
+      "sha256": "d3dd76143c024c5e0f657c81b078e08026b02ad66114b6f9a566223ec2bdb365",
+      "isProvisional": false,
+      "producingPackage": "m0-3",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "expected-view"
+    },
+    {
+      "path": "state_table.json",
+      "sha256": "06df4d070ae1359788f64077272bbc6f5743d78c3134400635bb9f2fa2cc3115",
+      "isProvisional": false,
+      "producingPackage": "m0-3",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "state-table"
+    },
+    {
+      "path": "stop.bin",
+      "sha256": "8c6ad52fe7190a2f0d0ace0ff24d686f60721a1a8282cf1f58d74109981dd8a7",
+      "isProvisional": false,
+      "producingPackage": "m0-3",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "record-stream"
+    },
+    {
+      "path": "stop.expected.json",
+      "sha256": "e61df7f7e83ca4a25f51a8ca91c1855a0e7fb438906b24c080a1660ca95edc0a",
+      "isProvisional": false,
+      "producingPackage": "m0-3",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "expected-view"
+    }
+  ]
+}

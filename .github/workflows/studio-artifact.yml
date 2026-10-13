@@ -1,0 +1,514 @@
+name: Studio Artifact
+
+# Builds the Harken Studio packages: Windows x64 and macOS (x64 + arm64).
+# Builds the SDK bundle first via sdk-artifact.yml, then embeds the Unity SDK
+# into every Studio package. Called by release-artifacts.yml.
+on:
+  workflow_call:
+    inputs:
+      build-channel:
+        type: string
+        required: false
+        default: dev
+
+concurrency:
+  group: studio-artifact-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: '6.8.3'
+  HARKEN_BUILD_CHANNEL: ${{ inputs.build-channel }}
+
+jobs:
+  schema-release:
+    name: studio-schema-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate development Schema inputs
+        if: inputs.build-channel != 'stable' && inputs.build-channel != 'beta'
+        run: python .scripts/studio_schema_release_audit.py --head HEAD
+
+      - name: Verify formal Studio Schema release receipt
+        if: inputs.build-channel == 'stable' || inputs.build-channel == 'beta'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python .scripts/studio_schema_release_audit.py
+          --verify-current
+          --head HEAD
+          --json-out .temp/studio-schema-release/audit.json
+          --markdown-out .temp/studio-schema-release/audit.md
+
+      - name: Publish Schema release summary
+        if: always() && hashFiles('.temp/studio-schema-release/audit.md') != ''
+        run: cat .temp/studio-schema-release/audit.md >> "$GITHUB_STEP_SUMMARY"
+
+  sdk:
+    name: harken-sdk-bundle
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/sdk-artifact.yml
+    with:
+      artifact-name: harken-sdk-bundle
+      build-channel: ${{ inputs.build-channel }}
+
+  studio-windows:
+    name: harkenstudio-windows-x64
+    needs: [schema-release, sdk]
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+          vsversion: '2022'
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+          cache-key-prefix: qt-${{ env.QT_VERSION }}-windows
+
+      - name: Preserve Qt setup log and verify clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f aqtinstall.log ]; then
+            mkdir -p .temp/qt-install
+            mv aqtinstall.log .temp/qt-install/
+          fi
+          status=$(git status --porcelain)
+          if [ -n "$status" ]; then
+            printf '%s\n' "$status"
+            echo "::error::Studio release build requires a clean checkout"
+            exit 1
+          fi
+
+      - name: Export VENUS_QT_DIR
+        shell: bash
+        run: echo "VENUS_QT_DIR=$QT_ROOT_DIR" >> $GITHUB_ENV
+
+      - name: Configure (windows-release)
+        run: >-
+          cmake --fresh --preset windows-release
+          -DHARKEN_VS_DIR:PATH="$env:VSINSTALLDIR"
+          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_EDITOR=ON
+          -DHARKEN_BUILD_TOOLS=ON
+
+      - name: Build HarkenEditor and harken_packc
+        shell: bash
+        run: |
+          for target in harken_editor harken_packc; do
+            cmake --build build --config Release --target "$target" --parallel
+          done
+
+      - name: Download SDK bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: harken-sdk-bundle
+          path: .temp/sdk-bundle
+
+      - name: Install complete SDK bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build/bin/Release/HarkenSDK
+          cp -R .temp/sdk-bundle/HarkenSDK build/bin/Release/HarkenSDK
+          python .scripts/check_sdk_version.py
+          find build/bin/Release/HarkenSDK -type f -print
+
+      - name: Stage legal attribution texts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .scripts/release/collect_legal_texts.py \
+            --product studio \
+            --qt-version "$(qmake -query QT_VERSION)" \
+            --output build/bin/Release/Legal
+
+      - name: Verify deployed layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          for required in HarkenStudio.exe packc.exe qt.conf HarkenSDK HarkenSDK/Unity/Harken HarkenSDK/Unreal/Harken Legal/NOTICE.txt; do
+            if [ ! -e "build/bin/Release/$required" ]; then
+              echo "::error::missing deployed content: build/bin/Release/$required"
+              status=1
+            fi
+          done
+          for runtime in \
+            HarkenSDK/Unity/Harken/Runtime/Plugins/x86_64/HarkenCore.dll \
+            HarkenSDK/Unity/Harken/Runtime/Plugins/x86_64/libHarkenCore.so \
+            HarkenSDK/Unity/Harken/Runtime/Plugins/macOS/libHarkenCore.dylib \
+            HarkenSDK/Unity/Harken/Runtime/Plugins/iOS/libHarkenCore.a \
+            HarkenSDK/Unity/Harken/Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so; do
+            if [ ! -s "build/bin/Release/$runtime" ]; then
+              echo "::error::missing or empty Unity runtime: build/bin/Release/$runtime"
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Upload Windows studio artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: harkenstudio-windows-x64
+          path: build/bin/Release
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build hub-installable studio package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          build_id=$(sed -n 's/.*BuildId[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+            build/generated/harken_buildinfo/harken_buildinfo.h)
+          test -n "$build_id"
+          version=$(tr -d ' \t\r\n' < VERSION)
+          python .scripts/release/build_studio_package.py \
+            --input-dir build/bin/Release \
+            --output-dir .temp/studio-package \
+            --version "$version" \
+            --build-id "$build_id" \
+            --channel "$HARKEN_BUILD_CHANNEL"
+
+      - name: Upload Windows studio package artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: harkenstudio-package-windows-x64
+          path: .temp/studio-package
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: ${{ (inputs.build-channel == 'stable' || inputs.build-channel == 'beta') && 90 || 14 }}
+
+  studio-macos:
+    name: harkenstudio-macos-${{ matrix.slug }}
+    needs: [schema-release, sdk]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            slug: x64
+          - arch: arm64
+            slug: arm64
+    runs-on: macos-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install macOS build deps
+        run: brew install ninja
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: desktop
+          arch: clang_64
+          cache: true
+          cache-key-prefix: qt-${{ env.QT_VERSION }}-mac
+
+      - name: Preserve Qt setup log and verify clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f aqtinstall.log ]; then
+            mkdir -p .temp/qt-install
+            mv aqtinstall.log .temp/qt-install/
+          fi
+          status=$(git status --porcelain)
+          if [ -n "$status" ]; then
+            printf '%s\n' "$status"
+            echo "::error::Studio release build requires a clean checkout"
+            exit 1
+          fi
+
+      - name: Patch macOS Qt AGL linkage
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${QT_ROOT_DIR:-}" ] && [ -d "$QT_ROOT_DIR" ]; then
+            python3 <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          root = Path(os.environ["QT_ROOT_DIR"])
+          patterns = [
+              (re.compile(r'"\$<LINK_LIBRARY:FRAMEWORK,AGL>"'), '""'),
+              (re.compile(r"'\$<LINK_LIBRARY:FRAMEWORK,AGL>'"), "''"),
+              (re.compile(r'\$<LINK_LIBRARY:FRAMEWORK,AGL>'), ''),
+              (re.compile(r'SHELL:-framework\s+AGL'), ''),
+              (re.compile(r'LINKER:-framework,AGL'), ''),
+              (re.compile(r'-Xlinker\s+-framework\s+-Xlinker\s+AGL'), ''),
+              (re.compile(r'"-framework\s+AGL"'), '""'),
+              (re.compile(r"'-framework\s+AGL'"), "''"),
+              (re.compile(r'\s*-framework\s+AGL'), ''),
+              (re.compile(r'"-framework"\s*,\s*"AGL"'), ''),
+              (re.compile(r'"-framework"\s+"AGL"'), ''),
+              (re.compile(r';?-framework;?AGL'), ''),
+              (re.compile(r';?AGL(?=;|\s|$)'), ''),
+              (re.compile(r'AGL\.framework'), ''),
+          ]
+          suffixes = {'.cmake', '.prl', '.pc', '.pri'}
+          patched = []
+          for path in root.rglob('*'):
+              if not path.is_file() or path.suffix not in suffixes:
+                  continue
+              try:
+                  text = path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  text = path.read_text(encoding='utf-8', errors='ignore')
+              if 'AGL' not in text:
+                  continue
+              new_text = text
+              for regex, replacement in patterns:
+                  new_text = regex.sub(replacement, new_text)
+              if new_text != text:
+                  path.write_text(new_text, encoding='utf-8')
+                  patched.append(str(path))
+          print(f"Patched {len(patched)} Qt metadata files containing AGL")
+          for item in patched:
+              print(item)
+          PY
+          fi
+
+      - name: Export VENUS_QT_DIR
+        shell: bash
+        run: echo "VENUS_QT_DIR=$QT_ROOT_DIR" >> $GITHUB_ENV
+
+      - name: Configure (macos-release, ${{ matrix.arch }})
+        run: >-
+          cmake --fresh --preset macos-release
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_EDITOR=ON
+          -DHARKEN_BUILD_TOOLS=ON
+
+      - name: Patch generated macOS AGL linkage
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("build")
+          patterns = [
+              (re.compile(r'"\$<LINK_LIBRARY:FRAMEWORK,AGL>"'), '""'),
+              (re.compile(r"'\$<LINK_LIBRARY:FRAMEWORK,AGL>'"), "''"),
+              (re.compile(r'\$<LINK_LIBRARY:FRAMEWORK,AGL>'), ''),
+              (re.compile(r'SHELL:-framework\s+AGL'), ''),
+              (re.compile(r'LINKER:-framework,AGL'), ''),
+              (re.compile(r'-Xlinker\s+-framework\s+-Xlinker\s+AGL'), ''),
+              (re.compile(r'"-framework\s+AGL"'), '""'),
+              (re.compile(r"'-framework\s+AGL'"), "''"),
+              (re.compile(r'\s*-framework\s+AGL'), ''),
+              (re.compile(r'"-framework"\s*,\s*"AGL"'), ''),
+              (re.compile(r'"-framework"\s+"AGL"'), ''),
+              (re.compile(r';?-framework;?AGL'), ''),
+              (re.compile(r';?AGL(?=;|\s|$)'), ''),
+              (re.compile(r'AGL\.framework'), ''),
+          ]
+          names = {"build.ninja", "rules.ninja", "link.txt"}
+          suffixes = {".cmake", ".ninja", ".rsp", ".txt"}
+          patched = []
+          for path in root.rglob("*"):
+              if not path.is_file() or (path.name not in names and path.suffix not in suffixes):
+                  continue
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except UnicodeDecodeError:
+                  text = path.read_text(encoding="utf-8", errors="ignore")
+              if "AGL" not in text:
+                  continue
+              new_text = text
+              for regex, replacement in patterns:
+                  new_text = regex.sub(replacement, new_text)
+              if new_text != text:
+                  path.write_text(new_text, encoding="utf-8")
+                  patched.append(str(path))
+          print(f"Patched {len(patched)} generated build files containing AGL")
+          for item in patched:
+              print(item)
+          PY
+
+      - name: Build HarkenEditor
+        run: cmake --build build --config Release --target harken_editor --parallel
+
+      - name: Download SDK bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: harken-sdk-bundle
+          path: .temp/sdk-bundle
+
+      - name: Install complete SDK bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="build/bin/Release/HarkenStudio.app/Contents/MacOS"
+          rm -rf "$root/HarkenSDK"
+          cp -R .temp/sdk-bundle/HarkenSDK "$root/HarkenSDK"
+          find "$root/HarkenSDK" -type f -print
+
+      - name: Stage legal attribution texts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .scripts/release/collect_legal_texts.py \
+            --product studio \
+            --qt-version "$(qmake -query QT_VERSION)" \
+            --output "build/bin/Release/HarkenStudio.app/Contents/Resources/Legal"
+
+      - name: Verify bundle architecture and layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="build/bin/Release/HarkenStudio.app"
+          binary="$bundle/Contents/MacOS/HarkenStudio"
+          echo "--- bundle layout (depth 2) ---"
+          find "$bundle" -maxdepth 2 -print
+          echo "-------------------------------"
+          status=0
+          if [ ! -f "$binary" ]; then
+            echo "::error::missing bundle binary: $binary"
+            exit 1
+          fi
+          archs=$(lipo -archs "$binary")
+          echo "HarkenStudio architectures: $archs"
+          if [ "$archs" != "${{ matrix.arch }}" ]; then
+            echo "::error file=$binary::expected ${{ matrix.arch }}, found: $archs"
+            status=1
+          fi
+          build_id=$(sed -n 's/.*BuildId[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+            build/generated/harken_buildinfo/harken_buildinfo.h)
+          expected_platform="macos-${{ matrix.slug }}"
+          if [ -z "$build_id" ] || [[ "$build_id" != *-"$expected_platform"-* ]]; then
+            echo "::error::expected BuildId platform $expected_platform, found: ${build_id:-missing}"
+            status=1
+          fi
+          for required in \
+            "$bundle/Contents/MacOS/packc" \
+            "$bundle/Contents/MacOS/HarkenSDK" \
+            "$bundle/Contents/MacOS/HarkenSDK/Unity/Harken" \
+            "$bundle/Contents/MacOS/HarkenSDK/Unreal/Harken" \
+            "$bundle/Contents/Resources/HarkenStudio.icns" \
+            "$bundle/Contents/Resources/Legal/NOTICE.txt" \
+            "$bundle/Contents/Frameworks" \
+            "$bundle/Contents/PlugIns/platforms" \
+            "$bundle/Contents/PlugIns/platforms/libqoffscreen.dylib"; do
+            if [ ! -e "$required" ]; then
+              echo "::error::missing bundle content: $required"
+              status=1
+            fi
+          done
+          sdk_plugins="$bundle/Contents/MacOS/HarkenSDK/Unity/Harken/Runtime/Plugins"
+          for runtime in \
+            "$sdk_plugins/x86_64/HarkenCore.dll" \
+            "$sdk_plugins/x86_64/libHarkenCore.so" \
+            "$sdk_plugins/macOS/libHarkenCore.dylib" \
+            "$sdk_plugins/iOS/libHarkenCore.a" \
+            "$sdk_plugins/Android/arm64-v8a/libHarkenCore.so"; do
+            if [ ! -s "$runtime" ]; then
+              echo "::error::missing or empty Unity runtime: $runtime"
+              status=1
+            fi
+          done
+          sdk_dylib="$sdk_plugins/macOS/libHarkenCore.dylib"
+          if [ -f "$sdk_dylib" ]; then
+            sdk_archs=$(lipo -archs "$sdk_dylib")
+            echo "Bundled Unity macOS runtime architectures: $sdk_archs"
+            for want in arm64 x86_64; do
+              case " $sdk_archs " in
+                *" $want "*) ;;
+                *) echo "::error file=$sdk_dylib::missing $want slice, got: $sdk_archs"; status=1 ;;
+              esac
+            done
+          fi
+          exit $status
+
+      - name: Zip bundle preserving symlinks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .scripts/release/collect_legal_texts.py --product studio --verify \
+            --output build/bin/Release/HarkenStudio.app/Contents/Resources/Legal
+          python3 .scripts/release/collect_legal_texts.py \
+            --sdk-root build/bin/Release/HarkenStudio.app/Contents/MacOS/HarkenSDK
+          mkdir -p .temp/release
+          ditto -c -k --keepParent build/bin/Release/HarkenStudio.app \
+            ".temp/release/HarkenStudio-macos-${{ matrix.slug }}.zip"
+
+      - name: Upload macOS studio artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: harkenstudio-macos-${{ matrix.slug }}
+          path: .temp/release/HarkenStudio-macos-${{ matrix.slug }}.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Build hub-installable studio package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          build_id=$(sed -n 's/.*BuildId[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+            build/generated/harken_buildinfo/harken_buildinfo.h)
+          test -n "$build_id"
+          version=$(tr -d ' \t\r\n' < VERSION)
+          mkdir -p .temp/package-root
+          cp -R build/bin/Release/HarkenStudio.app .temp/package-root/
+          python3 .scripts/release/build_studio_package.py \
+            --input-dir .temp/package-root \
+            --output-dir .temp/studio-package \
+            --version "$version" \
+            --build-id "$build_id" \
+            --channel "$HARKEN_BUILD_CHANNEL" \
+            --additional-artifact ".temp/release/HarkenStudio-macos-${{ matrix.slug }}.zip"
+
+      - name: Upload macOS studio package artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: harkenstudio-package-macos-${{ matrix.slug }}
+          path: .temp/studio-package
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: ${{ (inputs.build-channel == 'stable' || inputs.build-channel == 'beta') && 90 || 14 }}

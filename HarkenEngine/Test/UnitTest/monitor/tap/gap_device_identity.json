@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m3-1",
+  "helperVersion": 1,
+  "kind": "gap-device-identity",
+  "gapId": "G-device-tap",
+  "tapKind": "VN_MONITOR_TAP_DEVICE_OUTPUT",
+  "reason": "M0 descriptor has no stable device owner identity. Device tap is Unsupported. Do not invent a name, tree root, or default index."
+}

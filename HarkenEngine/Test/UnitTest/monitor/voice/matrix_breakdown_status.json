@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-3",
+  "helperVersion": 1,
+  "kind": "matrix-breakdown-status",
+  "states": [
+    {
+      "name": "FinalOnly",
+      "reason": 0,
+      "volumeNumeric": true
+    },
+    {
+      "name": "BreakdownUnavailable",
+      "reason": 10,
+      "volumeNumeric": false
+    },
+    {
+      "name": "Partial",
+      "reason": 9,
+      "notPublishedInM23": true
+    },
+    {
+      "name": "Invalid",
+      "reason": 11,
+      "notPublishedInM23": true
+    }
+  ],
+  "noBindingVariable": "forbids contribution rows, not the Voice State"
+}

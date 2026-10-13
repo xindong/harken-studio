@@ -1,0 +1,135 @@
+Harken Studio Open-Source Release Notice
+
+Release Date: September 30, 2026
+
+I. Release Statement
+
+This Notice describes the scope of Harken Studio's open-source release, the official release entity, applicable licenses, third-party components, the relationship between source code and binary releases, official download hosting, trademarks, limitation of responsibility, and contact channels. This Notice does not replace the LICENSE, NOTICE, third-party license texts, User Agreement, Privacy Policy, Security Policy, or any other applicable rules maintained in the repository. If this Notice conflicts with an applicable open-source license, the applicable open-source license will prevail.
+
+XD Network Inc. (“XD”) is the official release entity for Harken Studio and is responsible for the public release of the Harken Studio project and the maintenance of its official release channels. Contributors, project maintainers, Pull Request submitters, Issue or Discussion participants, Fork maintainers, and other community participants do not become agents of XD or the official release entity merely by participating in the project.
+
+II. Scope of the Open-Source Release
+
+2.1 Source Code
+
+XD publicly releases all source code in the official Harken Studio repository, including without limitation:
+
+- Harken Studio Hub;
+
+- Harken Studio Editor;
+
+- Harken Studio Unity SDK;
+
+- Harken Studio Runtime;
+
+- sample code ("Sample");
+
+- documentation ("Documentation"); and
+
+- build, test, release, and legal materials that may lawfully be made public.
+
+For purposes of this Notice, "public release" means making the source code and corresponding runnable programs described in this Notice publicly available to unspecified users.
+
+XD may change the names, logos, domain names, or other identifiers of the Products in accordance with its branding, product development, or operational arrangements. Unless otherwise expressly stated by XD, any such change will not affect the validity or continued application of this Notice, or any rights or obligations that have arisen or are to be performed under this Notice. A Product under a changed name will continue to be deemed the corresponding Product referred to in this Notice.
+
+2.2 Corresponding Runnable Programs
+
+XD publicly releases the official runnable programs built from the publicly released source code described above, including applicable installers, EXE files, dynamic libraries, static libraries, SDK packages, runtime libraries, update packages, and other binary release materials. The specific source code, components and binary release scope are subject to the relevant repositories, licenses and version release materials.
+
+2.3 Matters Outside the Open-Source Release
+
+The following are outside the scope of Harken Studio's open-source release:
+
+- AK/SK credentials, access tokens, account passwords, signing private keys, code-signing certificates, upload credentials, and other credentials used by OSS, CDN, websites, CI/CD systems, or other operational systems;
+
+- internal configurations, documents, data, test materials, personal information, trade secrets, and other materials that may not be made public under applicable law or security requirements; and
+
+- third-party code, documentation, materials, models, fonts, icons, audio, or other content for which there is no lawful basis for public disclosure, copying, modification, or redistribution.
+
+2.4 Subsequent Versions and Additional Content
+
+Harken Studio may add, modify, suspend, or remove code, features, components, documentation, release materials, or related services based on product development, community contributions, changes to third-party services, or other circumstances. The applicable licenses, third-party rights, functionality, and release conditions for any new or modified content are governed by the LICENSE, NOTICE, applicable third-party license texts, release notes, and other materials accompanying the relevant version. Unless otherwise required by applicable law or an applicable open-source license, the release materials for one version do not automatically apply to another version. Nothing in this Section affects rights that users have lawfully obtained under an applicable open-source license.
+
+III. Release Entity and Download Support
+
+XD is responsible for determining Harken Studio's official releases, public repository, and official release materials, and may provide release notes and download information in accordance with its release arrangements.
+
+XD or service providers designated by XD may use official websites, object-storage services ("OSS"), CDNs, or other official download channels to upload, host, and make available for manual download or automatic update official binary programs that have been publicly released. Such download support does not change XD's status as the official release entity for the source code and corresponding runnable programs, and does not change the rights granted under the applicable open-source licenses.
+
+AK/SK credentials, upload credentials, signing private keys, and other controlled credentials used for OSS, GitHub, CDN, or other release channels are not open-source materials and should not be included in the public repository, client, installer, or update package. The specific GitHub repository or Release, OSS/CDN address, fallback conditions, update frequency, user controls, signature-verification method, and rollback policy for official downloads and automatic updates are governed by the official release page, client documentation, and Privacy Policy.
+
+IV. Open-Source and Third-Party Licenses
+
+4.1 Harken Studio Project License
+
+The Harken Studio source code and corresponding object code are released under the Apache License 2.0 stated in the repository's root LICENSE file. The specific scope and conditions of the license are governed by that license text.
+
+To the extent the Apache License 2.0 applies, you may use, copy, modify, and distribute the relevant source code and object code in accordance with that license. This Notice, the User Agreement, website terms, or other documents do not limit rights granted under the applicable open-source license.
+
+4.2 Third-Party Components
+
+Harken Studio includes or may include third-party open-source components, system components, or other third-party materials. Such components remain subject to their respective licenses, copyright notices, redistribution conditions, and other applicable terms.
+
+The versions, licenses, uses, linking arrangements, sources, and legal materials for third-party components are identified in the official repository's NOTICE, applicable component license texts, the Legal/ directory accompanying a release, and the SBOM for the relevant version. If you copy, modify, or redistribute source code or binary programs containing third-party components, you must comply with the applicable license requirements and retain any copyright notices, licenses, and NOTICE statements required by law.
+
+4.3 Release License Review
+
+XD may, based on the relevant release, conduct appropriate correspondence checks among the NOTICE, SBOM, actual build artifacts, and the Legal/ materials accompanying the release. Third-party code, proprietary components, or other protected materials without a confirmed lawful basis for redistribution will not be included as part of the relevant official release materials.
+
+Where a component is subject to specific linking, redistribution, or other license conditions, the relevant release materials are governed by the applicable license and the legal materials accompanying the release. Specific component and license information is governed by the official repository and the release materials for the relevant version.
+
+V. Correspondence and Verification of Source Code and Runnable Programs
+
+The official release page or related release materials may provide the following information to help users understand the origin and status of release materials:
+
+- the official repository address and the applicable tag, commit, or other version identifier;
+
+- the source-code version and the version of the official runnable program;
+
+- publicly available build instructions, build scripts, or build-environment requirements;
+
+- the file names, release dates, and hash values of installers, EXE files, update packages, or other binary programs;
+
+- where applicable, Windows Authenticode signature information, signing-certificate information, or other system-verification information;
+
+- the SBOM, LICENSE, NOTICE, third-party license texts, and other Legal/ materials for the relevant version; and
+
+- release notes, known issues, security fixes, upgrade, rollback, or withdrawal information.
+
+Users may use the repository version identifier, official release notes, official download channels, file hashes, client-side automatic-update verification, and applicable operating-system signature information to make a reasonable assessment of the correspondence between release materials and the integrity of files. Formal signing and uploading may be performed through controlled release systems, and XD does not undertake that users will be able to reproduce the complete signing or upload process solely from publicly available materials.
+
+VI. Trademarks, Branding, and Official Status
+
+The Apache License 2.0 and other open-source licenses grant rights in the applicable source code and object code. They do not, by themselves, grant rights to use "Harken Studio", "Harken", "XD", related logos, icons, domain names, product appearance, brand identifiers, or official endorsements.
+
+Without written permission from XD or the relevant rights holder, you may not use the foregoing trademarks or brand identifiers in a manner likely to cause confusion, or imply that your Fork, modified version, redistributed version, or service has been reviewed, released, certified, warranted, or supported by XD or the official project.
+
+If you modify the source code and distribute your own version, you should clearly and reasonably identify the modifications and the responsible party so that users are not misled into believing that it is an official version.
+
+VII. Warranty Disclaimer and Limitation of Responsibility
+
+To the extent permitted by applicable law and the relevant open-source licenses, the Harken Studio source code, runnable programs, documentation, examples, release materials, and related services are provided on an "as is" and "as available" basis. XD does not warrant that they are error-free, uninterrupted, completely secure, fully compatible, fit for any particular purpose, suitable for any particular requirement, or free from infringement of third-party rights.
+
+You should independently assess and test whether Harken Studio is suitable for your systems, projects, hardware, engines, operating systems, business scenarios, and compliance requirements, and should back up projects, audio assets, configurations, databases, code, and other important data.
+
+If XD separately provides technical support, hosted downloads, compatibility certification, enterprise services, training, commercial warranties, or other independent services, their scope, fees, and conditions are governed by the applicable rules or written agreement. Such services do not automatically form part of the open-source license.
+
+VIII. Security, Community, and Contributions
+
+If you discover a security vulnerability, exposed secret, exploitable defect, or other risk involving non-public information, please do not disclose it through a public Issue, Pull Request, Discussion, or other public channel. Instead, submit it through the channel specified in the repository's SECURITY.md.
+
+If the project accepts external contributions, contributors should comply with the then-current CONTRIBUTING, SECURITY.md., code of conduct, DCO/CLA, open-source licenses, and other project rules. XD may take automated checks, manual review, refuse to merge, modify, remove, roll back, or take other necessary governance measures in relation to submitted content based on licenses, intellectual property, third-party components, security, privacy, supply-chain considerations, community order, or project-maintenance needs.
+
+IX. Contact Information
+
+For questions regarding Harken Studio's open-source licenses, third-party components, official release materials, trademark use, download channels, security matters, infringement complaints, or other matters, please contact:
+
+- Security reports: .github/SECURITY.md in the repository
+
+- Other contact channel: harken-support@xd.com
+
+X. Miscellaneous
+
+This Notice is intended solely to describe Harken Studio's public release arrangements and does not constitute any additional warranty, agency, partnership, employment, or other legal relationship with any user.
+
+If any provision of this Notice is held invalid or unenforceable, the remaining provisions will not be affected. Updates to this Notice will be published through the official repository, website, or other reasonable channel.

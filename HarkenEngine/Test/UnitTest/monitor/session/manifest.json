@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producingPackage": "m0-4",
+  "contractVersion": 1,
+  "files": [
+    {
+      "path": "compare.expected.json",
+      "sha256": "6dede5a4ec7732e6d9a985598c4f76184ad399a347aaa3957f224f52481326d7",
+      "isProvisional": false,
+      "producingPackage": "m0-4",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "expected-view"
+    },
+    {
+      "path": "incomparable.bin",
+      "sha256": "d8bd96c66ae924e0b687458ff2c7c39c2894cbb1b324e1e0883428bcdb39a74f",
+      "isProvisional": false,
+      "producingPackage": "m0-4",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "session-file"
+    },
+    {
+      "path": "legal.bin",
+      "sha256": "90e8e62af915182ad59648a96065b9bc8ddba5e4c7472d7e38643fcc23233a62",
+      "isProvisional": false,
+      "producingPackage": "m0-4",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "session-file"
+    },
+    {
+      "path": "missing.bin",
+      "sha256": "dc84418fcd365b1126f0b76356ec0a7d0d0f9fbb9b8aaeaaf7961a7efd404f78",
+      "isProvisional": false,
+      "producingPackage": "m0-4",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "session-file"
+    },
+    {
+      "path": "nine_commits.bin",
+      "sha256": "7b3e87db4ce2fa97d6b5c64c61316d0d31cebcaf15a2bcccf8f4ef0936eb671d",
+      "isProvisional": false,
+      "producingPackage": "m0-4",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "session-file"
+    },
+    {
+      "path": "optional_crc_fail.bin",
+      "sha256": "a23d72111b4623b69034be075a5ec1f0e611d28fc1738eea2080192ede102286",
+      "isProvisional": false,
+      "producingPackage": "m0-4",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "session-file"
+    },
+    {
+      "path": "optional_unknown.bin",
+      "sha256": "d0e499b9b63a71eaa3d5aaad2e2236c6a1bcc58df40f09cc9d3744d1aa40e20b",
+      "isProvisional": false,
+      "producingPackage": "m0-4",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "session-file"
+    },
+    {
+      "path": "recovered_tail.bin",
+      "sha256": "78fd4df05acbe7c5d7aa845b8571df40bebd9e9742ea8a5c40213cf141d19a5b",
+      "isProvisional": false,
+      "producingPackage": "m0-4",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "session-file"
+    },
+    {
+      "path": "required_decode_fail.bin",
+      "sha256": "0ca04995c1296fc7f1c0699b512742d13944c1f0f03f4f6056a2c1ba0885fddc",
+      "isProvisional": false,
+      "producingPackage": "m0-4",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "session-file"
+    },
+    {
+      "path": "trailing_junk.bin",
+      "sha256": "26b9af9b00968740cbba45eb1e57268a04084f53e9e154c99d8b4615ddb0b86a",
+      "isProvisional": false,
+      "producingPackage": "m0-4",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "session-file"
+    },
+    {
+      "path": "truncated.bin",
+      "sha256": "443ff88fa218382e19254a79aa497d6aacfcb7a7d16679a7f328690af3a5fead",
+      "isProvisional": false,
+      "producingPackage": "m0-4",
+      "contractVersion": 1,
+      "formatVersion": 1,
+      "fixtureRole": "session-file"
+    }
+  ]
+}

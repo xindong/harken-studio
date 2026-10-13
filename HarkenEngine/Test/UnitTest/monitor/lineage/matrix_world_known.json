@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-2",
+  "kind": "matrix-world-known",
+  "worldAvailability": "Known",
+  "entities": ["ACTION", "QUEUE"],
+  "replaceInstanceKey": true
+}

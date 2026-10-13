@@ -1,0 +1,90 @@
+name: Compliance Audit
+
+on:
+  schedule:
+    # 09:00 Asia/Shanghai every day.
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  compliance-audit:
+    name: Full-tree compliance audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full repository tree
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - name: Run full compliance audit
+        id: compliance_audit
+        continue-on-error: true
+        env:
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+        run: >
+          python .scripts/compliance_audit.py
+          --json-out .temp/compliance/compliance-report.json
+          --markdown-out .temp/compliance/compliance-report.md
+          --fail-on high
+
+      - name: Publish GitHub compliance report
+        if: always() && hashFiles('.temp/compliance/compliance-report.json') != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SYNC_GITHUB_ISSUES: ${{ github.event_name == 'workflow_dispatch' }}
+          COMMENT_PR_REPORT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          publish_args=(
+            --report-json .temp/compliance/compliance-report.json
+            --report-markdown .temp/compliance/compliance-report.md
+            --result-out .temp/compliance/github-publish-result.json
+            --report-type compliance
+            --artifact-name compliance-audit
+            --mention-on never
+          )
+          if [[ "$SYNC_GITHUB_ISSUES" == "true" ]]; then
+            publish_args+=(--sync-issues --comment-report-feed)
+          fi
+          if [[ "$COMMENT_PR_REPORT" == "true" ]]; then
+            publish_args+=(--comment-pr "$PR_NUMBER")
+          fi
+          python .scripts/publish_report_to_github.py "${publish_args[@]}"
+
+      - name: Upload audit artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: compliance-audit
+          path: .temp/compliance/*
+          if-no-files-found: ignore
+
+      - name: Enforce compliance result
+        if: always()
+        run: |
+          failed=0
+          if [[ "${{ steps.compliance_audit.outcome }}" != "success" ]]; then
+            echo "Full compliance audit failed."
+            failed=1
+          fi
+          exit "$failed"

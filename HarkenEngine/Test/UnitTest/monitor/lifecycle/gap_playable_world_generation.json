@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-1",
+  "kind": "gap-playable-world-generation",
+  "reason": "PlayableInstanceTable and TransitionInstancePool have no worldGeneration field. ActionFiringTable and QueueInstanceTable do. M2-1 writes 0 for Playable/Transition and does not invent a world field on those tables.",
+  "entities": ["PLAYABLE", "CONTAINER", "TRANSITION"],
+  "publicWorldGenerationField": null
+}

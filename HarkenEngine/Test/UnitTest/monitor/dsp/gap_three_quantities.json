@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-6",
+  "helperVersion": 1,
+  "kind": "gap-three-quantities",
+  "reason": "VnMonitorTimeSeriesSample and VnMonitorAggregatePayload cannot encode wall span, per-thread work, and critical path without new fields. MixerLoop metrics 101-105 remain M1-5 CPU/arena series and must not be renamed."
+}

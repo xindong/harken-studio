@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-4",
+  "helperVersion": 1,
+  "kind": "gap-tri-state-params",
+  "reason": "VnMonitorStateUpsert has no parameter array. Publishing base/target/final by overloading volumeDb or other frozen scalars is forbidden."
+}

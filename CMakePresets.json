@@ -1,0 +1,393 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+
+    "configurePresets": [
+        {
+            "name": "windows-base",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": "$env{VENUS_QT_DIR}"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "windows-ninja-clang-base",
+            "hidden": true,
+            "inherits": "windows-base",
+            "generator": "Ninja Multi-Config",
+            "toolchainFile": "${sourceDir}/cmake/toolchains/windows-clang-cl.cmake"
+        },
+        {
+            "name": "windows-vs-dev",
+            "displayName": "Windows development configure with Visual Studio and MSVC",
+            "inherits": "windows-base",
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/build-vs",
+            "cacheVariables": {
+                "HARKEN_BUILD_CORE": "ON",
+                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_EDITOR": "ON",
+                "HARKEN_BUILD_HUB": "ON",
+                "HARKEN_BUILD_TOOLS": "ON",
+                "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "ON",
+                "HARKEN_BUILD_EDITOR_UNIT_TESTS": "ON",
+                "HARKEN_BUILD_RUNTIME_BENCHMARKS": "ON"
+            }
+        },
+        {
+            "name": "windows-ninja-clang-dev",
+            "displayName": "Windows development configure with Ninja and Clang-cl",
+            "inherits": "windows-ninja-clang-base",
+            "binaryDir": "${sourceDir}/build-nc",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "HARKEN_BUILD_CORE": "ON",
+                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_EDITOR": "ON",
+                "HARKEN_BUILD_HUB": "ON",
+                "HARKEN_BUILD_TOOLS": "ON",
+                "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "ON",
+                "HARKEN_BUILD_EDITOR_UNIT_TESTS": "ON",
+                "HARKEN_BUILD_RUNTIME_BENCHMARKS": "ON"
+            }
+        },
+        {
+            "name": "windows-release",
+            "displayName": "Windows release with Ninja and Clang-cl",
+            "inherits": "windows-ninja-clang-base",
+            "binaryDir": "${sourceDir}/build"
+        },
+        {
+            "name": "windows-ci-asan-ubsan",
+            "displayName": "Windows CI of Address Sanitizer & Undefined Behavior Sanitizer in Clang-cl",
+            "inherits": "windows-ninja-clang-base",
+            "binaryDir": "${sourceDir}/build-ci-au",
+            "cacheVariables": {
+                "HARKEN_BUILD_CORE": "ON",
+                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_EDITOR": "ON",
+                "HARKEN_BUILD_TOOLS": "ON",
+                "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "ON",
+                "HARKEN_BUILD_EDITOR_UNIT_TESTS": "ON",
+                "HARKEN_ENABLE_ASAN": "ON",
+                "HARKEN_ENABLE_UBSAN": "ON"
+            }
+        },
+        {
+            "name": "linux-base",
+            "hidden": true,
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": "$env{VENUS_QT_DIR}",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "linux-release",
+            "displayName": "Linux release",
+            "inherits": "linux-base",
+            "binaryDir": "${sourceDir}/build"
+        },
+        {
+            "name": "linux-ci-asan-lsan-ubsan",
+            "displayName": "Linux CI of Address Sanitizer (including Leak Sanitizer) & Undefined Behavior Sanitizer in Clang",
+            "inherits": "linux-base",
+            "binaryDir": "${sourceDir}/build-ci-alu",
+            "cacheVariables": {
+                "HARKEN_BUILD_CORE": "ON",
+                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_EDITOR": "ON",
+                "HARKEN_BUILD_TOOLS": "ON",
+                "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "ON",
+                "HARKEN_BUILD_EDITOR_UNIT_TESTS": "ON",
+                "HARKEN_ENABLE_ASAN": "ON",
+                "HARKEN_ENABLE_UBSAN": "ON"
+            }
+        },
+        {
+            "name": "linux-ci-tsan",
+            "displayName": "Linux CI of Thread Sanitizer in Clang",
+            "inherits": "linux-base",
+            "binaryDir": "${sourceDir}/build-ci-t",
+            "cacheVariables": {
+                "HARKEN_BUILD_CORE": "ON",
+                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_TOOLS": "ON",
+                "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "ON",
+                "HARKEN_ENABLE_TSAN": "ON"
+            }
+        },
+        {
+            "name": "macos-base",
+            "hidden": true,
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": "$env{VENUS_QT_DIR}",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+        {
+            "name": "macos-dev",
+            "displayName": "MacOS development configure with Ninja and Clang",
+            "inherits": "macos-base",
+            "binaryDir": "${sourceDir}/build-nc",
+            "cacheVariables": {
+                "HARKEN_BUILD_CORE": "ON",
+                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_EDITOR": "ON",
+                "HARKEN_BUILD_HUB": "ON",
+                "HARKEN_BUILD_TOOLS": "ON",
+                "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "ON",
+                "HARKEN_BUILD_EDITOR_UNIT_TESTS": "ON",
+                "HARKEN_BUILD_RUNTIME_BENCHMARKS": "ON"
+            }
+        },
+        {
+            "name": "macos-release",
+            "displayName": "MacOS release",
+            "inherits": "macos-base",
+            "binaryDir": "${sourceDir}/build"
+        },
+        {
+            "name": "macos-ci-asan-ubsan",
+            "displayName": "MacOS CI of Address Sanitizer & Undefined Behavior Sanitizer in Clang",
+            "inherits": "macos-base",
+            "binaryDir": "${sourceDir}/build-ci-au",
+            "cacheVariables": {
+                "HARKEN_BUILD_CORE": "ON",
+                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_EDITOR": "ON",
+                "HARKEN_BUILD_TOOLS": "ON",
+                "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "ON",
+                "HARKEN_BUILD_EDITOR_UNIT_TESTS": "ON",
+                "HARKEN_ENABLE_ASAN": "ON",
+                "HARKEN_ENABLE_UBSAN": "ON"
+            }
+        },
+        {
+            "name": "macos-ci-tsan",
+            "displayName": "MacOS CI of Thread Sanitizer in Clang",
+            "inherits": "macos-base",
+            "binaryDir": "${sourceDir}/build-ci-t",
+            "cacheVariables": {
+                "HARKEN_BUILD_CORE": "ON",
+                "HARKEN_BUILD_SHARED": "ON",
+                "HARKEN_BUILD_TOOLS": "ON",
+                "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "ON",
+                "HARKEN_ENABLE_TSAN": "ON"
+            }
+        }
+    ],
+
+    "buildPresets": [
+        {
+            "name": "windows-build-base",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "linux-build-base",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "macos-build-base",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+
+        {
+            "name": "windows-release",
+            "inherits": "windows-build-base",
+            "configurePreset": "windows-release",
+            "configuration": "Release"
+        },
+        {
+            "name": "windows-ci-asan-ubsan",
+            "inherits": "windows-build-base",
+            "configurePreset": "windows-ci-asan-ubsan",
+            "configuration": "RelWithDebInfo"
+        },
+
+        {
+            "name": "linux-release",
+            "inherits": "linux-build-base",
+            "configurePreset": "linux-release",
+            "configuration": "Release"
+        },
+        {
+            "name": "linux-ci-asan-lsan-ubsan",
+            "inherits": "linux-build-base",
+            "configurePreset": "linux-ci-asan-lsan-ubsan",
+            "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "linux-ci-tsan",
+            "inherits": "linux-build-base",
+            "configurePreset": "linux-ci-tsan",
+            "configuration": "RelWithDebInfo"
+        },
+
+        {
+            "name": "macos-release",
+            "inherits": "macos-build-base",
+            "configurePreset": "macos-release",
+            "configuration": "Release"
+        },
+        {
+            "name": "macos-ci-asan-ubsan",
+            "inherits": "macos-build-base",
+            "configurePreset": "macos-ci-asan-ubsan",
+            "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "macos-ci-tsan",
+            "inherits": "macos-build-base",
+            "configurePreset": "macos-ci-tsan",
+            "configuration": "RelWithDebInfo"
+        }
+    ],
+
+    "testPresets": [
+        {
+            "name": "ci-base",
+            "hidden": true,
+            "configuration": "RelWithDebInfo",
+            "output": {
+                "outputOnFailure": true,
+                "shortProgress": true
+            },
+            "execution": {
+                "noTestsAction": "error",
+                "stopOnFailure": false,
+                "timeout": 600
+            }
+        },
+        {
+            "name": "ci-asan-ubsan-env",
+            "hidden": true,
+            "environment": {
+                "ASAN_OPTIONS": "abort_on_error=1:halt_on_error=1:detect_leaks=0",
+                "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+            }
+        },
+        {
+            "name": "ci-tsan-env",
+            "hidden": true,
+            "environment": {
+                "TSAN_OPTIONS": "halt_on_error=1:second_deadlock_stack=1:history_size=7"
+            }
+        },
+        {
+            "name": "windows-test-base",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "linux-test-base",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "macos-test-base",
+            "hidden": true,
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Darwin"
+            }
+        },
+
+        {
+            "name": "windows-vs-dev",
+            "inherits": "windows-test-base",
+            "configurePreset": "windows-vs-dev",
+            "configuration": "Debug",
+            "output": { "outputOnFailure": true }
+        },
+        {
+            "name": "windows-ninja-clang-dev",
+            "inherits": "windows-test-base",
+            "configurePreset": "windows-ninja-clang-dev",
+            "configuration": "Debug",
+            "output": { "outputOnFailure": true }
+        },
+
+        {
+            "name": "windows-ci-asan-ubsan",
+            "inherits": ["windows-test-base", "ci-base", "ci-asan-ubsan-env"],
+            "configurePreset": "windows-ci-asan-ubsan"
+        },
+
+        {
+            "name": "linux-ci-asan-lsan-ubsan",
+            "inherits": ["linux-test-base", "ci-base"],
+            "configurePreset": "linux-ci-asan-lsan-ubsan",
+            "environment": {
+                "ASAN_OPTIONS": "abort_on_error=1:halt_on_error=1:detect_leaks=1",
+                "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+            }
+        },
+        {
+            "name": "linux-ci-tsan",
+            "inherits": ["linux-test-base", "ci-base", "ci-tsan-env"],
+            "configurePreset": "linux-ci-tsan"
+        },
+
+        {
+            "name": "macos-dev",
+            "inherits": "macos-test-base",
+            "configurePreset": "macos-dev",
+            "configuration": "Debug",
+            "output": { "outputOnFailure": true }
+        },
+
+        {
+            "name": "macos-ci-asan-ubsan",
+            "inherits": ["macos-test-base", "ci-base", "ci-asan-ubsan-env"],
+            "configurePreset": "macos-ci-asan-ubsan"
+        },
+        {
+            "name": "macos-ci-tsan",
+            "inherits": ["macos-test-base", "ci-base", "ci-tsan-env"],
+            "configurePreset": "macos-ci-tsan"
+        }
+    ]
+}

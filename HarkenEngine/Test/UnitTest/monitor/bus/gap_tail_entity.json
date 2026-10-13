@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-5",
+  "helperVersion": 1,
+  "kind": "gap-tail-entity",
+  "reason": "Public entity kinds have no TAIL. One-shot release is an EFFECT tombstone on EffectInstanceRef.generation, not a pollable Tail object."
+}

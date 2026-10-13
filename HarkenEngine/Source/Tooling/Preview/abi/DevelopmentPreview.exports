@@ -1,0 +1,54 @@
+; The development preview surface's declared entry names, and the tokens that
+; must never reach a gameplay product.
+;
+; Source: HarkenEngine/Source/Tooling/Preview/include/harken_preview/PreviewAbi.h
+; Check:  py -3 HarkenEngine/Source/Tooling/Preview/abi/check_preview_isolation.py
+;
+; Why a manifest for a static library. Nothing links this file: harken_preview is
+; a static library, so no linker needs an export list. What needs one is the
+; review. The gameplay export allowlist (HarkenEngine/Source/Runtime/api/abi/
+; HarkenCore.def) and the C# binding under HarkenSDK/Unity/Harken/Runtime/Generated/ are both
+; emitted from the engine's own public declarations, and those generators never
+; read the preview header -- so the isolation holds structurally, with no filter
+; to configure and none to forget. That is a good property and a silent one: it
+; is invisible in a diff, and it would be lost the moment a preview entry were
+; declared in the public header instead, with every existing check still green.
+;
+; This file makes it stateable from the preview side. EXPORTS is the surface's
+; own entry set, kept in step with the header in both directions: an entry the
+; header declares and this file omits fails the check, and so does the reverse.
+; ISOLATED-TOKENS is what the check then looks for in the gameplay products and
+; in the two inputs they are generated from, so a preview name appearing in the
+; public header or the wire table is a red check at the moment it appears --
+; before anyone regenerates anything.
+
+EXPORTS
+    VnPreview_CancelProject
+    VnPreview_CapturePlaybackPaths
+    VnPreview_CommitProject
+    VnPreview_DrainProjectAcks
+    VnPreview_HasAction
+    VnPreview_HasPlayableConsumers
+    VnPreview_PlayPlayable
+    VnPreview_PlayVoiceRaw
+    VnPreview_PrepareProject
+    VnPreview_PrepareProjectV2
+    VnPreview_PrepareProjectV3
+    VnPreview_ProjectIsOpen
+    VnPreview_PumpNullMixer
+    VnPreview_QueryOwnerRevision
+    VnPreview_QueryPlayable
+    VnPreview_RefreshVoiceBindings
+    VnPreview_RegisterPcm
+    VnPreview_ResetPlayable
+    VnPreview_SetVoiceProperty
+    VnPreview_StopPlayable
+
+; The identifier prefixes and the capability name this surface owns. A token
+; here appearing anywhere in a gameplay product, or in a generator input, means
+; the surface has crossed into the production face.
+ISOLATED-TOKENS
+    VnPreview
+    VN_PREVIEW_
+    HARKEN_PREVIEW_CAPABILITY
+    development-preview

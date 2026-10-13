@@ -1,0 +1,286 @@
+name: PR Gate Studio
+
+# Editor gate: checks Studio local QSS ownership, compiles HarkenEditor on
+# Windows + macOS and runs the editor unit tests on Windows (offscreen Qt).
+# Also triggered by engine changes —
+# the editor links harken_core through the runtime bridge. Not a required
+# status check (path-filtered workflows must not be).
+
+on:
+  pull_request:
+    paths:
+      - 'HarkenStudio/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+  workflow_dispatch:
+
+concurrency:
+  group: pr-gate-studio-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: '6.8.3'
+  # BuildInfo build type is inferred from GITHUB_ACTIONS; gate builds use dev.
+  HARKEN_BUILD_CHANNEL: dev
+
+jobs:
+  studio-windows:
+    name: studio-windows
+    runs-on: [self-hosted, windows, venus-win]
+    timeout-minutes: 90
+
+    steps:
+      # clean:false — the self-hosted workspace is persistent, and the default
+      # clean runs `git clean -ffdx`, whose -x deletes the gitignored
+      # build-studio/ tree. Without this every run is a cold build and
+      # self-hosting buys nothing but the core count.
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          clean: false
+
+      # Runs before the toolchain setup so an ownership violation fails in
+      # seconds instead of after a full Qt install and build.
+      - name: Local QSS ownership gate
+        shell: bash
+        run: |
+          python .scripts/tests/test_studio_local_qss_gate.py
+          python .scripts/studio_local_qss_gate.py
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+
+      # The runner machine already has the Qt kit VENUS_QT_DIR points at, so this
+      # gate uses it instead of install-qt-action. That action's cache key embeds
+      # the install path, so each runner keeps its own 325 MB entry and pulls it
+      # over the public internet -- 262s on a runner meeting this gate for the
+      # first time, about half the job. The version assertion is what keeps
+      # QT_VERSION meaningful here: without it, upgrading the kit on the machine
+      # would silently build this gate against a different Qt than studio-macos.
+      - name: Use machine Qt ${{ env.QT_VERSION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${VENUS_QT_DIR:-}" ]; then
+            echo "::error::VENUS_QT_DIR is not set on this runner"
+            exit 1
+          fi
+          found=$("$VENUS_QT_DIR/bin/qmake.exe" -query QT_VERSION)
+          echo "VENUS_QT_DIR=$VENUS_QT_DIR (Qt $found)"
+          if [ "$found" != "${QT_VERSION}" ]; then
+            echo "::error::runner has Qt $found, this gate expects Qt ${QT_VERSION}"
+            exit 1
+          fi
+          echo "$VENUS_QT_DIR/bin" >> "$GITHUB_PATH"
+
+      # Hosted-runner fallback, kept for a quick way back: flip runs-on above to
+      # windows-latest and swap the step above for these two.
+      #
+      # - name: Install Qt ${{ env.QT_VERSION }}
+      #   uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4
+      #   with:
+      #     version: ${{ env.QT_VERSION }}
+      #     host: windows
+      #     target: desktop
+      #     arch: win64_msvc2022_64
+      #     cache: true
+      #     cache-key-prefix: qt-${{ env.QT_VERSION }}-windows
+      #
+      # - name: Export VENUS_QT_DIR
+      #   shell: bash
+      #   run: echo "VENUS_QT_DIR=$QT_ROOT_DIR" >> $GITHUB_ENV
+
+      - name: Configure (windows-release, editor tests)
+        run: >-
+          cmake --fresh --preset windows-release -B build-studio
+          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_EDITOR=ON
+          -DHARKEN_BUILD_TOOLS=ON
+          -DHARKEN_BUILD_EDITOR_UNIT_TESTS=ON
+          -DHARKEN_BUILD_RUNTIME_BENCHMARKS=OFF
+
+      # No --parallel: bare --parallel means ninja's own default (cores + 2) and
+      # takes precedence over CMAKE_BUILD_PARALLEL_LEVEL, which each runner's
+      # .env sets so three concurrent jobs share the machine instead of each
+      # claiming all of it.
+      - name: Build Studio and all registered editor test targets
+        shell: bash
+        run: |
+          for target in harken_editor harken_editor_ci_tests; do
+            cmake --build build-studio --config Release --target "$target"
+          done
+
+      - name: Run editor test groups (offscreen Qt)
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+          HARKEN_TEST_MODE: ${{ github.event_name == 'pull_request' && 'pr' || 'full' }}
+        run: >-
+          python .scripts/run_test_groups.py
+          --build-dir build-studio/HarkenStudio/Test --config Release --product editor
+          --mode "$HARKEN_TEST_MODE" --exclude-label harken-daily --budget-seconds 900
+          --output-dir .temp/ci-studio-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: studio-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .temp/ci-studio-${{ github.run_id }}-${{ github.run_attempt }}/
+          include-hidden-files: true
+          retention-days: 14
+
+  studio-macos:
+    name: studio-macos-${{ matrix.slug }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            slug: x64
+            runner: macos-26-intel
+          - arch: arm64
+            slug: arm64
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install macOS build deps
+        run: brew install ninja
+
+      - name: Install Qt ${{ env.QT_VERSION }}
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: mac
+          target: desktop
+          arch: clang_64
+          cache: true
+          cache-key-prefix: qt-${{ env.QT_VERSION }}-mac-${{ matrix.slug }}
+
+      - name: Patch macOS Qt AGL linkage
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${QT_ROOT_DIR:-}" ] && [ -d "$QT_ROOT_DIR" ]; then
+            python3 <<'PY'
+          from pathlib import Path
+          import os
+          import re
+
+          root = Path(os.environ["QT_ROOT_DIR"])
+          patterns = [
+              (re.compile(r'"\$<LINK_LIBRARY:FRAMEWORK,AGL>"'), '""'),
+              (re.compile(r"'\$<LINK_LIBRARY:FRAMEWORK,AGL>'"), "''"),
+              (re.compile(r'\$<LINK_LIBRARY:FRAMEWORK,AGL>'), ''),
+              (re.compile(r'SHELL:-framework\s+AGL'), ''),
+              (re.compile(r'LINKER:-framework,AGL'), ''),
+              (re.compile(r'-Xlinker\s+-framework\s+-Xlinker\s+AGL'), ''),
+              (re.compile(r'"-framework\s+AGL"'), '""'),
+              (re.compile(r"'-framework\s+AGL'"), "''"),
+              (re.compile(r'\s*-framework\s+AGL'), ''),
+              (re.compile(r'"-framework"\s*,\s*"AGL"'), ''),
+              (re.compile(r'"-framework"\s+"AGL"'), ''),
+              (re.compile(r';?-framework;?AGL'), ''),
+              (re.compile(r';?AGL(?=;|\s|$)'), ''),
+              (re.compile(r'AGL\.framework'), ''),
+          ]
+          suffixes = {'.cmake', '.prl', '.pc', '.pri'}
+          patched = []
+          for path in root.rglob('*'):
+              if not path.is_file() or path.suffix not in suffixes:
+                  continue
+              try:
+                  text = path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  text = path.read_text(encoding='utf-8', errors='ignore')
+              if 'AGL' not in text:
+                  continue
+              new_text = text
+              for regex, replacement in patterns:
+                  new_text = regex.sub(replacement, new_text)
+              if new_text != text:
+                  path.write_text(new_text, encoding='utf-8')
+                  patched.append(str(path))
+          print(f"Patched {len(patched)} Qt metadata files containing AGL")
+          for item in patched:
+              print(item)
+          PY
+          fi
+
+      - name: Export VENUS_QT_DIR
+        shell: bash
+        run: echo "VENUS_QT_DIR=$QT_ROOT_DIR" >> $GITHUB_ENV
+
+      - name: Configure (macos-release, ${{ matrix.arch }})
+        run: >-
+          cmake --fresh --preset macos-release
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_EDITOR=ON
+          -DHARKEN_BUILD_TOOLS=ON
+
+      - name: Patch generated macOS AGL linkage
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("build")
+          patterns = [
+              (re.compile(r'"\$<LINK_LIBRARY:FRAMEWORK,AGL>"'), '""'),
+              (re.compile(r"'\$<LINK_LIBRARY:FRAMEWORK,AGL>'"), "''"),
+              (re.compile(r'\$<LINK_LIBRARY:FRAMEWORK,AGL>'), ''),
+              (re.compile(r'SHELL:-framework\s+AGL'), ''),
+              (re.compile(r'LINKER:-framework,AGL'), ''),
+              (re.compile(r'-Xlinker\s+-framework\s+-Xlinker\s+AGL'), ''),
+              (re.compile(r'"-framework\s+AGL"'), '""'),
+              (re.compile(r"'-framework\s+AGL'"), "''"),
+              (re.compile(r'\s*-framework\s+AGL'), ''),
+              (re.compile(r'"-framework"\s*,\s*"AGL"'), ''),
+              (re.compile(r'"-framework"\s+"AGL"'), ''),
+              (re.compile(r';?-framework;?AGL'), ''),
+              (re.compile(r';?AGL(?=;|\s|$)'), ''),
+              (re.compile(r'AGL\.framework'), ''),
+          ]
+          names = {"build.ninja", "rules.ninja", "link.txt"}
+          suffixes = {".cmake", ".ninja", ".rsp", ".txt"}
+          patched = []
+          for path in root.rglob("*"):
+              if not path.is_file() or (path.name not in names and path.suffix not in suffixes):
+                  continue
+              try:
+                  text = path.read_text(encoding="utf-8")
+              except UnicodeDecodeError:
+                  text = path.read_text(encoding="utf-8", errors="ignore")
+              if "AGL" not in text:
+                  continue
+              new_text = text
+              for regex, replacement in patterns:
+                  new_text = regex.sub(replacement, new_text)
+              if new_text != text:
+                  path.write_text(new_text, encoding="utf-8")
+                  patched.append(str(path))
+          print(f"Patched {len(patched)} generated build files containing AGL")
+          for item in patched:
+              print(item)
+          PY
+
+      - name: Build (harken_editor)
+        run: cmake --build --preset macos-release --target harken_editor --parallel

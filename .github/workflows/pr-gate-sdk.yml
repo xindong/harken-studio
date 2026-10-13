@@ -1,0 +1,169 @@
+name: PR Gate SDK
+
+# Not a required status check (path-filtered workflows must not be).
+
+on:
+  pull_request:
+    paths:
+      - 'HarkenSDK/**'
+      - 'HarkenEngine/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+  workflow_dispatch:
+
+concurrency:
+  group: pr-gate-sdk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # BuildInfo build type is inferred from GITHUB_ACTIONS; gate builds use dev.
+  HARKEN_BUILD_CHANNEL: dev
+
+jobs:
+  sdk-windows:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    name: sdk-windows
+    runs-on: [self-hosted, windows, venus-win]
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # clean:false — the self-hosted workspace is persistent, and the default
+      # clean runs `git clean -ffdx`, whose -x deletes the gitignored
+      # build-sdk-runtime-clang/ tree. Without this every run is a cold build and
+      # self-hosting buys nothing but the core count.
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          clean: false
+
+      - name: Check SDK source contracts before compilation
+        run: |
+          python .scripts/check_sdk_version.py
+          python .scripts/check_unity_sdk_contract.py
+          python .scripts/tests/test_check_unity_sdk_contract.py -v
+          python .scripts/check_unreal_sdk_contract.py
+          python HarkenEngine/Source/Tooling/Binding/gen_binding.py --check
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+
+      - name: Configure Core libraries and Pack tests (windows-release)
+        run: >-
+          cmake --fresh --preset windows-release -B build-sdk-runtime-clang
+          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_TOOLS=ON
+          -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
+
+      # No --parallel: bare --parallel means ninja's own default (cores + 2) and
+      # takes precedence over CMAKE_BUILD_PARALLEL_LEVEL, which each runner's
+      # .env sets so three concurrent jobs share the machine instead of each
+      # claiming all of it.
+      - name: Build Core shared library and Pack tests
+        run: cmake --build build-sdk-runtime-clang --config Release --target harken_core_shared harken_pack_schema_tests
+
+      - name: Run Pack native fixture check
+        timeout-minutes: 3
+        run: >-
+          ctest --test-dir build-sdk-runtime-clang/HarkenEngine/Test -C Release
+          --no-tests=error --output-on-failure --timeout 120
+          -R '^PackSchema[.]PackFoundationQualification[.]CatalogMayExceedResidentWindow$'
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Run contract gates against native library (Pack bootstrap and zero-GC hot path)
+        timeout-minutes: 5
+        env:
+          HARKEN_NATIVE_DIR: ${{ github.workspace }}/build-sdk-runtime-clang/bin/Release
+        run: >-
+          dotnet run --project HarkenSDK/Test/ContractTest --configuration Release --
+          --require-native --pack-root .temp/f3-catalog-resident-window
+
+  sdk-macos:
+    name: sdk-macos-${{ matrix.slug }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            slug: x64
+            runner: macos-26-intel
+          - arch: arm64
+            slug: arm64
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Check SDK version identity
+        run: python3 .scripts/check_sdk_version.py
+
+      - name: Check Unity SDK source contract
+        run: python3 .scripts/check_unity_sdk_contract.py
+
+      - name: Test Unity SDK source contract
+        run: python3 .scripts/tests/test_check_unity_sdk_contract.py -v
+
+      - name: Check Unreal native contract
+        run: python3 .scripts/check_unreal_sdk_contract.py
+
+      - name: Check generated binding drift
+        run: python3 HarkenEngine/Source/Tooling/Binding/gen_binding.py --check
+
+      - name: Install macOS build deps
+        run: brew install ninja
+
+      - name: Configure Core libraries and Pack tests (macos-release, ${{ matrix.arch }})
+        run: >-
+          cmake --fresh --preset macos-release -B build-sdk-runtime-clang
+          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_TOOLS=ON
+          -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
+
+      - name: Build Core shared library and Pack tests
+        run: cmake --build build-sdk-runtime-clang --config Release --target harken_core_shared harken_pack_schema_tests
+
+      - name: Run Pack native fixture check
+        timeout-minutes: 3
+        run: >-
+          ctest --test-dir build-sdk-runtime-clang/HarkenEngine/Test -C Release
+          --no-tests=error --output-on-failure --timeout 120
+          -R '^PackSchema[.]PackFoundationQualification[.]CatalogMayExceedResidentWindow$'
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Run contract gates against native library (Pack bootstrap and zero-GC hot path)
+        timeout-minutes: 5
+        env:
+          HARKEN_NATIVE_DIR: ${{ github.workspace }}/build-sdk-runtime-clang/bin/Release
+        run: >-
+          dotnet run --project HarkenSDK/Test/ContractTest --configuration Release --
+          --require-native --pack-root .temp/f3-catalog-resident-window

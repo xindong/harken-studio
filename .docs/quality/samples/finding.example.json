@@ -1,0 +1,13 @@
+{
+  "fingerprint": "DEP-001|CMakeLists.txt|googletest archive",
+  "title": "FetchContent 下载缺少 URL_HASH",
+  "category": "supply-chain",
+  "severity": "medium",
+  "file": "CMakeLists.txt",
+  "line": 353,
+  "evidence": "googletest release archive",
+  "recommendation": "为下载归档补充 URL_HASH SHA256。",
+  "source": "compliance:DEP-001",
+  "report_type": "compliance",
+  "commit_sha": "abcdef123456"
+}

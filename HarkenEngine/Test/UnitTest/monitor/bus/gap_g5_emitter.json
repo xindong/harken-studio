@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-5",
+  "helperVersion": 1,
+  "kind": "gap-g5-emitter",
+  "gapId": "G5",
+  "reason": "Emitter registry is Unsupported. It does not enter the Bus tree."
+}

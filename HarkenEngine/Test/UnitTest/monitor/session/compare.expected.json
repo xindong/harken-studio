@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "producingPackage": "m0-4",
+  "isProvisional": false,
+  "contractVerified": true,
+  "compare": {
+    "legal_vs_legal": "VN_MONITOR_COMPARE_COMPARABLE",
+    "legal_vs_incomparable": "VN_MONITOR_COMPARE_INCOMPARABLE",
+    "legal_vs_missing": "VN_MONITOR_COMPARE_MISSING_DATA",
+    "legal_vs_optional": "VN_MONITOR_COMPARE_PARTIALLY_COMPARABLE",
+    "legal_vs_trailing": "VN_MONITOR_COMPARE_MISSING_DATA",
+    "legal_vs_recovered": "VN_MONITOR_COMPARE_PARTIALLY_COMPARABLE",
+    "legal_vs_nine": "VN_MONITOR_COMPARE_COMPARABLE",
+    "legal_vs_optional_crc": "VN_MONITOR_COMPARE_PARTIALLY_COMPARABLE"
+  }
+}

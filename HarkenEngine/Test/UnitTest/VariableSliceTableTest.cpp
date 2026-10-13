@@ -1,0 +1,415 @@
+#include "Common/TestUtil.h"
+#include "harken/core/VariableSliceTable.h"
+
+#include <gtest/gtest.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+
+namespace {
+
+struct ApplyProbe {
+    bool valid = true;
+    std::uint32_t validationCount = 0;
+    std::uint32_t applyCount = 0;
+    std::uint16_t lastOpcode = 0;
+};
+
+struct ClaimInvalidationProbe {
+    harken::VariableSliceTable* table = nullptr;
+    harken::VariableSliceInvalidationResult result =
+        harken::VariableSliceInvalidationResult::InvalidReference;
+    std::uint32_t callCount = 0;
+};
+
+void InvalidateAfterAudioClaim(void* context,
+                               harken::VariableSliceRef ref) noexcept {
+    ClaimInvalidationProbe& probe =
+        *static_cast<ClaimInvalidationProbe*>(context);
+    ++probe.callCount;
+    probe.result = probe.table->Invalidate(ref, 1u);
+}
+
+bool ValidateTarget(void* context,
+                    const harken::VariableSliceTarget&) noexcept {
+    ApplyProbe& probe = *static_cast<ApplyProbe*>(context);
+    ++probe.validationCount;
+    return probe.valid;
+}
+
+void ApplyCommand(void* context,
+                  const harken::VariableSliceTarget& target) noexcept {
+    ApplyProbe& probe = *static_cast<ApplyProbe*>(context);
+    ++probe.applyCount;
+    probe.lastOpcode = target.command.opcode;
+}
+
+harken::VariableSliceTarget MakeTarget(std::uint32_t id) {
+    harken::VariableSliceTarget target{};
+    target.locator.targetId = id;
+    target.targetRevision = id + 1;
+    target.command.opcode = static_cast<std::uint16_t>(id + 10);
+    return target;
+}
+
+bool ReserveTargets(harken::VariableSliceTable& table,
+                    std::uint32_t targetCount, std::uint64_t ticket,
+                    harken::VariableSliceRef* out) {
+    return table.Reserve(1, 1, ticket, ticket * 64, ticket, targetCount, out);
+}
+
+void FillTargets(harken::VariableSliceTable& table,
+                 harken::VariableSliceRef ref, std::uint32_t count) {
+    for (std::uint32_t i = 0; i < count; ++i) {
+        ASSERT_TRUE(table.AddTarget(ref, MakeTarget(i)));
+    }
+}
+
+void PublishAndApply(harken::VariableSliceTable& table,
+                     harken::VariableSliceRef ref,
+                     std::uint64_t blockSequence) {
+    ASSERT_TRUE(table.Publish(ref));
+    ApplyProbe probe{};
+    ASSERT_TRUE(table.Apply(ref, blockSequence, &probe, ValidateTarget,
+                            ApplyCommand));
+}
+
+TEST(VariableSliceTable, ResetAllowsDisabledTargetsAndRejectsHardLimits) {
+    harken::VariableSliceTable table;
+    EXPECT_FALSE(table.Reset(0, 1, 1));
+    EXPECT_FALSE(table.Reset(harken::kVariableSliceRowHardLimit + 1, 1, 1));
+    EXPECT_FALSE(table.Reset(1, harken::kVariableSliceTargetHardLimit + 1, 1));
+    EXPECT_FALSE(
+        table.Reset(1, 1, harken::kVariableSliceTargetPoolHardLimit + 1));
+    EXPECT_EQ(0u, table.Capacity());
+    ASSERT_TRUE(table.Reset(1, 0, 0));
+    EXPECT_EQ(0u, table.MaxTargetsPerSlice());
+    EXPECT_EQ(0u, table.TargetPoolCapacity());
+    EXPECT_EQ(0u, table.FreeTargetCapacity());
+    harken::VariableSliceRef disabled{};
+    EXPECT_FALSE(ReserveTargets(table, 1, 1, &disabled));
+    EXPECT_FALSE(disabled.Valid());
+    ASSERT_TRUE(table.Reset(1, 0, 1));
+    EXPECT_FALSE(ReserveTargets(table, 1, 2, &disabled));
+    ASSERT_TRUE(table.Reset(1, 1, 0));
+    EXPECT_FALSE(ReserveTargets(table, 1, 3, &disabled));
+    EXPECT_TRUE(table.Reset(1, harken::kVariableSliceTargetHardLimit, 1));
+    EXPECT_TRUE(
+        table.Reset(1, 1, harken::kVariableSliceTargetPoolHardLimit));
+    EXPECT_TRUE(table.Reset(1, harken::kVariableSliceTargetHardLimit,
+                            harken::kVariableSliceTargetPoolHardLimit));
+}
+
+TEST(VariableSliceTable, EngineUsesTheInternalDefaultSharedPool) {
+    harkentest::EngineSession session(
+        harkentest::MakeNullConfig(1, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    ASSERT_NE(nullptr, session.Engine());
+    EXPECT_EQ(harken::kMaxVariableSliceTargetsTotalDefault,
+              session.Engine()->variableSlices.TargetPoolCapacity());
+    EXPECT_EQ(harken::kMaxPropertiesPerCurrentSliceDefault,
+              session.Engine()->variableSlices.MaxTargetsPerSlice());
+    EXPECT_GE(session.Engine()->mixer.CurrentSliceScratchCapacityForTest(),
+              static_cast<std::size_t>(
+                  session.Engine()->config.maxEventsPerQuantum) *
+                  2u);
+}
+
+TEST(VariableSliceTable, EngineAllowsAnExplicitDisabledInternalProfile) {
+    harken::EngineConfig config{};
+    config.maxPropertiesPerCurrentSlice = 0;
+    config.maxVariableSliceTargetsTotal = 0;
+    const std::unique_ptr<harken::Engine> engine =
+        std::make_unique<harken::Engine>(config);
+    EXPECT_EQ(0u, engine->variableSlices.MaxTargetsPerSlice());
+    EXPECT_EQ(0u, engine->variableSlices.TargetPoolCapacity());
+
+    harken::VariableSliceRef ref{};
+    EXPECT_FALSE(engine->variableSlices.Reserve(1, 1, 1, 64, 1, 0, &ref));
+    EXPECT_FALSE(ref.Valid());
+}
+
+TEST(VariableSliceTable, WorldQueryTracksPhysicalRowsAndIgnoresQuarantine) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(2, 1, 2));
+    harken::VariableSliceRef prepared{};
+    ASSERT_TRUE(table.Reserve(41, 1, 1, 64, 1, 1, &prepared));
+    EXPECT_TRUE(table.HasUnreclaimedWorldRows(41));
+    EXPECT_FALSE(table.HasUnreclaimedWorldRows(42));
+    ASSERT_TRUE(table.AbandonPrepared(prepared));
+    EXPECT_FALSE(table.HasUnreclaimedWorldRows(41));
+
+    harken::VariableSliceRef applied{};
+    ASSERT_TRUE(table.Reserve(42, 1, 2, 128, 2, 1, &applied));
+    FillTargets(table, applied, 1);
+    PublishAndApply(table, applied, 9);
+    EXPECT_TRUE(table.HasUnreclaimedWorldRows(42));
+    EXPECT_FALSE(table.Reclaim(applied, 9));
+    EXPECT_TRUE(table.HasUnreclaimedWorldRows(42));
+    EXPECT_TRUE(table.Reclaim(applied, 10));
+    EXPECT_FALSE(table.HasUnreclaimedWorldRows(42));
+
+    ASSERT_TRUE(table.SetFreeRowGenerationForTest(0, UINT32_MAX));
+    harken::VariableSliceRef quarantined{};
+    ASSERT_TRUE(table.Reserve(43, 1, 3, 192, 3, 1, &quarantined));
+    FillTargets(table, quarantined, 1);
+    PublishAndApply(table, quarantined, 11);
+    EXPECT_FALSE(table.Reclaim(quarantined, 12));
+    EXPECT_EQ(harken::VariableSliceState::Quarantined,
+              table.State(quarantined));
+    EXPECT_FALSE(table.HasUnreclaimedWorldRows(43));
+}
+
+TEST(VariableSliceTable, AggregatePoolStopsAtExactCapacityWithoutSideEffects) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(4, 100, 100));
+    EXPECT_EQ(100u, table.FreeTargetCapacity());
+
+    harken::VariableSliceRef first{};
+    ASSERT_TRUE(ReserveTargets(table, 95, 1, &first));
+    EXPECT_EQ(5u, table.FreeTargetCapacity());
+
+    harken::VariableSliceRef second{};
+    ASSERT_TRUE(ReserveTargets(table, 5, 2, &second));
+    EXPECT_EQ(0u, table.FreeTargetCapacity());
+    const std::uint32_t rowsBefore = table.FreeRowCount();
+    const std::size_t rangesBefore = table.FreeRangeCount();
+
+    harken::VariableSliceRef refused{};
+    EXPECT_FALSE(ReserveTargets(table, 1, 3, &refused));
+    EXPECT_FALSE(refused.Valid());
+    EXPECT_EQ(0u, table.FreeTargetCapacity());
+    EXPECT_EQ(rowsBefore, table.FreeRowCount());
+    EXPECT_EQ(rangesBefore, table.FreeRangeCount());
+    EXPECT_EQ(harken::VariableSliceState::Prepared, table.State(first));
+    EXPECT_EQ(harken::VariableSliceState::Prepared, table.State(second));
+
+    EXPECT_TRUE(table.AbandonPrepared(first));
+    EXPECT_TRUE(table.AbandonPrepared(second));
+    EXPECT_EQ(100u, table.FreeTargetCapacity());
+    EXPECT_EQ(1u, table.FreeRangeCount());
+}
+
+TEST(VariableSliceTable, RowShortageDoesNotConsumeAnAvailableSpan) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(1, 1, 2));
+    harken::VariableSliceRef first{};
+    ASSERT_TRUE(ReserveTargets(table, 1, 1, &first));
+    ASSERT_EQ(1u, table.FreeTargetCapacity());
+
+    harken::VariableSliceRef refused{};
+    EXPECT_FALSE(ReserveTargets(table, 1, 2, &refused));
+    EXPECT_FALSE(refused.Valid());
+    EXPECT_EQ(1u, table.FreeTargetCapacity());
+    EXPECT_EQ(0u, table.FreeRowCount());
+    EXPECT_EQ(1u, table.FreeRangeCount());
+}
+
+TEST(VariableSliceTable, FragmentationBackpressuresUntilAdjacentRangesMerge) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(4, 6, 12));
+    harken::VariableSliceRef first{};
+    harken::VariableSliceRef middle{};
+    harken::VariableSliceRef last{};
+    ASSERT_TRUE(ReserveTargets(table, 4, 1, &first));
+    ASSERT_TRUE(ReserveTargets(table, 4, 2, &middle));
+    ASSERT_TRUE(ReserveTargets(table, 4, 3, &last));
+    ASSERT_TRUE(table.AbandonPrepared(first));
+    ASSERT_TRUE(table.AbandonPrepared(last));
+    ASSERT_EQ(8u, table.FreeTargetCapacity());
+    ASSERT_EQ(2u, table.FreeRangeCount());
+
+    const std::uint32_t rowsBefore = table.FreeRowCount();
+    harken::VariableSliceRef fragmented{};
+    EXPECT_FALSE(ReserveTargets(table, 6, 4, &fragmented));
+    EXPECT_FALSE(fragmented.Valid());
+    EXPECT_EQ(8u, table.FreeTargetCapacity());
+    EXPECT_EQ(rowsBefore, table.FreeRowCount());
+    EXPECT_EQ(2u, table.FreeRangeCount());
+
+    ASSERT_TRUE(table.AbandonPrepared(middle));
+    ASSERT_EQ(12u, table.FreeTargetCapacity());
+    ASSERT_EQ(1u, table.FreeRangeCount());
+    EXPECT_TRUE(ReserveTargets(table, 6, 5, &fragmented));
+    EXPECT_EQ(6u, table.FreeTargetCapacity());
+}
+
+TEST(VariableSliceTable, PublishRequiresExactFillAndAddNeverCrossesTheSpan) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(1, 3, 3));
+    const std::uint32_t rowsBefore = table.FreeRowCount();
+    const std::uint32_t targetsBefore = table.FreeTargetCapacity();
+    harken::VariableSliceRef refused{};
+    EXPECT_FALSE(ReserveTargets(table, 0, 1, &refused));
+    EXPECT_FALSE(ReserveTargets(table, 4, 1, &refused));
+    EXPECT_EQ(rowsBefore, table.FreeRowCount());
+    EXPECT_EQ(targetsBefore, table.FreeTargetCapacity());
+
+    harken::VariableSliceRef ref{};
+    ASSERT_TRUE(ReserveTargets(table, 3, 2, &ref));
+    ASSERT_TRUE(table.AddTarget(ref, MakeTarget(0)));
+    ASSERT_TRUE(table.AddTarget(ref, MakeTarget(1)));
+    EXPECT_FALSE(table.Publish(ref));
+    ASSERT_TRUE(table.AddTarget(ref, MakeTarget(2)));
+    EXPECT_FALSE(table.AddTarget(ref, MakeTarget(3)));
+    EXPECT_EQ(3u, table.TargetCount(ref));
+    ASSERT_TRUE(table.Publish(ref));
+    EXPECT_EQ(nullptr, table.Target(ref, 0));
+    const harken::VariableSliceTable& immutable = table;
+    EXPECT_NE(nullptr, immutable.Target(ref, 0));
+    EXPECT_EQ(nullptr, immutable.Target(ref, 3));
+}
+
+TEST(VariableSliceTable, AppliedFenceRequiresStrictlyLaterObservation) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(1, 1, 1));
+    harken::VariableSliceRef ref{};
+    ASSERT_TRUE(ReserveTargets(table, 1, 1, &ref));
+    FillTargets(table, ref, 1);
+    PublishAndApply(table, ref, 10);
+    EXPECT_EQ(10u, table.AppliedBlockSequence(ref));
+    EXPECT_FALSE(table.Reclaim(ref, 10));
+    EXPECT_EQ(harken::VariableSliceState::SliceApplied, table.State(ref));
+    EXPECT_TRUE(table.Reclaim(ref, 11));
+    EXPECT_EQ(1u, table.FreeTargetCapacity());
+}
+
+TEST(VariableSliceTable, ValidationFailureUsesTheSameStrictTombstoneFence) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(1, 1, 1));
+    harken::VariableSliceRef ref{};
+    ASSERT_TRUE(ReserveTargets(table, 1, 1, &ref));
+    FillTargets(table, ref, 1);
+    ASSERT_TRUE(table.Publish(ref));
+    ApplyProbe probe{};
+    probe.valid = false;
+    EXPECT_FALSE(table.Apply(ref, 20, &probe, ValidateTarget, ApplyCommand));
+    EXPECT_EQ(1u, probe.validationCount);
+    EXPECT_EQ(0u, probe.applyCount);
+    EXPECT_EQ(20u, table.AppliedBlockSequence(ref));
+    EXPECT_EQ(harken::VariableSliceState::Invalidated, table.State(ref));
+    EXPECT_FALSE(table.Reclaim(ref, 20));
+    EXPECT_TRUE(table.Reclaim(ref, 21));
+}
+
+TEST(VariableSliceTable, InvalidatedPageWaitsForAudioTombstoneAck) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(1, 1, 1));
+    harken::VariableSliceRef ref{};
+    ASSERT_TRUE(ReserveTargets(table, 1, 1, &ref));
+    FillTargets(table, ref, 1);
+    ASSERT_TRUE(table.Publish(ref));
+    ASSERT_EQ(harken::VariableSliceInvalidationResult::InvalidatedBeforeClaim,
+              table.Invalidate(ref, 1));
+    EXPECT_EQ(harken::VariableSliceInvalidationResult::AlreadyInvalidated,
+              table.Invalidate(ref, 2));
+    EXPECT_EQ(harken::VariableSliceState::Invalidated, table.State(ref));
+    EXPECT_EQ(0u, table.AppliedBlockSequence(ref));
+    EXPECT_FALSE(table.Reclaim(ref, UINT64_MAX));
+
+    ApplyProbe probe{};
+    EXPECT_FALSE(table.Apply(ref, 30, &probe, ValidateTarget, ApplyCommand));
+    EXPECT_EQ(0u, probe.validationCount);
+    EXPECT_EQ(0u, probe.applyCount);
+    EXPECT_EQ(30u, table.AppliedBlockSequence(ref));
+    EXPECT_FALSE(table.Reclaim(ref, 30));
+    EXPECT_TRUE(table.Reclaim(ref, 31));
+}
+
+TEST(VariableSliceTable, InvalidationAfterAudioClaimAppliesTheWholeSlice) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(1, 2, 2));
+    harken::VariableSliceRef ref{};
+    ASSERT_TRUE(ReserveTargets(table, 2, 1, &ref));
+    FillTargets(table, ref, 2);
+    ASSERT_TRUE(table.Publish(ref));
+
+    ClaimInvalidationProbe invalidation{&table};
+    table.SetAfterAudioClaimHookForTest(InvalidateAfterAudioClaim,
+                                        &invalidation);
+    ApplyProbe apply{};
+    ASSERT_TRUE(table.Apply(ref, 40, &apply, ValidateTarget, ApplyCommand));
+    table.SetAfterAudioClaimHookForTest(nullptr, nullptr);
+
+    EXPECT_EQ(1u, invalidation.callCount);
+    EXPECT_EQ(harken::VariableSliceInvalidationResult::AudioClaimedApplyWhole,
+              invalidation.result);
+    EXPECT_EQ(2u, apply.validationCount);
+    EXPECT_EQ(2u, apply.applyCount);
+    EXPECT_EQ(harken::VariableSliceState::SliceApplied, table.State(ref));
+    EXPECT_EQ(harken::VariableSliceInvalidationResult::AlreadyApplied,
+              table.Invalidate(ref, 2u));
+    EXPECT_FALSE(table.Reclaim(ref, 40));
+    EXPECT_TRUE(table.Reclaim(ref, 41));
+}
+
+TEST(VariableSliceTable, StaleReferenceCannotReachAReusedSpan) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(1, 1, 1));
+    harken::VariableSliceRef stale{};
+    ASSERT_TRUE(ReserveTargets(table, 1, 1, &stale));
+    FillTargets(table, stale, 1);
+    PublishAndApply(table, stale, 5);
+    ASSERT_TRUE(table.Reclaim(stale, 6));
+
+    harken::VariableSliceRef current{};
+    ASSERT_TRUE(ReserveTargets(table, 1, 2, &current));
+    ASSERT_EQ(stale.slot, current.slot);
+    ASSERT_NE(stale.generation, current.generation);
+    FillTargets(table, current, 1);
+    EXPECT_EQ(nullptr, table.Target(stale, 0));
+    const harken::VariableSliceTable& immutable = table;
+    EXPECT_EQ(nullptr, immutable.Target(stale, 0));
+    EXPECT_NE(nullptr, immutable.Target(current, 0));
+}
+
+TEST(VariableSliceTable, MaximumGenerationQuarantinesAndPinsItsSpan) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(2, 2, 2));
+    ASSERT_TRUE(table.SetFreeRowGenerationForTest(0, UINT32_MAX));
+    harken::VariableSliceRef pinned{};
+    ASSERT_TRUE(ReserveTargets(table, 1, 1, &pinned));
+    ASSERT_EQ(UINT32_MAX, pinned.generation);
+    FillTargets(table, pinned, 1);
+    PublishAndApply(table, pinned, 7);
+    EXPECT_FALSE(table.Reclaim(pinned, 8));
+    EXPECT_EQ(harken::VariableSliceState::Quarantined, table.State(pinned));
+    EXPECT_EQ(1u, table.FreeTargetCapacity());
+    EXPECT_EQ(1u, table.FreeRowCount());
+
+    harken::VariableSliceRef tooWide{};
+    EXPECT_FALSE(ReserveTargets(table, 2, 2, &tooWide));
+    harken::VariableSliceRef remaining{};
+    ASSERT_TRUE(ReserveTargets(table, 1, 3, &remaining));
+    EXPECT_TRUE(table.AbandonPrepared(remaining));
+    EXPECT_EQ(1u, table.FreeTargetCapacity());
+    EXPECT_EQ(harken::VariableSliceState::Quarantined, table.State(pinned));
+}
+
+TEST(VariableSliceTable, AudioApplyDoesNotMutatePoolOrFreeRangeState) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(2, 2, 4));
+    harken::VariableSliceRef ref{};
+    ASSERT_TRUE(ReserveTargets(table, 2, 1, &ref));
+    FillTargets(table, ref, 2);
+    ASSERT_TRUE(table.Publish(ref));
+    const harken::VariableSliceTable& immutable = table;
+    const harken::VariableSliceTarget* firstBefore = immutable.Target(ref, 0);
+    ASSERT_NE(nullptr, firstBefore);
+    const std::uint32_t freeTargetsBefore = table.FreeTargetCapacity();
+    const std::uint32_t freeRowsBefore = table.FreeRowCount();
+    const std::size_t freeRangesBefore = table.FreeRangeCount();
+
+    ApplyProbe probe{};
+    ASSERT_TRUE(table.Apply(ref, 9, &probe, ValidateTarget, ApplyCommand));
+    EXPECT_EQ(2u, probe.validationCount);
+    EXPECT_EQ(2u, probe.applyCount);
+    EXPECT_EQ(11u, probe.lastOpcode);
+    EXPECT_EQ(freeTargetsBefore, table.FreeTargetCapacity());
+    EXPECT_EQ(freeRowsBefore, table.FreeRowCount());
+    EXPECT_EQ(freeRangesBefore, table.FreeRangeCount());
+    EXPECT_EQ(firstBefore, immutable.Target(ref, 0));
+}
+
+} // namespace

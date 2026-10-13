@@ -1,0 +1,28 @@
+# ─── Python ───
+__pycache__/
+*.pyc
+.venv/
+
+# ─── Temporary cache and local Secrets ───
+.temp/
+.env
+.local/
+
+# ─── Build Artifacts ───
+build*/
+CMakeUserPresets.json
+
+# ─── IDE / Editor ───
+.vs/
+.vscode/
+.cursor/
+.opencode/
+.codex/
+
+# ─── Claude Code local ───
+.claude/
+CLAUDE.local.md
+
+# ─── Codex local ───
+.agents/
+AGENTS.override.md

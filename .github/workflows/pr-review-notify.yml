@@ -1,0 +1,242 @@
+name: Review Request Notify
+
+on:
+  pull_request_target:
+    types: [review_requested]
+  workflow_dispatch:
+    inputs:
+      reviewer:
+        description: GitHub reviewer login to resolve and notify
+        required: true
+        type: choice
+        options:
+          - Probus-XD
+          - liuxin2-sys
+          - zqm-web
+        default: Probus-XD
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  FEISHU_OPEN_BASE_URL: https://open.feishu.cn/open-apis
+
+jobs:
+  notify:
+    name: Send review card
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Resolve reviewer and send card
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          REVIEWER_LOGIN: ${{ github.event.requested_reviewer.login || inputs.reviewer }}
+          REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          response_file=$(mktemp)
+          codeowners_file=$(mktemp)
+          changed_files_file=$(mktemp)
+          trap 'rm -f "$response_file" "$codeowners_file" "$changed_files_file"' EXIT
+
+          reviewer_email() {
+            case "$1" in
+              Probus-XD)
+                printf '%s' 'huangdengyun@xd.com'
+                ;;
+              liuxin2-sys)
+                printf '%s' 'liuxin2@xd.com'
+                ;;
+              zqm-web)
+                printf '%s' 'zqm@xd.com'
+                ;;
+              *)
+                return 1
+                ;;
+            esac
+          }
+
+          if ! email=$(reviewer_email "$REVIEWER_LOGIN"); then
+            echo "Unsupported reviewer login: ${REVIEWER_LOGIN}"
+            exit 0
+          fi
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            pr_number="manual"
+            pr_title="Review notification test"
+            pr_author="$GITHUB_ACTOR"
+            pr_url="${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
+            sha_summary="manual"
+            scope_summary="手动测试，无关联 PR"
+          else
+            pr_number=$(jq -er '.pull_request.number' "$GITHUB_EVENT_PATH")
+            pr_title=$(jq -er '.pull_request.title' "$GITHUB_EVENT_PATH")
+            pr_author=$(jq -er '.pull_request.user.login' "$GITHUB_EVENT_PATH")
+            pr_url=$(jq -er '.pull_request.html_url' "$GITHUB_EVENT_PATH")
+            head_sha=$(jq -er '.pull_request.head.sha' "$GITHUB_EVENT_PATH")
+            base_sha=$(jq -er '.pull_request.base.sha' "$GITHUB_EVENT_PATH")
+            sha_summary="${head_sha:0:7}"
+
+            gh api \
+              --header 'Accept: application/vnd.github+json' \
+              "repos/${REPOSITORY}/contents/.github/CODEOWNERS?ref=${base_sha}" \
+              --jq '.content' | base64 --decode > "$codeowners_file"
+            gh api \
+              --paginate \
+              --header 'Accept: application/vnd.github+json' \
+              "repos/${REPOSITORY}/pulls/${pr_number}/files?per_page=100" \
+              --jq '.[].filename' > "$changed_files_file"
+
+            CODEOWNERS_PATH="$codeowners_file" \
+            CHANGED_FILES_PATH="$changed_files_file" \
+            REVIEWER_LOGIN="$REVIEWER_LOGIN" \
+            python - <<'PY' > "$response_file"
+          import fnmatch
+          import json
+          import os
+
+          codeowners_path = os.environ["CODEOWNERS_PATH"]
+          changed_files_path = os.environ["CHANGED_FILES_PATH"]
+          reviewer = os.environ["REVIEWER_LOGIN"]
+          changed_files = [line.strip().removeprefix("./") for line in open(changed_files_path, encoding="utf-8") if line.strip()]
+
+          rules = []
+          for line_number, raw_line in enumerate(open(codeowners_path, encoding="utf-8"), 1):
+              line = raw_line.split("#", 1)[0].strip()
+              if not line:
+                  continue
+              fields = line.split()
+              if len(fields) < 2:
+                  continue
+              rules.append((line_number, fields[0], fields[1:]))
+
+          def matches(pattern, path):
+              anchored = pattern.startswith("/")
+              pattern = pattern.lstrip("/")
+              if pattern == "*":
+                  return not anchored or "/" not in path
+              if pattern.endswith("/"):
+                  return path.startswith(pattern)
+              if "/" not in pattern:
+                  if anchored and "/" in path:
+                      return False
+                  target = path if anchored else path.rsplit("/", 1)[-1]
+                  return fnmatch.fnmatchcase(target, pattern)
+              return fnmatch.fnmatchcase(path, pattern)
+
+          scopes = {}
+          for path in changed_files:
+              matched = None
+              for line_number, pattern, owners in rules:
+                  if matches(pattern, path):
+                      matched = (line_number, pattern, owners)
+              if matched is None:
+                  continue
+              line_number, pattern, owners = matched
+              if f"@{reviewer}" not in owners:
+                  continue
+              key = f"{pattern}\t{line_number}"
+              scopes.setdefault(key, {"pattern": pattern, "line": line_number, "count": 0})
+              scopes[key]["count"] += 1
+
+          print(json.dumps(sorted(scopes.values(), key=lambda entry: (entry["line"], entry["pattern"])), ensure_ascii=False))
+          PY
+            scope_summary=$(jq -r \
+              'if length == 0 then "未匹配到 CODEOWNERS 审核区域" else map("• " + .pattern + " — " + (.count | tostring) + " 个文件") | join("\n") end' \
+              "$response_file")
+          fi
+
+          if [[ -z "$FEISHU_APP_ID" || -z "$FEISHU_APP_SECRET" ]]; then
+            echo "FEISHU_APP_ID and FEISHU_APP_SECRET must be configured as repository secrets." >&2
+            exit 1
+          fi
+
+          token_http=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+            --max-time 15 \
+            --header 'Content-Type: application/json' \
+            --data "$(jq -cn --arg app_id "$FEISHU_APP_ID" --arg app_secret "$FEISHU_APP_SECRET" \
+              '{app_id: $app_id, app_secret: $app_secret}')" \
+            "${FEISHU_OPEN_BASE_URL}/auth/v3/tenant_access_token/internal") || token_http="000"
+
+          if [[ "$token_http" != "200" ]]; then
+            token_msg=$(jq -r '.msg // "unknown Feishu authentication error"' "$response_file" 2>/dev/null || true)
+            echo "Feishu authentication failed: HTTP ${token_http}; ${token_msg}" >&2
+            exit 1
+          fi
+
+          tenant_access_token=$(jq -er '.tenant_access_token // empty' "$response_file") || {
+            echo "Feishu authentication response did not contain a tenant access token." >&2
+            exit 1
+          }
+
+          user_http=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+            --max-time 15 \
+            --request POST \
+            --header "Authorization: Bearer ${tenant_access_token}" \
+            --header 'Content-Type: application/json' \
+            --data "$(jq -cn --arg email "$email" '{emails: [$email]}')" \
+            "${FEISHU_OPEN_BASE_URL}/contact/v3/users/batch_get_id?user_id_type=open_id") || user_http="000"
+
+          if [[ "$user_http" != "200" ]]; then
+            user_msg=$(jq -r '.msg // "unknown Feishu user lookup error"' "$response_file" 2>/dev/null || true)
+            echo "Feishu reviewer lookup failed for ${REVIEWER_LOGIN}: HTTP ${user_http}; ${user_msg}" >&2
+            exit 1
+          fi
+
+          reviewer_open_id=$(jq -er '.data.user_list[0].user_id // empty' "$response_file") || {
+            echo "No Feishu user was found for reviewer ${REVIEWER_LOGIN}." >&2
+            exit 1
+          }
+
+          card_content=$(jq -cn \
+            --arg repository "$REPOSITORY" \
+            --arg number "$pr_number" \
+            --arg title "$pr_title" \
+            --arg author "$pr_author" \
+            --arg sha "$sha_summary" \
+            --arg scope "$scope_summary" \
+            --arg url "$pr_url" \
+            '{
+              config: {wide_screen_mode: true},
+              header: {
+                template: "blue",
+                title: {tag: "plain_text", content: "请求代码审核"}
+              },
+              elements: [
+                {tag: "div", text: {tag: "lark_md", content: ("**仓库**：" + $repository + "\n**PR**：#" + $number + " " + $title + "\n**提交者**：" + $author + "\n**提交**：" + $sha + "\n\n**以下区域需你审核**：\n" + $scope)}},
+                {tag: "action", actions: [{tag: "button", text: {tag: "plain_text", content: "打开 Pull Request"}, type: "primary", url: $url}]}
+              ]
+            }')
+
+          message_http=$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+            --max-time 15 \
+            --request POST \
+            --header "Authorization: Bearer ${tenant_access_token}" \
+            --header 'Content-Type: application/json' \
+            --data "$(jq -cn \
+              --arg receive_id "$reviewer_open_id" \
+              --arg content "$card_content" \
+              '{receive_id: $receive_id, msg_type: "interactive", content: $content}')" \
+            "${FEISHU_OPEN_BASE_URL}/im/v1/messages?receive_id_type=open_id") || message_http="000"
+
+          if [[ "$message_http" != "200" ]]; then
+            message_msg=$(jq -r '.msg // "unknown Feishu message error"' "$response_file" 2>/dev/null || true)
+            echo "Feishu review card delivery failed for ${REVIEWER_LOGIN}: HTTP ${message_http}; ${message_msg}" >&2
+            exit 1
+          fi
+
+          if ! jq -e '.code == 0' "$response_file" >/dev/null; then
+            message_msg=$(jq -r '.msg // "unknown Feishu message error"' "$response_file" 2>/dev/null || true)
+            echo "Feishu review card delivery failed for ${REVIEWER_LOGIN}: ${message_msg}" >&2
+            exit 1
+          fi
+
+          echo "Feishu review card sent to ${REVIEWER_LOGIN}."

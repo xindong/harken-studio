@@ -1,0 +1,49 @@
+name: Release Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: 'Products to build and package'
+        type: choice
+        default: all
+        options:
+          - all
+          - hub
+          - studio
+      build-channel:
+        description: 'Product build channel'
+        type: choice
+        default: stable
+        options:
+          - stable
+          - beta
+          - dev
+          - nightly
+
+concurrency:
+  group: release-artifacts-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  studio:
+    name: harken-studio
+    if: inputs.targets == 'all' || inputs.targets == 'studio'
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/studio-artifact.yml
+    with:
+      build-channel: ${{ inputs.build-channel }}
+
+  hub:
+    name: harken-hub
+    if: inputs.targets == 'all' || inputs.targets == 'hub'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/hub-artifact.yml
+    with:
+      build-channel: ${{ inputs.build-channel }}

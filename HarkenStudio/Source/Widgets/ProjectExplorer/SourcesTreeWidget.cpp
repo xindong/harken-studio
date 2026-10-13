@@ -1,0 +1,452 @@
+#include "SourcesTreeWidget.h"
+
+#include "Core/AssetPipeline/AssetRegistry.h"
+#include "Core/AssetPipeline/AudioImportGate.h"
+#include "Core/AssetPipeline/ImportAssetsCommand.h"
+#include "Core/AssetPipeline/SourceFileSystem.h"
+#include "Core/ThemeManager.h"
+#include "Core/QtControlSkin.h"
+#include "Core/ShortcutManager.h"
+#include "Core/ToastManager.h"
+#include "Widgets/Shared/RefIdMime.h"
+#include "Widgets/Shared/TreeRowStyle.h"
+#include "Widgets/Shared/InlineRenameEdit.h"
+
+#include <QDesktopServices>
+#include <QDir>
+#include <QDrag>
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QKeyEvent>
+#include <QMenu>
+#include <QMimeData>
+#include <QPainter>
+#include <QTimer>
+#include <QTreeWidgetItemIterator>
+#include <QUrl>
+
+namespace VNX {
+namespace {
+
+constexpr auto kSourcePathsMime = "application/x-harken-source-paths";
+
+QStringList sourcePaths(const QMimeData* mime)
+{
+    if (!mime || !mime->hasFormat(QLatin1String(kSourcePathsMime)))
+        return {};
+    const auto object = QJsonDocument::fromJson(mime->data(QLatin1String(kSourcePathsMime))).object();
+    if (object.value(QStringLiteral("projectRoot")).toString() != AssetRegistry::instance().projectRoot())
+        return {};
+    QStringList paths;
+    for (const auto& value : object.value(QStringLiteral("paths")).toArray()) {
+        const QString path = value.toString();
+        if (path.isEmpty() || SourceFileSystem::absolutePath(path).isEmpty())
+            return {};
+        paths.append(path);
+    }
+    return paths;
+}
+
+}
+
+SourcesTreeWidget::SourcesTreeWidget(QWidget* parent)
+    : TreeExpansionWidget(parent)
+{
+    auto* delegate = new TreeRowStyle::ItemRowDelegate(this);
+    delegate->setRenameEditorFactory([this](QWidget* parent, const QModelIndex& index) {
+        const QString path = index.data(kSourcePathRole).toString();
+        const QString original = QFileInfo(path).fileName();
+        auto* editor = new InlineRenameEdit(original,
+            [this, path, original](const QString& name, bool commit) {
+                QString error;
+                if (!SourceFileSystem::validateRename(path, name, &error)) return error;
+                if (commit && name != original) {
+                    QString renamedName;
+                    if (SourceFileSystem::rename(path, name, &error, &renamedName)) {
+                        const int slash = path.lastIndexOf(QLatin1Char('/'));
+                        selectPath((slash < 0 ? QString() : path.left(slash + 1)) + renamedName);
+                    }
+                }
+                return error;
+            }, parent);
+        return editor;
+    });
+    setItemDelegate(delegate);
+    setEditTriggers(QAbstractItemView::EditKeyPressed);
+    setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(this, &QWidget::customContextMenuRequested, this, [this](const QPoint& position) {
+        showContextMenu(itemAt(position), viewport()->mapToGlobal(position));
+    });
+    ShortcutManager::instance().bindWidgetAction(Shortcuts::Delete, this,
+        [this]() { deleteCurrentFolder(); }, Qt::WidgetWithChildrenShortcut);
+    expandTimer_ = new QTimer(this);
+    expandTimer_->setSingleShot(true);
+    expandTimer_->setInterval(600);
+    connect(expandTimer_, &QTimer::timeout, this, [this]() {
+        if (dropFolder_.isValid())
+            expand(dropFolder_);
+    });
+}
+
+QMimeData* SourcesTreeWidget::mimeData(const QList<QTreeWidgetItem*>& items) const
+{
+    auto* mime = new QMimeData;
+    QList<uint32_t> ids;
+    QList<QUrl> urls;
+    QJsonArray paths;
+    for (auto* item : items) {
+        if (!item)
+            continue;
+        bool ancestorSelected = false;
+        for (auto* parent = item->parent(); parent; parent = parent->parent())
+            ancestorSelected |= items.contains(parent);
+        if (ancestorSelected) continue;
+        const uint32_t id = item->data(0, kSourceIdRole).toUInt();
+        if (id != 0)
+            ids.append(id);
+        const QString path = item->data(0, kSourcePathRole).toString();
+        const QString absolute = SourceFileSystem::absolutePath(path);
+        if (!path.isEmpty() && !absolute.isEmpty()) {
+            paths.append(path);
+            if (QFileInfo::exists(absolute))
+                urls.append(QUrl::fromLocalFile(absolute));
+        }
+    }
+    RefIdMime::write(mime, RefDomain::AudioAsset, ids);
+    if (!urls.isEmpty())
+        mime->setUrls(urls);
+    if (!paths.isEmpty())
+        mime->setData(QLatin1String(kSourcePathsMime), QJsonDocument(QJsonObject{
+            {QStringLiteral("projectRoot"), AssetRegistry::instance().projectRoot()},
+            {QStringLiteral("paths"), paths}}).toJson(QJsonDocument::Compact));
+    return mime;
+}
+
+void SourcesTreeWidget::startDrag(Qt::DropActions)
+{
+    const auto items = selectedItems();
+    if (items.isEmpty())
+        return;
+    QDrag drag(this);
+    drag.setMimeData(mimeData(items));
+    drag.setPixmap(items.first()->icon(0).pixmap(iconSize()));
+    drag.exec(Qt::CopyAction | Qt::MoveAction, Qt::CopyAction);
+}
+
+QString SourcesTreeWidget::folderForItem(QTreeWidgetItem* item) const
+{
+    if (!item)
+        return {};
+    if (item->data(0, kSourceFolderRole).toBool())
+        return item->data(0, kSourcePathRole).toString();
+    return folderForItem(item->parent());
+}
+
+QString SourcesTreeWidget::currentFolder() const
+{
+    return folderForItem(currentItem());
+}
+
+bool SourcesTreeWidget::importDroppedAudio(const QMimeData* mimeData, const QString& folder)
+{
+    if (SourceFileSystem::absolutePath({}).isEmpty()
+        || RefIdMime::has(mimeData, RefDomain::AudioAsset))
+        return false;
+    const QStringList files = AudioImportGate::extractAudioFiles(mimeData);
+    if (files.isEmpty()) {
+        showError(tr("No supported audio files were found in the dropped files or folders."));
+        return false;
+    }
+    auto* command = ImportAssetsCommand::pushImportSources(files, folder);
+    if (command->failCount() > 0)
+        showError(tr("%1 audio file(s) could not be imported. See the log for details.")
+            .arg(command->failCount()));
+    return command->successCount() > 0;
+}
+
+bool SourcesTreeWidget::moveDroppedSources(const QMimeData* mime, const QString& folder)
+{
+    const QStringList paths = sourcePaths(mime);
+    if (paths.isEmpty())
+        return false;
+    QString error;
+    const bool moved = SourceFileSystem::move(paths, folder, &error);
+    if (moved) {
+        clearSelection();
+        setCurrentItem(nullptr);
+        for (const QString& path : paths) {
+            const QString destination = folder.isEmpty() ? QFileInfo(path).fileName()
+                : folder + QLatin1Char('/') + QFileInfo(path).fileName();
+            for (QTreeWidgetItemIterator it(this); *it; ++it) {
+                if ((*it)->data(0, kSourcePathRole).toString() == destination) {
+                    for (auto* parent = (*it)->parent(); parent; parent = parent->parent())
+                        parent->setExpanded(true);
+                    (*it)->setSelected(true);
+                    setCurrentItem(*it, 0, QItemSelectionModel::NoUpdate);
+                    break;
+                }
+            }
+        }
+        if (currentItem())
+            scrollToItem(currentItem());
+    }
+    showError(error);
+    return moved;
+}
+
+bool SourcesTreeWidget::acceptsMime(const QMimeData* mime) const
+{
+    if (!mime || SourceFileSystem::absolutePath({}).isEmpty())
+        return false;
+    if (mime->hasFormat(QLatin1String(kSourcePathsMime)))
+        return !sourcePaths(mime).isEmpty();
+    if (RefIdMime::has(mime, RefDomain::AudioAsset))
+        return false;
+    if (AudioImportGate::mimeHasAudio(mime))
+        return true;
+    for (const auto& url : mime->urls())
+        if (url.isLocalFile() && QFileInfo(url.toLocalFile()).isDir())
+            return true;
+    return false;
+}
+
+Qt::DropAction SourcesTreeWidget::dropActionFor(const QMimeData* mime, const QString& folder) const
+{
+    if (!acceptsMime(mime))
+        return Qt::IgnoreAction;
+    if (mime->hasFormat(QLatin1String(kSourcePathsMime)))
+        return SourceFileSystem::canMove(sourcePaths(mime), folder) ? Qt::MoveAction : Qt::IgnoreAction;
+    return Qt::CopyAction;
+}
+
+void SourcesTreeWidget::setRootDropTarget(QWidget* target)
+{
+    rootDropTarget_ = target;
+    target->setAcceptDrops(true);
+    target->installEventFilter(this);
+}
+
+bool SourcesTreeWidget::eventFilter(QObject* watched, QEvent* event)
+{
+    if (watched != rootDropTarget_)
+        return QTreeWidget::eventFilter(watched, event);
+    if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove) {
+        auto* drag = static_cast<QDragMoveEvent*>(event);
+        const Qt::DropAction action = dropActionFor(drag->mimeData(), {});
+        if (action == Qt::IgnoreAction) {
+            drag->ignore();
+        } else {
+            drag->setDropAction(action);
+            drag->accept();
+        }
+        QtControlSkin::setSemanticProperty(rootDropTarget_, "sourceDropTarget", drag->isAccepted());
+        return true;
+    }
+    if (event->type() == QEvent::DragLeave) {
+        clearDropHighlight();
+        event->accept();
+        return true;
+    }
+    if (event->type() == QEvent::Drop) {
+        performDrop(static_cast<QDropEvent*>(event), {});
+        return true;
+    }
+    return QTreeWidget::eventFilter(watched, event);
+}
+
+void SourcesTreeWidget::clearDropHighlight()
+{
+    dropFolder_ = QPersistentModelIndex();
+    expandTimer_->stop();
+    if (rootDropTarget_)
+        QtControlSkin::setSemanticProperty(rootDropTarget_, "sourceDropTarget", false);
+    viewport()->update();
+}
+
+void SourcesTreeWidget::dragEnterEvent(QDragEnterEvent* event)
+{
+    if (!acceptsMime(event->mimeData())) {
+        event->ignore();
+        return;
+    }
+    event->setDropAction(event->mimeData()->hasFormat(QLatin1String(kSourcePathsMime))
+        ? Qt::MoveAction : Qt::CopyAction);
+    event->accept();
+}
+
+void SourcesTreeWidget::dragMoveEvent(QDragMoveEvent* event)
+{
+    auto* target = itemAt(event->position().toPoint());
+    if (target && !target->data(0, kSourceFolderRole).toBool())
+        target = target->parent();
+    const QString folder = folderForItem(target);
+    const Qt::DropAction action = dropActionFor(event->mimeData(), folder);
+    if (action == Qt::IgnoreAction) {
+        clearDropHighlight();
+        event->ignore();
+        return;
+    }
+    const QPersistentModelIndex index(indexFromItem(target));
+    if (index != dropFolder_) {
+        dropFolder_ = index;
+        expandTimer_->start();
+        viewport()->update();
+    }
+    if (rootDropTarget_)
+        QtControlSkin::setSemanticProperty(rootDropTarget_, "sourceDropTarget", !target);
+    event->setDropAction(action);
+    event->accept();
+}
+
+void SourcesTreeWidget::dragLeaveEvent(QDragLeaveEvent* event)
+{
+    clearDropHighlight();
+    QTreeWidget::dragLeaveEvent(event);
+}
+
+void SourcesTreeWidget::dropEvent(QDropEvent* event)
+{
+    performDrop(event, folderForItem(itemAt(event->position().toPoint())));
+}
+
+void SourcesTreeWidget::performDrop(QDropEvent* event, const QString& folder)
+{
+    clearDropHighlight();
+    const Qt::DropAction action = dropActionFor(event->mimeData(), folder);
+    if (action == Qt::IgnoreAction
+        || !(action == Qt::MoveAction ? moveDroppedSources(event->mimeData(), folder)
+                                     : importDroppedAudio(event->mimeData(), folder))) {
+        event->ignore();
+        return;
+    }
+    event->setDropAction(action);
+    event->accept();
+    emit contentRevealRequested();
+}
+
+void SourcesTreeWidget::drawBranches(QPainter* painter, const QRect& rect, const QModelIndex& index) const
+{
+    TreeRowStyle::paintBranches(painter, rect, index, model(), indentation(), isExpanded(index),
+                               rootIsDecorated());
+}
+
+void SourcesTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& options,
+                              const QModelIndex& index) const
+{
+    QTreeWidget::drawRow(painter, options, index);
+    if (selectionModel()->isSelected(index))
+        TreeRowStyle::paintRowAccent(painter, options.rect);
+    if (index == dropFolder_) {
+        painter->save();
+        painter->fillRect(options.rect, ThemeManager::instance().colors().dropHighlight);
+        painter->fillRect(QRect(options.rect.left(), options.rect.top(), 3, options.rect.height()),
+                          ThemeManager::instance().colors().dropAccent);
+        painter->restore();
+    }
+}
+
+void SourcesTreeWidget::showError(const QString& message)
+{
+    if (!message.isEmpty())
+        ToastManager::instance().showToast(message, 5000, ToastType::Error);
+}
+
+void SourcesTreeWidget::selectPath(const QString& path)
+{
+    for (QTreeWidgetItemIterator it(this); *it; ++it) {
+        if ((*it)->data(0, kSourcePathRole).toString() == path) {
+            setCurrentItem(*it);
+            scrollToItem(*it);
+            return;
+        }
+    }
+}
+
+void SourcesTreeWidget::newFolder()
+{
+    const QString parent = currentFolder();
+    const QString absolute = SourceFileSystem::absolutePath(parent);
+    if (absolute.isEmpty())
+        return;
+    QString error;
+    QString name;
+    if (SourceFileSystem::createFolder(parent, QStringLiteral("New Folder"), &error, &name)) {
+        selectPath(parent.isEmpty() ? name : parent + QLatin1Char('/') + name);
+        emit contentRevealRequested();
+    }
+    showError(error);
+}
+
+void SourcesTreeWidget::renameCurrent()
+{
+    if (currentItem()) editItem(currentItem(), 0);
+}
+
+void SourcesTreeWidget::deleteCurrentFolder()
+{
+    if (!currentItem() || !currentItem()->data(0, kSourceFolderRole).toBool())
+        return;
+    QString error;
+    SourceFileSystem::removeEmptyFolder(currentItem()->data(0, kSourcePathRole).toString(), &error);
+    showError(error);
+}
+
+void SourcesTreeWidget::keyPressEvent(QKeyEvent* event)
+{
+    if (event->key() == Qt::Key_F2) {
+        renameCurrent();
+        event->accept();
+    } else {
+        QTreeWidget::keyPressEvent(event);
+    }
+}
+
+void SourcesTreeWidget::showRootContextMenu(const QPoint& globalPosition)
+{
+    showContextMenu(nullptr, globalPosition);
+}
+
+void SourcesTreeWidget::showContextMenu(QTreeWidgetItem* item, const QPoint& globalPosition)
+{
+    if (item && !item->isSelected())
+        setCurrentItem(item);
+    else if (!item) {
+        clearSelection();
+        setCurrentItem(nullptr);
+    }
+    QMenu menu(this);
+    menu.addAction(tr("New Folder"), this, &SourcesTreeWidget::newFolder)
+        ->setEnabled(!SourceFileSystem::absolutePath({}).isEmpty());
+    if (item) {
+        menu.addAction(tr("Rename"), this, &SourcesTreeWidget::renameCurrent);
+        if (item->data(0, kSourceFolderRole).toBool()) {
+            const QString absolute = SourceFileSystem::absolutePath(item->data(0, kSourcePathRole).toString());
+            menu.addAction(tr("Delete Folder"), this, &SourcesTreeWidget::deleteCurrentFolder)
+                ->setEnabled(!absolute.isEmpty() && QDir(absolute).isEmpty());
+        }
+        menu.addAction(tr("Move to Sources Root"), this, [this]() {
+            QStringList paths;
+            for (auto* selected : selectedItems())
+                paths.append(selected->data(0, kSourcePathRole).toString());
+            QString error;
+            SourceFileSystem::move(paths, {}, &error);
+            showError(error);
+        });
+    }
+    menu.addSeparator();
+    menu.addAction(tr("Expand All"), this, &QTreeWidget::expandAll);
+    menu.addAction(tr("Collapse All"), this, &QTreeWidget::collapseAll);
+    menu.addAction(tr("Open Containing Folder"), this, [this]() {
+        const QString path = SourceFileSystem::absolutePath(currentFolder());
+        if (!path.isEmpty())
+            QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    })->setEnabled(!SourceFileSystem::absolutePath({}).isEmpty());
+    menu.exec(globalPosition);
+}
+
+}

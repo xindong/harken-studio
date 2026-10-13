@@ -1,0 +1,15 @@
+# Python dependencies for the repository tooling under .scripts/ and the
+# developer environment setup described in README.md. The .scripts/ tooling
+# itself uses the standard library only; add pinned entries the moment a
+# script grows a third-party import.
+#
+# NOTE: keep this file pure ASCII -- pip on zh-CN Windows decodes it with
+# the locale codepage (GBK) and chokes on multibyte UTF-8 characters.
+
+# Qt kit downloader (README deployment step 3); fetches the official
+# win64_msvc2022_64 kit that VENUS_QT_DIR points at.
+aqtinstall==3.3.0
+
+# Ed25519 signing for release manifests
+# (.scripts/release/sign_release_manifest.py).
+cryptography==49.0.0

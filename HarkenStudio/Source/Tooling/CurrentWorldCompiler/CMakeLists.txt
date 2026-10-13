@@ -1,0 +1,4 @@
+add_library(harken_current_world_compiler STATIC src/CurrentWorldCompiler.cpp)
+target_include_directories(harken_current_world_compiler PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(harken_current_world_compiler PUBLIC
+    harken_project_schema harken_bus_compiler harken_studio_pack_build)

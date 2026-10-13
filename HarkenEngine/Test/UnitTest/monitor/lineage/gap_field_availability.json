@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "isProvisional": false,
+  "producerPackage": "m2-2",
+  "kind": "gap-field-availability",
+  "reason": "Lifecycle producers copy only facts already on the committing row. Action has acceptedLogicSequence but no program fingerprint. Playable has programSemanticFingerprint but no worldGeneration and no attributable TelemetryCorrelation. Transition has none of those fields. Missing values stay 0 and are not published as delivered lineage.",
+  "zeroUnlessSourced": [
+    "programSemanticFingerprint",
+    "runtimeLineageFingerprint",
+    "optionalSymbolFingerprint",
+    "renderPlanGeneration",
+    "clockAnchorGeneration",
+    "arrangingInstance",
+    "clipId",
+    "loopIteration",
+    "logicCommitSequence"
+  ]
+}

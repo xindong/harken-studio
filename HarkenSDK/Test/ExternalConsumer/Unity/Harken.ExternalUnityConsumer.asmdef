@@ -1,0 +1,6 @@
+{
+  "name": "Harken.ExternalUnityConsumer",
+  "references": ["Harken.Core", "Harken.Unity"],
+  "optionalUnityReferences": ["TestAssemblies"],
+  "autoReferenced": false
+}

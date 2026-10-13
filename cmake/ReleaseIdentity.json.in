@@ -1,0 +1,10 @@
+{
+  "gitCommit": "@HARKEN_BI_GIT_COMMIT@",
+  "gitDirty": @HARKEN_BI_GIT_DIRTY@,
+  "buildId": "@HARKEN_BI_BUILD_ID@",
+  "channel": "@HARKEN_BI_BUILD_CHANNEL@",
+  "platform": "@HARKEN_BI_TARGET_PLATFORM@",
+  "version": "@HARKEN_VERSION@",
+  "hubVersion": "@HARKEN_HUB_VERSION@",
+  "configuredAt": "@HARKEN_BI_TIMESTAMP@"
+}
