@@ -99,6 +99,14 @@ fields, not public C# setters. Adding the component to an active GameObject can
 run `Awake` immediately; a subsequent `Configure*BeforeStartup` call cannot undo
 that startup. Use a preconfigured scene/prefab for explicit startup.
 
+Player application pause callbacks may arrive before initialization completes.
+The component remembers the latest application pause state without reporting an
+uninitialized operation, then applies it when the session is created. A session
+created while paused stays `Suspended`; its first Ready/BecameReady notifications
+wait for a successful resume. Later resumes raise only `BecameReady`. Application
+pause callbacks are ignored in the Editor. Explicit `SetSuspended` calls still
+require an active session and report native failures normally.
+
 Missing startup Content (`VN_CONTENT_NOT_LOADED`) can leave an active session
 and raise Ready/BecameReady. Check the startup return value and
 `Session?.IsActive` before inspecting `Session.StartupResult` and

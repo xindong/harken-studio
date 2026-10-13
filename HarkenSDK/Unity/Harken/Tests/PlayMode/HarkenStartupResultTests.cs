@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Net;
@@ -15,6 +16,235 @@ namespace Harken.Unity.Tests
 {
     public sealed class HarkenStartupResultTests
     {
+        [UnityTest]
+        public IEnumerator ApplicationPauseWithoutSessionPreservesDiagnosticsAndExplicitErrors()
+        {
+            using (var fixture = new Fixture())
+            {
+                fixture.Activate();
+                int observed = 0;
+                fixture.Runtime.OperationCompleted += (_, __, ___) => ++observed;
+                NotifyApplicationPause(fixture.Runtime, false);
+                NotifyApplicationPause(fixture.Runtime, true);
+                NotifyApplicationPause(fixture.Runtime, false);
+                Assert.That(observed, Is.Zero);
+                Assert.That(fixture.Runtime.State, Is.EqualTo(HarkenRuntimeState.Stopped));
+                LogAssert.Expect(LogType.Error, new Regex("HarkenEngine.Suspend: VN_NOT_INITIALIZED"));
+                Assert.That(fixture.Runtime.SetSuspended(true), Is.EqualTo(VnResult.VN_NOT_INITIALIZED));
+                ExpectFailure(VnResult.VN_INVALID_ARG);
+                Assert.That(fixture.Runtime.StartRuntime((HarkenPreparedPacks)null), Is.EqualTo(VnResult.VN_INVALID_ARG));
+                int failureObservations = observed;
+                NotifyApplicationPause(fixture.Runtime, true);
+                NotifyApplicationPause(fixture.Runtime, false);
+                Assert.That(observed, Is.EqualTo(failureObservations));
+                fixture.AssertFailed(VnResult.VN_INVALID_ARG, 1);
+                Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(fixture.Runtime.IsReady, Is.True);
+            }
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator PausedStartupDefersReadinessAndPreservesPauseAcrossRestart()
+        {
+            using (var fixture = new Fixture())
+            {
+                fixture.Activate();
+                var notifications = new List<string>();
+                Get<UnityEvent>(fixture.Runtime, "ready").AddListener(() => notifications.Add("ready"));
+                fixture.Runtime.BecameReady += _ => notifications.Add("BecameReady");
+                int operations = 0;
+                fixture.Runtime.OperationCompleted += (_, __, ___) => ++operations;
+                NotifyApplicationPause(fixture.Runtime, true);
+                Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(fixture.Runtime.State, Is.EqualTo(HarkenRuntimeState.Suspended));
+                Assert.That(fixture.Runtime.IsPreparationComplete, Is.False);
+                Assert.That(notifications, Is.Empty);
+                int startupOperations = operations;
+                NotifyApplicationPause(fixture.Runtime, true);
+                Assert.That(operations, Is.EqualTo(startupOperations));
+                NotifyApplicationPause(fixture.Runtime, false);
+                Assert.That(notifications, Is.EqualTo(new[] { "ready", "BecameReady" }));
+                Assert.That(fixture.Runtime.IsPreparationComplete, Is.True);
+                int resumedOperations = operations;
+                NotifyApplicationPause(fixture.Runtime, false);
+                Assert.That(operations, Is.EqualTo(resumedOperations));
+                NotifyApplicationPause(fixture.Runtime, true);
+                NotifyApplicationPause(fixture.Runtime, false);
+                Assert.That(notifications, Is.EqualTo(new[] { "ready", "BecameReady", "BecameReady" }));
+                NotifyApplicationPause(fixture.Runtime, true);
+                Assert.That(fixture.Runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(fixture.Runtime.State, Is.EqualTo(HarkenRuntimeState.Suspended));
+                Assert.That(notifications.Count, Is.EqualTo(3));
+                NotifyApplicationPause(fixture.Runtime, false);
+                Assert.That(notifications, Is.EqualTo(new[] { "ready", "BecameReady", "BecameReady", "ready", "BecameReady" }));
+            }
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator PausedPartialContentFailureDefersReadinessWithoutDiscardingSession()
+        {
+            using (var fixture = new Fixture())
+            {
+                Assert.That(HarkenPreparedPacks.Create(fixture.Prepared.Publication,
+                    File.ReadAllBytes(Path.Combine(fixture.Root, fixture.Prepared.Publication.InitPack.Path)),
+                    out HarkenPreparedPacks incomplete, out string error), Is.EqualTo(VnResult.VN_OK), error);
+                fixture.Activate();
+                NotifyApplicationPause(fixture.Runtime, true);
+                ExpectFailure(VnResult.VN_CONTENT_NOT_LOADED);
+                Assert.That(fixture.Runtime.StartRuntime(incomplete), Is.EqualTo(VnResult.VN_CONTENT_NOT_LOADED));
+                PackBootstrapSession session = fixture.Runtime.Session;
+                Assert.That(session.IsActive, Is.True);
+                Assert.That(fixture.Runtime.State, Is.EqualTo(HarkenRuntimeState.Suspended));
+                Assert.That(fixture.FailedCount, Is.EqualTo(1));
+                Assert.That(fixture.StartupReadyCount, Is.Zero);
+                Assert.That(fixture.ReadyCount, Is.Zero);
+                NotifyApplicationPause(fixture.Runtime, false);
+                Assert.That(fixture.Runtime.Session, Is.SameAs(session));
+                Assert.That(fixture.Runtime.IsReady, Is.True);
+                Assert.That(fixture.Runtime.IsPreparationComplete, Is.False);
+                Assert.That(fixture.StartupReadyCount, Is.EqualTo(1));
+                Assert.That(fixture.ReadyCount, Is.EqualTo(1));
+            }
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator ApplicationPauseDuringPreparationUsesLatestState()
+        {
+            foreach (bool pausedAtCompletion in new[] { false, true })
+            {
+                using (var fixture = new Fixture())
+                {
+                    fixture.Activate();
+                    bool readStarted = false;
+                    Assert.That(fixture.Runtime.StartRuntime(PackManifest.ManifestFileName, path =>
+                    {
+                        Assert.That(fixture.Runtime.State, Is.EqualTo(HarkenRuntimeState.Starting));
+                        readStarted = true;
+                        NotifyApplicationPause(fixture.Runtime, true);
+                        NotifyApplicationPause(fixture.Runtime, false);
+                        NotifyApplicationPause(fixture.Runtime, pausedAtCompletion);
+                        return File.ReadAllBytes(Path.Combine(fixture.Root, path));
+                    }), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(readStarted, Is.True);
+                    Assert.That(fixture.Runtime.State, Is.EqualTo(pausedAtCompletion
+                        ? HarkenRuntimeState.Suspended : HarkenRuntimeState.Ready));
+                    Assert.That(fixture.ReadyCount, Is.EqualTo(pausedAtCompletion ? 0 : 1));
+                    NotifyApplicationPause(fixture.Runtime, false);
+                    Assert.That(fixture.StartupReadyCount, Is.EqualTo(1));
+                    Assert.That(fixture.ReadyCount, Is.EqualTo(1));
+                }
+                yield return null;
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator EarlySuspendObserverCannotPublishReadyBeforeStartupResult()
+        {
+            using (var fixture = new Fixture())
+            {
+                fixture.Activate();
+                NotifyApplicationPause(fixture.Runtime, true);
+                var notifications = new List<string>();
+                fixture.Runtime.OperationCompleted += (owner, operation, result) =>
+                {
+                    notifications.Add(operation);
+                    if (operation == "HarkenEngine.Suspend")
+                        Assert.That(owner.SetSuspended(false), Is.EqualTo(VnResult.VN_OK));
+                };
+                Get<UnityEvent>(fixture.Runtime, "ready").AddListener(() => notifications.Add("ready"));
+                fixture.Runtime.BecameReady += _ => notifications.Add("BecameReady");
+                Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(notifications, Is.EqualTo(new[]
+                {
+                    "HarkenEngine.Suspend", "HarkenEngine.Resume", "PackBootstrap.Start", "ready", "BecameReady"
+                }));
+            }
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator DeferredReadyCanPauseAndResumeWithoutDuplicateNotifications()
+        {
+            using (var fixture = new Fixture())
+            {
+                fixture.Activate();
+                NotifyApplicationPause(fixture.Runtime, true);
+                Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
+                Get<UnityEvent>(fixture.Runtime, "ready").AddListener(() =>
+                {
+                    NotifyApplicationPause(fixture.Runtime, true);
+                    NotifyApplicationPause(fixture.Runtime, false);
+                });
+                NotifyApplicationPause(fixture.Runtime, false);
+                Assert.That(fixture.Runtime.IsReady, Is.True);
+                Assert.That(fixture.StartupReadyCount, Is.EqualTo(1));
+                Assert.That(fixture.ReadyCount, Is.EqualTo(1));
+            }
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator DeferredStartupNotificationsRetainSessionAcquisitionGuard()
+        {
+            foreach (bool useBecameReady in new[] { false, true })
+            {
+                using (var fixture = new Fixture())
+                {
+                    fixture.Activate();
+                    NotifyApplicationPause(fixture.Runtime, true);
+                    Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
+                    bool called = false;
+                    System.Action stopAndRetry = () =>
+                    {
+                        called = true;
+                        Assert.That(fixture.Runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
+                        Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_ALREADY_INITIALIZED));
+                    };
+                    if (useBecameReady) fixture.Runtime.BecameReady += _ => stopAndRetry();
+                    else Get<UnityEvent>(fixture.Runtime, "ready").AddListener(() => stopAndRetry());
+                    NotifyApplicationPause(fixture.Runtime, false);
+                    Assert.That(called, Is.True);
+                    Assert.That(fixture.Runtime.Session, Is.Null);
+                    Assert.That(fixture.Runtime.State, Is.EqualTo(HarkenRuntimeState.Stopped));
+                    Assert.That(fixture.StartupReadyCount, Is.EqualTo(1));
+                    Assert.That(fixture.ReadyCount, Is.EqualTo(useBecameReady ? 1 : 0));
+                }
+                yield return null;
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator ResumeNotificationCanStartAReplacementSessionWithItsOwnReadiness()
+        {
+            using (var fixture = new Fixture())
+            {
+                fixture.Activate();
+                Assert.That(fixture.Runtime.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
+                PackBootstrapSession previous = fixture.Runtime.Session;
+                bool restarted = false;
+                fixture.Runtime.BecameReady += owner =>
+                {
+                    if (restarted) return;
+                    restarted = true;
+                    Assert.That(owner.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(owner.StartRuntime(fixture.Prepared), Is.EqualTo(VnResult.VN_OK));
+                };
+                NotifyApplicationPause(fixture.Runtime, true);
+                NotifyApplicationPause(fixture.Runtime, false);
+                Assert.That(restarted, Is.True);
+                Assert.That(previous.IsActive, Is.False);
+                Assert.That(fixture.Runtime.Session, Is.Not.SameAs(previous));
+                Assert.That(fixture.Runtime.IsReady, Is.True);
+                Assert.That(fixture.StartupReadyCount, Is.EqualTo(2));
+                Assert.That(fixture.ReadyCount, Is.EqualTo(3));
+            }
+            yield return null;
+        }
+
         [UnityTest]
         public IEnumerator RemoteCommunicationFollowsProjectPolicyAndAudioLifecycle()
         {
@@ -499,6 +729,7 @@ namespace Harken.Unity.Tests
             public readonly string Root = Path.Combine(Application.streamingAssetsPath, "Audio/U4Original");
             public int FailedCount { get; private set; }
             public int ReadyCount { get; private set; }
+            public int StartupReadyCount { get; private set; }
             private VnResult observedFailure;
             private HarkenRuntimeState failureState;
 
@@ -520,6 +751,7 @@ namespace Harken.Unity.Tests
                     failureState = Runtime.State;
                 });
                 Runtime.BecameReady += _ => ++ReadyCount;
+                Get<UnityEvent>(Runtime, "ready").AddListener(() => ++StartupReadyCount);
             }
 
             public void Activate() => Owner.SetActive(true);
@@ -581,6 +813,17 @@ namespace Harken.Unity.Tests
 
         private static void ExpectFailure(VnResult result)
             => LogAssert.Expect(LogType.Error, new Regex("Harken operation failed: PackBootstrap.Start: " + result));
+
+        private static void NotifyApplicationPause(HarkenAudioSystem runtime, bool paused)
+        {
+#if UNITY_EDITOR
+            const string callback = "HandleApplicationPause";
+#else
+            const string callback = "OnApplicationPause";
+#endif
+            typeof(HarkenAudioSystem).GetMethod(callback, BindingFlags.Instance | BindingFlags.NonPublic)
+                .Invoke(runtime, new object[] { paused });
+        }
 
         private static T Get<T>(object target, string name)
             => (T)target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).GetValue(target);
