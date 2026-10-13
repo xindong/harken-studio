@@ -20,7 +20,7 @@ env:
 jobs:
   daily-windows:
     name: daily-windows
-    runs-on: [self-hosted, windows, venus-win]
+    runs-on: [self-hosted, windows, harken-win]
     timeout-minutes: 120
 
     steps:

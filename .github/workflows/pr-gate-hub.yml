@@ -28,7 +28,7 @@ env:
 jobs:
   hub-windows:
     name: hub-windows
-    runs-on: [self-hosted, windows, venus-win]
+    runs-on: [self-hosted, windows, harken-win]
     timeout-minutes: 60
 
     steps:

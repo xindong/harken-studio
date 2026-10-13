@@ -30,7 +30,7 @@ env:
 jobs:
   studio-windows:
     name: studio-windows
-    runs-on: [self-hosted, windows, venus-win]
+    runs-on: [self-hosted, windows, harken-win]
     timeout-minutes: 90
 
     steps:
