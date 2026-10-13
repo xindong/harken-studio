@@ -31,7 +31,6 @@
 #include "Widgets/ProjectExplorer/ProjectExplorer.h"
 #include "Widgets/PlatformBar/PlaybackControls.h"
 #include "Widgets/PreviewPanel/PreviewPanel.h"
-#include "Widgets/SourceEditor/SourceEditorPanel.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
 #include "Widgets/Timeline/TimelineEditorPanel.h"
 #include "Widgets/TransitionEditor/TransitionEditorPanel.h"
@@ -367,10 +366,7 @@ TEST_P(ObjectRefStudioNavigationTest, LocatesOnClickAndOpensOnDoubleClickWithout
         EXPECT_EQ(editor->boundItem(), piece_);
         EXPECT_EQ(window_->activeStandaloneEditorPanel(QStringLiteral("SourceEditor")), nullptr);
     } else {
-        auto* editor = qobject_cast<VNX::SourceEditorPanel*>(
-            window_->activeStandaloneEditorPanel(QStringLiteral("SourceEditor")));
-        ASSERT_NE(editor, nullptr);
-        EXPECT_EQ(editor->sourceId(), asset.sourceID);
+        EXPECT_EQ(window_->activeStandaloneEditorPanel(QStringLiteral("SourceEditor")), nullptr);
         EXPECT_EQ(window_->activeInspectorPanel()->currentContextItem(), track_);
         EXPECT_EQ(window_->activeStandaloneEditorPanel(QStringLiteral("TimelineEditor")), nullptr);
     }

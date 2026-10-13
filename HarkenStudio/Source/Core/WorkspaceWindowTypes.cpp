@@ -119,6 +119,16 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
             AvailabilityPolicy::Always
         },
         {
+            QStringLiteral("SourceEditor"),
+            QStringLiteral("Source Viewer"),
+            QStringLiteral("SourceEditorDock"),
+            WindowKind::MultiInstance,
+            {DefaultDockArea::Floating, QString(), false},
+            MaterializationPolicy::OnDemand,
+            ClosePolicy::Destroy,
+            AvailabilityPolicy::FeatureDisabled
+        },
+        {
             QStringLiteral("TransitionEditor"),
             QStringLiteral("Transition Editor"),
             QStringLiteral("TransitionEditorDock"),
