@@ -1,5 +1,107 @@
 {
   "auditVersion": 4,
   "product": "HarkenStudio",
-  "publication": "unpublished"
+  "publication": "released",
+  "releaseTag": "studio-v0.7.1",
+  "sourceFingerprint": "e08e21a9f012bef12d6c84e2d18318d033a71b20b7dfef6c18bfd0a8b9053aa0",
+  "trees": {
+    "Editor": {
+      "generation": 7,
+      "sha256": "65ff25d42df8847bbda5b50bb359bba68d89e16fabc82eae39a1b5252058a33e"
+    },
+    "Pack": {
+      "generation": 3,
+      "sha256": "22051330667b09b1128d606a4f4924f49be8c7252637592e6e0140de34a8e341"
+    }
+  },
+  "verification": {
+    "baselineTags": [
+      "release-38541471454-6a1340232cb6"
+    ],
+    "currentReader": {
+      "buildId": "local-windows-x64-5f729cf2-20261014T124637Z",
+      "gitCommit": "5f729cf2adc394907a2956eec0e963b9c255fbd1",
+      "gitDirty": false,
+      "version": "0.7.1"
+    },
+    "errors": [],
+    "pack": {
+      "fixtureSha256": {
+        "Content.pack": "a4abd06619f4b9dc3422c31d9589a49408b33eae2c0f8b8b4726d38cb84efa14",
+        "Init.pack": "2d50422da0e203ee3d82629f335db10ff229a2629a6d5c45fb2e4e87ac9d2ce1"
+      },
+      "readerSha256": "47676ab471bca60c28f4f7a31f5974fe07d118874d5182abb951a367c9d1428c",
+      "schemaVersion": 3,
+      "status": "passed"
+    },
+    "packReaders": [
+      {
+        "fixtureSha256": {
+          "Content.pack": "a4abd06619f4b9dc3422c31d9589a49408b33eae2c0f8b8b4726d38cb84efa14",
+          "Init.pack": "2d50422da0e203ee3d82629f335db10ff229a2629a6d5c45fb2e4e87ac9d2ce1"
+        },
+        "indexEntries": [
+          {
+            "basePlatform": "Windows",
+            "id": "11111111-2222-3333-4444-555555555555",
+            "name": "Compatibility",
+            "path": "Compatibility"
+          }
+        ],
+        "manifestEntries": [
+          {
+            "contentHash": "14224002531617328111",
+            "dependencies": [],
+            "name": "Init",
+            "packStableId": "11",
+            "path": "Init.pack",
+            "platformId": "11111111-2222-3333-4444-555555555555"
+          },
+          {
+            "contentHash": "14976597613653028589",
+            "dependencies": [
+              "11"
+            ],
+            "name": "Content",
+            "packStableId": "22",
+            "path": "Content.pack",
+            "platformId": "11111111-2222-3333-4444-555555555555"
+          }
+        ],
+        "ok": true,
+        "packPaths": [
+          "Compatibility/Init.pack",
+          "Compatibility/Content.pack"
+        ],
+        "readerSha256": "e7fc69a2faffcbe8b5d91c926e7510e4d04c3bad8865f995ce38b967e5aca19d",
+        "schemaVersion": 3,
+        "tag": "release-38541471454-6a1340232cb6"
+      }
+    ],
+    "protocol": "schema-roundtrip-v1",
+    "readers": [
+      {
+        "buildId": "local-windows-x64-5f729cf2-20261014T124637Z",
+        "checks": [
+          "new-reads-old",
+          "old-edits-new",
+          "new-reopens-preserved-content"
+        ],
+        "schemaSnapshotHash": "bd0e0b2d04376bf2760c495829407a4ca45b4820d0f99ebc62a9ec3c1004a381",
+        "tag": "current"
+      },
+      {
+        "buildId": "stable-windows-x64-run2-0e5f4826-20261014T092443Z",
+        "checks": [
+          "old-pack-parser-reads-current-sidecars",
+          "new-reads-old",
+          "old-edits-new",
+          "new-reopens-preserved-content"
+        ],
+        "schemaSnapshotHash": "bd0e0b2d04376bf2760c495829407a4ca45b4820d0f99ebc62a9ec3c1004a381",
+        "tag": "release-38541471454-6a1340232cb6"
+      }
+    ],
+    "schemaSnapshotHash": "bd0e0b2d04376bf2760c495829407a4ca45b4820d0f99ebc62a9ec3c1004a381"
+  }
 }
