@@ -1,5 +1,50 @@
 {
   "auditVersion": 4,
   "product": "HarkenStudio",
-  "publication": "unpublished"
+  "publication": "released",
+  "releaseTag": "studio-v0.7.1",
+  "sourceFingerprint": "e08e21a9f012bef12d6c84e2d18318d033a71b20b7dfef6c18bfd0a8b9053aa0",
+  "trees": {
+    "Editor": {
+      "generation": 7,
+      "sha256": "65ff25d42df8847bbda5b50bb359bba68d89e16fabc82eae39a1b5252058a33e"
+    },
+    "Pack": {
+      "generation": 3,
+      "sha256": "22051330667b09b1128d606a4f4924f49be8c7252637592e6e0140de34a8e341"
+    }
+  },
+  "verification": {
+    "baselineTags": [],
+    "currentReader": {
+      "buildId": "local-windows-x64-83d7b4d5-20261014T083812Z",
+      "gitCommit": "83d7b4d53ed5b4154f78a2bfb0c627e21463f130",
+      "gitDirty": false,
+      "version": "0.7.1"
+    },
+    "errors": [],
+    "pack": {
+      "fixtureSha256": {
+        "Content.pack": "a4abd06619f4b9dc3422c31d9589a49408b33eae2c0f8b8b4726d38cb84efa14",
+        "Init.pack": "2d50422da0e203ee3d82629f335db10ff229a2629a6d5c45fb2e4e87ac9d2ce1"
+      },
+      "readerSha256": "dc96adc4a99291ea5abc1fc0678eb67a1e496ac5b4abb7bb8c2c11dfc4a372ba",
+      "schemaVersion": 3,
+      "status": "passed"
+    },
+    "protocol": "schema-roundtrip-v1",
+    "readers": [
+      {
+        "buildId": "local-windows-x64-83d7b4d5-20261014T083812Z",
+        "checks": [
+          "new-reads-old",
+          "old-edits-new",
+          "new-reopens-preserved-content"
+        ],
+        "schemaSnapshotHash": "bd0e0b2d04376bf2760c495829407a4ca45b4820d0f99ebc62a9ec3c1004a381",
+        "tag": "current"
+      }
+    ],
+    "schemaSnapshotHash": "bd0e0b2d04376bf2760c495829407a4ca45b4820d0f99ebc62a9ec3c1004a381"
+  }
 }
