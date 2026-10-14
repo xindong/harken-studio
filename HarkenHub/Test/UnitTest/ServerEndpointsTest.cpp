@@ -107,6 +107,12 @@ TEST(ServerEndpointsTest, GithubRedirectsAreStrictlyAllowlisted)
                        "github-production-release-asset/123?sp=r&sig=value"))));
     EXPECT_FALSE(ServerEndpoints::isApprovedGithubRedirect(QUrl(
         QStringLiteral("https://example.invalid/Hub.exe"))));
+    for (const QString& repository : {QStringLiteral("xindong/venus-studio"),
+                                      QStringLiteral("another-owner/harken-studio")}) {
+        EXPECT_FALSE(ServerEndpoints::isApprovedGithubRedirect(QUrl(
+            QStringLiteral("https://github.com/%1/releases/download/release-42-abcd/Hub.exe")
+                .arg(repository))));
+    }
     EXPECT_FALSE(ServerEndpoints::isApprovedGithubRedirect(QUrl(
         QStringLiteral("https://github.com/xindong/harken-studio/releases/"
                        "download/release-42-abcd/Hub.exe?redirect=1"))));
