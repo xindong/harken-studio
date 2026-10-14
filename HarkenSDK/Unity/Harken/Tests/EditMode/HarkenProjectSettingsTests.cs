@@ -210,12 +210,26 @@ namespace Harken.Unity.Tests
         [Test]
         public void EditorSettingsInResourcesRefuseBuild()
         {
+            bool editorSettingsExisted = HarkenEditorProjectSettings.Load() != null;
+            var editorSettings = HarkenEditorProjectSettings.GetOrCreate();
+            string originalPath = AssetDatabase.GetAssetPath(editorSettings);
             duplicateFolder = "Assets/HarkenSettingsFixture_" + Guid.NewGuid().ToString("N");
             EnsureFolder(duplicateFolder + "/Resources");
-            AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<HarkenEditorProjectSettings>(),
-                duplicateFolder + "/Resources/EditorSettings.asset");
-            Assert.Throws<BuildFailedException>(HarkenEditorProjectSettings.ValidateNotInResources);
-            Assert.Throws<BuildFailedException>(ValidateSettingsBeforeBuild);
+            string movedPath = duplicateFolder + "/Resources/EditorSettings.asset";
+            Assert.That(AssetDatabase.MoveAsset(originalPath, movedPath), Is.Empty);
+            try
+            {
+                Assert.That(HarkenEditorProjectSettings.Load(), Is.SameAs(editorSettings));
+                Assert.Throws<BuildFailedException>(HarkenEditorProjectSettings.ValidateNotInResources);
+                Assert.Throws<BuildFailedException>(ValidateSettingsBeforeBuild);
+            }
+            finally
+            {
+                if (editorSettingsExisted)
+                    Assert.That(AssetDatabase.MoveAsset(movedPath, originalPath), Is.Empty);
+                else
+                    AssetDatabase.DeleteAsset(movedPath);
+            }
         }
 
         [Test]
