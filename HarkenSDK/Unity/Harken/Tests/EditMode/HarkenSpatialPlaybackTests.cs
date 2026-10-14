@@ -190,7 +190,7 @@ namespace Harken.Unity.Tests
                     runtime = owner.AddComponent<HarkenAudioSystem>();
                     Set(runtime, "autoInitialize", false);
                     Set(runtime, "persistAcrossScenes", false);
-                    Assert.That(runtime.ConfigureBeforeStartup("Audio/" + publication, "Init.pack",
+                    Assert.That(runtime.ConfigureBeforeStartup("Audio/" + publication, catalog.Publication.InitPack.Path,
                         Array.Empty<ulong>(), true, false), Is.EqualTo(VnResult.VN_OK));
                     owner.SetActive(true);
                     typeof(HarkenAudioSystem).GetMethod("Awake", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(runtime, null);

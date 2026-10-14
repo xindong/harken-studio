@@ -28,8 +28,10 @@ $env:HARKEN_NATIVE_DIR = "build-nc/Bin/Debug"
 dotnet run --project HarkenSDK/Test/ContractTest -- --require-native
 ```
 
-This mode exits nonzero when native validation is skipped or fails. When
-`HARKEN_NATIVE_DIR` is explicitly set with `--require-native`, that directory is
+This mode exits nonzero when native validation is skipped or fails. It also
+loads the production-exported Unity fixtures and PlayableDemo publications through
+the native Runtime. Hand-built waveform fixtures remain metadata reader contracts.
+When `HARKEN_NATIVE_DIR` is explicitly set with `--require-native`, that directory is
 authoritative: the runner does not probe repository build folders or fall back
 to the operating system library search. This makes missing-library acceptance
 checks deterministic.

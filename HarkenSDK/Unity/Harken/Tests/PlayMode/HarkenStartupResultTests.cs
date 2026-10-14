@@ -774,7 +774,7 @@ namespace Harken.Unity.Tests
                 Assert.That(source, Is.Not.Null, "Prepare HarkenUnityFixtureAssets before this test.");
                 Assert.That(source.Capture(out Prepared, out string error), Is.EqualTo(VnResult.VN_OK), error);
                 Assert.That(Prepared.Publication.TryFindAction("Play_U4_A", out Action), Is.True);
-                Assert.That(Runtime.ConfigureBeforeStartup("UnusedStartupResultPath", "Init.pack",
+                Assert.That(Runtime.ConfigureBeforeStartup("UnusedStartupResultPath", Prepared.Publication.InitPack.Path,
                     new[] { Action.OwnerPackStableId }, true, false), Is.EqualTo(VnResult.VN_OK));
                 Get<HarkenRuntimeResultEvent>(Runtime, "failed").AddListener(_ =>
                 {

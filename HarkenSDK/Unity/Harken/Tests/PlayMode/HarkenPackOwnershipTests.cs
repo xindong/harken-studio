@@ -207,7 +207,7 @@ namespace Harken.Unity.Tests
                 Set(Pack, "packStableId", DependencyId);
                 Set(Pack, "loadOnReady", false);
                 settingsLease.Settings.SetPackDirectory(Root);
-                Assert.That(Runtime.ConfigureBeforeStartup("Audio/U4Original", "Init.pack", Array.Empty<ulong>(), true, false),
+                Assert.That(Runtime.ConfigureBeforeStartup("Audio/U4Original", publication.InitPack.Path, Array.Empty<ulong>(), true, false),
                     Is.EqualTo(VnResult.VN_OK));
                 Owner.SetActive(true);
                 Source.SetActive(true);
