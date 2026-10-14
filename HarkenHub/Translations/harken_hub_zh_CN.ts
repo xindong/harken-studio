@@ -156,6 +156,7 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Engine Integrations uses system file and folder pickers, restoring address-bar path navigation on Windows.</source><translation>&#x5f15;&#x64ce;&#x96c6;&#x6210;&#x6062;&#x590d;&#x4f7f;&#x7528;&#x7cfb;&#x7edf;&#x539f;&#x751f;&#x6587;&#x4ef6;&#x548c;&#x6587;&#x4ef6;&#x5939;&#x9009;&#x62e9;&#x7a97;&#x53e3;&#xff0c;&#x53ef;&#x5728; Windows &#x5730;&#x5740;&#x680f;&#x7c98;&#x8d34;&#x8def;&#x5f84;&#x540e;&#x6309;&#x56de;&#x8f66;&#x76f4;&#x63a5;&#x5b9a;&#x4f4d;&#x3002;</translation></message>
     <message><source>Unreal SDK installation now rejects incomplete native headers before changing the game project.</source><translation>Unreal SDK &#x5b89;&#x88c5;&#x4f1a;&#x5728;&#x4fee;&#x6539;&#x6e38;&#x620f;&#x5de5;&#x7a0b;&#x524d;&#x62e6;&#x622a;&#x7f3a;&#x5c11;&#x5fc5;&#x9700;&#x539f;&#x751f;&#x5934;&#x6587;&#x4ef6;&#x7684; SDK&#x3002;</translation></message>
     <message><source>Hub and Studio downloads support the new release archive layout on GitHub and COS.</source><translation>Hub 和 Studio 下载已适配 GitHub 与 COS 的新发布归档目录。</translation></message>
     <message><source>Hub and Studio update checks and downloads use the active release sources after the Harken rename.</source><translation>修复更名为 Harken 后 Hub 与 Studio 的更新检查和下载地址。</translation></message>

@@ -638,7 +638,6 @@ TEST_F(EngineIntegrationsPageTest, BrowseOpensWithoutRepeatingUnchangedProjectVa
     auto* dialog = page->findChild<QFileDialog*>();
     ASSERT_NE(dialog, nullptr);
     EXPECT_TRUE(dialog->isVisible());
-    EXPECT_TRUE(dialog->testOption(QFileDialog::DontUseNativeDialog));
     EXPECT_TRUE(dialog->testOption(QFileDialog::DontUseCustomDirectoryIcons));
     dialog->reject();
 }
