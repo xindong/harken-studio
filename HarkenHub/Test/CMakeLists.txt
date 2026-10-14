@@ -104,6 +104,7 @@ target_compile_definitions(harken_hub_integration_guidance_tests PRIVATE
 add_dependencies(harken_hub_integration_guidance_tests harken_hub_lrelease)
 add_test(NAME HubIntegrationGuidance COMMAND harken_hub_integration_guidance_tests)
 set_tests_properties(HubIntegrationGuidance PROPERTIES
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_FORCE_STDERR_LOGGING=1")
 
 harken_add_ci_test_target(hub)
