@@ -25,8 +25,21 @@ namespace Harken.Unity.Editor
             return settings != null ? settings.AudioProjectDirectory : string.Empty;
         }
 
-        public static HarkenEditorProjectSettings Load() =>
-            AssetDatabase.LoadAssetAtPath<HarkenEditorProjectSettings>(AssetPath);
+        public static HarkenEditorProjectSettings Load()
+        {
+            HarkenEditorProjectSettings settings = null;
+            foreach (string guid in AssetDatabase.FindAssets("t:HarkenEditorProjectSettings"))
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                var candidate = AssetDatabase.LoadAssetAtPath<HarkenEditorProjectSettings>(path);
+                if (candidate == null) continue;
+                if (settings != null)
+                    throw new BuildFailedException("Multiple Harken editor settings assets: " +
+                        AssetDatabase.GetAssetPath(settings) + " and " + path + ". Keep exactly one.");
+                settings = candidate;
+            }
+            return settings;
+        }
 
         public static HarkenEditorProjectSettings GetOrCreate()
         {
@@ -42,14 +55,13 @@ namespace Harken.Unity.Editor
 
         public static void ValidateNotInResources()
         {
-            foreach (string guid in AssetDatabase.FindAssets("t:HarkenEditorProjectSettings"))
+            HarkenEditorProjectSettings settings = Load();
+            if (settings == null) return;
+            string path = AssetDatabase.GetAssetPath(settings);
+            if (path.IndexOf("/Resources/", System.StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                if (path.IndexOf("/Resources/", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    throw new BuildFailedException(
-                        "The Harken audio project directory must not ship in Resources: " + path);
-                }
+                throw new BuildFailedException(
+                    "The Harken audio project directory must not ship in Resources: " + path);
             }
         }
 
