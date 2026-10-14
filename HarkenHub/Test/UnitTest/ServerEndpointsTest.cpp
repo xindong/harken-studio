@@ -15,7 +15,7 @@ TEST(ServerEndpointsTest, DefaultSourcesMatchPublishedProducts)
             base, product, QStringLiteral("windows-x64"));
         ASSERT_EQ(urls.size(), 2);
         EXPECT_EQ(urls[0].toString(),
-                  QStringLiteral("https://github.com/xindong/venus-studio/"
+                  QStringLiteral("https://github.com/xindong/harken-studio/"
                                  "releases/latest/download/%1-manifest.json").arg(product));
         EXPECT_TRUE(ServerEndpoints::isApprovedGithubRedirect(urls[0]));
         EXPECT_EQ(urls[1].toString(),
@@ -78,7 +78,7 @@ TEST(ServerEndpointsTest, GitHubIsPrimaryAndCosIsFallback)
         cos, QStringLiteral("hub"), QStringLiteral("windows-x64"));
     ASSERT_EQ(manifests.size(), 2);
     EXPECT_EQ(manifests[0].toString(),
-              QStringLiteral("https://github.com/xindong/venus-studio/"
+              QStringLiteral("https://github.com/xindong/harken-studio/"
                              "releases/latest/download/hub-manifest.json"));
     EXPECT_EQ(manifests[1].toString(),
               QStringLiteral("https://updates.example/harken/release/hub/"
@@ -90,7 +90,7 @@ TEST(ServerEndpointsTest, GitHubIsPrimaryAndCosIsFallback)
         QStringLiteral("release-42-abcd1234"));
     ASSERT_EQ(downloads.size(), 2);
     EXPECT_EQ(downloads[0].toString(),
-              QStringLiteral("https://github.com/xindong/venus-studio/"
+              QStringLiteral("https://github.com/xindong/harken-studio/"
                              "releases/download/release-42-abcd1234/Hub.exe"));
     EXPECT_EQ(downloads[1].toString(),
               QStringLiteral("https://updates.example/harken/release/hub/"
@@ -100,7 +100,7 @@ TEST(ServerEndpointsTest, GitHubIsPrimaryAndCosIsFallback)
 TEST(ServerEndpointsTest, GithubRedirectsAreStrictlyAllowlisted)
 {
     EXPECT_TRUE(ServerEndpoints::isApprovedGithubRedirect(QUrl(
-        QStringLiteral("https://github.com/xindong/venus-studio/releases/"
+        QStringLiteral("https://github.com/xindong/harken-studio/releases/"
                        "download/release-42-abcd/Hub.exe"))));
     EXPECT_TRUE(ServerEndpoints::isApprovedGithubRedirect(QUrl(
         QStringLiteral("https://release-assets.githubusercontent.com/"
@@ -108,7 +108,7 @@ TEST(ServerEndpointsTest, GithubRedirectsAreStrictlyAllowlisted)
     EXPECT_FALSE(ServerEndpoints::isApprovedGithubRedirect(QUrl(
         QStringLiteral("https://example.invalid/Hub.exe"))));
     EXPECT_FALSE(ServerEndpoints::isApprovedGithubRedirect(QUrl(
-        QStringLiteral("https://github.com/xindong/venus-studio/releases/"
+        QStringLiteral("https://github.com/xindong/harken-studio/releases/"
                        "download/release-42-abcd/Hub.exe?redirect=1"))));
     EXPECT_FALSE(ServerEndpoints::isSafeReleaseTag(QStringLiteral("../bad")));
 }

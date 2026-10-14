@@ -288,19 +288,11 @@ def required_baselines(root: Path, exclude_tag: str | None = None,
     editor = schema_archive.load_tree("Editor", root)
     pack = schema_archive.load_tree("Pack", root)
     versions = set(editor["manifest"]["supportedHistorical"]) | {editor["currentVersion"]}
-    candidates = {tag: record for tag, record in published_releases().items()
+    return {tag: record for tag, record in published_releases().items()
             if tag != exclude_tag and (exclude_commit is None or
                 run_git(["rev-parse", f"refs/tags/{tag}^{{commit}}"]).stdout.strip() != exclude_commit)
             and (record.get("trees", {}).get("Editor", {}).get("generation") in versions
             or record.get("trees", {}).get("Pack", {}).get("generation") == pack["currentVersion"])}
-    floors = {"Editor": editor["manifest"]["published"][0], "Pack": pack["manifest"]["published"][0]}
-    baselines = {}
-    for tag, record in candidates.items():
-        with schema_root_at(tag) as previous_root:
-            if all(schema_archive.load_tree(tree, previous_root)["manifest"]["published"][0] >= floor
-                   for tree, floor in floors.items()):
-                baselines[tag] = record
-    return baselines
 
 
 def release_schema_errors(root: Path, exclude_tag: str | None = None) -> list[str]:
@@ -314,8 +306,7 @@ def release_schema_errors(root: Path, exclude_tag: str | None = None) -> list[st
                 previous = schema_archive.load_tree(tree, previous_root)
                 for version, published in previous["published"].items():
                     if version not in current[tree]["published"]:
-                        if version >= current[tree]["manifest"]["published"][0]:
-                            errors.append(f"{tag}: Published {tree} generation {version} cannot be removed within retained history")
+                        errors.append(f"{tag}: Published {tree} generation {version} cannot be removed")
                         continue
                     target = current[tree]["current"] if version == current[tree]["currentVersion"] \
                         else current[tree]["published"][version]
@@ -380,46 +371,15 @@ def verify_current_release(head_revision: str = "WORKTREE") -> dict[str, Any]:
             "status": "failed" if errors else "passed", "errors": errors}
 
 
-def history_retirement_errors(base_revision: str, head_revision: str) -> list[str] | None:
-    with schema_root_at(base_revision) as previous_root, schema_root_at(head_revision) as current_root:
-        previous = {tree: schema_archive.load_tree(tree, previous_root) for tree in TREE_NAMES}
-        current = {tree: schema_archive.load_tree(tree, current_root) for tree in TREE_NAMES}
-        if not any(set(previous[tree]["published"]) - set(current[tree]["published"]) for tree in TREE_NAMES):
-            return None
-        errors = []
-        for tree in TREE_NAMES:
-            before, after = previous[tree], current[tree]
-            retained = after["manifest"]["published"]
-            if retained != [version for version in before["manifest"]["published"] if version >= retained[0]]:
-                errors.append(f"{tree} history retirement must remove only an oldest prefix and retain the current generation")
-            if not json_equal(before["currentSource"], after["currentSource"]):
-                errors.append(f"{tree} history retirement cannot change the current contract")
-            if any(version not in before["published"] or not json_equal(contract, before["published"][version])
-                   for version, contract in after["published"].items()):
-                errors.append(f"{tree} history retirement cannot rewrite retained contracts")
-            expected_support = [version for version in before["manifest"]["supportedHistorical"] if version in retained]
-            if after["manifest"]["supportedHistorical"] != expected_support:
-                errors.append(f"{tree} history retirement can only remove support for retired generations")
-        record = revision_json(head_revision, CONFIG_PATH)
-        if record != {"auditVersion": 4, "product": "HarkenStudio", "publication": "unpublished"}:
-            errors.append("Schema history retirement requires a cleared unpublished release receipt")
-        errors.extend(release_schema_errors(current_root))
-        return errors
-
-
 def audit(base_revision: str | None, head_revision: str = "WORKTREE") -> dict[str, Any]:
     with schema_root_at(head_revision) as root:
         schema_archive.build_bundle(root)
     scopes = review_scopes(base_revision, head_revision) if base_revision else []
     errors = []
-    if base_revision and any(
+    if base_revision and published_releases() and any(
             re.match(r"HarkenSchema/(Editor|Pack)/(\d+/|manifest\.json$)", path)
             for path in changed_files(base_revision, head_revision)):
-        retirement = history_retirement_errors(base_revision, head_revision)
-        if retirement is not None:
-            errors.extend(retirement)
-        elif published_releases():
-            errors.extend(verify_current_release(head_revision)["errors"])
+        errors.extend(verify_current_release(head_revision)["errors"])
     return {"auditVersion": 4, "decision": "development", "headRevision": head_revision,
             "reviewScopes": scopes, "status": "failed" if errors else "passed", "errors": errors}
 

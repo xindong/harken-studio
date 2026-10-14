@@ -18,8 +18,8 @@ class BuildInfoTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         (self.root / "HarkenHub").mkdir()
-        (self.root / "VERSION").write_text("0.3.0\n", encoding="utf-8")
-        (self.root / "HarkenHub/VERSION").write_text("0.1.47\n", encoding="utf-8")
+        (self.root / "VERSION").write_text("0.7.0\n", encoding="utf-8")
+        (self.root / "HarkenHub/VERSION").write_text("0.1.56\n", encoding="utf-8")
         (self.root / "CMakeLists.txt").write_text(
             "cmake_minimum_required(VERSION 3.25)\n"
             "project(BuildInfoTest LANGUAGES NONE)\n"
@@ -48,16 +48,16 @@ class BuildInfoTest(unittest.TestCase):
                 flags = "8L" if channel == "stable" else "10L"
                 self.assertEqual(
                     (self.root / "build/identity.txt").read_text(encoding="utf-8"),
-                    f"0.3.0|0.1.47|{channel}|0.3.0.0|0.1.47.0|{flags}|{flags}",
+                    f"0.7.0|0.1.56|{channel}|0.7.0.0|0.1.56.0|{flags}|{flags}",
                 )
 
     def test_studio_version_rejects_channel_suffix(self) -> None:
-        (self.root / "VERSION").write_text("0.3.0-dev\n", encoding="utf-8")
+        (self.root / "VERSION").write_text("0.7.0-dev\n", encoding="utf-8")
         result = self.configure("dev")
         self.assertNotEqual(result.returncode, 0)
 
     def test_hub_version_rejects_channel_suffix(self) -> None:
-        (self.root / "HarkenHub/VERSION").write_text("0.1.47-dev\n", encoding="utf-8")
+        (self.root / "HarkenHub/VERSION").write_text("0.1.56-dev\n", encoding="utf-8")
         result = self.configure("dev")
         self.assertNotEqual(result.returncode, 0)
 

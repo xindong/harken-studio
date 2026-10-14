@@ -1,132 +1,23 @@
 {
   "schemaVersion": 1,
   "excludedPullRequests": {
-    "versionOnly": [8, 23, 31, 36, 37, 39, 41, 123, 157, 287],
-    "noHubUserChange": [9, 25, 27, 49, 51, 53, 67, 110, 113, 117, 215, 292, 298, 382, 387, 389, 404, 421, 434, 442],
-    "archivedReleases": [1, 6, 7, 10, 17, 18, 22, 28, 29, 30, 33, 34, 38, 40, 82, 140, 141, 143, 146, 149, 154, 156, 158, 160, 162, 166, 178, 183, 190, 199, 201, 206, 233, 244, 258, 263, 272, 273, 282, 374, 376, 380, 395, 396]
+    "versionOnly": [],
+    "noHubUserChange": [],
+    "archivedReleases": []
   },
   "releases": [
     {
       "version": "0.1.56",
       "date": "2026-10-09",
       "pullRequests": [],
-      "contributors": ["liuxin2-sys"],
+      "contributors": [
+        "liuxin2-sys"
+      ],
       "changes": [
-        { "category": "improved", "text": "Unreal SDK installation now rejects incomplete native headers before changing the game project." }
-      ]
-    },
-    {
-      "version": "0.1.55",
-      "date": "2026-10-08",
-      "pullRequests": [],
-      "contributors": ["liuxin2-sys"],
-      "changes": [
-        { "category": "improved", "text": "Hub and Studio downloads support the new release archive layout on GitHub and COS." },
-        { "category": "improved", "text": "Hub and Studio update checks and downloads use the active release sources after the Harken rename." },
-        { "category": "improved", "text": "Command-line update checks can verify Hub or Studio independently." }
-      ]
-    },
-    {
-      "version": "0.1.54",
-      "date": "2026-09-22",
-      "pullRequests": [591],
-      "contributors": ["liuxin2-sys"],
-      "changes": [
-        { "category": "improved", "text": "Unity and Unreal projects share one SDK workflow with separate project association, SDK actions, and results." },
-        { "category": "improved", "text": "Project association now explains that it only adds or removes the project pair from the integration list." },
-        { "category": "improved", "text": "Check the installed SDK without selecting a source. Failures explain their causes, recovery steps, and available actions." },
-        { "category": "improved", "text": "SDK changes use dedicated dialogs and safety checks that require closing the target game project before writing files." },
-        { "category": "improved", "text": "SDK scans run in the background with live activity and a Stop Scan button. Stopped scans cannot approve SDK changes." },
-        { "category": "added", "text": "Choose an Unreal SDK folder under Plugins, migrate with a verified backup, and recover interrupted migrations through the shared SDK workflow." },
-        { "category": "improved", "text": "Hub manages SDK integration independently, including repair guidance for damaged installations in Chinese and English." }
-      ]
-    },
-    {
-      "version": "0.1.53",
-      "date": "2026-09-21",
-      "pullRequests": [584],
-      "contributors": ["liuxin2-sys"],
-      "changes": [
-        { "category": "added", "text": "Choose a custom SDK installation folder inside your Unity project. Hub remembers the location for each project." },
-        { "category": "added", "text": "Move an installed SDK without reinstalling it or unlinking projects, preserving modified files and Unity asset references." },
-        { "category": "added", "text": "SDK migration creates a verified backup and supports restoring the original location after an interruption." },
-        { "category": "improved", "text": "SDK operations detect duplicate installations and reject unsafe paths, conflicting package references, or projects open in Unity." },
-        { "category": "improved", "text": "Integration guidance now explains how to unlink projects or migrate the SDK, with consistent Chinese and English text." },
-        { "category": "improved", "text": "On Windows, Hub restores its window after an update and confirms startup before reporting a successful restart." },
-        { "category": "improved", "text": "Reinstalling a Hub update on Windows no longer replaces its running update helper or leaves later updates blocked by files in use." }
-      ]
-    },
-    {
-      "version": "0.1.52",
-      "date": "2026-09-20",
-      "pullRequests": [566],
-      "contributors": ["liuxin2-sys"],
-      "changes": [
-        { "category": "removed", "text": "The Unreal project selection button is temporarily hidden in Engine Integrations." },
-        { "category": "improved", "text": "The integration editor opens without waiting for Studio version checks to finish." },
-        { "category": "improved", "text": "Reduced delays when browsing for or selecting a Harken project." },
-        { "category": "improved", "text": "Integration checks, installation, and removal now show their own results, with failures selected first and empty details hidden." }
-      ]
-    },
-    {
-      "version": "0.1.51",
-      "date": "2026-09-17",
-      "pullRequests": [541],
-      "contributors": ["liuxin2-sys"],
-      "changes": [
-        { "category": "removed", "text": "Removed release notes for Hub versions older than 0.1.47 from the About window." }
-      ]
-    },
-    {
-      "version": "0.1.50",
-      "date": "2026-09-16",
-      "pullRequests": [533],
-      "contributors": ["liuxin2-sys"],
-      "changes": [
-        { "category": "added", "text": "Remove multiple selected projects from the list at once, without deleting their files." },
-        { "category": "improved", "text": "Manual Studio package installation now explains folder conflicts and rejects packages for a different operating system." },
-        { "category": "improved", "text": "Language names stay in their native language when switching the Hub interface language." },
-        { "category": "removed", "text": "Template selection is temporarily hidden when creating a project." },
-        { "category": "improved", "text": "Updated the Harken Studio license agreement and privacy policy. Hub asks you to confirm the revised terms." },
-        { "category": "improved", "text": "The Hub website link now opens https://harken.xd.com." }
-      ]
-    },
-    {
-      "version": "0.1.49",
-      "date": "2026-09-15",
-      "pullRequests": [521],
-      "contributors": ["liuxin2-sys"],
-      "changes": [
-        { "category": "improved", "text": "Hub stays usable while Studio creates a project, without closing Studio when creation takes longer than expected." },
-        { "category": "improved", "text": "Pending update files survive cache cleanup, and missing files or failed downloads can recover without waiting for a new release." },
-        { "category": "improved", "text": "Hub stays open and explains the error if its update helper cannot be started." },
-        { "category": "improved", "text": "Unreal plugin updates preserve hidden project-specific files and files inside hidden folders." }
-      ]
-    },
-    {
-      "version": "0.1.48",
-      "date": "2026-09-14",
-      "pullRequests": [509, 516],
-      "contributors": ["liuxin2-sys"],
-      "changes": [
-        { "category": "added", "text": "Read the license agreement and privacy policy side by side from the Settings menu." },
-        { "category": "improved", "text": "Install and keep older Studio versions, and open their existing projects with the selected version." },
-        { "category": "improved", "text": "Installation issues now show specific causes and let you select which installation to repair. Missing newer Hub features no longer mark an intact older version as damaged." }
-      ]
-    },
-    {
-      "version": "0.1.47",
-      "date": "2026-09-08",
-      "pullRequests": [426, 450],
-      "contributors": ["liuxin2-sys"],
-      "changes": [
-        { "category": "improved", "text": "Hub recommends the Studio version last used to save each project. Your chosen installation takes priority; if several installations match, Hub asks you to choose." },
-        { "category": "improved", "text": "Before upgrading a project, Hub shows the affected files and asks for confirmation. Cancelling leaves the project unchanged." },
-        { "category": "improved", "text": "If Hub cannot finish checking a project, Studio can continue the checks and ask you to confirm any upgrade before opening it." },
-        { "category": "improved", "text": "Studio stays open while you decide whether to upgrade a project, even if its connection to Hub is lost." },
-        { "category": "improved", "text": "The project list now loads project details in the background." },
-        { "category": "improved", "text": "Hub automatically checks local Studio builds again after recompilation. Unavailable installations remain listed separately." },
-        { "category": "removed", "text": "Studio packages in the old format can no longer be installed or used with this Hub version. Use a package in the new format." }
+        {
+          "category": "improved",
+          "text": "Unreal SDK installation now rejects incomplete native headers before changing the game project."
+        }
       ]
     }
   ]

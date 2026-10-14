@@ -53,7 +53,7 @@ AI 对话已经支持本机持久化，不能再写成“对话仅存内存”�
 
 `HarkenHub/Source/Update/ServerEndpoints.cpp` 统一生成端点：
 
-- 清单首选 `https://github.com/xindong/venus-studio/releases/latest/download/<product>-manifest.json`，产品为 `hub` 或 `harken`。
+- 清单首选 `https://github.com/xindong/harken-studio/releases/latest/download/<product>-manifest.json`，产品为 `hub` 或 `harken`。
 - 默认备用基址为 `https://venus-1459151234.cos.ap-shanghai.myqcloud.com/`，清单路径为 `release/<product>/manifest.json`。
 - 备用基址可由 `HARKEN_CONTENT_BASE_URL` 覆盖。旧 `HARKEN_SERVER_BASE_URL`、内网 IP 和 `/api/harken/client/...` 路由已不适用于当前代码。
 - 软件包地址来自已验证清单的 release tag／对象路径，优先 GitHub Release 资产，备用路径为 `release/<product>/<platform-architecture>/<version>/<build-directory>/<filename>`。构建目录使用 Hub 的 `run<number>.<commit>` 或 Studio 的 `run<number>-<commit>-<timestamp>`（重跑时为 `run<number>.<attempt>`）。Hub 文件名为 `HarkenHubSetup-<version>.exe/pkg`，Studio 为 `<version>-<channel>-<platform-architecture>.zip`；GitHub 资产使用相同文件名。当前客户端只接受此归档布局。

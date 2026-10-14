@@ -177,15 +177,15 @@ TEST(HubLocalizationTest, SimplifiedChineseCatalogIsCompleteAndLoadable)
                              "\u72b6\u6001 \u2192 \u7b49\u5f85\u66f4\u65b0"
                              "\u6865\u63a5"));
     EXPECT_EQ(VNH::LogConsoleDialog::localizeLine(QStringLiteral(
-                  "[INFO] HarkenStudio 0.1.11-dev check: latest build is "
+                  "[INFO] HarkenStudio 0.7.0-dev check: latest build is "
                   "already installed")),
-              QStringLiteral("[\u4fe1\u606f] HarkenStudio 0.1.11-dev "
+              QStringLiteral("[\u4fe1\u606f] HarkenStudio 0.7.0-dev "
                              "\u68c0\u67e5\uff1a\u5df2\u5b89\u88c5\u6700\u65b0"
                              "\u6784\u5efa"));
     EXPECT_EQ(VNH::LogConsoleDialog::localizeLine(QStringLiteral(
-                  "[INFO] HarkenStudio 0.1.11-dev poll result: latest build "
+                  "[INFO] HarkenStudio 0.7.0-dev poll result: latest build "
                   "is already installed")),
-              QStringLiteral("[\u4fe1\u606f] HarkenStudio 0.1.11-dev "
+              QStringLiteral("[\u4fe1\u606f] HarkenStudio 0.7.0-dev "
                              "\u8f6e\u8be2\u7ed3\u679c\uff1a\u5df2\u5b89"
                              "\u88c5\u6700\u65b0\u6784\u5efa"));
 

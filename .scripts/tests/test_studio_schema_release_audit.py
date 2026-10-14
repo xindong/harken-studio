@@ -267,12 +267,12 @@ class SchemaCompatibilityTest(unittest.TestCase):
 class GitHubPublicationTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tag = "release-123-abcdef"
-        self.package = {"id": 10, "name": "0.4.0-stable-windows-x64-build.zip", "state": "uploaded"}
+        self.package = {"id": 10, "name": "0.7.0-stable-windows-x64-build.zip", "state": "uploaded"}
         self.catalog_asset = {"id": 11, "name": "harken-manifest.json", "state": "uploaded"}
         self.release = {"tag_name": self.tag, "draft": False, "published_at": "2026-09-20T12:59:49Z",
                         "assets": [self.package, self.catalog_asset]}
-        self.entry = {"version": "0.4.0", "releaseTag": self.tag,
-                      "file": "releases/harken/windows-x64/0.4.0/" + self.package["name"]}
+        self.entry = {"version": "0.7.0", "releaseTag": self.tag,
+                      "file": "releases/harken/windows-x64/0.7.0/" + self.package["name"]}
         self.catalog = {"schema_version": 1, "channels": {"windows-x64": [self.entry]}}
 
     def test_publisher_tag_is_discovered_from_catalog_and_uploaded_package(self) -> None:
@@ -412,11 +412,11 @@ class ReleaseLifecycleTest(unittest.TestCase):
 
     def test_publisher_tag_freezes_contracts_and_requires_its_reader(self) -> None:
         tag = "release-123-abcdef"
-        self.publish_tag(tag, "studio-v0.4.0")
+        self.publish_tag(tag, "studio-first")
         MODULE.run_git(["tag", "hub-only"])
         with patch.object(MODULE, "github_studio_release_tags", return_value={tag}):
             self.assertEqual(set(MODULE.published_releases()), {tag})
-            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-v0.4.0")), {tag})
+            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-first")), {tag})
             self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenSchema"), [])
             with self.assertRaisesRegex(ValueError, re.escape(tag)):
                 MODULE.verify_release_readers(Path("missing"), {})
@@ -436,21 +436,21 @@ class ReleaseLifecycleTest(unittest.TestCase):
     def test_verifying_a_published_commit_excludes_itself_but_not_prior_readers(self) -> None:
         first = "release-123-first"
         second = "release-124-second"
-        self.publish_tag(first, "studio-v0.4.0")
-        self.publish_tag(second, "studio-v0.4.1")
+        self.publish_tag(first, "studio-first")
+        self.publish_tag(second, "studio-next")
         with patch.object(MODULE, "github_studio_release_tags", return_value={first, second}):
             commit = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
-            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-v0.4.1", commit)), {first})
+            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-next", commit)), {first})
             (self.root / "VERSION").write_text("1.0.1", encoding="utf-8")
             self.commit()
             commit = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
-            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-v0.4.1", commit)), {first, second})
+            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-next", commit)), {first, second})
 
     def test_unrelated_tag_with_a_copied_receipt_is_not_a_baseline(self) -> None:
-        self.publish_tag("studio-v0.4.0")
+        self.publish_tag("studio-first")
         MODULE.run_git(["tag", "internal-build"])
         with patch.object(MODULE, "github_studio_release_tags", return_value=set()) as discover:
-            self.assertEqual(set(MODULE.published_releases()), {"studio-v0.4.0"})
+            self.assertEqual(set(MODULE.published_releases()), {"studio-first"})
             discover.assert_called_once_with({"internal-build"})
 
     def test_same_generation_rejects_a_lost_published_metadata_property(self) -> None:
@@ -499,108 +499,23 @@ class ReleaseLifecycleTest(unittest.TestCase):
         self.assertEqual(MODULE.required_baselines(source_root), {})
         self.assertTrue(any("removed" in error for error in MODULE.release_schema_errors(source_root)))
 
-    def prepare_retirement(self, published: bool = True) -> tuple[str, dict]:
-        for tree in MODULE.TREE_NAMES:
-            source = MODULE.schema_archive.load_tree(tree, self.root / "HarkenSchema")["currentSource"]
-            tree_root = self.root / "HarkenSchema" / tree
-            for path in tree_root.iterdir():
-                if path.is_dir() and path.name.isdigit():
-                    shutil.rmtree(path)
-            for version in (1, 2, 3):
-                path = tree_root / str(version) / MODULE.SCHEMA_NAMES[tree]
-                path.parent.mkdir()
-                path.write_text(json.dumps(MODULE.schema_archive.materialize_source(tree, source, version)), encoding="utf-8")
-            (tree_root / "manifest.json").write_text(json.dumps({"manifestVersion": 1, "tip": "current",
-                "published": [1, 2, 3], "supportedHistorical": [1, 2] if tree == "Editor" else []}), encoding="utf-8")
-        if published:
-            self.publish_tag("before-retirement")
-        else:
-            self.commit()
-        base = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
-        for tree in MODULE.TREE_NAMES:
-            tree_root = self.root / "HarkenSchema" / tree
-            for version in (1, 2):
-                shutil.rmtree(tree_root / str(version))
-            (tree_root / "manifest.json").write_text(json.dumps({"manifestVersion": 1, "tip": "current",
-                "published": [3], "supportedHistorical": []}), encoding="utf-8")
-        receipt = {"auditVersion": 4, "product": "HarkenStudio", "publication": "unpublished"}
-        (self.root / MODULE.CONFIG_PATH).write_text(json.dumps(receipt), encoding="utf-8")
-        return base, receipt
-
-    def test_history_retirement_drops_old_packages_but_requires_a_new_verified_release(self) -> None:
-        base, _ = self.prepare_retirement()
-        self.assertEqual(MODULE.audit(base)["errors"], [])
-        self.assertEqual(MODULE.required_baselines(self.root / "HarkenSchema"), {})
-        self.assertTrue(any("no verified release receipt" in error for error in MODULE.verify_current_release()["errors"]))
-        self.publish_tag("after-retirement")
-        self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema")), {"after-retirement"})
-
-    def test_history_retirement_rejects_a_stale_release_receipt(self) -> None:
-        base, receipt = self.prepare_retirement()
-        receipt["verification"] = {"errors": []}
-        (self.root / MODULE.CONFIG_PATH).write_text(json.dumps(receipt), encoding="utf-8")
-        self.assertTrue(any("cleared unpublished" in error for error in MODULE.audit(base)["errors"]))
-
-    def test_unpublished_history_has_the_same_retirement_boundaries(self) -> None:
-        base, receipt = self.prepare_retirement(published=False)
-        self.assertEqual(MODULE.published_releases(), {})
-        self.assertEqual(MODULE.audit(base)["errors"], [])
+    def test_published_generations_cannot_be_removed_after_advancing_both_trees(self) -> None:
         source_root = self.root / "HarkenSchema"
-        for folder in ("current", "3"):
-            path = source_root / "Editor" / folder / MODULE.SCHEMA_NAMES["Editor"]
-            original = path.read_bytes()
-            source = json.loads(original)
-            source["$defs"]["uuid"]["maxLength"] = 36
-            path.write_text(json.dumps(source), encoding="utf-8")
-            self.assertTrue(MODULE.audit(base)["errors"])
-            path.write_bytes(original)
-        (self.root / MODULE.CONFIG_PATH).write_text(json.dumps({**receipt, "releaseTag": "stale"}), encoding="utf-8")
-        self.assertTrue(any("cleared unpublished" in error for error in MODULE.audit(base)["errors"]))
-        (self.root / MODULE.CONFIG_PATH).write_text(json.dumps(receipt), encoding="utf-8")
-        source = MODULE.schema_archive.load_tree("Editor", source_root)["currentSource"]
-        path = source_root / "Editor/1" / MODULE.SCHEMA_NAMES["Editor"]
-        path.parent.mkdir()
-        path.write_text(json.dumps(MODULE.schema_archive.materialize_source("Editor", source, 1)), encoding="utf-8")
-        (source_root / "Editor/manifest.json").write_text(json.dumps({"manifestVersion": 1, "tip": "current",
-            "published": [1, 3], "supportedHistorical": []}), encoding="utf-8")
-        self.assertTrue(any("oldest prefix" in error for error in MODULE.audit(base)["errors"]))
-
-    def test_history_retirement_cannot_change_current_or_retained_contracts(self) -> None:
-        base, _ = self.prepare_retirement()
-        for folder in ("current", "3"):
-            with self.subTest(folder=folder):
-                path = self.root / "HarkenSchema/Editor" / folder / MODULE.SCHEMA_NAMES["Editor"]
-                original = path.read_bytes()
-                source = json.loads(original)
-                source["$defs"]["uuid"]["maxLength"] = 36
-                path.write_text(json.dumps(source), encoding="utf-8")
-                self.assertTrue(MODULE.audit(base)["errors"])
-                path.write_bytes(original)
-
-    def test_history_retirement_cannot_remove_middle_or_current_generations(self) -> None:
-        base, _ = self.prepare_retirement()
-        tree_root = self.root / "HarkenSchema/Editor"
-        current = MODULE.schema_archive.load_tree("Editor", self.root / "HarkenSchema")["currentSource"]
-        for retained in ([1, 3], [2]):
-            with self.subTest(retained=retained):
-                for path in tree_root.iterdir():
-                    if path.is_dir() and path.name.isdigit():
-                        shutil.rmtree(path)
-                for version in retained:
-                    path = tree_root / str(version) / MODULE.SCHEMA_NAMES["Editor"]
-                    path.parent.mkdir()
-                    path.write_text(json.dumps(MODULE.schema_archive.materialize_source("Editor", current, version)), encoding="utf-8")
-                (tree_root / "manifest.json").write_text(json.dumps({"manifestVersion": 1, "tip": "current",
-                    "published": retained, "supportedHistorical": []}), encoding="utf-8")
-                self.assertTrue(any("oldest prefix" in error for error in MODULE.audit(base)["errors"]))
-
-    def test_pack_overlap_cannot_restore_a_package_with_retired_editor_history(self) -> None:
-        self.prepare_retirement()
-        tree_root = self.root / "HarkenSchema/Pack"
-        with MODULE.schema_root_at("before-retirement") as previous_root:
-            shutil.rmtree(tree_root)
-            shutil.copytree(previous_root / "Pack", tree_root)
-        self.assertEqual(MODULE.required_baselines(self.root / "HarkenSchema"), {})
+        self.publish_tag("published")
+        for tree in MODULE.TREE_NAMES:
+            loaded = MODULE.schema_archive.load_tree(tree, source_root)
+            version = loaded["currentVersion"] + 1
+            loaded["manifest"]["published"] = [version]
+            loaded["manifest"]["supportedHistorical"] = []
+            (source_root / tree / "manifest.json").write_text(json.dumps(loaded["manifest"]), encoding="utf-8")
+            target = source_root / tree / str(version) / MODULE.SCHEMA_NAMES[tree]
+            target.parent.mkdir()
+            target.write_text(json.dumps(MODULE.schema_archive.materialize_source(tree, loaded["currentSource"], version)), encoding="utf-8")
+            shutil.rmtree(source_root / tree / str(loaded["currentVersion"]))
+        self.assertEqual(MODULE.required_baselines(source_root), {})
+        errors = MODULE.release_schema_errors(source_root)
+        for tree in MODULE.TREE_NAMES:
+            self.assertTrue(any(f"Published {tree} generation" in error and "cannot be removed" in error for error in errors))
 
     def test_formal_reader_must_match_committed_sources(self) -> None:
         head = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
