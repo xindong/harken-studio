@@ -9,6 +9,8 @@ All notable changes to the Harken Core Unity package are documented here.
 - Defer the initial Ready and BecameReady notifications until a paused startup
   session resumes successfully. Later resumes only raise BecameReady.
 - Guard application pause handling during startup cancellation and shutdown.
+- Allow the project settings asset to move between parent directories while
+  preserving its Resources lookup path and duplicate-resource validation.
 
 ## [0.3.1]
 
