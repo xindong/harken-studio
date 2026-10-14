@@ -52,6 +52,21 @@ bool AudioSliceLease::HoldPrivateTransfer() noexcept {
         std::memory_order_acq_rel, std::memory_order_acquire);
 }
 
+bool AudioSliceLease::HoldPublication() noexcept {
+    if (pendingReasonBits_.load(std::memory_order_acquire) != 0 ||
+        invalidateAfterSlice_.load(std::memory_order_acquire) != 0) return false;
+    auto expected = AudioSliceState::Ready;
+    return state_.compare_exchange_strong(expected, AudioSliceState::PublicationReserved,
+        std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
+void AudioSliceLease::ReleasePublication() noexcept {
+    assert(state_.load(std::memory_order_acquire) == AudioSliceState::PublicationReserved);
+    assert(pendingReasonBits_.load(std::memory_order_acquire) == 0 &&
+        invalidateAfterSlice_.load(std::memory_order_acquire) == 0);
+    state_.store(AudioSliceState::Ready, std::memory_order_release);
+}
+
 void AudioSliceLease::ReleasePrivateTransfer() noexcept {
     assert(state_.load(std::memory_order_acquire) == AudioSliceState::PrivateTransferReserved);
     assert(pendingReasonBits_.load(std::memory_order_acquire) == 0 &&
@@ -128,11 +143,15 @@ AudioSliceInvalidateDisposition AudioSliceLease::Invalidate(
     // Only the single producer can hold a never-published private lease.
     if (state_.load(std::memory_order_acquire) == AudioSliceState::PrivateTransferReserved)
         return AudioSliceInvalidateDisposition::PrivateTransferHeld;
+    if (state_.load(std::memory_order_acquire) == AudioSliceState::PublicationReserved)
+        return AudioSliceInvalidateDisposition::PublicationHeld;
     pendingReasonBits_.fetch_or(bit, std::memory_order_acq_rel);
     for (;;) {
         AudioSliceState state = state_.load(std::memory_order_acquire);
         if (state == AudioSliceState::PrivateTransferReserved)
             return AudioSliceInvalidateDisposition::PrivateTransferHeld;
+        if (state == AudioSliceState::PublicationReserved)
+            return AudioSliceInvalidateDisposition::PublicationHeld;
         if (state == AudioSliceState::Ready) {
             if (state_.compare_exchange_weak(
                     state, AudioSliceState::SliceInvalidated,

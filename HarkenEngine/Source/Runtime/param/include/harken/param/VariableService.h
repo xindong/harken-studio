@@ -7,12 +7,22 @@
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/BankVersionToken.h"
 #include "harken/core/LogicCommitCoordinator.h"
+#include "harken/core/ActionFiringTable.h"
 #include "harken/core/PlayablePropertyCut.h"
 #include "harken/core/VariableSliceTable.h"
+#include "harken/core/VariableReadCut.h"
+#include "harken/core/TimelineArmTable.h"
+#include "harken/core/DecisionTable.h"
 #include "harken/core/VariableLabel.h"
+#include "harken/render/OriginalSourceMutationActor.h"
+#include "harken/param/ParamTargets.h"
 
 #include <array>
+#include <atomic>
+#include <bitset>
 #include <cstdint>
+#include <memory>
+#include <span>
 #include <vector>
 
 namespace harken {
@@ -22,6 +32,8 @@ struct VariableServiceTestAccess;
 }
 
 struct Engine;
+struct EngineActionPlayScratch;
+struct EngineImmediateEntryAttempt;
 class BindingTable;
 class BusTargetStore;
 class CommandQueue;
@@ -30,6 +42,13 @@ class EmitterTable;
 class ParamSystem;
 class ScheduledTransactionPool;
 class TransportEpochOwner;
+class HeldCurrentSliceToken;
+struct ConsumedCurrentSlice;
+class OriginalSourceSubmissionRegistry;
+class ImmediateActionLane;
+class PrivatePlainLayoutCommitProof;
+class PrivateImmediateLanePlacementProof;
+class PrivateImmediateLaneGroupsPublicationProof;
 
 using TransportEpoch = std::uint64_t;
 
@@ -260,7 +279,9 @@ public:
                       LogicCommitCoordinator& commits,
                       TransportEpochOwner& transport,
                       VariableSliceTable& slices,
-                      ScheduledTransactionPool& timeline);
+                      ScheduledTransactionPool& timeline,
+                      std::uint64_t readCutCapacity,
+                      std::uint32_t timelineReadUseCapacity);
 
     WorldInstallResult Install(const ContainerWorldInstallViewV1& install);
     WorldInstallResult InstallWithReplacementAdmission(
@@ -442,12 +463,32 @@ public:
         VariableWriterIdentityV1 writer = VariableWriterIdentityV1::Game) noexcept;
     void CommitPreparedWrite(PreparedVariableWriteToken* prepared,
                              LogicCommitSequence sequence) noexcept;
+    bool BindPreparedActionWriteOrder(PreparedVariableWriteToken& prepared,
+        const LogicCommitCoordinator::PreparedIssue& issue) noexcept;
+    bool BindPreparedActionWriteOrder(PreparedVariableWriteToken& prepared, Engine& engine,
+        const ActionFiringTable::PreparedChildIdentity& child) noexcept;
+    void CommitPreparedActionWrite(PreparedVariableWriteToken* prepared,
+        const LogicCommitCoordinator::ConsumedIssue& consumed) noexcept;
+    void CommitPreparedActionWrite(PreparedVariableWriteToken* prepared,
+        const ActionFiringTable::ChildActivationReceipt& activated) noexcept;
+    void CommitPreparedActionSources(const LogicCommitCoordinator::ConsumedIssue& consumed) noexcept;
+    void CommitPreparedActionSources(const ActionFiringTable::ChildActivationReceipt& activated) noexcept;
+    bool SealPreparedActionSources(const LogicCommitCoordinator::PreparedIssue& issue) noexcept;
+    bool SealPreparedActionSources(Engine& engine,
+        const ActionFiringTable::PreparedChildIdentity& child) noexcept;
     void CancelPreparedWrite(PreparedVariableWriteToken* prepared) noexcept;
 
     void BeginService(Engine& engine, std::uint64_t blocksRendered,
                       std::uint32_t blockFrames);
     void EndService(Engine& engine);
     void PrepareClaimedSlices(Engine& engine);
+    void PublishPreparedPlaybackPages(std::uint64_t requestedPublishThrough = 0) noexcept;
+    bool PrepareReadCutSources(Engine& engine, VariableReadCutRef cut);
+    bool PrepareActionReadCutSources(Engine& engine, VariableReadCutRef cut,
+        const LogicCommitCoordinator::PreparedIssue& issue);
+    bool PrepareActionReadCutSources(Engine& engine, VariableReadCutRef cut,
+        const ActionFiringTable::PreparedChildIdentity& child);
+    std::uint64_t EarliestReadCutFrame(const Engine& engine) const noexcept;
     void TerminateSession();
     bool NoteEmitterCreated(VnEmitterHandle emitter) noexcept;
     void NoteEmitterDestroyed(Engine& engine, VnEmitterHandle emitter);
@@ -488,6 +529,152 @@ public:
     bool CurrentValue(VnVariableId id, float* out) const noexcept;
     bool CurrentValue(VnEmitterHandle emitter, VnVariableId id,
                       float* out) const noexcept;
+    bool CaptureReadCut(VnEmitterHandle emitter, std::uint64_t executeFrame,
+                        LogicCommitSequence sequence,
+                        std::uint32_t executionOrdinalExclusive,
+                        VariableReadCutRef* out) noexcept;
+    bool CaptureActionReadCut(VnEmitterHandle emitter, std::uint64_t executeFrame,
+        const LogicCommitCoordinator::PreparedIssue& issue,
+        std::uint32_t executionOrdinalExclusive, VariableReadCutRef* out,
+        bool pendingPlacement = false) noexcept;
+    bool CaptureActionReadCut(Engine& engine, VnEmitterHandle emitter, std::uint64_t executeFrame,
+        const ActionFiringTable::PreparedChildIdentity& child,
+        std::uint32_t executionOrdinalExclusive, VariableReadCutRef* out,
+        bool pendingPlacement = false) noexcept;
+    bool ReadCutValue(VariableReadCutRef cut, VnVariableId id,
+                      float* out) noexcept;
+    VariableReadCutValueStatus ReadCutInput(VariableReadCutRef cut, VnVariableId id,
+                                           float* out) noexcept;
+    VariableReadCutReader ReadCutReader(VariableReadCutRef cut) noexcept;
+    bool ReadCutHasSources(VariableReadCutRef cut) const noexcept;
+    VariableReadCutStatus PublishReadCut(VariableReadCutRef cut,
+                                        std::uint64_t finalFrame) noexcept;
+    // Source proof only; the start consumer must also validate its published identities.
+    VariableReadCutStatus ReadCutSourcesStatus(VariableReadCutRef cut) const noexcept;
+    bool ReserveNativeReadCutCalendar(VariableReadCutRef cut, std::uint64_t publicationFrontier,
+                                      HeldCurrentSliceToken* out) noexcept;
+    bool CancelNativeReadCutCalendar(VariableReadCutRef cut, HeldCurrentSliceToken* held) noexcept;
+    bool HasNativeReadCutsForTransport(TransportEpoch transport) const noexcept;
+    bool ConsumeNativeReadCutCalendar(const ConsumedCurrentSlice& consumed) noexcept;
+    bool NativeReadCutCalendarConsumed(const VariableNativeStartIdentity& identity) const noexcept;
+    bool CaptureNativeReadCutIdentity(VariableReadCutRef cut, VnVoiceHandle nativeHandle,
+                                      VariableNativeStartIdentity* out) const noexcept;
+    bool PrepareNativeReadCut(VariableReadCutRef cut, VnVoiceHandle nativeHandle,
+                              std::uint64_t finalFrame, VariableNativeStartIdentity* out) noexcept;
+    bool CommitNativeReadCut(const VariableNativeStartIdentity& identity) noexcept;
+    bool CancelPreparedNativeReadCut(const VariableNativeStartIdentity& identity) noexcept;
+    // Audio marks the exact native start only after its complete initial command run is installed.
+    bool MarkNativeReadCutInstalled(const VariableNativeStartIdentity& identity) noexcept;
+    VariableNativeStartReceipt NativeReadCutStatus(const VariableNativeStartIdentity& identity) const noexcept;
+    VariableReadCutStatus NativeReadCutSourcesStatus(const VariableNativeStartIdentity& identity) const noexcept;
+    // Audio detaches every native link, then publishes activation/failure. No cut reads follow this call.
+    bool FinishNativeReadCut(const VariableNativeStartIdentity& identity, bool activated) noexcept;
+    // Logic acquires the terminal receipt before releasing any source pins.
+    bool AcknowledgeNativeReadCut(const VariableNativeStartIdentity& identity) noexcept;
+    void AcknowledgeFinishedNativeReadCuts() noexcept;
+    bool HasNativePublicationHold(VnVoiceHandle nativeHandle) const noexcept;
+    void ShutdownReadCutsAfterQuiescence() noexcept;
+    bool CanReleaseReadCut(VariableReadCutRef cut) const noexcept;
+    bool ReleaseReadCut(VariableReadCutRef cut) noexcept;
+    bool PrepareTimelineReadUse(VariableReadCutRef cut, VnVoiceHandle nativeHandle,
+        TimelineArmTable& arms, const TimelineArmTable::PreparedCommitProof& proof,
+        VariableTimelineReadUseRef* out, std::uint64_t authoredStartOffset = 0) noexcept;
+    bool BindPreparedTimelineReadUseSource(VariableTimelineReadUseRef use,
+        OriginalSourceSubmissionRegistry& sources, OriginalSourceLifetimePin&& original) noexcept;
+    bool BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef use,
+        const ImmediateActionLane& lane, const PrivatePlainLayoutCommitProof& placement,
+        VariableReadCutRef* cut) noexcept;
+    bool BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef use,
+        const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+        VariableReadCutRef* cut) noexcept;
+    bool BeginPendingVariableGroupPlacement(Engine& engine, EngineActionPlayScratch& producer,
+        EngineImmediateEntryAttempt& attempt, const PrivateImmediateLanePlacementProof& placement,
+        VariableReadCutReader* out) noexcept;
+    bool BeginPendingVariableGroupReprepare(Engine& engine, EngineActionPlayScratch& producer,
+        const EngineImmediateEntryAttempt& attempt, std::uint64_t anchor,
+        VariableReadCutReader* out) noexcept;
+    bool PreparePendingOrdinarySelectionReadCut(Engine& engine, EngineActionPlayScratch& producer,
+        EngineImmediateEntryAttempt& attempt, std::uint64_t anchor) noexcept;
+    bool OriginalPendingVariableGroupUsesMatch(Engine& engine, EngineActionPlayScratch& producer,
+        const EngineImmediateEntryAttempt& attempt, const PrivateImmediateLanePlacementProof& placement) const noexcept;
+    bool StageOriginalPendingVariableGroupInitializer(Engine& engine, EngineActionPlayScratch& producer,
+        const EngineImmediateEntryAttempt& attempt, const PrivateImmediateLanePlacementProof& placement,
+        std::uint32_t leaf, std::span<const CommandRecord> commands) noexcept;
+    bool OriginalPendingVariableGroupReadyToFreeze(Engine& engine, EngineActionPlayScratch& producer,
+        const EngineImmediateEntryAttempt& attempt, const PrivateImmediateLanePlacementProof& placement,
+        bool* outWaiting) noexcept;
+    bool FreezeOriginalPendingVariableGroup(Engine& engine, EngineActionPlayScratch& producer,
+        const EngineImmediateEntryAttempt& attempt, const PrivateImmediateLanePlacementProof& placement) noexcept;
+    bool MatchesPreparedTimelineReadUse(VariableTimelineReadUseRef use, VariableReadCutRef cut,
+        VnVoiceHandle nativeHandle, const TimelineArmTable::PreparedCommitProof& arm,
+        const OriginalSourceSubmissionRegistry& sources, std::uint64_t authoredOffset) const noexcept;
+    bool MatchesPrivateCommittedTimelineReadUse(VariableTimelineReadUseRef use, VariableReadCutRef cut,
+        VnVoiceHandle nativeHandle, const TimelineArmTable& arms, TimelineArmToken arm,
+        const OriginalSourceSubmissionRegistry& sources, std::uint64_t anchor, std::uint64_t authoredOffset) const noexcept;
+    bool MatchesPublishedPendingVariableGroupReadCut(Engine& engine, EngineActionPlayScratch& producer,
+        const EngineImmediateEntryAttempt& attempt, const EngineActionPlayScratch& child,
+        const PrivateImmediateLanePlacementProof& placement, bool entryBound) const noexcept;
+    bool MatchesEntryBoundTimelineReadUse(VariableTimelineReadUseRef use, VariableReadCutRef cut,
+        VnVoiceHandle nativeHandle, const TimelineArmTable& arms, TimelineArmToken arm,
+        const OriginalSourceSubmissionRegistry& sources, const DecisionTable& decisions,
+        const ScheduledTransactionPool& pool, const FrontierActivationDescriptor& descriptor,
+        std::uint32_t leafCount, std::uint64_t authoredOffset) const noexcept;
+    bool BeginPreparedPendingVariableGroupPlacement(Engine& engine, EngineActionPlayScratch& producer,
+        const EngineImmediateEntryAttempt& attempt, const PrivateImmediateLanePlacementProof& placement,
+        VariableReadCutReader* out) noexcept;
+    bool StagePreparedPendingVariableGroupInitializer(Engine& engine, EngineActionPlayScratch& producer,
+        const EngineImmediateEntryAttempt& attempt, const PrivateImmediateLanePlacementProof& placement,
+        std::uint32_t leaf, std::span<const CommandRecord> commands) noexcept;
+    bool FreezePreparedPendingVariableGroup(Engine& engine, EngineActionPlayScratch& producer,
+        const EngineImmediateEntryAttempt& attempt, const PrivateImmediateLanePlacementProof& placement,
+        bool* outWaiting = nullptr) noexcept;
+    bool PreparedPendingVariableGroupReadyToFreeze(Engine& engine, EngineActionPlayScratch& producer,
+        const EngineImmediateEntryAttempt& attempt, const PrivateImmediateLanePlacementProof& placement,
+        bool* outWaiting = nullptr) noexcept;
+    bool ResetPrivatePendingVariableGroupCut(Engine& engine, EngineActionPlayScratch& producer,
+        const EngineImmediateEntryAttempt& attempt) noexcept;
+    bool FreezePendingTimelineReadUse(VariableTimelineReadUseRef use,
+        std::span<const CommandRecord> commands) noexcept;
+    bool ProveTimelineReadUseInitializer(VariableTimelineReadUseRef use, VnVoiceHandle nativeHandle,
+        const TimelineArmTable::PlainAudioProof& proof, VariableTimelineInitializerProof* out) noexcept;
+    bool ProveTimelineReadUseInitializer(VariableTimelineReadUseRef use, VnVoiceHandle nativeHandle,
+        const TimelineArmTable::LaneAudioProof& proof, VariableTimelineInitializerProof* out) noexcept;
+    bool ProveTimelineReadUseInitializer(VariableTimelineReadUseRef use, VnVoiceHandle nativeHandle,
+        const TimelineArmTable::BoundAudioProof& proof, VariableTimelineInitializerProof* out) noexcept;
+    bool ProveTimelineReadUseInitializer(VariableTimelineReadUseRef use, VnVoiceHandle nativeHandle,
+        const TimelineArmTable::AudioOperationClaim& proof, VariableTimelineInitializerProof* out) noexcept;
+    static void ApplyTimelineReadUseInitializer(VariableTimelineInitializerProof& proof,
+        void* context, void (*apply)(void*, const CommandRecord&) noexcept) noexcept;
+    bool PendingTimelineReadUseFrozen(VariableTimelineReadUseRef use) const noexcept;
+    bool PendingTimelineReadUseStaged(VariableTimelineReadUseRef use) const noexcept;
+    bool CommitTimelineReadUse(VariableTimelineReadUseRef use) noexcept;
+    bool CancelPreparedTimelineReadUse(VariableTimelineReadUseRef use) noexcept;
+    bool CanTransferReadCutToTimelineUses(VariableReadCutRef cut) const noexcept;
+    bool TransferReadCutToTimelineUses(VariableReadCutRef cut) noexcept;
+    bool PrepareFrontierEntryReadUse(VariableReadCutRef cut, DecisionTable& decisions,
+        ScheduledTransactionPool& pool, const FrontierActivationDescriptor& descriptor) noexcept;
+    bool CommitFrontierEntryReadUse(VariableReadCutRef cut) noexcept;
+    bool CanCommitFrontierEntryReadUse(VariableReadCutRef cut,
+        const DecisionTable::FrontierPublicationProof& activation,
+        const PrivateImmediateLaneGroupsPublicationProof& groups) const noexcept;
+    bool CommitFrontierEntryReadUse(VariableReadCutRef cut,
+        const DecisionTable::FrontierPublicationProof& activation,
+        const PrivateImmediateLaneGroupsPublicationProof& groups) noexcept;
+    VariableReadCutStatus FrontierEntrySourcesStatus(
+        const FrontierActivationDescriptor& descriptor) const noexcept;
+    bool FinishFrontierEntryReadUse(const FrontierEntryReceiptRef& entry,
+        std::uint64_t completedAudioSequence) noexcept;
+    bool CancelPreparedFrontierEntryReadUse(const FrontierEntryReceiptRef& entry) noexcept;
+    VariableReadCutStatus TimelineReadUseSourcesStatus(VariableTimelineReadUseRef use,
+        VnVoiceHandle nativeHandle) const noexcept;
+    VariableReadCutStatus TimelineReadUseStartStatus(VariableTimelineReadUseRef use,
+        VnVoiceHandle nativeHandle) const noexcept;
+    bool PendingTimelineReadUseMatchesArm(VariableTimelineReadUseRef use,
+        VnVoiceHandle nativeHandle, TimelineArmToken arm) const noexcept;
+    void AcknowledgeFinishedTimelineReadUses(std::uint64_t completedAudioSequence) noexcept;
+    std::uint32_t ReadCutCapacity() const noexcept { return readCutCapacity_; }
+    std::uint32_t TimelineReadUseCapacity() const noexcept { return timelineReadUseCapacity_; }
+    std::size_t ReadCutStorageBytes() const noexcept;
     bool CaptureCurrentBank(VnEmitterHandle emitter,
                             const VnVariableId* variableIds,
                             std::uint32_t variableCount,
@@ -851,8 +1038,42 @@ private:
         bool pending = false;
     };
 
+    struct ActionOrderIdentity {
+        LogicCommitCoordinator::PreparedIssueIdentity ordinary{};
+        ActionFiringTable::PreparedChildIdentity deferred{};
+        const ActionFiringTable* deferredTable = nullptr;
+        bool HasReservation() const noexcept {
+            return ordinary.HasReservation() || deferred.HasPreparation();
+        }
+        bool SameReservation(const ActionOrderIdentity& other) const noexcept {
+            return ordinary.SameReservation(other.ordinary) ||
+                (deferredTable != nullptr && deferredTable == other.deferredTable &&
+                    deferred.SamePreparation(other.deferred));
+        }
+    };
+    bool CaptureActionOrder(const LogicCommitCoordinator::PreparedIssue& issue,
+        ActionOrderIdentity* out) const noexcept;
+    bool CaptureActionOrder(Engine& engine, const ActionFiringTable::PreparedChildIdentity& child,
+        ActionOrderIdentity* out) const noexcept;
+    bool IsPreparedActionOrderActive(const ActionOrderIdentity& identity) const noexcept;
+    bool MatchesConsumedActionOrder(const ActionOrderIdentity& identity,
+        const LogicCommitCoordinator::ConsumedIssue* consumed,
+        const ActionFiringTable::ChildActivationReceipt* activated) const noexcept;
+    bool BindPreparedActionWriteOrderImpl(PreparedVariableWriteToken& prepared,
+        const ActionOrderIdentity& identity, LogicCommitSequence sequence) noexcept;
+    bool SealPreparedActionSourcesImpl(const ActionOrderIdentity& identity) noexcept;
+    void CommitPreparedActionSourcesImpl(const LogicCommitCoordinator::ConsumedIssue* consumed,
+        const ActionFiringTable::ChildActivationReceipt* activated) noexcept;
+    bool PrepareActionReadCutSourcesImpl(Engine& engine, VariableReadCutRef cut,
+        const ActionOrderIdentity& identity);
+
     struct WriteRow {
         bool used = false;
+        bool reserved = false;
+        ActionOrderIdentity preparedIssue{};
+        Engine* preparedEngine = nullptr;
+        bool cancelledBeforePublication = false;
+        bool preparedSourcesSealed = false;
         RowState state = RowState::Pending;
         WriteOperation operation = WriteOperation::Set;
         WorldGeneration world = 0;
@@ -864,18 +1085,133 @@ private:
         LogicCommitTicket ticket{};
         std::uint32_t executionOrdinal = 0;
         std::uint64_t requiredCommandFrontier = 0;
-        std::uint64_t targetQuantum = 0;
         std::uint64_t committedFrame = 0;
         std::uint64_t bankOrdinal = 0;
         VariableSliceRef slice{};
+        TargetClaimOwner publicationOwner{};
         bool frontierCaptured = false;
-        bool noPhysicalTargets = false;
+        bool placementHeld = false;
         bool emitterDestroyedBeforeApplied = false;
         std::uint32_t emitterOverrideSlot = UINT32_MAX;
         std::uint64_t outcomeGeneration = 0;
         std::uint64_t batchId = 0;
         bool batchLeader = true;
+        std::uint32_t observers = 0;
+        bool historySlicePin = false;
+        std::uint64_t consumedFence = 0;
+        bool outcomeDelivered = false;
+        VariableOutcomeKind finalOutcome = VariableOutcomeKind::Session;
     };
+
+    struct HistoryRef {
+        std::uint32_t slot = UINT32_MAX;
+        std::uint32_t generation = 0;
+        LogicCommitSequence sequence = 0;
+        WorldGeneration world = 0;
+        TransportEpoch transport = 0;
+        bool Valid() const noexcept { return slot != UINT32_MAX && generation != 0; }
+    };
+    struct ReadCutValueRow {
+        VnVariableId variableId{};
+        float value = 0.0f;
+        HistoryRef source{};
+        std::uint64_t baselineOrdinal = 0;
+        bool read = false;
+    };
+    enum class ReadCutState : std::uint8_t { Free, Capturing, Published, Quarantined };
+    enum class EntryReadUseState : std::uint8_t { None, Prepared, Published };
+    struct ReadCutRow {
+        std::atomic<std::uint32_t> generation{1};
+        std::atomic<ReadCutState> state{ReadCutState::Free};
+        WorldGeneration world = 0;
+        TransportEpoch transport = 0;
+        VnEmitterHandle emitter = 0;
+        std::uint64_t executeFrame = 0;
+        LogicCommitSequence sequence = 0;
+        std::uint32_t executionOrdinalExclusive = 0;
+        ActionOrderIdentity preparedIssue{};
+        bool pendingPlacement = false;
+        bool finalPlacementCaptured = false;
+        bool actionOrderConsumed = false;
+        std::array<float, kVariableDefinitionCapacity> baselineValues{};
+        // Each set bit owns an observer, so the slot cannot recycle while retained.
+        std::bitset<kVariableHistoryCapacity> candidatePins{};
+        bool candidateAdmissionFailed = false;
+        std::uint32_t valueCount = 0;
+        std::uint32_t sourceCount = 0;
+        std::uint32_t publishedSourceCount = 0;
+        bool needsRebuild = false;
+        std::atomic<bool> preparationFailed{false};
+        std::atomic<VariableNativeStartReceipt> nativeReceipt{VariableNativeStartReceipt::None};
+        bool nativeCalendarRequired = false;
+        std::uint64_t nativeCalendarReservationSequence = 0;
+        std::atomic<bool> nativeCalendarConsumed{false};
+        VnVoiceHandle nativeHandle = 0;
+        std::uint32_t timelineUseCount = 0;
+        bool timelineOwnershipTransferred = false;
+        std::atomic<EntryReadUseState> entryUse{EntryReadUseState::None};
+        FrontierActivationDescriptor entryDescriptor{};
+        DecisionTable* entryDecisions = nullptr;
+        ScheduledTransactionPool* entryPool = nullptr;
+        DecisionFuturePin entryPin;
+        std::array<ReadCutValueRow, kVariableDefinitionCapacity> values{};
+        std::array<HistoryRef, kVariableDefinitionCapacity> sources{};
+        std::array<VariableSliceSource, kVariableDefinitionCapacity> publishedSources{};
+    };
+
+    ReadCutRow* ResolveReadCut(VariableReadCutRef cut) noexcept;
+    bool CaptureReadCutImpl(VnEmitterHandle emitter, std::uint64_t executeFrame,
+        LogicCommitSequence sequence, std::uint32_t executionOrdinalExclusive,
+        VariableReadCutRef* out, const ActionOrderIdentity* privateIssue,
+        bool pendingPlacement = false) noexcept;
+    bool RebuildPendingReadCut(ReadCutRow& cut, std::uint64_t logicalFrame) noexcept;
+    void RegisterCommittedPendingReadCutCandidate(std::uint32_t slot) noexcept;
+    bool ValidateReadCutPublication(VariableReadCutRef cut, std::uint64_t finalFrame,
+        bool* outWaiting) noexcept;
+    bool BeginUnborrowedPendingVariableGroupCut(Engine& engine, EngineActionPlayScratch& producer,
+        VariableReadCutRef ref, std::uint64_t anchor, VariableReadCutReader* out) noexcept;
+    bool ReleaseFrontierEntryReadUse(ReadCutRow& cut) noexcept;
+    bool FrontierEntryReadUseDetached(const ReadCutRow& cut, std::uint64_t completedAudioSequence) const noexcept;
+    void PrepareClaimedSlicesImpl(Engine& engine, bool allowUnsettledFrontier, bool publishPages,
+        const ActionOrderIdentity* privateIssue = nullptr);
+    std::uint64_t pendingPlaybackPublicationThrough_ = 0;
+    const ReadCutRow* ResolveReadCut(VariableReadCutRef cut) const noexcept;
+    const ReadCutRow* ResolveNativeReadCut(const VariableNativeStartIdentity& identity) const noexcept;
+    enum class TimelineReadUseState : std::uint8_t { Free, Prepared, Published, Quarantined };
+    enum class TimelineInitializerState : std::uint8_t { None, PendingPlacement, Building, Staged, Frozen, Consumed };
+    static constexpr std::uint32_t kTimelineInitialCommandCapacity = kBuiltinTargetCount + 4u;
+    struct TimelineReadUseRow {
+        std::atomic<std::uint32_t> generation{1};
+        std::atomic<TimelineReadUseState> state{TimelineReadUseState::Free};
+        VariableReadCutRef cut{};
+        VnVoiceHandle nativeHandle = 0;
+        TimelineArmTable::VariableReadLifetime lifetime;
+        OriginalSourceSubmissionRegistry* sourceOwner = nullptr;
+        OriginalSourceLifetimePin originalSource;
+        std::atomic<TimelineInitializerState> initializer{TimelineInitializerState::None};
+        std::uint64_t logicalFrame = 0;
+        std::uint64_t onsetFrame = 0;
+        std::uint64_t authoredStartOffset = 0;
+        std::uint32_t initialCommandCount = 0;
+        std::array<CommandRecord, kTimelineInitialCommandCapacity> initialCommands{};
+    };
+    bool BeginPendingTimelineReadUsePlacement(TimelineReadUseRow& use,
+        std::uint64_t logicalFrame, std::uint64_t onsetFrame, VariableReadCutRef* cut) noexcept;
+    bool PreparedPendingVariableGroupUsesMatch(const EngineActionPlayScratch& child,
+        const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement) const noexcept;
+    static bool TimelineInitializerCommandsMatch(VnVoiceHandle nativeHandle,
+        std::span<const CommandRecord> commands) noexcept;
+    bool CaptureTimelineInitializerProof(VariableTimelineReadUseRef use, VnVoiceHandle nativeHandle,
+        VariableTimelineInitializerProof* out) noexcept;
+    TimelineReadUseRow* ResolveTimelineReadUse(VariableTimelineReadUseRef use) noexcept;
+    const TimelineReadUseRow* ResolveTimelineReadUse(VariableTimelineReadUseRef use) const noexcept;
+    void ReleaseTimelineReadUse(TimelineReadUseRow& use) noexcept;
+    WriteRow* ResolveHistory(HistoryRef ref) noexcept;
+    bool PreparedSourceDependsOn(VariableSliceRef source, VariableSliceRef cancelled) const noexcept;
+    bool PinHistorySlice(WriteRow& row) noexcept;
+    bool RecycleHistoryRow(std::uint32_t slot) noexcept;
+    void ReclaimHistoryRows() noexcept;
+    void ObserveAppliedWriteForReadCuts(const WriteRow& row) noexcept;
 
     struct GatheredTarget {
         VariableTargetLocator locator{};
@@ -892,6 +1228,8 @@ private:
     static bool ScopeEqual(const VariableScopeKey& a,
                            const VariableScopeKey& b) noexcept;
     static bool RowKeyEqual(const WriteRow& a, const WriteRow& b) noexcept;
+    static bool Precedes(const WriteRow& a, const WriteRow& b) noexcept;
+    static bool PublicationPrecedes(const WriteRow& a, const WriteRow& b) noexcept;
     static bool SameBankKey(const WriteRow& a, const WriteRow& b) noexcept;
     static bool SameServiceDependency(const WriteRow& a,
                                       const WriteRow& b) noexcept;
@@ -899,6 +1237,8 @@ private:
                                            const WriteRow& b) noexcept;
     static bool SameTarget(const VariableTargetLocator& a,
                            const VariableTargetLocator& b) noexcept;
+    static bool SamePhysicalTarget(const VariableTargetLocator& a,
+                                   const VariableTargetLocator& b) noexcept;
     static bool ExactStepValue(float value) noexcept;
 
     DefinitionRow* FindDefinition(VnVariableId id) noexcept;
@@ -949,6 +1289,9 @@ private:
         std::uint32_t executionOrdinal,
         PreparedVariableWriteToken* out,
         VariableWriterIdentityV1 writer = VariableWriterIdentityV1::Game) noexcept;
+    void CommitPreparedWriteImpl(PreparedVariableWriteToken* prepared, LogicCommitSequence sequence,
+        const LogicCommitCoordinator::ConsumedIssue* consumed,
+        const ActionFiringTable::ChildActivationReceipt* activated = nullptr) noexcept;
     bool CanTerminateForWorldReplacement(const WriteRow& row) const noexcept;
     void FinalizeRow(WriteRow& row, VariableOutcomeKind outcome,
                      LogicCommitTicket related, std::uint64_t actualFrame) noexcept;
@@ -957,6 +1300,14 @@ private:
     void FinalizeBatch(WriteRow& leader, VariableOutcomeKind outcome,
                        LogicCommitTicket related, std::uint64_t actualFrame) noexcept;
     void ReleaseEmitterOverrideReservation(WriteRow& row) noexcept;
+    template <typename Visitor>
+    void ForEachTarget(Engine& engine, WriteRow& row, Visitor&& visitor) noexcept;
+    bool SharesPhysicalTargets(Engine& engine, WriteRow& prior,
+                              const WriteRow& row) noexcept;
+    static bool ScopeAppliesToTarget(const Engine& engine, const WriteRow& row,
+                                    const VariableTargetLocator& target) noexcept;
+    bool CaptureCandidateSources(Engine& engine, WriteRow& row,
+                                 WriteRow* const* prefix, std::size_t count) noexcept;
     bool GatherTargets(Engine& engine, WriteRow& row,
                        std::uint32_t* outCount) noexcept;
     bool RecensusMatches(Engine& engine, WriteRow& row) noexcept;
@@ -1019,11 +1370,15 @@ private:
     std::vector<ActionProgramViewV1> actionProgramViews_;
     std::vector<EmitterBank> emitterBanks_;
     std::vector<std::uint32_t> emitterBankVersionGenerations_;
-    // Fixed slot pool of durable write rows. A slot recycles once its row
-    // is Terminal AND its outcome record has been delivered (popped by the
-    // per-update outcome drain); freeSlots_ is the recycle stack.
+    // History reuse requires outcome delivery, zero observers and an audio fence.
     std::vector<WriteRow> history_;
+    std::vector<HeldCurrentSliceToken> preparedWritePlacements_;
+    std::vector<std::uint32_t> historyGenerations_;
     std::vector<std::uint32_t> freeSlots_;
+    std::uint32_t readCutCapacity_ = 0;
+    std::unique_ptr<ReadCutRow[]> readCuts_;
+    std::uint32_t timelineReadUseCapacity_ = 0;
+    std::unique_ptr<TimelineReadUseRow[]> timelineReadUses_;
     // Per-update outcome staging: filled by FinalizeRow, drained whole by
     // the update epilogue (transcribed to an active trace, else dropped),
     // never carried across updates.
@@ -1041,6 +1396,9 @@ private:
     std::uint64_t pendingRows_ = 0;
     std::uint64_t preparedRows_ = 0;
     std::uint64_t nextBankOrdinal_ = 1;
+    TargetClaimOwner publicationOwner_{};
+    WorldGeneration publicationWorld_ = 0;
+    TransportEpoch publicationTransport_ = 0;
     std::uint32_t globalBankVersionGeneration_ = 1;
     WorldDrainState drainState_ = WorldDrainState::Idle;
     bool engineAdmissionClosed_ = false;

@@ -125,6 +125,12 @@ public:
     void DrainQueuedCommands(std::uint32_t quantumCount);
     // Engine teardown only, after queue discard and callback/worker join.
     void FinishControlHeaderAckAfterQuiescence() noexcept;
+    using NativeStartCalendarConsumer = bool (*)(void*, const ConsumedCurrentSlice&) noexcept;
+    // Installed before any callback; authority storage outlives the mixer.
+    void SetNativeStartCalendarConsumer(void* context, NativeStartCalendarConsumer consumer) noexcept {
+        m_nativeStartCalendarContext = context;
+        m_nativeStartCalendarConsumer = consumer;
+    }
     void SuppressCommandProtocolAssertForTest(bool suppress) {
         m_suppressCommandProtocolAssertForTest = suppress;
     }
@@ -140,6 +146,11 @@ public:
         m_currentSliceFrontierHookForTest = hook;
         m_currentSliceFrontierHookContextForTest = context;
     }
+    using TimelineFinalizedHookForTest = void (*)(void*, std::uint64_t) noexcept;
+    void SetTimelineFinalizedHookForTest(TimelineFinalizedHookForTest hook, void* context) noexcept {
+        m_timelineFinalizedHookForTest = hook;
+        m_timelineFinalizedHookContextForTest = context;
+    }
     void SetCurrentSliceScratchLimitForTest(std::size_t limit) noexcept {
         m_currentSliceScratchLimitForTest = limit;
     }
@@ -152,6 +163,8 @@ public:
     std::size_t EffectiveCurrentSliceCapacity() const noexcept {
         return std::min(m_currentSliceScratch.size(), m_currentSliceScratchLimitForTest);
     }
+    void InitializeVariableSliceConsumptionStorage();
+    std::size_t VariableSliceConsumptionStorageBytes() const noexcept;
 
 private:
     friend struct detail::OriginalControlOriginTestAccess;
@@ -281,14 +294,28 @@ private:
     VoiceTimelineSink* m_timelineSink = nullptr;
     ScheduledTransactionPool* m_timelinePool = nullptr;
     VariableSliceTable* m_variableSlices = nullptr;
+    void* m_nativeStartCalendarContext = nullptr;
+    NativeStartCalendarConsumer m_nativeStartCalendarConsumer = nullptr;
+    CurrentSliceStagePlan m_activeCurrentSlicePlan{};
+    bool m_currentSlicesAppliedInExecutor = false;
+    void ApplyConsumedCurrentSlices(std::uint64_t blockIndex,
+                                   const TimelineExecutionResult& result) noexcept;
     const ProjectGenerationInstallAckIdentityV1* m_installAckSideTable = nullptr;
     std::uint32_t m_installAckSideTableCapacity = 0;
     ProjectGenerationInstallAckRingV1* m_installAckRing = nullptr;
     std::vector<ConsumedCurrentSlice> m_currentSliceScratch;
+    struct PendingSliceConsumption {
+        bool active = false;
+        ConsumedCurrentSlice consumed{};
+    };
+    std::vector<PendingSliceConsumption> m_pendingSliceConsumptions;
+    std::vector<std::uint32_t> m_pendingSliceOrder;
     std::size_t m_stagedCurrentSliceCount = 0;
     std::size_t m_currentSliceScratchLimitForTest = 0;
     CurrentSliceFrontierHookForTest m_currentSliceFrontierHookForTest = nullptr;
     void* m_currentSliceFrontierHookContextForTest = nullptr;
+    TimelineFinalizedHookForTest m_timelineFinalizedHookForTest = nullptr;
+    void* m_timelineFinalizedHookContextForTest = nullptr;
     // Preallocated record scratch for the three meter tap lanes,
     // written and handed to PushTaps() on the audio thread — sized at init, so
     // the append allocates nothing.

@@ -6,6 +6,17 @@
 
 namespace harken {
 
+namespace {
+bool DeferredPrecedes(const DeferredIntent& a, std::uint32_t aSlot,
+                      const DeferredIntent& b, std::uint32_t bSlot) noexcept {
+    if (a.dueFrame != b.dueFrame) return a.dueFrame < b.dueFrame;
+    if (a.commitSequence != b.commitSequence) return a.commitSequence < b.commitSequence;
+    if (a.executionOrdinal != b.executionOrdinal) return a.executionOrdinal < b.executionOrdinal;
+    if (a.payload != b.payload) return a.payload < b.payload;
+    return aSlot < bSlot;
+}
+}
+
 bool ActionDeferredRecordTable::Reset(std::uint32_t capacity) {
     if (capacity == 0 || preparedPairLoans_ != 0) {
         return false;
@@ -235,6 +246,61 @@ bool ActionDeferredRecordTable::Claim(
     return true;
 }
 
+bool ActionDeferredRecordTable::InspectPlayPrerequisites(
+    DeferredIntentPool& pool, const DeferredIntent& candidate,
+    std::uint32_t candidateSlot, bool* outHeld,
+    ActionDeferredPairState* outFaultState) const noexcept {
+    if (outHeld == nullptr) return false;
+    *outHeld = false;
+    // Expanded parent/child firings share the accepted ticket, not the firing handle.
+    for (std::uint32_t slot = 0; slot < rows_.size(); ++slot) {
+        const Row& prerequisite = rows_[slot];
+        if (prerequisite.state != ActionDeferredRecordState::Held || prerequisite.heldCancelOwned ||
+            (prerequisite.record.step.opcode != ActionOpcodeV1::Reset &&
+             prerequisite.record.step.opcode != ActionOpcodeV1::SetVariable) ||
+            prerequisite.record.intendedBoundaryFrame > candidate.dueFrame) continue;
+        const auto* prior = pool.Validate(prerequisite.poolToken, DeferredIntentEntryState::Held);
+        if (prior == nullptr || prior->intent.ownerDomain != DeferredIntentOwnerDomain::Action ||
+            prior->intent.ownerHandle != prerequisite.record.firing ||
+            prior->intent.ownerEpoch != prerequisite.record.ownerCancellationEpoch ||
+            prior->intent.payload != slot || prior->intent.dueFrame != prerequisite.record.intendedBoundaryFrame ||
+            prior->intent.executionOrdinal != prerequisite.record.executionOrdinal ||
+            prerequisite.retryReservation.Valid() || prior->retryReservation.Valid()) {
+            if (outFaultState != nullptr)
+                (void)InspectPair(pool, prerequisite.poolToken, {slot, prerequisite.generation}, outFaultState);
+            return false;
+        }
+        if (prior->intent.commitSequence == candidate.commitSequence &&
+            DeferredPrecedes(prior->intent, slot, candidate, candidateSlot)) {
+            *outHeld = true;
+            return true;
+        }
+    }
+    return true;
+}
+
+bool ActionDeferredRecordTable::InspectClaimedPlayPrerequisites(
+    DeferredIntentPool* pool, DeferredIntentToken poolToken,
+    ActionDeferredRecordToken recordToken, bool* outHeld,
+    ActionDeferredPairState* outFaultState) const noexcept {
+    const Row* row = Resolve(recordToken);
+    const auto* entry = pool == nullptr ? nullptr : pool->Validate(poolToken, DeferredIntentEntryState::Claimed);
+    if (outHeld == nullptr || row == nullptr || row->state != ActionDeferredRecordState::Claimed ||
+        row->record.step.opcode != ActionOpcodeV1::Play || row->retryReservation.Valid() ||
+        row->poolToken.slot != poolToken.slot || row->poolToken.generation != poolToken.generation ||
+        entry == nullptr || entry->retryReservation.Valid() ||
+        entry->intent.ownerDomain != DeferredIntentOwnerDomain::Action ||
+        entry->intent.ownerHandle != row->record.firing ||
+        entry->intent.ownerEpoch != row->record.ownerCancellationEpoch ||
+        entry->intent.payload != recordToken.slot || entry->intent.dueFrame != row->record.intendedBoundaryFrame ||
+        entry->intent.executionOrdinal != row->record.executionOrdinal) {
+        if (pool != nullptr && outFaultState != nullptr)
+            (void)InspectPair(*pool, poolToken, recordToken, outFaultState);
+        return false;
+    }
+    return InspectPlayPrerequisites(*pool, entry->intent, recordToken.slot, outHeld, outFaultState);
+}
+
 FixedPlayClaimStatus ActionDeferredRecordTable::ClaimFixedPlayPair(
     DeferredIntentPool* pool, FixedPlayClaimMode mode,
     std::uint64_t renderedQuantum, std::uint32_t blockFrames,
@@ -244,18 +310,6 @@ FixedPlayClaimStatus ActionDeferredRecordTable::ClaimFixedPlayPair(
     if (pool == nullptr || outClaim == nullptr || blockFrames == 0) {
         return FixedPlayClaimStatus::ProtocolViolation;
     }
-    const auto precedes = [](const DeferredIntent& a,
-                             std::uint32_t aSlot,
-                             const DeferredIntent& b,
-                             std::uint32_t bSlot) noexcept {
-        if (a.dueFrame != b.dueFrame) return a.dueFrame < b.dueFrame;
-        if (a.commitSequence != b.commitSequence)
-            return a.commitSequence < b.commitSequence;
-        if (a.executionOrdinal != b.executionOrdinal)
-            return a.executionOrdinal < b.executionOrdinal;
-        if (a.payload != b.payload) return a.payload < b.payload;
-        return aSlot < bSlot;
-    };
     DeferredIntentPool::Entry* selected = nullptr;
     DeferredIntentToken selectedToken{};
     for (std::uint32_t slot = 0; slot < rows_.size(); ++slot) {
@@ -294,8 +348,14 @@ FixedPlayClaimStatus ActionDeferredRecordTable::ClaimFixedPlayPair(
             entry->intent.notBeforeQuantum > renderedQuantum) {
             continue;
         }
+        if (mode == FixedPlayClaimMode::BeforeDeadline) {
+            bool prerequisiteHeld = false;
+            if (!InspectPlayPrerequisites(*pool, entry->intent, slot, &prerequisiteHeld, outFaultState))
+                return FixedPlayClaimStatus::ProtocolViolation;
+            if (prerequisiteHeld) continue;
+        }
         if (selected == nullptr ||
-            precedes(entry->intent, slot, selected->intent,
+            DeferredPrecedes(entry->intent, slot, selected->intent,
                      static_cast<std::uint32_t>(selected->intent.payload))) {
             selected = entry;
             selectedToken = row.poolToken;
@@ -343,7 +403,7 @@ FixedPlayClaimStatus ActionDeferredRecordTable::ClaimFixedPlayPair(
                  blocker->retryReservation.Valid() ||
                  (mode == FixedPlayClaimMode::BeforeDeadline &&
                   blocker->intent.notBeforeQuantum > renderedQuantum)) &&
-                precedes(blocker->intent, slot, selected->intent,
+                DeferredPrecedes(blocker->intent, slot, selected->intent,
                          static_cast<std::uint32_t>(selected->intent.payload))) {
                 return FixedPlayClaimStatus::None;
             }

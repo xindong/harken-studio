@@ -107,6 +107,7 @@ enum class PlayLedBatchKind : std::uint8_t {
     EmitterStop = 3,
     ParkReturn = 4,
     TimelineControlArm = 5,
+    DirectStart = 6,
 };
 
 struct PlayLedBatchHeader {

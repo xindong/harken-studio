@@ -1,5 +1,7 @@
 #include "harken/param/EmitterTable.h"
 
+#include <algorithm>
+
 namespace harken {
 
 EmitterTable::EmitterTable(const EngineConfig& config)
@@ -9,6 +11,32 @@ EmitterTable::EmitterTable(const EngineConfig& config)
     }
     m_emitters.back().live = true;
     m_emitters.back().stateOnly = true;
+    m_projectionStride = config.emitterVariableSlots;
+    m_projectionLocals.resize(m_emitters.size() * m_projectionStride);
+}
+
+bool EmitterTable::BeginVariableProjection() noexcept {
+    if (m_projectionActive) return false;
+    for (std::size_t i = 0; i < m_emitters.size(); ++i) {
+        const auto& locals = m_emitters[i].locals;
+        std::copy(locals.begin(), locals.end(), m_projectionLocals.begin() + i * m_projectionStride);
+    }
+    m_projectionActive = true;
+    return true;
+}
+
+void EmitterTable::RestoreVariableProjection() noexcept {
+    if (!m_projectionActive) return;
+    for (std::size_t i = 0; i < m_emitters.size(); ++i) {
+        auto& locals = m_emitters[i].locals;
+        const auto begin = m_projectionLocals.begin() + i * m_projectionStride;
+        std::copy(begin, begin + m_projectionStride, locals.begin());
+    }
+    m_projectionActive = false;
+}
+
+std::uint64_t EmitterTable::VariableProjectionStorageBytes() const noexcept {
+    return m_projectionLocals.size() * sizeof(LocalVar);
 }
 
 bool EmitterTable::Create(VnEmitterHandle* outHandle, bool stateOnly) {

@@ -7,7 +7,8 @@ namespace harken {
 
 inline bool TimelineEventGuardEligible(const VoiceEventSpan& span,
                                       std::uint32_t eventIndex) noexcept {
-    return span.events[eventIndex].frontierProof.Eligible(span.quantumIndex, span.renderGeneration);
+    return !span.events[eventIndex].firstOutputDeferred &&
+        span.events[eventIndex].frontierProof.Eligible(span.quantumIndex, span.renderGeneration);
 }
 
 struct AuthoredRootStopCutoff {

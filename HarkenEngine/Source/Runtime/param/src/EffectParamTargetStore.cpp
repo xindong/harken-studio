@@ -14,6 +14,40 @@ EffectParamTargetStore::EffectParamTargetStore(std::uint32_t sampleRate,
     : m_sampleRate(sampleRate), m_activeCapacity(capacity),
       m_totalCapacity(capacity + retiringCapacity) {
     m_records.reserve(m_totalCapacity);
+    m_projection.resize(m_totalCapacity);
+}
+
+bool EffectParamTargetStore::BeginVariableProjection() noexcept {
+    if (m_projectionActive) return false;
+    m_projectionRecordCount = m_records.size();
+    m_projectionDirtyCount = m_dirtyCount;
+    for (std::size_t i = 0; i < m_records.size(); ++i) {
+        const auto& record = m_records[i];
+        m_projection[i] = {record.contribution, record.rebuildAccum,
+            record.bindingActive, record.foldedThisSweep, record.dirty};
+    }
+    m_projectionActive = true;
+    return true;
+}
+
+void EffectParamTargetStore::RestoreVariableProjection() noexcept {
+    if (!m_projectionActive) return;
+    assert(m_records.size() == m_projectionRecordCount);
+    for (std::size_t i = 0; i < m_records.size(); ++i) {
+        auto& record = m_records[i];
+        const auto& saved = m_projection[i];
+        record.contribution = saved.contribution;
+        record.rebuildAccum = saved.rebuildAccum;
+        record.bindingActive = saved.bindingActive;
+        record.foldedThisSweep = saved.foldedThisSweep;
+        record.dirty = saved.dirty;
+    }
+    m_dirtyCount = m_projectionDirtyCount;
+    m_projectionActive = false;
+}
+
+std::uint64_t EffectParamTargetStore::VariableProjectionStorageBytes() const noexcept {
+    return m_projection.size() * sizeof(VariableEvaluation);
 }
 
 std::uint32_t EffectParamTargetStore::DefaultGeneration(
@@ -803,7 +837,7 @@ float EffectParamTargetStore::LastCommitted(Scope scope, std::uint64_t objectId,
 
 bool EffectParamTargetStore::TryClaim(
     Scope scope, std::uint64_t objectId, std::uint32_t slot,
-    std::uint32_t paramIndex, VariableSliceRef owner,
+    std::uint32_t paramIndex, TargetClaimOwner owner,
     std::uint32_t expectedRevision) noexcept {
     return TryClaim(scope, objectId, DefaultGeneration(scope, objectId), slot,
                     paramIndex, owner, expectedRevision);
@@ -811,23 +845,30 @@ bool EffectParamTargetStore::TryClaim(
 
 bool EffectParamTargetStore::TryClaim(
     Scope scope, std::uint64_t objectId, std::uint32_t objectGeneration,
-    std::uint32_t slot, std::uint32_t paramIndex, VariableSliceRef owner,
+    std::uint32_t slot, std::uint32_t paramIndex, TargetClaimOwner owner,
     std::uint32_t expectedRevision) noexcept {
     Record* record = FindExact(scope, objectId, objectGeneration, slot,
                                paramIndex, false);
     if (record == nullptr || !owner.Valid() ||
         record->revision != expectedRevision ||
-        record->preparedOwner.Valid() ||
         SlotReserved(scope, objectId, objectGeneration, slot)) {
         return false;
     }
+    if (record->preparedOwner.Valid()) {
+        if (!owner.Shared() || record->preparedOwner != owner ||
+            record->publicationRefCount == UINT32_MAX) return false;
+        ++record->publicationRefCount;
+        return true;
+    }
+    if (record->publicationRefCount != 0) return false;
     record->preparedOwner = owner;
+    record->publicationRefCount = owner.Shared() ? 1u : 0u;
     return true;
 }
 
 void EffectParamTargetStore::ReleaseClaim(
     Scope scope, std::uint64_t objectId, std::uint32_t slot,
-    std::uint32_t paramIndex, VariableSliceRef owner) noexcept {
+    std::uint32_t paramIndex, TargetClaimOwner owner) noexcept {
     ReleaseClaim(scope, objectId, DefaultGeneration(scope, objectId), slot,
                  paramIndex, owner);
 }
@@ -835,11 +876,12 @@ void EffectParamTargetStore::ReleaseClaim(
 void EffectParamTargetStore::ReleaseClaim(
     Scope scope, std::uint64_t objectId, std::uint32_t objectGeneration,
     std::uint32_t slot, std::uint32_t paramIndex,
-    VariableSliceRef owner) noexcept {
+    TargetClaimOwner owner) noexcept {
     Record* record = FindExact(scope, objectId, objectGeneration, slot,
                                paramIndex, true);
-    if (record != nullptr && record->preparedOwner.slot == owner.slot &&
-        record->preparedOwner.generation == owner.generation) {
+    if (record != nullptr && record->preparedOwner == owner) {
+        if (owner.Shared() && (record->publicationRefCount == 0 ||
+            --record->publicationRefCount != 0)) return;
         if (record->lifecycle == Lifecycle::Retiring) {
             *record = Record{};
         } else {
@@ -850,7 +892,7 @@ void EffectParamTargetStore::ReleaseClaim(
 
 bool EffectParamTargetStore::SnapshotForClaim(
     Scope scope, std::uint64_t objectId, std::uint32_t slot,
-    std::uint32_t paramIndex, VariableSliceRef owner, float* resolved,
+    std::uint32_t paramIndex, TargetClaimOwner owner, float* resolved,
     std::uint32_t* revision, std::uint32_t* effectType) const noexcept {
     return SnapshotForClaim(
         scope, objectId, DefaultGeneration(scope, objectId), slot,
@@ -859,14 +901,13 @@ bool EffectParamTargetStore::SnapshotForClaim(
 
 bool EffectParamTargetStore::SnapshotForClaim(
     Scope scope, std::uint64_t objectId, std::uint32_t objectGeneration,
-    std::uint32_t slot, std::uint32_t paramIndex, VariableSliceRef owner,
+    std::uint32_t slot, std::uint32_t paramIndex, TargetClaimOwner owner,
     float* resolved, std::uint32_t* revision,
     std::uint32_t* effectType) const noexcept {
     const Record* record = FindExact(scope, objectId, objectGeneration, slot,
                                      paramIndex, true);
     if (record == nullptr || resolved == nullptr || revision == nullptr ||
-        effectType == nullptr || record->preparedOwner.slot != owner.slot ||
-        record->preparedOwner.generation != owner.generation) {
+        effectType == nullptr || record->preparedOwner != owner) {
         return false;
     }
     *resolved = ReduceRecord(*record);
@@ -962,19 +1003,27 @@ bool EffectParamTargetStore::ClaimedInSlot(
 
 void EffectParamTargetStore::MarkSliceCommitted(
     Scope scope, std::uint64_t objectId, std::uint32_t slot,
-    std::uint32_t paramIndex, VariableSliceRef owner, float resolved) noexcept {
+    std::uint32_t paramIndex, TargetClaimOwner owner, float resolved) noexcept {
     MarkSliceCommitted(scope, objectId, DefaultGeneration(scope, objectId),
                        slot, paramIndex, owner, resolved);
 }
 
 void EffectParamTargetStore::MarkSliceCommitted(
     Scope scope, std::uint64_t objectId, std::uint32_t objectGeneration,
-    std::uint32_t slot, std::uint32_t paramIndex, VariableSliceRef owner,
+    std::uint32_t slot, std::uint32_t paramIndex, TargetClaimOwner owner,
     float resolved) noexcept {
     Record* record = FindExact(scope, objectId, objectGeneration, slot,
                                paramIndex, true);
-    if (record == nullptr || record->preparedOwner.slot != owner.slot ||
-        record->preparedOwner.generation != owner.generation) {
+    if (record == nullptr || record->preparedOwner != owner) {
+        return;
+    }
+    if (owner.Shared()) {
+        if (record->lifecycle != Lifecycle::Retiring) {
+            record->lastCommitted = resolved;
+            if (ReduceRecord(*record) != resolved) SetDirty(*record);
+            else CleanDirty(*record);
+        }
+        ReleaseClaim(scope, objectId, objectGeneration, slot, paramIndex, owner);
         return;
     }
     if (record->lifecycle == Lifecycle::Retiring) {

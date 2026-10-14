@@ -15,11 +15,19 @@
 namespace harken {
 namespace detail { struct OriginalControlOriginTestAccess; struct OriginalGroupMemberTestAccess; }
 class ScheduledTransactionPool;
+class DecisionTable;
+class ArmGroupTable;
 class AuthoredStopOperation;
 struct ScheduledEventInput;
 struct ConsumedEvent;
 class ImmediateActionLane;
+class PrivateImmediateLanePlacementProof;
+class MixerLoop;
 class PrivateSelectedQueueFutureSpanPool;
+class PrivatePendingQueueFrontierBinding;
+class OriginalQueueFutureGroupRegistration;
+struct ImmediateLaneEvent;
+struct Plan03PageGroupView;
 
 enum class ArmState : std::uint8_t {
     Free = 0,
@@ -60,6 +68,7 @@ struct TimelineArmObservation {
     std::uint64_t tombstoneAudioSequence = 0;
     ParentAudioGroupRef parentGroup{};
     std::uint16_t memberIndex = UINT16_MAX;
+    bool finalSourcePublished = false;
 };
 
 class TimelineArmTable;
@@ -198,6 +207,7 @@ public:
         ParentAudioGroupRef parentGroup{};
         std::uint16_t memberIndex = UINT16_MAX;
         std::atomic<std::uint32_t> frontierReaderPins{0};
+        std::atomic<std::uint32_t> variableReadPins{0};
         std::atomic<bool> originalLifetimePinned{false};
         bool originalLifetimeIssued = false;
         const void* originalSourceSubmission = nullptr;
@@ -211,6 +221,8 @@ public:
         // Issued only by the owning never-published, cancelled Lane under this row gate.
         // The same-generation record survives cancellation and clears only at Reserve.
         std::atomic<bool> nativePrivateWithdrawn{false};
+        bool finalSourcePublicationIssued = false;
+        bool finalSourcePublicationConsumed = false;
         AuthoredControlMetadata authoredControl{};
     };
 
@@ -292,6 +304,84 @@ public:
     static void AcknowledgeSourceCommand(SourceCommandRowProof& proof,
         std::uint64_t completionSequence) noexcept;
 
+    // Issued by the real fixed Source factory; the original owner retains its row.
+    class PublicationAfterInstallation {
+    public:
+        PublicationAfterInstallation() = default;
+        PublicationAfterInstallation(const PublicationAfterInstallation&) = delete;
+        PublicationAfterInstallation& operator=(const PublicationAfterInstallation&) = delete;
+        PublicationAfterInstallation(PublicationAfterInstallation&& other) noexcept {
+            *this = std::move(other);
+        }
+        PublicationAfterInstallation& operator=(PublicationAfterInstallation&& other) noexcept {
+            if (this != &other) {
+                owner_ = std::exchange(other.owner_, nullptr);
+                row_ = std::exchange(other.row_, nullptr);
+                token_ = std::exchange(other.token_, {});
+                submission_ = std::exchange(other.submission_, nullptr);
+                incarnation_ = std::exchange(other.incarnation_, 0);
+                episode_ = std::exchange(other.episode_, 0);
+                frame_ = std::exchange(other.frame_, 0);
+                deadline_ = std::exchange(other.deadline_, 0);
+                program_ = std::exchange(other.program_, 0);
+                target_ = std::exchange(other.target_, {});
+            }
+            return *this;
+        }
+        bool Valid() const noexcept { return owner_ != nullptr; }
+    private:
+        friend class TimelineArmTable;
+        friend class OriginalSourceSubmissionRegistry;
+        void Reset() noexcept {
+            owner_ = nullptr; row_ = nullptr; token_ = {}; submission_ = nullptr;
+            incarnation_ = episode_ = frame_ = deadline_ = program_ = 0; target_ = {};
+        }
+        TimelineArmTable* owner_ = nullptr;
+        Row* row_ = nullptr;
+        TimelineArmToken token_{};
+        const void* submission_ = nullptr;
+        std::uint64_t incarnation_ = 0;
+        std::uint64_t episode_ = 0;
+        std::uint64_t frame_ = 0;
+        std::uint64_t deadline_ = 0;
+        ProgramGeneration program_ = 0;
+        TimelineSemanticTarget target_{};
+    };
+
+    // The original Source owns this right through actual command installation.
+    class GroupedPublicationAfterInstallation {
+    public:
+        GroupedPublicationAfterInstallation() = default;
+        GroupedPublicationAfterInstallation(const GroupedPublicationAfterInstallation&) = delete;
+        GroupedPublicationAfterInstallation& operator=(const GroupedPublicationAfterInstallation&) = delete;
+        bool Valid() const noexcept { return owner_ != nullptr; }
+    private:
+        friend class TimelineArmTable;
+        friend class OriginalSourceSubmissionRegistry;
+        void Reset() noexcept {
+            owner_ = nullptr; row_ = nullptr; token_ = {}; submission_ = nullptr;
+            incarnation_ = episode_ = frame_ = deadline_ = program_ = 0; target_ = {};
+            groups_ = nullptr; group_ = {}; parent_ = {}; member_ = UINT16_MAX;
+            binding_ = nullptr; lease_ = nullptr;
+        }
+        TimelineArmTable* owner_ = nullptr;
+        Row* row_ = nullptr;
+        TimelineArmToken token_{};
+        const void* submission_ = nullptr;
+        std::uint64_t incarnation_ = 0;
+        std::uint64_t episode_ = 0;
+        std::uint64_t frame_ = 0;
+        std::uint64_t deadline_ = 0;
+        ProgramGeneration program_ = 0;
+        TimelineSemanticTarget target_{};
+        ArmGroupTable* groups_ = nullptr;
+        ArmGroupToken group_{};
+        DecisionToken parent_{};
+        std::uint16_t member_ = UINT16_MAX;
+        const FrontierGroupBinding* binding_ = nullptr;
+        AudioSliceLease* lease_ = nullptr;
+    };
+
     // The table and its private owner must outlive this exclusive mutation right.
     // Abandoning the proof leaves the original Prepared cancellation right intact.
     class PreparedCommitProof {
@@ -339,6 +429,25 @@ public:
         OriginalArmRowOwner& operator=(OriginalArmRowOwner&& other) noexcept;
         ~OriginalArmRowOwner() { Release(); }
         bool Valid() const noexcept { return owner_ != nullptr; }
+        TimelineArmToken Token() const noexcept { return token_; }
+        const TimelineArmTable* Owner() const noexcept { return owner_; }
+        void Release() noexcept;
+    private:
+        friend class TimelineArmTable;
+        TimelineArmTable* owner_ = nullptr;
+        Row* row_ = nullptr;
+        TimelineArmToken token_{};
+    };
+    // Lifetime only. Return after private rollback, an audio fence, or joined teardown.
+    class VariableReadLifetime {
+    public:
+        VariableReadLifetime() = default;
+        VariableReadLifetime(const VariableReadLifetime&) = delete;
+        VariableReadLifetime& operator=(const VariableReadLifetime&) = delete;
+        VariableReadLifetime(VariableReadLifetime&& other) noexcept;
+        VariableReadLifetime& operator=(VariableReadLifetime&& other) noexcept;
+        ~VariableReadLifetime() { Release(); }
+        bool Valid() const noexcept { return row_ != nullptr; }
         TimelineArmToken Token() const noexcept { return token_; }
         const TimelineArmTable* Owner() const noexcept { return owner_; }
         void Release() noexcept;
@@ -458,13 +567,39 @@ public:
         std::size_t nextLease_ = 0;
     };
 
+    class PlainAudioProof {
+    public:
+        PlainAudioProof() = default;
+        ~PlainAudioProof() { Release(); }
+        PlainAudioProof(const PlainAudioProof&) = delete;
+        PlainAudioProof& operator=(const PlainAudioProof&) = delete;
+        bool Valid() const noexcept { return row_ != nullptr; }
+        void Release() noexcept {
+            if (row_ != nullptr) row_->reservation.clear(std::memory_order_release);
+            row_ = nullptr;
+        }
+    private:
+        friend class TimelineArmTable;
+        Row* row_ = nullptr;
+        std::uint64_t sequence_ = 0;
+        bool starts_ = false;
+        bool transient_ = false;
+    };
+    TimelineArmOperationDisposition ProvePlainAudioApply(TimelineArmToken token,
+        bool starts, bool transient, std::uint64_t audioSequence, PlainAudioProof* out) noexcept;
+    void ApplyPlainAudio(PlainAudioProof& proof) noexcept;
+    bool MatchesVariableInitializerStart(const PlainAudioProof& proof, TimelineArmToken token,
+        std::uint64_t onsetFrame) const noexcept;
+
     class AudioOperationClaim {
     public:
         AudioOperationClaim() = default;
+        ~AudioOperationClaim() { if (!applied_) CancelFrontierOperation(*this); }
         AudioOperationClaim(const AudioOperationClaim&) = delete;
         AudioOperationClaim& operator=(const AudioOperationClaim&) = delete;
         AudioOperationClaim(AudioOperationClaim&& other) noexcept
-            : row_(other.row_), kind_(other.kind_), sequence_(other.sequence_), applied_(other.applied_) {
+            : row_(other.row_), kind_(other.kind_), sequence_(other.sequence_), applied_(other.applied_),
+              priorState_(other.priorState_), operation_(other.operation_) {
             other.row_ = nullptr;
         }
         bool Valid() const noexcept { return row_ != nullptr; }
@@ -474,6 +609,8 @@ public:
         TimelineArmOperationKind kind_ = TimelineArmOperationKind::Start;
         std::uint64_t sequence_ = 0;
         bool applied_ = false;
+        ArmState priorState_ = ArmState::Published;
+        FrontierDueOperationRef operation_{};
     };
 
     class BoundAudioProof {
@@ -483,6 +620,7 @@ public:
         BoundAudioProof(const BoundAudioProof&) = delete;
         BoundAudioProof& operator=(const BoundAudioProof&) = delete;
         bool Valid() const noexcept { return row_ != nullptr; }
+        bool AdmissionOnly() const noexcept { return admissionOnly_; }
         void Release() noexcept {
             if (row_ != nullptr) {
                 const auto state = lease_->Capture().state;
@@ -501,6 +639,7 @@ public:
         const FrontierGroupBinding* binding_ = nullptr;
         std::uint64_t sequence_ = 0;
         bool starts_ = false;
+        bool admissionOnly_ = false;
     };
 
     class LaneAudioProof {
@@ -523,6 +662,16 @@ public:
         TimelineArmToken token_{};
         std::uint64_t audioSequence_ = 0;
     };
+
+    bool MatchesVariableInitializerStart(const BoundAudioProof& proof, TimelineArmToken token,
+        std::uint64_t onsetFrame) const noexcept;
+    bool MatchesVariableInitializerStart(const LaneAudioProof& proof, TimelineArmToken token,
+        std::uint64_t onsetFrame) const noexcept;
+    bool MatchesVariableInitializerStart(const AudioOperationClaim& proof, TimelineArmToken token,
+        std::uint64_t onsetFrame) const noexcept;
+    bool ProveInitialVariableDeferredStart(TimelineArmToken token, const FrontierGroupBinding& binding,
+        AudioSliceLease& lease, const ScheduledTransactionPool& pool,
+        std::uint64_t audioSequence, BoundAudioProof* out) noexcept;
 
     struct PrivatePendingImmediateArmInput {
         TimelineArmToken arm{};
@@ -558,6 +707,32 @@ public:
         friend class TimelineArmTable;
         TimelineArmTable* owner_ = nullptr;
         const PrivatePendingImmediateArmInput* inputs_ = nullptr;
+        Row** rows_ = nullptr;
+        std::size_t count_ = 0;
+    };
+
+    struct BoundArmPublicationInput {
+        PreparedCommitInput expected{};
+        const TimelineArmReaderPin* reader = nullptr;
+        const FrontierGroupBinding* admission = nullptr;
+        AudioSliceLease* lease = nullptr;
+        const AuthoredControlInput* control = nullptr;
+        TimelineArmToken sourceStart{};
+    };
+
+    // The table and caller-owned row scratch must outlive this publication reservation.
+    class BoundArmPublicationProof {
+    public:
+        BoundArmPublicationProof() = default;
+        BoundArmPublicationProof(const BoundArmPublicationProof&) = delete;
+        BoundArmPublicationProof& operator=(const BoundArmPublicationProof&) = delete;
+        ~BoundArmPublicationProof() { Release(); }
+        bool Valid() const noexcept { return owner_ != nullptr; }
+        void Release() noexcept;
+
+    private:
+        friend class TimelineArmTable;
+        TimelineArmTable* owner_ = nullptr;
         Row** rows_ = nullptr;
         std::size_t count_ = 0;
     };
@@ -647,10 +822,16 @@ public:
         PrivatePendingImmediateArmProof* out) noexcept;
     static void ApplyPrivatePendingImmediateArmBatch(
         PrivatePendingImmediateArmProof& proof) noexcept;
+    bool ProveBoundArmPublicationBatch(const BoundArmPublicationInput* inputs,
+        std::size_t inputCount, Row** reservedRows, std::size_t reservedCapacity,
+        BoundArmPublicationProof* out) noexcept;
+    static void ApplyBoundArmPublicationBatch(BoundArmPublicationProof& proof) noexcept;
     bool CommitPrepared(TimelineArmToken token) noexcept;
     bool ProvePreparedCommit(const PreparedCommitInput& expected,
                              PreparedCommitProof* out) noexcept;
     static void ConsumePreparedCommit(PreparedCommitProof&& proof) noexcept;
+    bool PinPreparedVariableRead(const PreparedCommitProof& proof,
+        VariableReadLifetime* out) noexcept;
     bool CancelPrepared(TimelineArmToken token) noexcept;
     // The caller has already cancelled the exact unpublished voice batch and
     // witnessed every slice invalidating directly from Ready.
@@ -708,6 +889,14 @@ public:
                               ProgramGeneration programGeneration,
                               const TimelineSemanticTarget& target,
                               bool entryInSameBucket = false) noexcept;
+    bool MatchesHeldLaneFutureStart(const LaneAudioProof& proof,
+        const FrontierGroupBinding& binding, std::uint16_t memberIndex,
+        TimelineArmToken token, std::uint64_t executeFrame,
+        std::uint64_t audioSequence, ProgramGeneration programGeneration,
+        const TimelineSemanticTarget& target, bool entryInSameBucket) const noexcept;
+    bool MatchesHeldLaneStart(const LaneAudioProof& proof, TimelineArmToken token,
+        std::uint64_t executeFrame, std::uint64_t audioSequence,
+        ProgramGeneration programGeneration, const TimelineSemanticTarget& target) const noexcept;
     static void ApplyLaneStart(LaneAudioProof& proof) noexcept;
     void ApplyClaimedAudioSlice(TimelineArmToken token) noexcept;
     bool RequestCancelAppliedAudioSlice(
@@ -721,6 +910,51 @@ public:
     bool PinFrontierReader(TimelineArmToken token, TimelineArmReaderPin* out) noexcept;
     bool BindFrontierAdmission(TimelineArmToken token, const FrontierGroupBinding& binding,
                               AudioSliceLease& lease) noexcept;
+    bool UnbindPrivatePendingFrontierAdmission(TimelineArmReaderPin& ownedReader,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions) noexcept;
+    bool BindPrivatePendingFrontierStart(const TimelineArmReaderPin& ownedReader,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+        std::uint32_t eventOrdinal) noexcept;
+    bool PrivatePendingFrontierStartReady(const TimelineArmReaderPin& ownedReader,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+        std::uint32_t eventOrdinal) const noexcept;
+    bool BindPrivatePendingQueueFrontierStart(const TimelineArmReaderPin& ownedReader,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        const PrivatePendingQueueFrontierBinding& queue,
+        const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
+        const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+        std::uint32_t eventOrdinal) noexcept;
+    bool PrivatePendingQueueFrontierStartReady(const TimelineArmReaderPin& ownedReader,
+        TimelineArmToken expectedArm, const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        const PrivatePendingQueueFrontierBinding& queue,
+        const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
+        const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+        std::uint32_t eventOrdinal) const noexcept;
+    bool BindPrivatePendingQueueFrontierControl(const TimelineArmReaderPin& ownedReader,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        const PrivatePendingQueueFrontierBinding& queue,
+        const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
+        const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+        std::uint32_t eventOrdinal) noexcept;
+    bool PrivatePendingQueueFrontierControlReady(const TimelineArmReaderPin& ownedReader,
+        TimelineArmToken expectedArm, const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        const PrivatePendingQueueFrontierBinding& queue,
+        const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
+        const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+        std::uint32_t eventOrdinal) const noexcept;
+    bool UnbindPrivatePendingQueueFrontierAdmission(TimelineArmReaderPin& ownedReader,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        const PrivatePendingQueueFrontierBinding& queue) noexcept;
     std::uint64_t Incarnation() const noexcept { return incarnation_; }
     bool WitnessUnpublishedFrontierRetirement(
         TimelineArmToken token, const FrontierGroupBinding& binding,
@@ -751,6 +985,7 @@ public:
         const FrontierEventBinding* binding = nullptr,
         const ScheduledTransactionPool* pool = nullptr) noexcept;
     static void ApplyFrontierOperation(AudioOperationClaim& claim) noexcept;
+    static void CancelFrontierOperation(AudioOperationClaim& claim) noexcept;
     static void FinishFrontierOperation(AudioOperationClaim& claim, bool completesControl = false) noexcept;
     bool AcknowledgeLogicalComplete(
         TimelineArmToken token,
@@ -795,6 +1030,58 @@ public:
 
 private:
     friend class OriginalSourceSubmissionRegistry;
+    friend class MixerLoop;
+    const Row* CapturePrivatePendingFrontierStart(const TimelineArmReaderPin& ownedReader,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+        std::uint32_t eventOrdinal, std::uint64_t* startFrame) const noexcept;
+    const Row* CapturePrivatePendingQueueFrontierStart(const TimelineArmReaderPin& ownedReader,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        const PrivatePendingQueueFrontierBinding& queue,
+        const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
+        const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+        std::uint32_t eventOrdinal, std::uint64_t* startFrame) const noexcept;
+    const Row* CapturePrivatePendingQueueFrontierEvent(const TimelineArmReaderPin& ownedReader,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        const PrivatePendingQueueFrontierBinding& queue,
+        const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
+        const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+        std::uint32_t eventOrdinal, bool control, std::uint64_t* frame) const noexcept;
+    const Row* CapturePrivatePendingFrontierStartRow(const TimelineArmReaderPin& ownedReader,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease, const Plan03PageGroupView& native,
+        const ImmediateLaneEvent& placed, std::uint64_t anchor, std::uint64_t* startFrame) const noexcept;
+    bool UnbindPrivatePendingFrontierAdmissionRow(TimelineArmReaderPin& ownedReader,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease, const Plan03PageGroupView& native) noexcept;
+    bool FinalSourcePreparationEligible(const PreparedCommitProof& preparation) const noexcept;
+    bool IssuePublicationAfterInstallation(const PreparedCommitProof& preparation,
+        const OriginalArmRowOwner& original, const void* submission,
+        PublicationAfterInstallation* out) noexcept;
+    static bool MatchesPublicationAfterInstallation(const SourceCommandRowProof& proof,
+        const PublicationAfterInstallation& publication) noexcept;
+    static bool ConsumePublicationAfterInstallation(SourceCommandRowProof& proof,
+        PublicationAfterInstallation& publication) noexcept;
+    bool IssueGroupedPublicationAfterInstallation(const OriginalArmRowOwner& original,
+        const void* submission, ArmGroupTable& groups, ArmGroupToken group,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        GroupedPublicationAfterInstallation* out) noexcept;
+    bool IssueQueueGroupedPublicationAfterInstallation(const OriginalArmRowOwner& original,
+        const void* submission, ArmGroupTable& groups, ArmGroupToken group,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        const PrivatePendingQueueFrontierBinding& queue,
+        GroupedPublicationAfterInstallation* out) noexcept;
+    bool IssueAuthenticatedGroupedPublicationAfterInstallation(const OriginalArmRowOwner& original,
+        const void* submission, ArmGroupTable& groups, ArmGroupToken group,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        GroupedPublicationAfterInstallation* out) noexcept;
+    static bool MatchesGroupedPublicationAfterInstallation(const SourceCommandRowProof& proof,
+        const GroupedPublicationAfterInstallation& publication) noexcept;
+    enum class GroupedInstallationPublicationResult : std::uint8_t { Published, CancelRequired, Refused };
+    static GroupedInstallationPublicationResult ConsumeGroupedPublicationAfterInstallation(
+        SourceCommandRowProof& proof, GroupedPublicationAfterInstallation& publication) noexcept;
     friend class PrivateSelectedQueueFutureSpanPool;
     bool PreparePendingAuthoredControlInternal(const PendingAuthoredControlInput& input,
         ParentAudioGroupRef selectedSourceGroup, TimelineArmToken* outToken) noexcept;
@@ -804,6 +1091,11 @@ private:
     const Row* PinnedAuthoredControlSource(const Row& control) const noexcept;
     bool BindOriginalSourceEpisode(const PreparedCommitProof& preparation,
         const OriginalArmRowOwner& original, const void* submission, std::uint64_t sourceEpisode) noexcept;
+    SourceCommandRowStatus RequestOriginalPendingSourceRetirement(
+        const OriginalArmRowOwner& original, const void* submission,
+        std::uint64_t sourceEpisode) noexcept;
+    bool OriginalPendingSourceRetirementSettled(const OriginalArmRowOwner& original,
+        const void* submission, std::uint64_t sourceEpisode) const noexcept;
     bool IssueOriginalUnpublishedSourceDisposition(const OriginalArmRowOwner& original,
         const void* submission, std::uint64_t sourceEpisode, std::uint64_t originalMarker,
         std::uint64_t sourceIdentity, OriginalUnpublishedSourceDisposition* out) const noexcept;

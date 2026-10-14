@@ -77,6 +77,7 @@
 
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -92,6 +93,7 @@ class ImmediateActionLane;
 class ImmediateLaneBucketClaimReceipt;
 struct ImmediateLaneHandle;
 struct ImmediateLaneBucket;
+class PrivateImmediateLanePublicationProof;
 
 // Caller-assigned identifier for one transaction, opaque to the pool.
 using TransactionId = std::uint64_t;
@@ -103,11 +105,70 @@ enum class ImmediateEntryAttemptState : std::uint8_t {
     Committed = 3,
     Missed = 4,
     Aborted = 5,
+    PublicationHeld = 6,
 };
 
 // Storage must remain stable until every page and reader for its generation retires.
 class ImmediateEntryAttemptGate {
 public:
+    class PublicationProof {
+    public:
+        PublicationProof() noexcept = default;
+        PublicationProof(const PublicationProof&) = delete;
+        PublicationProof& operator=(const PublicationProof&) = delete;
+        PublicationProof(PublicationProof&& other) noexcept { *this = std::move(other); }
+        PublicationProof& operator=(PublicationProof&& other) noexcept {
+            if (this != &other) {
+                Release();
+                owner_ = std::exchange(other.owner_, nullptr);
+                generation_ = std::exchange(other.generation_, 0);
+                if (owner_ != nullptr) owner_->publicationProof_ = this;
+            }
+            return *this;
+        }
+        ~PublicationProof() { Release(); }
+        bool Valid() const noexcept { return owner_ != nullptr; }
+        void Release() noexcept {
+            if (owner_ != nullptr) {
+                owner_->value_.store(Encode(generation_, ImmediateEntryAttemptState::Preparing),
+                    std::memory_order_release);
+                owner_->publicationProof_ = nullptr;
+            }
+            owner_ = nullptr;
+            generation_ = 0;
+        }
+    private:
+        friend class ImmediateEntryAttemptGate;
+        ImmediateEntryAttemptGate* owner_ = nullptr;
+        std::uint64_t generation_ = 0;
+    };
+
+    ~ImmediateEntryAttemptGate() {
+        if (publicationProof_ != nullptr) publicationProof_->Release();
+    }
+
+    bool ProvePublication(std::uint64_t generation, PublicationProof* out) noexcept {
+        if (out == nullptr || out->Valid() || generation == 0 ||
+            generation > (UINT64_MAX >> 3) || publicationProof_ != nullptr ||
+            !Transition(generation, ImmediateEntryAttemptState::Preparing,
+                ImmediateEntryAttemptState::PublicationHeld)) return false;
+        out->owner_ = this;
+        out->generation_ = generation;
+        publicationProof_ = out;
+        return true;
+    }
+
+    static void ApplyPublication(PublicationProof&& proof) noexcept {
+        assert(proof.Valid());
+        if (!proof.Valid()) return;
+        auto* owner = proof.owner_;
+        owner->value_.store(Encode(proof.generation_, ImmediateEntryAttemptState::Committed),
+            std::memory_order_release);
+        owner->publicationProof_ = nullptr;
+        proof.owner_ = nullptr;
+        proof.generation_ = 0;
+    }
+
     bool Prepare(std::uint64_t generation) noexcept {
         if (generation == 0 || generation > (UINT64_MAX >> 3)) return false;
         std::uint64_t prior = value_.load(std::memory_order_acquire);
@@ -187,6 +248,7 @@ private:
             std::memory_order_acq_rel, std::memory_order_acquire);
     }
     std::atomic<std::uint64_t> value_{0};
+    PublicationProof* publicationProof_ = nullptr;
 };
 
 struct ImmediateEntryAttemptRef {
@@ -453,6 +515,13 @@ private:
     std::uint64_t marker_ = 0;
 };
 
+struct OriginalQueueFutureGroupScope {
+    std::uint64_t cohortRoot = 0;
+    std::uint64_t provisionalAnchorFrame = 0;
+    std::uint64_t selectedFutureDomain = 0;
+    Plan03GroupSliceInput input{};
+};
+
 class OriginalQueueFutureGroupRegistration {
 public:
     OriginalQueueFutureGroupRegistration() noexcept = default;
@@ -471,6 +540,9 @@ public:
     bool MatchesOriginalScope(std::uint64_t cohortRoot,
         std::uint64_t provisionalAnchorFrame, const Plan03GroupSliceInput& input,
         const TimelineArmTable& armTable) const noexcept;
+    // Producer-only borrowed observation. It adds no loan or publication rights.
+    bool CaptureOriginalScope(const ScheduledTransactionPool& pool,
+        const TimelineArmTable& armTable, OriginalQueueFutureGroupScope* out) const noexcept;
 
 private:
     friend class ScheduledTransactionPool;
@@ -588,6 +660,27 @@ private:
     void* row_ = nullptr;
     PreparedPrivateImmediateLaneGroup* original_ = nullptr;
     Plan03GroupSliceIdentity identity_{};
+};
+
+// Retains every actual private group and lease until the original Lane proof
+// is released. Apply the Pool proof before publishing that Lane.
+class PrivateImmediateLaneGroupsPublicationProof {
+public:
+    PrivateImmediateLaneGroupsPublicationProof() noexcept = default;
+    ~PrivateImmediateLaneGroupsPublicationProof() { Release(); }
+    PrivateImmediateLaneGroupsPublicationProof(const PrivateImmediateLaneGroupsPublicationProof&) = delete;
+    PrivateImmediateLaneGroupsPublicationProof& operator=(const PrivateImmediateLaneGroupsPublicationProof&) = delete;
+    PrivateImmediateLaneGroupsPublicationProof(PrivateImmediateLaneGroupsPublicationProof&& other) noexcept;
+    PrivateImmediateLaneGroupsPublicationProof& operator=(PrivateImmediateLaneGroupsPublicationProof&& other) noexcept;
+    bool Valid() const noexcept { return owner_ != nullptr; }
+    void Release() noexcept;
+private:
+    friend class ScheduledTransactionPool;
+    friend class PrivateImmediateLanePublicationProof;
+    ScheduledTransactionPool* owner_ = nullptr;
+    PrivateImmediateLanePublicationProof* lane_ = nullptr;
+    std::uint64_t root_ = 0;
+    PrivateImmediateLaneGroupsPublicationProof* next_ = nullptr;
 };
 
 // Release is explicit because a destructor cannot manufacture a completed block.
@@ -1012,6 +1105,7 @@ private:
 enum class CurrentSliceKind : std::uint8_t {
     VariableBankCut = 1,
     MeterProbeWithdrawal = 2,
+    NativeStartCalendar = 3,
 };
 
 struct CurrentSliceRef {
@@ -1024,6 +1118,7 @@ struct ScheduledCurrentSliceInput {
     LogicCommitSequence logicCommitSequence = 0;
     CurrentSliceKind kind = CurrentSliceKind::VariableBankCut;
     CurrentSliceRef slice{};
+    std::uint32_t executionOrdinal = 0;
 };
 
 struct ConsumedCurrentSlice {
@@ -1031,6 +1126,37 @@ struct ConsumedCurrentSlice {
     LogicCommitSequence logicCommitSequence = 0;
     CurrentSliceKind kind = CurrentSliceKind::VariableBankCut;
     CurrentSliceRef slice{};
+    std::uint32_t executionOrdinal = 0;
+    std::uint64_t reservationSequence = 0;
+};
+
+// The pool must outlive every held token, including RAII rollback.
+class HeldCurrentSliceToken {
+public:
+    HeldCurrentSliceToken() = default;
+    ~HeldCurrentSliceToken();
+    HeldCurrentSliceToken(const HeldCurrentSliceToken&) = delete;
+    HeldCurrentSliceToken& operator=(const HeldCurrentSliceToken&) = delete;
+    HeldCurrentSliceToken(HeldCurrentSliceToken&& other) noexcept;
+    HeldCurrentSliceToken& operator=(HeldCurrentSliceToken&& other) noexcept;
+
+    bool IsHeld() const noexcept { return owner_ != nullptr; }
+    std::uint64_t ExecuteFrame() const noexcept { return executeFrame_; }
+    CurrentSliceKind Kind() const noexcept { return kind_; }
+    CurrentSliceRef Slice() const noexcept { return slice_; }
+    std::uint64_t ReservationSequence() const noexcept { return rowSequence_; }
+
+private:
+    friend class ScheduledTransactionPool;
+    ScheduledTransactionPool* owner_ = nullptr;
+    std::uint64_t incarnation_ = 0;
+    TransportEpoch epoch_ = kInvalidTransportEpoch;
+    std::uint64_t absoluteQuantum_ = 0;
+    std::uint64_t pageGeneration_ = 0;
+    std::uint64_t rowSequence_ = 0;
+    std::uint64_t executeFrame_ = 0;
+    CurrentSliceKind kind_ = CurrentSliceKind::VariableBankCut;
+    CurrentSliceRef slice_{};
 };
 
 inline constexpr std::uint64_t kUnpublishedQuantumStamp = UINT64_MAX;
@@ -1126,6 +1252,7 @@ public:
         std::uint32_t maxEventsPerQuantum = 0;
         std::uint32_t maxTransactionEvents = 0;
         std::uint32_t maxCurrentSlicesPerQuantum = 0;
+        std::uint32_t maxNativeStartCalendarsPerQuantum = 0;
         std::uint32_t maxPlan03GroupHeadersPerPage = 0;
         std::uint32_t maxArmsPerGroup = 0;
         std::uint32_t maxImmediateLaneGroupRows = 0;
@@ -1172,7 +1299,15 @@ public:
         return config_.maxScheduledTransactions;
     }
     std::uint32_t MaxCurrentSlicesPerQuantum() const {
+        return currentSliceStorageCapacity_;
+    }
+    std::uint32_t MaxVariableCurrentSlicesPerQuantum() const {
         return config_.maxCurrentSlicesPerQuantum;
+    }
+    std::uint64_t CurrentSliceStorageBytes() const noexcept {
+        return static_cast<std::uint64_t>(pageCurrentSlices_.capacity()) * sizeof(CurrentSliceRow) +
+            static_cast<std::uint64_t>(pageCurrentSliceOrder_.capacity()) * sizeof(std::uint32_t) +
+            static_cast<std::uint64_t>(pageCurrentSliceCount_.capacity()) * sizeof(std::uint32_t);
     }
     std::uint32_t MaxPlan03GroupHeadersPerPage() const {
         return config_.maxPlan03GroupHeadersPerPage;
@@ -1368,6 +1503,14 @@ public:
         const ScheduledCurrentSliceInput& input,
         PrePublishLatePolicy latePolicy,
         std::uint64_t publicationFrontier);
+    ReserveResult ReserveHeldCurrentSlice(
+        const ScheduledCurrentSliceInput& input,
+        PrePublishLatePolicy latePolicy,
+        std::uint64_t publicationFrontier,
+        HeldCurrentSliceToken* out);
+    bool CanReleaseHeldCurrentSlice(const HeldCurrentSliceToken& token) const noexcept;
+    bool ReleaseHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept;
+    bool CancelHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept;
     Plan03GroupReserveStatus PreflightPlan03GroupSlices(
         std::uint64_t executeFrame,
         std::uint32_t additionalGroupCount) const noexcept;
@@ -1424,6 +1567,8 @@ public:
         std::uint64_t executeFrame, PrivateUnboundPageArmRetirementProof* out) noexcept;
     static void ConsumePrivateUnboundPageArmRetirement(
         PrivateUnboundPageArmRetirementProof&& proof) noexcept;
+    bool CanReleaseCommittedPlan03GroupSliceOwnership(
+        const CommittedPlan03GroupSlice& committed) const noexcept;
     bool ReleaseCommittedPlan03GroupSliceOwnership(
         CommittedPlan03GroupSlice* committed) noexcept;
     Plan03GroupReserveStatus PreparePlan03GroupSliceReplacement(
@@ -1491,6 +1636,14 @@ public:
         std::uint64_t provisionalAnchorFrame, const Plan03GroupSliceInput& input,
         const TimelineArmTable& armTable, Plan03GroupSliceIdentity* out,
         PreparedPrivateImmediateLaneGroup* original = nullptr) noexcept;
+    bool ProvePrivateImmediateLaneGroupsPublication(
+        PrivateImmediateLanePublicationProof& lane,
+        PrivateImmediateLaneGroupsPublicationProof* out) noexcept;
+    bool IsPrivateImmediateLaneGroupsPublicationProofFor(
+        const PrivateImmediateLaneGroupsPublicationProof& proof,
+        const Plan03GroupSliceIdentity& identity, const FrontierEntryReceiptRef& entry) const noexcept;
+    static void ApplyPrivateImmediateLaneGroupsPublication(
+        PrivateImmediateLaneGroupsPublicationProof&& proof) noexcept;
     bool OwnsPrivateImmediateLaneGroupOriginal(
         const PreparedPrivateImmediateLaneGroup& original) const noexcept;
     bool PrivateImmediateLaneGroupTransferHeld(
@@ -1577,6 +1730,14 @@ public:
     bool CancelPrivateImmediateLaneGroup(std::uint64_t cohortRoot,
         const Plan03GroupSliceIdentity& identity,
         OriginalQueueFutureGroupRegistration* originalBaseline = nullptr) noexcept;
+    using ImmediateLaneGroupDisposalObserver = void (*)(void*, Plan03GroupSliceIdentity,
+        std::uint64_t, std::uint64_t) noexcept;
+    // Producer-only. The observer must not re-enter or mutate this pool.
+    void SetImmediateLaneGroupDisposalObserver(void* context,
+        ImmediateLaneGroupDisposalObserver observer) noexcept {
+        immediateLaneGroupDisposalContext_ = context;
+        immediateLaneGroupDisposalObserver_ = observer;
+    }
     bool CancelImmediateLaneGroups(std::uint64_t cohortRoot,
         std::uint64_t completedAudioSequence,
         OriginalQueueFutureGroupRegistration* originalBaselines = nullptr,
@@ -1595,6 +1756,8 @@ public:
         std::uint64_t completedAudioSequence) const noexcept;
     bool PrivateImmediateLaneFrontierRollbackReady(
         const Plan03GroupSliceIdentity& identity) const noexcept;
+    bool MatchesPrivateImmediateLaneGroupPlacement(const Plan03GroupSliceIdentity& identity,
+        const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement) const noexcept;
     bool ClaimImmediateLaneFrontier(const Plan03GroupSliceIdentity& identity,
         ImmediateLaneFrontierClaim* out) const noexcept;
     bool ValidateImmediateLaneGroupClaim(
@@ -1629,6 +1792,10 @@ public:
         Plan03PageGroupView* out) const noexcept;
     bool AcquirePlan03GroupReader(const Plan03GroupSliceIdentity& identity,
                                  Plan03GroupReaderPin* out) noexcept;
+    bool IsPlan03GroupReaderFor(const Plan03GroupReaderPin& pin,
+        const Plan03GroupSliceIdentity& identity) const noexcept {
+        return pin.owner_ == this && pin.identity_ == identity;
+    }
     bool NotePlan03GroupReadRt(const Plan03GroupSliceIdentity& identity,
                               std::uint64_t audioSequence) const noexcept;
     std::uint64_t Plan03GroupReaderStorageBytes() const noexcept;
@@ -1643,6 +1810,11 @@ public:
     bool InvalidateFrontierOwnerOperations(const FrontierOwnerIdentity& owner,
         DecisionToken decision = {}, AudioSliceInvalidateReason reason = AudioSliceInvalidateReason::Cancel) const noexcept;
     bool HasFrontierOwnerOperations(const FrontierOwnerIdentity& owner, DecisionToken decision = {}) const noexcept;
+    bool FrontierMemberBindingDetached(const Plan03GroupSliceIdentity& identity,
+        const FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence) const noexcept;
+    bool FrontierCoordinatorDetached(const Plan03GroupSliceIdentity& identity,
+        const FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence,
+        const Plan03GroupReaderPin* activationReader = nullptr) const noexcept;
     std::uint64_t PageStamp(std::uint64_t absoluteQuantum) const noexcept;
     // Producer-only: confirms every attempt-owned entry record was frozen valid.
     bool VerifyImmediateEntryPage(
@@ -1807,8 +1979,24 @@ private:
         const OriginalQueueFutureGroupRegistration& original,
         std::uint64_t cohortRoot, std::uint64_t provisionalAnchorFrame,
         const Plan03GroupSliceInput& input, const TimelineArmTable& armTable) const noexcept;
+    bool MatchesOriginalQueueFutureGroupScopeImpl(
+        const OriginalQueueFutureGroupRegistration& original,
+        std::uint64_t cohortRoot, std::uint64_t provisionalAnchorFrame,
+        const Plan03GroupSliceInput& input, const TimelineArmTable& armTable,
+        bool retiredSounds) const noexcept;
+    bool CaptureOriginalQueueFutureGroupScope(
+        const OriginalQueueFutureGroupRegistration& original,
+        const TimelineArmTable& armTable, OriginalQueueFutureGroupScope* out) const noexcept;
     friend class PreparedPrivateImmediateLaneGroup;
     friend class PrivateImmediateLaneGroupTransferProof;
+    friend class PrivateImmediateLaneGroupsPublicationProof;
+    void ReleasePrivateImmediateLaneGroupsPublication(
+        PrivateImmediateLaneGroupsPublicationProof& proof, bool publish = false) noexcept;
+    void MovePrivateImmediateLaneGroupsPublication(
+        PrivateImmediateLaneGroupsPublicationProof& from,
+        PrivateImmediateLaneGroupsPublicationProof& to) noexcept;
+    bool InitialLaneCohortPublicationHeld(std::uint64_t root) const noexcept;
+    PrivateImmediateLaneGroupsPublicationProof* laneGroupPublications_ = nullptr;
     void DropPrivateImmediateLaneGroupOriginal(
         PreparedPrivateImmediateLaneGroup* original) noexcept;
     void ReleasePrivateImmediateLaneGroupTransferLease(
@@ -1890,6 +2078,7 @@ private:
         PreparedPrivateImmediateLaneGroup* transferOriginal = nullptr;
         PrivateImmediateLaneGroupTransferProof* transferProof = nullptr;
         PrivateOriginalQueueGroupClockProof* clockProof = nullptr;
+        PrivateImmediateLaneGroupsPublicationProof* publicationProof = nullptr;
         std::uint64_t originalFactoryMarker = 0;
         std::uint32_t originalRegistrationPinCount = 0;
         std::atomic<LaneGroupState> state{LaneGroupState::Free};
@@ -2015,7 +2204,16 @@ private:
         CurrentSliceKind kind = CurrentSliceKind::VariableBankCut;
         CurrentSliceRef slice{};
         std::uint64_t rowSequence = 0;
+        std::uint32_t executionOrdinal = 0;
+        bool publicationHeld = false;
     };
+
+    ReserveResult ReserveCurrentSliceImpl(
+        const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
+        std::uint64_t publicationFrontier, HeldCurrentSliceToken* held);
+    bool LocateHeldCurrentSlice(const HeldCurrentSliceToken& token,
+        std::uint32_t* ring, std::uint32_t* index) const noexcept;
+    bool HasHeldCurrentSlices() const noexcept;
 
     struct Plan03GroupSliceRow {
         UnpublishedGroupArmCancellationProof* jointCancellation = nullptr;
@@ -2067,6 +2265,8 @@ private:
                           const OccurrenceStatePool& occurrences) const;
 
     Config config_{};
+    void* immediateLaneGroupDisposalContext_ = nullptr;
+    ImmediateLaneGroupDisposalObserver immediateLaneGroupDisposalObserver_ = nullptr;
     std::uint32_t pageCount_ = 0;
     std::uint32_t quantumFrames_ = 0;
     TransportEpoch epoch_ = kInvalidTransportEpoch;
@@ -2076,6 +2276,9 @@ private:
     std::uint32_t ringStart_ = 0;
     std::uint64_t publishCutoffFrame_ = 0;
     std::uint64_t nextRowSequence_ = 1;
+    std::uint64_t nextCurrentSliceSequence_ = 1;
+    std::uint32_t currentSliceStorageCapacity_ = 0;
+    std::uint64_t currentSliceIncarnation_ = 0;
     std::uint64_t nextCommitSerial_ = 1;
     std::uint64_t consumeTick_ = 0;
 

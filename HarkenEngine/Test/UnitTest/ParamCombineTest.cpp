@@ -78,6 +78,52 @@ std::vector<ParamCommit> FlushAll(ParamSystem& params) {
     return commits;
 }
 
+TEST(ParamCombine, CapturedMissingVolumeClearsThePreviousVariableContribution) {
+    ParamSystem params(DefaultConfig());
+    params.OnVoiceStarted(kVoice0, -3, 1);
+    ASSERT_TRUE(params.BindVoiceTarget(harkentest::ObjectId(7), kVoice0,
+        harken::kTargetVoiceVolume, LinearCurve(0, 0, 1, -12)));
+    ASSERT_EQ(VN_OK, params.SetValue(harkentest::ObjectId(7), 1));
+    FlushAll(params);
+    ASSERT_FLOAT_EQ(-15, params.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
+    const harken::VariableReadCutReader reader{nullptr, {},
+        [](void*, harken::VariableReadCutRef, VnObjectId, float*) noexcept {
+            return harken::VariableReadCutValueStatus::Missing;
+        }};
+    float peek = 0;
+    ASSERT_TRUE(params.TryPeekResolvedVolume(kVoice0, nullptr, &peek, &reader));
+    EXPECT_FLOAT_EQ(-3, peek);
+    harken::ParamSystem::PrimedValue primed[harken::kBuiltinTargetCount]{};
+    std::uint32_t written = 0;
+    ASSERT_TRUE(params.TryPrimeVoiceBindings(kVoice0, reader, primed, std::size(primed), &written));
+    EXPECT_FLOAT_EQ(peek, params.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
+}
+
+TEST(ParamCombine, CapturedPrimingReadsEachInputOnceBeforeChangingAnyTarget) {
+    ParamSystem params(DefaultConfig());
+    params.OnVoiceStarted(kVoice0, 0, 1);
+    const auto variable = harkentest::ObjectId(7);
+    ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0, harken::kTargetVoiceVolume,
+        LinearCurve(0, 0, 1, -12)));
+    ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0, harken::kTargetVoicePitch,
+        LinearCurve(0, 0, 1, 1200)));
+    struct Inputs { std::uint32_t reads = 0; } inputs;
+    const harken::VariableReadCutReader reader{&inputs, {},
+        [](void* context, harken::VariableReadCutRef, VnObjectId, float* out) noexcept {
+            auto& inputs = *static_cast<Inputs*>(context);
+            if (++inputs.reads > 2) return harken::VariableReadCutValueStatus::Failed;
+            *out = 1;
+            return harken::VariableReadCutValueStatus::Value;
+        }};
+    harken::ParamSystem::PrimedValue primed[harken::kBuiltinTargetCount]{};
+    std::uint32_t written = 0;
+    ASSERT_TRUE(params.TryPrimeVoiceBindings(kVoice0, reader, primed, std::size(primed), &written));
+    EXPECT_EQ(2u, inputs.reads);
+    EXPECT_EQ(2u, written);
+    EXPECT_FLOAT_EQ(-12, params.LastCommitted(kVoice0, harken::kTargetVoiceVolume));
+    EXPECT_FLOAT_EQ(1200, params.LastCommitted(kVoice0, harken::kTargetVoicePitch));
+}
+
 TEST(ParamCombine, VolumeAddsInDbAcrossBaseApiDirectAndBinding) {
     ParamSystem params(DefaultConfig());
     params.OnVoiceStarted(kVoice0, -6.0f, 1.0);
@@ -561,6 +607,126 @@ TEST(ParamCombine, RejectCandidateRestoresBaselineInsteadOfMergingPreparedRamp) 
                         harken::ClaimReleaseReason::RejectCandidate);
     EXPECT_FALSE(params.ForeignClaim(kVoice0, kTarget));
     EXPECT_EQ(20u, params.PendingRampMs(kVoice0, kTarget));
+}
+
+TEST(ParamCombine, SharedPublicationSettlesOneSnapshotAndKeepsLaterDemandAndClaims) {
+    ParamSystem params(DefaultConfig());
+    params.OnVoiceStarted(kVoice0, 0.0f, 1.0);
+    constexpr auto target = harken::kTargetVoiceVolume;
+    const harken::TargetClaimOwner owner{0, 1, harken::TargetClaimKind::VariablePublication};
+    const harken::VariableSliceRef probe{0, 1};
+    const auto revision = params.TargetRevision(kVoice0, target);
+    ASSERT_TRUE(params.TryClaim(kVoice0, target, owner, revision));
+    ASSERT_TRUE(params.TryClaim(kVoice0, target, owner, revision));
+    EXPECT_FALSE(params.TryClaim(kVoice0, target, probe, revision));
+    params.SetAttenuationSlot(kVoice0, target, -1.0f, 20);
+    float resolved = 0.0f;
+    std::uint32_t ramp = 0, capturedRevision = 0;
+    ASSERT_TRUE(params.CaptureSnapshotForClaim(kVoice0, target, owner, &resolved, &ramp, &capturedRevision));
+    ASSERT_TRUE(params.CaptureSnapshotForClaim(kVoice0, target, owner, &resolved, &ramp, &capturedRevision));
+    EXPECT_EQ(20u, ramp);
+    params.MarkSliceCommitted(kVoice0, target, owner, -1.0f, 20);
+    EXPECT_TRUE(params.ForeignClaim(kVoice0, target));
+    EXPECT_EQ(20u, params.PendingRampMs(kVoice0, target));
+    EXPECT_TRUE(FlushAll(params).empty());
+    params.ReleaseClaim(kVoice0, target, probe);
+    EXPECT_TRUE(params.ForeignClaim(kVoice0, target));
+    params.ReleaseClaim(kVoice0, target, owner);
+    EXPECT_FALSE(params.ForeignClaim(kVoice0, target));
+    EXPECT_EQ(20u, params.PendingRampMs(kVoice0, target));
+    ASSERT_TRUE(params.TryClaim(kVoice0, target, probe, revision));
+    params.ReleaseClaim(kVoice0, target, probe);
+}
+
+TEST(ParamCombine, VariableProjectionRestoresInsertedValuesCachesAndDemand) {
+    ParamSystem params(DefaultConfig());
+    params.OnVoiceStarted(kVoice0, 0.0f, 1.0);
+    const auto variable = harkentest::ObjectId(7);
+    const auto inserted = harkentest::ObjectId(8);
+    ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0,
+        harken::kTargetVoiceVolume, LinearCurve(0.0f, 0.0f, 1.0f, -12.0f)));
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 0.0f));
+    params.NoteVariableWrite(variable);
+    params.EvaluateDirtyBindings(nullptr);
+    FlushAll(params);
+    const auto count = params.VariableCount();
+    const auto demand = params.DirtyTargetCount();
+    ASSERT_TRUE(params.BeginVariableProjection());
+    EXPECT_FALSE(params.BeginVariableProjection());
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 1.0f));
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(inserted, 0.5f));
+    params.NoteVariableWrite(variable);
+    params.EvaluateDirtyBindings(nullptr);
+    EXPECT_FLOAT_EQ(-12.0f, params.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
+    params.RestoreVariableProjection();
+    EXPECT_EQ(count, params.VariableCount());
+    EXPECT_EQ(demand, params.DirtyTargetCount());
+    float value = -1.0f;
+    EXPECT_FALSE(params.ScopedVariableValue(nullptr, 0, inserted, &value));
+    ASSERT_TRUE(params.ScopedVariableValue(nullptr, 0, variable, &value));
+    EXPECT_FLOAT_EQ(0.0f, value);
+    EXPECT_FLOAT_EQ(0.0f, params.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
+    EXPECT_TRUE(FlushAll(params).empty());
+    ASSERT_EQ(VN_OK, params.SetValue(variable, 1.0f));
+    const auto commits = FlushAll(params);
+    ASSERT_EQ(1u, commits.size());
+    EXPECT_FLOAT_EQ(-12.0f, commits[0].resolved);
+    EXPECT_GT(params.VariableProjectionStorageBytes(), 0u);
+}
+
+TEST(ParamCombine, PrivateInitialPrimingDoesNotPublishValuesOrSuppressTheNextLiveUpdate) {
+    ParamSystem params(DefaultConfig());
+    params.OnVoiceStarted(kVoice0, 0, 1);
+    const auto variable = harkentest::ObjectId(7);
+    ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0, harken::kTargetVoiceVolume,
+        LinearCurve(0, 0, 1, -12)));
+    ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0, harken::kTargetVoicePan,
+        LinearCurve(0, 0, 1, 0.5f)));
+    ASSERT_EQ(VN_OK, params.SetValue(variable, 0));
+    FlushAll(params);
+    const auto demand = params.DirtyTargetCount();
+    const harken::VariableReadCutReader reader{nullptr, {},
+        [](void*, harken::VariableReadCutRef, VnObjectId, float* out) noexcept {
+            *out = 1;
+            return harken::VariableReadCutValueStatus::Value;
+        }};
+    harken::ParamSystem::PrimedValue primed[harken::kBuiltinTargetCount]{};
+    std::uint32_t written = 0;
+    ASSERT_TRUE(params.BeginVariableProjection());
+    ASSERT_TRUE(params.TryPrimeVoiceBindings(kVoice0, reader, primed, std::size(primed), &written, true));
+    ASSERT_EQ(2u, written);
+    params.RestoreVariableProjection();
+    EXPECT_EQ(demand, params.DirtyTargetCount());
+    EXPECT_FLOAT_EQ(0, params.LastCommitted(kVoice0, harken::kTargetVoiceVolume));
+    EXPECT_FLOAT_EQ(0, params.LastCommitted(kVoice0, harken::kTargetVoicePan));
+    EXPECT_TRUE(FlushAll(params).empty());
+    ASSERT_EQ(VN_OK, params.SetValue(variable, 1));
+    const auto commits = FlushAll(params);
+    ASSERT_EQ(2u, commits.size());
+    const auto pan = std::find_if(commits.begin(), commits.end(), [](const auto& commit) {
+        return commit.targetId == harken::kTargetVoicePan;
+    });
+    ASSERT_NE(commits.end(), pan);
+    EXPECT_FLOAT_EQ(0.5f, pan->resolved);
+    EXPECT_FLOAT_EQ(0.5f, pan->pan2d);
+}
+
+TEST(ParamCombine, RetiredSharedPublicationRetainsEverySnapshotReference) {
+    ParamSystem params(DefaultConfig());
+    params.OnVoiceStarted(kVoice0, 0.0f, 1.0);
+    constexpr auto target = harken::kTargetVoiceVolume;
+    const harken::TargetClaimOwner owner{0, 1, harken::TargetClaimKind::VariablePublication};
+    const auto revision = params.TargetRevision(kVoice0, target);
+    ASSERT_TRUE(params.TryClaim(kVoice0, target, owner, revision));
+    ASSERT_TRUE(params.TryClaim(kVoice0, target, owner, revision));
+    params.RetireVoiceTargets(kVoice0);
+    EXPECT_EQ(1u, params.RetiringTargetCountForTests());
+    params.MarkSliceCommitted(kVoice0, target, owner, -6.0f, 0);
+    EXPECT_EQ(1u, params.RetiringTargetCountForTests());
+    params.ReleaseClaim(kVoice0, target, harken::VariableSliceRef{0, 1});
+    EXPECT_EQ(1u, params.RetiringTargetCountForTests());
+    params.ReleaseClaim(kVoice0, target, owner);
+    EXPECT_EQ(0u, params.RetiringTargetCountForTests());
 }
 
 TEST(ParamCombine, RetryPreserveStillMergesPreparedRamp) {

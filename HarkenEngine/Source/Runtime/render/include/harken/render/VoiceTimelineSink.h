@@ -26,7 +26,10 @@ class VoiceTimelineSink final : public TimelineExecutorSink {
 public:
     VoiceTimelineSink(VoicePool& voices, TimelineArmTable& arms)
         : voices_(voices), arms_(arms), frontier_(voices, arms),
-          laneFrontier_(voices, arms), immediate_(voices, arms) {}
+          laneFrontier_(voices, arms), immediate_(voices, arms),
+          pendingVariableStarts_(voices.Capacity()),
+          plainResults_(voices.Capacity() * 2u * kTimelineMaxEventsPerVoiceQuantum),
+          retiringPlainArms_(arms.Capacity()), retiringPlainArmSlots_(arms.Capacity()) {}
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     struct FrontierStageRecordForTest {
@@ -204,9 +207,16 @@ public:
 
     bool BeginQuantum(std::uint64_t quantumIndex) noexcept override {
         (void)immediate_.Capture(quantumIndex);
+        plainResultCount_ = 0;
+        plainQuantum_ = quantumIndex;
         authoredStopFenceCount_ = 0;
         frontier_.Begin(quantumIndex, blockFrames_);
         voices_.BeginTimelineQuantum(quantumIndex);
+        RetryRetiringPlainArms();
+        for (auto& pending : pendingVariableStarts_)
+            if (pending.count != 0 && !voices_.TimelineBindingValid(
+                    pending.arm.renderSlot, pending.arm.renderGeneration))
+                RetirePendingVariableStart(pending);
         return true;
     }
 
@@ -218,6 +228,11 @@ public:
         for (std::size_t i = 0; i < count; ++i)
             if (pageGroups_[i].frontier != nullptr && !frontier_.CollectGroup(pageGroups_[i])) return false;
         return true;
+    }
+
+    bool PendingFrontierBindingValid(const ConsumedEvent& event,
+        const TimelineEventPayload& payload) const noexcept override {
+        return frontier_.PendingBindingValid(event, payload);
     }
 
     bool StageFrontierEvent(const ConsumedEvent& event,
@@ -242,6 +257,22 @@ public:
 
     std::uint8_t FrontierEventDisposition(const ConsumedEvent& event) const noexcept override {
         return frontier_.EventDisposition(event);
+    }
+
+    std::uint8_t PlainEventDisposition(const ConsumedEvent& event,
+        std::uint8_t disposition) const noexcept override {
+        if (disposition != kTimelineDispositionApplied) return disposition;
+        for (std::uint32_t i = 0; i < plainResultCount_; ++i)
+            if (SamePlainArm(plainResults_[i].arm, event.armToken))
+                return plainResults_[i].disposition;
+        return disposition;
+    }
+
+    std::size_t VariableStartStorageBytes() const noexcept {
+        return pendingVariableStarts_.size() * sizeof(PendingVariableStart) +
+            plainResults_.size() * sizeof(PlainTransactionResult) +
+            retiringPlainArms_.size() * sizeof(TimelineArmToken) +
+            retiringPlainArmSlots_.size() * sizeof(std::uint32_t);
     }
 
     bool CollectAuthoredStopFence(const AuthoredStopFenceDescriptor& descriptor,
@@ -541,6 +572,63 @@ public:
                                              quantumIndex, eventCount)) {
             return false;
         }
+        bool hasStart = false;
+        for (std::uint32_t i = 0; i < eventCount; ++i)
+            hasStart = hasStart || events[i].payload->kind == TimelineEventKind::Start;
+        if (renderSlot < pendingVariableStarts_.size() &&
+            (pendingVariableStarts_[renderSlot].count != 0 ||
+             (hasStart && voices_.HasTimelineVariableSourceRead(renderSlot, renderGeneration)))) {
+            auto& pending = pendingVariableStarts_[renderSlot];
+            if (pending.count != 0 && pending.arm.renderGeneration != renderGeneration) return false;
+            if (pending.count == 0) {
+                pending.arm = armToken;
+                pending.source = voices_.TimelineVariableSourceRead(renderSlot, renderGeneration);
+            }
+            std::uint32_t transactionIndex = 0;
+            while (transactionIndex < pending.transactionCount &&
+                !SamePlainArm(pending.transactions[transactionIndex].arm, armToken)) ++transactionIndex;
+            if (transactionIndex == pending.transactions.size()) return false;
+            if (transactionIndex == pending.transactionCount) {
+                pending.transactions[transactionIndex].arm = armToken;
+                ++pending.transactionCount;
+            }
+            auto& transaction = pending.transactions[transactionIndex];
+            transaction.starts = transaction.starts || hasStart;
+            if (pending.failed || eventCount > pending.events.size() - pending.count) {
+                pending.failed = true;
+                RecordPlainResult(armToken, pending.failureDisposition);
+                (void)CancelBinding(renderSlot, renderGeneration);
+                return true;
+            }
+            for (std::uint32_t i = 0; i < eventCount; ++i) {
+                auto& stored = pending.events[pending.count + i];
+                const auto& payload = *events[i].payload;
+                stored = {};
+                stored.kind = payload.kind;
+                stored.authoredRootStop = payload.kind == TimelineEventKind::Stop &&
+                    (payload.reserved & kTimelineEventAuthoredRootStop) != 0;
+                stored.authoredStopOperation = payload.authoredStopOperation;
+                stored.offset = static_cast<std::uint16_t>(events[i].effectiveOffset);
+                stored.envelopeDirection = payload.envelopeDirection;
+                stored.authoredFadeOutCandidate = events[i].authoredFadeOutCandidate;
+                stored.frame = payload.envelopeStartFrame;
+                stored.endFrame = payload.envelopeEndFrame;
+                stored.value = payload.sourceStartFrame;
+                stored.envelopeCurve = payload.envelopeCurve;
+                stored.variableWeight = payload.variableWeight;
+                stored.variableWeightOwner = payload.variableWeightOwner;
+                stored.order = events[i].order;
+                transaction.transient = transaction.transient ||
+                    payload.kind == TimelineEventKind::VariableWeight ||
+                    (payload.kind == TimelineEventKind::Stop &&
+                        (payload.reserved & kTimelineEventTransientControlArm) != 0) ||
+                    (payload.kind == TimelineEventKind::Start &&
+                        (payload.reserved & kTimelineEventTransientStartArm) != 0);
+            }
+            pending.count += eventCount;
+            RecordPlainResult(armToken, kTimelineDispositionArmPending);
+            return true;
+        }
         bool variableWeightControl = false;
         bool transientStartControl = false;
         bool transientControl = false;
@@ -573,6 +661,7 @@ public:
                 if (!arms_.Start(armToken, blockSequence)) {
                     return false;
                 }
+                voices_.FinishTimelineVariableSourceRead(renderSlot, renderGeneration);
                 transientStartControl = transientStartControl ||
                     (payload.reserved &
                      kTimelineEventTransientStartArm) != 0;
@@ -604,7 +693,15 @@ public:
 
     bool CancelBinding(std::uint32_t renderSlot,
                        std::uint32_t renderGeneration) noexcept override {
-        return voices_.CancelTimelineBindingFromAudio(renderSlot, renderGeneration);
+        const bool cancelled = voices_.CancelTimelineBindingFromAudio(renderSlot, renderGeneration);
+        if (renderSlot < pendingVariableStarts_.size() &&
+            pendingVariableStarts_[renderSlot].count != 0 &&
+            pendingVariableStarts_[renderSlot].arm.renderGeneration == renderGeneration) {
+            auto& pending = pendingVariableStarts_[renderSlot];
+            pending.failed = true;
+            if (cancelled) RetirePendingVariableStart(pending);
+        }
+        return cancelled;
     }
 
     void FailPlan03Deadline(DecisionToken decision,
@@ -631,6 +728,18 @@ public:
         return true;
     }
 
+    using CurrentSliceApplyCallback = void (*)(void*, std::uint64_t,
+        const TimelineExecutionResult&) noexcept;
+    void SetCurrentSliceApplyCallback(void* context, CurrentSliceApplyCallback callback) noexcept {
+        currentSliceApplyContext_ = context;
+        currentSliceApplyCallback_ = callback;
+    }
+    void BeforeEndQuantum(std::uint64_t quantumIndex,
+                          const TimelineExecutionResult& result) noexcept override {
+        if (currentSliceApplyCallback_ != nullptr)
+            currentSliceApplyCallback_(currentSliceApplyContext_, quantumIndex, result);
+        FinishPendingVariableStarts(quantumIndex);
+    }
     void EndQuantum(std::uint64_t quantumIndex) noexcept override {
         immediate_.Apply(quantumIndex);
         frontier_.Finish();
@@ -659,6 +768,180 @@ public:
 private:
     friend struct detail::VoiceTimelineSinkTestAccess;
     friend struct detail::QueueCancellationRaceTestAccess;
+
+    struct PendingVariableTransaction {
+        TimelineArmToken arm{};
+        bool starts = false;
+        bool transient = false;
+    };
+    struct PlainTransactionResult {
+        TimelineArmToken arm{};
+        std::uint8_t disposition = kTimelineDispositionArmPending;
+    };
+    static bool SamePlainArm(TimelineArmToken a, TimelineArmToken b) noexcept {
+        return a.slot == b.slot && a.generation == b.generation &&
+            a.renderSlot == b.renderSlot && a.renderGeneration == b.renderGeneration;
+    }
+    void RecordPlainResult(TimelineArmToken arm, std::uint8_t disposition) noexcept {
+        for (std::uint32_t i = 0; i < plainResultCount_; ++i) {
+            if (!SamePlainArm(plainResults_[i].arm, arm)) continue;
+            plainResults_[i].disposition = disposition;
+            return;
+        }
+        assert(plainResultCount_ < plainResults_.size());
+        if (plainResultCount_ < plainResults_.size()) plainResults_[plainResultCount_++] = {arm, disposition};
+    }
+    struct PendingVariableStart {
+        TimelineArmToken arm{};
+        VariableTimelineReadUseRef source{};
+        std::uint32_t count = 0;
+        std::uint32_t transactionCount = 0;
+        bool failed = false;
+        std::uint8_t failureDisposition = kTimelineDispositionArmFailed;
+        std::array<PendingVariableTransaction, kTimelineMaxEventsPerVoiceQuantum + 1u> transactions{};
+        std::array<VoiceTimelineEvent, kTimelineMaxEventsPerVoiceQuantum> events{};
+    };
+
+    void RetirePendingVariableStart(PendingVariableStart& pending) noexcept {
+        pending.failed = true;
+        // A busy Arm owns its retirement independently of the reusable native slot.
+        for (std::uint32_t i = 0; i < pending.transactionCount; ++i) {
+            const auto arm = pending.transactions[i].arm;
+            if (arm.slot >= retiringPlainArms_.size()) return;
+            const auto prior = retiringPlainArms_[arm.slot];
+            if (prior.Valid() && !SamePlainArm(prior, arm)) return;
+        }
+        for (std::uint32_t i = 0; i < pending.transactionCount; ++i) {
+            const auto arm = pending.transactions[i].arm;
+            RecordPlainResult(arm, pending.failureDisposition);
+            if (TryRetirePlainArm(arm)) continue;
+            if (!retiringPlainArms_[arm.slot].Valid()) {
+                assert(retiringPlainArmCount_ < retiringPlainArmSlots_.size());
+                retiringPlainArmSlots_[retiringPlainArmCount_++] = arm.slot;
+                retiringPlainArms_[arm.slot] = arm;
+            }
+        }
+        pending = {};
+    }
+
+    bool TryRetirePlainArm(TimelineArmToken arm) noexcept {
+        TimelineArmObservation observation{};
+        if (!arms_.Observe(arm, &observation) || observation.state == ArmState::Tombstoned) return true;
+        const bool cancelled = observation.state == ArmState::Started
+            ? arms_.RequestCancelStartedVoice(arm)
+            : observation.state == ArmState::AudioClaimed
+                ? arms_.RequestCancelAppliedAudioSlice(arm) : arms_.RequestCancel(arm);
+        const auto sequence = plainQuantum_ == UINT64_MAX ? UINT64_MAX : plainQuantum_ + 1u;
+        return cancelled && arms_.Tombstone(arm, sequence);
+    }
+
+    void RetryRetiringPlainArms() noexcept {
+        for (std::uint32_t i = 0; i < retiringPlainArmCount_;) {
+            const auto slot = retiringPlainArmSlots_[i];
+            if (!TryRetirePlainArm(retiringPlainArms_[slot])) { ++i; continue; }
+            retiringPlainArms_[slot] = {};
+            retiringPlainArmSlots_[i] = retiringPlainArmSlots_[--retiringPlainArmCount_];
+        }
+    }
+
+    void FinishPendingVariableStarts(std::uint64_t quantumIndex) noexcept {
+        const auto sequence = quantumIndex == UINT64_MAX ? UINT64_MAX : quantumIndex + 1u;
+        for (auto& pending : pendingVariableStarts_) {
+            if (pending.count == 0) continue;
+            const auto arm = pending.arm;
+            if (!voices_.TimelineBindingValid(arm.renderSlot, arm.renderGeneration)) {
+                // A released or reused generation has already detached every audio reader.
+                RetirePendingVariableStart(pending);
+                continue;
+            }
+            if (pending.failed) {
+                (void)CancelBinding(arm.renderSlot, arm.renderGeneration);
+                continue;
+            }
+            TimelineArmObservation observation{};
+            const bool observed = arms_.Observe(arm, &observation);
+            const auto source = voices_.TimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration);
+            const auto status = source.Valid() && source.slot == pending.source.slot &&
+                source.generation == pending.source.generation
+                ? voices_.TimelineVariableSourcesStatus(arm.renderSlot, arm.renderGeneration)
+                : VariableReadCutStatus::Failed;
+            const bool canStart = observed && (observation.state == ArmState::Published ||
+                observation.state == ArmState::AudioClaimed);
+            std::uint64_t startFrame = UINT64_MAX;
+            std::uint64_t stopFrame = UINT64_MAX;
+            for (std::uint32_t i = 0; i < pending.count; ++i) {
+                const auto& event = pending.events[i];
+                if (event.kind == TimelineEventKind::Start) startFrame = std::min(startFrame, event.order.executeFrame);
+                if (event.kind == TimelineEventKind::Stop) stopFrame = std::min(stopFrame, event.order.executeFrame);
+            }
+            const bool stopDominates = status != VariableReadCutStatus::Failed &&
+                stopFrame != UINT64_MAX && (status == VariableReadCutStatus::Waiting ||
+                    stopFrame <= std::max(startFrame, quantumIndex * blockFrames_));
+            if (stopDominates) {
+                pending.failureDisposition = kTimelineDispositionStopDominated;
+                (void)CancelBinding(arm.renderSlot, arm.renderGeneration);
+                continue;
+            }
+            if (canStart &&
+                status == VariableReadCutStatus::Waiting) continue;
+            const bool ready = canStart &&
+                status == VariableReadCutStatus::Applied &&
+                voices_.CanAppendTimelineEvents(arm.renderSlot, arm.renderGeneration,
+                    quantumIndex, pending.count);
+            if (!ready) {
+                (void)CancelBinding(arm.renderSlot, arm.renderGeneration);
+                continue;
+            }
+            std::array<TimelineArmTable::PlainAudioProof, kTimelineMaxEventsPerVoiceQuantum + 1u> proofs{};
+            bool proved = true;
+            bool deferred = false;
+            for (std::uint32_t i = 0; i < pending.transactionCount; ++i) {
+                const auto& transaction = pending.transactions[i];
+                const auto disposition = arms_.ProvePlainAudioApply(transaction.arm,
+                    transaction.starts, transaction.transient, sequence, &proofs[i]);
+                if (disposition == TimelineArmOperationDisposition::Claimed) continue;
+                proved = false;
+                deferred = disposition == TimelineArmOperationDisposition::Deferred;
+                break;
+            }
+            if (!proved) {
+                for (auto& proof : proofs) proof.Release();
+                if (!deferred) (void)CancelBinding(arm.renderSlot, arm.renderGeneration);
+                continue;
+            }
+            VariableTimelineInitializerProof initializer;
+            bool initialized = true;
+            for (std::uint32_t i = 0; i < pending.transactionCount; ++i) {
+                if (!pending.transactions[i].starts) continue;
+                initialized = voices_.ProveTimelineVariableInitializer(arm.renderSlot,
+                    arm.renderGeneration, proofs[i], &initializer);
+                break;
+            }
+            if (!initialized) {
+                for (auto& proof : proofs) proof.Release();
+                (void)CancelBinding(arm.renderSlot, arm.renderGeneration);
+                continue;
+            }
+            voices_.ApplyTimelineVariableInitializer(initializer);
+            for (std::uint32_t i = 0; i < pending.count; ++i) {
+                auto event = pending.events[i];
+                const auto quantumStart = quantumIndex * blockFrames_;
+                event.offset = static_cast<std::uint16_t>(event.order.executeFrame < quantumStart
+                    ? 0 : event.order.executeFrame - quantumStart);
+                const bool appended = voices_.AppendTimelineEvent(arm.renderSlot, arm.renderGeneration,
+                    quantumIndex, event);
+                assert(appended);
+                (void)appended;
+            }
+            voices_.FinishTimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration);
+            for (std::uint32_t i = 0; i < pending.transactionCount; ++i) {
+                const auto& transaction = pending.transactions[i];
+                arms_.ApplyPlainAudio(proofs[i]);
+                RecordPlainResult(transaction.arm, kTimelineDispositionApplied);
+            }
+            pending = {};
+        }
+    }
 
     struct VariableControlSliceContext {
         VoiceTimelineSink* sink = nullptr;
@@ -1011,8 +1294,17 @@ private:
     VoicePool& voices_;
     TimelineArmTable& arms_;
     FrontierTimelineFinalizer frontier_;
+    void* currentSliceApplyContext_ = nullptr;
+    CurrentSliceApplyCallback currentSliceApplyCallback_ = nullptr;
     FrontierTimelineFinalizer laneFrontier_;
     ImmediateLaneTimelineFinalizer immediate_;
+    std::vector<PendingVariableStart> pendingVariableStarts_;
+    std::vector<PlainTransactionResult> plainResults_;
+    std::vector<TimelineArmToken> retiringPlainArms_;
+    std::vector<std::uint32_t> retiringPlainArmSlots_;
+    std::uint32_t retiringPlainArmCount_ = 0;
+    std::uint32_t plainResultCount_ = 0;
+    std::uint64_t plainQuantum_ = 0;
     DecisionTable* decisions_ = nullptr;
     const ScheduledTransactionPool* pool_ = nullptr;
     mutable std::vector<Plan03PageGroupView> pageGroups_;

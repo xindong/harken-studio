@@ -1239,12 +1239,15 @@ TEST(VoicePool, OriginalOwnerGatedDisposalDoesNotInventCoreRetirement) {
     ASSERT_TRUE(engine.voices.StageReservedLaneTimelineEvent(reservation, 0, event));
     harken::VoiceTimelineReservationProof eventProof;
     ASSERT_TRUE(engine.voices.ProveTimelineReservation(reservation, &eventProof));
-    EXPECT_EQ(harken::VoicePool::OriginalVoiceDisposal::Refused,
+    EXPECT_EQ(harken::VoicePool::OriginalVoiceDisposal::Deferred,
         engine.voices.TryDisposeOriginalTimelineVoice(owner));
     ASSERT_NE(nullptr, engine.voices.Resolve(handle));
     EXPECT_EQ(1u, engine.registry.Lookup(harkentest::ObjectId(1)).useCount->load());
     harken::VoicePool::ReleaseTimelineReservationProof(eventProof);
     ASSERT_TRUE(engine.voices.RejectTimelineReservation(reservation));
+    EXPECT_EQ(harken::VoicePool::OriginalVoiceDisposal::Deferred,
+        engine.voices.TryDisposeOriginalTimelineVoice(owner));
+    engine.voices.FinalizeTimelineQuantum(quantum);
     ASSERT_EQ(harken::VoicePool::OriginalVoiceDisposal::Released,
         engine.voices.TryDisposeOriginalTimelineVoice(owner));
     harken::TimelineArmObservation observation{};

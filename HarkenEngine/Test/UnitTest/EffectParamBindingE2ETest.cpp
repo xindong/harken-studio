@@ -17,6 +17,7 @@
 #include "harken/render/BuiltinEffects.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <utility>
@@ -273,6 +274,167 @@ TEST(EffectParamBindingE2E,
     const float independentReference =
         kDc * std::pow(10.0f, (-6.0f + 6.0f) / 20.0f);
     EXPECT_NEAR(independentReference, SteadyLevel(firstBlock), 2e-3f);
+}
+
+static void CheckOrderedRecipeFirstPcm(std::uint32_t type, bool refuseArena) {
+    auto config = EffectBindConfig();
+    config.maxVoices = 4;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    InstallBindingVariable(&engine);
+    const auto sound = harkentest::ObjectId(171);
+    std::vector<float> samples(kRate, 0.3f);
+    if (type == VN_EFFECT_THREE_BAND_TONE) {
+        for (std::uint32_t i = 0; i < samples.size(); ++i)
+            samples[i] = 0.05f * std::sin(2.0f * 3.14159265358979323846f * 1000.0f * i / kRate);
+    }
+    const auto pcm = MonoDesc(samples, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    harken::PackLogicImage::VoiceRecipe recipe;
+    recipe.header.playableId = sound;
+    recipe.header.installCount = 1;
+    harken::PackVoiceRecipeInstall install;
+    install.effectType = type;
+    install.descriptorVintage = harken::kPackV2EffectDescriptorVintage;
+    struct Input { std::uint32_t param; float a; float b; };
+    std::vector<Input> inputs;
+    if (type == VN_EFFECT_GAIN) {
+        install.paramCount = 1;
+        inputs = {{harken::kGainParamGainDb, 0, -12}};
+    } else if (type == VN_EFFECT_THREE_BAND_TONE) {
+        install.paramCount = harken::kToneParamCount;
+        install.params[harken::kToneParamLowShelfFreqHz] = 200;
+        install.params[harken::kToneParamPeakFreqHz] = 1000;
+        install.params[harken::kToneParamPeakQ] = 1;
+        install.params[harken::kToneParamHighShelfFreqHz] = 6000;
+        inputs = {{harken::kToneParamPeakGainDb, 0, 6},
+                  {harken::kToneParamPeakFreqHz, 0, 1},
+                  {harken::kToneParamPeakQ, 0, 1}};
+    } else {
+        install.paramCount = harken::kCompressorParamCount;
+        install.params[harken::kCompressorParamThresholdDb] = -18;
+        install.params[harken::kCompressorParamRatio] = 1;
+        install.params[harken::kCompressorParamAttackMs] = 0.1f;
+        install.params[harken::kCompressorParamReleaseMs] = 100;
+        inputs = {{harken::kCompressorParamThresholdDb, 0, -12},
+                  {harken::kCompressorParamRatio, 1, 4},
+                  {harken::kCompressorParamMakeupDb, 0, -6}};
+    }
+    recipe.installs.push_back(install);
+    for (std::uint32_t i = 0; i < inputs.size(); ++i) {
+        const auto id = harkentest::ObjectId(172 + i);
+        const auto binding = EffectParamBinding(VN_TARGET_SCOPE_VOICE_EFFECT_PARAM,
+            type, inputs[i].param, inputs[i].a, inputs[i].b);
+        ASSERT_EQ(VN_OK, Vn_RegisterBinding(id, &binding));
+        recipe.bindings.push_back(id);
+    }
+    recipe.header.bindingCount = static_cast<std::uint32_t>(recipe.bindings.size());
+    auto* record = ClaimTestLogicRecord(&engine);
+    ASSERT_NE(nullptr, record);
+    record->voiceRecipes.push_back(std::move(recipe));
+    auto pan = EffectParamBinding(VN_TARGET_SCOPE_VOICE, type, 0, -1, 1);
+    pan.targetId = harken::kTargetVoicePan;
+    const auto panId = harkentest::ObjectId(180);
+    ASSERT_EQ(VN_OK, Vn_RegisterBinding(panId, &pan));
+    VnBindingAttachDesc attach{};
+    attach.structSize = sizeof(attach);
+    attach.scopeKind = VN_TARGET_SCOPE_VOICE;
+    attach.objectId = sound;
+    ASSERT_EQ(VN_OK, Vn_AttachBinding(panId, &attach));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    const auto play = MakePlayDesc(sound);
+    std::array<VnVoiceHandle, 2> handles{};
+    ASSERT_EQ(VN_OK, Vn_SetValue(kVar, 0));
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handles[0]));
+    ASSERT_EQ(VN_OK, Vn_SetValue(kVar, 1));
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handles[1]));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    if (refuseArena) {
+        engine.mixer.ArenaForTests().SetCapacityForTests(0);
+        engine.nullBackend.Pump(4);
+        for (std::uint32_t i = 0; i < 2 * kBlock; ++i)
+            ASSERT_FLOAT_EQ(0, engine.nullBackend.LastBlock()[i]);
+        engine.mixer.ArenaForTests().RestoreCapacityForTests();
+    }
+    bool heard = false;
+    for (std::uint32_t block = 0; block < 16 && !heard; ++block) {
+        engine.nullBackend.Pump(1);
+        heard = std::abs(engine.nullBackend.LastBlock()[2 * (kBlock - 1)]) > 1e-7f;
+    }
+    ASSERT_TRUE(heard);
+    // A complete descriptor is the reference, independent of the variable fold.
+    for (std::uint32_t channel = 0; channel < 2; ++channel) {
+        SCOPED_TRACE(channel);
+        std::array<float, kBlock> reference{};
+        std::copy_n(samples.data(), kBlock, reference.data());
+        harken::GainState gain{};
+        harken::ToneEffectState tone{};
+        harken::CompressorState compressor{};
+        tone.sampleRate = compressor.sampleRate = kRate;
+        void* state = type == VN_EFFECT_GAIN ? static_cast<void*>(&gain)
+            : type == VN_EFFECT_THREE_BAND_TONE ? static_cast<void*>(&tone)
+            : static_cast<void*>(&compressor);
+        const auto effect = harken::BuildEffect(type, state);
+        effect.reset(state);
+        if (type == VN_EFFECT_GAIN) {
+            const auto descriptor = GainDesc(channel == 0 ? 0 : -12);
+            harken::ApplyEffectDesc(type, AsBase(&descriptor), state);
+        } else if (type == VN_EFFECT_THREE_BAND_TONE) {
+            auto descriptor = ToneDesc(channel == 0 ? 0 : 6, channel == 0 ? 1000 : 2000);
+            descriptor.peakQ = channel == 0 ? 1 : 2;
+            harken::ApplyEffectDesc(type, AsBase(&descriptor), state);
+        } else {
+            auto descriptor = CompressorDesc();
+            descriptor.thresholdDb = channel == 0 ? -18 : -30;
+            descriptor.ratio = channel == 0 ? 1 : 4;
+            descriptor.makeupDb = channel == 0 ? 0 : -6;
+            harken::ApplyEffectDesc(type, AsBase(&descriptor), state);
+        }
+        float* channels[] = {reference.data()};
+        effect.process(state, channels, 1, 0, kBlock);
+        for (std::uint32_t frame = 0; frame < kBlock; ++frame)
+            EXPECT_NEAR(reference[frame], engine.nullBackend.LastBlock()[2 * frame + channel], 2e-5f);
+    }
+    engine.nullBackend.Pump(8);
+    for (const auto handle : handles) {
+        const auto render = harkentest::RenderHandle(&engine, handle);
+        const auto* voice = engine.voices.Resolve(render);
+        ASSERT_NE(nullptr, voice);
+        EXPECT_FLOAT_EQ(1, voice->pan);
+        const auto effect = engine.voiceEffectInstanceRefs[static_cast<std::uint32_t>(render)][0];
+        void* state = engine.effectBank.LiveStateFor(effect);
+        ASSERT_NE(nullptr, state);
+        if (type == VN_EFFECT_GAIN) {
+            EXPECT_NEAR(std::pow(10.0f, -12.0f / 20.0f),
+                static_cast<harken::GainState*>(state)->gainLinear, 1e-6f);
+        } else if (type == VN_EFFECT_THREE_BAND_TONE) {
+            const auto& value = *static_cast<harken::ToneEffectState*>(state);
+            EXPECT_FLOAT_EQ(6, value.peakGainDb);
+            EXPECT_FLOAT_EQ(2000, value.peakFreqHz);
+            EXPECT_FLOAT_EQ(2, value.peakQ);
+        } else {
+            const auto& value = *static_cast<harken::CompressorState*>(state);
+            EXPECT_FLOAT_EQ(-30, value.parameters.thresholdDb);
+            EXPECT_FLOAT_EQ(0.25f, value.parameters.reciprocalRatio);
+        }
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    for (const auto handle : handles)
+        EXPECT_FALSE(engine.variables.HasNativePublicationHold(harkentest::RenderHandle(&engine, handle)));
+}
+
+TEST(EffectParamBindingE2E, OrderedRecipeGainKeepsOwnFirstPcmThenFollowsLatestValue) {
+    CheckOrderedRecipeFirstPcm(VN_EFFECT_GAIN, false);
+}
+
+TEST(EffectParamBindingE2E, OrderedRecipeToneKeepsCompleteInitialTupleThroughArenaRefusal) {
+    CheckOrderedRecipeFirstPcm(VN_EFFECT_THREE_BAND_TONE, true);
+}
+
+TEST(EffectParamBindingE2E, OrderedRecipeCompressorKeepsCompleteInitialTupleThroughArenaRefusal) {
+    CheckOrderedRecipeFirstPcm(VN_EFFECT_COMPRESSOR, true);
 }
 
 

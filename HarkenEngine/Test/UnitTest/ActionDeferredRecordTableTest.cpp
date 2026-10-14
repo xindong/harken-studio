@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <gtest/gtest-spi.h>
+#include <array>
 #include <utility>
 
 namespace {
@@ -756,6 +757,247 @@ TEST(ActionDeferredRecordTable,
               harken::FixedPlayClaimStatus::Claimed);
     EXPECT_EQ(special.token.slot, added.token.slot);
     EXPECT_EQ(pool.EarliestHeldDueBefore(1024), 512u);
+}
+
+class ActionDeferredPrerequisite : public ::testing::Test {
+protected:
+    void SetUp() override { ASSERT_TRUE(table.Reset(3)); }
+
+    void Publish(std::uint32_t index, harken::ActionOpcodeV1 opcode, std::uint64_t frame,
+                 std::uint32_t ordinal, std::uint64_t ticket, std::uint64_t firingOffset = 0) {
+        auto record = MakeRecord();
+        record.step.opcode = opcode;
+        record.firing += firingOffset;
+        record.firstRowFrame = record.lastRowFrame = record.intendedBoundaryFrame = record.deadlineFrame = frame;
+        record.executionOrdinal = ordinal;
+        auto prepared = table.Prepare(record);
+        ASSERT_EQ(harken::ActionDeferredRecordPrepareStatus::Prepared, prepared.status);
+        records[index] = prepared.token;
+        auto intent = MakeIntent(record, prepared.token);
+        intent.commitSequence = ticket;
+        const auto added = pool.AddPrepared(intent);
+        ASSERT_EQ(harken::DeferredIntentRefusal::None, added.status);
+        intents[index] = added.token;
+        ASSERT_TRUE(table.CommitPreparedPair(&prepared.token, &pool, added.token));
+    }
+
+    harken::FixedPlayClaimStatus Claim(harken::DeferredIntentClaim* out,
+        harken::FixedPlayClaimMode mode = harken::FixedPlayClaimMode::BeforeDeadline,
+        std::uint64_t quantum = 1, std::uint64_t cutoff = 256,
+        harken::ActionDeferredPairState* fault = nullptr) {
+        return table.ClaimFixedPlayPair(&pool, mode, quantum, 256, 1024, cutoff, out, fault);
+    }
+
+    void ExpectBlockedThenConsumed(harken::ActionOpcodeV1 opcode) {
+        ASSERT_NO_FATAL_FAILURE(Publish(0, opcode, 512, 1, 7, 1));
+        ASSERT_NO_FATAL_FAILURE(Publish(1, harken::ActionOpcodeV1::Play, 512, 2, 7));
+        harken::DeferredIntentClaim claim{};
+        ASSERT_EQ(harken::FixedPlayClaimStatus::None, Claim(&claim));
+        EXPECT_FALSE(claim.token.Valid());
+        EXPECT_EQ(2u, pool.Count());
+        ASSERT_EQ(1u, pool.ClaimDue(1024, instances, &claim, 1));
+        EXPECT_EQ(intents[0].slot, claim.token.slot);
+        harken::ActionDeferredRecordToken record{};
+        harken::ActionDeferredRecord captured{};
+        ASSERT_TRUE(table.Claim(claim, &record, &captured));
+        EXPECT_EQ(opcode, captured.step.opcode);
+        ASSERT_TRUE(pool.Release(claim.token));
+        ASSERT_TRUE(table.FinalizeClaim(record));
+        ASSERT_EQ(harken::FixedPlayClaimStatus::Claimed, Claim(&claim));
+        EXPECT_EQ(intents[1].slot, claim.token.slot);
+        EXPECT_EQ(harken::ActionDeferredRecordState::Held, table.State(records[1]));
+    }
+
+    void ExpectDifferentFrameOrdinaryRetry(harken::ActionOpcodeV1 opcode) {
+        ASSERT_NO_FATAL_FAILURE(Publish(0, opcode, 512, 0, 7, 1));
+        ASSERT_NO_FATAL_FAILURE(Publish(1, harken::ActionOpcodeV1::Play, 768, 1, 7));
+        harken::DeferredIntentClaim claim{};
+        harken::ActionDeferredRecordToken record{};
+        harken::ActionDeferredRecord captured{};
+        ASSERT_EQ(1u, pool.ClaimDue(1024, instances, &claim, 1));
+        ASSERT_EQ(intents[0].slot, claim.token.slot);
+        ASSERT_TRUE(table.Claim(claim, &record, &captured));
+        ASSERT_EQ(harken::DeferredIntentRefusal::None, pool.Retry(claim.token, 2));
+        ASSERT_TRUE(table.RetryClaim(record));
+        claim = {};
+        EXPECT_EQ(harken::FixedPlayClaimStatus::None, Claim(&claim));
+        ASSERT_EQ(1u, pool.ClaimDue(1024, instances, &claim, 1, nullptr, nullptr, 1));
+        ASSERT_EQ(intents[1].slot, claim.token.slot);
+        ASSERT_TRUE(table.Claim(claim, &record, &captured));
+        bool held = false;
+        ASSERT_TRUE(table.InspectClaimedPlayPrerequisites(&pool, claim.token, record, &held));
+        ASSERT_TRUE(held);
+        ASSERT_TRUE(table.RetryFixedPlayPair(&pool, claim.token, record, 2));
+        ASSERT_TRUE(table.Capture(records[1], &captured));
+        EXPECT_EQ(768u, captured.intendedBoundaryFrame);
+        EXPECT_EQ(768u, captured.deadlineFrame);
+        EXPECT_EQ(harken::ActionDeferredRecordState::Held, table.State(records[1]));
+
+        ASSERT_EQ(1u, pool.ClaimDue(1024, instances, &claim, 1, nullptr, nullptr, 2));
+        ASSERT_EQ(intents[0].slot, claim.token.slot);
+        ASSERT_TRUE(table.Claim(claim, &record, &captured));
+        ASSERT_TRUE(pool.Release(claim.token));
+        ASSERT_TRUE(table.FinalizeClaim(record));
+        ASSERT_EQ(1u, pool.ClaimDue(1024, instances, &claim, 1, nullptr, nullptr, 2));
+        EXPECT_EQ(intents[1].slot, claim.token.slot);
+        EXPECT_EQ(intents[1].generation, claim.token.generation);
+        EXPECT_EQ(768u, claim.intent.dueFrame);
+        EXPECT_EQ(7u, claim.intent.commitSequence);
+        ASSERT_TRUE(table.Claim(claim, &record, &captured));
+        ASSERT_TRUE(table.InspectClaimedPlayPrerequisites(&pool, claim.token, record, &held));
+        EXPECT_FALSE(held);
+        ASSERT_TRUE(pool.Release(claim.token));
+        ASSERT_TRUE(table.FinalizeClaim(record));
+        EXPECT_EQ(0u, table.LiveCount());
+        EXPECT_EQ(0u, pool.Count());
+    }
+
+    harken::ActionDeferredRecordTable table;
+    harken::DeferredIntentPool pool{3, 3};
+    harken::PlayableInstanceTable instances{1};
+    std::array<harken::ActionDeferredRecordToken, 3> records{};
+    std::array<harken::DeferredIntentToken, 3> intents{};
+};
+
+TEST_F(ActionDeferredPrerequisite, ResetInAnotherFiringOfTheSameAcceptedTicketRunsBeforePlay) {
+    ExpectBlockedThenConsumed(harken::ActionOpcodeV1::Reset);
+}
+
+TEST_F(ActionDeferredPrerequisite, SetVariableInAnotherFiringOfTheSameAcceptedTicketRunsBeforePlay) {
+    ExpectBlockedThenConsumed(harken::ActionOpcodeV1::SetVariable);
+}
+
+TEST_F(ActionDeferredPrerequisite, BlockedTicketDoesNotPreventAnotherAcceptedPlay) {
+    ASSERT_NO_FATAL_FAILURE(Publish(0, harken::ActionOpcodeV1::Reset, 512, 0, 7, 1));
+    ASSERT_NO_FATAL_FAILURE(Publish(1, harken::ActionOpcodeV1::Play, 512, 1, 7));
+    ASSERT_NO_FATAL_FAILURE(Publish(2, harken::ActionOpcodeV1::Play, 512, 0, 8, 2));
+    harken::DeferredIntentClaim claim{};
+    ASSERT_EQ(harken::FixedPlayClaimStatus::Claimed, Claim(&claim));
+    EXPECT_EQ(intents[2].slot, claim.token.slot);
+    EXPECT_EQ(8u, claim.intent.commitSequence);
+    EXPECT_EQ(harken::ActionDeferredRecordState::Held, table.State(records[1]));
+}
+
+TEST_F(ActionDeferredPrerequisite, FutureResetDoesNotBlockEarlierFramePlay) {
+    ASSERT_NO_FATAL_FAILURE(Publish(0, harken::ActionOpcodeV1::Reset, 768, 0, 7, 1));
+    ASSERT_NO_FATAL_FAILURE(Publish(1, harken::ActionOpcodeV1::Play, 512, 1, 7));
+    harken::DeferredIntentClaim claim{};
+    ASSERT_EQ(harken::FixedPlayClaimStatus::Claimed, Claim(&claim));
+    EXPECT_EQ(intents[1].slot, claim.token.slot);
+}
+
+TEST_F(ActionDeferredPrerequisite, LaterSameFrameResetDoesNotBlockEarlierEventPlay) {
+    ASSERT_NO_FATAL_FAILURE(Publish(0, harken::ActionOpcodeV1::Reset, 512, 2, 7, 1));
+    ASSERT_NO_FATAL_FAILURE(Publish(1, harken::ActionOpcodeV1::Play, 512, 1, 7));
+    harken::DeferredIntentClaim claim{};
+    ASSERT_EQ(harken::FixedPlayClaimStatus::Claimed, Claim(&claim));
+    EXPECT_EQ(intents[1].slot, claim.token.slot);
+}
+
+TEST_F(ActionDeferredPrerequisite, RetriedVariableWriteStillPrecedesPlayUntilMaterialized) {
+    ASSERT_NO_FATAL_FAILURE(Publish(0, harken::ActionOpcodeV1::SetVariable, 512, 0, 7, 1));
+    ASSERT_NO_FATAL_FAILURE(Publish(1, harken::ActionOpcodeV1::Play, 512, 1, 7));
+    harken::DeferredIntentClaim claim{};
+    ASSERT_EQ(1u, pool.ClaimDue(1024, instances, &claim, 1));
+    ASSERT_EQ(intents[0].slot, claim.token.slot);
+    harken::ActionDeferredRecordToken record{};
+    harken::ActionDeferredRecord captured{};
+    ASSERT_TRUE(table.Claim(claim, &record, &captured));
+    ASSERT_EQ(harken::DeferredIntentRefusal::None, pool.Retry(claim.token, 2));
+    ASSERT_TRUE(table.RetryClaim(record));
+    claim = {};
+    EXPECT_EQ(harken::FixedPlayClaimStatus::None, Claim(&claim));
+    EXPECT_EQ(harken::FixedPlayClaimStatus::None,
+              Claim(&claim, harken::FixedPlayClaimMode::BeforeDeadline, 2, 512));
+    EXPECT_FALSE(claim.token.Valid());
+    ASSERT_EQ(1u, pool.ClaimDue(1024, instances, &claim, 1, nullptr, nullptr, 2));
+    EXPECT_EQ(intents[0].slot, claim.token.slot);
+    ASSERT_TRUE(table.Claim(claim, &record, &captured));
+    ASSERT_TRUE(pool.Release(claim.token));
+    ASSERT_TRUE(table.FinalizeClaim(record));
+    ASSERT_EQ(harken::FixedPlayClaimStatus::Claimed,
+              Claim(&claim, harken::FixedPlayClaimMode::BeforeDeadline, 2, 512));
+    EXPECT_EQ(intents[1].slot, claim.token.slot);
+    EXPECT_EQ(intents[1].generation, claim.token.generation);
+}
+
+TEST_F(ActionDeferredPrerequisite, CancellerOwnedResetDoesNotBlockPlay) {
+    ASSERT_NO_FATAL_FAILURE(Publish(0, harken::ActionOpcodeV1::Reset, 512, 0, 7, 1));
+    ASSERT_NO_FATAL_FAILURE(Publish(1, harken::ActionOpcodeV1::Play, 512, 1, 7));
+    ASSERT_EQ(harken::ActionDeferredCancelOwnership::Canceller, table.RequestCancel(records[0]));
+    harken::DeferredIntentClaim claim{};
+    ASSERT_EQ(harken::FixedPlayClaimStatus::Claimed, Claim(&claim));
+    EXPECT_EQ(intents[1].slot, claim.token.slot);
+    ASSERT_TRUE(pool.Cancel(intents[0]));
+    ASSERT_TRUE(table.FinalizeHeld(records[0]));
+    EXPECT_EQ(1u, table.LiveCount());
+}
+
+TEST_F(ActionDeferredPrerequisite, ExpiredPlayKeepsItsOriginalDeadlineDespiteHeldReset) {
+    ASSERT_NO_FATAL_FAILURE(Publish(0, harken::ActionOpcodeV1::Reset, 512, 0, 7, 1));
+    ASSERT_NO_FATAL_FAILURE(Publish(1, harken::ActionOpcodeV1::Play, 512, 1, 7));
+    harken::DeferredIntentClaim claim{};
+    ASSERT_EQ(harken::FixedPlayClaimStatus::Claimed,
+              Claim(&claim, harken::FixedPlayClaimMode::Expired, 3, 768));
+    EXPECT_EQ(intents[1].slot, claim.token.slot);
+    EXPECT_EQ(512u, claim.intent.dueFrame);
+    EXPECT_EQ(harken::ActionDeferredRecordState::Held, table.State(records[0]));
+}
+
+TEST_F(ActionDeferredPrerequisite, BrokenPrerequisitePairReportsProtocolFaultWithoutClaimingPlay) {
+    ASSERT_NO_FATAL_FAILURE(Publish(0, harken::ActionOpcodeV1::Reset, 512, 0, 7, 1));
+    ASSERT_NO_FATAL_FAILURE(Publish(1, harken::ActionOpcodeV1::Play, 512, 1, 7));
+    harken::DeferredIntentToken changed{};
+    ASSERT_TRUE(pool.SetTokenGenerationForTests(intents[0], intents[0].generation + 1u, &changed));
+    harken::DeferredIntentClaim claim{};
+    harken::ActionDeferredPairState fault{};
+    EXPECT_EQ(harken::FixedPlayClaimStatus::ProtocolViolation,
+              Claim(&claim, harken::FixedPlayClaimMode::BeforeDeadline, 1, 256, &fault));
+    EXPECT_EQ(records[0].slot, fault.recordToken.slot);
+    EXPECT_FALSE(claim.token.Valid());
+    EXPECT_EQ(2u, pool.Count());
+    EXPECT_EQ(harken::ActionDeferredRecordState::Held, table.State(records[1]));
+}
+
+TEST_F(ActionDeferredPrerequisite, OrdinaryClaimCannotMaterializePastEarlierFrameRetriedReset) {
+    ExpectDifferentFrameOrdinaryRetry(harken::ActionOpcodeV1::Reset);
+}
+
+TEST_F(ActionDeferredPrerequisite, OrdinaryClaimCannotMaterializePastEarlierFrameRetriedVariableWrite) {
+    ExpectDifferentFrameOrdinaryRetry(harken::ActionOpcodeV1::SetVariable);
+}
+
+TEST_F(ActionDeferredPrerequisite, ClaimedInspectionRejectsHeldPairWithoutMutation) {
+    ASSERT_NO_FATAL_FAILURE(Publish(0, harken::ActionOpcodeV1::Play, 512, 0, 7));
+    bool held = false;
+    harken::ActionDeferredPairState fault{};
+    EXPECT_FALSE(table.InspectClaimedPlayPrerequisites(&pool, intents[0], records[0], &held, &fault));
+    EXPECT_EQ(harken::ActionDeferredRecordState::Held, fault.recordState);
+    EXPECT_EQ(harken::DeferredIntentEntryState::Held, fault.poolState);
+    EXPECT_EQ(1u, table.LiveCount());
+    EXPECT_EQ(1u, pool.Count());
+}
+
+TEST_F(ActionDeferredPrerequisite, ClaimedInspectionReportsBrokenEarlierPairAndPreservesCandidate) {
+    ASSERT_NO_FATAL_FAILURE(Publish(0, harken::ActionOpcodeV1::Reset, 512, 0, 7, 1));
+    ASSERT_NO_FATAL_FAILURE(Publish(1, harken::ActionOpcodeV1::Play, 768, 1, 7));
+    harken::DeferredIntentClaim claim{};
+    ASSERT_EQ(1u, pool.ClaimDue(1024, instances, &claim, 1));
+    ASSERT_EQ(harken::DeferredIntentRefusal::None, pool.Retry(claim.token, 2));
+    ASSERT_EQ(1u, pool.ClaimDue(1024, instances, &claim, 1, nullptr, nullptr, 1));
+    ASSERT_EQ(intents[1].slot, claim.token.slot);
+    harken::ActionDeferredRecordToken record{};
+    harken::ActionDeferredRecord captured{};
+    ASSERT_TRUE(table.Claim(claim, &record, &captured));
+    harken::DeferredIntentToken changed{};
+    ASSERT_TRUE(pool.SetTokenGenerationForTests(intents[0], intents[0].generation + 1u, &changed));
+    bool held = false;
+    harken::ActionDeferredPairState fault{};
+    EXPECT_FALSE(table.InspectClaimedPlayPrerequisites(&pool, claim.token, record, &held, &fault));
+    EXPECT_EQ(records[0].slot, fault.recordToken.slot);
+    EXPECT_EQ(harken::ActionDeferredRecordState::Claimed, table.State(records[1]));
+    EXPECT_EQ(2u, table.LiveCount());
+    EXPECT_EQ(2u, pool.Count());
 }
 
 TEST(ActionDeferredRecordTable,

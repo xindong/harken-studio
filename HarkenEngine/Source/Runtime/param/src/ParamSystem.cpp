@@ -49,7 +49,86 @@ ParamSystem::ParamSystem(const EngineConfig& config)
       m_bindings(static_cast<std::size_t>(config.voiceCapacity.Render()) *
                  ResolveInstanceSlots(config)),
       m_meterProbeContributions(config.maxBindingAttachments),
-      m_instanceSlotsPerVoice(ResolveInstanceSlots(config)) {}
+      m_instanceSlotsPerVoice(ResolveInstanceSlots(config)) {
+    m_primingInputs.resize(m_bindings.size());
+    m_projectionVariables.resize(m_variables.size());
+    m_projectionBindings.resize(m_bindings.size());
+    m_projectionVoices.resize(m_voiceStates.size());
+}
+
+bool ParamSystem::BeginVariableProjection() noexcept {
+    if (m_projectionActive) return false;
+    std::copy(m_variables.begin(), m_variables.end(), m_projectionVariables.begin());
+    m_projectionVariableCount = m_variableCount;
+    m_projectionBindingCount = m_bindingCount;
+    m_projectionForcedRebuilds = m_forcedRebuilds;
+    m_projectionDirtyTargetCount = m_dirtyTargetCount;
+    m_projectionPendingInputMarks = m_pendingInputMarks;
+    for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
+        const auto& b = m_bindings[i];
+        m_projectionBindings[i] = {b.lastInput, b.lastContribution, b.lastRevision,
+            b.lastHadValue, b.everEvaluated, b.definitionChanged, b.neutralizePending};
+    }
+    for (std::size_t i = 0; i < m_voiceStates.size(); ++i) {
+        const auto& voice = m_voiceStates[i];
+        auto& saved = m_projectionVoices[i];
+        saved.handle = voice.handle;
+        saved.anyDirty = voice.anyDirty;
+        for (std::uint32_t t = 0; t < kBuiltinTargetCount; ++t) {
+            const auto& target = voice.targets[t];
+            saved.targets[t] = {target.slots[kSlotVariableBindings], target.pendingRampMs,
+                target.active[kSlotVariableBindings], target.suppressClaimRamp,
+                target.dirty, target.pendingInput, target.rebuild};
+        }
+    }
+    m_projectionActive = true;
+    return true;
+}
+
+void ParamSystem::RestoreVariableProjection() noexcept {
+    if (!m_projectionActive) return;
+    assert(m_bindingCount == m_projectionBindingCount);
+    std::copy(m_projectionVariables.begin(), m_projectionVariables.end(), m_variables.begin());
+    m_variableCount = m_projectionVariableCount;
+    for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
+        auto& b = m_bindings[i];
+        const auto& saved = m_projectionBindings[i];
+        b.lastInput = saved.lastInput;
+        b.lastContribution = saved.lastContribution;
+        b.lastRevision = saved.lastRevision;
+        b.lastHadValue = saved.lastHadValue;
+        b.everEvaluated = saved.everEvaluated;
+        b.definitionChanged = saved.definitionChanged;
+        b.neutralizePending = saved.neutralizePending;
+    }
+    for (std::size_t i = 0; i < m_voiceStates.size(); ++i) {
+        auto& voice = m_voiceStates[i];
+        const auto& saved = m_projectionVoices[i];
+        assert(voice.handle == saved.handle);
+        voice.anyDirty = saved.anyDirty;
+        for (std::uint32_t t = 0; t < kBuiltinTargetCount; ++t) {
+            auto& target = voice.targets[t];
+            const auto& eval = saved.targets[t];
+            target.slots[kSlotVariableBindings] = eval.variableSlot;
+            target.active[kSlotVariableBindings] = eval.variableActive;
+            target.pendingRampMs = eval.pendingRampMs;
+            target.suppressClaimRamp = eval.suppressClaimRamp;
+            target.dirty = eval.dirty;
+            target.pendingInput = eval.pendingInput;
+            target.rebuild = eval.rebuild;
+        }
+    }
+    m_forcedRebuilds = m_projectionForcedRebuilds;
+    m_dirtyTargetCount = m_projectionDirtyTargetCount;
+    m_pendingInputMarks = m_projectionPendingInputMarks;
+    m_projectionActive = false;
+}
+
+std::uint64_t ParamSystem::VariableProjectionStorageBytes() const noexcept {
+    return m_projectionVariables.size() * sizeof(Variable) +
+        m_projectionBindings.size() * sizeof(BindingEvaluation) +
+        m_projectionVoices.size() * sizeof(VoiceEvaluation);
+}
 
 void ParamSystem::OnVoiceStarted(VnVoiceHandle handle, float baseVolumeDb,
                                  double basePitchRatio,
@@ -160,6 +239,7 @@ void ParamSystem::RetireVoiceTargets(VnVoiceHandle handle) noexcept {
         retiring->handle = handle;
         retiring->targetId = targetId;
         retiring->owner = target.preparedOwner;
+        retiring->publicationRefCount = target.publicationRefCount;
         retiring->revision = target.revision;
         retiring->frozenResolved = Reduce(state, targetId);
         retiring->frozenPan2d = targetId == kTargetVoicePan ? Pan2dOf(state) : 0.0f;
@@ -175,6 +255,7 @@ void ParamSystem::RetireVoiceTargets(VnVoiceHandle handle) noexcept {
         target.preCandidateApiRampTick = 0;
         target.candidateBaselineValid = false;
         target.preparedOwner = {};
+        target.publicationRefCount = 0;
     }
     for (std::uint32_t targetId = 0; targetId < kBuiltinTargetCount;
          ++targetId) {
@@ -184,6 +265,24 @@ void ParamSystem::RetireVoiceTargets(VnVoiceHandle handle) noexcept {
     state.anyDirty = false;
     state.emitterHandle = 0;
     state.retired = true;
+}
+
+void ParamSystem::DiscardPreparedVoice(VnVoiceHandle handle) noexcept {
+    const auto slot = SlotOf(handle);
+    if (handle == 0 || slot >= m_voiceStates.size() || m_voiceStates[slot].handle != handle) return;
+    const auto demand = UniqueBoundTargets(handle);
+    RetireVoiceTargets(handle);
+    if (m_capacityPublisher != nullptr) m_capacityPublisher->ShrinkWorstCase(demand);
+    std::uint32_t write = 0;
+    for (std::uint32_t read = 0; read < m_bindingCount; ++read) {
+        if (m_bindings[read].handle == handle) continue;
+        if (write != read) m_bindings[write] = m_bindings[read];
+        ++write;
+    }
+    m_bindingCount = write;
+    for (auto& contribution : m_meterProbeContributions)
+        if (contribution.used && contribution.handle == handle) contribution = MeterProbeContribution{};
+    m_voiceStates[slot] = VoiceState{};
 }
 
 void ParamSystem::ApplyTonePreset(VnVoiceHandle handle,
@@ -1084,7 +1183,8 @@ float ParamSystem::InstanceContribution(VnVoiceHandle handle,
 
 bool ParamSystem::TryPeekResolvedVolume(VnVoiceHandle handle,
                                        const EmitterTable* emitters,
-                                       float* outDb) const {
+                                       float* outDb,
+                                       const VariableReadCutReader* reader) const {
     if (outDb == nullptr) {
         return false;
     }
@@ -1097,13 +1197,17 @@ bool ParamSystem::TryPeekResolvedVolume(VnVoiceHandle handle,
     for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
         const Binding& binding = m_bindings[i];
         if (binding.handle != handle ||
-            binding.targetId != kTargetVoiceVolume) {
+            binding.targetId != kTargetVoiceVolume || binding.neutralized) {
             continue;
         }
         float input = 0.0f;
-        const bool hasValue = ResolveScopedValue(
-            emitters, state->emitterHandle, binding.variableId, &input);
-        if (binding.neutralized || !hasValue) {
+        const auto status = reader == nullptr ? VariableReadCutValueStatus::Missing
+            : reader->Read(binding.variableId, &input);
+        if (status == VariableReadCutValueStatus::Failed) return false;
+        const bool hasValue = reader == nullptr ? ResolveScopedValue(
+            emitters, state->emitterHandle, binding.variableId, &input)
+            : status == VariableReadCutValueStatus::Value;
+        if (!hasValue) {
             continue;
         }
         const float contribution = EvaluateBinding(binding, input);
@@ -1114,24 +1218,32 @@ bool ParamSystem::TryPeekResolvedVolume(VnVoiceHandle handle,
             slot += contribution;
         }
     }
-    *outDb = fed ? Reduce(*state, kTargetVoiceVolume, kSlotVariableBindings,
+    *outDb = (fed || reader != nullptr) ? Reduce(*state, kTargetVoiceVolume, kSlotVariableBindings,
                           slot)
                  : Reduce(*state, kTargetVoiceVolume);
     return true;
 }
 
 bool ParamSystem::TryClaim(VnVoiceHandle handle, std::uint32_t targetId,
-                           VariableSliceRef owner,
+                           TargetClaimOwner owner,
                            std::uint32_t expectedRevision) noexcept {
     VoiceState* state = StateFor(handle);
     if (state == nullptr || targetId >= kBuiltinTargetCount || !owner.Valid()) {
         return false;
     }
     TargetState& target = state->targets[targetId];
-    if (target.revision != expectedRevision || target.preparedOwner.Valid()) {
+    if (target.revision != expectedRevision) return false;
+    if (target.preparedOwner.Valid()) {
+        if (!owner.Shared() || target.preparedOwner != owner ||
+            target.publicationRefCount == UINT32_MAX) return false;
+        ++target.publicationRefCount;
+        return true;
+    }
+    if (target.publicationRefCount != 0) {
         return false;
     }
     target.preparedOwner = owner;
+    target.publicationRefCount = owner.Shared() ? 1u : 0u;
     target.preparedRampMs = 0;
     target.suppressClaimRamp = false;
     target.claimSnapshotCaptured = false;
@@ -1144,14 +1256,14 @@ bool ParamSystem::TryClaim(VnVoiceHandle handle, std::uint32_t targetId,
 
 bool ParamSystem::CaptureCandidateBaseline(VnVoiceHandle handle,
                                            std::uint32_t targetId,
-                                           VariableSliceRef owner) noexcept {
+                                           TargetClaimOwner owner) noexcept {
+    if (owner.Shared()) return false;
     VoiceState* state = StateFor(handle);
     if (state == nullptr || targetId >= kBuiltinTargetCount || !owner.Valid()) {
         return false;
     }
     TargetState& target = state->targets[targetId];
-    if (target.preparedOwner.slot != owner.slot ||
-        target.preparedOwner.generation != owner.generation ||
+    if (target.preparedOwner != owner ||
         target.preparedRampMs != 0 || target.claimSnapshotCaptured) {
         return false;
     }
@@ -1164,16 +1276,34 @@ bool ParamSystem::CaptureCandidateBaseline(VnVoiceHandle handle,
     return true;
 }
 
+std::uint32_t ParamSystem::TakePublicationRamp(VnVoiceHandle handle,
+    std::uint32_t targetId, TargetClaimOwner owner) noexcept {
+    VoiceState* state = StateFor(handle);
+    if (!owner.Shared() || state == nullptr || targetId >= kBuiltinTargetCount ||
+        state->targets[targetId].preparedOwner != owner) return 0;
+    auto& target = state->targets[targetId];
+    return std::exchange(target.pendingRampMs, 0u);
+}
+
+void ParamSystem::RestorePublicationRamp(VnVoiceHandle handle,
+    std::uint32_t targetId, TargetClaimOwner owner, std::uint32_t rampMs) noexcept {
+    VoiceState* state = StateFor(handle);
+    if (!owner.Shared() || state == nullptr || targetId >= kBuiltinTargetCount ||
+        state->targets[targetId].preparedOwner != owner || rampMs == 0) return;
+    auto& target = state->targets[targetId];
+    target.pendingRampMs = std::max(target.pendingRampMs, rampMs);
+    SetTargetDirty(*state, target);
+}
+
 void ParamSystem::ClearCandidateBaseline(VnVoiceHandle handle,
                                          std::uint32_t targetId,
-                                         VariableSliceRef owner) noexcept {
+                                         TargetClaimOwner owner) noexcept {
     VoiceState* state = StateFor(handle);
     if (state == nullptr || targetId >= kBuiltinTargetCount) {
         return;
     }
     TargetState& target = state->targets[targetId];
-    if (target.preparedOwner.slot != owner.slot ||
-        target.preparedOwner.generation != owner.generation) {
+    if (target.preparedOwner != owner) {
         return;
     }
     target.preCandidatePendingRampMs = 0;
@@ -1184,14 +1314,14 @@ void ParamSystem::ClearCandidateBaseline(VnVoiceHandle handle,
 
 void ParamSystem::DropClaimedPublication(VnVoiceHandle handle,
                                          std::uint32_t targetId,
-                                         VariableSliceRef owner) noexcept {
+                                         TargetClaimOwner owner) noexcept {
+    if (owner.Shared()) return;
     VoiceState* state = StateFor(handle);
     if (state == nullptr || targetId >= kBuiltinTargetCount) {
         return;
     }
     TargetState& target = state->targets[targetId];
-    if (target.preparedOwner.slot != owner.slot ||
-        target.preparedOwner.generation != owner.generation) {
+    if (target.preparedOwner != owner) {
         return;
     }
     RecordPublishedValue(*state, targetId, Reduce(*state, targetId), Pan2dOf(*state));
@@ -1208,13 +1338,18 @@ void ParamSystem::DropClaimedPublication(VnVoiceHandle handle,
 }
 
 void ParamSystem::ReleaseClaim(VnVoiceHandle handle, std::uint32_t targetId,
-                               VariableSliceRef owner,
+                               TargetClaimOwner owner,
                                ClaimReleaseReason reason) noexcept {
     VoiceState* state = StateFor(handle);
     if (state != nullptr && targetId < kBuiltinTargetCount) {
         TargetState& target = state->targets[targetId];
-        if (target.preparedOwner.slot == owner.slot &&
-            target.preparedOwner.generation == owner.generation) {
+        if (target.preparedOwner == owner) {
+            if (owner.Shared()) {
+                if (target.publicationRefCount == 0 || --target.publicationRefCount != 0) return;
+                target.preparedOwner = {};
+                target.suppressClaimRamp = false;
+                return;
+            }
             if (reason == ClaimReleaseReason::RejectCandidate) {
                 if (target.candidateBaselineValid) {
                     target.pendingRampMs = target.preCandidatePendingRampMs;
@@ -1238,13 +1373,15 @@ void ParamSystem::ReleaseClaim(VnVoiceHandle handle, std::uint32_t targetId,
     }
     if (RetiringTarget* retiring =
             FindRetiringTarget(handle, targetId, owner)) {
+        if (owner.Shared() && (retiring->publicationRefCount == 0 ||
+            --retiring->publicationRefCount != 0)) return;
         *retiring = RetiringTarget{};
     }
 }
 
 bool ParamSystem::SnapshotForClaim(VnVoiceHandle handle,
                                    std::uint32_t targetId,
-                                   VariableSliceRef owner, float* resolved,
+                                   TargetClaimOwner owner, float* resolved,
                                    std::uint32_t* rampMs,
                                    std::uint32_t* revision, float* pan2d) const noexcept {
     const VoiceState* state = StateFor(handle);
@@ -1253,8 +1390,7 @@ bool ParamSystem::SnapshotForClaim(VnVoiceHandle handle,
     }
     if (state != nullptr && targetId < kBuiltinTargetCount) {
         const TargetState& target = state->targets[targetId];
-        if (target.preparedOwner.slot == owner.slot &&
-            target.preparedOwner.generation == owner.generation) {
+        if (target.preparedOwner == owner) {
             *resolved = Reduce(*state, targetId);
             if (pan2d != nullptr) *pan2d = targetId == kTargetVoicePan ? Pan2dOf(*state) : 0.0f;
             *rampMs = target.pendingRampMs;
@@ -1275,7 +1411,7 @@ bool ParamSystem::SnapshotForClaim(VnVoiceHandle handle,
 }
 
 bool ParamSystem::CaptureSnapshotForClaim(
-    VnVoiceHandle handle, std::uint32_t targetId, VariableSliceRef owner,
+    VnVoiceHandle handle, std::uint32_t targetId, TargetClaimOwner owner,
     float* resolved, std::uint32_t* rampMs,
     std::uint32_t* revision, float* pan2d) noexcept {
     if (resolved == nullptr || rampMs == nullptr || revision == nullptr) {
@@ -1284,8 +1420,14 @@ bool ParamSystem::CaptureSnapshotForClaim(
     VoiceState* state = StateFor(handle);
     if (state != nullptr && targetId < kBuiltinTargetCount) {
         TargetState& target = state->targets[targetId];
-        if (target.preparedOwner.slot == owner.slot &&
-            target.preparedOwner.generation == owner.generation) {
+        if (target.preparedOwner == owner) {
+            if (owner.Shared()) {
+                *resolved = Reduce(*state, targetId);
+                if (pan2d != nullptr) *pan2d = targetId == kTargetVoicePan ? Pan2dOf(*state) : 0.0f;
+                *rampMs = target.pendingRampMs;
+                *revision = target.revision;
+                return true;
+            }
             if (target.claimSnapshotCaptured) {
                 return false;
             }
@@ -1300,27 +1442,26 @@ bool ParamSystem::CaptureSnapshotForClaim(
         }
     }
     RetiringTarget* retiring = FindRetiringTarget(handle, targetId, owner);
-    if (retiring == nullptr || retiring->claimSnapshotCaptured) {
+    if (retiring == nullptr || (!owner.Shared() && retiring->claimSnapshotCaptured)) {
         return false;
     }
     *resolved = retiring->frozenResolved;
     if (pan2d != nullptr) *pan2d = retiring->frozenPan2d;
     *rampMs = retiring->frozenRampMs;
     *revision = retiring->revision;
-    retiring->claimSnapshotCaptured = true;
+    if (!owner.Shared()) retiring->claimSnapshotCaptured = true;
     return true;
 }
 
 void ParamSystem::SetClaimRampSuppressed(
-    VnVoiceHandle handle, std::uint32_t targetId, VariableSliceRef owner,
+    VnVoiceHandle handle, std::uint32_t targetId, TargetClaimOwner owner,
     bool suppressed) noexcept {
     VoiceState* state = StateFor(handle);
     if (state == nullptr || targetId >= kBuiltinTargetCount) {
         return;
     }
     TargetState& target = state->targets[targetId];
-    if (target.preparedOwner.slot == owner.slot &&
-        target.preparedOwner.generation == owner.generation) {
+    if (target.preparedOwner == owner) {
         target.suppressClaimRamp = suppressed;
     }
 }
@@ -1358,15 +1499,25 @@ bool ParamSystem::ForeignClaim(VnVoiceHandle handle,
 
 void ParamSystem::MarkSliceCommitted(VnVoiceHandle handle,
                                      std::uint32_t targetId,
-                                     VariableSliceRef owner, float resolved,
+                                     TargetClaimOwner owner, float resolved,
                                      std::uint32_t rampMs, float pan2d) noexcept {
     VoiceState* state = StateFor(handle);
     if (state != nullptr && targetId < kBuiltinTargetCount) {
         TargetState& target = state->targets[targetId];
-        if (target.preparedOwner.slot == owner.slot &&
-            target.preparedOwner.generation == owner.generation) {
+        if (target.preparedOwner == owner) {
             RecordPublishedValue(*state, targetId, resolved, pan2d);
             target.lastPublishedRampMs = rampMs;
+            if (owner.Shared()) {
+                if (PublicationChanged(*state, targetId, Reduce(*state, targetId), Pan2dOf(*state)) ||
+                    target.pendingInput || target.pendingRampMs != 0) {
+                    SetTargetDirty(*state, target);
+                } else {
+                    SetTargetClean(target);
+                }
+                ++m_commits;
+                ReleaseClaim(handle, targetId, owner);
+                return;
+            }
             if (PublicationChanged(*state, targetId, Reduce(*state, targetId),
                                    Pan2dOf(*state))) {
                 SetTargetDirty(*state, target);
@@ -1388,6 +1539,8 @@ void ParamSystem::MarkSliceCommitted(VnVoiceHandle handle,
     }
     if (RetiringTarget* retiring =
             FindRetiringTarget(handle, targetId, owner)) {
+        if (owner.Shared() && (retiring->publicationRefCount == 0 ||
+            --retiring->publicationRefCount != 0)) return;
         *retiring = RetiringTarget{};
     }
 }
@@ -1488,6 +1641,32 @@ std::uint32_t ParamSystem::PrimeVoiceBindings(VnVoiceHandle handle,
                                               const EmitterTable* emitters,
                                               PrimedValue* out,
                                               std::uint32_t capacity) {
+    return PrimeVoiceBindingsImpl(handle, emitters, out, capacity, nullptr);
+}
+
+bool ParamSystem::TryPrimeVoiceBindings(VnVoiceHandle handle, const VariableReadCutReader& reader,
+                                        PrimedValue* out, std::uint32_t capacity,
+                                        std::uint32_t* written, bool includeUnchanged) {
+    if (written == nullptr) return false;
+    *written = 0;
+    if (StateFor(handle) == nullptr || out == nullptr || capacity < kBuiltinTargetCount) return false;
+    for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
+        const auto& binding = m_bindings[i];
+        if (binding.handle != handle || binding.targetId >= kBuiltinTargetCount) continue;
+        float input = 0.0f;
+        const auto status = binding.neutralized ? VariableReadCutValueStatus::Missing
+            : reader.Read(binding.variableId, &input);
+        if (status == VariableReadCutValueStatus::Failed) return false;
+        m_primingInputs[i] = {input, status == VariableReadCutValueStatus::Value};
+    }
+    *written = PrimeVoiceBindingsImpl(handle, nullptr, out, capacity, m_primingInputs.data(), includeUnchanged);
+    return true;
+}
+
+std::uint32_t ParamSystem::PrimeVoiceBindingsImpl(VnVoiceHandle handle,
+                                                  const EmitterTable* emitters,
+                                                  PrimedValue* out, std::uint32_t capacity,
+                                                  const PrimingInput* capturedInputs, bool includeUnchanged) {
     VoiceState* state = StateFor(handle);
     if (state == nullptr) {
         return 0;
@@ -1515,8 +1694,10 @@ std::uint32_t ParamSystem::PrimeVoiceBindings(VnVoiceHandle handle,
             continue;
         }
         float input = 0.0f;
-        const bool hasValue = ResolveScopedValue(
-            emitters, state->emitterHandle, b.variableId, &input);
+        const bool hasValue = capturedInputs == nullptr ? ResolveScopedValue(
+            emitters, state->emitterHandle, b.variableId, &input)
+            : capturedInputs[i].hasValue;
+        if (capturedInputs != nullptr) input = capturedInputs[i].value;
         // Recording the change-detection state here is what makes the
         // tick's ordinary evaluation see no spurious change (and fold no
         // activation ramp): the voice's first values snap by publishing
@@ -1566,7 +1747,7 @@ std::uint32_t ParamSystem::PrimeVoiceBindings(VnVoiceHandle handle,
         TargetState& target = state->targets[t];
         const float resolved = Reduce(*state, t);
         const float pan2d = t == kTargetVoicePan ? Pan2dOf(*state) : 0.0f;
-        if (PublicationChanged(*state, t, resolved, pan2d)) {
+        if (includeUnchanged || PublicationChanged(*state, t, resolved, pan2d)) {
             if (written >= capacity) {
                 // Defensive only (callers size to kBuiltinTargetCount):
                 // an unwritten value stays dirty for the ordinary flush
@@ -1578,7 +1759,8 @@ std::uint32_t ParamSystem::PrimeVoiceBindings(VnVoiceHandle handle,
             out[written].resolved = resolved;
             out[written].pan2d = pan2d;
             ++written;
-            RecordPublishedValue(*state, t, resolved, pan2d);
+            // Private projection commands have not reached an audio consumer.
+            if (!m_projectionActive) RecordPublishedValue(*state, t, resolved, pan2d);
         }
         // The primed target is settled: its demand marks retire and no
         // ramp is pending (initial instantiation snaps, section 9.2).
@@ -1704,7 +1886,7 @@ ParamSystem::StateFor(VnVoiceHandle handle) const noexcept {
 
 ParamSystem::RetiringTarget* ParamSystem::FindRetiringTarget(
     VnVoiceHandle handle, std::uint32_t targetId,
-    VariableSliceRef owner) noexcept {
+    TargetClaimOwner owner) noexcept {
     return const_cast<RetiringTarget*>(
         static_cast<const ParamSystem*>(this)->FindRetiringTarget(
             handle, targetId, owner));
@@ -1712,12 +1894,11 @@ ParamSystem::RetiringTarget* ParamSystem::FindRetiringTarget(
 
 const ParamSystem::RetiringTarget* ParamSystem::FindRetiringTarget(
     VnVoiceHandle handle, std::uint32_t targetId,
-    VariableSliceRef owner) const noexcept {
+    TargetClaimOwner owner) const noexcept {
     for (const RetiringTarget& retiring : m_retiringTargets) {
         if (retiring.used && retiring.handle == handle &&
             retiring.targetId == targetId &&
-            retiring.owner.slot == owner.slot &&
-            retiring.owner.generation == owner.generation) {
+            retiring.owner == owner) {
             return &retiring;
         }
     }

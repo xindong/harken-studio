@@ -154,6 +154,8 @@ void PrivatePlainLayoutEdit::ClearCandidate() noexcept {
                                        std::memory_order_relaxed);
         bucket.attemptGeneration = 0;
         bucket.quantum = 0;
+        bucket.sourceWaitSequence.store(0, std::memory_order_relaxed);
+        bucket.completedAudioSequence.store(0, std::memory_order_relaxed);
         bucket.firstEvent = bucket.eventCount = 0;
         bucket.firstGroup = bucket.groupCount = bucket.memberCount = 0;
     }
@@ -271,6 +273,120 @@ bool PrivateImmediateLanePlacementProof::CaptureAnchorFrame(std::uint64_t* out) 
     *out = anchor_;
     return true;
 }
+
+bool ImmediateActionLane::CapturePrivatePendingVariableStartGeometry(
+    const PrivatePlainLayoutCommitProof& proof, const TimelineArmTable& arms,
+    TimelineArmToken arm, std::uint64_t authoredOffset,
+    std::uint64_t* logicalFrame, std::uint64_t* onsetFrame) const noexcept {
+    const auto& edit = proof.edit_;
+    const auto* attempt = edit.owner_ == this ? Resolve(edit.handle_) : nullptr;
+    if (!proof.Valid() || attempt == nullptr || attempt->privateLayoutEdit != &edit ||
+        attempt->state.load(std::memory_order_acquire) != ImmediateLaneAttemptState::PrivateLayoutHeld)
+        return false;
+    return CapturePrivatePendingVariableStartGeometryImpl(edit.handle_, arms, arm,
+        authoredOffset, logicalFrame, onsetFrame);
+}
+
+bool ImmediateActionLane::CapturePrivatePendingVariableStartGeometry(
+    const PrivateImmediateLanePlacementProof& proof, const TimelineArmTable& arms,
+    TimelineArmToken arm, std::uint64_t authoredOffset,
+    std::uint64_t* logicalFrame, std::uint64_t* onsetFrame) const noexcept {
+    return MatchesPrivatePlacementProof(proof) && CapturePrivatePendingVariableStartGeometryImpl(
+        proof.handle_, arms, arm, authoredOffset, logicalFrame, onsetFrame);
+}
+
+bool ImmediateActionLane::CapturePrivatePreparedVariableStartGeometry(
+    const PrivateImmediateLanePlacementProof& placement,
+    const TimelineArmTable::PreparedCommitProof& proof, std::uint64_t authoredOffset,
+    std::uint64_t* logicalFrame, std::uint64_t* onsetFrame) const noexcept {
+    if (!MatchesPrivatePlacementProof(placement) || !proof.Valid() || proof.Owner() == nullptr ||
+        logicalFrame == nullptr || onsetFrame == nullptr || authoredOffset > UINT64_MAX - placement.anchor_)
+        return false;
+    const auto token = proof.OriginalPreparedToken();
+    const auto* native = proof.Owner()->Resolve(token);
+    const auto* attempt = Resolve(placement.handle_);
+    if (native == nullptr || !native->pendingImmediateStart || native->startBound ||
+        native->state.load(std::memory_order_acquire) != ArmState::Prepared ||
+        native->startedBlockSequence.load(std::memory_order_acquire) != 0 ||
+        native->frontierOperation.Valid() || native->frontierAdmission != nullptr ||
+        native->frontierAdmissionLease != nullptr ||
+        native->frontierActiveLease.load(std::memory_order_acquire) != nullptr ||
+        attempt->eventCount == 0 || attempt->eventCount > config_.eventsPerAttempt) return false;
+    const auto* events = EventBase(placement.handle_.slot);
+    std::uint32_t found = 0;
+    for (std::uint32_t index = 0; index < attempt->eventCount; ++index) {
+        const auto& item = events[index];
+        const auto& event = item.event;
+        if (!SameArm(event.armToken, token)) continue;
+        const auto* program = event.program.program;
+        if (program == nullptr || program->payloads == nullptr || event.payload >= program->payloadCount ||
+            program->generation != event.program.programGeneration ||
+            program->generation != native->programGeneration) return false;
+        const auto& payload = program->payloads[event.payload];
+        std::uint64_t due = 0;
+        if (payload.kind != TimelineEventKind::Start || ++found != 1 || payload.target != native->target ||
+            item.timeDomain != ImmediateLaneTimeDomain::RelativeToAnchor || item.relativeFrame != authoredOffset ||
+            item.futureGroupedStart != (authoredOffset != 0) ||
+            !ResolveLaneDue(item, placement.anchor_, &due) || event.executeFrame != due ||
+            due != placement.anchor_ + authoredOffset) return false;
+    }
+    if (found != 1) return false;
+    *logicalFrame = placement.anchor_;
+    *onsetFrame = placement.anchor_ + authoredOffset;
+    return true;
+}
+
+bool ImmediateActionLane::CapturePrivateUnboundVariableStartGeometry(
+    const PrivateImmediateLanePlacementProof& proof, const TimelineArmTable& arms,
+    TimelineArmToken arm, std::uint64_t authoredOffset,
+    std::uint64_t* logicalFrame, std::uint64_t* onsetFrame) const noexcept {
+    return MatchesPrivatePlacementProof(proof) && CapturePrivatePendingVariableStartGeometryImpl(
+        proof.handle_, arms, arm, authoredOffset, logicalFrame, onsetFrame, true);
+}
+
+bool ImmediateActionLane::CapturePrivatePendingVariableStartGeometryImpl(ImmediateLaneHandle handle,
+    const TimelineArmTable& arms, TimelineArmToken arm, std::uint64_t authoredOffset,
+    std::uint64_t* logicalFrame, std::uint64_t* onsetFrame, bool unbound) const noexcept {
+    const auto* attempt = Resolve(handle);
+    const auto* native = arms.Resolve(arm);
+    if (attempt == nullptr || native == nullptr || logicalFrame == nullptr || onsetFrame == nullptr ||
+        !native->pendingImmediateStart || native->startBound == unbound ||
+        native->state.load(std::memory_order_acquire) != ArmState::Armed ||
+        (unbound && (native->startedBlockSequence.load(std::memory_order_acquire) != 0 ||
+            native->frontierOperation.Valid() || native->frontierAdmission != nullptr ||
+            native->frontierAdmissionLease != nullptr ||
+            native->frontierActiveLease.load(std::memory_order_acquire) != nullptr)) ||
+        attempt->eventCount == 0 || attempt->eventCount > config_.eventsPerAttempt) {
+        return false;
+    }
+    const auto* events = EventBase(handle.slot);
+    std::uint32_t found = 0;
+    for (std::uint32_t index = 0; index < attempt->eventCount; ++index) {
+        const auto& item = events[index];
+        const auto& event = item.event;
+        if (!SameArm(event.armToken, arm)) continue;
+        const auto* program = event.program.program;
+        if (program == nullptr || program->payloads == nullptr || event.payload >= program->payloadCount ||
+            program->generation != event.program.programGeneration ||
+            (unbound ? event.program.programGeneration != native->programGeneration
+                     : item.armProgramGeneration != native->programGeneration)) return false;
+        const auto& payload = program->payloads[event.payload];
+        if (payload.kind != TimelineEventKind::Start) continue;
+        std::uint64_t due = 0;
+        if (++found != 1 || payload.target != native->target ||
+            !ResolveLaneDue(item, attempt->anchorFrame, &due) || event.executeFrame != due ||
+            (!unbound && due != native->startFrame) || due < authoredOffset ||
+            (unbound && (item.futureGroupedStart != (authoredOffset != 0) ||
+                item.timeDomain != ImmediateLaneTimeDomain::RelativeToAnchor)) ||
+            (item.timeDomain == ImmediateLaneTimeDomain::RelativeToAnchor &&
+                item.relativeFrame != authoredOffset)) {
+            return false;
+        }
+        *logicalFrame = due - authoredOffset;
+        *onsetFrame = due;
+    }
+    return found == 1;
+}
 void PrivateImmediateLanePlacementProof::Release() noexcept {
     if (owner_ != nullptr) owner_->ReturnPrivatePlacementProof(*this);
     owner_ = nullptr;
@@ -302,6 +418,16 @@ void ImmediateActionLane::ReturnPrivatePlacementProof(
     if (exact) proof.attempt_->privatePlacementProof = nullptr;
 }
 
+bool ImmediateActionLane::CapturePrivatePlacedEvent(const PrivateImmediateLanePlacementProof& proof,
+    std::uint32_t ordinal, ImmediateLaneEvent* out) const noexcept {
+    const auto* attempt = Resolve(proof.handle_);
+    if (out == nullptr || attempt == nullptr) return false;
+    AttemptReadAccess access(*attempt);
+    if (!access || !MatchesPrivatePlacementProof(proof) || ordinal >= attempt->eventCount) return false;
+    *out = EventBase(proof.handle_.slot)[ordinal];
+    return true;
+}
+
 ImmediateActionLane::~ImmediateActionLane() {
     if (attempts_ != nullptr)
         for (std::uint32_t i = 0; i < config_.attempts; ++i)
@@ -309,6 +435,8 @@ ImmediateActionLane::~ImmediateActionLane() {
     if (attempts_ == nullptr) return;
     for (std::uint32_t i = 0; i < config_.attempts; ++i) {
         // Return the exact unpublished short proof before destroying storage.
+        if (attempts_[i].privatePublicationProof != nullptr)
+            attempts_[i].privatePublicationProof->Release();
         if (attempts_[i].privatePlacementProof != nullptr)
             attempts_[i].privatePlacementProof->Release();
         if (attempts_[i].privateLayoutEdit != nullptr)
@@ -552,6 +680,7 @@ bool ImmediateActionLane::Reset(Config config) {
         for (std::uint32_t i = 0; i < config_.attempts; ++i)
             if (attempts_[i].privateLayoutEdit != nullptr ||
                 attempts_[i].privatePlacementProof != nullptr ||
+                attempts_[i].privatePublicationProof != nullptr ||
                 attempts_[i].originalLifetimePins != 0) return false;
     groupPool_ = nullptr;
     valid_ = false;
@@ -563,6 +692,8 @@ bool ImmediateActionLane::Reset(Config config) {
     groupPlacementOrder_.reset();
     members_.reset();
     privateEntries_.reset();
+    privateEntryBuckets_.reset();
+    sourceWaitEntries_.reset();
     eventPrivateEntries_.reset();
     groupPrivateEntries_.reset();
     memberOrder_.reset();
@@ -596,6 +727,8 @@ bool ImmediateActionLane::Reset(Config config) {
         groupPlacementOrder_ = std::make_unique<std::uint32_t[]>(slots);
         members_ = std::make_unique<ImmediateLaneMemberManifest[]>(slots);
         privateEntries_ = std::make_unique<PrivateEntryAssociation[]>(slots);
+        privateEntryBuckets_ = std::make_unique<PrivateEntryBucket[]>(slots);
+        sourceWaitEntries_ = std::make_unique<SourceWaitEntry[]>(slots);
         eventPrivateEntries_ = std::make_unique<std::uint32_t[]>(slots);
         groupPrivateEntries_ = std::make_unique<std::uint32_t[]>(slots);
         memberOrder_ = std::make_unique<std::uint32_t[]>(slots);
@@ -621,6 +754,8 @@ bool ImmediateActionLane::Reset(Config config) {
         groupPlacementOrder_.reset();
         members_.reset();
         privateEntries_.reset();
+        privateEntryBuckets_.reset();
+        sourceWaitEntries_.reset();
         eventPrivateEntries_.reset();
         groupPrivateEntries_.reset();
         memberOrder_.reset();
@@ -732,6 +867,7 @@ bool ImmediateActionLane::Reserve(std::uint64_t root,
             attempt.generation == UINT32_MAX) continue;
         ++attempt.generation;
         attempt.root = root;
+        attempt.sourceWaitEntryCount = 0;
         attempt.originalLifetimeMarker = 0;
         attempt.originalLifetimePins = 0;
         attempt.conditionalProjectionIssued = false;
@@ -865,13 +1001,18 @@ bool ImmediateActionLane::CapturePublishedValidationRefusal(
                 ImmediateLaneAdmissionFailure::FrontierValidation) continue;
         if (actual.bucketOrdinal != UINT32_MAX ||
             bucket.attemptGeneration != handle.generation ||
-            bucket.quantum == UINT64_MAX ||
-            bucket.quantum + 1u > completedAudioSequence ||
+            bucket.completedAudioSequence.load(std::memory_order_relaxed) == 0 ||
+            bucket.completedAudioSequence.load(std::memory_order_relaxed) > completedAudioSequence ||
             bucket.firstGroup > attempt->groupCount ||
             bucket.groupCount > attempt->groupCount - bucket.firstGroup)
             return false;
+        const auto sequence = bucket.completedAudioSequence.load(std::memory_order_relaxed);
+        const auto waiting = bucket.sourceWaitSequence.load(std::memory_order_acquire);
+        if (bucket.quantum == UINT64_MAX ||
+            (waiting == 0 ? sequence != bucket.quantum + 1u :
+                waiting <= bucket.quantum || waiting > sequence || sequence <= bucket.quantum)) return false;
         actual = {attempt->root, index, bucket.firstGroup, bucket.groupCount,
-                  bucket.quantum + 1u};
+                  sequence, bucket.quantum, waiting};
     }
     if (actual.bucketOrdinal == UINT32_MAX) return false;
     *out = actual;
@@ -900,11 +1041,16 @@ bool ImmediateActionLane::CapturePublishedValidationRefusalGroup(
         bucket.admissionFailure.load(std::memory_order_acquire) !=
             ImmediateLaneAdmissionFailure::FrontierValidation ||
         bucket.attemptGeneration != handle.generation ||
-        bucket.quantum == UINT64_MAX ||
-        bucket.quantum + 1u > completedAudioSequence ||
+        bucket.completedAudioSequence.load(std::memory_order_relaxed) == 0 ||
+        bucket.completedAudioSequence.load(std::memory_order_relaxed) > completedAudioSequence ||
         bucket.firstGroup > attempt->groupCount ||
         bucket.groupCount > attempt->groupCount - bucket.firstGroup ||
         groupOffset >= bucket.groupCount) return false;
+    const auto sequence = bucket.completedAudioSequence.load(std::memory_order_relaxed);
+    const auto waiting = bucket.sourceWaitSequence.load(std::memory_order_acquire);
+    if (bucket.quantum == UINT64_MAX ||
+        (waiting == 0 ? sequence != bucket.quantum + 1u :
+            waiting <= bucket.quantum || waiting > sequence || sequence <= bucket.quantum)) return false;
     const auto& actual = GroupBase(handle.slot)[bucket.firstGroup + groupOffset];
     if (!actual.identity.Exact() || actual.laneSlot != handle.slot ||
         actual.laneGeneration != handle.generation ||
@@ -995,11 +1141,13 @@ bool ImmediateActionLane::ValidatePrivateVariableControlEntryScope(
     const DecisionTable& decisions,
     const std::array<PreparedPrivateImmediateLaneGroup, 3>& originals,
     const std::array<PrivateImmediateLaneGroupTransferProof, 3>& proofs) const noexcept {
-    if (!scope.entry.Valid() ||
+    if (!scope.entry.Valid() || scope.memberCount == 0 ||
+        scope.memberCount > kMaxKnownScheduleLeaves ||
         scope.coordinatorRequest.expectedContinuationGeneration != scope.entry.attempt ||
         !decisions.MatchesOpenReservation(scope.entry.coordinator, scope.coordinatorRequest) ||
         !MatchesReservedMemberSpan(handle, root, originalDemand,
-            scope.firstMember, scope.members, 2)) return false;
+            scope.firstMember, scope.members, scope.memberCount)) return false;
+    std::uint32_t memberBase = 0;
     for (std::size_t index = 0; index < originals.size(); ++index) {
         const auto& input = scope.groups[index];
         if (input.executeFrame != scope.provisionalFrame ||
@@ -1008,15 +1156,20 @@ bool ImmediateActionLane::ValidatePrivateVariableControlEntryScope(
         for (std::size_t prior = 0; prior < index; ++prior)
             if (originals[prior].Identity() == originals[index].Identity()) return false;
         if (index < 2) {
-            if (input.memberCount != 1 || input.sourceControlCount != 0 ||
-                input.members == nullptr ||
-                !(scope.members[index].group == originals[index].Identity()) ||
-                !SameArm(scope.members[index].arm, input.members[0])) return false;
+            if (input.memberCount == 0 || input.sourceControlCount != 0 ||
+                input.members == nullptr || input.memberCount > scope.memberCount - memberBase)
+                return false;
+            for (std::uint32_t member = 0; member < input.memberCount; ++member) {
+                const auto& manifest = scope.members[memberBase + member];
+                if (!(manifest.group == originals[index].Identity()) ||
+                    !SameArm(manifest.arm, input.members[member])) return false;
+            }
+            memberBase += input.memberCount;
         } else if (input.memberCount != 0 || input.sourceControlCount != 0 ||
             input.decision.slot != scope.entry.coordinator.slot ||
             input.decision.generation != scope.entry.coordinator.generation) return false;
     }
-    return true;
+    return memberBase == scope.memberCount;
 }
 
 bool ImmediateActionLane::DeclarePrivateVariableControlEntry(
@@ -1042,8 +1195,8 @@ bool ImmediateActionLane::DeclarePrivateVariableControlEntry(
              prior.entry.coordinator.generation == scope.entry.coordinator.generation) ||
             (prior.entry.owner.serviceSlot == scope.entry.owner.serviceSlot &&
              prior.entry.owner.serviceGeneration == scope.entry.owner.serviceGeneration) ||
-            (scope.firstMember < static_cast<std::uint64_t>(prior.firstMember) + 2 &&
-             prior.firstMember < static_cast<std::uint64_t>(scope.firstMember) + 2)) return false;
+            (scope.firstMember < static_cast<std::uint64_t>(prior.firstMember) + prior.memberCount &&
+             prior.firstMember < static_cast<std::uint64_t>(scope.firstMember) + scope.memberCount)) return false;
         for (const auto& group : prior.groups)
             for (const auto& original : originals)
                 if (group == original.Identity()) return false;
@@ -1058,16 +1211,13 @@ bool ImmediateActionLane::DeclarePrivateVariableControlEntry(
     declared.decisions = &decisions;
     declared.provisionalFrame = scope.provisionalFrame;
     declared.firstMember = scope.firstMember;
+    declared.memberCount = scope.memberCount;
     declared.mapping = {};
     declared.mappingValid = false;
     declared.admission.store(0, std::memory_order_relaxed);
     declared.bucketCount = 0;
-    for (auto& bucket : declared.buckets) {
-        bucket.ordinal = UINT32_MAX;
-        bucket.audioSequence.store(0, std::memory_order_relaxed);
-        bucket.outcome.store(ImmediateLaneEntryOutcome::Dormant,
-                             std::memory_order_relaxed);
-    }
+    declared.buckets = nullptr;
+    declared.bucketCapacity = 0;
     for (std::size_t index = 0; index < originals.size(); ++index)
         declared.groups[index] = originals[index].Identity();
     ++attempt->privateEntryCount;
@@ -1093,7 +1243,7 @@ bool ImmediateActionLane::MatchesPrivateVariableControlEntry(
         declared.armTable != &arms || declared.armTableIncarnation != arms.Incarnation() ||
         declared.decisions != &decisions ||
         declared.provisionalFrame != scope.provisionalFrame ||
-        declared.firstMember != scope.firstMember) return false;
+        declared.firstMember != scope.firstMember || declared.memberCount != scope.memberCount) return false;
     const auto& original = declared.coordinatorRequest;
     const auto& current = scope.coordinatorRequest;
     if (original.ticket.sequence != current.ticket.sequence ||
@@ -1438,7 +1588,7 @@ bool ImmediateActionLane::PinGroups(ImmediateLaneHandle handle,
     ScheduledTransactionPool& pool, DecisionTable& decisions,
     std::uint32_t maxGroupsPerQuantum) noexcept {
     auto* attempt = Resolve(handle);
-    if (attempt == nullptr || attempt->groupPinsInstalled ||
+    if (attempt == nullptr || attempt->privatePublicationProof != nullptr || attempt->groupPinsInstalled ||
         attempt->bucketCount == 0 || maxGroupsPerQuantum == 0 ||
         attempt->state.load(std::memory_order_acquire) !=
             ImmediateLaneAttemptState::Prepared) return false;
@@ -1759,7 +1909,7 @@ bool ImmediateActionLane::PinGroups(ImmediateLaneHandle handle,
                              ++group)
                             ownsEntry = ownsEntry ||
                                 groups[group].identity == declaration->group;
-                        if (!ownsEntry) {
+                        if (!ownsEntry && groups[groupIndex].dueQuantum >= bucket.quantum) {
                             rollback();
                             return false;
                         }
@@ -1847,17 +1997,15 @@ bool ImmediateActionLane::FreezePrivateEntryAdmission(ImmediateLaneHandle handle
     std::fill_n(eventEntries, attempt->eventCount, UINT32_MAX);
     std::fill_n(groupEntries, attempt->groupCount, UINT32_MAX);
     const auto* buckets = BucketBase(handle.slot);
+    const auto* members = members_.get() + offset;
+    std::uint32_t arenaCount = 0;
     for (std::uint32_t ordinal = 0; ordinal < attempt->privateEntryCount; ++ordinal) {
         auto& entry = entries[ordinal];
         if (!entry.mappingValid) return false;
         entry.bucketCount = 0;
-        for (auto& bucket : entry.buckets) {
-            bucket.ordinal = UINT32_MAX;
-            bucket.audioSequence.store(0, std::memory_order_relaxed);
-            bucket.outcome.store(ImmediateLaneEntryOutcome::Dormant,
-                                 std::memory_order_relaxed);
-        }
-        for (const auto index : entry.mapping.events) {
+        entry.buckets = privateEntryBuckets_.get() + offset + arenaCount;
+        entry.bucketCapacity = std::min(entry.memberCount + 3u, attempt->eventCount - arenaCount);
+        const auto addEvent = [&](std::uint32_t index) noexcept {
             if (index >= attempt->eventCount || eventEntries[index] != UINT32_MAX)
                 return false;
             eventEntries[index] = ordinal;
@@ -1870,10 +2018,18 @@ bool ImmediateActionLane::FreezePrivateEntryAdmission(ImmediateLaneHandle handle
                 actualBucket = bucket;
             }
             if (actualBucket == UINT32_MAX) return false;
-            if (PrivateEntryBucketFor(entry, actualBucket) != nullptr) continue;
-            if (entry.bucketCount == entry.buckets.size()) return false;
-            entry.buckets[entry.bucketCount++].ordinal = actualBucket;
-        }
+            if (PrivateEntryBucketFor(entry, actualBucket) != nullptr) return true;
+            if (entry.bucketCount == entry.bucketCapacity) return false;
+            auto& cell = entry.buckets[entry.bucketCount++];
+            cell.ordinal = actualBucket;
+            cell.audioSequence.store(0, std::memory_order_relaxed);
+            cell.outcome.store(ImmediateLaneEntryOutcome::Dormant, std::memory_order_relaxed);
+            return true;
+        };
+        for (const auto index : entry.mapping.events) if (!addEvent(index)) return false;
+        for (std::uint32_t member = 0; member < entry.memberCount; ++member)
+            if (!addEvent(members[entry.firstMember + member].eventOrdinal)) return false;
+        arenaCount += entry.bucketCount;
         if (PrivateEntryBucketFor(entry, entry.mapping.coordinatorBucket) == nullptr)
             return false;
         for (const auto index : entry.mapping.groups) {
@@ -1924,7 +2080,8 @@ bool ImmediateActionLane::CapturePrivateEntryBucketShape(ImmediateLaneHandle han
          phase != ImmediateLaneAttemptState::Committed) ||
         !attempt->pinsInstalled || !attempt->groupPinsInstalled ||
         !entry.mappingValid || entry.bucketCount == 0 ||
-        entry.bucketCount > entry.buckets.size()) return false;
+        entry.buckets == nullptr || entry.bucketCount > entry.bucketCapacity ||
+        entry.bucketCount > kMaxKnownScheduleLeaves + 3u) return false;
     ImmediateLanePrivateEntryBucketShape actual{};
     actual.count = entry.bucketCount;
     actual.coordinator = entry.mapping.coordinatorBucket;
@@ -1952,7 +2109,8 @@ bool ImmediateActionLane::CapturePrivateEntryTerminalProjection(ImmediateLaneHan
     const auto& entry = privateEntries_[static_cast<std::size_t>(handle.slot) *
         config_.eventsPerAttempt + ordinal];
     if (!entry.mappingValid || entry.bucketCount == 0 ||
-        entry.bucketCount > entry.buckets.size()) return false;
+        entry.buckets == nullptr || entry.bucketCount > entry.bucketCapacity ||
+        entry.bucketCount > kMaxKnownScheduleLeaves + 3u) return false;
     ImmediateLanePrivateEntryTerminalProjection actual{};
     actual.registeredEntryCount = attempt->privateEntryCount;
     actual.shape.count = entry.bucketCount;
@@ -1977,7 +2135,7 @@ bool ImmediateActionLane::CapturePrivateEntryTerminalProjection(ImmediateLaneHan
                 (state != ImmediateLaneBucketState::Committed &&
                  state != ImmediateLaneBucketState::Cancelled &&
                  state != ImmediateLaneBucketState::Missed)) return false;
-            actual.omittedMask |= static_cast<std::uint8_t>(1u << index);
+            actual.omitted.set(index);
         }
         actual.outcomes[index] = {outcome, sequence, bucketOrdinal};
     }
@@ -1989,7 +2147,7 @@ bool ImmediateActionLane::RequestPrivateEntryStop(ImmediateLaneHandle handle,
     std::uint64_t root, std::uint32_t ordinal,
     const FrontierEntryReceiptRef& identity) noexcept {
     auto* attempt = Resolve(handle);
-    if (attempt == nullptr || attempt->root != root ||
+    if (attempt == nullptr || attempt->privatePublicationProof != nullptr || attempt->root != root ||
         ordinal >= attempt->privateEntryCount) return false;
     const auto phase = attempt->state.load(std::memory_order_acquire);
     if (phase != ImmediateLaneAttemptState::Reserved &&
@@ -2003,6 +2161,18 @@ bool ImmediateActionLane::RequestPrivateEntryStop(ImmediateLaneHandle handle,
     // contests admission; it does not borrow the audio capture gate.
     (void)entry.admission.fetch_or(kEntryStopRequested, std::memory_order_acq_rel);
     return true;
+}
+
+bool ImmediateActionLane::CanCancelPrivateEntrySources(ImmediateLaneHandle handle,
+    std::uint64_t root, std::uint32_t ordinal,
+    const FrontierEntryReceiptRef& identity) const noexcept {
+    if (!MatchesPrivateEntryAssociation(handle, root, ordinal, identity)) return false;
+    const auto& entry = privateEntries_[static_cast<std::size_t>(handle.slot) *
+        config_.eventsPerAttempt + ordinal];
+    const auto admission = entry.admission.load(std::memory_order_acquire);
+    // Stop prevents a new audio claim; an already captured Entry must finish first.
+    return (admission & kEntryStopRequested) != 0 &&
+        (admission & kEntryAudioAdmitting) == 0;
 }
 
 bool ImmediateActionLane::CapturePrivateEntryOutcome(ImmediateLaneHandle handle,
@@ -2068,7 +2238,7 @@ void ImmediateActionLane::EndPrivateEntryAdmission(std::uint32_t slot,
         const auto previous = bucket->outcome.load(std::memory_order_relaxed);
         if (previous != ImmediateLaneEntryOutcome::Admitting &&
             previous != ImmediateLaneEntryOutcome::Withdrawing) continue;
-        bucket->audioSequence.store(captured->quantum + 1u, std::memory_order_relaxed);
+        bucket->audioSequence.store(attempt.capturedAudioSequence, std::memory_order_relaxed);
         bucket->outcome.store(previous == ImmediateLaneEntryOutcome::Withdrawing
             ? ImmediateLaneEntryOutcome::Withdrawn
             : (applied ? ImmediateLaneEntryOutcome::Applied :
@@ -2117,13 +2287,13 @@ void ImmediateActionLane::BeginEventAdmission(std::uint32_t slot,
         bool admitted = eventWithdrawal_[offset + scope].compare_exchange_strong(
             expected, kEventAudioAdmitting, std::memory_order_acq_rel, std::memory_order_acquire);
         if (admitted) {
-            scopeLastCaptureSequence_[offset + scope] = bucket.quantum + 1u;
+            scopeLastCaptureSequence_[offset + scope] = attempts_[slot].capturedAudioSequence;
 #if !defined(HARKEN_RT_QUALIFICATION)
             if (eventAdmissionHook_ != nullptr) eventAdmissionHook_(eventAdmissionContext_, index);
 #endif
         }
         else admitted = (expected & kEventAudioAdmitting) != 0 &&
-            scopeLastCaptureSequence_[offset + scope] == bucket.quantum + 1u;
+            scopeLastCaptureSequence_[offset + scope] == attempts_[slot].capturedAudioSequence;
         assert(admitted || (expected & kEventWithdrawalRequested) != 0);
         capturedEventAdmission_[offset + index] = admitted ? 1u : 0u;
     }
@@ -2221,14 +2391,14 @@ bool ImmediateActionLane::BuildPrivateVariableControlEntryMapping(
     ImmediateLanePrivateVariableControlEntryMapping* out) const noexcept {
     const auto entryCount = static_cast<std::uint64_t>(attempt.privateEntryCount);
     if (out == nullptr || entryCount == 0 ||
-        attempt.memberCount != 2u * entryCount ||
         attempt.groupCount != 3u * entryCount ||
-        attempt.eventCount != 5u * entryCount ||
+        attempt.eventCount != 3u * entryCount + attempt.memberCount ||
         attempt.pinGroupManifestCount != attempt.groupCount ||
         entry.pool == nullptr || entry.armTable == nullptr || entry.decisions == nullptr ||
         attempt.pinGroupPool != entry.pool ||
         entry.armTableIncarnation != entry.armTable->Incarnation() ||
-        static_cast<std::uint64_t>(entry.firstMember) + 2u > attempt.memberCount)
+        entry.memberCount == 0 || entry.memberCount > kMaxKnownScheduleLeaves ||
+        static_cast<std::uint64_t>(entry.firstMember) + entry.memberCount > attempt.memberCount)
         return false;
     const auto offset = static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt;
     const auto* groupPins = groupPins_.get() + offset;
@@ -2237,7 +2407,11 @@ bool ImmediateActionLane::BuildPrivateVariableControlEntryMapping(
     const auto* groups = GroupBase(handle.slot);
     const auto* events = EventBase(handle.slot);
     ImmediateLanePrivateVariableControlEntryMapping mapping{};
+    mapping.firstMember = entry.firstMember;
+    mapping.memberCount = entry.memberCount;
     std::array<Plan03PageGroupView, 3> views{};
+    std::array<std::uint32_t, 2> sideBases{};
+    std::uint32_t memberBase = 0;
     for (std::uint32_t side = 0; side < views.size(); ++side) {
         for (std::uint32_t index = 0; index < attempt.groupCount; ++index) {
             if (!(groups[index].identity == entry.groups[side])) continue;
@@ -2272,16 +2446,24 @@ bool ImmediateActionLane::BuildPrivateVariableControlEntryMapping(
                 !(binding.operation.owner == entry.entry.owner) ||
                 views[side].memberCount != 0 || views[side].sourceControlCount != 0)
                 return false;
-        } else if (binding.role != FrontierGroupRole::EntryMember ||
-            !binding.variableSide.Valid() || binding.variableSide.side != side ||
-            views[side].memberCount != 1 || views[side].sourceControlCount != 0 ||
-            views[side].members == nullptr ||
-            !(members[side].group == entry.groups[side]) ||
-            !SameArm(views[side].members[0], members[side].arm) ||
-            members[side].kind != ImmediateLaneMemberKind::SingleEvent ||
-            members[side].memberIndex != 0 || members[side].eventSpanCount != 1)
-            return false;
+        } else {
+            if (binding.role != FrontierGroupRole::EntryMember ||
+                !binding.variableSide.Valid() || binding.variableSide.side != side ||
+                views[side].memberCount == 0 || views[side].sourceControlCount != 0 ||
+                views[side].members == nullptr || views[side].memberCount > entry.memberCount - memberBase)
+                return false;
+            sideBases[side] = memberBase;
+            for (std::uint32_t member = 0; member < views[side].memberCount; ++member) {
+                const auto& manifest = members[memberBase + member];
+                if (!(manifest.group == entry.groups[side]) ||
+                    !SameArm(views[side].members[member], manifest.arm) ||
+                    manifest.kind != ImmediateLaneMemberKind::SingleEvent ||
+                    manifest.memberIndex != member || manifest.eventSpanCount != 1) return false;
+            }
+            memberBase += views[side].memberCount;
+        }
     }
+    if (memberBase != entry.memberCount) return false;
     const auto* activation = entry.decisions->ResolveFrontierActivation(entry.entry.coordinator);
     DecisionCommittedSnapshot committed{};
     if (activation == nullptr || !entry.decisions->CaptureCommitted(
@@ -2322,7 +2504,8 @@ bool ImmediateActionLane::BuildPrivateVariableControlEntryMapping(
     }
     std::uint32_t nonFutureCount = 0;
     std::array<std::uint32_t, 3> groupEvents{};
-    std::array<bool, 2> memberFound{};
+    std::array<bool, kMaxKnownScheduleLeaves> memberFound{};
+    std::bitset<kMaxKnownScheduleLeaves + 3u> eventFound{};
     for (std::uint32_t index = 0; index < attempt.eventCount; ++index) {
         const auto& lane = events[index];
         const auto& event = lane.event;
@@ -2330,7 +2513,7 @@ bool ImmediateActionLane::BuildPrivateVariableControlEntryMapping(
         if (!(frontier.entry == entry.entry)) continue;
         const auto local = frontier.entryEventOrdinal;
         std::uint64_t effectiveDue = 0;
-        if (local >= mapping.events.size() || mapping.events[local] != UINT32_MAX ||
+        if (local >= entry.memberCount + 3u || eventFound[local] ||
             !frontier.Valid() || frontier.operationEventCount != 1 ||
             frontier.world != request.world || frontier.transport != request.transport ||
             frontier.kind != (lane.futureGroupedStart ? FrontierOperationKind::Dependent :
@@ -2363,27 +2546,39 @@ bool ImmediateActionLane::BuildPrivateVariableControlEntryMapping(
                 (side < 2 && (views[side].frontier->operation.program != event.program.program ||
                     views[side].frontier->operation.programGeneration != event.program.programGeneration)))
                 return false;
+            mapping.events[local] = index;
         } else {
-            if (side >= 2 || memberFound[side] ||
-                !SameArm(event.armToken, members[side].arm) ||
-                !SameTimeSpec(lane, members[side]) ||
-                lane.futureGroupedStart != members[side].future ||
-                event.program.programGeneration != members[side].programGeneration ||
-                event.ownerInstanceHandle != members[side].ownerInstance ||
-                event.ownerInstanceScheduleEpoch != members[side].ownerEpoch ||
-                !(payload.target == members[side].target) ||
+            if (side >= 2) return false;
+            std::uint32_t member = UINT32_MAX;
+            for (std::uint32_t candidate = sideBases[side];
+                 candidate < sideBases[side] + views[side].memberCount; ++candidate) {
+                if (!SameArm(event.armToken, members[candidate].arm)) continue;
+                if (member != UINT32_MAX) return false;
+                member = candidate;
+            }
+            if (member == UINT32_MAX || memberFound[member] ||
+                !SameTimeSpec(lane, members[member]) ||
+                lane.futureGroupedStart != members[member].future ||
+                event.program.programGeneration != members[member].programGeneration ||
+                event.ownerInstanceHandle != members[member].ownerInstance ||
+                event.ownerInstanceScheduleEpoch != members[member].ownerEpoch ||
+                !(payload.target == members[member].target) ||
                 payload.kind != TimelineEventKind::Start ||
                 event.program.program->role != TimelineProgramRole::Voice ||
-                members[side].eventOrdinal != index) return false;
-            memberFound[side] = true;
+                members[member].eventOrdinal != index) return false;
+            memberFound[member] = true;
         }
-        mapping.events[local] = index;
+        eventFound.set(local);
         ++groupEvents[side];
         if (!lane.futureGroupedStart) ++nonFutureCount;
     }
     for (const auto index : mapping.events) if (index == UINT32_MAX) return false;
-    if (groupEvents[0] != 2 || groupEvents[1] != 2 || groupEvents[2] != 1 ||
-        !memberFound[0] || !memberFound[1] ||
+    for (std::uint32_t member = 0; member < entry.memberCount; ++member)
+        if (!memberFound[member]) return false;
+    for (std::uint32_t local = 0; local < entry.memberCount + 3u; ++local)
+        if (!eventFound[local]) return false;
+    if (groupEvents[0] != 1u + views[0].memberCount ||
+        groupEvents[1] != 1u + views[1].memberCount || groupEvents[2] != 1 ||
         descriptor.expectedEntryEventCount != nonFutureCount) return false;
     mapping.coordinatorBucket = groups[mapping.groups[2]].bucketOrdinal;
     const auto& bucket = BucketBase(handle.slot)[mapping.coordinatorBucket];
@@ -2414,8 +2609,10 @@ bool ImmediateActionLane::CapturePrivateVariableControlEntryMapping(
         !(current == original.mapping)) return false;
     const auto* pins = armPins_.get() +
         static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt;
-    for (std::size_t local = 3; local < current.events.size(); ++local)
-        if (!pins[current.events[local]].Valid()) return false;
+    const auto* members = members_.get() +
+        static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt + current.firstMember;
+    for (std::uint32_t member = 0; member < current.memberCount; ++member)
+        if (!pins[members[member].eventOrdinal].Valid()) return false;
     *out = current;
     return true;
 }
@@ -2487,7 +2684,7 @@ bool ImmediateActionLane::CapturePrivatePinGroup(
 bool ImmediateActionLane::ReleasePrivatePinGroupOwnership(
     ImmediateLaneHandle handle, ScheduledTransactionPool& pool) noexcept {
     auto* attempt = Resolve(handle);
-    if (attempt == nullptr || attempt->pinGroupPool != &pool ||
+    if (attempt == nullptr || attempt->privatePublicationProof != nullptr || attempt->pinGroupPool != &pool ||
         attempt->groupPinsInstalled ||
         attempt->pinGroupManifestCount == 0 ||
         attempt->pinGroupManifestCount > attempt->groupCredit) return false;
@@ -3065,6 +3262,8 @@ void ImmediateActionLane::InstallPlacement(ImmediateLaneHandle handle,
             ++firstGroup;
         }
         bucket.state.store(ImmediateLaneBucketState::Prepared, std::memory_order_relaxed);
+        bucket.sourceWaitSequence.store(0, std::memory_order_relaxed);
+        bucket.completedAudioSequence.store(0, std::memory_order_relaxed);
     }
     attempt->bucketCount = bucketCount;
     attempt->anchorFrame = anchor;
@@ -3078,7 +3277,15 @@ bool ImmediateActionLane::Publish(ImmediateLaneHandle handle) noexcept {
         initial != ImmediateLaneAttemptState::Prepared) return false;
     AttemptReadAccess access(*attempt);
     if (!access || Resolve(handle) != attempt) return false;
-    if (attempt == nullptr || (attempt->conditionalProjectionIssued &&
+    if (!ValidatePrivatePublication(handle, *attempt)) return false;
+    ApplyPrivatePublicationImpl(handle, *attempt);
+    return true;
+}
+
+bool ImmediateActionLane::ValidatePrivatePublication(ImmediateLaneHandle handle,
+    const ImmediateLaneAttempt& native) const noexcept {
+    const auto* attempt = &native;
+    if ((attempt->conditionalProjectionIssued &&
             !attempt->conditionalProjectionBound) || attempt->bucketCount == 0 ||
         (config_.requireArmPins && !attempt->pinsInstalled) ||
         attempt->state.load(std::memory_order_acquire) !=
@@ -3087,7 +3294,7 @@ bool ImmediateActionLane::Publish(ImmediateLaneHandle handle) noexcept {
     for (std::uint32_t i = 0; i < attempt->eventCount; ++i)
         if (EventBase(handle.slot)[i].event.frontier.Present() &&
             !attempt->groupPinsInstalled) return false;
-    auto* buckets = BucketBase(handle.slot);
+    const auto* buckets = BucketBase(handle.slot);
     std::uint32_t nextGroup = 0;
     const auto* groups = GroupBase(handle.slot);
     for (std::uint32_t index = 0; index < attempt->bucketCount; ++index) {
@@ -3110,12 +3317,78 @@ bool ImmediateActionLane::Publish(ImmediateLaneHandle handle) noexcept {
             !CapturePrivateVariableControlEntryMapping(handle, attempt->root, index, entry.entry,
                 *entry.pool, *entry.armTable, *entry.decisions, &mapping)) return false;
     }
+    return true;
+}
+
+void ImmediateActionLane::ApplyPrivatePublicationImpl(ImmediateLaneHandle handle,
+    ImmediateLaneAttempt& native) noexcept {
+    auto* attempt = &native;
+    auto* buckets = BucketBase(handle.slot);
     for (std::uint32_t index = 0; index < attempt->bucketCount; ++index)
         buckets[index].state.store(ImmediateLaneBucketState::Committed,
                                    std::memory_order_relaxed);
     attempt->state.store(ImmediateLaneAttemptState::Committed,
                          std::memory_order_release);
+}
+
+PrivateImmediateLanePublicationProof::PrivateImmediateLanePublicationProof(
+    PrivateImmediateLanePublicationProof&& other) noexcept { *this = std::move(other); }
+
+PrivateImmediateLanePublicationProof& PrivateImmediateLanePublicationProof::operator=(
+    PrivateImmediateLanePublicationProof&& other) noexcept {
+    if (this != &other) {
+        Release();
+        owner_ = std::exchange(other.owner_, nullptr);
+        attempt_ = std::exchange(other.attempt_, nullptr);
+        handle_ = std::exchange(other.handle_, ImmediateLaneHandle{});
+        groupsPublication_ = std::exchange(other.groupsPublication_, nullptr);
+        if (groupsPublication_ != nullptr) groupsPublication_->lane_ = this;
+        if (attempt_ != nullptr) {
+            assert(attempt_->privatePublicationProof == &other);
+            attempt_->privatePublicationProof = this;
+        }
+    }
+    return *this;
+}
+
+PrivateImmediateLanePublicationProof::~PrivateImmediateLanePublicationProof() { Release(); }
+
+void PrivateImmediateLanePublicationProof::Release() noexcept {
+    if (groupsPublication_ != nullptr) groupsPublication_->Release();
+    if (owner_ != nullptr) {
+        assert(attempt_ != nullptr && attempt_->privatePublicationProof == this);
+        attempt_->privatePublicationProof = nullptr;
+        attempt_->readerGate.clear(std::memory_order_release);
+    }
+    owner_ = nullptr;
+    attempt_ = nullptr;
+    handle_ = {};
+}
+
+bool ImmediateActionLane::ProvePrivatePublication(ImmediateLaneHandle handle,
+    std::uint64_t root, PrivateImmediateLanePublicationProof* out) noexcept {
+    auto* attempt = Resolve(handle);
+    if (out == nullptr || out->Valid() || attempt == nullptr || root == 0 ||
+        attempt->root != root || attempt->privatePlacementProof != nullptr ||
+        attempt->privatePublicationProof != nullptr || attempt->privateLayoutEdit != nullptr)
+        return false;
+    AttemptReadAccess access(*attempt);
+    if (!access || Resolve(handle) != attempt ||
+        !ValidatePrivatePublication(handle, *attempt)) return false;
+    out->owner_ = this;
+    out->attempt_ = attempt;
+    out->handle_ = handle;
+    attempt->privatePublicationProof = out;
+    access.Detach();
     return true;
+}
+
+void ImmediateActionLane::ApplyPrivatePublication(
+    PrivateImmediateLanePublicationProof&& proof) noexcept {
+    assert(proof.Valid() && proof.attempt_->privatePublicationProof == &proof);
+    if (!proof.Valid() || proof.groupsPublication_ != nullptr) return;
+    proof.owner_->ApplyPrivatePublicationImpl(proof.handle_, *proof.attempt_);
+    proof.Release();
 }
 
 bool ImmediateActionLane::Cancel(ImmediateLaneHandle handle) noexcept {
@@ -3193,7 +3466,9 @@ const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
             EntireConditionalProjectionBucket(slot, bucket) &&
             (attempt.conditionalProjectionAdmission.load(std::memory_order_acquire) &
                 kEventWithdrawalRequested) != 0;
-        if (bucket.quantum < quantum && state == ImmediateLaneBucketState::Committed && !withdrawnOld) {
+        const auto sourceWait = bucket.sourceWaitSequence.load(std::memory_order_acquire);
+        const bool resuming = sourceWait != 0 && sourceWait <= quantum + 1u && bucket.quantum <= quantum;
+        if (bucket.quantum < quantum && state == ImmediateLaneBucketState::Committed && !withdrawnOld && !resuming) {
             BeginConditionalProjection(slot, bucket, quantum + 1u);
             if (attempt.capturedConditionalProjection) {
                 if (attempt.capturedConditionalReplacementRead)
@@ -3204,7 +3479,7 @@ const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
             withdrawnOld = EntireConditionalProjectionBucket(slot, bucket) &&
                 (attempt.conditionalProjectionAdmission.load(std::memory_order_acquire) & kEventWithdrawalRequested) != 0;
         }
-        if (bucket.quantum < quantum && state == ImmediateLaneBucketState::Committed && !withdrawnOld) {
+        if (bucket.quantum < quantum && state == ImmediateLaneBucketState::Committed && !withdrawnOld && !resuming) {
             if (bucket.state.compare_exchange_strong(state, ImmediateLaneBucketState::Missed,
                     std::memory_order_acq_rel, std::memory_order_acquire)) {
                 attempt.state.store(ImmediateLaneAttemptState::Cancelling, std::memory_order_release);
@@ -3212,8 +3487,9 @@ const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
             }
             return nullptr;
         }
-        if ((bucket.quantum == quantum || withdrawnOld) && state == ImmediateLaneBucketState::Committed) {
+        if ((bucket.quantum == quantum || withdrawnOld || resuming) && state == ImmediateLaneBucketState::Committed) {
             attempt.capturedBucketOrdinal = next;
+            attempt.capturedAudioSequence = quantum + 1u;
             BeginConditionalProjection(slot, bucket, quantum + 1u);
             BeginEventAdmission(slot, bucket);
             BeginPrivateEntryAdmission(slot, next);
@@ -3235,6 +3511,127 @@ const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
         return nullptr;
     }
     return nullptr;
+}
+
+bool ImmediateActionLane::CapturedSourceWaitQuantum(std::uint32_t slot,
+    const ImmediateLaneBucket* bucket, std::uint64_t* outQuantum) const noexcept {
+    if (!valid_ || slot >= config_.attempts || bucket == nullptr || outQuantum == nullptr) return false;
+    const auto& attempt = attempts_[slot];
+    if (!attempt.captureActive.load(std::memory_order_acquire) ||
+        attempt.capturedBucketOrdinal >= attempt.bucketCount ||
+        bucket != BucketBase(slot) + attempt.capturedBucketOrdinal ||
+        bucket->attemptGeneration != attempt.generation || attempt.capturedAudioSequence == 0 ||
+        bucket->sourceWaitSequence.load(std::memory_order_acquire) == 0 ||
+        bucket->sourceWaitSequence.load(std::memory_order_acquire) > attempt.capturedAudioSequence) return false;
+    *outQuantum = attempt.capturedAudioSequence - 1u;
+    return true;
+}
+
+bool ImmediateActionLane::SuspendCaptureForSourceWait(std::uint32_t slot,
+    const ImmediateLaneBucket* bucket, const FrontierEntryReceiptRef* waitingEntries,
+    std::uint32_t waitingEntryCount) noexcept {
+    if (!valid_ || slot >= config_.attempts || bucket == nullptr ||
+        waitingEntryCount > config_.eventsPerAttempt ||
+        (waitingEntryCount != 0 && waitingEntries == nullptr)) return false;
+    auto& attempt = attempts_[slot];
+    if (!attempt.captureActive.load(std::memory_order_acquire) ||
+        attempt.capturedBucketOrdinal >= attempt.bucketCount ||
+        bucket != BucketBase(slot) + attempt.capturedBucketOrdinal ||
+        bucket->attemptGeneration != attempt.generation ||
+        attempt.nextBucket.load(std::memory_order_acquire) != attempt.capturedBucketOrdinal ||
+        attempt.state.load(std::memory_order_acquire) != ImmediateLaneAttemptState::Committed ||
+        bucket->state.load(std::memory_order_acquire) != ImmediateLaneBucketState::Committed ||
+        attempt.capturedAudioSequence == 0 || AllCapturedEntriesWithdrawing(slot, bucket)) return false;
+    auto* waits = sourceWaitEntries_.get() + static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
+    const auto originalCount = attempt.sourceWaitEntryCount;
+    const auto fail = [&]() noexcept {
+        while (attempt.sourceWaitEntryCount > originalCount)
+            waits[--attempt.sourceWaitEntryCount] = {};
+        return false;
+    };
+    const auto record = [&](const FrontierEntryReceiptRef& identity) noexcept {
+        if (!identity.Valid()) return true;
+        for (std::uint32_t index = 0; index < attempt.sourceWaitEntryCount; ++index)
+            if (waits[index].entry == identity) return true;
+        if (attempt.sourceWaitEntryCount == config_.eventsPerAttempt) return false;
+        waits[attempt.sourceWaitEntryCount++] = {identity, attempt.capturedAudioSequence};
+        return true;
+    };
+    for (std::uint32_t entry = 0; entry < waitingEntryCount; ++entry) {
+        const auto& identity = waitingEntries[entry];
+        if (!identity.Valid()) return fail();
+        bool admitted = false;
+        for (std::uint32_t index = 0; index < bucket->eventCount; ++index)
+            admitted = admitted || (IsEventAdmitted(slot, bucket, bucket->firstEvent + index) &&
+                EventBase(slot)[bucket->firstEvent + index].event.frontier.entry == identity);
+        for (std::uint32_t index = 0; index < bucket->groupCount; ++index) {
+            if (!IsGroupAdmitted(slot, bucket, bucket->firstGroup + index)) continue;
+            Plan03PageGroupView group{};
+            if (attempt.pinGroupPool == nullptr ||
+                !attempt.pinGroupPool->ResolvePlan03GroupSliceRt(GroupBase(slot)[bucket->firstGroup + index].identity, &group) ||
+                group.frontier == nullptr) return fail();
+            admitted = admitted || group.frontier->entry == identity;
+        }
+        if (!admitted || !record(identity)) return fail();
+    }
+    auto* entries = privateEntries_.get() + static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
+    for (std::uint32_t ordinal = 0; ordinal < attempt.privateEntryCount; ++ordinal) {
+        auto& entry = entries[ordinal];
+        auto* current = const_cast<PrivateEntryBucket*>(PrivateEntryBucketFor(entry, attempt.capturedBucketOrdinal));
+        if (current != nullptr && current->outcome.load(std::memory_order_relaxed) == ImmediateLaneEntryOutcome::Admitting) {
+            current->outcome.store(ImmediateLaneEntryOutcome::Dormant, std::memory_order_relaxed);
+            (void)entry.admission.fetch_and(static_cast<std::uint8_t>(~kEntryAudioAdmitting), std::memory_order_release);
+        }
+    }
+    BucketBase(slot)[attempt.capturedBucketOrdinal].sourceWaitSequence.store(
+        attempt.capturedAudioSequence, std::memory_order_release);
+    PreserveSourceWaitSuccessors(slot);
+    EndEventAdmission(slot, *bucket);
+    EndConditionalProjection(slot);
+    attempt.capturedBucketOrdinal = UINT32_MAX;
+    attempt.captureActive.store(false, std::memory_order_relaxed);
+    attempt.readerGate.clear(std::memory_order_release);
+    return true;
+}
+
+void ImmediateActionLane::PreserveSourceWaitSuccessors(std::uint32_t slot) noexcept {
+    const auto& attempt = attempts_[slot];
+    const auto* waits = sourceWaitEntries_.get() + static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
+    const auto retained = [&](const FrontierEntryReceiptRef& entry) noexcept {
+        for (std::uint32_t index = 0; index < attempt.sourceWaitEntryCount; ++index)
+            if (waits[index].entry == entry) return true;
+        return false;
+    };
+    // Retention follows the exact suspended Entry, including not-yet-due work.
+    for (auto index = attempt.capturedBucketOrdinal + 1u; index < attempt.bucketCount; ++index) {
+        auto& successor = BucketBase(slot)[index];
+        bool related = false;
+        for (std::uint32_t event = 0; event < successor.eventCount; ++event)
+            related = retained(EventBase(slot)[successor.firstEvent + event].event.frontier.entry) || related;
+        for (std::uint32_t group = 0; group < successor.groupCount; ++group) {
+            Plan03PageGroupView view{};
+            if (attempt.pinGroupPool != nullptr &&
+                attempt.pinGroupPool->ResolvePlan03GroupSliceRt(GroupBase(slot)[successor.firstGroup + group].identity, &view) &&
+                view.frontier != nullptr)
+                related = retained(view.frontier->entry) ||
+                    (view.frontier->role == FrontierGroupRole::Coordinator &&
+                     view.frontier->prerequisiteMember.Exact() && retained(view.frontier->prerequisite)) || related;
+        }
+        if (related && successor.state.load(std::memory_order_acquire) == ImmediateLaneBucketState::Committed)
+            successor.sourceWaitSequence.store(attempt.capturedAudioSequence, std::memory_order_release);
+    }
+}
+
+bool ImmediateActionLane::CapturedEntrySourceWait(std::uint32_t slot, const ImmediateLaneBucket* bucket,
+    const FrontierEntryReceiptRef& identity) const noexcept {
+    std::uint64_t quantum = 0;
+    if (!identity.Valid() || !CapturedSourceWaitQuantum(slot, bucket, &quantum)) return false;
+    const auto& attempt = attempts_[slot];
+    const auto* waits = sourceWaitEntries_.get() + static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
+    for (std::uint32_t index = 0; index < attempt.sourceWaitEntryCount; ++index)
+        if (waits[index].entry == identity && waits[index].sequence != 0 &&
+            waits[index].sequence <= quantum + 1u) return true;
+    return false;
 }
 
 bool ImmediateActionLane::Claim(ImmediateLaneHandle handle,
@@ -3712,6 +4109,7 @@ bool ImmediateActionLane::RejectCapturedBucket(
     (void)actual.admissionFailure.compare_exchange_strong(
         noFailure, ImmediateLaneAdmissionFailure::FrontierValidation,
         std::memory_order_release, std::memory_order_relaxed);
+    actual.completedAudioSequence.store(attempt.capturedAudioSequence, std::memory_order_relaxed);
     auto expected = ImmediateLaneBucketState::Committed;
     if (!actual.state.compare_exchange_strong(
             expected, ImmediateLaneBucketState::Missed,
@@ -3755,10 +4153,14 @@ bool ImmediateActionLane::FinishBucket(std::uint32_t slot,
     if (next >= attempt.bucketCount || bucket != BucketBase(slot) + next)
         return false;
     auto expected = ImmediateLaneBucketState::AudioClaimed;
+    BucketBase(slot)[next].completedAudioSequence.store(attempt.capturedAudioSequence, std::memory_order_relaxed);
     if (!BucketBase(slot)[next].state.compare_exchange_strong(
             expected, terminal,
             std::memory_order_acq_rel, std::memory_order_acquire))
         return false;
+    if (terminal == ImmediateLaneBucketState::Applied &&
+        bucket->sourceWaitSequence.load(std::memory_order_acquire) != 0)
+        PreserveSourceWaitSuccessors(slot);
     EndPrivateEntryAdmission(slot, bucket, terminal == ImmediateLaneBucketState::Applied);
     EndEventAdmission(slot, *bucket);
     EndConditionalProjection(slot);
@@ -3823,7 +4225,7 @@ const AuthoredStopFenceDescriptor* ImmediateActionLane::CapturedNoneFence(
     const auto& event = EventBase(handle.slot)[eventIndex].event;
     if (!reference.Matches(event.program) || event.program.program == nullptr ||
         event.program.program->authoredStopFence != reference.Descriptor()) return nullptr;
-    reference.lastReadSequence_ = std::max(reference.lastReadSequence_, bucket->quantum + 1u);
+    reference.lastReadSequence_ = std::max(reference.lastReadSequence_, attempt.capturedAudioSequence);
     return reference.Descriptor();
 }
 
@@ -4321,7 +4723,7 @@ bool OriginalConditionalReplacementBatch::Attach(
         !spans.IsFrozenReplacementOf(pending.selected, original.conditional_, Sequence()) ||
         !original.Borrow(&pending.original)) return false;
     auto* row = original.lane_.lane_->Resolve(original.lane_.handle_);
-    if (row == nullptr) return false;
+    if (row == nullptr || row->privatePublicationProof != nullptr) return false;
     const auto state = row->state.load(std::memory_order_acquire);
     if (state != ImmediateLaneAttemptState::Reserved && state != ImmediateLaneAttemptState::Prepared &&
         state != ImmediateLaneAttemptState::Committed) return false;
@@ -4361,6 +4763,7 @@ bool OriginalConditionalReplacementBatch::TryAccept(const ActionCommitBundle& ac
     for (std::uint32_t i = 0; i < count_; ++i) {
         const auto& member = members_[i];
         if (!member.original.Valid() || member.attempt == nullptr ||
+            member.attempt->privatePublicationProof != nullptr ||
             !queues_->IsCurrentOriginalConditionalFutureReservation(member.original.conditional_) ||
             (member.attempt->state.load(std::memory_order_acquire) != ImmediateLaneAttemptState::Reserved &&
              member.attempt->state.load(std::memory_order_acquire) != ImmediateLaneAttemptState::Prepared &&
@@ -4433,13 +4836,17 @@ bool OriginalConditionalReplacementBatch::Accepted() const noexcept {
     return queues_ != nullptr && (word_.load(std::memory_order_acquire) & kAccepted) != 0;
 }
 
-LogicCommitSequence OriginalConditionalReplacementBatch::ConsumeAcceptedOrder() noexcept {
+LogicCommitSequence OriginalConditionalReplacementBatch::ConsumeAcceptedOrder(
+    LogicCommitCoordinator::ConsumedIssue* consumed) noexcept {
     assert(Accepted() && !orderConsumed_ && Sequence() != 0);
-    if (!Accepted() || orderConsumed_) return 0;
+    if (!Accepted() || orderConsumed_ || (consumed != nullptr && consumed->Sequence() != 0)) return 0;
     const auto order = Sequence();
     // Consume through the actual held issuer, never a caller-supplied receiver.
     // Deferred Actions keep their genuine prepared child's inherited order.
-    if (sequence_.Valid()) sequence_.owner_->ConsumePreparedIssue(std::move(sequence_));
+    if (sequence_.Valid()) {
+        auto receipt = sequence_.owner_->ConsumePreparedIssue(std::move(sequence_));
+        if (consumed != nullptr) *consumed = std::move(receipt);
+    }
     orderConsumed_ = true;
     return order;
 }
@@ -4469,6 +4876,9 @@ void OriginalConditionalReplacementBatch::ReturnOldRead() noexcept {
 
 bool OriginalConditionalReplacementBatch::Close() noexcept {
     if (queues_ == nullptr) return true;
+    for (std::uint32_t i = 0; i < count_; ++i)
+        if (members_[i].attempt != nullptr &&
+            members_[i].attempt->privatePublicationProof != nullptr) return false;
     if (!Accepted()) word_.fetch_or(kAborted, std::memory_order_acq_rel);
     bool closed = true;
     for (std::uint32_t i = 0; i < count_; ++i) {
@@ -4906,6 +5316,7 @@ bool OriginalImmediateLaneConditionalProjection::CapturedWithdrawalExcludesPair(
 bool OriginalImmediateLaneConditionalProjection::RequestWithdrawal() noexcept {
     if (!withdrawalOwner_ || !Valid()) return false;
     auto& row = lane_.lane_->attempts_[lane_.handle_.slot];
+    if (row.privatePublicationProof != nullptr) return false;
     (void)row.conditionalProjectionAdmission.fetch_or(kEventWithdrawalRequested, std::memory_order_acq_rel);
     return true;
 }
@@ -4914,6 +5325,7 @@ bool OriginalImmediateLaneConditionalProjection::TryCompleteNativeWithdrawal(
     DecisionTable& decisions, std::uint64_t completedAudioSequence) noexcept {
     if (!withdrawalOwner_ || !Valid()) return false;
     auto& row = lane_.lane_->attempts_[lane_.handle_.slot];
+    if (row.privatePublicationProof != nullptr) return false;
     if (row.conditionalProjectionDecisions != &decisions || !row.conditionalProjectionEntry.Valid()) return false;
     const auto entry = row.conditionalProjectionEntry;
     const auto admission = row.conditionalProjectionAdmission.load(std::memory_order_acquire);
@@ -4945,6 +5357,7 @@ bool OriginalImmediateLaneConditionalProjection::ReturnNativeReferences(
     if (!Valid()) return false;
     auto& lane = *lane_.lane_;
     auto& row = lane.attempts_[lane_.handle_.slot];
+    if (row.privatePublicationProof != nullptr) return false;
     if (!row.conditionalProjectionCancelled) return false;
     if (row.conditionalProjectionReferencesReturned) return true;
     const auto admission = row.conditionalProjectionAdmission.load(std::memory_order_acquire);

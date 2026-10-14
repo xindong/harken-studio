@@ -2,6 +2,7 @@
 #include "harken/core/ActionFiringTable.h"
 
 #include <gtest/gtest.h>
+#include <type_traits>
 
 namespace {
 
@@ -117,6 +118,147 @@ TEST(ActionFiringTable, InheritedOrderRequiresActualPreparedChildAndLiveUncancel
     ASSERT_TRUE(table.CommitPreparedChild(&child));
     EXPECT_EQ(0u, child.InheritedSequence());
     ASSERT_TRUE(table.Abandon(&unrelated));
+}
+
+TEST(ActionFiringTable, PreparedChildCannotCommitAfterItsOriginalParentIsCancelled) {
+    harken::ActionFiringTable table;
+    ASSERT_TRUE(table.Reset(2));
+    harken::PreparedActionFiring root, child;
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
+    ASSERT_TRUE(table.Commit(&root, 99));
+    ASSERT_TRUE(table.PrepareChild(root.Handle(), harkentest::ObjectId(2),
+        harken::ActionFiringOwnerStamp::DirectWorld(7), 1, &child));
+    ASSERT_TRUE(table.BumpCancellationEpoch(root.Handle()));
+    EXPECT_FALSE(table.CommitPreparedChild(&child));
+    EXPECT_TRUE(child.Valid());
+    EXPECT_EQ(1u, table.LiveCount());
+    ASSERT_TRUE(table.Abandon(&child));
+}
+
+TEST(ActionFiringTable, ChildActivationReceiptMatchesActualPreparedIdentityAndTransfersByMove) {
+    static_assert(!std::is_copy_constructible_v<harken::ActionFiringTable::ChildActivationReceipt>);
+    static_assert(!std::is_copy_assignable_v<harken::ActionFiringTable::ChildActivationReceipt>);
+    harken::ActionFiringTable table, foreign;
+    ASSERT_TRUE(table.Reset(2));
+    ASSERT_TRUE(foreign.Reset(2));
+    harken::PreparedActionFiring root, child;
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
+    harken::ActionFiringTable::PreparedChildIdentity identity;
+    EXPECT_FALSE(table.CapturePreparedChildIdentity(root, 1, &identity));
+    ASSERT_TRUE(table.Commit(&root, 99));
+    ASSERT_TRUE(table.PrepareChild(root.Handle(), harkentest::ObjectId(2),
+        harken::ActionFiringOwnerStamp::DirectWorld(7), 1, &child));
+    EXPECT_FALSE(table.CapturePreparedChildIdentity(child, 0, &identity));
+    EXPECT_FALSE(table.CapturePreparedChildIdentity(child, 2, &identity));
+    EXPECT_FALSE(foreign.CapturePreparedChildIdentity(child, 1, &identity));
+    ASSERT_TRUE(table.CapturePreparedChildIdentity(child, 1, &identity));
+    EXPECT_EQ(child.Handle(), identity.Child());
+    EXPECT_EQ(root.Handle(), identity.Parent());
+    EXPECT_EQ(99u, identity.Sequence());
+    EXPECT_TRUE(table.IsPreparedChildActive(identity));
+    EXPECT_FALSE(foreign.IsPreparedChildActive(identity));
+    harken::ActionFiringTable::ChildActivationReceipt receipt;
+    EXPECT_FALSE(table.IsChildActivationCurrent(receipt));
+    EXPECT_FALSE(receipt.MatchesOriginalPreparation(identity));
+    ASSERT_TRUE(table.CommitPreparedChild(&child, &receipt));
+    EXPECT_FALSE(table.IsPreparedChildActive(identity));
+    EXPECT_TRUE(receipt.MatchesOriginalPreparation(identity));
+    EXPECT_TRUE(table.IsChildActivationCurrent(receipt));
+    auto moved = std::move(receipt);
+    EXPECT_EQ(0u, receipt.Sequence());
+    EXPECT_FALSE(receipt.MatchesOriginalPreparation(identity));
+    EXPECT_FALSE(table.IsChildActivationCurrent(receipt));
+    EXPECT_EQ(99u, moved.Sequence());
+    EXPECT_TRUE(table.IsChildActivationCurrent(moved));
+    EXPECT_FALSE(foreign.IsChildActivationCurrent(moved));
+    ASSERT_TRUE(table.BumpCancellationEpoch(root.Handle()));
+    EXPECT_FALSE(table.IsChildActivationCurrent(moved));
+}
+
+TEST(ActionFiringTable, SameSequenceSiblingAndOccupiedReceiptCannotAuthorizeAnotherChild) {
+    harken::ActionFiringTable table;
+    ASSERT_TRUE(table.Reset(3));
+    harken::PreparedActionFiring root, first, second;
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
+    ASSERT_TRUE(table.Commit(&root, 99));
+    ASSERT_TRUE(table.PrepareChild(root.Handle(), harkentest::ObjectId(2),
+        harken::ActionFiringOwnerStamp::DirectWorld(7), 1, &first));
+    ASSERT_TRUE(table.PrepareChild(root.Handle(), harkentest::ObjectId(3),
+        harken::ActionFiringOwnerStamp::DirectWorld(7), 1, &second));
+    harken::ActionFiringTable::PreparedChildIdentity firstIdentity, secondIdentity;
+    ASSERT_TRUE(table.CapturePreparedChildIdentity(first, 1, &firstIdentity));
+    ASSERT_TRUE(table.CapturePreparedChildIdentity(second, 1, &secondIdentity));
+    EXPECT_EQ(firstIdentity.Sequence(), secondIdentity.Sequence());
+    EXPECT_FALSE(firstIdentity.SamePreparation(secondIdentity));
+    harken::ActionFiringTable::ChildActivationReceipt firstReceipt, secondReceipt;
+    ASSERT_TRUE(table.CommitPreparedChild(&first, &firstReceipt));
+    EXPECT_FALSE(table.CommitPreparedChild(&second, &firstReceipt));
+    EXPECT_TRUE(second.Valid());
+    EXPECT_FALSE(firstReceipt.MatchesOriginalPreparation(secondIdentity));
+    ASSERT_TRUE(table.CommitPreparedChild(&second, &secondReceipt));
+    EXPECT_TRUE(secondReceipt.MatchesOriginalPreparation(secondIdentity));
+    EXPECT_FALSE(secondReceipt.MatchesOriginalPreparation(firstIdentity));
+}
+
+TEST(ActionFiringTable, AbandonedPreparedIdentityCannotAuthorizeReusedSlotOrLaterActivation) {
+    harken::ActionFiringTable table;
+    ASSERT_TRUE(table.Reset(2));
+    harken::PreparedActionFiring root, child;
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
+    ASSERT_TRUE(table.Commit(&root, 99));
+    ASSERT_TRUE(table.PrepareChild(root.Handle(), harkentest::ObjectId(2),
+        harken::ActionFiringOwnerStamp::DirectWorld(7), 1, &child));
+    harken::ActionFiringTable::PreparedChildIdentity oldIdentity, replacementIdentity;
+    ASSERT_TRUE(table.CapturePreparedChildIdentity(child, 1, &oldIdentity));
+    ASSERT_TRUE(table.Abandon(&child));
+    EXPECT_FALSE(table.IsPreparedChildActive(oldIdentity));
+    ASSERT_TRUE(table.PrepareChild(root.Handle(), harkentest::ObjectId(2),
+        harken::ActionFiringOwnerStamp::DirectWorld(7), 1, &child));
+    ASSERT_TRUE(table.CapturePreparedChildIdentity(child, 1, &replacementIdentity));
+    EXPECT_NE(oldIdentity.Child(), replacementIdentity.Child());
+    EXPECT_EQ(oldIdentity.Sequence(), replacementIdentity.Sequence());
+    EXPECT_FALSE(table.IsPreparedChildActive(oldIdentity));
+    harken::ActionFiringTable::ChildActivationReceipt receipt;
+    ASSERT_TRUE(table.CommitPreparedChild(&child, &receipt));
+    EXPECT_FALSE(receipt.MatchesOriginalPreparation(oldIdentity));
+    EXPECT_TRUE(receipt.MatchesOriginalPreparation(replacementIdentity));
+}
+
+TEST(ActionFiringTable, NewChildCannotRecaptureAnOldDeferredCancellationEpoch) {
+    harken::ActionFiringTable table;
+    ASSERT_TRUE(table.Reset(2));
+    harken::PreparedActionFiring root, child;
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
+    ASSERT_TRUE(table.Commit(&root, 99));
+    const auto originalEpoch = table.CancellationEpoch(root.Handle());
+    ASSERT_TRUE(table.BumpCancellationEpoch(root.Handle()));
+    ASSERT_TRUE(table.PrepareChild(root.Handle(), harkentest::ObjectId(2),
+        harken::ActionFiringOwnerStamp::DirectWorld(7), 1, &child));
+    harken::ActionFiringTable::PreparedChildIdentity identity;
+    EXPECT_FALSE(table.CapturePreparedChildIdentity(child, originalEpoch, &identity));
+    ASSERT_TRUE(table.CapturePreparedChildIdentity(child, table.CancellationEpoch(root.Handle()), &identity));
+    ASSERT_TRUE(table.Abandon(&child));
+    EXPECT_FALSE(table.IsPreparedChildActive(identity));
+}
+
+TEST(ActionFiringTable, ActiveIntermediateParentCannotHideRootCancellationFromPreparedChild) {
+    harken::ActionFiringTable table;
+    ASSERT_TRUE(table.Reset(3));
+    harken::PreparedActionFiring root, parent, child;
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root));
+    ASSERT_TRUE(table.PrepareChild(root, harkentest::ObjectId(2), 7, 1, &parent));
+    ASSERT_TRUE(table.Commit(&root, 99));
+    ASSERT_TRUE(table.PrepareChild(parent.Handle(), harkentest::ObjectId(3),
+        harken::ActionFiringOwnerStamp::DirectWorld(7), 1, &child));
+    ASSERT_TRUE(table.BumpCancellationEpoch(root.Handle()));
+    harken::ActionFiringSnapshot activeParent{};
+    ASSERT_TRUE(table.Capture(parent.Handle(), &activeParent));
+    ASSERT_EQ(harken::ActionFiringState::Active, activeParent.state);
+    EXPECT_EQ(0u, child.InheritedSequence());
+    EXPECT_FALSE(table.CommitPreparedChild(&child));
+    EXPECT_TRUE(child.Valid());
+    EXPECT_EQ(2u, table.LiveCount());
+    ASSERT_TRUE(table.Abandon(&child));
 }
 
 TEST(ActionFiringTable, GenerationExhaustionQuarantinesWithoutRevivingAHandle) {

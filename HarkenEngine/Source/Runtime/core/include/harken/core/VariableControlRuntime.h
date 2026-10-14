@@ -17,6 +17,8 @@
 namespace harken {
 
 class ScheduledTransactionPool;
+class DecisionTable;
+struct Engine;
 
 namespace detail {
 struct VariableControlInstanceTableTestAccess;
@@ -110,6 +112,7 @@ private:
         BankVersionToken bank{};
         std::uint64_t generation = 0;
         bool issued = false;
+        bool silent = false;
     };
     VariableControlInstanceCreateRequest originalRequest_{};
     std::array<SideReceipt, 2> originalSides_{};
@@ -144,6 +147,41 @@ class VariableControlInstanceTable {
     struct SideRow;
     struct Entry;
 public:
+    class OriginalInitialSideReceipt {
+    public:
+        OriginalInitialSideReceipt() noexcept = default;
+        ~OriginalInitialSideReceipt();
+        OriginalInitialSideReceipt(const OriginalInitialSideReceipt&) = delete;
+        OriginalInitialSideReceipt& operator=(const OriginalInitialSideReceipt&) = delete;
+        OriginalInitialSideReceipt(OriginalInitialSideReceipt&& other) noexcept;
+        OriginalInitialSideReceipt& operator=(OriginalInitialSideReceipt&& other) noexcept;
+        bool Valid() const noexcept { return owner_ != nullptr; }
+        void Release() noexcept;
+    private:
+        friend class VariableControlInstanceTable;
+        VariableControlInstanceTable* owner_ = nullptr;
+        Entry* entry_ = nullptr;
+        VariableControlInstanceToken token_{};
+        VariableControlInstanceCreateRequest create_{};
+        VariableControlSide side_ = VariableControlSide::Discrete;
+        VariableControlSideSnapshot snapshot_{};
+        std::uint64_t generation_ = 0;
+        bool replacing_ = false;
+    };
+    class InitialSideReplacement {
+    public:
+        InitialSideReplacement() noexcept = default;
+        ~InitialSideReplacement();
+        InitialSideReplacement(const InitialSideReplacement&) = delete;
+        InitialSideReplacement& operator=(const InitialSideReplacement&) = delete;
+        bool Valid() const noexcept { return original_ != nullptr; }
+    private:
+        friend class VariableControlInstanceTable;
+        OriginalInitialSideReceipt* original_ = nullptr;
+        DecisionToken replacement_{};
+        std::uint64_t generation_ = 0;
+    };
+
     class PreparedCommitProof {
     public:
         PreparedCommitProof() = default;
@@ -228,6 +266,9 @@ public:
         VariableControlInstanceToken instance,
         VariableControlSide side,
         BankVersionToken bank) noexcept;
+    VariableControlInstanceStatus CommitSilentSide(
+        PreparedVariableControlInstance& original, VariableControlSide side,
+        BankVersionToken bank) noexcept;
 
     VariableControlInstanceStatus AdvanceCommittedSideBank(
         VariableControlInstanceToken instance,
@@ -279,7 +320,25 @@ public:
                  VariableControlInstanceSnapshot* out) const noexcept;
 
 private:
+    friend struct Engine;
     friend struct detail::VariableControlInstanceTableTestAccess;
+
+    // Engine must retain its genuine private Entry placement while replacing.
+    bool IssueOriginalInitialSideReceipt(const PreparedVariableControlInstance& original,
+        VariableControlSide side, OriginalInitialSideReceipt* out) noexcept;
+    bool MatchesOriginalInitialSideReceipt(const OriginalInitialSideReceipt& original,
+        VariableControlInstanceToken instance, VariableControlSide side,
+        DecisionToken decision, BankVersionToken bank) const noexcept;
+    VariableControlInstanceStatus BeginInitialSideReplacement(OriginalInitialSideReceipt& original,
+        DecisionToken replacement, InitialSideReplacement* out) noexcept;
+    bool FinishInitialSideReplacement(InitialSideReplacement& replacement, bool commit) noexcept;
+    bool MatchesInitialSideEntry(const OriginalInitialSideReceipt& original) const noexcept;
+    bool UnbindPrivateInitialFrontierSide(const OriginalInitialSideReceipt& original,
+        const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool,
+        const DecisionTable& decisions) noexcept;
+    bool MatchesPrivateInitialFrontierSide(const OriginalInitialSideReceipt& original,
+        const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool,
+        const DecisionTable& decisions) const noexcept;
 
     enum class SlotState : std::uint8_t {
         Free = 0,
@@ -298,6 +357,7 @@ private:
         std::atomic<std::uint64_t> newestPending{0};
         std::atomic<std::uint64_t> lastApplied{0};
         std::atomic<std::uint64_t> generation{1};
+        std::atomic<const InitialSideReplacement*> initialReplacement{nullptr};
         const ScheduledTransactionPool* frontierPool = nullptr;
         FrontierOwnerIdentity frontierOwner{};
     };
@@ -325,6 +385,9 @@ private:
         VariableControlInstanceToken instance, VariableControlSide side,
         DecisionToken decision, BankVersionToken bank,
         PreparedVariableControlInstance* original) noexcept;
+    VariableControlInstanceStatus CommitSilentSideInternal(
+        VariableControlInstanceToken instance, VariableControlSide side,
+        BankVersionToken bank, PreparedVariableControlInstance* original) noexcept;
     static void ResetEntry(Entry& entry) noexcept;
     static bool MayMutateSide(SideRow& side) noexcept;
 

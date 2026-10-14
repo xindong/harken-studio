@@ -589,6 +589,13 @@ public:
     }
 
     template <typename Fn>
+    void ForEachVoiceEffectInstanceForHandle(VnVoiceHandle publicHandle, Fn&& fn) const {
+        for (const auto& inst : m_voiceEffectInstances)
+            if (inst.used && inst.publicHandle == publicHandle)
+                fn(inst, m_definitions[inst.definitionIndex]);
+    }
+
+    template <typename Fn>
     void ForEachVoiceEffectVariableDependency(VnVoiceHandle publicHandle,
                                               Fn&& fn) const {
         for (const VoiceEffectInstance& inst : m_voiceEffectInstances) {
@@ -685,6 +692,10 @@ public:
     // pass IS the evaluation those marks await).
     void EvaluateBusAttachments(const ParamSystem& params,
                                 BusTargetStore& store);
+
+    bool BeginVariableProjection() noexcept;
+    void RestoreVariableProjection() noexcept;
+    std::uint64_t VariableProjectionStorageBytes() const noexcept;
 
     // Marks the store's pending-input demand for every BUS attachment
     // driven by `variableId` — the bus-side twin of
@@ -840,6 +851,12 @@ private:
 
     std::vector<Definition> m_definitions; // fixed capacity (maxBindings)
     std::vector<Attachment> m_attachments; // fixed (maxBindingAttachments)
+    struct AttachmentEvaluation {
+        float lastContribution = 0.0f;
+        bool lastHadValue = false;
+    };
+    std::vector<AttachmentEvaluation> m_projectionAttachments;
+    bool m_projectionActive = false;
     // Voice-effect apply instances, fixed capacity (sized to maxAttachments).
     std::vector<VoiceEffectInstance> m_voiceEffectInstances;
     std::uint32_t m_definitionCount = 0;

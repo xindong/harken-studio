@@ -40,12 +40,40 @@ BindingTable::BindingTable(std::uint32_t maxDefinitions,
                            std::uint32_t maxBuses)
     : m_definitions(maxDefinitions),
       m_attachments(maxAttachments),
+      m_projectionAttachments(maxAttachments),
       m_voiceEffectInstances(maxAttachments),
       m_busAccum(static_cast<std::size_t>(maxBuses) * kBusTargetCount, 0.0f),
       m_busAccumActive(static_cast<std::size_t>(maxBuses) * kBusTargetCount,
                        false),
       m_busAccumAccepted(static_cast<std::size_t>(maxBuses) * kBusTargetCount,
                          false) {}
+
+bool BindingTable::BeginVariableProjection() noexcept {
+    if (m_projectionActive) return false;
+    for (std::size_t i = 0; i < m_attachments.size(); ++i) {
+        const auto& attachment = m_attachments[i];
+        m_projectionAttachments[i] = {attachment.lastContribution,
+                                       attachment.lastHadValue};
+    }
+    m_projectionActive = true;
+    return true;
+}
+
+void BindingTable::RestoreVariableProjection() noexcept {
+    if (!m_projectionActive) return;
+    for (std::size_t i = 0; i < m_attachments.size(); ++i) {
+        auto& attachment = m_attachments[i];
+        const auto& saved = m_projectionAttachments[i];
+        attachment.lastContribution = saved.lastContribution;
+        attachment.lastHadValue = saved.lastHadValue;
+    }
+    // Bus sweep scratch is rebuilt completely by EvaluateBusAttachments.
+    m_projectionActive = false;
+}
+
+std::uint64_t BindingTable::VariableProjectionStorageBytes() const noexcept {
+    return m_projectionAttachments.size() * sizeof(AttachmentEvaluation);
+}
 
 VnResult BindingTable::ValidateDescriptor(std::uint32_t scopeKind,
                                           std::uint32_t targetId,

@@ -115,7 +115,8 @@ public:
         std::uint32_t executionOrdinal = 0) noexcept;
     bool PrepareQueueSelection(const OriginalImmediateLaneConditionalProjection& original,
         std::uint64_t executeFrame, std::uint32_t executionOrdinal) noexcept;
-    LogicCommitSequence ConsumeAcceptedOrder() noexcept;
+    LogicCommitSequence ConsumeAcceptedOrder(
+        LogicCommitCoordinator::ConsumedIssue* consumed = nullptr) noexcept;
     bool Accepted() const noexcept;
     // Abandonment is reversible before acceptance. Busy native readers retain
     // this object for a later close; the audio thread never waits for logic.

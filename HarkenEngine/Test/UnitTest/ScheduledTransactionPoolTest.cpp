@@ -44,6 +44,9 @@
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 namespace harken::detail {
 struct ScheduledTransactionPoolCancelTestAccess {
+    static void SetCurrentSliceSerial(ScheduledTransactionPool& pool, std::uint64_t serial) {
+        pool.nextCurrentSliceSequence_ = serial;
+    }
     static bool SetEmptyPageGeneration(ScheduledTransactionPool& pool,
         std::uint64_t frame, std::uint64_t generation) {
         const auto ring = Ring(pool, frame);
@@ -195,6 +198,10 @@ static_assert(!std::is_copy_constructible_v<PreparedTransactionBatch>);
 static_assert(!std::is_copy_assignable_v<PreparedTransactionBatch>);
 static_assert(std::is_nothrow_move_constructible_v<PreparedTransactionBatch>);
 static_assert(std::is_nothrow_move_assignable_v<PreparedTransactionBatch>);
+static_assert(!std::is_copy_constructible_v<harken::HeldCurrentSliceToken>);
+static_assert(!std::is_copy_assignable_v<harken::HeldCurrentSliceToken>);
+static_assert(std::is_nothrow_move_constructible_v<harken::HeldCurrentSliceToken>);
+static_assert(std::is_nothrow_move_assignable_v<harken::HeldCurrentSliceToken>);
 
 // A small pool geometry with everything overridable per case. Defaults: four
 // 100-frame pages, generous per-item ceilings.
@@ -344,6 +351,8 @@ TEST(ScheduledTransactionPool, OriginalRowOwnerBlocksBothRealPrivatePageRetireme
 TEST(ScheduledTransactionPool, PrivateUnboundPageArmRetirementHoldsAllRightsReleaseReproveConsumeReclaims) {
     PrivateUnboundPageArmHarness h;
     ASSERT_NO_FATAL_FAILURE(h.Prepare());
+    for (const auto& original : h.originals)
+        ASSERT_TRUE(h.pool->CanReleaseCommittedPlan03GroupSliceOwnership(*original));
     ASSERT_TRUE(h.Prove());
     ASSERT_TRUE(h.proof->Valid());
     EXPECT_FALSE(h.Prove());
@@ -359,6 +368,7 @@ TEST(ScheduledTransactionPool, PrivateUnboundPageArmRetirementHoldsAllRightsRele
     const auto before = h.pool->CapturePrivateMaterializationSnapshotForTest();
     for (std::size_t i = 0; i < 2; ++i) {
         EXPECT_FALSE(h.pool->RollbackCommittedPlan03GroupSlice(h.originals[i].get()));
+        EXPECT_FALSE(h.pool->CanReleaseCommittedPlan03GroupSliceOwnership(*h.originals[i]));
         EXPECT_FALSE(h.pool->ReleaseCommittedPlan03GroupSliceOwnership(h.originals[i].get()));
         EXPECT_FALSE(h.Lease(i)->ResetForReuse());
         EXPECT_FALSE(h.Lease(i)->TryClaim());
@@ -383,6 +393,8 @@ TEST(ScheduledTransactionPool, PrivateUnboundPageArmRetirementHoldsAllRightsRele
     h.proof->Release();
     EXPECT_FALSE(h.proof->Valid());
     EXPECT_FALSE(h.originals[0]->Held());
+    for (const auto& original : h.originals)
+        EXPECT_TRUE(h.pool->CanReleaseCommittedPlan03GroupSliceOwnership(*original));
     EXPECT_EQ(harken::AudioSliceState::Ready, h.Lease(0)->Capture().state);
     ASSERT_TRUE(h.Prove());
     ASSERT_NO_FATAL_FAILURE(h.ConsumeAndReclaim());
@@ -502,9 +514,14 @@ TEST(ScheduledTransactionPool, PrivateUnboundPageArmRetirementReusedOriginalCann
         h.arms = std::make_unique<harken::TimelineArmTable>(3);
         ASSERT_NO_FATAL_FAILURE(h.Prepare());
         auto* const reusedOriginal = h.originals[0].get();
+        ASSERT_TRUE(h.pool->CanReleaseCommittedPlan03GroupSliceOwnership(*reusedOriginal));
+        ScheduledTransactionPool foreign;
+        ASSERT_TRUE(foreign.Reset(MakeConfig(), 0, kEpoch));
+        EXPECT_FALSE(foreign.CanReleaseCommittedPlan03GroupSliceOwnership(*reusedOriginal));
         if (rollback) ASSERT_TRUE(h.pool->RollbackCommittedPlan03GroupSlice(reusedOriginal));
         else ASSERT_TRUE(h.pool->ReleaseCommittedPlan03GroupSliceOwnership(reusedOriginal));
         ASSERT_FALSE(reusedOriginal->Valid());
+        EXPECT_FALSE(h.pool->CanReleaseCommittedPlan03GroupSliceOwnership(*reusedOriginal));
         harken::Plan03GroupSliceInput input{};
         input.executeFrame = h.frame;
         input.decision = h.decision[0];
@@ -543,6 +560,7 @@ TEST(ScheduledTransactionPool, PrivateUnboundPageArmRetirementReusedOriginalCann
         EXPECT_FALSE(h.originals[1]->Held());
         EXPECT_EQ(harken::AudioSliceState::Ready, h.Lease(1)->Capture().state);
         EXPECT_TRUE(h.pool->RollbackCommittedPlan03GroupSlice(reusedOriginal));
+        EXPECT_FALSE(h.pool->CanReleaseCommittedPlan03GroupSliceOwnership(*reusedOriginal));
         EXPECT_TRUE(h.pool->RollbackCommittedPlan03GroupSlice(h.originals[1].get()));
     }
 }
@@ -1125,6 +1143,7 @@ TEST(ScheduledTransactionPool, PrivateLaneEntriesRetainActualFactorySourcesAndOr
         auto& scope = scopes[entry];
         scope.provisionalFrame = 100;
         scope.firstMember = entry * 2;
+        scope.memberCount = 2;
         scope.members = members.data() + scope.firstMember;
         auto& request = scope.coordinatorRequest;
         request.ticket.sequence = 9;
@@ -1320,6 +1339,7 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
             auto& scope = scopes[entry];
             scope.provisionalFrame = 100;
             scope.firstMember = entry * 2;
+            scope.memberCount = 2;
             scope.members = members.data() + scope.firstMember;
             scope.coordinatorRequest = {{9}, 7, kEpoch, entry + 1u, 1, {}};
             for (unsigned side = 0; side < 3; ++side) {
@@ -1435,7 +1455,21 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
         }
         ASSERT_TRUE(lane.Prepare(handle, events.data(), 10));
         std::uint64_t anchor = 0;
-        ASSERT_TRUE(lane.TryPlace(handle, 200, 0, &anchor));
+        harken::PrivateImmediateLanePlacementProof placement;
+        ASSERT_TRUE(lane.TryPlace(handle, 200, 0, &anchor, &placement));
+        std::array<std::uint32_t, 4> actualStartOrdinals{UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+        for (std::uint32_t index = 0; index < events.size(); ++index) {
+            harken::ImmediateLaneEvent placed{};
+            ASSERT_TRUE(lane.CapturePrivatePlacedEvent(placement, index, &placed));
+            for (std::uint32_t member = 0; member < actualArms.size(); ++member)
+                if (placed.event.armToken.slot == actualArms[member].slot &&
+                    placed.event.armToken.generation == actualArms[member].generation &&
+                    placed.event.armToken.renderSlot == actualArms[member].renderSlot &&
+                    placed.event.armToken.renderGeneration == actualArms[member].renderGeneration)
+                    actualStartOrdinals[member] = index;
+        }
+        for (const auto index : actualStartOrdinals) ASSERT_NE(UINT32_MAX, index);
+        placement.Release();
         const auto bind = [&](bool wrongLastDescriptor) {
             ASSERT_TRUE(pool.RebaseImmediateLaneGroups(17, anchor));
             for (unsigned entry = 0; entry < 2; ++entry) {
@@ -1574,6 +1608,72 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
         }
         EXPECT_EQ(sentinel, refused);
         ASSERT_TRUE(lane.PinArms(handle, arms));
+        if (mode == 0) {
+            harken::PrivateImmediateLanePublicationProof publication;
+            ASSERT_TRUE(lane.ProvePrivatePublication(handle, 17, &publication));
+            std::array<harken::DecisionTable::FrontierPublicationProof, 2> coordinators;
+            std::array<harken::DecisionCommittedSnapshot, 2> before{};
+            for (unsigned entry = 0; entry < 2; ++entry) {
+                ASSERT_TRUE(decisions.CaptureCommitted(tokens[entry][2], &before[entry]));
+                ASSERT_EQ(2u, before[entry].participantCount);
+                harken::DecisionFuturePin reader;
+                ASSERT_TRUE(decisions.AcquireFuturePin(tokens[entry][2], &reader));
+                ASSERT_TRUE(decisions.ProveFrontierActivationPublication(tokens[entry][2],
+                    scopes[entry].entry, pool, &coordinators[entry]));
+                harken::DecisionFuturePin refusedReader;
+                EXPECT_FALSE(decisions.AcquireFuturePin(tokens[entry][2], &refusedReader));
+                EXPECT_FALSE(decisions.CloneFuturePin(reader, &refusedReader));
+                EXPECT_FALSE(decisions.CancelPreparedFrontierActivation(tokens[entry][2]));
+                EXPECT_FALSE(decisions.RollbackPreparedFrontierDecision(tokens[entry][2], tokens[entry][2]));
+                if (entry == 1) reader = harken::DecisionFuturePin{};
+            }
+            for (unsigned entry = 0; entry < 2; ++entry) {
+                EXPECT_FALSE(lane.RequestPrivateEntryStop(handle, 17, entry, scopes[entry].entry));
+                EXPECT_FALSE(lane.CanCancelPrivateEntrySources(handle, 17, entry, scopes[entry].entry));
+                harken::DecisionCommittedSnapshot held{};
+                ASSERT_TRUE(decisions.CaptureCommitted(tokens[entry][2], &held));
+                EXPECT_EQ(before[entry].futurePinCount, held.futurePinCount);
+                EXPECT_EQ(before[entry].participantCount, held.participantCount);
+                EXPECT_EQ(before[entry].ticket.sequence, held.ticket.sequence);
+                EXPECT_EQ(harken::FrontierReceiptState::PublicationHeld,
+                    decisions.ResolveFrontierActivation(tokens[entry][2])->State());
+            }
+            harken::PrivateImmediateLaneGroupsPublicationProof poolPublication;
+            ASSERT_TRUE(pool.ProvePrivateImmediateLaneGroupsPublication(publication, &poolPublication));
+            EXPECT_FALSE(pool.PublishImmediateLaneGroups(17));
+            EXPECT_FALSE(pool.RebaseImmediateLaneGroups(17, anchor + 100));
+            EXPECT_FALSE(pool.CancelImmediateLaneGroups(17, 0));
+            EXPECT_FALSE(pool.Reset(config, 0, kEpoch + 1));
+            EXPECT_FALSE(pool.ResetForEpoch(0, kEpoch + 1));
+            for (unsigned entry = 0; entry < 2; ++entry) {
+                EXPECT_FALSE(pool.InvalidateFrontierOwnerOperations(scopes[entry].entry.owner));
+                for (unsigned side = 0; side < 3; ++side) {
+                    harken::Plan03PageGroupView held{};
+                    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(groups[entry][side], &held));
+                    ASSERT_NE(nullptr, held.lease);
+                    EXPECT_EQ(harken::AudioSliceState::PublicationReserved, held.lease->Capture().state);
+                    EXPECT_FALSE(held.lease->TryClaim());
+                    EXPECT_FALSE(held.lease->PrepareReplacement());
+                    EXPECT_FALSE(held.lease->ResetForReuse());
+                    EXPECT_EQ(harken::AudioSliceInvalidateDisposition::PublicationHeld,
+                        held.lease->Invalidate(harken::AudioSliceInvalidateReason::Cancel));
+                    EXPECT_EQ(0u, held.lease->Capture().pendingReasonBits);
+                    EXPECT_FALSE(pool.InvalidateFrontierOwnerOperations(scopes[entry].entry.owner, tokens[entry][side]));
+                    EXPECT_FALSE(pool.DetachPlan03GroupFrontier(groups[entry][side], 0));
+                }
+            }
+            poolPublication.Release();
+            for (unsigned entry = 0; entry < 2; ++entry) {
+                coordinators[entry].Release();
+                EXPECT_TRUE(decisions.CanPublishFrontierActivation(tokens[entry][2]));
+            }
+            publication.Release();
+            for (unsigned entry = 0; entry < 2; ++entry) {
+                EXPECT_FALSE(lane.CanCancelPrivateEntrySources(handle, 17, entry, scopes[entry].entry));
+                ASSERT_TRUE(lane.RequestPrivateEntryStop(handle, 17, entry, scopes[entry].entry));
+                EXPECT_TRUE(lane.CanCancelPrivateEntrySources(handle, 17, entry, scopes[entry].entry));
+            }
+        }
         std::array<harken::ImmediateLanePrivateVariableControlEntryMapping, 2> mappings{};
         for (unsigned entry = 0; entry < 2; ++entry) {
             ASSERT_TRUE(lane.CapturePrivateVariableControlEntryMapping(handle, 17, ordinals[entry],
@@ -1587,9 +1687,9 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
                 decisions.ResolveFrontierActivation(tokens[entry][2])->Descriptor().expectedEntryEventCount);
         }
         if (mode == 1 || mode == 2 || mode == 5 || mode == 13 || mode >= 19) {
-            EXPECT_LT(mappings[0].events[3], mappings[1].events[0]);
-            EXPECT_LT(mappings[1].events[3], mappings[0].events[4]);
-            EXPECT_LT(mappings[0].events[4], mappings[1].events[4]);
+            EXPECT_LT(actualStartOrdinals[0], mappings[1].events[0]);
+            EXPECT_LT(actualStartOrdinals[2], actualStartOrdinals[1]);
+            EXPECT_LT(actualStartOrdinals[1], actualStartOrdinals[3]);
         }
         std::array<harken::ImmediateLanePrivateEntryBucketShape, 2> shapes{};
         for (unsigned entry = 0; entry < 2; ++entry) {
@@ -1785,12 +1885,12 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
                 EXPECT_EQ(shapes[entry], projection.shape);
                 EXPECT_EQ(2u, projection.registeredEntryCount);
                 if (mode == 19 || mode == 20)
-                    EXPECT_EQ((1u << projection.shape.count) - 1u, projection.omittedMask);
-                else if (mode == 21 || mode == 22) EXPECT_NE(0u, projection.omittedMask);
-                else EXPECT_EQ(0u, projection.omittedMask);
+                    EXPECT_EQ(projection.shape.count, projection.omitted.count());
+                else if (mode == 21 || mode == 22) EXPECT_TRUE(projection.omitted.any());
+                else EXPECT_TRUE(projection.omitted.none());
                 for (unsigned index = 0; index < projection.shape.count; ++index) {
                     EXPECT_EQ(projection.shape.ordinals[index], projection.outcomes[index].bucketOrdinal);
-                    if ((projection.omittedMask & (1u << index)) != 0) {
+                    if (projection.omitted[index]) {
                         EXPECT_EQ(harken::ImmediateLaneEntryOutcome::Dormant, projection.outcomes[index].outcome);
                         EXPECT_EQ(0u, projection.outcomes[index].audioSequence);
                     }
@@ -1963,6 +2063,334 @@ struct MixedTimeGroupHarness {
         EXPECT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
     }
 };
+
+struct PrivatePoolPublicationHarness : MixedTimeGroupHarness {
+    harken::ImmediateLaneHandle handle{};
+    harken::PrivateImmediateLanePublicationProof lanePublication;
+    void Prepare(bool installGroupPins = true) {
+        ASSERT_NO_FATAL_FAILURE(Init(2));
+        ASSERT_TRUE(lane.Reserve(17, {0, 2, 0, 1}, &handle));
+        ASSERT_NO_FATAL_FAILURE(ReserveGroup(0, 17, 200, handle, false, 0));
+        ASSERT_NO_FATAL_FAILURE(ReserveGroup(1, 17, 200, handle, false, 0));
+        ASSERT_TRUE(lane.Prepare(handle, nullptr, 0));
+        std::uint64_t anchor = 0;
+        ASSERT_TRUE(lane.TryPlace(handle, 200, 0, &anchor));
+        ASSERT_EQ(200u, anchor);
+        ASSERT_TRUE(pool.RebaseImmediateLaneGroups(17, 0));
+        ASSERT_NO_FATAL_FAILURE(Bind(0, 200));
+        ASSERT_NO_FATAL_FAILURE(Bind(1, 200));
+        if (installGroupPins) ASSERT_TRUE(lane.PinGroups(handle, pool, decisions, 2));
+        ASSERT_TRUE(lane.PinArms(handle, arms));
+        if (installGroupPins) ASSERT_TRUE(lane.ProvePrivatePublication(handle, 17, &lanePublication));
+    }
+};
+
+TEST(ScheduledTransactionPool, PrivateGroupPublicationHoldsCompleteCensusAndAppliesOriginalRows) {
+    PrivatePoolPublicationHarness actual;
+    ASSERT_NO_FATAL_FAILURE(actual.Prepare());
+    harken::PrivateImmediateLaneGroupsPublicationProof publication;
+    harken::PrivateImmediateLanePublicationProof absent;
+    EXPECT_FALSE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(absent, &publication));
+    ASSERT_TRUE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+    harken::PrivateImmediateLaneGroupsPublicationProof duplicate;
+    EXPECT_FALSE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &duplicate));
+    harken::Plan03GroupSliceInput extra{};
+    extra.executeFrame = 200;
+    extra.decision = actual.tokens[0];
+    extra.sliceIndex = 1;
+    harken::Plan03GroupSliceIdentity refused{};
+    EXPECT_FALSE(actual.pool.ReserveImmediateLaneGroup(17, 0, extra, actual.arms, &refused));
+    EXPECT_FALSE(refused.Valid());
+    for (unsigned index = 0; index < actual.count; ++index) {
+        harken::Plan03PageGroupView view{};
+        ASSERT_TRUE(actual.pool.ResolvePlan03GroupSliceProducer(actual.groups[index], &view));
+        ASSERT_NE(nullptr, view.lease);
+        EXPECT_EQ(harken::AudioSliceState::PublicationReserved, view.lease->Capture().state);
+        ASSERT_NE(nullptr, view.frontier);
+        EXPECT_TRUE(actual.pool.IsPrivateImmediateLaneGroupsPublicationProofFor(
+            publication, actual.groups[index], view.frontier->entry));
+        EXPECT_FALSE(actual.pool.IsPrivateImmediateLaneGroupsPublicationProofFor(
+            duplicate, actual.groups[index], view.frontier->entry));
+        auto changedEntry = view.frontier->entry;
+        ++changedEntry.owner.serviceGeneration;
+        EXPECT_FALSE(actual.pool.IsPrivateImmediateLaneGroupsPublicationProofFor(
+            publication, actual.groups[index], changedEntry));
+        EXPECT_EQ(harken::AudioSliceInvalidateDisposition::PublicationHeld,
+            view.lease->Invalidate(harken::AudioSliceInvalidateReason::WorldReplacement));
+        EXPECT_EQ(0u, view.lease->Capture().pendingReasonBits);
+        EXPECT_FALSE(actual.pool.ResolvePlan03GroupSliceRt(actual.groups[index], &view));
+    }
+    harken::ScheduledTransactionPool::ApplyPrivateImmediateLaneGroupsPublication(std::move(publication));
+    EXPECT_FALSE(publication.Valid());
+    for (unsigned index = 0; index < actual.count; ++index) {
+        harken::Plan03PageGroupView view{};
+        ASSERT_TRUE(actual.pool.ResolvePlan03GroupSliceProducer(actual.groups[index], &view));
+        EXPECT_EQ(actual.groups[index], view.identity);
+        EXPECT_EQ(harken::AudioSliceState::Ready, view.lease->Capture().state);
+        EXPECT_EQ(200u, view.frontier->operation.order.executeFrame);
+        EXPECT_FALSE(actual.pool.IsPrivateImmediateLaneGroupsPublicationProofFor(
+            publication, actual.groups[index], view.frontier->entry));
+        EXPECT_FALSE(actual.pool.ResolvePlan03GroupSliceRt(actual.groups[index], &view));
+    }
+    EXPECT_EQ(nullptr, actual.lane.CaptureDue(actual.handle.slot, 2));
+    harken::ImmediateActionLane::ApplyPrivatePublication(std::move(actual.lanePublication));
+    for (unsigned index = 0; index < actual.count; ++index) {
+        harken::Plan03PageGroupView view{};
+        ASSERT_TRUE(actual.pool.ResolvePlan03GroupSliceRt(actual.groups[index], &view));
+        EXPECT_EQ(actual.groups[index], view.identity);
+        ASSERT_EQ(harken::AudioSliceInvalidateDisposition::InvalidatedReady,
+            view.lease->Invalidate(harken::AudioSliceInvalidateReason::Cancel));
+    }
+    ASSERT_NO_FATAL_FAILURE(actual.Cleanup(actual.handle));
+}
+
+TEST(ScheduledTransactionPool, PrivateGroupPublicationRejectsActualTimingMismatchAndRecovers) {
+    PrivatePoolPublicationHarness actual;
+    ASSERT_NO_FATAL_FAILURE(actual.Prepare());
+    for (const std::uint64_t offset : {1u, 100u}) {
+        ASSERT_TRUE(actual.pool.RebaseImmediateLaneGroups(17, offset));
+        harken::PrivateImmediateLaneGroupsPublicationProof publication;
+        EXPECT_FALSE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+        publication.Release();
+        for (unsigned index = 0; index < actual.count; ++index) {
+            harken::Plan03PageGroupView view{};
+            ASSERT_TRUE(actual.pool.ResolvePlan03GroupSliceProducer(actual.groups[index], &view));
+            EXPECT_EQ(harken::AudioSliceState::Ready, view.lease->Capture().state);
+            EXPECT_EQ(0u, view.lease->Capture().pendingReasonBits);
+        }
+        ASSERT_TRUE(actual.pool.RebaseImmediateLaneGroups(17, 0));
+        ASSERT_TRUE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+        publication.Release();
+    }
+    actual.lanePublication.Release();
+    ASSERT_NO_FATAL_FAILURE(actual.Cleanup(actual.handle));
+}
+
+TEST(ScheduledTransactionPool, PrivateGroupPublicationRejectsForeignPoolAndRequiresRealGroupPins) {
+    PrivatePoolPublicationHarness actual;
+    ASSERT_NO_FATAL_FAILURE(actual.Prepare(false));
+    EXPECT_FALSE(actual.lane.ProvePrivatePublication(actual.handle, 17, &actual.lanePublication));
+    ScheduledTransactionPool empty;
+    ASSERT_TRUE(empty.Reset(MakeConfig(), 0, kEpoch));
+    harken::PrivateImmediateLaneGroupsPublicationProof publication;
+    EXPECT_FALSE(empty.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+    publication.Release();
+    EXPECT_FALSE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+    actual.lanePublication.Release();
+    ASSERT_TRUE(actual.lane.PinGroups(actual.handle, actual.pool, actual.decisions, 2));
+    ASSERT_TRUE(actual.lane.ProvePrivatePublication(actual.handle, 17, &actual.lanePublication));
+    EXPECT_FALSE(empty.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+    ASSERT_TRUE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+    publication.Release();
+    actual.lanePublication.Release();
+    ASSERT_NO_FATAL_FAILURE(actual.Cleanup(actual.handle));
+}
+
+TEST(ScheduledTransactionPool, PrivateGroupPublicationLaneProofMoveAndEarlyReleaseReturnOriginalRows) {
+    PrivatePoolPublicationHarness actual;
+    ASSERT_NO_FATAL_FAILURE(actual.Prepare());
+    harken::PrivateImmediateLaneGroupsPublicationProof publication;
+    ASSERT_TRUE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+    harken::PrivateImmediateLanePublicationProof moved(std::move(actual.lanePublication));
+    EXPECT_FALSE(actual.lanePublication.Valid());
+    EXPECT_TRUE(publication.Valid());
+    moved.Release();
+    EXPECT_FALSE(publication.Valid());
+    publication.Release();
+    for (unsigned index = 0; index < actual.count; ++index) {
+        harken::Plan03PageGroupView view{};
+        ASSERT_TRUE(actual.pool.ResolvePlan03GroupSliceProducer(actual.groups[index], &view));
+        EXPECT_EQ(harken::AudioSliceState::Ready, view.lease->Capture().state);
+        EXPECT_EQ(0u, view.lease->Capture().pendingReasonBits);
+        EXPECT_FALSE(actual.pool.ResolvePlan03GroupSliceRt(actual.groups[index], &view));
+    }
+    ASSERT_TRUE(actual.lane.ProvePrivatePublication(actual.handle, 17, &actual.lanePublication));
+    ASSERT_TRUE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+    actual.lanePublication = std::move(moved);
+    EXPECT_FALSE(publication.Valid());
+    publication.Release();
+    ASSERT_NO_FATAL_FAILURE(actual.Cleanup(actual.handle));
+}
+
+TEST(ScheduledTransactionPool, PrivateGroupPublicationLaneOwnerDestructionRevokesActualEmptyCohort) {
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(MakeConfig(), 0, kEpoch));
+    harken::PrivateImmediateLanePublicationProof lanePublication;
+    harken::PrivateImmediateLaneGroupsPublicationProof publication;
+    const harken::TimelineProgramView program{};
+    {
+        harken::ImmediateActionLane lane;
+        ASSERT_TRUE(lane.Reset({1, 1, 1, 100}));
+        harken::ImmediateLaneHandle handle{};
+        ASSERT_TRUE(lane.Reserve(17, {1, 0, 0, 1}, &handle));
+        harken::ImmediateLaneEvent event{};
+        event.event.program.program = &program;
+        ASSERT_TRUE(lane.Prepare(handle, &event, 1));
+        std::uint64_t anchor = 0;
+        ASSERT_TRUE(lane.TryPlace(handle, 200, 0, &anchor));
+        ASSERT_TRUE(lane.ProvePrivatePublication(handle, 17, &lanePublication));
+        ASSERT_TRUE(pool.ProvePrivateImmediateLaneGroupsPublication(lanePublication, &publication));
+    }
+    EXPECT_FALSE(lanePublication.Valid());
+    EXPECT_FALSE(publication.Valid());
+    publication.Release();
+    EXPECT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+}
+
+TEST(ScheduledTransactionPool, PrivateGroupPublicationLaneCannotApplyBeforeOriginalRows) {
+    PrivatePoolPublicationHarness actual;
+    ASSERT_NO_FATAL_FAILURE(actual.Prepare());
+    harken::PrivateImmediateLaneGroupsPublicationProof publication;
+    ASSERT_TRUE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+    harken::ImmediateActionLane::ApplyPrivatePublication(std::move(actual.lanePublication));
+    EXPECT_TRUE(actual.lanePublication.Valid());
+    EXPECT_TRUE(publication.Valid());
+    EXPECT_EQ(nullptr, actual.lane.CaptureDue(actual.handle.slot, 2));
+    publication.Release();
+    actual.lanePublication.Release();
+    ASSERT_NO_FATAL_FAILURE(actual.Cleanup(actual.handle));
+}
+
+TEST(ScheduledTransactionPool, PrivateGroupPublicationLastLeaseRefusalKeepsEntireCohortReusable) {
+    PrivatePoolPublicationHarness actual;
+    ASSERT_NO_FATAL_FAILURE(actual.Prepare());
+    harken::Plan03PageGroupView last{};
+    ASSERT_TRUE(actual.pool.ResolvePlan03GroupSliceProducer(actual.groups[1], &last));
+    ASSERT_TRUE(last.lease->PrepareReplacement());
+    harken::PrivateImmediateLaneGroupsPublicationProof publication;
+    EXPECT_FALSE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+    EXPECT_FALSE(publication.Valid());
+    harken::Plan03PageGroupView first{};
+    ASSERT_TRUE(actual.pool.ResolvePlan03GroupSliceProducer(actual.groups[0], &first));
+    EXPECT_EQ(harken::AudioSliceState::Ready, first.lease->Capture().state);
+    EXPECT_EQ(0u, first.lease->Capture().pendingReasonBits);
+    EXPECT_EQ(harken::AudioSliceState::ReplacementReserved, last.lease->Capture().state);
+    ASSERT_TRUE(last.lease->CancelPreparedReplacement());
+    ASSERT_TRUE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+    publication.Release();
+    actual.lanePublication.Release();
+    ASSERT_NO_FATAL_FAILURE(actual.Cleanup(actual.handle));
+}
+
+TEST(ScheduledTransactionPool, PrivateGroupPublicationRejectsDetachedLastFrontierAndRecovers) {
+    PrivatePoolPublicationHarness actual;
+    ASSERT_NO_FATAL_FAILURE(actual.Prepare());
+    ASSERT_TRUE(actual.pool.DetachPlan03GroupFrontier(actual.groups[1], 0));
+    actual.bound[1] = false;
+    harken::Plan03PageGroupView detached{};
+    ASSERT_TRUE(actual.pool.ResolvePlan03GroupSliceProducer(actual.groups[1], &detached));
+    ASSERT_EQ(nullptr, detached.frontier);
+    harken::PrivateImmediateLaneGroupsPublicationProof publication;
+    EXPECT_FALSE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+    publication.Release();
+    for (unsigned index = 0; index < actual.count; ++index) {
+        harken::Plan03PageGroupView view{};
+        ASSERT_TRUE(actual.pool.ResolvePlan03GroupSliceProducer(actual.groups[index], &view));
+        EXPECT_EQ(harken::AudioSliceState::Ready, view.lease->Capture().state);
+        EXPECT_EQ(0u, view.lease->Capture().pendingReasonBits);
+    }
+    ASSERT_NO_FATAL_FAILURE(actual.Bind(1, 200));
+    ASSERT_TRUE(actual.pool.ProvePrivateImmediateLaneGroupsPublication(actual.lanePublication, &publication));
+    publication.Release();
+    actual.lanePublication.Release();
+    ASSERT_NO_FATAL_FAILURE(actual.Cleanup(actual.handle));
+}
+
+TEST(ScheduledTransactionPool, PrivateGroupPublicationPoolOwnerDestructionRetainsOriginalLaneProof) {
+    harken::ImmediateActionLane lane;
+    ASSERT_TRUE(lane.Reset({1, 1, 1, 100}));
+    harken::ImmediateLaneHandle handle{};
+    ASSERT_TRUE(lane.Reserve(17, {1, 0, 0, 1}, &handle));
+    const harken::TimelineProgramView program{};
+    harken::ImmediateLaneEvent event{};
+    event.event.program.program = &program;
+    ASSERT_TRUE(lane.Prepare(handle, &event, 1));
+    std::uint64_t anchor = 0;
+    ASSERT_TRUE(lane.TryPlace(handle, 200, 0, &anchor));
+    harken::PrivateImmediateLanePublicationProof lanePublication;
+    ASSERT_TRUE(lane.ProvePrivatePublication(handle, 17, &lanePublication));
+    harken::PrivateImmediateLaneGroupsPublicationProof publication;
+    {
+        ScheduledTransactionPool pool;
+        ASSERT_TRUE(pool.Reset(MakeConfig(), 0, kEpoch));
+        ASSERT_TRUE(pool.ProvePrivateImmediateLaneGroupsPublication(lanePublication, &publication));
+    }
+    EXPECT_FALSE(publication.Valid());
+    EXPECT_TRUE(lanePublication.Valid());
+    EXPECT_FALSE(lane.Cancel(handle));
+    ScheduledTransactionPool replacement;
+    ASSERT_TRUE(replacement.Reset(MakeConfig(), 0, kEpoch));
+    ASSERT_TRUE(replacement.ProvePrivateImmediateLaneGroupsPublication(lanePublication, &publication));
+    harken::ScheduledTransactionPool::ApplyPrivateImmediateLaneGroupsPublication(std::move(publication));
+    harken::ImmediateActionLane::ApplyPrivatePublication(std::move(lanePublication));
+    const auto* bucket = lane.CaptureDue(handle.slot, 2);
+    ASSERT_NE(nullptr, bucket);
+    ASSERT_TRUE(lane.ReleaseCapture(handle.slot, bucket));
+    ASSERT_TRUE(lane.Cancel(handle));
+    ASSERT_TRUE(lane.Retire(handle));
+}
+
+TEST(ScheduledTransactionPool, PrivateGroupPublicationFreezesActualZeroGroupCohort) {
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(MakeConfig(), 0, kEpoch));
+    harken::ImmediateActionLane lane;
+    ASSERT_TRUE(lane.Reset({1, 1, 1, 100}));
+    harken::ImmediateLaneHandle handle{};
+    ASSERT_TRUE(lane.Reserve(17, {1, 0, 0, 1}, &handle));
+    const harken::TimelineProgramView program{};
+    harken::ImmediateLaneEvent event{};
+    event.event.program.program = &program;
+    ASSERT_TRUE(lane.Prepare(handle, &event, 1));
+    std::uint64_t anchor = 0;
+    ASSERT_TRUE(lane.TryPlace(handle, 200, 0, &anchor));
+    harken::PrivateImmediateLanePublicationProof lanePublication;
+    ASSERT_TRUE(lane.ProvePrivatePublication(handle, 17, &lanePublication));
+    harken::PrivateImmediateLaneGroupsPublicationProof publication;
+    ASSERT_TRUE(pool.ProvePrivateImmediateLaneGroupsPublication(lanePublication, &publication));
+    EXPECT_FALSE(pool.ResetForEpoch(0, kEpoch + 1));
+    harken::TimelineArmTable arms{1};
+    harken::Plan03GroupSliceInput input{};
+    input.executeFrame = 200;
+    input.decision = {0, 1};
+    harken::Plan03GroupSliceIdentity refused{};
+    EXPECT_FALSE(pool.ReserveImmediateLaneGroup(17, 0, input, arms, &refused));
+    harken::ScheduledTransactionPool::ApplyPrivateImmediateLaneGroupsPublication(std::move(publication));
+    harken::ImmediateActionLane::ApplyPrivatePublication(std::move(lanePublication));
+    const auto* bucket = lane.CaptureDue(handle.slot, 2);
+    ASSERT_NE(nullptr, bucket);
+    ASSERT_TRUE(lane.ReleaseCapture(handle.slot, bucket));
+    ASSERT_TRUE(lane.Cancel(handle));
+    ASSERT_TRUE(lane.Retire(handle));
+    EXPECT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+}
+
+TEST(ScheduledTransactionPool, PrivateGroupPublicationMoveAbandonAndOwnerDestructionReleaseExactCohort) {
+    harken::PrivateImmediateLaneGroupsPublicationProof survivor;
+    auto first = std::make_unique<PrivatePoolPublicationHarness>();
+    auto second = std::make_unique<PrivatePoolPublicationHarness>();
+    ASSERT_NO_FATAL_FAILURE(first->Prepare());
+    ASSERT_NO_FATAL_FAILURE(second->Prepare());
+    ASSERT_TRUE(first->pool.ProvePrivateImmediateLaneGroupsPublication(first->lanePublication, &survivor));
+    harken::PrivateImmediateLaneGroupsPublicationProof other;
+    ASSERT_TRUE(second->pool.ProvePrivateImmediateLaneGroupsPublication(second->lanePublication, &other));
+    survivor = std::move(other);
+    EXPECT_FALSE(other.Valid());
+    for (unsigned index = 0; index < first->count; ++index) {
+        harken::Plan03PageGroupView view{};
+        ASSERT_TRUE(first->pool.ResolvePlan03GroupSliceProducer(first->groups[index], &view));
+        EXPECT_EQ(harken::AudioSliceState::Ready, view.lease->Capture().state);
+    }
+    harken::PrivateImmediateLaneGroupsPublicationProof moved(std::move(survivor));
+    EXPECT_FALSE(survivor.Valid());
+    moved.Release();
+    ASSERT_TRUE(second->pool.ProvePrivateImmediateLaneGroupsPublication(second->lanePublication, &survivor));
+    second->lanePublication.Release();
+    second.reset();
+    EXPECT_FALSE(survivor.Valid());
+    survivor.Release();
+    first->lanePublication.Release();
+    ASSERT_NO_FATAL_FAILURE(first->Cleanup(first->handle));
+}
 
 TEST(ScheduledTransactionPool, MixedTimeRealGroupCapacitySlideReordersOriginalPinnedGroups) {
     MixedTimeGroupHarness h;
@@ -2253,6 +2681,192 @@ TEST(ScheduledTransactionPool, MixedTimePinnedCrossSliceFuturePrecedesSlidUnrela
     EXPECT_EQ(0u, transitions.LiveCount());
     EXPECT_EQ(0u, pool.CaptureImmediateLaneCohortGroups(17, nullptr, 0));
     EXPECT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+}
+
+TEST(ScheduledTransactionPool, NativeDisposalReportsPartialSuccessBeforeSlotReuse) {
+    ScheduledTransactionPool pool;
+    auto config = MakeConfig();
+    config.maxPlan03GroupHeadersPerPage = 2;
+    config.maxArmsPerGroup = 1;
+    config.maxImmediateLaneGroupRows = 2;
+    config.maxImmediateLaneOwnerGates = 2;
+    config.maxImmediateLaneDecisionGates = 2;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    harken::TimelineArmTable arms(1);
+    harken::DecisionTable decisions(2, 2);
+    std::array<harken::DecisionToken, 2> decisionTokens{};
+    std::array<harken::Plan03GroupSliceInput, 2> inputs{};
+    std::array<harken::Plan03GroupSliceIdentity, 2> identities{};
+    std::array<harken::OriginalQueueFutureGroupRegistration, 2> baselines{};
+    struct Observation {
+        harken::Plan03GroupSliceIdentity identity{};
+        std::uint64_t root = 0;
+        std::uint64_t domain = UINT64_MAX;
+        bool baselinePresent = false;
+    };
+    struct Observations {
+        decltype(baselines)* originals = nullptr;
+        std::array<Observation, 3> events{};
+        std::size_t count = 0;
+    } observed{&baselines};
+    pool.SetImmediateLaneGroupDisposalObserver(&observed,
+        [](void* opaque, harken::Plan03GroupSliceIdentity identity,
+            std::uint64_t root, std::uint64_t domain) noexcept {
+            auto& values = *static_cast<Observations*>(opaque);
+            const auto index = values.count++;
+            if (index >= values.events.size()) return;
+            const auto& original = (*values.originals)[identity.committedRow];
+            values.events[index] = {identity, root, domain,
+                original.Valid() && original.Identity() == identity};
+        });
+    for (std::uint32_t index = 0; index < decisionTokens.size(); ++index) {
+        harken::DecisionReserveRequest request{};
+        request.ticket.sequence = index + 1u;
+        request.world = 7;
+        request.transport = kEpoch;
+        request.expectedContinuationGeneration = 1;
+        request.sliceCount = 1;
+        ASSERT_TRUE(decisions.Reserve(request, &decisionTokens[index]));
+        inputs[index].executeFrame = 120 + 40u * index;
+        inputs[index].decision = decisionTokens[index];
+        harken::PreparedPrivateImmediateLaneGroup prepared;
+        ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, inputs[index], arms, &identities[index], &prepared));
+        harken::PrivateImmediateLaneGroupTransferProof proof;
+        ASSERT_TRUE(pool.ProvePrivateImmediateLaneGroupTransfer(prepared, 17, 100, inputs[index], arms, &proof));
+        ASSERT_TRUE(pool.ConsumePrivateImmediateLaneGroupTransfer(std::move(proof), &baselines[identities[index].committedRow]));
+        auto& baseline = baselines[identities[index].committedRow];
+        harken::OriginalQueueFutureGroupScope scope{};
+        ASSERT_TRUE(baseline.CaptureOriginalScope(pool, arms, &scope));
+        EXPECT_EQ(17u, scope.cohortRoot);
+        EXPECT_EQ(100u, scope.provisionalAnchorFrame);
+        EXPECT_EQ(0u, scope.selectedFutureDomain);
+        EXPECT_EQ(inputs[index].executeFrame, scope.input.executeFrame);
+        EXPECT_EQ(inputs[index].decision.slot, scope.input.decision.slot);
+        EXPECT_EQ(inputs[index].decision.generation, scope.input.decision.generation);
+        EXPECT_EQ(0u, scope.input.memberCount);
+        EXPECT_TRUE(baseline.MatchesOriginalScope(scope.cohortRoot,
+            scope.provisionalAnchorFrame, scope.input, arms));
+        harken::ScheduledTransactionPool foreignPool;
+        harken::TimelineArmTable foreignArms(1);
+        EXPECT_FALSE(baseline.CaptureOriginalScope(foreignPool, arms, &scope));
+        EXPECT_FALSE(baseline.CaptureOriginalScope(pool, foreignArms, &scope));
+        EXPECT_EQ(100u, scope.provisionalAnchorFrame);
+    }
+    harken::OriginalQueueFutureGroupLifetimePin busy;
+    ASSERT_TRUE(baselines[identities[1].committedRow].BorrowLifetime(&busy));
+    EXPECT_FALSE(pool.CancelImmediateLaneGroups(17, 0, baselines.data(), baselines.size()));
+    ASSERT_EQ(1u, observed.count);
+    EXPECT_EQ(identities[0], observed.events[0].identity);
+    EXPECT_EQ(17u, observed.events[0].root);
+    EXPECT_EQ(0u, observed.events[0].domain);
+    EXPECT_TRUE(observed.events[0].baselinePresent);
+    EXPECT_FALSE(baselines[identities[0].committedRow].Valid());
+    harken::OriginalQueueFutureGroupScope refusedScope{};
+    refusedScope.cohortRoot = 99;
+    EXPECT_FALSE(baselines[identities[0].committedRow].CaptureOriginalScope(pool, arms, &refusedScope));
+    EXPECT_EQ(99u, refusedScope.cohortRoot);
+    EXPECT_TRUE(baselines[identities[1].committedRow].Valid());
+    EXPECT_TRUE(busy.Valid());
+    EXPECT_FALSE(pool.CancelPrivateImmediateLaneGroup(17, identities[0]));
+    EXPECT_EQ(1u, observed.count);
+    busy.Release();
+    ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 0, baselines.data(), baselines.size()));
+    ASSERT_EQ(2u, observed.count);
+    EXPECT_EQ(identities[1], observed.events[1].identity);
+    EXPECT_TRUE(observed.events[1].baselinePresent);
+    ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 0, baselines.data(), baselines.size()));
+    EXPECT_EQ(2u, observed.count);
+
+    harken::PreparedPrivateImmediateLaneGroup replacement;
+    harken::Plan03GroupSliceIdentity next{};
+    ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, inputs[0], arms, &next, &replacement));
+    ASSERT_EQ(identities[0].committedRow, next.committedRow);
+    EXPECT_NE(identities[0].rowClaimGeneration, next.rowClaimGeneration);
+    harken::PrivateImmediateLaneGroupTransferProof proof;
+    ASSERT_TRUE(pool.ProvePrivateImmediateLaneGroupTransfer(replacement, 17, 100, inputs[0], arms, &proof));
+    ASSERT_TRUE(pool.ConsumePrivateImmediateLaneGroupTransfer(std::move(proof), &baselines[next.committedRow]));
+    EXPECT_FALSE(pool.CancelPrivateImmediateLaneGroup(17, identities[0], &baselines[next.committedRow]));
+    EXPECT_EQ(2u, observed.count);
+    ASSERT_TRUE(pool.CancelPrivateImmediateLaneGroup(17, next, &baselines[next.committedRow]));
+    ASSERT_EQ(3u, observed.count);
+    EXPECT_EQ(next, observed.events[2].identity);
+    EXPECT_TRUE(observed.events[2].baselinePresent);
+    EXPECT_EQ(identities[0], observed.events[0].identity);
+    EXPECT_FALSE(pool.CancelPrivateImmediateLaneGroup(17, next));
+    EXPECT_EQ(3u, observed.count);
+    for (const auto token : decisionTokens) {
+        ASSERT_TRUE(decisions.Cancel(token));
+        ASSERT_TRUE(decisions.ReclaimCancelled(token));
+    }
+    pool.SetImmediateLaneGroupDisposalObserver(nullptr, nullptr);
+    EXPECT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+}
+
+TEST(ScheduledTransactionPool, OriginalQueueGroupScopePreservesIssuedInputsAfterRebase) {
+    ScheduledTransactionPool pool;
+    auto config = MakeConfig();
+    config.maxPlan03GroupHeadersPerPage = 1;
+    config.maxArmsPerGroup = 2;
+    config.maxImmediateLaneGroupRows = 1;
+    config.maxImmediateLaneOwnerGates = 1;
+    config.maxImmediateLaneDecisionGates = 1;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    harken::TimelineArmTable arms(2);
+    harken::DecisionTable decisions(1, 1);
+    harken::DecisionReserveRequest request{{9}, 7, kEpoch, 1, 1, {}};
+    harken::DecisionToken decision{};
+    ASSERT_TRUE(decisions.Reserve(request, &decision));
+    std::array<harken::TimelineArmToken, 2> tokens{};
+    for (std::uint16_t member = 0; member < tokens.size(); ++member) {
+        harken::TimelineSemanticTarget target{};
+        target.programSemanticFingerprint = 40 + member;
+        ASSERT_TRUE(arms.PreparePendingImmediateGrouped(member, 1, member + 1, target,
+            harken::ParentAudioGroupRef{decision}, member, &tokens[member]));
+    }
+    harken::ImmediateEntryAttemptGate gate;
+    ASSERT_TRUE(gate.Prepare(4));
+    harken::Plan03GroupSliceInput input{};
+    input.executeFrame = 120;
+    input.decision = decision;
+    input.members = tokens.data();
+    input.memberCount = 2;
+    input.sourceControlCount = 1;
+    input.immediateEntry = {&gate, 4};
+    harken::Plan03GroupSliceIdentity identity{};
+    harken::PreparedPrivateImmediateLaneGroup prepared;
+    ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &identity, &prepared));
+    harken::PrivateImmediateLaneGroupTransferProof transfer;
+    ASSERT_TRUE(pool.ProvePrivateImmediateLaneGroupTransfer(prepared, 17, 100, input, arms, &transfer));
+    harken::OriginalQueueFutureGroupRegistration original;
+    ASSERT_TRUE(pool.ConsumePrivateImmediateLaneGroupTransfer(std::move(transfer), &original));
+    ASSERT_TRUE(pool.RebaseImmediateLaneGroups(17, 300));
+    harken::OriginalQueueFutureGroupScope scope{};
+    ASSERT_TRUE(original.CaptureOriginalScope(pool, arms, &scope));
+    EXPECT_EQ(17u, scope.cohortRoot);
+    EXPECT_EQ(100u, scope.provisionalAnchorFrame);
+    EXPECT_EQ(120u, scope.input.executeFrame);
+    EXPECT_EQ(2u, scope.input.memberCount);
+    EXPECT_EQ(1u, scope.input.sourceControlCount);
+    EXPECT_EQ(&gate, scope.input.immediateEntry.gate);
+    EXPECT_EQ(4u, scope.input.immediateEntry.generation);
+    ASSERT_NE(nullptr, scope.input.members);
+    for (std::uint16_t member = 0; member < tokens.size(); ++member) {
+        EXPECT_EQ(tokens[member].slot, scope.input.members[member].slot);
+        EXPECT_EQ(tokens[member].generation, scope.input.members[member].generation);
+        EXPECT_EQ(tokens[member].renderSlot, scope.input.members[member].renderSlot);
+        EXPECT_EQ(tokens[member].renderGeneration, scope.input.members[member].renderGeneration);
+    }
+    EXPECT_TRUE(original.MatchesOriginalScope(scope.cohortRoot,
+        scope.provisionalAnchorFrame, scope.input, arms));
+    auto rebased = scope.input;
+    rebased.executeFrame = 320;
+    EXPECT_FALSE(original.MatchesOriginalScope(17, 300, rebased, arms));
+    ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 0, &original, 1));
+    EXPECT_FALSE(original.CaptureOriginalScope(pool, arms, &scope));
+    EXPECT_EQ(100u, scope.provisionalAnchorFrame);
+    for (const auto token : tokens) ASSERT_TRUE(arms.CancelPrepared(token));
+    ASSERT_TRUE(decisions.Cancel(decision));
+    ASSERT_TRUE(decisions.ReclaimCancelled(decision));
 }
 
 TEST(ScheduledTransactionPool, PrivateLaneTransferProofMaximumGenerationIsRealAndExhaustionDoesNotWrap) {
@@ -4178,6 +4792,397 @@ TEST(ScheduledTransactionPool, PublishedEmptyPrefixRequiresExactPublishedUnreuse
     EXPECT_EQ(UINT64_MAX, pool.PublishedEmptyPrefixEnd(UINT64_MAX, UINT64_MAX));
 }
 
+TEST(ScheduledTransactionPool, CurrentSliceOrderPreservesWritesAcrossRecycledSliceSlots) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 2;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    harken::ScheduledCurrentSliceInput slice{};
+    slice.executeFrame = 100;
+    slice.logicCommitSequence = 7;
+    slice.slice = {99, 1};
+    ASSERT_EQ(ReserveStatus::Committed,
+              pool.ReserveCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0).status);
+    slice.slice = {0, 2};
+    ASSERT_EQ(ReserveStatus::Committed,
+              pool.ReserveCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0).status);
+    pool.Publish(200);
+    std::array<harken::ConsumedCurrentSlice, 2> consumed{};
+    ASSERT_EQ(2u, pool.ConsumeCurrentSlicesRt(1, consumed.data(), consumed.size()));
+    EXPECT_EQ(99u, consumed[0].slice.slot);
+    EXPECT_EQ(0u, consumed[1].slice.slot);
+}
+
+TEST(ScheduledTransactionPool, NativeStartCalendarsHaveIndependentQuotaAndCancellationRecovery) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 2;
+    config.maxNativeStartCalendarsPerQuantum = 1;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    EXPECT_EQ(2u, pool.MaxVariableCurrentSlicesPerQuantum());
+    EXPECT_EQ(3u, pool.MaxCurrentSlicesPerQuantum());
+    harken::ScheduledCurrentSliceInput input{};
+    input.executeFrame = 100;
+    input.logicCommitSequence = 1;
+    input.slice = {1, 1};
+    ASSERT_EQ(ReserveStatus::Committed, pool.ReserveCurrentSlice(input, PrePublishLatePolicy::Refuse, 0).status);
+    input.kind = harken::CurrentSliceKind::MeterProbeWithdrawal;
+    input.slice = {2, 1};
+    ASSERT_EQ(ReserveStatus::Committed, pool.ReserveCurrentSlice(input, PrePublishLatePolicy::Refuse, 0).status);
+    input.slice = {3, 1};
+    EXPECT_EQ(ReserveRefusal::PageEventCapacity, pool.ReserveCurrentSlice(input, PrePublishLatePolicy::Refuse, 0).refusal);
+    input.kind = harken::CurrentSliceKind::NativeStartCalendar;
+    input.executionOrdinal = 7;
+    harken::HeldCurrentSliceToken first, replacement;
+    ASSERT_EQ(ReserveStatus::Committed, pool.ReserveHeldCurrentSlice(input, PrePublishLatePolicy::Refuse, 0, &first).status);
+    input.slice = {4, 2};
+    EXPECT_EQ(ReserveRefusal::PageEventCapacity,
+        pool.ReserveHeldCurrentSlice(input, PrePublishLatePolicy::Refuse, 0, &replacement).refusal);
+    EXPECT_FALSE(replacement.IsHeld());
+    ASSERT_TRUE(pool.CancelHeldCurrentSlice(&first));
+    ASSERT_EQ(ReserveStatus::Committed, pool.ReserveHeldCurrentSlice(input, PrePublishLatePolicy::Refuse, 0, &replacement).status);
+    ASSERT_TRUE(pool.ReleaseHeldCurrentSlice(&replacement));
+    pool.Publish(200);
+    std::array<harken::ConsumedCurrentSlice, 3> consumed{};
+    EXPECT_EQ(3u, pool.ConsumeCurrentSlicesRt(1, consumed.data(), 2));
+    ASSERT_EQ(3u, pool.ConsumeCurrentSlicesRt(1, consumed.data(), consumed.size()));
+    EXPECT_EQ(harken::CurrentSliceKind::VariableBankCut, consumed[0].kind);
+    EXPECT_EQ(harken::CurrentSliceKind::MeterProbeWithdrawal, consumed[1].kind);
+    EXPECT_EQ(harken::CurrentSliceKind::NativeStartCalendar, consumed[2].kind);
+    EXPECT_EQ(4u, consumed[2].slice.slot);
+    EXPECT_EQ(2u, consumed[2].slice.generation);
+    EXPECT_EQ(7u, consumed[2].executionOrdinal);
+}
+
+TEST(ScheduledTransactionPool, NativeStartCalendarRejectsUnknownKindAndCapacityOverflow) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = UINT32_MAX;
+    config.maxNativeStartCalendarsPerQuantum = 1;
+    ScheduledTransactionPool pool;
+    EXPECT_FALSE(pool.Reset(config, 0, kEpoch));
+    config = MakeConfig();
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    harken::ScheduledCurrentSliceInput input{};
+    input.logicCommitSequence = 1;
+    input.slice = {1, 1};
+    input.kind = static_cast<harken::CurrentSliceKind>(255);
+    harken::HeldCurrentSliceToken held;
+    EXPECT_EQ(ReserveStatus::Refused, pool.ReserveHeldCurrentSlice(input, PrePublishLatePolicy::Refuse, 0, &held).status);
+    EXPECT_FALSE(held.IsHeld());
+    input.kind = harken::CurrentSliceKind::NativeStartCalendar;
+    EXPECT_EQ(ReserveRefusal::PageEventCapacity, pool.ReserveCurrentSlice(input, PrePublishLatePolicy::Refuse, 0).refusal);
+    EXPECT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+}
+
+TEST(ScheduledTransactionPool, HeldCurrentSliceCancelPreservesUnrelatedRowsAndHolds) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 3;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    harken::ScheduledCurrentSliceInput slice{};
+    slice.executeFrame = 100;
+    slice.logicCommitSequence = 7;
+    slice.slice = {9, 1};
+    harken::HeldCurrentSliceToken first, second;
+    ASSERT_EQ(ReserveStatus::Committed,
+              pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &first).status);
+    slice.logicCommitSequence = 8;
+    slice.kind = harken::CurrentSliceKind::MeterProbeWithdrawal;
+    slice.slice = {7, 1};
+    ASSERT_EQ(ReserveStatus::Committed,
+              pool.ReserveCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0).status);
+    slice.logicCommitSequence = 9;
+    slice.kind = harken::CurrentSliceKind::VariableBankCut;
+    slice.slice = {1, 2};
+    ASSERT_EQ(ReserveStatus::Committed,
+              pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &second).status);
+
+    pool.Publish(400);
+    EXPECT_EQ(100u, pool.PublishCutoffFrame());
+    EXPECT_EQ(0u, pool.PageStamp(0));
+    EXPECT_EQ(harken::kUnpublishedQuantumStamp, pool.PageStamp(1));
+    ASSERT_TRUE(pool.CancelHeldCurrentSlice(&first));
+    EXPECT_FALSE(first.IsHeld());
+    EXPECT_FALSE(pool.CancelHeldCurrentSlice(&first));
+    ASSERT_TRUE(pool.CanReleaseHeldCurrentSlice(second));
+    pool.Publish(400);
+    EXPECT_EQ(100u, pool.PublishCutoffFrame());
+    ASSERT_TRUE(pool.ReleaseHeldCurrentSlice(&second));
+    EXPECT_FALSE(pool.ReleaseHeldCurrentSlice(&second));
+    pool.Publish(400);
+    EXPECT_EQ(400u, pool.PublishCutoffFrame());
+    std::array<harken::ConsumedCurrentSlice, 3> consumed{};
+    ASSERT_EQ(2u, pool.ConsumeCurrentSlicesRt(1, consumed.data(), consumed.size()));
+    EXPECT_EQ(7u, consumed[0].slice.slot);
+    EXPECT_EQ(harken::CurrentSliceKind::MeterProbeWithdrawal, consumed[0].kind);
+    EXPECT_EQ(1u, consumed[1].slice.slot);
+}
+
+TEST(ScheduledTransactionPool, HeldCurrentSliceCapacityRefusalLeavesNoReservationAndRecovers) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 1;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    harken::ScheduledCurrentSliceInput slice{};
+    slice.executeFrame = 100;
+    slice.logicCommitSequence = 7;
+    slice.slice = {9, 1};
+    harken::HeldCurrentSliceToken first, second;
+    ASSERT_EQ(ReserveStatus::Committed,
+              pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &first).status);
+    EXPECT_EQ(ReserveStatus::Refused,
+              pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &first).status);
+    slice.slice = {1, 2};
+    const auto refused = pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &second);
+    EXPECT_EQ(ReserveStatus::Refused, refused.status);
+    EXPECT_EQ(ReserveRefusal::PageEventCapacity, refused.refusal);
+    EXPECT_FALSE(second.IsHeld());
+    ASSERT_TRUE(pool.CancelHeldCurrentSlice(&first));
+    ASSERT_EQ(ReserveStatus::Committed,
+              pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &second).status);
+    ASSERT_TRUE(pool.ReleaseHeldCurrentSlice(&second));
+    pool.Publish(200);
+    harken::ConsumedCurrentSlice consumed{};
+    ASSERT_EQ(1u, pool.ConsumeCurrentSlicesRt(1, &consumed, 1));
+    EXPECT_EQ(1u, consumed.slice.slot);
+}
+
+TEST(ScheduledTransactionPool, HeldCurrentSliceOwnershipBlocksResetDropAndPageReuseUntilCancelled) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 1;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    harken::ScheduledCurrentSliceInput slice{};
+    slice.logicCommitSequence = 7;
+    slice.slice = {0, 1};
+    harken::HeldCurrentSliceToken held;
+    ASSERT_EQ(ReserveStatus::Committed,
+              pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &held).status);
+    pool.Publish(100);
+    pool.ConsumerFrontier().store(1, std::memory_order_release);
+    EXPECT_FALSE(pool.Advance());
+    EXPECT_FALSE(pool.ResetForEpoch(0, kEpoch + 1));
+    EXPECT_FALSE(pool.Reset(config, 0, kEpoch));
+    pool.DropPreparedOccupancy();
+    ASSERT_TRUE(pool.CanReleaseHeldCurrentSlice(held));
+    ASSERT_TRUE(pool.CancelHeldCurrentSlice(&held));
+    ASSERT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+    harken::HeldCurrentSliceToken next;
+    ASSERT_EQ(ReserveStatus::Committed,
+              pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &next).status);
+    EXPECT_FALSE(pool.ReleaseHeldCurrentSlice(&held));
+    ASSERT_TRUE(pool.CanReleaseHeldCurrentSlice(next));
+    ASSERT_TRUE(pool.CancelHeldCurrentSlice(&next));
+    EXPECT_TRUE(pool.Reset(config, 0, kEpoch));
+}
+
+TEST(ScheduledTransactionPool, HeldCurrentSliceMoveAndScopeExitCancelOnlyTheOwningPool) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 1;
+    ScheduledTransactionPool firstPool, secondPool;
+    ASSERT_TRUE(firstPool.Reset(config, 0, kEpoch));
+    ASSERT_TRUE(secondPool.Reset(config, 0, kEpoch));
+    harken::ScheduledCurrentSliceInput slice{};
+    slice.logicCommitSequence = 7;
+    slice.slice = {0, 1};
+    harken::HeldCurrentSliceToken second;
+    ASSERT_EQ(ReserveStatus::Committed,
+              secondPool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &second).status);
+    {
+        harken::HeldCurrentSliceToken first;
+        ASSERT_EQ(ReserveStatus::Committed,
+                  firstPool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &first).status);
+        EXPECT_FALSE(secondPool.ReleaseHeldCurrentSlice(&first));
+        harken::HeldCurrentSliceToken moved(std::move(first));
+        EXPECT_FALSE(first.IsHeld());
+        EXPECT_TRUE(firstPool.CanReleaseHeldCurrentSlice(moved));
+        EXPECT_TRUE(secondPool.CanReleaseHeldCurrentSlice(second));
+    }
+    EXPECT_TRUE(firstPool.ResetForEpoch(0, kEpoch + 1));
+    EXPECT_FALSE(secondPool.ResetForEpoch(0, kEpoch + 1));
+    ASSERT_TRUE(secondPool.CancelHeldCurrentSlice(&second));
+}
+
+TEST(ScheduledTransactionPool, HeldCurrentSliceReschedulingRetainsSemanticActionOrder) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 2;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    harken::ScheduledCurrentSliceInput slice{};
+    slice.executeFrame = 20;
+    slice.logicCommitSequence = 7;
+    slice.executionOrdinal = 2;
+    slice.slice = {0, 1};
+    harken::HeldCurrentSliceToken later, earlier;
+    const auto reserved = pool.ReserveHeldCurrentSlice(
+        slice, PrePublishLatePolicy::ExecuteAtEarliestSafeFrame, 100, &later);
+    ASSERT_EQ(ReserveStatus::Committed, reserved.status);
+    EXPECT_TRUE(reserved.rescheduled);
+    EXPECT_EQ(100u, later.ExecuteFrame());
+    slice.executeFrame = 100;
+    slice.executionOrdinal = 1;
+    slice.slice = {99, 1};
+    ASSERT_EQ(ReserveStatus::Committed,
+              pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &earlier).status);
+    ASSERT_TRUE(pool.ReleaseHeldCurrentSlice(&later));
+    ASSERT_TRUE(pool.ReleaseHeldCurrentSlice(&earlier));
+    pool.Publish(200);
+    std::array<harken::ConsumedCurrentSlice, 2> consumed{};
+    ASSERT_EQ(2u, pool.ConsumeCurrentSlicesRt(1, consumed.data(), consumed.size()));
+    EXPECT_EQ(1u, consumed[0].executionOrdinal);
+    EXPECT_EQ(99u, consumed[0].slice.slot);
+    EXPECT_EQ(2u, consumed[1].executionOrdinal);
+    EXPECT_EQ(0u, consumed[1].slice.slot);
+}
+
+TEST(ScheduledTransactionPool, HeldCurrentSliceMoveAssignmentCancelsDestinationReservation) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 2;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    harken::ScheduledCurrentSliceInput slice{};
+    slice.logicCommitSequence = 7;
+    slice.slice = {0, 1};
+    harken::HeldCurrentSliceToken first, second;
+    ASSERT_EQ(ReserveStatus::Committed,
+        pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &first).status);
+    slice.slice = {1, 1};
+    ASSERT_EQ(ReserveStatus::Committed,
+        pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &second).status);
+    first = std::move(second);
+    EXPECT_FALSE(second.IsHeld());
+    ASSERT_TRUE(pool.ReleaseHeldCurrentSlice(&first));
+    pool.Publish(100);
+    std::array<harken::ConsumedCurrentSlice, 2> consumed{};
+    ASSERT_EQ(1u, pool.ConsumeCurrentSlicesRt(0, consumed.data(), consumed.size()));
+    EXPECT_EQ(1u, consumed[0].slice.slot);
+}
+
+TEST(ScheduledTransactionPool, HeldCurrentSliceCanCancelAfterWindowOverflowAtFirstOrLaterPage) {
+    for (auto offset : {0u, 100u}) {
+        SCOPED_TRACE(offset);
+        auto config = MakeConfig();
+        config.maxCurrentSlicesPerQuantum = 1;
+        ScheduledTransactionPool pool;
+        const auto start = (UINT64_MAX - 400u) / 100u * 100u;
+        ASSERT_TRUE(pool.Reset(config, start, kEpoch));
+        harken::ScheduledCurrentSliceInput slice{};
+        slice.executeFrame = start + offset;
+        slice.logicCommitSequence = 7;
+        slice.slice = {0, 1};
+        harken::HeldCurrentSliceToken held;
+        ASSERT_EQ(ReserveStatus::Committed,
+            pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, start, &held).status);
+        EXPECT_EQ(0u, pool.Advance());
+        EXPECT_FALSE(pool.Valid());
+        EXPECT_FALSE(pool.CanReleaseHeldCurrentSlice(held));
+        EXPECT_FALSE(pool.ReleaseHeldCurrentSlice(&held));
+        ASSERT_TRUE(pool.CancelHeldCurrentSlice(&held));
+        EXPECT_TRUE(pool.Reset(config, 0, kEpoch + 1));
+    }
+}
+
+TEST(ScheduledTransactionPool, HeldCurrentSliceLaterPageAllowsUnrelatedPageToAdvance) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 1;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    harken::ScheduledCurrentSliceInput slice{};
+    slice.executeFrame = 100;
+    slice.logicCommitSequence = 7;
+    slice.slice = {0, 1};
+    harken::HeldCurrentSliceToken held;
+    ASSERT_EQ(ReserveStatus::Committed,
+        pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &held).status);
+    pool.Publish(100);
+    pool.ConsumerFrontier().store(1, std::memory_order_release);
+    pool.Advance();
+    EXPECT_EQ(100u, pool.WindowStartFrame());
+    ASSERT_TRUE(pool.CanReleaseHeldCurrentSlice(held));
+    ASSERT_TRUE(pool.CancelHeldCurrentSlice(&held));
+}
+
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+TEST(ScheduledTransactionPool, OrdinaryEventsCannotWrapExhaustedCurrentSliceIdentity) {
+    Harness h;
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 2;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    harken::ScheduledCurrentSliceInput slice{};
+    slice.logicCommitSequence = 7;
+    slice.slice = {0, 1};
+    harken::HeldCurrentSliceToken first, second;
+    harken::detail::ScheduledTransactionPoolCancelTestAccess::SetCurrentSliceSerial(pool, UINT64_MAX - 1);
+    ASSERT_EQ(ReserveStatus::Committed,
+        pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &first).status);
+    ScheduledEventInput event{};
+    event.executeFrame = 10;
+    TransactionRequest request{};
+    request.transportEpoch = kEpoch;
+    request.ownerInstanceHandle = h.owner;
+    request.ownerInstanceScheduleEpoch = h.ownerEpoch;
+    request.events = &event;
+    request.eventCount = 1;
+    for (auto id : {11u, 12u}) {
+        request.transactionId = id;
+        ASSERT_EQ(ReserveStatus::Committed, pool.Reserve(request, PrePublishLatePolicy::Refuse).status);
+    }
+    const auto refused = pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &second);
+    EXPECT_EQ(ReserveStatus::Refused, refused.status);
+    EXPECT_EQ(ReserveRefusal::CommitSerialExhausted, refused.refusal);
+    EXPECT_FALSE(second.IsHeld());
+    ASSERT_TRUE(pool.CancelHeldCurrentSlice(&first));
+    EXPECT_TRUE(pool.Reset(config, 0, kEpoch + 1));
+}
+
+TEST(ScheduledTransactionPool, HeldCurrentSliceCanRollBackAfterUnrelatedPageGenerationExhaustion) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 1;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    ASSERT_TRUE(harken::detail::ScheduledTransactionPoolCancelTestAccess::SetEmptyPageGeneration(
+        pool, 0, UINT64_MAX));
+    harken::ScheduledCurrentSliceInput slice{};
+    slice.executeFrame = 100;
+    slice.logicCommitSequence = 7;
+    slice.slice = {0, 1};
+    {
+        harken::HeldCurrentSliceToken held;
+        ASSERT_EQ(ReserveStatus::Committed,
+            pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &held).status);
+        pool.Publish(100);
+        pool.ConsumerFrontier().store(1, std::memory_order_release);
+        EXPECT_EQ(0u, pool.Advance());
+        EXPECT_FALSE(pool.Valid());
+        EXPECT_FALSE(pool.Reset(config, 0, kEpoch + 1));
+    }
+    EXPECT_TRUE(pool.Reset(config, 0, kEpoch + 1));
+}
+
+TEST(ScheduledTransactionPool, CurrentSliceSerialExhaustionRefusesWithoutAbaOrPublicationHold) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 1;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    harken::ScheduledCurrentSliceInput slice{};
+    slice.logicCommitSequence = 7;
+    slice.slice = {0, 1};
+    harken::HeldCurrentSliceToken held;
+    harken::detail::ScheduledTransactionPoolCancelTestAccess::SetCurrentSliceSerial(pool, UINT64_MAX);
+    const auto refused = pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &held);
+    EXPECT_EQ(ReserveStatus::Refused, refused.status);
+    EXPECT_EQ(ReserveRefusal::CommitSerialExhausted, refused.refusal);
+    EXPECT_FALSE(held.IsHeld());
+    EXPECT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+    ASSERT_EQ(ReserveStatus::Committed,
+              pool.ReserveHeldCurrentSlice(slice, PrePublishLatePolicy::Refuse, 0, &held).status);
+    EXPECT_TRUE(pool.ReleaseHeldCurrentSlice(&held));
+    pool.Publish(100);
+    EXPECT_EQ(0u, pool.PageStamp(0));
+}
+#endif
+
 TEST(ScheduledTransactionPool, PublishedEmptyPrefixStopsBeforeEventsSlicesGroupsAndPreparation) {
     Harness h;
     for (unsigned kind = 0; kind < 4; ++kind) {
@@ -4325,6 +5330,69 @@ TEST(ScheduledTransactionPool,
                       gate.Observe(1));
         }
     }
+}
+
+TEST(ScheduledTransactionPool, ImmediateEntryPublicationProofRefusesAudioAndCancelUntilCommitOrReturn) {
+    using State = harken::ImmediateEntryAttemptState;
+    using Gate = harken::ImmediateEntryAttemptGate;
+    Gate gate;
+    Gate::PublicationProof proof;
+    ASSERT_TRUE(gate.Prepare(1));
+    EXPECT_FALSE(gate.ProvePublication(2, &proof));
+    EXPECT_FALSE(proof.Valid());
+    ASSERT_TRUE(gate.ProvePublication(1, &proof));
+    EXPECT_EQ(State::PublicationHeld, gate.Observe(1));
+    EXPECT_FALSE(gate.AdmitAudio(1));
+    EXPECT_EQ(State::PublicationHeld, gate.Observe(1));
+    EXPECT_FALSE(gate.Abort(1));
+    EXPECT_FALSE(gate.Finalize(1));
+    EXPECT_FALSE(gate.Commit(1));
+    EXPECT_FALSE(gate.Retire(1));
+    EXPECT_FALSE(gate.Prepare(2));
+    Gate::PublicationProof other;
+    EXPECT_FALSE(gate.ProvePublication(1, &other));
+    EXPECT_FALSE(other.Valid());
+    proof.Release();
+    EXPECT_EQ(State::Preparing, gate.Observe(1));
+    ASSERT_TRUE(gate.ProvePublication(1, &proof));
+    Gate::ApplyPublication(std::move(proof));
+    EXPECT_FALSE(proof.Valid());
+    EXPECT_EQ(State::Committed, gate.Observe(1));
+    EXPECT_TRUE(gate.AdmitAudio(1));
+    EXPECT_FALSE(gate.ProvePublication(1, &proof));
+    ASSERT_TRUE(gate.Retire(1));
+    ASSERT_TRUE(gate.Prepare(2));
+    EXPECT_FALSE(gate.ProvePublication(1, &proof));
+    ASSERT_TRUE(gate.Abort(2));
+    ASSERT_TRUE(gate.Retire(2));
+}
+
+TEST(ScheduledTransactionPool, ImmediateEntryPublicationProofMoveAbandonAndOwnerDestructionReturnOriginalGeneration) {
+    using State = harken::ImmediateEntryAttemptState;
+    using Gate = harken::ImmediateEntryAttemptGate;
+    Gate::PublicationProof survivor;
+    {
+        Gate first, second;
+        ASSERT_TRUE(first.Prepare(1));
+        ASSERT_TRUE(second.Prepare(7));
+        ASSERT_TRUE(first.ProvePublication(1, &survivor));
+        Gate::PublicationProof other;
+        EXPECT_FALSE(second.ProvePublication(7, &survivor));
+        ASSERT_TRUE(second.ProvePublication(7, &other));
+        survivor = std::move(other);
+        EXPECT_FALSE(other.Valid());
+        EXPECT_EQ(State::Preparing, first.Observe(1));
+        ASSERT_TRUE(first.Abort(1));
+        ASSERT_TRUE(first.Retire(1));
+        Gate::PublicationProof moved(std::move(survivor));
+        EXPECT_FALSE(survivor.Valid());
+        EXPECT_EQ(State::PublicationHeld, second.Observe(7));
+        moved.Release();
+        EXPECT_EQ(State::Preparing, second.Observe(7));
+        ASSERT_TRUE(second.ProvePublication(7, &survivor));
+    }
+    EXPECT_FALSE(survivor.Valid());
+    survivor.Release();
 }
 
 TEST(ScheduledTransactionPool,

@@ -161,6 +161,9 @@ public:
     }
 
     bool Empty() const noexcept { return unresolved_ == 0; }
+    bool TransferredFor(std::uint64_t generation) const noexcept {
+        return Matches(generation) && phase_ == Phase::Transferred && unresolved_ == 0;
+    }
     std::uint32_t UnresolvedCount() const noexcept { return unresolved_; }
     std::uint32_t NextContextSlot(FrontierOwnerKind kind) const noexcept {
         const auto domain = static_cast<std::size_t>(kind);

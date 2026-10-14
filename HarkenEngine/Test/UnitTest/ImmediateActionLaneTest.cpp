@@ -92,6 +92,132 @@ TEST(ImmediateActionLane, BucketClaimReceiptExistsOnlyWhileExactClaimIsOwned) {
     EXPECT_TRUE(lane.Retire(second));
 }
 
+TEST(ImmediateActionLane, SourceWaitSuspensionReturnsCaptureAndResumesExactBucket) {
+    harken::ImmediateActionLane lane;
+    ASSERT_TRUE(lane.Reset({1, 1, 1, 64}));
+    const harken::TimelineProgramView program{};
+    const auto event = Event(0, &program, 0);
+    harken::ImmediateLaneHandle handle{};
+    ASSERT_TRUE(lane.Reserve(1, 1, &handle));
+    ASSERT_TRUE(lane.Prepare(handle, &event, 1));
+    std::uint64_t anchor = 0;
+    ASSERT_TRUE(lane.TryPlace(handle, 64, 0, &anchor));
+    ASSERT_TRUE(lane.Publish(handle));
+    const auto* original = lane.CaptureDue(handle.slot, 1);
+    ASSERT_NE(nullptr, original);
+    std::uint64_t quantum = 0;
+    EXPECT_FALSE(lane.CapturedSourceWaitQuantum(handle.slot, original, &quantum));
+    ASSERT_TRUE(lane.SuspendCaptureForSourceWait(handle.slot, original));
+    EXPECT_FALSE(lane.CapturedSourceWaitQuantum(handle.slot, original, &quantum));
+    harken::ImmediateLaneObservation observation{};
+    ASSERT_TRUE(lane.Observe(handle, &observation));
+    EXPECT_FALSE(observation.complete);
+    EXPECT_FALSE(observation.missed);
+    const auto* resumed = lane.CaptureDue(handle.slot, 4);
+    ASSERT_EQ(original, resumed);
+    ASSERT_TRUE(lane.CapturedSourceWaitQuantum(handle.slot, resumed, &quantum));
+    EXPECT_EQ(4u, quantum);
+    EXPECT_EQ(1u, resumed->quantum);
+    EXPECT_EQ(64u, lane.Events(handle.slot, resumed)[0].event.executeFrame);
+    ASSERT_TRUE(lane.SuspendCaptureForSourceWait(handle.slot, resumed));
+    resumed = lane.CaptureDue(handle.slot, 7);
+    ASSERT_EQ(original, resumed);
+    harken::ImmediateLaneBucketClaimReceipt receipt;
+    ASSERT_TRUE(lane.Claim(handle, resumed, &receipt));
+    EXPECT_EQ(1u, receipt.Quantum());
+    EXPECT_FALSE(lane.SuspendCaptureForSourceWait(handle.slot, resumed));
+    ASSERT_TRUE(lane.Finish(handle.slot, resumed, true));
+    EXPECT_EQ(8u, resumed->completedAudioSequence.load());
+    ASSERT_TRUE(lane.Observe(handle, &observation));
+    EXPECT_TRUE(observation.applied);
+    EXPECT_FALSE(observation.missed);
+    EXPECT_TRUE(lane.Retire(handle, 8));
+}
+
+TEST(ImmediateActionLane, SuspendedSourceWaitAllowsCancellationAndRejectsReusedGeneration) {
+    harken::ImmediateActionLane lane;
+    ASSERT_TRUE(lane.Reset({1, 1, 1, 64}));
+    const harken::TimelineProgramView program{};
+    const auto event = Event(0, &program, 0);
+    harken::ImmediateLaneHandle handle{};
+    ASSERT_TRUE(lane.Reserve(1, 1, &handle));
+    ASSERT_TRUE(lane.Prepare(handle, &event, 1));
+    std::uint64_t anchor = 0;
+    ASSERT_TRUE(lane.TryPlace(handle, 64, 0, &anchor));
+    ASSERT_TRUE(lane.Publish(handle));
+    const auto* bucket = lane.CaptureDue(handle.slot, 1);
+    ASSERT_NE(nullptr, bucket);
+    ASSERT_TRUE(lane.SuspendCaptureForSourceWait(handle.slot, bucket));
+    ASSERT_TRUE(lane.Cancel(handle));
+    EXPECT_EQ(nullptr, lane.CaptureDue(handle.slot, 8));
+    ASSERT_TRUE(lane.Retire(handle, 9));
+    harken::ImmediateLaneHandle reused{};
+    ASSERT_TRUE(lane.Reserve(2, 1, &reused));
+    ASSERT_NE(handle.generation, reused.generation);
+    ASSERT_TRUE(lane.Prepare(reused, &event, 1));
+    ASSERT_TRUE(lane.TryPlace(reused, 10 * 64, 0, &anchor));
+    ASSERT_TRUE(lane.Publish(reused));
+    // This attempt was never captured or suspended at its due time.
+    EXPECT_EQ(nullptr, lane.CaptureDue(reused.slot, 11));
+    harken::ImmediateLaneObservation observation{};
+    ASSERT_TRUE(lane.Observe(reused, &observation));
+    EXPECT_TRUE(observation.missed);
+    EXPECT_TRUE(lane.Retire(reused, 12));
+}
+
+TEST(ImmediateActionLane, SourceWaitDoesNotRetainUnrelatedFutureWithoutEntryIdentity) {
+    harken::ImmediateActionLane lane;
+    ASSERT_TRUE(lane.Reset({1, 2, 2, 64}));
+    const harken::TimelineProgramView program{};
+    const harken::ImmediateLaneEvent events[] = {Event(0, &program, 0), Event(128, &program, 1)};
+    harken::ImmediateLaneHandle handle{};
+    ASSERT_TRUE(lane.Reserve(1, 2, &handle));
+    ASSERT_TRUE(lane.Prepare(handle, events, 2));
+    std::uint64_t anchor = 0;
+    ASSERT_TRUE(lane.TryPlace(handle, 64, 0, &anchor));
+    ASSERT_TRUE(lane.Publish(handle));
+    const auto* first = lane.CaptureDue(handle.slot, 1);
+    ASSERT_NE(nullptr, first);
+    ASSERT_TRUE(lane.SuspendCaptureForSourceWait(handle.slot, first));
+    first = lane.CaptureDue(handle.slot, 3);
+    ASSERT_NE(nullptr, first);
+    ASSERT_TRUE(lane.Claim(handle, first));
+    ASSERT_TRUE(lane.Finish(handle.slot, first, true));
+    const auto* successor = lane.CaptureDue(handle.slot, 4);
+    EXPECT_EQ(nullptr, successor);
+    harken::ImmediateLaneObservation observation{};
+    ASSERT_TRUE(lane.Observe(handle, &observation));
+    EXPECT_TRUE(observation.complete);
+    EXPECT_TRUE(observation.missed);
+    EXPECT_TRUE(lane.Retire(handle, 5));
+}
+
+TEST(ImmediateActionLane, SourceWaitValidationRefusalRequiresActualResumedAudioCompletion) {
+    harken::ImmediateActionLane lane;
+    ASSERT_TRUE(lane.Reset({1, 1, 1, 64}));
+    const harken::TimelineProgramView program{};
+    const auto event = Event(0, &program, 0);
+    harken::ImmediateLaneHandle handle{};
+    ASSERT_TRUE(lane.Reserve(1, 1, &handle));
+    ASSERT_TRUE(lane.Prepare(handle, &event, 1));
+    std::uint64_t anchor = 0;
+    ASSERT_TRUE(lane.TryPlace(handle, 64, 0, &anchor));
+    ASSERT_TRUE(lane.Publish(handle));
+    const auto* bucket = lane.CaptureDue(handle.slot, 1);
+    ASSERT_NE(nullptr, bucket);
+    ASSERT_TRUE(lane.SuspendCaptureForSourceWait(handle.slot, bucket));
+    bucket = lane.CaptureDue(handle.slot, 7);
+    ASSERT_NE(nullptr, bucket);
+    ASSERT_TRUE(lane.RejectCapturedBucket(handle, bucket));
+    ASSERT_TRUE(lane.ReleaseCapture(handle.slot, bucket));
+    harken::ImmediateLaneValidationRefusalSnapshot refused{};
+    EXPECT_FALSE(lane.CapturePublishedValidationRefusal(handle, 2, &refused));
+    EXPECT_FALSE(lane.CapturePublishedValidationRefusal(handle, 7, &refused));
+    ASSERT_TRUE(lane.CapturePublishedValidationRefusal(handle, 8, &refused));
+    EXPECT_EQ(8u, refused.audioSequence);
+    EXPECT_TRUE(lane.Retire(handle, 9));
+}
+
 TEST(ImmediateActionLane, ExactBucketCreditRejectsASecondDueQuantum) {
     harken::ImmediateActionLane lane;
     ASSERT_TRUE(lane.Reset({1, 4, 2, 64}));
@@ -1931,6 +2057,97 @@ TEST(ImmediateActionLane, ActualPlacementProofIsIssuedOnlyOnTruePlaceAndPreserve
     EXPECT_EQ(256u, anchor);
     ASSERT_TRUE(lane.Cancel(reused));
     ASSERT_TRUE(lane.Retire(reused));
+}
+
+TEST(ImmediateActionLane, PublicationProofHoldsActualLayoutAndAppliesWithoutReacquiringReaderGate) {
+    harken::ImmediateActionLane lane;
+    ASSERT_TRUE(lane.Reset({1, 2, 2, 64}));
+    const harken::TimelineProgramView program{};
+    const harken::ImmediateLaneEvent events[]{Event(0, &program, 0), Event(17, &program, 1)};
+    harken::ImmediateLaneHandle handle{};
+    ASSERT_TRUE(lane.Reserve(73, 2, &handle));
+    ASSERT_TRUE(lane.Prepare(handle, events, 2));
+    std::uint64_t anchor = 0;
+    ASSERT_TRUE(lane.TryPlace(handle, 64, 0, &anchor));
+    harken::PrivateImmediateLanePublicationProof proof;
+    ASSERT_TRUE(lane.ProvePrivatePublication(handle, 73, &proof));
+    EXPECT_FALSE(lane.Publish(handle));
+    EXPECT_FALSE(lane.Cancel(handle));
+    EXPECT_FALSE(lane.Retire(handle));
+    EXPECT_FALSE(lane.Reset({1, 2, 2, 64}));
+    std::uint64_t refusedAnchor = 99;
+    EXPECT_FALSE(lane.TryPlace(handle, 128, 0, &refusedAnchor));
+    EXPECT_EQ(99u, refusedAnchor);
+    const harken::ImmediateLaneEvent changed[]{Event(0, &program, 3)};
+    EXPECT_FALSE(lane.Prepare(handle, changed, 1));
+    std::thread audio([&] { EXPECT_EQ(nullptr, lane.CaptureDue(handle.slot, 1)); });
+    audio.join();
+    harken::ImmediateActionLane::ApplyPrivatePublication(std::move(proof));
+    EXPECT_FALSE(proof.Valid());
+    const auto* bucket = lane.CaptureDue(handle.slot, 1);
+    ASSERT_NE(nullptr, bucket);
+    ASSERT_EQ(2u, bucket->eventCount);
+    const auto* actual = lane.Events(handle.slot, bucket);
+    ASSERT_NE(nullptr, actual);
+    EXPECT_EQ(64u, actual[0].event.executeFrame);
+    EXPECT_EQ(81u, actual[1].event.executeFrame);
+    ASSERT_TRUE(lane.Claim(handle, bucket));
+    ASSERT_TRUE(lane.Finish(handle.slot, bucket, true));
+    ASSERT_TRUE(lane.Retire(handle));
+}
+
+TEST(ImmediateActionLane, PublicationProofRefusalAbandonMoveAndOwnerDestructionReturnExactGate) {
+    harken::PrivateImmediateLanePublicationProof survivor;
+    {
+        harken::ImmediateActionLane lane, foreign;
+        ASSERT_TRUE(lane.Reset({1, 1, 1, 64}));
+        ASSERT_TRUE(foreign.Reset({1, 1, 1, 64}));
+        const harken::TimelineProgramView program{};
+        const auto event = Event(0, &program, 0);
+        harken::ImmediateLaneHandle a{}, b{};
+        ASSERT_TRUE(lane.Reserve(73, 1, &a));
+        ASSERT_TRUE(foreign.Reserve(74, 1, &b));
+        EXPECT_FALSE(lane.ProvePrivatePublication(a, 73, &survivor));
+        EXPECT_FALSE(survivor.Valid());
+        ASSERT_TRUE(lane.Prepare(a, &event, 1));
+        ASSERT_TRUE(foreign.Prepare(b, &event, 1));
+        std::uint64_t anchor = 0;
+        ASSERT_TRUE(lane.TryPlace(a, 64, 0, &anchor));
+        ASSERT_TRUE(foreign.TryPlace(b, 128, 0, &anchor));
+        EXPECT_FALSE(lane.ProvePrivatePublication(a, 74, &survivor));
+        EXPECT_FALSE(lane.ProvePrivatePublication({a.slot, a.generation + 1}, 73, &survivor));
+        bool refusedWhileBusy = false;
+        struct BusyContext {
+            harken::ImmediateActionLane& lane;
+            harken::ImmediateLaneHandle handle;
+            harken::PrivateImmediateLanePublicationProof& proof;
+            bool& refused;
+        } context{lane, a, survivor, refusedWhileBusy};
+        lane.SetCaptureGateHookForTest([](void* opaque) {
+            auto& busy = *static_cast<BusyContext*>(opaque);
+            busy.refused = !busy.lane.ProvePrivatePublication(busy.handle, 73, &busy.proof);
+        }, &context);
+        EXPECT_EQ(nullptr, lane.CaptureDue(a.slot, 1));
+        lane.SetCaptureGateHookForTest(nullptr, nullptr);
+        EXPECT_TRUE(refusedWhileBusy);
+        EXPECT_FALSE(survivor.Valid());
+        ASSERT_TRUE(lane.ProvePrivatePublication(a, 73, &survivor));
+        harken::PrivateImmediateLanePublicationProof other;
+        ASSERT_TRUE(foreign.ProvePrivatePublication(b, 74, &other));
+        survivor = std::move(other);
+        EXPECT_FALSE(other.Valid());
+        ASSERT_TRUE(lane.Cancel(a));
+        ASSERT_TRUE(lane.Retire(a));
+        harken::PrivateImmediateLanePublicationProof moved(std::move(survivor));
+        EXPECT_FALSE(survivor.Valid());
+        EXPECT_FALSE(foreign.Cancel(b));
+        survivor = std::move(moved);
+        survivor.Release();
+        ASSERT_TRUE(foreign.TryPlace(b, 192, 0, &anchor));
+        ASSERT_TRUE(foreign.ProvePrivatePublication(b, 74, &survivor));
+    }
+    EXPECT_FALSE(survivor.Valid());
+    survivor.Release();
 }
 
 TEST(ImmediateActionLane, ActualPlacementProofBrieflyHoldsPrivateAnchorThenAllowsRealRetryPublishAndApply) {

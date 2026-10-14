@@ -164,6 +164,10 @@ public:
         std::uint64_t windowEndFrame, std::uint64_t publishCutoffFrame,
         DeferredIntentClaim* outClaim,
         ActionDeferredPairState* outFaultState = nullptr) noexcept;
+    bool InspectClaimedPlayPrerequisites(
+        DeferredIntentPool* pool, DeferredIntentToken poolToken,
+        ActionDeferredRecordToken recordToken, bool* outHeld,
+        ActionDeferredPairState* outFaultState = nullptr) const noexcept;
     bool RetryFixedPlayPair(DeferredIntentPool* pool,
                             DeferredIntentToken poolToken,
                             ActionDeferredRecordToken recordToken,
@@ -230,6 +234,9 @@ private:
     void CommitValidated(Row& row, ActionDeferredRecordToken* token,
                          DeferredIntentToken poolToken) noexcept;
     bool Finalize(Row& row) noexcept;
+    bool InspectPlayPrerequisites(DeferredIntentPool& pool,
+        const DeferredIntent& candidate, std::uint32_t candidateSlot,
+        bool* outHeld, ActionDeferredPairState* outFaultState) const noexcept;
 
     std::uint64_t nextPreparedPairMarker_ = 0;
     std::uint32_t preparedPairLoans_ = 0;

@@ -546,7 +546,7 @@ bool MeterProbeSystem::CaptureAndScheduleWithdrawalChunk(
     }
     probe.withdrawalPageCommitted = true;
     ReleaseWithdrawalChunkRows(engine, probe);
-    engine.timelinePool.Publish(
+    engine.variables.PublishPreparedPlaybackPages(
         reserved.firstFrame > UINT64_MAX - quantum
             ? UINT64_MAX
             : reserved.firstFrame + quantum);

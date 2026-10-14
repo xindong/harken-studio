@@ -87,6 +87,38 @@ TEST(BindingPool, PreparedDetachRejectsZeroPublishWhenLiveAttachmentChanges) {
     EXPECT_TRUE(table.HasAttachment(harkentest::ObjectId(41), harken::kTargetScopeBus, harkentest::ObjectId(81)));
 }
 
+TEST(BindingPool, VariableProjectionRestoresBusAttachmentTransitionDetection) {
+    harken::BindingTable table(2, 2, 2);
+    harken::BusTargetStore store(2);
+    harken::ParamSystem params(harken::EngineConfig{});
+    const auto variable = harkentest::ObjectId(71);
+    const harken::CurvePoint points[] = {{0.0f, 0.0f}, {1.0f, -6.0f}};
+    const harken::CurveHandlePair handles[] = {{0.0f, 0.0f, 1.0f, -6.0f}};
+    ASSERT_EQ(VN_OK, table.RegisterBinding(harkentest::ObjectId(41), variable,
+        harken::kTargetScopeBus, harken::kBusTargetBusVolume,
+        points, handles, 2, 31, nullptr));
+    ASSERT_EQ(VN_OK, table.Attach(harkentest::ObjectId(41),
+        harken::kTargetScopeBus, harkentest::ObjectId(81), 1, nullptr, 0));
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 0.0f));
+    table.EvaluateBusAttachments(params, store);
+    store.MarkCommitted(1, harken::kBusTargetBusVolume, 0.0f, 0);
+    ASSERT_TRUE(table.BeginVariableProjection());
+    ASSERT_TRUE(store.BeginVariableProjection());
+    ASSERT_TRUE(params.BeginVariableProjection());
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 1.0f));
+    table.EvaluateBusAttachments(params, store);
+    params.RestoreVariableProjection();
+    store.RestoreVariableProjection();
+    table.RestoreVariableProjection();
+    EXPECT_EQ(0u, store.DemandCount());
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 1.0f));
+    table.EvaluateBusAttachments(params, store);
+    EXPECT_FLOAT_EQ(-6.0f, store.Reduce(1, harken::kBusTargetBusVolume));
+    EXPECT_EQ(31u, store.PendingRampMs(1, harken::kBusTargetBusVolume));
+    EXPECT_EQ(1u, store.DemandCount());
+    EXPECT_GT(table.VariableProjectionStorageBytes(), 0u);
+}
+
 TEST(BindingPool, TransitionRangeRefusalPreservesRegisteredAndPreparedState) {
     harken::BindingTable table(2, 2, 2);
     const harken::CurvePoint points[] = {{0.0f, 0.0f}, {1.0f, -6.0f}};

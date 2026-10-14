@@ -35,6 +35,9 @@ struct PlaybackExecutionContext {
 class EmitterTable {
 public:
     explicit EmitterTable(const EngineConfig& config);
+    bool BeginVariableProjection() noexcept;
+    void RestoreVariableProjection() noexcept;
+    std::uint64_t VariableProjectionStorageBytes() const noexcept;
 
     // Mints a fresh emitter at a free slot, forming its handle. Returns false
     // when every slot is live (the caller maps this to VN_NO_EMITTER). A new
@@ -118,6 +121,9 @@ private:
     const Emitter* Live(VnEmitterHandle handle) const noexcept;
 
     std::vector<Emitter> m_emitters;
+    std::vector<LocalVar> m_projectionLocals;
+    bool m_projectionActive = false;
+    std::uint32_t m_projectionStride = 0;
     std::uint32_t m_activeCount = 0;
     std::uint64_t m_highWater = 0;
 };

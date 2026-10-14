@@ -88,6 +88,12 @@ public:
     virtual void DiscardIndependentWork() noexcept {}
     virtual bool BindingValid(std::uint32_t renderSlot,
                               std::uint32_t renderGeneration) const noexcept = 0;
+    virtual bool PendingFrontierBindingValid(const ConsumedEvent& event,
+        const TimelineEventPayload& payload) const noexcept {
+        (void)event;
+        (void)payload;
+        return false;
+    }
     virtual bool ApplyTransaction(std::uint32_t renderSlot,
                                   std::uint32_t renderGeneration,
                                   std::uint64_t quantumIndex,
@@ -107,6 +113,11 @@ public:
         (void)event;
         return kTimelineDispositionProtocolViolation;
     }
+    virtual std::uint8_t PlainEventDisposition(const ConsumedEvent& event,
+        std::uint8_t disposition) const noexcept {
+        (void)event;
+        return disposition;
+    }
     virtual bool ApplyAuthoredStopFence(
         const AuthoredStopFenceDescriptor& descriptor,
         std::uint64_t quantumIndex) noexcept {
@@ -123,6 +134,11 @@ public:
                                     std::uint64_t quantumIndex) noexcept {
         (void)decision;
         (void)quantumIndex;
+    }
+    virtual void BeforeEndQuantum(std::uint64_t quantumIndex,
+                                  const TimelineExecutionResult& result) noexcept {
+        (void)quantumIndex;
+        (void)result;
     }
     virtual void EndQuantum(std::uint64_t quantumIndex) noexcept = 0;
 };

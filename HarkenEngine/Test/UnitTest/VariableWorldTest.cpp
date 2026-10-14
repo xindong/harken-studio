@@ -680,34 +680,43 @@ TEST(VariableWorld,
         engine->timelinePool.QuantumFrames(),
         engine->mixer.BlocksRendered() * engine->timelinePool.QuantumFrames(),
         engine->timelinePool.PublishCutoffFrame());
-    clear.requestedEffectiveFrame =
-        engine->mixer.BlocksRendered() * engine->timelinePool.QuantumFrames();
+    // Keep the future override beyond the clear's actual publication lead.
+    clear.requestedEffectiveFrame = std::max(engine->timelinePool.PublishCutoffFrame(),
+        engine->mixer.BlocksRendered() * engine->timelinePool.QuantumFrames()) +
+        static_cast<std::uint64_t>(engine->timelinePool.PublishLeadQuanta() + 2u) *
+            engine->timelinePool.QuantumFrames();
     harken::VariableCallObservation laterSet = clear;
-    laterSet.requestedEffectiveFrame += engine->timelinePool.QuantumFrames();
-    ASSERT_EQ(VN_OK,
-              engine->variables.AcceptEmitter(
-                  emitter, harkentest::ObjectId(9211), 0.75f, laterSet, engine->emitters,
-                  engine->params)
-                  .result);
-    ASSERT_EQ(VN_OK,
-              engine->variables.AcceptGlobal(
-                  harkentest::ObjectId(9211), 0.1f, clear, engine->params,
-                  engine->bindings, engine->busTargets)
-                  .result);
+    laterSet.requestedEffectiveFrame +=
+        static_cast<std::uint64_t>(2u * engine->timelinePool.PublishLeadQuanta() + 4u) *
+            engine->timelinePool.QuantumFrames();
+    const auto futureAccepted = engine->variables.AcceptEmitter(
+        emitter, harkentest::ObjectId(9211), 0.75f, laterSet, engine->emitters, engine->params);
+    ASSERT_EQ(VN_OK, futureAccepted.result);
+    const auto clearAccepted = engine->variables.AcceptGlobal(
+        harkentest::ObjectId(9211), 0.1f, clear, engine->params, engine->bindings, engine->busTargets);
+    ASSERT_EQ(VN_OK, clearAccepted.result);
 
     float current = 0.0f;
     bool observedClearWindow = false;
+    std::vector<std::pair<float, std::uint32_t>> observedBanks;
+    std::uint64_t clearFrame = 0, futureFrame = 0;
     for (std::uint32_t block = 0; block < 32; ++block) {
         engine->nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
         ASSERT_TRUE(engine->variables.CurrentValue(emitter, harkentest::ObjectId(9211),
                                                    &current));
+        observedBanks.emplace_back(current, engine->variables.PendingCount());
+        const auto clearSlice = engine->variables.SliceForTicketForTests(clearAccepted.ticket.sequence);
+        const auto futureSlice = engine->variables.SliceForTicketForTests(futureAccepted.ticket.sequence);
+        if (clearSlice.Valid()) clearFrame = engine->variableSlices.EffectiveFrame(clearSlice);
+        if (futureSlice.Valid()) futureFrame = engine->variableSlices.EffectiveFrame(futureSlice);
         if (current == 0.1f && engine->variables.PendingCount() == 1) {
             observedClearWindow = true;
             break;
         }
     }
-    ASSERT_TRUE(observedClearWindow);
+    ASSERT_TRUE(observedClearWindow) << "clear frame " << clearFrame << ", future frame " << futureFrame
+        << ", values/pending " << ::testing::PrintToString(observedBanks);
     const std::uint64_t issuedBeforeRefusal =
         engine->logicCommits.IssuedCount();
     const std::uint64_t acceptedBeforeRefusal =
@@ -901,10 +910,9 @@ TEST(VariableWorld, HistorySlotsRecycleAcrossTheFullCapacity) {
     // Drain the tail: a write's effective frame sits ahead of the audio
     // clock, so the last few writes are still in flight when the loop
     // ends.
-    for (int i = 0; i < 8 && engine->variables.PendingCount() != 0; ++i) {
-        engine->nullBackend.Pump(1);
-        ASSERT_EQ(VN_OK, Vn_Update());
-    }
+    harkentest::AdvanceVariableWrite(engine);
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(0u, engine->variables.PendingCount());
     // Every accepted write reached a terminal outcome; none was refused.
     EXPECT_EQ(static_cast<std::uint64_t>(cycles),
@@ -914,10 +922,10 @@ TEST(VariableWorld, HistorySlotsRecycleAcrossTheFullCapacity) {
                   engine->variables.SupersededCount());
     EXPECT_EQ(0u, engine->variables.RefusalCount());
     // The pool never grew: the high-water mark stays far under capacity
-    // (each cycle applies and recycles before the next accept), proving a
-    // traceless long run holds no spent-row or outcome residue.
-    EXPECT_LT(engine->variables.HistoryHighWater(),
-              static_cast<std::uint64_t>(8));
+    // The live page lead and the strict return fence keep a bounded pipeline,
+    // not one fully completed write per cycle.
+    EXPECT_LE(engine->variables.HistoryHighWater(),
+              static_cast<std::uint64_t>(2u * engine->timelinePool.PublishLeadQuanta() + 4u));
     float value = 0.0f;
     ASSERT_TRUE(engine->variables.CurrentValue(kSmoothVar, &value));
     EXPECT_FLOAT_EQ(-1.0f - ((cycles - 1u) % 3u), value);

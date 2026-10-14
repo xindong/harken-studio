@@ -7,6 +7,7 @@
 #include "harken/core/PackReadinessContract.h"
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace harken {
@@ -148,6 +149,47 @@ private:
 
 class ActionFiringTable {
 public:
+    class PreparedChildIdentity {
+    public:
+        bool HasPreparation() const noexcept { return owner_ != nullptr; }
+        std::uint64_t Sequence() const noexcept { return sequence_; }
+        ActionFiringHandle Child() const noexcept { return child_; }
+        ActionFiringHandle Parent() const noexcept { return parent_; }
+        bool SamePreparation(const PreparedChildIdentity& other) const noexcept {
+            return owner_ != nullptr && owner_ == other.owner_ && child_ == other.child_ &&
+                parent_ == other.parent_ && root_ == other.root_ && epoch_ == other.epoch_ &&
+                rootEpoch_ == other.rootEpoch_ && sequence_ == other.sequence_;
+        }
+    private:
+        friend class ActionFiringTable;
+        const ActionFiringTable* owner_ = nullptr;
+        ActionFiringHandle child_ = 0;
+        ActionFiringHandle parent_ = 0;
+        ActionFiringHandle root_ = 0;
+        std::uint64_t epoch_ = 0;
+        std::uint64_t rootEpoch_ = 0;
+        std::uint64_t sequence_ = 0;
+    };
+
+    class ChildActivationReceipt {
+    public:
+        ChildActivationReceipt() = default;
+        ChildActivationReceipt(const ChildActivationReceipt&) = delete;
+        ChildActivationReceipt& operator=(const ChildActivationReceipt&) = delete;
+        ChildActivationReceipt(ChildActivationReceipt&& other) noexcept { *this = std::move(other); }
+        ChildActivationReceipt& operator=(ChildActivationReceipt&& other) noexcept {
+            if (this != &other) identity_ = std::exchange(other.identity_, PreparedChildIdentity{});
+            return *this;
+        }
+        std::uint64_t Sequence() const noexcept { return identity_.Sequence(); }
+        bool MatchesOriginalPreparation(const PreparedChildIdentity& identity) const noexcept {
+            return identity_.SamePreparation(identity);
+        }
+    private:
+        friend class ActionFiringTable;
+        PreparedChildIdentity identity_{};
+    };
+
     bool Reset(std::uint32_t capacity);
     bool PrepareRoot(VnObjectId actionId,
                      const ActionFiringOwnerStamp& owner,
@@ -171,7 +213,12 @@ public:
                       const ActionFiringOwnerStamp& owner,
                       std::uint32_t directStepCount,
                       PreparedActionFiring* out) noexcept;
-    bool CommitPreparedChild(PreparedActionFiring* prepared) noexcept;
+    bool CapturePreparedChildIdentity(const PreparedActionFiring& prepared,
+        std::uint64_t originalCancellationEpoch, PreparedChildIdentity* out) const noexcept;
+    bool IsPreparedChildActive(const PreparedChildIdentity& identity) const noexcept;
+    bool IsChildActivationCurrent(const ChildActivationReceipt& receipt) const noexcept;
+    bool CommitPreparedChild(PreparedActionFiring* prepared,
+        ChildActivationReceipt* out = nullptr) noexcept;
     bool SetPreparedProgramFingerprint(const PreparedActionFiring& prepared,
                                         std::uint64_t fingerprint) noexcept;
     bool SetPreparedStep(const PreparedActionFiring& prepared,
@@ -271,6 +318,7 @@ private:
         std::uint64_t worldGeneration = 0;
         ActionFiringOwnerStamp owner{};
         std::uint64_t cancellationEpoch = 0;
+        std::uint64_t rootCancellationEpoch = 0;
         std::uint64_t acceptedLogicSequence = 0;
         ActionFiringOutcome outcome = ActionFiringOutcome::Pending;
         ActionTerminalReason terminalReason = ActionTerminalReason::None;
@@ -292,6 +340,7 @@ private:
     static std::uint64_t GenerationOf(ActionFiringHandle handle) noexcept;
     Row* Resolve(ActionFiringHandle handle) noexcept;
     const Row* Resolve(ActionFiringHandle handle) const noexcept;
+    bool MatchesChildIdentity(const PreparedChildIdentity& identity, bool prepared) const noexcept;
     Row* ResolvePrepared(const PreparedActionFiring& prepared) noexcept;
     bool Recycle(std::uint32_t slot, Row& row) noexcept;
     bool UnlinkChild(Row& parent, ActionFiringHandle child) noexcept;

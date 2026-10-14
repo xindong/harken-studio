@@ -32,6 +32,27 @@ TEST(BusTargetStore, FreshStoreReducesToNeutralBaseOnEveryBus) {
     }
 }
 
+TEST(BusTargetStore, VariableProjectionRestoresDemandRampAndVariableSlot) {
+    BusTargetStore store(2);
+    constexpr auto target = harken::kBusTargetBusVolume;
+    store.SetSlot(0, target, BusTargetStore::kSlotApiDirectIndex, -2.0f);
+    store.SetSlot(0, target, BusTargetStore::kSlotVariableIndex, -3.0f);
+    store.MarkVariableChanged(0, target, 23);
+    store.MarkPendingInput(1, target);
+    const auto demand = store.DemandCount();
+    ASSERT_TRUE(store.BeginVariableProjection());
+    EXPECT_FALSE(store.BeginVariableProjection());
+    store.SetSlot(0, target, BusTargetStore::kSlotVariableIndex, -12.0f);
+    store.MarkVariableChanged(0, target, 500);
+    store.ConsumePendingInput();
+    store.RestoreVariableProjection();
+    EXPECT_FLOAT_EQ(-5.0f, store.Reduce(0, target));
+    EXPECT_EQ(23u, store.PendingRampMs(0, target));
+    EXPECT_EQ(demand, store.DemandCount());
+    EXPECT_TRUE(store.PendingPublication(1, target));
+    EXPECT_GT(store.VariableProjectionStorageBytes(), 0u);
+}
+
 TEST(BusTargetStore, ApiDirectSlotAloneMatchesDirectSetSemantics) {
     // With only the API-direct slot occupied, the reduced value IS the set
     // value: neutral 0 dB plus the direct contribution in add-in-dB. This
@@ -481,6 +502,33 @@ TEST(BusTargetStore, RetryPreserveStillMergesPreparedRamp) {
     store.ReleaseClaim(kBus, kGeneration, kTarget, owner,
                        harken::ClaimReleaseReason::RetryPreserve);
     EXPECT_EQ(500u, store.PendingRampMs(kBus, kTarget));
+}
+
+TEST(BusTargetStore, SharedPublicationKeepsLaterSnapshotsAndRampDemand) {
+    BusTargetStore store(1, 1);
+    constexpr auto target = harken::kBusTargetBusVolume;
+    store.InitializeBusGeneration(0, 4);
+    const harken::TargetClaimOwner owner{0, 1, harken::TargetClaimKind::VariablePublication};
+    const harken::VariableSliceRef probe{0, 1};
+    const auto revision = store.TargetRevision(0, 4, target);
+    ASSERT_TRUE(store.TryClaim(0, 4, target, owner, revision));
+    ASSERT_TRUE(store.TryClaim(0, 4, target, owner, revision));
+    EXPECT_FALSE(store.TryClaim(0, 4, target, probe, revision));
+    store.MarkVariableChanged(0, target, 20);
+    float resolved = 0.0f;
+    std::uint32_t ramp = 0, capturedRevision = 0;
+    ASSERT_TRUE(store.CaptureSnapshotForClaim(0, 4, target, owner, &resolved, &ramp, &capturedRevision));
+    ASSERT_TRUE(store.CaptureSnapshotForClaim(0, 4, target, owner, &resolved, &ramp, &capturedRevision));
+    store.MarkSliceCommitted(0, 4, target, owner, resolved, ramp);
+    EXPECT_TRUE(store.ForeignClaim(0, 4, target));
+    EXPECT_EQ(20u, store.PendingRampMs(0, target));
+    store.ReleaseClaim(0, 4, target, probe);
+    EXPECT_TRUE(store.ForeignClaim(0, 4, target));
+    store.ReleaseClaim(0, 4, target, owner);
+    EXPECT_FALSE(store.ForeignClaim(0, 4, target));
+    EXPECT_EQ(20u, store.PendingRampMs(0, target));
+    ASSERT_TRUE(store.TryClaim(0, 4, target, probe, revision));
+    store.ReleaseClaim(0, 4, target, probe);
 }
 
 } // namespace
