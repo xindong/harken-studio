@@ -53,7 +53,12 @@ class IntegrationGuidanceTest : public QObject
 
     void install()
     {
-        QVERIFY(VNH::HubUnityIntegrationService::run(request()).success);
+        const auto result = VNH::HubUnityIntegrationService::run(request());
+        QStringList details;
+        for (const auto& step : result.steps)
+            if (step.status == VNH::UnityIntegrationStepStatus::Failed)
+                details << step.id << step.summary << step.cause << step.details;
+        QVERIFY2(result.success, qPrintable(details.join('\n')));
     }
 
 private slots:
@@ -193,7 +198,8 @@ private slots:
         using Operation = VNH::IntegrationOperation;
         auto plan = Executor::planUnreal(target, source, Operation::Install);
         QVERIFY2(plan.valid, qPrintable(plan.error));
-        QVERIFY(Executor::executeUnreal(target, plan, Operation::Install, true).success);
+        auto result = Executor::executeUnreal(target, plan, Operation::Install, true);
+        QVERIFY2(result.success, qPrintable(result.error));
         const QString plugin = target.canonicalRoot + "/Plugins/Harken/Harken.uplugin";
         write(plugin, "invalid");
         const auto observation = VNH::EngineTargetProbe::observe(target);
@@ -201,11 +207,13 @@ private slots:
         QVERIFY(observation.canChangeSdk && observation.canRemoveSdk && !observation.canMoveSdk);
         plan = Executor::planUnreal(target, source, Operation::Repair);
         QVERIFY2(plan.valid, qPrintable(plan.error));
-        QVERIFY(Executor::executeUnreal(target, plan, Operation::Repair, true).success);
+        result = Executor::executeUnreal(target, plan, Operation::Repair, true);
+        QVERIFY2(result.success, qPrintable(result.error));
         write(plugin, "invalid");
         plan = Executor::planUnreal(target, {}, Operation::Remove);
         QVERIFY2(plan.valid, qPrintable(plan.error));
-        QVERIFY(Executor::executeUnreal(target, plan, Operation::Remove, true).success);
+        result = Executor::executeUnreal(target, plan, Operation::Remove, true);
+        QVERIFY2(result.success, qPrintable(result.error));
     }
 
     void associationAndResolutionInBothLanguages_data()

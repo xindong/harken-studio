@@ -1,6 +1,7 @@
 #include "Integrations/ProjectIntegrationExecutor.h"
 #include "Integrations/EngineTargetProbe.h"
 #include "Integrations/IntegrationProgress.h"
+#include "Integrations/IntegrationFileSystem.h"
 
 #include <gtest/gtest.h>
 
@@ -12,6 +13,8 @@
 #include <QProcess>
 #include <QScopeGuard>
 #include <QLockFile>
+#include <chrono>
+#include <thread>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -36,6 +39,113 @@ bool writeUnrealHeaders(const QString& source)
 }
 
 }
+
+TEST(IntegrationDirectoryTest, ExistingDestinationIsNeverReplaced)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString source = directory.filePath("stage");
+    const QString target = directory.filePath("installed");
+    ASSERT_TRUE(writeFile(source + "/new.txt", "new"));
+    ASSERT_TRUE(writeFile(target + "/existing.txt", "existing"));
+    EXPECT_FALSE(VNH::renameIntegrationDirectory(source, target));
+    EXPECT_TRUE(QFileInfo::exists(source + "/new.txt"));
+    QFile preserved(target + "/existing.txt");
+    ASSERT_TRUE(preserved.open(QIODevice::ReadOnly));
+    EXPECT_EQ(preserved.readAll(), "existing");
+}
+
+#ifdef Q_OS_WIN
+TEST(IntegrationFileWriteTest, TransientLockAllowsAtomicReplacementAfterRelease)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString path = QDir::toNativeSeparators(directory.filePath("report.json"));
+    ASSERT_TRUE(writeFile(path, "previous report"));
+    HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(path.utf16()), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+    const std::jthread release([handle]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        CloseHandle(handle);
+    });
+    QString error;
+    EXPECT_TRUE(VNH::writeIntegrationFile(path, "new report", &error)) << error.toStdString();
+    QFile report(path);
+    ASSERT_TRUE(report.open(QIODevice::ReadOnly));
+    EXPECT_EQ(report.readAll(), "new report");
+}
+
+TEST(IntegrationFileWriteTest, PersistentLockKeepsPreviousContentsAndReportsFailure)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString path = QDir::toNativeSeparators(directory.filePath("report.json"));
+    ASSERT_TRUE(writeFile(path, "previous report"));
+    HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(path.utf16()), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+    {
+        const auto close = qScopeGuard([handle]() { CloseHandle(handle); });
+        QString error;
+        EXPECT_FALSE(VNH::writeIntegrationFile(path, "new report", &error));
+        EXPECT_FALSE(error.isEmpty());
+        QFile report(path);
+        ASSERT_TRUE(report.open(QIODevice::ReadOnly));
+        EXPECT_EQ(report.readAll(), "previous report");
+    }
+    QString error;
+    EXPECT_TRUE(VNH::writeIntegrationFile(path, "new report", &error)) << error.toStdString();
+    QFile report(path);
+    ASSERT_TRUE(report.open(QIODevice::ReadOnly));
+    EXPECT_EQ(report.readAll(), "new report");
+}
+
+TEST(IntegrationDirectoryTest, TransientFileLockAllowsAtomicRenameAfterRelease)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString source = directory.filePath("stage");
+    const QString target = directory.filePath("installed");
+    const QString file = QDir::toNativeSeparators(source + "/payload.txt");
+    ASSERT_TRUE(writeFile(file, "payload"));
+    HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(file.utf16()), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+    const std::jthread release([handle]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        CloseHandle(handle);
+    });
+    EXPECT_TRUE(VNH::renameIntegrationDirectory(source, target));
+    EXPECT_FALSE(QFileInfo::exists(source));
+    QFile installed(target + "/payload.txt");
+    ASSERT_TRUE(installed.open(QIODevice::ReadOnly));
+    EXPECT_EQ(installed.readAll(), "payload");
+}
+
+TEST(IntegrationDirectoryTest, PersistentFileLockPreservesSourceAndAllowsLaterRetry)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString source = directory.filePath("stage");
+    const QString target = directory.filePath("installed");
+    const QString file = QDir::toNativeSeparators(source + "/payload.txt");
+    ASSERT_TRUE(writeFile(file, "payload"));
+    HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(file.utf16()), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+    {
+        const auto close = qScopeGuard([handle]() { CloseHandle(handle); });
+        EXPECT_FALSE(VNH::renameIntegrationDirectory(source, target));
+        EXPECT_FALSE(QFileInfo::exists(target));
+        QFile preserved(file);
+        ASSERT_TRUE(preserved.open(QIODevice::ReadOnly));
+        EXPECT_EQ(preserved.readAll(), "payload");
+    }
+    EXPECT_TRUE(VNH::renameIntegrationDirectory(source, target));
+    EXPECT_TRUE(QFileInfo::exists(target + "/payload.txt"));
+}
+#endif
 
 class UnrealMigrationTest : public ::testing::Test
 {
