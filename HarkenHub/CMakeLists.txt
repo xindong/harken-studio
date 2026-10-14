@@ -115,6 +115,7 @@ set(HARKEN_HUB_SOURCES
     Source/Update/HubSelfUpdate.cpp
     Source/Update/SelfUpdateHealthCheck.cpp
     Source/Integrations/IntegrationStore.cpp
+    Source/Integrations/IntegrationFileSystem.cpp
     Source/Integrations/EngineTargetStore.cpp
     Source/Integrations/EngineTargetProbe.cpp
     Source/Integrations/ProjectIntegrationExecutor.cpp

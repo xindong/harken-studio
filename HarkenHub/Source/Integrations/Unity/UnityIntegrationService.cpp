@@ -1,3 +1,4 @@
+#include "Integrations/IntegrationFileSystem.h"
 #include "Integrations/Unity/UnityIntegrationService.h"
 #include "Integrations/IntegrationProgress.h"
 #include "Integrations/Unity/UnityInstallation.h"
@@ -153,22 +154,6 @@ bool ignoredRelativePath(const QString& relative)
            normalized.startsWith(QStringLiteral("Unreal/"));
 }
 
-// Directory renames are how this service keeps staging atomic, but on Windows
-// a tree that was just written can still be held for a moment by a scanner or
-// the indexer, and the rename then fails with a sharing violation that has
-// nothing to do with the caller. Retry briefly before calling it a failure;
-// a genuine lock outlives this window and still reports.
-bool renameDirectory(QDir& parent, const QString& from, const QString& to)
-{
-    constexpr int kRetries = 25;
-    constexpr unsigned long kRetryDelayMs = 20;
-    for (int attempt = 0; attempt <= kRetries; ++attempt) {
-        if (parent.rename(from, to)) return true;
-        QThread::msleep(kRetryDelayMs);
-    }
-    return false;
-}
-
 QStringList allRelativeFiles(const QString& root)
 {
     QStringList files;
@@ -280,24 +265,6 @@ bool verifyCopiedFiles(const QString& sourceRoot,
             }
             return false;
         }
-    }
-    return true;
-}
-
-bool writeBytesAtomically(const QString& path,
-                          const QByteArray& contents,
-                          QString* error)
-{
-    if (!QDir().mkpath(QFileInfo(path).absolutePath())) {
-        if (error) *error = QStringLiteral("Cannot create directory for %1").arg(path);
-        return false;
-    }
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly) || file.write(contents) < 0 ||
-        !file.commit()) {
-        if (error) *error = QStringLiteral("Cannot write %1: %2")
-                                .arg(path, file.errorString());
-        return false;
     }
     return true;
 }
@@ -907,7 +874,7 @@ bool recoverSdkMigration(const QString& project, const QJsonObject& record, bool
     QDir filesystem;
     if ((!atSource && QDir(from).exists() && !filesystem.rmdir(from))
         || (metaAtTarget && !QFile::rename(toMeta, fromMeta))
-        || (!atSource && !renameDirectory(filesystem, to, from))
+        || (!atSource && !VNH::renameIntegrationDirectory(filesystem.filePath(to), filesystem.filePath(from)))
         || (record.value(QStringLiteral("target_existed")).toBool() && !QDir().mkpath(to))) {
         *error = QStringLiteral("The SDK could not be restored to its previous location. Close programs using these files and retry recovery.");
         return false;
@@ -1228,7 +1195,7 @@ UnityIntegrationService::Result UnityIntegrationService::migrateIntegration(cons
         || !matchesMigrationSnapshot(backup, inventory, &error)) return fail(error);
     if (!metaHash.isEmpty() && !sha256File(backup + QStringLiteral(".meta")).matches(metaHash))
         return fail(QStringLiteral("SDK directory metadata backup verification failed."));
-    if (!writeBytesAtomically(QDir(result.migrationBackupPath).filePath(QStringLiteral("migration.json")), recordBytes, &error))
+    if (!VNH::writeIntegrationFile(QDir(result.migrationBackupPath).filePath(QStringLiteral("migration.json")), recordBytes, &error))
         return fail(error);
     result.steps.back().artifacts << result.migrationBackupPath;
     finishStep(StepStatus::Succeeded, QStringLiteral("All installed SDK files and directory metadata were backed up and verified."));
@@ -1241,7 +1208,7 @@ UnityIntegrationService::Result UnityIntegrationService::migrateIntegration(cons
         return fail(QStringLiteral("SDK directory metadata changed. Migration was cancelled."));
     if (!QDir().mkpath(QFileInfo(to).absolutePath()))
         return fail(QStringLiteral("The SDK migration destination could not be created."));
-    if (!writeBytesAtomically(migrationJournalPath(project), recordBytes, &error)) return fail(error);
+    if (!VNH::writeIntegrationFile(migrationJournalPath(project), recordBytes, &error)) return fail(error);
     const auto rollback = [&](const QString& cause) {
         QString recoveryError;
         if (recoverSdkMigration(project, record, true, &recoveryError))
@@ -1251,7 +1218,7 @@ UnityIntegrationService::Result UnityIntegrationService::migrateIntegration(cons
         return fail(cause + QLatin1Char('\n') + recoveryError);
     };
     QDir filesystem;
-    if ((QDir(to).exists() && !filesystem.rmdir(to)) || !renameDirectory(filesystem, from, to))
+    if ((QDir(to).exists() && !filesystem.rmdir(to)) || !VNH::renameIntegrationDirectory(filesystem.filePath(from), filesystem.filePath(to)))
         return rollback(QStringLiteral("The SDK directory could not be moved."));
     if (!metaHash.isEmpty() && !QFile::rename(fromMeta, toMeta))
         return rollback(QStringLiteral("The SDK directory metadata could not be moved."));
@@ -1646,12 +1613,12 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                            "Files not owned by Harken were also kept unchanged in the Unity project.\n")
                 .arg(generatedAt, result.unityProjectPath, backupSdk)
                 .toUtf8();
-        if (!writeBytesAtomically(
+        if (!VNH::writeIntegrationFile(
                 QDir(result.removalBackupPath).filePath(
                     QStringLiteral("backup.json")),
                 QJsonDocument(backupRecord).toJson(QJsonDocument::Indented),
                 &backupError) ||
-            !writeBytesAtomically(
+            !VNH::writeIntegrationFile(
                 QDir(result.removalBackupPath).filePath(
                     QStringLiteral("README-FIRST.txt")),
                 instructions, &backupError)) {
@@ -1672,7 +1639,7 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                                            QUuid::createUuid().toString(
                                                QUuid::WithoutBraces));
         const QString stageRoot = packages.filePath(stageName);
-        if (!renameDirectory(packages, targetName, stageName)) {
+        if (!VNH::renameIntegrationDirectory(packages.filePath(targetName), packages.filePath(stageName))) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("Could not detach the installed Harken SDK.");
             step.cause = targetSdk;
@@ -1685,7 +1652,7 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
         if (!preservedFiles.isEmpty() &&
             !copyFiles(stageRoot, targetSdk, preservedFiles, &copyError)) {
             QDir(targetSdk).removeRecursively();
-            renameDirectory(packages, stageName, targetName);
+            VNH::renameIntegrationDirectory(packages.filePath(stageName), packages.filePath(targetName));
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("Could not preserve project-specific files, so removal was cancelled.");
             step.cause = copyError;
@@ -1742,13 +1709,12 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
         for (const StepResult& item : result.steps) steps.append(stepToJson(item));
         root[QStringLiteral("steps")] = steps;
 
-        QSaveFile jsonFile(result.jsonReportPath);
-        if (!jsonFile.open(QIODevice::WriteOnly) ||
-            jsonFile.write(QJsonDocument(root).toJson(QJsonDocument::Indented)) < 0 ||
-            !jsonFile.commit()) {
+        QString jsonFileError;
+        if (!VNH::writeIntegrationFile(result.jsonReportPath,
+                QJsonDocument(root).toJson(QJsonDocument::Indented), &jsonFileError)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("The removal report could not be written.");
-            step.cause = jsonFile.errorString();
+            step.cause = jsonFileError;
             step.remediation = QStringLiteral("Check write permission for Unity Library/HarkenIntegration.");
             return;
         }
@@ -1762,13 +1728,12 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                                                        : QStringLiteral("no"))
                         .arg(result.filesRemoved)
                         .arg(result.targetOnlyFilesPreserved);
-        QSaveFile markdownFile(result.markdownReportPath);
-        if (!markdownFile.open(QIODevice::WriteOnly) ||
-            markdownFile.write(markdown.toUtf8()) < 0 ||
-            !markdownFile.commit()) {
+        QString markdownFileError;
+        if (!VNH::writeIntegrationFile(result.markdownReportPath,
+                markdown.toUtf8(), &markdownFileError)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("JSON report was written, but the Markdown removal report failed.");
-            step.cause = markdownFile.errorString();
+            step.cause = markdownFileError;
             step.remediation = QStringLiteral("Check write permission for Unity Library/HarkenIntegration.");
             return;
         }
@@ -2362,7 +2327,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             step.cause = safetyError;
             return;
         }
-        if (hadTarget && !renameDirectory(packages, targetName, backupName)) {
+        if (hadTarget && !VNH::renameIntegrationDirectory(packages.filePath(targetName), packages.filePath(backupName))) {
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("Could not back up the existing Unity SDK.");
@@ -2371,8 +2336,8 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             return;
         }
         if (hadTarget) updateBackupRoot = packages.filePath(backupName);
-        if (!renameDirectory(packages, stageName, targetName)) {
-            const bool restored = !hadTarget || renameDirectory(packages, backupName, targetName);
+        if (!VNH::renameIntegrationDirectory(packages.filePath(stageName), packages.filePath(targetName))) {
+            const bool restored = !hadTarget || VNH::renameIntegrationDirectory(packages.filePath(backupName), packages.filePath(targetName));
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("Could not activate the staged Unity SDK.");
@@ -2421,10 +2386,10 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             const QString failedName = QStringLiteral(".%1.failed-%2").arg(targetName,
                 QUuid::createUuid().toString(QUuid::WithoutBraces));
             const bool displaced = !QFileInfo::exists(targetSdk)
-                || renameDirectory(parent, targetName, failedName);
+                || VNH::renameIntegrationDirectory(parent.filePath(targetName), parent.filePath(failedName));
             if (QFileInfo::exists(parent.filePath(failedName))) step.artifacts << parent.filePath(failedName);
             const bool restored = displaced && (updateBackupRoot.isEmpty()
-                || renameDirectory(parent, QFileInfo(updateBackupRoot).fileName(), targetName));
+                || VNH::renameIntegrationDirectory(parent.filePath(QFileInfo(updateBackupRoot).fileName()), parent.filePath(targetName)));
             result.targetInstalled = QDir(targetSdk).exists();
             result.sdkFilesCopied = 0;
             if (restored) {
@@ -2509,13 +2474,12 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         for (const StepResult& item : result.steps) steps.append(stepToJson(item));
         root[QStringLiteral("steps")] = steps;
 
-        QSaveFile jsonFile(result.jsonReportPath);
-        if (!jsonFile.open(QIODevice::WriteOnly) ||
-            jsonFile.write(QJsonDocument(root).toJson(QJsonDocument::Indented)) < 0 ||
-            !jsonFile.commit()) {
+        QString jsonFileError;
+        if (!VNH::writeIntegrationFile(result.jsonReportPath,
+                QJsonDocument(root).toJson(QJsonDocument::Indented), &jsonFileError)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("The integration report could not be written.");
-            step.cause = jsonFile.errorString();
+            step.cause = jsonFileError;
             step.remediation = QStringLiteral("Check write permission for Unity Library/HarkenIntegration.");
             return;
         }
@@ -2538,13 +2502,12 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 markdown += QStringLiteral("Details:\n\n```text\n%1\n```\n\n")
                                 .arg(jsonArrayText(item.details));
         }
-        QSaveFile markdownFile(result.markdownReportPath);
-        if (!markdownFile.open(QIODevice::WriteOnly) ||
-            markdownFile.write(markdown.toUtf8()) < 0 ||
-            !markdownFile.commit()) {
+        QString markdownFileError;
+        if (!VNH::writeIntegrationFile(result.markdownReportPath,
+                markdown.toUtf8(), &markdownFileError)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("JSON report was written, but the Markdown report failed.");
-            step.cause = markdownFile.errorString();
+            step.cause = markdownFileError;
             step.remediation = QStringLiteral("Check write permission for Unity Library/HarkenIntegration.");
             return;
         }

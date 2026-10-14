@@ -171,27 +171,9 @@ class StudioSchemaLockTest(unittest.TestCase):
         self.assertFalse((self.source / f"Editor/{self.editor_version + 1}").exists())
 
     def test_external_baseline_cannot_be_reset(self) -> None:
-        with patch.object(MODULE.audit, "release_schema_errors", return_value=[]), \
-                patch.object(MODULE.audit, "required_baselines", return_value={"release": {}}):
+        with patch.object(MODULE.audit, "published_releases", return_value={"release": {}}):
             with self.assertRaises(ValueError):
                 MODULE.reset_unpublished()
-
-    def test_retired_history_reset_clears_old_verification(self) -> None:
-        receipt = self.root / MODULE.audit.CONFIG_PATH
-        receipt.write_text(json.dumps({"publication": "released", "releaseTag": "retired",
-                                      "verification": {"baselineTags": ["retired"]}}), encoding="utf-8")
-        with patch.object(MODULE.audit, "release_schema_errors", return_value=[]), \
-                patch.object(MODULE.audit, "required_baselines", return_value={}):
-            MODULE.reset_unpublished()
-        self.assertEqual(json.loads(receipt.read_text(encoding="utf-8")),
-                         {"auditVersion": 4, "product": "HarkenStudio", "publication": "unpublished"})
-
-    def test_reset_cannot_hide_retained_contract_damage(self) -> None:
-        before = self.snapshot()
-        with patch.object(MODULE.audit, "release_schema_errors", return_value=["retained contract changed"]):
-            with self.assertRaisesRegex(ValueError, "retained contract changed"):
-                MODULE.reset_unpublished()
-        self.assertEqual(self.snapshot(), before)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 #include "Integrations/ProjectIntegrationExecutor.h"
 #include "Integrations/IntegrationProgress.h"
+#include "Integrations/IntegrationFileSystem.h"
 #include "Integrations/Unity/UnityInstallation.h"
 #include "Platform/ProcessScan.h"
 
@@ -598,7 +599,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnrealMigration(
         }
         const bool restored = plan.recovering && emptyLocation(input)
             ? copyInventory(plan.backupRoot, output, plan.inventory, &result.error)
-            : inventory(input, &result.error) == plan.inventory && QDir().rename(input, output);
+            : inventory(input, &result.error) == plan.inventory && renameIntegrationDirectory(input, output);
         if (!restored) {
             if (result.error.isEmpty()) result.error = hubTranslate(QStringLiteral("The SDK migration is unfinished. Choose \"Recover...\" before continuing."));
             return result;
@@ -857,7 +858,7 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnreal(
                 .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
         if (!safeTree(QFileInfo(backup).absolutePath())
             || !QDir().mkpath(QFileInfo(backup).absolutePath())
-            || !QDir().rename(plan.targetRoot, backup)) {
+            || !renameIntegrationDirectory(plan.targetRoot, backup)) {
             result.error = hubTranslate(QStringLiteral("The existing Unreal plugin cannot be backed up"));
             return result;
         }
@@ -867,8 +868,8 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnreal(
         result.success = true;
         return result;
     }
-    if (!QDir().rename(staging.path(), plan.targetRoot)) {
-        if (!result.backupPath.isEmpty() && QDir().rename(result.backupPath, plan.targetRoot))
+    if (!renameIntegrationDirectory(staging.path(), plan.targetRoot)) {
+        if (!result.backupPath.isEmpty() && renameIntegrationDirectory(result.backupPath, plan.targetRoot))
             result.backupPath.clear();
         result.error = hubTranslate(QStringLiteral("The Unreal plugin cannot be activated"));
         return result;
@@ -877,9 +878,9 @@ IntegrationOperationResult ProjectIntegrationExecutor::executeUnreal(
     if (operation != IntegrationOperation::Remove) {
         const auto verification = inspectUnreal(target);
         if (!verification.valid || !verification.modifiedManagedFiles.isEmpty()) {
-            QDir().rename(plan.targetRoot, staging.path());
+            renameIntegrationDirectory(plan.targetRoot, staging.path());
             staging.setAutoRemove(true);
-            if (!result.backupPath.isEmpty() && QDir().rename(result.backupPath, plan.targetRoot))
+            if (!result.backupPath.isEmpty() && renameIntegrationDirectory(result.backupPath, plan.targetRoot))
                 result.backupPath.clear();
             result.error = hubTranslate(QStringLiteral("Installed SDK verification failed. Review the backup and restore the project before retrying."));
             return result;

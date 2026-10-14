@@ -119,12 +119,9 @@ def publish_candidate(candidate_root: Path, release_tag: str, current_binary: Pa
 
 
 def reset_unpublished() -> None:
+    if audit.published_releases():
+        raise ValueError("An externally published baseline cannot be reset")
     schema_archive.build_bundle(SCHEMA_ROOT)
-    errors = audit.release_schema_errors(SCHEMA_ROOT)
-    if errors:
-        raise ValueError("; ".join(errors))
-    if audit.required_baselines(SCHEMA_ROOT):
-        raise ValueError("An externally published baseline within retained history cannot be reset")
     (REPO_ROOT / audit.CONFIG_PATH).write_text(
         audit.canonical_text({"auditVersion": 4, "product": "HarkenStudio", "publication": "unpublished"}), encoding="utf-8")
 

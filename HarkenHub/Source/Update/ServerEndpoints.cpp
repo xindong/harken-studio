@@ -59,7 +59,7 @@ QUrl ServerEndpoints::githubLatestUrl(const QString& product)
         product != QStringLiteral("harken"))
         return QUrl();
     return withClientPath(
-        QUrl(QStringLiteral("https://github.com/xindong/venus-studio")),
+        QUrl(QStringLiteral("https://github.com/xindong/harken-studio")),
         QStringLiteral("/releases/latest/download/%1-manifest.json")
             .arg(product));
 }
@@ -127,7 +127,7 @@ QList<QUrl> ServerEndpoints::downloadUrls(const QUrl& fallbackBaseUrl,
         return result;
     if (isSafeReleaseTag(releaseTag)) {
         result.append(withClientPath(
-            QUrl(QStringLiteral("https://github.com/xindong/venus-studio")),
+            QUrl(QStringLiteral("https://github.com/xindong/harken-studio")),
             QStringLiteral("/releases/download/%1/%2")
                 .arg(releaseTag, parts.last())));
     }
@@ -160,7 +160,7 @@ bool ServerEndpoints::isApprovedGithubRedirect(const QUrl& url)
         return false;
     if (host != QStringLiteral("github.com") || parts.size() < 6 ||
         parts[0] != QStringLiteral("xindong") ||
-        parts[1] != QStringLiteral("venus-studio") ||
+        parts[1] != QStringLiteral("harken-studio") ||
         parts[2] != QStringLiteral("releases"))
         return false;
     if (parts[3] == QStringLiteral("latest"))
