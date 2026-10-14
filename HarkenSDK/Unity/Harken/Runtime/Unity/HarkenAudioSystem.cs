@@ -86,6 +86,9 @@ namespace Harken.Unity
         private ShutdownCompletion pendingShutdown;
         private bool starting;
         private bool publishingStartupResult;
+        private bool applicationPaused;
+        private bool startupReadyPending;
+        private PackBootstrapSession publishingReadySession;
         private Coroutine startupCoroutine;
         private readonly Dictionary<string, string> successMessages =
             new Dictionary<string, string>(SuccessMessageCacheCapacity, StringComparer.Ordinal);
@@ -734,6 +737,7 @@ namespace Harken.Unity
                 managedCallerSeed = 0;
                 PackRootPath = platformRoot;
                 State = HarkenRuntimeState.Ready;
+                startupReadyPending = true;
                 LastRemoteResult = VnResult.VN_OK;
                 LastRemoteError = string.Empty;
                 if (HarkenProjectSettings.CommunicationEnabled) RetryRemoteCommunication();
@@ -758,18 +762,40 @@ namespace Harken.Unity
             string error = LastStartupError;
             try
             {
+                if (completedSession != null && completedSession.IsActive &&
+                    ReferenceEquals(session, completedSession)) ApplyApplicationPause();
                 ObserveResult("PackBootstrap.Start", result);
                 if (result != VnResult.VN_OK) failed.Invoke(error);
                 // Canceling asynchronous preparation cannot release this synchronous notification scope.
-                if (completedSession != null && completedSession.IsActive &&
-                    ReferenceEquals(session, completedSession) && IsReady)
-                {
-                    ready.Invoke();
-                    if (completedSession.IsActive && ReferenceEquals(session, completedSession) && IsReady)
-                        BecameReady?.Invoke(this);
-                }
+                PublishReady(completedSession);
             }
             finally { publishingStartupResult = false; }
+        }
+
+        private void PublishReady(PackBootstrapSession readySession)
+        {
+            if (readySession == null || !readySession.IsActive ||
+                !ReferenceEquals(session, readySession) || !IsReady ||
+                ReferenceEquals(publishingReadySession, readySession)) return;
+            PackBootstrapSession previousReadySession = publishingReadySession;
+            bool wasPublishingStartupResult = publishingStartupResult;
+            publishingReadySession = readySession;
+            try
+            {
+                if (startupReadyPending)
+                {
+                    startupReadyPending = false;
+                    publishingStartupResult = true;
+                    ready.Invoke();
+                }
+                if (readySession.IsActive && ReferenceEquals(session, readySession) && IsReady)
+                    BecameReady?.Invoke(this);
+            }
+            finally
+            {
+                publishingReadySession = previousReadySession;
+                publishingStartupResult = wasPublishingStartupResult;
+            }
         }
 
         private void Awake()
@@ -1497,8 +1523,22 @@ namespace Harken.Unity
 #if UNITY_EDITOR
             return;
 #else
-            SetSuspended(paused);
+            HandleApplicationPause(paused);
 #endif
+        }
+
+        private void HandleApplicationPause(bool paused)
+        {
+            if (Instance != this || hostExiting) return;
+            applicationPaused = paused;
+            ApplyApplicationPause();
+        }
+
+        private void ApplyApplicationPause()
+        {
+            if (shuttingDown || session == null || !session.IsActive) return;
+            if (applicationPaused == (State == HarkenRuntimeState.Suspended)) return;
+            SetSuspended(applicationPaused);
         }
 
         public VnResult SetSuspended(bool suspended)
@@ -1520,9 +1560,9 @@ namespace Harken.Unity
                 : HarkenRuntimeState.Ready;
             ObserveResult(operation, result);
             if (wasSuspended && !suspended && result == VnResult.VN_OK &&
-                suspendingSession.IsActive && ReferenceEquals(session, suspendingSession) && IsReady)
+                !starting && !publishingStartupResult)
             {
-                BecameReady?.Invoke(this);
+                PublishReady(suspendingSession);
             }
             return result;
         }
@@ -1612,6 +1652,7 @@ namespace Harken.Unity
                 emitterCleanup.Clear();
                 packCleanup.Clear();
                 session = null;
+                startupReadyPending = false;
                 DisposeCallbackRegistrations();
                 RestoreUnityAudio();
                 runtimeFailureOperation = null;
