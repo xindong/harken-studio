@@ -14,14 +14,16 @@ namespace Harken.Unity.Tests
     {
         private HarkenProjectSettings settings;
         private string original;
+        private string settingsPath;
         private bool existed;
         private string duplicateFolder;
 
         [SetUp]
         public void SetUp()
         {
-            existed = File.Exists(HarkenProjectSettingsProvider.AssetPath);
+            existed = HarkenProjectSettings.Load() != null;
             settings = HarkenProjectSettingsProvider.GetOrCreateSettings();
+            settingsPath = AssetDatabase.GetAssetPath(settings);
             original = JsonUtility.ToJson(settings);
         }
 
@@ -29,18 +31,17 @@ namespace Harken.Unity.Tests
         public void TearDown()
         {
             if (duplicateFolder != null) AssetDatabase.DeleteAsset(duplicateFolder);
-            if (!existed) AssetDatabase.DeleteAsset(HarkenProjectSettingsProvider.AssetPath);
+            if (!existed) AssetDatabase.DeleteAsset(settingsPath);
             else
             {
                 settings = AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(
-                    HarkenProjectSettingsProvider.AssetPath);
+                    settingsPath);
                 if (settings == null)
                 {
                     settings = ScriptableObject.CreateInstance<HarkenProjectSettings>();
                     JsonUtility.FromJsonOverwrite(original, settings);
-                    EnsureFolder("Assets/Harken");
-                    EnsureFolder("Assets/Harken/Resources");
-                    AssetDatabase.CreateAsset(settings, HarkenProjectSettingsProvider.AssetPath);
+                    EnsureFolder(Path.GetDirectoryName(settingsPath)?.Replace('\\', '/'));
+                    AssetDatabase.CreateAsset(settings, settingsPath);
                 }
                 else
                 {
@@ -76,7 +77,7 @@ namespace Harken.Unity.Tests
         {
             if (!existed)
             {
-                Assert.That(File.Exists(HarkenProjectSettingsProvider.AssetPath), Is.True);
+                Assert.That(File.Exists(settingsPath), Is.True);
                 var generated = new SerializedObject(settings);
                 Assert.That(generated.FindProperty("maxVoices").longValue, Is.EqualTo(256L));
                 Assert.That(generated.FindProperty("maxPacks").longValue, Is.EqualTo(256L));
@@ -89,7 +90,8 @@ namespace Harken.Unity.Tests
                 Assert.That(config.maxActions, Is.EqualTo(256u));
                 Assert.That(config.maxActionFirings, Is.EqualTo(256u));
             }
-            string path = "Assets/Harken/FreshCapacity_" + Guid.NewGuid().ToString("N") + ".asset";
+            string path = Path.GetDirectoryName(settingsPath)?.Replace('\\', '/') +
+                "/FreshCapacity_" + Guid.NewGuid().ToString("N") + ".asset";
             var fresh = ScriptableObject.CreateInstance<HarkenProjectSettings>();
             try
             {
@@ -117,7 +119,7 @@ namespace Harken.Unity.Tests
             serialized.FindProperty("maxActionFirings").longValue = 114;
             serialized.ApplyModifiedPropertiesWithoutUndo();
             AssetDatabase.SaveAssetIfDirty(settings);
-            AssetDatabase.ImportAsset(HarkenProjectSettingsProvider.AssetPath,
+            AssetDatabase.ImportAsset(settingsPath,
                 ImportAssetOptions.ForceSynchronousImport);
 
             var config = new VnConfig();
@@ -138,8 +140,8 @@ namespace Harken.Unity.Tests
             serialized.FindProperty("remoteApplicationName").stringValue = "Settings fixture";
             serialized.ApplyModifiedPropertiesWithoutUndo();
             AssetDatabase.SaveAssetIfDirty(settings);
-            AssetDatabase.ImportAsset(HarkenProjectSettingsProvider.AssetPath, ImportAssetOptions.ForceSynchronousImport);
-            settings = AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(HarkenProjectSettingsProvider.AssetPath);
+            AssetDatabase.ImportAsset(settingsPath, ImportAssetOptions.ForceSynchronousImport);
+            settings = AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(settingsPath);
             Assert.That(settings.EnableCommunicationInBuilds, Is.False);
             var reloaded = new SerializedObject(settings);
             Assert.That(reloaded.FindProperty("remoteBindAddress").stringValue, Is.EqualTo("127.0.0.1"));
@@ -183,15 +185,200 @@ namespace Harken.Unity.Tests
         }
 
         [Test]
+        public void WrongTypePlayerResourceRefusesBuildAndSettingsCreation()
+        {
+            duplicateFolder = "Assets/HarkenSettingsFixture_" + Guid.NewGuid().ToString("N");
+            EnsureFolder(duplicateFolder + "/Resources");
+            string backupPath = duplicateFolder + "/OriginalSettings.asset";
+            string wrongPath = duplicateFolder + "/Resources/" + HarkenProjectSettings.ResourceName + ".asset";
+            Assert.That(AssetDatabase.MoveAsset(settingsPath, backupPath), Is.Empty);
+            try
+            {
+                AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<HarkenEditorProjectSettings>(), wrongPath);
+                Assert.Throws<BuildFailedException>(HarkenProjectSettingsProvider.ValidateSettingsAssets);
+                Assert.Throws<BuildFailedException>(() => HarkenProjectSettingsProvider.GetOrCreateSettings());
+                Assert.That(AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(
+                    HarkenProjectSettingsProvider.AssetPath), Is.Null);
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(wrongPath);
+                Assert.That(AssetDatabase.MoveAsset(backupPath, settingsPath), Is.Empty);
+            }
+        }
+
+        [Test]
+        public void EditorSettingsInResourcesRefuseBuild()
+        {
+            duplicateFolder = "Assets/HarkenSettingsFixture_" + Guid.NewGuid().ToString("N");
+            EnsureFolder(duplicateFolder + "/Resources");
+            AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<HarkenEditorProjectSettings>(),
+                duplicateFolder + "/Resources/EditorSettings.asset");
+            Assert.Throws<BuildFailedException>(HarkenEditorProjectSettings.ValidateNotInResources);
+            Assert.Throws<BuildFailedException>(ValidateSettingsBeforeBuild);
+        }
+
+        [Test]
+        public void DuplicateEditorSettingsRefuseLookupCreationAndBuild()
+        {
+            bool editorSettingsExisted = HarkenEditorProjectSettings.Load() != null;
+            var editorSettings = HarkenEditorProjectSettings.GetOrCreate();
+            string originalPath = AssetDatabase.GetAssetPath(editorSettings);
+            duplicateFolder = "Assets/HarkenSettingsFixture_" + Guid.NewGuid().ToString("N");
+            EnsureFolder(duplicateFolder);
+            try
+            {
+                AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<HarkenEditorProjectSettings>(),
+                    duplicateFolder + "/OtherEditorSettings.asset");
+                Assert.Throws<BuildFailedException>(() => HarkenEditorProjectSettings.Load());
+                Assert.Throws<BuildFailedException>(() => HarkenEditorProjectSettings.GetOrCreate());
+                Assert.Throws<BuildFailedException>(ValidateSettingsBeforeBuild);
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(duplicateFolder);
+                duplicateFolder = null;
+                if (!editorSettingsExisted) AssetDatabase.DeleteAsset(originalPath);
+            }
+        }
+
+        [Test]
         public void MissingSettingsCreatesDocumentedDefaults()
         {
-            Assert.That(AssetDatabase.DeleteAsset(HarkenProjectSettingsProvider.AssetPath), Is.True);
-            HarkenProjectSettings created = HarkenProjectSettingsProvider.GetOrCreateSettings();
-            Assert.That(created, Is.Not.Null);
-            Assert.That(created.EnableCommunicationInBuilds, Is.True);
-            Assert.That(created.MaxVoices, Is.EqualTo(HarkenProjectSettings.DefaultMaxVoices));
-            Assert.That(AssetDatabase.GetAssetPath(created),
-                Is.EqualTo(HarkenProjectSettingsProvider.AssetPath));
+            duplicateFolder = "Assets/HarkenSettingsFixture_" + Guid.NewGuid().ToString("N");
+            EnsureFolder(duplicateFolder);
+            string backupPath = duplicateFolder + "/OriginalSettings.asset";
+            Assert.That(AssetDatabase.MoveAsset(settingsPath, backupPath), Is.Empty);
+            try
+            {
+                HarkenProjectSettings created = HarkenProjectSettingsProvider.GetOrCreateSettings();
+                Assert.That(created, Is.Not.Null);
+                Assert.That(created.EnableCommunicationInBuilds, Is.True);
+                Assert.That(created.MaxVoices, Is.EqualTo(HarkenProjectSettings.DefaultMaxVoices));
+                Assert.That(AssetDatabase.GetAssetPath(created),
+                    Is.EqualTo(HarkenProjectSettingsProvider.AssetPath));
+            }
+            finally
+            {
+                AssetDatabase.DeleteAsset(HarkenProjectSettingsProvider.AssetPath);
+                Assert.That(AssetDatabase.MoveAsset(backupPath, settingsPath), Is.Empty);
+            }
+        }
+
+        [Test]
+        public void EditorSettingsAreReusedAfterMovingAndRenaming()
+        {
+            HarkenEditorProjectSettings editorSettings = HarkenEditorProjectSettings.Load();
+            bool editorSettingsExisted = editorSettings != null;
+            editorSettings = HarkenEditorProjectSettings.GetOrCreate();
+            string originalPath = AssetDatabase.GetAssetPath(editorSettings);
+            if (!editorSettingsExisted)
+                Assert.That(originalPath, Is.EqualTo(HarkenEditorProjectSettings.AssetPath));
+            string originalSettings = JsonUtility.ToJson(editorSettings);
+            string guid = AssetDatabase.AssetPathToGUID(originalPath);
+            string folder = "Assets/Audio/HarkenEditorSettingsFixture_" + Guid.NewGuid().ToString("N");
+            string movedPath = folder + "/RenamedSettings.asset";
+            bool audioFolderExisted = AssetDatabase.IsValidFolder("Assets/Audio");
+            try
+            {
+                EnsureFolder(folder);
+                var serialized = new SerializedObject(editorSettings);
+                serialized.FindProperty("audioProjectDirectory").stringValue = "Assets/Audio/AudioProject";
+                serialized.ApplyModifiedPropertiesWithoutUndo();
+                AssetDatabase.SaveAssetIfDirty(editorSettings);
+                Assert.That(AssetDatabase.MoveAsset(originalPath, movedPath), Is.Empty);
+                AssetDatabase.ImportAsset(movedPath, ImportAssetOptions.ForceSynchronousImport);
+
+                HarkenEditorProjectSettings loaded = HarkenEditorProjectSettings.Load();
+                Assert.That(loaded, Is.Not.Null);
+                Assert.That(AssetDatabase.GetAssetPath(loaded), Is.EqualTo(movedPath));
+                Assert.That(loaded.AudioProjectDirectory, Is.EqualTo("Assets/Audio/AudioProject"));
+                Assert.That(HarkenProjectSettings.ReadAudioProjectDirectory(),
+                    Is.EqualTo("Assets/Audio/AudioProject"));
+                Assert.That(HarkenEditorProjectSettings.GetOrCreate(), Is.SameAs(loaded));
+                Assert.That(AssetDatabase.AssetPathToGUID(movedPath), Is.EqualTo(guid));
+                Assert.That(AssetDatabase.LoadAssetAtPath<HarkenEditorProjectSettings>(originalPath), Is.Null);
+                Assert.That(AssetDatabase.LoadAssetAtPath<HarkenEditorProjectSettings>(
+                    HarkenEditorProjectSettings.AssetPath), Is.Null);
+                Assert.DoesNotThrow(HarkenEditorProjectSettings.ValidateNotInResources);
+                Assert.DoesNotThrow(ValidateSettingsBeforeBuild);
+            }
+            finally
+            {
+                if (editorSettingsExisted)
+                {
+                    string currentPath = AssetDatabase.GUIDToAssetPath(guid);
+                    if (currentPath != originalPath)
+                        Assert.That(AssetDatabase.MoveAsset(currentPath, originalPath), Is.Empty);
+                    JsonUtility.FromJsonOverwrite(originalSettings, editorSettings);
+                    EditorUtility.SetDirty(editorSettings);
+                    AssetDatabase.SaveAssetIfDirty(editorSettings);
+                }
+                else
+                {
+                    AssetDatabase.DeleteAsset(AssetDatabase.GUIDToAssetPath(guid));
+                }
+                AssetDatabase.DeleteAsset(folder);
+                if (!audioFolderExisted && AssetDatabase.IsValidFolder("Assets/Audio") &&
+                    Directory.GetFileSystemEntries("Assets/Audio").Length == 0)
+                    AssetDatabase.DeleteAsset("Assets/Audio");
+            }
+        }
+
+        [TestCase("Assets/Audio")]
+        [TestCase("Assets")]
+        public void RuntimeSettingsAreReusedAfterMovingResourcesFolder(string parent)
+        {
+            string originalPath = AssetDatabase.GetAssetPath(settings);
+            string guid = AssetDatabase.AssetPathToGUID(originalPath);
+            string folder = parent + "/HarkenRuntimeSettingsFixture_" + Guid.NewGuid().ToString("N");
+            string movedPath = folder + "/Resources/" + HarkenProjectSettings.ResourceName + ".asset";
+            bool audioFolderExisted = AssetDatabase.IsValidFolder("Assets/Audio");
+            try
+            {
+                EnsureFolder(folder + "/Resources");
+                settings.SetMaxVoices(384);
+                EditorUtility.SetDirty(settings);
+                AssetDatabase.SaveAssetIfDirty(settings);
+                Assert.That(AssetDatabase.MoveAsset(originalPath, movedPath), Is.Empty);
+                AssetDatabase.ImportAsset(movedPath, ImportAssetOptions.ForceSynchronousImport);
+
+                Assert.That(HarkenProjectSettings.Load(), Is.SameAs(settings));
+                Assert.DoesNotThrow(HarkenProjectSettingsProvider.ValidateSettingsAssets);
+                Assert.DoesNotThrow(ValidateSettingsBeforeBuild);
+                Assert.That(HarkenProjectSettingsProvider.GetOrCreateSettings(), Is.SameAs(settings));
+                Assert.That(settings.MaxVoices, Is.EqualTo(384u));
+                Assert.That(AssetDatabase.AssetPathToGUID(movedPath), Is.EqualTo(guid));
+                Assert.That(AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(originalPath), Is.Null);
+                Assert.That(AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(
+                    HarkenProjectSettingsProvider.AssetPath), Is.Null);
+                var communicationPage = HarkenProjectSettingsProvider.CreateCommunicationSettingsProvider();
+                Assert.DoesNotThrow(() => communicationPage.activateHandler(string.Empty, null));
+
+                EnsureFolder(folder + "/Duplicate/Resources");
+                AssetDatabase.CreateAsset(ScriptableObject.CreateInstance<HarkenProjectSettings>(),
+                    folder + "/Duplicate/Resources/" + HarkenProjectSettings.ResourceName + ".asset");
+                Assert.Throws<BuildFailedException>(HarkenProjectSettingsProvider.ValidateSettingsAssets);
+                Assert.Throws<BuildFailedException>(() => HarkenProjectSettingsProvider.GetOrCreateSettings());
+                Assert.Throws<BuildFailedException>(ValidateSettingsBeforeBuild);
+            }
+            finally
+            {
+                if (AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(movedPath) != null)
+                    Assert.That(AssetDatabase.MoveAsset(movedPath, originalPath), Is.Empty);
+                AssetDatabase.DeleteAsset(folder);
+                if (!audioFolderExisted && AssetDatabase.IsValidFolder("Assets/Audio") &&
+                    Directory.GetFileSystemEntries("Assets/Audio").Length == 0)
+                    AssetDatabase.DeleteAsset("Assets/Audio");
+            }
+        }
+
+        private static void ValidateSettingsBeforeBuild()
+        {
+            Type validatorType = typeof(HarkenProjectSettingsProvider).Assembly.GetType(
+                "Harken.Unity.Editor.HarkenProjectSettingsBuildValidator", true);
+            var validator = (IPreprocessBuildWithReport)Activator.CreateInstance(validatorType);
+            validator.OnPreprocessBuild(null);
         }
 
         [Test]

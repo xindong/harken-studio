@@ -184,7 +184,7 @@ namespace Harken.Unity.Editor
         public static HarkenProjectSettings GetOrCreateSettings()
         {
             ValidateSettingsAssets();
-            var settings = AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(AssetPath);
+            var settings = HarkenProjectSettings.Load();
             if (settings != null) return settings;
             if (AssetDatabase.LoadMainAssetAtPath(AssetPath) != null || File.Exists(AssetPath))
                 throw new InvalidOperationException("The Harken settings path contains a different asset: " + AssetPath);
@@ -200,6 +200,7 @@ namespace Harken.Unity.Editor
 
         public static void ValidateSettingsAssets()
         {
+            string settingsPath = null;
             foreach (string guid in AssetDatabase.FindAssets(HarkenProjectSettings.ResourceName))
             {
                 string path = AssetDatabase.GUIDToAssetPath(guid);
@@ -208,9 +209,11 @@ namespace Harken.Unity.Editor
                     path.Substring(resources + "/Resources/".Length),
                     HarkenProjectSettings.ResourceName + Path.GetExtension(path), StringComparison.OrdinalIgnoreCase))
                     continue;
-                if (path != AssetPath || AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(path) == null)
+                if (settingsPath != null || AssetDatabase.LoadAssetAtPath<HarkenProjectSettings>(path) == null)
                     throw new BuildFailedException("Conflicting Harken settings resource: " + path +
-                        ". Project settings must use " + AssetPath);
+                        ". Keep exactly one HarkenProjectSettings asset at Resources/" +
+                        HarkenProjectSettings.ResourceName + ".asset.");
+                settingsPath = path;
             }
         }
     }
