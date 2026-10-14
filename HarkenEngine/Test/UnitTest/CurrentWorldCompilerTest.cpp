@@ -788,7 +788,7 @@ TEST(CurrentWorldCompiler, VintageEightRetainsV7WireAndCannotBecomeProduction) {
     ASSERT_TRUE(harken::EncodeCurrentWorldBodyV7(historical, vintageSeven));
     ASSERT_TRUE(harken::EncodeCurrentWorldBodyV8(historical, vintageEight));
     EXPECT_EQ(vintageSeven, vintageEight);
-    ASSERT_EQ(17u, harken::kCurrentWorldShippingBodyVintage);
+    ASSERT_EQ(18u, harken::kCurrentWorldShippingBodyVintage);
 
     harken::CurrentWorldBodyImage strict;
     EXPECT_EQ(nullptr, strict.ProductionView());
@@ -2337,7 +2337,7 @@ TEST(CurrentWorldCompiler,
                   .scheduleSemanticFingerprint);
     EXPECT_NE(shortClip.world->View().identity.runtimeSemanticFingerprint,
               longClip.world->View().identity.runtimeSemanticFingerprint);
-    ASSERT_EQ(17u, harken::kCurrentWorldShippingBodyVintage);
+    ASSERT_EQ(18u, harken::kCurrentWorldShippingBodyVintage);
 
     std::vector<std::uint8_t> body;
     ASSERT_TRUE(harkenstudiobuild::EncodeCurrentWorldShippingBody(

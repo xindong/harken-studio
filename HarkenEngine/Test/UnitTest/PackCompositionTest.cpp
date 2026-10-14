@@ -18407,10 +18407,16 @@ struct OriginalDeferredOperationFixture {
             ASSERT_EQ(operation, record.firing);
             ASSERT_EQ(ActionDeferredRecordState::Held, state);
             const auto* original = engine.OriginalDeferredPackLease(token);
-            ASSERT_NE(nullptr, original);
-            ASSERT_TRUE(original->Valid());
-            EXPECT_TRUE(engine.OriginalPackIdentityLeaseMatches(*original, record.targetPackLease));
-            EXPECT_EQ(VN_IN_USE, engine.ReleasePackIdentityLease(record.targetPackLease));
+            if (record.step.opcode == ActionOpcodeV1::Stop) {
+                EXPECT_EQ(nullptr, original);
+                EXPECT_EQ(0u, record.targetPackLease.leaseToken);
+                EXPECT_EQ(0u, record.targetPackLease.resourceClosureToken);
+            } else {
+                ASSERT_NE(nullptr, original);
+                ASSERT_TRUE(original->Valid());
+                EXPECT_TRUE(engine.OriginalPackIdentityLeaseMatches(*original, record.targetPackLease));
+                EXPECT_EQ(VN_IN_USE, engine.ReleasePackIdentityLease(record.targetPackLease));
+            }
             tokens.push_back(token);
             records.push_back(record);
         }
@@ -18464,7 +18470,7 @@ TEST(PackComposition, OriginalDeferredResetNormalCompletionReturnsSameNativeLeas
     ASSERT_NO_FATAL_FAILURE(CheckOriginalDeferredOperationNormalReturn(ActionOpcodeV1::Reset));
 }
 
-TEST(PackComposition, OriginalDeferredStopWithoutRootsReturnsSameNativeLease) {
+TEST(PackComposition, DeferredStopWithoutRootsCompletesWithoutTargetLease) {
     ASSERT_NO_FATAL_FAILURE(CheckOriginalDeferredOperationNormalReturn(ActionOpcodeV1::Stop));
 }
 
@@ -18512,7 +18518,7 @@ TEST(PackComposition, OriginalDeferredResetHeldCancelFaultRetainsActualRecordUnt
     EXPECT_EQ(VN_NOT_INITIALIZED, Vn_Update());
 }
 
-TEST(PackComposition, OriginalDeferredStopEveryCapturedRootOwnsItsSameAcquiredLease) {
+TEST(PackComposition, DeferredStopCapturesEveryRootWithoutAdditionalTargetLeases) {
     OriginalDeferredOperationFixture fixture(ActionOpcodeV1::Stop);
     ASSERT_NO_FATAL_FAILURE(fixture.PostPlay());
     ASSERT_NO_FATAL_FAILURE(fixture.PostPlay());
@@ -18522,7 +18528,8 @@ TEST(PackComposition, OriginalDeferredStopEveryCapturedRootOwnsItsSameAcquiredLe
     ASSERT_NO_FATAL_FAILURE(fixture.Capture(tokens, records));
     ASSERT_EQ(2u, tokens.size());
     EXPECT_NE(records[0].rootPlayable, records[1].rootPlayable);
-    EXPECT_NE(records[0].targetPackLease.leaseToken, records[1].targetPackLease.leaseToken);
+    EXPECT_NE(0u, records[0].rootPlayable);
+    EXPECT_NE(0u, records[1].rootPlayable);
     ASSERT_EQ(VN_OK, Vn_StopActionFiring(fixture.operation, 0));
     ASSERT_NO_FATAL_FAILURE(fixture.ExpectReturned(tokens, records));
     for (auto firing : fixture.plays) ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
@@ -18537,7 +18544,7 @@ static bool IsOriginalDeferredOperationTargetAcquisition(Engine& engine) {
 }
 
 #if defined(HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
-TEST(PackComposition, OriginalDeferredStopPartialCapturePoolRefusalReturnsEveryNativePreparation) {
+TEST(PackComposition, DeferredStopPartialCapturePoolRefusalRollsBackWithoutTargetAcquisition) {
     OriginalDeferredOperationFixture fixture(ActionOpcodeV1::Stop);
     ASSERT_NO_FATAL_FAILURE(fixture.PostPlay());
     ASSERT_NO_FATAL_FAILURE(fixture.PostPlay());
@@ -18573,7 +18580,7 @@ TEST(PackComposition, OriginalDeferredStopPartialCapturePoolRefusalReturnsEveryN
     engine.originalPackResourceAcquiredHookForTest = nullptr;
     engine.originalPackResourceAcquiredContextForTest = nullptr;
     EXPECT_EQ(0u, fixture.operation);
-    ASSERT_EQ(2u, acquired.size());
+    EXPECT_TRUE(acquired.empty());
     ASSERT_EQ(1u, capture.definitionCalls);
     EXPECT_FALSE(engine.packComposition.HasOriginalLeaseEpisode(capture.definition));
     EXPECT_EQ(VN_STALE_HANDLE, engine.packs.ValidateResourceClosure(capture.definition.resourceClosureToken));
@@ -18592,7 +18599,7 @@ TEST(PackComposition, OriginalDeferredStopPartialCapturePoolRefusalReturnsEveryN
 #endif
 
 
-static void CheckOriginalDeferredPendingStopSettlement(bool fault) {
+static void CheckDeferredPendingStopSettlement(bool cancelStop) {
     OriginalDeferredOperationFixture fixture(ActionOpcodeV1::Stop, true);
     ASSERT_NO_FATAL_FAILURE(fixture.PostPlay());
     ASSERT_EQ(VN_OK, fixture.PostOperation());
@@ -18602,45 +18609,22 @@ static void CheckOriginalDeferredPendingStopSettlement(bool fault) {
     ASSERT_EQ(1u, tokens.size());
     ASSERT_TRUE(records[0].waitingForImmediateEntry);
     auto& engine = *fixture.session.Engine();
-    if (fault) ASSERT_EQ(VN_OK,
-        engine.packs.ReleaseResourceClosure(records[0].targetPackLease.resourceClosureToken));
+    if (cancelStop) ASSERT_EQ(VN_OK, Vn_StopActionFiring(fixture.operation, 0));
     ASSERT_EQ(VN_OK, Vn_StopActionFiring(fixture.plays[0], 0));
-    const VnResult updated = Vn_Update();
-    if (!fault) {
-        EXPECT_EQ(VN_OK, updated);
-        ASSERT_NO_FATAL_FAILURE(fixture.ExpectReturned(tokens, records));
-    } else {
-        EXPECT_EQ(VN_OK, updated);
-        const auto* original = engine.OriginalDeferredPackLease(tokens[0]);
-        ASSERT_NE(nullptr, original);
-        EXPECT_TRUE(original->Valid());
-        EXPECT_EQ(PackComposition::OriginalLeasePhase::Faulted, original->Phase());
-        EXPECT_TRUE(engine.OriginalDeferredHeldCancellationPending(tokens[0]));
-        EXPECT_EQ(ActionDeferredRecordState::Held, engine.actionDeferredRecords.State(tokens[0]));
-        EXPECT_EQ(1u, engine.actionFirings.OwnedDeferredCount(fixture.operation));
-        EXPECT_TRUE(engine.runtimeRecreateRequired);
-        VnPostActionDesc rejected{};
-        rejected.structSize = sizeof(rejected);
-        rejected.actionId = OriginalDeferredOperationFixture::kOperation;
-        rejected.emitter = fixture.emitter;
-        VnActionFiringHandle refused = 0;
-        EXPECT_EQ(VN_RUNTIME_RECREATE_REQUIRED, Vn_PostAction(&rejected, &refused));
-        EXPECT_EQ(0u, refused);
-        EXPECT_EQ(1u, engine.actionFirings.OwnedDeferredCount(fixture.operation));
-        Vn_Term();
-        EXPECT_EQ(VN_NOT_INITIALIZED, Vn_Update());
-    }
+    EXPECT_EQ(VN_OK, Vn_Update());
+    ASSERT_NO_FATAL_FAILURE(fixture.ExpectReturned(tokens, records));
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(fixture.operation));
 }
 
-TEST(PackComposition, OriginalDeferredPendingStopTargetGoneReturnsBeforeRecordFinalization) {
-    ASSERT_NO_FATAL_FAILURE(CheckOriginalDeferredPendingStopSettlement(false));
+TEST(PackComposition, DeferredPendingStopTargetGoneReclaimsRecordWithoutTargetLease) {
+    ASSERT_NO_FATAL_FAILURE(CheckDeferredPendingStopSettlement(false));
 }
 
-TEST(PackComposition, OriginalDeferredPendingStopReturnFaultRetainsHeldPairAndFiringUntilJoinedTerm) {
-    ASSERT_NO_FATAL_FAILURE(CheckOriginalDeferredPendingStopSettlement(true));
+TEST(PackComposition, DeferredPendingStopCancellationReclaimsPairWithoutTargetLease) {
+    ASSERT_NO_FATAL_FAILURE(CheckDeferredPendingStopSettlement(true));
 }
 
-TEST(PackComposition, OriginalDeferredStopNormalMaterializationStopsActualPcmAndReturnsOperationLease) {
+TEST(PackComposition, DeferredStopMaterializationStopsActualPcmWithoutTargetLease) {
     OriginalDeferredOperationFixture fixture(ActionOpcodeV1::Stop);
     ASSERT_NO_FATAL_FAILURE(fixture.PostPlay());
     ASSERT_EQ(VN_OK, fixture.PostOperation());
@@ -18683,8 +18667,8 @@ TEST(PackComposition, OriginalDeferredStopNormalMaterializationStopsActualPcmAnd
 }
 
 #if defined(HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
-static void CheckOriginalDeferredStopPreparationCapacityExit(bool fault) {
-    OriginalDeferredOperationFixture fixture(ActionOpcodeV1::Stop);
+static void CheckOriginalDeferredPreparationCapacityExit(ActionOpcodeV1 opcode, bool fault) {
+    OriginalDeferredOperationFixture fixture(opcode);
     auto& engine = *fixture.session.Engine();
     // A deliberate zero staging capacity exercises the pre-record exit. It
     // neither clears a live cap nor supplies replacement ownership evidence.
@@ -18713,7 +18697,7 @@ static void CheckOriginalDeferredStopPreparationCapacityExit(bool fault) {
     EXPECT_EQ(VN_BACKPRESSURE, fixture.PostOperation());
     engine.originalPackResourceAcquiredHookForTest = nullptr;
     engine.originalPackResourceAcquiredContextForTest = nullptr;
-    ASSERT_EQ(1u, prefix.calls);
+    ASSERT_EQ(opcode == ActionOpcodeV1::Stop ? 0u : 1u, prefix.calls);
     ASSERT_EQ(1u, prefix.definitionCalls);
     EXPECT_FALSE(engine.packComposition.HasOriginalLeaseEpisode(prefix.definition));
     EXPECT_EQ(VN_STALE_HANDLE, engine.packs.ValidateResourceClosure(prefix.definition.resourceClosureToken));
@@ -18743,15 +18727,19 @@ static void CheckOriginalDeferredStopPreparationCapacityExit(bool fault) {
 
 
 #if defined(HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
-TEST(PackComposition, OriginalDeferredStopZeroRootCapacityRefusalReturnsActualUnassignedPreparation) {
-    ASSERT_NO_FATAL_FAILURE(CheckOriginalDeferredStopPreparationCapacityExit(false));
+TEST(PackComposition, DeferredStopZeroRootCapacityRefusalReturnsDefinitionWithoutTargetAcquisition) {
+    ASSERT_NO_FATAL_FAILURE(CheckOriginalDeferredPreparationCapacityExit(ActionOpcodeV1::Stop, false));
+}
+
+TEST(PackComposition, OriginalDeferredResetCapacityRefusalReturnsActualUnassignedPreparation) {
+    ASSERT_NO_FATAL_FAILURE(CheckOriginalDeferredPreparationCapacityExit(ActionOpcodeV1::Reset, false));
 }
 #endif
 
 
 #if defined(HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
-TEST(PackComposition, OriginalDeferredStopPreparationReturnFaultRetainsActualUnassignedOwnerUntilJoinedTerm) {
-    ASSERT_NO_FATAL_FAILURE(CheckOriginalDeferredStopPreparationCapacityExit(true));
+TEST(PackComposition, OriginalDeferredResetPreparationReturnFaultRetainsActualUnassignedOwnerUntilJoinedTerm) {
+    ASSERT_NO_FATAL_FAILURE(CheckOriginalDeferredPreparationCapacityExit(ActionOpcodeV1::Reset, true));
 }
 #endif
 

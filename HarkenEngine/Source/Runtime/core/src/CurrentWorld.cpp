@@ -1144,6 +1144,15 @@ bool ValidCurrentContainer(const ContainerProgramViewV3& row) noexcept {
 }
 
 template <class WorldView>
+const PlayablePropertyProgramViewV1* FindActionTargetProperty(
+    const WorldView& world, VnObjectId stableId) noexcept {
+    for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i)
+        if (world.playableProperties[i].stableId == stableId)
+            return &world.playableProperties[i];
+    return nullptr;
+}
+
+template <class WorldView>
 const PlayablePropertyProgramViewV1* FindProperty(
     const WorldView& world,
     playableproperties::ContentPropertyKindV1 kind,
@@ -3735,7 +3744,8 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             if (step.opcode == ActionOpcodeV1::Play ||
                 step.opcode == ActionOpcodeV1::Stop) {
                 const bool stop = step.opcode == ActionOpcodeV1::Stop;
-                if (static_cast<std::uint32_t>(step.target.kind) >
+                if (step.target.expectedProgramSemanticFingerprint == 0
+                    || static_cast<std::uint32_t>(step.target.kind) >
                         static_cast<std::uint32_t>(
                             ActionTargetKindV1::Piece) ||
                     step.scope != ActionScopeV1::Global ||
@@ -3760,12 +3770,13 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                     static_cast<playableproperties::ContentPropertyKindV1>(
                         static_cast<std::uint32_t>(step.target.kind) + 1u);
                 const auto* property =
-                    FindProperty(world, propertyKind, step.target.stableId);
+                    FindActionTargetProperty(world, step.target.stableId);
                 if (property == nullptr) {
-                    if (!IsPartitionLocal(scope)) {
+                    if (!stop && !IsPartitionLocal(scope)) {
                         return WorldInstallStatus::InvalidWorld;
                     }
-                } else if (property->programSemanticFingerprint !=
+                } else if (property->contentPropertyKind != propertyKind
+                           || property->programSemanticFingerprint !=
                            step.target.expectedProgramSemanticFingerprint) {
                     return WorldInstallStatus::InvalidWorld;
                 }
@@ -3789,7 +3800,8 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                         return WorldInstallStatus::InvalidWorld;
                     }
                 } else {
-                    if (static_cast<std::uint32_t>(
+                    if (step.quantizeReference.expectedProgramSemanticFingerprint == 0
+                        || static_cast<std::uint32_t>(
                             step.quantizeReference.kind) >
                         static_cast<std::uint32_t>(
                             ActionTargetKindV1::Piece)) {
@@ -3800,14 +3812,13 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                             static_cast<std::uint32_t>(
                                 step.quantizeReference.kind) +
                             1u);
-                    const auto* reference = FindProperty(
-                        world, referenceKind,
-                        step.quantizeReference.stableId);
+                    const auto* reference = FindActionTargetProperty(world, step.quantizeReference.stableId);
                     if (reference == nullptr) {
-                        if (!IsPartitionLocal(scope)) {
+                        if (!stop && !IsPartitionLocal(scope)) {
                             return WorldInstallStatus::InvalidWorld;
                         }
-                    } else if (reference->programSemanticFingerprint !=
+                    } else if (reference->contentPropertyKind != referenceKind
+                               || reference->programSemanticFingerprint !=
                                step.quantizeReference
                                    .expectedProgramSemanticFingerprint) {
                         return WorldInstallStatus::InvalidWorld;

@@ -99,6 +99,7 @@ struct Builder
     std::set<harkenstudio::ObjectId> actionVisited;
     std::set<harkenstudio::ObjectId> actionActive;
     std::set<harkenstudio::ObjectId> objectVisited;
+    std::set<harkenstudio::ObjectId> controlVisited;
     std::set<std::tuple<harkenstudio::ObjectId, harkenstudio::ObjectId, ActionClosureEdgeReason, QString,
                         std::vector<harkenstudio::ObjectId>>> edgeKeys;
     std::set<std::tuple<RuntimeCapabilityFeature, harkenstudio::ObjectId, QString>> capabilityKeys;
@@ -266,7 +267,7 @@ struct Builder
                  QStringLiteral("effects"), path);
     }
 
-    void addSoundMedia(const ProjectItem& item)
+    void addSoundMedia(const ProjectItem& item, bool control)
     {
         const auto* sound = item.comp<VSound>();
         if (!sound) {
@@ -295,7 +296,7 @@ struct Builder
             const QString platform = variant.platform;
             const QString artifactLanguage = language.isEmpty()
                 ? QStringLiteral("none") : language;
-            plan.media.push_back({item.runtimeId(), resolution.source->entryId,
+            (control ? plan.controlMedia : plan.media).push_back({item.runtimeId(), resolution.source->entryId,
                                   resolution.source->sourceId, platform, language,
                                   QStringLiteral("%1_%2_%3")
                                       .arg(objectIdString(item.runtimeId())).arg(platform, artifactLanguage)});
@@ -306,7 +307,8 @@ struct Builder
             add(variant.language);
     }
 
-    void visitTrack(const ProjectItem& track, const std::vector<harkenstudio::ObjectId>& path)
+    void visitTrack(const ProjectItem& track, const std::vector<harkenstudio::ObjectId>& path,
+                      bool control = false)
     {
         const auto* timeline = track.comp<VTrack>();
         if (!timeline) {
@@ -326,11 +328,12 @@ struct Builder
             edge(track.runtimeId(), target->runtimeId(),
                  ActionClosureEdgeReason::TrackClip,
                  clip.clipGuid.toString(QUuid::WithoutBraces), targetPath);
-            visitContent(*target, targetPath);
+            visitContent(*target, targetPath, control);
         }
     }
 
-    void visitContainer(const ProjectItem& container, const std::vector<harkenstudio::ObjectId>& path)
+    void visitContainer(const ProjectItem& container, const std::vector<harkenstudio::ObjectId>& path,
+                      bool control = false)
     {
         const auto platform = ProjectPlatformSemantics::parseId(variant.platform);
         const auto* selection = container.comp<VSelection>();
@@ -346,7 +349,7 @@ struct Builder
             edge(container.runtimeId(), child->runtimeId(),
                  ActionClosureEdgeReason::OwnedChild,
                  QStringLiteral("selections"), childPath);
-            visitContent(*child, childPath);
+            visitContent(*child, childPath, control);
         }
         const auto visitRows = [&](const auto& rows, const QString& field) {
             for (const auto& row : rows) {
@@ -358,7 +361,7 @@ struct Builder
                 targetPath.push_back(target->runtimeId());
                 edge(container.runtimeId(), target->runtimeId(),
                      ActionClosureEdgeReason::GridRow, field, targetPath);
-                visitContent(*target, targetPath);
+                visitContent(*target, targetPath, control);
             }
         };
         if (selection->mode == SelectionMode::Match) {
@@ -403,14 +406,15 @@ struct Builder
             edge(container.runtimeId(), bridge->runtimeId(),
                  ActionClosureEdgeReason::TransitionBridge,
                  QStringLiteral("transitions.rules[%1].bridge").arg(i), bridgePath);
-            visitContent(*bridge, bridgePath);
+            visitContent(*bridge, bridgePath, control);
             capability(RuntimeCapabilityFeature::Transition,
                        RuntimeCapabilityState::UnavailableEngineContract,
                        container.runtimeId(), QStringLiteral("transitions"));
         }
     }
 
-    void visitContent(const ProjectItem& item, const std::vector<harkenstudio::ObjectId>& path)
+    void visitContent(const ProjectItem& item, const std::vector<harkenstudio::ObjectId>& path,
+                      bool control = false)
     {
         if (!isContentType(item.type)) {
             diagnostic(ActionClosureDiagnosticCode::InvalidReferenceType,
@@ -421,19 +425,19 @@ struct Builder
         }
         if (harkenstudio::IsNull(item.runtimeId()))
             return;
-        if (!objectVisited.insert(item.runtimeId()).second)
+        if (!(control ? controlVisited : objectVisited).insert(item.runtimeId()).second)
             return;
-        plan.objects.push_back(member(item, path));
+        (control ? plan.controlObjects : plan.objects).push_back(member(item, path));
         addDependencies(item, path);
         switch (item.type) {
         case ProjectItem::Type::Sound:
-            addSoundMedia(item);
+            addSoundMedia(item, control);
             break;
         case ProjectItem::Type::Container:
-            visitContainer(item, path);
+            visitContainer(item, path, control);
             break;
         case ProjectItem::Type::Track:
-            visitTrack(item, path);
+            visitTrack(item, path, control);
             break;
         case ProjectItem::Type::Piece:
             for (const auto& child : item.children) {
@@ -444,7 +448,7 @@ struct Builder
                 edge(item.runtimeId(), child->runtimeId(),
                      ActionClosureEdgeReason::OwnedChild,
                      QStringLiteral("tracks"), childPath);
-                visitContent(*child, childPath);
+                visitContent(*child, childPath, control);
             }
             break;
         default:
@@ -500,7 +504,7 @@ struct Builder
                     edge(action.runtimeId(), reference->runtimeId(),
                          ActionClosureEdgeReason::QuantizeReference,
                          field, referencePath);
-                    visitContent(*reference, referencePath);
+                    visitContent(*reference, referencePath, step.type == VActionStep::Type::Stop);
                 }
             }
             if (quantized)
@@ -578,7 +582,7 @@ struct Builder
                      .arg(i).arg(step.type == VActionStep::Type::Play
                                      ? QStringLiteral("play") : QStringLiteral("stop")),
                  targetPath);
-            visitContent(*target, targetPath);
+            visitContent(*target, targetPath, step.type == VActionStep::Type::Stop);
         }
         actionActive.erase(action.runtimeId());
     }
@@ -591,10 +595,13 @@ struct Builder
         };
         std::sort(plan.actions.begin(), plan.actions.end(), memberLess);
         std::sort(plan.objects.begin(), plan.objects.end(), memberLess);
-        std::sort(plan.media.begin(), plan.media.end(), [](const auto& a, const auto& b) {
+        std::sort(plan.controlObjects.begin(), plan.controlObjects.end(), memberLess);
+        const auto mediaLess = [](const auto& a, const auto& b) {
             return std::tie(a.soundStableId, a.language, a.sourceEntryId)
                 < std::tie(b.soundStableId, b.language, b.sourceEntryId);
-        });
+        };
+        std::sort(plan.media.begin(), plan.media.end(), mediaLess);
+        std::sort(plan.controlMedia.begin(), plan.controlMedia.end(), mediaLess);
         std::sort(plan.edges.begin(), plan.edges.end(), [](const auto& a, const auto& b) {
             return std::tie(a.fromStableId, a.toStableId, a.reason, a.field)
                 < std::tie(b.fromStableId, b.toStableId, b.reason, b.field);
@@ -686,6 +693,8 @@ QJsonObject ActionClosurePlan::toJson() const
             {QStringLiteral("actions"), values(actions)},
             {QStringLiteral("objects"), values(objects)},
             {QStringLiteral("media"), values(media)},
+            {QStringLiteral("controlObjects"), values(controlObjects)},
+            {QStringLiteral("controlMedia"), values(controlMedia)},
             {QStringLiteral("edges"), values(edges)},
             {QStringLiteral("diagnostics"), values(diagnostics)},
             {QStringLiteral("capabilities"), values(capabilities)},

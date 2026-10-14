@@ -355,6 +355,8 @@ struct PackMediaDesc
     std::vector<uint8_t> sharedCodebook;
 };
 
+bool computePackMediaContentRevision(const PackMediaDesc& media, uint64_t* revision);
+
 /// One pack build. Owns the runtime pack builder; add content, then build.
 class PackBuildSession
 {

@@ -286,6 +286,8 @@ void ProjectPackExporter::ApplyMediaCollectionStats(ExportResult& result,
     result.mediaConversions += stats.conversions;
     result.mediaFallbacks += stats.fallbacks;
     result.warnings.append(stats.warnings);
+    result.controlSoundContentRevisions.insert(
+        stats.controlSoundContentRevisions.begin(), stats.controlSoundContentRevisions.end());
 }
 
 
@@ -1424,7 +1426,7 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
     std::set<uint32_t> processedMedia;
     std::set<harkenstudio::ObjectId> processedSounds;
 
-    if (closure && !closure->media.empty()) {
+    if (closure && (!closure->media.empty() || !closure->controlMedia.empty())) {
         const ObjectIndex index = buildProjectObjectIndex(project);
         std::map<harkenstudio::ObjectId, const ProjectItem*> soundsByStableId;
         for (const auto& [objectId, item] : index)
@@ -1432,10 +1434,15 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
                 soundsByStableId.emplace(item->runtimeId(), item);
         const QString derivativeDir = QDir(PathUtils::getCacheDir(projectDir))
             .filePath(QStringLiteral("pack-derivatives/%1").arg(options.platform));
-        for (const ActionClosureMedia& media : closure->media) {
-            if (excludedClosureMediaIds
-                && excludedClosureMediaIds->count(media.authoringSourceId) != 0)
-                continue;
+        auto inputs = closure->media;
+        inputs.insert(inputs.end(), closure->controlMedia.begin(), closure->controlMedia.end());
+        for (const ActionClosureMedia& media : inputs) {
+            if (processedSounds.count(media.soundStableId) != 0) continue;
+            const auto matchesSound = [&](const auto& candidate) {
+                return candidate.soundStableId == media.soundStableId;
+            };
+            const bool controlInput = std::any_of(
+                closure->controlMedia.begin(), closure->controlMedia.end(), matchesSound);
             const auto owner = soundsByStableId.find(media.soundStableId);
             const ProjectItem* soundItem = owner == soundsByStableId.end()
                 ? nullptr : owner->second;
@@ -1445,8 +1452,11 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
                     .arg(VNX::objectIdString(media.soundStableId));
                 return false;
             }
-            if (includedObjectIds && includedObjectIds->count(soundItem->objectID) == 0)
-                continue;
+            const bool publish = std::any_of(closure->media.begin(), closure->media.end(), matchesSound)
+                && (!includedObjectIds || includedObjectIds->count(soundItem->objectID) != 0)
+                && (!excludedClosureMediaIds
+                    || excludedClosureMediaIds->count(media.authoringSourceId) == 0);
+            if (!publish && !controlInput) continue;
             const auto* source = SoundSourceSemantics::findEntry(*sound, media.sourceEntryId);
             if (!source) {
                 if (errorOut) *errorOut = QStringLiteral("Closure source entry is missing for Sound %1")
@@ -1497,7 +1507,17 @@ bool ProjectPackExporter::CollectMedia(const ProjectData& project,
             desc.loopStartFrame = artifact->loopStartFrame;
             desc.loopEndFrame = artifact->loopEndFrame;
             desc.format = Bridge::PackMediaFormat::PcmFloat;
-            builder.addMedia(desc);
+            if (publish) {
+                builder.addMedia(desc);
+            } else {
+                uint64_t revision = 0;
+                if (!stats || !Bridge::computePackMediaContentRevision(desc, &revision)) {
+                    if (errorOut) *errorOut = QStringLiteral("Cannot compute converted media revision for Sound %1")
+                        .arg(VNX::objectIdString(media.soundStableId));
+                    return false;
+                }
+                stats->controlSoundContentRevisions.emplace(media.soundStableId, revision);
+            }
             processedSounds.insert(media.soundStableId);
         }
     }

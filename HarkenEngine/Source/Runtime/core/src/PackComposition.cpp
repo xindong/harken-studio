@@ -1135,6 +1135,25 @@ VnResult ValidateActionObjectRefInClosure(
     return VN_OK;
 }
 
+VnResult ValidateActionControlReference(
+    const PackComposition::PublishedView& published,
+    const ActionObjectRefV1& ref) noexcept {
+    if (ref.reserved != 0 || ref.stableId == VnObjectId{} ||
+        ref.expectedProgramSemanticFingerprint == 0 ||
+        static_cast<std::uint32_t>(ref.kind) > static_cast<std::uint32_t>(ActionTargetKindV1::Piece))
+        return VN_BAD_PACK;
+    const auto* hit = BinaryFind(published.index, ref.stableId);
+    if (hit == nullptr) return VN_OK;
+    if (hit->identityClass != kInitCatalogIdentityClassPlayable ||
+        hit->packSlot >= published.owners.size()) return VN_BAD_PACK;
+    const auto* property = PropertyAtHit(published.owners[hit->packSlot], *hit);
+    const auto kind = static_cast<playableproperties::ContentPropertyKindV1>(
+        static_cast<std::uint32_t>(ref.kind) + 1u);
+    return property != nullptr && property->contentPropertyKind == kind &&
+        property->programSemanticFingerprint == ref.expectedProgramSemanticFingerprint
+        ? VN_OK : VN_BAD_PACK;
+}
+
 VnResult ValidateScheduleKeyInClosure(
     const PackComposition::PublishedView& published,
     const std::vector<std::uint8_t>& member,
@@ -1373,16 +1392,18 @@ VnResult ValidateOwnerExternalRefs(
                     return setValue;
                 }
             }
-            const VnResult target = ValidateActionObjectRefInClosure(
-                published, member, step.target);
+            const VnResult target = step.opcode == ActionOpcodeV1::Stop
+                ? ValidateActionControlReference(published, step.target)
+                : ValidateActionObjectRefInClosure(published, member, step.target);
             if (target != VN_OK) {
                 return target;
             }
             if (step.quantizeReference.stableId == VnObjectId{}) {
                 continue;
             }
-            const VnResult quantize = ValidateActionObjectRefInClosure(
-                published, member, step.quantizeReference);
+            const VnResult quantize = step.opcode == ActionOpcodeV1::Stop
+                ? ValidateActionControlReference(published, step.quantizeReference)
+                : ValidateActionObjectRefInClosure(published, member, step.quantizeReference);
             if (quantize != VN_OK) {
                 return quantize;
             }
