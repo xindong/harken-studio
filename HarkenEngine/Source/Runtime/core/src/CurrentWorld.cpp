@@ -1144,6 +1144,15 @@ bool ValidCurrentContainer(const ContainerProgramViewV3& row) noexcept {
 }
 
 template <class WorldView>
+bool IsKnownNonPlayableActionTarget(const WorldView& world, VnObjectId stableId) noexcept {
+    for (std::uint32_t i = 0; i < world.actionCount; ++i)
+        if (world.actions[i].actionStableId == stableId) return true;
+    for (std::uint32_t i = 0; i < world.variableCount; ++i)
+        if (world.variables[i].variableId == stableId) return true;
+    return false;
+}
+
+template <class WorldView>
 const PlayablePropertyProgramViewV1* FindActionTargetProperty(
     const WorldView& world, VnObjectId stableId) noexcept {
     for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i)
@@ -3772,7 +3781,8 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                 const auto* property =
                     FindActionTargetProperty(world, step.target.stableId);
                 if (property == nullptr) {
-                    if (!stop && !IsPartitionLocal(scope)) {
+                    if (IsKnownNonPlayableActionTarget(world, step.target.stableId)
+                        || (!stop && !IsPartitionLocal(scope))) {
                         return WorldInstallStatus::InvalidWorld;
                     }
                 } else if (property->contentPropertyKind != propertyKind
@@ -3814,7 +3824,8 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                             1u);
                     const auto* reference = FindActionTargetProperty(world, step.quantizeReference.stableId);
                     if (reference == nullptr) {
-                        if (!stop && !IsPartitionLocal(scope)) {
+                        if (IsKnownNonPlayableActionTarget(world, step.quantizeReference.stableId)
+                            || (!stop && !IsPartitionLocal(scope))) {
                             return WorldInstallStatus::InvalidWorld;
                         }
                     } else if (reference->contentPropertyKind != referenceKind

@@ -149,6 +149,48 @@ bool WriteBinary(const std::filesystem::path& path,
     return static_cast<bool>(out);
 }
 
+TEST(CurrentWorldCompiler, StopControlReferencesRejectKnownNonPlayableIdentities) {
+    using namespace harkenstudiobuild;
+    ActionStepProgramViewV1 step{};
+    step.opcode = ActionOpcodeV1::Stop;
+    step.target = {ActionTargetKindV1::Sound, 0, harkentest::StudioObjectId(10), 123};
+    step.delay = {AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
+    step.fade = step.cooldown = step.delay;
+    ActionProgramViewV1 action{};
+    action.actionStableId = harkentest::StudioObjectId(99);
+    action.steps = &step;
+    action.stepCount = action.expandedStepOccurrenceCount = action.expandedFiringCount = 1;
+    VariableDefinitionV1 variable{};
+    variable.variableId = harkentest::StudioObjectId(98);
+    variable.kind = VariableKindV1::Smooth;
+    variable.rangeMax = 1.0f;
+    ContainerWorldInstallViewV1 world{};
+    world.actions = &action;
+    world.actionCount = 1;
+    world.variables = &variable;
+    world.variableCount = 1;
+    world.identity.capabilityMask = kWorldCapabilityActionDefinitions | kWorldCapabilityVariableDefinitions;
+    const auto validate = [&] {
+        action.programSemanticFingerprint = ComputeActionProgramFingerprintV1(action);
+        world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV5(world);
+        return ValidateCurrentWorldV1(world);
+    };
+    ASSERT_EQ(WorldInstallStatus::Ok, validate());
+    const auto valid = step;
+    for (const auto id : {action.actionStableId, variable.variableId}) {
+        step = valid;
+        step.target.stableId = id;
+        EXPECT_EQ(WorldInstallStatus::InvalidWorld, validate());
+        step = valid;
+        step.quantizeTiming = ActionQuantizeTimingV1::NextBeat;
+        step.quantizeReference = step.target;
+        step.quantizeReference.stableId = id;
+        action.directFeatureMask = action.transitiveFeatureMask = 2;
+        EXPECT_EQ(WorldInstallStatus::InvalidWorld, validate());
+        action.directFeatureMask = action.transitiveFeatureMask = 0;
+    }
+}
+
 TEST(CurrentWorldCompiler, DefinitionsOccurrencesAndLayerPathAreCanonical) {
     const auto result = harkencurrentworldcompiler::CompileCurrentWorldV1(
         Project(), {}, Materializations(),

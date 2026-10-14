@@ -386,12 +386,14 @@ void readCanonicalWorld(const QString& path, QByteArray& bytes,
 }
 
 void activateExportedNames(const QString& outputDir, const QStringList& names,
-                          const QString& language = {})
+                          const QString& language = {},
+                          std::map<QString, VnPackHandle>* handles = nullptr)
 {
     const auto manifestDir = language.isEmpty() ? outputDir : QDir(outputDir).filePath(language);
     const auto packs = readManifest(manifestDir).value(QStringLiteral("packs")).toArray();
     std::vector<QByteArray> paths;
     std::vector<VnCanonicalPackSetMemberV1> members;
+    QStringList memberNames;
     const auto root = QFileInfo(outputDir).absoluteFilePath().toUtf8();
     for (const auto& value : packs) {
         const auto pack = value.toObject();
@@ -408,6 +410,7 @@ void activateExportedNames(const QString& outputDir, const QStringList& names,
         member.packStableId = pack.value(QStringLiteral("packStableId")).toString().toULongLong();
         member.utf8ContainmentRoot = root.constData();
         members.push_back(member);
+        memberNames.push_back(name);
     }
     ASSERT_EQ(members.size(), names.size() + 1u);
     std::vector<VnCanonicalPackSetMemberResultV1> rows(members.size());
@@ -418,6 +421,9 @@ void activateExportedNames(const QString& outputDir, const QStringList& names,
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(
         members.data(), static_cast<uint32_t>(members.size()), rows.data(), report));
+    if (handles)
+        for (size_t i = 0; i < rows.size(); ++i)
+            handles->emplace(memberNames[i], rows[i].handle);
 }
 
 void expectMediaMatchesDefinition(const QByteArray& bytes,
@@ -925,13 +931,14 @@ TEST(EditorProjectPackExporterManifest, MediaFreeDelayedStopCapturesOnlyExisting
     options.platform = HarkenTest::platformIdString("Windows");
     const auto result = exporter.ExportAllPacks(project, dir.path(), options);
     ASSERT_TRUE(result.success) << result.error.toStdString();
-    for (int scenario = 0; scenario != 4; ++scenario) {
+    for (int scenario = 0; scenario != 6; ++scenario) {
         SCOPED_TRACE(scenario);
         harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
+        std::map<QString, VnPackHandle> handles;
         ASSERT_NO_FATAL_FAILURE(activateExportedNames(dir.path(), scenario == 0
             ? QStringList{QStringLiteral("Stop")}
-            : QStringList{QStringLiteral("Play"), QStringLiteral("Stop")}));
+            : QStringList{QStringLiteral("Play"), QStringLiteral("Stop")}, {}, &handles));
         VnPostActionDesc post{};
         post.structSize = sizeof(post);
         ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
@@ -955,16 +962,61 @@ TEST(EditorProjectPackExporterManifest, MediaFreeDelayedStopCapturesOnlyExisting
         VnActionStepResult playStep{};
         playStep.structSize = sizeof(playStep);
         if (playFiring != 0) ASSERT_EQ(VN_OK, Vn_QueryActionStep(playFiring, 0, &playStep));
+        harken::PackResourceRevisionToken oldRevision = 0;
+        if (scenario == 4) {
+            harken::PackRevisionKey oldKey{};
+            const auto provider = handles.at(QStringLiteral("Play"));
+            ASSERT_TRUE(session.Engine()->packs.ActiveRevisionIdentity(provider, &oldKey, &oldRevision));
+            ASSERT_EQ(VN_OK, Vn_UnloadPack(provider));
+            EXPECT_EQ(session.Engine()->packs.RetiringCount(), 1u);
+            EXPECT_TRUE(session.Engine()->playableInstances.Classify(playStep.producedPlayableInstance).live);
+        }
+        if (scenario == 5) {
+            const auto oldRoot = playStep.producedPlayableInstance;
+            ASSERT_EQ(VN_OK, Vn_StopActionFiring(playFiring, 0));
+            for (int block = 0; block != 8; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                session.Engine()->nullBackend.Pump(1);
+            }
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_FALSE(session.Engine()->playableInstances.Classify(oldRoot).live);
+            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(playFiring));
+            ASSERT_EQ(VN_OK, postAction(21, &playFiring));
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(playFiring, 0, &playStep));
+            EXPECT_EQ(static_cast<uint32_t>(oldRoot), static_cast<uint32_t>(playStep.producedPlayableInstance));
+            EXPECT_NE(oldRoot, playStep.producedPlayableInstance);
+        }
         for (int block = 0; block != 150; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
             session.Engine()->nullBackend.Pump(1);
+            if (scenario == 4 && block == 30) {
+                const auto* pcm = session.Engine()->nullBackend.LastBlock();
+                const auto samples = session.Engine()->nullBackend.BlockFrames()
+                    * session.Engine()->nullBackend.Channels();
+                ASSERT_TRUE(std::any_of(pcm, pcm + samples, [](float sample) {
+                    return std::abs(sample) > 1e-4f;
+                }));
+                EXPECT_TRUE(session.Engine()->playableInstances.Classify(playStep.producedPlayableInstance).live);
+            }
         }
         ASSERT_EQ(VN_OK, Vn_Update());
         EXPECT_EQ(session.Engine()->actionDeferredRecords.LiveCount(), 0u);
         EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stopFiring));
         if (playFiring != 0)
             EXPECT_EQ(session.Engine()->playableInstances.Classify(playStep.producedPlayableInstance).live,
-                      scenario != 2);
+                      scenario != 2 && scenario != 4);
+        if (scenario == 4) {
+            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(playFiring));
+            for (int block = 0; block != 4; ++block) {
+                session.Engine()->nullBackend.Pump(1);
+                ASSERT_EQ(VN_OK, Vn_Update());
+            }
+            EXPECT_EQ(session.Engine()->packs.RetiringCount(), 0u);
+            harken::PCMView exact{};
+            EXPECT_EQ(VN_CONTENT_NOT_LOADED, session.Engine()->packs.LookupExact(oldRevision,
+                harkentest::ToRuntime(harkentest::StudioObjectId(1 + kStableIdBias)),
+                session.Engine()->registry, &exact));
+        }
     }
     VNX::AssetRegistry::instance().clear();
 }

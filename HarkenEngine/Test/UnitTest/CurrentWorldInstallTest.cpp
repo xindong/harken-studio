@@ -345,6 +345,27 @@ TEST(CurrentWorldInstall, StopControlReferenceMayBeAbsentButMustBeWellFormed) {
     };
     ASSERT_EQ(harken::WorldInstallStatus::Ok, validate());
     const auto valid = step;
+    harken::VariableDefinitionV1 variable{};
+    variable.variableId = harkentest::ObjectId(98);
+    variable.kind = harken::VariableKindV1::Smooth;
+    variable.rangeMax = 1.0f;
+    world.variables = &variable;
+    world.variableCount = 1;
+    world.identity.capabilityMask |= harken::kWorldCapabilityVariableDefinitions;
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, validate());
+    for (const auto id : {action.actionStableId, variable.variableId}) {
+        step = valid;
+        step.target.stableId = id;
+        EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld, validate());
+        step = valid;
+        step.quantizeTiming = harken::ActionQuantizeTimingV1::NextBeat;
+        step.quantizeReference = step.target;
+        step.quantizeReference.stableId = id;
+        action.directFeatureMask = action.transitiveFeatureMask = 2;
+        EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld, validate());
+        action.directFeatureMask = action.transitiveFeatureMask = 0;
+    }
+    step = valid;
     step.target.expectedProgramSemanticFingerprint = 0;
     EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld, validate());
     step = valid;
