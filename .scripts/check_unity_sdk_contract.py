@@ -239,8 +239,8 @@ def verify_manifests(sdk: Path, errors: list[str]) -> None:
     )
     if package.get("name") != "com.harken.core":
         errors.append("package.json name must be com.harken.core")
-    if package.get("version") != "0.3.2":
-        errors.append("package.json version must be 0.3.2")
+    if package.get("version") != "0.3.3":
+        errors.append("package.json version must be 0.3.3")
     if "samples" in package:
         errors.append("package.json must not declare repository-owned Samples")
 
