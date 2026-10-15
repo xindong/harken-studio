@@ -810,8 +810,13 @@ TEST_F(EngineIntegrationsPageTest, SdkSelectionCancelKeepsSavedStateAndApplyUpda
         QCoreApplication::processEvents();
         ASSERT_TRUE(sources->view()->isVisible());
         const auto item = sources->model()->index(index, 0);
+        sources->view()->scrollTo(item);
+        const QRect itemRect = sources->view()->visualRect(item).intersected(
+            sources->view()->viewport()->rect());
+        ASSERT_FALSE(itemRect.isEmpty());
+        QTest::mouseMove(sources->view()->viewport(), itemRect.center());
         QTest::mouseClick(sources->view()->viewport(), Qt::LeftButton, Qt::NoModifier,
-                          sources->view()->visualRect(item).center());
+                          itemRect.center());
         QCoreApplication::processEvents();
         EXPECT_FALSE(sources->view()->isVisible());
         EXPECT_EQ(sources->lineEdit()->text(), sdkPath);
