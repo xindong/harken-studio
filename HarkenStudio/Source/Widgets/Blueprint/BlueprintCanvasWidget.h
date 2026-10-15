@@ -226,6 +226,8 @@ private:
     std::vector<QPointF> gainDragStartPositions_;
     bool pathRefreshPending_ = false;
     bool pathRefreshScheduled_ = false;
+    bool chainRefreshPending_ = false;
+    bool chainRefreshScheduled_ = false;
     std::unique_ptr<PropertyEditSession> nodeEditSession_;
     std::unique_ptr<SignalPathGainEditSession> gainEditSession_;
     bool gridSnapEnabled_ = true;

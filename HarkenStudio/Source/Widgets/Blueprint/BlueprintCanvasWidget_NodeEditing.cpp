@@ -223,6 +223,7 @@ void BlueprintCanvasWidget::finishNodeEdits_(bool committed)
         pathRefreshPending_ = false;
         schedulePathRefresh_();
     }
+    if (chainRefreshPending_) scheduleChainRefresh_();
 }
 
 }

@@ -18,6 +18,7 @@
 #include <QDir>
 #include <QEventLoop>
 #include <QFileInfo>
+#include <QGraphicsScene>
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QKeyEvent>
@@ -243,6 +244,63 @@ TEST_F(BlueprintNodeStatusTest, DirtyTitleEditingUsesRawNameAndSynchronizesRenam
         drainNodeStatusEvents();
         EXPECT_EQ(item->name, renamed);
         expectMatchingStatus(canvas, hierarchy, item);
+    }
+}
+
+TEST_F(BlueprintNodeStatusTest, AssetRefreshPreservesTitleEditsUntilCommitOrCancel)
+{
+    auto& registry = AssetRegistry::instance();
+    AssetInfo asset;
+    asset.sourceID = registry.allocateStableID();
+    asset.relativePath = QStringLiteral("external.wav");
+    asset.absolutePath = QDir(registry.projectRoot()).filePath(QStringLiteral("AudioSources/external.wav"));
+    ASSERT_TRUE(registry.registerAsset(asset, false));
+    for (const bool chain : {false, true}) {
+        SCOPED_TRACE(chain ? "signal chain" : "signal path");
+        BlueprintCanvasWidget canvas;
+        if (chain) canvas.useSignalChain(container);
+        else canvas.rebuildFromProject();
+        drainNodeStatusEvents();
+        const auto currentNode = [&]() -> NodeItem* {
+            for (auto* item : canvas.scene()->items())
+                if (auto* node = dynamic_cast<NodeItem*>(item); node && node->objectID() == sound->objectID)
+                    return node;
+            return nullptr;
+        };
+        int refreshes = 0;
+        QObject::connect(&canvas, &BlueprintCanvasWidget::signalChainViewChanged, &canvas, [&] { ++refreshes; });
+        for (const bool committed : {true, false}) {
+            SCOPED_TRACE(committed ? "commit" : "cancel");
+            auto* node = currentNode();
+            ASSERT_NE(node, nullptr);
+            const QString original = sound->name;
+            const QString edited = original + QStringLiteral(" Edited");
+            node->beginTitleEditing();
+            ASSERT_TRUE(node->isTitleEditing());
+            node->titleEditor()->setText(edited);
+            refreshes = 0;
+            emit registry.assetModified(asset.sourceID);
+            emit registry.assetModified(asset.sourceID);
+            drainNodeStatusEvents();
+            ASSERT_EQ(refreshes, 0);
+            ASSERT_EQ(currentNode(), node);
+            ASSERT_TRUE(node->isTitleEditing());
+            EXPECT_EQ(node->titleEditor()->text(), edited);
+            EXPECT_EQ(sound->name, original);
+            node->finishTitleEditing(committed);
+            drainNodeStatusEvents();
+            EXPECT_GT(refreshes, 0);
+            ASSERT_NE(currentNode(), nullptr);
+            EXPECT_FALSE(currentNode()->isTitleEditing());
+            EXPECT_EQ(sound->name, committed ? edited : original);
+            EXPECT_EQ(currentNode()->title(), sound->name);
+            if (committed) {
+                ASSERT_TRUE(UndoRedoManager::instance().undo());
+                drainNodeStatusEvents();
+                EXPECT_EQ(sound->name, original);
+                EXPECT_EQ(currentNode()->title(), original);
+            }
+        }
     }
 }
 

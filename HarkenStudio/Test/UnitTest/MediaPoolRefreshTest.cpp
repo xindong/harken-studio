@@ -5,6 +5,7 @@
 #include "AssetPipeline/PathUtils.h"
 #include "AssetPipeline/WaveformCache.h"
 #include "Core/ProjectManager.h"
+#include "Core/ProjectPlatformActivity.h"
 #include "Core/LanguageContextService.h"
 #include "Core/PlatformContextService.h"
 #include "Core/SoundSourceSemantics.h"
@@ -526,10 +527,28 @@ TEST(MediaPoolRefreshTest, ProjectOpenRefreshPreservesNewerEditsAndDiscardsClose
     manager.fileWatcher()->stopWatching();
     ASSERT_NE(registry.getAsset(info.sourceID), nullptr);
     EXPECT_EQ(registry.getAsset(info.sourceID)->metadata.totalSamples, 480u);
+    int conversions = 0;
+    int succeeded = 0;
+    int failed = 0;
+    const auto conversionConnection = QObject::connect(&media, &MediaPool::batchOperationComplete, &manager,
+        [&](int successCount, int failureCount) {
+            ++conversions;
+            succeeded = successCount;
+            failed = failureCount;
+        });
+    const auto disconnect = qScopeGuard([&] { QObject::disconnect(conversionConnection); });
+    QThreadPool::globalInstance()->waitForDone();
+    media.batchConvert({info.sourceID}, HarkenTest::PlatformIds::Windows);
     ASSERT_TRUE(QTest::qWaitFor([&] {
         return registry.getAsset(info.sourceID)->metadata.totalSamples == 960
-            && registry.findAssetByPath(added);
+            && registry.findAssetByPath(added) && conversions == 1;
     }, 5000));
+    EXPECT_EQ(succeeded, 1);
+    EXPECT_EQ(failed, 0);
+    ASSERT_TRUE(registry.isCacheValid(info.sourceID, HarkenTest::PlatformIds::Windows));
+    const auto cache = registry.getAsset(info.sourceID)->platformCaches.value(HarkenTest::PlatformIds::Windows);
+    const QString convertedPath = QDir(PathUtils::getCacheDir(registry.projectRoot())).filePath(cache.cachePath);
+    EXPECT_EQ(importer.analyzeFile(convertedPath).totalSamples, 960u);
     EXPECT_FALSE(registry.isUncommitted(registry.findAssetByPath(added)->sourceID));
     EXPECT_EQ(registry.getAsset(info.sourceID)->contentHash, AssetImporter::computeContentHash(path));
     manager.closeProject();
@@ -540,9 +559,16 @@ TEST(MediaPoolRefreshTest, ProjectOpenRefreshPreservesNewerEditsAndDiscardsClose
     ASSERT_TRUE(manager.loadProject(projectPath));
     manager.fileWatcher()->stopWatching();
     QThreadPool::globalInstance()->waitForDone();
+    media.batchConvert({info.sourceID}, HarkenTest::PlatformIds::Windows);
+    auto platforms = manager.currentProject()->platforms;
+    platforms.front().profile.performResample = true;
+    platforms.front().profile.sizePolicies.front().config.targetSampleRate = 22050;
+    manager.setProjectPlatformsInternal(platforms);
     writeWav(path, 1920, 0.5f);
     ASSERT_TRUE(media.refreshSourceFile(info.sourceID, path));
     QApplication::processEvents();
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !ProjectPlatformActivity::instance().isBusy(); }, 5000));
+    EXPECT_EQ(conversions, 1);
     EXPECT_EQ(registry.getAsset(info.sourceID)->metadata.totalSamples, 1920u);
     EXPECT_EQ(registry.getAsset(info.sourceID)->contentHash, AssetImporter::computeContentHash(path));
     manager.closeProject();
@@ -553,12 +579,15 @@ TEST(MediaPoolRefreshTest, ProjectOpenRefreshPreservesNewerEditsAndDiscardsClose
     writeWav(abandoned, 240, 0.6f);
     ASSERT_TRUE(manager.loadProject(projectPath));
     QThreadPool::globalInstance()->waitForDone();
+    media.batchConvert({info.sourceID}, HarkenTest::PlatformIds::Windows);
     manager.closeProject();
     config.name = QStringLiteral("OtherProject");
     ASSERT_TRUE(manager.createProject(config));
     QThreadPool::globalInstance()->waitForDone();
     QApplication::processEvents();
     EXPECT_EQ(registry.count(), 0);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !ProjectPlatformActivity::instance().isBusy(); }, 5000));
+    EXPECT_EQ(conversions, 1);
 }
 
 TEST(MediaPoolRefreshTest, WaveformNotificationsUpdateSharedNodesWithoutClearingOtherSources)

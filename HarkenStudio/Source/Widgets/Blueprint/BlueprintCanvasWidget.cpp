@@ -545,6 +545,7 @@ void BlueprintCanvasWidget::clearScene()
 {
     locationPing_->stop();
     locationPingObjectID_ = 0;
+    chainRefreshPending_ = false;
     finishNodeEdits_(false);
     QToolTip::hideText();
     connectHint_->hide();
@@ -665,6 +666,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
                             pathRefreshPending_ = false;
                             schedulePathRefresh_();
                         }
+                        if (chainRefreshPending_) scheduleChainRefresh_();
                     });
             }
             const uint32_t nid = d.id;
@@ -3014,8 +3016,14 @@ bool BlueprintCanvasWidget::focusItem(ProjectItem* item, const PlacementContext*
 
 void BlueprintCanvasWidget::scheduleChainRefresh_()
 {
+    if (activeSource_ != chainSource_.get()) return;
+    chainRefreshPending_ = true;
+    if (chainRefreshScheduled_) return;
+    chainRefreshScheduled_ = true;
     QMetaObject::invokeMethod(this, [this]() {
-        if (activeSource_ != chainSource_.get()) return;
+        chainRefreshScheduled_ = false;
+        if (activeSource_ != chainSource_.get() || !chainRefreshPending_ || nodeFieldEditing_()) return;
+        chainRefreshPending_ = false;
         materializeFromSource_();
         refreshTransitionWatch_();
     }, Qt::QueuedConnection);

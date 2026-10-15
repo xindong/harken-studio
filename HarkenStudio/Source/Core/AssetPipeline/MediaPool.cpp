@@ -65,7 +65,8 @@ MediaPool::MediaPool(QObject* parent)
         refreshStatusCacheAsync();
     });
     connect(&pm, &ProjectManager::projectClosed, this, [this]() {
-        sourceRefresh_.cancel();
+        if (sourceRefreshWatcher_) sourceRefreshWatcher_->cancel();
+        sourceRefreshWatcher_ = nullptr;
         ++sourceRefreshGeneration_;
         referenceCache_.clear();
         referenceCacheValid_ = false;
@@ -332,6 +333,17 @@ QVector<BatchReplaceResult> MediaPool::batchReplace(
 void MediaPool::batchConvert(const QVector<uint32_t>& sourceIDs, ProjectPlatformId platform)
 {
     const auto activity = ProjectPlatformActivity::acquire();
+    if (sourceRefreshWatcher_) {
+        const auto generation = sourceRefreshGeneration_;
+        const auto revision = AssetRegistry::instance().buildSnapshot(false).platformRevisions.value(platform);
+        connect(sourceRefreshWatcher_, &QFutureWatcherBase::finished, this,
+            [this, sourceIDs, platform, generation, revision, activity]() {
+                if (generation != sourceRefreshGeneration_ || revision.isNull()) return;
+                const auto current = AssetRegistry::instance().buildSnapshot(false);
+                if (current.platformRevisions.value(platform) == revision) batchConvert(sourceIDs, platform);
+            });
+        return;
+    }
     const auto snapshot = AssetRegistry::instance().buildSnapshot();
     auto converter = std::make_shared<AssetConverter>();
     converter->setBuildSnapshot(snapshot);
@@ -647,7 +659,7 @@ void MediaPool::synchronizeSourceFiles(const QStringList& paths)
 
 void MediaPool::synchronizeSourceFilesAsync(const QStringList& paths)
 {
-    sourceRefresh_.cancel();
+    if (sourceRefreshWatcher_) sourceRefreshWatcher_->cancel();
     const auto generation = ++sourceRefreshGeneration_;
     struct SourceRefresh {
         QString path;
@@ -668,7 +680,11 @@ void MediaPool::synchronizeSourceFilesAsync(const QStringList& paths)
         sources.append(std::move(source));
     }
     auto* watcher = new QFutureWatcher<SourceRefresh>(this);
-    connect(watcher, &QFutureWatcher<SourceRefresh>::finished, watcher, &QObject::deleteLater);
+    sourceRefreshWatcher_ = watcher;
+    connect(watcher, &QFutureWatcher<SourceRefresh>::finished, this, [this, watcher, generation]() {
+        if (generation == sourceRefreshGeneration_) sourceRefreshWatcher_ = nullptr;
+        watcher->deleteLater();
+    });
     connect(watcher, &QFutureWatcher<SourceRefresh>::resultReadyAt, this, [this, watcher, generation](int index) {
         if (watcher->isCanceled() || generation != sourceRefreshGeneration_) return;
         const auto source = watcher->resultAt(index);
@@ -721,7 +737,6 @@ void MediaPool::synchronizeSourceFilesAsync(const QStringList& paths)
             promise.addResult(std::move(source));
         }
     });
-    sourceRefresh_ = future;
     watcher->setFuture(future);
 }
 

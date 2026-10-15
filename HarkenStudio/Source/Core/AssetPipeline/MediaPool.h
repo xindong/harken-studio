@@ -6,7 +6,7 @@
 #include <QVector>
 #include <QMap>
 #include <QHash>
-#include <QFuture>
+#include <QFutureWatcher>
 #include <cstdint>
 #include <atomic>
 
@@ -159,7 +159,7 @@ private:
     mutable ProjectPlatformId statusCachePlatform_ = {};
 
     std::atomic<bool> asyncRefreshRunning_{false};
-    QFuture<void> sourceRefresh_;
+    QFutureWatcherBase* sourceRefreshWatcher_ = nullptr;
     uint64_t sourceRefreshGeneration_ = 0;
     uint64_t cacheGeneration_ = 0;
 };
