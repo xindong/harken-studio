@@ -4,6 +4,7 @@
 #include "AssetRegistry.h"
 #include "PathUtils.h"
 #include "WaveformAnalysis.h"
+#include "Utils/AudioFileReader.h"
 
 #include "../ProjectTypes.h"
 
@@ -164,6 +165,8 @@ QString WaveformCache::cachePath(const QString& audioFilePath)
 
 bool WaveformCache::remove(const QString& audioFilePath)
 {
+    QMutexLocker lock(&waveformWriteMutex());
+    waveformRevisions().remove(normalizedAudioPath(audioFilePath));
     QString path = cachePath(audioFilePath);
     if (QFile::exists(path)) {
         return QFile::remove(path);
@@ -215,17 +218,11 @@ bool WaveformCache::generateForRevision(const QString& audioFilePath,
     }
 
     drwav wav;
-#ifdef _WIN32
-    if (!drwav_init_file_w(&wav, reinterpret_cast<const wchar_t*>(audioFilePath.utf16()), nullptr)) {
+    AudioFileReader file(audioFilePath);
+    if (!file.initWav(wav)) {
         qWarning() << "[WaveformCache] Failed to open WAV:" << audioFilePath;
         return false;
     }
-#else
-    if (!drwav_init_file(&wav, audioFilePath.toUtf8().constData(), nullptr)) {
-        qWarning() << "[WaveformCache] Failed to open WAV:" << audioFilePath;
-        return false;
-    }
-#endif
 
     uint64_t totalFrames = wav.totalPCMFrameCount;
     uint32_t channels    = wav.channels;
@@ -493,13 +490,9 @@ WaveformPeakData WaveformCache::readRange(const QString& audioFilePath,
 
     if (QFileInfo(audioFilePath).suffix().compare(QStringLiteral("wav"), Qt::CaseInsensitive) == 0) {
         drwav wav;
-#ifdef _WIN32
-        if (!drwav_init_file_w(&wav, reinterpret_cast<const wchar_t*>(audioFilePath.utf16()), nullptr))
+        AudioFileReader file(audioFilePath);
+        if (!file.initWav(wav))
             return {};
-#else
-        if (!drwav_init_file(&wav, audioFilePath.toUtf8().constData(), nullptr))
-            return {};
-#endif
         if (!prepare(wav.totalPCMFrameCount, wav.channels, wav.sampleRate)
             || !drwav_seek_to_pcm_frame(&wav, startFrame)) {
             drwav_uninit(&wav);
@@ -856,8 +849,8 @@ bool WaveformCache::generateMidSideForRevision(const QString& audioFilePath,
 
     if (ext == QStringLiteral("wav")) {
         drwav wav;
-        QByteArray pathUtf8 = audioFilePath.toUtf8();
-        if (!drwav_init_file(&wav, pathUtf8.constData(), nullptr)) {
+        AudioFileReader file(audioFilePath);
+        if (!file.initWav(wav)) {
             qWarning() << "[WaveformCache] generateMidSide: failed to open WAV:" << audioFilePath;
             outData.midSidePeaks.clear();
             return false;

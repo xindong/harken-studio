@@ -10,6 +10,7 @@
 #include "SoundSourceEditing.h"
 #include "SoundSourceSemantics.h"
 #include "UndoCommands.h"
+#include "Utils/AudioFileReader.h"
 
 #include <gtest/gtest.h>
 
@@ -184,6 +185,12 @@ TEST_F(ImportSoundSourcesCommandTest, FirstImportActivatesFirstRowAndRoundTripsU
     EXPECT_TRUE(ownsMedia(binding_->rootItem.get(), secondID));
     EXPECT_NE(MediaPool::instance().computeStatus(secondID), MediaStatus::Orphaned);
 
+    const QString importedPath = AssetRegistry::instance().getAsset(firstID)->absolutePath;
+    AudioFileReader reader(importedPath);
+    ASSERT_TRUE(reader.openReadOnly());
+    const QByteArray originalBytes = reader.readAll();
+    ASSERT_FALSE(originalBytes.isEmpty());
+
     UndoRedoManager::instance().undoStack()->undo();
     EXPECT_TRUE(ledger->sources.plain.entries.empty());
     EXPECT_TRUE(ledger->sources.plain.active.isNull());
@@ -191,6 +198,9 @@ TEST_F(ImportSoundSourcesCommandTest, FirstImportActivatesFirstRowAndRoundTripsU
     EXPECT_TRUE(sound_->sourcePath.isEmpty());
     EXPECT_FALSE(AssetRegistry::instance().contains(firstID));
     EXPECT_FALSE(AssetRegistry::instance().contains(secondID));
+    EXPECT_FALSE(QFile::exists(importedPath));
+    ASSERT_TRUE(reader.seek(0));
+    EXPECT_EQ(reader.readAll(), originalBytes);
 
     UndoRedoManager::instance().undoStack()->redo();
     ASSERT_EQ(ledger->sources.plain.entries.size(), 2u);
@@ -201,6 +211,9 @@ TEST_F(ImportSoundSourcesCommandTest, FirstImportActivatesFirstRowAndRoundTripsU
     EXPECT_FALSE(sound_->sourcePath.isEmpty());
     EXPECT_TRUE(AssetRegistry::instance().contains(firstID));
     EXPECT_TRUE(AssetRegistry::instance().contains(secondID));
+    AudioFileReader restored(importedPath);
+    ASSERT_TRUE(restored.openReadOnly());
+    EXPECT_EQ(restored.readAll(), originalBytes);
 }
 
 TEST_F(ImportSoundSourcesCommandTest, ReusesSharedAssetAndDoesNotChangeExistingActive)

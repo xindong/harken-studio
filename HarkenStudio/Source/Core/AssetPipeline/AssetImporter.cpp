@@ -1,5 +1,6 @@
 
 #include "AssetImporter.h"
+#include "Utils/AudioFileReader.h"
 #include "AssetRegistry.h"
 #include "MediaPool.h"
 #include "PathUtils.h"
@@ -248,17 +249,10 @@ LoopInfo AssetImporter::readWavLoopInfo(const QString& path)
     LoopInfo info;
     drwav wav;
 
-#ifdef _WIN32
-    if (!drwav_init_file_ex_w(&wav, reinterpret_cast<const wchar_t*>(path.utf16()),
-                               smplChunkCallback, &info, 0, nullptr)) {
+    AudioFileReader file(path);
+    if (!file.initWav(wav, smplChunkCallback, &info)) {
         return info;
     }
-#else
-    if (!drwav_init_file_ex(&wav, path.toUtf8().constData(),
-                             smplChunkCallback, &info, 0, nullptr)) {
-        return info;
-    }
-#endif
 
     drwav_uninit(&wav);
     return info;
@@ -269,15 +263,10 @@ ValidationFlags AssetImporter::validateAudio(const QString& path)
     ValidationFlags flags;
 
     drwav wav;
-#ifdef _WIN32
-    if (!drwav_init_file_w(&wav, reinterpret_cast<const wchar_t*>(path.utf16()), nullptr)) {
+    AudioFileReader file(path);
+    if (!file.initWav(wav)) {
         return flags;
     }
-#else
-    if (!drwav_init_file(&wav, path.toUtf8().constData(), nullptr)) {
-        return flags;
-    }
-#endif
 
     constexpr size_t ANALYSIS_SAMPLES = 44100 * 10;
     size_t samplesToRead = std::min(static_cast<size_t>(wav.totalPCMFrameCount * wav.channels),
@@ -420,8 +409,8 @@ bool AssetImporter::isFormatSupported(const QString& path)
 
 QString AssetImporter::computeContentHash(const QString& path)
 {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) {
+    AudioFileReader file(path);
+    if (!file.openReadOnly()) {
         qWarning() << "[AssetImporter] computeContentHash: cannot open" << path;
         return QString();
     }
@@ -491,17 +480,11 @@ AudioMetadata AssetImporter::readWavMetadata(const QString& path)
     AudioMetadata meta;
 
     drwav wav;
-#ifdef _WIN32
-    if (!drwav_init_file_w(&wav, reinterpret_cast<const wchar_t*>(path.utf16()), nullptr)) {
+    AudioFileReader file(path);
+    if (!file.initWav(wav)) {
         qWarning() << "Failed to open WAV file:" << path;
         return meta;
     }
-#else
-    if (!drwav_init_file(&wav, path.toUtf8().constData(), nullptr)) {
-        qWarning() << "Failed to open WAV file:" << path;
-        return meta;
-    }
-#endif
 
     meta.sampleRate = wav.sampleRate;
     meta.channels = static_cast<uint16_t>(wav.channels);

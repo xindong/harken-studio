@@ -34,8 +34,10 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScopeGuard>
+#include <QSemaphore>
 #include <QTemporaryDir>
 #include <QThreadPool>
+#include <QtConcurrent/QtConcurrent>
 #include <QtCore/qtestsupport_core.h>
 
 #include <array>
@@ -675,6 +677,40 @@ TEST(MediaPoolRefreshTest, WaveformNotificationsUpdateSharedNodesWithoutClearing
         for (size_t index = 0; index < sounds.size(); ++index)
             EXPECT_EQ(render(*canvas, sounds[index]), before[index]);
     }
+}
+
+TEST(MediaPoolRefreshTest, CacheRemovalInvalidatesPendingWaveformPublication)
+{
+    using namespace VNX;
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("pending.wav"));
+    writeWav(path, 480, 0.1f);
+    ASSERT_TRUE(WaveformCache::generate(path));
+
+    auto* pool = QThreadPool::globalInstance();
+    pool->waitForDone();
+    const int threadCount = pool->maxThreadCount();
+    pool->setMaxThreadCount(1);
+    QSemaphore started;
+    QSemaphore resume;
+    auto blocker = QtConcurrent::run([&] {
+        started.release();
+        resume.acquire();
+    });
+    const auto cleanup = qScopeGuard([&] {
+        resume.release();
+        blocker.waitForFinished();
+        pool->waitForDone();
+        pool->setMaxThreadCount(threadCount);
+    });
+    started.acquire();
+    auto waveform = WaveformCache::generateAsync(path);
+    ASSERT_TRUE(WaveformCache::remove(path));
+    resume.release();
+    waveform.waitForFinished();
+    EXPECT_FALSE(waveform.result());
+    EXPECT_FALSE(WaveformCache::isValid(path));
 }
 
 TEST(MediaPoolRefreshTest, SupersedingWaveformJobsNotifyViewsAfterProjectReopen)
