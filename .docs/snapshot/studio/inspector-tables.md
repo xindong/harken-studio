@@ -10,7 +10,7 @@
 
 | 对象 | 字段名称 | Inspector 字段标识 | Category > Section | 列名 | 数据来源 |
 |---|---|---|---|---|---|
-| Sound | Sources | `sources` | `Basic > Source` | # / Audio / Wave / Active | `VSound.sources` |
+| Sound | Sources | `sources` | `Basic > Source` | # / Audio / Waveform / Active | `VSound.sources` |
 | Track | Clips | `clips` | `Basic > Clip` | # / Child | `VTrack.clips` |
 | Action | Steps | `steps` | `Basic > Step` | # / Type / Target / Delay / 无标题展开列 | `VAction.steps` |
 | Attenuation | Dimensions | `dimensions` | `Basic > Dimension` | # / Property / Curve | `VAttenuation.dimensions` |
@@ -46,7 +46,7 @@ Inputs、Receives 明确声明为展示表，不含 `#`、配置行移动或增�
 - slider 与 value 编辑器共享 `ParameterBinding`，各自保持独立编辑能力；常规 presenter 可将两者组合，业务布局可以分别放置。试听 Variables 使用仅含 slider 的 host、独立 `ParameterValueEditor` 和 Scope 下拉框三个兄弟控件等分 Value 单元格，不能通过把前两者绑定成不可拆的复合控件来分配宽度。
 - slider 不再显示跟随手柄的 Label 浮标，Step 的名称由选择框显示。Variable Binding 与混合曲线共用 Variable X 轴配置：Step 使用 Label、整数刻度和阶梯预览，Smooth 使用正常浮点刻度与连续曲线；切换 kind 会刷新已打开的曲线编辑器而不改写曲线，Label 配置与 SDK 名称解析继续适用于两种 kind。
 - Source 中的 Language（`distinguishLanguage`）位于 section 标题右侧，未勾选时显示普通音源，勾选时显示分语言音源；项目没有配置语言时禁止开启，已开启时仍可关闭并恢复普通音源，两组音源数据均保留。语言列表变化后同步更新可操作状态。它与 Selection 中的 Mode（`mode`）、Behavior（`behavior`）均为独立字段。标题右侧控件统一保留主题的小间距，与 Inherit 对齐。
-- 表格列可以表达数据、状态或操作入口。Sources 的 Active 使用标准勾选框表达选择状态，同一平台与语言内只选一个音源，多平台选择不一致时显示半勾选；Wave 是候选音频引用的波形与范围编辑入口；Steps 的无标题列是行详情展开入口。
+- 表格列可以表达数据、状态或操作入口。Sources 的 Active 使用标准勾选框表达选择状态，同一平台与语言内只选一个音源，多平台选择不一致时显示半勾选；Waveform 是候选音频引用的波形与范围编辑入口；Steps 的无标题列是行详情展开入口。
 
 ## 数据归属与持久化
 
@@ -56,7 +56,7 @@ Container 的四种模式共享唯一的 `selections` 数据，并统一在 Sele
 
 Match 矩阵的列结构为 `# | Target | Variable…`，空表保留一个空 Variable 表头。`#` 是真实序号列，单独承载行选择底色，并通过公共表格交互拖动整行、提示插入位置和撤销移动；Target 是普通对象引用字段，变量表头支持独立列选择，与行选择互斥。多变量表头通过 ObjectRef 左侧独立拖动柄复用 Display Table 的列移动动画；变量和整列条件一同移动，改变匹配优先级，支持撤销，`#` 与 Target 保持固定。ObjectRef 的定位、导航、选择、对象拖入和右键菜单保持可用，列边界继续调整比例宽度。当前胜出行的条件单元格显示预览底色，重复与不可达条件的行号显示警告色，单元格及 Target 提示说明原因和阻挡行号；预览读取变量覆盖值或默认值，不追踪实际播放实例。条件值通过可输入的下拉框编辑，通配值为 `*`（下拉项为 `* (Any)`）；范围超过 64 个整数时只列出标签，其余整数值直接输入。
 
-Blend 模式的 Selection Editor 编辑当前平台 `selections` 条目中的混合曲线，不另存混合成员名单。混合表无表头，外层固定宽度 `#` 列承担整行选中与拖动排序，高亮仅限该列；控制区为标准 Variable ObjectRef 和 Child 副表，右侧为带标题容器的混合曲线画布。横轴是变量数值，纵轴是混合百分比。底部加减号管理混合行，副表加减号管理 child，控制区和画布按比例调整宽度，每行可独立调高。曲线的精确坐标输入沿用公共 DecimalSpinBox、数字字体、对齐与提示规则，未改动的数值不因显示精度而改变。首尾点以外为 0%，标题拖动只平移横坐标。
+Blend 模式的 Selection Editor 编辑当前平台 `selections` 条目中的混合曲线，不另存混合成员名单。混合表无表头，外层固定宽度 `#` 列承担整行选中与拖动排序，高亮仅限该列；控制区为标准 Variable ObjectRef 和 Child 副表，右侧为带标题容器的混合曲线画布。横轴是变量数值，纵轴是混合百分比。底部加减号管理混合行，副表加减号管理 child，控制区和画布按比例调整宽度，每行默认采用当前最小行高，可独立调高。曲线的精确坐标输入沿用公共 DecimalSpinBox、数字字体、对齐与提示规则，未改动的数值不因显示精度而改变。首尾点以外为 0%，标题拖动只平移横坐标。
 
 ### 继承字段范围
 

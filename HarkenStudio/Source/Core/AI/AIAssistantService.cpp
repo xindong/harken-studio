@@ -331,7 +331,7 @@ QString unrestrictedSystemPrompt()
         "Match, and Blend modes. Random and Sequence use Play Type Single for one "
         "selection per trigger or Queue for a full round. Match selects one child by variable values. Blend "
         "starts all table members and combines their gains. Variable Response is "
-        "At Start or Live and never extends content lifetime. Track schedules clips on one lane of absolute "
+        "Fixed or Live and never extends content lifetime. Track schedules clips on one lane of absolute "
         "time and can be triggered directly. Piece aligns its Track children to a "
         "shared absolute origin. A clip schedules the start of a Sound, Container, "
         "or Piece; playback length follows its target. Overlap plays content "
