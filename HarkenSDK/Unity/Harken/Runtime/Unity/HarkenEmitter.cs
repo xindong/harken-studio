@@ -145,25 +145,31 @@ namespace Harken.Unity
 
         private void HandleRuntimeReady(HarkenAudioSystem owner)
         {
+            // An earlier subscriber may disable or destroy us during dispatch.
+            if (!this || !isActiveAndEnabled || owner == null || !runtimeBound ||
+                !ReferenceEquals(boundRuntime, owner) || !ReferenceEquals(runtime, owner) ||
+                !owner.IsReady)
+                return;
             owner.RegisterParticipant(this);
             Create();
         }
 
         private void PublishTransformIfChanged()
         {
-            if (transformPublished && transform.position == lastPosition &&
-                transform.rotation == lastRotation)
+            Vector3 position = transform.position;
+            Quaternion rotation = transform.rotation;
+            if (transformPublished && position == lastPosition && rotation == lastRotation)
             {
                 return;
             }
-            VnResult result = UnitySpatial.SetEmitterTransform(emitter, transform);
-            Observe("UnitySpatial.SetEmitterTransform", result);
+            VnResult result = UnitySpatial.SetEmitterTransform(emitter, position, rotation * Vector3.forward);
             if (result == VnResult.VN_OK)
             {
-                lastPosition = transform.position;
-                lastRotation = transform.rotation;
+                lastPosition = position;
+                lastRotation = rotation;
                 transformPublished = true;
             }
+            Observe("UnitySpatial.SetEmitterTransform", result);
         }
 
         private VnResult Observe(string operation, VnResult result)

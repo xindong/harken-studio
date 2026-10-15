@@ -50779,6 +50779,8 @@ bool StopTargetSetTouchesGuardedVoice(harken::Engine& engine,
 
 VnResult StopAllPlayablesCore(harken::Engine& engine, std::uint32_t fadeMs,
                             std::uint32_t directCommandCount);
+VnResult StopEmitterPlayablesCore(harken::Engine& engine, VnEmitterHandle emitter,
+                                std::uint32_t fadeMs, std::uint32_t directCommandCount);
 
 VnResult StopAllCore(harken::Engine& engine, std::uint32_t fadeMs) {
     if (StopTargetSetTouchesGuardedVoice(
@@ -56420,7 +56422,9 @@ static PlayableControlStatus BeginPlayableCancellation(
     bool preflightOnly = false,
     std::uint32_t* outCommandCount = nullptr,
     bool preparedCommit = false,
-    bool* outCancellationRequired = nullptr) noexcept {
+    bool* outCancellationRequired = nullptr,
+    bool aggregatePreflight = false) noexcept {
+    assert(!aggregatePreflight || preflightOnly);
     if (outCommandCount != nullptr) {
         *outCommandCount = 0;
     }
@@ -56652,7 +56656,7 @@ static PlayableControlStatus BeginPlayableCancellation(
         engine.commands.NoteBackpressure();
         return PlayableControlStatus::Backpressure;
     }
-    if (!AdmitCommandBatch(engine, liveChildCount)) {
+    if (!aggregatePreflight && !AdmitCommandBatch(engine, liveChildCount)) {
         engine.commands.NoteBackpressure();
         return PlayableControlStatus::Backpressure;
     }
@@ -84699,13 +84703,8 @@ static VnResult StopEmitterObserved(VnEmitterHandle handle, uint32_t fadeMs) {
             ++attachedLive;
         }
     });
-    if (!AtomicBatchFitsCapacities(*engine, attachedLive)) {
-        return VN_NO_VOICE;
-    }
-    if (!AdmitCommandBatch(*engine, attachedLive)) {
-        engine->commands.NoteBackpressure();
-        return VN_BACKPRESSURE;
-    }
+    const VnResult playables = StopEmitterPlayablesCore(*engine, handle, fadeMs, attachedLive);
+    if (playables != VN_OK) return playables;
     std::uint32_t stopBatchCount = 0;
     engine->ledger.ForEachLive([&](VnVoiceHandle render, std::uint32_t,
                                    std::uint64_t, bool) {
@@ -85461,6 +85460,48 @@ void FillResolved(const harken::PackComposition::PublishedView& published,
     outResolved->publicationGeneration = published.compositeGeneration;
     std::memcpy(outResolved->projectGuid,
                 published.gameplayCatalog.header.projectGuid.data(), 16);
+}
+
+VnResult StopEmitterPlayablesCore(harken::Engine& engine, VnEmitterHandle emitter,
+                                std::uint32_t fadeMs, std::uint32_t directCommandCount) {
+    std::uint32_t scratchCount = 0;
+    std::uint32_t cancellationCount = 0;
+    std::uint32_t commandCount = directCommandCount;
+    for (auto& row : engine.playableServices) {
+        if (row.phase == harken::EnginePlayableStartPhase::Free ||
+            row.parentService.Valid() || row.partitionRetiring ||
+            row.Invocation().invocationEmitter != emitter) continue;
+        if (scratchCount >= engine.actionStopScratch.size()) return VN_DEVICE_ERROR;
+        auto& scratch = engine.actionStopScratch[scratchCount++];
+        scratch = {};
+        scratch.row = &row;
+        const auto status = harken::BeginPlayableCancellation(
+            engine, row.rootInstance, fadeMs, harken::PlayableCancellationIntent::Stop,
+            true, &scratch.commandCount, true, &scratch.treeCancellationRequired, true);
+        if (status == harken::PlayableControlStatus::Backpressure) return VN_BACKPRESSURE;
+        if (status != harken::PlayableControlStatus::Ok ||
+            commandCount > UINT32_MAX - scratch.commandCount) return VN_DEVICE_ERROR;
+        commandCount += scratch.commandCount;
+        cancellationCount += scratch.treeCancellationRequired ? 1u : 0u;
+    }
+    // Check the combined DirectVoice and playable demand before changing either.
+    if (!AtomicBatchFitsCapacities(engine, commandCount)) return VN_NO_VOICE;
+    if (!engine.playableInstances.CanBumpScheduleEpochs(cancellationCount) ||
+        !AdmitCommandBatch(engine, commandCount)) {
+        engine.commands.NoteBackpressure();
+        return VN_BACKPRESSURE;
+    }
+    // Preserve retirement observers and independent, not-yet-started Action steps.
+    for (std::uint32_t index = 0; index < scratchCount; ++index) {
+        auto& scratch = engine.actionStopScratch[index];
+        if (scratch.treeCancellationRequired &&
+            harken::BeginPlayableCancellation(engine, scratch.row->rootInstance, fadeMs,
+                harken::PlayableCancellationIntent::Stop, false, nullptr, true) !=
+                harken::PlayableControlStatus::Ok) {
+            engine.runtimeRecreateRequired = true;
+        }
+    }
+    return engine.runtimeRecreateRequired ? VN_RUNTIME_RECREATE_REQUIRED : VN_OK;
 }
 
 VnResult StopAllPlayablesCore(harken::Engine &engine, std::uint32_t fadeMs,

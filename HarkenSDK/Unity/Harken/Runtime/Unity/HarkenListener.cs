@@ -31,19 +31,21 @@ namespace Harken.Unity
                 published = false;
                 publishedSession = runtime.Session;
             }
-            if (published && transform.position == lastPosition &&
-                transform.rotation == lastRotation)
+            Vector3 position = transform.position;
+            Quaternion rotation = transform.rotation;
+            if (published && position == lastPosition && rotation == lastRotation)
             {
                 return;
             }
-            LastResult = UnitySpatial.SetListener(transform);
-            runtime.ObserveResult("UnitySpatial.SetListener", LastResult);
-            if (LastResult == VnResult.VN_OK)
+            VnResult result = UnitySpatial.SetListener(position, rotation * Vector3.forward, rotation * Vector3.up);
+            if (result == VnResult.VN_OK)
             {
-                lastPosition = transform.position;
-                lastRotation = transform.rotation;
+                lastPosition = position;
+                lastRotation = rotation;
                 published = true;
             }
+            LastResult = result;
+            runtime.ObserveResult("UnitySpatial.SetListener", result);
         }
     }
 }
