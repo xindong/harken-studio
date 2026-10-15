@@ -61,10 +61,12 @@ MediaPool::MediaPool(QObject* parent)
         statusCache_.clear();
         statusCacheValid_ = false;
         ++cacheGeneration_;
-        synchronizeSourceFiles(ProjectManager::instance().fileWatcher()->sourceFiles());
+        synchronizeSourceFilesAsync(ProjectManager::instance().fileWatcher()->sourceFiles());
         refreshStatusCacheAsync();
     });
     connect(&pm, &ProjectManager::projectClosed, this, [this]() {
+        sourceRefresh_.cancel();
+        ++sourceRefreshGeneration_;
         referenceCache_.clear();
         referenceCacheValid_ = false;
         statusCache_.clear();
@@ -489,22 +491,23 @@ void MediaPool::refreshStatusCacheAsync(ProjectPlatformId platform)
     QList<uint32_t> ids = AssetRegistry::instance().getAllSourceIDs();
     QString projRoot = projectRoot();
 
-    const auto mediaSnapshot = AssetRegistry::instance().buildSnapshot();
+    auto mediaSnapshot = AssetRegistry::instance().buildSnapshot(false);
 
     uint64_t startGeneration = cacheGeneration_;
 
-    QtConcurrent::run([this, platform, ids, refCacheSnapshot, mediaSnapshot, projRoot, startGeneration]() {
+    QtConcurrent::run([this, platform, ids, refCacheSnapshot,
+                       mediaSnapshot = std::move(mediaSnapshot), projRoot, startGeneration]() mutable {
         try {
         QHash<uint32_t, MediaStatus> newCache;
         newCache.reserve(ids.size());
 
         for (uint32_t id : ids) {
-            auto snapIt = mediaSnapshot.assets.constFind(id);
-            if (snapIt == mediaSnapshot.assets.cend()) {
+            auto snapIt = mediaSnapshot.assets.find(id);
+            if (snapIt == mediaSnapshot.assets.end()) {
                 newCache[id] = MediaStatus::Missing;
                 continue;
             }
-            const AssetInfo& snap = snapIt.value();
+            AssetInfo& snap = snapIt.value();
 
             QString absPath = snap.absolutePath;
             if (absPath.isEmpty() && !projRoot.isEmpty()) {
@@ -527,6 +530,8 @@ void MediaPool::refreshStatusCacheAsync(ProjectPlatformId platform)
                 continue;
             }
 
+            if (snap.contentHash.isEmpty())
+                snap.contentHash = AssetImporter::computeContentHash(absPath);
             const auto request = mediaSnapshot.request(id, platform);
             if (!request || !request->cacheValid()) {
                 newCache[id] = MediaStatus::Outdated;
@@ -640,6 +645,86 @@ void MediaPool::synchronizeSourceFiles(const QStringList& paths)
     }
 }
 
+void MediaPool::synchronizeSourceFilesAsync(const QStringList& paths)
+{
+    sourceRefresh_.cancel();
+    const auto generation = ++sourceRefreshGeneration_;
+    struct SourceRefresh {
+        QString path;
+        std::optional<AssetInfo> original;
+        AudioMetadata metadata;
+        QString contentHash;
+        qint64 size = 0;
+        QDateTime modified;
+    };
+    QVector<SourceRefresh> sources;
+    const auto& registry = AssetRegistry::instance();
+    for (const auto& path : paths) {
+        if (!AssetImporter::isFormatSupported(path)) continue;
+        SourceRefresh source;
+        source.path = path;
+        if (const auto* asset = registry.findAssetByPath(path))
+            source.original = *asset;
+        sources.append(std::move(source));
+    }
+    auto* watcher = new QFutureWatcher<SourceRefresh>(this);
+    connect(watcher, &QFutureWatcher<SourceRefresh>::finished, watcher, &QObject::deleteLater);
+    connect(watcher, &QFutureWatcher<SourceRefresh>::resultReadyAt, this, [this, watcher, generation](int index) {
+        if (watcher->isCanceled() || generation != sourceRefreshGeneration_) return;
+        const auto source = watcher->resultAt(index);
+        const QFileInfo file(source.path);
+        if (!file.isFile() || file.size() != source.size || file.lastModified() != source.modified)
+            return;
+        auto& registry = AssetRegistry::instance();
+        const auto* current = registry.findAssetByPath(source.path);
+        if (source.original) {
+            const auto& original = *source.original;
+            if (!current || current->sourceID != original.sourceID
+                || current->relativePath != original.relativePath
+                || current->absolutePath != original.absolutePath
+                || current->contentHash != original.contentHash
+                || current->lastModified != original.lastModified
+                || !audioMetadataEqual(current->metadata, original.metadata))
+                return;
+            commitSourceFile(original.sourceID, source.path, source.metadata, source.contentHash,
+                static_cast<uint64_t>(source.modified.toSecsSinceEpoch()));
+        } else if (!current) {
+            AssetInfo info;
+            info.sourceID = registry.allocateStableID();
+            info.relativePath = QDir(PathUtils::getAudioSourcesDir(projectRoot())).relativeFilePath(source.path);
+            info.absolutePath = source.path;
+            info.metadata = source.metadata;
+            info.contentHash = source.contentHash;
+            info.lastModified = static_cast<uint64_t>(source.modified.toSecsSinceEpoch());
+            if (registry.registerAsset(info, false)) {
+                HarkenEditor::Bridge::mediaRegistryRegister(info.sourceID, source.path);
+                refreshWaveform(info.sourceID);
+            }
+        }
+    });
+    const auto future = QtConcurrent::run([sources = std::move(sources)](QPromise<SourceRefresh>& promise) {
+        AssetImporter importer;
+        for (auto source : sources) {
+            if (promise.isCanceled()) return;
+            const QFileInfo before(source.path);
+            if (!before.isFile()) continue;
+            source.size = before.size();
+            source.modified = before.lastModified();
+            source.metadata = importer.analyzeFile(source.path);
+            if (source.metadata.sampleRate == 0 || source.metadata.totalSamples == 0) continue;
+            if (promise.isCanceled()) return;
+            source.contentHash = AssetImporter::computeContentHash(source.path);
+            if (source.contentHash.isEmpty()) continue;
+            const QFileInfo after(source.path);
+            if (!after.isFile() || after.size() != source.size || after.lastModified() != source.modified)
+                continue;
+            promise.addResult(std::move(source));
+        }
+    });
+    sourceRefresh_ = future;
+    watcher->setFuture(future);
+}
+
 void MediaPool::refreshWaveform(uint32_t sourceID)
 {
     const auto* asset = AssetRegistry::instance().getAsset(sourceID);
@@ -664,6 +749,14 @@ bool MediaPool::refreshSourceFile(uint32_t sourceID, const QString& absolutePath
 
     const uint64_t lastModified = static_cast<uint64_t>(
         QFileInfo(absolutePath).lastModified().toSecsSinceEpoch());
+    commitSourceFile(sourceID, absolutePath, metadata, contentHash, lastModified);
+    return true;
+}
+
+void MediaPool::commitSourceFile(uint32_t sourceID, const QString& absolutePath,
+                                 const AudioMetadata& metadata, const QString& contentHash,
+                                 uint64_t lastModified)
+{
     const bool changed = AssetRegistry::instance().updateSourceFile(
         sourceID, metadata, absolutePath, contentHash, lastModified);
     if (changed) {
@@ -675,7 +768,6 @@ bool MediaPool::refreshSourceFile(uint32_t sourceID, const QString& absolutePath
     if (changed)
         emit mediaStatusChanged(sourceID, MediaStatus::Imported);
     emit mediaHotSwapped(sourceID, absolutePath);
-    return true;
 }
 
 }

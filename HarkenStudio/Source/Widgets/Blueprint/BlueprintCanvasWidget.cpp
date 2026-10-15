@@ -504,7 +504,7 @@ BlueprintCanvasWidget::BlueprintCanvasWidget(QWidget* parent)
         refreshSource();
     });
     connect(&AssetRegistry::instance(), &AssetRegistry::assetModified,
-            this, &BlueprintCanvasWidget::schedulePathRefresh_);
+            this, refreshSource);
     connect(&AssetRegistry::instance(), &AssetRegistry::assetModified,
             this, &BlueprintCanvasWidget::refreshNodeWaveforms_);
     connect(&MediaPool::instance(), &MediaPool::waveformReady,
@@ -570,6 +570,7 @@ void BlueprintCanvasWidget::clearScene()
     // one by one, and removeItem emits selectionChanged synchronously when a selected
     // node is removed — that would re-enter onSceneSelectionChanged mid-teardown.
     nodeMap_.clear();
+    waveformNodes_.clear();
     inputVisibility_.clear();
     edges_.clear();
     gainNodes_.clear();
@@ -680,6 +681,8 @@ void BlueprintCanvasWidget::materializeFromSource_()
         }
 
         item->setBlueprintWaveformMode(d.waveformMode);
+        if (d.waveformMode)
+            waveformNodes_[d.mediaPath].push_back({item, d.waveformRange});
 
         if (d.overrideBadge >= 0) {
             item->setOverrideBadge(d.overrideBadge != 0);

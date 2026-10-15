@@ -137,6 +137,10 @@ private:
                                  BatchReplaceResult& result);
     void commitReplacements(const QVector<PendingReplace>& pending);
     void synchronizeSourceFiles(const QStringList& paths);
+    void synchronizeSourceFilesAsync(const QStringList& paths);
+    void commitSourceFile(uint32_t sourceID, const QString& absolutePath,
+                          const AudioMetadata& metadata, const QString& contentHash,
+                          uint64_t lastModified);
 
     bool isSourceFileMissing(const AssetInfo& info) const;
     bool hasAnyValidCache(const AssetInfo& info) const;
@@ -155,6 +159,8 @@ private:
     mutable ProjectPlatformId statusCachePlatform_ = {};
 
     std::atomic<bool> asyncRefreshRunning_{false};
+    QFuture<void> sourceRefresh_;
+    uint64_t sourceRefreshGeneration_ = 0;
     uint64_t cacheGeneration_ = 0;
 };
 

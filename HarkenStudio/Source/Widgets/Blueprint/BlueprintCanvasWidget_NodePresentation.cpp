@@ -11,19 +11,24 @@
 
 namespace VNX {
 
-void BlueprintCanvasWidget::refreshNodeWaveforms_()
+void BlueprintCanvasWidget::refreshNodeWaveforms_(uint32_t sourceID)
 {
-    if (!activeSource_) return;
-    for (const auto& desc : activeSource_->buildNodes()) {
-        if (!desc.waveformMode) continue;
-        const auto kind = desc.kind == BlueprintNodeKind::ProjectItem ? NodeKind::ProjectItem : NodeKind::Bus;
-        const auto found = nodeMap_.find(NodeKey{kind, desc.id, desc.occurrenceIndex});
-        if (found == nodeMap_.end()) continue;
+    const auto refresh = [](const QString& path, const std::vector<WaveformNode>& nodes) {
         WaveformPeakData peaks;
-        if (!desc.mediaPath.isEmpty() && !WaveformCache::load(desc.mediaPath, peaks))
+        if (!path.isEmpty() && !WaveformCache::load(path, peaks))
             peaks = {};
-        found->second->setWaveformPeakData(peaks, desc.waveformRange);
+        for (const auto& node : nodes)
+            node.item->setWaveformPeakData(peaks, node.range);
+    };
+    if (sourceID != 0) {
+        const auto* asset = AssetRegistry::instance().getAsset(sourceID);
+        if (!asset) return;
+        const auto nodes = waveformNodes_.constFind(asset->absolutePath);
+        if (nodes != waveformNodes_.cend()) refresh(nodes.key(), nodes.value());
+        return;
     }
+    for (auto nodes = waveformNodes_.cbegin(); nodes != waveformNodes_.cend(); ++nodes)
+        refresh(nodes.key(), nodes.value());
 }
 
 void BlueprintCanvasWidget::refreshNodeTitles_()

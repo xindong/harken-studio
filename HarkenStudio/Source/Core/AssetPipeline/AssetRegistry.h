@@ -28,9 +28,10 @@ public:
 
     QString projectRoot() const;
     void setPlatforms(const QVector<ProjectPlatform>& platforms);
-    MediaBuildSnapshot buildSnapshot() const;
+    MediaBuildSnapshot buildSnapshot(bool resolveMissingHashes = true) const;
     MediaBuildSnapshot buildSnapshot(const QString& projectRoot,
-                                     const QVector<ProjectPlatform>& platforms) const;
+                                     const QVector<ProjectPlatform>& platforms,
+                                     bool resolveMissingHashes = true) const;
     bool accepts(const MediaConversionRequest& request) const;
 
     void clear();

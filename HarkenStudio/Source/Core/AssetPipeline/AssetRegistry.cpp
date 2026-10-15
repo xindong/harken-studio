@@ -382,7 +382,7 @@ void AssetRegistry::setPlatforms(const QVector<ProjectPlatform>& platforms)
     }
 }
 
-MediaBuildSnapshot AssetRegistry::buildSnapshot() const
+MediaBuildSnapshot AssetRegistry::buildSnapshot(bool resolveMissingHashes) const
 {
     QString root;
     QVector<ProjectPlatform> platforms;
@@ -391,11 +391,11 @@ MediaBuildSnapshot AssetRegistry::buildSnapshot() const
         root = projectRoot_;
         platforms = platforms_;
     }
-    return buildSnapshot(root, platforms);
+    return buildSnapshot(root, platforms, resolveMissingHashes);
 }
 
 MediaBuildSnapshot AssetRegistry::buildSnapshot(
-    const QString& root, const QVector<ProjectPlatform>& platforms) const
+    const QString& root, const QVector<ProjectPlatform>& platforms, bool resolveMissingHashes) const
 {
     MediaBuildSnapshot result;
     result.projectRoot = root;
@@ -426,7 +426,7 @@ MediaBuildSnapshot AssetRegistry::buildSnapshot(
         for (const auto& asset : assets) result.assets.insert(asset.sourceID, asset);
     }
     for (auto& asset : result.assets) {
-        if (asset.contentHash.isEmpty())
+        if (resolveMissingHashes && asset.contentHash.isEmpty())
             asset.contentHash = AssetImporter::computeContentHash(asset.absolutePath);
     }
     return result;

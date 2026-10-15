@@ -482,6 +482,172 @@ TEST(MediaPoolRefreshTest, ExternalFileLifecyclePreservesAuthoredReferencesAcros
     EXPECT_FALSE(registry.sourceFileExists(sourceID));
 }
 
+TEST(MediaPoolRefreshTest, ProjectOpenRefreshPreservesNewerEditsAndDiscardsClosedProjects)
+{
+    using namespace VNX;
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    auto& media = MediaPool::instance();
+    const auto cleanup = qScopeGuard([&] {
+        UndoRedoManager::instance().clear();
+        manager.closeProject();
+        QThreadPool::globalInstance()->waitForDone();
+        QApplication::processEvents();
+    });
+    ProjectConfig config;
+    config.name = QStringLiteral("SourceRefresh");
+    config.location = dir.path();
+    config.platforms = HarkenTest::platforms({QStringLiteral("Windows")});
+    ASSERT_TRUE(manager.createProject(config));
+    manager.fileWatcher()->stopWatching();
+    const QString projectPath = manager.currentProject()->projectPath;
+    const QString audioRoot = PathUtils::getAudioSourcesDir(registry.projectRoot());
+    const QString path = QDir(audioRoot).filePath(QStringLiteral("existing.wav"));
+    writeWav(path, 480, 0.1f);
+    AssetImporter importer;
+    AssetInfo info;
+    info.sourceID = registry.allocateStableID();
+    info.relativePath = QStringLiteral("existing.wav");
+    info.absolutePath = path;
+    info.metadata = importer.analyzeFile(path);
+    info.contentHash = AssetImporter::computeContentHash(path);
+    ASSERT_TRUE(registry.registerAsset(info, false));
+    ASSERT_TRUE(manager.saveProject());
+    manager.closeProject();
+    QThreadPool::globalInstance()->waitForDone();
+    QApplication::processEvents();
+
+    writeWav(path, 960, 0.2f);
+    const QString added = QDir(audioRoot).filePath(QStringLiteral("added.wav"));
+    writeWav(added, 240, 0.3f);
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    manager.fileWatcher()->stopWatching();
+    ASSERT_NE(registry.getAsset(info.sourceID), nullptr);
+    EXPECT_EQ(registry.getAsset(info.sourceID)->metadata.totalSamples, 480u);
+    ASSERT_TRUE(QTest::qWaitFor([&] {
+        return registry.getAsset(info.sourceID)->metadata.totalSamples == 960
+            && registry.findAssetByPath(added);
+    }, 5000));
+    EXPECT_FALSE(registry.isUncommitted(registry.findAssetByPath(added)->sourceID));
+    EXPECT_EQ(registry.getAsset(info.sourceID)->contentHash, AssetImporter::computeContentHash(path));
+    manager.closeProject();
+    QThreadPool::globalInstance()->waitForDone();
+    QApplication::processEvents();
+
+    writeWav(path, 1440, 0.4f);
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    manager.fileWatcher()->stopWatching();
+    QThreadPool::globalInstance()->waitForDone();
+    writeWav(path, 1920, 0.5f);
+    ASSERT_TRUE(media.refreshSourceFile(info.sourceID, path));
+    QApplication::processEvents();
+    EXPECT_EQ(registry.getAsset(info.sourceID)->metadata.totalSamples, 1920u);
+    EXPECT_EQ(registry.getAsset(info.sourceID)->contentHash, AssetImporter::computeContentHash(path));
+    manager.closeProject();
+    QThreadPool::globalInstance()->waitForDone();
+    QApplication::processEvents();
+
+    const QString abandoned = QDir(audioRoot).filePath(QStringLiteral("abandoned.wav"));
+    writeWav(abandoned, 240, 0.6f);
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    QThreadPool::globalInstance()->waitForDone();
+    manager.closeProject();
+    config.name = QStringLiteral("OtherProject");
+    ASSERT_TRUE(manager.createProject(config));
+    QThreadPool::globalInstance()->waitForDone();
+    QApplication::processEvents();
+    EXPECT_EQ(registry.count(), 0);
+}
+
+TEST(MediaPoolRefreshTest, WaveformNotificationsUpdateSharedNodesWithoutClearingOtherSources)
+{
+    using namespace VNX;
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    auto& media = MediaPool::instance();
+    const auto cleanup = qScopeGuard([&] {
+        UndoRedoManager::instance().clear();
+        manager.closeProject();
+        QThreadPool::globalInstance()->waitForDone();
+        QApplication::processEvents();
+    });
+    ProjectConfig config;
+    config.name = QStringLiteral("SharedWaveforms");
+    config.location = dir.path();
+    config.platforms = HarkenTest::platforms({QStringLiteral("Windows")});
+    ASSERT_TRUE(manager.createProject(config));
+    manager.fileWatcher()->stopWatching();
+    const QString audioRoot = PathUtils::getAudioSourcesDir(registry.projectRoot());
+    std::array<AssetInfo, 2> assets;
+    AssetImporter importer;
+    for (size_t index = 0; index < assets.size(); ++index) {
+        auto& asset = assets[index];
+        asset.sourceID = registry.allocateStableID();
+        asset.relativePath = QStringLiteral("source%1.wav").arg(index);
+        asset.absolutePath = QDir(audioRoot).filePath(asset.relativePath);
+        writeWav(asset.absolutePath, 480, index == 0 ? 0.2f : 0.6f);
+        asset.metadata = importer.analyzeFile(asset.absolutePath);
+        asset.contentHash = AssetImporter::computeContentHash(asset.absolutePath);
+        ASSERT_TRUE(registry.registerAsset(asset, false));
+        ASSERT_TRUE(WaveformCache::generate(asset.absolutePath));
+    }
+    auto* layer = manager.createItem(nullptr, "Layer", ProjectItem::Type::Layer);
+    ASSERT_NE(layer, nullptr);
+    std::array<uint32_t, 3> sounds;
+    for (size_t index = 0; index < sounds.size(); ++index) {
+        auto* sound = manager.createItem(layer, QStringLiteral("Sound%1").arg(index), ProjectItem::Type::Sound);
+        ASSERT_NE(sound, nullptr);
+        sounds[index] = sound->objectID;
+        SoundSourceDef source;
+        source.entryId = QUuid::createUuid();
+        source.sourceId = assets[index == 2 ? 1 : 0].sourceID;
+        auto& group = sound->comp<VSound>()->sources.plain;
+        group.entries = {source};
+        SoundSourceSemantics::assignActive(group, source.entryId);
+    }
+    BlueprintCanvasWidget blueprint;
+    blueprint.setNodeContentFields(kAllNodeContentFields);
+    blueprint.rebuildFromProject();
+    BlueprintCanvasWidget chain;
+    chain.setNodeContentFields(kAllNodeContentFields);
+    chain.useSignalChain(layer);
+    const auto render = [](BlueprintCanvasWidget& canvas, uint32_t id) {
+        for (auto* item : canvas.scene()->items()) {
+            auto* node = dynamic_cast<NodeItem*>(item);
+            if (!node || node->objectID() != id) continue;
+            QImage image(node->shape().boundingRect().size().toSize(), QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::transparent);
+            QPainter painter(&image);
+            node->paint(&painter, nullptr, nullptr);
+            return image;
+        }
+        return QImage{};
+    };
+    for (auto* canvas : {&blueprint, &chain}) {
+        std::array<QImage, 3> before;
+        for (size_t index = 0; index < sounds.size(); ++index) {
+            before[index] = render(*canvas, sounds[index]);
+            ASSERT_FALSE(before[index].isNull());
+        }
+        WaveformCache::remove(assets[0].absolutePath);
+        WaveformCache::remove(assets[1].absolutePath);
+        emit media.waveformReady(assets[0].sourceID);
+        EXPECT_NE(render(*canvas, sounds[0]), before[0]);
+        EXPECT_NE(render(*canvas, sounds[1]), before[1]);
+        EXPECT_EQ(render(*canvas, sounds[2]), before[2]);
+        ASSERT_TRUE(WaveformCache::generate(assets[0].absolutePath));
+        ASSERT_TRUE(WaveformCache::generate(assets[1].absolutePath));
+        emit media.waveformReady(assets[0].sourceID);
+        emit media.waveformReady(assets[1].sourceID);
+        for (size_t index = 0; index < sounds.size(); ++index)
+            EXPECT_EQ(render(*canvas, sounds[index]), before[index]);
+    }
+}
+
 TEST(MediaPoolRefreshTest, SupersedingWaveformJobsNotifyViewsAfterProjectReopen)
 {
     using namespace VNX;
