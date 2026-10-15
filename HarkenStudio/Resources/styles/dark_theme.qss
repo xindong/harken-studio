@@ -177,7 +177,6 @@ QMenuBar::item:pressed {
     color: @accentText@;
 }
 
-QMenu,
 QWidget[surfaceRole="popup"] {
     border: 1px solid @borderSecondary@;
 }
@@ -185,7 +184,8 @@ QWidget[surfaceRole="popup"] {
 QMenu {
     -qt-style-features: background-color;
     background-color: @bgTertiary@;
-    border-radius: @radiusMedium@px;
+    border: 1px solid @borderPrimary@;
+    border-radius: 0px;
     padding: 6px 0;
 }
 
