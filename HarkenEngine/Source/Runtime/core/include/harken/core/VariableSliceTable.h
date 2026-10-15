@@ -2,6 +2,7 @@
 #define HARKEN_CORE_VARIABLE_SLICE_TABLE_H
 
 #include "harken/core/CommandQueue.h"
+#include "harken/core/VariableReadCut.h"
 
 #include <atomic>
 #include <cstddef>
@@ -14,6 +15,9 @@ namespace harken {
 inline constexpr std::uint32_t kVariableSliceRowHardLimit = 65536;
 inline constexpr std::uint32_t kVariableSliceTargetHardLimit = 4096;
 inline constexpr std::uint32_t kVariableSliceTargetPoolHardLimit = 65536;
+inline constexpr std::uint32_t kVariableSliceSourceHardLimit = 256;
+inline constexpr std::uint32_t kVariableSliceSourceRejected = 1u << 30;
+inline constexpr std::uint32_t kVariableSliceTargetRejected = 1u << 29;
 
 enum class VariableSliceState : std::uint8_t {
     Free = 0,
@@ -58,6 +62,41 @@ struct VariableSliceRef {
     }
 };
 
+struct VariableSliceSource {
+    VariableSliceRef slice{};
+    std::uint64_t world = 0;
+    std::uint64_t transport = 0;
+    std::uint64_t ticket = 0;
+    std::uint64_t bankOrdinal = 0;
+};
+
+enum class TargetClaimKind : std::uint8_t {
+    SingleSlice,
+    VariablePublication,
+};
+
+struct TargetClaimOwner {
+    std::uint32_t slot = UINT32_MAX;
+    std::uint32_t generation = 0;
+    TargetClaimKind kind = TargetClaimKind::SingleSlice;
+
+    constexpr TargetClaimOwner() = default;
+    constexpr TargetClaimOwner(std::uint32_t slotValue, std::uint32_t generationValue,
+                               TargetClaimKind kindValue = TargetClaimKind::SingleSlice)
+        : slot(slotValue), generation(generationValue), kind(kindValue) {}
+    constexpr TargetClaimOwner(VariableSliceRef slice)
+        : slot(slice.slot), generation(slice.generation) {}
+    bool Valid() const noexcept {
+        return slot != UINT32_MAX && generation != 0 &&
+            (kind == TargetClaimKind::SingleSlice || kind == TargetClaimKind::VariablePublication);
+    }
+    bool Shared() const noexcept { return kind == TargetClaimKind::VariablePublication; }
+    bool operator==(TargetClaimOwner other) const noexcept {
+        return slot == other.slot && generation == other.generation && kind == other.kind;
+    }
+    bool operator!=(TargetClaimOwner other) const noexcept { return !(*this == other); }
+};
+
 struct VariableTargetLocator {
     VariableTargetScope scope = VariableTargetScope::Voice;
     std::uint64_t object = 0;
@@ -73,6 +112,9 @@ struct VariableSliceTarget {
     std::uint32_t targetRevision = 0;
     float resolvedValue = 0.0f;
     std::uint32_t rampMs = 0;
+    std::uint32_t carriedRampMs = 0;
+    VariableNativeEffectIdentity nativeEffect{};
+    VariableToneBandValues toneBand{};
     CommandRecord command{};
 };
 
@@ -90,14 +132,30 @@ public:
                  std::uint64_t bankOrdinal, std::uint32_t exactTargetCount,
                  VariableSliceRef* out) noexcept;
     bool AddTarget(VariableSliceRef ref, const VariableSliceTarget& target) noexcept;
+    bool CaptureSource(VariableSliceRef ref, VariableSliceSource* out) const noexcept;
+    bool RetainSource(const VariableSliceSource& source) noexcept;
+    bool ReleaseSource(const VariableSliceSource& source) noexcept;
+    bool SourceApplied(const VariableSliceSource& source) const noexcept;
+    bool AddSource(VariableSliceRef ref, const VariableSliceSource& source) noexcept;
+    const VariableSliceSource* Source(VariableSliceRef ref, std::uint32_t index) const noexcept;
+    bool ClearPreparedSources(VariableSliceRef ref) noexcept;
+    bool SetPreparedEffectiveFrame(VariableSliceRef ref, std::uint64_t frame) noexcept;
+    bool SetPreparedCommandFrontier(VariableSliceRef ref, std::uint64_t frontier) noexcept;
+    std::uint64_t EffectiveFrame(VariableSliceRef ref) const noexcept;
+    std::uint32_t SourceCount(VariableSliceRef ref) const noexcept;
+    std::uint32_t SourceObserverCount(VariableSliceRef ref) const noexcept;
+    std::uint32_t InvalidationReasons(VariableSliceRef ref) const noexcept;
+    std::size_t StorageBytes() const noexcept;
     bool Publish(VariableSliceRef ref) noexcept;
+    bool CanPublishPrepared(VariableSliceRef ref, bool allowPreparedSources = false) const noexcept;
     VariableSliceInvalidationResult Invalidate(
         VariableSliceRef ref, std::uint32_t reason) noexcept;
     bool Apply(VariableSliceRef ref, std::uint64_t blockSequence,
                void* context,
                bool (*validate)(void*, const VariableSliceTarget&) noexcept,
                void (*apply)(void*,
-                             const VariableSliceTarget&) noexcept) noexcept;
+                             const VariableSliceTarget&) noexcept,
+               std::uint64_t settledCommandFrontier = UINT64_MAX) noexcept;
     VariableSliceState State(VariableSliceRef ref) const noexcept;
     std::uint64_t AppliedBlockSequence(VariableSliceRef ref) const noexcept;
     std::uint32_t TargetCount(VariableSliceRef ref) const noexcept;
@@ -139,9 +197,12 @@ private:
         std::uint64_t ticket = 0;
         std::uint64_t effectiveFrame = 0;
         std::uint64_t bankOrdinal = 0;
+        std::uint64_t requiredCommandFrontier = 0;
         std::uint32_t targetSpanOffset = 0;
         std::uint32_t targetSpanCapacity = 0;
         std::uint32_t targetCount = 0;
+        std::uint32_t sourceCount = 0;
+        std::uint32_t sourceObservers = 0;
         std::atomic<std::uint64_t> appliedBlockSequence{0};
         std::atomic<std::uint32_t> pendingInvalidationReasons{0};
     };
@@ -155,12 +216,15 @@ private:
     const Row* Resolve(VariableSliceRef ref) const noexcept;
     bool ReleaseSpan(std::uint32_t offset, std::uint32_t count) noexcept;
     bool RecycleRow(Row& row, VariableSliceRef ref) noexcept;
+    bool SourceIdentityMatches(const Row& row, const VariableSliceSource& source) const noexcept;
 
     std::uint32_t capacity_ = 0;
     std::uint32_t maxTargetsPerSlice_ = 0;
     std::uint32_t targetPoolCapacity_ = 0;
     std::unique_ptr<Row[]> rows_;
     std::vector<VariableSliceTarget> targets_;
+    std::vector<VariableSliceSource> sources_;
+    std::uint32_t maxSourcesPerSlice_ = 0;
     std::vector<FreeRange> freeRanges_;
     std::atomic<AfterAudioClaimHookForTest> afterAudioClaimHookForTest_{
         nullptr};

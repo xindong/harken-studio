@@ -27199,18 +27199,92 @@ TEST(PlayableStart, BlendQueueAfterLogicalTrackInheritsVariableResponseGain) {
             }
             const auto render = queue->renderHandle;
             ASSERT_NE(0u, render);
-            for (unsigned block = 0; block < 8; ++block) {
-                ASSERT_EQ(VN_OK, Vn_Update());
-                engine->nullBackend.Pump(1);
-            }
             const auto* voice = engine->voices.Resolve(render);
             ASSERT_NE(nullptr, voice);
             const auto* weight = FrontierOwnedVariableWeight(*voice, *parent);
             ASSERT_NE(nullptr, weight);
             const float expected = (live ? 7.0f : initialValue) / 8.0f;
-            EXPECT_FLOAT_EQ(expected, weight->segment.endWeight);
+            const auto weightHasApplied = [&](float variableValue, float targetWeight) {
+                if (weight->segment.endWeight != targetWeight ||
+                    engine->mixer.BlocksRendered() * engine->config.blockFrames <
+                        weight->segment.endFrame ||
+                    !(std::abs(harkentest::Peak(engine->nullBackend.LastBlock(), 512) -
+                        targetWeight * 0.1f) <= 0.001f)) return false;
+                if (!live) return true;
+                harken::BankVersionToken bank{};
+                float value = 0.0f;
+                harken::VariableControlInstanceSnapshot state{};
+                if (!engine->variables.CaptureCurrentBank(parent->variableControlEmitter,
+                        &variable.variableId, 1, &value, &bank) || value != variableValue ||
+                    !engine->variableControlInstances.Capture(parent->variableControlInstance,
+                        &state) || state.continuous.state !=
+                        harken::VariableControlSideState::Committed) return false;
+                return bank.Valid() && weight->segment.bank.slot == bank.slot &&
+                    weight->segment.bank.generation == bank.generation &&
+                    state.continuous.lastApplied.slot == bank.slot &&
+                    state.continuous.lastApplied.generation == bank.generation &&
+                    weight->segment.decision.Valid() &&
+                    state.continuous.decision.slot == weight->segment.decision.slot &&
+                    state.continuous.decision.generation == weight->segment.decision.generation;
+            };
+            // The handle is allocated before its Start and later weight cut execute.
+            for (unsigned block = 0; block < 16; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                engine->nullBackend.Pump(1);
+                voice = engine->voices.Resolve(render);
+                ASSERT_NE(nullptr, voice);
+                weight = FrontierOwnedVariableWeight(*voice, *parent);
+                ASSERT_NE(nullptr, weight);
+                if (block >= 7 && weightHasApplied(7.0f, expected)) break;
+            }
+            harken::VariableControlInstanceSnapshot controlState{};
+            const bool capturedControl = engine->variableControlInstances.Capture(
+                parent->variableControlInstance, &controlState);
+            harken::BankVersionToken currentBank{};
+            float currentValue = 0.0f;
+            const bool capturedBank = engine->variables.CaptureCurrentBank(
+                parent->variableControlEmitter, &variable.variableId, 1,
+                &currentValue, &currentBank);
+            harken::DecisionCommittedSnapshot retargetDecision{};
+            const bool capturedDecision = engine->decisions.CaptureCommitted(
+                parent->variableControlRetargetDecision, &retargetDecision);
+            harken::ArmGroupSnapshot retargetGroup{};
+            const bool capturedGroup = engine->armGroups.Capture(
+                parent->variableControlRetargetArmGroup, &retargetGroup);
+            EXPECT_FLOAT_EQ(expected, weight->segment.endWeight)
+                << " phase=" << static_cast<unsigned>(parent->phase)
+                << " lifecycle=" << static_cast<unsigned>(parent->controlLifecycle)
+                << " nextFrame=" << parent->variableControlNextEvaluationFrame
+                << " capturedControl=" << capturedControl
+                << " side=" << static_cast<unsigned>(controlState.continuous.state)
+                << " applied=" << controlState.continuous.lastApplied.slot << '/'
+                << controlState.continuous.lastApplied.generation
+                << " capturedBank=" << capturedBank << " bank=" << currentBank.slot
+                << '/' << currentBank.generation << " value=" << currentValue
+                << " blocks=" << engine->mixer.BlocksRendered()
+                << " start=" << parent->startFrame
+                << " lastBlock=" << parent->lastAppliedBlockSequence
+                << " prepared=" << parent->variableControlRetargetPrepared
+                << " committed=" << parent->variableControlRetargetDecisionCommitted
+                << " retargetApplied=" << parent->variableControlRetargetApplied
+                << " superseded=" << parent->variableControlRetargetSuperseded
+                << " frame=" << parent->variableControlRetargetFrame
+                << " envelopeEnd=" << parent->variableControlRetargetEnvelopeEndFrame
+                << " members=" << parent->variableControlRetargetUnionMemberCount
+                << " decision=" << capturedDecision << '/'
+                << static_cast<unsigned>(retargetDecision.audioState) << '/'
+                << retargetDecision.lastAudioSequence
+                << " group=" << capturedGroup << '/'
+                << static_cast<unsigned>(retargetGroup.state) << '/'
+                << retargetGroup.memberCount << '/' << retargetGroup.ackedCount
+                << " lifetime=" << parent->frontierLifetimeEntry.Valid() << '/'
+                << parent->frontierLifetimePin.Valid()
+                << " child=" << parent->frontierChildService.Valid();
             EXPECT_NEAR(expected * 0.1f,
                 harkentest::Peak(engine->nullBackend.LastBlock(), 512), 0.001f);
+            EXPECT_GE(engine->mixer.BlocksRendered() * engine->config.blockFrames,
+                weight->segment.endFrame);
+            ASSERT_TRUE(weightHasApplied(7.0f, expected));
             const auto cursor = voice->srcCursor;
             ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 0.0f));
             for (unsigned block = 0; block < 16; ++block) {
@@ -27220,9 +27294,7 @@ TEST(PlayableStart, BlendQueueAfterLogicalTrackInheritsVariableResponseGain) {
                 ASSERT_NE(nullptr, voice);
                 weight = FrontierOwnedVariableWeight(*voice, *parent);
                 ASSERT_NE(nullptr, weight);
-                if (block >= 7 && weight->segment.endWeight == (live ? 0.0f : expected) &&
-                    engine->mixer.BlocksRendered() * engine->config.blockFrames >= weight->segment.endFrame)
-                    break;
+                if (block >= 7 && weightHasApplied(0.0f, live ? 0.0f : expected)) break;
             }
             ASSERT_EQ(render, queue->renderHandle);
             voice = engine->voices.Resolve(render);
@@ -27230,6 +27302,11 @@ TEST(PlayableStart, BlendQueueAfterLogicalTrackInheritsVariableResponseGain) {
             weight = FrontierOwnedVariableWeight(*voice, *parent);
             ASSERT_NE(nullptr, weight);
             EXPECT_FLOAT_EQ(live ? 0.0f : expected, weight->segment.endWeight);
+            EXPECT_GE(engine->mixer.BlocksRendered() * engine->config.blockFrames,
+                weight->segment.endFrame);
+            EXPECT_NEAR((live ? 0.0f : expected) * 0.1f,
+                harkentest::Peak(engine->nullBackend.LastBlock(), 512), 0.001f);
+            EXPECT_TRUE(weightHasApplied(0.0f, live ? 0.0f : expected));
             EXPECT_GT(voice->srcCursor, cursor);
             for (unsigned block = 0; block < 96; ++block) {
                 ASSERT_EQ(VN_OK, Vn_Update());

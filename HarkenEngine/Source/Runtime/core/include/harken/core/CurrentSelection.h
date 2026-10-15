@@ -121,9 +121,10 @@ struct SelectionSeedProbeCopyV1 {
 struct SelectionDeltaRefV1 {
     std::uint32_t slot = UINT32_MAX;
     std::uint32_t generation = 0;
+    std::uint64_t lifetime = 0;
 
     explicit operator bool() const noexcept {
-        return slot != UINT32_MAX && generation != 0;
+        return slot != UINT32_MAX && generation != 0 && lifetime != 0;
     }
 };
 
@@ -172,6 +173,95 @@ struct SelectionMemorySnapshotV1 {
 
 class SelectionMemoryTableV1;
 
+struct SelectionPendingBatchIdentityV1 {
+    WorldGeneration world = 0;
+    std::uint64_t worldSemanticFingerprint = 0;
+    VnObjectId rootStableId{};
+    std::uint64_t callerSeed = 0;
+    std::uint64_t acceptedPostOrdinal = 0;
+    std::uint64_t ticket = 0;
+    std::uint32_t emitterSlot = UINT32_MAX;
+    std::uint32_t emitterGeneration = 0;
+    std::uint32_t eventBegin = 0;
+    std::uint32_t eventCount = 0;
+};
+
+class PendingSelectionReplacementV1 {
+public:
+    PendingSelectionReplacementV1() = default;
+    PendingSelectionReplacementV1(const PendingSelectionReplacementV1&) = delete;
+    PendingSelectionReplacementV1& operator=(const PendingSelectionReplacementV1&) = delete;
+    PendingSelectionReplacementV1& operator=(PendingSelectionReplacementV1&&) = delete;
+    PendingSelectionReplacementV1(PendingSelectionReplacementV1&& other) noexcept
+        : owner_(other.owner_), slot_(other.slot_), generation_(other.generation_),
+          lifetime_(other.lifetime_), session_(other.session_) { other.Clear(); }
+    bool Valid() const noexcept { return owner_ != nullptr; }
+
+private:
+    friend class SelectionMemoryTableV1;
+    void Clear() noexcept {
+        owner_ = nullptr;
+        slot_ = UINT32_MAX;
+        generation_ = 0;
+        lifetime_ = session_ = 0;
+    }
+    SelectionMemoryTableV1* owner_ = nullptr;
+    std::uint32_t slot_ = UINT32_MAX;
+    std::uint32_t generation_ = 0;
+    std::uint64_t lifetime_ = 0;
+    std::uint64_t session_ = 0;
+};
+
+struct SelectionReplacementPlayViewV1 {
+    SelectionMemoryStatusV1 status = SelectionMemoryStatusV1::InvalidInput;
+    std::uint32_t selectedChildOrdinal = 0;
+    SelectionSeedProbeCopyV1 seedProbe{};
+};
+
+class PendingSelectionBatchV1 {
+public:
+    PendingSelectionBatchV1() = default;
+    PendingSelectionBatchV1(const PendingSelectionBatchV1&) = delete;
+    PendingSelectionBatchV1& operator=(const PendingSelectionBatchV1&) = delete;
+    PendingSelectionBatchV1& operator=(PendingSelectionBatchV1&&) = delete;
+    PendingSelectionBatchV1(PendingSelectionBatchV1&& other) noexcept
+        : owner_(other.owner_), slot_(other.slot_), generation_(other.generation_),
+          lifetime_(other.lifetime_) { other.Clear(); }
+
+    bool Valid() const noexcept { return owner_ != nullptr; }
+
+private:
+    friend class SelectionMemoryTableV1;
+    void Clear() noexcept {
+        owner_ = nullptr;
+        slot_ = UINT32_MAX;
+        generation_ = 0;
+        lifetime_ = 0;
+    }
+    SelectionMemoryTableV1* owner_ = nullptr;
+    std::uint32_t slot_ = UINT32_MAX;
+    std::uint32_t generation_ = 0;
+    std::uint64_t lifetime_ = 0;
+};
+
+struct PendingSelectionBatchViewV1 {
+    bool live = false;
+    std::uint32_t memberCount = 0;
+    std::uint64_t revision = 0;
+};
+
+struct PendingSelectionBatchCommitV1 {
+    PendingSelectionBatchV1* batch = nullptr;
+    std::uint64_t revision = 0;
+};
+
+struct PendingSelectionBatchMemberViewV1 {
+    SelectionDeltaRefV1 ref{};
+    SelectionDeltaViewV1 delta{};
+    SelectionSeedProbeCopyV1 seedProbe{};
+    std::uint64_t revision = 0;
+};
+
 class PreparedSelectionPlayV1 {
 public:
     PreparedSelectionPlayV1() = default;
@@ -180,11 +270,12 @@ public:
         const PreparedSelectionPlayV1&) = delete;
     PreparedSelectionPlayV1(PreparedSelectionPlayV1&& other) noexcept
         : owner_(other.owner_), slot_(other.slot_),
-          generation_(other.generation_), prepared_(other.prepared_),
+          generation_(other.generation_), lifetime_(other.lifetime_), prepared_(other.prepared_),
           committed_(other.committed_) {
         other.owner_ = nullptr;
         other.slot_ = UINT32_MAX;
         other.generation_ = 0;
+        other.lifetime_ = 0;
         other.prepared_ = false;
         other.committed_ = false;
     }
@@ -194,11 +285,13 @@ public:
             owner_ = other.owner_;
             slot_ = other.slot_;
             generation_ = other.generation_;
+            lifetime_ = other.lifetime_;
             prepared_ = other.prepared_;
             committed_ = other.committed_;
             other.owner_ = nullptr;
             other.slot_ = UINT32_MAX;
             other.generation_ = 0;
+            other.lifetime_ = 0;
             other.prepared_ = false;
             other.committed_ = false;
         }
@@ -213,6 +306,7 @@ private:
     SelectionMemoryTableV1* owner_ = nullptr;
     std::uint32_t slot_ = UINT32_MAX;
     std::uint32_t generation_ = 0;
+    std::uint64_t lifetime_ = 0;
     bool prepared_ = false;
     bool committed_ = false;
 };
@@ -225,13 +319,15 @@ public:
         const PreparedSelectionResetV1&) = delete;
     PreparedSelectionResetV1(PreparedSelectionResetV1&& other) noexcept
         : owner_(other.owner_), slot_(other.slot_),
-          generation_(other.generation_), prepared_(other.prepared_),
-          idempotent_(other.idempotent_) {
+          generation_(other.generation_), lifetime_(other.lifetime_), prepared_(other.prepared_),
+          idempotent_(other.idempotent_), pending_(other.pending_) {
         other.owner_ = nullptr;
         other.slot_ = UINT32_MAX;
         other.generation_ = 0;
+        other.lifetime_ = 0;
         other.prepared_ = false;
         other.idempotent_ = false;
+        other.pending_ = false;
     }
     PreparedSelectionResetV1& operator=(
         PreparedSelectionResetV1&& other) noexcept {
@@ -239,13 +335,17 @@ public:
             owner_ = other.owner_;
             slot_ = other.slot_;
             generation_ = other.generation_;
+            lifetime_ = other.lifetime_;
             prepared_ = other.prepared_;
             idempotent_ = other.idempotent_;
+            pending_ = other.pending_;
             other.owner_ = nullptr;
             other.slot_ = UINT32_MAX;
             other.generation_ = 0;
+            other.lifetime_ = 0;
             other.prepared_ = false;
             other.idempotent_ = false;
+            other.pending_ = false;
         }
         return *this;
     }
@@ -258,8 +358,10 @@ private:
     SelectionMemoryTableV1* owner_ = nullptr;
     std::uint32_t slot_ = UINT32_MAX;
     std::uint32_t generation_ = 0;
+    std::uint64_t lifetime_ = 0;
     bool prepared_ = false;
     bool idempotent_ = false;
+    bool pending_ = false;
 };
 
 class SelectionMemoryTableV1 {
@@ -275,6 +377,10 @@ public:
         const SelectionPlayRequestV1& request,
         PreparedSelectionPlayV1* out,
         std::uint32_t* outSelectedChildOrdinal) noexcept;
+    SelectionMemoryStatusV1 PreparePlayForPendingBatch(
+        const SelectionPlayRequestV1& request,
+        PreparedSelectionPlayV1* out,
+        std::uint32_t* outSelectedChildOrdinal) noexcept;
     SelectionSeedProbeCopyV1 PreparedPlaySeedProbe(
         const PreparedSelectionPlayV1& prepared) const noexcept;
     SelectionMemoryStatusV1 CommitPreparedPlay(
@@ -284,6 +390,47 @@ public:
         PreparedSelectionPlayV1* prepared,
         std::uint64_t ticket,
         SelectionDeltaRefV1* out) noexcept;
+    SelectionMemoryStatusV1 MovePreparedPlaysToPending(
+        PreparedSelectionPlayV1* const* prepared, std::uint32_t count,
+        std::uint64_t ticket, PendingSelectionBatchV1* out) noexcept;
+    SelectionMemoryStatusV1 IssueProducerPendingSelectionBatch(
+        const SelectionPendingBatchIdentityV1& identity,
+        PreparedSelectionPlayV1* const* prepared, std::uint32_t count,
+        PendingSelectionBatchV1* out) noexcept;
+    SelectionMemoryStatusV1 BeginPendingBatchReplacement(
+        const PendingSelectionBatchV1& batch, std::uint64_t revision,
+        PendingSelectionReplacementV1* out) noexcept;
+    SelectionMemoryStatusV1 PrepareReplacementPlay(
+        PendingSelectionReplacementV1* replacement,
+        const SelectionPlayRequestV1& request,
+        std::uint32_t* outSelectedChildOrdinal) noexcept;
+    SelectionReplacementPlayViewV1 ReadReplacementPlay(
+        const PendingSelectionReplacementV1& replacement, std::uint32_t member) const noexcept;
+    SelectionMemoryStatusV1 SealReplacement(
+        PendingSelectionReplacementV1* replacement, std::uint32_t count,
+        std::uint64_t frame) noexcept;
+    SelectionMemoryStatusV1 CanInstallReplacement(
+        const PendingSelectionReplacementV1& replacement) const noexcept;
+    SelectionMemoryStatusV1 InstallReplacement(
+        PendingSelectionReplacementV1* replacement,
+        PendingSelectionBatchV1* batch) noexcept;
+    SelectionMemoryStatusV1 CancelReplacement(PendingSelectionReplacementV1* replacement) noexcept;
+    PendingSelectionBatchViewV1 ReadPendingBatch(
+        const PendingSelectionBatchV1& batch) const noexcept;
+    PendingSelectionBatchMemberViewV1 ReadPendingBatchMember(
+        const PendingSelectionBatchV1& batch, std::uint32_t member) const noexcept;
+    SelectionMemoryStatusV1 CanCommitPendingBatch(
+        const PendingSelectionBatchV1& batch, std::uint64_t revision) const noexcept;
+    SelectionMemoryStatusV1 CommitPendingBatch(
+        PendingSelectionBatchV1* batch, std::uint64_t revision) noexcept;
+    SelectionMemoryStatusV1 CanCommitPendingBatches(
+        const PendingSelectionBatchCommitV1* batches, std::uint32_t count) const noexcept;
+    SelectionMemoryStatusV1 CommitPendingBatches(
+        const PendingSelectionBatchCommitV1* batches, std::uint32_t count) noexcept;
+    SelectionMemoryStatusV1 CancelPendingBatch(PendingSelectionBatchV1* batch) noexcept;
+    std::uint32_t FreePendingBatchCount() const noexcept;
+    // Registry, membership and scratch only; excludes existing state frontier metadata.
+    std::size_t PendingBatchStorageBytes() const noexcept;
     SelectionMemoryStatusV1 CancelPreparedPlay(
         PreparedSelectionPlayV1* prepared) noexcept;
     SelectionMemoryStatusV1 CommitPreparedPlayTransactional(
@@ -301,6 +448,15 @@ public:
     SelectionMemoryStatusV1 CommitPreparedReset(
         PreparedSelectionResetV1* prepared,
         std::uint64_t ticket) noexcept;
+    SelectionMemoryStatusV1 PreparePendingReset(
+        const SelectionMemoryKeyV1& key, std::uint64_t expectedTicket,
+        std::uint32_t eventIndex, PreparedSelectionResetV1* out,
+        std::uint64_t executeFrame = 0) noexcept;
+    SelectionMemoryStatusV1 AcceptPreparedPendingReset(
+        PreparedSelectionResetV1* prepared, std::uint64_t ticket) noexcept;
+    SelectionMemoryStatusV1 CanAcceptPreparedPendingReset(
+        const PreparedSelectionResetV1& prepared, std::uint64_t ticket,
+        bool* outIdempotent = nullptr) const noexcept;
     SelectionMemoryStatusV1 CancelPreparedReset(
         PreparedSelectionResetV1* prepared) noexcept;
     SelectionMemoryStatusV1 CommitHead(SelectionDeltaRefV1 delta) noexcept;
@@ -340,6 +496,24 @@ private:
         std::uint32_t rotationCursor = 0;
         std::vector<std::uint32_t> recent;
         std::vector<std::uint32_t> permutation;
+        bool hasScheduledFrontier = false;
+        std::uint64_t scheduledFrame = 0;
+        std::uint64_t scheduledTicket = 0;
+        std::uint32_t scheduledEvent = 0;
+        bool hasNativeScheduledFrontier = false;
+        std::uint64_t nativeScheduledFrame = 0;
+        std::uint64_t nativeScheduledTicket = 0;
+        std::uint32_t nativeScheduledEvent = 0;
+        bool hasImmediateFrontier = false;
+        std::uint64_t immediateTicket = 0;
+        std::uint32_t immediateEvent = 0;
+        bool hasPrivateScheduledFrontier = false;
+        std::uint64_t privateScheduledFrame = 0;
+        std::uint64_t privateScheduledTicket = 0;
+        std::uint32_t privateScheduledEvent = 0;
+        bool hasPrivateImmediateFrontier = false;
+        std::uint64_t privateImmediateTicket = 0;
+        std::uint32_t privateImmediateEvent = 0;
     };
 
     struct Row {
@@ -362,11 +536,15 @@ private:
         std::uint32_t scheduledHead = UINT32_MAX;
         std::uint32_t scheduledTail = UINT32_MAX;
         std::uint32_t scheduledCount = 0;
+        std::uint32_t candidateCount = 0;
     };
 
     struct DeltaRow {
         bool used = false;
         bool prepared = false;
+        bool nativePendingPreparation = false;
+        bool pendingReset = false;
+        bool replacementCandidate = false;
         bool quarantined = false;
         std::uint32_t generation = 1;
         std::uint32_t row = UINT32_MAX;
@@ -387,7 +565,59 @@ private:
         bool rollbackCommitted = false;
         bool rollbackCounted = false;
         bool rollbackable = false;
+        struct BatchMembership {
+            std::uint32_t slot = UINT32_MAX;
+            std::uint32_t generation = 0;
+            std::uint32_t next = UINT32_MAX;
+            std::uint32_t ordinal = 0;
+        } batch{};
     };
+
+    struct BatchRow {
+        bool used = false;
+        bool quarantined = false;
+        std::uint32_t generation = 1;
+        std::uint32_t head = UINT32_MAX;
+        std::uint32_t count = 0;
+        std::uint64_t revision = 1;
+        bool producer = false;
+        SelectionPendingBatchIdentityV1 identity{};
+        bool replacementActive = false;
+        bool replacementSealed = false;
+        std::uint64_t replacementSession = 0;
+        std::uint64_t replacementEpoch = 0;
+        std::uint64_t replacementRevision = 0;
+        std::uint64_t replacementFrame = 0;
+        std::uint32_t replacementHead = UINT32_MAX;
+        std::uint32_t replacementTail = UINT32_MAX;
+        std::uint32_t replacementCount = 0;
+    };
+
+    const BatchRow* ResolveBatch(const PendingSelectionBatchV1& batch) const noexcept;
+    bool ValidateBatchMembers(std::uint32_t slot) const noexcept;
+    void RecycleBatch(std::uint32_t slot) noexcept;
+    void CancelBatchSlot(std::uint32_t slot) noexcept;
+    const BatchRow* ResolveReplacement(const PendingSelectionReplacementV1& replacement) const noexcept;
+    SelectionMemoryStatusV1 CheckReplacementCurrent(const PendingSelectionReplacementV1& replacement) const noexcept;
+    bool ValidateReplacementMembers(std::uint32_t slot) const noexcept;
+    void CancelReplacementSlot(std::uint32_t slot) noexcept;
+    void AdvanceMutationEpoch() noexcept;
+    bool ValidBatchIdentity(const SelectionPendingBatchIdentityV1& identity) const noexcept;
+    bool MatchesBatchIdentity(const SelectionPendingBatchIdentityV1& identity,
+        const SelectionPlayRequestV1& request) const noexcept;
+    bool ReplacementRowCompatible(std::uint32_t rowIndex) const noexcept;
+    SelectionMemoryStatusV1 CheckReplacementPlayOrder(std::uint32_t batchSlot,
+        std::uint32_t rowIndex, const SelectionPlayRequestV1& request) const noexcept;
+    SelectionMemoryStatusV1 CheckReplacementBatchOrder(std::uint32_t batchSlot) const noexcept;
+    SelectionMemoryStatusV1 ComputeReplacementPlay(std::uint32_t batchSlot,
+        std::uint32_t rowIndex, const SelectionPlayRequestV1& request,
+        MemoryState& after, std::uint32_t* selected,
+        SelectionSeedProbeCopyV1* seed) noexcept;
+    SelectionMemoryStatusV1 PreparePlayImpl(
+        const SelectionPlayRequestV1& request,
+        PreparedSelectionPlayV1* out,
+        std::uint32_t* outSelectedChildOrdinal,
+        bool nativePendingPreparation) noexcept;
 
     static bool SameKey(const SelectionMemoryKeyV1& a,
                         const SelectionMemoryKeyV1& b) noexcept;
@@ -407,6 +637,23 @@ private:
     SelectionMemoryStatusV1 ComputeReset(const Row& row,
                                          const MemoryState& before,
                                          MemoryState& after) noexcept;
+    const MemoryState& PreparedPredecessor(const Row& row,
+        std::uint64_t executeFrame, std::uint64_t ticket,
+        std::uint32_t eventIndex, std::uint32_t stopBefore = UINT32_MAX) const noexcept;
+    SelectionMemoryStatusV1 PendingPredecessor(const Row& row,
+        const MemoryState& before, const SelectionPlayRequestV1& request,
+        const MemoryState** out, bool includePrivate = false) noexcept;
+    static void MarkScheduledFrontier(MemoryState& state, const DeltaRow& reset) noexcept;
+    static void ClearResetFrontiers(MemoryState& state) noexcept;
+    static bool ResetConsumed(const MemoryState& state, const DeltaRow& reset) noexcept;
+    static bool ResetAppliesBefore(const DeltaRow& reset, std::uint64_t frame,
+        std::uint64_t ticket, std::uint32_t eventIndex) noexcept;
+    std::uint32_t PrivateResetCount(const SelectionMemoryKeyV1& key) const noexcept;
+    bool PrivateResetConflicts(const SelectionMemoryKeyV1& key,
+        std::uint64_t ticket = 0) const noexcept;
+    bool PendingResetHasHistory(const Row& row, const DeltaRow& reset) const noexcept;
+    bool PendingResetBlocked(const Row& row, const DeltaRow& reset) const noexcept;
+    void RefreshResetJournal(std::uint32_t rowIndex) noexcept;
     void AppendRecent(MemoryState& state, std::uint32_t child,
                       std::uint32_t avoidLastN) noexcept;
     void LinkDelta(Row& row, std::uint32_t rowIndex,
@@ -414,7 +661,8 @@ private:
     void LinkScheduled(Row& row, std::uint32_t rowIndex,
                        std::uint32_t deltaIndex) noexcept;
     void UnlinkScheduledHead(Row& row, std::uint32_t deltaIndex) noexcept;
-    void DropScheduledThrough(Row& row, std::uint64_t executeFrame,
+    void UnlinkScheduled(Row& row, std::uint32_t deltaIndex) noexcept;
+    bool DropScheduledThrough(Row& row, std::uint64_t executeFrame,
                               std::uint64_t ticket,
                               std::uint32_t eventIndex) noexcept;
     void UnlinkHead(Row& row, std::uint32_t deltaIndex) noexcept;
@@ -429,11 +677,21 @@ private:
     SelectionMemoryConfigV1 config_{};
     std::vector<Row> rows_;
     std::vector<DeltaRow> deltas_;
+    std::vector<BatchRow> batches_;
+    MemoryState pendingScratch_[2];
+    MemoryState replacementScratch_[2];
+    std::vector<std::uint8_t> replacementAffectedRows_;
+    struct BatchDependencyEdge { std::uint32_t before, after; };
+    mutable std::vector<BatchDependencyEdge> replacementBatchEdges_;
+    mutable std::vector<std::uint8_t> replacementBatchReachable_;
+    mutable std::vector<std::uint32_t> pendingCommitHeads_;
     std::vector<SelectionChildV1> childScratch_;
     std::vector<std::uint32_t> remainingScratch_;
     std::uint32_t rowCount_ = 0;
     std::uint32_t pendingCount_ = 0;
     std::uint32_t quarantinedDeltaCount_ = 0;
+    std::uint64_t tableLifetime_ = 0;
+    std::uint64_t mutationEpoch_ = 1;
 };
 
 std::size_t SelectionSeedByteCountV1(

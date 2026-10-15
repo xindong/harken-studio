@@ -1832,6 +1832,7 @@ TEST(PackLogicLoad, FiniteAuthoredMixPlusVariableOverflowLeavesAuthoredIntact) {
     attach.scopeKind = VN_TARGET_SCOPE_BUS;
     attach.objectId = harkentest::ObjectId(13162);
     ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(13163), &attach));
+    const auto dropsBefore = engine->paramDropCount;
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(13161), 1.0f));
     harkentest::AdvanceVariableWrite(engine);
 
@@ -1847,7 +1848,9 @@ TEST(PackLogicLoad, FiniteAuthoredMixPlusVariableOverflowLeavesAuthoredIntact) {
                         index, harken::kBusTargetBusVolume));
     EXPECT_FALSE(engine->busTargets.PendingPublication(
         index, harken::kBusTargetBusVolume));
-    EXPECT_EQ(0u, engine->paramDropCount);
+    EXPECT_EQ(dropsBefore + 1u, engine->paramDropCount);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(dropsBefore + 1u, engine->paramDropCount);
 }
 
 TEST(PackLogicLoad, FiniteAuthoredMixPlusMeterProbeOverflowLeavesAuthoredIntact) {
@@ -2215,6 +2218,12 @@ TEST(PackLogicUnload, ParkedScope2RecipeRefusesWithoutPartialUnload) {
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
     ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(voice, harkentest::ObjectId(7961)));
     engine->nullBackend.Pump(1);
+    // Acknowledge the initial read cut before the next audibility pass.
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto started = engine->ledger.Classify(voice);
+    ASSERT_EQ(harken::VoiceLedger::HandleKind::Live, started.kind);
+    ASSERT_FALSE(engine->variables.HasNativePublicationHold(
+        started.renderHandle));
     ASSERT_EQ(VN_OK, listenerAt(0.0f));
     engine->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());

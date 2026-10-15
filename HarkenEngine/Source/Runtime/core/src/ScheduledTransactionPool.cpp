@@ -434,6 +434,7 @@ bool JointArmUnread(const TimelineArmTable::Row& row, TimelineArmToken token) no
         (state == ArmState::Prepared || state == ArmState::PendingApply) &&
         row.frontierAdmission == nullptr && row.frontierAdmissionLease == nullptr &&
         row.frontierReaderPins.load(std::memory_order_acquire) == 0 &&
+        row.variableReadPins.load(std::memory_order_acquire) == 0 &&
         row.frontierLastReadSequence.load(std::memory_order_acquire) == 0 &&
         row.frontierActiveLease.load(std::memory_order_acquire) == nullptr && !row.frontierOperation.Valid() &&
         row.armedCompletionSequence.load(std::memory_order_acquire) == 0 &&
@@ -855,6 +856,7 @@ bool ScheduledTransactionPool::ProvePrivateUnboundPageArmRetirement(
             row->frontierAdmission != nullptr || row->frontierAdmissionLease != nullptr ||
             row->frontierReaderPins.load(std::memory_order_acquire) != 0 ||
             row->originalLifetimePinned.load(std::memory_order_acquire) ||
+            row->variableReadPins.load(std::memory_order_acquire) != 0 ||
             row->frontierLastReadSequence.load(std::memory_order_acquire) != 0 ||
             row->frontierActiveLease.load(std::memory_order_acquire) != nullptr || row->frontierOperation.Valid() ||
             row->armedCompletionSequence.load(std::memory_order_acquire) != 0 ||
@@ -890,7 +892,8 @@ void ScheduledTransactionPool::ConsumePrivateUnboundPageArmRetirement(
     PrivateUnboundPageArmRetirementProof&& proof) noexcept {
     assert(proof.Valid());
     for (auto* row : proof.rows_)
-        assert(row != nullptr && !row->originalLifetimePinned.load(std::memory_order_acquire));
+        assert(row != nullptr && !row->originalLifetimePinned.load(std::memory_order_acquire) &&
+            row->variableReadPins.load(std::memory_order_acquire) == 0);
     for (auto* lease : proof.leases_) lease->ConsumePrivateTransferCancellation();
     proof.heldLeases_ = 0;
     for (std::size_t i = 0; i < 2; ++i) {
@@ -1196,9 +1199,173 @@ void ScheduledTransactionPool::ReturnAllGroupMemberOriginals() noexcept {
     ReturnGroupMemberOriginals(replacementGroupMemberOriginals_.get(), config_.maxArmsPerGroup);
 }
 
+PrivateImmediateLaneGroupsPublicationProof::PrivateImmediateLaneGroupsPublicationProof(
+    PrivateImmediateLaneGroupsPublicationProof&& other) noexcept { *this = std::move(other); }
+
+PrivateImmediateLaneGroupsPublicationProof& PrivateImmediateLaneGroupsPublicationProof::operator=(
+    PrivateImmediateLaneGroupsPublicationProof&& other) noexcept {
+    if (this != &other) {
+        Release();
+        if (other.owner_ != nullptr) other.owner_->MovePrivateImmediateLaneGroupsPublication(other, *this);
+    }
+    return *this;
+}
+
+void PrivateImmediateLaneGroupsPublicationProof::Release() noexcept {
+    if (owner_ != nullptr) owner_->ReleasePrivateImmediateLaneGroupsPublication(*this);
+}
+
+bool ScheduledTransactionPool::InitialLaneCohortPublicationHeld(std::uint64_t root) const noexcept {
+    for (auto* proof = laneGroupPublications_; proof != nullptr; proof = proof->next_)
+        if (proof->root_ == root) return true;
+    return false;
+}
+
+void ScheduledTransactionPool::MovePrivateImmediateLaneGroupsPublication(
+    PrivateImmediateLaneGroupsPublicationProof& from,
+    PrivateImmediateLaneGroupsPublicationProof& to) noexcept {
+    auto** link = &laneGroupPublications_;
+    while (*link != &from) link = &(*link)->next_;
+    to.owner_ = this;
+    to.lane_ = from.lane_;
+    assert(to.lane_ != nullptr && to.lane_->groupsPublication_ == &from);
+    to.lane_->groupsPublication_ = &to;
+    to.root_ = from.root_;
+    to.next_ = from.next_;
+    *link = &to;
+    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index)
+        if (immediateLaneGroups_[index].publicationProof == &from)
+            immediateLaneGroups_[index].publicationProof = &to;
+    from.owner_ = nullptr;
+    from.lane_ = nullptr;
+    from.root_ = 0;
+    from.next_ = nullptr;
+}
+
+void ScheduledTransactionPool::ReleasePrivateImmediateLaneGroupsPublication(
+    PrivateImmediateLaneGroupsPublicationProof& proof, bool publish) noexcept {
+    assert(proof.owner_ == this);
+    auto** link = &laneGroupPublications_;
+    while (*link != &proof) link = &(*link)->next_;
+    *link = proof.next_;
+    assert(proof.lane_ != nullptr && proof.lane_->groupsPublication_ == &proof);
+    proof.lane_->groupsPublication_ = nullptr;
+    proof.owner_ = nullptr;
+    proof.lane_ = nullptr;
+    proof.root_ = 0;
+    proof.next_ = nullptr;
+    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+        auto& row = immediateLaneGroups_[index];
+        if (row.publicationProof != &proof) continue;
+        row.publicationProof = nullptr;
+        row.lease.ReleasePublication();
+        if (publish) row.state.store(LaneGroupState::Published, std::memory_order_release);
+    }
+}
+
+bool ScheduledTransactionPool::ProvePrivateImmediateLaneGroupsPublication(
+    PrivateImmediateLanePublicationProof& lane,
+    PrivateImmediateLaneGroupsPublicationProof* out) noexcept {
+    if (!Valid() || out == nullptr || out->Valid() || !lane.Valid() ||
+        lane.attempt_ == nullptr || lane.attempt_->privatePublicationProof != &lane ||
+        lane.groupsPublication_ != nullptr ||
+        !lane.owner_->OwnsPrivate(lane.handle_, lane.attempt_->root) ||
+        InitialLaneCohortPublicationHeld(lane.attempt_->root)) return false;
+    const auto root = lane.attempt_->root;
+    const auto pinCount = lane.owner_->PrivatePinGroupCount(lane.handle_);
+    if (pinCount != lane.attempt_->groupCount ||
+        (pinCount == 0 && lane.attempt_->declaredGroupCount != 0) ||
+        (pinCount != 0 && (!lane.attempt_->groupPinsInstalled || lane.attempt_->pinGroupPool != this)))
+        return false;
+    std::size_t count = 0;
+    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+        const auto& row = immediateLaneGroups_[index];
+        if (row.cohortRoot != root || row.selectedFutureDomain != 0) continue;
+        if (row.state.load(std::memory_order_acquire) != LaneGroupState::Private ||
+            row.publicationProof != nullptr || row.transferOriginal != nullptr ||
+            row.transferProof != nullptr || row.clockProof != nullptr ||
+            row.laneOwner != lane.owner_ || row.laneSlot != lane.handle_.slot ||
+            row.laneGeneration != lane.handle_.generation || !row.frameRebased ||
+            row.bucketOrdinal == UINT32_MAX || row.groupIndex == UINT32_MAX ||
+            row.readers.lastAudioSequence.load(std::memory_order_acquire) != 0) return false;
+        Plan03GroupSliceIdentity identity{};
+        if (!lane.owner_->CapturePrivatePinGroup(lane.handle_, row.groupIndex, &identity) ||
+            identity.backing != Plan03GroupBacking::ImmediateLane ||
+            identity.committedRow != index || identity.rowClaimGeneration != row.generation ||
+            identity.transportEpoch != epoch_ || identity.absoluteQuantum != 0 || identity.pageGeneration != 1 ||
+            identity.decision.slot != row.decision.slot || identity.decision.generation != row.decision.generation ||
+            identity.sliceIndex != row.sliceIndex ||
+            !lane.owner_->ProvePrivateGroupPlacement(lane.handle_, identity, row.bucketOrdinal, row.groupIndex))
+            return false;
+        const auto& actual = lane.owner_->GroupBase(lane.handle_.slot)[row.groupIndex];
+        if (row.dueQuantum != actual.dueQuantum) return false;
+        const auto lease = row.lease.Capture();
+        const auto* effective = EffectiveImmediateLaneGroupLease(index);
+        if (lease.state != AudioSliceState::Ready || lease.pendingReasonBits != 0 || lease.invalidateAfterSlice ||
+            effective == nullptr || effective->Capture().state != AudioSliceState::Ready) return false;
+        const auto& owner = row.frontier.operation.owner;
+        if (!row.frontierPinsOwned || !row.frontier.Valid() || row.frontier.operation.group != identity ||
+            row.frontier.operation.order.executeFrame != row.rebasedFrame ||
+            owner.serviceSlot >= config_.maxImmediateLaneOwnerGates ||
+            row.decision.slot >= config_.maxImmediateLaneDecisionGates ||
+            immediateLaneOwnerGates_[owner.serviceSlot].state.load(std::memory_order_acquire) != 0 ||
+            immediateLaneDecisionGates_[row.decision.slot].state.load(std::memory_order_acquire) != 0)
+            return false;
+        ++count;
+    }
+    if (count != pinCount) return false;
+    // The complete census passed before any shared primary lease changes state.
+    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+        auto& row = immediateLaneGroups_[index];
+        if (row.cohortRoot != root || row.selectedFutureDomain != 0) continue;
+        if (!row.lease.HoldPublication()) {
+            for (std::size_t prior = 0; prior < index; ++prior) {
+                auto& held = immediateLaneGroups_[prior];
+                if (held.publicationProof != out) continue;
+                held.publicationProof = nullptr;
+                held.lease.ReleasePublication();
+            }
+            return false;
+        }
+        row.publicationProof = out;
+    }
+    out->owner_ = this;
+    out->lane_ = &lane;
+    lane.groupsPublication_ = out;
+    out->root_ = root;
+    out->next_ = laneGroupPublications_;
+    laneGroupPublications_ = out;
+    return true;
+}
+
+bool ScheduledTransactionPool::IsPrivateImmediateLaneGroupsPublicationProofFor(
+    const PrivateImmediateLaneGroupsPublicationProof& proof,
+    const Plan03GroupSliceIdentity& identity, const FrontierEntryReceiptRef& entry) const noexcept {
+    Plan03PageGroupView group{};
+    if (proof.owner_ != this || proof.lane_ == nullptr || !proof.lane_->Valid() ||
+        proof.lane_->groupsPublication_ != &proof ||
+        !ResolveImmediateLaneGroup(identity, &group, false)) return false;
+    const auto& row = immediateLaneGroups_[identity.committedRow];
+    return row.publicationProof == &proof && row.cohortRoot == proof.root_ &&
+        row.laneOwner == proof.lane_->owner_ && row.laneSlot == proof.lane_->handle_.slot &&
+        row.laneGeneration == proof.lane_->handle_.generation &&
+        row.state.load(std::memory_order_acquire) == LaneGroupState::Private &&
+        row.lease.Capture().state == AudioSliceState::PublicationReserved &&
+        group.lease->Capture().state == AudioSliceState::PublicationReserved &&
+        group.frontier != nullptr && group.frontier->entry == entry &&
+        group.frontier->operation.group == identity;
+}
+
+void ScheduledTransactionPool::ApplyPrivateImmediateLaneGroupsPublication(
+    PrivateImmediateLaneGroupsPublicationProof&& proof) noexcept {
+    assert(proof.Valid());
+    if (proof.Valid()) proof.owner_->ReleasePrivateImmediateLaneGroupsPublication(proof, true);
+}
+
 ScheduledTransactionPool::~ScheduledTransactionPool() {
     assert(selectedFutureDomains_ == 0);
     // Device and producer quiescence precedes pool destruction.
+    while (laneGroupPublications_ != nullptr) laneGroupPublications_->Release();
     while (unpublishedGroupArmCancellations_ != nullptr)
         unpublishedGroupArmCancellations_->Release();
     for (auto& row : pagePlan03Groups_) {
@@ -2233,6 +2400,37 @@ bool OriginalQueueFutureGroupRegistration::MatchesOriginalScope(
             cohortRoot, provisionalAnchorFrame, input, armTable);
 }
 
+bool OriginalQueueFutureGroupRegistration::CaptureOriginalScope(
+    const ScheduledTransactionPool& pool, const TimelineArmTable& armTable,
+    OriginalQueueFutureGroupScope* out) const noexcept {
+    return pool.CaptureOriginalQueueFutureGroupScope(*this, armTable, out);
+}
+
+bool ScheduledTransactionPool::CaptureOriginalQueueFutureGroupScope(
+    const OriginalQueueFutureGroupRegistration& original, const TimelineArmTable& armTable,
+    OriginalQueueFutureGroupScope* out) const noexcept {
+    if (out == nullptr || !MatchesOriginalQueueFutureGroupLifetime(original.lifetime_) ||
+        original.armTable_ != &armTable || plan03ArmTable_ != &armTable ||
+        original.armTableIncarnation_ == 0 || armTable.Incarnation() != original.armTableIncarnation_)
+        return false;
+    OriginalQueueFutureGroupScope captured{};
+    captured.cohortRoot = original.cohortRoot_;
+    captured.provisionalAnchorFrame = original.provisionalAnchorFrame_;
+    captured.selectedFutureDomain = original.selectedFutureDomain_;
+    captured.input.executeFrame = original.executeFrame_;
+    captured.input.decision = original.Identity().decision;
+    captured.input.sliceIndex = original.Identity().sliceIndex;
+    captured.input.memberCount = original.memberCount_;
+    captured.input.sourceControlCount = original.sourceControlCount_;
+    captured.input.immediateEntry = original.immediateEntry_;
+    captured.input.members = immediateLaneGroupMembers_.get() +
+        original.Identity().committedRow * config_.maxArmsPerGroup;
+    if (!MatchesOriginalQueueFutureGroupScope(original, captured.cohortRoot,
+            captured.provisionalAnchorFrame, captured.input, armTable)) return false;
+    *out = captured;
+    return true;
+}
+
 bool ScheduledTransactionPool::MatchesOriginalQueueFutureGroupLifetime(
     const OriginalQueueFutureGroupLifetimePin& original) const noexcept {
     const auto& identity = original.identity_;
@@ -2380,6 +2578,15 @@ bool ScheduledTransactionPool::MatchesOriginalQueueFutureGroupScope(
     const OriginalQueueFutureGroupRegistration& original,
     std::uint64_t cohortRoot, std::uint64_t provisionalAnchorFrame,
     const Plan03GroupSliceInput& input, const TimelineArmTable& armTable) const noexcept {
+    return MatchesOriginalQueueFutureGroupScopeImpl(original, cohortRoot,
+        provisionalAnchorFrame, input, armTable, false);
+}
+
+bool ScheduledTransactionPool::MatchesOriginalQueueFutureGroupScopeImpl(
+    const OriginalQueueFutureGroupRegistration& original,
+    std::uint64_t cohortRoot, std::uint64_t provisionalAnchorFrame,
+    const Plan03GroupSliceInput& input, const TimelineArmTable& armTable,
+    bool retiredSounds) const noexcept {
     if (!MatchesOriginalQueueFutureGroupLifetime(original.lifetime_) ||
         original.cohortRoot_ != cohortRoot ||
         original.provisionalAnchorFrame_ != provisionalAnchorFrame ||
@@ -2406,11 +2613,17 @@ bool ScheduledTransactionPool::MatchesOriginalQueueFutureGroupScope(
         rowIndex * config_.maxArmsPerGroup;
     for (std::uint16_t index = 0; index < input.memberCount; ++index) {
         TimelineArmObservation expected{};
-        if (armTable.Resolve(input.members[index]) == nullptr ||
-            !armTable.Observe(input.members[index], &expected) ||
+        if (!armTable.Observe(input.members[index], &expected) ||
             expected.parentGroup.decision.slot != original.lifetime_.identity_.decision.slot ||
             expected.parentGroup.decision.generation != original.lifetime_.identity_.decision.generation)
             return false;
+        if (retiredSounds && index >= input.sourceControlCount) {
+            const auto* arm = armTable.RowAt(input.members[index].slot);
+            if (arm == nullptr || expected.state != ArmState::Tombstoned ||
+                expected.startedBlockSequence != 0 || expected.tombstoneAudioSequence == 0 ||
+                arm->renderSlot != input.members[index].renderSlot ||
+                arm->renderGeneration != input.members[index].renderGeneration) return false;
+        } else if (armTable.Resolve(input.members[index]) == nullptr) return false;
         std::uint16_t position = input.memberCount;
         for (std::uint16_t candidate = 0; candidate < input.memberCount; ++candidate) {
             if (actual[candidate].slot == input.members[index].slot &&
@@ -2437,6 +2650,8 @@ std::uint32_t ScheduledTransactionPool::RingIndex(std::uint32_t page) const {
 bool ScheduledTransactionPool::Reset(const Config& config,
                                      std::uint64_t startFrame,
                                      TransportEpoch epoch) {
+    if (laneGroupPublications_ != nullptr) return false;
+    if (HasHeldCurrentSlices() || currentSliceIncarnation_ == UINT64_MAX) return false;
     if (selectedFutureDomains_ != 0 || preparedPageFrontierBindingHolds_ != 0 ||
         privateUnboundPageArmRetirements_ != nullptr || unpublishedGroupArmCancellations_ != nullptr || privateMaterializationActive_) return false;
     if (immediateLaneGroups_ != nullptr)
@@ -2501,6 +2716,13 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     if (config.maxScheduledTransactions > SIZE_MAX / sizeof(PreparedTransactionClaim)) return false;
     const std::uint64_t pages =
         config.scheduleHorizonFrames / config.quantumFrames;
+    const std::uint64_t currentSliceCapacity =
+        static_cast<std::uint64_t>(config.maxCurrentSlicesPerQuantum == 0
+            ? config.maxEventsPerQuantum : config.maxCurrentSlicesPerQuantum) +
+        config.maxNativeStartCalendarsPerQuantum;
+    if (currentSliceCapacity > UINT32_MAX ||
+        currentSliceCapacity > SIZE_MAX / sizeof(CurrentSliceRow) ||
+        pages > SIZE_MAX / sizeof(CurrentSliceRow) / currentSliceCapacity) return false;
     if (pages == 0 || pages > 0xFFFFFFFFull) {
         return false;
     }
@@ -2540,6 +2762,7 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     ringStart_ = 0;
     publishCutoffFrame_ = startFrame; // nothing within the window is frozen yet
     nextRowSequence_ = 1;
+    nextCurrentSliceSequence_ = 1;
     consumeTick_ = 0;
 
     pageHeaders_.assign(pageCount_, HorizonPageHeader{});
@@ -2566,14 +2789,16 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     if (config_.maxCurrentSlicesPerQuantum == 0) {
         config_.maxCurrentSlicesPerQuantum = config_.maxEventsPerQuantum;
     }
+    currentSliceStorageCapacity_ = static_cast<std::uint32_t>(currentSliceCapacity);
+    ++currentSliceIncarnation_;
     pageCurrentSliceCount_.assign(pageCount_, 0);
     pageCurrentSlices_.assign(
         static_cast<std::size_t>(pageCount_) *
-            config_.maxCurrentSlicesPerQuantum,
+            currentSliceStorageCapacity_,
         CurrentSliceRow{});
     pageCurrentSliceOrder_.assign(
         static_cast<std::size_t>(pageCount_) *
-            config_.maxCurrentSlicesPerQuantum,
+            currentSliceStorageCapacity_,
         0);
     const std::size_t groupRows =
         static_cast<std::size_t>(pageCount_) *
@@ -3617,6 +3842,7 @@ bool ScheduledTransactionPool::HasUnplacedGroupBudget(
 
 bool ScheduledTransactionPool::CanResetForEpoch(
     std::uint64_t startFrame, TransportEpoch epoch) const noexcept {
+    if (laneGroupPublications_ != nullptr) return false;
     if (selectedFutureDomains_ != 0 || preparedPageFrontierBindingHolds_ != 0 || privateUnboundPageArmRetirements_ != nullptr || unpublishedGroupArmCancellations_ != nullptr ||
         privateMaterializationActive_ || HasPlan03GroupReaders()) return false;
     if (!Valid() || epoch == kInvalidTransportEpoch || pageCount_ == 0 ||
@@ -3663,7 +3889,7 @@ bool ScheduledTransactionPool::CanResetForEpoch(
                       pageEvents_.size()) ||
         pageEventOrder_.size() != pageEvents_.size() ||
         pageCurrentSliceCount_.size() != pageCount ||
-        !exactProduct(pageCount, config_.maxCurrentSlicesPerQuantum,
+        !exactProduct(pageCount, currentSliceStorageCapacity_,
                       pageCurrentSlices_.size()) ||
         pageCurrentSliceOrder_.size() != pageCurrentSlices_.size() ||
         pagePlan03GroupCount_.size() != pageCount ||
@@ -3707,7 +3933,7 @@ bool ScheduledTransactionPool::CanResetForEpoch(
             pagePreparedEventCount_[page] != 0 ||
             pagePublicationHolds_[page] != 0 ||
             pageCurrentSliceCount_[page] >
-                config_.maxCurrentSlicesPerQuantum ||
+                currentSliceStorageCapacity_ ||
             pagePlan03GroupCount_[page] >
                 config_.maxPlan03GroupHeadersPerPage ||
             pagePreparedPlan03GroupCount_[page] != 0 ||
@@ -3790,6 +4016,7 @@ bool ScheduledTransactionPool::ResetForEpoch(
     ringStart_ = 0;
     publishCutoffFrame_ = startFrame;
     nextRowSequence_ = 1;
+    nextCurrentSliceSequence_ = 1;
     consumeTick_ = 0;
 
     for (std::uint32_t page = 0; page < pageCount_; ++page) {
@@ -4002,7 +4229,7 @@ void ScheduledTransactionPool::Publish(
                     pageCurrentSliceCount_[ring];
                 const std::size_t sliceBase =
                     static_cast<std::size_t>(ring) *
-                    config_.maxCurrentSlicesPerQuantum;
+                    currentSliceStorageCapacity_;
                 std::uint32_t* sliceOrder =
                     &pageCurrentSliceOrder_[sliceBase];
                 for (std::uint32_t i = 0; i < sliceCount; ++i) {
@@ -4022,12 +4249,8 @@ void ScheduledTransactionPool::Publish(
                                   return x.logicCommitSequence <
                                          y.logicCommitSequence;
                               }
-                              if (x.slice.slot != y.slice.slot) {
-                                  return x.slice.slot < y.slice.slot;
-                              }
-                              if (x.slice.generation != y.slice.generation) {
-                                  return x.slice.generation <
-                                         y.slice.generation;
+                              if (x.executionOrdinal != y.executionOrdinal) {
+                                  return x.executionOrdinal < y.executionOrdinal;
                               }
                               return x.rowSequence < y.rowSequence;
                           });
@@ -6170,10 +6393,26 @@ bool ScheduledTransactionPool::CancelPreparedTransactionBatch(
 ReserveResult ScheduledTransactionPool::ReserveCurrentSlice(
     const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
     std::uint64_t publicationFrontier) {
+    return ReserveCurrentSliceImpl(input, latePolicy, publicationFrontier, nullptr);
+}
+
+ReserveResult ScheduledTransactionPool::ReserveHeldCurrentSlice(
+    const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
+    std::uint64_t publicationFrontier, HeldCurrentSliceToken* out) {
+    if (out == nullptr || out->IsHeld()) return {};
+    return ReserveCurrentSliceImpl(input, latePolicy, publicationFrontier, out);
+}
+
+ReserveResult ScheduledTransactionPool::ReserveCurrentSliceImpl(
+    const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
+    std::uint64_t publicationFrontier, HeldCurrentSliceToken* held) {
     ReserveResult result{};
     publicationFrontier = std::max(publicationFrontier, publishCutoffFrame_);
     std::uint64_t frame = input.executeFrame;
     if (!Valid() || input.logicCommitSequence == 0 ||
+        (input.kind != CurrentSliceKind::VariableBankCut &&
+         input.kind != CurrentSliceKind::MeterProbeWithdrawal &&
+         input.kind != CurrentSliceKind::NativeStartCalendar) ||
         input.slice.slot == UINT32_MAX || input.slice.generation == 0) {
         result.status = ReserveStatus::Refused;
         return result;
@@ -6215,27 +6454,136 @@ ReserveResult ScheduledTransactionPool::ReserveCurrentSlice(
         ++refusalCounts_[static_cast<std::size_t>(result.refusal)];
         return result;
     }
-    if (pageCurrentSliceCount_[ring] >=
-        config_.maxCurrentSlicesPerQuantum) {
+    const auto base = static_cast<std::size_t>(ring) * currentSliceStorageCapacity_;
+    const bool native = input.kind == CurrentSliceKind::NativeStartCalendar;
+    std::uint32_t quotaCount = 0;
+    for (std::uint32_t i = 0; i < pageCurrentSliceCount_[ring]; ++i)
+        if ((pageCurrentSlices_[base + i].kind == CurrentSliceKind::NativeStartCalendar) == native) ++quotaCount;
+    const auto quota = native ? config_.maxNativeStartCalendarsPerQuantum : config_.maxCurrentSlicesPerQuantum;
+    if (quotaCount >= quota || pageCurrentSliceCount_[ring] >= currentSliceStorageCapacity_ ||
+        (held != nullptr && pagePublicationHolds_[ring] == UINT64_MAX)) {
         result.status = ReserveStatus::Refused;
         result.refusal = ReserveRefusal::PageEventCapacity;
         ++refusalCounts_[static_cast<std::size_t>(result.refusal)];
         return result;
     }
-    const std::size_t base =
-        static_cast<std::size_t>(ring) *
-        config_.maxCurrentSlicesPerQuantum;
+    if (nextCurrentSliceSequence_ == 0 || nextCurrentSliceSequence_ == UINT64_MAX) {
+        result.status = ReserveStatus::Refused;
+        result.refusal = ReserveRefusal::CommitSerialExhausted;
+        ++refusalCounts_[static_cast<std::size_t>(result.refusal)];
+        return result;
+    }
     CurrentSliceRow& row =
         pageCurrentSlices_[base + pageCurrentSliceCount_[ring]++];
     row.executeFrame = frame;
     row.logicCommitSequence = input.logicCommitSequence;
     row.kind = input.kind;
     row.slice = input.slice;
-    row.rowSequence = nextRowSequence_++;
+    row.rowSequence = nextCurrentSliceSequence_++;
+    row.executionOrdinal = input.executionOrdinal;
+    row.publicationHeld = held != nullptr;
+    if (held != nullptr) {
+        ++pagePublicationHolds_[ring];
+        held->owner_ = this;
+        held->incarnation_ = currentSliceIncarnation_;
+        held->epoch_ = epoch_;
+        held->absoluteQuantum_ = pageHeaders_[ring].absoluteQuantumIndex;
+        held->pageGeneration_ = pageHeaders_[ring].pageGeneration;
+        held->rowSequence_ = row.rowSequence;
+        held->executeFrame_ = frame;
+        held->kind_ = row.kind;
+        held->slice_ = row.slice;
+    }
     result.status = ReserveStatus::Committed;
     result.firstFrame = frame;
     result.lastFrame = frame;
     return result;
+}
+
+bool ScheduledTransactionPool::HasHeldCurrentSlices() const noexcept {
+    return std::any_of(pageCurrentSlices_.begin(), pageCurrentSlices_.end(),
+        [](const CurrentSliceRow& row) { return row.publicationHeld; });
+}
+
+bool ScheduledTransactionPool::LocateHeldCurrentSlice(
+    const HeldCurrentSliceToken& token, std::uint32_t* ring,
+    std::uint32_t* index) const noexcept {
+    // Terminal geometry remains intact so private reservations can roll back.
+    if (token.owner_ != this || token.epoch_ != epoch_ ||
+        token.incarnation_ != currentSliceIncarnation_ ||
+        token.absoluteQuantum_ < baseQuantumIndex_ ||
+        token.absoluteQuantum_ - baseQuantumIndex_ >= pageCount_) return false;
+    const auto rowRing = RingIndex(static_cast<std::uint32_t>(
+        token.absoluteQuantum_ - baseQuantumIndex_));
+    const auto& header = pageHeaders_[rowRing];
+    if (header.frozen || header.absoluteQuantumIndex != token.absoluteQuantum_ ||
+        header.pageGeneration != token.pageGeneration_ ||
+        pagePublicationHolds_[rowRing] == 0) return false;
+    const auto base = static_cast<std::size_t>(rowRing) * currentSliceStorageCapacity_;
+    for (std::uint32_t i = 0; i < pageCurrentSliceCount_[rowRing]; ++i) {
+        const auto& row = pageCurrentSlices_[base + i];
+        if (row.publicationHeld && row.rowSequence == token.rowSequence_ &&
+            row.executeFrame == token.executeFrame_ &&
+            row.slice.slot == token.slice_.slot &&
+            row.slice.generation == token.slice_.generation) {
+            *ring = rowRing;
+            *index = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ScheduledTransactionPool::CanReleaseHeldCurrentSlice(
+    const HeldCurrentSliceToken& token) const noexcept {
+    std::uint32_t ring = 0, index = 0;
+    return Valid() && LocateHeldCurrentSlice(token, &ring, &index);
+}
+
+bool ScheduledTransactionPool::ReleaseHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept {
+    std::uint32_t ring = 0, index = 0;
+    if (!Valid() || token == nullptr || !LocateHeldCurrentSlice(*token, &ring, &index)) return false;
+    const auto base = static_cast<std::size_t>(ring) * currentSliceStorageCapacity_;
+    pageCurrentSlices_[base + index].publicationHeld = false;
+    --pagePublicationHolds_[ring];
+    token->owner_ = nullptr;
+    return true;
+}
+
+bool ScheduledTransactionPool::CancelHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept {
+    std::uint32_t ring = 0, index = 0;
+    if (token == nullptr || !LocateHeldCurrentSlice(*token, &ring, &index)) return false;
+    const auto base = static_cast<std::size_t>(ring) * currentSliceStorageCapacity_;
+    auto& count = pageCurrentSliceCount_[ring];
+    for (std::uint32_t i = index + 1; i < count; ++i)
+        pageCurrentSlices_[base + i - 1] = pageCurrentSlices_[base + i];
+    pageCurrentSlices_[base + --count] = {};
+    --pagePublicationHolds_[ring];
+    token->owner_ = nullptr;
+    return true;
+}
+
+HeldCurrentSliceToken::~HeldCurrentSliceToken() {
+    if (owner_ != nullptr) (void)owner_->CancelHeldCurrentSlice(this);
+}
+
+HeldCurrentSliceToken::HeldCurrentSliceToken(HeldCurrentSliceToken&& other) noexcept {
+    *this = std::move(other);
+}
+
+HeldCurrentSliceToken& HeldCurrentSliceToken::operator=(HeldCurrentSliceToken&& other) noexcept {
+    if (this == &other) return *this;
+    if (owner_ != nullptr && !owner_->CancelHeldCurrentSlice(this)) return *this;
+    owner_ = std::exchange(other.owner_, nullptr);
+    incarnation_ = other.incarnation_;
+    epoch_ = other.epoch_;
+    absoluteQuantum_ = other.absoluteQuantum_;
+    pageGeneration_ = other.pageGeneration_;
+    rowSequence_ = other.rowSequence_;
+    executeFrame_ = other.executeFrame_;
+    kind_ = other.kind_;
+    slice_ = other.slice_;
+    return *this;
 }
 
 Plan03GroupReserveStatus ScheduledTransactionPool::PreflightPlan03GroupSlices(
@@ -6746,19 +7094,18 @@ bool ScheduledTransactionPool::RollbackCommittedPlan03GroupSlice(
     return true;
 }
 
+bool ScheduledTransactionPool::CanReleaseCommittedPlan03GroupSliceOwnership(
+    const CommittedPlan03GroupSlice& committed) const noexcept {
+    return !committed.Held() && committed.owner_ == this &&
+        committed.rowIndex_ < pagePlan03Groups_.size() &&
+        pagePlan03GroupRowStates_[committed.rowIndex_] == Plan03GroupRowState::Live &&
+        pagePlan03GroupClaimGenerations_[committed.rowIndex_] == committed.generation_;
+}
+
 bool ScheduledTransactionPool::ReleaseCommittedPlan03GroupSliceOwnership(
     CommittedPlan03GroupSlice* committed) noexcept {
-    if (committed == nullptr || committed->Held() || committed->owner_ != this ||
-        committed->rowIndex_ >= pagePlan03Groups_.size()) {
-        return false;
-    }
+    if (committed == nullptr || !CanReleaseCommittedPlan03GroupSliceOwnership(*committed)) return false;
     const std::size_t rowIndex = committed->rowIndex_;
-    if (pagePlan03GroupRowStates_[rowIndex] !=
-            Plan03GroupRowState::Live ||
-        pagePlan03GroupClaimGenerations_[rowIndex] !=
-            committed->generation_) {
-        return false;
-    }
     if (pagePlan03Groups_[rowIndex].publicationHeld) {
         const auto ring = rowIndex / config_.maxPlan03GroupHeadersPerPage;
         --pagePublicationHolds_[ring];
@@ -7144,12 +7491,12 @@ std::size_t ScheduledTransactionPool::ConsumeCurrentSlicesRt(
     }
     const std::size_t base =
         static_cast<std::size_t>(ring) *
-        config_.maxCurrentSlicesPerQuantum;
+        currentSliceStorageCapacity_;
     const std::uint32_t* order = &pageCurrentSliceOrder_[base];
     for (std::uint32_t i = 0; i < count; ++i) {
         const CurrentSliceRow& row = pageCurrentSlices_[base + order[i]];
         out[i] = {row.executeFrame, row.logicCommitSequence, row.kind,
-                  row.slice};
+                  row.slice, row.executionOrdinal, row.rowSequence};
     }
     return count;
 }
@@ -7519,6 +7866,7 @@ ScheduledTransactionPool::FinishUnpublishedFrontierRetirement(
 }
 
 void ScheduledTransactionPool::DropPreparedOccupancy() noexcept {
+    if (HasHeldCurrentSlices()) return;
     if ( preparedPageFrontierBindingHolds_ != 0 || privateUnboundPageArmRetirements_ != nullptr ||
         unpublishedGroupArmCancellations_ != nullptr) return;
     for (const auto& claim : preparedTransactionClaims_)
@@ -7822,7 +8170,7 @@ bool ScheduledTransactionPool::BindPlan03GroupFrontier(const Plan03GroupSliceIde
                 immediateLaneGroups_[binding.primary.committedRow].laneGeneration != row.laneGeneration)
                 return false;
             auto& coordinator = immediateLaneGroups_[binding.primary.committedRow];
-            if (coordinator.transferProof != nullptr || coordinator.clockProof != nullptr || !coordinator.frontierPinsOwned ||
+            if (coordinator.publicationProof != nullptr || coordinator.transferProof != nullptr || coordinator.clockProof != nullptr || !coordinator.frontierPinsOwned ||
                 coordinator.frontierDependents == UINT32_MAX ||
                 coordinator.readers.pins.load(std::memory_order_acquire) == UINT32_MAX)
                 return false;
@@ -7889,6 +8237,15 @@ bool ScheduledTransactionPool::BindPlan03GroupFrontier(const Plan03GroupSliceIde
 bool ScheduledTransactionPool::InvalidateFrontierOwnerOperations(
     const FrontierOwnerIdentity& owner, DecisionToken decision, AudioSliceInvalidateReason reason) const noexcept {
     if (!owner.Valid()) return false;
+    // Check all matching shared gates before changing even the first invalid bit.
+    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+        const auto& row = immediateLaneGroups_[index];
+        const auto& heldOwner = row.frontier.operation.owner;
+        if (row.publicationProof != nullptr && row.frontierPinsOwned &&
+            heldOwner.serviceSlot == owner.serviceSlot && heldOwner.serviceGeneration == owner.serviceGeneration &&
+            (!decision.Valid() || (row.decision.slot == decision.slot && row.decision.generation == decision.generation)))
+            return false;
+    }
     bool mutableOwner = true;
     const auto invalidateGate = [reason](LaneFrontierGate& gate,
                                          std::uint64_t generation) noexcept {
@@ -7935,7 +8292,7 @@ void ScheduledTransactionPool::SettleInvalidatedImmediateLaneFrontiers(
         const auto& row = immediateLaneGroups_[index];
         const auto state = row.state.load(std::memory_order_acquire);
         if ((state != LaneGroupState::Private && state != LaneGroupState::Published) ||
-            !row.frontierPinsOwned || !row.frontier.Valid() || row.clockProof != nullptr) continue;
+            !row.frontierPinsOwned || !row.frontier.Valid() || row.clockProof != nullptr || row.publicationProof != nullptr) continue;
         if (held != nullptr && held(context, row.cohortRoot,
                                     row.laneSlot, row.laneGeneration)) continue;
         const auto& owner = row.frontier.operation.owner;
@@ -7992,13 +8349,66 @@ bool ScheduledTransactionPool::HasFrontierOwnerOperations(const FrontierOwnerIde
     return false;
 }
 
+bool ScheduledTransactionPool::FrontierMemberBindingDetached(const Plan03GroupSliceIdentity& identity,
+    const FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence) const noexcept {
+    Plan03PageGroupView group{};
+    if (!identity.Exact() || !entry.Valid() ||
+        identity.backing != Plan03GroupBacking::ImmediateLane ||
+        !ResolvePlan03GroupSliceProducer(identity, &group) || group.identity != identity ||
+        group.frontier == nullptr || !group.frontier->Valid() || group.frontier->entry != entry ||
+        group.frontier->operation.group != identity || group.lease == nullptr ||
+        (group.frontier->role != FrontierGroupRole::EntryMember &&
+         group.frontier->role != FrontierGroupRole::Future)) return false;
+    const auto& row = immediateLaneGroups_[identity.committedRow];
+    const auto state = group.lease->Capture().state;
+    const auto last = row.readers.lastAudioSequence.load(std::memory_order_acquire);
+    // Other readers retain their own loans; only this exact frontier loan has ended.
+    return row.state.load(std::memory_order_acquire) == LaneGroupState::Published &&
+        !row.frontierPinsOwned && row.frontierDependents == 0 &&
+        row.publicationProof == nullptr && row.transferProof == nullptr && row.clockProof == nullptr &&
+        (state == AudioSliceState::SliceApplied || state == AudioSliceState::SliceInvalidated) &&
+        (last == 0 || completedAudioSequence > last);
+}
+
+bool ScheduledTransactionPool::FrontierCoordinatorDetached(const Plan03GroupSliceIdentity& identity,
+    const FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence,
+    const Plan03GroupReaderPin* activationReader) const noexcept {
+    Plan03PageGroupView group{};
+    if (!identity.Exact() || !entry.Valid() || identity.decision.slot != entry.coordinator.slot ||
+        identity.decision.generation != entry.coordinator.generation ||
+        !ResolvePlan03GroupSliceProducer(identity, &group) || !(group.identity == identity) ||
+        group.memberCount != 0 || group.sourceControlCount != 0 || group.lease == nullptr) return false;
+    if (activationReader != nullptr && (activationReader->owner_ != this ||
+        !(activationReader->identity_ == identity))) return false;
+    if (group.frontier != nullptr && (!group.frontier->Valid() ||
+        group.frontier->role != FrontierGroupRole::Coordinator || !(group.frontier->entry == entry) ||
+        !(group.frontier->primary == identity) || !(group.frontier->operation.group == identity) ||
+        !(group.frontier->operation.owner == entry.owner))) return false;
+    const auto detached = [&](const auto& row, const auto& readers) noexcept {
+        const auto last = readers.lastAudioSequence.load(std::memory_order_acquire);
+        return !row.frontierPinsOwned && row.frontierDependents == 0 &&
+            readers.pins.load(std::memory_order_acquire) == (activationReader == nullptr ? 0u : 1u) &&
+            (last == 0 || completedAudioSequence > last);
+    };
+    // Published descriptors stay immutable after their actual reader loans return.
+    if (identity.backing == Plan03GroupBacking::ImmediateLane) {
+        const auto& row = immediateLaneGroups_[identity.committedRow];
+        return row.publicationProof == nullptr && row.transferOriginal == nullptr && row.transferProof == nullptr && row.clockProof == nullptr &&
+            detached(row, row.readers);
+    }
+    const auto& row = pagePlan03Groups_[identity.committedRow];
+    return row.transferOriginal == nullptr && row.transferProof == nullptr && row.frontierBindings == nullptr &&
+        row.privateUnboundArmRetirement == nullptr && row.jointCancellation == nullptr &&
+        row.cancellationOriginal == nullptr && detached(row, pagePlan03GroupReaders_[identity.committedRow]);
+}
+
 bool ScheduledTransactionPool::DetachPlan03GroupFrontier(const Plan03GroupSliceIdentity& identity,
     std::uint64_t completedAudioSequence) noexcept {
     if (identity.backing == Plan03GroupBacking::ImmediateLane) {
         Plan03PageGroupView group{};
         if (!ResolveImmediateLaneGroup(identity, &group, false)) return false;
         auto& row = immediateLaneGroups_[identity.committedRow];
-        if (row.transferProof != nullptr || row.clockProof != nullptr || !row.frontierPinsOwned ||
+        if (row.publicationProof != nullptr || row.transferProof != nullptr || row.clockProof != nullptr || !row.frontierPinsOwned ||
             row.frontierDependents != 0) return false;
         const auto pins = row.readers.pins.load(std::memory_order_acquire);
         const auto read = row.readers.lastAudioSequence.load(std::memory_order_acquire);
@@ -8019,7 +8429,7 @@ bool ScheduledTransactionPool::DetachPlan03GroupFrontier(const Plan03GroupSliceI
             auto& primary = immediateLaneGroups_[row.frontier.primary.committedRow];
             const auto primaryPins = primary.readers.pins.load(std::memory_order_acquire);
             const auto primaryRead = primary.readers.lastAudioSequence.load(std::memory_order_acquire);
-            if (primary.transferProof != nullptr || primary.clockProof != nullptr || primaryPins == 0 ||
+            if (primary.publicationProof != nullptr || primary.transferProof != nullptr || primary.clockProof != nullptr || primaryPins == 0 ||
                 primary.frontierDependents == 0 ||
                 (primaryRead != 0 && completedAudioSequence <= primaryRead)) return false;
             --primary.frontierDependents;
@@ -8077,6 +8487,7 @@ bool ScheduledTransactionPool::AcquireImmediateLaneFutureDependent(
         group.frontier->role != FrontierGroupRole::EntryMember ||
         immediateLaneGroups_[identity.committedRow].transferProof != nullptr ||
         immediateLaneGroups_[identity.committedRow].clockProof != nullptr ||
+        immediateLaneGroups_[identity.committedRow].publicationProof != nullptr ||
         !immediateLaneGroups_[identity.committedRow].frontierPinsOwned ||
         immediateLaneGroups_[identity.committedRow].frontierDependents ==
             UINT32_MAX) return false;
@@ -8093,6 +8504,7 @@ bool ScheduledTransactionPool::ReleaseImmediateLaneFutureDependent(
         group.frontier->role != FrontierGroupRole::EntryMember ||
         immediateLaneGroups_[identity.committedRow].transferProof != nullptr ||
         immediateLaneGroups_[identity.committedRow].clockProof != nullptr ||
+        immediateLaneGroups_[identity.committedRow].publicationProof != nullptr ||
         immediateLaneGroups_[identity.committedRow].frontierDependents == 0)
         return false;
     --immediateLaneGroups_[identity.committedRow].frontierDependents;
@@ -8370,6 +8782,9 @@ bool ScheduledTransactionPool::CancelPrivateImmediateLaneGroupInDomain(
         row.lease.Invalidate(AudioSliceInvalidateReason::Cancel) !=
             AudioSliceInvalidateDisposition::InvalidatedReady) return false;
     if (!row.lease.ResetForReuse()) return false;
+    if (immediateLaneGroupDisposalObserver_ != nullptr)
+        immediateLaneGroupDisposalObserver_(immediateLaneGroupDisposalContext_, identity,
+            row.cohortRoot, row.selectedFutureDomain);
     if (originalBaseline != nullptr) originalBaseline->Release();
     ReturnGroupMemberOriginals(immediateGroupMemberOriginals_.get() +
         identity.committedRow * config_.maxArmsPerGroup, row.memberCount);
@@ -8399,6 +8814,7 @@ bool ScheduledTransactionPool::CancelImmediateLaneGroupsInDomain(
     std::uint64_t cohortRoot, std::uint64_t completedAudioSequence,
     OriginalQueueFutureGroupRegistration* originalBaselines,
     std::size_t originalBaselineCapacity, std::uint64_t domain) noexcept {
+    if (domain == 0 && InitialLaneCohortPublicationHeld(cohortRoot)) return false;
     if (cohortRoot == 0 ||
         (originalBaselines == nullptr && originalBaselineCapacity != 0) ||
         (originalBaselines != nullptr &&
@@ -8461,6 +8877,9 @@ bool ScheduledTransactionPool::CancelImmediateLaneGroupsInDomain(
                 complete = false;
                 continue;
             }
+            if (immediateLaneGroupDisposalObserver_ != nullptr)
+                immediateLaneGroupDisposalObserver_(immediateLaneGroupDisposalContext_, identity,
+                    row.cohortRoot, row.selectedFutureDomain);
             if (original != nullptr) original->Release();
             ReturnGroupMemberOriginals(immediateGroupMemberOriginals_.get() +
                 index * config_.maxArmsPerGroup, row.memberCount);
@@ -8497,6 +8916,7 @@ bool ScheduledTransactionPool::ReserveImmediateLaneGroupInDomain(
     std::uint64_t cohortRoot, std::uint64_t provisionalAnchorFrame,
     const Plan03GroupSliceInput& input, const TimelineArmTable& armTable,
     Plan03GroupSliceIdentity* out, PreparedPrivateImmediateLaneGroup* original, std::uint64_t domain) noexcept {
+    if (domain == 0 && InitialLaneCohortPublicationHeld(cohortRoot)) return false;
     if ((original != nullptr && (original->owner_ != nullptr || armTable.Incarnation() == 0 ||
             nextOriginalLaneGroupFactoryMarker_ == UINT64_MAX)) ||
         !Valid() || cohortRoot == 0 || out == nullptr || out->Valid() ||
@@ -8864,6 +9284,7 @@ bool ScheduledTransactionPool::RebaseImmediateLaneGroups(
 
 bool ScheduledTransactionPool::RebaseImmediateLaneGroupsInDomain(
     std::uint64_t cohortRoot, std::uint64_t anchorFrame, std::uint64_t domain) noexcept {
+    if (domain == 0 && InitialLaneCohortPublicationHeld(cohortRoot)) return false;
     if (cohortRoot == 0 || quantumFrames_ == 0) return false;
     for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
         const auto& row = immediateLaneGroups_[index];
@@ -8891,6 +9312,7 @@ bool ScheduledTransactionPool::PublishImmediateLaneGroups(
 
 bool ScheduledTransactionPool::PublishImmediateLaneGroupsInDomain(
     std::uint64_t cohortRoot, std::uint64_t domain) noexcept {
+    if (domain == 0 && InitialLaneCohortPublicationHeld(cohortRoot)) return false;
     if (cohortRoot == 0) return false;
     for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
         const auto& row = immediateLaneGroups_[index];
@@ -9175,6 +9597,7 @@ bool ScheduledTransactionPool::PrivatePlan03GroupBindable(
     Plan03PageGroupView view{};
     if (identity.backing == Plan03GroupBacking::ImmediateLane)
         return ResolveImmediateLaneGroup(identity, &view, false) &&
+            immediateLaneGroups_[identity.committedRow].publicationProof == nullptr &&
             immediateLaneGroups_[identity.committedRow].transferProof == nullptr &&
             immediateLaneGroups_[identity.committedRow].clockProof == nullptr &&
             immediateLaneGroups_[identity.committedRow].state.load(
@@ -9201,6 +9624,18 @@ bool ScheduledTransactionPool::PrivateImmediateLaneGroupRetirementReady(
         (lease.state == AudioSliceState::Ready ||
             (lease.state == AudioSliceState::SliceInvalidated &&
              lease.pendingReasonBits == AudioSliceReasonCancel));
+}
+
+bool ScheduledTransactionPool::MatchesPrivateImmediateLaneGroupPlacement(
+    const Plan03GroupSliceIdentity& identity, const ImmediateActionLane& lane,
+    const PrivateImmediateLanePlacementProof& placement) const noexcept {
+    if (identity.backing != Plan03GroupBacking::ImmediateLane || !PrivatePlan03GroupBindable(identity)) return false;
+    const auto& row = immediateLaneGroups_[identity.committedRow];
+    std::uint64_t anchor = 0;
+    return quantumFrames_ != 0 && row.laneOwner == &lane && row.frameRebased &&
+        lane.IsPrivatePlacementProofFor(placement, {row.laneSlot, row.laneGeneration}, row.cohortRoot) &&
+        placement.CaptureAnchorFrame(&anchor) && row.relativeFrame <= UINT64_MAX - anchor &&
+        row.rebasedFrame == anchor + row.relativeFrame && row.dueQuantum == row.rebasedFrame / quantumFrames_;
 }
 
 bool ScheduledTransactionPool::PrivateImmediateLaneFrontierRollbackReady(

@@ -88,6 +88,51 @@ TEST(EffectParamTargetStore, SeedComposesBindingOnAuthoredBaseNotNeutral) {
     EXPECT_EQ(1u, s.DemandCount());
 }
 
+TEST(EffectParamTargetStore, SharedPublicationKeepsLaterSnapshotAndNewContribution) {
+    auto store = MakeStore();
+    const auto bases = DelayBases(10.0f, 0.0f, 1.0f, 1.0f);
+    ASSERT_TRUE(store.SeedInstalledEffect(Scope::Voice, kVoice, kSlot,
+        VN_EFFECT_FEEDBACK_DELAY, bases.data(), harken::kDelayParamCount));
+    constexpr auto param = harken::kDelayParamWet;
+    const auto revision = store.TargetRevision(Scope::Voice, kVoice, kSlot, param);
+    const harken::TargetClaimOwner owner{0, 1, harken::TargetClaimKind::VariablePublication};
+    const harken::VariableSliceRef probe{0, 1};
+    ASSERT_TRUE(store.TryClaim(Scope::Voice, kVoice, kSlot, param, owner, revision));
+    ASSERT_TRUE(store.TryClaim(Scope::Voice, kVoice, kSlot, param, owner, revision));
+    EXPECT_FALSE(store.TryClaim(Scope::Voice, kVoice, kSlot, param, probe, revision));
+    Sweep(store, kVoice, kSlot, param, {0.5f});
+    store.MarkSliceCommitted(Scope::Voice, kVoice, kSlot, param, owner, 1.0f);
+    EXPECT_TRUE(store.ForeignClaim(Scope::Voice, kVoice, kSlot, param));
+    EXPECT_EQ(1u, store.DemandCount());
+    store.ReleaseClaim(Scope::Voice, kVoice, kSlot, param, probe);
+    EXPECT_TRUE(store.ForeignClaim(Scope::Voice, kVoice, kSlot, param));
+    store.ReleaseClaim(Scope::Voice, kVoice, kSlot, param, owner);
+    EXPECT_FALSE(store.ForeignClaim(Scope::Voice, kVoice, kSlot, param));
+    EXPECT_EQ(1u, store.DemandCount());
+    ASSERT_TRUE(store.TryClaim(Scope::Voice, kVoice, kSlot, param, probe, revision));
+    store.ReleaseClaim(Scope::Voice, kVoice, kSlot, param, probe);
+}
+
+TEST(EffectParamTargetStore, VariableProjectionRestoresFoldAndPublicationDemand) {
+    auto store = MakeStore();
+    const auto bases = DelayBases(10.0f, 0.0f, 1.0f, 1.0f);
+    ASSERT_TRUE(store.SeedInstalledEffect(Scope::Voice, kVoice, kSlot,
+        VN_EFFECT_FEEDBACK_DELAY, bases.data(), harken::kDelayParamCount));
+    constexpr auto param = harken::kDelayParamWet;
+    Sweep(store, kVoice, kSlot, param, {0.5f});
+    const auto demand = store.DemandCount();
+    ASSERT_TRUE(store.BeginVariableProjection());
+    EXPECT_FALSE(store.BeginVariableProjection());
+    Sweep(store, kVoice, kSlot, param, {0.25f});
+    EXPECT_FLOAT_EQ(0.25f, store.Reduce(Scope::Voice, kVoice, kSlot, param));
+    store.RestoreVariableProjection();
+    EXPECT_FLOAT_EQ(0.5f, store.Reduce(Scope::Voice, kVoice, kSlot, param));
+    EXPECT_EQ(demand, store.DemandCount());
+    Sweep(store, kVoice, kSlot, param, {0.75f});
+    EXPECT_FLOAT_EQ(0.75f, store.Reduce(Scope::Voice, kVoice, kSlot, param));
+    EXPECT_GT(store.VariableProjectionStorageBytes(), 0u);
+}
+
 TEST(EffectParamTargetStore, DelayOpenBoundsResolveToConcreteFloats) {
     EffectParamTargetStore s = MakeStore();
     const std::vector<float> bases = DelayBases(0.0f, 1.0f, 1.0f, 1.0f);

@@ -30,6 +30,7 @@
 
 #include "harken/core/EngineConfig.h"
 #include "harken/core/LogRing.h"
+#include "harken/core/VariableReadCut.h"
 #include "harken/core/VariableSliceTable.h"
 #include "harken/param/Curve.h"
 #include "harken/param/ParamTargets.h"
@@ -137,6 +138,7 @@ public:
     void OnVoiceStarted(VnVoiceHandle handle, float baseVolumeDb,
                         double basePitchRatio, VnEmitterHandle emitterHandle = 0);
     void RetireVoiceTargets(VnVoiceHandle handle) noexcept;
+    void DiscardPreparedVoice(VnVoiceHandle handle) noexcept;
 
     void ApplyTonePreset(VnVoiceHandle handle,
                          const VoiceTonePreset& preset);
@@ -427,7 +429,8 @@ public:
     // convert to a linear gain.
     bool TryPeekResolvedVolume(VnVoiceHandle handle,
                                const EmitterTable* emitters,
-                               float* outDb) const;
+                               float* outDb,
+                               const VariableReadCutReader* reader = nullptr) const;
 
     // One primed initial value bound for a voice's start batch.
     struct PrimedValue {
@@ -451,6 +454,10 @@ public:
                                      const EmitterTable* emitters,
                                      PrimedValue* out,
                                      std::uint32_t capacity);
+    // Validates every captured input before changing any evaluator or publication state.
+    bool TryPrimeVoiceBindings(VnVoiceHandle handle, const VariableReadCutReader& reader,
+                               PrimedValue* out, std::uint32_t capacity,
+                               std::uint32_t* written, bool includeUnchanged = false);
 
     // Settles an explicit list of targets for a voice's start batch, the
     // authored-base counterpart of PrimeVoiceBindings: each listed target
@@ -640,30 +647,39 @@ public:
     std::uint32_t PendingRampMs(VnVoiceHandle handle,
                                 std::uint32_t targetId) const;
     bool TryClaim(VnVoiceHandle handle, std::uint32_t targetId,
-                  VariableSliceRef owner, std::uint32_t expectedRevision) noexcept;
+                  TargetClaimOwner owner, std::uint32_t expectedRevision) noexcept;
+    bool BeginVariableProjection() noexcept;
+    void RestoreVariableProjection() noexcept;
+    std::uint64_t VariableProjectionStorageBytes() const noexcept;
+    std::uint32_t TakePublicationRamp(VnVoiceHandle handle,
+        std::uint32_t targetId, TargetClaimOwner owner) noexcept;
+    void RestorePublicationRamp(VnVoiceHandle handle, std::uint32_t targetId,
+        TargetClaimOwner owner, std::uint32_t rampMs) noexcept;
     bool CaptureCandidateBaseline(VnVoiceHandle handle,
                                   std::uint32_t targetId,
-                                  VariableSliceRef owner) noexcept;
+                                  TargetClaimOwner owner) noexcept;
     void ClearCandidateBaseline(VnVoiceHandle handle, std::uint32_t targetId,
-                                VariableSliceRef owner) noexcept;
+                                TargetClaimOwner owner) noexcept;
     void DropClaimedPublication(VnVoiceHandle handle, std::uint32_t targetId,
-                                VariableSliceRef owner) noexcept;
+                                TargetClaimOwner owner) noexcept;
+    void DropClaimedBaseline(VnVoiceHandle handle, std::uint32_t targetId,
+                             TargetClaimOwner owner) noexcept;
     void ReleaseClaim(VnVoiceHandle handle, std::uint32_t targetId,
-                      VariableSliceRef owner,
+                      TargetClaimOwner owner,
                       ClaimReleaseReason reason =
                           ClaimReleaseReason::RetryPreserve) noexcept;
     bool SnapshotForClaim(VnVoiceHandle handle, std::uint32_t targetId,
-                          VariableSliceRef owner, float* resolved,
+                          TargetClaimOwner owner, float* resolved,
                           std::uint32_t* rampMs,
                           std::uint32_t* revision, float* pan2d = nullptr) const noexcept;
     bool CaptureSnapshotForClaim(VnVoiceHandle handle,
                                  std::uint32_t targetId,
-                                 VariableSliceRef owner, float* resolved,
+                                 TargetClaimOwner owner, float* resolved,
                                  std::uint32_t* rampMs,
                                  std::uint32_t* revision, float* pan2d = nullptr) noexcept;
     void SetClaimRampSuppressed(VnVoiceHandle handle,
                                 std::uint32_t targetId,
-                                VariableSliceRef owner,
+                                TargetClaimOwner owner,
                                 bool suppressed) noexcept;
     std::uint32_t TargetRevision(VnVoiceHandle handle,
                                  std::uint32_t targetId) const noexcept;
@@ -673,7 +689,7 @@ public:
     bool ForeignClaim(VnVoiceHandle handle,
                       std::uint32_t targetId) const noexcept;
     void MarkSliceCommitted(VnVoiceHandle handle, std::uint32_t targetId,
-                            VariableSliceRef owner, float resolved,
+                            TargetClaimOwner owner, float resolved,
                             std::uint32_t rampMs, float pan2d = 0.0f) noexcept;
     std::uint32_t RetiringTargetCountForTests() const noexcept;
 
@@ -801,6 +817,29 @@ public:
     }
 
 private:
+    struct BindingEvaluation {
+        float lastInput = 0.0f;
+        float lastContribution = 0.0f;
+        std::uint32_t lastRevision = 0;
+        bool lastHadValue = false;
+        bool everEvaluated = false;
+        bool definitionChanged = false;
+        bool neutralizePending = false;
+    };
+    struct TargetEvaluation {
+        float variableSlot = 0.0f;
+        std::uint32_t pendingRampMs = 0;
+        bool variableActive = false;
+        bool suppressClaimRamp = false;
+        bool dirty = false;
+        bool pendingInput = false;
+        bool rebuild = false;
+    };
+    struct VoiceEvaluation {
+        VnVoiceHandle handle = 0;
+        bool anyDirty = false;
+        TargetEvaluation targets[kBuiltinTargetCount]{};
+    };
     struct Variable {
         VnVariableId id{};
         float value = 0.0f;
@@ -891,7 +930,8 @@ private:
         // nothing else does.
         std::uint32_t lastPublishedRampMs = 0;
         std::uint32_t revision = 1;
-        VariableSliceRef preparedOwner{};
+        TargetClaimOwner preparedOwner{};
+        std::uint32_t publicationRefCount = 0;
     };
 
     struct MeterProbeContribution {
@@ -918,7 +958,8 @@ private:
         bool claimSnapshotCaptured = false;
         VnVoiceHandle handle = 0;
         std::uint32_t targetId = 0;
-        VariableSliceRef owner{};
+        TargetClaimOwner owner{};
+        std::uint32_t publicationRefCount = 0;
         std::uint32_t revision = 0;
         float frozenResolved = 0.0f;
         float frozenPan2d = 0.0f;
@@ -929,12 +970,20 @@ private:
     const VoiceState* StateFor(VnVoiceHandle handle) const noexcept;
     RetiringTarget* FindRetiringTarget(VnVoiceHandle handle,
                                        std::uint32_t targetId,
-                                       VariableSliceRef owner) noexcept;
+                                       TargetClaimOwner owner) noexcept;
     const RetiringTarget* FindRetiringTarget(
         VnVoiceHandle handle, std::uint32_t targetId,
-        VariableSliceRef owner) const noexcept;
+        TargetClaimOwner owner) const noexcept;
     Variable* FindVariable(VnVariableId id) noexcept;
     const Variable* FindVariable(VnVariableId id) const noexcept;
+    struct PrimingInput {
+        float value = 0.0f;
+        bool hasValue = false;
+    };
+    std::uint32_t PrimeVoiceBindingsImpl(VnVoiceHandle handle,
+                                         const EmitterTable* emitters,
+                                         PrimedValue* out, std::uint32_t capacity,
+                                         const PrimingInput* capturedInputs, bool includeUnchanged = false);
     // Resolves a Variable at a voice's emitter scope: the emitter-local
     // override when the (live) emitter has one, else the global value. Returns
     // false when neither scope holds a value (the binding contributes nothing).
@@ -1040,6 +1089,16 @@ private:
     // order. Raw bindings and definition-backed instances share it; a
     // slot-reuse purge reclaims the dead occupant's entries.
     std::vector<Binding> m_bindings;
+    std::vector<PrimingInput> m_primingInputs;
+    std::vector<Variable> m_projectionVariables;
+    std::vector<BindingEvaluation> m_projectionBindings;
+    std::vector<VoiceEvaluation> m_projectionVoices;
+    bool m_projectionActive = false;
+    std::uint32_t m_projectionVariableCount = 0;
+    std::uint32_t m_projectionBindingCount = 0;
+    std::uint32_t m_projectionForcedRebuilds = 0;
+    std::uint32_t m_projectionDirtyTargetCount = 0;
+    std::uint32_t m_projectionPendingInputMarks = 0;
     std::vector<MeterProbeContribution> m_meterProbeContributions;
     std::uint32_t m_instanceSlotsPerVoice = 0; // per-voice ceiling
     std::uint32_t m_variableCount = 0;

@@ -7,6 +7,7 @@
 #include "VoicePoolReleaseTestAccess.h"
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/PlayablePropertyCut.h"
+#include "harken/param/MeterProbe.h"
 #include "harken/param/ParamTargets.h"
 
 #include <gtest/gtest.h>
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -710,6 +712,624 @@ TEST(TimelineVoiceInstall, DirectWorldPostActionWithoutAttachmentHasNoInstance) 
         engine->nullBackend.Pump(1);
     }
     EXPECT_EQ(0u, BindingInstanceCount(engine));
+}
+
+static void CheckOrderedActionFirstPcm(bool sameAction, bool fixedStart = false,
+    std::int64_t delayNanoseconds = 4000000, bool delayedWrites = false,
+    bool refuseAudioArena = false) {
+    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    if (fixedStart) {
+        image.step.delay.numerator = delayNanoseconds;
+        image.action.directFeatureMask = image.action.transitiveFeatureMask = 1;
+    }
+    std::array<harken::ActionStepProgramViewV1, 4> ordered{};
+    if (sameAction) {
+        ordered[0] = image.step;
+        ordered[0].opcode = harken::ActionOpcodeV1::SetVariable;
+        ordered[0].delay.numerator = delayedWrites ? image.step.delay.numerator : 0;
+        ordered[0].target = {};
+        ordered[0].target.kind = harken::ActionTargetKindV1::Variable;
+        ordered[0].target.stableId = kVariable;
+        ordered[0].valueBits = std::bit_cast<std::uint32_t>(0.0f);
+        ordered[1] = image.step;
+        ordered[2] = ordered[0];
+        ordered[2].valueBits = std::bit_cast<std::uint32_t>(1.0f);
+        ordered[3] = image.step;
+        for (std::uint32_t i = 0; i < ordered.size(); ++i) ordered[i].authoredEventIndex = i;
+        image.action.steps = ordered.data();
+        image.action.stepCount = static_cast<std::uint32_t>(ordered.size());
+        image.action.expandedStepOccurrenceCount = image.action.stepCount;
+    }
+    image.action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(image.action);
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_NO_FATAL_FAILURE(AttachVoiceVolumeRange(0, -12));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    VnPostActionDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.actionId = kAction;
+    std::array<VnActionFiringHandle, 2> firings{};
+    if (sameAction) {
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firings[0]));
+        firings[1] = firings[0];
+    } else {
+        ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 0));
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firings[0]));
+        ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 1));
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firings[1]));
+    }
+    std::array<VnVoiceHandle, 2> renders{};
+    for (std::uint32_t i = 0; i < renders.size(); ++i) {
+        VnActionStepResult play{};
+        play.structSize = sizeof(play);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firings[i], sameAction ? 1u + 2u * i : 0u, &play));
+        ASSERT_NE(0u, play.producedPlayableInstance);
+        const auto row = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+            [&](const auto& service) { return service.rootInstance == play.producedPlayableInstance; });
+        ASSERT_NE(engine.playableServices.end(), row);
+        if (fixedStart) EXPECT_FALSE(row->pendingImmediateEntry);
+        renders[i] = row->renderHandle;
+        ASSERT_NE(0u, renders[i]);
+    }
+    if (delayedWrites) {
+        for (std::uint32_t update = 0; update < 3; ++update) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            for (const auto& row : engine.playableServices) {
+                if (row.renderHandle != renders[0] && row.renderHandle != renders[1]) continue;
+                harken::TimelineArmObservation arm{};
+                ASSERT_TRUE(engine.timelineArms.Observe(row.arm, &arm));
+                EXPECT_EQ(harken::ArmState::PendingApply, arm.state);
+                EXPECT_LE(engine.timelinePool.PublishCutoffFrame(), (row.startFrame / kBlock) * kBlock);
+            }
+        }
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    if (refuseAudioArena) {
+        engine.mixer.ArenaForTests().SetCapacityForTests(0);
+        for (std::uint32_t block = 0; block < 4; ++block) {
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            for (std::uint32_t sample = 0; sample < 2 * kBlock; ++sample)
+                EXPECT_EQ(0, engine.nullBackend.LastBlock()[sample]);
+            for (const auto render : renders)
+                EXPECT_TRUE(engine.voices.HasTimelineVariableSourceRead(static_cast<std::uint32_t>(render),
+                    static_cast<std::uint32_t>(render >> 32)));
+        }
+        engine.mixer.ArenaForTests().RestoreCapacityForTests();
+    }
+    bool heard = false;
+    for (std::uint32_t step = 0; step < 24 && !heard; ++step) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+        heard = std::abs(engine.nullBackend.LastBlock()[2 * (kBlock - 1)]) > 1e-7f;
+    }
+    ASSERT_TRUE(heard);
+    const auto initialA = engine.voices.Resolve(renders[0]);
+    const auto initialB = engine.voices.Resolve(renders[1]);
+    ASSERT_NE(nullptr, initialA);
+    ASSERT_NE(nullptr, initialB);
+    for (const auto render : renders)
+        EXPECT_FALSE(engine.voices.HasTimelineVariableSourceRead(static_cast<std::uint32_t>(render),
+            static_cast<std::uint32_t>(render >> 32)));
+    const auto b = std::pow(10.0f, -12.0f / 20.0f);
+    EXPECT_NEAR(1, initialA->gain.current, 1e-6f);
+    EXPECT_NEAR(b, initialB->gain.current, 1e-6f);
+    for (std::uint32_t i = kBlock / 2; i < kBlock; ++i)
+        EXPECT_NEAR(0.5f * (1 + b), engine.nullBackend.LastBlock()[2 * i], 1e-6f);
+    engine.nullBackend.Pump(1);
+    for (std::uint32_t i = kBlock / 2; i < kBlock; ++i)
+        EXPECT_NEAR(b, engine.nullBackend.LastBlock()[2 * i], 1e-6f);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    for (const auto render : renders) EXPECT_FALSE(engine.variables.HasNativePublicationHold(render));
+}
+
+TEST(TimelineVoiceInstall, ExternalWritesAndConsecutiveActionsKeepOwnInitialPcm) {
+    CheckOrderedActionFirstPcm(false);
+}
+
+TEST(TimelineVoiceInstall, SameActionWritesAndPlaysKeepOwnInitialPcm) {
+    CheckOrderedActionFirstPcm(true);
+}
+
+TEST(TimelineVoiceInstall, FixedSoundExternalWritesKeepOwnInitialPcm) {
+    CheckOrderedActionFirstPcm(false, true);
+}
+
+TEST(TimelineVoiceInstall, FixedSoundSameActionWritesKeepOwnInitialPcm) {
+    CheckOrderedActionFirstPcm(true, true);
+}
+
+TEST(TimelineVoiceInstall, FixedSoundNonalignedExternalWritesKeepOwnInitialPcm) {
+    CheckOrderedActionFirstPcm(false, true, 4250000);
+}
+
+TEST(TimelineVoiceInstall, FixedSoundNonalignedSameActionWritesKeepOwnInitialPcm) {
+    CheckOrderedActionFirstPcm(true, true, 4250000);
+}
+
+TEST(TimelineVoiceInstall, DelayedSameFrameWritesAndPlaysKeepOwnInitialPcm) {
+    CheckOrderedActionFirstPcm(true, true, 4000000, true);
+}
+
+TEST(TimelineVoiceInstall, DelayedNonalignedSameFrameWritesAndPlaysKeepOwnInitialPcm) {
+    CheckOrderedActionFirstPcm(true, true, 4250000, true);
+}
+
+TEST(TimelineVoiceInstall, PendingExternalWritesKeepOwnInitialPcmAcrossAudioArenaRefusal) {
+    CheckOrderedActionFirstPcm(false, false, 4000000, false, true);
+}
+
+TEST(TimelineVoiceInstall, PendingSameActionWritesKeepOwnInitialPcmAcrossAudioArenaRefusal) {
+    CheckOrderedActionFirstPcm(true, false, 4000000, false, true);
+}
+
+TEST(TimelineVoiceInstall, CancelFixedSameFramePlayReleasesPageAndKeepsVariableWrite) {
+    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    image.step.delay.numerator = 4250000;
+    std::array<harken::ActionStepProgramViewV1, 2> steps{image.step, image.step};
+    steps[0].opcode = harken::ActionOpcodeV1::SetVariable;
+    steps[0].target = {};
+    steps[0].target.kind = harken::ActionTargetKindV1::Variable;
+    steps[0].target.stableId = kVariable;
+    steps[0].valueBits = std::bit_cast<std::uint32_t>(1.0f);
+    steps[1].authoredEventIndex = 1;
+    image.action.steps = steps.data();
+    image.action.stepCount = image.action.expandedStepOccurrenceCount = 2;
+    image.action.directFeatureMask = image.action.transitiveFeatureMask = 1;
+    image.action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(image.action);
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_NO_FATAL_FAILURE(AttachVoiceVolumeRange(0, -12));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    VnPostActionDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.actionId = kAction;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    VnActionStepResult play{};
+    play.structSize = sizeof(play);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 1, &play));
+    const auto row = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+        [&](const auto& service) { return service.rootInstance == play.producedPlayableInstance; });
+    ASSERT_NE(engine.playableServices.end(), row);
+    const auto render = row->renderHandle;
+    const auto sourceFrame = row->startFrame;
+    harken::VoiceReleaseObserver release{};
+    ASSERT_TRUE(engine.voices.CaptureReleaseObserver(render, &release));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_LE(engine.timelinePool.PublishCutoffFrame(), (sourceFrame / kBlock) * kBlock);
+    ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(engine, play.producedPlayableInstance, 0));
+    for (std::uint32_t block = 0; block < 24; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+        for (std::uint32_t sample = 0; sample < 2 * kBlock; ++sample)
+            EXPECT_EQ(0.0f, engine.nullBackend.LastBlock()[sample]);
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    float value = 0.0f;
+    ASSERT_TRUE(engine.variables.CurrentValue(kVariable, &value));
+    EXPECT_FLOAT_EQ(1.0f, value);
+    EXPECT_GT(engine.timelinePool.PublishCutoffFrame(), sourceFrame);
+    EXPECT_TRUE(engine.voices.ReleaseObserved(release));
+    EXPECT_FALSE(engine.voices.HasTimelineVariableSourceRead(static_cast<std::uint32_t>(render),
+        static_cast<std::uint32_t>(render >> 32)));
+    EXPECT_EQ(0u, harken::detail::VoicePoolReleaseTestAccess::OriginalOwnerCount(engine.voices));
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+}
+
+TEST(TimelineVoiceInstall, OlderProbeWithdrawalCannotPublishUninstalledFixedSoundPage) {
+    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    image.step.delay.numerator = 500000;
+    image.action.directFeatureMask = image.action.transitiveFeatureMask = 1;
+    image.action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(image.action);
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_NO_FATAL_FAILURE(AttachVoiceVolumeRange(0, -12));
+
+    constexpr auto sourceBus = harkentest::ObjectId(22);
+    constexpr auto targetBus = harkentest::ObjectId(23);
+    constexpr auto probeId = harkentest::ObjectId(8001);
+    constexpr auto probeBinding = harkentest::ObjectId(8002);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(sourceBus, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(targetBus, VN_BUS_MASTER));
+    std::uint32_t probeGeneration = 0;
+    ASSERT_EQ(VN_OK, harken::InstallMeterProbe(engine, probeId, sourceBus,
+        VN_BUS_METER_TAP_POST_EFFECTS, 0, 0, &probeGeneration));
+    const harken::CurvePoint points[2] = {{-96, -6}, {0, -6}};
+    const harken::CurveHandlePair handles[1] = {{-96, -6, 0, -6}};
+    ASSERT_EQ(VN_OK, harken::DefineMeterProbeBinding(engine, probeBinding, probeId,
+        probeGeneration, VN_TARGET_SCOPE_BUS, harken::kBusTargetBusVolume, points, handles, 2, 0));
+    const auto targetIndex = engine.buses.FindIndex(targetBus);
+    ASSERT_EQ(VN_OK, harken::AttachMeterProbeBinding(engine, probeBinding, VN_TARGET_SCOPE_BUS,
+        targetBus, 0, engine.buses.GenerationAt(targetIndex)));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_Update());
+
+    // Capture a real older frontier, leaving its command unconsumed.
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(targetBus, -3, 0));
+    const auto olderFrontier = engine.commands.PublishedHead();
+    ASSERT_GT(olderFrontier, engine.commands.SettledFrontier());
+    ASSERT_EQ(VN_OK, harken::UninstallMeterProbe(engine, probeId, probeGeneration));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    auto* withdrawal = engine.meterDetectors.Find(probeId);
+    ASSERT_NE(nullptr, withdrawal);
+    ASSERT_TRUE(withdrawal->withdrawalFrontierCaptured);
+    ASSERT_EQ(olderFrontier, withdrawal->withdrawalCommandFrontier);
+    ASSERT_FALSE(withdrawal->withdrawalPageCommitted);
+    engine.nullBackend.Pump(1);
+    ASSERT_GE(engine.commands.SettledFrontier(), olderFrontier);
+
+    ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 0));
+    VnPostActionDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.actionId = kAction;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    VnActionStepResult play{};
+    play.structSize = sizeof(play);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
+    const auto row = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+        [&](const auto& service) { return service.rootInstance == play.producedPlayableInstance; });
+    ASSERT_NE(engine.playableServices.end(), row);
+    const auto render = row->renderHandle;
+    ASSERT_NE(0u, render);
+    const auto startPage = (row->startFrame / kBlock) * kBlock;
+    ASSERT_GT(engine.commands.PublishedHead(), engine.commands.SettledFrontier());
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_TRUE(withdrawal->withdrawalPageCommitted);
+    const auto withdrawalSlice = engine.meterProbes.WithdrawalSliceForTests(engine, probeId, probeGeneration);
+    ASSERT_TRUE(withdrawalSlice.Valid());
+    harken::TimelineArmObservation arm{};
+    ASSERT_TRUE(engine.timelineArms.Observe(row->arm, &arm));
+    EXPECT_EQ(harken::ArmState::PendingApply, arm.state);
+    EXPECT_LE(engine.timelinePool.PublishCutoffFrame(), startPage);
+
+    bool produced = false;
+    for (std::uint32_t block = 0; block < 24; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+        if (std::abs(engine.nullBackend.LastBlock()[2 * (kBlock - 1)]) > 1e-7f) {
+            produced = true;
+            EXPECT_NEAR(0.5f,
+                engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
+        }
+    }
+    EXPECT_TRUE(produced);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_GT(engine.timelinePool.PublishCutoffFrame(), startPage);
+    EXPECT_EQ(nullptr, engine.meterDetectors.Find(probeId));
+    EXPECT_EQ(0u, engine.meterProbeWithdrawalCount);
+    EXPECT_EQ(0u, engine.meterProbes.AttachmentCount(engine));
+    EXPECT_EQ(0u, engine.meterProbes.BindingCount(engine));
+    EXPECT_FLOAT_EQ(-3, engine.busTargets.LastCommitted(targetIndex, harken::kBusTargetBusVolume));
+    EXPECT_FALSE(engine.voices.HasTimelineVariableSourceRead(static_cast<std::uint32_t>(render),
+        static_cast<std::uint32_t>(render >> 32)));
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+}
+
+TEST(TimelineVoiceInstall, PendingSoundIgnoresEarlierSequenceFutureWriteUntilItIsDue) {
+    EngineSession session(MakeNullConfig(2, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_NO_FATAL_FAILURE(AttachVoiceVolumeRange(0, -12));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    auto observed = harken::ObserveVariableCallAt(engine.variables.CurrentWorldGeneration(),
+        engine.variables.CurrentTransportEpoch(), kBlock, engine.mixer.BlocksRendered(),
+        engine.commands.PublishedHead());
+    observed.requestedEffectiveFrame = 20 * kBlock;
+    const auto future = engine.variables.AcceptGlobal(kVariable, 1, observed,
+        engine.params, engine.bindings, engine.busTargets);
+    ASSERT_EQ(VN_OK, future.result);
+    VnPostActionDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.actionId = kAction;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    VnActionStepResult play{};
+    play.structSize = sizeof(play);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
+    const auto row = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+        [&](const auto& service) { return service.rootInstance == play.producedPlayableInstance; });
+    ASSERT_NE(engine.playableServices.end(), row);
+    ASSERT_TRUE(row->pendingImmediateEntry);
+    const auto render = row->renderHandle;
+    ASSERT_NE(0u, render);
+    bool produced = false;
+    for (std::uint32_t block = 0; block < 16 && !produced; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+        produced = std::abs(engine.nullBackend.LastBlock()[2 * (kBlock - 1)]) > 1e-7f;
+    }
+    ASSERT_TRUE(produced);
+    ASSERT_LT(engine.mixer.BlocksRendered() * kBlock, observed.requestedEffectiveFrame);
+    EXPECT_NEAR(0.5f, engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
+    while (engine.mixer.BlocksRendered() < 24) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+    }
+    EXPECT_NEAR(0.5f * std::pow(10.0f, -12.0f / 20.0f),
+        engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_FALSE(engine.variables.HasNativePublicationHold(render));
+    EXPECT_FALSE(engine.voices.HasTimelineVariableSourceRead(static_cast<std::uint32_t>(render),
+        static_cast<std::uint32_t>(render >> 32)));
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+}
+
+static void CheckPendingSoundEarlyReleaseAndReuse(bool destroySourceEmitter) {
+    auto config = MakeNullConfig(1, kBlock, kRate);
+    config.maxEmitters = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_NO_FATAL_FAILURE(AttachVoiceVolumeRange(0, -12));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    for (std::uint32_t attempt = 0; attempt < 3; ++attempt) {
+        SCOPED_TRACE(attempt);
+        VnEmitterHandle emitter = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+        ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, kVariable, 1));
+        VnPostActionDesc desc{};
+        desc.structSize = sizeof(desc);
+        desc.actionId = kAction;
+        desc.emitter = emitter;
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+        VnActionStepResult play{};
+        play.structSize = sizeof(play);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
+        const auto row = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+            [&](const auto& service) { return service.rootInstance == play.producedPlayableInstance; });
+        ASSERT_NE(engine.playableServices.end(), row);
+        ASSERT_TRUE(row->pendingImmediateEntry);
+        const auto render = row->renderHandle;
+        ASSERT_NE(0u, render);
+        ASSERT_TRUE(engine.voices.HasTimelineVariableSourceRead(static_cast<std::uint32_t>(render),
+            static_cast<std::uint32_t>(render >> 32)));
+        harken::VoiceReleaseObserver release{};
+        ASSERT_TRUE(engine.voices.CaptureReleaseObserver(render, &release));
+        if (destroySourceEmitter) ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+        else ASSERT_EQ(harken::PlayableControlStatus::Ok,
+            harken::StopPlayable(engine, play.producedPlayableInstance, 0));
+        for (std::uint32_t block = 0; block < 24; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine.nullBackend.Pump(1);
+            for (std::uint32_t sample = 0; sample < 2 * kBlock; ++sample)
+                EXPECT_EQ(0, engine.nullBackend.LastBlock()[sample]);
+        }
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_TRUE(engine.voices.ReleaseObserved(release));
+        EXPECT_FALSE(engine.variables.HasNativePublicationHold(render));
+        EXPECT_FALSE(engine.voices.HasTimelineVariableSourceRead(static_cast<std::uint32_t>(render),
+            static_cast<std::uint32_t>(render >> 32)));
+        EXPECT_EQ(0u, BindingInstanceCount(&engine));
+        EXPECT_EQ(0u, harken::detail::VoicePoolReleaseTestAccess::OriginalOwnerCount(engine.voices));
+        if (!destroySourceEmitter) ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+
+        VnEmitterHandle freshEmitter = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&freshEmitter));
+        EXPECT_NE(emitter, freshEmitter);
+        EXPECT_EQ(static_cast<std::uint32_t>(emitter), static_cast<std::uint32_t>(freshEmitter));
+        desc.emitter = freshEmitter;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
+        bool produced = false;
+        for (std::uint32_t block = 0; block < 16 && !produced; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine.nullBackend.Pump(1);
+            produced = std::abs(engine.nullBackend.LastBlock()[2 * (kBlock - 1)]) > 1e-7f;
+        }
+        ASSERT_TRUE(produced);
+        EXPECT_NEAR(0.5f, engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
+        EXPECT_TRUE(engine.voices.ReleaseObserved(release));
+        ASSERT_EQ(harken::PlayableControlStatus::Ok,
+            harken::StopPlayable(engine, play.producedPlayableInstance, 0));
+        ASSERT_EQ(VN_OK, Vn_DestroyEmitter(freshEmitter));
+        for (std::uint32_t block = 0; block < 16; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine.nullBackend.Pump(1);
+        }
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+    }
+}
+
+TEST(TimelineVoiceInstall, PendingSourceEmitterFailureReleasesReaderAndAllowsFreshReuse) {
+    CheckPendingSoundEarlyReleaseAndReuse(true);
+}
+
+TEST(TimelineVoiceInstall, PendingStopBeforeInstallationReleasesReaderAndAllowsFreshReuse) {
+    CheckPendingSoundEarlyReleaseAndReuse(false);
+}
+
+TEST(TimelineVoiceInstall, PendingReadCutCapacityRefusalRollsBackAndKeepsAcceptedWrite) {
+    EngineSession session(MakeNullConfig(1, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_NO_FATAL_FAILURE(AttachVoiceVolumeRange(0, -12));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 1));
+    const auto commandHead = engine.commands.PublishedHead();
+    const auto freeRows = engine.variableSlices.FreeRowCount();
+    const auto freeTargets = engine.variableSlices.FreeTargetCapacity();
+    std::vector<harken::VariableReadCutRef> held(engine.variables.ReadCutCapacity());
+    for (auto& cut : held) ASSERT_TRUE(engine.variables.CaptureReadCut(0, 8 * kBlock,
+        engine.logicCommits.Current() + 1u, 0, &cut));
+    VnPostActionDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.actionId = kAction;
+    VnActionFiringHandle firing = 0;
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, firing);
+    EXPECT_EQ(commandHead, engine.commands.PublishedHead());
+    EXPECT_EQ(freeRows, engine.variableSlices.FreeRowCount());
+    EXPECT_EQ(freeTargets, engine.variableSlices.FreeTargetCapacity());
+    EXPECT_EQ(0u, BindingInstanceCount(&engine));
+    EXPECT_EQ(0u, harken::detail::VoicePoolReleaseTestAccess::OriginalOwnerCount(engine.voices));
+    for (const auto cut : held) ASSERT_TRUE(engine.variables.ReleaseReadCut(cut));
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    bool produced = false;
+    for (std::uint32_t block = 0; block < 16 && !produced; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+        produced = std::abs(engine.nullBackend.LastBlock()[2 * (kBlock - 1)]) > 1e-7f;
+    }
+    ASSERT_TRUE(produced);
+    EXPECT_NEAR(0.5f * std::pow(10.0f, -12.0f / 20.0f),
+        engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+}
+
+TEST(TimelineVoiceInstall, PendingTransportResetReleasesReaderBeforeFreshEpochPlayback) {
+    EngineSession session(MakeNullConfig(1, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_NO_FATAL_FAILURE(AttachVoiceVolumeRange(0, -12));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 1));
+    VnPostActionDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.actionId = kAction;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    VnActionStepResult play{};
+    play.structSize = sizeof(play);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
+    const auto row = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+        [&](const auto& service) { return service.rootInstance == play.producedPlayableInstance; });
+    ASSERT_NE(engine.playableServices.end(), row);
+    ASSERT_TRUE(row->pendingImmediateEntry);
+    const auto render = row->renderHandle;
+    harken::VoiceReleaseObserver release{};
+    ASSERT_TRUE(engine.voices.CaptureReleaseObserver(render, &release));
+    const auto oldEpoch = engine.variables.CurrentTransportEpoch();
+    const auto resetFrame = engine.mixer.BlocksRendered() * kBlock;
+    auto reset = harken::BeginRuntimeTransportReset(engine, resetFrame);
+    for (std::uint32_t block = 0; block < 24 && reset == harken::RuntimeTransportResetStatus::Backpressure; ++block) {
+        engine.nullBackend.Pump(1);
+        for (std::uint32_t sample = 0; sample < 2 * kBlock; ++sample)
+            EXPECT_EQ(0, engine.nullBackend.LastBlock()[sample]);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        reset = harken::BeginRuntimeTransportReset(engine, resetFrame);
+    }
+    ASSERT_EQ(harken::RuntimeTransportResetStatus::Complete, reset);
+    EXPECT_GT(engine.variables.CurrentTransportEpoch(), oldEpoch);
+    EXPECT_TRUE(engine.voices.ReleaseObserved(release));
+    EXPECT_FALSE(engine.variables.HasNativePublicationHold(render));
+    EXPECT_FALSE(engine.voices.HasTimelineVariableSourceRead(static_cast<std::uint32_t>(render),
+        static_cast<std::uint32_t>(render >> 32)));
+    EXPECT_EQ(0u, BindingInstanceCount(&engine));
+    EXPECT_EQ(0u, harken::detail::VoicePoolReleaseTestAccess::OriginalOwnerCount(engine.voices));
+    ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 0));
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    bool produced = false;
+    for (std::uint32_t block = 0; block < 16 && !produced; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+        produced = std::abs(engine.nullBackend.LastBlock()[2 * (kBlock - 1)]) > 1e-7f;
+    }
+    ASSERT_TRUE(produced);
+    EXPECT_NEAR(0.5f, engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+}
+
+static void CheckFixedSoundMissedDeadline(bool lateInstallation) {
+    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    image.step.delay.numerator = 4000000;
+    image.action.directFeatureMask = image.action.transitiveFeatureMask = 1;
+    image.action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(image.action);
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_NO_FATAL_FAILURE(AttachVoiceVolumeRange(0, -12));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 0));
+    VnPostActionDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.actionId = kAction;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    VnActionStepResult play{};
+    play.structSize = sizeof(play);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
+    const auto row = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+        [&](const auto& service) { return service.rootInstance == play.producedPlayableInstance; });
+    ASSERT_NE(engine.playableServices.end(), row);
+    ASSERT_FALSE(row->pendingImmediateEntry);
+    const auto arm = row->arm;
+    const auto render = row->renderHandle;
+    const auto startQuantum = row->startFrame / kBlock;
+    if (lateInstallation) engine.mixer.SetMaxCommandsPerQuantumForTest(0);
+    while (engine.mixer.BlocksRendered() <= startQuantum) engine.nullBackend.Pump(1);
+    if (lateInstallation) {
+        engine.mixer.SetMaxCommandsPerQuantumForTest(engine.config.maxControlCommandsPerQuantum);
+        engine.nullBackend.Pump(1);
+    }
+    harken::TimelineArmObservation observed{};
+    ASSERT_TRUE(engine.timelineArms.Observe(arm, &observed));
+    ASSERT_EQ(harken::ArmState::Published, observed.state);
+    ASSERT_TRUE(observed.finalSourcePublished);
+    ASSERT_NE(0u, observed.armedCompletionSequence);
+    ASSERT_EQ(0u, observed.startedBlockSequence);
+    if (lateInstallation) ASSERT_GT(observed.armedCompletionSequence, startQuantum);
+    else ASSERT_LE(observed.armedCompletionSequence, startQuantum);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(harken::EnginePlayableStartPhase::Cancelling, row->phase);
+    EXPECT_EQ(harken::PlayableControlReason::Deadline, row->controlReason);
+    for (std::uint32_t step = 0; step < 16; ++step) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        float peak = 0.0f;
+        for (std::uint32_t sample = 0; sample < 2 * kBlock; ++sample)
+            peak = std::max(peak, std::abs(engine.nullBackend.LastBlock()[sample]));
+        EXPECT_EQ(0.0f, peak);
+    }
+    EXPECT_FALSE(engine.variables.HasNativePublicationHold(render));
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+}
+
+TEST(TimelineVoiceInstall, FixedSoundLateInstallationFailsDeadlineWithoutPcm) {
+    CheckFixedSoundMissedDeadline(true);
+}
+
+TEST(TimelineVoiceInstall, FixedSoundStalePublicationFailsDeadlineWithoutPcm) {
+    CheckFixedSoundMissedDeadline(false);
 }
 
 TEST(TimelineVoiceInstall, SnapshotOwnedSurvivesCallerStorageOverwrite) {

@@ -14,6 +14,7 @@ enum class AudioSliceState : std::uint8_t {
     SliceClaimedWithInvalidation = 4,
     ReplacementReserved = 5,
     PrivateTransferReserved = 6,
+    PublicationReserved = 7,
 };
 
 enum class AudioSliceInvalidateReason : std::uint8_t {
@@ -39,6 +40,7 @@ enum class AudioSliceInvalidateDisposition : std::uint8_t {
     AlreadyInvalidated = 3,
     InvalidReason = 4,
     PrivateTransferHeld = 5,
+    PublicationHeld = 6,
 };
 
 struct AudioSliceLeaseSnapshot {
@@ -81,6 +83,8 @@ public:
 
 private:
     friend class ScheduledTransactionPool;
+    bool HoldPublication() noexcept;
+    void ReleasePublication() noexcept;
     bool HoldPrivateTransfer() noexcept;
     void ReleasePrivateTransfer() noexcept;
     void ConsumePrivateTransferCancellation() noexcept;

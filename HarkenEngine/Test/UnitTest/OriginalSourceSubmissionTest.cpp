@@ -76,7 +76,8 @@ void StartIndependent(harken::Engine& engine, SourceBody& body,
 // Supplementary issuer-level integration: no Lane Start is issued for this Source.
 void PublishSourceBody(harken::Engine& engine, SourceBody& body,
     bool withEffect, bool crossTargetEffect,
-    Registry::OriginalSourceLifetimePin* original = nullptr) {
+    Registry::OriginalSourceLifetimePin* original = nullptr,
+    bool finalSource = false) {
     const auto pcm = engine.registry.Lookup(kSound);
     ASSERT_TRUE(pcm.Valid());
     ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0.0f, 1.0, 0, false, 0, 0, 0,
@@ -141,8 +142,17 @@ void PublishSourceBody(harken::Engine& engine, SourceBody& body,
         payload.poolIndex = body.incoming.poolIndex;
         payload.poolGeneration = body.incoming.generation;
     }
-    ASSERT_TRUE(engine.originalSourceSubmissions.CapturePreparedSource(header,
-        armProof, voiceProof, std::span(effectProofs.data(), effectCount), original));
+    if (finalSource) {
+        ASSERT_TRUE(engine.originalSourceSubmissions.CapturePreparedFinalSource(header,
+            armProof, voiceProof, std::span(effectProofs.data(), effectCount), original));
+        EXPECT_FALSE(engine.originalSourceSubmissions.CapturePreparedFinalSource(header,
+            armProof, voiceProof, std::span(effectProofs.data(), effectCount)));
+        EXPECT_FALSE(engine.originalSourceSubmissions.CapturePreparedSource(header,
+            armProof, voiceProof, std::span(effectProofs.data(), effectCount)));
+    } else {
+        ASSERT_TRUE(engine.originalSourceSubmissions.CapturePreparedSource(header,
+            armProof, voiceProof, std::span(effectProofs.data(), effectCount), original));
+    }
     harken::CommandQueue::BatchReservation reservation{};
     ASSERT_TRUE(engine.commands.ReserveBatch(body.commandCount, &reservation));
     harken::CommandQueue::PreparedBatchProof batch;
@@ -265,6 +275,222 @@ TEST(OriginalSourceSubmission, CancelPreservesLegalIndependentTargetSetterAndFre
     ASSERT_TRUE(engine.timelineArms.RequestCancel(body.arm));
     ASSERT_NO_FATAL_FAILURE(CheckCompletedDisposition(engine, body, true, 0.5f));
     ASSERT_NO_FATAL_FAILURE(RetireSource(engine, body, true));
+    ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
+}
+
+TEST(OriginalSourceSubmission, FinalSourcePublishesOnlyAfterCompleteInstallation) {
+    for (const bool finalSource : {false, true}) {
+        SCOPED_TRACE(finalSource);
+        harkentest::EngineSession session(SourceBodyConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const std::vector<float> samples(kRate, 0.25f);
+        SourceBody body;
+        ASSERT_NO_FATAL_FAILURE(StartIndependent(engine, body, samples));
+        ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, body, true, false, nullptr, finalSource));
+        const auto* row = engine.timelineArms.RowAt(body.arm.slot);
+        ASSERT_EQ(harken::ArmState::PendingApply, row->state.load());
+        EXPECT_EQ(finalSource, row->finalSourcePublicationIssued);
+        EXPECT_FALSE(row->finalSourcePublicationConsumed);
+        ASSERT_NO_FATAL_FAILURE(CheckCompletedDisposition(engine, body, false, 0.5f));
+        EXPECT_EQ(finalSource ? harken::ArmState::Published : harken::ArmState::Armed, row->state.load());
+        EXPECT_EQ(finalSource, row->finalSourcePublicationConsumed);
+        ASSERT_NE(nullptr, engine.voices.Resolve(body.source));
+        EXPECT_TRUE(Registry::SameEffect(body.incoming, engine.voices.Resolve(body.source)->fxSlotEffectRef[0]));
+        const auto completed = row->armedCompletionSequence.load();
+        engine.nullBackend.Pump(1);
+        EXPECT_EQ(completed, row->armedCompletionSequence.load());
+        EXPECT_EQ(finalSource ? harken::ArmState::Published : harken::ArmState::Armed, row->state.load());
+        EXPECT_EQ(finalSource, row->finalSourcePublicationConsumed);
+        ASSERT_NO_FATAL_FAILURE(RetireSource(engine, body, false));
+        ASSERT_NO_FATAL_FAILURE(RecycleExactRetirement(engine, body));
+        ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
+    }
+}
+
+TEST(OriginalSourceSubmission, FinalSourceCancelAndCorruptionNeverPublish) {
+    for (const bool invalid : {false, true}) {
+        SCOPED_TRACE(invalid);
+        harkentest::EngineSession session(SourceBodyConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const std::vector<float> samples(kRate, 0.25f);
+        SourceBody body;
+        ASSERT_NO_FATAL_FAILURE(StartIndependent(engine, body, samples));
+        ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, body, true, false, nullptr, true));
+        if (invalid) {
+            harken::CommandRecord corrupt{};
+            ASSERT_TRUE(engine.commands.PeekAt(1, corrupt));
+            corrupt.flags = 0x80;
+            harken::detail::CommandQueueSubmissionTestAccess::OverwriteAt(engine.commands, 1, corrupt);
+        } else ASSERT_TRUE(engine.timelineArms.RequestCancel(body.arm));
+        ASSERT_NO_FATAL_FAILURE(CheckCompletedDisposition(engine, body, true, invalid ? 1.0f : 0.5f));
+        const auto* row = engine.timelineArms.RowAt(body.arm.slot);
+        EXPECT_EQ(harken::ArmState::Tombstoned, row->state.load());
+        EXPECT_TRUE(row->finalSourcePublicationIssued);
+        EXPECT_FALSE(row->finalSourcePublicationConsumed);
+        ASSERT_NO_FATAL_FAILURE(RecycleExactRetirement(engine, body));
+        ASSERT_NO_FATAL_FAILURE(RetireSource(engine, body, true));
+        ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
+    }
+}
+
+TEST(OriginalSourceSubmission, FinalSourceBudgetDeferralKeepsWholeInstallationPending) {
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const std::vector<float> samples(kRate, 0.25f);
+    SourceBody body;
+    ASSERT_NO_FATAL_FAILURE(StartIndependent(engine, body, samples));
+    engine.mixer.SetMaxCommandsPerQuantumForTest(2);
+    harken::CommandRecord prior{};
+    prior.opcode = harken::kOpcodeSetVoiceVolume;
+    prior.payload.setVoiceVolume.handle = body.independent;
+    prior.payload.setVoiceVolume.volumeDb = 0.0f;
+    ASSERT_TRUE(engine.commands.TryPush(prior));
+    ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, body, false, false, nullptr, true));
+    const auto* row = engine.timelineArms.RowAt(body.arm.slot);
+    const auto before = engine.mixer.BlocksRendered();
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+    EXPECT_EQ(harken::ArmState::PendingApply, row->state.load());
+    EXPECT_EQ(0u, row->armedCompletionSequence.load());
+    EXPECT_FALSE(row->finalSourcePublicationConsumed);
+    EXPECT_NEAR(body.baseline, CurrentPeak(engine), 0.00001f);
+    ASSERT_NO_FATAL_FAILURE(CheckCompletedDisposition(engine, body, false, 0.5f));
+    EXPECT_EQ(harken::ArmState::Published, row->state.load());
+    ASSERT_NO_FATAL_FAILURE(RetireSource(engine, body, false));
+    ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
+}
+
+TEST(OriginalSourceSubmission, FinalSourcePhysicalReleaseDeferralNeverPublishesOrAcknowledges) {
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const std::vector<float> samples(kRate, 0.25f);
+    SourceBody body;
+    ASSERT_NO_FATAL_FAILURE(StartIndependent(engine, body, samples));
+    ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, body, false, false, nullptr, true));
+    ASSERT_TRUE(engine.timelineArms.RequestCancel(body.arm));
+    struct Held {
+        harken::Engine& engine;
+        const SourceBody& body;
+        std::uint64_t tail;
+        std::uint32_t calls = 0;
+    } held{engine, body, engine.commands.ConsumedCount()};
+    harken::detail::VoicePoolReleaseTestAccess::SetReleaseHeldHook(engine.voices, [](void* opaque) {
+        auto& context = *static_cast<Held*>(opaque);
+        ++context.calls;
+        const auto before = context.engine.mixer.BlocksRendered();
+        for (std::uint32_t i = 0; i < 2; ++i) {
+            context.engine.nullBackend.Pump(1);
+            EXPECT_EQ(before + i + 1u, context.engine.mixer.BlocksRendered());
+            EXPECT_EQ(context.tail, context.engine.commands.ConsumedCount());
+            EXPECT_FALSE(context.engine.voices.ReleaseObserved(context.body.release));
+            const auto* row = context.engine.timelineArms.RowAt(context.body.arm.slot);
+            EXPECT_EQ(0u, row->armedCompletionSequence.load());
+            EXPECT_EQ(0u, row->tombstoneAudioSequence.load());
+            EXPECT_FALSE(row->finalSourcePublicationConsumed);
+            EXPECT_NE(harken::ArmState::Published, row->state.load());
+        }
+    }, &held);
+    ASSERT_TRUE(engine.voices.AbortClaimedVoice(body.source));
+    ASSERT_EQ(1u, held.calls);
+    ASSERT_NO_FATAL_FAILURE(CheckCompletedDisposition(engine, body, true, 0.5f));
+    EXPECT_FALSE(engine.timelineArms.RowAt(body.arm.slot)->finalSourcePublicationConsumed);
+    ASSERT_NO_FATAL_FAILURE(RetireSource(engine, body, true));
+    ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
+}
+
+TEST(OriginalSourceSubmission, FinalSourceReuseIssuesOnlyForTheNewActualArmGeneration) {
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const std::vector<float> samples(kRate, 0.25f);
+    SourceBody body;
+    ASSERT_NO_FATAL_FAILURE(StartIndependent(engine, body, samples));
+    harken::TimelineArmToken previous{};
+    for (const bool finalSource : {true, false, true}) {
+        SCOPED_TRACE(finalSource);
+        ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, body, false, false, nullptr, finalSource));
+        if (previous.Valid()) {
+            EXPECT_EQ(previous.slot, body.arm.slot);
+            EXPECT_LT(previous.generation, body.arm.generation);
+            harken::TimelineArmObservation stale{};
+            EXPECT_FALSE(engine.timelineArms.Observe(previous, &stale));
+        }
+        const auto* row = engine.timelineArms.RowAt(body.arm.slot);
+        EXPECT_EQ(finalSource, row->finalSourcePublicationIssued);
+        EXPECT_FALSE(row->finalSourcePublicationConsumed);
+        engine.nullBackend.Pump(1);
+        EXPECT_EQ(finalSource ? harken::ArmState::Published : harken::ArmState::Armed, row->state.load());
+        EXPECT_EQ(finalSource, row->finalSourcePublicationConsumed);
+        previous = body.arm;
+        ASSERT_NO_FATAL_FAILURE(RetireSource(engine, body, false));
+    }
+    ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
+}
+
+TEST(OriginalSourceSubmission, FinalSourcePartialMetadataWaitsForEffectRetirementBeforePublishing) {
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const std::vector<float> samples(kRate, 0.25f);
+    SourceBody body;
+    ASSERT_NO_FATAL_FAILURE(StartIndependent(engine, body, samples));
+    VnGainDesc gain{};
+    gain.structSize = sizeof(gain);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceEffect(body.independentPublic, 0, VN_EFFECT_GAIN,
+        reinterpret_cast<const VnEffectDesc*>(&gain)));
+    engine.nullBackend.Pump(1);
+    ASSERT_NE(nullptr, engine.voices.Resolve(body.independent));
+    const auto oldEffect = engine.voices.Resolve(body.independent)->fxSlotEffectRef[0];
+    ASSERT_EQ(VN_EFFECT_GAIN, oldEffect.type);
+    Registry::OriginalSourceLifetimePin original;
+    ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, body, true, true, &original, true));
+    const auto tail = engine.commands.ConsumedCount();
+    // Fault-inject retire-channel saturation. Placeholders own no effect instance.
+    const harken::EffectInstanceRef placeholder{};
+    std::uint32_t filled = 0;
+    while (engine.effectBank.RetireQueue().TryPush(placeholder)) ++filled;
+    ASSERT_GT(filled, 0u);
+    const auto before = engine.mixer.BlocksRendered();
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+    EXPECT_EQ(tail + 2u, engine.commands.ConsumedCount());
+    const auto* row = engine.timelineArms.RowAt(body.arm.slot);
+    EXPECT_EQ(harken::ArmState::PendingApply, row->state.load());
+    EXPECT_EQ(0u, row->armedCompletionSequence.load());
+    EXPECT_FALSE(row->finalSourcePublicationConsumed);
+    EXPECT_EQ(Registry::Phase::CleanupPending, engine.originalSourceSubmissions.Find(body.arm)->State());
+    EXPECT_FALSE(engine.originalSourceSubmissions.IsOriginalInstalledSourceCurrent(original, body.source));
+    EXPECT_NEAR(body.baseline * 0.5f, CurrentPeak(engine), 0.00001f);
+    harken::EffectInstanceRef returned{};
+    ASSERT_TRUE(engine.effectBank.RetireQueue().TryPop(returned));
+    ASSERT_TRUE(Registry::SameEffect(placeholder, returned));
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(body.acceptedHead, engine.commands.ConsumedCount());
+    EXPECT_EQ(harken::ArmState::Published, row->state.load());
+    EXPECT_EQ(before + 1u, row->armedCompletionSequence.load());
+    EXPECT_TRUE(row->finalSourcePublicationConsumed);
+    EXPECT_TRUE(engine.originalSourceSubmissions.IsOriginalInstalledSourceCurrent(original, body.source));
+    EXPECT_TRUE(Registry::SameEffect(body.incoming, engine.voices.Resolve(body.independent)->fxSlotEffectRef[0]));
+    std::uint32_t placeholders = 0, retired = 0;
+    while (engine.effectBank.RetireQueue().TryPop(returned)) {
+        if (Registry::SameEffect(placeholder, returned)) ++placeholders;
+        else {
+            EXPECT_TRUE(Registry::SameEffect(oldEffect, returned));
+            ++retired;
+            engine.effectBank.Recycle(returned);
+        }
+    }
+    EXPECT_EQ(filled - 1u, placeholders);
+    EXPECT_EQ(1u, retired);
+    original.Release();
+    ASSERT_NO_FATAL_FAILURE(RetireSource(engine, body, false));
+    ASSERT_EQ(VN_OK, Vn_Stop(body.independentPublic, 0));
+    engine.nullBackend.Pump(1);
+    ASSERT_NO_FATAL_FAILURE(RecycleExactRetirement(engine, body));
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
@@ -554,7 +780,8 @@ void PublishOriginalBodyEpisode(harken::Engine& engine, SourceBody& body,
     Registry::OriginalSourceLifetimePin* original,
     harken::VoicePool::OriginalSourceBodyLifetimePin* originalBody,
     bool wrongFrozenSourceIdentity = false,
-    const harken::VoicePool::OriginalSourceBodyLifetimePin* occupiedBody = nullptr) {
+    const harken::VoicePool::OriginalSourceBodyLifetimePin* occupiedBody = nullptr,
+    bool pendingStart = false) {
     const auto pcm = engine.registry.Lookup(kSound);
     ASSERT_TRUE(pcm.Valid());
     ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0.0f, 1.0, 0, false, 0, 0, 0,
@@ -571,11 +798,16 @@ void PublishOriginalBodyEpisode(harken::Engine& engine, SourceBody& body,
     harken::TimelineArmTable::PreparedCommitInput logical{};
     logical.startFrame = engine.mixer.BlocksRendered() * kFrames;
     logical.armDeadline = logical.startFrame;
+    logical.pendingImmediateStart = pendingStart;
+    if (pendingStart) logical.startFrame = logical.armDeadline = 0;
     logical.target.subjectId = kSound;
     body.armFreeBefore = engine.timelineArms.FreeCount();
-    ASSERT_TRUE(engine.timelineArms.Prepare(static_cast<std::uint32_t>(body.source),
-        static_cast<std::uint32_t>(body.source >> 32), logical.startFrame,
-        logical.armDeadline, logical.programGeneration, logical.target, &body.arm));
+    ASSERT_TRUE(pendingStart
+        ? engine.timelineArms.PreparePendingImmediate(static_cast<std::uint32_t>(body.source),
+            static_cast<std::uint32_t>(body.source >> 32), logical.programGeneration, logical.target, &body.arm)
+        : engine.timelineArms.Prepare(static_cast<std::uint32_t>(body.source),
+            static_cast<std::uint32_t>(body.source >> 32), logical.startFrame,
+            logical.armDeadline, logical.programGeneration, logical.target, &body.arm));
     logical.arm = body.arm;
     harken::TimelineArmTable::PreparedCommitProof armProof;
     ASSERT_TRUE(engine.timelineArms.ProvePreparedCommit(logical, &armProof));
@@ -2802,6 +3034,31 @@ namespace harken::detail {
 // range actor. The limit setters establish negative prerequisites only.
 struct OriginalSourceMutationActorTestAccess {
     using Registry = OriginalSourceSubmissionRegistry;
+    static bool OwnersReturned(const Registry& registry, TimelineArmToken token) {
+        const auto* row = registry.Find(token);
+        if (row == nullptr) return false;
+        const auto lifetime = row->originalLifetime_.load(std::memory_order_acquire);
+        return row->State() == Registry::Phase::Disposed &&
+            (lifetime & Registry::kPinMask) == 0 && (lifetime & Registry::kOwnersReleased) != 0 &&
+            !row->arm_.Valid() && !row->voice_.Valid();
+    }
+    static Registry::InstalledSourceRetirementRequest RequestRetirement(Registry& registry,
+        const OriginalSourceLifetimePin& source, const VoicePool::OriginalSourceBodyLifetimePin& body) {
+        return registry.RequestPendingInstalledSourceRetirement(source, body);
+    }
+    static Registry::InstalledSourceRetirementRequest RequestRetirementReceipt(Registry& registry,
+        const OriginalSourceLifetimePin& source, const VoicePool::OriginalSourceBodyLifetimePin& body,
+        Registry::PendingInstalledSourceRetirementReceipt* out) {
+        return registry.RequestPendingInstalledSourceRetirementWithReceipt(source, body, out);
+    }
+    static bool ReturnRetirementStorage(Registry& registry,
+        Registry::PendingInstalledSourceRetirementReceipt& receipt, TimelineArmToken token) {
+        return registry.ReturnPendingInstalledSourceRetirementStorage(receipt, token);
+    }
+    static bool RetirementSettled(const Registry& registry,
+        const Registry::PendingInstalledSourceRetirementReceipt& receipt, TimelineArmToken token) {
+        return registry.PendingInstalledSourceRetirementSettled(receipt, token);
+    }
     struct Observation {
         std::uint8_t mode = 0;
         std::uint64_t count = 0;
@@ -2862,6 +3119,9 @@ struct OriginalSourceMutationActorTestAccess {
         row->originalLifetime_.store(prior, std::memory_order_release);
     }
 };
+bool OriginalSourceOwnersReturnedForTest(const OriginalSourceSubmissionRegistry& registry, TimelineArmToken token) {
+    return OriginalSourceMutationActorTestAccess::OwnersReturned(registry, token);
+}
 } // namespace harken::detail
 
 namespace {
@@ -3961,10 +4221,15 @@ struct HiddenBoundNativeFuture {
         ASSERT_FALSE(old.placement.Valid());
         ASSERT_TRUE(old.privateClock.Valid());
     }
-    void PublishOriginalForAudio() {
+    void PublishOriginalForAudio(bool placementReturned = false) {
         auto& engine = old.engine;
-        ASSERT_TRUE(old.privateClock.ReturnPlacement(&old.placement));
-        old.placement.Release();
+        if (placementReturned) {
+            ASSERT_FALSE(old.privateClock.Valid());
+            ASSERT_FALSE(old.placement.Valid());
+        } else {
+            ASSERT_TRUE(old.privateClock.ReturnPlacement(&old.placement));
+            old.placement.Release();
+        }
         ASSERT_TRUE(engine.timelineArms.Publish(old.episode.source.arm));
         for (const auto index : {0u, 2u}) {
             ASSERT_TRUE(engine.decisions.CanPublishFrontierActivation(old.decisions[index]));
@@ -5734,7 +5999,7 @@ struct GenuineBoundC1ProjectionHarness {
 };
 
 enum class ReplacementAdmissionCase {
-    BeforeAck, ReadOnlyCapture, NativeWrite, LateAttach, MissedDeadline, Deferred, DeferredCancelled
+    BeforeAck, ReadOnlyCapture, NativeWrite, LateAttach, MissedDeadline, Deferred, DeferredCancelled, PublicationHeld
 };
 
 void CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase mode) {
@@ -5773,7 +6038,7 @@ void CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase mode)
         EXPECT_EQ(inheritedSequence, selected.reservedSequence);
         EXPECT_EQ(inheritedSequence, engine.logicCommits.Current());
     } else ASSERT_TRUE(batch.Prepare(engine.queueInstances, &future.scope, &future.sequence));
-    if (mode != ReplacementAdmissionCase::LateAttach) {
+    if (mode != ReplacementAdmissionCase::LateAttach && mode != ReplacementAdmissionCase::PublicationHeld) {
         ASSERT_TRUE(batch.Attach(state.projection, future.spans, future.owner));
         EXPECT_FALSE(batch.Attach(state.projection, future.spans, future.owner));
     }
@@ -5811,7 +6076,28 @@ void CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase mode)
     ASSERT_NO_FATAL_FAILURE(future.PlaceOriginalForAudio(&state.originalLane));
     ASSERT_TRUE(future.old.Bind());
     ASSERT_TRUE(state.projection.BindPrepared());
-    ASSERT_NO_FATAL_FAILURE(future.PublishOriginalForAudio());
+    if (mode == ReplacementAdmissionCase::PublicationHeld) {
+        ASSERT_TRUE(future.old.privateClock.ReturnPlacement(&future.old.placement));
+        future.old.placement.Release();
+        harken::PrivateImmediateLanePublicationProof publication;
+        ASSERT_TRUE(engine.immediateActionLane.ProvePrivatePublication(future.old.lane, future.old.cohort, &publication));
+        EXPECT_FALSE(state.projection.RequestWithdrawal());
+        EXPECT_FALSE(batch.Attach(state.projection, future.spans, future.owner));
+        EXPECT_FALSE(batch.Accepted());
+        publication.Release();
+        ASSERT_TRUE(batch.Attach(state.projection, future.spans, future.owner));
+        ASSERT_TRUE(engine.immediateActionLane.ProvePrivatePublication(future.old.lane, future.old.cohort, &publication));
+        EXPECT_FALSE(batch.TryAccept(action));
+        EXPECT_FALSE(batch.Close());
+        EXPECT_FALSE(batch.Accepted());
+        EXPECT_FALSE(state.projection.RequestWithdrawal());
+        EXPECT_FALSE(state.projection.TryRetireNativeConditional(engine.decisions, engine.mixer.BlocksRendered()));
+        publication.Release();
+        ASSERT_TRUE(batch.TryAccept(action));
+        EXPECT_TRUE(batch.Accepted());
+        ASSERT_TRUE(state.projection.RequestWithdrawal());
+    }
+    ASSERT_NO_FATAL_FAILURE(future.PublishOriginalForAudio(mode == ReplacementAdmissionCase::PublicationHeld));
     ASSERT_NO_FATAL_FAILURE(state.PumpCurrent());
     if (mode == ReplacementAdmissionCase::ReadOnlyCapture) {
         harken::ImmediateLaneTimelineFinalizer finalizer(engine.voices, engine.timelineArms);
@@ -5838,7 +6124,7 @@ void CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase mode)
         ASSERT_EQ(capturedSequence + 2u, engine.mixer.BlocksRendered());
     } else ASSERT_NO_FATAL_FAILURE(state.PumpC1IfNextBucket());
     const bool accepted = mode == ReplacementAdmissionCase::BeforeAck || mode == ReplacementAdmissionCase::ReadOnlyCapture ||
-        mode == ReplacementAdmissionCase::Deferred;
+        mode == ReplacementAdmissionCase::Deferred || mode == ReplacementAdmissionCase::PublicationHeld;
     if (!accepted) {
         if (mode == ReplacementAdmissionCase::LateAttach)
             EXPECT_FALSE(batch.Attach(state.projection, future.spans, future.owner));
@@ -5885,6 +6171,9 @@ TEST(OriginalSourceSubmission, ReplacementBatchUsesActualDeferredParentOrderWith
 }
 TEST(OriginalSourceSubmission, ReplacementBatchRefusesDeferredParentCancelledAfterPreparation) {
     ASSERT_NO_FATAL_FAILURE(CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase::DeferredCancelled));
+}
+TEST(OriginalSourceSubmission, BoundC1PublicationHoldPreservesActualReplacementAndWithdrawalRetries) {
+    ASSERT_NO_FATAL_FAILURE(CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase::PublicationHeld));
 }
 
 struct SelectedSourceStop {
@@ -6054,6 +6343,8 @@ void CheckAcceptedQueueSelectionKeepsOriginalClock(bool bindBeforeSelection, boo
     if (scheduledStop) ASSERT_NO_FATAL_FAILURE(stop.Prepare(engine, future, newSource));
     harken::OriginalConditionalReplacementBatch batch(1);
     ASSERT_TRUE(batch.Prepare(engine.queueInstances, &future.scope, &future.sequence));
+    harken::LogicCommitCoordinator::PreparedIssueIdentity acceptedIdentity;
+    ASSERT_TRUE(engine.logicCommits.CapturePreparedIssueIdentity(batch.SequenceIssue(), &acceptedIdentity));
     ASSERT_TRUE(batch.Attach(state.projection, future.spans, future.owner));
     // Genuine structural loans alone cannot commit a replacement. Its actual
     // independent Decisions must own the complete private native participants.
@@ -6186,7 +6477,18 @@ void CheckAcceptedQueueSelectionKeepsOriginalClock(bool bindBeforeSelection, boo
     EXPECT_FALSE(batch.TryAccept(action));
     ASSERT_TRUE(action.Reserve());
     ASSERT_TRUE(batch.TryAccept(action));
-    EXPECT_EQ(sequence, batch.ConsumeAcceptedOrder());
+    harken::LogicCommitCoordinator foreign;
+    harken::LogicCommitCoordinator::PreparedIssue foreignIssue;
+    ASSERT_EQ(harken::LogicCommitCoordinator::IssueStatus::Issued, foreign.PrepareIssue(&foreignIssue));
+    auto occupiedReceipt = foreign.ConsumePreparedIssue(std::move(foreignIssue));
+    EXPECT_EQ(0u, batch.ConsumeAcceptedOrder(&occupiedReceipt));
+    harken::LogicCommitCoordinator::ConsumedIssue acceptedReceipt;
+    EXPECT_EQ(sequence, batch.ConsumeAcceptedOrder(&acceptedReceipt));
+    EXPECT_TRUE(acceptedReceipt.MatchesOriginalReservation(acceptedIdentity));
+    EXPECT_FALSE(occupiedReceipt.MatchesOriginalReservation(acceptedIdentity));
+    auto movedReceipt = std::move(acceptedReceipt);
+    EXPECT_FALSE(acceptedReceipt.MatchesOriginalReservation(acceptedIdentity));
+    EXPECT_TRUE(movedReceipt.MatchesOriginalReservation(acceptedIdentity));
     EXPECT_EQ(sequence, engine.logicCommits.Current());
     if (publishSelected)
         EXPECT_FALSE(future.spans.RollbackUnselectedDecisionCommits(future.owner, selectedDomain));
@@ -7660,7 +7962,8 @@ struct NativeUnpublishedDispositionSource {
     void Prepare(harken::Engine& engine, bool bindRange, bool commit = true,
         bool identifySource = true, bool expectCapture = true,
         harken::ParentAudioGroupRef parent = {}, bool captureBody = false,
-        std::uint64_t startFrame = 0, bool pendingImmediate = false) {
+        std::uint64_t startFrame = 0, bool pendingImmediate = false,
+        bool finalSource = false, Registry* receiver = nullptr) {
         const auto pcm = engine.registry.Lookup(kSound);
         ASSERT_TRUE(pcm.Valid());
         ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0.0f, 1.0, 0, false, 0, 0, 0,
@@ -7700,8 +8003,12 @@ struct NativeUnpublishedDispositionSource {
         header.payload.play.batch.batchKind = harken::PlayLedBatchKind::TimelineArm;
         header.payload.play.batch.batchCommandCount = 1;
         header.payload.play.batch.armToken = (static_cast<std::uint64_t>(arm.generation) << 32) | arm.slot;
-        const bool captured = engine.originalSourceSubmissions.CapturePreparedSource(header, armProof,
-            voiceProof, {}, &original, captureBody ? &originalBody : nullptr);
+        auto& sources = receiver == nullptr ? engine.originalSourceSubmissions : *receiver;
+        const bool captured = finalSource
+            ? sources.CapturePreparedFinalSource(header, armProof,
+                voiceProof, {}, &original, captureBody ? &originalBody : nullptr)
+            : sources.CapturePreparedSource(header, armProof,
+                voiceProof, {}, &original, captureBody ? &originalBody : nullptr);
         if (!expectCapture) { ASSERT_FALSE(captured); return; }
         ASSERT_TRUE(captured);
         if (bindRange) {
@@ -7727,6 +8034,94 @@ void RegisterNativeDispositionPcm() {
     const auto pcm = harkentest::MonoDesc(samples, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
 }
+}
+
+TEST(OriginalSourceSubmission, FinalSourceUnpublishedAbortReturnsOriginalOwnersWithoutPublication) {
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
+    const auto free = engine.timelineArms.FreeCount();
+    NativeUnpublishedDispositionSource source;
+    ASSERT_NO_FATAL_FAILURE(source.Prepare(engine, true, false, true, true, {}, true, 0, false, true));
+    const auto* row = engine.timelineArms.RowAt(source.arm.slot);
+    EXPECT_TRUE(row->finalSourcePublicationIssued);
+    EXPECT_FALSE(row->finalSourcePublicationConsumed);
+    ASSERT_NO_FATAL_FAILURE(source.Dispose(engine));
+    source.original.Release();
+    source.originalBody.Release();
+    ASSERT_TRUE(engine.timelineArms.CancelPrepared(source.arm));
+    EXPECT_EQ(free, engine.timelineArms.FreeCount());
+    EXPECT_EQ(0u, engine.commands.PublishedHead());
+    EXPECT_EQ(0u, engine.mixer.BlocksRendered());
+}
+
+TEST(OriginalSourceSubmission, FinalSourceFactoryRefusesUnboundPendingFrameBeforeTakingOwners) {
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
+    const auto free = engine.timelineArms.FreeCount();
+    NativeUnpublishedDispositionSource source;
+    ASSERT_NO_FATAL_FAILURE(source.Prepare(engine, false, false, true, false, {}, true, 0, true, true));
+    const auto* row = engine.timelineArms.RowAt(source.arm.slot);
+    EXPECT_FALSE(row->finalSourcePublicationIssued);
+    EXPECT_FALSE(row->originalLifetimePinned.load());
+    EXPECT_FALSE(source.original.Valid());
+    EXPECT_FALSE(source.originalBody.Valid());
+    ASSERT_TRUE(engine.voices.CancelPreparedVoice(source.render));
+    ASSERT_TRUE(engine.timelineArms.CancelPrepared(source.arm));
+    EXPECT_EQ(free, engine.timelineArms.FreeCount());
+    EXPECT_EQ(0u, engine.commands.PublishedHead());
+}
+
+TEST(OriginalSourceSubmission, FinalSourceFactoryRefusesGroupedArmBeforeTakingOwners) {
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
+    const harken::VariableDefinitionV1 definition{
+        harkentest::ObjectId(0x791), harken::VariableKindV1::Step, 0.0f, 1.0f, 0.0f};
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallDefinitionsWorld(&engine, &definition, 1, UINT64_C(0x4A4F494E54534F55)).status);
+    harken::DecisionReserveRequest request{};
+    request.ticket.sequence = engine.logicCommits.Issue();
+    request.world = engine.variables.CurrentWorldGeneration();
+    request.transport = engine.timelinePool.Epoch();
+    request.expectedContinuationGeneration = 1;
+    request.sliceCount = 1;
+    harken::DecisionToken decision{};
+    ASSERT_TRUE(engine.decisions.Reserve(request, &decision));
+    NativeUnpublishedDispositionSource source;
+    ASSERT_NO_FATAL_FAILURE(source.Prepare(engine, false, false, true, false, {decision}, true, 0, false, true));
+    const auto* row = engine.timelineArms.RowAt(source.arm.slot);
+    EXPECT_FALSE(row->finalSourcePublicationIssued);
+    EXPECT_FALSE(row->originalLifetimePinned.load());
+    EXPECT_FALSE(source.original.Valid());
+    EXPECT_FALSE(source.originalBody.Valid());
+    ASSERT_TRUE(engine.voices.CancelPreparedVoice(source.render));
+    ASSERT_TRUE(engine.timelineArms.CancelPrepared(source.arm));
+    ASSERT_TRUE(engine.decisions.Cancel(decision));
+    EXPECT_EQ(0u, engine.commands.PublishedHead());
+}
+
+TEST(OriginalSourceSubmission, FinalSourceFactoryRefusesForeignArmTableBeforeTakingOwners) {
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
+    harken::TimelineArmTable foreignArms(4);
+    Registry foreign(foreignArms, engine.voices, engine.commands, engine.effectBank);
+    NativeUnpublishedDispositionSource source;
+    ASSERT_NO_FATAL_FAILURE(source.Prepare(engine, false, false, true, false, {}, true, 0, false, true, &foreign));
+    const auto* row = engine.timelineArms.RowAt(source.arm.slot);
+    EXPECT_FALSE(row->finalSourcePublicationIssued);
+    EXPECT_FALSE(row->originalLifetimePinned.load());
+    EXPECT_FALSE(source.original.Valid());
+    EXPECT_FALSE(source.originalBody.Valid());
+    ASSERT_TRUE(engine.voices.CancelPreparedVoice(source.render));
+    ASSERT_TRUE(engine.timelineArms.CancelPrepared(source.arm));
+    EXPECT_EQ(0u, engine.commands.PublishedHead());
 }
 
 TEST(OriginalSourceSubmission, NativeUnpublishedDispositionRequiresTrueBatchCancelAndPhysicalRelease) {
@@ -7776,6 +8171,337 @@ TEST(OriginalSourceSubmission, NativeUnpublishedDispositionAcceptsTrueNeverBound
     EXPECT_FALSE(engine.timelineArms.RowAt(source.arm.slot)->originalLifetimePinned.load());
     ASSERT_TRUE(engine.timelineArms.CancelPrepared(source.arm));
     EXPECT_EQ(0u, engine.mixer.BlocksRendered()); EXPECT_EQ(0u, engine.commands.PublishedHead());
+}
+
+TEST(OriginalSourceSubmission, UnpublishedStorageWaitsForBothLoansAcrossPreparationAndCommit) {
+    for (const bool bound : {false, true}) {
+        for (const bool committed : {false, true}) {
+            for (const bool bodyFirst : {false, true}) {
+                SCOPED_TRACE(testing::Message() << "bound=" << bound << " committed=" << committed
+                    << " bodyFirst=" << bodyFirst);
+                harkentest::EngineSession session(SourceBodyConfig());
+                ASSERT_EQ(VN_OK, session.InitResult());
+                auto& engine = *session.Engine();
+                ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
+                const auto free = engine.timelineArms.FreeCount();
+                NativeUnpublishedDispositionSource source;
+                ASSERT_NO_FATAL_FAILURE(source.Prepare(engine, bound, committed, true, true, {}, true));
+                Registry::OriginalSourceLifetimePin sourceLoan;
+                harken::VoicePool::OriginalSourceBodyLifetimePin bodyLoan;
+                ASSERT_TRUE(source.original.Borrow(&sourceLoan));
+                ASSERT_TRUE(source.originalBody.Borrow(&bodyLoan));
+                EXPECT_FALSE(engine.originalSourceSubmissions.CanReturnUnpublishedOriginalSourcePairStorage(
+                    source.original, source.originalBody));
+                ASSERT_NO_FATAL_FAILURE(source.Dispose(engine));
+                EXPECT_TRUE(engine.voices.ReleaseObserved(source.release));
+                EXPECT_FALSE(engine.originalSourceSubmissions.CanReturnUnpublishedOriginalSourcePairStorage(
+                    source.original, source.originalBody));
+                if (bodyFirst) bodyLoan.Release();
+                else sourceLoan.Release();
+                EXPECT_FALSE(engine.originalSourceSubmissions.CanReturnUnpublishedOriginalSourcePairStorage(
+                    source.original, source.originalBody));
+                if (bodyFirst) sourceLoan.Release();
+                else bodyLoan.Release();
+                EXPECT_TRUE(engine.originalSourceSubmissions.CanReturnUnpublishedOriginalSourcePairStorage(
+                    source.original, source.originalBody));
+                source.originalBody.Release();
+                source.original.Release();
+                const auto* disposition = engine.originalSourceSubmissions.OriginalUnpublishedDisposition(source.arm);
+                ASSERT_NE(nullptr, disposition);
+                using Retirement = harken::TimelineArmTable::UnparentedUnpublishedSourceRetirement;
+                if (committed)
+                    EXPECT_EQ(Retirement::Consumed,
+                        engine.timelineArms.ConsumeOriginalUnparentedUnpublishedSource(*disposition));
+                else
+                    EXPECT_TRUE(engine.timelineArms.CancelPrepared(source.arm));
+                EXPECT_EQ(free, engine.timelineArms.FreeCount());
+                EXPECT_EQ(0u, engine.commands.PublishedHead());
+                EXPECT_EQ(0u, engine.mixer.BlocksRendered());
+            }
+        }
+    }
+}
+
+TEST(OriginalSourceSubmission, PublishedPairReturnRequiresRealRangeAndExactPhysicalRelease) {
+    for (const bool cancelledBeforeInstall : {false, true}) {
+        SCOPED_TRACE(cancelledBeforeInstall);
+        harkentest::EngineSession session(SourceBodyConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const std::vector<float> samples(kRate, 0.25f);
+        SourceBody first, second;
+        ASSERT_NO_FATAL_FAILURE(StartIndependent(engine, first, samples));
+        second.independent = first.independent;
+        Registry::OriginalSourceLifetimePin source, otherSource, sourceLoan;
+        BodyPin original, otherBody, bodyLoan;
+        ASSERT_NO_FATAL_FAILURE(PublishOriginalBodyEpisode(engine, first, false, false, &source, &original));
+        ASSERT_NO_FATAL_FAILURE(PublishOriginalBodyEpisode(engine, second, false, false, &otherSource, &otherBody));
+        ASSERT_TRUE(source.Borrow(&sourceLoan));
+        ASSERT_TRUE(original.Borrow(&bodyLoan));
+        EXPECT_FALSE(engine.originalSourceSubmissions.CanReturnPublishedOriginalSourcePairStorage(
+            source, original, first.release));
+        if (cancelledBeforeInstall) ASSERT_TRUE(engine.timelineArms.RequestCancel(first.arm));
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(Registry::Phase::Disposed, engine.originalSourceSubmissions.Find(first.arm)->State());
+        if (!cancelledBeforeInstall) {
+            EXPECT_FALSE(engine.originalSourceSubmissions.CanReturnPublishedOriginalSourcePairStorage(
+                source, original, first.release));
+            ASSERT_NO_FATAL_FAILURE(StopOriginalBodyEpisode(engine, first));
+        }
+        ASSERT_TRUE(engine.voices.ReleaseObserved(first.release));
+        auto wrongRelease = first.release;
+        ++wrongRelease.targetSequence;
+        EXPECT_FALSE(engine.originalSourceSubmissions.CanReturnPublishedOriginalSourcePairStorage(
+            source, original, wrongRelease));
+        EXPECT_FALSE(engine.originalSourceSubmissions.CanReturnPublishedOriginalSourcePairStorage(
+            source, original, second.release));
+        EXPECT_FALSE(engine.originalSourceSubmissions.CanReturnPublishedOriginalSourcePairStorage(
+            source, otherBody, first.release));
+        EXPECT_FALSE(engine.originalSourceSubmissions.CanReturnPublishedOriginalSourcePairStorage(
+            otherSource, original, first.release));
+        ASSERT_TRUE(engine.originalSourceSubmissions.CanReturnPublishedOriginalSourcePairStorage(
+            source, original, first.release));
+        original.Release();
+        source.Release();
+        EXPECT_TRUE(engine.timelineArms.RowAt(first.arm.slot)->originalLifetimePinned.load());
+        ASSERT_TRUE(engine.originalSourceSubmissions.CanReturnPublishedOriginalSourcePairStorage(
+            sourceLoan, bodyLoan, first.release));
+        bodyLoan.Release();
+        sourceLoan.Release();
+        EXPECT_FALSE(engine.timelineArms.RowAt(first.arm.slot)->originalLifetimePinned.load());
+        ASSERT_NO_FATAL_FAILURE(ReclaimOriginalBodyArm(engine, first));
+        ASSERT_NO_FATAL_FAILURE(StopOriginalBodyEpisode(engine, second));
+        otherBody.Release();
+        otherSource.Release();
+        ASSERT_NO_FATAL_FAILURE(ReclaimOriginalBodyArm(engine, second));
+        ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, first));
+    }
+}
+
+TEST(OriginalSourceSubmission, PendingInstalledRetirementRunsOnActualCallbackAndPreservesForeignStorage) {
+    using Result = Registry::InstalledSourceRetirementRequest;
+    for (const bool returnDuringCallback : {false, true}) {
+        SCOPED_TRACE(returnDuringCallback);
+        harkentest::EngineSession session(SourceBodyConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const std::vector<float> samples(kRate, 0.25f);
+        SourceBody body;
+        ASSERT_NO_FATAL_FAILURE(StartIndependent(engine, body, samples));
+        Registry::OriginalSourceLifetimePin source;
+        BodyPin original, foreign;
+        ASSERT_NO_FATAL_FAILURE(PublishOriginalBodyEpisode(engine, body, true, false,
+            &source, &original, false, nullptr, true));
+        EXPECT_EQ(Result::Refused,
+            SourceOriginAccess::RequestRetirement(engine.originalSourceSubmissions, source, original));
+        ASSERT_NO_FATAL_FAILURE(PumpOriginalBodyInstall(engine, body));
+        ASSERT_TRUE(original.Borrow(&foreign));
+        const auto watermark = engine.mixer.BlocksRendered();
+        const auto completed = engine.voices.CompletedCount();
+        const auto origin = SourceOriginAccess::Observe(engine.originalSourceSubmissions, body.arm);
+        ASSERT_EQ(Result::Requested,
+            SourceOriginAccess::RequestRetirement(engine.originalSourceSubmissions, source, original));
+        ASSERT_EQ(Result::Requested,
+            SourceOriginAccess::RequestRetirement(engine.originalSourceSubmissions, source, foreign));
+        EXPECT_EQ(origin.epoch, SourceOriginAccess::Observe(engine.originalSourceSubmissions, body.arm).epoch);
+        EXPECT_FALSE(engine.voices.ReleaseObserved(body.release));
+        EXPECT_EQ(completed, engine.voices.CompletedCount());
+        EXPECT_FALSE(engine.timelineArms.BindPendingImmediateStart(body.arm,
+            (watermark + 2u) * kFrames, (watermark + 2u) * kFrames));
+
+        engine.voices.BeginAudioBlock(watermark);
+        ASSERT_TRUE(engine.voices.ReleaseObserved(body.release));
+        EXPECT_EQ(completed + 1u, engine.voices.CompletedCount());
+        EXPECT_EQ(nullptr, engine.voices.Resolve(body.source));
+        EXPECT_FALSE(engine.voices.IsOriginalSourceBodyCurrent(original));
+        EXPECT_FALSE(engine.originalSourceSubmissions.IsOriginalInstalledSourceCurrent(source, body.source));
+        const auto physical = NativeCallbackAccess::ObserveOriginalCallback(engine.voices,
+            static_cast<std::uint32_t>(body.source));
+        EXPECT_TRUE(physical.free);
+        EXPECT_TRUE(physical.reader);
+        EXPECT_TRUE(physical.actor);
+        EXPECT_TRUE(physical.disposed);
+        EXPECT_FALSE(physical.loanReturned);
+        harken::TimelineArmObservation ended{};
+        ASSERT_TRUE(engine.timelineArms.Observe(body.arm, &ended));
+        EXPECT_EQ(harken::ArmState::Tombstoned, ended.state);
+        EXPECT_EQ(watermark, ended.tombstoneAudioSequence);
+        EXPECT_EQ(0u, ended.startedBlockSequence);
+        EXPECT_EQ(Result::AlreadyReleased,
+            SourceOriginAccess::RequestRetirement(engine.originalSourceSubmissions, source, original));
+        VnVoiceHandle replacement = 0;
+        EXPECT_EQ(VN_NO_VOICE, PrepareAtOriginalBodySlot(engine, body, &replacement));
+        if (returnDuringCallback) {
+            foreign.Release();
+            original.Release();
+            EXPECT_EQ(VN_NO_VOICE, PrepareAtOriginalBodySlot(engine, body, &replacement));
+        }
+        engine.voices.EndAudioBlock();
+        ASSERT_NO_FATAL_FAILURE(CheckActualNativeCallbackReturned(engine, body));
+        EXPECT_EQ(watermark, engine.mixer.BlocksRendered());
+        if (!returnDuringCallback) {
+            EXPECT_EQ(VN_NO_VOICE, PrepareAtOriginalBodySlot(engine, body, &replacement));
+            original.Release();
+            EXPECT_EQ(VN_NO_VOICE, PrepareAtOriginalBodySlot(engine, body, &replacement));
+            foreign.Release();
+        }
+        ASSERT_EQ(VN_OK, PrepareAtOriginalBodySlot(engine, body, &replacement));
+        EXPECT_NE(body.source, replacement);
+        ASSERT_TRUE(engine.voices.CancelPreparedVoice(replacement));
+        ASSERT_NO_FATAL_FAILURE(RecycleExactRetirement(engine, body));
+        ASSERT_NO_FATAL_FAILURE(CloseManualNativeStopAndReclaim(engine, body, source, original));
+    }
+}
+
+TEST(OriginalSourceSubmission, PendingInstalledRetirementUsesFreshMixerCallbackAndExactRelease) {
+    using Result = Registry::InstalledSourceRetirementRequest;
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const std::vector<float> samples(kRate, 0.25f);
+    SourceBody body;
+    ASSERT_NO_FATAL_FAILURE(StartIndependent(engine, body, samples));
+    Registry::OriginalSourceLifetimePin source;
+    BodyPin original;
+    ASSERT_NO_FATAL_FAILURE(PublishOriginalBodyEpisode(engine, body, true, false,
+        &source, &original, false, nullptr, true));
+    ASSERT_NO_FATAL_FAILURE(PumpOriginalBodyInstall(engine, body));
+    const auto before = engine.mixer.BlocksRendered();
+    const auto completed = engine.voices.CompletedCount();
+    const auto origin = SourceOriginAccess::Observe(engine.originalSourceSubmissions, body.arm);
+    ASSERT_EQ(Result::Requested,
+        SourceOriginAccess::RequestRetirement(engine.originalSourceSubmissions, source, original));
+    EXPECT_FALSE(engine.voices.ReleaseObserved(body.release));
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+    ASSERT_TRUE(engine.voices.ReleaseObserved(body.release));
+    EXPECT_EQ(completed + 1u, engine.voices.CompletedCount());
+    EXPECT_GT(SourceOriginAccess::Observe(engine.originalSourceSubmissions, body.arm).epoch, origin.epoch);
+    ASSERT_NO_FATAL_FAILURE(CheckActualNativeCallbackReturned(engine, body));
+    harken::TimelineArmObservation ended{};
+    ASSERT_TRUE(engine.timelineArms.Observe(body.arm, &ended));
+    EXPECT_EQ(harken::ArmState::Tombstoned, ended.state);
+    EXPECT_EQ(before, ended.tombstoneAudioSequence);
+    EXPECT_EQ(0u, ended.startedBlockSequence);
+    EXPECT_FALSE(engine.timelineArms.Reclaim(body.arm, engine.mixer.BlocksRendered()));
+    ASSERT_NO_FATAL_FAILURE(RecycleExactRetirement(engine, body));
+    ASSERT_NO_FATAL_FAILURE(ReturnActualOriginTail(engine, body, source, original));
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(completed + 1u, engine.voices.CompletedCount());
+    ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
+}
+
+TEST(OriginalSourceSubmission, PendingInstalledRetirementSealsFreshTerminalBeforeReturningReusableStorage) {
+    using Result = Registry::InstalledSourceRetirementRequest;
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const std::vector<float> samples(kRate, 0.25f);
+    SourceBody body;
+    ASSERT_NO_FATAL_FAILURE(StartIndependent(engine, body, samples));
+    Registry::OriginalSourceLifetimePin source;
+    BodyPin original, foreign;
+    ASSERT_NO_FATAL_FAILURE(PublishOriginalBodyEpisode(engine, body, true, false,
+        &source, &original, false, nullptr, true));
+    ASSERT_NO_FATAL_FAILURE(PumpOriginalBodyInstall(engine, body));
+    ASSERT_TRUE(original.Borrow(&foreign));
+    Registry::PendingInstalledSourceRetirementReceipt receipt;
+    ASSERT_EQ(Result::Requested,
+        SourceOriginAccess::RequestRetirementReceipt(engine.originalSourceSubmissions, source, original, &receipt));
+    EXPECT_FALSE(receipt.StorageReturned());
+    EXPECT_FALSE(SourceOriginAccess::ReturnRetirementStorage(engine.originalSourceSubmissions, receipt, body.arm));
+    EXPECT_FALSE(SourceOriginAccess::RetirementSettled(engine.originalSourceSubmissions, receipt, body.arm));
+    const auto before = engine.mixer.BlocksRendered();
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+    ASSERT_TRUE(engine.voices.ReleaseObserved(body.release));
+    ASSERT_TRUE(SourceOriginAccess::ReturnRetirementStorage(engine.originalSourceSubmissions, receipt, body.arm));
+    EXPECT_TRUE(receipt.Valid());
+    EXPECT_TRUE(receipt.StorageReturned());
+    EXPECT_TRUE(SourceOriginAccess::RetirementSettled(engine.originalSourceSubmissions, receipt, body.arm));
+    auto wrong = body.arm;
+    ++wrong.renderGeneration;
+    EXPECT_FALSE(SourceOriginAccess::RetirementSettled(engine.originalSourceSubmissions, receipt, wrong));
+    Registry foreignRegistry(engine.timelineArms, engine.voices, engine.commands, engine.effectBank);
+    EXPECT_FALSE(SourceOriginAccess::RetirementSettled(foreignRegistry, receipt, body.arm));
+    original.Release();
+    source.Release();
+    VnVoiceHandle replacement = 0;
+    EXPECT_EQ(VN_NO_VOICE, PrepareAtOriginalBodySlot(engine, body, &replacement));
+    foreign.Release();
+    ASSERT_EQ(VN_OK, PrepareAtOriginalBodySlot(engine, body, &replacement));
+    EXPECT_NE(body.source, replacement);
+    ASSERT_TRUE(engine.voices.CancelPreparedVoice(replacement));
+    ASSERT_TRUE(engine.timelineArms.Reclaim(body.arm, engine.mixer.BlocksRendered()));
+    EXPECT_EQ(nullptr, engine.timelineArms.Resolve(body.arm));
+    // The certificate survives physical storage reuse without reading the old row.
+    Registry::PendingInstalledSourceRetirementReceipt moved(std::move(receipt));
+    EXPECT_FALSE(receipt.Valid());
+    EXPECT_FALSE(SourceOriginAccess::RetirementSettled(engine.originalSourceSubmissions, receipt, body.arm));
+    EXPECT_TRUE(SourceOriginAccess::RetirementSettled(engine.originalSourceSubmissions, moved, body.arm));
+    ASSERT_TRUE(SourceOriginAccess::ReturnRetirementStorage(engine.originalSourceSubmissions, moved, body.arm));
+    ASSERT_NO_FATAL_FAILURE(RecycleExactRetirement(engine, body));
+    SourceBody next;
+    next.independent = body.independent;
+    next.baseline = body.baseline;
+    Registry::OriginalSourceLifetimePin nextSource;
+    BodyPin nextBody;
+    ASSERT_NO_FATAL_FAILURE(PublishOriginalBodyEpisode(engine, next, false, false,
+        &nextSource, &nextBody, false, nullptr, true));
+    ASSERT_EQ(body.arm.slot, next.arm.slot);
+    ASSERT_NE(body.arm.generation, next.arm.generation);
+    EXPECT_EQ(nullptr, engine.originalSourceSubmissions.Find(body.arm));
+    EXPECT_TRUE(SourceOriginAccess::RetirementSettled(engine.originalSourceSubmissions, moved, body.arm));
+    EXPECT_FALSE(SourceOriginAccess::RetirementSettled(engine.originalSourceSubmissions, moved, next.arm));
+    ASSERT_NO_FATAL_FAILURE(PumpOriginalBodyInstall(engine, next));
+    EXPECT_EQ(Result::Refused,
+        SourceOriginAccess::RequestRetirementReceipt(engine.originalSourceSubmissions, nextSource, nextBody, &moved));
+    EXPECT_TRUE(SourceOriginAccess::RetirementSettled(engine.originalSourceSubmissions, moved, body.arm));
+    ASSERT_NO_FATAL_FAILURE(StopOriginalBodyEpisode(engine, next));
+    ASSERT_NO_FATAL_FAILURE(ReturnActualOriginTail(engine, next, nextSource, nextBody));
+    ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
+    moved.Release();
+    EXPECT_FALSE(moved.Valid());
+    EXPECT_FALSE(SourceOriginAccess::RetirementSettled(engine.originalSourceSubmissions, moved, body.arm));
+}
+
+TEST(OriginalSourceSubmission, PendingInstalledRetirementRejectsForeignPairAndBoundStart) {
+    using Result = Registry::InstalledSourceRetirementRequest;
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const std::vector<float> samples(kRate, 0.25f);
+    SourceBody first, second;
+    ASSERT_NO_FATAL_FAILURE(StartIndependent(engine, first, samples));
+    second.independent = first.independent;
+    second.baseline = first.baseline;
+    Registry::OriginalSourceLifetimePin firstSource, secondSource, emptySource;
+    BodyPin firstBody, secondBody, emptyBody;
+    ASSERT_NO_FATAL_FAILURE(PublishOriginalBodyEpisode(engine, first, false, false,
+        &firstSource, &firstBody, false, nullptr, true));
+    ASSERT_NO_FATAL_FAILURE(PumpOriginalBodyInstall(engine, first));
+    ASSERT_NO_FATAL_FAILURE(PublishOriginalBodyEpisode(engine, second, false, false,
+        &secondSource, &secondBody, false, nullptr, true));
+    ASSERT_NO_FATAL_FAILURE(PumpOriginalBodyInstall(engine, second));
+    EXPECT_EQ(Result::Refused,
+        SourceOriginAccess::RequestRetirement(engine.originalSourceSubmissions, firstSource, secondBody));
+    EXPECT_EQ(Result::Refused,
+        SourceOriginAccess::RequestRetirement(engine.originalSourceSubmissions, secondSource, firstBody));
+    EXPECT_EQ(Result::Refused,
+        SourceOriginAccess::RequestRetirement(engine.originalSourceSubmissions, emptySource, firstBody));
+    EXPECT_EQ(Result::Refused,
+        SourceOriginAccess::RequestRetirement(engine.originalSourceSubmissions, firstSource, emptyBody));
+    const auto frame = (engine.mixer.BlocksRendered() + 2u) * kFrames;
+    ASSERT_TRUE(engine.timelineArms.BindPendingImmediateStart(first.arm, frame, frame));
+    EXPECT_EQ(Result::Refused,
+        SourceOriginAccess::RequestRetirement(engine.originalSourceSubmissions, firstSource, firstBody));
+    EXPECT_FALSE(engine.voices.ReleaseObserved(first.release));
+    EXPECT_FALSE(engine.voices.ReleaseObserved(second.release));
+    ASSERT_NO_FATAL_FAILURE(StopOriginalBodyEpisode(engine, first));
+    ASSERT_NO_FATAL_FAILURE(StopOriginalBodyEpisode(engine, second));
+    ASSERT_NO_FATAL_FAILURE(ReturnActualOriginTail(engine, first, firstSource, firstBody));
+    ASSERT_NO_FATAL_FAILURE(ReturnActualOriginTail(engine, second, secondSource, secondBody));
+    ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, first));
 }
 
 TEST(OriginalSourceSubmission, NativeUnpublishedDispositionRetainsRealForeignSourceLoanAfterPhysicalExit) {

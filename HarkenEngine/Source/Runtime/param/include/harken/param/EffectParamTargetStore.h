@@ -262,28 +262,28 @@ public:
     float LastCommitted(Scope scope, std::uint64_t objectId, std::uint32_t slot,
                         std::uint32_t paramIndex) const;
     bool TryClaim(Scope scope, std::uint64_t objectId, std::uint32_t slot,
-                  std::uint32_t paramIndex, VariableSliceRef owner,
+                  std::uint32_t paramIndex, TargetClaimOwner owner,
                   std::uint32_t expectedRevision) noexcept;
     bool TryClaim(Scope scope, std::uint64_t objectId,
                   std::uint32_t objectGeneration, std::uint32_t slot,
-                  std::uint32_t paramIndex, VariableSliceRef owner,
+                  std::uint32_t paramIndex, TargetClaimOwner owner,
                   std::uint32_t expectedRevision) noexcept;
     void ReleaseClaim(Scope scope, std::uint64_t objectId, std::uint32_t slot,
                       std::uint32_t paramIndex,
-                      VariableSliceRef owner) noexcept;
+                      TargetClaimOwner owner) noexcept;
     void ReleaseClaim(Scope scope, std::uint64_t objectId,
                       std::uint32_t objectGeneration, std::uint32_t slot,
                       std::uint32_t paramIndex,
-                      VariableSliceRef owner) noexcept;
+                      TargetClaimOwner owner) noexcept;
     bool SnapshotForClaim(Scope scope, std::uint64_t objectId,
                           std::uint32_t slot, std::uint32_t paramIndex,
-                          VariableSliceRef owner, float* resolved,
+                          TargetClaimOwner owner, float* resolved,
                           std::uint32_t* revision,
                           std::uint32_t* effectType) const noexcept;
     bool SnapshotForClaim(Scope scope, std::uint64_t objectId,
                           std::uint32_t objectGeneration,
                           std::uint32_t slot, std::uint32_t paramIndex,
-                          VariableSliceRef owner, float* resolved,
+                          TargetClaimOwner owner, float* resolved,
                           std::uint32_t* revision,
                           std::uint32_t* effectType) const noexcept;
     std::uint32_t TargetRevision(Scope scope, std::uint64_t objectId,
@@ -316,11 +316,11 @@ public:
                        std::uint32_t slot) const noexcept;
     void MarkSliceCommitted(Scope scope, std::uint64_t objectId,
                             std::uint32_t slot, std::uint32_t paramIndex,
-                            VariableSliceRef owner, float resolved) noexcept;
+                            TargetClaimOwner owner, float resolved) noexcept;
     void MarkSliceCommitted(Scope scope, std::uint64_t objectId,
                             std::uint32_t objectGeneration,
                             std::uint32_t slot, std::uint32_t paramIndex,
-                            VariableSliceRef owner, float resolved) noexcept;
+                            TargetClaimOwner owner, float resolved) noexcept;
     std::uint32_t RetiringRecordCountForTests() const noexcept;
     void SetNextRevisionForTests(std::uint64_t revision) noexcept {
         m_nextRevision = revision;
@@ -331,7 +331,18 @@ public:
     void MarkDropped(Scope scope, std::uint64_t objectId, std::uint32_t slot,
                      std::uint32_t paramIndex);
 
+    bool BeginVariableProjection() noexcept;
+    void RestoreVariableProjection() noexcept;
+    std::uint64_t VariableProjectionStorageBytes() const noexcept;
+
 private:
+    struct VariableEvaluation {
+        float contribution = 0.0f;
+        float rebuildAccum = 0.0f;
+        bool bindingActive = false;
+        bool foldedThisSweep = false;
+        bool dirty = false;
+    };
     struct Record {
         Lifecycle lifecycle = Lifecycle::Free;
         Scope scope = Scope::Voice;
@@ -356,7 +367,8 @@ private:
         bool foldedThisSweep = false; // reset by Begin, set by first Accumulate
         bool dirty = false;
         bool reserved = false;
-        VariableSliceRef preparedOwner{};
+        TargetClaimOwner preparedOwner{};
+        std::uint32_t publicationRefCount = 0;
         std::uint32_t revision = 0;
     };
 
@@ -400,6 +412,10 @@ private:
     std::uint32_t m_activeCapacity = 0;
     std::uint32_t m_totalCapacity = 0;
     std::vector<Record> m_records;
+    std::vector<VariableEvaluation> m_projection;
+    bool m_projectionActive = false;
+    std::size_t m_projectionRecordCount = 0;
+    std::uint32_t m_projectionDirtyCount = 0;
     std::uint64_t m_nextRevision = 1;
     std::uint32_t m_dirtyCount = 0;
     bool m_failSeedForTests = false;

@@ -13,6 +13,7 @@ target_include_directories(harken_object_identity_tests PRIVATE
     ${HARKEN_RUNTIME_DIR}/media/include
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/remote/include
+    ${HARKEN_RUNTIME_DIR}/render/include
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Remote/include
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Remote/generated)
 target_link_libraries(harken_object_identity_tests PRIVATE harken_core GTest::gtest_main)

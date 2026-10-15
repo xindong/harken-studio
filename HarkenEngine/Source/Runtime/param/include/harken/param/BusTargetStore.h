@@ -180,50 +180,61 @@ public:
     void MarkDropped(std::uint32_t busIndex, std::uint32_t targetId);
 
     float LastCommitted(std::uint32_t busIndex, std::uint32_t targetId) const;
+    bool BeginVariableProjection() noexcept;
+    void RestoreVariableProjection() noexcept;
+    std::uint64_t VariableProjectionStorageBytes() const noexcept;
+    std::uint32_t TakePublicationRamp(std::uint32_t busIndex,
+        std::uint32_t busGeneration, std::uint32_t targetId,
+        TargetClaimOwner owner) noexcept;
+    void RestorePublicationRamp(std::uint32_t busIndex,
+        std::uint32_t busGeneration, std::uint32_t targetId,
+        TargetClaimOwner owner, std::uint32_t rampMs) noexcept;
     bool TryClaim(std::uint32_t busIndex, std::uint32_t targetId,
-                  VariableSliceRef owner, std::uint32_t expectedRevision) noexcept;
+                  TargetClaimOwner owner, std::uint32_t expectedRevision) noexcept;
     bool TryClaim(std::uint32_t busIndex, std::uint32_t busGeneration,
-                  std::uint32_t targetId, VariableSliceRef owner,
+                  std::uint32_t targetId, TargetClaimOwner owner,
                   std::uint32_t expectedRevision) noexcept;
     bool CaptureCandidateBaseline(std::uint32_t busIndex,
                                   std::uint32_t busGeneration,
                                   std::uint32_t targetId,
-                                  VariableSliceRef owner) noexcept;
+                                  TargetClaimOwner owner) noexcept;
     void ClearCandidateBaseline(std::uint32_t busIndex,
                                 std::uint32_t busGeneration,
                                 std::uint32_t targetId,
-                                VariableSliceRef owner) noexcept;
+                                TargetClaimOwner owner) noexcept;
     void DropClaimedPublication(std::uint32_t busIndex,
                                 std::uint32_t busGeneration,
                                 std::uint32_t targetId,
-                                VariableSliceRef owner) noexcept;
+                                TargetClaimOwner owner) noexcept;
+    void DropClaimedBaseline(std::uint32_t busIndex, std::uint32_t busGeneration,
+                             std::uint32_t targetId, TargetClaimOwner owner) noexcept;
     void ReleaseClaim(std::uint32_t busIndex, std::uint32_t targetId,
-                      VariableSliceRef owner,
+                      TargetClaimOwner owner,
                       ClaimReleaseReason reason =
                           ClaimReleaseReason::RetryPreserve) noexcept;
     void ReleaseClaim(std::uint32_t busIndex, std::uint32_t busGeneration,
-                      std::uint32_t targetId, VariableSliceRef owner,
+                      std::uint32_t targetId, TargetClaimOwner owner,
                       ClaimReleaseReason reason =
                           ClaimReleaseReason::RetryPreserve) noexcept;
     std::uint32_t PendingRampMs(std::uint32_t busIndex,
                                 std::uint32_t targetId) const;
     bool SnapshotForClaim(std::uint32_t busIndex, std::uint32_t targetId,
-                          VariableSliceRef owner, float* resolved,
+                          TargetClaimOwner owner, float* resolved,
                           std::uint32_t* rampMs,
                           std::uint32_t* revision) const noexcept;
     bool SnapshotForClaim(std::uint32_t busIndex,
                           std::uint32_t busGeneration,
-                          std::uint32_t targetId, VariableSliceRef owner,
+                          std::uint32_t targetId, TargetClaimOwner owner,
                           float* resolved, std::uint32_t* rampMs,
                           std::uint32_t* revision) const noexcept;
     bool CaptureSnapshotForClaim(
         std::uint32_t busIndex, std::uint32_t busGeneration,
-        std::uint32_t targetId, VariableSliceRef owner, float* resolved,
+        std::uint32_t targetId, TargetClaimOwner owner, float* resolved,
         std::uint32_t* rampMs, std::uint32_t* revision) noexcept;
     void SetClaimRampSuppressed(std::uint32_t busIndex,
                                 std::uint32_t busGeneration,
                                 std::uint32_t targetId,
-                                VariableSliceRef owner,
+                                TargetClaimOwner owner,
                                 bool suppressed) noexcept;
     std::uint32_t TargetRevision(std::uint32_t busIndex,
                                  std::uint32_t targetId) const noexcept;
@@ -235,11 +246,11 @@ public:
     bool ForeignClaim(std::uint32_t busIndex, std::uint32_t busGeneration,
                       std::uint32_t targetId) const noexcept;
     void MarkSliceCommitted(std::uint32_t busIndex, std::uint32_t targetId,
-                            VariableSliceRef owner, float resolved,
+                            TargetClaimOwner owner, float resolved,
                             std::uint32_t rampMs) noexcept;
     void MarkSliceCommitted(std::uint32_t busIndex,
                             std::uint32_t busGeneration,
-                            std::uint32_t targetId, VariableSliceRef owner,
+                            std::uint32_t targetId, TargetClaimOwner owner,
                             float resolved, std::uint32_t rampMs) noexcept;
 
     void RetireBusGeneration(std::uint32_t busIndex,
@@ -277,6 +288,14 @@ private:
         bool active = false;
     };
 
+    struct VariableEvaluation {
+        Slot variable{};
+        std::uint32_t pendingRampMs = 0;
+        bool dirty = false;
+        bool pendingInput = false;
+        bool suppressClaimRamp = false;
+    };
+
     // Per (bus, target) publication record — the voice TargetState mirror.
     struct PublishState {
         float lastCommitted = 0.0f; // seeded to the neutral base at init
@@ -296,7 +315,8 @@ private:
         // attribution capture's record, nothing else reads it.
         std::uint32_t lastPublishedRampMs = 0;
         std::uint32_t revision = 1;
-        VariableSliceRef preparedOwner{};
+        TargetClaimOwner preparedOwner{};
+        std::uint32_t publicationRefCount = 0;
     };
 
     struct RetiringTarget {
@@ -305,7 +325,8 @@ private:
         std::uint32_t busIndex = 0;
         std::uint32_t busGeneration = 0;
         std::uint32_t targetId = 0;
-        VariableSliceRef owner{};
+        TargetClaimOwner owner{};
+        std::uint32_t publicationRefCount = 0;
         std::uint32_t revision = 0;
         float frozenResolved = 0.0f;
         std::uint32_t frozenRampMs = 0;
@@ -339,14 +360,18 @@ private:
     RetiringTarget* FindRetiring(std::uint32_t busIndex,
                                  std::uint32_t busGeneration,
                                  std::uint32_t targetId,
-                                 VariableSliceRef owner) noexcept;
+                                 TargetClaimOwner owner) noexcept;
     const RetiringTarget* FindRetiring(
         std::uint32_t busIndex, std::uint32_t busGeneration,
-        std::uint32_t targetId, VariableSliceRef owner) const noexcept;
+        std::uint32_t targetId, TargetClaimOwner owner) const noexcept;
 
     std::uint32_t m_maxBuses = 0;
     std::vector<Slot> m_slots;           // fixed size after construction
     std::vector<PublishState> m_publish; // one per (bus, target)
+    std::vector<VariableEvaluation> m_projection;
+    bool m_projectionActive = false;
+    std::uint32_t m_projectionDemandCount = 0;
+    std::uint32_t m_projectionPendingInputMarks = 0;
     std::vector<std::uint32_t> m_activeGenerations;
     std::vector<RetiringTarget> m_retiringTargets;
     std::vector<float> m_meterProbeAccum;

@@ -86,11 +86,52 @@ std::uint64_t PreparedActionFiring::InheritedSequence() const noexcept {
 std::uint64_t ActionFiringTable::InheritedSequence(const PreparedActionFiring& child) const noexcept {
     if (child.owner_ != this || !child.Valid()) return 0;
     const auto& row = rows_[SlotOf(child.handle_)];
-    const auto* parent = Resolve(row.parent);
-    if (parent == nullptr || parent->state != SlotState::Active ||
-        row.acceptedLogicSequence == 0 || row.acceptedLogicSequence != parent->acceptedLogicSequence ||
-        row.cancellationEpoch != parent->cancellationEpoch) return 0;
-    return row.acceptedLogicSequence;
+    PreparedChildIdentity identity;
+    return CapturePreparedChildIdentity(child, row.cancellationEpoch, &identity) ? identity.Sequence() : 0;
+}
+
+bool ActionFiringTable::CapturePreparedChildIdentity(const PreparedActionFiring& prepared,
+    std::uint64_t originalCancellationEpoch, PreparedChildIdentity* out) const noexcept {
+    if (out == nullptr || out->HasPreparation() || prepared.owner_ != this || !prepared.Valid() ||
+        originalCancellationEpoch == 0) return false;
+    const auto& row = rows_[SlotOf(prepared.handle_)];
+    PreparedChildIdentity identity;
+    identity.owner_ = this;
+    identity.child_ = prepared.handle_;
+    identity.parent_ = row.parent;
+    identity.root_ = row.root;
+    identity.epoch_ = originalCancellationEpoch;
+    identity.rootEpoch_ = row.rootCancellationEpoch;
+    identity.sequence_ = row.acceptedLogicSequence;
+    if (!IsPreparedChildActive(identity)) return false;
+    *out = identity;
+    return true;
+}
+
+bool ActionFiringTable::MatchesChildIdentity(const PreparedChildIdentity& identity, bool prepared) const noexcept {
+    if (identity.owner_ != this || identity.child_ == 0 || identity.parent_ == 0 || identity.root_ == 0 ||
+        identity.sequence_ == 0 || identity.epoch_ == 0 || identity.rootEpoch_ == 0) return false;
+    const auto slot = SlotOf(identity.child_);
+    if (slot >= rows_.size()) return false;
+    const auto& child = rows_[slot];
+    const auto* parent = Resolve(identity.parent_);
+    const auto* root = Resolve(identity.root_);
+    return child.generation == GenerationOf(identity.child_) &&
+        child.state == (prepared ? SlotState::Prepared : SlotState::Active) &&
+        child.parent == identity.parent_ && child.root == identity.root_ &&
+        child.cancellationEpoch == identity.epoch_ && child.rootCancellationEpoch == identity.rootEpoch_ &&
+        child.acceptedLogicSequence == identity.sequence_ && parent != nullptr && root != nullptr &&
+        parent->state == SlotState::Active && parent->root == identity.root_ && root->state == SlotState::Active &&
+        parent->cancellationEpoch == identity.epoch_ && root->cancellationEpoch == identity.rootEpoch_ &&
+        parent->acceptedLogicSequence == identity.sequence_ && root->acceptedLogicSequence == identity.sequence_;
+}
+
+bool ActionFiringTable::IsPreparedChildActive(const PreparedChildIdentity& identity) const noexcept {
+    return MatchesChildIdentity(identity, true);
+}
+
+bool ActionFiringTable::IsChildActivationCurrent(const ChildActivationReceipt& receipt) const noexcept {
+    return MatchesChildIdentity(receipt.identity_, false);
 }
 
 ActionFiringHandle ActionFiringTable::MakeHandle(
@@ -213,6 +254,7 @@ bool ActionFiringTable::PrepareRoot(
                 ? owner.worldGeneration
                 : owner.pack.compositeGeneration;
         row.cancellationEpoch = 1;
+        row.rootCancellationEpoch = 1;
         row.acceptedLogicSequence = 0;
         row.outcome = ActionFiringOutcome::Pending;
         row.terminalReason = ActionTerminalReason::None;
@@ -280,6 +322,7 @@ bool ActionFiringTable::PrepareChild(
                 ? owner.worldGeneration
                 : owner.pack.compositeGeneration;
         row.cancellationEpoch = 1;
+        row.rootCancellationEpoch = parentRow->rootCancellationEpoch;
         row.acceptedLogicSequence = 0;
         row.outcome = ActionFiringOutcome::Pending;
         row.terminalReason = ActionTerminalReason::None;
@@ -312,8 +355,11 @@ bool ActionFiringTable::PrepareChild(
     const ActionFiringOwnerStamp& owner, std::uint32_t directStepCount,
     PreparedActionFiring* out) noexcept {
     Row* parentRow = Resolve(parent);
+    const Row* rootRow = parentRow == nullptr ? nullptr : Resolve(parentRow->root);
     if (out == nullptr || parentRow == nullptr || actionId == VnObjectId{} ||
         !owner.Valid() || directStepCount > kMaxActionSteps ||
+        rootRow == nullptr || rootRow->state != SlotState::Active ||
+        (parent != parentRow->root && rootRow->cancellationEpoch != parentRow->rootCancellationEpoch) ||
         (parentRow->state != SlotState::Active &&
          parentRow->state != SlotState::Stopping)) {
         return false;
@@ -341,6 +387,7 @@ bool ActionFiringTable::PrepareChild(
                 ? owner.worldGeneration
                 : owner.pack.compositeGeneration;
         row.cancellationEpoch = parentRow->cancellationEpoch;
+        row.rootCancellationEpoch = rootRow->cancellationEpoch;
         row.acceptedLogicSequence = parentRow->acceptedLogicSequence;
         row.outcome = ActionFiringOutcome::Pending;
         row.terminalReason = ActionTerminalReason::None;
@@ -369,8 +416,8 @@ bool ActionFiringTable::PrepareChild(
 }
 
 bool ActionFiringTable::CommitPreparedChild(
-    PreparedActionFiring* prepared) noexcept {
-    if (prepared == nullptr) {
+    PreparedActionFiring* prepared, ChildActivationReceipt* out) noexcept {
+    if (prepared == nullptr || (out != nullptr && out->Sequence() != 0)) {
         return false;
     }
     Row* row = ResolvePrepared(*prepared);
@@ -378,7 +425,8 @@ bool ActionFiringTable::CommitPreparedChild(
         row->acceptedLogicSequence == 0) {
         return false;
     }
-    if (Resolve(row->parent) == nullptr) {
+    PreparedChildIdentity identity;
+    if (!CapturePreparedChildIdentity(*prepared, row->cancellationEpoch, &identity)) {
         return false;
     }
     const ActionFiringHandle handle = prepared->handle_;
@@ -391,6 +439,7 @@ bool ActionFiringTable::CommitPreparedChild(
     prepared->prepared_ = false;
     liveCount_ += committed;
     highWater_ = (std::max)(highWater_, liveCount_);
+    if (out != nullptr) out->identity_ = identity;
     return true;
 }
 
@@ -993,6 +1042,7 @@ bool ActionFiringTable::Recycle(std::uint32_t slot, Row& row) noexcept {
     row.worldGeneration = 0;
     row.owner = {};
     row.cancellationEpoch = 0;
+    row.rootCancellationEpoch = 0;
     row.acceptedLogicSequence = 0;
     row.outcome = ActionFiringOutcome::Pending;
     row.terminalReason = ActionTerminalReason::None;

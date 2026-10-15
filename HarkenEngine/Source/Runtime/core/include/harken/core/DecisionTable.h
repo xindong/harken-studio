@@ -14,6 +14,7 @@
 #include <memory>
 
 namespace harken {
+class PrivatePendingQueueFrontierBinding;
 
 inline constexpr std::uint32_t kMaxDecisionRowsHard = 65536;
 inline constexpr std::uint32_t kMaxParticipantsPerDecisionHard = 2048;
@@ -246,6 +247,30 @@ public:
         PreparedTicketCommitProof* out) noexcept;
     static void ConsumePreparedReservationCommit(PreparedTicketCommitProof&& proof) noexcept;
     bool PreparedTicketHeld(DecisionToken token) const noexcept;
+    class FrontierPublicationProof {
+    public:
+        FrontierPublicationProof() noexcept = default;
+        ~FrontierPublicationProof() { Release(); }
+        FrontierPublicationProof(const FrontierPublicationProof&) = delete;
+        FrontierPublicationProof& operator=(const FrontierPublicationProof&) = delete;
+        FrontierPublicationProof(FrontierPublicationProof&& other) noexcept;
+        FrontierPublicationProof& operator=(FrontierPublicationProof&& other) noexcept;
+        bool Valid() const noexcept { return table_ != nullptr; }
+        void Release() noexcept;
+    private:
+        friend class DecisionTable;
+        void Detach() noexcept;
+        DecisionTable* table_ = nullptr;
+        Row* row_ = nullptr;
+        FrontierActivation* activation_ = nullptr;
+        DecisionToken token_{};
+    };
+    bool ProveFrontierActivationPublication(DecisionToken token,
+        const FrontierEntryReceiptRef& entry, const ScheduledTransactionPool& pool,
+        FrontierPublicationProof* out) noexcept;
+    bool IsFrontierPublicationProofFor(const FrontierPublicationProof& proof,
+        const FrontierActivationDescriptor& descriptor) const noexcept;
+    static void ApplyFrontierActivationPublication(FrontierPublicationProof&& proof) noexcept;
     DecisionTable(std::uint32_t capacity,
                   std::uint32_t maxParticipantsPerDecision);
     ~DecisionTable();
@@ -267,9 +292,13 @@ public:
     bool CancelPreparedFrontierActivation(DecisionToken token) noexcept;
     FrontierActivation* ResolveFrontierActivation(DecisionToken token) noexcept;
     const FrontierActivation* ResolveFrontierActivation(DecisionToken token) const noexcept;
+    bool MatchesPreparedFrontierActivationPool(const FrontierEntryReceiptRef& entry,
+        const ScheduledTransactionPool& pool) const noexcept;
     bool CaptureFrontierActivationSidecar(DecisionToken token,
         const FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence,
         FrontierActivationSidecarSnapshot* out) const noexcept;
+    bool FrontierActivationBindingsDetached(const FrontierEntryReceiptRef& entry,
+        const ScheduledTransactionPool& pool, std::uint64_t completedAudioSequence) const noexcept;
     bool ReconcileFrontierActivation(DecisionToken token,
         const FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence,
         FrontierActivationReceipt* out) noexcept;
@@ -289,6 +318,10 @@ public:
         const FrontierGroupBinding* binding = nullptr) const noexcept;
     bool RollbackPreparedFrontierDecision(DecisionToken token, DecisionToken coordinator,
         const FrontierGroupBinding* binding = nullptr) noexcept;
+    bool CanRollbackPrivatePendingQueueFrontierDecision(const FrontierGroupBinding& binding,
+        const ScheduledTransactionPool& pool, const PrivatePendingQueueFrontierBinding& queue) const noexcept;
+    bool RollbackPrivatePendingQueueFrontierDecision(const FrontierGroupBinding& binding,
+        const ScheduledTransactionPool& pool, const PrivatePendingQueueFrontierBinding& queue) noexcept;
     bool ValidateFrontierMemberDecisionApply(const FrontierGroupBinding& binding,
         AudioSliceLease& lease, std::uint64_t audioSequence, FrontierDecisionApplyProof* out) noexcept;
 
@@ -413,6 +446,7 @@ private:
     void ConsumeOriginalDecisionBaseline(Row& row, DecisionToken token,
         OriginalDecisionLifetimePin* baseline) noexcept;
     bool MayMutateFrontierDecision(DecisionToken token, AudioSliceInvalidateReason reason) const noexcept;
+    bool FrontierPublicationHeld(DecisionToken token) const noexcept;
     bool ReleaseFuturePin(DecisionToken token) noexcept;
     enum class SlotState : std::uint8_t {
         Free = 0,

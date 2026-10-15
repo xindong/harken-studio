@@ -55,6 +55,10 @@ public:
                  ArmGroupToken* outToken) noexcept;
     bool CommitPrepared(ArmGroupToken token) noexcept;
     bool CancelPrepared(ArmGroupToken token) noexcept;
+    // Producer-only: inspect the original preparation before committing it.
+    bool MatchesPreparedMembers(ArmGroupToken token, DecisionToken parent,
+                                const TimelineArmToken* members,
+                                std::uint16_t memberCount) const noexcept;
     bool Acknowledge(ArmGroupToken token, TimelineArmToken member,
                      std::uint64_t completionSequence) noexcept;
     bool CancelBeforePublication(ArmGroupToken token) noexcept;
@@ -102,6 +106,7 @@ private:
     Row* Resolve(ArmGroupToken token) noexcept;
     const Row* Resolve(ArmGroupToken token) const noexcept;
     Row* ResolvePrepared(ArmGroupToken token) noexcept;
+    const Row* ResolvePrepared(ArmGroupToken token) const noexcept;
     bool ReserveInternal(DecisionToken parent,
                          const TimelineArmToken* members,
                          std::uint16_t memberCount,

@@ -18,9 +18,41 @@
 #include <array>
 #include <cassert>
 #include <cmath>
+#include <stdexcept>
 #include <utility>
 
 namespace harken {
+
+namespace {
+
+class VariableProjectionGuard {
+public:
+    explicit VariableProjectionGuard(Engine& engine) noexcept : engine_(engine) {
+        params_ = engine_.params.BeginVariableProjection();
+        if (params_) emitters_ = engine_.emitters.BeginVariableProjection();
+        if (emitters_) bindings_ = engine_.bindings.BeginVariableProjection();
+        if (bindings_) buses_ = engine_.busTargets.BeginVariableProjection();
+        if (buses_) effects_ = engine_.effectParamTargets.BeginVariableProjection();
+    }
+    VariableProjectionGuard(const VariableProjectionGuard&) = delete;
+    VariableProjectionGuard& operator=(const VariableProjectionGuard&) = delete;
+    ~VariableProjectionGuard() { Restore(); }
+    bool Valid() const noexcept { return effects_; }
+    void Restore() noexcept {
+        if (effects_) engine_.effectParamTargets.RestoreVariableProjection();
+        if (buses_) engine_.busTargets.RestoreVariableProjection();
+        if (bindings_) engine_.bindings.RestoreVariableProjection();
+        if (emitters_) engine_.emitters.RestoreVariableProjection();
+        if (params_) engine_.params.RestoreVariableProjection();
+        params_ = emitters_ = bindings_ = buses_ = effects_ = false;
+    }
+private:
+    Engine& engine_;
+    bool params_ = false, emitters_ = false, bindings_ = false;
+    bool buses_ = false, effects_ = false;
+};
+
+} // namespace
 
 WorldInstallResult InstallContainerWorldV1(
     Engine& engine, const ContainerWorldInstallViewV1& install,
@@ -139,7 +171,8 @@ VariableServiceV1::VariableServiceV1(
     std::uint32_t maxPropertiesPerCurrentSlice,
     std::uint32_t maxActionDefinitions,
     LogicCommitCoordinator& commits, TransportEpochOwner& transport,
-    VariableSliceTable& slices, ScheduledTransactionPool& timeline)
+    VariableSliceTable& slices, ScheduledTransactionPool& timeline,
+    std::uint64_t readCutCapacity, std::uint32_t timelineReadUseCapacity)
     : maxEmitters_(maxEmitters),
       overridesPerEmitter_(overridesPerEmitter),
       maxActionDefinitions_(maxActionDefinitions),
@@ -156,6 +189,13 @@ VariableServiceV1::VariableServiceV1(
         bank.overrides.resize(overridesPerEmitter_);
     }
     history_.resize(kVariableHistoryCapacity);
+    preparedWritePlacements_.resize(kVariableHistoryCapacity);
+    historyGenerations_.resize(kVariableHistoryCapacity, 1);
+    if (readCutCapacity > UINT32_MAX) throw std::length_error("variable read cut capacity overflow");
+    readCutCapacity_ = static_cast<std::uint32_t>(readCutCapacity);
+    readCuts_ = std::make_unique<ReadCutRow[]>(readCutCapacity_);
+    timelineReadUseCapacity_ = timelineReadUseCapacity;
+    timelineReadUses_ = std::make_unique<TimelineReadUseRow[]>(timelineReadUseCapacity_);
     freeSlots_.reserve(kVariableHistoryCapacity);
     for (std::uint32_t slot = kVariableHistoryCapacity; slot > 0; --slot) {
         freeSlots_.push_back(slot - 1);
@@ -419,10 +459,7 @@ WorldInstallResult VariableServiceV1::InstallImpl(
         if (!row.used) {
             continue;
         }
-        if ((row.state == RowState::Pending ||
-             (row.state == RowState::WaitingFrontier &&
-              row.noPhysicalTargets)) &&
-            !row.slice.Valid()) {
+        if (row.state == RowState::Pending && !row.slice.Valid()) {
             FinalizeRow(row, VariableOutcomeKind::WorldReplacement, {}, 0);
             continue;
         }
@@ -1211,6 +1248,20 @@ bool VariableServiceV1::SameBankKey(const WriteRow& a,
            ScopeEqual(a.scope, b.scope) && a.variableId == b.variableId;
 }
 
+bool VariableServiceV1::Precedes(const WriteRow& a, const WriteRow& b) noexcept {
+    if (a.requestedFrame != b.requestedFrame) return a.requestedFrame < b.requestedFrame;
+    if (a.ticket.sequence != b.ticket.sequence) return a.ticket.sequence < b.ticket.sequence;
+    if (a.executionOrdinal != b.executionOrdinal) return a.executionOrdinal < b.executionOrdinal;
+    return a.bankOrdinal < b.bankOrdinal;
+}
+
+bool VariableServiceV1::PublicationPrecedes(const WriteRow& a, const WriteRow& b) noexcept {
+    if (a.committedFrame != b.committedFrame) return a.committedFrame < b.committedFrame;
+    if (a.ticket.sequence != b.ticket.sequence) return a.ticket.sequence < b.ticket.sequence;
+    if (a.executionOrdinal != b.executionOrdinal) return a.executionOrdinal < b.executionOrdinal;
+    return a.bankOrdinal < b.bankOrdinal;
+}
+
 bool VariableServiceV1::SameServiceDependency(
     const WriteRow& a, const WriteRow& b) noexcept {
     if (SameBankKey(a, b)) {
@@ -1247,6 +1298,47 @@ bool VariableServiceV1::SameTarget(const VariableTargetLocator& a,
            a.objectGeneration == b.objectGeneration &&
            a.targetId == b.targetId && a.effectSlot == b.effectSlot &&
            a.paramIndex == b.paramIndex && a.effectType == b.effectType;
+}
+
+bool VariableServiceV1::SamePhysicalTarget(const VariableTargetLocator& a,
+                                          const VariableTargetLocator& b) noexcept {
+    if (a.scope != b.scope || a.object != b.object ||
+        a.objectGeneration != b.objectGeneration) return false;
+    if (SameTarget(a, b)) return true;
+    if (a.scope == VariableTargetScope::Voice) {
+        const auto section = [](std::uint32_t target) {
+            switch (target) {
+            case kTargetVoiceLowpassCutoff:
+            case kTargetVoiceLowpassQ: return 0u;
+            case kTargetVoiceHighpassCutoff:
+            case kTargetVoiceHighpassQ: return 1u;
+            case kTargetVoiceLowShelfGainDb:
+            case kTargetVoiceLowShelfFreqHz:
+            case kTargetVoiceLowShelfQ: return 2u;
+            case kTargetVoiceHighShelfGainDb:
+            case kTargetVoiceHighShelfFreqHz:
+            case kTargetVoiceHighShelfQ: return 3u;
+            default: return UINT32_MAX;
+            }
+        };
+        return section(a.targetId) != UINT32_MAX &&
+               section(a.targetId) == section(b.targetId);
+    }
+    if (a.scope != VariableTargetScope::VoiceEffect &&
+        a.scope != VariableTargetScope::BusEffect) return false;
+    if (a.effectSlot != b.effectSlot || a.effectType != b.effectType) return false;
+    if (a.effectType == VN_EFFECT_COMPRESSOR) return true;
+    if (a.effectType == VN_EFFECT_THREE_BAND_TONE) {
+        const auto section = [](std::uint32_t param) {
+            if (param <= kToneParamLowShelfFreqHz) return 0u;
+            if (param <= kToneParamPeakQ) return 1u;
+            if (param <= kToneParamHighShelfFreqHz) return 2u;
+            return UINT32_MAX;
+        };
+        return section(a.paramIndex) != UINT32_MAX &&
+               section(a.paramIndex) == section(b.paramIndex);
+    }
+    return false;
 }
 
 VariableAcceptResult VariableServiceV1::Prepare(
@@ -1360,7 +1452,7 @@ VariableAcceptResult VariableServiceV1::Prepare(
         }
         if (emitterOverrideSlot == overridesPerEmitter_) {
             for (const WriteRow& prepared : history_) {
-                if (!prepared.used &&
+                if (prepared.reserved &&
                     prepared.emitterOverrideSlot != UINT32_MAX &&
                     ScopeEqual(prepared.scope, scope) &&
                     prepared.variableId == id) {
@@ -1376,7 +1468,7 @@ VariableAcceptResult VariableServiceV1::Prepare(
                 }
                 bool reserved = false;
                 for (const WriteRow& prepared : history_) {
-                    if (!prepared.used &&
+                    if (prepared.reserved &&
                         prepared.emitterOverrideSlot == i &&
                         ScopeEqual(prepared.scope, scope)) {
                         reserved = true;
@@ -1395,7 +1487,20 @@ VariableAcceptResult VariableServiceV1::Prepare(
             return result;
         }
     }
+    if (publicationWorld_ != worldGeneration_ || publicationTransport_ != transport_.Current()) {
+        if (publicationOwner_.generation == UINT32_MAX) {
+            result.result = VN_BACKPRESSURE;
+            ++refusalCount_;
+            return result;
+        }
+        publicationOwner_ = {0, publicationOwner_.generation + 1u,
+                             TargetClaimKind::VariablePublication};
+        publicationWorld_ = worldGeneration_;
+        publicationTransport_ = transport_.Current();
+    }
     WriteRow row{};
+    row.reserved = true;
+    row.publicationOwner = publicationOwner_;
     row.operation = operation;
     row.world = worldGeneration_;
     row.transport = transport_.Current();
@@ -1419,9 +1524,81 @@ VariableAcceptResult VariableServiceV1::Prepare(
     return result;
 }
 
+bool VariableServiceV1::CaptureActionOrder(const LogicCommitCoordinator::PreparedIssue& issue,
+    ActionOrderIdentity* out) const noexcept {
+    return out != nullptr && commits_.CapturePreparedIssueIdentity(issue, &out->ordinary);
+}
+
+bool VariableServiceV1::CaptureActionOrder(Engine& engine,
+    const ActionFiringTable::PreparedChildIdentity& child, ActionOrderIdentity* out) const noexcept {
+    if (out == nullptr || &engine.variables != this || &engine.logicCommits != &commits_ ||
+        !engine.actionFirings.IsPreparedChildActive(child)) return false;
+    out->deferred = child;
+    out->deferredTable = &engine.actionFirings;
+    return true;
+}
+
+bool VariableServiceV1::IsPreparedActionOrderActive(const ActionOrderIdentity& identity) const noexcept {
+    return commits_.IsPreparedIssueActive(identity.ordinary) ||
+        (identity.deferredTable != nullptr && identity.deferredTable->IsPreparedChildActive(identity.deferred));
+}
+
+bool VariableServiceV1::MatchesConsumedActionOrder(const ActionOrderIdentity& identity,
+    const LogicCommitCoordinator::ConsumedIssue* consumed,
+    const ActionFiringTable::ChildActivationReceipt* activated) const noexcept {
+    return (consumed != nullptr && consumed->MatchesOriginalReservation(identity.ordinary)) ||
+        (activated != nullptr && identity.deferredTable != nullptr &&
+            activated->MatchesOriginalPreparation(identity.deferred) &&
+            identity.deferredTable->IsChildActivationCurrent(*activated));
+}
+
+bool VariableServiceV1::BindPreparedActionWriteOrder(PreparedVariableWriteToken& prepared,
+    const LogicCommitCoordinator::PreparedIssue& issue) noexcept {
+    ActionOrderIdentity identity{};
+    return CaptureActionOrder(issue, &identity) &&
+        BindPreparedActionWriteOrderImpl(prepared, identity, issue.Sequence());
+}
+
+bool VariableServiceV1::BindPreparedActionWriteOrder(PreparedVariableWriteToken& prepared, Engine& engine,
+    const ActionFiringTable::PreparedChildIdentity& child) noexcept {
+    ActionOrderIdentity identity{};
+    return CaptureActionOrder(engine, child, &identity) &&
+        BindPreparedActionWriteOrderImpl(prepared, identity, child.Sequence());
+}
+
+bool VariableServiceV1::BindPreparedActionWriteOrderImpl(PreparedVariableWriteToken& prepared,
+    const ActionOrderIdentity& identity, LogicCommitSequence sequence) noexcept {
+    if (prepared.owner_ != this || !prepared.prepared_ || prepared.slot_ >= history_.size() ||
+        !IsPreparedActionOrderActive(identity) || sequence == 0) return false;
+    auto& row = history_[prepared.slot_];
+    if (!row.reserved || row.used || row.state != RowState::Pending) return false;
+    if (row.ticket.Valid()) return row.preparedIssue.SameReservation(identity);
+    if (nextBankOrdinal_ == UINT64_MAX) return false;
+    row.ticket = {sequence};
+    row.preparedIssue = identity;
+    row.bankOrdinal = nextBankOrdinal_++;
+    return true;
+}
+
 void VariableServiceV1::CommitPreparedWrite(
     PreparedVariableWriteToken* prepared,
     LogicCommitSequence sequence) noexcept {
+    CommitPreparedWriteImpl(prepared, sequence, nullptr);
+}
+
+void VariableServiceV1::CommitPreparedActionWrite(PreparedVariableWriteToken* prepared,
+    const LogicCommitCoordinator::ConsumedIssue& consumed) noexcept {
+    CommitPreparedWriteImpl(prepared, consumed.Sequence(), &consumed);
+}
+
+void VariableServiceV1::CommitPreparedActionWrite(PreparedVariableWriteToken* prepared,
+    const ActionFiringTable::ChildActivationReceipt& activated) noexcept {
+    CommitPreparedWriteImpl(prepared, activated.Sequence(), nullptr, &activated);
+}
+
+void VariableServiceV1::CommitPreparedWriteImpl(PreparedVariableWriteToken* prepared,
+    LogicCommitSequence sequence, const LogicCommitCoordinator::ConsumedIssue* consumed,
+    const ActionFiringTable::ChildActivationReceipt* activated) noexcept {
     if (prepared == nullptr || prepared->owner_ != this ||
         !prepared->prepared_ || prepared->slot_ >= history_.size() ||
         sequence == 0) {
@@ -1431,10 +1608,17 @@ void VariableServiceV1::CommitPreparedWrite(
     if (row.used) {
         return;
     }
+    if (row.preparedIssue.HasReservation() &&
+        !MatchesConsumedActionOrder(row.preparedIssue, consumed, activated)) return;
+    if (row.preparedEngine != nullptr && !row.preparedSourcesSealed) return;
     const LogicCommitTicket ticket{sequence};
+    assert(!row.ticket.Valid() || row.ticket.sequence == sequence);
+    if (row.ticket.Valid() && row.ticket.sequence != sequence) return;
     row.used = true;
+    row.reserved = false;
     row.ticket = ticket;
-    row.bankOrdinal = nextBankOrdinal_++;
+    if (row.bankOrdinal == 0) row.bankOrdinal = nextBankOrdinal_++;
+    RegisterCommittedPendingReadCutCandidate(prepared->slot_);
     for (WriteRow& prior : history_) {
         if (&prior != &row && prior.used &&
             prior.state == RowState::Pending && RowKeyEqual(prior, row) &&
@@ -1463,6 +1647,95 @@ void VariableServiceV1::CommitPreparedWrite(
     prepared->prepared_ = false;
 }
 
+bool VariableServiceV1::SealPreparedActionSources(const LogicCommitCoordinator::PreparedIssue& issue) noexcept {
+    ActionOrderIdentity identity{};
+    return CaptureActionOrder(issue, &identity) && SealPreparedActionSourcesImpl(identity);
+}
+
+bool VariableServiceV1::SealPreparedActionSources(Engine& engine,
+    const ActionFiringTable::PreparedChildIdentity& child) noexcept {
+    ActionOrderIdentity identity{};
+    return CaptureActionOrder(engine, child, &identity) && SealPreparedActionSourcesImpl(identity);
+}
+
+bool VariableServiceV1::SealPreparedActionSourcesImpl(const ActionOrderIdentity& identity) noexcept {
+    if (!IsPreparedActionOrderActive(identity)) return false;
+    std::array<WriteRow*, kPendingVariableWriteCapacity> rows{};
+    std::size_t count = 0;
+    for (auto& row : history_) {
+        if (row.preparedEngine == nullptr || !row.preparedIssue.SameReservation(identity)) continue;
+        row.preparedSourcesSealed = false;
+        const auto& held = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
+        if (!row.reserved || row.used || row.state != RowState::SlicePrepared || !row.historySlicePin ||
+            !row.placementHeld || !timeline_.CanReleaseHeldCurrentSlice(held) ||
+            !slices_.CanPublishPrepared(row.slice, true)) return false;
+        if (count == rows.size()) return false;
+        rows[count++] = &row;
+    }
+    std::sort(rows.begin(), rows.begin() + count,
+        [](const WriteRow* a, const WriteRow* b) { return PublicationPrecedes(*a, *b); });
+    for (std::size_t index = 0; index < count; ++index) {
+        for (std::uint32_t source = 0; source < slices_.SourceCount(rows[index]->slice); ++source) {
+            const auto* dependency = slices_.Source(rows[index]->slice, source);
+            if (dependency == nullptr) return false;
+            if (slices_.State(dependency->slice) != VariableSliceState::Prepared) continue;
+            const bool earlier = std::any_of(rows.begin(), rows.begin() + index,
+                [&](const auto* prior) { return prior->slice.slot == dependency->slice.slot &&
+                    prior->slice.generation == dependency->slice.generation; });
+            if (!earlier) return false;
+        }
+    }
+    for (std::size_t index = 0; index < count; ++index) rows[index]->preparedSourcesSealed = true;
+    return true;
+}
+
+void VariableServiceV1::CommitPreparedActionSources(const LogicCommitCoordinator::ConsumedIssue& consumed) noexcept {
+    CommitPreparedActionSourcesImpl(&consumed, nullptr);
+}
+
+void VariableServiceV1::CommitPreparedActionSources(const ActionFiringTable::ChildActivationReceipt& activated) noexcept {
+    CommitPreparedActionSourcesImpl(nullptr, &activated);
+}
+
+void VariableServiceV1::CommitPreparedActionSourcesImpl(const LogicCommitCoordinator::ConsumedIssue* consumed,
+    const ActionFiringTable::ChildActivationReceipt* activated) noexcept {
+    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
+        auto& cut = readCuts_[index];
+        if (cut.state.load(std::memory_order_acquire) == ReadCutState::Capturing &&
+            cut.pendingPlacement && MatchesConsumedActionOrder(cut.preparedIssue, consumed, activated))
+            cut.actionOrderConsumed = true;
+    }
+    std::array<WriteRow*, kPendingVariableWriteCapacity> rows{};
+    std::size_t count = 0;
+    for (auto& row : history_) {
+        if (row.preparedEngine == nullptr || !MatchesConsumedActionOrder(row.preparedIssue, consumed, activated)) continue;
+        assert(row.used && !row.reserved && row.state == RowState::SlicePrepared && row.preparedSourcesSealed);
+        if (!row.used || row.reserved || row.state != RowState::SlicePrepared || !row.preparedSourcesSealed) return;
+        rows[count++] = &row;
+    }
+    std::sort(rows.begin(), rows.begin() + count,
+        [](const WriteRow* a, const WriteRow* b) { return PublicationPrecedes(*a, *b); });
+    for (std::size_t index = 0; index < count; ++index) {
+        auto& row = *rows[index];
+        const bool published = slices_.Publish(row.slice);
+        assert(published);
+        if (!published) return;
+        row.state = RowState::PageCommitted;
+    }
+    // Every source is committed before any of the held pages can become visible.
+    for (std::size_t index = 0; index < count; ++index) {
+        auto& row = *rows[index];
+        auto& held = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
+        const bool released = timeline_.ReleaseHeldCurrentSlice(&held);
+        assert(released);
+        (void)released;
+        row.placementHeld = false;
+        row.preparedEngine = nullptr;
+        pendingPlaybackPublicationThrough_ = std::max(pendingPlaybackPublicationThrough_,
+            row.committedFrame + timeline_.QuantumFrames());
+    }
+}
+
 void VariableServiceV1::CancelPreparedWrite(
     PreparedVariableWriteToken* prepared) noexcept {
     if (prepared == nullptr || prepared->owner_ != this ||
@@ -1473,8 +1746,42 @@ void VariableServiceV1::CancelPreparedWrite(
     if (row.used) {
         return;
     }
-    row = WriteRow{};
-    freeSlots_.push_back(prepared->slot_);
+    for (auto& related : history_) {
+        if (related.preparedIssue.SameReservation(row.preparedIssue)) related.preparedSourcesSealed = false;
+    }
+    if (row.preparedEngine != nullptr) {
+        auto& held = preparedWritePlacements_[prepared->slot_];
+        if (held.IsHeld()) {
+            const bool cancelled = timeline_.CancelHeldCurrentSlice(&held);
+            assert(cancelled);
+            (void)cancelled;
+        }
+        row.placementHeld = false;
+        ReleaseSliceClaims(*row.preparedEngine, row);
+        row.preparedEngine = nullptr;
+        row.cancelledBeforePublication = true;
+    }
+    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
+        auto& cut = readCuts_[index];
+        const auto state = cut.state.load(std::memory_order_acquire);
+        if (state != ReadCutState::Capturing && state != ReadCutState::Published) continue;
+        for (std::uint32_t source = 0; source < cut.sourceCount; ++source) {
+            const auto& ref = cut.sources[source];
+            const auto* observed = ResolveHistory(ref);
+            if (observed == &row || (observed != nullptr && row.slice.Valid() &&
+                PreparedSourceDependsOn(observed->slice, row.slice))) {
+                cut.preparationFailed.store(true, std::memory_order_release);
+                break;
+            }
+        }
+    }
+    row.reserved = false;
+    row.emitterOverrideSlot = UINT32_MAX;
+    if (row.cancelledBeforePublication) (void)slices_.ClearPreparedSources(row.slice);
+    row.state = RowState::Terminal;
+    row.outcomeDelivered = true;
+    row.finalOutcome = VariableOutcomeKind::TargetRejected;
+    ReclaimHistoryRows();
     --preparedRows_;
     prepared->owner_ = nullptr;
     prepared->slot_ = UINT32_MAX;
@@ -1533,6 +1840,9 @@ bool VariableServiceV1::CanSupersede(
         return false;
     }
     const auto members = BatchRows(prior);
+    for (const WriteRow* member : members) {
+        if (member != nullptr && member->observers != 0) return false;
+    }
     for (const WriteRow& other : history_) {
         if (other.used && other.state != RowState::Terminal &&
             other.requestedFrame == prior.requestedFrame &&
@@ -1875,10 +2185,8 @@ void VariableServiceV1::SyncBatchState(WriteRow& leader) noexcept {
         if (member == nullptr || member == &leader) continue;
         member->state = leader.state;
         member->slice = leader.slice;
-        member->noPhysicalTargets = leader.noPhysicalTargets;
         member->frontierCaptured = leader.frontierCaptured;
         member->requiredCommandFrontier = leader.requiredCommandFrontier;
-        member->targetQuantum = leader.targetQuantum;
         member->committedFrame = leader.committedFrame;
         member->emitterDestroyedBeforeApplied = leader.emitterDestroyedBeforeApplied;
     }
@@ -1890,7 +2198,6 @@ void VariableServiceV1::FinalizeBatch(WriteRow& leader,
     for (WriteRow* member : BatchRows(leader)) {
         if (member != nullptr) {
             FinalizeRow(*member, outcome, related, actualFrame);
-            member->slice = {};
         }
     }
 }
@@ -1908,6 +2215,7 @@ void VariableServiceV1::FinalizeRow(WriteRow& row,
     assert(outcomes_.size() < outcomes_.capacity());
     ReleaseEmitterOverrideReservation(row);
     row.state = RowState::Terminal;
+    row.finalOutcome = outcome;
     row.outcomeGeneration = currentOutcomeGeneration_;
     if (pendingRows_ > 0) {
         --pendingRows_;
@@ -1936,6 +2244,7 @@ void VariableServiceV1::FinalizeRow(WriteRow& row,
 }
 
 void VariableServiceV1::CommitAppliedBank(const WriteRow& row) {
+    ObserveAppliedWriteForReadCuts(row);
     const auto advanceGeneration = [](std::uint32_t& generation) noexcept {
         if (generation == UINT32_MAX || generation == 0) {
             generation = 0;
@@ -2010,27 +2319,9 @@ void VariableServiceV1::ReleaseEmitterOverrideReservation(
     row.emitterOverrideSlot = UINT32_MAX;
 }
 
-bool VariableServiceV1::GatherTargets(Engine& engine, WriteRow& batchRow,
-                                      std::uint32_t* outCount) noexcept {
-    if (outCount == nullptr) {
-        return false;
-    }
-    *outCount = 0;
-    bool overflow = false;
-    const auto add = [&](VariableTargetLocator locator,
-                         std::uint32_t revision) {
-        for (std::uint32_t i = 0; i < *outCount; ++i) {
-            if (SameTarget(censusScratch_[i].locator, locator)) {
-                return;
-            }
-        }
-        if (*outCount >= censusScratch_.size()) {
-            overflow = true;
-            return;
-        }
-        censusScratch_[*outCount] = {locator, revision};
-        ++*outCount;
-    };
+template <typename Visitor>
+void VariableServiceV1::ForEachTarget(Engine& engine, WriteRow& batchRow,
+                                      Visitor&& visitor) noexcept {
     for (const WriteRow *member : BatchRows(batchRow)) {
         if (member == nullptr)
             continue;
@@ -2062,7 +2353,7 @@ bool VariableServiceV1::GatherTargets(Engine& engine, WriteRow& batchRow,
                 locator.objectGeneration =
                     static_cast<std::uint32_t>(handle >> 32);
                 locator.targetId = targetId;
-                add(locator, engine.params.TargetRevision(handle, targetId));
+                visitor(locator, engine.params.TargetRevision(handle, targetId), row);
             });
         if (row.scope.scope == VariableScopeV1::Global) {
             engine.bindings.ForEachBusVariableTarget(
@@ -2074,9 +2365,9 @@ bool VariableServiceV1::GatherTargets(Engine& engine, WriteRow& batchRow,
                     locator.objectGeneration =
                         engine.buses.GenerationAt(busIndex);
                     locator.targetId = targetId;
-                    add(locator,
+                    visitor(locator,
                         engine.busTargets.TargetRevision(
-                            busIndex, locator.objectGeneration, targetId));
+                            busIndex, locator.objectGeneration, targetId), row);
                 });
         }
         engine.bindings.ForEachEffectVariableTarget(
@@ -2115,9 +2406,95 @@ bool VariableServiceV1::GatherTargets(Engine& engine, WriteRow& batchRow,
                 locator.effectSlot = slot;
                 locator.paramIndex = paramIndex;
                 locator.effectType = effectType;
-                add(locator, revision);
+                visitor(locator, revision, row);
             });
     }
+}
+
+bool VariableServiceV1::SharesPhysicalTargets(Engine& engine, WriteRow& prior,
+                                              const WriteRow& row) noexcept {
+    bool overlaps = false;
+    const VariableSliceTable& slices = slices_;
+    ForEachTarget(engine, prior, [&](const VariableTargetLocator& locator,
+                                     std::uint32_t, const WriteRow&) {
+        if (overlaps) return;
+        for (std::uint32_t i = 0; i < slices.TargetCount(row.slice); ++i) {
+            const auto* target = slices.Target(row.slice, i);
+            if (target != nullptr && SamePhysicalTarget(target->locator, locator)) {
+                overlaps = true;
+                break;
+            }
+        }
+    });
+    return overlaps;
+}
+
+bool VariableServiceV1::ScopeAppliesToTarget(const Engine& engine, const WriteRow& row,
+                                            const VariableTargetLocator& target) noexcept {
+    if (row.scope.scope == VariableScopeV1::Global) return true;
+    if (target.scope != VariableTargetScope::Voice &&
+        target.scope != VariableTargetScope::VoiceEffect) return false;
+    const auto emitter = engine.params.EmitterHandleOf(target.object);
+    return row.scope.emitterSlot == static_cast<std::uint32_t>(emitter) &&
+           row.scope.emitterGeneration == static_cast<std::uint32_t>(emitter >> 32);
+}
+
+bool VariableServiceV1::CaptureCandidateSources(Engine& engine, WriteRow& row,
+                                                WriteRow* const* prefix,
+                                                std::size_t count) noexcept {
+    const VariableSliceTable& slices = slices_;
+    const auto ownMembers = BatchRows(row);
+    for (std::size_t index = 0; index < count; ++index) {
+        bool contributes = false;
+        ForEachTarget(engine, *prefix[index], [&](const VariableTargetLocator& locator,
+                                                  std::uint32_t, const WriteRow& input) {
+            if (contributes) return;
+            for (std::uint32_t targetIndex = 0; targetIndex < slices.TargetCount(row.slice); ++targetIndex) {
+                const auto* target = slices.Target(row.slice, targetIndex);
+                if (target == nullptr || !SamePhysicalTarget(target->locator, locator)) continue;
+                const auto overwrites = [&](const WriteRow* later) {
+                    return later != nullptr && later->variableId == input.variableId &&
+                           ScopeAppliesToTarget(engine, *later, target->locator);
+                };
+                bool overwritten = std::any_of(ownMembers.begin(), ownMembers.end(), overwrites);
+                for (std::size_t later = index + 1; later < count && !overwritten; ++later) {
+                    const auto members = BatchRows(*prefix[later]);
+                    overwritten = std::any_of(members.begin(), members.end(), overwrites);
+                }
+                if (!overwritten) {
+                    contributes = true;
+                    break;
+                }
+            }
+        });
+        if (!contributes) continue;
+        VariableSliceSource source{};
+        const auto sourceFrame = slices.EffectiveFrame(prefix[index]->slice);
+        if (!slices_.SetPreparedEffectiveFrame(row.slice,
+                std::max(slices.EffectiveFrame(row.slice), sourceFrame)) ||
+            !slices_.CaptureSource(prefix[index]->slice, &source) ||
+            !slices_.AddSource(row.slice, source)) return false;
+    }
+    return true;
+}
+
+bool VariableServiceV1::GatherTargets(Engine& engine, WriteRow& batchRow,
+                                      std::uint32_t* outCount) noexcept {
+    if (outCount == nullptr) return false;
+    *outCount = 0;
+    bool overflow = false;
+    ForEachTarget(engine, batchRow, [&](VariableTargetLocator locator,
+                                        std::uint32_t revision, const WriteRow&) {
+        for (std::uint32_t i = 0; i < *outCount; ++i) {
+            if (SameTarget(censusScratch_[i].locator, locator)) return;
+        }
+        if (*outCount >= censusScratch_.size()) {
+            overflow = true;
+            return;
+        }
+        censusScratch_[*outCount] = {locator, revision};
+        ++*outCount;
+    });
     if (overflow) {
         return false;
     }
@@ -2171,14 +2548,14 @@ bool VariableServiceV1::RecensusMatches(Engine& engine,
         case VariableTargetScope::Voice:
             owned = engine.params.SnapshotForClaim(
                 static_cast<VnVoiceHandle>(target->locator.object),
-                target->locator.targetId, row.slice, &resolved, &rampMs,
+                target->locator.targetId, row.publicationOwner, &resolved, &rampMs,
                 &revision);
             break;
         case VariableTargetScope::Bus:
             owned = engine.busTargets.SnapshotForClaim(
                 static_cast<std::uint32_t>(target->locator.object),
                 target->locator.objectGeneration, target->locator.targetId,
-                row.slice, &resolved, &rampMs, &revision);
+                row.publicationOwner, &resolved, &rampMs, &revision);
             break;
         case VariableTargetScope::VoiceEffect:
         case VariableTargetScope::BusEffect:
@@ -2188,7 +2565,7 @@ bool VariableServiceV1::RecensusMatches(Engine& engine,
                     : EffectParamTargetStore::Scope::Bus,
                 target->locator.object, target->locator.objectGeneration,
                 target->locator.effectSlot, target->locator.paramIndex,
-                row.slice, &resolved, &revision, &effectType);
+                row.publicationOwner, &resolved, &revision, &effectType);
             break;
         }
         if (!owned || revision != target->targetRevision ||
@@ -2337,16 +2714,43 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row) {
     if (!RecensusMatches(engine, row)) {
         return CandidateCaptureResult::Retry;
     }
-    if (!SnapshotCandidateBaselines(engine, row)) {
-        ClearCandidateBaselines(engine, row);
+    VariableProjectionGuard projection(engine);
+    if (!projection.Valid()) {
         return CandidateCaptureResult::Retry;
     }
+    std::array<WriteRow*, kPendingVariableWriteCapacity> prefix{};
+    std::size_t prefixCount = 0;
+    for (WriteRow& prior : history_) {
+        const bool privatePrefix = prior.reserved && row.reserved &&
+            prior.preparedIssue.SameReservation(row.preparedIssue) &&
+            IsPreparedActionOrderActive(prior.preparedIssue);
+        if ((!prior.used && !privatePrefix) || !prior.batchLeader || prior.world != row.world ||
+            prior.transport != row.transport || !PublicationPrecedes(prior, row) ||
+            (prior.state != RowState::SlicePrepared && prior.state != RowState::PageCommitted)) continue;
+        if (slices_.State(prior.slice) == VariableSliceState::Invalidated) continue;
+        if (prefixCount == prefix.size()) return CandidateCaptureResult::Retry;
+        prefix[prefixCount++] = &prior;
+    }
+    std::sort(prefix.begin(), prefix.begin() + prefixCount,
+        [](const WriteRow* a, const WriteRow* b) { return PublicationPrecedes(*a, *b); });
+    if (!CaptureCandidateSources(engine, row, prefix.data(), prefixCount)) {
+        return CandidateCaptureResult::Retry;
+    }
+    SetSliceRampSuppressed(engine, row, true);
+    for (std::size_t i = 0; i < prefixCount; ++i) {
+        SetSliceRampSuppressed(engine, *prefix[i], true);
+        for (const WriteRow* member : BatchRows(*prefix[i])) {
+            if (member != nullptr) ProjectCandidate(engine, *member);
+        }
+        RunVariableEvaluators(engine);
+    }
+    SetSliceRampSuppressed(engine, row, false);
     for (const WriteRow* member : BatchRows(row)) {
         if (member != nullptr) ProjectCandidate(engine, *member);
     }
     RunVariableEvaluators(engine);
     bool valid = true;
-    bool rejected = false;
+    std::uint32_t rejectedTargets = 0;
     const std::uint32_t count = slices_.TargetCount(row.slice);
     for (std::uint32_t i = 0; i < count; ++i) {
         VariableSliceTarget* existing = slices_.Target(row.slice, i);
@@ -2359,16 +2763,17 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row) {
         std::uint32_t rampMs = 0;
         std::uint32_t revision = 0;
         std::uint32_t effectType = target.locator.effectType;
+        bool poisoned = false;
         switch (target.locator.scope) {
         case VariableTargetScope::Voice: {
             float pan2d = 0.0f;
             valid = engine.params.CaptureSnapshotForClaim(
                 static_cast<VnVoiceHandle>(target.locator.object),
-                target.locator.targetId, row.slice, &resolved, &rampMs,
+                target.locator.targetId, row.publicationOwner, &resolved, &rampMs,
                 &revision, &pan2d);
             if (valid && target.locator.targetId == kTargetVoiceVolume &&
                 !TryVolumeGainFromDb(resolved)) {
-                rejected = true;
+                poisoned = true;
                 break;
             }
             ParamCommit commit{};
@@ -2386,12 +2791,12 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row) {
             valid = engine.busTargets.CaptureSnapshotForClaim(
                 static_cast<std::uint32_t>(target.locator.object),
                 target.locator.objectGeneration, target.locator.targetId,
-                row.slice, &resolved, &rampMs, &revision);
+                row.publicationOwner, &resolved, &rampMs, &revision);
             if (valid &&
                 (target.locator.targetId == kBusTargetBusVolume ||
                  target.locator.targetId == kBusTargetBusOutputVolume) &&
                 !TryVolumeGainFromDb(resolved)) {
-                rejected = true;
+                poisoned = true;
                 break;
             }
             if (valid) {
@@ -2420,18 +2825,25 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row) {
             valid = engine.effectParamTargets.SnapshotForClaim(
                 scope, target.locator.object,
                 target.locator.objectGeneration, target.locator.effectSlot,
-                target.locator.paramIndex, row.slice, &resolved, &revision,
+                target.locator.paramIndex, row.publicationOwner, &resolved, &revision,
                 &effectType);
             valid = valid &&
                     MakeVariableEffectParamCommand(
                         engine, scope, target.locator.object,
                         target.locator.effectSlot, target.locator.paramIndex,
-                        resolved, effectType, &target.command);
+                        resolved, effectType, &target.command, 0, &target.toneBand);
+            if (valid && scope == EffectParamTargetStore::Scope::Voice) {
+                const auto voiceSlot = static_cast<std::uint32_t>(target.locator.object);
+                if (voiceSlot >= engine.voiceEffectInstanceRefs.size() ||
+                    target.locator.effectSlot >= engine.voiceEffectInstanceRefs[voiceSlot].size()) {
+                    valid = false;
+                } else {
+                    const auto& effect = engine.voiceEffectInstanceRefs[voiceSlot][target.locator.effectSlot];
+                    target.nativeEffect = {effect.type, effect.poolIndex, effect.generation};
+                }
+            }
             break;
         }
-        }
-        if (rejected) {
-            break;
         }
         if (!valid || revision != target.targetRevision ||
             effectType != target.locator.effectType) {
@@ -2441,28 +2853,66 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row) {
         target.resolvedValue = resolved;
         target.rampMs = rampMs;
         *existing = target;
+        if (poisoned) ++rejectedTargets;
     }
-    SetSliceRampSuppressed(engine, row, true);
-    for (const WriteRow* member : BatchRows(row)) {
-        if (member != nullptr) ProjectCurrentApplied(engine, *member);
-    }
-    RunVariableEvaluators(engine);
-    if (rejected) {
+    projection.Restore();
+    if (valid && rejectedTargets != 0) {
+        // The census contains unique physical targets; retries must not count drops.
+        engine.paramDropCount += rejectedTargets;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const auto& target = *slices_.Target(row.slice, i);
+            if (TryVolumeGainFromDb(target.resolvedValue)) continue;
+            if (target.locator.scope == VariableTargetScope::Voice &&
+                target.locator.targetId == kTargetVoiceVolume) {
+                const auto handle = static_cast<VnVoiceHandle>(target.locator.object);
+                if (!TryVolumeGainFromDb(engine.params.ResolvedValue(handle, target.locator.targetId)))
+                    engine.params.DropClaimedBaseline(handle, target.locator.targetId, row.publicationOwner);
+            } else if (target.locator.scope == VariableTargetScope::Bus &&
+                (target.locator.targetId == kBusTargetBusVolume ||
+                 target.locator.targetId == kBusTargetBusOutputVolume)) {
+                const auto bus = static_cast<std::uint32_t>(target.locator.object);
+                if (!TryVolumeGainFromDb(engine.busTargets.Reduce(bus, target.locator.targetId)))
+                    engine.busTargets.DropClaimedBaseline(bus, target.locator.objectGeneration,
+                        target.locator.targetId, row.publicationOwner);
+            }
+        }
         RejectPreparedRow(engine, row);
         return CandidateCaptureResult::Rejected;
     }
-    SetSliceRampSuppressed(engine, row, false);
+    if (valid) {
+        for (std::uint32_t i = 0; i < count; ++i) {
+            auto* target = slices_.Target(row.slice, i);
+            if (target->locator.scope == VariableTargetScope::Voice) {
+                target->carriedRampMs = engine.params.TakePublicationRamp(
+                    static_cast<VnVoiceHandle>(target->locator.object),
+                    target->locator.targetId, row.publicationOwner);
+            } else if (target->locator.scope == VariableTargetScope::Bus) {
+                target->carriedRampMs = engine.busTargets.TakePublicationRamp(
+                    static_cast<std::uint32_t>(target->locator.object),
+                    target->locator.objectGeneration, target->locator.targetId,
+                    row.publicationOwner);
+            }
+        }
+    }
     return valid ? CandidateCaptureResult::Ready
                  : CandidateCaptureResult::Retry;
 }
 
 void VariableServiceV1::RejectPreparedRow(Engine& engine,
                                           WriteRow& row) noexcept {
+    const auto members = BatchRows(row);
     if (row.slice.Valid()) {
         ReleaseSliceClaims(engine, row, ClaimReleaseReason::RejectCandidate);
+        if (row.historySlicePin) {
+            VariableSliceSource source{};
+            if (slices_.CaptureSource(row.slice, &source)) (void)slices_.ReleaseSource(source);
+            row.historySlicePin = false;
+        }
         (void)slices_.AbandonPrepared(row.slice);
     }
-    row.slice = {};
+    for (auto* member : members) {
+        if (member != nullptr) member->slice = {};
+    }
     FinalizeBatch(row, VariableOutcomeKind::TargetRejected, {}, 0);
 }
 
@@ -2470,12 +2920,18 @@ void VariableServiceV1::ResetPreparedRow(Engine& engine,
                                          WriteRow& row) noexcept {
     if (row.slice.Valid()) {
         ReleaseSliceClaims(engine, row);
+        if (row.historySlicePin) {
+            VariableSliceSource source{};
+            if (slices_.CaptureSource(row.slice, &source)) (void)slices_.ReleaseSource(source);
+            row.historySlicePin = false;
+        }
         (void)slices_.AbandonPrepared(row.slice);
     }
     row.slice = {};
     row.state = RowState::Pending;
     row.frontierCaptured = false;
-    row.noPhysicalTargets = false;
+    row.preparedEngine = nullptr;
+    row.preparedSourcesSealed = false;
     SyncBatchState(row);
 }
 
@@ -2484,17 +2940,12 @@ bool VariableServiceV1::PrepareCurrentSlice(Engine& engine, WriteRow& row) {
     if (!GatherTargets(engine, row, &count)) {
         return false;
     }
-    if (count == 0) {
-        row.noPhysicalTargets = true;
-        row.state = RowState::WaitingFrontier;
-        return true;
-    }
-
     if (!slices_.Reserve(row.world, row.transport, row.ticket.sequence,
                          row.requestedFrame, row.bankOrdinal, count,
                          &row.slice)) {
         return false;
     }
+    if (row.reserved) row.preparedEngine = &engine;
     row.state = RowState::TargetsClaimed;
 
     const auto releaseClaim = [&](const GatheredTarget& target) {
@@ -2502,13 +2953,13 @@ bool VariableServiceV1::PrepareCurrentSlice(Engine& engine, WriteRow& row) {
         case VariableTargetScope::Voice:
             engine.params.ReleaseClaim(
                 static_cast<VnVoiceHandle>(target.locator.object),
-                target.locator.targetId, row.slice);
+                target.locator.targetId, row.publicationOwner);
             break;
         case VariableTargetScope::Bus:
             engine.busTargets.ReleaseClaim(
                 static_cast<std::uint32_t>(target.locator.object),
                 target.locator.objectGeneration, target.locator.targetId,
-                row.slice);
+                row.publicationOwner);
             break;
         case VariableTargetScope::VoiceEffect:
         case VariableTargetScope::BusEffect:
@@ -2518,7 +2969,7 @@ bool VariableServiceV1::PrepareCurrentSlice(Engine& engine, WriteRow& row) {
                     : EffectParamTargetStore::Scope::Bus,
                 target.locator.object, target.locator.objectGeneration,
                 target.locator.effectSlot, target.locator.paramIndex,
-                row.slice);
+                row.publicationOwner);
             break;
         }
     };
@@ -2530,13 +2981,13 @@ bool VariableServiceV1::PrepareCurrentSlice(Engine& engine, WriteRow& row) {
         case VariableTargetScope::Voice:
             ok = engine.params.TryClaim(
                 static_cast<VnVoiceHandle>(target.locator.object),
-                target.locator.targetId, row.slice, target.revision);
+                target.locator.targetId, row.publicationOwner, target.revision);
             break;
         case VariableTargetScope::Bus:
             ok = engine.busTargets.TryClaim(
                 static_cast<std::uint32_t>(target.locator.object),
                 target.locator.objectGeneration, target.locator.targetId,
-                row.slice, target.revision);
+                row.publicationOwner, target.revision);
             break;
         case VariableTargetScope::VoiceEffect:
         case VariableTargetScope::BusEffect:
@@ -2546,7 +2997,7 @@ bool VariableServiceV1::PrepareCurrentSlice(Engine& engine, WriteRow& row) {
                     : EffectParamTargetStore::Scope::Bus,
                 target.locator.object, target.locator.objectGeneration,
                 target.locator.effectSlot, target.locator.paramIndex,
-                row.slice, target.revision);
+                row.publicationOwner, target.revision);
             break;
         }
         if (!ok) {
@@ -2581,15 +3032,26 @@ void VariableServiceV1::ReleaseSliceClaims(
         }
         switch (target->locator.scope) {
         case VariableTargetScope::Voice:
+            if (reason != ClaimReleaseReason::RejectCandidate) {
+                engine.params.RestorePublicationRamp(
+                    static_cast<VnVoiceHandle>(target->locator.object),
+                    target->locator.targetId, row.publicationOwner, target->carriedRampMs);
+            }
             engine.params.ReleaseClaim(
                 static_cast<VnVoiceHandle>(target->locator.object),
-                target->locator.targetId, row.slice, reason);
+                target->locator.targetId, row.publicationOwner, reason);
             break;
         case VariableTargetScope::Bus:
+            if (reason != ClaimReleaseReason::RejectCandidate) {
+                engine.busTargets.RestorePublicationRamp(
+                    static_cast<std::uint32_t>(target->locator.object),
+                    target->locator.objectGeneration, target->locator.targetId,
+                    row.publicationOwner, target->carriedRampMs);
+            }
             engine.busTargets.ReleaseClaim(
                 static_cast<std::uint32_t>(target->locator.object),
                 target->locator.objectGeneration, target->locator.targetId,
-                row.slice, reason);
+                row.publicationOwner, reason);
             break;
         case VariableTargetScope::VoiceEffect:
         case VariableTargetScope::BusEffect:
@@ -2599,7 +3061,7 @@ void VariableServiceV1::ReleaseSliceClaims(
                     : EffectParamTargetStore::Scope::Bus,
                 target->locator.object, target->locator.objectGeneration,
                 target->locator.effectSlot, target->locator.paramIndex,
-                row.slice);
+                row.publicationOwner);
             break;
         }
     }
@@ -2618,7 +3080,7 @@ void VariableServiceV1::CommitSliceTargets(Engine& engine,
         case VariableTargetScope::Voice:
             engine.params.MarkSliceCommitted(
                 static_cast<VnVoiceHandle>(target->locator.object),
-                target->locator.targetId, row.slice, target->resolvedValue,
+                target->locator.targetId, row.publicationOwner, target->resolvedValue,
                 target->rampMs, target->locator.targetId == kTargetVoicePan
                     ? target->command.payload.setVoicePan.pan2d : 0.0f);
             break;
@@ -2626,7 +3088,7 @@ void VariableServiceV1::CommitSliceTargets(Engine& engine,
             engine.busTargets.MarkSliceCommitted(
                 static_cast<std::uint32_t>(target->locator.object),
                 target->locator.objectGeneration, target->locator.targetId,
-                row.slice, target->resolvedValue, target->rampMs);
+                row.publicationOwner, target->resolvedValue, target->rampMs);
             break;
         case VariableTargetScope::VoiceEffect:
         case VariableTargetScope::BusEffect:
@@ -2636,7 +3098,7 @@ void VariableServiceV1::CommitSliceTargets(Engine& engine,
                     : EffectParamTargetStore::Scope::Bus,
                 target->locator.object, target->locator.objectGeneration,
                 target->locator.effectSlot, target->locator.paramIndex,
-                row.slice,
+                row.publicationOwner,
                 target->resolvedValue);
             break;
         }
@@ -2656,13 +3118,13 @@ void VariableServiceV1::SetSliceRampSuppressed(
         case VariableTargetScope::Voice:
             engine.params.SetClaimRampSuppressed(
                 static_cast<VnVoiceHandle>(target->locator.object),
-                target->locator.targetId, row.slice, suppressed);
+                target->locator.targetId, row.publicationOwner, suppressed);
             break;
         case VariableTargetScope::Bus:
             engine.busTargets.SetClaimRampSuppressed(
                 static_cast<std::uint32_t>(target->locator.object),
                 target->locator.objectGeneration, target->locator.targetId,
-                row.slice, suppressed);
+                row.publicationOwner, suppressed);
             break;
         case VariableTargetScope::VoiceEffect:
         case VariableTargetScope::BusEffect:
@@ -2690,30 +3152,10 @@ void VariableServiceV1::BeginService(Engine& engine,
         const std::size_t i = (start + offset) % historySize;
         WriteRow& row = history_[i];
         if (!row.used || !row.batchLeader || row.state != RowState::Pending ||
-            row.requestedFrame > serviceAudioFrame_) {
+            row.requestedFrame >= timeline_.WindowEndFrame()) {
             continue;
         }
-        bool earlierSameKey = false;
         const auto members = BatchRows(row);
-        for (const WriteRow& other : history_) {
-            if (&row != &other && other.used &&
-                other.state != RowState::Terminal &&
-                std::any_of(members.begin(), members.end(),
-                    [&](const WriteRow* member) {
-                        return member != nullptr && SameServiceDependency(other, *member);
-                    }) &&
-                (other.requestedFrame < row.requestedFrame ||
-                 (other.requestedFrame == row.requestedFrame &&
-                  (other.ticket.sequence < row.ticket.sequence ||
-                   (other.ticket.sequence == row.ticket.sequence &&
-                    other.executionOrdinal < row.executionOrdinal))))) {
-                earlierSameKey = true;
-                break;
-            }
-        }
-        if (earlierSameKey) {
-            continue;
-        }
         const auto memberCount = static_cast<std::size_t>(std::count_if(
             members.begin(), members.end(), [](const WriteRow* member) {
                 return member != nullptr;
@@ -2729,102 +3171,288 @@ void VariableServiceV1::BeginService(Engine& engine,
     if (candidateCount == 0) {
         serviceCursor_ = (start + 1) % historySize;
     }
+    std::sort(candidates.begin(), candidates.begin() + candidateCount,
+        [&](std::size_t a, std::size_t b) { return Precedes(history_[a], history_[b]); });
     for (std::size_t candidate = 0; candidate < candidateCount; ++candidate) {
         WriteRow& row = history_[candidates[candidate]];
-        row.targetQuantum = blockFrames == 0 ? blocksRendered
-                                             : row.requestedFrame / blockFrames;
         (void)PrepareCurrentSlice(engine, row);
         SyncBatchState(row);
     }
 }
 
+std::uint64_t VariableServiceV1::EarliestReadCutFrame(const Engine& engine) const noexcept {
+    const auto quantum = timeline_.QuantumFrames();
+    const auto blocks = engine.mixer.BlocksRendered();
+    if (quantum == 0) return UINT64_MAX;
+    const auto audioFrame = std::max(serviceAudioFrame_,
+        blocks > UINT64_MAX / quantum ? UINT64_MAX : blocks * quantum);
+    const auto frame = std::max(
+        {timeline_.PublishCutoffFrame(),
+         timeline_.WindowStartFrame() +
+             static_cast<std::uint64_t>(timeline_.PublishLeadQuanta()) * timeline_.QuantumFrames(),
+         (timeline_.ConsumerFrontier().load(std::memory_order_acquire) + 1u) * timeline_.QuantumFrames(),
+         audioFrame > UINT64_MAX - quantum ? UINT64_MAX : audioFrame + quantum});
+    return frame > UINT64_MAX - (quantum - 1u) ? UINT64_MAX :
+        ((frame + quantum - 1u) / quantum) * quantum;
+}
+
+bool VariableServiceV1::PrepareReadCutSources(Engine& engine, VariableReadCutRef ref) {
+    auto* cut = ResolveReadCut(ref);
+    if (cut == nullptr || cut->state.load(std::memory_order_acquire) != ReadCutState::Capturing) return false;
+    std::array<WriteRow*, kPendingVariableWriteCapacity> candidates{};
+    std::size_t count = 0;
+    for (auto& row : history_) {
+        if (!row.used || !row.batchLeader || row.state != RowState::Pending ||
+            row.world != cut->world || row.transport != cut->transport || row.requestedFrame > cut->executeFrame ||
+            row.ticket.sequence > cut->sequence || (row.ticket.sequence == cut->sequence &&
+                row.executionOrdinal >= cut->executionOrdinalExclusive)) continue;
+        if (count == candidates.size()) return false;
+        candidates[count++] = &row;
+    }
+    std::sort(candidates.begin(), candidates.begin() + count,
+        [](const WriteRow* a, const WriteRow* b) { return Precedes(*a, *b); });
+    for (std::size_t i = 0; i < count; ++i) {
+        (void)PrepareCurrentSlice(engine, *candidates[i]);
+        SyncBatchState(*candidates[i]);
+    }
+    PrepareClaimedSlicesImpl(engine, true, false);
+    return true;
+}
+
+bool VariableServiceV1::PrepareActionReadCutSources(Engine& engine, VariableReadCutRef ref,
+    const LogicCommitCoordinator::PreparedIssue& issue) {
+    ActionOrderIdentity identity{};
+    return CaptureActionOrder(issue, &identity) && PrepareActionReadCutSourcesImpl(engine, ref, identity);
+}
+
+bool VariableServiceV1::PrepareActionReadCutSources(Engine& engine, VariableReadCutRef ref,
+    const ActionFiringTable::PreparedChildIdentity& child) {
+    ActionOrderIdentity identity{};
+    return CaptureActionOrder(engine, child, &identity) && PrepareActionReadCutSourcesImpl(engine, ref, identity);
+}
+
+bool VariableServiceV1::PrepareActionReadCutSourcesImpl(Engine& engine, VariableReadCutRef ref,
+    const ActionOrderIdentity& identity) {
+    auto* cut = ResolveReadCut(ref);
+    if (cut == nullptr || cut->state.load(std::memory_order_acquire) != ReadCutState::Capturing ||
+        &engine.variables != this || &engine.logicCommits != &commits_ || !IsPreparedActionOrderActive(identity) ||
+        !cut->preparedIssue.SameReservation(identity)) return false;
+    std::array<WriteRow*, kPendingVariableWriteCapacity> candidates{};
+    std::size_t count = 0;
+    for (auto& row : history_) {
+        const bool privateRow = row.reserved && row.preparedIssue.SameReservation(identity);
+        if ((!row.used && !privateRow) || !row.batchLeader || row.state != RowState::Pending ||
+            row.world != cut->world || row.transport != cut->transport || row.requestedFrame > cut->executeFrame ||
+            row.ticket.sequence > cut->sequence || (row.ticket.sequence == cut->sequence &&
+                row.executionOrdinal >= cut->executionOrdinalExclusive)) continue;
+        if (count == candidates.size()) return false;
+        candidates[count++] = &row;
+    }
+    std::sort(candidates.begin(), candidates.begin() + count,
+        [](const WriteRow* a, const WriteRow* b) { return Precedes(*a, *b); });
+    for (std::size_t index = 0; index < count; ++index) {
+        (void)PrepareCurrentSlice(engine, *candidates[index]);
+        SyncBatchState(*candidates[index]);
+    }
+    PrepareClaimedSlicesImpl(engine, true, false, &identity);
+    for (std::uint32_t index = 0; index < cut->sourceCount; ++index) {
+        const auto* row = ResolveHistory(cut->sources[index]);
+        if (row == nullptr || !row->slice.Valid()) return false;
+        const bool privateReady = row->reserved && row->preparedIssue.SameReservation(identity) &&
+            row->preparedEngine == &engine && row->placementHeld && row->state == RowState::SlicePrepared;
+        const bool committedReady = row->used && (row->state == RowState::PageCommitted ||
+            (row->state == RowState::Terminal && row->finalOutcome == VariableOutcomeKind::Applied));
+        if (!privateReady && !committedReady) return false;
+    }
+    return true;
+}
+
 void VariableServiceV1::PrepareClaimedSlices(Engine& engine) {
+    PrepareClaimedSlicesImpl(engine, false, true);
+}
+
+void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine,
+    bool allowUnsettledFrontier, bool publishPages,
+    const ActionOrderIdentity* privateIssue) {
+    const std::uint64_t nextOpenFrame = EarliestReadCutFrame(engine);
+    const auto expectedFrame = [&](const WriteRow& row) {
+        if (row.state == RowState::PageCommitted || row.placementHeld) return row.committedFrame;
+        return std::max(row.requestedFrame, nextOpenFrame);
+    };
+    std::array<WriteRow*, kPendingVariableWriteCapacity> rows{};
+    std::size_t rowCount = 0;
     for (WriteRow& row : history_) {
-        if (!row.used || !row.batchLeader || row.noPhysicalTargets || !row.slice.Valid()) {
+        const bool privateRow = row.reserved && privateIssue != nullptr &&
+            row.preparedIssue.SameReservation(*privateIssue);
+        if ((!row.used && !privateRow) || !row.batchLeader || !row.slice.Valid() ||
+            (row.preparedEngine != nullptr && row.placementHeld && row.state == RowState::SlicePrepared)) {
             continue;
         }
-        if (row.state == RowState::WaitingFrontier) {
-            if (engine.commands.SettledFrontier() <
-                row.requiredCommandFrontier) {
+        if (row.state != RowState::WaitingFrontier && row.state != RowState::SlicePrepared) continue;
+        assert(rowCount < rows.size());
+        rows[rowCount++] = &row;
+    }
+    std::sort(rows.begin(), rows.begin() + rowCount,
+        [&](const WriteRow* a, const WriteRow* b) {
+            if (expectedFrame(*a) != expectedFrame(*b)) return expectedFrame(*a) < expectedFrame(*b);
+            if (a->ticket.sequence != b->ticket.sequence) return a->ticket.sequence < b->ticket.sequence;
+            return a->executionOrdinal < b->executionOrdinal;
+        });
+    std::array<HeldCurrentSliceToken, kPendingVariableWriteCapacity> held{};
+    std::array<std::size_t, kPendingVariableWriteCapacity> order{};
+    std::size_t placedCount = 0;
+    std::uint64_t publishThrough = 0;
+    // Reserve every private placement before constructing any physical tuple.
+    for (std::size_t index = 0; index < rowCount; ++index) {
+        WriteRow& row = *rows[index];
+        if (!allowUnsettledFrontier && engine.commands.SettledFrontier() < row.requiredCommandFrontier) continue;
+        if (!RecensusMatches(engine, row)) {
+            ResetPreparedRow(engine, row);
+            continue;
+        }
+        (void)slices_.ClearPreparedSources(row.slice);
+        ScheduledCurrentSliceInput input{};
+        input.executeFrame = row.requestedFrame;
+        input.logicCommitSequence = row.ticket.sequence;
+        input.executionOrdinal = row.executionOrdinal;
+        input.slice = {row.slice.slot, row.slice.generation};
+        const ReserveResult reserved = timeline_.ReserveHeldCurrentSlice(
+            input, PrePublishLatePolicy::ExecuteAtEarliestSafeFrame, nextOpenFrame, &held[index]);
+        if (reserved.status != ReserveStatus::Committed) continue;
+        row.committedFrame = reserved.firstFrame;
+        row.placementHeld = true;
+        if (!slices_.SetPreparedEffectiveFrame(row.slice, row.committedFrame)) {
+            (void)timeline_.CancelHeldCurrentSlice(&held[index]);
+            row.placementHeld = false;
+            ResetPreparedRow(engine, row);
+            continue;
+        }
+        order[placedCount++] = index;
+    }
+    std::sort(order.begin(), order.begin() + placedCount,
+        [&](std::size_t a, std::size_t b) { return PublicationPrecedes(*rows[a], *rows[b]); });
+    for (std::size_t placed = 0; placed < placedCount; ++placed) {
+        const auto index = order[placed];
+        WriteRow& row = *rows[index];
+        const auto cancelPlacement = [&] {
+            (void)timeline_.CancelHeldCurrentSlice(&held[index]);
+            row.placementHeld = false;
+        };
+        {
+            bool prefixUnprepared = false;
+            const auto members = BatchRows(row);
+            for (WriteRow& prior : history_) {
+                const bool privatePrefix = prior.reserved && privateIssue != nullptr &&
+                    prior.preparedIssue.SameReservation(*privateIssue);
+                if ((!prior.used && !privatePrefix) || !prior.batchLeader || prior.world != row.world ||
+                    prior.transport != row.transport || &prior == &row ||
+                    prior.state == RowState::Terminal || prior.state == RowState::PageCommitted ||
+                    (privatePrefix && prior.state == RowState::SlicePrepared && prior.placementHeld)) continue;
+                const auto frame = expectedFrame(prior);
+                if (frame > row.committedFrame || (frame == row.committedFrame &&
+                    (prior.ticket.sequence > row.ticket.sequence ||
+                        (prior.ticket.sequence == row.ticket.sequence && prior.executionOrdinal >= row.executionOrdinal)))) continue;
+                for (const WriteRow* priorMember : BatchRows(prior)) {
+                    if (priorMember == nullptr) continue;
+                    for (const WriteRow* member : members) {
+                        if (member != nullptr && SameServiceDependency(*priorMember, *member)) {
+                            prefixUnprepared = true;
+                        }
+                    }
+                }
+                if (!prefixUnprepared) {
+                    prefixUnprepared = SharesPhysicalTargets(engine, prior, row);
+                }
+                if (prefixUnprepared) break;
+            }
+            if (prefixUnprepared) {
+                cancelPlacement();
                 continue;
             }
             if (!RecensusMatches(engine, row)) {
+                cancelPlacement();
                 ResetPreparedRow(engine, row);
                 continue;
             }
             const CandidateCaptureResult captured =
                 CaptureCandidateSlice(engine, row);
             if (captured == CandidateCaptureResult::Retry) {
+                cancelPlacement();
                 ResetPreparedRow(engine, row);
                 continue;
             }
             if (captured == CandidateCaptureResult::Rejected) {
+                cancelPlacement();
                 continue;
             }
             row.state = RowState::SlicePrepared;
             SyncBatchState(row);
         }
-        if (row.state != RowState::SlicePrepared) {
+        if (!slices_.SetPreparedCommandFrontier(row.slice, row.requiredCommandFrontier) ||
+            !PinHistorySlice(row) || (row.used && !slices_.Publish(row.slice))) {
+            cancelPlacement();
+            ResetPreparedRow(engine, row);
             continue;
         }
-        ScheduledCurrentSliceInput input{};
-        input.executeFrame = row.requestedFrame;
-        input.logicCommitSequence = row.ticket.sequence;
-        input.slice = {row.slice.slot, row.slice.generation};
-        const std::uint64_t nextOpenFrame = std::max(
-            {timeline_.PublishCutoffFrame(),
-             timeline_.WindowStartFrame() +
-                 static_cast<std::uint64_t>(timeline_.PublishLeadQuanta()) *
-                     timeline_.QuantumFrames(),
-             (timeline_.ConsumerFrontier().load(std::memory_order_acquire) +
-              1u) * timeline_.QuantumFrames(),
-             serviceAudioFrame_ >
-                     UINT64_MAX - timeline_.QuantumFrames()
-                 ? UINT64_MAX
-                 : serviceAudioFrame_ + timeline_.QuantumFrames()});
-        const ReserveResult reserved = timeline_.ReserveCurrentSlice(
-            input, PrePublishLatePolicy::ExecuteAtEarliestSafeFrame,
-            nextOpenFrame);
-        if (reserved.status != ReserveStatus::Committed) {
+        if (row.reserved) {
+            row.preparedEngine = &engine;
+            auto& privatePlacement = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
+            privatePlacement = std::move(held[index]);
             continue;
         }
-        if (!slices_.Publish(row.slice)) {
-            continue;
-        }
-        row.committedFrame = reserved.firstFrame;
+        row.placementHeld = false;
         row.state = RowState::PageCommitted;
         SyncBatchState(row);
-        timeline_.Publish(reserved.firstFrame + timeline_.QuantumFrames());
+        publishThrough = std::max(publishThrough, row.committedFrame + timeline_.QuantumFrames());
+    }
+    for (std::size_t index = 0; index < rowCount; ++index) {
+        if (!held[index].IsHeld()) continue;
+        const bool released = timeline_.ReleaseHeldCurrentSlice(&held[index]);
+        assert(released);
+        (void)released;
+    }
+    pendingPlaybackPublicationThrough_ = std::max(pendingPlaybackPublicationThrough_, publishThrough);
+    if (publishPages) PublishPreparedPlaybackPages();
+}
+
+void VariableServiceV1::PublishPreparedPlaybackPages(std::uint64_t requestedPublishThrough) noexcept {
+    pendingPlaybackPublicationThrough_ = std::max(pendingPlaybackPublicationThrough_, requestedPublishThrough);
+    if (pendingPlaybackPublicationThrough_ != 0) {
+        auto publishThrough = pendingPlaybackPublicationThrough_;
+        const auto quantum = timeline_.QuantumFrames();
+        // A shared source page must not outrun its fixed voice installation.
+        for (std::uint32_t index = 0; quantum != 0 && index < timelineReadUseCapacity_; ++index) {
+            const auto& use = timelineReadUses_[index];
+            if (use.state.load(std::memory_order_acquire) != TimelineReadUseState::Published ||
+                use.initializer.load(std::memory_order_acquire) != TimelineInitializerState::None) continue;
+            const auto* cut = ResolveReadCut(use.cut);
+            TimelineArmObservation arm{};
+            if (cut == nullptr || !use.lifetime.Owner()->Observe(use.lifetime.Token(), &arm)) continue;
+            if (arm.state == ArmState::PendingApply || arm.state == ArmState::Armed)
+                publishThrough = std::min(publishThrough, (cut->executeFrame / quantum) * quantum);
+        }
+        timeline_.Publish(publishThrough);
+        if (timeline_.PublishCutoffFrame() >= pendingPlaybackPublicationThrough_)
+            pendingPlaybackPublicationThrough_ = 0;
     }
 }
 
 void VariableServiceV1::EndService(Engine& engine) {
     const std::uint64_t blocksRendered = engine.mixer.BlocksRendered();
+    std::array<WriteRow*, kPendingVariableWriteCapacity> rows{};
+    std::size_t rowCount = 0;
     for (WriteRow& row : history_) {
         if (!row.used || !row.batchLeader) {
             continue;
         }
-        if (row.state == RowState::WaitingFrontier && row.noPhysicalTargets) {
-            if (blocksRendered < row.targetQuantum + 1) {
-                continue;
-            }
-            std::uint32_t count = 0;
-            if (!GatherTargets(engine, row, &count) || count != 0) {
-                row.state = RowState::Pending;
-                row.noPhysicalTargets = false;
-                SyncBatchState(row);
-                continue;
-            }
-            for (WriteRow* member : BatchRows(row)) {
-                if (member == nullptr) continue;
-                CommitAppliedBank(*member);
-                ProjectCurrentApplied(engine, *member);
-            }
-            RunVariableEvaluators(engine);
-            FinalizeBatch(row, VariableOutcomeKind::Applied, {},
-                        blocksRendered * engine.config.blockFrames);
-            continue;
-        }
+        if (row.state == RowState::Terminal) continue;
+        assert(rowCount < rows.size());
+        rows[rowCount++] = &row;
+    }
+    std::sort(rows.begin(), rows.begin() + rowCount,
+        [](const WriteRow* a, const WriteRow* b) { return PublicationPrecedes(*a, *b); });
+    for (std::size_t index = 0; index < rowCount; ++index) {
+        WriteRow& row = *rows[index];
         if (row.state != RowState::PageCommitted || !row.slice.Valid()) {
             continue;
         }
@@ -2836,9 +3464,11 @@ void VariableServiceV1::EndService(Engine& engine) {
                 continue;
             }
             ReleaseSliceClaims(engine, row);
-            FinalizeBatch(row, VariableOutcomeKind::EmitterDestroyed, {},
+            const auto reasons = slices_.InvalidationReasons(row.slice);
+            const auto outcome = (reasons & (kVariableSliceSourceRejected | kVariableSliceTargetRejected)) != 0
+                ? VariableOutcomeKind::TargetRejected : VariableOutcomeKind::EmitterDestroyed;
+            FinalizeBatch(row, outcome, {},
                         appliedBlock * engine.config.blockFrames);
-            row.slice = {};
             continue;
         }
         if (state != VariableSliceState::SliceApplied) {
@@ -2869,10 +3499,10 @@ void VariableServiceV1::EndService(Engine& engine) {
                         : VariableOutcomeKind::Applied,
                     {},
                     appliedBlock * engine.config.blockFrames);
-        row.slice = {};
     }
-    slices_.ReclaimSettled(blocksRendered);
     observedBlock_ = blocksRendered;
+    ReclaimHistoryRows();
+    slices_.ReclaimSettled(blocksRendered);
 }
 
 VnResult VariableServiceV1::ReplacePackDefinitions(
@@ -2915,8 +3545,7 @@ VariableServiceV1::PreparedPackDefinitions::operator=(
 bool VariableServiceV1::CanTerminateForWorldReplacement(
     const WriteRow& row) const noexcept {
     return row.world == worldGeneration_ && row.transport == transport_.Current() &&
-        !row.slice.Valid() && (row.state == RowState::Pending ||
-            (row.state == RowState::WaitingFrontier && row.noPhysicalTargets));
+        !row.slice.Valid() && row.state == RowState::Pending;
 }
 
 VnResult VariableServiceV1::PreparePackDefinitions(
@@ -3179,10 +3808,7 @@ bool VariableServiceV1::ResetTransport(std::uint64_t resetFrame) {
             const bool unclaimedPending =
                 row.used && row.state == RowState::Pending &&
                 !row.slice.Valid();
-            const bool noPhysicalFallback =
-                row.used && row.state == RowState::WaitingFrontier &&
-                row.noPhysicalTargets && !row.slice.Valid();
-            if (unclaimedPending || noPhysicalFallback) {
+            if (unclaimedPending) {
                 FinalizeRow(row, VariableOutcomeKind::TransportReset, {},
                             transportDrainFrame_);
             }
@@ -3196,6 +3822,9 @@ bool VariableServiceV1::ResetTransport(std::uint64_t resetFrame) {
             : transportDrainFrame_ - transportDrainFrame_ % quantum;
 
     if (transportDrainState_ == TransportDrainState::DrainingCurrent) {
+        // Released native calendars must drain in the old epoch before reset.
+        // Otherwise a source-free holder could lose its only consumption proof.
+        if (HasNativeReadCutsForTransport(transportDrainEpoch_)) return false;
         for (const WriteRow& row : history_) {
             if (row.used && row.state != RowState::Terminal) {
                 return false;
@@ -3350,7 +3979,7 @@ bool VariableServiceV1::HasBlockingWrite(VnVariableId id) const noexcept {
 VariableSliceRef VariableServiceV1::SliceForTicketForTests(
     std::uint64_t ticket) const noexcept {
     for (const WriteRow& row : history_) {
-        if (row.used && row.ticket.sequence == ticket) {
+        if (row.used && row.state != RowState::Terminal && row.ticket.sequence == ticket) {
             return row.slice;
         }
     }
@@ -3364,6 +3993,1735 @@ bool VariableServiceV1::EmitterBankActiveForTests(
     scope.emitterSlot = static_cast<std::uint32_t>(emitter);
     scope.emitterGeneration = static_cast<std::uint32_t>(emitter >> 32);
     return FindEmitterBank(scope) != nullptr;
+}
+
+VariableServiceV1::ReadCutRow* VariableServiceV1::ResolveReadCut(
+    VariableReadCutRef cut) noexcept {
+    if (!cut.Valid() || cut.slot >= readCutCapacity_) return nullptr;
+    auto& row = readCuts_[cut.slot];
+    if (row.generation.load(std::memory_order_acquire) != cut.generation) return nullptr;
+    const auto state = row.state.load(std::memory_order_acquire);
+    return state == ReadCutState::Capturing || state == ReadCutState::Published ? &row : nullptr;
+}
+
+const VariableServiceV1::ReadCutRow* VariableServiceV1::ResolveReadCut(
+    VariableReadCutRef cut) const noexcept {
+    return const_cast<VariableServiceV1*>(this)->ResolveReadCut(cut);
+}
+
+VariableServiceV1::WriteRow* VariableServiceV1::ResolveHistory(HistoryRef ref) noexcept {
+    if (!ref.Valid() || ref.slot >= history_.size() ||
+        historyGenerations_[ref.slot] != ref.generation) return nullptr;
+    auto& row = history_[ref.slot];
+    if (row.world != ref.world || row.transport != ref.transport ||
+        (row.ticket.Valid() && row.ticket.sequence != ref.sequence)) return nullptr;
+    return row.used || row.reserved || row.observers != 0 ? &row : nullptr;
+}
+
+bool VariableServiceV1::PreparedSourceDependsOn(VariableSliceRef source,
+    VariableSliceRef cancelled) const noexcept {
+    std::array<VariableSliceRef, kPendingVariableWriteCapacity> visited{};
+    std::size_t count = 0;
+    if (!source.Valid()) return false;
+    VariableSliceSource cancelledIdentity{};
+    if (!slices_.CaptureSource(cancelled, &cancelledIdentity)) return false;
+    visited[count++] = source;
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto current = visited[index];
+        if (current.slot == cancelled.slot && current.generation == cancelled.generation) return true;
+        for (std::uint32_t dependency = 0; dependency < slices_.SourceCount(current); ++dependency) {
+            const auto* next = slices_.Source(current, dependency);
+            if (next == nullptr) continue;
+            if (next->ticket < cancelledIdentity.ticket) continue;
+            const bool seen = std::any_of(visited.begin(), visited.begin() + count,
+                [&](const auto prior) { return prior.slot == next->slice.slot &&
+                    prior.generation == next->slice.generation; });
+            if (seen) continue;
+            // The pending-write admission ceiling bounds the private dependency graph.
+            if (count == visited.size()) return true;
+            visited[count++] = next->slice;
+        }
+    }
+    return false;
+}
+
+bool VariableServiceV1::PinHistorySlice(WriteRow& row) noexcept {
+    if (!row.batchLeader || row.historySlicePin || !row.slice.Valid()) return true;
+    VariableSliceSource source{};
+    if (!slices_.CaptureSource(row.slice, &source) || !slices_.RetainSource(source)) return false;
+    row.historySlicePin = true;
+    return true;
+}
+
+bool VariableServiceV1::RecycleHistoryRow(std::uint32_t slot) noexcept {
+    auto& row = history_[slot];
+    if (row.observers != 0) return false;
+    if (row.historySlicePin) {
+        VariableSliceSource source{};
+        if (!slices_.CaptureSource(row.slice, &source) || !slices_.ReleaseSource(source)) return false;
+        row.historySlicePin = false;
+    }
+    if (row.cancelledBeforePublication && row.slice.Valid() && !slices_.AbandonPrepared(row.slice)) return false;
+    row = WriteRow{};
+    if (historyGenerations_[slot] != UINT32_MAX) {
+        ++historyGenerations_[slot];
+        freeSlots_.push_back(slot);
+    }
+    return true;
+}
+
+void VariableServiceV1::ReclaimHistoryRows() noexcept {
+    for (std::uint32_t slot = 0; slot < history_.size(); ++slot) {
+        auto& row = history_[slot];
+        if (row.state != RowState::Terminal || row.observers != 0) continue;
+        if (row.slice.Valid()) {
+            if (row.cancelledBeforePublication) {
+                (void)RecycleHistoryRow(slot);
+                continue;
+            }
+            const auto fence = row.consumedFence != 0 ? row.consumedFence
+                : slices_.AppliedBlockSequence(row.slice);
+            if (fence == 0 || observedBlock_ <= fence) continue;
+            row.consumedFence = fence;
+            // Unobserved slices can retire while their value-only outcome awaits delivery.
+            if (row.historySlicePin) {
+                VariableSliceSource source{};
+                if (!slices_.CaptureSource(row.slice, &source) || !slices_.ReleaseSource(source)) continue;
+                row.historySlicePin = false;
+            }
+        }
+        if (row.outcomeDelivered) (void)RecycleHistoryRow(slot);
+    }
+}
+
+std::size_t VariableServiceV1::ReadCutStorageBytes() const noexcept {
+    return static_cast<std::size_t>(readCutCapacity_) * sizeof(ReadCutRow) +
+        static_cast<std::size_t>(timelineReadUseCapacity_) * sizeof(TimelineReadUseRow) +
+        historyGenerations_.capacity() * sizeof(std::uint32_t) +
+        preparedWritePlacements_.capacity() * sizeof(HeldCurrentSliceToken);
+}
+
+bool VariableServiceV1::CaptureReadCut(
+    VnEmitterHandle emitter, std::uint64_t executeFrame, LogicCommitSequence sequence,
+    std::uint32_t executionOrdinalExclusive, VariableReadCutRef* out) noexcept {
+    return CaptureReadCutImpl(emitter, executeFrame, sequence, executionOrdinalExclusive, out, nullptr);
+}
+
+bool VariableServiceV1::CaptureActionReadCut(VnEmitterHandle emitter, std::uint64_t executeFrame,
+    const LogicCommitCoordinator::PreparedIssue& issue, std::uint32_t executionOrdinalExclusive,
+    VariableReadCutRef* out, bool pendingPlacement) noexcept {
+    ActionOrderIdentity identity{};
+    if (!CaptureActionOrder(issue, &identity)) {
+        if (out != nullptr) *out = {};
+        return false;
+    }
+    return CaptureReadCutImpl(emitter, executeFrame, issue.Sequence(), executionOrdinalExclusive, out, &identity,
+        pendingPlacement);
+}
+
+bool VariableServiceV1::CaptureActionReadCut(Engine& engine, VnEmitterHandle emitter, std::uint64_t executeFrame,
+    const ActionFiringTable::PreparedChildIdentity& child, std::uint32_t executionOrdinalExclusive,
+    VariableReadCutRef* out, bool pendingPlacement) noexcept {
+    ActionOrderIdentity identity{};
+    if (!CaptureActionOrder(engine, child, &identity)) {
+        if (out != nullptr) *out = {};
+        return false;
+    }
+    return CaptureReadCutImpl(emitter, executeFrame, child.Sequence(), executionOrdinalExclusive, out, &identity,
+        pendingPlacement);
+}
+
+bool VariableServiceV1::CaptureReadCutImpl(
+    VnEmitterHandle emitter, std::uint64_t executeFrame, LogicCommitSequence sequence,
+    std::uint32_t executionOrdinalExclusive, VariableReadCutRef* out,
+    const ActionOrderIdentity* privateIssue, bool pendingPlacement) noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    if (sequence == 0 || definitions_.size() > kVariableDefinitionCapacity) return false;
+    if (emitter != 0 && (static_cast<std::uint32_t>(emitter) >= emitterBanks_.size() ||
+        static_cast<std::uint32_t>(emitter >> 32) == 0 ||
+        emitterBanks_[static_cast<std::uint32_t>(emitter)].generation != static_cast<std::uint32_t>(emitter >> 32))) return false;
+    std::uint32_t slot = 0;
+    for (; slot < readCutCapacity_; ++slot) {
+        if (readCuts_[slot].state.load(std::memory_order_acquire) == ReadCutState::Free) break;
+    }
+    if (slot == readCutCapacity_) return false;
+    auto& cut = readCuts_[slot];
+    cut.world = worldGeneration_;
+    cut.transport = transport_.Current();
+    cut.emitter = emitter;
+    cut.executeFrame = executeFrame;
+    cut.sequence = sequence;
+    cut.executionOrdinalExclusive = executionOrdinalExclusive;
+    cut.preparedIssue = privateIssue == nullptr ? ActionOrderIdentity{} : *privateIssue;
+    cut.pendingPlacement = pendingPlacement;
+    cut.finalPlacementCaptured = cut.actionOrderConsumed = false;
+    cut.candidatePins.reset();
+    cut.candidateAdmissionFailed = false;
+    cut.valueCount = static_cast<std::uint32_t>(definitions_.size());
+    cut.sourceCount = cut.publishedSourceCount = 0;
+    cut.needsRebuild = false;
+    cut.preparationFailed.store(false, std::memory_order_relaxed);
+    cut.nativeHandle = 0;
+    cut.timelineUseCount = 0;
+    cut.timelineOwnershipTransferred = false;
+    assert(!cut.entryPin.Valid());
+    cut.entryDescriptor = {};
+    cut.entryDecisions = nullptr;
+    cut.entryPool = nullptr;
+    cut.entryUse.store(EntryReadUseState::None, std::memory_order_relaxed);
+    cut.nativeReceipt.store(VariableNativeStartReceipt::None, std::memory_order_relaxed);
+    cut.nativeCalendarRequired = false;
+    cut.nativeCalendarReservationSequence = 0;
+    cut.nativeCalendarConsumed.store(false, std::memory_order_relaxed);
+    const VariableScopeKey scope{VariableScopeV1::Emitter,
+        static_cast<std::uint32_t>(emitter), static_cast<std::uint32_t>(emitter >> 32)};
+    const auto* bank = emitter == 0 ? nullptr : FindEmitterBank(scope);
+    const auto frameOf = [](const WriteRow& row) {
+        return row.state == RowState::PageCommitted || row.placementHeld ? row.committedFrame : row.requestedFrame;
+    };
+    const auto sequenceOf = [](const WriteRow& row) { return row.ticket.sequence; };
+    const auto included = [&](const WriteRow& row) {
+        return row.used || (row.reserved && privateIssue != nullptr &&
+            row.preparedIssue.SameReservation(*privateIssue) && IsPreparedActionOrderActive(row.preparedIssue));
+    };
+    if (pendingPlacement) {
+        if (privateIssue == nullptr) return false;
+        for (std::size_t index = 0; index < history_.size(); ++index) {
+            const auto& row = history_[index];
+            if (!included(row) || row.state == RowState::Terminal || row.world != cut.world ||
+                row.transport != cut.transport || row.ticket.sequence > sequence ||
+                (row.ticket.sequence == sequence && row.executionOrdinal >= executionOrdinalExclusive) ||
+                (row.scope.scope != VariableScopeV1::Global &&
+                    (emitter == 0 || !ScopeEqual(row.scope, scope)))) continue;
+            if (row.observers == UINT32_MAX) return false;
+            cut.candidatePins.set(index);
+        }
+        for (std::size_t index = 0; index < history_.size(); ++index)
+            if (cut.candidatePins.test(index)) ++history_[index].observers;
+    }
+    for (std::uint32_t index = 0; index < cut.valueCount; ++index) {
+        const auto& definition = definitions_[index];
+        auto& value = cut.values[index];
+        value = {};
+        value.variableId = definition.definition.variableId;
+        const auto* local = bank == nullptr ? nullptr : FindCurrentOverride(*bank, value.variableId);
+        value.value = local == nullptr ? definition.currentGlobal : local->currentValue;
+        cut.baselineValues[index] = value.value;
+        value.baselineOrdinal = local == nullptr ? definition.currentBankOrdinal : local->currentBankOrdinal;
+        const WriteRow* winner = nullptr;
+        for (const auto& row : history_) {
+            if (!included(row) || row.state == RowState::Terminal ||
+                row.world != cut.world || row.transport != cut.transport || row.variableId != value.variableId ||
+                row.requestedFrame > executeFrame || frameOf(row) > executeFrame ||
+                (row.scope.scope != VariableScopeV1::Global && (emitter == 0 || !ScopeEqual(row.scope, scope)))) continue;
+            const auto seq = sequenceOf(row);
+            if (seq > sequence || (seq == sequence && row.executionOrdinal >= executionOrdinalExclusive)) continue;
+            if (winner == nullptr || frameOf(row) > frameOf(*winner) ||
+                (frameOf(row) == frameOf(*winner) && (seq > sequenceOf(*winner) ||
+                    (seq == sequenceOf(*winner) && row.executionOrdinal > winner->executionOrdinal)))) winner = &row;
+        }
+        if (winner == nullptr) continue;
+        value.value = winner->value;
+        const auto* leader = winner;
+        if (winner->batchId != 0) {
+            for (const auto& member : history_) {
+                if (included(member) && member.batchLeader && member.batchId == winner->batchId) {
+                    leader = &member;
+                    break;
+                }
+            }
+        }
+        const auto historySlot = static_cast<std::uint32_t>(leader - history_.data());
+        value.source = {historySlot, historyGenerations_[historySlot], sequenceOf(*leader), cut.world, cut.transport};
+    }
+    cut.state.store(ReadCutState::Capturing, std::memory_order_release);
+    *out = {slot, cut.generation.load(std::memory_order_relaxed)};
+    return true;
+}
+
+bool VariableServiceV1::ReadCutValue(VariableReadCutRef ref, VnVariableId id, float* out) noexcept {
+    return ReadCutInput(ref, id, out) == VariableReadCutValueStatus::Value;
+}
+
+void VariableServiceV1::RegisterCommittedPendingReadCutCandidate(std::uint32_t slot) noexcept {
+    auto& row = history_[slot];
+    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
+        auto& cut = readCuts_[index];
+        const VariableScopeKey scope{VariableScopeV1::Emitter,
+            static_cast<std::uint32_t>(cut.emitter), static_cast<std::uint32_t>(cut.emitter >> 32)};
+        if (cut.state.load(std::memory_order_acquire) != ReadCutState::Capturing ||
+            !cut.pendingPlacement || cut.candidateAdmissionFailed || !row.used ||
+            row.world != cut.world || row.transport != cut.transport ||
+            row.ticket.sequence > cut.sequence ||
+            (row.ticket.sequence == cut.sequence && row.executionOrdinal >= cut.executionOrdinalExclusive) ||
+            (row.scope.scope != VariableScopeV1::Global &&
+                (cut.emitter == 0 || !ScopeEqual(row.scope, scope))) || cut.candidatePins.test(slot)) continue;
+        if (row.observers == UINT32_MAX) {
+            cut.candidateAdmissionFailed = true;
+            cut.preparationFailed.store(true, std::memory_order_release);
+            continue;
+        }
+        ++row.observers;
+        cut.candidatePins.set(slot);
+        if (cut.finalPlacementCaptured) cut.needsRebuild = true;
+    }
+}
+
+bool VariableServiceV1::RebuildPendingReadCut(ReadCutRow& cut, std::uint64_t logicalFrame) noexcept {
+    // The two Begin entries authenticate their distinct original owners before rebuilding.
+    if (!cut.pendingPlacement || !cut.actionOrderConsumed || cut.candidateAdmissionFailed ||
+        cut.state.load(std::memory_order_acquire) != ReadCutState::Capturing ||
+        cut.world != worldGeneration_ || cut.transport != transport_.Current()) return false;
+    for (std::size_t slot = 0; slot < history_.size(); ++slot) {
+        if (!cut.candidatePins.test(slot)) continue;
+        const auto& row = history_[slot];
+        if (row.world != cut.world || row.transport != cut.transport || row.observers == 0 ||
+            row.ticket.sequence > cut.sequence ||
+            (row.ticket.sequence == cut.sequence && row.executionOrdinal >= cut.executionOrdinalExclusive)) return false;
+    }
+    cut.needsRebuild = true;
+    for (std::uint32_t index = 0; index < cut.sourceCount; ++index) {
+        auto* row = ResolveHistory(cut.sources[index]);
+        assert(row != nullptr && row->observers != 0);
+        if (row == nullptr || row->observers == 0) return false;
+    }
+    for (std::uint32_t index = 0; index < cut.sourceCount; ++index)
+        --ResolveHistory(cut.sources[index])->observers;
+    cut.sourceCount = 0;
+    cut.preparationFailed.store(false, std::memory_order_relaxed);
+    cut.executeFrame = logicalFrame;
+    const VariableScopeKey scope{VariableScopeV1::Emitter,
+        static_cast<std::uint32_t>(cut.emitter), static_cast<std::uint32_t>(cut.emitter >> 32)};
+    const auto frameOf = [](const WriteRow& row) {
+        return row.state == RowState::PageCommitted || row.state == RowState::Terminal || row.placementHeld
+            ? row.committedFrame : row.requestedFrame;
+    };
+    for (std::uint32_t index = 0; index < cut.valueCount; ++index) {
+        auto& value = cut.values[index];
+        value.value = cut.baselineValues[index];
+        value.source = {};
+        value.read = false;
+        const WriteRow* winner = nullptr;
+        for (std::size_t slot = 0; slot < history_.size(); ++slot) {
+            if (!cut.candidatePins.test(slot)) continue;
+            const auto& row = history_[slot];
+            if (row.variableId != value.variableId || row.requestedFrame > logicalFrame ||
+                frameOf(row) > logicalFrame ||
+                (row.scope.scope != VariableScopeV1::Global && (cut.emitter == 0 || !ScopeEqual(row.scope, scope)))) continue;
+            if (winner == nullptr || frameOf(row) > frameOf(*winner) ||
+                (frameOf(row) == frameOf(*winner) && (row.ticket.sequence > winner->ticket.sequence ||
+                    (row.ticket.sequence == winner->ticket.sequence && row.executionOrdinal > winner->executionOrdinal))))
+                winner = &row;
+        }
+        if (winner == nullptr) continue;
+        value.value = winner->value;
+        const auto* leader = winner;
+        if (winner->batchId != 0)
+            for (std::size_t slot = 0; slot < history_.size(); ++slot)
+                if (cut.candidatePins.test(slot) && history_[slot].batchLeader &&
+                    history_[slot].batchId == winner->batchId) { leader = &history_[slot]; break; }
+        const auto slot = static_cast<std::uint32_t>(leader - history_.data());
+        value.source = {slot, historyGenerations_[slot], leader->ticket.sequence, cut.world, cut.transport};
+    }
+    cut.finalPlacementCaptured = true;
+    cut.needsRebuild = false;
+    return true;
+}
+
+VariableReadCutReader VariableServiceV1::ReadCutReader(VariableReadCutRef ref) noexcept {
+    return {this, ref, [](void* context, VariableReadCutRef cut, VnObjectId id, float* out) noexcept {
+        return static_cast<VariableServiceV1*>(context)->ReadCutInput(cut, id, out);
+    }};
+}
+
+bool VariableServiceV1::ReadCutHasSources(VariableReadCutRef ref) const noexcept {
+    const auto* cut = ResolveReadCut(ref);
+    return cut != nullptr && cut->sourceCount != 0;
+}
+
+VariableReadCutValueStatus VariableServiceV1::ReadCutInput(
+    VariableReadCutRef ref, VnVariableId id, float* out) noexcept {
+    auto* cut = ResolveReadCut(ref);
+    if (cut == nullptr || out == nullptr || cut->needsRebuild ||
+        cut->preparationFailed.load(std::memory_order_acquire)) return VariableReadCutValueStatus::Failed;
+    for (std::uint32_t index = 0; index < cut->valueCount; ++index) {
+        auto& value = cut->values[index];
+        if (value.variableId != id) continue;
+        if (value.source.Valid()) {
+            auto* row = ResolveHistory(value.source);
+            if (row == nullptr || (row->reserved && !IsPreparedActionOrderActive(row->preparedIssue)) ||
+                (row->state == RowState::Terminal &&
+                (row->finalOutcome != VariableOutcomeKind::Applied || !row->historySlicePin))) {
+                return VariableReadCutValueStatus::Failed;
+            }
+            if (row->slice.Valid()) {
+                const auto state = slices_.State(row->slice);
+                if (state == VariableSliceState::Invalidated || state == VariableSliceState::Free ||
+                    state == VariableSliceState::Quarantined) return VariableReadCutValueStatus::Failed;
+            }
+            bool retained = false;
+            for (std::uint32_t source = 0; source < cut->sourceCount; ++source) {
+                const auto& prior = cut->sources[source];
+                if (prior.slot == value.source.slot && prior.generation == value.source.generation) retained = true;
+            }
+            if (!retained && (!cut->pendingPlacement || cut->finalPlacementCaptured)) {
+                if (cut->state.load(std::memory_order_acquire) != ReadCutState::Capturing ||
+                    cut->sourceCount == cut->sources.size()) return VariableReadCutValueStatus::Failed;
+                if (row->observers == UINT32_MAX) return VariableReadCutValueStatus::Failed;
+                ++row->observers;
+                cut->sources[cut->sourceCount++] = value.source;
+            }
+        }
+        if (cut->state.load(std::memory_order_acquire) == ReadCutState::Capturing) value.read = true;
+        *out = value.value;
+        return VariableReadCutValueStatus::Value;
+    }
+    return VariableReadCutValueStatus::Missing;
+}
+
+bool VariableServiceV1::ValidateReadCutPublication(VariableReadCutRef ref,
+    std::uint64_t finalFrame, bool* outWaiting) noexcept {
+    if (outWaiting != nullptr) *outWaiting = false;
+    auto* cut = ResolveReadCut(ref);
+    if (cut == nullptr || cut->world != worldGeneration_ || cut->transport != transport_.Current() ||
+        finalFrame != cut->executeFrame || cut->preparationFailed.load(std::memory_order_acquire)) return false;
+    if (cut->emitter != 0 && (static_cast<std::uint32_t>(cut->emitter) >= emitterBanks_.size() ||
+        emitterBanks_[static_cast<std::uint32_t>(cut->emitter)].generation != static_cast<std::uint32_t>(cut->emitter >> 32))) return false;
+    if (cut->state.load(std::memory_order_acquire) == ReadCutState::Published) return true;
+    if (cut->needsRebuild) return false;
+    // Reordering private writes during placement must rebuild the captured image.
+    const VariableScopeKey scope{VariableScopeV1::Emitter,
+        static_cast<std::uint32_t>(cut->emitter), static_cast<std::uint32_t>(cut->emitter >> 32)};
+    const auto frameOf = [](const WriteRow& row) {
+        return row.state == RowState::PageCommitted || row.state == RowState::Terminal || row.placementHeld
+            ? row.committedFrame : row.requestedFrame;
+    };
+    const auto newer = [&](const WriteRow& a, const WriteRow& b) {
+        if (frameOf(a) != frameOf(b)) return frameOf(a) > frameOf(b);
+        if (a.ticket.sequence != b.ticket.sequence) return a.ticket.sequence > b.ticket.sequence;
+        return a.executionOrdinal > b.executionOrdinal;
+    };
+    for (std::uint32_t index = 0; index < cut->valueCount; ++index) {
+        const auto& value = cut->values[index];
+        if (!value.read) continue;
+        const auto* original = value.source.Valid() ? ResolveHistory(value.source) : nullptr;
+        const auto* winner = original;
+        for (const auto& row : history_) {
+            const bool privateRow = row.reserved && row.preparedIssue.SameReservation(cut->preparedIssue) &&
+                IsPreparedActionOrderActive(row.preparedIssue);
+            if (cut->pendingPlacement && !cut->candidatePins.test(static_cast<std::size_t>(&row - history_.data())))
+                continue;
+            if ((!row.used && !privateRow) || row.world != cut->world || row.transport != cut->transport ||
+                row.variableId != value.variableId || row.requestedFrame > finalFrame || frameOf(row) > finalFrame ||
+                (row.scope.scope != VariableScopeV1::Global && (cut->emitter == 0 || !ScopeEqual(row.scope, scope))) ||
+                row.ticket.sequence > cut->sequence ||
+                (row.ticket.sequence == cut->sequence && row.executionOrdinal >= cut->executionOrdinalExclusive)) continue;
+            if (row.state == RowState::Terminal &&
+                (row.finalOutcome != VariableOutcomeKind::Applied || row.bankOrdinal <= value.baselineOrdinal)) continue;
+            if (winner == nullptr || newer(row, *winner)) winner = &row;
+        }
+        if (winner != original && (winner == nullptr || original == nullptr || winner->batchId == 0 ||
+            winner->batchId != original->batchId)) return false;
+    }
+    for (std::uint32_t index = 0; index < cut->sourceCount; ++index) {
+        auto* row = ResolveHistory(cut->sources[index]);
+        const bool privateRow = row != nullptr && row->reserved && row->preparedEngine != nullptr &&
+            row->placementHeld && row->state == RowState::SlicePrepared &&
+            row->preparedIssue.SameReservation(cut->preparedIssue) && IsPreparedActionOrderActive(row->preparedIssue);
+        if (row == nullptr || (!row->used && !privateRow) ||
+            (row->state == RowState::Terminal && row->finalOutcome != VariableOutcomeKind::Applied)) return false;
+        if (!row->slice.Valid() || (!privateRow && row->state != RowState::PageCommitted &&
+            row->state != RowState::Terminal)) {
+            if (outWaiting != nullptr) *outWaiting = true;
+            return false;
+        }
+        if (slices_.EffectiveFrame(row->slice) > finalFrame ||
+            (slices_.EffectiveFrame(row->slice) == finalFrame &&
+                (row->ticket.sequence > cut->sequence ||
+                    (row->ticket.sequence == cut->sequence && row->executionOrdinal >= cut->executionOrdinalExclusive))) ||
+            slices_.State(row->slice) == VariableSliceState::Invalidated) return false;
+    }
+    return true;
+}
+
+VariableReadCutStatus VariableServiceV1::PublishReadCut(VariableReadCutRef ref,
+                                                      std::uint64_t finalFrame) noexcept {
+    bool waiting = false;
+    if (!ValidateReadCutPublication(ref, finalFrame, &waiting))
+        return waiting ? VariableReadCutStatus::Waiting : VariableReadCutStatus::Failed;
+    auto* cut = ResolveReadCut(ref);
+    if (cut->state.load(std::memory_order_acquire) == ReadCutState::Published) return ReadCutSourcesStatus(ref);
+    for (std::uint32_t index = 0; index < cut->sourceCount; ++index) {
+        auto* row = ResolveHistory(cut->sources[index]);
+        VariableSliceSource source{};
+        if (!slices_.CaptureSource(row->slice, &source) || !slices_.RetainSource(source)) {
+            for (std::uint32_t prior = 0; prior < cut->publishedSourceCount; ++prior)
+                (void)slices_.ReleaseSource(cut->publishedSources[prior]);
+            cut->publishedSourceCount = 0;
+            return VariableReadCutStatus::Failed;
+        }
+        cut->publishedSources[cut->publishedSourceCount++] = source;
+    }
+    cut->state.store(ReadCutState::Published, std::memory_order_release);
+    return ReadCutSourcesStatus(ref);
+}
+
+VariableReadCutStatus VariableServiceV1::ReadCutSourcesStatus(VariableReadCutRef ref) const noexcept {
+    const auto* cut = ResolveReadCut(ref);
+    if (cut == nullptr) return VariableReadCutStatus::Failed;
+    if (cut->preparationFailed.load(std::memory_order_acquire)) return VariableReadCutStatus::Failed;
+    if (cut->state.load(std::memory_order_acquire) != ReadCutState::Published) return VariableReadCutStatus::Waiting;
+    bool waiting = false;
+    for (std::uint32_t index = 0; index < cut->publishedSourceCount; ++index) {
+        const auto& source = cut->publishedSources[index];
+        if (slices_.SourceApplied(source)) continue;
+        const auto state = slices_.State(source.slice);
+        if (state == VariableSliceState::Invalidated || state == VariableSliceState::Free ||
+            state == VariableSliceState::Quarantined) return VariableReadCutStatus::Failed;
+        waiting = true;
+    }
+    return waiting ? VariableReadCutStatus::Waiting : VariableReadCutStatus::Applied;
+}
+
+bool VariableServiceV1::CanReleaseReadCut(VariableReadCutRef ref) const noexcept {
+    const auto* cut = ResolveReadCut(ref);
+    return cut != nullptr && cut->timelineUseCount == 0 && !cut->entryPin.Valid() &&
+        cut->entryUse.load(std::memory_order_acquire) == EntryReadUseState::None &&
+        cut->nativeReceipt.load(std::memory_order_acquire) == VariableNativeStartReceipt::None &&
+        (!cut->nativeCalendarRequired || cut->nativeCalendarConsumed.load(std::memory_order_acquire));
+}
+
+bool VariableServiceV1::ReleaseReadCut(VariableReadCutRef ref) noexcept {
+    if (!CanReleaseReadCut(ref)) return false;
+    auto* cut = ResolveReadCut(ref);
+    for (std::uint32_t index = 0; index < cut->publishedSourceCount; ++index)
+        (void)slices_.ReleaseSource(cut->publishedSources[index]);
+    for (std::uint32_t index = 0; index < cut->sourceCount; ++index) {
+        auto* row = ResolveHistory(cut->sources[index]);
+        assert(row != nullptr && row->observers != 0);
+        if (row != nullptr && row->observers != 0) --row->observers;
+    }
+    for (std::size_t index = 0; index < history_.size(); ++index) {
+        if (!cut->candidatePins.test(index)) continue;
+        assert(history_[index].observers != 0);
+        --history_[index].observers;
+    }
+    cut->candidatePins.reset();
+    cut->sourceCount = cut->publishedSourceCount = cut->valueCount = 0;
+    if (ref.generation == UINT32_MAX) {
+        cut->state.store(ReadCutState::Quarantined, std::memory_order_release);
+    } else {
+        cut->generation.store(ref.generation + 1u, std::memory_order_release);
+        cut->state.store(ReadCutState::Free, std::memory_order_release);
+    }
+    ReclaimHistoryRows();
+    return true;
+}
+
+const VariableServiceV1::ReadCutRow* VariableServiceV1::ResolveNativeReadCut(
+    const VariableNativeStartIdentity& identity) const noexcept {
+    const auto* cut = ResolveReadCut(identity.cut);
+    if (cut == nullptr || cut->nativeReceipt.load(std::memory_order_acquire) ==
+        VariableNativeStartReceipt::None || identity.nativeHandle == 0 ||
+        cut->nativeHandle != identity.nativeHandle || cut->world != identity.world ||
+        cut->transport != identity.transport || cut->executeFrame != identity.startFrame ||
+        cut->sequence != identity.sequence || cut->executionOrdinalExclusive != identity.executionOrdinalExclusive) return nullptr;
+    return cut;
+}
+
+bool VariableServiceV1::ReserveNativeReadCutCalendar(VariableReadCutRef ref,
+    std::uint64_t publicationFrontier, HeldCurrentSliceToken* out) noexcept {
+    auto* cut = ResolveReadCut(ref);
+    if (cut == nullptr || out == nullptr || out->IsHeld() || cut->nativeCalendarRequired ||
+        cut->state.load(std::memory_order_acquire) != ReadCutState::Capturing ||
+        cut->nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None) return false;
+    ScheduledCurrentSliceInput input{};
+    input.executeFrame = cut->executeFrame;
+    input.logicCommitSequence = cut->sequence;
+    input.executionOrdinal = cut->executionOrdinalExclusive;
+    input.kind = CurrentSliceKind::NativeStartCalendar;
+    input.slice = {ref.slot, ref.generation};
+    const auto reserved = timeline_.ReserveHeldCurrentSlice(input, PrePublishLatePolicy::Refuse,
+                                                           publicationFrontier, out);
+    if (reserved.status != ReserveStatus::Committed) return false;
+    cut->nativeCalendarRequired = true;
+    cut->nativeCalendarReservationSequence = out->ReservationSequence();
+    return true;
+}
+
+bool VariableServiceV1::CancelNativeReadCutCalendar(VariableReadCutRef ref,
+    HeldCurrentSliceToken* held) noexcept {
+    auto* cut = ResolveReadCut(ref);
+    if (cut == nullptr || held == nullptr || !held->IsHeld() ||
+        held->Kind() != CurrentSliceKind::NativeStartCalendar ||
+        held->Slice().slot != ref.slot || held->Slice().generation != ref.generation ||
+        held->ExecuteFrame() != cut->executeFrame || !cut->nativeCalendarRequired ||
+        held->ReservationSequence() != cut->nativeCalendarReservationSequence ||
+        cut->nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None ||
+        !timeline_.CancelHeldCurrentSlice(held)) return false;
+    cut->nativeCalendarRequired = false;
+    cut->nativeCalendarReservationSequence = 0;
+    return true;
+}
+
+bool VariableServiceV1::HasNativeReadCutsForTransport(TransportEpoch transport) const noexcept {
+    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
+        const auto& cut = readCuts_[index];
+        const auto state = cut.state.load(std::memory_order_acquire);
+        if ((state == ReadCutState::Capturing || state == ReadCutState::Published) &&
+            cut.transport == transport && (cut.timelineUseCount != 0 || cut.nativeCalendarRequired ||
+            cut.nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None)) return true;
+    }
+    return false;
+}
+
+bool VariableServiceV1::CaptureNativeReadCutIdentity(VariableReadCutRef ref,
+    VnVoiceHandle nativeHandle, VariableNativeStartIdentity* out) const noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    const auto* cut = ResolveReadCut(ref);
+    if (cut == nullptr || cut->nativeReceipt.load(std::memory_order_acquire) == VariableNativeStartReceipt::None ||
+        nativeHandle == 0 || cut->nativeHandle != nativeHandle) return false;
+    *out = {ref, nativeHandle, cut->world, cut->transport, cut->executeFrame,
+            cut->sequence, cut->executionOrdinalExclusive};
+    return true;
+}
+
+bool VariableServiceV1::ConsumeNativeReadCutCalendar(const ConsumedCurrentSlice& consumed) noexcept {
+    if (consumed.kind != CurrentSliceKind::NativeStartCalendar) return false;
+    auto* cut = ResolveReadCut({consumed.slice.slot, consumed.slice.generation});
+    if (cut == nullptr || cut->state.load(std::memory_order_acquire) != ReadCutState::Published) return false;
+    const auto receipt = cut->nativeReceipt.load(std::memory_order_acquire);
+    if (receipt == VariableNativeStartReceipt::None || receipt == VariableNativeStartReceipt::Prepared ||
+        !cut->nativeCalendarRequired || cut->executeFrame != consumed.executeFrame ||
+        cut->nativeCalendarReservationSequence == 0 ||
+        cut->nativeCalendarReservationSequence != consumed.reservationSequence ||
+        cut->sequence != consumed.logicCommitSequence ||
+        cut->executionOrdinalExclusive != consumed.executionOrdinal) return false;
+    cut->nativeCalendarConsumed.store(true, std::memory_order_release);
+    return true;
+}
+
+bool VariableServiceV1::NativeReadCutCalendarConsumed(const VariableNativeStartIdentity& identity) const noexcept {
+    const auto* cut = ResolveNativeReadCut(identity);
+    return cut != nullptr && (!cut->nativeCalendarRequired ||
+        cut->nativeCalendarConsumed.load(std::memory_order_acquire));
+}
+
+bool VariableServiceV1::PrepareNativeReadCut(VariableReadCutRef ref, VnVoiceHandle nativeHandle,
+    std::uint64_t finalFrame, VariableNativeStartIdentity* out) noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    auto* cut = ResolveReadCut(ref);
+    if (cut == nullptr || nativeHandle == 0 || cut->timelineUseCount != 0 ||
+        cut->state.load(std::memory_order_acquire) != ReadCutState::Published ||
+        cut->executeFrame != finalFrame ||
+        cut->nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None ||
+        ReadCutSourcesStatus(ref) == VariableReadCutStatus::Failed) return false;
+    cut->nativeHandle = nativeHandle;
+    *out = {ref, nativeHandle, cut->world, cut->transport, finalFrame,
+            cut->sequence, cut->executionOrdinalExclusive};
+    cut->nativeReceipt.store(VariableNativeStartReceipt::Prepared, std::memory_order_release);
+    return true;
+}
+
+bool VariableServiceV1::CommitNativeReadCut(const VariableNativeStartIdentity& identity) noexcept {
+    const auto* resolved = ResolveNativeReadCut(identity);
+    if (resolved == nullptr) return false;
+    auto& cut = *const_cast<ReadCutRow*>(resolved);
+    auto expected = VariableNativeStartReceipt::Prepared;
+    if (!cut.nativeReceipt.compare_exchange_strong(expected, VariableNativeStartReceipt::Pending,
+        std::memory_order_release, std::memory_order_relaxed)) return false;
+    if (cut.nativeCalendarRequired) {
+        const auto quantum = timeline_.QuantumFrames();
+        pendingPlaybackPublicationThrough_ = std::max(pendingPlaybackPublicationThrough_,
+            cut.executeFrame > UINT64_MAX - quantum ? UINT64_MAX : cut.executeFrame + quantum);
+    }
+    return true;
+}
+
+bool VariableServiceV1::CancelPreparedNativeReadCut(const VariableNativeStartIdentity& identity) noexcept {
+    const auto* resolved = ResolveNativeReadCut(identity);
+    if (resolved == nullptr) return false;
+    auto& cut = *const_cast<ReadCutRow*>(resolved);
+    auto expected = VariableNativeStartReceipt::Prepared;
+    return cut.nativeReceipt.compare_exchange_strong(expected, VariableNativeStartReceipt::None,
+        std::memory_order_release, std::memory_order_relaxed);
+}
+
+VariableNativeStartReceipt VariableServiceV1::NativeReadCutStatus(
+    const VariableNativeStartIdentity& identity) const noexcept {
+    const auto* cut = ResolveNativeReadCut(identity);
+    return cut == nullptr ? VariableNativeStartReceipt::None
+        : cut->nativeReceipt.load(std::memory_order_acquire);
+}
+
+bool VariableServiceV1::MarkNativeReadCutInstalled(
+    const VariableNativeStartIdentity& identity) noexcept {
+    const auto* resolved = ResolveNativeReadCut(identity);
+    if (resolved == nullptr) return false;
+    auto& cut = *const_cast<ReadCutRow*>(resolved);
+    auto expected = VariableNativeStartReceipt::Pending;
+    return cut.nativeReceipt.compare_exchange_strong(expected, VariableNativeStartReceipt::Installed,
+        std::memory_order_release, std::memory_order_relaxed);
+}
+
+VariableReadCutStatus VariableServiceV1::NativeReadCutSourcesStatus(
+    const VariableNativeStartIdentity& identity) const noexcept {
+    const auto* cut = ResolveNativeReadCut(identity);
+    if (cut == nullptr || cut->nativeReceipt.load(std::memory_order_acquire) !=
+        VariableNativeStartReceipt::Installed) return VariableReadCutStatus::Failed;
+    return ReadCutSourcesStatus(identity.cut);
+}
+
+bool VariableServiceV1::FinishNativeReadCut(const VariableNativeStartIdentity& identity,
+    bool activated) noexcept {
+    const auto* resolved = ResolveNativeReadCut(identity);
+    if (resolved == nullptr || (activated &&
+        (!NativeReadCutCalendarConsumed(identity) ||
+         NativeReadCutSourcesStatus(identity) != VariableReadCutStatus::Applied))) return false;
+    auto& cut = *const_cast<ReadCutRow*>(resolved);
+    auto expected = cut.nativeReceipt.load(std::memory_order_acquire);
+    if (expected != VariableNativeStartReceipt::Installed &&
+        (activated || expected != VariableNativeStartReceipt::Pending)) return false;
+    return cut.nativeReceipt.compare_exchange_strong(expected,
+        activated ? VariableNativeStartReceipt::Activated : VariableNativeStartReceipt::Failed,
+        std::memory_order_release, std::memory_order_relaxed);
+}
+
+bool VariableServiceV1::AcknowledgeNativeReadCut(const VariableNativeStartIdentity& identity) noexcept {
+    const auto* resolved = ResolveNativeReadCut(identity);
+    if (resolved == nullptr) return false;
+    auto& cut = *const_cast<ReadCutRow*>(resolved);
+    const auto receipt = cut.nativeReceipt.load(std::memory_order_acquire);
+    if (receipt != VariableNativeStartReceipt::Activated &&
+        receipt != VariableNativeStartReceipt::Failed) return false;
+    if (cut.nativeCalendarRequired && !cut.nativeCalendarConsumed.load(std::memory_order_acquire)) return false;
+    cut.nativeReceipt.store(VariableNativeStartReceipt::None, std::memory_order_relaxed);
+    return ReleaseReadCut(identity.cut);
+}
+
+void VariableServiceV1::AcknowledgeFinishedNativeReadCuts() noexcept {
+    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
+        auto& cut = readCuts_[index];
+        const auto state = cut.state.load(std::memory_order_acquire);
+        if (state != ReadCutState::Published) continue;
+        const auto receipt = cut.nativeReceipt.load(std::memory_order_acquire);
+        if (receipt != VariableNativeStartReceipt::Activated && receipt != VariableNativeStartReceipt::Failed)
+            continue;
+        const VariableNativeStartIdentity identity{{index, cut.generation.load(std::memory_order_relaxed)},
+            cut.nativeHandle, cut.world, cut.transport, cut.executeFrame, cut.sequence, cut.executionOrdinalExclusive};
+        (void)AcknowledgeNativeReadCut(identity);
+    }
+}
+
+bool VariableServiceV1::HasNativePublicationHold(VnVoiceHandle nativeHandle) const noexcept {
+    for (std::uint32_t index = 0; index < timelineReadUseCapacity_; ++index) {
+        const auto& use = timelineReadUses_[index];
+        const auto state = use.state.load(std::memory_order_acquire);
+        if ((state == TimelineReadUseState::Prepared || state == TimelineReadUseState::Published) &&
+            use.nativeHandle == nativeHandle) return true;
+    }
+    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
+        const auto& cut = readCuts_[index];
+        if (cut.state.load(std::memory_order_acquire) != ReadCutState::Published) continue;
+        if (cut.nativeHandle == nativeHandle &&
+            cut.nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None) return true;
+    }
+    return false;
+}
+
+void VariableServiceV1::ShutdownReadCutsAfterQuiescence() noexcept {
+    for (std::uint32_t index = 0; index < timelineReadUseCapacity_; ++index) {
+        auto& use = timelineReadUses_[index];
+        const auto state = use.state.load(std::memory_order_relaxed);
+        if (state == TimelineReadUseState::Prepared || state == TimelineReadUseState::Published)
+            ReleaseTimelineReadUse(use);
+    }
+    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
+        auto& cut = readCuts_[index];
+        const auto state = cut.state.load(std::memory_order_relaxed);
+        if (state != ReadCutState::Capturing && state != ReadCutState::Published) continue;
+        cut.nativeReceipt.store(VariableNativeStartReceipt::None, std::memory_order_relaxed);
+        // Joined teardown means no calendar or native consumer can read again.
+        cut.nativeCalendarRequired = false;
+        if (cut.entryPin.Valid()) {
+            const bool released = cut.entryPin.Release();
+            assert(released);
+            (void)released;
+        }
+        cut.entryUse.store(EntryReadUseState::None, std::memory_order_relaxed);
+        cut.entryDescriptor = {};
+        cut.entryDecisions = nullptr;
+        cut.entryPool = nullptr;
+        (void)ReleaseReadCut({index, cut.generation.load(std::memory_order_relaxed)});
+    }
+}
+
+const VariableServiceV1::TimelineReadUseRow* VariableServiceV1::ResolveTimelineReadUse(
+    VariableTimelineReadUseRef ref) const noexcept {
+    if (!ref.Valid() || ref.slot >= timelineReadUseCapacity_) return nullptr;
+    const auto& use = timelineReadUses_[ref.slot];
+    const auto state = use.state.load(std::memory_order_acquire);
+    if ((state != TimelineReadUseState::Prepared && state != TimelineReadUseState::Published) ||
+        use.generation.load(std::memory_order_acquire) != ref.generation) return nullptr;
+    return &use;
+}
+
+VariableServiceV1::TimelineReadUseRow* VariableServiceV1::ResolveTimelineReadUse(
+    VariableTimelineReadUseRef ref) noexcept {
+    return const_cast<TimelineReadUseRow*>(std::as_const(*this).ResolveTimelineReadUse(ref));
+}
+
+bool VariableServiceV1::PrepareTimelineReadUse(VariableReadCutRef ref, VnVoiceHandle nativeHandle,
+    TimelineArmTable& arms, const TimelineArmTable::PreparedCommitProof& proof,
+    VariableTimelineReadUseRef* out, std::uint64_t authoredStartOffset) noexcept {
+    if (out == nullptr || out->Valid()) return false;
+    auto* cut = ResolveReadCut(ref);
+    if (cut == nullptr || cut->timelineOwnershipTransferred || cut->nativeCalendarRequired ||
+        cut->nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None ||
+        (cut->state.load(std::memory_order_acquire) != ReadCutState::Published &&
+            cut->state.load(std::memory_order_acquire) != ReadCutState::Capturing) ||
+        cut->timelineUseCount == UINT32_MAX || nativeHandle == 0 ||
+        cut->preparationFailed.load(std::memory_order_acquire) ||
+        (!cut->pendingPlacement && authoredStartOffset != 0) ||
+        authoredStartOffset > UINT64_MAX - cut->executeFrame) return false;
+    std::uint32_t index = 0;
+    for (; index < timelineReadUseCapacity_; ++index)
+        if (timelineReadUses_[index].state.load(std::memory_order_acquire) == TimelineReadUseState::Free) break;
+    if (index == timelineReadUseCapacity_) return false;
+    auto& use = timelineReadUses_[index];
+    if (!arms.PinPreparedVariableRead(proof, &use.lifetime)) return false;
+    const auto token = use.lifetime.Token();
+    const auto* arm = arms.Resolve(token);
+    if (token.renderSlot != static_cast<std::uint32_t>(nativeHandle) ||
+        token.renderGeneration != static_cast<std::uint32_t>(nativeHandle >> 32) ||
+        arm == nullptr || (!arm->pendingImmediateStart && arm->startFrame < cut->executeFrame)) {
+        use.lifetime.Release();
+        return false;
+    }
+    use.cut = ref;
+    use.nativeHandle = nativeHandle;
+    use.sourceOwner = nullptr;
+    use.logicalFrame = cut->executeFrame;
+    use.onsetFrame = arm->pendingImmediateStart ? cut->executeFrame + authoredStartOffset : arm->startFrame;
+    use.authoredStartOffset = authoredStartOffset;
+    use.initialCommandCount = 0;
+    use.initializer.store(cut->pendingPlacement ? TimelineInitializerState::PendingPlacement :
+        TimelineInitializerState::None, std::memory_order_relaxed);
+    ++cut->timelineUseCount;
+    use.state.store(TimelineReadUseState::Prepared, std::memory_order_release);
+    *out = {index, use.generation.load(std::memory_order_relaxed)};
+    return true;
+}
+
+bool VariableServiceV1::BindPreparedTimelineReadUseSource(VariableTimelineReadUseRef ref,
+    OriginalSourceSubmissionRegistry& sources, OriginalSourceLifetimePin&& original) noexcept {
+    auto* use = ResolveTimelineReadUse(ref);
+    if (use == nullptr || use->state.load(std::memory_order_acquire) != TimelineReadUseState::Prepared ||
+        use->initializer.load(std::memory_order_relaxed) != TimelineInitializerState::PendingPlacement ||
+        use->originalSource.Valid() || !sources.IsOriginalSourceLifetimePinFor(original, use->lifetime.Token()))
+        return false;
+    use->sourceOwner = &sources;
+    use->originalSource = std::move(original);
+    return true;
+}
+
+bool VariableServiceV1::BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef ref,
+    const ImmediateActionLane& lane, const PrivatePlainLayoutCommitProof& placement,
+    VariableReadCutRef* cut) noexcept {
+    auto* use = ResolveTimelineReadUse(ref);
+    std::uint64_t logical = 0, onset = 0;
+    return use != nullptr && lane.CapturePrivatePendingVariableStartGeometry(placement,
+        *use->lifetime.Owner(), use->lifetime.Token(), use->authoredStartOffset, &logical, &onset) &&
+        BeginPendingTimelineReadUsePlacement(*use, logical, onset, cut);
+}
+
+bool VariableServiceV1::BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef ref,
+    const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+    VariableReadCutRef* cut) noexcept {
+    auto* use = ResolveTimelineReadUse(ref);
+    std::uint64_t logical = 0, onset = 0;
+    return use != nullptr && lane.CapturePrivatePendingVariableStartGeometry(placement,
+        *use->lifetime.Owner(), use->lifetime.Token(), use->authoredStartOffset, &logical, &onset) &&
+        BeginPendingTimelineReadUsePlacement(*use, logical, onset, cut);
+}
+
+bool VariableServiceV1::BeginPendingVariableGroupPlacement(Engine& engine,
+    EngineActionPlayScratch& producer, EngineImmediateEntryAttempt& attempt,
+    const PrivateImmediateLanePlacementProof& placement, VariableReadCutReader* out) noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    if (&engine.variables != this) return false;
+    const auto* group = engine.OriginalPendingVariableGroupForPlacement(producer, attempt, placement);
+    std::uint64_t anchor = 0;
+    if (group == nullptr || !placement.CaptureAnchorFrame(&anchor)) return false;
+    auto* cut = ResolveReadCut(group->cut);
+    if (cut != nullptr && cut->timelineUseCount != 0) {
+        if (!OriginalPendingVariableGroupUsesMatch(engine, producer, attempt, placement) ||
+            cut->state.load(std::memory_order_acquire) != ReadCutState::Capturing ||
+            !RebuildPendingReadCut(*cut, anchor)) return false;
+        for (std::uint32_t index = 0; index < group->leafCount; ++index) {
+            const auto arm = group->leafArms[index];
+            auto* use = ResolveTimelineReadUse(engine.voices.TimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration));
+            use->logicalFrame = anchor;
+            use->onsetFrame = anchor + use->authoredStartOffset;
+            use->initialCommandCount = 0;
+            use->initializer.store(TimelineInitializerState::Building, std::memory_order_release);
+        }
+        *out = ReadCutReader(group->cut);
+        return true;
+    }
+    return BeginUnborrowedPendingVariableGroupCut(engine, producer, group->cut, anchor, out);
+}
+
+bool VariableServiceV1::OriginalPendingVariableGroupUsesMatch(Engine& engine,
+    EngineActionPlayScratch& producer, const EngineImmediateEntryAttempt& attempt,
+    const PrivateImmediateLanePlacementProof& placement) const noexcept {
+    const auto* group = &engine.variables == this
+        ? engine.OriginalPendingVariableGroupForPlacement(producer, attempt, placement) : nullptr;
+    const bool originalProducer = producer.row != nullptr && (attempt.privateVcProducerCount != 0
+        ? engine.IsRegisteredPrivateVcProducerFor(producer, attempt)
+        : attempt.producerSlot < engine.actionPlayScratch.size() &&
+          &engine.actionPlayScratch[attempt.producerSlot] == &producer &&
+          attempt.producerGeneration == producer.storage.generation &&
+          attempt.initialService == producer.row->identity &&
+          attempt.initialInvocationGeneration == producer.row->invocationGeneration);
+    if (group == nullptr || !originalProducer ||
+        group->leafCount == 0 || group->leafCount != producer.voiceStartCount ||
+        group->leafCount != producer.row->scheduleLeafCount || group->leafCount > group->leafArms.size() ||
+        group->leafRetirement != Engine::OriginalPendingVariableGroupHolder::LeafRetirement::None) return false;
+    const auto* cut = ResolveReadCut(group->cut);
+    const auto& row = *producer.row;
+    if (cut == nullptr || !cut->pendingPlacement || !cut->actionOrderConsumed ||
+        cut->state.load(std::memory_order_acquire) != ReadCutState::Capturing ||
+        cut->timelineUseCount != group->leafCount || cut->timelineOwnershipTransferred ||
+        cut->entryPin.Valid() || cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::None ||
+        cut->nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None ||
+        cut->nativeCalendarRequired || cut->publishedSourceCount != 0 ||
+        cut->world != worldGeneration_ ||
+        cut->transport != transport_.Current() || cut->emitter != row.Invocation().invocationEmitter ||
+        cut->sequence != row.ticket || cut->executionOrdinalExclusive != row.Invocation().actionExecutionOrdinal ||
+        cut->preparationFailed.load(std::memory_order_acquire)) return false;
+    for (std::uint32_t index = 0; index < group->leafCount; ++index) {
+        if (!engine.MatchesPendingVariableGroupLeaf(*group, index)) return false;
+        const auto arm = group->leafArms[index];
+        const auto& source = engine.pendingVariableLeafSources[arm.slot];
+        const auto ref = engine.voices.TimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration);
+        const auto* use = ResolveTimelineReadUse(ref);
+        std::uint64_t logical = 0, onset = 0;
+        if (source.preparedStartFrame < row.startFrame || use == nullptr ||
+            use->state.load(std::memory_order_acquire) != TimelineReadUseState::Published ||
+            use->cut != group->cut || use->nativeHandle != source.sourceIdentity ||
+            use->nativeHandle != ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot) ||
+            use->authoredStartOffset != source.preparedStartFrame - row.startFrame ||
+            use->lifetime.Owner() != &engine.timelineArms ||
+            !OriginalSourceSubmissionRegistry::SameToken(use->lifetime.Token(), arm) ||
+            use->sourceOwner != &engine.originalSourceSubmissions ||
+            !engine.originalSourceSubmissions.IsOriginalSourceLifetimePinFor(use->originalSource, arm) ||
+            !engine.originalSourceSubmissions.IsOriginalInstalledSourceCurrent(source.source, source.sourceIdentity) ||
+            !engine.voices.IsOriginalSourceBodyCurrent(source.body)) return false;
+        if (!engine.immediateActionLane.CapturePrivateUnboundVariableStartGeometry(placement,
+                engine.timelineArms, arm, use->authoredStartOffset, &logical, &onset)) return false;
+        const auto initializer = use->initializer.load(std::memory_order_acquire);
+        if (initializer != TimelineInitializerState::PendingPlacement && initializer != TimelineInitializerState::Building &&
+            initializer != TimelineInitializerState::Staged) return false;
+        for (std::uint32_t prior = 0; prior < index; ++prior) {
+            const auto previous = group->leafArms[prior];
+            const auto previousUse = engine.voices.TimelineVariableSourceRead(previous.renderSlot, previous.renderGeneration);
+            if (previous.slot == arm.slot ||
+                (previous.renderSlot == arm.renderSlot && previous.renderGeneration == arm.renderGeneration) ||
+                (previousUse.slot == ref.slot && previousUse.generation == ref.generation)) return false;
+        }
+    }
+    return true;
+}
+
+bool VariableServiceV1::StageOriginalPendingVariableGroupInitializer(Engine& engine,
+    EngineActionPlayScratch& producer, const EngineImmediateEntryAttempt& attempt,
+    const PrivateImmediateLanePlacementProof& placement, std::uint32_t leaf,
+    std::span<const CommandRecord> commands) noexcept {
+    if (!OriginalPendingVariableGroupUsesMatch(engine, producer, attempt, placement)) return false;
+    const auto* group = engine.OriginalPendingVariableGroupForPlacement(producer, attempt, placement);
+    if (leaf >= group->leafCount) return false;
+    const auto arm = group->leafArms[leaf];
+    auto* use = ResolveTimelineReadUse(engine.voices.TimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration));
+    if (use->initializer.load(std::memory_order_acquire) != TimelineInitializerState::Building ||
+        !TimelineInitializerCommandsMatch(use->nativeHandle, commands)) return false;
+    std::copy(commands.begin(), commands.end(), use->initialCommands.begin());
+    use->initialCommandCount = static_cast<std::uint32_t>(commands.size());
+    use->initializer.store(TimelineInitializerState::Staged, std::memory_order_release);
+    return true;
+}
+
+bool VariableServiceV1::OriginalPendingVariableGroupReadyToFreeze(Engine& engine,
+    EngineActionPlayScratch& producer, const EngineImmediateEntryAttempt& attempt,
+    const PrivateImmediateLanePlacementProof& placement, bool* outWaiting) noexcept {
+    if (outWaiting != nullptr) *outWaiting = false;
+    if (!OriginalPendingVariableGroupUsesMatch(engine, producer, attempt, placement)) return false;
+    const auto* group = engine.OriginalPendingVariableGroupForPlacement(producer, attempt, placement);
+    std::uint64_t anchor = 0;
+    if (!placement.CaptureAnchorFrame(&anchor) || ResolveReadCut(group->cut)->executeFrame != anchor) return false;
+    for (std::uint32_t index = 0; index < group->leafCount; ++index) {
+        const auto arm = group->leafArms[index];
+        const auto* use = ResolveTimelineReadUse(engine.voices.TimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration));
+        if (use->initializer.load(std::memory_order_acquire) != TimelineInitializerState::Staged ||
+            use->logicalFrame != anchor || use->onsetFrame != anchor + use->authoredStartOffset) return false;
+    }
+    return ValidateReadCutPublication(group->cut, anchor, outWaiting);
+}
+
+bool VariableServiceV1::FreezeOriginalPendingVariableGroup(Engine& engine,
+    EngineActionPlayScratch& producer, const EngineImmediateEntryAttempt& attempt,
+    const PrivateImmediateLanePlacementProof& placement) noexcept {
+    bool waiting = false;
+    if (!OriginalPendingVariableGroupReadyToFreeze(engine, producer, attempt, placement, &waiting)) return false;
+    const auto* group = engine.OriginalPendingVariableGroupForPlacement(producer, attempt, placement);
+    const auto* cut = ResolveReadCut(group->cut);
+    if (PublishReadCut(group->cut, cut->executeFrame) == VariableReadCutStatus::Failed ||
+        cut->state.load(std::memory_order_acquire) != ReadCutState::Published) return false;
+    for (std::uint32_t index = 0; index < group->leafCount; ++index) {
+        const auto arm = group->leafArms[index];
+        ResolveTimelineReadUse(engine.voices.TimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration))->initializer.store(
+            TimelineInitializerState::Frozen, std::memory_order_release);
+    }
+    return true;
+}
+
+bool VariableServiceV1::BeginPendingVariableGroupReprepare(Engine& engine,
+    EngineActionPlayScratch& producer, const EngineImmediateEntryAttempt& attempt,
+    std::uint64_t anchor, VariableReadCutReader* out) noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    if (&engine.variables != this || attempt.lane.Valid() ||
+        (attempt.privateVcProducerCount != 0 &&
+         !engine.MatchesRegisteredPendingVariableCohortReprepare(producer, attempt))) return false;
+    const auto* group = engine.OriginalPendingVariableGroupForReprepare(producer, attempt);
+    if (group == nullptr || !group->ReprepareReady()) return false;
+    return BeginUnborrowedPendingVariableGroupCut(engine, producer, group->cut, anchor, out);
+}
+
+bool VariableServiceV1::PreparePendingOrdinarySelectionReadCut(Engine& engine,
+    EngineActionPlayScratch& producer, EngineImmediateEntryAttempt& attempt, std::uint64_t anchor) noexcept {
+    auto* holder = engine.PendingOrdinarySelectionFor(producer.storage);
+    auto* cut = ResolveReadCut(producer.storage.initialVariableCut);
+    if (&engine.variables != this || producer.row == nullptr || holder == nullptr ||
+        !holder->accepted || !holder->sourceRetired ||
+        !engine.MatchesPendingOrdinarySelection(*holder, producer.storage, *producer.row) ||
+        !engine.MatchesPendingSelectionCensus(attempt) ||
+        producer.storage.initialVariableService != this || cut == nullptr ||
+        !cut->pendingPlacement || !cut->actionOrderConsumed || cut->timelineUseCount != 0 ||
+        cut->timelineOwnershipTransferred || cut->entryPin.Valid() ||
+        cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::None ||
+        cut->nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None ||
+        cut->nativeCalendarRequired) return false;
+    for (std::uint32_t index = 0; index < cut->publishedSourceCount; ++index)
+        (void)slices_.ReleaseSource(cut->publishedSources[index]);
+    cut->publishedSourceCount = 0;
+    cut->needsRebuild = true;
+    cut->state.store(ReadCutState::Capturing, std::memory_order_release);
+    VariableReadCutReader reader;
+    return BeginUnborrowedPendingVariableGroupCut(engine, producer,
+        producer.storage.initialVariableCut, anchor, &reader);
+}
+
+bool VariableServiceV1::BeginUnborrowedPendingVariableGroupCut(Engine& engine,
+    EngineActionPlayScratch& producer, VariableReadCutRef ref,
+    std::uint64_t anchor, VariableReadCutReader* out) noexcept {
+    auto* cut = ResolveReadCut(ref);
+    const auto& row = *producer.row;
+    if (cut == nullptr || cut->state.load(std::memory_order_acquire) != ReadCutState::Capturing ||
+        !cut->pendingPlacement || !cut->actionOrderConsumed ||
+        cut->world != worldGeneration_ ||
+        cut->transport != transport_.Current() || cut->emitter != row.Invocation().invocationEmitter ||
+        cut->sequence != row.ticket || cut->executionOrdinalExclusive != row.Invocation().actionExecutionOrdinal ||
+        cut->timelineUseCount != 0 || cut->timelineOwnershipTransferred || cut->entryPin.Valid() ||
+        cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::None ||
+        cut->nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None ||
+        cut->nativeCalendarRequired || cut->publishedSourceCount != 0) return false;
+    if (cut->emitter != 0 && (static_cast<std::uint32_t>(cut->emitter) >= emitterBanks_.size() ||
+        emitterBanks_[static_cast<std::uint32_t>(cut->emitter)].generation !=
+            static_cast<std::uint32_t>(cut->emitter >> 32))) return false;
+    if (!RebuildPendingReadCut(*cut, anchor)) return false;
+    *out = ReadCutReader(ref);
+    return true;
+}
+
+bool VariableServiceV1::MatchesPreparedTimelineReadUse(VariableTimelineReadUseRef ref,
+    VariableReadCutRef expectedCut, VnVoiceHandle nativeHandle,
+    const TimelineArmTable::PreparedCommitProof& arm,
+    const OriginalSourceSubmissionRegistry& sources, std::uint64_t authoredOffset) const noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    const auto* cut = ResolveReadCut(expectedCut);
+    const auto token = arm.OriginalPreparedToken();
+    return arm.Valid() && use != nullptr && cut != nullptr &&
+        cut->state.load(std::memory_order_acquire) == ReadCutState::Capturing &&
+        use->state.load(std::memory_order_acquire) == TimelineReadUseState::Prepared &&
+        use->initializer.load(std::memory_order_acquire) == TimelineInitializerState::PendingPlacement &&
+        use->cut == expectedCut && use->nativeHandle == nativeHandle &&
+        nativeHandle == ((static_cast<std::uint64_t>(token.renderGeneration) << 32) | token.renderSlot) &&
+        use->authoredStartOffset == authoredOffset && use->lifetime.Owner() == arm.Owner() &&
+        OriginalSourceSubmissionRegistry::SameToken(use->lifetime.Token(), token) &&
+        use->sourceOwner == &sources && sources.IsOriginalSourceLifetimePinFor(use->originalSource, token);
+}
+
+bool VariableServiceV1::MatchesPrivateCommittedTimelineReadUse(VariableTimelineReadUseRef ref,
+    VariableReadCutRef cutRef, VnVoiceHandle nativeHandle, const TimelineArmTable& arms, TimelineArmToken arm,
+    const OriginalSourceSubmissionRegistry& sources, std::uint64_t anchor, std::uint64_t authoredOffset) const noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    const auto* cut = ResolveReadCut(cutRef);
+    return use != nullptr && cut != nullptr && authoredOffset <= UINT64_MAX - anchor &&
+        use->state.load(std::memory_order_acquire) == TimelineReadUseState::Prepared &&
+        use->initializer.load(std::memory_order_acquire) == TimelineInitializerState::Frozen &&
+        use->cut == cutRef && use->nativeHandle == nativeHandle &&
+        nativeHandle == ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot) &&
+        use->authoredStartOffset == authoredOffset && use->logicalFrame == anchor && use->onsetFrame == anchor + authoredOffset &&
+        use->lifetime.Owner() == &arms && OriginalSourceSubmissionRegistry::SameToken(use->lifetime.Token(), arm) &&
+        use->sourceOwner == &sources && sources.IsOriginalSourceLifetimePinFor(use->originalSource, arm) &&
+        cut->state.load(std::memory_order_acquire) == ReadCutState::Published && cut->pendingPlacement &&
+        cut->actionOrderConsumed && cut->executeFrame == anchor && cut->world == worldGeneration_ &&
+        cut->transport == transport_.Current() && !cut->timelineOwnershipTransferred && !cut->entryPin.Valid() &&
+        cut->entryUse.load(std::memory_order_acquire) == EntryReadUseState::None &&
+        cut->nativeReceipt.load(std::memory_order_acquire) == VariableNativeStartReceipt::None &&
+        !cut->nativeCalendarRequired && !cut->preparationFailed.load(std::memory_order_acquire);
+}
+
+bool VariableServiceV1::MatchesPublishedPendingVariableGroupReadCut(Engine& engine,
+    EngineActionPlayScratch& producer, const EngineImmediateEntryAttempt& attempt,
+    const EngineActionPlayScratch& child, const PrivateImmediateLanePlacementProof& placement,
+    bool entryBound) const noexcept {
+    const auto* group = &engine.variables == this
+        ? engine.OriginalPendingVariableGroupForReprepare(producer, attempt) : nullptr;
+    if (group == nullptr || producer.row == nullptr || group->cut != child.pendingVariableReplacementCut ||
+        !engine.MatchesPendingVariableReplacementProducer(child, producer, attempt) ||
+        !engine.immediateActionLane.IsPrivatePlacementProofFor(placement, attempt.lane, attempt.root)) return false;
+    const auto* cut = ResolveReadCut(group->cut);
+    const auto& row = *producer.row;
+    std::uint64_t anchor = 0;
+    if (cut == nullptr || !placement.CaptureAnchorFrame(&anchor) ||
+        anchor != child.pendingVariableReplacementAnchorFrame ||
+        cut->state.load(std::memory_order_acquire) != ReadCutState::Published ||
+        !cut->pendingPlacement || !cut->actionOrderConsumed || !cut->finalPlacementCaptured || cut->needsRebuild ||
+        cut->preparationFailed.load(std::memory_order_acquire) || cut->candidateAdmissionFailed ||
+        cut->world != worldGeneration_ ||
+        cut->transport != transport_.Current() || cut->transport != engine.timelinePool.Epoch() ||
+        cut->emitter != row.Invocation().invocationEmitter || cut->sequence != row.ticket ||
+        cut->executionOrdinalExclusive != row.Invocation().actionExecutionOrdinal || cut->executeFrame != anchor ||
+        cut->timelineUseCount != child.voiceStartCount || cut->timelineOwnershipTransferred ||
+        cut->nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None ||
+        cut->nativeCalendarRequired) return false;
+    if (!entryBound)
+        return !cut->entryPin.Valid() && cut->entryUse.load(std::memory_order_acquire) == EntryReadUseState::None;
+    const auto& descriptor = child.frontierDescriptor;
+    const auto* activation = engine.decisions.ResolveFrontierActivation(descriptor.entry.coordinator);
+    return descriptor.Valid() && descriptor.initialVariables == group->cut &&
+        descriptor.order.executeFrame == anchor && descriptor.order.logicCommitSequence == row.ticket &&
+        descriptor.order.executionOrdinal == row.Invocation().actionExecutionOrdinal &&
+        cut->entryUse.load(std::memory_order_acquire) == EntryReadUseState::Prepared &&
+        cut->entryDescriptor == descriptor && cut->entryDecisions == &engine.decisions &&
+        cut->entryPool == &engine.timelinePool && cut->entryPin.Valid() &&
+        cut->entryPin.Owner() == &engine.decisions &&
+        cut->entryPin.Token().slot == descriptor.entry.coordinator.slot &&
+        cut->entryPin.Token().generation == descriptor.entry.coordinator.generation &&
+        activation != nullptr && activation->State() == FrontierReceiptState::Prepared &&
+        activation->Descriptor() == descriptor &&
+        engine.decisions.MatchesPreparedFrontierActivationPool(descriptor.entry, engine.timelinePool);
+}
+
+bool VariableServiceV1::MatchesEntryBoundTimelineReadUse(VariableTimelineReadUseRef ref,
+    VariableReadCutRef cutRef, VnVoiceHandle nativeHandle, const TimelineArmTable& arms, TimelineArmToken arm,
+    const OriginalSourceSubmissionRegistry& sources, const DecisionTable& decisions,
+    const ScheduledTransactionPool& pool, const FrontierActivationDescriptor& descriptor,
+    std::uint32_t leafCount, std::uint64_t authoredOffset) const noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    const auto* cut = ResolveReadCut(cutRef);
+    const auto anchor = descriptor.order.executeFrame;
+    const auto* activation = decisions.ResolveFrontierActivation(descriptor.entry.coordinator);
+    return descriptor.Valid() && descriptor.initialVariables == cutRef &&
+        use != nullptr && cut != nullptr && authoredOffset <= UINT64_MAX - anchor &&
+        use->state.load(std::memory_order_acquire) == TimelineReadUseState::Prepared &&
+        use->initializer.load(std::memory_order_acquire) == TimelineInitializerState::Frozen &&
+        use->cut == cutRef && use->nativeHandle == nativeHandle &&
+        nativeHandle == ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot) &&
+        use->authoredStartOffset == authoredOffset && use->logicalFrame == anchor &&
+        use->onsetFrame == anchor + authoredOffset && use->lifetime.Owner() == &arms &&
+        OriginalSourceSubmissionRegistry::SameToken(use->lifetime.Token(), arm) &&
+        use->sourceOwner == &sources && sources.IsOriginalSourceLifetimePinFor(use->originalSource, arm) &&
+        cut->state.load(std::memory_order_acquire) == ReadCutState::Published && cut->pendingPlacement &&
+        cut->actionOrderConsumed && cut->executeFrame == anchor && cut->world == worldGeneration_ &&
+        cut->transport == transport_.Current() &&
+        cut->transport == descriptor.primary.transportEpoch && cut->sequence == descriptor.order.logicCommitSequence &&
+        cut->executionOrdinalExclusive == descriptor.order.executionOrdinal && cut->timelineUseCount == leafCount &&
+        !cut->timelineOwnershipTransferred && cut->entryUse.load(std::memory_order_acquire) == EntryReadUseState::Prepared &&
+        cut->entryDescriptor == descriptor && cut->entryDecisions == &decisions && cut->entryPool == &pool &&
+        cut->entryPin.Valid() && cut->entryPin.Owner() == &decisions &&
+        cut->entryPin.Token().slot == descriptor.entry.coordinator.slot &&
+        cut->entryPin.Token().generation == descriptor.entry.coordinator.generation &&
+        activation != nullptr && activation->State() == FrontierReceiptState::Prepared &&
+        activation->Descriptor() == descriptor && decisions.MatchesPreparedFrontierActivationPool(descriptor.entry, pool) &&
+        cut->nativeReceipt.load(std::memory_order_acquire) == VariableNativeStartReceipt::None &&
+        !cut->nativeCalendarRequired && !cut->preparationFailed.load(std::memory_order_acquire);
+}
+
+bool VariableServiceV1::PreparedPendingVariableGroupUsesMatch(const EngineActionPlayScratch& child,
+    const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement) const noexcept {
+    const auto* cut = ResolveReadCut(child.pendingVariableReplacementCut);
+    std::uint64_t anchor = 0;
+    if (cut == nullptr || !placement.CaptureAnchorFrame(&anchor) ||
+        anchor != child.pendingVariableReplacementAnchorFrame || !cut->pendingPlacement ||
+        !cut->actionOrderConsumed || cut->executeFrame != anchor ||
+        cut->world != worldGeneration_ || cut->transport != transport_.Current() ||
+        cut->timelineUseCount != child.voiceStartCount || cut->timelineOwnershipTransferred ||
+        cut->entryPin.Valid() || cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::None ||
+        cut->nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None ||
+        cut->nativeCalendarRequired || cut->preparationFailed.load(std::memory_order_acquire)) return false;
+    for (std::uint32_t index = 0; index < child.voiceStartCount; ++index) {
+        const auto& start = child.voiceStarts[index];
+        const auto* use = ResolveTimelineReadUse(start.initialVariableReadUse);
+        const auto& proof = child.voiceOwnerContexts[index].armCommitProof;
+        const auto token = proof.OriginalPreparedToken();
+        std::uint64_t logical = 0, onset = 0;
+        if (use == nullptr || use->state.load(std::memory_order_acquire) != TimelineReadUseState::Prepared ||
+            use->cut != child.pendingVariableReplacementCut || use->nativeHandle != start.renderHandle ||
+            start.renderHandle != ((static_cast<std::uint64_t>(token.renderGeneration) << 32) | token.renderSlot) ||
+            use->authoredStartOffset != child.pendingVariableReplacementLeaves[index].authoredOffset ||
+            use->lifetime.Owner() != proof.Owner() ||
+            !OriginalSourceSubmissionRegistry::SameToken(use->lifetime.Token(), token) ||
+            use->sourceOwner == nullptr || !use->sourceOwner->IsOriginalSourceLifetimePinFor(use->originalSource, token) ||
+            !lane.CapturePrivatePreparedVariableStartGeometry(placement, proof, use->authoredStartOffset,
+                &logical, &onset) || use->logicalFrame != logical || use->onsetFrame != onset) return false;
+        const auto initializer = use->initializer.load(std::memory_order_acquire);
+        if (initializer != TimelineInitializerState::PendingPlacement && initializer != TimelineInitializerState::Building &&
+            initializer != TimelineInitializerState::Staged && initializer != TimelineInitializerState::Frozen) return false;
+    }
+    return true;
+}
+
+bool VariableServiceV1::BeginPreparedPendingVariableGroupPlacement(Engine& engine,
+    EngineActionPlayScratch& producer, const EngineImmediateEntryAttempt& attempt,
+    const PrivateImmediateLanePlacementProof& placement, VariableReadCutReader* out) noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    const auto* child = &engine.variables == this
+        ? engine.OriginalPreparedPendingVariableGroupChildren(producer, attempt, placement) : nullptr;
+    if (child == nullptr || !PreparedPendingVariableGroupUsesMatch(*child, engine.immediateActionLane, placement))
+        return false;
+    const auto* cut = ResolveReadCut(child->pendingVariableReplacementCut);
+    if (child->voiceStartCount == 0) {
+        const auto state = cut->state.load(std::memory_order_acquire);
+        if (state != ReadCutState::Capturing && state != ReadCutState::Published) return false;
+        *out = ReadCutReader(child->pendingVariableReplacementCut);
+        return true;
+    }
+    const auto first = ResolveTimelineReadUse(child->voiceStarts[0].initialVariableReadUse)->initializer.load(std::memory_order_acquire);
+    for (std::uint32_t index = 0; index < child->voiceStartCount; ++index) {
+        const auto initializer = ResolveTimelineReadUse(child->voiceStarts[index].initialVariableReadUse)->initializer.load(std::memory_order_acquire);
+        if ((first == TimelineInitializerState::PendingPlacement && initializer != first) ||
+            ((first == TimelineInitializerState::Frozen) != (initializer == TimelineInitializerState::Frozen)) ||
+            (initializer == TimelineInitializerState::PendingPlacement && first != initializer)) return false;
+    }
+    if (first == TimelineInitializerState::Frozen) {
+        if (cut->state.load(std::memory_order_acquire) != ReadCutState::Published) return false;
+    } else {
+        if (cut->state.load(std::memory_order_acquire) != ReadCutState::Capturing) return false;
+        if (first == TimelineInitializerState::PendingPlacement)
+            for (std::uint32_t index = 0; index < child->voiceStartCount; ++index)
+                ResolveTimelineReadUse(child->voiceStarts[index].initialVariableReadUse)->initializer.store(
+                    TimelineInitializerState::Building, std::memory_order_release);
+    }
+    *out = ReadCutReader(child->pendingVariableReplacementCut);
+    return true;
+}
+
+bool VariableServiceV1::TimelineInitializerCommandsMatch(VnVoiceHandle nativeHandle,
+    std::span<const CommandRecord> commands) noexcept {
+    if (commands.size() > kTimelineInitialCommandCapacity) return false;
+    for (const auto& command : commands) {
+        VnVoiceHandle handle = 0;
+        switch (command.opcode) {
+        case kOpcodeSetVoiceVolume: handle = command.payload.setVoiceVolume.handle; break;
+        case kOpcodeSetVoicePitch: handle = command.payload.setVoicePitch.handle; break;
+        case kOpcodeSetVoiceFilter: handle = command.payload.setVoiceFilter.handle; break;
+        case kOpcodeSetVoiceLowShelf: handle = command.payload.setVoiceShelf.handle; break;
+        case kOpcodeSetVoicePan: handle = command.payload.setVoicePan.handle; break;
+        case kOpcodeSetVoiceSpatialScalar: handle = command.payload.setVoiceSpatialScalar.handle; break;
+        default: return false;
+        }
+        if (handle != nativeHandle) return false;
+    }
+    return true;
+}
+
+bool VariableServiceV1::StagePreparedPendingVariableGroupInitializer(Engine& engine,
+    EngineActionPlayScratch& producer, const EngineImmediateEntryAttempt& attempt,
+    const PrivateImmediateLanePlacementProof& placement, std::uint32_t leaf,
+    std::span<const CommandRecord> commands) noexcept {
+    const auto* child = &engine.variables == this
+        ? engine.OriginalPreparedPendingVariableGroupChildren(producer, attempt, placement) : nullptr;
+    if (child == nullptr || leaf >= child->voiceStartCount ||
+        !PreparedPendingVariableGroupUsesMatch(*child, engine.immediateActionLane, placement)) return false;
+    auto* use = ResolveTimelineReadUse(child->voiceStarts[leaf].initialVariableReadUse);
+    const auto* cut = ResolveReadCut(child->pendingVariableReplacementCut);
+    if (cut->state.load(std::memory_order_acquire) != ReadCutState::Capturing ||
+        use->initializer.load(std::memory_order_acquire) != TimelineInitializerState::Building ||
+        !TimelineInitializerCommandsMatch(use->nativeHandle, commands)) return false;
+    std::copy(commands.begin(), commands.end(), use->initialCommands.begin());
+    use->initialCommandCount = static_cast<std::uint32_t>(commands.size());
+    use->initializer.store(TimelineInitializerState::Staged, std::memory_order_release);
+    return true;
+}
+
+bool VariableServiceV1::PreparedPendingVariableGroupReadyToFreeze(Engine& engine,
+    EngineActionPlayScratch& producer, const EngineImmediateEntryAttempt& attempt,
+    const PrivateImmediateLanePlacementProof& placement, bool* outWaiting) noexcept {
+    if (outWaiting != nullptr) *outWaiting = false;
+    const auto* child = &engine.variables == this
+        ? engine.OriginalPreparedPendingVariableGroupChildren(producer, attempt, placement) : nullptr;
+    if (child == nullptr || !PreparedPendingVariableGroupUsesMatch(*child, engine.immediateActionLane, placement))
+        return false;
+    if (child->voiceStartCount == 0) {
+        const auto* cut = ResolveReadCut(child->pendingVariableReplacementCut);
+        return ValidateReadCutPublication(child->pendingVariableReplacementCut, cut->executeFrame, outWaiting);
+    }
+    const auto first = ResolveTimelineReadUse(child->voiceStarts[0].initialVariableReadUse)->initializer.load(std::memory_order_acquire);
+    if (first != TimelineInitializerState::Staged && first != TimelineInitializerState::Frozen) return false;
+    for (std::uint32_t index = 0; index < child->voiceStartCount; ++index)
+        if (ResolveTimelineReadUse(child->voiceStarts[index].initialVariableReadUse)->initializer.load(std::memory_order_acquire) != first)
+            return false;
+    const auto* cut = ResolveReadCut(child->pendingVariableReplacementCut);
+    return ValidateReadCutPublication(child->pendingVariableReplacementCut, cut->executeFrame, outWaiting);
+}
+
+bool VariableServiceV1::FreezePreparedPendingVariableGroup(Engine& engine,
+    EngineActionPlayScratch& producer, const EngineImmediateEntryAttempt& attempt,
+    const PrivateImmediateLanePlacementProof& placement, bool* outWaiting) noexcept {
+    if (outWaiting != nullptr) *outWaiting = false;
+    if (!PreparedPendingVariableGroupReadyToFreeze(engine, producer, attempt, placement, outWaiting)) return false;
+    const auto* child = engine.OriginalPreparedPendingVariableGroupChildren(producer, attempt, placement);
+    auto* cut = ResolveReadCut(child->pendingVariableReplacementCut);
+    const auto first = child->voiceStartCount == 0
+        ? (cut->state.load(std::memory_order_acquire) == ReadCutState::Published
+            ? TimelineInitializerState::Frozen : TimelineInitializerState::Staged)
+        : ResolveTimelineReadUse(child->voiceStarts[0].initialVariableReadUse)->initializer.load(std::memory_order_acquire);
+    if (first != TimelineInitializerState::Staged && first != TimelineInitializerState::Frozen) return false;
+    for (std::uint32_t index = 0; index < child->voiceStartCount; ++index)
+        if (ResolveTimelineReadUse(child->voiceStarts[index].initialVariableReadUse)->initializer.load(std::memory_order_acquire) != first)
+            return false;
+    if (first == TimelineInitializerState::Frozen)
+        return cut->state.load(std::memory_order_acquire) == ReadCutState::Published;
+    const auto published = PublishReadCut(child->pendingVariableReplacementCut, cut->executeFrame);
+    if (published == VariableReadCutStatus::Waiting &&
+        cut->state.load(std::memory_order_acquire) == ReadCutState::Capturing) {
+        if (outWaiting != nullptr) *outWaiting = true;
+        return false;
+    }
+    if (published == VariableReadCutStatus::Failed || cut->state.load(std::memory_order_acquire) != ReadCutState::Published)
+        return false;
+    for (std::uint32_t index = 0; index < child->voiceStartCount; ++index)
+        ResolveTimelineReadUse(child->voiceStarts[index].initialVariableReadUse)->initializer.store(
+            TimelineInitializerState::Frozen, std::memory_order_release);
+    return true;
+}
+
+bool VariableServiceV1::ResetPrivatePendingVariableGroupCut(Engine& engine,
+    EngineActionPlayScratch& producer, const EngineImmediateEntryAttempt& attempt) noexcept {
+    const auto* child = &engine.variables == this
+        ? engine.OriginalCancelledPendingVariableGroupChildren(producer, attempt) : nullptr;
+    if (child == nullptr) return false;
+    auto* cut = ResolveReadCut(child->pendingVariableReplacementCut);
+    if (cut == nullptr || !cut->pendingPlacement || !cut->actionOrderConsumed || cut->timelineUseCount != 0 ||
+        cut->timelineOwnershipTransferred || cut->entryPin.Valid() ||
+        cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::None ||
+        cut->nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None ||
+        cut->nativeCalendarRequired) return false;
+    for (std::uint32_t index = 0; index < cut->publishedSourceCount; ++index)
+        (void)slices_.ReleaseSource(cut->publishedSources[index]);
+    cut->publishedSourceCount = 0;
+    cut->needsRebuild = true;
+    cut->state.store(ReadCutState::Capturing, std::memory_order_release);
+    return true;
+}
+
+bool VariableServiceV1::BeginPendingTimelineReadUsePlacement(TimelineReadUseRow& use,
+    std::uint64_t logicalFrame, std::uint64_t onsetFrame, VariableReadCutRef* out) noexcept {
+    auto* cut = ResolveReadCut(use.cut);
+    const auto initializer = use.initializer.load(std::memory_order_acquire);
+    if (out != nullptr && cut != nullptr && initializer == TimelineInitializerState::Frozen &&
+        use.logicalFrame == logicalFrame && use.onsetFrame == onsetFrame) {
+        *out = use.cut;
+        return true;
+    }
+    if (out == nullptr || cut == nullptr || use.state.load(std::memory_order_acquire) != TimelineReadUseState::Published ||
+        (initializer != TimelineInitializerState::PendingPlacement && initializer != TimelineInitializerState::Building) ||
+        cut->timelineUseCount != 1 || use.sourceOwner == nullptr ||
+        !use.sourceOwner->IsOriginalInstalledSourceCurrent(use.originalSource, use.nativeHandle) ||
+        !RebuildPendingReadCut(*cut, logicalFrame)) return false;
+    use.logicalFrame = logicalFrame;
+    use.onsetFrame = onsetFrame;
+    use.initializer.store(TimelineInitializerState::Building, std::memory_order_release);
+    *out = use.cut;
+    return true;
+}
+
+bool VariableServiceV1::FreezePendingTimelineReadUse(VariableTimelineReadUseRef ref,
+    std::span<const CommandRecord> commands) noexcept {
+    auto* use = ResolveTimelineReadUse(ref);
+    if (use == nullptr || use->initializer.load(std::memory_order_acquire) != TimelineInitializerState::Building ||
+        commands.size() > use->initialCommands.size()) return false;
+    // This first stage supports builtin tuples only; effect identities need their own sidecars.
+    if (!TimelineInitializerCommandsMatch(use->nativeHandle, commands)) return false;
+    const auto published = PublishReadCut(use->cut, use->logicalFrame);
+    const auto* cut = ResolveReadCut(use->cut);
+    if (published == VariableReadCutStatus::Failed || cut == nullptr ||
+        cut->state.load(std::memory_order_acquire) != ReadCutState::Published) return false;
+    std::copy(commands.begin(), commands.end(), use->initialCommands.begin());
+    use->initialCommandCount = static_cast<std::uint32_t>(commands.size());
+    use->initializer.store(TimelineInitializerState::Frozen, std::memory_order_release);
+    return true;
+}
+
+bool VariableServiceV1::PendingTimelineReadUseFrozen(VariableTimelineReadUseRef ref) const noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    return use != nullptr && use->initializer.load(std::memory_order_acquire) == TimelineInitializerState::Frozen;
+}
+
+bool VariableServiceV1::PendingTimelineReadUseStaged(VariableTimelineReadUseRef ref) const noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    return use != nullptr && use->initializer.load(std::memory_order_acquire) == TimelineInitializerState::Staged;
+}
+
+bool VariableServiceV1::ProveTimelineReadUseInitializer(VariableTimelineReadUseRef ref,
+    VnVoiceHandle nativeHandle, const TimelineArmTable::PlainAudioProof& proof,
+    VariableTimelineInitializerProof* out) noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    return use != nullptr && use->lifetime.Owner()->MatchesVariableInitializerStart(
+        proof, use->lifetime.Token(), use->onsetFrame) && CaptureTimelineInitializerProof(ref, nativeHandle, out);
+}
+
+bool VariableServiceV1::ProveTimelineReadUseInitializer(VariableTimelineReadUseRef ref,
+    VnVoiceHandle nativeHandle, const TimelineArmTable::LaneAudioProof& proof,
+    VariableTimelineInitializerProof* out) noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    return use != nullptr && use->lifetime.Owner()->MatchesVariableInitializerStart(
+        proof, use->lifetime.Token(), use->onsetFrame) && CaptureTimelineInitializerProof(ref, nativeHandle, out);
+}
+
+bool VariableServiceV1::ProveTimelineReadUseInitializer(VariableTimelineReadUseRef ref,
+    VnVoiceHandle nativeHandle, const TimelineArmTable::BoundAudioProof& proof,
+    VariableTimelineInitializerProof* out) noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    return use != nullptr && use->lifetime.Owner()->MatchesVariableInitializerStart(
+        proof, use->lifetime.Token(), use->onsetFrame) && CaptureTimelineInitializerProof(ref, nativeHandle, out);
+}
+
+bool VariableServiceV1::CaptureTimelineInitializerProof(VariableTimelineReadUseRef ref,
+    VnVoiceHandle nativeHandle, VariableTimelineInitializerProof* out) noexcept {
+    auto* use = ResolveTimelineReadUse(ref);
+    if (use == nullptr || use->nativeHandle != nativeHandle || out == nullptr || out->Valid() ||
+        TimelineReadUseStartStatus(ref, nativeHandle) != VariableReadCutStatus::Applied) return false;
+    const auto initializer = use->initializer.load(std::memory_order_acquire);
+    if (initializer != TimelineInitializerState::None && initializer != TimelineInitializerState::Frozen) return false;
+    const auto* cut = ResolveReadCut(use->cut);
+    out->row_ = use;
+    out->nativeHandle_ = nativeHandle;
+    out->order_ = {use->logicalFrame, cut->sequence, cut->executionOrdinalExclusive};
+    out->commands_ = use->initialCommands.data();
+    out->commandCount_ = initializer == TimelineInitializerState::Frozen ? use->initialCommandCount : 0;
+    return true;
+}
+
+void VariableServiceV1::ApplyTimelineReadUseInitializer(VariableTimelineInitializerProof& proof,
+    void* context, void (*apply)(void*, const CommandRecord&) noexcept) noexcept {
+    assert(proof.Valid() && apply != nullptr);
+    auto& use = *static_cast<TimelineReadUseRow*>(proof.row_);
+    for (std::uint32_t index = 0; index < proof.commandCount_; ++index) apply(context, proof.commands_[index]);
+    use.initializer.store(TimelineInitializerState::Consumed, std::memory_order_release);
+    proof.Reset();
+}
+
+bool VariableServiceV1::ProveTimelineReadUseInitializer(VariableTimelineReadUseRef ref,
+    VnVoiceHandle nativeHandle, const TimelineArmTable::AudioOperationClaim& proof,
+    VariableTimelineInitializerProof* out) noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    return use != nullptr && use->lifetime.Owner()->MatchesVariableInitializerStart(
+        proof, use->lifetime.Token(), use->onsetFrame) && CaptureTimelineInitializerProof(ref, nativeHandle, out);
+}
+
+bool VariableServiceV1::CommitTimelineReadUse(VariableTimelineReadUseRef ref) noexcept {
+    auto* use = ResolveTimelineReadUse(ref);
+    if (use == nullptr || use->state.load(std::memory_order_acquire) != TimelineReadUseState::Prepared)
+        return false;
+    use->state.store(TimelineReadUseState::Published, std::memory_order_release);
+    return true;
+}
+
+bool VariableServiceV1::CanTransferReadCutToTimelineUses(VariableReadCutRef ref) const noexcept {
+    const auto* cut = ResolveReadCut(ref);
+    return cut != nullptr && (cut->timelineUseCount != 0 ||
+        cut->entryUse.load(std::memory_order_acquire) == EntryReadUseState::Published) &&
+        !cut->timelineOwnershipTransferred;
+}
+
+bool VariableServiceV1::TransferReadCutToTimelineUses(VariableReadCutRef ref) noexcept {
+    if (!CanTransferReadCutToTimelineUses(ref)) return false;
+    ResolveReadCut(ref)->timelineOwnershipTransferred = true;
+    return true;
+}
+
+bool VariableServiceV1::PrepareFrontierEntryReadUse(VariableReadCutRef ref,
+    DecisionTable& decisions, ScheduledTransactionPool& pool,
+    const FrontierActivationDescriptor& descriptor) noexcept {
+    auto* cut = ResolveReadCut(ref);
+    const auto* activation = decisions.ResolveFrontierActivation(descriptor.entry.coordinator);
+    DecisionCommittedSnapshot coordinator{};
+    Plan03PageGroupView group{};
+    if (cut == nullptr || !descriptor.Valid() || !(descriptor.initialVariables == ref) ||
+        cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::None || cut->entryPin.Valid() ||
+        cut->state.load(std::memory_order_acquire) != ReadCutState::Published || cut->timelineOwnershipTransferred ||
+        cut->world != worldGeneration_ || cut->transport != transport_.Current() ||
+        cut->transport != descriptor.primary.transportEpoch ||
+        cut->executeFrame != descriptor.order.executeFrame || cut->sequence != descriptor.order.logicCommitSequence ||
+        activation == nullptr || activation->State() != FrontierReceiptState::Prepared ||
+        !(activation->Descriptor() == descriptor) ||
+        !decisions.CaptureCommitted(descriptor.entry.coordinator, &coordinator) ||
+        coordinator.ticket.sequence != cut->sequence || coordinator.world != descriptor.worldGeneration ||
+        coordinator.transport != cut->transport || coordinator.audioState != AudioGroupState::Pending ||
+        coordinator.participantCount != descriptor.expectedMemberCount || coordinator.consumedSlices != 0 ||
+        !pool.PrivatePlan03GroupBindable(descriptor.primary) ||
+        !pool.ResolvePlan03GroupSliceProducer(descriptor.primary, &group) || group.frontier == nullptr ||
+        !group.frontier->Valid() || group.frontier->role != FrontierGroupRole::Coordinator ||
+        !(group.frontier->entry == descriptor.entry) || !(group.frontier->primary == descriptor.primary) ||
+        !(group.frontier->operation.group == descriptor.primary) ||
+        !(group.frontier->operation.owner == descriptor.entry.owner) ||
+        group.frontier->operation.order != descriptor.order ||
+        !(group.frontier->initialVariables == ref) || group.lease == nullptr ||
+        group.lease->Capture().state != AudioSliceState::Ready ||
+        !decisions.AcquireFuturePin(descriptor.entry.coordinator, &cut->entryPin)) return false;
+    cut->entryDescriptor = descriptor;
+    cut->entryDecisions = &decisions;
+    cut->entryPool = &pool;
+    cut->entryUse.store(EntryReadUseState::Prepared, std::memory_order_release);
+    return true;
+}
+
+bool VariableServiceV1::CommitFrontierEntryReadUse(VariableReadCutRef ref) noexcept {
+    auto* cut = ResolveReadCut(ref);
+    if (cut == nullptr || cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::Prepared ||
+        !cut->entryPin.Valid() || cut->entryDecisions == nullptr || cut->entryPool == nullptr) return false;
+    const auto* activation = cut->entryDecisions->ResolveFrontierActivation(cut->entryDescriptor.entry.coordinator);
+    Plan03PageGroupView group{};
+    if (activation == nullptr || activation->State() != FrontierReceiptState::Prepared ||
+        !(activation->Descriptor() == cut->entryDescriptor) ||
+        !cut->entryPool->ResolvePlan03GroupSliceProducer(cut->entryDescriptor.primary, &group) ||
+        group.frontier == nullptr || !(group.frontier->initialVariables == ref) ||
+        !(group.frontier->entry == cut->entryDescriptor.entry) || group.lease == nullptr ||
+        group.lease->Capture().state != AudioSliceState::Ready) return false;
+    cut->entryUse.store(EntryReadUseState::Published, std::memory_order_release);
+    return true;
+}
+
+bool VariableServiceV1::CanCommitFrontierEntryReadUse(VariableReadCutRef ref,
+    const DecisionTable::FrontierPublicationProof& activation,
+    const PrivateImmediateLaneGroupsPublicationProof& groups) const noexcept {
+    const auto* cut = ResolveReadCut(ref);
+    if (cut == nullptr || cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::Prepared ||
+        !cut->entryPin.Valid() || cut->entryDecisions == nullptr || cut->entryPool == nullptr ||
+        cut->entryDescriptor.initialVariables != ref ||
+        !cut->entryDecisions->IsFrontierPublicationProofFor(activation, cut->entryDescriptor) ||
+        !cut->entryPool->IsPrivateImmediateLaneGroupsPublicationProofFor(
+            groups, cut->entryDescriptor.primary, cut->entryDescriptor.entry)) return false;
+    Plan03PageGroupView group{};
+    return cut->entryPool->ResolvePlan03GroupSliceProducer(cut->entryDescriptor.primary, &group) &&
+        group.frontier != nullptr && group.frontier->initialVariables == ref &&
+        group.frontier->primary == cut->entryDescriptor.primary;
+}
+
+bool VariableServiceV1::CommitFrontierEntryReadUse(VariableReadCutRef ref,
+    const DecisionTable::FrontierPublicationProof& activation,
+    const PrivateImmediateLaneGroupsPublicationProof& groups) noexcept {
+    if (!CanCommitFrontierEntryReadUse(ref, activation, groups)) return false;
+    ResolveReadCut(ref)->entryUse.store(EntryReadUseState::Published, std::memory_order_release);
+    return true;
+}
+
+VariableReadCutStatus VariableServiceV1::FrontierEntrySourcesStatus(
+    const FrontierActivationDescriptor& descriptor) const noexcept {
+    const auto* cut = ResolveReadCut(descriptor.initialVariables);
+    if (cut == nullptr || cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::Published ||
+        !(cut->entryDescriptor == descriptor)) return VariableReadCutStatus::Failed;
+    return ReadCutSourcesStatus(descriptor.initialVariables);
+}
+
+bool VariableServiceV1::FrontierEntryReadUseDetached(const ReadCutRow& cut,
+    std::uint64_t completedAudioSequence) const noexcept {
+    return cut.entryPool != nullptr && cut.entryDecisions != nullptr &&
+        cut.entryDecisions->FrontierActivationBindingsDetached(cut.entryDescriptor.entry,
+            *cut.entryPool, completedAudioSequence);
+}
+
+bool VariableServiceV1::ReleaseFrontierEntryReadUse(ReadCutRow& cut) noexcept {
+    if (!cut.entryPin.Release()) return false;
+    const auto ref = cut.entryDescriptor.initialVariables;
+    cut.entryUse.store(EntryReadUseState::None, std::memory_order_release);
+    cut.entryDescriptor = {};
+    cut.entryDecisions = nullptr;
+    cut.entryPool = nullptr;
+    if (cut.timelineUseCount == 0 && cut.timelineOwnershipTransferred) return ReleaseReadCut(ref);
+    return true;
+}
+
+bool VariableServiceV1::FinishFrontierEntryReadUse(const FrontierEntryReceiptRef& entry,
+    std::uint64_t completedAudioSequence) noexcept {
+    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
+        auto& cut = readCuts_[index];
+        if (cut.entryUse.load(std::memory_order_acquire) == EntryReadUseState::None ||
+            !(cut.entryDescriptor.entry == entry)) continue;
+        const auto* activation = cut.entryDecisions->ResolveFrontierActivation(entry.coordinator);
+        FrontierActivationReceipt receipt{};
+        // LogicFinal alone does not fence a controller already read by audio.
+        if (activation == nullptr || !(activation->Descriptor() == cut.entryDescriptor) ||
+            activation->Read(entry, completedAudioSequence, &receipt) != FrontierReceiptRead::Ready ||
+            !FrontierEntryReadUseDetached(cut, completedAudioSequence) || !ReleaseFrontierEntryReadUse(cut)) return false;
+    }
+    return true;
+}
+
+bool VariableServiceV1::CancelPreparedFrontierEntryReadUse(const FrontierEntryReceiptRef& entry) noexcept {
+    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
+        auto& cut = readCuts_[index];
+        if (cut.entryUse.load(std::memory_order_acquire) == EntryReadUseState::None ||
+            !(cut.entryDescriptor.entry == entry)) continue;
+        const auto* activation = cut.entryDecisions->ResolveFrontierActivation(entry.coordinator);
+        if (activation == nullptr || activation->State() != FrontierReceiptState::Prepared ||
+            !(activation->Descriptor() == cut.entryDescriptor) || !FrontierEntryReadUseDetached(cut, 0) ||
+            !ReleaseFrontierEntryReadUse(cut)) return false;
+    }
+    return true;
+}
+
+void VariableServiceV1::ReleaseTimelineReadUse(TimelineReadUseRow& use) noexcept {
+    const auto ref = use.cut;
+    auto* cut = ResolveReadCut(ref);
+    assert(cut != nullptr && cut->timelineUseCount != 0);
+    use.lifetime.Release();
+    use.originalSource.Release();
+    use.sourceOwner = nullptr;
+    use.initializer.store(TimelineInitializerState::None, std::memory_order_relaxed);
+    use.initialCommandCount = 0;
+    use.cut = {};
+    use.nativeHandle = 0;
+    use.logicalFrame = 0;
+    use.onsetFrame = 0;
+    use.authoredStartOffset = 0;
+    const auto generation = use.generation.load(std::memory_order_relaxed);
+    if (generation == UINT32_MAX) {
+        use.state.store(TimelineReadUseState::Quarantined, std::memory_order_release);
+    } else {
+        use.generation.store(generation + 1u, std::memory_order_release);
+        use.state.store(TimelineReadUseState::Free, std::memory_order_release);
+    }
+    if (cut != nullptr && cut->timelineUseCount != 0) {
+        --cut->timelineUseCount;
+        if (cut->timelineUseCount == 0 && cut->timelineOwnershipTransferred) (void)ReleaseReadCut(ref);
+    }
+}
+
+bool VariableServiceV1::CancelPreparedTimelineReadUse(VariableTimelineReadUseRef ref) noexcept {
+    auto* use = ResolveTimelineReadUse(ref);
+    if (use == nullptr || use->state.load(std::memory_order_acquire) != TimelineReadUseState::Prepared)
+        return false;
+    // The original command run is still private, even if its Arm was consumed.
+    ReleaseTimelineReadUse(*use);
+    return true;
+}
+
+VariableReadCutStatus VariableServiceV1::TimelineReadUseSourcesStatus(
+    VariableTimelineReadUseRef ref, VnVoiceHandle nativeHandle) const noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    if (use == nullptr || use->state.load(std::memory_order_acquire) != TimelineReadUseState::Published ||
+        use->nativeHandle != nativeHandle) return VariableReadCutStatus::Failed;
+    return ReadCutSourcesStatus(use->cut);
+}
+
+VariableReadCutStatus VariableServiceV1::TimelineReadUseStartStatus(
+    VariableTimelineReadUseRef ref, VnVoiceHandle nativeHandle) const noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    if (use == nullptr || use->state.load(std::memory_order_acquire) != TimelineReadUseState::Published ||
+        use->nativeHandle != nativeHandle) return VariableReadCutStatus::Failed;
+    const auto* cut = ResolveReadCut(use->cut);
+    const auto initializer = use->initializer.load(std::memory_order_acquire);
+    if (initializer == TimelineInitializerState::PendingPlacement || initializer == TimelineInitializerState::Building)
+        return VariableReadCutStatus::Waiting;
+    const auto* arm = use->lifetime.Owner()->Resolve(use->lifetime.Token());
+    if (cut == nullptr || arm == nullptr) return VariableReadCutStatus::Failed;
+    const auto state = arm->state.load(std::memory_order_acquire);
+    if (state != ArmState::Published && state != ArmState::AudioClaimed)
+        return state == ArmState::Armed || state == ArmState::PendingApply
+            ? VariableReadCutStatus::Waiting : VariableReadCutStatus::Failed;
+    if ((arm->pendingImmediateStart && !arm->startBound) ||
+        arm->startFrame != use->onsetFrame)
+        return VariableReadCutStatus::Failed;
+    return ReadCutSourcesStatus(use->cut);
+}
+
+bool VariableServiceV1::PendingTimelineReadUseMatchesArm(VariableTimelineReadUseRef ref,
+    VnVoiceHandle nativeHandle, TimelineArmToken arm) const noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    if (use == nullptr || use->state.load(std::memory_order_acquire) != TimelineReadUseState::Published ||
+        use->nativeHandle != nativeHandle || !use->lifetime.Valid()) return false;
+    const auto original = use->lifetime.Token();
+    return original.slot == arm.slot && original.generation == arm.generation &&
+        original.renderSlot == arm.renderSlot && original.renderGeneration == arm.renderGeneration &&
+        TimelineReadUseStartStatus(ref, nativeHandle) == VariableReadCutStatus::Waiting &&
+        TimelineReadUseSourcesStatus(ref, nativeHandle) != VariableReadCutStatus::Failed;
+}
+
+void VariableServiceV1::AcknowledgeFinishedTimelineReadUses(std::uint64_t completedAudioSequence) noexcept {
+    for (std::uint32_t index = 0; index < timelineReadUseCapacity_; ++index) {
+        auto& use = timelineReadUses_[index];
+        if (use.state.load(std::memory_order_acquire) != TimelineReadUseState::Published) continue;
+        TimelineArmObservation arm{};
+        const bool observed = use.lifetime.Owner()->Observe(use.lifetime.Token(), &arm);
+        assert(observed);
+        if (!observed) continue;
+        if ((arm.startedBlockSequence != 0 && completedAudioSequence > arm.startedBlockSequence) ||
+            (arm.state == ArmState::Tombstoned && completedAudioSequence >
+                arm.tombstoneAudioSequence)) ReleaseTimelineReadUse(use);
+    }
+}
+
+void VariableServiceV1::ObserveAppliedWriteForReadCuts(const WriteRow& applied) noexcept {
+    for (std::uint32_t slot = 0; slot < readCutCapacity_; ++slot) {
+        auto& cut = readCuts_[slot];
+        if (cut.state.load(std::memory_order_acquire) != ReadCutState::Capturing || cut.needsRebuild ||
+            (cut.pendingPlacement && !cut.finalPlacementCaptured) ||
+            cut.world != applied.world || cut.transport != applied.transport ||
+            applied.requestedFrame > cut.executeFrame || applied.committedFrame > cut.executeFrame ||
+            applied.ticket.sequence > cut.sequence ||
+            (applied.ticket.sequence == cut.sequence && applied.executionOrdinal >= cut.executionOrdinalExclusive)) continue;
+        if (applied.scope.scope == VariableScopeV1::Emitter &&
+            (cut.emitter == 0 || applied.scope.emitterSlot != static_cast<std::uint32_t>(cut.emitter) ||
+                applied.scope.emitterGeneration != static_cast<std::uint32_t>(cut.emitter >> 32))) continue;
+        for (std::uint32_t index = 0; index < cut.valueCount; ++index) {
+            const auto& value = cut.values[index];
+            if (!value.read || value.variableId != applied.variableId) continue;
+            const auto* original = value.source.Valid() ? ResolveHistory(value.source) : nullptr;
+            if (original != nullptr && (&applied == original ||
+                (applied.batchId != 0 && applied.batchId == original->batchId))) continue;
+            if (original == nullptr) {
+                if (applied.bankOrdinal > value.baselineOrdinal) cut.needsRebuild = true;
+                continue;
+            }
+            const auto originalFrame = original->state == RowState::PageCommitted || original->state == RowState::Terminal
+                ? original->committedFrame : original->requestedFrame;
+            if (applied.committedFrame > originalFrame || (applied.committedFrame == originalFrame &&
+                (applied.ticket.sequence > original->ticket.sequence ||
+                    (applied.ticket.sequence == original->ticket.sequence && applied.executionOrdinal > original->executionOrdinal)))) {
+                cut.needsRebuild = true;
+            }
+        }
+    }
 }
 
 bool VariableServiceV1::CurrentValue(VnVariableId id, float* out) const noexcept {
@@ -3697,8 +6055,7 @@ void VariableServiceV1::FinishOutcomeDelivery() noexcept {
             WriteRow& row = history_[slot];
             if (row.used && row.state == RowState::Terminal &&
                 row.outcomeGeneration <= deliveredOutcomeGeneration_) {
-                row = WriteRow{};
-                freeSlots_.push_back(slot);
+                row.outcomeDelivered = true;
             }
         }
         outcomes_.erase(
@@ -3708,6 +6065,7 @@ void VariableServiceV1::FinishOutcomeDelivery() noexcept {
         deliveredOutcomeCount_ = 0;
         deliveredOutcomeGeneration_ = 0;
     }
+    ReclaimHistoryRows();
     outcomeRead_ = 0;
 }
 

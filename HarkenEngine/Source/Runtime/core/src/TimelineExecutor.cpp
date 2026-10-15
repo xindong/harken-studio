@@ -290,6 +290,7 @@ TimelineExecutionResult TimelineExecutor::ExecuteQuantum(
         return result;
     }
     if (!sink_->ApplyPlan03Groups(absoluteQuantum)) {
+        sink_->BeforeEndQuantum(absoluteQuantum, result);
         sink_->EndQuantum(absoluteQuantum);
         return result;
     }
@@ -414,6 +415,8 @@ TimelineExecutionResult TimelineExecutor::ExecuteQuantum(
                     payload->kind == TimelineEventKind::ControllerActivation;
                 const bool bindingValid = !controller && armTable_->Snapshot(event.armToken, &state, &target) &&
                     sink_->BindingValid(event.armToken.renderSlot, event.armToken.renderGeneration);
+                const bool pendingBindingValid = !controller && !bindingValid && payload != nullptr &&
+                    sink_->PendingFrontierBindingValid(event, *payload);
                 const bool frameValid = event.executeFrame >= quantumStart &&
                     event.executeFrame - quantumStart < quantumFrames_;
                 const auto expectedPhase = payload == nullptr ? 0u :
@@ -427,7 +430,7 @@ TimelineExecutionResult TimelineExecutor::ExecuteQuantum(
                     (controller ? eventProgram->role == TimelineProgramRole::ControllerActivation &&
                         !event.armToken.Valid() && (event.frontier.kind == FrontierOperationKind::Entry ||
                             event.frontier.group.Exact()) :
-                        bindingValid && SameTarget(payload->target, target));
+                        (pendingBindingValid || (bindingValid && SameTarget(payload->target, target))));
                 if (payload != nullptr && payload->kind == TimelineEventKind::VariableWeight) {
                     float weight = 0.0f;
                     valid = valid && payload->variableWeight.startFrame == event.executeFrame &&
@@ -673,12 +676,15 @@ TimelineExecutionResult TimelineExecutor::ExecuteQuantum(
             eventIndex = nextEvent_[eventIndex];
         }
     }
+    sink_->BeforeEndQuantum(absoluteQuantum, result);
     sink_->EndQuantum(absoluteQuantum);
     deferDigest_ = false;
     for (std::size_t index = 0; index < deferredDigestCount_; ++index) {
         auto& record = deferredDigest_[index];
         if (record.event.frontier.Present())
             record.disposition = sink_->FrontierEventDisposition(record.event);
+        else
+            record.disposition = sink_->PlainEventDisposition(record.event, record.disposition);
         FoldEvent(record.event, record.payloadValid ? &record.payload : nullptr,
             record.effectiveFrame, record.disposition, record.bindingValid ? &record.resolvedBinding : nullptr);
     }

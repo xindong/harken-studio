@@ -174,6 +174,7 @@ struct VoiceTimelineEvent {
     std::uint64_t value = 0;
     WeightSegmentV1 variableWeight{};
     VariableWeightControlIdentity variableWeightOwner{};
+    bool firstOutputDeferred = false;
     const CurveLUT* envelopeCurve = nullptr;
     TimelineExecutionOrder order{};
     AuthoredStopOperationIdentity authoredStopOperation{};
@@ -371,7 +372,7 @@ struct VoiceRenderContext {
         for (std::uint32_t index = 0; index < variableWeightControlCount; ++index) {
             auto& binding = variableWeightControls[index];
             if (binding.owner != owner) continue;
-            if (segment.segmentGeneration <= binding.segment.segmentGeneration) return false;
+            if (!binding.active || segment.segmentGeneration <= binding.segment.segmentGeneration) return false;
             binding.segment = segment;
             binding.active = true;
             binding.inverseSpan = 1.0 / static_cast<double>(segment.endFrame - segment.startFrame - 1u);

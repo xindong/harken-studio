@@ -253,6 +253,8 @@ public:
     bool IsOriginalLifetimePinFor(const OriginalLifetimePin& original,
         PlayableInstanceHandle handle) const noexcept;
     bool IsOriginalLifetimeCurrent(const OriginalLifetimePin& original) const noexcept;
+    bool CaptureOriginalPreparedNodeKind(const PreparedPlayableInstance& prepared,
+        const OriginalLifetimePin& original, PlayableKind* kind) const noexcept;
     // A genuine native end request can return its own structural associations
     // before Arm/Occurrence tails finish. This hold retains the actual Core row;
     // only its Return permits the existing final native Retired operation.
@@ -346,6 +348,12 @@ public:
     // No numeric handle lookup can issue a parent relationship through it.
     bool MatchesPreparedOriginalAncestry(const PreparedParentLinksProof& proof,
         PlayableInstanceHandle descendant, PlayableInstanceHandle ancestor) const noexcept;
+    struct PreparedNodeCensusEntry {
+        const PreparedPlayableInstance* original = nullptr;
+        PlayableKind expectedKind = PlayableKind::Sound;
+    };
+    bool MatchesPreparedOriginalNodeCensus(const PreparedParentLinksProof& proof,
+        std::span<const PreparedNodeCensusEntry> nodes) const noexcept;
     bool IssueOriginalPreparedLifetime(const PreparedParentLinksProof& preparation,
         const PreparedPlayableInstance& exactOriginal, OriginalLifetimePin* out) noexcept;
     // Stable output slots are selected only from the actual held native nodes.

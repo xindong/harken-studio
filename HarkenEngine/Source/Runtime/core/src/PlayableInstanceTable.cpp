@@ -1,5 +1,6 @@
 #include "harken/core/PlayableInstanceTable.h"
 
+#include <algorithm>
 #include <utility>
 #include <cassert>
 #include <limits>
@@ -591,6 +592,49 @@ bool PlayableInstanceTable::MatchesPreparedOriginalAncestry(const PreparedParent
         if (cursor == 0) return false;
     }
     return false;
+}
+
+bool PlayableInstanceTable::CaptureOriginalPreparedNodeKind(const PreparedPlayableInstance& prepared,
+    const OriginalLifetimePin& original, PlayableKind* kind) const noexcept {
+    if (kind == nullptr || !OwnsPrepared(prepared) || !PreparedCommitHeld(prepared) ||
+        !IsOriginalLifetimePinFor(original, prepared.Handle()) || !IsOriginalLifetimeCurrent(original) ||
+        original.OriginalParent() != prepared.Parent() ||
+        original.OriginalScheduleEpoch() != prepared.ScheduleEpoch()) return false;
+    const auto* entry = FindAny(prepared.Handle());
+    if (entry == nullptr || entry->preparationInput.kind != entry->kind) return false;
+    *kind = entry->kind;
+    return true;
+}
+
+bool PlayableInstanceTable::MatchesPreparedOriginalNodeCensus(const PreparedParentLinksProof& proof,
+    std::span<const PreparedNodeCensusEntry> nodes) const noexcept {
+    if (proof.owner_ != this || !proof.Valid() || nodes.empty()) return false;
+    for (std::size_t index = 0; index < nodes.size(); ++index) {
+        const auto* original = nodes[index].original;
+        if (original == nullptr || !OwnsPrepared(*original) ||
+            !MatchesPreparedOriginalAncestry(proof, original->Handle(), original->Handle())) return false;
+        const auto* entry = FindAny(original->Handle());
+        if (entry == nullptr || entry->kind != nodes[index].expectedKind ||
+            entry->preparationInput.kind != nodes[index].expectedKind) return false;
+        for (std::size_t prior = 0; prior < index; ++prior)
+            if (nodes[prior].original == original || nodes[prior].original->Handle() == original->Handle()) return false;
+        bool present = false;
+        for (std::size_t actual = 0; actual < proof.nodeCount_; ++actual)
+            present |= proof.nodes_[actual].request.original == original;
+        for (std::size_t actual = 0; actual < proof.anchorCount_; ++actual)
+            present |= proof.anchors_[actual].request.original == original;
+        if (!present) return false;
+    }
+    const auto included = [&](const PreparedParentLinksProof::Node& actual) noexcept {
+        return std::count_if(nodes.begin(), nodes.end(), [&](const auto& supplied) {
+            return supplied.original == actual.request.original;
+        }) == 1;
+    };
+    for (std::size_t index = 0; index < proof.nodeCount_; ++index)
+        if (!included(proof.nodes_[index])) return false;
+    for (std::size_t index = 0; index < proof.anchorCount_; ++index)
+        if (!included(proof.anchors_[index])) return false;
+    return true;
 }
 
 void PlayableInstanceTable::ConsumePreparedParentLinks(PreparedParentLinksProof&& proof) noexcept {

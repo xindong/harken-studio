@@ -531,6 +531,7 @@ target_include_directories(harken_editor_metadata_tests PRIVATE ${CMAKE_CURRENT_
     ${HARKEN_RUNTIME_DIR}/core/include ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/media/include ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
+    ${HARKEN_RUNTIME_DIR}/render/include
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Common)
 target_compile_definitions(harken_editor_metadata_tests PRIVATE HARKEN_TEMP_DIR="${CMAKE_SOURCE_DIR}/.temp")
 target_compile_definitions(harken_editor_metadata_tests PRIVATE

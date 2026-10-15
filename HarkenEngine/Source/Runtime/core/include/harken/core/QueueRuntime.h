@@ -24,11 +24,14 @@
 
 namespace harken {
 class OriginalImmediateLaneConditionalProjection;
+class PrivatePendingQueueFrontierBinding;
 
 class OccurrenceStatePool;
 class CompositeCompletionOwnerPool;
 class ScheduledTransactionPool;
 class PrivateSelectedQueueFutureSpanPool;
+class ImmediateActionLane;
+struct ImmediateLaneBucket;
 struct Engine;
 
 inline constexpr std::uint32_t kMaxQueueInstancesHard = 16384;
@@ -106,6 +109,14 @@ enum class QueueConditionalCompletionMode : std::uint8_t {
     InQuantum = 0,
     RetiredSource = 1,
     LogicalBoundary = 2,
+    SourceWait = 3,
+};
+
+struct QueueFrontierSourceWaitContext {
+    const ImmediateActionLane* lane = nullptr;
+    const ImmediateLaneBucket* bucket = nullptr;
+    const DecisionTable* decisions = nullptr;
+    std::uint32_t slot = UINT32_MAX;
 };
 
 struct QueueConditionalProof {
@@ -832,6 +843,7 @@ public:
         FrontierInitialCompletionProof& operator=(const FrontierInitialCompletionProof&) = delete;
         bool Valid() const noexcept { return pool_ != nullptr && claim_.Valid(); }
         void Release() noexcept;
+        const QueueConditionalProof& Completion() const noexcept { return completion_; }
     private:
         friend class QueueInstanceTable;
         const ScheduledTransactionPool* pool_ = nullptr;
@@ -845,7 +857,8 @@ public:
         const ScheduledTransactionPool& pool, std::uint64_t sourceSequence,
         const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool* composites,
         std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame,
-        std::uint64_t completedAudioSequence, FrontierInitialCompletionProof* out) noexcept;
+        std::uint64_t completedAudioSequence, FrontierInitialCompletionProof* out,
+        const QueueFrontierSourceWaitContext* sourceWait = nullptr) noexcept;
     void ApplyFrontierInitialCompletion(const FrontierInitialCompletionProof& proof) noexcept;
 
     enum class FrontierConditionalSlice : std::uint8_t { Activation, Prelude, TargetLock };
@@ -868,11 +881,24 @@ public:
 
     bool BindFrontierConditional(QueueInstanceToken token, const FrontierGroupBinding& binding,
         const ScheduledTransactionPool& pool) noexcept;
+    bool CapturePrivatePendingFrontierBinding(const OriginalConditionalFutureReservation& original,
+        const OriginalLifetimePin& parent, const FrontierGroupBinding& binding,
+        const ScheduledTransactionPool& pool, const TransitionInstancePool& transitions,
+        PrivatePendingQueueFrontierBinding* out,
+        const FrontierGroupBinding* counterpart = nullptr,
+        const CompositeCompletionOwnerPool* composites = nullptr) const noexcept;
     bool ProveFrontierConditional(const FrontierGroupBinding& binding, AudioSliceLease& lease,
         const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool* composites,
         std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame, std::uint64_t completedAudioSequence,
-        FrontierConditionalProof* out, FrontierConditionalSlice slice = FrontierConditionalSlice::Activation) noexcept;
+        FrontierConditionalProof* out, FrontierConditionalSlice slice = FrontierConditionalSlice::Activation,
+        const QueueFrontierSourceWaitContext* sourceWait = nullptr) noexcept;
     void ApplyFrontierConditional(const FrontierConditionalProof& proof) noexcept;
+    QueueConditionalProofStatus PreflightFrontierSourceWait(
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const QueueFrontierSourceWaitContext& context,
+        const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool* composites,
+        std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame,
+        std::uint64_t completedAudioSequence, QueueConditionalProof* outProof) const noexcept;
 
     explicit QueueInstanceTable(std::uint32_t capacity,
         std::uint32_t originalConditionalCapacity = 0);
@@ -1071,6 +1097,26 @@ public:
         std::uint64_t failureFrame) noexcept;
 
 private:
+    class SourceWaitAuthority {
+    public:
+        SourceWaitAuthority() = default;
+        SourceWaitAuthority(const SourceWaitAuthority&) = delete;
+        SourceWaitAuthority& operator=(const SourceWaitAuthority&) = delete;
+    private:
+        friend class QueueInstanceTable;
+        const FrontierGroupBinding* binding_ = nullptr;
+        std::uint64_t delayFrames_ = 0;
+    };
+    bool ProveSourceWaitAuthority(const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const QueueFrontierSourceWaitContext& context,
+        std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame,
+        std::uint64_t completedAudioSequence, SourceWaitAuthority* out) const noexcept;
+    QueueConditionalProofStatus ProveConditionalCompletion(
+        QueueInstanceToken token, ConditionalQueueVersionToken version,
+        const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool& composites,
+        std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame,
+        std::uint64_t expectedCompletedThroughBlockSequence, bool currentQuantumScratchAdmitted,
+        QueueConditionalProof* outProof, const SourceWaitAuthority* sourceWait) const noexcept;
     QueueResetStatusV1 PrepareConditionalReplacementInternal(
         QueueInstanceToken token, ConditionalQueueVersionToken expectedVersion,
         DecisionToken expectedDecision, const ConditionalQueuePrepareRequest& replacement,
@@ -1080,6 +1126,11 @@ private:
     friend class OriginalImmediateLaneConditionalProjection;
     friend struct QueueInstanceTableTestAccess;
     friend struct Engine;
+    friend class PrivatePendingQueueFrontierBinding;
+    bool MatchesPrivatePendingFrontierBinding(const OriginalConditionalFutureReservation& original,
+        const OriginalLifetimePin& parent, const FrontierGroupBinding& binding,
+        const ScheduledTransactionPool& pool, const TransitionInstancePool& transitions,
+        const FrontierGroupBinding* counterpart, const CompositeCompletionOwnerPool* composites) const noexcept;
     // Same native prepared record and parent loan; never a Live Current grant.
     bool CapturePreparedOriginalConditionalFamily(
         const OriginalConditionalFutureReservation& original, const OriginalLifetimePin& parent,
@@ -1326,6 +1377,23 @@ private:
     std::uint64_t liveCatalogResetScopeMarker_ = 0;
     std::uint64_t nextOriginalLifetimeMarker_ = 0;
     std::uint64_t logicNow_ = 0;
+};
+
+// Synchronous borrowed evidence; every use rechecks the original Queue and parent loan.
+class PrivatePendingQueueFrontierBinding {
+public:
+    bool Valid() const noexcept { return owner_ != nullptr; }
+    bool Matches(const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool) const noexcept;
+private:
+    friend class QueueInstanceTable;
+    const QueueInstanceTable* owner_ = nullptr;
+    const QueueInstanceTable::OriginalConditionalFutureReservation* original_ = nullptr;
+    const QueueInstanceTable::OriginalLifetimePin* parent_ = nullptr;
+    const FrontierGroupBinding* binding_ = nullptr;
+    const FrontierGroupBinding* counterpart_ = nullptr;
+    const ScheduledTransactionPool* pool_ = nullptr;
+    const TransitionInstancePool* transitions_ = nullptr;
+    const CompositeCompletionOwnerPool* composites_ = nullptr;
 };
 
 static_assert(std::atomic<ConditionalQueueActivation>::is_always_lock_free);

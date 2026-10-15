@@ -247,6 +247,185 @@ TEST(CommandBudget, OrdinaryPlayUsesSingleRecordBatchIdentity) {
               harken::PlayLedBatchKind::None);
 }
 
+TEST(CommandBudget, DirectPlayInitialBindingWaitsForWholeQuantumBudget) {
+    EngineSession session(BudgetConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallSmoothDefinitions(engine, {kBusVariable}, 0.0f, 1.0f).status);
+    const auto dc = harkentest::MakeDC(kBlockFrames, 0.5f);
+    const auto pcm = MonoDesc(dc, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+    auto binding = BusVolumeBindingDesc();
+    binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+    binding.curve.points[0].y = binding.curve.points[1].y = kHalfDb;
+    binding.curve.handles[0] = harkentest::EndpointHandles(binding.curve.points[0], binding.curve.points[1]);
+    ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(kBusBindingBase), &binding));
+    auto attach = BusAttachment(harkentest::ObjectId(1));
+    attach.scopeKind = VN_TARGET_SCOPE_VOICE;
+    ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(kBusBindingBase), &attach));
+    engine->nullBackend.Pump(1);
+    engine->mixer.SetMaxCommandsPerQuantumForTest(2);
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 0.0f, 0));
+    auto play = MakePlayDesc(harkentest::ObjectId(1));
+    play.loopCount = 0;
+    VnVoiceHandle handle = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+    ASSERT_EQ(3u, Queued(engine));
+    const auto before = engine->commands.ConsumedCount();
+    const auto waiting = PumpBlock(engine);
+    EXPECT_EQ(1u, engine->commands.ConsumedCount() - before);
+    EXPECT_LE(harkentest::Peak(waiting.left), harkentest::kSilenceFloor);
+    const auto started = PumpBlock(engine);
+    EXPECT_EQ(0u, Queued(engine));
+    HARKENTEST_ASSERT_NON_SILENT(started.left);
+    EXPECT_NEAR(0.5f * 0.5f, started.left.back(), 1e-5f);
+    EXPECT_EQ(0u, engine->mixer.CommandProtocolViolationCount());
+}
+
+TEST(CommandBudget, OversizedDirectPlayInitialBatchRefusesBeforePublishingOrClaiming) {
+    EngineSession session(BudgetConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallSmoothDefinitions(engine, {kBusVariable}, 0.0f, 1.0f).status);
+    const auto dc = harkentest::MakeDC(kBlockFrames, 0.5f);
+    const auto pcm = MonoDesc(dc, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+    auto binding = BusVolumeBindingDesc();
+    binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+    binding.curve.points[0].y = binding.curve.points[1].y = kHalfDb;
+    binding.curve.handles[0] = harkentest::EndpointHandles(binding.curve.points[0], binding.curve.points[1]);
+    ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(kBusBindingBase), &binding));
+    auto attach = BusAttachment(harkentest::ObjectId(1));
+    attach.scopeKind = VN_TARGET_SCOPE_VOICE;
+    ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(kBusBindingBase), &attach));
+    engine->nullBackend.Pump(1);
+    engine->mixer.SetMaxCommandsPerQuantumForTest(1);
+    const auto head = engine->commands.PublishedHead();
+    const auto demand = engine->propertyPublisher.WorstCaseCommits();
+    const auto completed = engine->voices.CompletedCount();
+    const auto highWater = engine->voices.HighWaterVoices();
+    const auto play = MakePlayDesc(harkentest::ObjectId(1));
+    VnVoiceHandle handle = 0;
+    EXPECT_EQ(VN_INVALID_CONFIG, harkentest::PlayRaw(&play, &handle));
+    EXPECT_EQ(0u, handle);
+    EXPECT_EQ(head, engine->commands.PublishedHead());
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(demand, engine->propertyPublisher.WorstCaseCommits());
+    EXPECT_EQ(completed, engine->voices.CompletedCount());
+    EXPECT_EQ(highWater, engine->voices.HighWaterVoices());
+    engine->mixer.SetMaxCommandsPerQuantumForTest(2);
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+    const auto started = PumpBlock(engine);
+    HARKENTEST_ASSERT_NON_SILENT(started.left);
+    EXPECT_NEAR(0.5f * 0.5f, started.left.back(), 1e-5f);
+}
+
+TEST(CommandBudget, NeutralDirectBindingFitsSingleCommandBudget) {
+    EngineSession session(BudgetConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallSmoothDefinitions(engine, {kBusVariable}, 0.0f, 1.0f).status);
+    const auto dc = harkentest::MakeDC(kBlockFrames, 0.5f);
+    const auto pcm = MonoDesc(dc, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+    auto binding = BusVolumeBindingDesc();
+    binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+    ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(kBusBindingBase), &binding));
+    auto attach = BusAttachment(harkentest::ObjectId(1));
+    attach.scopeKind = VN_TARGET_SCOPE_VOICE;
+    ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(kBusBindingBase), &attach));
+    engine->nullBackend.Pump(1);
+    engine->mixer.SetMaxCommandsPerQuantumForTest(1);
+    const auto play = MakePlayDesc(harkentest::ObjectId(1));
+    VnVoiceHandle handle = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+    EXPECT_EQ(1u, Queued(engine));
+    const auto started = PumpBlock(engine);
+    HARKENTEST_ASSERT_NON_SILENT(started.left);
+    EXPECT_NEAR(0.5f, started.left.back(), 1e-5f);
+}
+
+TEST(CommandBudget, DirectToneBindingsShareOnePhysicalCommandBudget) {
+    EngineSession session(BudgetConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallSmoothDefinitions(engine, {kBusVariable}, 0.0f, 1.0f).status);
+    const auto dc = harkentest::MakeDC(kBlockFrames, 0.5f);
+    const auto pcm = MonoDesc(dc, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+    for (std::uint32_t i = 0; i < 2; ++i) {
+        auto binding = BusVolumeBindingDesc();
+        binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+        binding.targetId = i == 0 ? harken::kTargetVoiceLowpassCutoff : harken::kTargetVoiceLowpassQ;
+        binding.curve.points[0].y = binding.curve.points[1].y = i == 0 ? 1000.0f : 1.0f;
+        binding.curve.handles[0] = harkentest::EndpointHandles(binding.curve.points[0], binding.curve.points[1]);
+        const auto id = harkentest::ObjectId(kBusBindingBase + i);
+        ASSERT_EQ(VN_OK, Vn_RegisterBinding(id, &binding));
+        auto attach = BusAttachment(harkentest::ObjectId(1));
+        attach.scopeKind = VN_TARGET_SCOPE_VOICE;
+        ASSERT_EQ(VN_OK, Vn_AttachBinding(id, &attach));
+    }
+    engine->nullBackend.Pump(1);
+    engine->mixer.SetMaxCommandsPerQuantumForTest(2);
+    const auto play = MakePlayDesc(harkentest::ObjectId(1));
+    VnVoiceHandle handle = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+    EXPECT_EQ(2u, Queued(engine));
+    const auto started = PumpBlock(engine);
+    HARKENTEST_ASSERT_NON_SILENT(started.left);
+    EXPECT_EQ(0u, engine->mixer.CommandProtocolViolationCount());
+}
+
+TEST(CommandBudget, DirectStartQueueFullRollsBackVoicePreparationAndRecovers) {
+    EngineSession session(BudgetConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallSmoothDefinitions(engine, {kBusVariable}, 0.0f, 1.0f).status);
+    const auto dc = harkentest::MakeDC(kBlockFrames, 0.5f);
+    const auto pcm = MonoDesc(dc, kRate);
+    const auto sound = harkentest::ObjectId(1);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    auto binding = BusVolumeBindingDesc();
+    binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+    binding.curve.points[0].y = binding.curve.points[1].y = kHalfDb;
+    binding.curve.handles[0] = harkentest::EndpointHandles(binding.curve.points[0], binding.curve.points[1]);
+    ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(kBusBindingBase), &binding));
+    auto attach = BusAttachment(sound);
+    attach.scopeKind = VN_TARGET_SCOPE_VOICE;
+    ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(kBusBindingBase), &attach));
+    engine->nullBackend.Pump(1);
+    while (Queued(engine) < engine->commands.Capacity() - 1u)
+        ASSERT_EQ(VN_OK, Vn_SetBusVolume(VN_BUS_MASTER, 0.0f, 0));
+    const auto head = engine->commands.PublishedHead();
+    const auto demand = engine->propertyPublisher.WorstCaseCommits();
+    const auto completed = engine->voices.CompletedCount();
+    const auto highWater = engine->voices.HighWaterVoices();
+    const auto source = engine->registry.Lookup(sound);
+    ASSERT_NE(nullptr, source.useCount);
+    const auto sourcePins = source.useCount->load(std::memory_order_acquire);
+    const auto play = MakePlayDesc(sound);
+    VnVoiceHandle handle = 0;
+    EXPECT_EQ(VN_BACKPRESSURE, harkentest::PlayRaw(&play, &handle));
+    EXPECT_EQ(0u, handle);
+    EXPECT_EQ(head, engine->commands.PublishedHead());
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(demand, engine->propertyPublisher.WorstCaseCommits());
+    EXPECT_EQ(completed, engine->voices.CompletedCount());
+    EXPECT_EQ(highWater, engine->voices.HighWaterVoices());
+    EXPECT_EQ(sourcePins, source.useCount->load(std::memory_order_acquire));
+    engine->nullBackend.Pump(8);
+    ASSERT_EQ(0u, Queued(engine));
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+    const auto started = PumpBlock(engine);
+    HARKENTEST_ASSERT_NON_SILENT(started.left);
+    EXPECT_NEAR(0.5f * 0.5f, started.left.back(), 1e-5f);
+}
+
 TEST(CommandBudget, TimelineArmBatchWaitsForWholeQuantumBudget) {
     EngineSession session(BudgetConfig());
     ASSERT_EQ(VN_OK, session.InitResult());

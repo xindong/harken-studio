@@ -1266,6 +1266,46 @@ bool PlayableTreeExecutor::ProveInstanceCommits(PlayableInstanceTable* expectedO
     return true;
 }
 
+bool PlayableTreeExecutor::IssueOriginalPreparedInstanceLifetimes(
+    PlayableInstanceTable& expectedOwner,
+    std::span<const PreparedPlayableInstance* const> originals,
+    std::span<PlayableInstanceTable::OriginalLifetimePin> stableBaselines) noexcept {
+    const auto stepCount = step_.instances_.size() + step_.adoptedInstanceCount_;
+    const auto count = stepCount + (externalInstance_ == nullptr ? 0u : 1u);
+    if (step_.Committed() || !step_.instanceCommitProofsRequired_ || !Validate() ||
+        count == 0 || originals.size() != count || stableBaselines.size() != expectedOwner.Capacity() ||
+        (externalInstance_ != nullptr && (instanceTable_ != &expectedOwner ||
+            !externalInstanceCommitProof_.AssociatedWith(*externalInstance_)))) return false;
+    const auto originalAt = [&](std::size_t index) -> const PreparedPlayableInstance* {
+        if (index == stepCount) return externalInstance_;
+        return index < step_.instances_.size() ? &step_.instances_[index]
+            : step_.adoptedInstances_[index - step_.instances_.size()];
+    };
+    const auto proofAt = [&](std::size_t index) -> const PlayableInstanceTable::PreparedCommitProof& {
+        if (index == stepCount) return externalInstanceCommitProof_;
+        return index < step_.instances_.size() ? step_.instanceCommitProofs_[index]
+            : step_.adoptedInstanceCommitProofs_[index - step_.instances_.size()];
+    };
+    // Complete pointer identity is checked before issuing any structural retention.
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto* original = originalAt(index);
+        if (original == nullptr || !expectedOwner.OwnsPrepared(*original) ||
+            !proofAt(index).AssociatedWith(*original) ||
+            std::count(originals.begin(), originals.end(), original) != 1 ||
+            static_cast<std::uint32_t>(original->Handle()) >= stableBaselines.size() ||
+            stableBaselines[static_cast<std::uint32_t>(original->Handle())].Valid()) return false;
+    }
+    std::size_t issued = 0;
+    for (; issued < count; ++issued) {
+        const auto slot = static_cast<std::uint32_t>(originalAt(issued)->Handle());
+        if (!expectedOwner.IssueOriginalPreparedLifetime(proofAt(issued), &stableBaselines[slot])) break;
+    }
+    if (issued == count) return true;
+    while (issued != 0)
+        stableBaselines[static_cast<std::uint32_t>(originalAt(--issued)->Handle())].Release();
+    return false;
+}
+
 PlayableTreeExecutor::PlayableTreeExecutor(PlayableTreeExecutor&& other) noexcept
     : step_(std::move(other.step_)) {
     if (other.step_.CommitProofsRequired()) return;

@@ -15,6 +15,26 @@
 namespace harken::detail {
 
 struct VariableControlInstanceTableTestAccess {
+    static bool IssueInitial(VariableControlInstanceTable& table,
+        const PreparedVariableControlInstance& original, VariableControlSide side,
+        VariableControlInstanceTable::OriginalInitialSideReceipt* out) {
+        return table.IssueOriginalInitialSideReceipt(original, side, out);
+    }
+    static VariableControlInstanceStatus BeginInitial(VariableControlInstanceTable& table,
+        VariableControlInstanceTable::OriginalInitialSideReceipt& original, DecisionToken replacement,
+        VariableControlInstanceTable::InitialSideReplacement* out) {
+        return table.BeginInitialSideReplacement(original, replacement, out);
+    }
+    static bool MatchesInitial(const VariableControlInstanceTable& table,
+        const VariableControlInstanceTable::OriginalInitialSideReceipt& original,
+        VariableControlInstanceToken instance, VariableControlSide side,
+        DecisionToken decision, BankVersionToken bank) {
+        return table.MatchesOriginalInitialSideReceipt(original, instance, side, decision, bank);
+    }
+    static bool FinishInitial(VariableControlInstanceTable& table,
+        VariableControlInstanceTable::InitialSideReplacement& replacement, bool commit) {
+        return table.FinishInitialSideReplacement(replacement, commit);
+    }
     static bool SeedFreeGeneration(VariableControlInstanceTable& table, std::uint32_t slot,
                                   std::uint32_t generation) {
         if (slot >= table.capacity_ || generation == 0 ||
@@ -28,6 +48,22 @@ struct VariableControlInstanceTableTestAccess {
         if (entry == nullptr || entry->state.load() != VariableControlInstanceTable::SlotState::Initializing)
             return false;
         entry->rootInstance.fetch_add(1);
+        return true;
+    }
+    static bool ChangeHeldBank(VariableControlInstanceTable& table,
+        VariableControlInstanceToken token, bool restore) {
+        auto* entry = table.Resolve(token);
+        if (entry == nullptr || entry->discrete.initialReplacement.load() == nullptr) return false;
+        if (restore) entry->discrete.newestObserved.fetch_sub(1);
+        else entry->discrete.newestObserved.fetch_add(1);
+        return true;
+    }
+    static bool SeedPreparingSideGeneration(VariableControlInstanceTable& table,
+        VariableControlInstanceToken token, std::uint64_t generation) {
+        auto* entry = table.ResolvePreparing(token);
+        if (entry == nullptr || entry->state.load() != VariableControlInstanceTable::SlotState::Initializing)
+            return false;
+        entry->discrete.generation.store(generation);
         return true;
     }
     static bool SeedSideGeneration(VariableControlInstanceTable& table,
@@ -50,7 +86,8 @@ struct VariableControlInstanceTableTestAccess {
 namespace {
 
 struct FrontierSideHarness {
-    void Prepare(harken::VariableControlSide side) {
+    void Prepare(harken::VariableControlSide side,
+        harken::VariableControlInstanceTable::OriginalInitialSideReceipt* initial = nullptr) {
         selected = side;
         harken::ScheduledTransactionPool::Config config{};
         config.quantumFrames = 64;
@@ -61,9 +98,21 @@ struct FrontierSideHarness {
         config.maxFrameBatchesPerQuantum = config.maxEventsPerQuantum = config.maxTransactionEvents = 8;
         config.maxCurrentSlicesPerQuantum = config.maxPlan03GroupHeadersPerPage = config.maxArmsPerGroup = 2;
         ASSERT_TRUE(pool.Reset(config, 0, 1));
-        ASSERT_EQ(harken::VariableControlInstanceStatus::Ok, instances.Acquire({1, 1, harkentest::ObjectId(9), 7}, &instance));
-        ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
-            instances.PrepareSide(instance, side, decision, bank));
+        if (initial != nullptr) {
+            harken::PreparedVariableControlInstance original;
+            ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+                instances.PrepareAcquire({1, 1, harkentest::ObjectId(9), 7}, &original));
+            ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+                instances.PrepareSide(original, side, decision, bank));
+            ASSERT_TRUE(harken::detail::VariableControlInstanceTableTestAccess::IssueInitial(
+                instances, original, side, initial));
+            ASSERT_TRUE(instances.CommitPreparedAcquire(&original, &instance));
+        } else {
+            ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+                instances.Acquire({1, 1, harkentest::ObjectId(9), 7}, &instance));
+            ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+                instances.PrepareSide(instance, side, decision, bank));
+        }
         harken::Plan03GroupSliceInput input{};
         input.decision = decision;
         ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed, pool.ReservePlan03GroupSlice(input, arms));
@@ -512,6 +561,254 @@ void PrepareOriginalVcSides(harken::VariableControlInstanceTable& table,
         table.PrepareSide(original, harken::VariableControlSide::Discrete, {2, 3}, {4, 5}));
     ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
         table.PrepareSide(original, harken::VariableControlSide::Continuous, {6, 7}, {4, 5}));
+}
+
+TEST(VariableControlInstance, InitialSideReplacementKeepsBankAndOtherSideAndRejectsOldProof) {
+    using Access = harken::detail::VariableControlInstanceTableTestAccess;
+    harken::VariableControlInstanceTable table(1);
+    harken::PreparedVariableControlInstance prepared;
+    ASSERT_NO_FATAL_FAILURE(PrepareOriginalVcSides(table, prepared));
+    harken::VariableControlInstanceTable::OriginalInitialSideReceipt original;
+    ASSERT_TRUE(Access::IssueInitial(table, prepared, harken::VariableControlSide::Discrete, &original));
+    harken::VariableControlInstanceToken token{};
+    ASSERT_TRUE(table.CommitPreparedAcquire(&prepared, &token));
+    harken::VariableControlActivationProof oldProof{};
+    ASSERT_TRUE(table.ProveActivation(token, {2, 3}, &oldProof));
+    harken::VariableControlInstanceTable::InitialSideReplacement replacement;
+    ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+        Access::BeginInitial(table, original, {8, 9}, &replacement));
+    EXPECT_FALSE(table.Release(token));
+    EXPECT_FALSE(table.ActivateProven(oldProof));
+    EXPECT_FALSE(table.CancelSide(token, harken::VariableControlSide::Discrete, {2, 3}));
+    harken::DecisionToken superseded{};
+    EXPECT_EQ(harken::VariableControlInstanceStatus::Stale,
+        table.PrepareNewerSide(token, harken::VariableControlSide::Discrete, {10, 11}, {4, 6}, &superseded));
+    harken::VariableControlInstanceTable::OriginalInitialSideReceipt denied(std::move(original));
+    EXPECT_FALSE(denied.Valid());
+    EXPECT_TRUE(original.Valid());
+    ASSERT_TRUE(Access::FinishInitial(table, replacement, true));
+    EXPECT_FALSE(replacement.Valid());
+    EXPECT_FALSE(table.ActivateProven(oldProof));
+    harken::VariableControlActivationProof fresh{};
+    ASSERT_TRUE(table.ProveActivation(token, {8, 9}, &fresh));
+    EXPECT_GT(fresh.sideGeneration, oldProof.sideGeneration);
+    EXPECT_EQ(4u, fresh.bank.slot);
+    EXPECT_EQ(5u, fresh.bank.generation);
+    harken::VariableControlInstanceSnapshot snapshot{};
+    ASSERT_TRUE(table.Capture(token, &snapshot));
+    EXPECT_EQ(11u, snapshot.rootInstance);
+    EXPECT_EQ(6u, snapshot.continuous.decision.slot);
+    EXPECT_EQ(7u, snapshot.continuous.decision.generation);
+    EXPECT_EQ(5u, snapshot.continuous.newestPending.generation);
+    EXPECT_TRUE(table.ActivateProven(fresh));
+    EXPECT_TRUE(table.ActivateSide(token, harken::VariableControlSide::Continuous, {6, 7}, {4, 5}));
+    EXPECT_TRUE(table.Release(token));
+}
+
+TEST(VariableControlInstance, InitialSideReplacementCancelRestoresOnlyOriginalSideWithoutProofRevival) {
+    using Access = harken::detail::VariableControlInstanceTableTestAccess;
+    harken::VariableControlInstanceTable table(1);
+    harken::PreparedVariableControlInstance prepared;
+    ASSERT_NO_FATAL_FAILURE(PrepareOriginalVcSides(table, prepared));
+    harken::VariableControlInstanceTable::OriginalInitialSideReceipt original;
+    ASSERT_TRUE(Access::IssueInitial(table, prepared, harken::VariableControlSide::Discrete, &original));
+    harken::VariableControlInstanceToken token{};
+    ASSERT_TRUE(table.CommitPreparedAcquire(&prepared, &token));
+    harken::VariableControlActivationProof oldProof{};
+    ASSERT_TRUE(table.ProveActivation(token, {2, 3}, &oldProof));
+    {
+        harken::VariableControlInstanceTable::InitialSideReplacement replacement;
+        ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+            Access::BeginInitial(table, original, {8, 9}, &replacement));
+        ASSERT_TRUE(table.ActivateSide(token, harken::VariableControlSide::Continuous, {6, 7}, {4, 5}));
+    }
+    EXPECT_FALSE(table.ActivateProven(oldProof));
+    harken::VariableControlInstanceSnapshot snapshot{};
+    ASSERT_TRUE(table.Capture(token, &snapshot));
+    EXPECT_EQ(harken::VariableControlSideState::Pending, snapshot.discrete.state);
+    EXPECT_EQ(2u, snapshot.discrete.decision.slot);
+    EXPECT_EQ(3u, snapshot.discrete.decision.generation);
+    EXPECT_FALSE(snapshot.discrete.lastApplied.Valid());
+    EXPECT_EQ(harken::VariableControlSideState::Committed, snapshot.continuous.state);
+    EXPECT_EQ(5u, snapshot.continuous.lastApplied.generation);
+    harken::VariableControlInstanceTable::InitialSideReplacement retry;
+    ASSERT_EQ(harken::VariableControlInstanceStatus::Ok, Access::BeginInitial(table, original, {}, &retry));
+    ASSERT_TRUE(Access::FinishInitial(table, retry, true));
+    ASSERT_TRUE(table.Capture(token, &snapshot));
+    EXPECT_EQ(harken::VariableControlSideState::Committed, snapshot.discrete.state);
+    EXPECT_FALSE(snapshot.discrete.decision.Valid());
+    EXPECT_FALSE(snapshot.discrete.newestPending.Valid());
+    EXPECT_EQ(5u, snapshot.discrete.lastApplied.generation);
+    EXPECT_TRUE(table.Release(token));
+}
+
+TEST(VariableControlInstance, InitialSideReplacementChangesSilentToVoicedAndRestoresSilentOnCancel) {
+    using Access = harken::detail::VariableControlInstanceTableTestAccess;
+    harken::VariableControlInstanceTable table(1);
+    harken::PreparedVariableControlInstance prepared;
+    ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+        table.PrepareAcquire({7, 11, harkentest::ObjectId(13), 17}, &prepared));
+    ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+        table.CommitSilentSide(prepared, harken::VariableControlSide::Discrete, {4, 5}));
+    harken::VariableControlInstanceTable::OriginalInitialSideReceipt original;
+    ASSERT_TRUE(Access::IssueInitial(table, prepared, harken::VariableControlSide::Discrete, &original));
+    EXPECT_TRUE(Access::MatchesInitial(table, original, prepared.Token(),
+        harken::VariableControlSide::Discrete, {}, {4, 5}));
+    for (const auto invalid : {harken::DecisionToken{0, 0}, {8, 0}, {UINT32_MAX, 1}}) {
+        EXPECT_FALSE(Access::MatchesInitial(table, original, prepared.Token(),
+            harken::VariableControlSide::Discrete, invalid, {4, 5}));
+    }
+    EXPECT_FALSE(Access::MatchesInitial(table, original, prepared.Token(),
+        harken::VariableControlSide::Continuous, {}, {4, 5}));
+    EXPECT_FALSE(Access::MatchesInitial(table, original, prepared.Token(),
+        harken::VariableControlSide::Discrete, {}, {4, 6}));
+    harken::VariableControlInstanceToken token{};
+    ASSERT_TRUE(table.CommitPreparedAcquire(&prepared, &token));
+    {
+        harken::VariableControlInstanceTable::InitialSideReplacement replacement;
+        ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+            Access::BeginInitial(table, original, {8, 9}, &replacement));
+    }
+    harken::VariableControlInstanceSnapshot snapshot{};
+    ASSERT_TRUE(table.Capture(token, &snapshot));
+    EXPECT_EQ(harken::VariableControlSideState::Committed, snapshot.discrete.state);
+    EXPECT_FALSE(snapshot.discrete.decision.Valid());
+    EXPECT_EQ(UINT32_MAX, snapshot.discrete.decision.slot);
+    EXPECT_EQ(0u, snapshot.discrete.decision.generation);
+    EXPECT_EQ(UINT32_MAX, snapshot.discrete.newestPending.slot);
+    EXPECT_EQ(0u, snapshot.discrete.newestPending.generation);
+    EXPECT_EQ(5u, snapshot.discrete.lastApplied.generation);
+    harken::VariableControlInstanceTable::InitialSideReplacement replacement;
+    ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+        Access::BeginInitial(table, original, {8, 9}, &replacement));
+    ASSERT_TRUE(Access::FinishInitial(table, replacement, true));
+    ASSERT_TRUE(table.Capture(token, &snapshot));
+    EXPECT_EQ(harken::VariableControlSideState::Pending, snapshot.discrete.state);
+    EXPECT_FALSE(snapshot.discrete.lastApplied.Valid());
+    EXPECT_EQ(UINT32_MAX, snapshot.discrete.lastApplied.slot);
+    EXPECT_EQ(0u, snapshot.discrete.lastApplied.generation);
+    EXPECT_TRUE(table.ActivateSide(token, harken::VariableControlSide::Discrete, {8, 9}, {4, 5}));
+    EXPECT_TRUE(table.Release(token));
+}
+
+TEST(VariableControlInstance, InitialSideReplacementRefusesForeignStaleAndAlreadyActivatedReceipts) {
+    using Access = harken::detail::VariableControlInstanceTableTestAccess;
+    harken::VariableControlInstanceTable table(1), foreign(1);
+    harken::PreparedVariableControlInstance prepared;
+    ASSERT_NO_FATAL_FAILURE(PrepareOriginalVcSides(table, prepared));
+    harken::VariableControlInstanceTable::OriginalInitialSideReceipt original;
+    ASSERT_TRUE(Access::IssueInitial(table, prepared, harken::VariableControlSide::Discrete, &original));
+    harken::VariableControlInstanceToken token{};
+    ASSERT_TRUE(table.CommitPreparedAcquire(&prepared, &token));
+    harken::VariableControlInstanceTable::InitialSideReplacement replacement;
+    EXPECT_EQ(harken::VariableControlInstanceStatus::Stale,
+        Access::BeginInitial(foreign, original, {8, 9}, &replacement));
+    EXPECT_EQ(harken::VariableControlInstanceStatus::Invalid,
+        Access::BeginInitial(table, original, {8, 0}, &replacement));
+    EXPECT_EQ(harken::VariableControlInstanceStatus::Invalid,
+        Access::BeginInitial(table, original, {6, 7}, &replacement));
+    ASSERT_TRUE(table.ActivateSide(token, harken::VariableControlSide::Discrete, {2, 3}, {4, 5}));
+    EXPECT_EQ(harken::VariableControlInstanceStatus::Stale,
+        Access::BeginInitial(table, original, {8, 9}, &replacement));
+    EXPECT_FALSE(replacement.Valid());
+    ASSERT_TRUE(table.ActivateSide(token, harken::VariableControlSide::Continuous, {6, 7}, {4, 5}));
+    ASSERT_TRUE(table.Release(token));
+    ASSERT_NO_FATAL_FAILURE(PrepareOriginalVcSides(table, prepared));
+    ASSERT_TRUE(table.CommitPreparedAcquire(&prepared, &token));
+    EXPECT_EQ(harken::VariableControlInstanceStatus::Stale,
+        Access::BeginInitial(table, original, {8, 9}, &replacement));
+    EXPECT_TRUE(table.CancelSide(token, harken::VariableControlSide::Discrete, {2, 3}));
+    EXPECT_TRUE(table.CancelSide(token, harken::VariableControlSide::Continuous, {6, 7}));
+    EXPECT_TRUE(table.Release(token));
+}
+
+TEST(VariableControlInstance, InitialSideReceiptRefusesTokenOnlyPreparationAndChangedFactoryMetadata) {
+    using Access = harken::detail::VariableControlInstanceTableTestAccess;
+    harken::VariableControlInstanceTable table(1);
+    harken::PreparedVariableControlInstance prepared;
+    ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+        table.PrepareAcquire({7, 11, harkentest::ObjectId(13), 17}, &prepared));
+    ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+        table.PrepareSide(prepared.Token(), harken::VariableControlSide::Discrete, {2, 3}, {4, 5}));
+    harken::VariableControlInstanceTable::OriginalInitialSideReceipt original;
+    EXPECT_FALSE(Access::IssueInitial(table, prepared, harken::VariableControlSide::Discrete, &original));
+    ASSERT_TRUE(table.CancelPreparedAcquire(&prepared));
+    ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+        table.PrepareAcquire({7, 11, harkentest::ObjectId(13), 17}, &prepared));
+    ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+        table.CommitSilentSide(prepared.Token(), harken::VariableControlSide::Discrete, {4, 5}));
+    EXPECT_FALSE(Access::IssueInitial(table, prepared, harken::VariableControlSide::Discrete, &original));
+    ASSERT_TRUE(table.CancelPreparedAcquire(&prepared));
+    ASSERT_NO_FATAL_FAILURE(PrepareOriginalVcSides(table, prepared));
+    ASSERT_TRUE(Access::ChangePreparingRoot(table, prepared.Token()));
+    EXPECT_FALSE(Access::IssueInitial(table, prepared, harken::VariableControlSide::Discrete, &original));
+    EXPECT_FALSE(original.Valid());
+    EXPECT_TRUE(table.CancelPreparedAcquire(&prepared));
+}
+
+TEST(VariableControlInstance, InitialSideReplacementRefusesBoundFrontierAndRealGroupReader) {
+    using Access = harken::detail::VariableControlInstanceTableTestAccess;
+    FrontierSideHarness harness;
+    harken::VariableControlInstanceTable::OriginalInitialSideReceipt original;
+    ASSERT_NO_FATAL_FAILURE(harness.Prepare(harken::VariableControlSide::Discrete, &original));
+    harken::VariableControlInstanceTable::InitialSideReplacement replacement;
+    EXPECT_EQ(harken::VariableControlInstanceStatus::Stale,
+        Access::BeginInitial(harness.instances, original, {8, 9}, &replacement));
+    EXPECT_FALSE(replacement.Valid());
+    harken::VariableControlInstanceSnapshot snapshot{};
+    ASSERT_TRUE(harness.instances.Capture(harness.instance, &snapshot));
+    EXPECT_EQ(harken::VariableControlSideState::Pending, snapshot.discrete.state);
+    EXPECT_EQ(harness.decision.slot, snapshot.discrete.decision.slot);
+}
+
+TEST(VariableControlInstance, InitialSideReplacementCancelRejectsForeignSemanticChange) {
+    using Access = harken::detail::VariableControlInstanceTableTestAccess;
+    harken::VariableControlInstanceTable table(1);
+    harken::PreparedVariableControlInstance prepared;
+    ASSERT_NO_FATAL_FAILURE(PrepareOriginalVcSides(table, prepared));
+    harken::VariableControlInstanceTable::OriginalInitialSideReceipt original;
+    ASSERT_TRUE(Access::IssueInitial(table, prepared, harken::VariableControlSide::Discrete, &original));
+    harken::VariableControlInstanceToken token{};
+    ASSERT_TRUE(table.CommitPreparedAcquire(&prepared, &token));
+    harken::VariableControlInstanceTable::InitialSideReplacement replacement;
+    ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+        Access::BeginInitial(table, original, {8, 9}, &replacement));
+    ASSERT_TRUE(Access::ChangeHeldBank(table, token, false));
+    EXPECT_FALSE(Access::FinishInitial(table, replacement, false));
+    EXPECT_TRUE(replacement.Valid());
+    harken::VariableControlInstanceSnapshot snapshot{};
+    ASSERT_TRUE(table.Capture(token, &snapshot));
+    EXPECT_EQ(5u, snapshot.discrete.newestObserved.slot);
+    ASSERT_TRUE(Access::ChangeHeldBank(table, token, true));
+    ASSERT_TRUE(Access::FinishInitial(table, replacement, false));
+    EXPECT_TRUE(table.CancelSide(token, harken::VariableControlSide::Discrete, {2, 3}));
+    EXPECT_TRUE(table.CancelSide(token, harken::VariableControlSide::Continuous, {6, 7}));
+    EXPECT_TRUE(table.Release(token));
+}
+
+TEST(VariableControlInstance, InitialSideReplacementExhaustionPreservesAcceptedSilentSide) {
+    using Access = harken::detail::VariableControlInstanceTableTestAccess;
+    harken::VariableControlInstanceTable table(1);
+    harken::PreparedVariableControlInstance prepared;
+    ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+        table.PrepareAcquire({7, 11, harkentest::ObjectId(13), 17}, &prepared));
+    ASSERT_TRUE(Access::SeedPreparingSideGeneration(table, prepared.Token(), UINT64_MAX));
+    ASSERT_EQ(harken::VariableControlInstanceStatus::Ok,
+        table.CommitSilentSide(prepared, harken::VariableControlSide::Discrete, {4, 5}));
+    harken::VariableControlInstanceTable::OriginalInitialSideReceipt original;
+    ASSERT_TRUE(Access::IssueInitial(table, prepared, harken::VariableControlSide::Discrete, &original));
+    harken::VariableControlInstanceToken token{};
+    ASSERT_TRUE(table.CommitPreparedAcquire(&prepared, &token));
+    harken::VariableControlInstanceTable::InitialSideReplacement replacement;
+    EXPECT_EQ(harken::VariableControlInstanceStatus::Capacity,
+        Access::BeginInitial(table, original, {8, 9}, &replacement));
+    EXPECT_FALSE(replacement.Valid());
+    harken::VariableControlInstanceSnapshot snapshot{};
+    ASSERT_TRUE(table.Capture(token, &snapshot));
+    EXPECT_EQ(11u, snapshot.rootInstance);
+    EXPECT_EQ(harken::VariableControlSideState::Committed, snapshot.discrete.state);
+    EXPECT_EQ(5u, snapshot.discrete.lastApplied.generation);
+    EXPECT_TRUE(table.Release(token));
 }
 
 TEST(VariableControlInstance, PreparedCommitHoldBlocksMutatorsAndPreservesStableOriginalCap) {

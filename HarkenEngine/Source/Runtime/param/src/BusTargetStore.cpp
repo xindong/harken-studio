@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <utility>
 
 namespace harken {
 
@@ -27,6 +28,7 @@ BusTargetStore::BusTargetStore(std::uint32_t maxBuses,
                    Slot{});
     m_publish.assign(static_cast<std::size_t>(maxBuses) * kBusTargetCount,
                      PublishState{});
+    m_projection.resize(m_publish.size());
     // Seed every changed-only reference to the target's neutral base: with
     // every slot inactive the reduction returns the base, so an untouched
     // bus target never publishes — the M5 no-binding identity.
@@ -37,6 +39,66 @@ BusTargetStore::BusTargetStore(std::uint32_t maxBuses,
                 meta != nullptr ? meta->neutral : 0.0f;
         }
     }
+}
+
+bool BusTargetStore::BeginVariableProjection() noexcept {
+    if (m_projectionActive) return false;
+    for (std::uint32_t bus = 0; bus < m_maxBuses; ++bus) {
+        for (std::uint32_t t = 0; t < kBusTargetCount; ++t) {
+            const auto index = PubIndexOf(bus, t);
+            const auto& state = m_publish[index];
+            m_projection[index] = {m_slots[IndexOf(bus, t, kSlotVariableIndex)],
+                state.pendingRampMs, state.dirty, state.pendingInput, state.suppressClaimRamp};
+        }
+    }
+    m_projectionDemandCount = m_demandCount;
+    m_projectionPendingInputMarks = m_pendingInputMarks;
+    m_projectionActive = true;
+    return true;
+}
+
+std::uint32_t BusTargetStore::TakePublicationRamp(std::uint32_t busIndex,
+    std::uint32_t busGeneration, std::uint32_t targetId,
+    TargetClaimOwner owner) noexcept {
+    if (!owner.Shared() || !InRange(busIndex, targetId, 0) ||
+        ActiveGeneration(busIndex) != busGeneration) return 0;
+    auto& state = m_publish[PubIndexOf(busIndex, targetId)];
+    if (state.preparedOwner != owner) return 0;
+    return std::exchange(state.pendingRampMs, 0u);
+}
+
+void BusTargetStore::RestorePublicationRamp(std::uint32_t busIndex,
+    std::uint32_t busGeneration, std::uint32_t targetId,
+    TargetClaimOwner owner, std::uint32_t rampMs) noexcept {
+    if (!owner.Shared() || !InRange(busIndex, targetId, 0) ||
+        ActiveGeneration(busIndex) != busGeneration || rampMs == 0) return;
+    auto& state = m_publish[PubIndexOf(busIndex, targetId)];
+    if (state.preparedOwner != owner) return;
+    state.pendingRampMs = std::max(state.pendingRampMs, rampMs);
+    SetDirty(state);
+}
+
+void BusTargetStore::RestoreVariableProjection() noexcept {
+    if (!m_projectionActive) return;
+    for (std::uint32_t bus = 0; bus < m_maxBuses; ++bus) {
+        for (std::uint32_t t = 0; t < kBusTargetCount; ++t) {
+            const auto index = PubIndexOf(bus, t);
+            auto& state = m_publish[index];
+            const auto& saved = m_projection[index];
+            m_slots[IndexOf(bus, t, kSlotVariableIndex)] = saved.variable;
+            state.pendingRampMs = saved.pendingRampMs;
+            state.dirty = saved.dirty;
+            state.pendingInput = saved.pendingInput;
+            state.suppressClaimRamp = saved.suppressClaimRamp;
+        }
+    }
+    m_demandCount = m_projectionDemandCount;
+    m_pendingInputMarks = m_projectionPendingInputMarks;
+    m_projectionActive = false;
+}
+
+std::uint64_t BusTargetStore::VariableProjectionStorageBytes() const noexcept {
+    return m_projection.size() * sizeof(VariableEvaluation);
 }
 
 bool BusTargetStore::InRange(std::uint32_t busIndex, std::uint32_t targetId,
@@ -276,6 +338,7 @@ void BusTargetStore::RetireBusGeneration(
         retiring->busGeneration = busGeneration;
         retiring->targetId = targetId;
         retiring->owner = state.preparedOwner;
+        retiring->publicationRefCount = state.publicationRefCount;
         retiring->revision = state.revision;
         retiring->frozenResolved = Reduce(busIndex, targetId);
         retiring->frozenRampMs = state.claimSnapshotCaptured
@@ -290,6 +353,7 @@ void BusTargetStore::RetireBusGeneration(
         state.preCandidateApiRampTick = 0;
         state.candidateBaselineValid = false;
         state.preparedOwner = {};
+        state.publicationRefCount = 0;
     }
     ResetActiveRows(busIndex);
     m_activeGenerations[busIndex] = 0;
@@ -422,7 +486,7 @@ void BusTargetStore::MarkDropped(std::uint32_t busIndex,
 
 bool BusTargetStore::TryClaim(std::uint32_t busIndex,
                               std::uint32_t targetId,
-                              VariableSliceRef owner,
+                              TargetClaimOwner owner,
                               std::uint32_t expectedRevision) noexcept {
     return TryClaim(busIndex, ActiveGeneration(busIndex), targetId, owner,
                     expectedRevision);
@@ -431,17 +495,25 @@ bool BusTargetStore::TryClaim(std::uint32_t busIndex,
 bool BusTargetStore::TryClaim(std::uint32_t busIndex,
                               std::uint32_t busGeneration,
                               std::uint32_t targetId,
-                              VariableSliceRef owner,
+                              TargetClaimOwner owner,
                               std::uint32_t expectedRevision) noexcept {
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount ||
         !owner.Valid() || m_activeGenerations[busIndex] != busGeneration) {
         return false;
     }
     PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
-    if (state.revision != expectedRevision || state.preparedOwner.Valid()) {
+    if (state.revision != expectedRevision) return false;
+    if (state.preparedOwner.Valid()) {
+        if (!owner.Shared() || state.preparedOwner != owner ||
+            state.publicationRefCount == UINT32_MAX) return false;
+        ++state.publicationRefCount;
+        return true;
+    }
+    if (state.publicationRefCount != 0) {
         return false;
     }
     state.preparedOwner = owner;
+    state.publicationRefCount = owner.Shared() ? 1u : 0u;
     state.preparedRampMs = 0;
     state.suppressClaimRamp = false;
     state.claimSnapshotCaptured = false;
@@ -454,14 +526,14 @@ bool BusTargetStore::TryClaim(std::uint32_t busIndex,
 
 bool BusTargetStore::CaptureCandidateBaseline(
     std::uint32_t busIndex, std::uint32_t busGeneration,
-    std::uint32_t targetId, VariableSliceRef owner) noexcept {
+    std::uint32_t targetId, TargetClaimOwner owner) noexcept {
+    if (owner.Shared()) return false;
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount ||
         !owner.Valid() || m_activeGenerations[busIndex] != busGeneration) {
         return false;
     }
     PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
-    if (state.preparedOwner.slot != owner.slot ||
-        state.preparedOwner.generation != owner.generation ||
+    if (state.preparedOwner != owner ||
         state.preparedRampMs != 0 || state.claimSnapshotCaptured) {
         return false;
     }
@@ -476,14 +548,13 @@ bool BusTargetStore::CaptureCandidateBaseline(
 
 void BusTargetStore::ClearCandidateBaseline(
     std::uint32_t busIndex, std::uint32_t busGeneration,
-    std::uint32_t targetId, VariableSliceRef owner) noexcept {
+    std::uint32_t targetId, TargetClaimOwner owner) noexcept {
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount ||
         m_activeGenerations[busIndex] != busGeneration) {
         return;
     }
     PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
-    if (state.preparedOwner.slot != owner.slot ||
-        state.preparedOwner.generation != owner.generation) {
+    if (state.preparedOwner != owner) {
         return;
     }
     state.preCandidatePendingRampMs = 0;
@@ -494,14 +565,14 @@ void BusTargetStore::ClearCandidateBaseline(
 
 void BusTargetStore::DropClaimedPublication(
     std::uint32_t busIndex, std::uint32_t busGeneration,
-    std::uint32_t targetId, VariableSliceRef owner) noexcept {
+    std::uint32_t targetId, TargetClaimOwner owner) noexcept {
+    if (owner.Shared()) return;
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount ||
         m_activeGenerations[busIndex] != busGeneration) {
         return;
     }
     PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
-    if (state.preparedOwner.slot != owner.slot ||
-        state.preparedOwner.generation != owner.generation) {
+    if (state.preparedOwner != owner) {
         return;
     }
     MarkDropped(busIndex, targetId);
@@ -515,9 +586,21 @@ void BusTargetStore::DropClaimedPublication(
     state.preparedOwner = {};
 }
 
+void BusTargetStore::DropClaimedBaseline(std::uint32_t busIndex,
+                                        std::uint32_t busGeneration,
+                                        std::uint32_t targetId,
+                                        TargetClaimOwner owner) noexcept {
+    if (busIndex >= m_maxBuses || targetId >= kBusTargetCount ||
+        m_activeGenerations[busIndex] != busGeneration) return;
+    auto& state = m_publish[PubIndexOf(busIndex, targetId)];
+    if (state.preparedOwner != owner) return;
+    MarkDropped(busIndex, targetId);
+    state.preCandidatePendingRampMs = 0;
+}
+
 void BusTargetStore::ReleaseClaim(std::uint32_t busIndex,
                                   std::uint32_t targetId,
-                                  VariableSliceRef owner,
+                                  TargetClaimOwner owner,
                                   ClaimReleaseReason reason) noexcept {
     ReleaseClaim(busIndex, ActiveGeneration(busIndex), targetId, owner,
                  reason);
@@ -526,15 +609,20 @@ void BusTargetStore::ReleaseClaim(std::uint32_t busIndex,
 void BusTargetStore::ReleaseClaim(std::uint32_t busIndex,
                                   std::uint32_t busGeneration,
                                   std::uint32_t targetId,
-                                  VariableSliceRef owner,
+                                  TargetClaimOwner owner,
                                   ClaimReleaseReason reason) noexcept {
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
         return;
     }
     if (m_activeGenerations[busIndex] == busGeneration) {
         PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
-        if (state.preparedOwner.slot == owner.slot &&
-            state.preparedOwner.generation == owner.generation) {
+        if (state.preparedOwner == owner) {
+            if (owner.Shared()) {
+                if (state.publicationRefCount == 0 || --state.publicationRefCount != 0) return;
+                state.preparedOwner = {};
+                state.suppressClaimRamp = false;
+                return;
+            }
             if (reason == ClaimReleaseReason::RejectCandidate) {
                 if (state.candidateBaselineValid) {
                     state.pendingRampMs = state.preCandidatePendingRampMs;
@@ -557,12 +645,14 @@ void BusTargetStore::ReleaseClaim(std::uint32_t busIndex,
     }
     if (RetiringTarget* retiring =
             FindRetiring(busIndex, busGeneration, targetId, owner)) {
+        if (owner.Shared() && (retiring->publicationRefCount == 0 ||
+            --retiring->publicationRefCount != 0)) return;
         *retiring = RetiringTarget{};
     }
 }
 
 bool BusTargetStore::SnapshotForClaim(
-    std::uint32_t busIndex, std::uint32_t targetId, VariableSliceRef owner,
+    std::uint32_t busIndex, std::uint32_t targetId, TargetClaimOwner owner,
     float* resolved, std::uint32_t* rampMs,
     std::uint32_t* revision) const noexcept {
     return SnapshotForClaim(busIndex, ActiveGeneration(busIndex), targetId,
@@ -571,7 +661,7 @@ bool BusTargetStore::SnapshotForClaim(
 
 bool BusTargetStore::SnapshotForClaim(
     std::uint32_t busIndex, std::uint32_t busGeneration,
-    std::uint32_t targetId, VariableSliceRef owner, float* resolved,
+    std::uint32_t targetId, TargetClaimOwner owner, float* resolved,
     std::uint32_t* rampMs, std::uint32_t* revision) const noexcept {
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount ||
         resolved == nullptr || rampMs == nullptr || revision == nullptr) {
@@ -579,8 +669,7 @@ bool BusTargetStore::SnapshotForClaim(
     }
     if (m_activeGenerations[busIndex] == busGeneration) {
         const PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
-        if (state.preparedOwner.slot == owner.slot &&
-            state.preparedOwner.generation == owner.generation) {
+        if (state.preparedOwner == owner) {
             *resolved = Reduce(busIndex, targetId);
             *rampMs = state.pendingRampMs;
             *revision = state.revision;
@@ -600,7 +689,7 @@ bool BusTargetStore::SnapshotForClaim(
 
 bool BusTargetStore::CaptureSnapshotForClaim(
     std::uint32_t busIndex, std::uint32_t busGeneration,
-    std::uint32_t targetId, VariableSliceRef owner, float* resolved,
+    std::uint32_t targetId, TargetClaimOwner owner, float* resolved,
     std::uint32_t* rampMs, std::uint32_t* revision) noexcept {
     if (resolved == nullptr || rampMs == nullptr || revision == nullptr) {
         return false;
@@ -608,8 +697,13 @@ bool BusTargetStore::CaptureSnapshotForClaim(
     if (busIndex < m_maxBuses && targetId < kBusTargetCount &&
         m_activeGenerations[busIndex] == busGeneration) {
         PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
-        if (state.preparedOwner.slot == owner.slot &&
-            state.preparedOwner.generation == owner.generation) {
+        if (state.preparedOwner == owner) {
+            if (owner.Shared()) {
+                *resolved = Reduce(busIndex, targetId);
+                *rampMs = state.pendingRampMs;
+                *revision = state.revision;
+                return true;
+            }
             if (state.claimSnapshotCaptured) {
                 return false;
             }
@@ -624,27 +718,26 @@ bool BusTargetStore::CaptureSnapshotForClaim(
     }
     RetiringTarget* retiring =
         FindRetiring(busIndex, busGeneration, targetId, owner);
-    if (retiring == nullptr || retiring->claimSnapshotCaptured) {
+    if (retiring == nullptr || (!owner.Shared() && retiring->claimSnapshotCaptured)) {
         return false;
     }
     *resolved = retiring->frozenResolved;
     *rampMs = retiring->frozenRampMs;
     *revision = retiring->revision;
-    retiring->claimSnapshotCaptured = true;
+    if (!owner.Shared()) retiring->claimSnapshotCaptured = true;
     return true;
 }
 
 void BusTargetStore::SetClaimRampSuppressed(
     std::uint32_t busIndex, std::uint32_t busGeneration,
-    std::uint32_t targetId, VariableSliceRef owner,
+    std::uint32_t targetId, TargetClaimOwner owner,
     bool suppressed) noexcept {
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount ||
         m_activeGenerations[busIndex] != busGeneration) {
         return;
     }
     PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
-    if (state.preparedOwner.slot == owner.slot &&
-        state.preparedOwner.generation == owner.generation) {
+    if (state.preparedOwner == owner) {
         state.suppressClaimRamp = suppressed;
     }
 }
@@ -695,7 +788,7 @@ bool BusTargetStore::ForeignClaim(std::uint32_t busIndex,
 }
 
 void BusTargetStore::MarkSliceCommitted(
-    std::uint32_t busIndex, std::uint32_t targetId, VariableSliceRef owner,
+    std::uint32_t busIndex, std::uint32_t targetId, TargetClaimOwner owner,
     float resolved, std::uint32_t rampMs) noexcept {
     MarkSliceCommitted(busIndex, ActiveGeneration(busIndex), targetId, owner,
                        resolved, rampMs);
@@ -703,17 +796,24 @@ void BusTargetStore::MarkSliceCommitted(
 
 void BusTargetStore::MarkSliceCommitted(
     std::uint32_t busIndex, std::uint32_t busGeneration,
-    std::uint32_t targetId, VariableSliceRef owner, float resolved,
+    std::uint32_t targetId, TargetClaimOwner owner, float resolved,
     std::uint32_t rampMs) noexcept {
     if (busIndex >= m_maxBuses || targetId >= kBusTargetCount) {
         return;
     }
     if (m_activeGenerations[busIndex] == busGeneration) {
         PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
-        if (state.preparedOwner.slot == owner.slot &&
-            state.preparedOwner.generation == owner.generation) {
+        if (state.preparedOwner == owner) {
             state.lastCommitted = resolved;
             state.lastPublishedRampMs = rampMs;
+            if (owner.Shared()) {
+                if (Reduce(busIndex, targetId) != resolved || state.pendingInput || state.pendingRampMs != 0)
+                    SetDirty(state);
+                else
+                    CleanDirty(state);
+                ReleaseClaim(busIndex, busGeneration, targetId, owner);
+                return;
+            }
             if (Reduce(busIndex, targetId) != resolved) {
                 SetDirty(state);
             } else {
@@ -733,13 +833,15 @@ void BusTargetStore::MarkSliceCommitted(
     }
     if (RetiringTarget* retiring =
             FindRetiring(busIndex, busGeneration, targetId, owner)) {
+        if (owner.Shared() && (retiring->publicationRefCount == 0 ||
+            --retiring->publicationRefCount != 0)) return;
         *retiring = RetiringTarget{};
     }
 }
 
 BusTargetStore::RetiringTarget* BusTargetStore::FindRetiring(
     std::uint32_t busIndex, std::uint32_t busGeneration,
-    std::uint32_t targetId, VariableSliceRef owner) noexcept {
+    std::uint32_t targetId, TargetClaimOwner owner) noexcept {
     return const_cast<RetiringTarget*>(
         static_cast<const BusTargetStore*>(this)->FindRetiring(
             busIndex, busGeneration, targetId, owner));
@@ -747,13 +849,12 @@ BusTargetStore::RetiringTarget* BusTargetStore::FindRetiring(
 
 const BusTargetStore::RetiringTarget* BusTargetStore::FindRetiring(
     std::uint32_t busIndex, std::uint32_t busGeneration,
-    std::uint32_t targetId, VariableSliceRef owner) const noexcept {
+    std::uint32_t targetId, TargetClaimOwner owner) const noexcept {
     for (const RetiringTarget& retiring : m_retiringTargets) {
         if (retiring.used && retiring.busIndex == busIndex &&
             retiring.busGeneration == busGeneration &&
             retiring.targetId == targetId &&
-            retiring.owner.slot == owner.slot &&
-            retiring.owner.generation == owner.generation) {
+            retiring.owner == owner) {
             return &retiring;
         }
     }

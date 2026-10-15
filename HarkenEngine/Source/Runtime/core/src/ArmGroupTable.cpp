@@ -186,16 +186,40 @@ bool ArmGroupTable::ReserveInternal(DecisionToken parent,
 
 ArmGroupTable::Row* ArmGroupTable::ResolvePrepared(
     ArmGroupToken token) noexcept {
+    return const_cast<Row*>(static_cast<const ArmGroupTable*>(this)->ResolvePrepared(token));
+}
+
+const ArmGroupTable::Row* ArmGroupTable::ResolvePrepared(
+    ArmGroupToken token) const noexcept {
     if (!token.Valid() || token.slot >= capacity_) {
         return nullptr;
     }
-    Row& row = rows_[token.slot];
+    const Row& row = rows_[token.slot];
     if (row.slotState.load(std::memory_order_acquire) != SlotState::Prepared ||
         row.identity.load(std::memory_order_acquire) !=
             PackIdentity(token.slot, token.generation)) {
         return nullptr;
     }
     return &row;
+}
+
+bool ArmGroupTable::MatchesPreparedMembers(ArmGroupToken token, DecisionToken parent,
+    const TimelineArmToken* members, std::uint16_t memberCount) const noexcept {
+    const Row* row = ResolvePrepared(token);
+    if (row == nullptr || !parent.Valid() || (memberCount != 0 && members == nullptr) ||
+        row->parent.slot != parent.slot || row->parent.generation != parent.generation ||
+        row->memberCount != memberCount ||
+        row->state.load(std::memory_order_acquire) !=
+            (memberCount == 0 ? ArmGroupState::Ready : ArmGroupState::AwaitingAcks) ||
+        row->ackedCount.load(std::memory_order_acquire) != 0 ||
+        row->tombstonedCount.load(std::memory_order_acquire) != 0 ||
+        row->maxTombstoneSequence.load(std::memory_order_acquire) != 0) return false;
+    const MemberRow* original = Members(token.slot);
+    for (std::uint16_t index = 0; index < memberCount; ++index)
+        if (!SameArm(original[index].token, members[index]) ||
+            original[index].acked.load(std::memory_order_acquire) != 0 ||
+            original[index].tombstoned.load(std::memory_order_acquire) != 0) return false;
+    return true;
 }
 
 bool ArmGroupTable::CommitPrepared(ArmGroupToken token) noexcept {

@@ -14,6 +14,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <type_traits>
 #include <utility>
@@ -908,6 +909,120 @@ TEST(PlayableTreeExecutor, InstanceProofExternalRootAndAdoptedChildFreezeBothWho
     ASSERT_TRUE(executor.RollbackCommitted(instances));
     other.Cancel();
     EXPECT_EQ(3u, instances.FreeCount());
+}
+
+TEST(PlayableTreeExecutor, OriginalInstanceLifetimeCensusIncludesExternalOwnedAndAdoptedPreparations) {
+    harken::PlayableInstanceTable table(4), foreign(4);
+    harken::PreparedPlayableInstance root, adopted;
+    ASSERT_TRUE(table.PrepareAcquire(harken::PlayableKind::Container, 0, &root));
+    ASSERT_TRUE(table.PrepareAcquire(harken::PlayableKind::Sound, root.Handle(), &adopted));
+    harken::PlayableTreeExecutor executor(2);
+    ASSERT_TRUE(executor.AdoptPreparedInstance(table, &root));
+    ASSERT_TRUE(executor.AdoptPreparedInstanceReservation(&adopted));
+    ASSERT_TRUE(executor.PrepareInstance(table, harken::PlayableKind::Track, root.Handle()));
+    const auto* owned = executor.PreparedInstanceToken(0);
+    ASSERT_NE(nullptr, owned);
+    ASSERT_EQ(3u, executor.PreparedInstanceCensusCount());
+    EXPECT_EQ(owned, executor.PreparedInstanceCensusToken(0));
+    EXPECT_EQ(&adopted, executor.PreparedInstanceCensusToken(1));
+    EXPECT_EQ(&root, executor.PreparedInstanceCensusToken(2));
+    EXPECT_EQ(nullptr, executor.PreparedInstanceCensusToken(3));
+    const std::array<const harken::PreparedPlayableInstance*, 3> census{&root, owned, &adopted};
+    std::array<harken::PlayableInstanceTable::OriginalLifetimePin, 4> baselines;
+    EXPECT_FALSE(executor.IssueOriginalPreparedInstanceLifetimes(table, census, baselines));
+    ASSERT_TRUE(executor.ProveInstanceCommits(&table, &root));
+    EXPECT_FALSE(executor.IssueOriginalPreparedInstanceLifetimes(foreign, census, baselines));
+    EXPECT_FALSE(executor.IssueOriginalPreparedInstanceLifetimes(table, {census.data(), 2}, baselines));
+    const std::array<const harken::PreparedPlayableInstance*, 3> duplicate{&root, owned, owned};
+    EXPECT_FALSE(executor.IssueOriginalPreparedInstanceLifetimes(table, duplicate, baselines));
+    harken::PreparedPlayableInstance copied = adopted;
+    const std::array<const harken::PreparedPlayableInstance*, 3> substituted{&root, owned, &copied};
+    EXPECT_FALSE(executor.IssueOriginalPreparedInstanceLifetimes(table, substituted, baselines));
+    EXPECT_FALSE(std::any_of(baselines.begin(), baselines.end(), [](const auto& pin) { return pin.Valid(); }));
+    ASSERT_TRUE(executor.IssueOriginalPreparedInstanceLifetimes(table, census, baselines));
+    EXPECT_FALSE(executor.ParentLinkProofHeld());
+    EXPECT_FALSE(executor.IssueOriginalPreparedInstanceLifetimes(table, census, baselines));
+    for (const auto* original : census) {
+        const auto& baseline = baselines[static_cast<std::uint32_t>(original->Handle())];
+        EXPECT_TRUE(table.IsOriginalLifetimePinFor(baseline, original->Handle()));
+        EXPECT_EQ(original->Parent(), baseline.OriginalParent());
+        EXPECT_EQ(original->ScheduleEpoch(), baseline.OriginalScheduleEpoch());
+    }
+    executor.ReleaseCommitProofs();
+    for (auto& baseline : baselines) baseline.Release();
+    ASSERT_TRUE(executor.Cancel(table));
+    EXPECT_EQ(4u, table.FreeCount());
+}
+
+TEST(PlayableTreeExecutor, OriginalFutureLifetimeDoesNotAcquireHeldArrangingParentLinks) {
+    harken::PlayableInstanceTable table(3);
+    harken::PreparedPlayableInstance arranging, successor;
+    ASSERT_TRUE(table.PrepareAcquire(harken::PlayableKind::Container, 0, &arranging));
+    harken::PlayableTreeExecutor parent(1), future(1);
+    ASSERT_TRUE(parent.AdoptPreparedInstance(table, &arranging));
+    ASSERT_TRUE(table.PrepareAcquire(harken::PlayableKind::Piece, arranging.Handle(), &successor));
+    ASSERT_TRUE(future.AdoptPreparedInstance(table, &successor));
+    ASSERT_TRUE(parent.ProveInstanceCommits(&table, &arranging));
+    ASSERT_TRUE(parent.ProveParentLinks(table, &arranging));
+    ASSERT_TRUE(table.ParentLinksHeld(arranging.Handle()));
+    ASSERT_TRUE(future.ProveInstanceCommits(&table, &successor));
+    const std::array<const harken::PreparedPlayableInstance*, 1> census{&successor};
+    std::array<harken::PlayableInstanceTable::OriginalLifetimePin, 3> baselines;
+    ASSERT_TRUE(future.IssueOriginalPreparedInstanceLifetimes(table, census, baselines));
+    auto& baseline = baselines[static_cast<std::uint32_t>(successor.Handle())];
+    harken::PlayableInstanceTable::OriginalLifetimePin loan;
+    ASSERT_TRUE(baseline.Borrow(&loan));
+    future.ReleaseCommitProofs();
+    EXPECT_FALSE(future.Cancel(table));
+    EXPECT_TRUE(successor.Valid());
+    EXPECT_EQ(arranging.Handle(), loan.OriginalParent());
+    EXPECT_FALSE(table.CancelPrepared(&successor, &baseline));
+    EXPECT_TRUE(successor.Valid());
+    EXPECT_TRUE(baseline.Valid());
+    loan.Release();
+    // This standalone fixture supplies its baseline explicitly; Engine registers a resolver.
+    ASSERT_TRUE(table.CancelPrepared(&successor, &baseline));
+    ASSERT_TRUE(future.Cancel(table));
+    parent.ReleaseCommitProofs();
+    ASSERT_TRUE(parent.Cancel(table));
+    EXPECT_EQ(3u, table.FreeCount());
+    EXPECT_FALSE(loan.Valid());
+}
+
+TEST(PlayableTreeExecutor, OriginalLifetimeNativeLaterRefusalReturnsOnlyIssuedPrefixAndKeepsProofs) {
+    harken::PlayableInstanceTable table(2);
+    harken::PreparedPlayableInstance root;
+    ASSERT_TRUE(table.PrepareAcquire(harken::PlayableKind::Container, 0, &root));
+    harken::PlayableInstanceTable::PreparedCommitProof earlierProof;
+    harken::PlayableInstanceTable::OriginalLifetimePin existingBaseline;
+    ASSERT_TRUE(table.ProvePreparedCommit(root, &earlierProof));
+    ASSERT_TRUE(table.IssueOriginalPreparedLifetime(earlierProof, &existingBaseline));
+    earlierProof.Release();
+    harken::PlayableTreeExecutor executor(1);
+    ASSERT_TRUE(executor.AdoptPreparedInstance(table, &root));
+    ASSERT_TRUE(executor.PrepareInstance(table, harken::PlayableKind::Sound, root.Handle()));
+    const auto* child = executor.PreparedInstanceToken(0);
+    ASSERT_NE(nullptr, child);
+    ASSERT_TRUE(executor.ProveInstanceCommits(&table, &root));
+    const std::array<const harken::PreparedPlayableInstance*, 2> census{&root, child};
+    std::array<harken::PlayableInstanceTable::OriginalLifetimePin, 2> baselines;
+    EXPECT_FALSE(executor.IssueOriginalPreparedInstanceLifetimes(table, census, baselines));
+    EXPECT_FALSE(std::any_of(baselines.begin(), baselines.end(), [](const auto& pin) { return pin.Valid(); }));
+    EXPECT_TRUE(table.IsOriginalLifetimePinFor(existingBaseline, root.Handle()));
+    EXPECT_TRUE(executor.InstanceCommitProofsHeld());
+    EXPECT_TRUE(executor.Validate());
+    EXPECT_TRUE(table.PreparedCommitHeld(root));
+    EXPECT_TRUE(table.PreparedCommitHeld(*child));
+    existingBaseline.Release();
+    ASSERT_TRUE(executor.IssueOriginalPreparedInstanceLifetimes(table, census, baselines));
+    EXPECT_TRUE(executor.Validate());
+    for (const auto* original : census)
+        EXPECT_TRUE(table.IsOriginalLifetimePinFor(
+            baselines[static_cast<std::uint32_t>(original->Handle())], original->Handle()));
+    executor.ReleaseCommitProofs();
+    for (auto& baseline : baselines) baseline.Release();
+    ASSERT_TRUE(executor.Cancel(table));
+    EXPECT_EQ(2u, table.FreeCount());
 }
 
 TEST(PlayableTreeExecutor, InstanceProofPrefixRefusalReleasesRootChildrenAndContainerButKeepsRequired) {
@@ -3042,6 +3157,23 @@ TEST(PlayableInstanceTable, ParentLinksProofKeepsOriginalRootAndOrderedChildrenU
     EXPECT_EQ(0u, table.LiveCount());
     EXPECT_EQ(0u, table.FirstChild(root));
     EXPECT_TRUE(links.MatchesOriginalScope(&table, requests, anchors));
+    std::array<PlayableInstanceTable::PreparedNodeCensusEntry, 3> census{{
+        {&originals[2], PlayableKind::Sound}, {&originals[0], PlayableKind::Container},
+        {&originals[1], PlayableKind::Sound}}};
+    EXPECT_TRUE(table.MatchesPreparedOriginalNodeCensus(links, census));
+    EXPECT_FALSE(table.MatchesPreparedOriginalNodeCensus(links, {census.data(), 2}));
+    census[0].expectedKind = PlayableKind::Track;
+    EXPECT_FALSE(table.MatchesPreparedOriginalNodeCensus(links, census));
+    census[0].expectedKind = PlayableKind::Sound;
+    const auto savedOriginal = census[0].original;
+    census[0].original = census[2].original;
+    EXPECT_FALSE(table.MatchesPreparedOriginalNodeCensus(links, census));
+    auto copiedOriginal = originals[2];
+    census[0].original = &copiedOriginal;
+    EXPECT_FALSE(table.MatchesPreparedOriginalNodeCensus(links, census));
+    census[0].original = savedOriginal;
+    PlayableInstanceTable foreign(4);
+    EXPECT_FALSE(foreign.MatchesPreparedOriginalNodeCensus(links, census));
     for (auto& activation : activations)
         PlayableInstanceTable::ConsumePreparedCommit(std::move(activation));
     ASSERT_TRUE(links.Valid());
@@ -3069,6 +3201,7 @@ TEST(PlayableInstanceTable, ParentLinksProofKeepsOriginalRootAndOrderedChildrenU
     EXPECT_EQ(1u, table.FreeCount());
     PlayableInstanceTable::ConsumePreparedParentLinks(std::move(links));
     EXPECT_FALSE(links.Valid());
+    EXPECT_FALSE(table.MatchesPreparedOriginalNodeCensus(links, census));
     EXPECT_EQ(first, table.FirstChild(root));
     EXPECT_EQ(second, table.NextSibling(first));
     EXPECT_EQ(0u, table.NextSibling(second));

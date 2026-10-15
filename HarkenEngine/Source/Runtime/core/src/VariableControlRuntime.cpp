@@ -1,5 +1,6 @@
 #include "harken/core/VariableControlRuntime.h"
 #include "harken/core/ScheduledTransactionPool.h"
+#include "harken/core/DecisionTable.h"
 
 #include <cassert>
 #include <cmath>
@@ -15,16 +16,225 @@ std::uint64_t Pack(std::uint32_t slot,
 }
 
 DecisionToken UnpackDecision(std::uint64_t packed) noexcept {
+    if (packed == 0) return {};
     return {static_cast<std::uint32_t>(packed),
             static_cast<std::uint32_t>(packed >> 32)};
 }
 
 BankVersionToken UnpackBank(std::uint64_t packed) noexcept {
+    if (packed == 0) return {};
     return {static_cast<std::uint32_t>(packed),
             static_cast<std::uint32_t>(packed >> 32)};
 }
 
 } // namespace
+
+VariableControlInstanceTable::OriginalInitialSideReceipt::~OriginalInitialSideReceipt() {
+    Release();
+}
+
+VariableControlInstanceTable::OriginalInitialSideReceipt::OriginalInitialSideReceipt(
+    OriginalInitialSideReceipt&& other) noexcept {
+    *this = std::move(other);
+}
+
+VariableControlInstanceTable::OriginalInitialSideReceipt&
+VariableControlInstanceTable::OriginalInitialSideReceipt::operator=(OriginalInitialSideReceipt&& other) noexcept {
+    if (this == &other || replacing_ || other.replacing_) return *this;
+    Release();
+    owner_ = std::exchange(other.owner_, nullptr);
+    entry_ = std::exchange(other.entry_, nullptr);
+    token_ = std::exchange(other.token_, {});
+    create_ = std::exchange(other.create_, {});
+    side_ = other.side_;
+    snapshot_ = std::exchange(other.snapshot_, {});
+    generation_ = std::exchange(other.generation_, 0);
+    return *this;
+}
+
+void VariableControlInstanceTable::OriginalInitialSideReceipt::Release() noexcept {
+    assert(!replacing_);
+    if (replacing_) return;
+    owner_ = nullptr;
+    entry_ = nullptr;
+    token_ = {};
+    create_ = {};
+    snapshot_ = {};
+    generation_ = 0;
+}
+
+VariableControlInstanceTable::InitialSideReplacement::~InitialSideReplacement() {
+    if (Valid()) {
+        const bool restored = original_->owner_->FinishInitialSideReplacement(*this, false);
+        assert(restored);
+        (void)restored;
+    }
+}
+
+bool VariableControlInstanceTable::MatchesInitialSideEntry(
+    const OriginalInitialSideReceipt& original) const noexcept {
+    if (original.owner_ != this || !original.token_.Valid() || original.token_.slot >= capacity_ ||
+        original.entry_ != &entries_[original.token_.slot]) return false;
+    const auto& entry = *original.entry_;
+    const auto& create = original.create_;
+    return entry.generation.load(std::memory_order_acquire) == original.token_.generation &&
+        entry.world.load(std::memory_order_acquire) == create.world &&
+        entry.rootInstance.load(std::memory_order_acquire) == create.rootInstance &&
+        entry.containerIdHigh.load(std::memory_order_acquire) == create.containerStableId.high &&
+        entry.containerIdLow.load(std::memory_order_acquire) == create.containerStableId.low &&
+        entry.programSemanticFingerprint.load(std::memory_order_acquire) == create.programSemanticFingerprint;
+}
+
+bool VariableControlInstanceTable::IssueOriginalInitialSideReceipt(
+    const PreparedVariableControlInstance& original, VariableControlSide selected,
+    OriginalInitialSideReceipt* out) noexcept {
+    if (out == nullptr || out->Valid() || original.owner_ != this || !original.prepared_ ||
+        !original.token_.Valid() || original.token_.slot >= capacity_ ||
+        (selected != VariableControlSide::Discrete && selected != VariableControlSide::Continuous)) return false;
+    auto& entry = entries_[original.token_.slot];
+    const auto slotState = entry.state.load(std::memory_order_acquire);
+    if (slotState != SlotState::Initializing && slotState != SlotState::PreparedCommitHeld) return false;
+    OriginalInitialSideReceipt issued;
+    issued.owner_ = this;
+    issued.entry_ = &entry;
+    issued.token_ = original.token_;
+    issued.create_ = original.originalRequest_;
+    issued.side_ = selected;
+    if (!MatchesInitialSideEntry(issued)) return false;
+    const auto& side = selected == VariableControlSide::Discrete ? entry.discrete : entry.continuous;
+    if (side.frontierPool != nullptr || side.frontierOwner != FrontierOwnerIdentity{}) return false;
+    issued.generation_ = side.generation.load(std::memory_order_acquire);
+    issued.snapshot_ = {side.state.load(std::memory_order_acquire),
+        UnpackDecision(side.decision.load(std::memory_order_acquire)),
+        UnpackBank(side.newestObserved.load(std::memory_order_acquire)),
+        UnpackBank(side.newestPending.load(std::memory_order_acquire)),
+        UnpackBank(side.lastApplied.load(std::memory_order_acquire))};
+    const auto& snapshot = issued.snapshot_;
+    const auto& receipt = original.originalSides_[selected == VariableControlSide::Discrete ? 0u : 1u];
+    const auto bank = side.newestObserved.load(std::memory_order_acquire);
+    const bool pending = snapshot.state == VariableControlSideState::Pending && receipt.issued && !receipt.silent &&
+        receipt.generation == issued.generation_ && receipt.decision.Valid() && receipt.bank.Valid() &&
+        side.decision.load(std::memory_order_acquire) == Pack(receipt.decision.slot, receipt.decision.generation) &&
+        bank == Pack(receipt.bank.slot, receipt.bank.generation) &&
+        side.newestPending.load(std::memory_order_acquire) == bank &&
+        side.lastApplied.load(std::memory_order_acquire) == 0;
+    const bool silent = snapshot.state == VariableControlSideState::Committed && receipt.issued && receipt.silent &&
+        receipt.generation == issued.generation_ && receipt.bank.Valid() &&
+        bank == Pack(receipt.bank.slot, receipt.bank.generation) &&
+        side.decision.load(std::memory_order_acquire) == 0 && snapshot.newestObserved.Valid() &&
+        side.newestPending.load(std::memory_order_acquire) == 0 &&
+        side.lastApplied.load(std::memory_order_acquire) == bank;
+    if ((!pending && !silent) || issued.generation_ == 0 ||
+        side.generation.load(std::memory_order_acquire) != issued.generation_ ||
+        side.state.load(std::memory_order_acquire) != snapshot.state) return false;
+    *out = std::move(issued);
+    return true;
+}
+
+bool VariableControlInstanceTable::MatchesOriginalInitialSideReceipt(
+    const OriginalInitialSideReceipt& original, VariableControlInstanceToken instance,
+    VariableControlSide side, DecisionToken decision, BankVersionToken bank) const noexcept {
+    const auto same = [](auto a, auto b) noexcept {
+        return a.slot == b.slot && a.generation == b.generation;
+    };
+    return !original.replacing_ && MatchesInitialSideEntry(original) &&
+        same(original.token_, instance) && original.side_ == side &&
+        same(original.snapshot_.decision, decision) && same(original.snapshot_.newestObserved, bank);
+}
+
+VariableControlInstanceStatus VariableControlInstanceTable::BeginInitialSideReplacement(
+    OriginalInitialSideReceipt& original, DecisionToken replacement,
+    InitialSideReplacement* out) noexcept {
+    if (out == nullptr || out->Valid() || original.replacing_ ||
+        (!replacement.Valid() && (replacement.slot != UINT32_MAX || replacement.generation != 0)))
+        return VariableControlInstanceStatus::Invalid;
+    if (!MatchesInitialSideEntry(original) ||
+        original.entry_->state.load(std::memory_order_acquire) != SlotState::Live)
+        return VariableControlInstanceStatus::Stale;
+    auto& side = original.side_ == VariableControlSide::Discrete
+        ? original.entry_->discrete : original.entry_->continuous;
+    if (side.frontierPool != nullptr || side.frontierOwner != FrontierOwnerIdentity{})
+        return VariableControlInstanceStatus::Stale;
+    const auto packed = [](auto token) noexcept {
+        return token.Valid() ? Pack(token.slot, token.generation) : 0;
+    };
+    const auto& prior = original.snapshot_;
+    const auto& other = original.side_ == VariableControlSide::Discrete
+        ? original.entry_->continuous : original.entry_->discrete;
+    if (replacement.Valid() && (packed(replacement) == packed(prior.decision) ||
+        packed(replacement) == other.decision.load(std::memory_order_acquire)))
+        return VariableControlInstanceStatus::Invalid;
+    const InitialSideReplacement* absent = nullptr;
+    if (!side.initialReplacement.compare_exchange_strong(absent, out,
+            std::memory_order_acq_rel, std::memory_order_acquire)) return VariableControlInstanceStatus::Stale;
+    auto expected = prior.state;
+    if (!side.state.compare_exchange_strong(expected, VariableControlSideState::Transitioning,
+            std::memory_order_acq_rel, std::memory_order_acquire)) {
+        side.initialReplacement.store(nullptr, std::memory_order_release);
+        return VariableControlInstanceStatus::Stale;
+    }
+    if (!MatchesInitialSideEntry(original) ||
+        side.generation.load(std::memory_order_acquire) != original.generation_ ||
+        side.decision.load(std::memory_order_acquire) != packed(prior.decision) ||
+        side.newestObserved.load(std::memory_order_acquire) != packed(prior.newestObserved) ||
+        side.newestPending.load(std::memory_order_acquire) != packed(prior.newestPending) ||
+        side.lastApplied.load(std::memory_order_acquire) != packed(prior.lastApplied)) {
+        side.state.store(prior.state, std::memory_order_release);
+        side.initialReplacement.store(nullptr, std::memory_order_release);
+        return VariableControlInstanceStatus::Stale;
+    }
+    if (original.generation_ == UINT64_MAX) {
+        side.state.store(prior.state, std::memory_order_release);
+        side.initialReplacement.store(nullptr, std::memory_order_release);
+        return VariableControlInstanceStatus::Capacity;
+    }
+    original.replacing_ = true;
+    out->original_ = &original;
+    out->replacement_ = replacement;
+    out->generation_ = original.generation_ + 1u;
+    side.generation.store(out->generation_, std::memory_order_release);
+    return VariableControlInstanceStatus::Ok;
+}
+
+bool VariableControlInstanceTable::FinishInitialSideReplacement(
+    InitialSideReplacement& replacement, bool commit) noexcept {
+    auto* original = replacement.original_;
+    if (original == nullptr || !original->replacing_ || !MatchesInitialSideEntry(*original) ||
+        original->entry_->state.load(std::memory_order_acquire) != SlotState::Live) return false;
+    auto& side = original->side_ == VariableControlSide::Discrete
+        ? original->entry_->discrete : original->entry_->continuous;
+    if (side.state.load(std::memory_order_acquire) != VariableControlSideState::Transitioning ||
+        side.initialReplacement.load(std::memory_order_acquire) != &replacement ||
+        side.generation.load(std::memory_order_acquire) != replacement.generation_ ||
+        side.frontierPool != nullptr || side.frontierOwner != FrontierOwnerIdentity{}) return false;
+    const auto packed = [](auto token) noexcept {
+        return token.Valid() ? Pack(token.slot, token.generation) : 0;
+    };
+    auto snapshot = original->snapshot_;
+    if (side.decision.load(std::memory_order_acquire) != packed(snapshot.decision) ||
+        side.newestObserved.load(std::memory_order_acquire) != packed(snapshot.newestObserved) ||
+        side.newestPending.load(std::memory_order_acquire) != packed(snapshot.newestPending) ||
+        side.lastApplied.load(std::memory_order_acquire) != packed(snapshot.lastApplied)) return false;
+    if (commit) {
+        snapshot.decision = replacement.replacement_;
+        snapshot.state = snapshot.decision.Valid() ? VariableControlSideState::Pending : VariableControlSideState::Committed;
+        snapshot.newestPending = snapshot.decision.Valid() ? snapshot.newestObserved : BankVersionToken{};
+        snapshot.lastApplied = snapshot.decision.Valid() ? BankVersionToken{} : snapshot.newestObserved;
+    }
+    side.decision.store(packed(snapshot.decision), std::memory_order_relaxed);
+    side.newestObserved.store(packed(snapshot.newestObserved), std::memory_order_relaxed);
+    side.newestPending.store(packed(snapshot.newestPending), std::memory_order_relaxed);
+    side.lastApplied.store(packed(snapshot.lastApplied), std::memory_order_relaxed);
+    original->snapshot_ = snapshot;
+    original->generation_ = replacement.generation_;
+    original->replacing_ = false;
+    replacement.original_ = nullptr;
+    replacement.replacement_ = {};
+    replacement.generation_ = 0;
+    side.state.store(snapshot.state, std::memory_order_release);
+    side.initialReplacement.store(nullptr, std::memory_order_release);
+    return true;
+}
 
 PreparedVariableControlInstance::PreparedVariableControlInstance(
     PreparedVariableControlInstance&& other) noexcept {
@@ -282,12 +492,14 @@ void VariableControlInstanceTable::ResetEntry(Entry& entry) noexcept {
         side->newestPending.store(0, std::memory_order_relaxed);
         side->lastApplied.store(0, std::memory_order_relaxed);
         side->generation.store(1, std::memory_order_relaxed);
+        side->initialReplacement.store(nullptr, std::memory_order_relaxed);
         side->state.store(VariableControlSideState::Empty,
                           std::memory_order_relaxed);
     }
 }
 
 bool VariableControlInstanceTable::MayMutateSide(SideRow& side) noexcept {
+    if (side.initialReplacement.load(std::memory_order_acquire) != nullptr) return false;
     return side.frontierPool == nullptr ||
         side.frontierPool->InvalidateFrontierOwnerOperations(side.frontierOwner,
             UnpackDecision(side.decision.load(std::memory_order_acquire)));
@@ -365,6 +577,77 @@ bool VariableControlInstanceTable::ProveFrontierSide(const FrontierGroupBinding&
     out->bank_ = Pack(identity.bankSlot, identity.bankGeneration);
     out->priorState_ = priorState;
     out->applied_ = false;
+    return true;
+}
+
+bool VariableControlInstanceTable::MatchesPrivateInitialFrontierSide(
+    const OriginalInitialSideReceipt& original, const FrontierGroupBinding& binding,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions) const noexcept {
+    const auto& identity = binding.variableSide;
+    const auto* activation = decisions.ResolveFrontierActivation(binding.entry.coordinator);
+    Plan03PageGroupView group{}, primary{};
+    if (original.replacing_ || !MatchesInitialSideEntry(original) || !binding.Valid() ||
+        original.entry_->state.load(std::memory_order_acquire) != SlotState::Live ||
+        binding.role != FrontierGroupRole::EntryMember || binding.operation.kind != FrontierOperationKind::Entry ||
+        binding.operation.owner != binding.entry.owner ||
+        binding.operation.group.backing != Plan03GroupBacking::ImmediateLane || binding.operation.group.sliceIndex != 0 ||
+        binding.transition.Valid() || binding.queueInitial.Valid() || binding.queueConditional.Valid() ||
+        !binding.queueDescendant.Empty() || binding.prerequisite.Valid() || binding.prerequisiteMember.Valid() ||
+        binding.initialVariables.Valid() || !identity.Valid() ||
+        original.token_.slot != identity.slot || original.token_.generation != identity.generation ||
+        static_cast<std::uint8_t>(original.side_) != identity.side ||
+        original.generation_ != identity.sideGeneration ||
+        original.create_.world != binding.operation.world ||
+        original.create_.rootInstance != binding.operation.owner.child ||
+        activation == nullptr || activation->State() != FrontierReceiptState::Prepared ||
+        !decisions.MatchesPreparedFrontierActivationPool(binding.entry, pool) ||
+        !(activation->Descriptor().entry == binding.entry) ||
+        !(activation->Descriptor().primary == binding.primary) ||
+        activation->Descriptor().worldGeneration != original.create_.world ||
+        activation->Descriptor().worldSemanticFingerprint != original.create_.programSemanticFingerprint ||
+        !pool.PrivateImmediateLaneFrontierRollbackReady(binding.operation.group) ||
+        !pool.PrivateImmediateLaneFrontierRollbackReady(binding.primary) ||
+        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &group) ||
+        group.frontier != &binding || group.lease == nullptr ||
+        group.lease->Capture().state != AudioSliceState::Ready ||
+        !pool.ResolvePlan03GroupSliceProducer(binding.primary, &primary) || primary.lease == nullptr ||
+        primary.lease->Capture().state != AudioSliceState::Ready || primary.frontier == nullptr ||
+        primary.frontier->role != FrontierGroupRole::Coordinator ||
+        !(primary.frontier->entry == binding.entry) || !(primary.frontier->primary == binding.primary) ||
+        primary.frontier->operation.owner != binding.entry.owner ||
+        !(primary.frontier->operation.order == activation->Descriptor().order) ||
+        primary.frontier->operation.world != binding.operation.world ||
+        primary.frontier->operation.transport != binding.operation.transport ||
+        primary.frontier->initialVariables != activation->Descriptor().initialVariables) return false;
+    auto& side = identity.side == 0 ? original.entry_->discrete : original.entry_->continuous;
+    const auto packed = [](auto token) noexcept { return token.Valid() ? Pack(token.slot, token.generation) : 0; };
+    if (side.frontierPool != &pool || !(side.frontierOwner == binding.operation.owner) ||
+        side.state.load(std::memory_order_acquire) != VariableControlSideState::Pending ||
+        original.snapshot_.state != VariableControlSideState::Pending ||
+        side.initialReplacement.load(std::memory_order_acquire) != nullptr ||
+        side.generation.load(std::memory_order_acquire) != identity.sideGeneration ||
+        side.decision.load(std::memory_order_acquire) != packed(original.snapshot_.decision) ||
+        side.newestObserved.load(std::memory_order_acquire) != packed(original.snapshot_.newestObserved) ||
+        side.newestPending.load(std::memory_order_acquire) != packed(original.snapshot_.newestPending) ||
+        side.lastApplied.load(std::memory_order_acquire) != packed(original.snapshot_.lastApplied) ||
+        side.decision.load(std::memory_order_acquire) != Pack(binding.operation.group.decision.slot,
+            binding.operation.group.decision.generation) ||
+        side.newestPending.load(std::memory_order_acquire) != Pack(identity.bankSlot, identity.bankGeneration))
+        return false;
+    return true;
+}
+
+bool VariableControlInstanceTable::UnbindPrivateInitialFrontierSide(
+    const OriginalInitialSideReceipt& original, const FrontierGroupBinding& binding,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions) noexcept {
+    if (!MatchesPrivateInitialFrontierSide(original, binding, pool, decisions)) return false;
+    auto& side = binding.variableSide.side == 0 ? original.entry_->discrete : original.entry_->continuous;
+    auto expected = VariableControlSideState::Pending;
+    if (!side.state.compare_exchange_strong(expected, VariableControlSideState::Transitioning,
+            std::memory_order_acq_rel, std::memory_order_acquire)) return false;
+    side.frontierPool = nullptr;
+    side.frontierOwner = {};
+    side.state.store(VariableControlSideState::Pending, std::memory_order_release);
     return true;
 }
 
@@ -586,8 +869,22 @@ VariableControlInstanceStatus VariableControlInstanceTable::CommitSilentSide(
     VariableControlInstanceToken instance,
     VariableControlSide side,
     BankVersionToken bank) noexcept {
+    return CommitSilentSideInternal(instance, side, bank, nullptr);
+}
+
+VariableControlInstanceStatus VariableControlInstanceTable::CommitSilentSide(
+    PreparedVariableControlInstance& original, VariableControlSide side, BankVersionToken bank) noexcept {
+    if (original.owner_ != this || !original.prepared_) return VariableControlInstanceStatus::Stale;
+    return CommitSilentSideInternal(original.token_, side, bank, &original);
+}
+
+VariableControlInstanceStatus VariableControlInstanceTable::CommitSilentSideInternal(
+    VariableControlInstanceToken instance, VariableControlSide side, BankVersionToken bank,
+    PreparedVariableControlInstance* original) noexcept {
     Entry* entry = ResolvePreparing(instance);
     if (entry == nullptr) return VariableControlInstanceStatus::Stale;
+    if (original != nullptr && entry->state.load(std::memory_order_acquire) != SlotState::Initializing)
+        return VariableControlInstanceStatus::Stale;
     if (!bank.Valid() ||
         (side != VariableControlSide::Discrete &&
          side != VariableControlSide::Continuous)) {
@@ -611,6 +908,9 @@ VariableControlInstanceStatus VariableControlInstanceTable::CommitSilentSide(
     target->lastApplied.store(packedBank, std::memory_order_relaxed);
     target->state.store(VariableControlSideState::Committed,
                         std::memory_order_release);
+    if (original != nullptr)
+        original->originalSides_[side == VariableControlSide::Discrete ? 0u : 1u] =
+            {{}, bank, target->generation.load(std::memory_order_relaxed), true, true};
     return VariableControlInstanceStatus::Ok;
 }
 
@@ -692,7 +992,9 @@ VariableControlInstanceTable::PrepareNewerSide(
         VariableControlSideState priorState =
             target.state.load(std::memory_order_acquire);
         if (priorState == VariableControlSideState::Transitioning) {
-            if (target.frontierPool != nullptr) return VariableControlInstanceStatus::Stale;
+            if (target.frontierPool != nullptr ||
+                target.initialReplacement.load(std::memory_order_acquire) != nullptr)
+                return VariableControlInstanceStatus::Stale;
             continue;
         }
         if (priorState == VariableControlSideState::Quarantined) {

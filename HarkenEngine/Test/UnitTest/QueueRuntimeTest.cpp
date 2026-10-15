@@ -931,6 +931,68 @@ TEST(QueueRuntime, PrivateConditionalTimingKeepsVersionAndOwnerWhileMovingBounda
     EXPECT_EQ(116u, completion.completion.activationOffset);
 }
 
+static void CheckCompositeCompletionLaterFailure(bool ownerChanged) {
+    harken::OccurrenceStatePool occurrences(4);
+    harken::OccurrenceToken current{}, successor{};
+    std::array<harken::OccurrenceToken, 2> members{};
+    ASSERT_TRUE(occurrences.Acquire({}, &current));
+    ASSERT_TRUE(occurrences.Acquire({}, &successor));
+    harken::CompositeCompletionOwnerPool composites(1, 2);
+    const harken::DecisionToken decision{19, 23};
+    std::array<harken::KnownScheduleLeafV1, 2> leaves{};
+    for (std::uint32_t index = 0; index < members.size(); ++index) {
+        ASSERT_TRUE(occurrences.Acquire({}, &members[index]));
+        ASSERT_TRUE(occurrences.BindCompletionProgress(members[index], 43 + index, 1));
+        auto& leaf = leaves[index];
+        leaf.occurrence = members[index];
+        leaf.renderGeneration = 43 + index;
+        leaf.stableLeafOrdinal = index + 1u;
+        leaf.authoredOffset.denominator = 1;
+        leaf.predicate = BoundPredicate(decision, leaf.occurrence, leaf.renderGeneration);
+        leaf.predicate.owner = {};
+    }
+    harken::CompositeCompletionOwnerToken owner{};
+    ASSERT_EQ(harken::CompositeCompletionAcquireStatus::Ok,
+        composites.Acquire(current, 1, leaves.data(), leaves.size(), occurrences, &owner));
+    harken::KnownScheduleLeafV1 later{};
+    ASSERT_TRUE(composites.CaptureLeaf(owner, 1, &later));
+    harken::QueueInstanceTable queues(1);
+    const auto queue = AcquireLogicalBoundaryQueue(queues);
+    auto request = LogicalBoundaryRequest(0);
+    request.completionIsLogicalBoundary = false;
+    request.expectedCurrentOccurrence = current;
+    request.successorOccurrence = successor;
+    request.completionOwner = harken::CompletionOwnerRef::Composite(owner, 1);
+    harken::ConditionalQueueVersionToken version{};
+    ASSERT_TRUE(queues.PrepareConditional(queue, request, &version));
+    harken::QueueConditionalProof proof{};
+    EXPECT_EQ(harken::QueueConditionalProofStatus::Waiting,
+        queues.ProveConditionalForQuantum(queue, version, occurrences, composites,
+            0, 64, 0, false, &proof));
+    if (ownerChanged) {
+        ASSERT_TRUE(occurrences.ClearCompletionOwnerExact(later.occurrence, later.predicate.owner));
+    } else {
+        harken::CompletionProgressSnapshot changed{};
+        changed.occurrence = later.occurrence;
+        changed.renderGeneration = later.renderGeneration + 1u;
+        changed.playbackFactsRevision = 1;
+        ASSERT_TRUE(harken::InitializeCompletionProgress(*occurrences.CompletionProgressOf(later.occurrence), changed));
+    }
+    EXPECT_EQ(ownerChanged ? harken::QueueConditionalProofStatus::FailedIdentity
+                           : harken::QueueConditionalProofStatus::FailedProgress,
+        queues.ProveConditionalForQuantum(queue, version, occurrences, composites,
+            0, 64, 0, false, &proof));
+    EXPECT_FALSE(proof.version.Valid());
+}
+
+TEST(QueueRuntime, CompositeCompletionChecksLaterIdentityFailureWhileEarlierLeafWaits) {
+    CheckCompositeCompletionLaterFailure(true);
+}
+
+TEST(QueueRuntime, CompositeCompletionChecksLaterProgressFailureWhileEarlierLeafWaits) {
+    CheckCompositeCompletionLaterFailure(false);
+}
+
 TEST(QueueRuntime, PrivateConditionalTimingPreservesSingleCompletionBaseline) {
     harken::QueueInstanceTable table(1);
     const auto queue = AcquireLogicalBoundaryQueue(table);

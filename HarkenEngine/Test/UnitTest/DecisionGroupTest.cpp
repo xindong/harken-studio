@@ -368,11 +368,14 @@ struct FrontierReceiptHarness {
         descriptor.programGeneration = 3;
         ASSERT_TRUE(decisions.PrepareFrontierActivation(token, descriptor, pool));
     }
-    void Publish() {
+    void Commit() {
         harken::DecisionCommitPayload payload{};
         payload.pages = {1, 1};
         payload.armGroup = {1, 1};
         ASSERT_TRUE(decisions.Commit(token, payload));
+    }
+    void Publish() {
+        ASSERT_NO_FATAL_FAILURE(Commit());
         ASSERT_TRUE(decisions.CanPublishFrontierActivation(token));
         ASSERT_TRUE(decisions.PublishFrontierActivation(token));
         EXPECT_FALSE(decisions.CanPublishFrontierActivation(token));
@@ -382,6 +385,166 @@ struct FrontierReceiptHarness {
         EXPECT_FALSE(decisions.RollbackPreparedFrontierDecision(token, token));
     }
 };
+
+TEST(DecisionGroup, FrontierPublicationHoldsActualTicketAndLoansUntilNoFailureApply) {
+    FrontierReceiptHarness actual;
+    ASSERT_NO_FATAL_FAILURE(actual.Prepare());
+    ASSERT_NO_FATAL_FAILURE(actual.Commit());
+    auto* activation = actual.decisions.ResolveFrontierActivation(actual.token);
+    ASSERT_NE(nullptr, activation);
+    harken::DecisionFuturePin reader;
+    ASSERT_TRUE(actual.decisions.AcquireFuturePin(actual.token, &reader));
+    harken::DecisionCommittedSnapshot before{};
+    ASSERT_TRUE(actual.decisions.CaptureCommitted(actual.token, &before));
+    harken::DecisionTable::FrontierPublicationProof publication;
+    auto wrong = actual.descriptor.entry;
+    ++wrong.owner.serviceGeneration;
+    EXPECT_FALSE(actual.decisions.ProveFrontierActivationPublication(actual.token, wrong, actual.pool, &publication));
+    EXPECT_FALSE(publication.Valid());
+    ASSERT_TRUE(actual.decisions.ProveFrontierActivationPublication(actual.token,
+        actual.descriptor.entry, actual.pool, &publication));
+    EXPECT_EQ(harken::FrontierReceiptState::PublicationHeld, activation->State());
+    harken::DecisionTable::FrontierPublicationProof duplicate;
+    EXPECT_TRUE(actual.decisions.IsFrontierPublicationProofFor(publication, actual.descriptor));
+    EXPECT_FALSE(actual.decisions.IsFrontierPublicationProofFor(duplicate, actual.descriptor));
+    auto changedDescriptor = actual.descriptor;
+    ++changedDescriptor.order.executeFrame;
+    EXPECT_FALSE(actual.decisions.IsFrontierPublicationProofFor(publication, changedDescriptor));
+    harken::DecisionTable foreign(2, 2);
+    EXPECT_FALSE(foreign.IsFrontierPublicationProofFor(publication, actual.descriptor));
+    EXPECT_FALSE(actual.decisions.ProveFrontierActivationPublication(actual.token,
+        actual.descriptor.entry, actual.pool, &duplicate));
+    EXPECT_FALSE(actual.decisions.PublishFrontierActivation(actual.token));
+    EXPECT_FALSE(actual.decisions.CancelPreparedFrontierActivation(actual.token));
+    EXPECT_FALSE(actual.decisions.RollbackPreparedFrontierDecision(actual.token, actual.token));
+    EXPECT_FALSE(activation->TryBeginAudio(actual.descriptor.entry));
+    EXPECT_EQ(harken::FrontierCancelDisposition::Stale,
+        activation->Cancel(actual.descriptor.entry, harken::AudioSliceInvalidateReason::Cancel));
+    EXPECT_EQ(harken::DecisionDeadlineDisposition::DeferredByFrontier,
+        actual.decisions.InvalidateForDeadline(actual.token));
+    EXPECT_EQ(harken::DecisionInvalidationDisposition::DeferredByFrontier,
+        actual.decisions.InvalidateForAuthoredStop(actual.token));
+    harken::DecisionFuturePin extra;
+    EXPECT_FALSE(actual.decisions.AcquireFuturePin(actual.token, &extra));
+    EXPECT_FALSE(actual.decisions.CloneFuturePin(reader, &extra));
+    EXPECT_TRUE(reader.Release());
+    harken::DecisionCommittedSnapshot held{};
+    ASSERT_TRUE(actual.decisions.CaptureCommitted(actual.token, &held));
+    EXPECT_EQ(before.ticket.sequence, held.ticket.sequence);
+    EXPECT_EQ(before.participantCount, held.participantCount);
+    EXPECT_EQ(before.futurePinCount - 1u, held.futurePinCount);
+    EXPECT_EQ(harken::AudioGroupState::Pending, held.audioState);
+    EXPECT_FALSE(held.authoredStopInvalidated);
+    EXPECT_EQ(harken::AudioSliceState::Ready, actual.group.lease->Capture().state);
+    harken::DecisionTable::ApplyFrontierActivationPublication(std::move(publication));
+    EXPECT_FALSE(publication.Valid());
+    EXPECT_FALSE(actual.decisions.IsFrontierPublicationProofFor(publication, actual.descriptor));
+    EXPECT_EQ(harken::FrontierReceiptState::Pending, activation->State());
+    ASSERT_TRUE(reader.Release());
+    EXPECT_EQ(harken::FrontierCancelDisposition::CancelledBeforeAudio,
+        activation->Cancel(actual.descriptor.entry, harken::AudioSliceInvalidateReason::Cancel));
+    harken::FrontierActivationReceipt receipt{};
+    ASSERT_TRUE(actual.decisions.ReconcileFrontierActivation(actual.token, actual.descriptor.entry, 1, &receipt));
+    EXPECT_EQ(harken::FrontierReceiptReason::Cancelled, receipt.reason);
+    ASSERT_EQ(harken::DecisionInvalidationDisposition::NewlyInvalidated, actual.decisions.Invalidate(actual.token));
+    ASSERT_TRUE(actual.decisions.Retire(actual.token, 1));
+    ASSERT_TRUE(actual.decisions.ReclaimRetired(actual.token));
+    EXPECT_EQ(0u, actual.decisions.LiveCount());
+}
+
+TEST(DecisionGroup, FrontierPublicationMoveAbandonAndOwnerDestructionReturnExactReservation) {
+    FrontierReceiptHarness first, second;
+    ASSERT_NO_FATAL_FAILURE(first.Prepare());
+    ASSERT_NO_FATAL_FAILURE(first.Commit());
+    ASSERT_NO_FATAL_FAILURE(second.Prepare());
+    ASSERT_NO_FATAL_FAILURE(second.Commit());
+    harken::DecisionTable::FrontierPublicationProof a, b;
+    ASSERT_TRUE(first.decisions.ProveFrontierActivationPublication(first.token,
+        first.descriptor.entry, first.pool, &a));
+    ASSERT_TRUE(second.decisions.ProveFrontierActivationPublication(second.token,
+        second.descriptor.entry, second.pool, &b));
+    a = std::move(b);
+    EXPECT_FALSE(b.Valid());
+    EXPECT_TRUE(first.decisions.CanPublishFrontierActivation(first.token));
+    EXPECT_FALSE(second.decisions.CanPublishFrontierActivation(second.token));
+    a.Release();
+    EXPECT_TRUE(second.decisions.CanPublishFrontierActivation(second.token));
+    ASSERT_TRUE(first.decisions.ProveFrontierActivationPublication(first.token,
+        first.descriptor.entry, first.pool, &a));
+    a.Release();
+    ASSERT_TRUE(first.decisions.RollbackPreparedFrontierDecision(first.token, first.token));
+    ASSERT_TRUE(first.decisions.CancelPreparedFrontierActivation(first.token));
+    ASSERT_TRUE(first.decisions.Cancel(first.token));
+    ASSERT_TRUE(first.decisions.ReclaimCancelled(first.token));
+    EXPECT_FALSE(first.decisions.ProveFrontierActivationPublication(first.token,
+        first.descriptor.entry, first.pool, &a));
+    auto owner = std::make_unique<FrontierReceiptHarness>();
+    ASSERT_NO_FATAL_FAILURE(owner->Prepare());
+    ASSERT_NO_FATAL_FAILURE(owner->Commit());
+    ASSERT_TRUE(owner->decisions.ProveFrontierActivationPublication(owner->token,
+        owner->descriptor.entry, owner->pool, &a));
+    owner.reset();
+    EXPECT_FALSE(a.Valid());
+    a.Release();
+}
+
+TEST(DecisionGroup, FrontierPublicationReaderDestructionReturnsLoanBeforeAbandonAndReclaim) {
+    FrontierReceiptHarness actual;
+    ASSERT_NO_FATAL_FAILURE(actual.Prepare());
+    ASSERT_NO_FATAL_FAILURE(actual.Commit());
+    harken::DecisionCommittedSnapshot baseline{};
+    ASSERT_TRUE(actual.decisions.CaptureCommitted(actual.token, &baseline));
+    ASSERT_EQ(1u, baseline.futurePinCount);
+    harken::DecisionTable::FrontierPublicationProof publication;
+    {
+        harken::DecisionFuturePin reader;
+        ASSERT_TRUE(actual.decisions.AcquireFuturePin(actual.token, &reader));
+        ASSERT_TRUE(actual.decisions.ProveFrontierActivationPublication(actual.token,
+            actual.descriptor.entry, actual.pool, &publication));
+    }
+    harken::DecisionCommittedSnapshot after{};
+    ASSERT_TRUE(actual.decisions.CaptureCommitted(actual.token, &after));
+    EXPECT_EQ(baseline.futurePinCount, after.futurePinCount);
+    EXPECT_EQ(harken::FrontierReceiptState::PublicationHeld,
+        actual.decisions.ResolveFrontierActivation(actual.token)->State());
+    publication.Release();
+    ASSERT_TRUE(actual.decisions.RollbackPreparedFrontierDecision(actual.token, actual.token));
+    ASSERT_TRUE(actual.decisions.CancelPreparedFrontierActivation(actual.token));
+    ASSERT_TRUE(actual.decisions.Cancel(actual.token));
+    EXPECT_TRUE(actual.decisions.ReclaimCancelled(actual.token));
+    EXPECT_EQ(0u, actual.decisions.LiveCount());
+}
+
+TEST(DecisionGroup, FrontierPublicationReaderMoveToEmptyReturnsLoanBeforeApplyAndReclaim) {
+    FrontierReceiptHarness actual;
+    ASSERT_NO_FATAL_FAILURE(actual.Prepare());
+    ASSERT_NO_FATAL_FAILURE(actual.Commit());
+    harken::DecisionCommittedSnapshot baseline{};
+    ASSERT_TRUE(actual.decisions.CaptureCommitted(actual.token, &baseline));
+    ASSERT_EQ(1u, baseline.futurePinCount);
+    harken::DecisionFuturePin reader;
+    ASSERT_TRUE(actual.decisions.AcquireFuturePin(actual.token, &reader));
+    harken::DecisionTable::FrontierPublicationProof publication;
+    ASSERT_TRUE(actual.decisions.ProveFrontierActivationPublication(actual.token,
+        actual.descriptor.entry, actual.pool, &publication));
+    reader = harken::DecisionFuturePin{};
+    EXPECT_FALSE(reader.Valid());
+    harken::DecisionCommittedSnapshot after{};
+    ASSERT_TRUE(actual.decisions.CaptureCommitted(actual.token, &after));
+    EXPECT_EQ(baseline.futurePinCount, after.futurePinCount);
+    harken::DecisionTable::ApplyFrontierActivationPublication(std::move(publication));
+    auto* activation = actual.decisions.ResolveFrontierActivation(actual.token);
+    ASSERT_NE(nullptr, activation);
+    EXPECT_EQ(harken::FrontierCancelDisposition::CancelledBeforeAudio,
+        activation->Cancel(actual.descriptor.entry, harken::AudioSliceInvalidateReason::Cancel));
+    harken::FrontierActivationReceipt receipt{};
+    ASSERT_TRUE(actual.decisions.ReconcileFrontierActivation(actual.token, actual.descriptor.entry, 1, &receipt));
+    ASSERT_EQ(harken::DecisionInvalidationDisposition::NewlyInvalidated,
+        actual.decisions.Invalidate(actual.token));
+    ASSERT_TRUE(actual.decisions.Retire(actual.token, 1));
+    EXPECT_TRUE(actual.decisions.ReclaimRetired(actual.token));
+    EXPECT_EQ(0u, actual.decisions.LiveCount());
+}
 
 struct DecisionLaneHarness {
     harken::DecisionTable decisions{2, 2};
@@ -619,9 +782,15 @@ TEST(DecisionGroup, FrontierMembersBorrowOnlyEntryClaimAndKeepExactPageRetiremen
     EXPECT_FALSE(pool.DetachPlan03GroupFrontier(member, 1));
     ASSERT_TRUE(pool.DetachPlan03GroupFrontier(member, 2));
     ASSERT_TRUE(pool.DetachPlan03GroupFrontier(primary, 2));
+    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(primary, &groups[0]));
+    ASSERT_NE(nullptr, groups[0].frontier);
+    EXPECT_EQ(harken::FrontierGroupRole::Coordinator, groups[0].frontier->role);
+    EXPECT_FALSE(pool.FrontierCoordinatorDetached(primary, binding.entry, 1));
+    EXPECT_TRUE(pool.FrontierCoordinatorDetached(primary, binding.entry, 2));
     pool.ConsumerFrontier().store(1, std::memory_order_release);
     pool.Advance();
     EXPECT_EQ(100u, pool.WindowStartFrame());
+    EXPECT_FALSE(pool.FrontierCoordinatorDetached(primary, binding.entry, 2));
     EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(member, &groups[1]));
     ASSERT_TRUE(pool.ResolvePlan03GroupSliceRt(future, &groups[2]));
     EXPECT_EQ(harken::AudioSliceState::Ready, groups[2].lease->Capture().state);
@@ -773,6 +942,14 @@ TEST(DecisionGroup, ImmediateLaneFutureMemberBlocksAppliedEntryDetachUntilRetire
     ASSERT_TRUE(pool.ReleaseImmediateLaneFutureDependent(member));
     ASSERT_TRUE(pool.DetachPlan03GroupFrontier(member, 2));
     ASSERT_TRUE(pool.DetachPlan03GroupFrontier(primary, 2));
+    ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(primary, &primaryView));
+    ASSERT_NE(nullptr, primaryView.frontier);
+    EXPECT_EQ(harken::FrontierGroupRole::Coordinator, primaryView.frontier->role);
+    EXPECT_FALSE(pool.FrontierCoordinatorDetached(primary, binding.entry, 1));
+    EXPECT_FALSE(pool.FrontierCoordinatorDetached(primary, binding.entry, 2));
+    ASSERT_TRUE(laneHarness.lane.Cancel(laneHarness.handle));
+    ASSERT_TRUE(laneHarness.lane.Retire(laneHarness.handle, 2));
+    EXPECT_TRUE(pool.FrontierCoordinatorDetached(primary, binding.entry, 2));
 }
 
 TEST(DecisionGroup, ImmediateLaneFrontierCancellationRetainsScopeReasonAndClaimOrder) {
@@ -1824,6 +2001,25 @@ TEST(DecisionGroup, FrontierPrivateCancellationReleasesRealPinsWithoutPublishing
     EXPECT_EQ(bytes, h.decisions.FrontierStorageBytes());
 }
 
+TEST(DecisionGroup, PreparedFrontierActivationRejectsForeignPoolWithSameIdentity) {
+    FrontierReceiptHarness original, foreign;
+    ASSERT_NO_FATAL_FAILURE(original.Prepare());
+    ASSERT_NO_FATAL_FAILURE(foreign.Prepare());
+    ASSERT_EQ(original.descriptor, foreign.descriptor);
+    EXPECT_TRUE(original.decisions.MatchesPreparedFrontierActivationPool(original.descriptor.entry, original.pool));
+    EXPECT_FALSE(original.decisions.MatchesPreparedFrontierActivationPool(original.descriptor.entry, foreign.pool));
+    auto stale = original.descriptor.entry;
+    ++stale.attempt;
+    EXPECT_FALSE(original.decisions.MatchesPreparedFrontierActivationPool(stale, original.pool));
+    ASSERT_TRUE(original.decisions.CancelPreparedFrontierActivation(original.token));
+    EXPECT_FALSE(original.decisions.MatchesPreparedFrontierActivationPool(original.descriptor.entry, original.pool));
+    ASSERT_TRUE(original.decisions.Cancel(original.token));
+    ASSERT_TRUE(original.decisions.ReclaimCancelled(original.token));
+    ASSERT_TRUE(foreign.decisions.CancelPreparedFrontierActivation(foreign.token));
+    ASSERT_TRUE(foreign.decisions.Cancel(foreign.token));
+    ASSERT_TRUE(foreign.decisions.ReclaimCancelled(foreign.token));
+}
+
 struct PrivatePendingArmRetirementHarness {
     harken::ScheduledTransactionPool pool;
     harken::TimelineArmTable arms{2};
@@ -2237,12 +2433,17 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
     EXPECT_EQ(0u, pool.Advance());
     EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Pending,
               pool.FinishUnpublishedFrontierRetirement(retirement));
+    EXPECT_FALSE(decisions.FrontierActivationBindingsDetached(binding.entry, pool, 0));
     EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Ready,
         pool.BeginUnpublishedFrontierRetirement(
             member, primary, binding.entry, receipt, &retirement));
     ASSERT_TRUE(pool.CaptureExactPlan03Group(primary, &primaryAfter));
+    EXPECT_EQ(2u, primaryAfter.unpublishedRetirementStage);
+    EXPECT_EQ(harken::FrontierGroupRole::Coordinator, primaryAfter.frontier.role);
     EXPECT_EQ(armEnd == UnpublishedRetirementArmEnd::Stage3Primary ? 2u : 1u,
               primaryAfter.readerPins);
+    EXPECT_EQ(armEnd != UnpublishedRetirementArmEnd::Stage3Primary,
+              decisions.FrontierActivationBindingsDetached(binding.entry, pool, 0));
     EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Pending,
               pool.FinishUnpublishedFrontierRetirement(retirement));
     ASSERT_TRUE(externalReader.Release(0));
@@ -2253,6 +2454,8 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
     harken::FrontierActivationReceipt reconciled{};
     ASSERT_TRUE(decisions.ReconcileFrontierActivation(
         coordinatorDecision, binding.entry, 0, &reconciled));
+    EXPECT_EQ(armEnd != UnpublishedRetirementArmEnd::Stage3Primary,
+              decisions.FrontierActivationBindingsDetached(binding.entry, pool, 0));
     EXPECT_EQ(harken::Plan03UnpublishedRetirementResult::Pending,
               pool.FinishUnpublishedFrontierRetirement(retirement));
     ASSERT_TRUE(pool.CaptureExactPlan03Group(member, &memberAfter));
@@ -2347,6 +2550,7 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
         EXPECT_EQ(3u, primaryAfter.unpublishedRetirementStage);
         EXPECT_EQ(1u, primaryAfter.pagePublicationHolds);
         ASSERT_TRUE(primaryExternalReader.Release(0));
+        EXPECT_TRUE(decisions.FrontierActivationBindingsDetached(binding.entry, pool, 0));
         EXPECT_FALSE(pool.RollbackCommittedPlan03GroupSlice(&committedPrimary));
         EXPECT_TRUE(committedPrimary.Valid());
         harken::Plan03GroupSliceInput reusedGroup{};
@@ -3876,6 +4080,47 @@ TEST(DecisionGroup, PageCannotReclaimReadyOrClaimedSliceAndRejectsStaleView) {
     stale.identity.absoluteQuantum = 71;
     EXPECT_FALSE(pool.ResolvePlan03GroupSliceRt(oldIdentity, &stale));
     EXPECT_EQ(71u, stale.identity.absoluteQuantum);
+}
+
+TEST(ArmGroup, PreparedMembersRequireExactIdentityAndCompleteOrderedCensus) {
+    harken::ArmGroupTable groups(1, 2);
+    const harken::DecisionToken parent{29, 31};
+    const std::array<harken::TimelineArmToken, 2> members{{{3, 5, 7, 11}, {13, 17, 19, 23}}};
+    harken::ArmGroupToken token{};
+    ASSERT_TRUE(groups.Prepare(parent, members.data(), 2, &token));
+    const auto& view = groups;
+    ASSERT_TRUE(view.MatchesPreparedMembers(token, parent, members.data(), 2));
+    EXPECT_EQ(0u, groups.LiveCount());
+    harken::ArmGroupSnapshot snapshot{};
+    EXPECT_FALSE(view.Capture(token, &snapshot));
+    EXPECT_FALSE(view.MatchesPreparedMembers({token.slot, token.generation + 1u}, parent, members.data(), 2));
+    EXPECT_FALSE(view.MatchesPreparedMembers(token, {parent.slot, parent.generation + 1u}, members.data(), 2));
+    EXPECT_FALSE(view.MatchesPreparedMembers(token, parent, members.data(), 1));
+    EXPECT_FALSE(view.MatchesPreparedMembers(token, parent, nullptr, 2));
+    auto wrong = members;
+    std::swap(wrong[0], wrong[1]);
+    EXPECT_FALSE(view.MatchesPreparedMembers(token, parent, wrong.data(), 2));
+    wrong = members;
+    ++wrong[1].renderGeneration;
+    EXPECT_FALSE(view.MatchesPreparedMembers(token, parent, wrong.data(), 2));
+    EXPECT_TRUE(view.MatchesPreparedMembers(token, parent, members.data(), 2));
+    ASSERT_TRUE(groups.CancelPrepared(token));
+    EXPECT_FALSE(view.MatchesPreparedMembers(token, parent, members.data(), 2));
+    harken::ArmGroupToken reused{};
+    ASSERT_TRUE(groups.Prepare(parent, members.data(), 2, &reused));
+    EXPECT_EQ(token.slot, reused.slot);
+    EXPECT_NE(token.generation, reused.generation);
+    EXPECT_FALSE(view.MatchesPreparedMembers(token, parent, members.data(), 2));
+    EXPECT_TRUE(view.MatchesPreparedMembers(reused, parent, members.data(), 2));
+    ASSERT_TRUE(groups.CommitPrepared(reused));
+    EXPECT_FALSE(view.MatchesPreparedMembers(reused, parent, members.data(), 2));
+    EXPECT_TRUE(view.Capture(reused, &snapshot));
+
+    harken::ArmGroupTable empty(1, 1);
+    ASSERT_TRUE(empty.Prepare(parent, nullptr, 0, &token));
+    EXPECT_TRUE(empty.MatchesPreparedMembers(token, parent, nullptr, 0));
+    EXPECT_FALSE(empty.MatchesPreparedMembers(token, parent, members.data(), 1));
+    EXPECT_TRUE(empty.CancelPrepared(token));
 }
 
 TEST(ArmGroup, ExactMembersBecomeReadyOnlyAfterEveryUniqueAck) {

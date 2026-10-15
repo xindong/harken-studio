@@ -1,6 +1,10 @@
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/ScheduledTransactionPool.h"
+#include "harken/core/DecisionTable.h"
+#include "harken/core/ArmGroupTable.h"
+#include "harken/core/ImmediateActionLane.h"
 #include "harken/core/AuthoredStopFence.h"
+#include "harken/core/QueueRuntime.h"
 
 #include <algorithm>
 #include <cassert>
@@ -843,7 +847,8 @@ bool TimelineArmTable::ReserveInternal(
             continue;
         }
         ArmState expected = ArmState::Free;
-        if (row.originalLifetimePinned.load(std::memory_order_acquire)) {
+        if (row.originalLifetimePinned.load(std::memory_order_acquire) ||
+            row.variableReadPins.load(std::memory_order_acquire) != 0) {
             row.reservation.clear(std::memory_order_release);
             continue;
         }
@@ -880,6 +885,8 @@ bool TimelineArmTable::ReserveInternal(
         row.frontierActiveLease.store(nullptr, std::memory_order_relaxed);
         row.frontierAdmissionFinished.store(true, std::memory_order_relaxed);
         row.nativePrivateWithdrawn.store(false, std::memory_order_relaxed);
+        row.finalSourcePublicationIssued = false;
+        row.finalSourcePublicationConsumed = false;
         row.identity.store(PackIdentity(slot, row.generation),
                            std::memory_order_release);
         if (row.state.compare_exchange_strong(
@@ -947,6 +954,46 @@ void TimelineArmTable::ConsumePreparedCommit(PreparedCommitProof&& proof) noexce
     assert(proof.row_->state.load(std::memory_order_relaxed) == ArmState::Prepared);
     proof.row_->state.store(ArmState::PendingApply, std::memory_order_release);
     proof.Release();
+}
+
+TimelineArmTable::VariableReadLifetime::VariableReadLifetime(
+    VariableReadLifetime&& other) noexcept { *this = std::move(other); }
+
+TimelineArmTable::VariableReadLifetime& TimelineArmTable::VariableReadLifetime::operator=(
+    VariableReadLifetime&& other) noexcept {
+    if (this != &other) {
+        Release();
+        owner_ = std::exchange(other.owner_, nullptr);
+        row_ = std::exchange(other.row_, nullptr);
+        token_ = std::exchange(other.token_, {});
+    }
+    return *this;
+}
+
+void TimelineArmTable::VariableReadLifetime::Release() noexcept {
+    auto* row = std::exchange(row_, nullptr);
+    owner_ = nullptr;
+    token_ = {};
+    if (row == nullptr) return;
+    const auto previous = row->variableReadPins.fetch_sub(1u, std::memory_order_release);
+    assert(previous != 0);
+    (void)previous;
+}
+
+bool TimelineArmTable::PinPreparedVariableRead(const PreparedCommitProof& proof,
+    VariableReadLifetime* out) noexcept {
+    if (out == nullptr || out->Valid() || proof.owner_ != this || !proof.Valid()) return false;
+    auto& row = *proof.row_;
+    if (row.state.load(std::memory_order_acquire) != ArmState::Prepared ||
+        row.authoredControl.stage != AuthoredControlStage::None ||
+        row.authoredControl.operation != nullptr ||
+        row.variableReadPins.load(std::memory_order_relaxed) == UINT32_MAX) return false;
+    const auto slot = static_cast<std::uint32_t>(&row - rows_.get());
+    row.variableReadPins.fetch_add(1u, std::memory_order_release);
+    out->owner_ = this;
+    out->row_ = &row;
+    out->token_ = {slot, row.generation, row.renderSlot, row.renderGeneration};
+    return true;
 }
 
 bool TimelineArmTable::CommitPrepared(TimelineArmToken token) noexcept {
@@ -1042,6 +1089,7 @@ bool TimelineArmTable::CancelPrepared(TimelineArmToken token) noexcept {
     if (!access || !IdentityMatches(*row, token) || row->renderSlot != token.renderSlot ||
         row->renderGeneration != token.renderGeneration ||
         row->frontierReaderPins.load(std::memory_order_acquire) != 0 ||
+        row->variableReadPins.load(std::memory_order_acquire) != 0 ||
         row->originalLifetimePinned.load(std::memory_order_acquire)) {
         return false;
     }
@@ -1097,6 +1145,7 @@ bool TimelineArmTable::RetirePendingImmediateBatchExact(
             row->renderGeneration == input.arm.renderGeneration &&
             row->state.load(std::memory_order_acquire) == ArmState::PendingApply &&
             !row->originalLifetimePinned.load(std::memory_order_acquire) &&
+            row->variableReadPins.load(std::memory_order_acquire) == 0 &&
             !row->pendingImmediateStart && row->startBound &&
             row->startFrame == input.startFrame &&
             row->armDeadline == input.startFrame &&
@@ -1191,6 +1240,7 @@ bool TimelineArmTable::BeginUnpublishedPendingRetirement(
             row->renderSlot == input.arm.renderSlot && row->renderGeneration == input.arm.renderGeneration &&
             row->state.load(std::memory_order_acquire) == ArmState::PendingApply &&
             !row->originalLifetimePinned.load(std::memory_order_acquire) &&
+            row->variableReadPins.load(std::memory_order_acquire) == 0 &&
             !row->pendingImmediateStart && row->startBound &&
             // Scheduled starts may fall inside a block; their arm deadline is
             // the preceding block boundary, as required by prepared commit.
@@ -1251,7 +1301,8 @@ bool TimelineArmTable::FinishUnpublishedPendingRetirement(
     if (proof == nullptr || proof->owner_ != this) return false;
     for (std::size_t index = 0; index < proof->count_; ++index)
         if (proof->rows_[index] == nullptr ||
-            proof->rows_[index]->originalLifetimePinned.load(std::memory_order_acquire))
+            proof->rows_[index]->originalLifetimePinned.load(std::memory_order_acquire) ||
+            proof->rows_[index]->variableReadPins.load(std::memory_order_acquire) != 0)
             return false;
     // Inputs and held rows stay private and immutable for this proof's lifetime.
     for (; proof->nextLease_ < proof->count_; ++proof->nextLease_) {
@@ -1399,6 +1450,188 @@ void TimelineArmTable::AcknowledgeSourceCommand(SourceCommandRowProof& proof,
     proof.completion_ = completionSequence;
 }
 
+bool TimelineArmTable::FinalSourcePreparationEligible(
+    const PreparedCommitProof& preparation) const noexcept {
+    const auto* row = preparation.row_;
+    return preparation.owner_ == this && row != nullptr && incarnation_ != 0 &&
+        row->state.load(std::memory_order_acquire) == ArmState::Prepared &&
+        !row->pendingImmediateStart && row->startBound &&
+        !row->parentGroup.Valid() && row->memberIndex == UINT16_MAX &&
+        row->authoredControl.stage == AuthoredControlStage::None &&
+        row->authoredControl.operation == nullptr &&
+        !row->nativePrivateWithdrawn.load(std::memory_order_acquire) &&
+        !row->finalSourcePublicationIssued;
+}
+
+bool TimelineArmTable::IssuePublicationAfterInstallation(
+    const PreparedCommitProof& preparation, const OriginalArmRowOwner& original,
+    const void* submission, PublicationAfterInstallation* out) noexcept {
+    if (out == nullptr || out->Valid() || !FinalSourcePreparationEligible(preparation) ||
+        original.owner_ != this || original.row_ != preparation.row_ || submission == nullptr ||
+        !IdentityMatches(*original.row_, original.token_) ||
+        original.row_->originalSourceSubmission != submission ||
+        original.row_->originalSourceEpisode == 0 ||
+        !original.row_->originalLifetimePinned.load(std::memory_order_acquire)) return false;
+    auto& row = *original.row_;
+    out->owner_ = this; out->row_ = &row; out->token_ = original.token_;
+    out->submission_ = submission; out->incarnation_ = incarnation_;
+    out->episode_ = row.originalSourceEpisode;
+    out->frame_ = row.startFrame; out->deadline_ = row.armDeadline;
+    out->program_ = row.programGeneration; out->target_ = row.target;
+    row.finalSourcePublicationIssued = true;
+    return true;
+}
+
+bool TimelineArmTable::MatchesPublicationAfterInstallation(
+    const SourceCommandRowProof& proof, const PublicationAfterInstallation& publication) noexcept {
+    if (!proof.Valid() || !publication.Valid() || proof.cancellation_ ||
+        proof.owner_ != publication.owner_ || proof.row_ != publication.row_ ||
+        publication.incarnation_ != proof.owner_->incarnation_ ||
+        !SameArm(proof.token_, publication.token_)) return false;
+    const auto& row = *proof.row_;
+    const auto state = row.state.load(std::memory_order_acquire);
+    return IdentityMatches(row, publication.token_) && row.startBound && !row.pendingImmediateStart &&
+        !row.parentGroup.Valid() && row.memberIndex == UINT16_MAX &&
+        row.startFrame == publication.frame_ && row.armDeadline == publication.deadline_ &&
+        row.programGeneration == publication.program_ && row.target == publication.target_ &&
+        row.originalSourceSubmission == publication.submission_ &&
+        row.originalSourceEpisode == publication.episode_ &&
+        row.originalLifetimePinned.load(std::memory_order_acquire) &&
+        row.finalSourcePublicationIssued && !row.finalSourcePublicationConsumed &&
+        !row.nativePrivateWithdrawn.load(std::memory_order_acquire) &&
+        ((state == ArmState::PendingApply && proof.completion_ == 0) ||
+         (state == ArmState::Armed && proof.completion_ != 0));
+}
+
+bool TimelineArmTable::ConsumePublicationAfterInstallation(
+    SourceCommandRowProof& proof, PublicationAfterInstallation& publication) noexcept {
+    if (!MatchesPublicationAfterInstallation(proof, publication) || proof.completion_ == 0 ||
+        proof.row_->state.load(std::memory_order_acquire) != ArmState::Armed) return false;
+    proof.row_->finalSourcePublicationConsumed = true;
+    publication.Reset();
+    proof.row_->state.store(ArmState::Published, std::memory_order_release);
+    return true;
+}
+
+bool TimelineArmTable::IssueGroupedPublicationAfterInstallation(const OriginalArmRowOwner& original,
+    const void* submission, ArmGroupTable& groups, ArmGroupToken group,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    GroupedPublicationAfterInstallation* out) noexcept {
+    if (!binding.Valid() || binding.role != FrontierGroupRole::EntryMember ||
+        binding.operation.kind != FrontierOperationKind::Entry) return false;
+    return IssueAuthenticatedGroupedPublicationAfterInstallation(original, submission, groups, group, binding, lease, out);
+}
+
+bool TimelineArmTable::IssueQueueGroupedPublicationAfterInstallation(const OriginalArmRowOwner& original,
+    const void* submission, ArmGroupTable& groups, ArmGroupToken group,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+    const PrivatePendingQueueFrontierBinding& queue, GroupedPublicationAfterInstallation* out) noexcept {
+    if (!queue.Matches(binding, pool) ||
+        !decisions.CanRollbackPrivatePendingQueueFrontierDecision(binding, pool, queue)) return false;
+    return IssueAuthenticatedGroupedPublicationAfterInstallation(original, submission, groups, group, binding, lease, out);
+}
+
+bool TimelineArmTable::IssueAuthenticatedGroupedPublicationAfterInstallation(const OriginalArmRowOwner& original,
+    const void* submission, ArmGroupTable& groups, ArmGroupToken group,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease, GroupedPublicationAfterInstallation* out) noexcept {
+    if (out == nullptr || original.owner_ != this || !original.Valid() || submission == nullptr ||
+        !group.Valid() || !binding.Valid()) return false;
+    auto* row = original.row_;
+    ArmMutationAccess access(row);
+    ArmGroupSnapshot snapshot{};
+    ArmGroupMemberSnapshot member{};
+    if (!access || !IdentityMatches(*row, original.token_) ||
+        row->state.load(std::memory_order_acquire) != ArmState::PendingApply ||
+        !row->pendingImmediateStart || !row->startBound || !row->parentGroup.Valid() ||
+        row->parentGroup.decision.slot != binding.operation.group.decision.slot ||
+        row->parentGroup.decision.generation != binding.operation.group.decision.generation ||
+        row->originalSourceSubmission != submission || row->originalSourceEpisode == 0 ||
+        !row->originalLifetimePinned.load(std::memory_order_acquire) ||
+        row->nativePrivateWithdrawn.load(std::memory_order_acquire) ||
+        row->authoredControl.operation != nullptr || row->authoredControl.stage != AuthoredControlStage::None ||
+        row->frontierAdmission != &binding || row->frontierAdmissionLease != &lease ||
+        row->frontierReaderPins.load(std::memory_order_acquire) != 1 ||
+        row->frontierAdmissionFinished.load(std::memory_order_acquire) ||
+        row->frontierActiveLease.load(std::memory_order_acquire) != nullptr || row->frontierOperation.Valid() ||
+        row->armedCompletionSequence.load(std::memory_order_acquire) != 0 ||
+        row->startedBlockSequence.load(std::memory_order_acquire) != 0 ||
+        row->tombstoneAudioSequence.load(std::memory_order_acquire) != 0 ||
+        lease.Capture().state != AudioSliceState::Ready ||
+        !groups.Capture(group, &snapshot) || snapshot.state != ArmGroupState::AwaitingAcks ||
+        snapshot.parent.slot != row->parentGroup.decision.slot ||
+        snapshot.parent.generation != row->parentGroup.decision.generation ||
+        snapshot.ackedCount != 0 || snapshot.tombstonedCount != 0 ||
+        !groups.CaptureMember(group, row->memberIndex, &member) || member.acked || member.tombstoned ||
+        !SameArm(member.token, original.token_)) return false;
+    if (out->Valid())
+        return out->owner_ == this && out->row_ == row && SameArm(out->token_, original.token_) &&
+            out->submission_ == submission && out->incarnation_ == incarnation_ &&
+            out->episode_ == row->originalSourceEpisode && out->frame_ == row->startFrame &&
+            out->deadline_ == row->armDeadline && out->program_ == row->programGeneration && out->target_ == row->target &&
+            out->groups_ == &groups && out->group_.slot == group.slot && out->group_.generation == group.generation &&
+            out->parent_.slot == row->parentGroup.decision.slot &&
+            out->parent_.generation == row->parentGroup.decision.generation && out->member_ == row->memberIndex &&
+            out->binding_ == &binding && out->lease_ == &lease;
+    out->owner_ = this; out->row_ = row; out->token_ = original.token_;
+    out->submission_ = submission; out->incarnation_ = incarnation_; out->episode_ = row->originalSourceEpisode;
+    out->frame_ = row->startFrame; out->deadline_ = row->armDeadline;
+    out->program_ = row->programGeneration; out->target_ = row->target;
+    out->groups_ = &groups; out->group_ = group; out->parent_ = row->parentGroup.decision;
+    out->member_ = row->memberIndex; out->binding_ = &binding; out->lease_ = &lease;
+    return true;
+}
+
+bool TimelineArmTable::MatchesGroupedPublicationAfterInstallation(const SourceCommandRowProof& proof,
+    const GroupedPublicationAfterInstallation& publication) noexcept {
+    if (!proof.Valid() || !publication.Valid() || proof.cancellation_ ||
+        proof.owner_ != publication.owner_ || proof.row_ != publication.row_ ||
+        publication.incarnation_ != proof.owner_->incarnation_ ||
+        !SameArm(proof.token_, publication.token_)) return false;
+    const auto& row = *proof.row_;
+    const auto state = row.state.load(std::memory_order_acquire);
+    return IdentityMatches(row, publication.token_) && row.pendingImmediateStart && row.startBound &&
+        row.parentGroup.decision.slot == publication.parent_.slot &&
+        row.parentGroup.decision.generation == publication.parent_.generation && row.memberIndex == publication.member_ &&
+        row.startFrame == publication.frame_ && row.armDeadline == publication.deadline_ &&
+        row.programGeneration == publication.program_ && row.target == publication.target_ &&
+        row.originalSourceSubmission == publication.submission_ && row.originalSourceEpisode == publication.episode_ &&
+        row.originalLifetimePinned.load(std::memory_order_acquire) &&
+        !row.nativePrivateWithdrawn.load(std::memory_order_acquire) &&
+        row.frontierAdmission == publication.binding_ && row.frontierAdmissionLease == publication.lease_ &&
+        publication.groups_ != nullptr && publication.binding_ != nullptr && publication.lease_ != nullptr &&
+        ((state == ArmState::PendingApply && proof.completion_ == 0) ||
+         (state == ArmState::Armed && proof.completion_ != 0));
+}
+
+TimelineArmTable::GroupedInstallationPublicationResult TimelineArmTable::ConsumeGroupedPublicationAfterInstallation(
+    SourceCommandRowProof& proof, GroupedPublicationAfterInstallation& publication) noexcept {
+    using Result = GroupedInstallationPublicationResult;
+    if (!MatchesGroupedPublicationAfterInstallation(proof, publication) || proof.completion_ == 0 ||
+        proof.row_->state.load(std::memory_order_acquire) != ArmState::Armed) return Result::Refused;
+    const auto readyMember = [&](ArmGroupMemberSnapshot* member) noexcept {
+        ArmGroupSnapshot group{};
+        return publication.groups_->Capture(publication.group_, &group) &&
+            group.parent.slot == publication.parent_.slot && group.parent.generation == publication.parent_.generation &&
+            (group.state == ArmGroupState::AwaitingAcks || group.state == ArmGroupState::Ready) &&
+            group.tombstonedCount == 0 && group.maxTombstoneSequence == 0 &&
+            publication.groups_->CaptureMember(publication.group_, publication.member_, member) &&
+            SameArm(member->token, proof.token_) && !member->tombstoned &&
+            publication.lease_->Capture().state == AudioSliceState::Ready;
+    };
+    ArmGroupMemberSnapshot member{};
+    bool ready = readyMember(&member);
+    // Observe-based producer ACK can race the real installation ACK. Authenticate
+    // that exact member again instead of treating a duplicate ACK as failure.
+    if (ready && !member.acked)
+        (void)publication.groups_->Acknowledge(publication.group_, proof.token_, proof.completion_);
+    ready = ready && readyMember(&member) && member.acked;
+    publication.Reset();
+    if (!ready) return Result::CancelRequired;
+    proof.row_->state.store(ArmState::Published, std::memory_order_release);
+    return Result::Published;
+}
+
 bool TimelineArmTable::BindOriginalSourceSubmission(
     const PreparedCommitProof& preparation, const OriginalArmRowOwner& original,
     const void* submission) noexcept {
@@ -1481,6 +1714,7 @@ TimelineArmTable::ConsumeOriginalUnparentedUnpublishedSource(
     if (scope.jointHeld || (SameOriginalGroupArm(scope.arm, token) && scope.activeCount != 0) ||
         (state != ArmState::Prepared && state != ArmState::PendingApply) ||
         row.originalLifetimePinned.load(std::memory_order_acquire) ||
+        row.variableReadPins.load(std::memory_order_acquire) != 0 ||
         row.frontierReaderPins.load(std::memory_order_acquire) != 0 ||
         row.frontierLastReadSequence.load(std::memory_order_acquire) != 0 ||
         row.frontierActiveLease.load(std::memory_order_acquire) != nullptr ||
@@ -1515,6 +1749,59 @@ TimelineArmToken TimelineArmTable::PreparedCommitProof::OriginalPreparedToken() 
     if (owner_ == nullptr || row_ == nullptr) return {};
     return {static_cast<std::uint32_t>(row_ - owner_->rows_.get()), row_->generation,
         row_->renderSlot, row_->renderGeneration};
+}
+
+TimelineArmTable::SourceCommandRowStatus TimelineArmTable::RequestOriginalPendingSourceRetirement(
+    const OriginalArmRowOwner& original, const void* submission,
+    std::uint64_t sourceEpisode) noexcept {
+    using Status = SourceCommandRowStatus;
+    const auto token = original.token_;
+    if (original.owner_ != this || !token.Valid() || token.slot >= capacity_ ||
+        original.row_ != &rows_[token.slot] || submission == nullptr || sourceEpisode == 0)
+        return Status::Invalid;
+    auto& row = *original.row_;
+    ArmMutationAccess access(&row);
+    if (!access) return Status::DeferredReservation;
+    const auto state = row.state.load(std::memory_order_acquire);
+    if (!IdentityMatches(row, token) || row.renderSlot != token.renderSlot ||
+        row.renderGeneration != token.renderGeneration ||
+        row.originalSourceSubmission != submission || row.originalSourceEpisode != sourceEpisode ||
+        !row.originalLifetimeIssued || !row.originalLifetimePinned.load(std::memory_order_acquire) ||
+        !row.pendingImmediateStart || row.startBound || row.startFrame != 0 || row.armDeadline != 0 ||
+        row.startedBlockSequence.load(std::memory_order_acquire) != 0 ||
+        row.logicalCompletionSequence.load(std::memory_order_acquire) != 0 ||
+        row.frontierReaderPins.load(std::memory_order_acquire) != 0 ||
+        row.frontierLastReadSequence.load(std::memory_order_acquire) != 0 ||
+        row.frontierOperation.Valid() || row.frontierAdmission != nullptr ||
+        row.frontierAdmissionLease != nullptr ||
+        row.frontierActiveLease.load(std::memory_order_acquire) != nullptr ||
+        row.authoredControl.operation != nullptr || row.authoredControl.stage != AuthoredControlStage::None ||
+        row.finalSourcePublicationIssued || row.finalSourcePublicationConsumed ||
+        (state != ArmState::Armed && state != ArmState::CancelRequested)) return Status::NotPendingSource;
+    row.state.store(ArmState::CancelRequested, std::memory_order_release);
+    return Status::Ready;
+}
+
+bool TimelineArmTable::OriginalPendingSourceRetirementSettled(const OriginalArmRowOwner& original,
+    const void* submission, std::uint64_t sourceEpisode) const noexcept {
+    const auto token = original.token_;
+    if (original.owner_ != this || !token.Valid() || token.slot >= capacity_ ||
+        original.row_ != &rows_[token.slot] || submission == nullptr || sourceEpisode == 0) return false;
+    const auto& row = *original.row_;
+    return IdentityMatches(row, token) && row.renderSlot == token.renderSlot &&
+        row.renderGeneration == token.renderGeneration && row.originalSourceSubmission == submission &&
+        row.originalSourceEpisode == sourceEpisode && row.originalLifetimeIssued &&
+        row.originalLifetimePinned.load(std::memory_order_acquire) &&
+        row.state.load(std::memory_order_acquire) == ArmState::Tombstoned &&
+        row.pendingImmediateStart && !row.startBound && row.startFrame == 0 && row.armDeadline == 0 &&
+        row.startedBlockSequence.load(std::memory_order_acquire) == 0 &&
+        row.frontierReaderPins.load(std::memory_order_acquire) == 0 &&
+        row.frontierLastReadSequence.load(std::memory_order_acquire) == 0 &&
+        !row.frontierOperation.Valid() && row.frontierAdmission == nullptr &&
+        row.frontierAdmissionLease == nullptr &&
+        row.frontierActiveLease.load(std::memory_order_acquire) == nullptr &&
+        row.authoredControl.operation == nullptr && row.authoredControl.stage == AuthoredControlStage::None &&
+        !row.finalSourcePublicationIssued && !row.finalSourcePublicationConsumed;
 }
 
 TimelineArmTable::SourceCommandRowStatus TimelineArmTable::ProveOriginalSourceCancellation(
@@ -1767,6 +2054,149 @@ void TimelineArmTable::ApplyPrivatePendingImmediateArmBatch(
     proof.Release();
 }
 
+void TimelineArmTable::BoundArmPublicationProof::Release() noexcept {
+    if (!Valid()) return;
+    for (std::size_t index = 0; index < count_; ++index) {
+        auto* row = rows_[index];
+        if (row->authoredControl.operation != nullptr)
+            row->authoredControl.operation->ReleaseApply();
+        row->reservation.clear(std::memory_order_release);
+        rows_[index] = nullptr;
+    }
+    owner_ = nullptr;
+    rows_ = nullptr;
+    count_ = 0;
+}
+
+bool TimelineArmTable::ProveBoundArmPublicationBatch(
+    const BoundArmPublicationInput* inputs, std::size_t inputCount,
+    Row** reservedRows, std::size_t reservedCapacity, BoundArmPublicationProof* out) noexcept {
+    if (inputs == nullptr || inputCount == 0 || reservedRows == nullptr ||
+        reservedCapacity < inputCount || out == nullptr || out->Valid()) return false;
+    for (std::size_t index = 0; index < inputCount; ++index)
+        if (reservedRows[index] != nullptr) return false;
+    const auto matches = [&](const BoundArmPublicationInput& input, const Row& row) noexcept {
+        const auto& expected = input.expected;
+        const auto token = expected.arm;
+        const auto pins = row.frontierReaderPins.load(std::memory_order_acquire);
+        if (!IdentityMatches(row, token) || row.renderSlot != token.renderSlot ||
+            row.renderGeneration != token.renderGeneration ||
+            row.state.load(std::memory_order_acquire) != ArmState::Armed ||
+            row.nativePrivateWithdrawn.load(std::memory_order_acquire) || !row.startBound ||
+            expected.startFrame == UINT64_MAX || expected.armDeadline > expected.startFrame ||
+            row.startFrame != expected.startFrame || row.armDeadline != expected.armDeadline ||
+            row.pendingImmediateStart != expected.pendingImmediateStart ||
+            row.programGeneration != expected.programGeneration || row.target != expected.target ||
+            row.parentGroup.decision.slot != expected.parentGroup.decision.slot ||
+            row.parentGroup.decision.generation != expected.parentGroup.decision.generation ||
+            row.memberIndex != expected.memberIndex ||
+            (expected.parentGroup.Valid() != (expected.memberIndex != UINT16_MAX)) ||
+            input.reader == nullptr || input.reader->owner_ != this ||
+            !SameArm(input.reader->token_, token) || pins == 0 ||
+            row.frontierLastReadSequence.load(std::memory_order_acquire) != 0 ||
+            row.startedBlockSequence.load(std::memory_order_acquire) != 0 ||
+            row.logicalCompletionSequence.load(std::memory_order_acquire) != 0 ||
+            row.tombstoneAudioSequence.load(std::memory_order_acquire) != 0 ||
+            row.frontierOperation.Valid() ||
+            row.frontierActiveLease.load(std::memory_order_acquire) != nullptr ||
+            (input.admission == nullptr) != (input.lease == nullptr) ||
+            row.frontierAdmission != input.admission || row.frontierAdmissionLease != input.lease)
+            return false;
+        if (input.admission != nullptr) {
+            if (!input.admission->Valid() || input.lease->Capture().state != AudioSliceState::Ready ||
+                row.frontierAdmissionFinished.load(std::memory_order_acquire) ||
+                (expected.parentGroup.Valid() &&
+                 ((input.admission->role != FrontierGroupRole::EntryMember &&
+                   input.admission->role != FrontierGroupRole::Future) ||
+                  expected.parentGroup.decision.slot != input.admission->operation.group.decision.slot ||
+                  expected.parentGroup.decision.generation != input.admission->operation.group.decision.generation)))
+                return false;
+        } else if (!row.frontierAdmissionFinished.load(std::memory_order_acquire)) return false;
+        const auto& control = row.authoredControl;
+        if (input.control == nullptr)
+            return control.stage == AuthoredControlStage::None && control.operation == nullptr &&
+                !input.sourceStart.Valid();
+        AuthoredControlMetadata captured{};
+        if (control.stage != AuthoredControlStage::Bound || expected.pendingImmediateStart ||
+            input.admission != nullptr || !input.sourceStart.Valid() || input.sourceStart.slot >= capacity_ ||
+            !SameArm(input.sourceStart, control.sourceStart) ||
+            input.control->renderSlot != token.renderSlot ||
+            input.control->renderGeneration != token.renderGeneration ||
+            input.control->armDeadline != expected.armDeadline ||
+            input.control->target != expected.target ||
+            !CaptureAuthoredControl(*input.control, token, &captured) ||
+            captured.operation != control.operation || captured.identity != control.identity ||
+            captured.program.program != control.program.program ||
+            captured.program.programGeneration != control.program.programGeneration ||
+            captured.program.programGeneration != expected.programGeneration ||
+            captured.payloads != control.payloads || captured.events != control.events ||
+            captured.onsetFrame != control.onsetFrame || captured.fadeStartFrame != control.fadeStartFrame ||
+            captured.curve != control.curve || captured.eventCount != control.eventCount ||
+            !row.pendingControlSourceReader.Valid() || row.pendingControlSourceReader.owner_ != this ||
+            !SameArm(row.pendingControlSourceReader.token_, input.sourceStart)) return false;
+        for (std::uint32_t index = 0; index < control.eventCount; ++index)
+            if (!SameControlEvent(input.control->events[index], control.eventsSnapshot[index])) return false;
+        return true;
+    };
+    BoundArmPublicationProof acquired;
+    acquired.owner_ = this;
+    acquired.rows_ = reservedRows;
+    for (std::size_t index = 0; index < inputCount; ++index) {
+        const auto& input = inputs[index];
+        const auto token = input.expected.arm;
+        if (!token.Valid() || token.slot >= capacity_) return false;
+        auto& row = rows_[token.slot];
+        bool held = false;
+        for (std::size_t prior = 0; prior < acquired.count_; ++prior)
+            held = held || acquired.rows_[prior] == &row;
+        if (held) {
+            if (!matches(input, row)) return false;
+            continue;
+        }
+        if (row.reservation.test_and_set(std::memory_order_acquire)) return false;
+        if (!matches(input, row) || (row.authoredControl.operation != nullptr &&
+            !row.authoredControl.operation->TryAcquireApply(row.authoredControl.identity))) {
+            row.reservation.clear(std::memory_order_release);
+            return false;
+        }
+        acquired.rows_[acquired.count_++] = &row;
+    }
+    for (std::size_t index = 0; index < acquired.count_; ++index) {
+        const auto& row = *acquired.rows_[index];
+        const auto& control = row.authoredControl;
+        if (control.operation == nullptr) continue;
+        const Row* source = nullptr;
+        for (std::size_t prior = 0; prior < acquired.count_; ++prior)
+            if (acquired.rows_[prior] == &rows_[control.sourceStart.slot]) source = acquired.rows_[prior];
+        const auto token = TimelineArmToken{static_cast<std::uint32_t>(row.identity.load()),
+            row.generation, row.renderSlot, row.renderGeneration};
+        if (source == nullptr || !IdentityMatches(*source, control.sourceStart) ||
+            source->renderSlot != control.sourceStart.renderSlot ||
+            source->renderGeneration != control.sourceStart.renderGeneration ||
+            source->authoredControl.operation != nullptr || !source->pendingImmediateStart ||
+            source->startFrame != control.onsetFrame || source->target != row.target ||
+            !SameArm(source->originalPlainControl, token) ||
+            source->originalPlainControlIdentity != control.identity ||
+            source->parentGroup.decision.slot != control.selectedSourceGroup.decision.slot ||
+            source->parentGroup.decision.generation != control.selectedSourceGroup.decision.generation)
+            return false;
+    }
+    out->owner_ = std::exchange(acquired.owner_, nullptr);
+    out->rows_ = std::exchange(acquired.rows_, nullptr);
+    out->count_ = std::exchange(acquired.count_, 0);
+    return true;
+}
+
+void TimelineArmTable::ApplyBoundArmPublicationBatch(BoundArmPublicationProof& proof) noexcept {
+    assert(proof.Valid());
+    for (std::size_t index = 0; index < proof.count_; ++index) {
+        auto* row = proof.rows_[index];
+        assert(row->state.load(std::memory_order_relaxed) == ArmState::Armed && row->startBound);
+        row->state.store(ArmState::Published, std::memory_order_release);
+    }
+    proof.Release();
+}
+
 bool TimelineArmTable::ClaimAudioSlice(TimelineArmToken token) noexcept {
     Row* row = Resolve(token);
     ArmMutationAccess access(row);
@@ -1822,6 +2252,22 @@ bool TimelineArmTable::LaneStartCancelled(const LaneAudioProof& proof) noexcept 
         source.appliedPlainStop.Valid() &&
         source.appliedPlainStop == source.originalPlainControlIdentity &&
         source.appliedPlainStop.stopFrame <= source.startFrame;
+}
+
+bool TimelineArmTable::MatchesHeldLaneStart(const LaneAudioProof& proof, TimelineArmToken token,
+    std::uint64_t executeFrame, std::uint64_t audioSequence,
+    ProgramGeneration programGeneration, const TimelineSemanticTarget& target) const noexcept {
+    const auto* row = Resolve(token);
+    return row != nullptr && proof.row_ == row && SameArm(proof.token_, token) &&
+        audioSequence != 0u && proof.audioSequence_ == audioSequence &&
+        row->authoredControl.operation == nullptr &&
+        row->frontierReaderPins.load(std::memory_order_acquire) != 0u &&
+        row->frontierAdmission == nullptr && !row->parentGroup.Valid() &&
+        IdentityMatches(*row, token) && row->programGeneration == programGeneration &&
+        row->target == target && row->startBound && row->startFrame == executeFrame &&
+        row->state.load(std::memory_order_acquire) == ArmState::Published &&
+        row->startedBlockSequence.load(std::memory_order_acquire) == 0u &&
+        !row->nativePrivateWithdrawn.load(std::memory_order_acquire);
 }
 
 bool TimelineArmTable::ProveLaneCancelledStart(const TimelineArmReaderPin& reader,
@@ -1929,6 +2375,33 @@ bool TimelineArmTable::ProveLaneFutureStart(TimelineArmToken token,
     return true;
 }
 
+bool TimelineArmTable::MatchesHeldLaneFutureStart(const LaneAudioProof& proof,
+    const FrontierGroupBinding& binding, std::uint16_t memberIndex,
+    TimelineArmToken token, std::uint64_t executeFrame, std::uint64_t audioSequence,
+    ProgramGeneration programGeneration, const TimelineSemanticTarget& target,
+    bool entryInSameBucket) const noexcept {
+    const auto* row = Resolve(token);
+    return row != nullptr && proof.row_ == row && SameArm(proof.token_, token) &&
+        audioSequence != 0 && proof.audioSequence_ == audioSequence &&
+        row->authoredControl.operation == nullptr && binding.role == FrontierGroupRole::EntryMember &&
+        binding.operation.group.backing == Plan03GroupBacking::ImmediateLane &&
+        row->frontierReaderPins.load(std::memory_order_acquire) != 0 &&
+        row->frontierAdmission == &binding && row->frontierAdmissionLease != nullptr &&
+        row->frontierAdmissionLease->Capture().state == (entryInSameBucket
+            ? AudioSliceState::Ready : AudioSliceState::SliceApplied) &&
+        !row->frontierAdmissionFinished.load(std::memory_order_acquire) &&
+        row->parentGroup.Valid() &&
+        row->parentGroup.decision.slot == binding.operation.group.decision.slot &&
+        row->parentGroup.decision.generation == binding.operation.group.decision.generation &&
+        row->memberIndex == memberIndex && IdentityMatches(*row, token) &&
+        row->programGeneration == programGeneration && row->target == target &&
+        row->startBound && row->startFrame == executeFrame &&
+        row->state.load(std::memory_order_acquire) == ArmState::Published &&
+        row->startedBlockSequence.load(std::memory_order_acquire) == 0 &&
+        !row->nativePrivateWithdrawn.load(std::memory_order_acquire) &&
+        row->frontierLastReadSequence.load(std::memory_order_acquire) <= audioSequence;
+}
+
 void TimelineArmTable::ApplyClaimedAudioSlice(
     TimelineArmToken token) noexcept {
     Row* row = Resolve(token);
@@ -1970,6 +2443,99 @@ void TimelineArmTable::CompleteClaimedAudioSlice(
     row->tombstoneAudioSequence.store(audioSequence,
                                       std::memory_order_relaxed);
     row->state.store(ArmState::Tombstoned, std::memory_order_release);
+}
+
+TimelineArmOperationDisposition TimelineArmTable::ProvePlainAudioApply(TimelineArmToken token,
+    bool starts, bool transient, std::uint64_t audioSequence, PlainAudioProof* out) noexcept {
+    auto* row = Resolve(token);
+    if (row == nullptr || out == nullptr || out->Valid() || audioSequence == 0)
+        return TimelineArmOperationDisposition::Stale;
+    if (row->reservation.test_and_set(std::memory_order_acquire))
+        return TimelineArmOperationDisposition::Deferred;
+    const auto reject = [&](TimelineArmOperationDisposition disposition) {
+        row->reservation.clear(std::memory_order_release);
+        return disposition;
+    };
+    if (!IdentityMatches(*row, token) || row->renderSlot != token.renderSlot ||
+        row->renderGeneration != token.renderGeneration)
+        return reject(TimelineArmOperationDisposition::Stale);
+    if (row->nativePrivateWithdrawn.load(std::memory_order_acquire) ||
+        row->authoredControl.operation != nullptr || row->frontierAdmission != nullptr ||
+        row->frontierOperation.Valid() || (row->pendingImmediateStart && !row->startBound))
+        return reject(TimelineArmOperationDisposition::Ineligible);
+    const auto state = row->state.load(std::memory_order_acquire);
+    if (state == ArmState::CancelRequested || state == ArmState::Tombstoned)
+        return reject(TimelineArmOperationDisposition::Cancelled);
+    if (state != ArmState::Published && state != ArmState::AudioClaimed &&
+        (!(state == ArmState::Started) || starts || transient))
+        return reject(TimelineArmOperationDisposition::Ineligible);
+    out->row_ = row;
+    out->sequence_ = audioSequence;
+    out->starts_ = starts;
+    out->transient_ = transient;
+    return TimelineArmOperationDisposition::Claimed;
+}
+
+void TimelineArmTable::ApplyPlainAudio(PlainAudioProof& proof) noexcept {
+    assert(proof.Valid());
+    if (proof.starts_ || proof.transient_) {
+        proof.row_->startedBlockSequence.store(proof.sequence_, std::memory_order_relaxed);
+        if (proof.transient_) {
+            proof.row_->logicalCompletionSequence.store(proof.sequence_, std::memory_order_relaxed);
+            proof.row_->tombstoneAudioSequence.store(proof.sequence_, std::memory_order_relaxed);
+        }
+        proof.row_->state.store(proof.transient_ ? ArmState::Tombstoned : ArmState::Started,
+            std::memory_order_release);
+    }
+    proof.Release();
+}
+
+bool TimelineArmTable::MatchesVariableInitializerStart(const PlainAudioProof& proof,
+    TimelineArmToken token, std::uint64_t onsetFrame) const noexcept {
+    const auto* row = Resolve(token);
+    return row != nullptr && proof.row_ == row && proof.starts_ &&
+        proof.sequence_ != 0 && row->startFrame == onsetFrame &&
+        row->startedBlockSequence.load(std::memory_order_acquire) == 0 &&
+        !row->nativePrivateWithdrawn.load(std::memory_order_acquire) &&
+        (row->state.load(std::memory_order_acquire) == ArmState::Published ||
+         row->state.load(std::memory_order_acquire) == ArmState::AudioClaimed);
+}
+
+bool TimelineArmTable::MatchesVariableInitializerStart(const BoundAudioProof& proof,
+    TimelineArmToken token, std::uint64_t onsetFrame) const noexcept {
+    const auto* row = Resolve(token);
+    return row != nullptr && proof.row_ == row && proof.starts_ && proof.sequence_ != 0 &&
+        proof.binding_ != nullptr && proof.lease_ != nullptr &&
+        row->frontierAdmission == proof.binding_ && row->frontierAdmissionLease == proof.lease_ &&
+        row->frontierActiveLease.load(std::memory_order_acquire) == proof.lease_ &&
+        proof.binding_->operation.order.executeFrame == onsetFrame && row->startFrame == onsetFrame &&
+        proof.lease_->Capture().state == AudioSliceState::Ready &&
+        row->startedBlockSequence.load(std::memory_order_acquire) == 0 &&
+        !row->nativePrivateWithdrawn.load(std::memory_order_acquire) &&
+        row->state.load(std::memory_order_acquire) == ArmState::Published;
+}
+
+bool TimelineArmTable::MatchesVariableInitializerStart(const LaneAudioProof& proof,
+    TimelineArmToken token, std::uint64_t onsetFrame) const noexcept {
+    const auto* row = Resolve(token);
+    return row != nullptr && proof.row_ == row && SameArm(proof.token_, token) &&
+        proof.audioSequence_ != 0 && row->startFrame == onsetFrame &&
+        row->startedBlockSequence.load(std::memory_order_acquire) == 0 &&
+        !LaneStartCancelled(proof) && !row->nativePrivateWithdrawn.load(std::memory_order_acquire) &&
+        (row->state.load(std::memory_order_acquire) == ArmState::Published ||
+         row->state.load(std::memory_order_acquire) == ArmState::AudioClaimed);
+}
+
+bool TimelineArmTable::MatchesVariableInitializerStart(const AudioOperationClaim& proof,
+    TimelineArmToken token, std::uint64_t onsetFrame) const noexcept {
+    const auto* row = Resolve(token);
+    return row != nullptr && proof.row_ == row && !proof.applied_ &&
+        proof.kind_ == TimelineArmOperationKind::Start && proof.sequence_ != 0 &&
+        proof.priorState_ == ArmState::Published && row->startFrame == onsetFrame &&
+        proof.operation_.order.executeFrame == onsetFrame &&
+        row->startedBlockSequence.load(std::memory_order_acquire) == 0 &&
+        !row->nativePrivateWithdrawn.load(std::memory_order_acquire) &&
+        row->state.load(std::memory_order_acquire) == ArmState::Published;
 }
 
 bool TimelineArmTable::Start(TimelineArmToken token) noexcept {
@@ -2034,6 +2600,312 @@ bool TimelineArmTable::BindFrontierAdmission(TimelineArmToken token,
         row->frontierAdmission = &binding;
         row->frontierAdmissionLease = &lease;
         row->frontierAdmissionFinished.store(false, std::memory_order_release);
+    }
+    row->reservation.clear(std::memory_order_release);
+    return valid;
+}
+
+const TimelineArmTable::Row* TimelineArmTable::CapturePrivatePendingFrontierStart(const TimelineArmReaderPin& ownedReader,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+    const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+    std::uint32_t eventOrdinal, std::uint64_t* startFrame) const noexcept {
+    Plan03PageGroupView native{};
+    ImmediateLaneEvent placed{};
+    std::uint64_t anchor = 0;
+    if (ownedReader.owner_ != this || !binding.Valid() || binding.role != FrontierGroupRole::EntryMember ||
+        binding.operation.kind != FrontierOperationKind::Entry || !binding.variableSide.Valid() ||
+        !decisions.MatchesPreparedFrontierActivationPool(binding.entry, pool) ||
+        !decisions.IsFrontierDecisionBindingFor(binding.operation.group.decision, binding, pool) ||
+        !decisions.CanRollbackPreparedFrontierDecision(binding.operation.group.decision,
+            binding.entry.coordinator, &binding) ||
+        !pool.PrivateImmediateLaneFrontierRollbackReady(binding.operation.group) ||
+        !pool.MatchesPrivateImmediateLaneGroupPlacement(binding.operation.group, lane, placement) ||
+        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) ||
+        native.frontier != &binding || native.lease != &lease || native.members == nullptr || native.sourceControlCount != 0 ||
+        !placement.CaptureAnchorFrame(&anchor) || anchor != binding.operation.order.executeFrame ||
+        !lane.CapturePrivatePlacedEvent(placement, eventOrdinal, &placed)) return nullptr;
+    return CapturePrivatePendingFrontierStartRow(ownedReader, binding, lease, native, placed, anchor, startFrame);
+}
+
+const TimelineArmTable::Row* TimelineArmTable::CapturePrivatePendingQueueFrontierStart(const TimelineArmReaderPin& ownedReader,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+    const PrivatePendingQueueFrontierBinding& queue,
+    const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
+    const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+    std::uint32_t eventOrdinal, std::uint64_t* startFrame) const noexcept {
+    return CapturePrivatePendingQueueFrontierEvent(ownedReader, binding, lease, pool, decisions, queue,
+        original, outer, lane, placement, eventOrdinal, false, startFrame);
+}
+
+const TimelineArmTable::Row* TimelineArmTable::CapturePrivatePendingQueueFrontierEvent(const TimelineArmReaderPin& ownedReader,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+    const PrivatePendingQueueFrontierBinding& queue,
+    const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
+    const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+    std::uint32_t eventOrdinal, bool control, std::uint64_t* frame) const noexcept {
+    Plan03PageGroupView native{};
+    ImmediateLaneEvent placed{};
+    OriginalQueueFutureGroupScope memberScope{}, outerScope{};
+    std::uint64_t anchor = 0;
+    if (ownedReader.owner_ != this || !queue.Matches(binding, pool) ||
+        !decisions.CanRollbackPrivatePendingQueueFrontierDecision(binding, pool, queue) ||
+        original.Identity() != binding.operation.group ||
+        !original.CaptureOriginalScope(pool, *this, &memberScope) || !outer.CaptureOriginalScope(pool, *this, &outerScope) ||
+        memberScope.cohortRoot != outerScope.cohortRoot || memberScope.provisionalAnchorFrame != outerScope.provisionalAnchorFrame ||
+        !memberScope.input.immediateEntry.Valid() || !outerScope.input.immediateEntry.Valid() ||
+        memberScope.input.immediateEntry.gate != outerScope.input.immediateEntry.gate ||
+        memberScope.input.immediateEntry.generation != outerScope.input.immediateEntry.generation ||
+        memberScope.input.immediateEntry.gate->Observe(memberScope.input.immediateEntry.generation) != ImmediateEntryAttemptState::Preparing ||
+        !pool.IsOriginalQueueFutureGroupRegistrationFor(original, binding.operation.group, memberScope.cohortRoot) ||
+        !pool.IsOriginalQueueFutureGroupRegistrationFor(outer, outer.Identity(), outerScope.cohortRoot) ||
+        !pool.MatchesPrivateImmediateLaneGroupPlacement(binding.operation.group, lane, placement) ||
+        !pool.MatchesPrivateImmediateLaneGroupPlacement(binding.primary, lane, placement) ||
+        !pool.MatchesPrivateImmediateLaneGroupPlacement(outer.Identity(), lane, placement) ||
+        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
+        native.lease != &lease || native.members == nullptr || native.sourceControlCount >= native.memberCount ||
+        !placement.CaptureAnchorFrame(&anchor) || !lane.CapturePrivatePlacedEvent(placement, eventOrdinal, &placed) ||
+        placed.futureGroupedStart == control || placed.event.frontier.kind != FrontierOperationKind::Dependent ||
+        placed.event.executeFrame < binding.operation.order.executeFrame) return nullptr;
+    if (!control) return CapturePrivatePendingFrontierStartRow(ownedReader, binding, lease, native, placed, anchor, frame);
+    const auto token = ownedReader.token_;
+    const auto& event = placed.event;
+    const auto* program = event.program.program;
+    const auto* row = Resolve(token);
+    if (binding.role != FrontierGroupRole::EntryMember || binding.operation.group.sliceIndex != 0 ||
+        !binding.transition.Valid() || native.sourceControlCount != 1 || native.memberCount != 2 ||
+        row == nullptr || !SameArm(event.armToken, token) || program == nullptr || program->payloads == nullptr ||
+        program->role != TimelineProgramRole::Voice || program->authoredStopFence != nullptr ||
+        program->generation != event.program.programGeneration || program->payloadCount != 1 || event.payload != 0 ||
+        program->payloads[0].kind != TimelineEventKind::Envelope ||
+        program->payloads[0].envelopeDirection != TimelineEnvelopeDirection::FadeOut ||
+        program->payloads[0].reserved != kTimelineEventTransientControlArm ||
+        program->payloads[0].envelopeStartFrame != event.executeFrame ||
+        program->payloads[0].envelopeEndFrame <= event.executeFrame || program->payloads[0].envelopeCurve == nullptr ||
+        !program->payloads[0].authoredFadeOutCandidate || !event.authoredFadeOutCandidate ||
+        !event.frozenTxnValid || event.subeventPhase != 30 || placed.relativeFrame > UINT64_MAX - anchor ||
+        event.executeFrame != anchor + placed.relativeFrame || event.executeFrame != binding.transition.audibleFrame ||
+        event.executeFrame != binding.operation.order.executeFrame ||
+        event.frontier.group != binding.operation.group || event.frontier.entry != binding.entry ||
+        event.frontier.owner != binding.operation.owner || event.frontier.world != binding.operation.world ||
+        event.frontier.transport != binding.operation.transport ||
+        event.logicCommitSequence != binding.operation.order.logicCommitSequence ||
+        event.executionOrdinal != binding.operation.order.executionOrdinal ||
+        !IdentityMatches(*row, token) || row->renderSlot != token.renderSlot || row->renderGeneration != token.renderGeneration ||
+        row->state.load(std::memory_order_acquire) != ArmState::PendingApply || !row->pendingImmediateStart ||
+        row->frontierReaderPins.load(std::memory_order_acquire) != 1 ||
+        row->frontierAdmission != &binding || row->frontierAdmissionLease != &lease ||
+        row->frontierAdmissionFinished.load(std::memory_order_acquire) ||
+        row->frontierActiveLease.load(std::memory_order_acquire) != nullptr || row->frontierOperation.Valid() ||
+        row->authoredControl.operation != nullptr || !row->parentGroup.Valid() ||
+        row->parentGroup.decision.slot != binding.operation.group.decision.slot ||
+        row->parentGroup.decision.generation != binding.operation.group.decision.generation ||
+        row->memberIndex != 0 || !SameArm(native.members[0], token) ||
+        row->programGeneration != placed.armProgramGeneration || row->target != program->payloads[0].target ||
+        row->frontierLastReadSequence.load(std::memory_order_acquire) != 0 ||
+        row->armedCompletionSequence.load(std::memory_order_acquire) != 0 ||
+        row->startedBlockSequence.load(std::memory_order_acquire) != 0 ||
+        row->logicalCompletionSequence.load(std::memory_order_acquire) != 0 ||
+        row->tombstoneAudioSequence.load(std::memory_order_acquire) != 0) return nullptr;
+    if (frame != nullptr) *frame = event.executeFrame;
+    return row;
+}
+
+const TimelineArmTable::Row* TimelineArmTable::CapturePrivatePendingFrontierStartRow(const TimelineArmReaderPin& ownedReader,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease, const Plan03PageGroupView& native,
+    const ImmediateLaneEvent& placed, std::uint64_t anchor, std::uint64_t* startFrame) const noexcept {
+    const auto token = ownedReader.token_;
+    const auto& event = placed.event;
+    const auto* program = event.program.program;
+    const bool conditionalTransition = binding.queueConditional.Valid() && binding.transition.Valid();
+    const bool dependentTransition = conditionalTransition || (binding.canonicalInitialCompletion && binding.transition.Valid());
+    if (!SameArm(event.armToken, token) || program == nullptr || program->payloads == nullptr ||
+        event.payload >= program->payloadCount || program->role != TimelineProgramRole::Voice ||
+        program->authoredStopFence != nullptr || program->generation != event.program.programGeneration ||
+        program->payloads[event.payload].kind != TimelineEventKind::Start ||
+        program->payloads[event.payload].reserved != (conditionalTransition ? 0u : kTimelineEventTransientStartArm) ||
+        !event.frozenTxnValid || event.subeventPhase != 20 || placed.relativeFrame > UINT64_MAX - anchor ||
+        event.executeFrame != anchor + placed.relativeFrame ||
+        placed.futureGroupedStart != (placed.relativeFrame != 0) ||
+        !(event.frontier.group == binding.operation.group) || !(event.frontier.entry == binding.entry) ||
+        !(event.frontier.owner == binding.operation.owner) || event.frontier.world != binding.operation.world ||
+        event.frontier.transport != binding.operation.transport ||
+        event.frontier.kind != (dependentTransition || placed.futureGroupedStart ? FrontierOperationKind::Dependent : FrontierOperationKind::Entry) ||
+        event.logicCommitSequence != binding.operation.order.logicCommitSequence ||
+        event.executionOrdinal != binding.operation.order.executionOrdinal) return nullptr;
+    const Row* row = Resolve(token);
+    if (row == nullptr) return nullptr;
+    const bool valid = IdentityMatches(*row, token) && row->renderSlot == token.renderSlot &&
+        row->renderGeneration == token.renderGeneration && row->state.load(std::memory_order_acquire) == ArmState::PendingApply &&
+        row->pendingImmediateStart &&
+        row->frontierReaderPins.load(std::memory_order_acquire) == 1 &&
+        row->frontierAdmission == &binding && row->frontierAdmissionLease == &lease &&
+        !row->frontierAdmissionFinished.load(std::memory_order_acquire) &&
+        row->frontierActiveLease.load(std::memory_order_acquire) == nullptr && !row->frontierOperation.Valid() &&
+        row->authoredControl.operation == nullptr && row->parentGroup.Valid() &&
+        row->parentGroup.decision.slot == binding.operation.group.decision.slot &&
+        row->parentGroup.decision.generation == binding.operation.group.decision.generation &&
+        row->memberIndex >= native.sourceControlCount && row->memberIndex < native.memberCount &&
+        SameArm(native.members[row->memberIndex], token) &&
+        row->programGeneration == placed.armProgramGeneration && row->target == program->payloads[event.payload].target &&
+        row->frontierLastReadSequence.load(std::memory_order_acquire) == 0 &&
+        row->armedCompletionSequence.load(std::memory_order_acquire) == 0 &&
+        row->startedBlockSequence.load(std::memory_order_acquire) == 0 &&
+        row->logicalCompletionSequence.load(std::memory_order_acquire) == 0 &&
+        row->tombstoneAudioSequence.load(std::memory_order_acquire) == 0;
+    if (!valid) return nullptr;
+    if (startFrame != nullptr) *startFrame = event.executeFrame;
+    return row;
+}
+
+bool TimelineArmTable::BindPrivatePendingFrontierStart(const TimelineArmReaderPin& ownedReader,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+    const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+    std::uint32_t eventOrdinal) noexcept {
+    auto* row = Resolve(ownedReader.token_);
+    if (row == nullptr || row->reservation.test_and_set(std::memory_order_acquire)) return false;
+    std::uint64_t start = 0;
+    const bool valid = !row->startBound && row->startFrame == 0 && row->armDeadline == 0 &&
+        CapturePrivatePendingFrontierStart(ownedReader, binding, lease, pool, decisions, lane,
+            placement, eventOrdinal, &start) == row;
+    if (valid) {
+        row->startFrame = start;
+        row->armDeadline = start;
+        row->startBound = true;
+    }
+    row->reservation.clear(std::memory_order_release);
+    return valid;
+}
+
+bool TimelineArmTable::PrivatePendingFrontierStartReady(const TimelineArmReaderPin& ownedReader,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+    const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+    std::uint32_t eventOrdinal) const noexcept {
+    std::uint64_t start = 0;
+    const auto* row = CapturePrivatePendingFrontierStart(ownedReader, binding, lease, pool,
+        decisions, lane, placement, eventOrdinal, &start);
+    return row != nullptr && row->startBound && row->startFrame == start && row->armDeadline == start;
+}
+
+bool TimelineArmTable::BindPrivatePendingQueueFrontierStart(const TimelineArmReaderPin& ownedReader,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+    const PrivatePendingQueueFrontierBinding& queue,
+    const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
+    const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement, std::uint32_t eventOrdinal) noexcept {
+    auto* row = Resolve(ownedReader.token_);
+    if (row == nullptr || row->reservation.test_and_set(std::memory_order_acquire)) return false;
+    std::uint64_t start = 0;
+    const bool valid = !row->startBound && row->startFrame == 0 && row->armDeadline == 0 &&
+        CapturePrivatePendingQueueFrontierStart(ownedReader, binding, lease, pool, decisions, queue, original, outer,
+            lane, placement, eventOrdinal, &start) == row;
+    if (valid) { row->startFrame = start; row->armDeadline = start; row->startBound = true; }
+    row->reservation.clear(std::memory_order_release);
+    return valid;
+}
+
+bool TimelineArmTable::PrivatePendingQueueFrontierStartReady(const TimelineArmReaderPin& ownedReader,
+    TimelineArmToken expectedArm, const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+    const PrivatePendingQueueFrontierBinding& queue,
+    const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
+    const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement, std::uint32_t eventOrdinal) const noexcept {
+    if (!expectedArm.Valid() || !SameArm(ownedReader.token_, expectedArm)) return false;
+    std::uint64_t start = 0;
+    const auto* row = CapturePrivatePendingQueueFrontierStart(ownedReader, binding, lease, pool, decisions, queue, original, outer,
+        lane, placement, eventOrdinal, &start);
+    return row != nullptr && row->startBound && row->startFrame == start && row->armDeadline == start;
+}
+
+bool TimelineArmTable::BindPrivatePendingQueueFrontierControl(const TimelineArmReaderPin& ownedReader,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+    const PrivatePendingQueueFrontierBinding& queue,
+    const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
+    const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement, std::uint32_t eventOrdinal) noexcept {
+    auto* row = Resolve(ownedReader.token_);
+    if (row == nullptr || row->reservation.test_and_set(std::memory_order_acquire)) return false;
+    std::uint64_t frame = 0;
+    const bool valid = !row->startBound && row->startFrame == 0 && row->armDeadline == 0 &&
+        CapturePrivatePendingQueueFrontierEvent(ownedReader, binding, lease, pool, decisions, queue, original, outer,
+            lane, placement, eventOrdinal, true, &frame) == row;
+    if (valid) { row->startFrame = frame; row->armDeadline = frame; row->startBound = true; }
+    row->reservation.clear(std::memory_order_release);
+    return valid;
+}
+
+bool TimelineArmTable::PrivatePendingQueueFrontierControlReady(const TimelineArmReaderPin& ownedReader,
+    TimelineArmToken expectedArm, const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+    const PrivatePendingQueueFrontierBinding& queue,
+    const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
+    const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement, std::uint32_t eventOrdinal) const noexcept {
+    if (!expectedArm.Valid() || !SameArm(ownedReader.token_, expectedArm)) return false;
+    std::uint64_t frame = 0;
+    const auto* row = CapturePrivatePendingQueueFrontierEvent(ownedReader, binding, lease, pool, decisions, queue, original, outer,
+        lane, placement, eventOrdinal, true, &frame);
+    return row != nullptr && row->startBound && row->startFrame == frame && row->armDeadline == frame;
+}
+
+bool TimelineArmTable::UnbindPrivatePendingQueueFrontierAdmission(TimelineArmReaderPin& ownedReader,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions, const PrivatePendingQueueFrontierBinding& queue) noexcept {
+    Plan03PageGroupView native{};
+    if (ownedReader.owner_ != this || !queue.Matches(binding, pool) ||
+        !decisions.CanRollbackPrivatePendingQueueFrontierDecision(binding, pool, queue) ||
+        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
+        native.lease != &lease || native.members == nullptr || lease.Capture().state != AudioSliceState::Ready) return false;
+    return UnbindPrivatePendingFrontierAdmissionRow(ownedReader, binding, lease, native);
+}
+
+bool TimelineArmTable::UnbindPrivatePendingFrontierAdmission(TimelineArmReaderPin& ownedReader,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    const ScheduledTransactionPool& pool, const DecisionTable& decisions) noexcept {
+    Plan03PageGroupView native{};
+    if (ownedReader.owner_ != this || !binding.Valid() || binding.role != FrontierGroupRole::EntryMember ||
+        binding.operation.kind != FrontierOperationKind::Entry || !binding.variableSide.Valid() ||
+        !decisions.MatchesPreparedFrontierActivationPool(binding.entry, pool) ||
+        !decisions.IsFrontierDecisionBindingFor(binding.operation.group.decision, binding, pool) ||
+        !pool.PrivateImmediateLaneFrontierRollbackReady(binding.operation.group) ||
+        !decisions.CanRollbackPreparedFrontierDecision(binding.operation.group.decision,
+            binding.entry.coordinator, &binding) ||
+        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) ||
+        native.frontier != &binding || native.lease != &lease || native.members == nullptr ||
+        native.sourceControlCount != 0 || lease.Capture().state != AudioSliceState::Ready) return false;
+    return UnbindPrivatePendingFrontierAdmissionRow(ownedReader, binding, lease, native);
+}
+
+bool TimelineArmTable::UnbindPrivatePendingFrontierAdmissionRow(TimelineArmReaderPin& ownedReader,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease, const Plan03PageGroupView& native) noexcept {
+    const auto token = ownedReader.token_;
+    Row* row = Resolve(token);
+    if (row == nullptr || row->reservation.test_and_set(std::memory_order_acquire)) return false;
+    const bool valid = IdentityMatches(*row, token) && row->renderSlot == token.renderSlot &&
+        row->renderGeneration == token.renderGeneration && row->state.load(std::memory_order_acquire) == ArmState::PendingApply &&
+        row->frontierReaderPins.load(std::memory_order_acquire) == 1 &&
+        row->frontierAdmission == &binding && row->frontierAdmissionLease == &lease &&
+        !row->frontierAdmissionFinished.load(std::memory_order_acquire) &&
+        row->frontierActiveLease.load(std::memory_order_acquire) == nullptr && !row->frontierOperation.Valid() &&
+        row->authoredControl.operation == nullptr && row->parentGroup.Valid() &&
+        row->parentGroup.decision.slot == binding.operation.group.decision.slot &&
+        row->parentGroup.decision.generation == binding.operation.group.decision.generation &&
+        row->memberIndex < native.memberCount && SameArm(native.members[row->memberIndex], token) &&
+        row->frontierLastReadSequence.load(std::memory_order_acquire) == 0 &&
+        row->armedCompletionSequence.load(std::memory_order_acquire) == 0 &&
+        row->startedBlockSequence.load(std::memory_order_acquire) == 0 &&
+        row->logicalCompletionSequence.load(std::memory_order_acquire) == 0 &&
+        row->tombstoneAudioSequence.load(std::memory_order_acquire) == 0;
+    if (valid) {
+        row->frontierAdmission = nullptr;
+        row->frontierAdmissionLease = nullptr;
+        row->frontierAdmissionFinished.store(true, std::memory_order_release);
+        row->frontierReaderPins.store(0, std::memory_order_release);
+        ownedReader.owner_ = nullptr;
+        ownedReader.token_ = {};
     }
     row->reservation.clear(std::memory_order_release);
     return valid;
@@ -2141,7 +3013,34 @@ bool TimelineArmTable::ProveBoundFrontierArm(TimelineArmToken token,
     out->binding_ = row->frontierAdmission;
     out->sequence_ = audioSequence;
     out->starts_ = starts;
+    out->admissionOnly_ = false;
     row->frontierActiveLease.store(out->lease_, std::memory_order_release);
+    return true;
+}
+
+bool TimelineArmTable::ProveInitialVariableDeferredStart(TimelineArmToken token,
+    const FrontierGroupBinding& binding, AudioSliceLease& lease, const ScheduledTransactionPool& pool,
+    std::uint64_t audioSequence, BoundAudioProof* out) noexcept {
+    Plan03PageGroupView group{};
+    if (!binding.Valid() || binding.role != FrontierGroupRole::EntryMember ||
+        binding.operation.kind != FrontierOperationKind::Entry || !binding.variableSide.Valid() ||
+        binding.transition.Valid() || binding.queueInitial.Valid() || binding.queueConditional.Valid() ||
+        !pool.ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
+        group.frontier != &binding || group.lease != &lease || group.members == nullptr ||
+        !pool.NotePlan03GroupReadRt(group.identity, audioSequence) ||
+        !ProveBoundFrontierArm(token, binding.entry, audioSequence, false, out, &binding)) return false;
+    auto& row = *out->row_;
+    const bool valid = IdentityMatches(row, token) && row.startFrame > binding.operation.order.executeFrame &&
+        row.startedBlockSequence.load(std::memory_order_acquire) == 0 && !row.frontierOperation.Valid() &&
+        row.parentGroup.Valid() && row.parentGroup.decision.slot == group.identity.decision.slot &&
+        row.parentGroup.decision.generation == group.identity.decision.generation &&
+        row.memberIndex >= group.sourceControlCount && row.memberIndex < group.memberCount &&
+        SameArm(group.members[row.memberIndex], token) && binding.operation.owner.Valid() &&
+        binding.operation.transport == group.identity.transportEpoch && binding.operation.world != 0;
+    // The observation remains fenced even if the whole Entry is later rejected.
+    row.frontierLastReadSequence.store(audioSequence, std::memory_order_release);
+    if (!valid) { out->Release(); return false; }
+    out->admissionOnly_ = true;
     return true;
 }
 
@@ -2179,6 +3078,7 @@ bool TimelineArmTable::ProveGroupedFrontierOperation(TimelineArmToken token, con
     out->binding_ = &binding;
     out->sequence_ = audioSequence;
     out->starts_ = starts;
+    out->admissionOnly_ = false;
     row->frontierActiveLease.store(&lease, std::memory_order_release);
     return true;
 }
@@ -2215,7 +3115,7 @@ bool TimelineArmTable::ProveDeferredFrontierStart(TimelineArmToken token, const 
 }
 
 void TimelineArmTable::ApplyBoundFrontierArm(BoundAudioProof& proof, bool completesControl) noexcept {
-    assert(proof.Valid() && proof.lease_ != nullptr && proof.binding_ != nullptr);
+    assert(proof.Valid() && !proof.admissionOnly_ && proof.lease_ != nullptr && proof.binding_ != nullptr);
     const auto state = proof.lease_->Capture().state;
     assert(state == AudioSliceState::SliceClaimed || state == AudioSliceState::SliceClaimedWithInvalidation);
     (void)state;
@@ -2388,9 +3288,15 @@ TimelineArmOperationDisposition TimelineArmTable::BeginFrontierOperation(
     if (row.parentGroup.Valid()) {
         const auto* admission = row.frontierAdmission;
         Plan03PageGroupView prior{};
+        const bool initialVariableStart = admission != nullptr &&
+            admission->role == FrontierGroupRole::EntryMember && admission->variableSide.Valid() &&
+            admission->operation.kind == FrontierOperationKind::Entry &&
+            !admission->transition.Valid() && !admission->queueInitial.Valid() &&
+            !admission->queueConditional.Valid() && kind == TimelineArmOperationKind::Start;
         if (binding == nullptr || pool == nullptr ||
             binding->kind != FrontierOperationKind::Dependent || admission == nullptr ||
-            admission->role != FrontierGroupRole::Future || !(admission->entry == binding->entry) ||
+            (admission->role != FrontierGroupRole::Future && !initialVariableStart) ||
+            !(admission->entry == binding->entry) ||
             !(admission->operation.owner == operation.owner) ||
             admission->operation.world != operation.world || admission->operation.transport != operation.transport ||
             admission->operation.group.sliceIndex != binding->operationOrdinal ||
@@ -2404,6 +3310,8 @@ TimelineArmOperationDisposition TimelineArmTable::BeginFrontierOperation(
             !pool->ResolvePlan03GroupSliceRt(admission->operation.group, &prior) ||
             prior.frontier != admission || prior.lease != row.frontierAdmissionLease || prior.lease == nullptr ||
             prior.lease->Capture().state != AudioSliceState::SliceApplied ||
+            (initialVariableStart && (prior.members == nullptr || row.memberIndex < prior.sourceControlCount ||
+                row.memberIndex >= prior.memberCount || !SameArm(prior.members[row.memberIndex], token))) ||
             !pool->NotePlan03GroupReadRt(admission->operation.group, audioSequence))
             return reject(TimelineArmOperationDisposition::Stale);
     } else if (transientControl) {
@@ -2414,12 +3322,9 @@ TimelineArmOperationDisposition TimelineArmTable::BeginFrontierOperation(
     if ((kind == TimelineArmOperationKind::Start && row.startFrame != operation.order.executeFrame) ||
         (row.frontierOperation.Valid() && !(row.frontierOperation.order < operation.order)))
         return reject(TimelineArmOperationDisposition::Ineligible);
-    const auto priorOperation = row.frontierOperation;
-    row.frontierOperation = operation;
-    if (!row.state.compare_exchange_strong(expected, ArmState::AudioClaimed,
-            std::memory_order_acq_rel, std::memory_order_acquire)) {
-        row.frontierOperation = priorOperation;
-        return reject(expected == ArmState::CancelRequested || expected == ArmState::Tombstoned ?
+    const auto current = row.state.load(std::memory_order_acquire);
+    if (current != expected) {
+        return reject(current == ArmState::CancelRequested || current == ArmState::Tombstoned ?
             TimelineArmOperationDisposition::Cancelled : TimelineArmOperationDisposition::Ineligible);
     }
     row.frontierLastReadSequence.store(audioSequence, std::memory_order_release);
@@ -2427,14 +3332,29 @@ TimelineArmOperationDisposition TimelineArmTable::BeginFrontierOperation(
     out->kind_ = kind;
     out->sequence_ = audioSequence;
     out->applied_ = false;
+    out->priorState_ = expected;
+    out->operation_ = operation;
     return TimelineArmOperationDisposition::Claimed;
 }
 
 void TimelineArmTable::ApplyFrontierOperation(AudioOperationClaim& claim) noexcept {
     assert(claim.row_ != nullptr && !claim.applied_);
+    auto expected = claim.priorState_;
+    const bool claimed = claim.row_->state.compare_exchange_strong(expected, ArmState::AudioClaimed,
+        std::memory_order_acq_rel, std::memory_order_acquire);
+    assert(claimed);
+    (void)claimed;
+    claim.row_->frontierOperation = claim.operation_;
     if (claim.kind_ == TimelineArmOperationKind::Start)
         claim.row_->startedBlockSequence.store(claim.sequence_, std::memory_order_relaxed);
     claim.applied_ = true;
+}
+
+void TimelineArmTable::CancelFrontierOperation(AudioOperationClaim& claim) noexcept {
+    if (claim.row_ == nullptr) return;
+    assert(!claim.applied_);
+    claim.row_->reservation.clear(std::memory_order_release);
+    claim.row_ = nullptr;
 }
 
 void TimelineArmTable::FinishFrontierOperation(AudioOperationClaim& claim, bool completesControl) noexcept {
@@ -2620,6 +3540,10 @@ bool TimelineArmTable::Observe(
         row.tombstoneAudioSequence.load(std::memory_order_acquire);
     observation.parentGroup = row.parentGroup;
     observation.memberIndex = row.memberIndex;
+    // Published acquires the original installation consumer's completion.
+    observation.finalSourcePublished =
+        (state == ArmState::Published || state == ArmState::AudioClaimed || state == ArmState::Started) &&
+        row.finalSourcePublicationConsumed;
     *out = observation;
     return true;
 }
@@ -2683,6 +3607,7 @@ bool TimelineArmTable::HasUnobservedTombstoneExact(TimelineArmToken token,
         row.parentGroup.decision.generation == parent.decision.generation && row.memberIndex == memberIndex &&
         !scope.jointHeld && (!SameOriginalGroupArm(scope.arm, token) || scope.activeCount == 0) &&
         !row.originalLifetimePinned.load(std::memory_order_acquire) &&
+        row.variableReadPins.load(std::memory_order_acquire) == 0 &&
         row.armedCompletionSequence.load(std::memory_order_acquire) == 0 &&
         row.startedBlockSequence.load(std::memory_order_acquire) == 0 &&
         row.logicalCompletionSequence.load(std::memory_order_acquire) == 0 &&
@@ -2748,6 +3673,7 @@ bool TimelineArmTable::Reclaim(
     if (!IdentityMatches(*row, token) ||
         row->state.load(std::memory_order_acquire) != ArmState::Tombstoned ||
         row->frontierReaderPins.load(std::memory_order_acquire) != 0 ||
+        row->variableReadPins.load(std::memory_order_acquire) != 0 ||
         row->originalLifetimePinned.load(std::memory_order_acquire) ||
         observedAudioSequence <= row->tombstoneAudioSequence.load(
                                      std::memory_order_acquire)) {

@@ -26,6 +26,7 @@
 #include "harken/core/SourceCursorMirror.h"
 #include "harken/core/SourceTerminalRecord.h"
 #include "harken/core/TimelineArmTable.h"
+#include "harken/core/VariableReadCut.h"
 #include "harken/core/StreamParkMailbox.h"
 #include "harken/core/StreamSeekHandoffTable.h"
 #include "harken/dsp/Resampler.h"
@@ -47,6 +48,24 @@ namespace harken {
 class DecisionTable;
 class OriginalSourceSubmissionRegistry;
 namespace detail { struct VoicePoolReleaseTestAccess; }
+
+struct VariableTimelineStartAuthority {
+    void* context = nullptr;
+    VariableReadCutStatus (*ready)(void*, VariableTimelineReadUseRef, std::uint64_t) noexcept = nullptr;
+    bool (*provePlain)(void*, VariableTimelineReadUseRef, std::uint64_t,
+        const TimelineArmTable::PlainAudioProof&, VariableTimelineInitializerProof*) noexcept = nullptr;
+    bool (*proveLane)(void*, VariableTimelineReadUseRef, std::uint64_t,
+        const TimelineArmTable::LaneAudioProof&, VariableTimelineInitializerProof*) noexcept = nullptr;
+    void (*apply)(VariableTimelineInitializerProof&, void*,
+        void (*)(void*, const CommandRecord&) noexcept) noexcept = nullptr;
+    bool (*proveBound)(void*, VariableTimelineReadUseRef, std::uint64_t,
+        const TimelineArmTable::BoundAudioProof&, VariableTimelineInitializerProof*) noexcept = nullptr;
+    bool (*proveOperation)(void*, VariableTimelineReadUseRef, std::uint64_t,
+        const TimelineArmTable::AudioOperationClaim&, VariableTimelineInitializerProof*) noexcept = nullptr;
+    VariableReadCutStatus (*entryReady)(void*, const FrontierActivationDescriptor&) noexcept = nullptr;
+    bool (*pendingArm)(void*, VariableTimelineReadUseRef, std::uint64_t, TimelineArmToken) noexcept = nullptr;
+    bool Valid() const noexcept { return ready != nullptr; }
+};
 
 struct Plan03ScratchDecisionState {
     std::uint32_t generation = 0;
@@ -161,6 +180,55 @@ public:
 
     bool BindStreamRingToken(VnVoiceHandle handle, StreamRing* ring,
                              std::uint64_t ringToken) noexcept;
+
+    void AttachNativeVariableStartAuthority(VariableNativeStartAuthority authority) noexcept {
+        m_nativeVariableStartAuthority = authority;
+    }
+    void AttachTimelineVariableStartAuthority(VariableTimelineStartAuthority authority) noexcept {
+        m_timelineVariableStartAuthority = authority;
+    }
+    bool BindPreparedTimelineReadUse(VnVoiceHandle handle, VariableTimelineReadUseRef use,
+        VariablePlaybackOrder order, bool pendingPlacement = false) noexcept;
+    bool ProveTimelineVariableInitializer(std::uint32_t renderSlot, std::uint32_t renderGeneration,
+        const TimelineArmTable::PlainAudioProof& arm, VariableTimelineInitializerProof* out) noexcept;
+    bool ProveTimelineVariableInitializer(std::uint32_t renderSlot, std::uint32_t renderGeneration,
+        const TimelineArmTable::LaneAudioProof& arm, VariableTimelineInitializerProof* out) noexcept;
+    bool ProveTimelineVariableInitializer(std::uint32_t renderSlot, std::uint32_t renderGeneration,
+        const TimelineArmTable::BoundAudioProof& arm, VariableTimelineInitializerProof* out) noexcept;
+    bool ProveTimelineVariableInitializer(std::uint32_t renderSlot, std::uint32_t renderGeneration,
+        const TimelineArmTable::AudioOperationClaim& arm, VariableTimelineInitializerProof* out) noexcept;
+    void ApplyTimelineVariableInitializer(VariableTimelineInitializerProof& proof) noexcept;
+    VariableReadCutStatus TimelineVariableSourcesStatus(std::uint32_t renderSlot,
+        std::uint32_t renderGeneration) const noexcept;
+    VariableReadCutStatus TimelineEntryVariableSourcesStatus(
+        const FrontierActivationDescriptor& descriptor) const noexcept;
+    bool PendingTimelineVariableReadMatchesArm(TimelineArmToken arm) const noexcept;
+    bool HasTimelineVariableSourceRead(std::uint32_t renderSlot,
+        std::uint32_t renderGeneration) const noexcept;
+    VariableTimelineReadUseRef TimelineVariableSourceRead(std::uint32_t renderSlot,
+        std::uint32_t renderGeneration) const noexcept;
+    // Audio detaches its final source reader only after the original start claim succeeds.
+    void FinishTimelineVariableSourceRead(std::uint32_t renderSlot,
+        std::uint32_t renderGeneration) noexcept;
+    // Logic binds only while the voice is private; the audio side owns it after Play.
+    bool BindPreparedNativeReadCut(VnVoiceHandle handle,
+                                   const VariableNativeStartIdentity& identity) noexcept;
+    bool FinishNativeVariableStartInstallation(VnVoiceHandle handle) noexcept;
+    bool HasPendingNativeVariableStart(VnVoiceHandle handle) noexcept;
+    void RejectNativeVariableStart(VnVoiceHandle handle, NotificationQueue& notifications,
+                                    std::uint64_t blockIndex) noexcept;
+    void ActivatePendingNativeVariableStarts(NotificationQueue& notifications,
+                                              std::uint64_t blockIndex) noexcept;
+    bool BindPreparedFirstOutputOrder(VnVoiceHandle handle, VariablePlaybackOrder order) noexcept;
+    bool DeferVariableCommandUntilFirstOutput(const CommandRecord& command, VariablePlaybackOrder order,
+        std::uint32_t targetRevision, VariableNativeEffectIdentity effect = {},
+        VariableToneBandValues toneBand = {}) noexcept;
+    void AttachFirstOutputCommandConsumer(void* context,
+        void (*apply)(void*, const CommandRecord&) noexcept) noexcept {
+        m_firstOutputCommandContext = context;
+        m_firstOutputCommandConsumer = apply;
+    }
+    std::size_t FirstOutputStorageBytes() const noexcept;
     bool CaptureStreamRingToken(VnVoiceHandle handle,
                                 std::uint64_t* outToken) const noexcept;
 
@@ -257,6 +325,11 @@ public:
                                        const VoiceTimelineEvent& event) noexcept;
     bool ProveTimelineReservation(const VoiceTimelineReservation& reservation,
                                   VoiceTimelineReservationProof* out) noexcept;
+    bool MatchesHeldLaneStart(std::uint32_t renderSlot, std::uint32_t renderGeneration,
+        std::uint64_t quantum, const VoiceTimelineEvent& expected,
+        const VoiceTimelineReservationProof& reservation,
+        const TimelineArmTable::LaneAudioProof& arm,
+        const VariableTimelineInitializerProof& initializer) noexcept;
     bool RejectTimelineReservation(const VoiceTimelineReservation& reservation) noexcept;
     static void ApplyProvenTimelineReservation(VoiceTimelineReservationProof& proof,
                                                std::uint64_t cutoffFrame = UINT64_MAX,
@@ -321,7 +394,7 @@ public:
     const StreamParkToken* ResolveParkOwnedToken(
         StreamParkTokenRef ref) const;
     void ReleaseParkOwnedToken(StreamParkTokenRef ref);
-    void BeginAudioBlock();
+    void BeginAudioBlock(std::uint64_t blockIndex = 0);
     void EndAudioBlock() noexcept;
     void StageCompletionProgressForSilentBlock(
         std::uint64_t blockIndex) noexcept;
@@ -759,8 +832,11 @@ private:
     enum class SlotState : std::uint8_t {
         Free,
         Claimed,
+        VariableStartClaimed,
         Rendering,
+        VariableStartWaiting,
         OriginalCallbackHeld,
+        TimelineCallbackHeld,
         Quarantined,
         Prepared,
         PreparedCommitHeld,
@@ -778,9 +854,22 @@ private:
     // sized once at construction and never copied or moved afterwards
     // (atomics are neither copyable nor movable).
     static bool IsAudioRenderingState(SlotState state) noexcept {
-        return state == SlotState::Rendering || state == SlotState::OriginalCallbackHeld;
+        return state == SlotState::Rendering || state == SlotState::OriginalCallbackHeld ||
+            state == SlotState::TimelineCallbackHeld;
     }
 
+    enum class FirstOutputPhase : std::uint8_t { Prepared, AwaitingFirstFold, FirstFolded, Live };
+    struct DeferredFirstOutputEndpoint {
+        bool valid = false;
+        VariablePlaybackOrder order{};
+        std::uint32_t targetRevision = 0;
+        VariableNativeEffectIdentity nativeEffect{};
+        VariableToneBandValues toneBand{};
+        VariableWeightControlIdentity weightOwner{};
+        WeightSegmentV1 weightSegment{};
+        bool weightRemoved = false;
+        CommandRecord command{};
+    };
     struct Slot {
         std::atomic<SlotState> state{SlotState::Free};
         std::atomic<std::uint32_t> generation{1};
@@ -788,6 +877,7 @@ private:
         std::uint64_t issuedOriginalReleaseTarget = 0;
         std::atomic<std::uint64_t> originalBodyLifetime{0};
         std::atomic<bool> originalCallbackStorageReader{false};
+        std::atomic<std::uint64_t> originalBodyRetirementRequest{0};
         std::uint64_t originalBodyMarker = 0;
         TimelineArmToken originalBodyArm{};
         VnVoiceHandle originalBodySourceIdentity = 0;
@@ -799,6 +889,11 @@ private:
         std::atomic<std::uint64_t> streamRingToken{0};
         mutable std::atomic<std::uint64_t> renderedState{0};
         VoiceRenderContext render;
+        VariableNativeStartIdentity nativeVariableStart{};
+        VariableTimelineReadUseRef timelineVariableReadUse{};
+        bool firstOutputOrderFinal = true;
+        VariablePlaybackOrder firstOutputOrder{};
+        FirstOutputPhase firstOutputPhase = FirstOutputPhase::Live;
         CompletionProgressRow* stagedCompletionProgress = nullptr;
         CompletionProgressBlockUpdate stagedCompletionUpdate{};
         bool completionProgressStaged = false;
@@ -811,6 +906,26 @@ private:
         std::uint32_t timelineLaneEventCount = 0;
         std::uint8_t timelineReservationCounts[kTimelineMaxCombinedEventsPerVoiceQuantum]{};
     };
+    VariableNativeStartAuthority m_nativeVariableStartAuthority{};
+    VariableTimelineStartAuthority m_timelineVariableStartAuthority{};
+    bool m_timelineQuantumOpen = false;
+    void ReturnTimelineCallbackStorage() noexcept;
+    bool FinishNativeVariableStart(Slot& slot, bool activated) noexcept;
+    static constexpr std::uint32_t kFirstOutputBuiltinEndpoints = 11;
+    std::uint32_t m_firstOutputStride = 0;
+    std::vector<DeferredFirstOutputEndpoint> m_firstOutputEndpoints;
+    void* m_firstOutputCommandContext = nullptr;
+    void (*m_firstOutputCommandConsumer)(void*, const CommandRecord&) noexcept = nullptr;
+    void ClearFirstOutput(Slot& slot) noexcept;
+    std::uint32_t FirstOutputCommandKey(const CommandRecord& command,
+        VnVoiceHandle& handle) const noexcept;
+    void SupersedeDeferredFirstOutput(const CommandRecord& command,
+        VnVoiceHandle initializingVoice = 0) noexcept;
+    void ApplyDeferredFirstOutput(Slot& slot) noexcept;
+    DeferredFirstOutputEndpoint* FindFirstOutputWeightEndpoint(Slot& slot,
+        VariableWeightControlIdentity owner, bool create) noexcept;
+    void PrepareFirstOutputTimelineWeights(Slot& slot) noexcept;
+    static bool FirstOutputProtected(const Slot& slot) noexcept;
 
     Slot* ResolveTimelineReservation(const VoiceTimelineReservation& reservation) noexcept;
 
@@ -833,7 +948,22 @@ private:
     bool MatchesPreparedOriginalSourceBody(const OriginalSourceBodyLifetimePin& original,
         const PreparedCommitProof& preparation, const PreparedCommitInput& expected,
         const OriginalSourceInstallationLoan** actualPending) const noexcept;
+    bool MatchesPreparedOriginalSourceStorage(const OriginalSourceBodyLifetimePin& original,
+        const PreparedCommitProof& preparation, const PreparedCommitInput& expected,
+        const OriginalSourceInstallationLoan** actualPending) const noexcept;
     bool MatchesOriginalSourceBody(const OriginalSourceBodyLifetimePin& original) const noexcept;
+    bool MatchesOriginalSourceRetirementPair(const OriginalVoiceOwner& owner,
+        const OriginalSourceBodyLifetimePin& body) const noexcept;
+    bool CaptureOriginalSourceRetirementIdentity(const OriginalVoiceOwner& owner,
+        const OriginalSourceBodyLifetimePin& body, VoiceReleaseObserver* release,
+        SourceTerminalToken* terminal) const noexcept;
+    bool CanReturnUnpublishedOriginalSourceBodyStorage(const OriginalSourceBodyLifetimePin& body,
+        const OriginalSourceInstallationLoan** installation) const noexcept;
+    bool CanReturnPublishedOriginalSourceBodyStorage(const OriginalVoiceOwner& owner,
+        const OriginalSourceBodyLifetimePin& body, VoiceReleaseObserver release,
+        const OriginalSourceInstallationLoan** installation) const noexcept;
+    void RequestOriginalSourceBodyRetirement(const OriginalSourceBodyLifetimePin& body) noexcept;
+    bool ConsumeOriginalSourceBodyRetirement(Slot& slot, std::uint64_t blockIndex) noexcept;
     bool BorrowOriginalSourceBody(const OriginalSourceBodyLifetimePin& original,
         OriginalSourceBodyLifetimePin* out) noexcept;
     void ReleaseOriginalSourceBody(OriginalSourceBodyLifetimePin& original) noexcept;

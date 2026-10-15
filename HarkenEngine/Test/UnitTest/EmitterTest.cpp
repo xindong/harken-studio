@@ -75,6 +75,30 @@ VnSnapshot Snap() {
 
 // --- Variable isolation goldens ---
 
+TEST(Emitter, VariableProjectionRestoresPresenceAndReleasesSpeculativeLocalSlot) {
+    harken::EngineConfig config{};
+    config.maxEmitters = 1;
+    config.emitterVariableSlots = 1;
+    harken::EmitterTable emitters(config);
+    VnEmitterHandle emitter = 0;
+    ASSERT_TRUE(emitters.Create(&emitter));
+    const auto original = harkentest::ObjectId(5);
+    const auto candidate = harkentest::ObjectId(77);
+    ASSERT_EQ(VN_OK, emitters.SetLocalValue(emitter, original, 0.25f));
+    ASSERT_TRUE(emitters.BeginVariableProjection());
+    EXPECT_FALSE(emitters.BeginVariableProjection());
+    ASSERT_EQ(VN_OK, emitters.ClearLocalValue(emitter, original));
+    ASSERT_EQ(VN_OK, emitters.SetLocalValue(emitter, candidate, 0.75f));
+    emitters.RestoreVariableProjection();
+    float value = -1.0f;
+    ASSERT_TRUE(emitters.LocalValue(emitter, original, &value));
+    EXPECT_FLOAT_EQ(0.25f, value);
+    EXPECT_FALSE(emitters.LocalValue(emitter, candidate, &value));
+    ASSERT_EQ(VN_OK, emitters.ClearLocalValue(emitter, original));
+    EXPECT_EQ(VN_OK, emitters.SetLocalValue(emitter, candidate, 1.0f));
+    EXPECT_GT(emitters.VariableProjectionStorageBytes(), 0u);
+}
+
 TEST(Emitter, LocalVariableValuesIsolatePerEmitter) {
     EngineSession session(EmitterConfig());
     ASSERT_EQ(VN_OK, session.InitResult());

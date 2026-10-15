@@ -571,6 +571,12 @@ TEST(Snapshot, PoisonedCommitDropIsCounted) {
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(7), 0.5f));
     ASSERT_EQ(VN_OK, Vn_Update());
+    // VN_OK accepts the write; the held initial command frontier has not run yet.
+    ASSERT_GT(engine->variables.PendingCount(), 0u);
+    VnSnapshot pending = MakeSnapshotArg();
+    ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&pending));
+    EXPECT_EQ(0u, pending.paramDropCount);
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
 
     VnSnapshot snapshot = MakeSnapshotArg();
     ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
@@ -578,6 +584,12 @@ TEST(Snapshot, PoisonedCommitDropIsCounted) {
     // The drop is not a commit: no command reached the audio thread, so
     // exactly one of the two counters moved.
     EXPECT_EQ(0u, snapshot.paramCommitCount);
+    for (std::uint32_t step = 0; step < 4; ++step) {
+        engine->nullBackend.Pump(2);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
+        EXPECT_EQ(1u, snapshot.paramDropCount);
+    }
 }
 
 TEST(Snapshot, ConcurrentCaptureStaysCoherent) {

@@ -140,6 +140,9 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
                                    config.voiceCapacity.Render()) *
                                    kMaxChannels * config.blockFrames,
                                0.0f) {
+    m_firstOutputStride = kFirstOutputBuiltinEndpoints + config.fxSlotsPerVoice * kMaxEffectParamCount +
+        kSelectionPathNodeCapacity;
+    m_firstOutputEndpoints.resize(static_cast<std::size_t>(config.voiceCapacity.Render()) * m_firstOutputStride);
     // Create the fixed worker set on the logic thread. Real-device workers stay
     // disabled until the backend binds them to its callback scheduling domain
     // and validates that callback. The Null backend explicitly selects offline
@@ -223,6 +226,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.completionProgressStaged = false;
     slot.completionProgressTerminal = false;
     slot.render = VoiceRenderContext{};
+    ClearFirstOutput(slot);
     slot.render.biquadTrig = m_biquadTrig;
     slot.render.engineSampleRate = m_sampleRate;
     slot.render.pcm = view;
@@ -374,6 +378,7 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
                      std::memory_order_relaxed);
     slot.streamRingToken.store(0, std::memory_order_relaxed);
     slot.render = VoiceRenderContext{};
+    ClearFirstOutput(slot);
     slot.render.biquadTrig = m_biquadTrig;
     slot.render.engineSampleRate = m_sampleRate;
     // Synthetic view: the cascade's channel and rate plumbing reads these
@@ -732,10 +737,17 @@ bool VoicePool::AdmitTimelineQuantum(
 }
 
 void VoicePool::BeginTimelineQuantum(std::uint64_t quantumIndex) noexcept {
+    assert(!m_timelineQuantumOpen);
+    m_timelineQuantumOpen = true;
     for (Slot& slot : m_slots) {
-        if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) {
-            continue;
+        auto state = slot.state.load(std::memory_order_acquire);
+        if (state == SlotState::Rendering) {
+            auto expected = state;
+            if (!slot.state.compare_exchange_strong(expected, SlotState::TimelineCallbackHeld,
+                std::memory_order_acq_rel, std::memory_order_acquire)) continue;
+            state = SlotState::TimelineCallbackHeld;
         }
+        if (!IsAudioRenderingState(state)) continue;
         VoiceEventSpan& span = slot.render.timelineEvents;
         assert(slot.timelineProvenMask == 0);
         span.quantumIndex = quantumIndex;
@@ -798,6 +810,16 @@ void VoicePool::FinalizeTimelineQuantum(std::uint64_t quantumIndex) noexcept {
             }
         }
         ++slot.timelineReservationEpoch;
+    }
+    m_timelineQuantumOpen = false;
+    if (!m_originalSourceCallbackOpen) ReturnTimelineCallbackStorage();
+}
+
+void VoicePool::ReturnTimelineCallbackStorage() noexcept {
+    for (auto& slot : m_slots) {
+        auto expected = SlotState::TimelineCallbackHeld;
+        (void)slot.state.compare_exchange_strong(expected, SlotState::Rendering,
+            std::memory_order_acq_rel, std::memory_order_acquire);
     }
 }
 
@@ -959,6 +981,48 @@ bool VoicePool::ProveTimelineReservation(const VoiceTimelineReservation& reserva
     return true;
 }
 
+bool VoicePool::MatchesHeldLaneStart(std::uint32_t renderSlot,
+    std::uint32_t renderGeneration, std::uint64_t quantum,
+    const VoiceTimelineEvent& expected, const VoiceTimelineReservationProof& proof,
+    const TimelineArmTable::LaneAudioProof& arm,
+    const VariableTimelineInitializerProof& initializer) noexcept {
+    if (renderSlot >= m_slots.size() || !proof.Valid() || proof.count_ != 1u ||
+        expected.kind != TimelineEventKind::Start || proof.mask_ == 0u ||
+        (proof.mask_ & (proof.mask_ - 1u)) != 0u) return false;
+    const auto& slot = m_slots[renderSlot];
+    const auto& span = slot.render.timelineEvents;
+    if (!IsAudioRenderingState(slot.state.load(std::memory_order_acquire)) ||
+        slot.generation.load(std::memory_order_acquire) != renderGeneration ||
+        span.renderGeneration != renderGeneration || span.quantumIndex != quantum ||
+        proof.claims_ != &slot.timelineProvenMask ||
+        (slot.timelineProvenMask & proof.mask_) != proof.mask_ ||
+        (slot.timelineFilledMask & proof.mask_) != proof.mask_ ||
+        (slot.timelineReservedMask & proof.mask_) != proof.mask_) return false;
+    std::uint32_t index = 0;
+    while (index < kTimelineMaxCombinedEventsPerVoiceQuantum &&
+        (proof.mask_ & (1u << index)) == 0u) ++index;
+    if (index >= span.eventCount || proof.events_ != &span.events[index] ||
+        slot.timelineReservationCounts[index] != 1u) return false;
+    const auto& actual = *proof.events_;
+    if (actual.kind != expected.kind || actual.offset != expected.offset ||
+        !(actual.order == expected.order) || actual.frame != 0u || actual.endFrame != 0u ||
+        actual.authoredRootStop || actual.authoredFadeOutCandidate ||
+        actual.envelopeCurve != nullptr || actual.value != 0u || actual.firstOutputDeferred ||
+        actual.frontierProof.state != FrontierEventState::Pending ||
+        actual.frontierProof.entry.Valid() || actual.frontierProof.operation.Valid() ||
+        actual.frontierProof.quantum != quantum ||
+        actual.frontierProof.renderGeneration != renderGeneration) return false;
+    VariableTimelineInitializerProof fresh;
+    if (!ProveTimelineVariableInitializer(renderSlot, renderGeneration, arm, &fresh)) return false;
+    return fresh.Valid() == initializer.Valid() &&
+        (!fresh.Valid() || (fresh.row_ == initializer.row_ &&
+            fresh.nativeHandle_ == initializer.nativeHandle_ &&
+            fresh.commands_ == initializer.commands_ && fresh.commandCount_ == initializer.commandCount_ &&
+            fresh.order_.frame == initializer.order_.frame &&
+            fresh.order_.sequence == initializer.order_.sequence &&
+            fresh.order_.ordinal == initializer.order_.ordinal));
+}
+
 bool VoicePool::StageReservedLaneTimelineEvent(
     const VoiceTimelineReservation& reservation, std::uint32_t index,
     const VoiceTimelineEvent& event) noexcept {
@@ -1061,6 +1125,16 @@ bool VoicePool::CancelTimelineBindingFromAudio(
     std::uint32_t renderSlot, std::uint32_t renderGeneration) noexcept {
     if (renderSlot >= m_slots.size()) return false;
     auto& slot = m_slots[renderSlot];
+    if (slot.state.load(std::memory_order_acquire) == SlotState::TimelineCallbackHeld) {
+        if ((!m_originalSourceCallbackOpen && !m_timelineQuantumOpen) ||
+            slot.generation.load(std::memory_order_acquire) != renderGeneration ||
+            slot.timelineProvenMask != 0 || !slot.render.timelineGated) return false;
+        auto expected = SlotState::TimelineCallbackHeld;
+        if (!slot.state.compare_exchange_strong(expected, SlotState::ReleaseHeld,
+            std::memory_order_acq_rel, std::memory_order_acquire)) return false;
+        ReleaseSlot(slot);
+        return true;
+    }
     if (slot.state.load(std::memory_order_acquire) != SlotState::OriginalCallbackHeld)
         return CancelTimelineBinding(renderSlot, renderGeneration);
     // This native callback owns the installed body and its pre-existing actor.
@@ -1210,6 +1284,12 @@ void VoicePool::IssueOriginalSourceBody(const PreparedCommitProof& proof,
 bool VoicePool::MatchesPreparedOriginalSourceBody(const OriginalSourceBodyLifetimePin& original,
     const PreparedCommitProof& preparation, const PreparedCommitInput& expected,
     const OriginalSourceInstallationLoan** actualPending) const noexcept {
+    return expected.completionProgress != nullptr &&
+        MatchesPreparedOriginalSourceStorage(original, preparation, expected, actualPending);
+}
+bool VoicePool::MatchesPreparedOriginalSourceStorage(const OriginalSourceBodyLifetimePin& original,
+    const PreparedCommitProof& preparation, const PreparedCommitInput& expected,
+    const OriginalSourceInstallationLoan** actualPending) const noexcept {
     if (actualPending == nullptr || !MatchesOriginalSourceBody(original) || preparation.pool_ != this ||
         preparation.slot_ != &m_slots[original.slot_] || !preparation.Valid() ||
         expected.renderHandle != OriginalSourceSubmissionRegistry::RenderOf(original.arm_) ||
@@ -1234,13 +1314,16 @@ bool VoicePool::MatchesPreparedOriginalSourceBody(const OriginalSourceBodyLifeti
         render.sourceTerminal != expected.sourceTerminal ||
         render.sourceTerminalToken.slot != expected.sourceTerminalToken.slot ||
         render.sourceTerminalToken.generation != expected.sourceTerminalToken.generation ||
-        render.completionProgress != expected.completionProgress || expected.completionProgress == nullptr ||
+        render.completionProgress != expected.completionProgress ||
         render.completionOccurrence.slot != expected.completionOccurrence.slot ||
         render.completionOccurrence.generation != expected.completionOccurrence.generation ||
-        expected.completionOccurrence.generation == 0 ||
         render.completionRenderGeneration != expected.completionRenderGeneration ||
-        expected.completionRenderGeneration != original.arm_.renderGeneration ||
-        render.playbackFactsRevision != expected.playbackFactsRevision || expected.playbackFactsRevision == 0 ||
+        render.playbackFactsRevision != expected.playbackFactsRevision ||
+        (expected.completionProgress == nullptr
+            ? expected.completionOccurrence.slot != 0 || expected.completionOccurrence.generation != 0 ||
+                expected.completionRenderGeneration != 0 || expected.playbackFactsRevision != 0
+            : expected.completionOccurrence.generation == 0 ||
+                expected.completionRenderGeneration != original.arm_.renderGeneration || expected.playbackFactsRevision == 0) ||
         render.streamRing != expected.streamRing ||
         slot.streamRingToken.load(std::memory_order_acquire) != expected.streamRingToken ||
         (expected.streamRing != nullptr && expected.streamRing->generation.load(std::memory_order_acquire) != expected.streamGeneration) ||
@@ -1272,6 +1355,82 @@ bool VoicePool::IsOriginalSourceBodyCurrent(const OriginalSourceBodyLifetimePin&
         IsAudioRenderingState(slot.state.load(std::memory_order_acquire)) &&
         slot.generation.load(std::memory_order_acquire) == original.arm_.renderGeneration &&
         slot.releaseSequence.load(std::memory_order_acquire) < slot.originalBodyReleaseTarget;
+}
+bool VoicePool::MatchesOriginalSourceRetirementPair(const OriginalVoiceOwner& owner,
+    const OriginalSourceBodyLifetimePin& body) const noexcept {
+    return owner.pool_ == this && owner.Valid() && owner.releaseTarget_ != 0 &&
+        MatchesOriginalSourceBody(body) && body.slot_ == static_cast<std::uint32_t>(owner.handle_) &&
+        body.arm_.renderGeneration == static_cast<std::uint32_t>(owner.handle_ >> 32) &&
+        m_slots[body.slot_].originalBodyReleaseTarget == owner.releaseTarget_;
+}
+void VoicePool::RequestOriginalSourceBodyRetirement(const OriginalSourceBodyLifetimePin& body) noexcept {
+    assert(MatchesOriginalSourceBody(body));
+    m_slots[body.slot_].originalBodyRetirementRequest.store(body.marker_, std::memory_order_release);
+}
+
+bool VoicePool::CaptureOriginalSourceRetirementIdentity(const OriginalVoiceOwner& owner,
+    const OriginalSourceBodyLifetimePin& body, VoiceReleaseObserver* release,
+    SourceTerminalToken* terminal) const noexcept {
+    if (release == nullptr || terminal == nullptr ||
+        !MatchesOriginalSourceRetirementPair(owner, body) || !IsOriginalSourceBodyCurrent(body)) return false;
+    const auto& render = m_slots[body.slot_].render;
+    const auto* source = render.sourceTerminal;
+    if (source == nullptr && !render.sourceTerminalToken.Valid()) {
+        *release = {body.slot_, owner.releaseTarget_};
+        *terminal = {};
+        return true;
+    }
+    if (source == nullptr || !render.sourceTerminalToken.Valid() || !source->occupied ||
+        source->generation != render.sourceTerminalToken.generation || source->render != owner.handle_ ||
+        source->release.slot != body.slot_ || source->release.targetSequence != owner.releaseTarget_) return false;
+    *release = source->release;
+    *terminal = render.sourceTerminalToken;
+    return true;
+}
+
+bool VoicePool::CanReturnUnpublishedOriginalSourceBodyStorage(const OriginalSourceBodyLifetimePin& body,
+    const OriginalSourceInstallationLoan** installation) const noexcept {
+    if (installation == nullptr || !MatchesOriginalSourceBody(body)) return false;
+    const auto& slot = m_slots[body.slot_];
+    const auto lifetime = slot.originalBodyLifetime.load(std::memory_order_acquire);
+    if ((lifetime & kOriginalBodyPinMask) != 1u || (lifetime & kOriginalBodyDisposed) == 0 ||
+        (lifetime & (kOriginalBodyLoanReturned | kOriginalBodyReturnClaimed)) != 0 ||
+        slot.originalCallbackStorageReader.load(std::memory_order_acquire) ||
+        !slot.pendingOriginalSource.Valid() || slot.installedOriginalSource.Valid()) return false;
+    *installation = &slot.pendingOriginalSource;
+    return true;
+}
+bool VoicePool::CanReturnPublishedOriginalSourceBodyStorage(const OriginalVoiceOwner& owner,
+    const OriginalSourceBodyLifetimePin& body, VoiceReleaseObserver release,
+    const OriginalSourceInstallationLoan** installation) const noexcept {
+    if (installation == nullptr || !MatchesOriginalSourceRetirementPair(owner, body) ||
+        !release.Valid() || release.slot != body.slot_ || release.targetSequence != owner.releaseTarget_ ||
+        !OriginalVoiceReleased(owner) || !ReleaseObserved(release)) return false;
+    const auto& slot = m_slots[body.slot_];
+    const auto lifetime = slot.originalBodyLifetime.load(std::memory_order_acquire);
+    if ((lifetime & kOriginalBodyPinMask) == 0 || (lifetime & kOriginalBodyDisposed) == 0 ||
+        (lifetime & (kOriginalBodyLoanReturned | kOriginalBodyReturnClaimed)) != 0 ||
+        slot.originalCallbackStorageReader.load(std::memory_order_acquire) ||
+        slot.pendingOriginalSource.Valid() == slot.installedOriginalSource.Valid()) return false;
+    // Cancellation before installation keeps the pending association.
+    // Extra storage loans retain their own episode after this holder returns.
+    *installation = slot.installedOriginalSource.Valid()
+        ? &slot.installedOriginalSource : &slot.pendingOriginalSource;
+    return true;
+}
+
+bool VoicePool::ConsumeOriginalSourceBodyRetirement(Slot& slot, std::uint64_t blockIndex) noexcept {
+    if (slot.state.load(std::memory_order_acquire) != SlotState::OriginalCallbackHeld) return false;
+    const auto marker = slot.originalBodyRetirementRequest.load(std::memory_order_acquire);
+    if (marker == 0 || marker != slot.originalBodyMarker) return false;
+    const auto index = static_cast<std::size_t>(&slot - m_slots.data());
+    const auto& lease = m_originalCallbackStorage[index];
+    if (!lease.storageHeld || !lease.actor.Valid() || lease.bodyMarker != marker ||
+        !slot.originalCallbackStorageReader.load(std::memory_order_acquire) ||
+        !OriginalSourceSubmissionRegistry::SameToken(lease.arm, slot.originalBodyArm) ||
+        !slot.installedOriginalSource.Valid()) return false;
+    return slot.installedOriginalSource.owner_->RetireRequestedInstalledSource(
+        slot.installedOriginalSource, blockIndex);
 }
 bool VoicePool::BorrowOriginalSourceBody(const OriginalSourceBodyLifetimePin& original,
     OriginalSourceBodyLifetimePin* out) noexcept {
@@ -1322,7 +1481,8 @@ void VoicePool::AcquireOriginalCallbackStorage(Slot& slot,
     // No body marker, installed loan or payload was read before native ownership.
     if (slot.originalBodyMarker == 0) {
         if (state == SlotState::OriginalCallbackHeld)
-            slot.state.store(SlotState::Rendering, std::memory_order_release);
+            slot.state.store(slot.render.timelineGated
+                ? SlotState::TimelineCallbackHeld : SlotState::Rendering, std::memory_order_release);
         return;
     }
     const auto index = static_cast<std::size_t>(&slot - m_slots.data());
@@ -1394,6 +1554,7 @@ void VoicePool::ResetOriginalSourceBodyForReuse(Slot& slot) noexcept {
         (slot.originalBodyMarker == 0 || (lifetime & kOriginalBodyLoanReturned) != 0) &&
         !slot.pendingOriginalSource.Valid() && !slot.installedOriginalSource.Valid());
     slot.originalBodyMarker = 0;
+    slot.originalBodyRetirementRequest.store(0, std::memory_order_relaxed);
     slot.originalBodyArm = {};
     slot.originalBodySourceIdentity = 0;
     slot.originalBodyReleaseTarget = 0;
@@ -1407,6 +1568,12 @@ void VoicePool::ShutdownOriginalSourceBodiesAfterQuiescence() noexcept {
     m_originalBodyShutdown = true;
     for (auto& slot : m_slots) CompleteOriginalSourceBodyDisposition(slot);
     EndAudioBlock();
+    for (auto& slot : m_slots) slot.nativeVariableStart = {};
+    m_nativeVariableStartAuthority = {};
+    m_timelineVariableStartAuthority = {};
+    for (auto& slot : m_slots) ClearFirstOutput(slot);
+    m_firstOutputCommandConsumer = nullptr;
+    m_firstOutputCommandContext = nullptr;
 }
 
 VoicePool::SourceCommandInstallProof::SourceCommandInstallProof(
@@ -1561,12 +1728,14 @@ bool VoicePool::AbortClaimedVoice(VnVoiceHandle handle) noexcept {
 
 bool VoicePool::CommitPreparedVoice(VnVoiceHandle handle) noexcept {
     Slot* slot = SlotFor(handle);
-    if (slot == nullptr) {
+    if (slot == nullptr || slot->state.load(std::memory_order_acquire) != SlotState::Prepared) {
         return false;
     }
     SlotState expected = SlotState::Prepared;
+    const auto committedState = slot->nativeVariableStart.cut.Valid()
+        ? SlotState::VariableStartClaimed : SlotState::Claimed;
     if (!slot->state.compare_exchange_strong(
-            expected, SlotState::Claimed, std::memory_order_acq_rel,
+            expected, committedState, std::memory_order_acq_rel,
             std::memory_order_acquire)) {
         return false;
     }
@@ -1575,6 +1744,436 @@ bool VoicePool::CommitPreparedVoice(VnVoiceHandle handle) noexcept {
         m_highWater = active;
     }
     return true;
+}
+
+bool VoicePool::BindPreparedNativeReadCut(VnVoiceHandle handle,
+    const VariableNativeStartIdentity& identity) noexcept {
+    auto* slot = SlotFor(handle);
+    if (slot == nullptr || slot->state.load(std::memory_order_acquire) != SlotState::Prepared ||
+        !m_nativeVariableStartAuthority.Valid() || !identity.cut.Valid() ||
+        identity.nativeHandle != handle || identity.transport == 0 || slot->originalBodyMarker != 0 ||
+        slot->nativeVariableStart.cut.Valid() || slot->timelineVariableReadUse.Valid() || identity.sequence == 0 ||
+        !BindPreparedFirstOutputOrder(handle,
+            {identity.startFrame, identity.sequence, identity.executionOrdinalExclusive})) return false;
+    slot->nativeVariableStart = identity;
+    return true;
+}
+
+bool VoicePool::BindPreparedTimelineReadUse(VnVoiceHandle handle, VariableTimelineReadUseRef use,
+    VariablePlaybackOrder order, bool pendingPlacement) noexcept {
+    auto* slot = SlotFor(handle);
+    if (slot == nullptr || !use.Valid() || !m_timelineVariableStartAuthority.Valid() ||
+        slot->timelineVariableReadUse.Valid() || slot->nativeVariableStart.cut.Valid() ||
+        !BindPreparedFirstOutputOrder(handle, order)) return false;
+    slot->timelineVariableReadUse = use;
+    slot->firstOutputOrderFinal = !pendingPlacement;
+    return true;
+}
+
+bool VoicePool::ProveTimelineVariableInitializer(std::uint32_t renderSlot, std::uint32_t renderGeneration,
+    const TimelineArmTable::PlainAudioProof& arm, VariableTimelineInitializerProof* out) noexcept {
+    if (!HasTimelineVariableSourceRead(renderSlot, renderGeneration)) return true;
+    const auto& slot = m_slots[renderSlot];
+    if (m_timelineVariableStartAuthority.provePlain == nullptr ||
+        m_timelineVariableStartAuthority.apply == nullptr || m_firstOutputCommandConsumer == nullptr) return false;
+    const auto nativeHandle = (std::uint64_t{renderGeneration} << 32) | renderSlot;
+    return m_timelineVariableStartAuthority.provePlain(m_timelineVariableStartAuthority.context,
+        slot.timelineVariableReadUse, nativeHandle, arm, out);
+}
+
+bool VoicePool::ProveTimelineVariableInitializer(std::uint32_t renderSlot, std::uint32_t renderGeneration,
+    const TimelineArmTable::LaneAudioProof& arm, VariableTimelineInitializerProof* out) noexcept {
+    if (!HasTimelineVariableSourceRead(renderSlot, renderGeneration)) return true;
+    const auto& slot = m_slots[renderSlot];
+    if (m_timelineVariableStartAuthority.proveLane == nullptr ||
+        m_timelineVariableStartAuthority.apply == nullptr || m_firstOutputCommandConsumer == nullptr) return false;
+    const auto nativeHandle = (std::uint64_t{renderGeneration} << 32) | renderSlot;
+    return m_timelineVariableStartAuthority.proveLane(m_timelineVariableStartAuthority.context,
+        slot.timelineVariableReadUse, nativeHandle, arm, out);
+}
+
+bool VoicePool::ProveTimelineVariableInitializer(std::uint32_t renderSlot, std::uint32_t renderGeneration,
+    const TimelineArmTable::BoundAudioProof& arm, VariableTimelineInitializerProof* out) noexcept {
+    if (!HasTimelineVariableSourceRead(renderSlot, renderGeneration)) return true;
+    const auto& slot = m_slots[renderSlot];
+    if (m_timelineVariableStartAuthority.proveBound == nullptr ||
+        m_timelineVariableStartAuthority.apply == nullptr || m_firstOutputCommandConsumer == nullptr) return false;
+    const auto nativeHandle = (std::uint64_t{renderGeneration} << 32) | renderSlot;
+    return m_timelineVariableStartAuthority.proveBound(m_timelineVariableStartAuthority.context,
+        slot.timelineVariableReadUse, nativeHandle, arm, out);
+}
+
+void VoicePool::ApplyTimelineVariableInitializer(VariableTimelineInitializerProof& proof) noexcept {
+    if (!proof.Valid()) return;
+    const auto renderSlot = static_cast<std::uint32_t>(proof.nativeHandle_);
+    const auto renderGeneration = static_cast<std::uint32_t>(proof.nativeHandle_ >> 32);
+    assert(HasTimelineVariableSourceRead(renderSlot, renderGeneration));
+    auto& slot = m_slots[renderSlot];
+    slot.firstOutputOrder = proof.order_;
+    m_timelineVariableStartAuthority.apply(proof, m_firstOutputCommandContext, m_firstOutputCommandConsumer);
+    slot.firstOutputOrderFinal = true;
+    const auto base = static_cast<std::size_t>(renderSlot) * m_firstOutputStride;
+    for (std::uint32_t index = 0; index < m_firstOutputStride; ++index) {
+        auto& endpoint = m_firstOutputEndpoints[base + index];
+        if (endpoint.valid && endpoint.order.frame <= slot.firstOutputOrder.frame &&
+            (endpoint.order.sequence < slot.firstOutputOrder.sequence ||
+             (endpoint.order.sequence == slot.firstOutputOrder.sequence &&
+                endpoint.order.ordinal < slot.firstOutputOrder.ordinal))) endpoint.valid = false;
+    }
+    FinishTimelineVariableSourceRead(renderSlot, renderGeneration);
+    proof.Reset();
+}
+
+bool VoicePool::ProveTimelineVariableInitializer(std::uint32_t renderSlot, std::uint32_t renderGeneration,
+    const TimelineArmTable::AudioOperationClaim& arm, VariableTimelineInitializerProof* out) noexcept {
+    if (!HasTimelineVariableSourceRead(renderSlot, renderGeneration)) return true;
+    const auto& slot = m_slots[renderSlot];
+    if (m_timelineVariableStartAuthority.proveOperation == nullptr ||
+        m_timelineVariableStartAuthority.apply == nullptr || m_firstOutputCommandConsumer == nullptr) return false;
+    const auto nativeHandle = (std::uint64_t{renderGeneration} << 32) | renderSlot;
+    return m_timelineVariableStartAuthority.proveOperation(m_timelineVariableStartAuthority.context,
+        slot.timelineVariableReadUse, nativeHandle, arm, out);
+}
+
+VariableReadCutStatus VoicePool::TimelineEntryVariableSourcesStatus(
+    const FrontierActivationDescriptor& descriptor) const noexcept {
+    if (!descriptor.initialVariables.Valid()) return VariableReadCutStatus::Applied;
+    if (m_timelineVariableStartAuthority.entryReady == nullptr) return VariableReadCutStatus::Failed;
+    return m_timelineVariableStartAuthority.entryReady(m_timelineVariableStartAuthority.context, descriptor);
+}
+
+VariableReadCutStatus VoicePool::TimelineVariableSourcesStatus(std::uint32_t renderSlot,
+    std::uint32_t renderGeneration) const noexcept {
+    if (renderSlot >= m_slots.size()) return VariableReadCutStatus::Failed;
+    const auto& slot = m_slots[renderSlot];
+    if (slot.generation.load(std::memory_order_acquire) != renderGeneration ||
+        slot.state.load(std::memory_order_acquire) == SlotState::Free) return VariableReadCutStatus::Failed;
+    if (!slot.timelineVariableReadUse.Valid()) return VariableReadCutStatus::Applied;
+    if (!m_timelineVariableStartAuthority.Valid()) return VariableReadCutStatus::Failed;
+    const auto nativeHandle = (std::uint64_t{renderGeneration} << 32) | renderSlot;
+    return m_timelineVariableStartAuthority.ready(m_timelineVariableStartAuthority.context,
+        slot.timelineVariableReadUse, nativeHandle);
+}
+
+bool VoicePool::PendingTimelineVariableReadMatchesArm(TimelineArmToken arm) const noexcept {
+    if (!arm.Valid() || arm.renderSlot >= m_slots.size() ||
+        m_timelineVariableStartAuthority.pendingArm == nullptr) return false;
+    const auto& slot = m_slots[arm.renderSlot];
+    if (slot.generation.load(std::memory_order_acquire) != arm.renderGeneration ||
+        slot.state.load(std::memory_order_acquire) == SlotState::Free ||
+        !slot.timelineVariableReadUse.Valid()) return false;
+    const auto nativeHandle = (std::uint64_t{arm.renderGeneration} << 32) | arm.renderSlot;
+    return m_timelineVariableStartAuthority.pendingArm(m_timelineVariableStartAuthority.context,
+        slot.timelineVariableReadUse, nativeHandle, arm);
+}
+
+bool VoicePool::HasTimelineVariableSourceRead(std::uint32_t renderSlot,
+    std::uint32_t renderGeneration) const noexcept {
+    return renderSlot < m_slots.size() &&
+        m_slots[renderSlot].generation.load(std::memory_order_acquire) == renderGeneration &&
+        m_slots[renderSlot].timelineVariableReadUse.Valid();
+}
+
+void VoicePool::FinishTimelineVariableSourceRead(std::uint32_t renderSlot,
+    std::uint32_t renderGeneration) noexcept {
+    if (renderSlot < m_slots.size() &&
+        m_slots[renderSlot].generation.load(std::memory_order_relaxed) == renderGeneration)
+        m_slots[renderSlot].timelineVariableReadUse = {};
+}
+
+VariableTimelineReadUseRef VoicePool::TimelineVariableSourceRead(std::uint32_t renderSlot,
+    std::uint32_t renderGeneration) const noexcept {
+    return HasTimelineVariableSourceRead(renderSlot, renderGeneration)
+        ? m_slots[renderSlot].timelineVariableReadUse : VariableTimelineReadUseRef{};
+}
+
+bool VoicePool::FinishNativeVariableStartInstallation(VnVoiceHandle handle) noexcept {
+    auto* slot = SlotFor(handle);
+    if (slot == nullptr) return true;
+    const auto state = slot->state.load(std::memory_order_acquire);
+    if (state != SlotState::VariableStartWaiting) return state != SlotState::VariableStartClaimed;
+    return m_nativeVariableStartAuthority.installed(m_nativeVariableStartAuthority.context,
+                                                   slot->nativeVariableStart);
+}
+
+bool VoicePool::HasPendingNativeVariableStart(VnVoiceHandle handle) noexcept {
+    auto* slot = SlotFor(handle);
+    if (slot == nullptr) return false;
+    const auto state = slot->state.load(std::memory_order_acquire);
+    return state == SlotState::VariableStartClaimed || state == SlotState::VariableStartWaiting;
+}
+
+void VoicePool::RejectNativeVariableStart(VnVoiceHandle handle, NotificationQueue& notifications,
+    std::uint64_t blockIndex) noexcept {
+    if (HasPendingNativeVariableStart(handle))
+        ApplyStop(handle, 0, 0, notifications, blockIndex);
+}
+
+bool VoicePool::FinishNativeVariableStart(Slot& slot, bool activated) noexcept {
+    if (!slot.nativeVariableStart.cut.Valid()) return true;
+    const auto identity = slot.nativeVariableStart;
+    slot.nativeVariableStart = {};
+    if (m_nativeVariableStartAuthority.finish(m_nativeVariableStartAuthority.context, identity, activated))
+        return true;
+    slot.nativeVariableStart = identity;
+    return false;
+}
+
+void VoicePool::ActivatePendingNativeVariableStarts(NotificationQueue& notifications,
+    std::uint64_t blockIndex) noexcept {
+    for (auto& slot : m_slots) {
+        if (slot.state.load(std::memory_order_acquire) != SlotState::VariableStartWaiting) continue;
+        const auto identity = slot.nativeVariableStart;
+        const auto status = m_nativeVariableStartAuthority.ready(m_nativeVariableStartAuthority.context, identity);
+        if (status == VariableReadCutStatus::Waiting) continue;
+        if (status == VariableReadCutStatus::Applied && FinishNativeVariableStart(slot, true)) {
+            slot.state.store(SlotState::Rendering, std::memory_order_release);
+            continue;
+        }
+        ApplyStop(identity.nativeHandle, 0, 0, notifications, blockIndex);
+    }
+}
+
+bool VoicePool::BindPreparedFirstOutputOrder(VnVoiceHandle handle, VariablePlaybackOrder order) noexcept {
+    auto* slot = SlotFor(handle);
+    if (slot == nullptr || order.sequence == 0 ||
+        slot->state.load(std::memory_order_acquire) != SlotState::Prepared ||
+        slot->firstOutputPhase != FirstOutputPhase::Live || m_firstOutputCommandConsumer == nullptr) return false;
+    slot->firstOutputOrder = order;
+    slot->firstOutputPhase = FirstOutputPhase::Prepared;
+    return true;
+}
+
+bool VoicePool::FirstOutputProtected(const Slot& slot) noexcept {
+    return slot.firstOutputPhase != FirstOutputPhase::Live;
+}
+
+std::size_t VoicePool::FirstOutputStorageBytes() const noexcept {
+    return m_firstOutputEndpoints.size() * sizeof(DeferredFirstOutputEndpoint) +
+        m_slots.size() * (sizeof(VariablePlaybackOrder) + sizeof(FirstOutputPhase) +
+            sizeof(VariableTimelineReadUseRef));
+}
+
+void VoicePool::ClearFirstOutput(Slot& slot) noexcept {
+    slot.timelineVariableReadUse = {};
+    slot.firstOutputOrder = {};
+    slot.firstOutputOrderFinal = true;
+    slot.firstOutputPhase = FirstOutputPhase::Live;
+    const auto base = static_cast<std::size_t>(&slot - m_slots.data()) * m_firstOutputStride;
+    for (std::uint32_t index = 0; index < m_firstOutputStride; ++index) {
+        auto& endpoint = m_firstOutputEndpoints[base + index];
+        endpoint.valid = false;
+        endpoint.weightOwner = {};
+        endpoint.weightRemoved = false;
+    }
+}
+
+std::uint32_t VoicePool::FirstOutputCommandKey(const CommandRecord& command,
+    VnVoiceHandle& handle) const noexcept {
+    handle = 0;
+    std::uint32_t key = UINT32_MAX;
+    switch (command.opcode) {
+    case kOpcodeSetVoiceVolume:
+        if (command.flags != 0 && command.flags != kCommandFlagVariableWeightSegment) break;
+        handle = command.payload.setVoiceVolume.handle;
+        key = command.flags == kCommandFlagVariableWeightSegment ? 10u
+            : command.payload.setVoiceVolume.outputOnly != 0 ? 1u : 0u;
+        break;
+    case kOpcodeSetVoicePitch:
+        handle = command.payload.setVoicePitch.handle;
+        key = 2;
+        break;
+    case kOpcodeSetVoiceFilter:
+        handle = command.payload.setVoiceFilter.handle;
+        if (command.payload.setVoiceFilter.filterKind < 2) key = 3 + command.payload.setVoiceFilter.filterKind;
+        break;
+    case kOpcodeSetVoiceLowShelf:
+        handle = command.payload.setVoiceShelf.handle;
+        if (command.payload.setVoiceShelf.shelfKind < 2) key = 5 + command.payload.setVoiceShelf.shelfKind;
+        break;
+    case kOpcodeSetVoicePan:
+        handle = command.payload.setVoicePan.handle;
+        key = 7;
+        break;
+    case kOpcodeSetVoiceSpatialScalar:
+        handle = command.payload.setVoiceSpatialScalar.handle;
+        if (command.payload.setVoiceSpatialScalar.kind < 2) key = 8 + command.payload.setVoiceSpatialScalar.kind;
+        break;
+    case kOpcodeSetVoiceEffectParam: {
+        const bool compressor = command.flags == kCommandFlagPreparedCompressor;
+        handle = compressor ? command.payload.setCompressorEffectParam.host : command.payload.setVoiceEffectParam.handle;
+        const auto effectSlot = compressor ? command.payload.setCompressorEffectParam.slot : command.payload.setVoiceEffectParam.slot;
+        const auto type = compressor ? command.payload.setCompressorEffectParam.effectType : command.payload.setVoiceEffectParam.effectType;
+        if ((compressor && type != VN_EFFECT_COMPRESSOR) ||
+            (!compressor && (command.flags != 0 || type == VN_EFFECT_COMPRESSOR))) break;
+        const auto param = compressor ? 0u : command.payload.setVoiceEffectParam.paramIndex;
+        if (effectSlot < m_fxSlotsPerVoice && param < kMaxEffectParamCount) {
+            const auto physical = type == VN_EFFECT_THREE_BAND_TONE
+                ? (param <= kToneParamLowShelfFreqHz ? 0u : param <= kToneParamPeakQ ? 1u : 2u) : param;
+            key = kFirstOutputBuiltinEndpoints + effectSlot * kMaxEffectParamCount + physical;
+        }
+        break;
+    }
+    default:
+        break;
+    }
+    return key;
+}
+
+void VoicePool::SupersedeDeferredFirstOutput(const CommandRecord& command,
+    VnVoiceHandle initializingVoice) noexcept {
+    VnVoiceHandle handle = 0;
+    const auto key = FirstOutputCommandKey(command, handle);
+    if (handle == initializingVoice) return;
+    const auto* proof = m_commandMetadataProof;
+    if (proof != nullptr && proof->Valid() && proof->pool_ == this && proof->begun_ &&
+        proof->source_->Valid()) {
+        const auto token = proof->source_->Token();
+        if (static_cast<std::uint32_t>(handle) == token.renderSlot &&
+            static_cast<std::uint32_t>(handle >> 32) == token.renderGeneration) return;
+    }
+    auto* slot = key == UINT32_MAX ? nullptr : SlotForCommandMetadata(handle);
+    if (slot == nullptr || !FirstOutputProtected(*slot)) return;
+    const auto base = static_cast<std::size_t>(slot - m_slots.data()) * m_firstOutputStride;
+    m_firstOutputEndpoints[base + key].valid = false;
+    if (command.opcode == kOpcodeSetVoicePan && command.payload.setVoicePan.hasWidth != 0)
+        m_firstOutputEndpoints[base + 8].valid = false;
+}
+
+bool VoicePool::DeferVariableCommandUntilFirstOutput(const CommandRecord& command,
+    VariablePlaybackOrder order, std::uint32_t targetRevision, VariableNativeEffectIdentity effect,
+    VariableToneBandValues toneBand) noexcept {
+    VnVoiceHandle handle = 0;
+    const auto key = FirstOutputCommandKey(command, handle);
+    auto* slot = SlotFor(handle);
+    if (slot == nullptr || key == UINT32_MAX || !FirstOutputProtected(*slot)) return false;
+    const auto state = slot->state.load(std::memory_order_acquire);
+    if (!IsAudioRenderingState(state) && state != SlotState::Claimed &&
+        state != SlotState::VariableStartClaimed && state != SlotState::VariableStartWaiting) return false;
+    const auto& cut = slot->firstOutputOrder;
+    if (slot->firstOutputOrderFinal && order.frame <= cut.frame && (order.sequence < cut.sequence ||
+        (order.sequence == cut.sequence && order.ordinal < cut.ordinal))) return true;
+    const auto base = static_cast<std::size_t>(slot - m_slots.data()) * m_firstOutputStride;
+    auto& pending = m_firstOutputEndpoints[base + key];
+    if (pending.valid && (order.frame < pending.order.frame ||
+        (order.frame == pending.order.frame && (order.sequence < pending.order.sequence ||
+            (order.sequence == pending.order.sequence && order.ordinal < pending.order.ordinal))))) return true;
+    pending.valid = true;
+    pending.order = order;
+    pending.targetRevision = targetRevision;
+    pending.nativeEffect = effect;
+    pending.toneBand = toneBand;
+    pending.weightOwner = {};
+    pending.command = command;
+    if (command.opcode == kOpcodeSetVoicePan && command.payload.setVoicePan.hasWidth != 0) {
+        pending.command.payload.setVoicePan.hasWidth = 0;
+        CommandRecord width{};
+        width.opcode = kOpcodeSetVoiceSpatialScalar;
+        width.payload.setVoiceSpatialScalar.handle = handle;
+        width.payload.setVoiceSpatialScalar.kind = kSpatialScalarKindWidth;
+        width.payload.setVoiceSpatialScalar.value = command.payload.setVoicePan.width;
+        (void)DeferVariableCommandUntilFirstOutput(width, order, targetRevision);
+    }
+    return true;
+}
+
+void VoicePool::ApplyDeferredFirstOutput(Slot& slot) noexcept {
+    if (slot.firstOutputPhase != FirstOutputPhase::FirstFolded) return;
+    slot.firstOutputPhase = FirstOutputPhase::Live;
+    const auto base = static_cast<std::size_t>(&slot - m_slots.data()) * m_firstOutputStride;
+    for (std::uint32_t index = 0; index < m_firstOutputStride; ++index) {
+        auto& endpoint = m_firstOutputEndpoints[base + index];
+        if (!endpoint.valid) continue;
+        endpoint.valid = false;
+        if (endpoint.nativeEffect.generation != 0) {
+            const auto effectSlot = endpoint.command.flags == kCommandFlagPreparedCompressor
+                ? endpoint.command.payload.setCompressorEffectParam.slot : endpoint.command.payload.setVoiceEffectParam.slot;
+            if (effectSlot >= slot.render.fxSlotCount) continue;
+            const auto& installed = slot.render.fxSlotEffectRef[effectSlot];
+            if (installed.type != endpoint.nativeEffect.type || installed.poolIndex != endpoint.nativeEffect.poolIndex ||
+                installed.generation != endpoint.nativeEffect.generation) continue;
+        }
+        if (endpoint.toneBand.valid) {
+            const auto& command = endpoint.command.payload.setVoiceEffectParam;
+            if (command.effectType != VN_EFFECT_THREE_BAND_TONE || command.slot >= slot.render.fxSlotCount ||
+                slot.render.fxSlotEffectRef[command.slot].type != VN_EFFECT_THREE_BAND_TONE) continue;
+            auto* tone = static_cast<ToneEffectState*>(slot.render.fxSlots[command.slot].state);
+            if (tone == nullptr) continue;
+            const auto& band = endpoint.toneBand;
+            // The command installs one prepared section; its entire scalar image must match it.
+            if (command.paramIndex <= kToneParamLowShelfFreqHz) {
+                tone->lowShelfGainDb = band.gainDb;
+                tone->lowShelfFreqHz = band.frequencyHz;
+                tone->lowShelfEverActive = tone->lowShelfEverActive || band.gainDb != 0.0f;
+            } else if (command.paramIndex <= kToneParamPeakQ) {
+                tone->peakGainDb = band.gainDb;
+                tone->peakFreqHz = band.frequencyHz;
+                tone->peakQ = band.q;
+                tone->peakEverActive = tone->peakEverActive || band.gainDb != 0.0f;
+            } else {
+                tone->highShelfGainDb = band.gainDb;
+                tone->highShelfFreqHz = band.frequencyHz;
+                tone->highShelfEverActive = tone->highShelfEverActive || band.gainDb != 0.0f;
+            }
+        }
+        if (endpoint.weightOwner.Valid()) {
+            (void)slot.render.ApplyVariableWeightControl(endpoint.weightOwner, endpoint.weightSegment);
+            if (endpoint.weightRemoved) {
+                for (std::uint32_t weight = 0; weight < slot.render.variableWeightControlCount; ++weight) {
+                    auto& binding = slot.render.variableWeightControls[weight];
+                    if (binding.owner == endpoint.weightOwner &&
+                        binding.segment.segmentGeneration == endpoint.weightSegment.segmentGeneration) {
+                        binding.active = false;
+                        break;
+                    }
+                }
+            }
+        } else {
+            m_firstOutputCommandConsumer(m_firstOutputCommandContext, endpoint.command);
+        }
+    }
+}
+
+VoicePool::DeferredFirstOutputEndpoint* VoicePool::FindFirstOutputWeightEndpoint(
+    Slot& slot, VariableWeightControlIdentity owner, bool create) noexcept {
+    const auto base = static_cast<std::size_t>(&slot - m_slots.data()) * m_firstOutputStride +
+        kFirstOutputBuiltinEndpoints + m_fxSlotsPerVoice * kMaxEffectParamCount;
+    const auto count = slot.render.variableWeightControlCount;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        if (slot.render.variableWeightControls[index].owner == owner)
+            return &m_firstOutputEndpoints[base + index];
+    }
+    DeferredFirstOutputEndpoint* empty = nullptr;
+    for (std::uint32_t index = count; index < kSelectionPathNodeCapacity; ++index) {
+        auto& endpoint = m_firstOutputEndpoints[base + index];
+        if (endpoint.weightOwner == owner) return &endpoint;
+        if (!endpoint.weightOwner.Valid() && empty == nullptr) empty = &endpoint;
+    }
+    return create ? empty : nullptr;
+}
+
+void VoicePool::PrepareFirstOutputTimelineWeights(Slot& slot) noexcept {
+    if (!FirstOutputProtected(slot)) return;
+    auto& span = slot.render.timelineEvents;
+    const auto cutoff = SelectAuthoredRootStop(span, m_blockFrames, slot.render.authoredRootStopFrame,
+        slot.render.authoredRootStopControl.authoredStopOperation);
+    const auto handle = MakeHandle(static_cast<std::uint32_t>(&slot - m_slots.data()),
+        slot.generation.load(std::memory_order_relaxed));
+    for (std::uint32_t index = 0; index < span.eventCount; ++index) {
+        auto& event = span.events[index];
+        if (event.kind != TimelineEventKind::VariableWeight || !event.variableWeightOwner.Valid() ||
+            event.offset >= m_blockFrames || !TimelineEventPrecedesRootStop(span, index,
+                m_blockFrames, cutoff, slot.render.authoredRootStopApplied)) continue;
+        const auto& cut = slot.firstOutputOrder;
+        const auto& order = event.order;
+        const auto frame = event.frontierProof.state == FrontierEventState::Legacy
+            ? span.quantumIndex * m_blockFrames + event.offset : order.executeFrame;
+        const bool included = frame <= cut.frame && (order.logicCommitSequence < cut.sequence ||
+            (order.logicCommitSequence == cut.sequence && order.executionOrdinal < cut.ordinal));
+        if (!included) (void)ApplyOwnedVariableWeightSegment(handle, event.variableWeightOwner,
+            event.variableWeight);
+        event.firstOutputDeferred = true;
+    }
 }
 
 VoicePool::PreparedCommitProof::PreparedCommitProof(PreparedCommitProof&& other) noexcept
@@ -1727,7 +2326,8 @@ VoicePool::OriginalVoiceDisposal VoicePool::TryDisposeOriginalTimelineVoice(
         return Result::AlreadyReleased;
     const auto state = slot.state.load(std::memory_order_acquire);
     if (state == SlotState::PreparedCommitHeld || state == SlotState::CommandInstallHeld ||
-        state == SlotState::ReleaseHeld || state == SlotState::OriginalCallbackHeld) return Result::Deferred;
+        state == SlotState::ReleaseHeld || state == SlotState::OriginalCallbackHeld ||
+        state == SlotState::TimelineCallbackHeld) return Result::Deferred;
     if (state != SlotState::Claimed && state != SlotState::Rendering) return Result::Refused;
     auto expected = state;
     if (!slot.state.compare_exchange_strong(expected, SlotState::ReleaseHeld,
@@ -1786,6 +2386,8 @@ bool VoicePool::CancelPreparedVoice(VnVoiceHandle handle) noexcept {
         slot->render.sourceTerminal->bypassResult.store(
             SourceTerminalKind::Cancelled, std::memory_order_release);
     slot->render = VoiceRenderContext{};
+    slot->nativeVariableStart = {};
+    ClearFirstOutput(*slot);
     PublishRelease(*slot);
     CompleteOriginalSourceBodyDisposition(*slot);
     slot->state.store(SlotState::Free, std::memory_order_release);
@@ -1824,6 +2426,8 @@ bool VoicePool::CancelOriginalPreparedVoice(const OriginalVoiceOwner& owner) noe
         slot->render.sourceTerminal->bypassResult.store(
             SourceTerminalKind::Cancelled, std::memory_order_release);
     slot->render = VoiceRenderContext{};
+    slot->nativeVariableStart = {};
+    ClearFirstOutput(*slot);
     PublishRelease(*slot);
     CompleteOriginalSourceBodyDisposition(*slot);
     slot->state.store(SlotState::Free, std::memory_order_release);
@@ -1890,6 +2494,8 @@ bool VoicePool::BindCompletionProgress(
 
 void VoicePool::InitializePlay(Slot& slot, VnVoiceHandle sourceIdentity,
     std::uint64_t sourceStartFrame, std::uint64_t blockIndex) {
+    if (slot.firstOutputPhase == FirstOutputPhase::Prepared)
+        slot.firstOutputPhase = FirstOutputPhase::AwaitingFirstFold;
     VoiceRenderContext& render = slot.render;
     if (render.completionProgress != nullptr &&
         CatchUpCompletionProgressFirstRender(
@@ -1918,9 +2524,12 @@ void VoicePool::InitializePlay(Slot& slot, VnVoiceHandle sourceIdentity,
 void VoicePool::ApplyPlay(VnVoiceHandle handle, VnVoiceHandle sourceIdentity,
     std::uint64_t sourceStartFrame, std::uint64_t blockIndex) {
     Slot* slot = SlotFor(handle);
-    if (slot != nullptr && slot->state.load(std::memory_order_acquire) == SlotState::Claimed) {
+    const auto state = slot == nullptr ? SlotState::Free : slot->state.load(std::memory_order_acquire);
+    if (state == SlotState::Claimed || state == SlotState::VariableStartClaimed) {
         InitializePlay(*slot, sourceIdentity, sourceStartFrame, blockIndex);
-        slot->state.store(SlotState::Rendering, std::memory_order_release);
+        slot->state.store(state == SlotState::VariableStartClaimed
+            ? SlotState::VariableStartWaiting : m_originalSourceCallbackOpen && slot->render.timelineGated
+                ? SlotState::TimelineCallbackHeld : SlotState::Rendering, std::memory_order_release);
     }
 }
 
@@ -2181,6 +2790,9 @@ void VoicePool::ApplyStop(VnVoiceHandle handle, std::uint32_t fadeMs,
     if (slot == nullptr) {
         return; // the voice ended between enqueue and apply: benign no-op
     }
+    // An unstarted dependent voice has no audible tail to fade.
+    if (slot->nativeVariableStart.cut.Valid() || FirstOutputProtected(*slot)) fadeMs = fadeFrames = 0;
+    ClearFirstOutput(*slot);
     // Resolve the fade length in frames. A caller may specify it directly in
     // frames (the steal declick, bounded to one block regardless of block
     // size) or in milliseconds (the public Vn_Stop contract); frames win when
@@ -2484,7 +3096,7 @@ void VoicePool::ReleaseParkOwnedToken(StreamParkTokenRef ref) {
     ReleaseStreamParkToken(ref, StreamParkTokenState::ParkOwned);
 }
 
-void VoicePool::BeginAudioBlock() {
+void VoicePool::BeginAudioBlock(std::uint64_t blockIndex) {
     assert(!m_originalSourceCallbackOpen);
     m_originalSourceCallbackOpen = true;
     ResetStreamParkCaptureBudget();
@@ -2494,7 +3106,9 @@ void VoicePool::BeginAudioBlock() {
         // Competing logic ReleaseHeld wins or this actual callback holds the
         // native slot. A stale sampled Rendering state grants no metadata use.
         AcquireOriginalCallbackStorage(slot);
+        if (ConsumeOriginalSourceBodyRetirement(slot, blockIndex)) continue;
         if (!IsAudioRenderingState(slot.state.load(std::memory_order_acquire))) continue;
+        ApplyDeferredFirstOutput(slot);
         slot.stagedCompletionProgress = nullptr;
         slot.stagedCompletionUpdate = {};
         slot.completionProgressStaged = false;
@@ -2513,6 +3127,7 @@ void VoicePool::EndAudioBlock() noexcept {
             slot.state.load(std::memory_order_acquire) == SlotState::Quarantined) continue;
         ReturnOriginalCallbackStorage(slot, lease);
     }
+    ReturnTimelineCallbackStorage();
     m_originalSourceCallbackOpen = false;
 }
 
@@ -2666,7 +3281,23 @@ bool VoicePool::ApplyVariableWeightSegment(
 bool VoicePool::ApplyOwnedVariableWeightSegment(VnVoiceHandle handle,
     VariableWeightControlIdentity owner, const WeightSegmentV1& segment) noexcept {
     auto* slot = SlotFor(handle);
-    return slot != nullptr && slot->render.ApplyVariableWeightControl(owner, segment);
+    if (slot == nullptr) return false;
+    if (!FirstOutputProtected(*slot)) return slot->render.ApplyVariableWeightControl(owner, segment);
+    float checked = 0.0f;
+    if (!owner.Valid() || !ResolveWeightSegment(segment, segment.startFrame, &checked)) return false;
+    for (std::uint32_t index = 0; index < slot->render.variableWeightControlCount; ++index) {
+        const auto& binding = slot->render.variableWeightControls[index];
+        if (binding.owner == owner && (!binding.active ||
+            segment.segmentGeneration <= binding.segment.segmentGeneration)) return false;
+    }
+    auto* endpoint = FindFirstOutputWeightEndpoint(*slot, owner, true);
+    if (endpoint == nullptr || (endpoint->valid && (endpoint->weightRemoved ||
+        segment.segmentGeneration <= endpoint->weightSegment.segmentGeneration))) return false;
+    *endpoint = {};
+    endpoint->valid = true;
+    endpoint->weightOwner = owner;
+    endpoint->weightSegment = segment;
+    return true;
 }
 
 bool VoicePool::PrepareVariableWeightControls(VnVoiceHandle handle,
@@ -2702,6 +3333,27 @@ bool VoicePool::RemoveOwnedVariableWeightSegment(VnVoiceHandle handle,
     auto* slot = SlotFor(handle);
     if (slot == nullptr || !owner.Valid()) return false;
     auto& render = slot->render;
+    if (FirstOutputProtected(*slot)) {
+        auto* endpoint = FindFirstOutputWeightEndpoint(*slot, owner, false);
+        if (endpoint != nullptr && endpoint->valid) {
+            if (endpoint->weightRemoved || endpoint->weightSegment.segmentGeneration != expectedGeneration) return false;
+            endpoint->weightRemoved = true;
+            return true;
+        }
+        for (std::uint32_t index = 0; index < render.variableWeightControlCount; ++index) {
+            const auto& binding = render.variableWeightControls[index];
+            if (binding.owner != owner) continue;
+            if (!binding.active || binding.segment.segmentGeneration != expectedGeneration) return false;
+            assert(endpoint != nullptr);
+            *endpoint = {};
+            endpoint->valid = true;
+            endpoint->weightOwner = owner;
+            endpoint->weightSegment = binding.segment;
+            endpoint->weightRemoved = true;
+            return true;
+        }
+        return false;
+    }
     for (std::uint32_t index = 0; index < render.variableWeightControlCount; ++index) {
         auto& binding = render.variableWeightControls[index];
         if (binding.owner != owner) continue;
@@ -3193,7 +3845,7 @@ void VoicePool::ApplyBusTombstones(const std::uint8_t* alive,
     };
     for (Slot& slot : m_slots) {
         const SlotState state = slot.state.load(std::memory_order_relaxed);
-        if (!IsAudioRenderingState(state)) {
+        if (!IsAudioRenderingState(state) && state != SlotState::VariableStartWaiting) {
             // Claimed contexts remain logic-thread-owned until ApplyPlay
             // publishes them; touching one here would race its construction.
             continue;
@@ -3416,6 +4068,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) {
                 continue;
             }
+            PrepareFirstOutputTimelineWeights(slot);
             beginCompressors(slot.render);
             slot.render.monitorRenderSlot = i;
             slot.render.monitorRenderGeneration =
@@ -3433,6 +4086,9 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             const StageResult result = RenderVoiceBlock(
                 slot.render, arena, busPlanes, blockFrames, m_mixChannels,
                 m_mixLayout, sourceFrameBegin);
+            if (slot.firstOutputPhase == FirstOutputPhase::AwaitingFirstFold &&
+                slot.render.cascade.runnable && slot.render.cascade.produced > 0)
+                slot.firstOutputPhase = FirstOutputPhase::FirstFolded;
             if (result.phase != SourcePhase::Done) {
                 m_dynamicRoutes.PublishVoiceTap(
                     slot.render.dynamicSourceIdentity,
@@ -3478,6 +4134,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
         if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) {
             continue;
         }
+        PrepareFirstOutputTimelineWeights(slot);
         beginCompressors(slot.render);
         slot.render.monitorRenderSlot = i;
         slot.render.monitorRenderGeneration =
@@ -3553,6 +4210,8 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
         if (slot.render.cascade.runnable) {
             FoldVoiceIntoBuses(slot.render, busPlanes, blockFrames,
                                m_mixChannels, m_mixLayout, sourceFrameBegin);
+            if (slot.firstOutputPhase == FirstOutputPhase::AwaitingFirstFold &&
+                slot.render.cascade.produced > 0) slot.firstOutputPhase = FirstOutputPhase::FirstFolded;
         }
         publishCompressors(i, slot);
         (void)StageCompletionProgress(
@@ -3572,6 +4231,7 @@ void VoicePool::QuarantineSlot(std::uint32_t slotIndex, Slot& slot,
                                std::uint64_t blockIndex) {
     const VnVoiceHandle handle = MakeHandle(
         slotIndex, slot.generation.load(std::memory_order_relaxed));
+    ClearFirstOutput(slot);
     // Deliberately not ReleaseSlot. Every step that call makes hands something
     // back to another thread while a writer may still be using it: dropping the
     // PCM use count lets the logic side unregister a buffer the cascade is
@@ -4108,6 +4768,10 @@ void VoicePool::NoteMonitorVoiceRetired(VnVoiceHandle publicHandle) noexcept {
 }
 
 void VoicePool::ReleaseSlot(Slot& slot) {
+    ClearFirstOutput(slot);
+    const bool nativeFinished = FinishNativeVariableStart(slot, false);
+    assert(nativeFinished);
+    (void)nativeFinished;
     if (slot.state.load(std::memory_order_acquire) == SlotState::ReleaseHeld) {
         if (const auto hook = m_releaseHeldHookForTest.exchange(nullptr, std::memory_order_acq_rel))
             hook(m_releaseHeldContextForTest.load(std::memory_order_relaxed));

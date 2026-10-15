@@ -3,6 +3,7 @@
 #include "harken/core/CompositeCompletionOwnerPool.h"
 #include "harken/core/OccurrenceStatePool.h"
 #include "harken/core/ScheduledTransactionPool.h"
+#include "harken/core/ImmediateActionLane.h"
 
 #include <algorithm>
 #include <limits>
@@ -670,7 +671,8 @@ bool QueueInstanceTable::ProveFrontierInitialCompletion(const FrontierGroupBindi
     const ScheduledTransactionPool& pool, std::uint64_t sourceSequence,
     const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool* composites,
     std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame,
-    std::uint64_t completedAudioSequence, FrontierInitialCompletionProof* out) noexcept {
+    std::uint64_t completedAudioSequence, FrontierInitialCompletionProof* out,
+    const QueueFrontierSourceWaitContext* sourceWait) noexcept {
     if (out == nullptr || out->Valid() || sourceSequence == 0 || !binding.Valid() ||
         binding.role != FrontierGroupRole::Future || !binding.queueInitial.Valid() ||
         binding.queueConditional.Valid() || binding.variableSide.Valid() ||
@@ -733,18 +735,24 @@ bool QueueInstanceTable::ProveFrontierInitialCompletion(const FrontierGroupBindi
         !SameCompletionOwner(row->pendingCompletion.owner, row->pendingCompletionOwner) ||
         row->pendingCompletionIsLogicalBoundary || quantumStartFrame >= quantumEndFrame)
         return fail();
-    const auto status = ProveConditionalForQuantum({conditional.slot, conditional.generation},
+    SourceWaitAuthority authority;
+    if (sourceWait != nullptr && !ProveSourceWaitAuthority(binding, lease, pool, *sourceWait,
+            quantumStartFrame, quantumEndFrame, completedAudioSequence, &authority)) return fail();
+    const auto status = ProveConditionalCompletion({conditional.slot, conditional.generation},
         {conditional.pendingVersion}, occurrences,
         composites == nullptr ? EmptyCompositeOwners() : *composites,
-        quantumStartFrame, quantumEndFrame, completedAudioSequence, true, &out->completion_);
+        quantumStartFrame, quantumEndFrame, completedAudioSequence, true, &out->completion_,
+        sourceWait == nullptr ? nullptr : &authority);
     const auto& proof = out->completion_;
     if (status != QueueConditionalProofStatus::ReadyToActivate ||
-        proof.completionMode != QueueConditionalCompletionMode::InQuantum ||
+        (proof.completionMode != QueueConditionalCompletionMode::InQuantum &&
+         proof.completionMode != QueueConditionalCompletionMode::SourceWait) ||
         !SameDecision(proof.decision, binding.operation.group.decision) ||
         !SameOccurrence(proof.currentOccurrence, conditional.current) ||
         !SameOccurrence(proof.successorOccurrence, conditional.successor) ||
-        binding.operation.order.executeFrame < quantumStartFrame ||
-        binding.operation.order.executeFrame - quantumStartFrame != proof.completion.activationOffset)
+        (proof.completionMode != QueueConditionalCompletionMode::SourceWait &&
+         (binding.operation.order.executeFrame < quantumStartFrame ||
+          binding.operation.order.executeFrame - quantumStartFrame != proof.completion.activationOffset)))
         return fail();
     return true;
 }
@@ -793,6 +801,192 @@ bool QueueInstanceTable::BindFrontierConditional(QueueInstanceToken token,
     return true;
 }
 
+bool QueueInstanceTable::MatchesPrivatePendingFrontierBinding(
+    const OriginalConditionalFutureReservation& cap, const OriginalLifetimePin& parent,
+    const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool,
+    const TransitionInstancePool& transitions, const FrontierGroupBinding* counterpart,
+    const CompositeCompletionOwnerPool* composites) const noexcept {
+    if (!binding.Valid() || binding.variableSide.Valid() || binding.operation.kind != FrontierOperationKind::Dependent ||
+        !IsCurrentOriginalConditionalFutureReservation(cap) || !IsOriginalLifetimePinFor(parent, cap.Token())) return false;
+    const auto& original = originalConditionalRows_[cap.row_];
+    const auto& row = rows_[original.queue.slot];
+    Plan03PageGroupView native{};
+    if (original.parent.marker_ != parent.marker_ || row.frontierPool != &pool || row.frontierOwner != binding.operation.owner ||
+        row.world != binding.operation.world || row.rootInstance != binding.operation.owner.child ||
+        row.initialActivationSequence.load(std::memory_order_acquire) != 0 ||
+        row.conditionalReplacementReserved.load(std::memory_order_acquire) ||
+        row.resetReserved.load(std::memory_order_acquire) || row.resetPending.load(std::memory_order_acquire) ||
+        !pool.PrivateImmediateLaneFrontierRollbackReady(binding.operation.group) ||
+        !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
+        native.lease == nullptr || native.lease->Capture().state != AudioSliceState::Ready) return false;
+    const auto matchesConditional = [&](const FrontierQueueConditionalIdentity& identity) noexcept {
+        return identity.Valid() && identity.slot == original.queue.slot && identity.generation == original.queue.generation &&
+            identity.currentVersion == original.currentState.version && identity.pendingVersion == original.version.version &&
+            SameOccurrence(identity.current, original.current) && SameOccurrence(identity.successor, original.successor) &&
+            SameDecision(binding.operation.group.decision, original.decision);
+    };
+    if (counterpart != nullptr) {
+        const bool preludeRole = binding.role == FrontierGroupRole::EntryMember && binding.operation.group.sliceIndex == 0;
+        const bool targetRole = binding.role == FrontierGroupRole::Future && binding.operation.group.sliceIndex == 1;
+        if ((!preludeRole && !targetRole) || !counterpart->Valid() || counterpart->variableSide.Valid()) return false;
+        const auto& prelude = preludeRole ? binding : *counterpart;
+        const auto& target = targetRole ? binding : *counterpart;
+        Plan03PageGroupView source{}, destination{};
+        TransitionInstanceSnapshot transition{};
+        std::uint64_t currentStart = UINT64_MAX, currentComplete = 0;
+        const bool single = row.pendingCompletionOwner.kind == CompletionOwnerKind::SingleQueue;
+        if (row.pendingCompletionIsLogicalBoundary || !EmptyRetiredSourceProof(row.pendingRetiredSource) ||
+            row.pendingCompletionIsLogicalBoundary != original.logicalBoundary ||
+            row.pendingCompletionHasLogicalFloor != original.logicalFloor ||
+            !SameCompletionOwner(row.pendingCompletionOwner, original.completionOwner)) return false;
+        if (single) {
+            const auto& completion = row.pendingCompletion;
+            if (!IsBoundKnownCompletionPredicate(completion) ||
+                !SameCompletionOwner(completion.owner, original.completionOwner) ||
+                !SameOccurrence(completion.occurrence, original.current) ||
+                completion.renderGeneration != original.completion.renderGeneration ||
+                !SamePlayableProgramKey(completion.program, original.completion.program) ||
+                completion.totalLogicalOutputFrames != original.completion.totalLogicalOutputFrames ||
+                completion.playbackFactsRevision != original.completion.playbackFactsRevision ||
+                completion.progressBaselineOutputFrames != original.completion.progressBaselineOutputFrames ||
+                completion.progressBaselineRevision != original.completion.progressBaselineRevision ||
+                completion.progressBaselineCompletedThroughBlockSequence != original.completion.progressBaselineCompletedThroughBlockSequence)
+                return false;
+            currentStart = completion.absoluteLogicalStartFrame;
+            currentComplete = completion.absoluteLogicalCompleteFrame;
+        } else {
+            CompositeCompletionOwnerInfo info{};
+            const auto& owner = row.pendingCompletionOwner;
+            if (owner.kind != CompletionOwnerKind::Composite || composites == nullptr ||
+                !composites->Capture(owner.composite, &info) || info.leafCount == 0 ||
+                !SameOccurrence(info.composedOccurrence, original.current) || info.aggregateRevision != owner.factsRevision)
+                return false;
+            for (std::uint32_t index = 0; index < info.leafCount; ++index) {
+                KnownScheduleLeafV1 leaf{};
+                if (!composites->CaptureLeaf(owner.composite, index, &leaf) ||
+                    !IsBoundKnownCompletionPredicate(leaf.predicate) ||
+                    !SameOccurrence(leaf.occurrence, leaf.predicate.occurrence) ||
+                    leaf.renderGeneration != leaf.predicate.renderGeneration ||
+                    !SameCompletionOwner(leaf.predicate.owner,
+                        CompletionOwnerRef::Composite(owner.composite, leaf.predicate.playbackFactsRevision)) ||
+                    leaf.absoluteLeafStartFrame != leaf.predicate.absoluteLogicalStartFrame) return false;
+                currentStart = std::min(currentStart, leaf.absoluteLeafStartFrame);
+                currentComplete = std::max(currentComplete, leaf.predicate.absoluteLogicalCompleteFrame);
+            }
+            if (currentComplete != info.absoluteLogicalCompleteFrame) return false;
+        }
+        if (row.pendingCompletionHasLogicalFloor)
+            currentComplete = std::max(currentComplete, row.pendingLogicalCompletionFrame);
+        if (prelude.role != FrontierGroupRole::EntryMember || prelude.operation.group.sliceIndex != 0 ||
+            target.role != FrontierGroupRole::Future || target.operation.group.sliceIndex != 1 ||
+            prelude.operation.kind != FrontierOperationKind::Dependent || target.operation.kind != FrontierOperationKind::Dependent ||
+            prelude.entry != target.entry || prelude.primary != target.primary ||
+            prelude.operation.owner != target.operation.owner || prelude.operation.world != target.operation.world ||
+            prelude.operation.transport != target.operation.transport ||
+            !SameDecision(prelude.operation.group.decision, original.decision) ||
+            !SameDecision(target.operation.group.decision, original.decision) ||
+            !prelude.transition.Valid() || prelude.transition.slot != target.transition.slot ||
+            prelude.transition.generation != target.transition.generation || prelude.transition.audibleFrame != target.transition.audibleFrame ||
+            prelude.operation.order.executeFrame != prelude.transition.audibleFrame ||
+            prelude.operation.order.logicCommitSequence != target.operation.order.logicCommitSequence ||
+            prelude.operation.order.executionOrdinal != target.operation.order.executionOrdinal ||
+            prelude.operation.order.executeFrame >= target.operation.order.executeFrame ||
+            prelude.operation.order.executeFrame <= currentStart ||
+            prelude.operation.order.executeFrame >= currentComplete ||
+            target.operation.order.executeFrame < currentComplete ||
+            !pool.PrivateImmediateLaneFrontierRollbackReady(counterpart->operation.group) ||
+            !pool.ResolvePlan03GroupSliceProducer(prelude.operation.group, &source) || source.frontier != &prelude ||
+            !pool.ResolvePlan03GroupSliceProducer(target.operation.group, &destination) || destination.frontier != &target ||
+            source.lease == nullptr || destination.lease == nullptr ||
+            source.lease->Capture().state != AudioSliceState::Ready || destination.lease->Capture().state != AudioSliceState::Ready ||
+            source.sourceControlCount != 1 || destination.sourceControlCount != 1 ||
+            source.memberCount != 2 || destination.memberCount != 2 || source.members == nullptr || destination.members == nullptr ||
+            !transitions.Capture({prelude.transition.slot, prelude.transition.generation}, &transition) ||
+            transition.state != TransitionAudibleGateState::Replaceable || transition.retiredAtAudioSequence != 0 ||
+            transition.audibleFrame != prelude.transition.audibleFrame) return false;
+        for (std::uint16_t member = 0; member < 2; ++member) {
+            const auto& a = source.members[member];
+            const auto& b = destination.members[member];
+            if (!a.Valid() || a.slot != b.slot || a.generation != b.generation ||
+                a.renderSlot != b.renderSlot || a.renderGeneration != b.renderGeneration) return false;
+        }
+        if (single && source.members[0].renderGeneration != row.pendingCompletion.renderGeneration) return false;
+        if (prelude.queueConditional.Valid())
+            return !prelude.queueInitial.Valid() && !target.queueInitial.Valid() &&
+                matchesConditional(prelude.queueConditional) && matchesConditional(target.queueConditional) &&
+                !prelude.canonicalInitialCompletion && !target.canonicalInitialCompletion &&
+                target.operation.order.executeFrame == currentComplete;
+        return prelude.queueInitial.Valid() && prelude.queueInitial == target.queueInitial &&
+            !target.queueConditional.Valid() && row.frontierInitial == &prelude &&
+            prelude.queueInitial.slot == original.queue.slot && prelude.queueInitial.generation == original.queue.generation &&
+            prelude.queueInitial.version == original.currentState.version &&
+            prelude.queueInitial.programSemanticFingerprint == original.programSemanticFingerprint &&
+            !prelude.canonicalInitialCompletion && target.canonicalInitialCompletion &&
+            matchesConditional(target.queueInitialCompletion) &&
+            single && SameDecision(original.completionOwner.singleDecision, original.decision);
+    }
+    if (binding.role == FrontierGroupRole::EntryMember) {
+        if (binding.operation.group.sliceIndex != 0 || !binding.queueConditional.Valid() || binding.queueInitial.Valid() ||
+            native.sourceControlCount != 0 || !matchesConditional(binding.queueConditional)) return false;
+        if (!binding.transition.Valid()) return true;
+        TransitionInstanceSnapshot transition{};
+        return binding.operation.order.executeFrame == binding.transition.audibleFrame &&
+            transitions.Capture({binding.transition.slot, binding.transition.generation}, &transition) &&
+            transition.state == TransitionAudibleGateState::Replaceable &&
+            transition.audibleFrame == binding.transition.audibleFrame && transition.retiredAtAudioSequence == 0;
+    }
+    if (binding.role != FrontierGroupRole::Future || binding.operation.group.sliceIndex != 1 ||
+        !binding.queueInitial.Valid() || binding.queueConditional.Valid() || !binding.transition.Valid() ||
+        row.frontierInitial == nullptr) return false;
+    const auto& initial = *row.frontierInitial;
+    Plan03PageGroupView source{};
+    TransitionInstanceSnapshot transition{};
+    if (!initial.Valid() || initial.role != FrontierGroupRole::EntryMember || initial.operation.kind != FrontierOperationKind::Dependent ||
+        initial.operation.group.sliceIndex != 0 || initial.entry != binding.entry || initial.primary != binding.primary ||
+        initial.operation.owner != binding.operation.owner || initial.queueInitial != binding.queueInitial ||
+        !SameDecision(initial.operation.group.decision, binding.operation.group.decision) ||
+        initial.transition.slot != binding.transition.slot || initial.transition.generation != binding.transition.generation ||
+        initial.transition.audibleFrame != binding.transition.audibleFrame ||
+        initial.operation.order.executeFrame != binding.transition.audibleFrame || !(initial.operation.order < binding.operation.order) ||
+        binding.queueInitial.slot != original.queue.slot || binding.queueInitial.generation != original.queue.generation ||
+        binding.queueInitial.version != original.currentState.version ||
+        binding.queueInitial.programSemanticFingerprint != original.programSemanticFingerprint ||
+        !pool.PrivateImmediateLaneFrontierRollbackReady(initial.operation.group) ||
+        !pool.ResolvePlan03GroupSliceProducer(initial.operation.group, &source) || source.frontier != &initial ||
+        source.lease == nullptr || source.lease->Capture().state != AudioSliceState::Ready ||
+        source.sourceControlCount != native.sourceControlCount || source.memberCount != native.memberCount ||
+        !transitions.Capture({binding.transition.slot, binding.transition.generation}, &transition) ||
+        transition.state != TransitionAudibleGateState::Replaceable ||
+        transition.audibleFrame != binding.transition.audibleFrame || transition.retiredAtAudioSequence != 0) return false;
+    if (!binding.canonicalInitialCompletion) return true;
+    return matchesConditional(binding.queueInitialCompletion) && !original.logicalBoundary &&
+        original.completionOwner.kind == CompletionOwnerKind::SingleQueue && IsBoundKnownCompletionPredicate(original.completion) &&
+        SameCompletionOwner(original.completion.owner, original.completionOwner) &&
+        SameDecision(original.completionOwner.singleDecision, binding.operation.group.decision) &&
+        SameOccurrence(original.completion.occurrence, original.current);
+}
+
+bool QueueInstanceTable::CapturePrivatePendingFrontierBinding(
+    const OriginalConditionalFutureReservation& cap, const OriginalLifetimePin& parent,
+    const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool,
+    const TransitionInstancePool& transitions, PrivatePendingQueueFrontierBinding* out,
+    const FrontierGroupBinding* counterpart, const CompositeCompletionOwnerPool* composites) const noexcept {
+    if (out == nullptr || out->Valid() || !MatchesPrivatePendingFrontierBinding(cap, parent, binding, pool, transitions, counterpart, composites)) return false;
+    out->owner_ = this; out->original_ = &cap; out->parent_ = &parent;
+    out->binding_ = &binding; out->pool_ = &pool;
+    out->counterpart_ = counterpart;
+    out->transitions_ = &transitions;
+    out->composites_ = composites;
+    return true;
+}
+
+bool PrivatePendingQueueFrontierBinding::Matches(const FrontierGroupBinding& binding,
+    const ScheduledTransactionPool& pool) const noexcept {
+    return owner_ != nullptr && original_ != nullptr && parent_ != nullptr && transitions_ != nullptr &&
+        binding_ == &binding && pool_ == &pool &&
+        owner_->MatchesPrivatePendingFrontierBinding(*original_, *parent_, binding, pool, *transitions_, counterpart_, composites_);
+}
+
 bool QueueInstanceTable::BindRetainedOriginalFrontierConditional(
     const OriginalConditionalFutureReservation& cap, const OriginalLifetimePin& parent,
     const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool) noexcept {
@@ -827,7 +1021,8 @@ bool QueueInstanceTable::BindRetainedOriginalFrontierConditional(
 bool QueueInstanceTable::ProveFrontierConditional(const FrontierGroupBinding& binding, AudioSliceLease& lease,
     const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool* composites,
     std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame, std::uint64_t completedAudioSequence,
-    FrontierConditionalProof* out, FrontierConditionalSlice slice) noexcept {
+    FrontierConditionalProof* out, FrontierConditionalSlice slice,
+    const QueueFrontierSourceWaitContext* sourceWait) noexcept {
     const auto& identity = binding.queueConditional;
     if (!binding.Valid() || !identity.Valid() || binding.variableSide.Valid() || binding.queueInitial.Valid() ||
         out == nullptr || out->Valid()) return false;
@@ -859,9 +1054,18 @@ bool QueueInstanceTable::ProveFrontierConditional(const FrontierGroupBinding& bi
         }
         return true;
     }
-    const auto status = ProveConditionalForQuantum({identity.slot, identity.generation}, {identity.pendingVersion},
+    SourceWaitAuthority authority;
+    const bool recovering = sourceWait != nullptr && slice == FrontierConditionalSlice::Activation &&
+        !row->pendingCompletionIsLogicalBoundary && !ValidRetiredSourceProof(row->pendingRetiredSource);
+    if (recovering && !ProveSourceWaitAuthority(binding, lease, *row->frontierPool, *sourceWait,
+            quantumStartFrame, quantumEndFrame, completedAudioSequence, &authority)) {
+        out->Release();
+        return false;
+    }
+    const auto status = ProveConditionalCompletion({identity.slot, identity.generation}, {identity.pendingVersion},
         occurrences, composites == nullptr ? EmptyCompositeOwners() : *composites,
-        quantumStartFrame, quantumEndFrame, completedAudioSequence, true, &out->completion_);
+        quantumStartFrame, quantumEndFrame, completedAudioSequence, true, &out->completion_,
+        recovering ? &authority : nullptr);
     const auto& proof = out->completion_;
     if (slice == FrontierConditionalSlice::Prelude) {
         if (!binding.transition.Valid() || binding.operation.group.sliceIndex != 0 ||
@@ -880,6 +1084,7 @@ bool QueueInstanceTable::ProveFrontierConditional(const FrontierGroupBinding& bi
         !SameDecision(proof.decision, binding.operation.group.decision) ||
         !SameOccurrence(proof.currentOccurrence, identity.current) || !SameOccurrence(proof.successorOccurrence, identity.successor) ||
         (status == QueueConditionalProofStatus::ReadyToActivate &&
+            proof.completionMode != QueueConditionalCompletionMode::SourceWait &&
             (binding.operation.order.executeFrame < quantumStartFrame ||
              binding.operation.order.executeFrame - quantumStartFrame != proof.completion.activationOffset))) {
         out->Release();
@@ -3007,6 +3212,130 @@ QueueInstanceTable::ProveConditionalForQuantum(
     std::uint64_t expectedCompletedThroughBlockSequence,
     bool currentQuantumScratchAdmitted,
     QueueConditionalProof* outProof) const noexcept {
+    return ProveConditionalCompletion(token, version, occurrences, composites,
+        quantumStartFrame, quantumEndFrame, expectedCompletedThroughBlockSequence,
+        currentQuantumScratchAdmitted, outProof, nullptr);
+}
+
+bool QueueInstanceTable::ProveSourceWaitAuthority(const FrontierGroupBinding& binding,
+    AudioSliceLease& lease, const ScheduledTransactionPool& pool,
+    const QueueFrontierSourceWaitContext& context,
+    std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame,
+    std::uint64_t completedAudioSequence, SourceWaitAuthority* out) const noexcept {
+    const auto blockFrames = quantumEndFrame - quantumStartFrame;
+    std::uint64_t capturedQuantum = 0;
+    if (out == nullptr || out->binding_ != nullptr || context.lane == nullptr || context.bucket == nullptr ||
+        context.decisions == nullptr || !binding.Valid() ||
+        (binding.role != FrontierGroupRole::Future &&
+         !(binding.role == FrontierGroupRole::EntryMember && binding.queueConditional.Valid())) ||
+        binding.variableSide.Valid() || quantumEndFrame <= quantumStartFrame || blockFrames > UINT32_MAX ||
+        completedAudioSequence == UINT64_MAX || completedAudioSequence > UINT64_MAX / blockFrames ||
+        quantumStartFrame != completedAudioSequence * blockFrames ||
+        binding.operation.order.executeFrame / blockFrames != context.bucket->quantum ||
+        !context.lane->CapturedSourceWaitQuantum(context.slot, context.bucket, &capturedQuantum) ||
+        capturedQuantum != completedAudioSequence ||
+        !pool.ProveImmediateLaneGroupBeforeClaim(binding.operation.group, &lease, *context.lane,
+            {context.slot, context.bucket->attemptGeneration}, context.bucket)) return false;
+    const auto& identity = binding.queueConditional.Valid() ? binding.queueConditional : binding.queueInitialCompletion;
+    const auto* row = Resolve({identity.slot, identity.generation});
+    Plan03PageGroupView group{};
+    if (!identity.Valid() || row == nullptr || row->frontierPool != &pool ||
+        !(row->frontierOwner == binding.operation.owner) || row->world != binding.operation.world ||
+        row->rootInstance != binding.operation.owner.child ||
+        row->failurePhase.load(std::memory_order_acquire) != QueueFailurePhase::Healthy ||
+        row->resetReserved.load(std::memory_order_acquire) || row->resetPending.load(std::memory_order_acquire) ||
+        row->conditionalReserved.load(std::memory_order_acquire) ||
+        row->mirrorVersion.load(std::memory_order_acquire) != identity.currentVersion ||
+        row->pendingVersion.load(std::memory_order_acquire) != identity.pendingVersion ||
+        row->pendingActivation.load(std::memory_order_acquire) != ConditionalQueueActivation::Waiting ||
+        !SameDecision(row->pendingDecision, binding.operation.group.decision) ||
+        !SameOccurrence(row->pendingExpectedCurrent, identity.current) ||
+        !SameOccurrence(row->pendingSuccessor, identity.successor) ||
+        !pool.ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
+        group.frontier != &binding || group.lease != &lease ||
+        lease.Capture().state != AudioSliceState::Ready) return false;
+
+    const auto* initial = row->frontierInitial;
+    if (initial == nullptr || !initial->queueInitial.Valid()) return false;
+    Plan03PageGroupView control{};
+    if (binding.canonicalInitialCompletion) {
+        if (!(binding.entry == initial->entry) || !(binding.primary == initial->primary)) return false;
+    } else {
+        Plan03PageGroupView prerequisite{};
+        if (!binding.queueConditional.Valid() || !binding.primary.Exact() ||
+            !pool.ResolvePlan03GroupSliceRt(binding.primary, &control) || control.frontier == nullptr ||
+            control.frontier->role != FrontierGroupRole::Coordinator ||
+            !(control.frontier->entry == binding.entry) || control.frontier->prerequisite == binding.entry ||
+            !control.frontier->prerequisiteMember.Exact() ||
+            !pool.ResolvePlan03GroupSliceRt(control.frontier->prerequisiteMember, &prerequisite) ||
+            prerequisite.frontier != initial || !(control.frontier->prerequisite == initial->entry) ||
+            !(control.frontier->operation.owner == binding.operation.owner) ||
+            (binding.role == FrontierGroupRole::EntryMember
+                ? control.frontier->operation.order.executeFrame != binding.operation.order.executeFrame
+                : !(control.frontier->operation.order < binding.operation.order))) return false;
+        const auto* target = context.decisions->ResolveFrontierActivation(binding.entry.coordinator);
+        if (target == nullptr || !(target->Descriptor().entry == binding.entry) ||
+            !(target->Descriptor().primary == binding.primary) ||
+            target->Descriptor().order != control.frontier->operation.order) return false;
+    }
+    if (!context.lane->CapturedEntrySourceWait(context.slot, context.bucket, binding.entry) &&
+        (control.frontier == nullptr || !context.lane->CapturedEntrySourceWait(context.slot,
+            context.bucket, control.frontier->prerequisite))) return false;
+    auto* activation = context.decisions->ResolveFrontierActivation(initial->entry.coordinator);
+    FrontierActivationReceipt receipt{};
+    Plan03PageGroupView source{};
+    if (activation == nullptr || !(activation->Descriptor().entry == initial->entry) ||
+        !(activation->Descriptor().primary == initial->primary) ||
+        activation->Read(initial->entry, completedAudioSequence, &receipt) != FrontierReceiptRead::Ready ||
+        receipt.outcome != FrontierReceiptOutcome::Applied || receipt.origin != FrontierReceiptOrigin::Audio ||
+        receipt.audioSequence == 0 || receipt.audioSequence != row->initialActivationSequence.load(std::memory_order_acquire) ||
+        !context.lane->EntryApplied(context.slot, context.bucket->attemptGeneration, initial->entry) ||
+        !pool.ResolvePlan03GroupSliceRt(initial->operation.group, &source) ||
+        source.frontier != initial || source.lease == nullptr ||
+        source.lease->Capture().state != AudioSliceState::SliceApplied ||
+        !(initial->operation.owner == binding.operation.owner)) return false;
+    const auto originalQuantum = receipt.order.executeFrame / blockFrames;
+    if (receipt.audioSequence <= originalQuantum) return false;
+    const auto delayQuanta = receipt.audioSequence - 1u - originalQuantum;
+    if (delayQuanta > UINT64_MAX / blockFrames) return false;
+    // Only the initially published current shares the original Entry clock.
+    // Later prepared predicates already use their own actual source clock.
+    if (identity.currentVersion == initial->queueInitial.version) {
+        out->delayFrames_ = delayQuanta * blockFrames;
+    }
+    out->binding_ = &binding;
+    return true;
+}
+
+QueueConditionalProofStatus QueueInstanceTable::PreflightFrontierSourceWait(
+    const FrontierGroupBinding& binding, AudioSliceLease& lease,
+    const ScheduledTransactionPool& pool, const QueueFrontierSourceWaitContext& context,
+    const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool* composites,
+    std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame,
+    std::uint64_t completedAudioSequence, QueueConditionalProof* outProof) const noexcept {
+    if (outProof == nullptr) return QueueConditionalProofStatus::FailedIdentity;
+    *outProof = {};
+    const auto& identity = binding.queueConditional.Valid() ? binding.queueConditional : binding.queueInitialCompletion;
+    const auto* row = Resolve({identity.slot, identity.generation});
+    if (row != nullptr && (row->pendingCompletionIsLogicalBoundary || ValidRetiredSourceProof(row->pendingRetiredSource))) {
+        return ProveConditionalCompletion({identity.slot, identity.generation}, {identity.pendingVersion},
+            occurrences, composites == nullptr ? EmptyCompositeOwners() : *composites,
+            quantumStartFrame, quantumEndFrame, completedAudioSequence, true, outProof, nullptr);
+    }
+    SourceWaitAuthority authority;
+    if (!ProveSourceWaitAuthority(binding, lease, pool, context, quantumStartFrame,
+            quantumEndFrame, completedAudioSequence, &authority)) return QueueConditionalProofStatus::FailedIdentity;
+    return ProveConditionalCompletion({identity.slot, identity.generation}, {identity.pendingVersion},
+        occurrences, composites == nullptr ? EmptyCompositeOwners() : *composites,
+        quantumStartFrame, quantumEndFrame, completedAudioSequence, true, outProof, &authority);
+}
+
+QueueConditionalProofStatus QueueInstanceTable::ProveConditionalCompletion(
+    QueueInstanceToken token, ConditionalQueueVersionToken version,
+    const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool& composites,
+    std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame,
+    std::uint64_t expectedCompletedThroughBlockSequence, bool currentQuantumScratchAdmitted,
+    QueueConditionalProof* outProof, const SourceWaitAuthority* sourceWait) const noexcept {
     const Row* row = Resolve(token);
     if (outProof == nullptr || row == nullptr || !version.Valid() ||
         row->pendingVersion.load(std::memory_order_acquire) !=
@@ -3015,8 +3344,32 @@ QueueInstanceTable::ProveConditionalForQuantum(
             ConditionalQueueActivation::Waiting) {
         return QueueConditionalProofStatus::Stale;
     }
+    const auto delay = sourceWait == nullptr ? 0u : sourceWait->delayFrames_;
+    std::uint64_t originalCompletion = row->pendingCompletion.absoluteLogicalCompleteFrame;
+    if (row->pendingCompletionOwner.kind == CompletionOwnerKind::Composite) {
+        CompositeCompletionOwnerInfo info{};
+        if (!composites.Capture(row->pendingCompletionOwner.composite, &info))
+            return QueueConditionalProofStatus::FailedIdentity;
+        originalCompletion = info.absoluteLogicalCompleteFrame;
+    }
+    if (row->pendingCompletionHasLogicalFloor)
+        originalCompletion = std::max(originalCompletion, row->pendingLogicalCompletionFrame);
+    if (sourceWait != nullptr &&
+        (sourceWait->binding_ == nullptr || row->pendingCompletionIsLogicalBoundary ||
+         ValidRetiredSourceProof(row->pendingRetiredSource) ||
+         sourceWait->binding_->operation.order.executeFrame != originalCompletion ||
+         originalCompletion > UINT64_MAX - delay)) return QueueConditionalProofStatus::FailedIdentity;
     const auto evaluate = [&](const KnownCompletionPredicateV1& predicate,
                               KnownCompletionQuantumProof* proof) {
+        auto effective = predicate;
+        if (sourceWait != nullptr) {
+            if (!IsBoundKnownCompletionPredicate(predicate) ||
+                predicate.absoluteLogicalStartFrame > UINT64_MAX - delay ||
+                predicate.absoluteLogicalCompleteFrame > UINT64_MAX - delay)
+                return std::pair{QueueConditionalProofStatus::FailedIdentity, CompletionProofStatus::Invalid};
+            effective.absoluteLogicalStartFrame += delay;
+            effective.absoluteLogicalCompleteFrame += delay;
+        }
         CompletionOwnerRef actualOwner{};
         if (!occurrences.CaptureCompletionOwner(
                 predicate.occurrence, &actualOwner) ||
@@ -3054,8 +3407,9 @@ QueueInstanceTable::ProveConditionalForQuantum(
                 predicate.progressBaselineRevision +
                     (snapshot.completedThroughBlockSequence -
                      predicate.progressBaselineCompletedThroughBlockSequence) &&
-            predicate.absoluteLogicalCompleteFrame < quantumStartFrame;
+            effective.absoluteLogicalCompleteFrame < quantumStartFrame;
         if (completeBeforeQuantum) {
+            proof->actualProducedBeforeQuantum = predicate.totalLogicalOutputFrames;
             return std::pair{
                 QueueConditionalProofStatus::ReadyToActivate,
                 CompletionProofStatus::CompletedBeforeQuantum};
@@ -3076,7 +3430,7 @@ QueueInstanceTable::ProveConditionalForQuantum(
         return std::pair{
             QueueConditionalProofStatus::ReadyToActivate,
             EvaluateKnownCompletionForQuantum(
-                predicate, snapshot, quantumStartFrame, quantumEndFrame,
+                effective, snapshot, quantumStartFrame, quantumEndFrame,
                 expectedCompletedThroughBlockSequence,
                 expectedProgressRevision, currentQuantumScratchAdmitted,
                 proof)};
@@ -3163,6 +3517,7 @@ QueueInstanceTable::ProveConditionalForQuantum(
             return QueueConditionalProofStatus::FailedIdentity;
         }
         status = CompletionProofStatus::CompletesAfterQuantum;
+        bool waiting = false;
         for (std::uint32_t index = 0; index < info.leafCount; ++index) {
             KnownScheduleLeafV1 leaf{};
             if (!composites.CaptureLeaf(
@@ -3176,6 +3531,10 @@ QueueInstanceTable::ProveConditionalForQuantum(
             }
             KnownCompletionQuantumProof leafProof{};
             const auto evaluated = evaluate(leaf.predicate, &leafProof);
+            if (evaluated.first == QueueConditionalProofStatus::Waiting) {
+                waiting = true;
+                continue;
+            }
             if (evaluated.first !=
                 QueueConditionalProofStatus::ReadyToActivate) {
                 return evaluated.first;
@@ -3185,8 +3544,10 @@ QueueInstanceTable::ProveConditionalForQuantum(
                 return QueueConditionalProofStatus::FailedProgress;
             }
             if (evaluated.second ==
-                CompletionProofStatus::CurrentQuantumNotAdmitted) {
-                return QueueConditionalProofStatus::Waiting;
+                CompletionProofStatus::CurrentQuantumNotAdmitted ||
+                evaluated.second == CompletionProofStatus::CompletesAfterQuantum) {
+                waiting = true;
+                continue;
             }
             if (leaf.predicate.absoluteLogicalCompleteFrame ==
                 info.absoluteLogicalCompleteFrame) {
@@ -3194,6 +3555,7 @@ QueueInstanceTable::ProveConditionalForQuantum(
                 proof = leafProof;
             }
         }
+        if (waiting) return QueueConditionalProofStatus::Waiting;
     } else {
         return QueueConditionalProofStatus::FailedIdentity;
     }
@@ -3210,17 +3572,20 @@ QueueInstanceTable::ProveConditionalForQuantum(
             !completeBeforeQuantum) {
             return QueueConditionalProofStatus::FailedProgress;
         }
-        if (row->pendingLogicalCompletionFrame >= quantumEndFrame) {
+        if (row->pendingLogicalCompletionFrame > UINT64_MAX - delay)
+            return QueueConditionalProofStatus::FailedProgress;
+        const auto logicalFloor = row->pendingLogicalCompletionFrame + delay;
+        if (logicalFloor >= quantumEndFrame) {
             return QueueConditionalProofStatus::Waiting;
         }
         if (completeBeforeQuantum &&
-            row->pendingLogicalCompletionFrame < quantumStartFrame &&
-            !validRetiredSource) {
+            logicalFloor < quantumStartFrame &&
+            !validRetiredSource && sourceWait == nullptr) {
             return QueueConditionalProofStatus::MissedDeadline;
         }
-        if (row->pendingLogicalCompletionFrame >= quantumStartFrame) {
+        if (logicalFloor >= quantumStartFrame) {
             const std::uint64_t floorOffset =
-                row->pendingLogicalCompletionFrame - quantumStartFrame;
+                logicalFloor - quantumStartFrame;
             if (floorOffset > UINT32_MAX) {
                 return QueueConditionalProofStatus::FailedProgress;
             }
@@ -3236,9 +3601,11 @@ QueueInstanceTable::ProveConditionalForQuantum(
     const bool retiredSourceReady =
         completeBeforeQuantum &&
         validRetiredSource;
+    const bool sourceWaitReady = sourceWait != nullptr &&
+        (status == CompletionProofStatus::CompletesInQuantum || completeBeforeQuantum);
     if (status == CompletionProofStatus::CompletesInQuantum ||
         logicalFloorReady ||
-        retiredSourceReady) {
+        retiredSourceReady || sourceWaitReady) {
         QueueConditionalProof result{};
         result.queue = token;
         result.version = version;
@@ -3254,7 +3621,7 @@ QueueInstanceTable::ProveConditionalForQuantum(
             row->pendingRetiredSource.tombstoneAudioSequence;
         result.completion = proof;
         result.completionMode =
-            retiredSourceReady
+            sourceWaitReady ? QueueConditionalCompletionMode::SourceWait : retiredSourceReady
                 ? QueueConditionalCompletionMode::RetiredSource
                 : QueueConditionalCompletionMode::InQuantum;
         *outProof = result;

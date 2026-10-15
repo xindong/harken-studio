@@ -380,6 +380,20 @@ public:
     bool ContainerCommitProofsHeld() const noexcept { return step_.ContainerCommitProofsHeld(); }
     bool ProveInstanceCommits(PlayableInstanceTable* expectedOwner = nullptr,
         const PreparedPlayableInstance* requiredRoot = nullptr) noexcept;
+    std::size_t PreparedInstanceCensusCount() const noexcept {
+        return step_.instances_.size() + step_.adoptedInstanceCount_ + (externalInstance_ == nullptr ? 0u : 1u);
+    }
+    const PreparedPlayableInstance* PreparedInstanceCensusToken(std::size_t index) const noexcept {
+        if (index < step_.instances_.size()) return &step_.instances_[index];
+        index -= step_.instances_.size();
+        if (index < step_.adoptedInstanceCount_) return step_.adoptedInstances_[index];
+        return index == step_.adoptedInstanceCount_ ? externalInstance_ : nullptr;
+    }
+    // Retains the exact factory census without acquiring another parent-link proof.
+    // The caller must separately authenticate the arranging parent and tree edges.
+    bool IssueOriginalPreparedInstanceLifetimes(PlayableInstanceTable& expectedOwner,
+        std::span<const PreparedPlayableInstance* const> originals,
+        std::span<PlayableInstanceTable::OriginalLifetimePin> stableBaselines) noexcept;
     bool ProveParentLinks(PlayableInstanceTable& expectedOwner,
         const PreparedPlayableInstance* requiredRoot = nullptr) noexcept;
     void ReleaseParentLinkProof() noexcept { step_.ReleaseParentLinkProof(); }
@@ -698,8 +712,17 @@ public:
         return true;
     }
 
+    bool CanReleasePublishedOwnership() const noexcept {
+        return published_ && ownerTokenCount_ == 0;
+    }
+
+    bool PublishedOwnershipTransferred() const noexcept {
+        return published_ && ownershipTransferred_ && ownerTokenCount_ == 0 &&
+            committedOwnerTokenCount_ == 0;
+    }
+
     bool ReleasePublishedOwnership() noexcept {
-        if (!published_ || ownerTokenCount_ != 0) return false;
+        if (!CanReleasePublishedOwnership()) return false;
         if (retainPreparedOwnerRollback_) {
             if (ownershipTransferred_) return true;
             for (std::uint32_t index = 0; index < committedOwnerTokenCount_; ++index) {

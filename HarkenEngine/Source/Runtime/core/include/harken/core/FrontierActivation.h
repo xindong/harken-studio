@@ -6,10 +6,13 @@
 #include "harken/core/Plan03GroupIdentity.h"
 #include "harken/core/OccurrenceToken.h"
 #include "harken/core/TimelineExecutionOrder.h"
+#include "harken/core/VariableReadCut.h"
 
 #include <atomic>
 
 namespace harken {
+
+class FrontierTimelineFinalizer;
 
 struct FrontierOwnerIdentity {
     std::uint64_t child = 0;
@@ -51,6 +54,9 @@ struct FrontierActivationDescriptor {
     std::uint32_t expectedMemberCount = 0;
     std::uint32_t expectedEntryEventCount = 0;
     std::uint64_t programGeneration = 0;
+    VariableReadCutRef initialVariables{};
+
+    bool operator==(const FrontierActivationDescriptor&) const = default;
 
     bool Valid() const noexcept {
         return entry.Valid() && primary.Exact() &&
@@ -259,10 +265,12 @@ struct FrontierGroupBinding {
     FrontierQueueConditionalIdentity queueInitialCompletion{};
     bool canonicalInitialCompletion = false;
     FrontierTransitionIdentity transition{};
+    VariableReadCutRef initialVariables{};
 
     bool Valid() const noexcept {
         if (role == FrontierGroupRole::Legacy || !entry.Valid() || !operation.Valid() ||
             !operation.group.Exact()) return false;
+        if (initialVariables.Valid() && role != FrontierGroupRole::Coordinator) return false;
         if (canonicalInitialCompletion) {
             if (role != FrontierGroupRole::Future || !queueInitial.Valid() ||
                 queueConditional.Valid() || variableSide.Valid() ||
@@ -313,7 +321,7 @@ struct FrozenFrontierEventProof {
 };
 
 enum class FrontierReceiptState : std::uint8_t {
-    Empty, Prepared, Pending, AudioStaging, AudioFinal, LogicFinal
+    Empty, Prepared, Pending, AudioStaging, AudioFinal, LogicFinal, PublicationHeld
 };
 enum class FrontierReceiptOutcome : std::uint8_t { Applied, DefinitivelyNotApplied };
 enum class FrontierReceiptOrigin : std::uint8_t { Audio, LogicBeforeAudio };
@@ -343,6 +351,13 @@ class FrontierActivation {
 public:
     const FrontierActivationDescriptor& Descriptor() const noexcept { return descriptor_; }
     FrontierReceiptState State() const noexcept { return state_.load(std::memory_order_acquire); }
+    std::uint64_t SourceWaitSequence(const FrontierEntryReceiptRef& entry,
+                                    std::uint64_t completedAudioSequence) const noexcept {
+        if (!(descriptor_.entry == entry) || State() != FrontierReceiptState::Pending ||
+            lease_ == nullptr || lease_->Capture().state != AudioSliceState::Ready) return 0;
+        const auto sequence = sourceWaitSequence_.load(std::memory_order_acquire);
+        return sequence <= completedAudioSequence ? sequence : 0;
+    }
     bool TryBeginAudio(const FrontierEntryReceiptRef& entry) noexcept {
         if (!(descriptor_.entry == entry)) return false;
         auto expected = FrontierReceiptState::Pending;
@@ -351,7 +366,9 @@ public:
     }
     FrontierCancelDisposition Cancel(const FrontierEntryReceiptRef& entry,
                                     AudioSliceInvalidateReason reason) noexcept {
-        if (!(descriptor_.entry == entry) || lease_ == nullptr || State() == FrontierReceiptState::Prepared) {
+        const auto state = State();
+        if (!(descriptor_.entry == entry) || lease_ == nullptr || state == FrontierReceiptState::Prepared ||
+            state == FrontierReceiptState::PublicationHeld) {
             return FrontierCancelDisposition::Stale;
         }
         const auto disposition = lease_->Invalidate(reason);
@@ -415,12 +432,20 @@ public:
 
 private:
     friend class DecisionTable;
+    friend class FrontierTimelineFinalizer;
+    void PublishSourceWait(const FrontierEntryReceiptRef& entry, std::uint64_t sequence) noexcept {
+        if (!(descriptor_.entry == entry) || sequence == 0 || State() != FrontierReceiptState::Pending ||
+            lease_ == nullptr || lease_->Capture().state != AudioSliceState::Ready) return;
+        if (sourceWaitSequence_.load(std::memory_order_relaxed) == 0)
+            sourceWaitSequence_.store(sequence, std::memory_order_release);
+    }
     bool Prepare(const FrontierActivationDescriptor& descriptor, AudioSliceLease* lease) noexcept {
         if (State() != FrontierReceiptState::Empty || !descriptor.Valid() || lease == nullptr ||
             lease->Capture().state != AudioSliceState::Ready) return false;
         descriptor_ = descriptor;
         receipt_ = {};
         lease_ = lease;
+        sourceWaitSequence_.store(0, std::memory_order_relaxed);
         logicPayloadReady_.store(false, std::memory_order_relaxed);
         state_.store(FrontierReceiptState::Prepared, std::memory_order_release);
         return true;
@@ -430,6 +455,7 @@ private:
     AudioSliceLease* lease_ = nullptr;
     std::atomic<FrontierReceiptState> state_{FrontierReceiptState::Empty};
     std::atomic<bool> logicPayloadReady_{false};
+    std::atomic<std::uint64_t> sourceWaitSequence_{0};
 };
 
 static_assert(std::atomic<FrontierReceiptState>::is_always_lock_free);

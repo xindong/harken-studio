@@ -45,6 +45,42 @@ struct LogicCommitTicket {
 
 class LogicCommitCoordinator {
 public:
+    // An observation of one genuine reservation, never a right to consume it.
+    class PreparedIssueIdentity {
+    public:
+        bool HasReservation() const noexcept { return owner_ != nullptr; }
+        bool SameReservation(const PreparedIssueIdentity& other) const noexcept {
+            return owner_ != nullptr && owner_ == other.owner_ && marker_ == other.marker_ &&
+                sequence_ == other.sequence_;
+        }
+    private:
+        friend class LogicCommitCoordinator;
+        const LogicCommitCoordinator* owner_ = nullptr;
+        std::uint64_t marker_ = 0;
+        LogicCommitSequence sequence_ = 0;
+    };
+
+    class ConsumedIssue {
+    public:
+        ConsumedIssue() = default;
+        ConsumedIssue(const ConsumedIssue&) = delete;
+        ConsumedIssue& operator=(const ConsumedIssue&) = delete;
+        ConsumedIssue(ConsumedIssue&& other) noexcept { *this = std::move(other); }
+        ConsumedIssue& operator=(ConsumedIssue&& other) noexcept {
+            identity_ = std::exchange(other.identity_, PreparedIssueIdentity{});
+            sequence_ = std::exchange(other.sequence_, 0);
+            return *this;
+        }
+        LogicCommitSequence Sequence() const noexcept { return sequence_; }
+        bool MatchesOriginalReservation(const PreparedIssueIdentity& identity) const noexcept {
+            return sequence_ != 0 && identity_.SameReservation(identity);
+        }
+    private:
+        friend class LogicCommitCoordinator;
+        PreparedIssueIdentity identity_{};
+        LogicCommitSequence sequence_ = 0;
+    };
+
     enum class IssueStatus : std::uint8_t {
         Issued,
         RuntimeRecreateRequired,
@@ -117,16 +153,34 @@ public:
         return MatchesPreparedIssue(proof);
     }
 
+    bool CapturePreparedIssueIdentity(const PreparedIssue& proof,
+        PreparedIssueIdentity* out) const noexcept {
+        if (out == nullptr || !MatchesPreparedIssue(proof)) return false;
+        out->owner_ = this;
+        out->marker_ = proof.marker_;
+        out->sequence_ = proof.sequence_;
+        return true;
+    }
+
+    bool IsPreparedIssueActive(const PreparedIssueIdentity& identity) const noexcept {
+        return identity.owner_ == this && identity.marker_ != 0 &&
+            identity.marker_ == m_liveReservation && m_current != UINT64_MAX &&
+            identity.sequence_ == m_current + 1u;
+    }
+
     // Only the original issuer token can enter this no-fail ownership transfer.
     // No capacity, generation or sequence issuance remains after preparation.
-    void ConsumePreparedIssue(PreparedIssue&& proof) noexcept {
+    ConsumedIssue ConsumePreparedIssue(PreparedIssue&& proof) noexcept {
         assert(MatchesPreparedIssue(proof));
-        if (!MatchesPreparedIssue(proof)) return;
+        ConsumedIssue consumed;
+        if (!CapturePreparedIssueIdentity(proof, &consumed.identity_)) return consumed;
+        consumed.sequence_ = proof.sequence_;
         m_current = proof.sequence_;
         m_liveReservation = 0;
         proof.owner_ = nullptr;
         proof.marker_ = 0;
         proof.sequence_ = 0;
+        return consumed;
     }
 
     // The last sequence issued, or 0 before the first.

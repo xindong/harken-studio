@@ -21,6 +21,7 @@ namespace detail { struct OriginalSourceMutationActorTestAccess; }
 // Actual preparation, immutable queue publication and complete disposition
 // share one stable record. Engine quiescence precedes registry destruction.
 class OriginalSourceSubmissionRegistry {
+    friend class VoicePool;
 public:
     static constexpr std::uint32_t kMaxCommands = 3u + kTimelineMaxVoiceSends +
         kTimelineMaxVoiceEffects + 2u + kMaxVoiceBindingInstanceSlots;
@@ -61,6 +62,8 @@ public:
         std::array<bool, kTimelineMaxVoiceEffects> incomingDone_{};
         std::uint32_t incomingCount_ = 0;
         TimelineArmTable::SourceCommandRowProof rowProof_;
+        TimelineArmTable::PublicationAfterInstallation installPublication_;
+        TimelineArmTable::GroupedPublicationAfterInstallation groupInstallPublication_;
         VoicePool::SourceCommandInstallProof installProof_;
         std::uint64_t completion_ = 0;
         std::uint32_t progress_ = 0;
@@ -75,7 +78,8 @@ public:
     OriginalSourceSubmissionRegistry(TimelineArmTable& arms, VoicePool& voices,
         CommandQueue& commands, EffectPoolBank& effects)
         : arms_(arms), voices_(voices), commands_(commands), effects_(effects),
-          capacity_(arms.Capacity()), rows_(std::make_unique<Record[]>(capacity_)) {}
+          capacity_(arms.Capacity()), rows_(std::make_unique<Record[]>(capacity_)),
+          incarnation_(NextIncarnation()) {}
     ~OriginalSourceSubmissionRegistry() {
         for (std::uint32_t i = 0; i < capacity_; ++i) {
             assert((rows_[i].originalLifetime_.load(std::memory_order_relaxed) & kPinMask) == 0);
@@ -93,12 +97,35 @@ public:
         std::span<const EffectPoolBank::PreparedCommitProof> effectProofs,
         OriginalSourceLifetimePin* original = nullptr,
         VoicePool::OriginalSourceBodyLifetimePin* originalBody = nullptr) noexcept {
+        return CapturePreparedSourceImpl(header, armProof, voiceProof, effectProofs,
+            original, originalBody, false);
+    }
+
+    bool CapturePreparedFinalSource(const CommandRecord& header,
+        const TimelineArmTable::PreparedCommitProof& armProof,
+        const VoicePool::PreparedCommitProof& voiceProof,
+        std::span<const EffectPoolBank::PreparedCommitProof> effectProofs,
+        OriginalSourceLifetimePin* original = nullptr,
+        VoicePool::OriginalSourceBodyLifetimePin* originalBody = nullptr) noexcept {
+        return CapturePreparedSourceImpl(header, armProof, voiceProof, effectProofs,
+            original, originalBody, true);
+    }
+
+private:
+    bool CapturePreparedSourceImpl(const CommandRecord& header,
+        const TimelineArmTable::PreparedCommitProof& armProof,
+        const VoicePool::PreparedCommitProof& voiceProof,
+        std::span<const EffectPoolBank::PreparedCommitProof> effectProofs,
+        OriginalSourceLifetimePin* original,
+        VoicePool::OriginalSourceBodyLifetimePin* originalBody,
+        bool publishOnInstallation) noexcept {
         const auto token = armProof.OriginalPreparedToken();
         const auto render = voiceProof.OriginalPreparedHandle();
         if (armProof.Owner() != &arms_ || !token.Valid() || token.slot >= capacity_ ||
             voiceProof.Owner() != &voices_ ||
             render == 0 || render != RenderOf(token) || !HeaderMatches(header, token) ||
             effectProofs.size() > kTimelineMaxVoiceEffects) return false;
+        if (publishOnInstallation && !arms_.FinalSourcePreparationEligible(armProof)) return false;
         if (original != nullptr && (original->Valid() || originalMarkerExhausted_ ||
             nextOriginalMarker_ == 0)) return false;
         // Both outputs belong to this actual Arm/Voice joint preparation.
@@ -116,7 +143,7 @@ public:
         const auto phase = row.State();
         if (phase == Phase::Preparing) {
             // Retrying preparation cannot manufacture another original issuer.
-            if (original != nullptr) return false;
+            if (original != nullptr || publishOnInstallation || row.installPublication_.Valid()) return false;
             if (!SameToken(row.token_, token) || !row.arm_.Valid() || !row.voice_.Valid() ||
                 !voices_.MatchesOriginalPreparedVoice(row.voice_, voiceProof) ||
                 row.incomingCount_ != effectProofs.size()) return false;
@@ -135,6 +162,8 @@ public:
         row.originalMarker_ = 0;
         row.nativeSourceEpisode_ = 0;
         row.unpublishedDisposition_.Reset();
+        row.installPublication_.Reset();
+        row.groupInstallPublication_.Reset();
         row.originalSourceIdentity_ = header.payload.play.sourceIdentity;
         row.originalInstallationCompleted_.store(false, std::memory_order_relaxed);
         assert(!row.rangeActor_.Valid() && !row.originCallbackHeld_.load(std::memory_order_relaxed));
@@ -159,6 +188,9 @@ public:
         assert(sourceEpisode.status == IssueStatus::Ok);
         row.nativeSourceEpisode_ = sourceEpisode.value;
         if (!arms_.BindOriginalSourceEpisode(armProof, row.arm_, &row, row.nativeSourceEpisode_)) return false;
+        if (publishOnInstallation &&
+            !arms_.IssuePublicationAfterInstallation(armProof, row.arm_, &row, &row.installPublication_))
+            return false;
         if (original != nullptr) {
             const auto issued = TryIssue(&nextOriginalMarker_, &originalMarkerExhausted_);
             assert(issued.status == IssueStatus::Ok);
@@ -186,6 +218,8 @@ public:
         }
         return true;
     }
+
+public:
 
     // Every source child is validated before the irreversible outer commit.
     bool BindPreparedChild(const CommandQueue::PreparedBatchProof& batch,
@@ -244,6 +278,19 @@ public:
         const VoicePool::PreparedCommitInput& physical,
         const CommandQueue::PreparedBatchProof& batch, TimelineArmToken arm,
         VnVoiceHandle sourceIdentity) const noexcept {
+        const OriginalSourceInstallationLoan* pending = nullptr;
+        return voices_.MatchesPreparedOriginalSourceBody(originalBody, voicePreparation, physical, &pending) &&
+            MatchesPreparedInitialGroupSourcePair(original, originalBody, armPreparation, voicePreparation,
+                physical, batch, arm, sourceIdentity);
+    }
+
+    bool MatchesPreparedInitialGroupSourcePair(const OriginalSourceLifetimePin& original,
+        const VoicePool::OriginalSourceBodyLifetimePin& originalBody,
+        const TimelineArmTable::PreparedCommitProof& armPreparation,
+        const VoicePool::PreparedCommitProof& voicePreparation,
+        const VoicePool::PreparedCommitInput& physical,
+        const CommandQueue::PreparedBatchProof& batch, TimelineArmToken arm,
+        VnVoiceHandle sourceIdentity) const noexcept {
         if (!MatchesOriginal(original) || !SameToken(original.token_, arm) ||
             armPreparation.Owner() != &arms_ || !armPreparation.Valid() ||
             !SameToken(armPreparation.OriginalPreparedToken(), arm) ||
@@ -260,9 +307,68 @@ public:
             HeaderMatches(row.body_[0], arm) && row.originalSourceIdentity_ == sourceIdentity &&
             row.body_[0].payload.play.sourceIdentity == sourceIdentity &&
             voices_.IsOriginalSourceBodyLifetimePinFor(originalBody, arm, sourceIdentity) &&
-            voices_.MatchesPreparedOriginalSourceBody(originalBody, voicePreparation, physical, &pending) &&
+            voices_.MatchesPreparedOriginalSourceStorage(originalBody, voicePreparation, physical, &pending) &&
             pending != nullptr && pending->owner_ == this && pending->marker_ == original.marker_ &&
             MatchesInstallationForSource(*pending, &row, arm, sourceIdentity);
+    }
+
+    bool MatchesPrivateCommittedInitialGroupSourcePair(const OriginalSourceLifetimePin& original,
+        const VoicePool::OriginalSourceBodyLifetimePin& body, const CommandQueue::PreparedBatchProof& batch,
+        TimelineArmToken arm, VnVoiceHandle sourceIdentity) const noexcept {
+        const auto* native = arms_.Resolve(arm);
+        return MatchesUnpublishedCommittedInitialGroupSourceStorage(original, body, batch, arm, sourceIdentity) &&
+            native != nullptr && !native->startBound;
+    }
+
+    bool MatchesEntryBoundInitialGroupSourcePair(const OriginalSourceLifetimePin& original,
+        const VoicePool::OriginalSourceBodyLifetimePin& body, const CommandQueue::PreparedBatchProof& batch,
+        TimelineArmToken arm, VnVoiceHandle sourceIdentity, std::uint64_t startFrame,
+        const FrontierGroupBinding& binding, const AudioSliceLease& lease) const noexcept {
+        const auto* native = arms_.Resolve(arm);
+        return MatchesUnpublishedCommittedInitialGroupSourceStorage(original, body, batch, arm, sourceIdentity) &&
+            native != nullptr && native->startBound && native->startFrame == startFrame &&
+            native->armDeadline == startFrame && native->frontierAdmission == &binding &&
+            native->frontierAdmissionLease == &lease;
+    }
+
+    bool CanReturnUnpublishedOriginalSourcePairStorage(const OriginalSourceLifetimePin& original,
+        const VoicePool::OriginalSourceBodyLifetimePin& body) const noexcept {
+        if (!MatchesOriginal(original)) return false;
+        const auto& row = *static_cast<const Record*>(original.row_);
+        const OriginalSourceInstallationLoan* installation = nullptr;
+        // Only the holder and the body's installation association may remain.
+        if (row.wasPublished_ || !CanWithdrawUnpublished(row.token_) ||
+            !row.voice_.Valid() || !voices_.OriginalVoiceReleased(row.voice_) ||
+            (row.originalLifetime_.load(std::memory_order_acquire) & kPinMask) != 2u ||
+            !voices_.MatchesOriginalSourceRetirementPair(row.voice_, body) ||
+            !voices_.IsOriginalSourceBodyLifetimePinFor(body, row.token_, row.originalSourceIdentity_) ||
+            !voices_.CanReturnUnpublishedOriginalSourceBodyStorage(body, &installation) ||
+            installation == nullptr) return false;
+        // A real factory prefix can be cancelled before its commands are frozen.
+        if (row.range_.State() == CommandQueue::OriginalRangeState::Empty &&
+            row.range_.owner_ == nullptr && row.range_.client_ == nullptr &&
+            row.range_.origin_ == 0 && row.range_.head_ == 0 && row.range_.count_ == 0 && row.count_ == 0)
+            return MatchesInstallationLoan(*installation, &row, row.token_);
+        return row.range_.State() == CommandQueue::OriginalRangeState::UnpublishedCancelled &&
+            MatchesInstallationForSource(*installation, &row, row.token_, row.originalSourceIdentity_);
+    }
+
+    bool CanReturnPublishedOriginalSourcePairStorage(const OriginalSourceLifetimePin& original,
+        const VoicePool::OriginalSourceBodyLifetimePin& body, VoiceReleaseObserver release) const noexcept {
+        if (!MatchesOriginal(original)) return false;
+        const auto& row = *static_cast<const Record*>(original.row_);
+        const OriginalSourceInstallationLoan* installation = nullptr;
+        return row.wasPublished_ && row.State() == Phase::Disposed && row.nativeSourceEpisode_ != 0 &&
+            row.arm_.Valid() && row.arm_.Owner() == &arms_ && SameToken(row.arm_.Token(), row.token_) &&
+            row.voice_.Valid() && row.voice_.RenderHandle() == RenderOf(row.token_) &&
+            row.range_.State() == CommandQueue::OriginalRangeState::Completed &&
+            row.range_.owner_ == &commands_ && row.range_.client_ == &row && row.range_.origin_ != 0 &&
+            row.count_ != 0 && row.range_.count_ == row.count_ &&
+            row.range_.kind_ == CommandQueue::OriginalRangeKind::Source &&
+            voices_.IsOriginalSourceBodyLifetimePinFor(body, row.token_, row.originalSourceIdentity_) &&
+            voices_.CanReturnPublishedOriginalSourceBodyStorage(row.voice_, body, release, &installation) &&
+            installation != nullptr &&
+            MatchesInstallationForSource(*installation, &row, row.token_, row.originalSourceIdentity_);
     }
 
     // This checks this Source component's real installation, not Decision,
@@ -278,6 +384,22 @@ public:
             voices_.Resolve(row.voice_.RenderHandle()) != nullptr;
     }
 
+    bool IsOriginalSourceInstallationPending(const OriginalSourceLifetimePin& original,
+        const VoicePool::OriginalSourceBodyLifetimePin& body, VnVoiceHandle sourceIdentity) const noexcept {
+        if (!MatchesOriginal(original)) return false;
+        const auto& row = *static_cast<const Record*>(original.row_);
+        const auto phase = row.State();
+        return row.wasPublished_ && (phase == Phase::Published || phase == Phase::ConsumerOwned) &&
+            !row.originalInstallationCompleted_.load(std::memory_order_acquire) &&
+            row.range_.State() == CommandQueue::OriginalRangeState::Published &&
+            sourceIdentity != 0 && row.originalSourceIdentity_ == sourceIdentity &&
+            row.arm_.Valid() && row.arm_.Owner() == &arms_ && SameToken(row.arm_.Token(), row.token_) &&
+            row.voice_.Valid() && !voices_.OriginalVoiceReleased(row.voice_) &&
+            voices_.Resolve(row.voice_.RenderHandle()) != nullptr &&
+            voices_.MatchesOriginalSourceRetirementPair(row.voice_, body) &&
+            voices_.IsOriginalSourceBodyLifetimePinFor(body, row.token_, sourceIdentity);
+    }
+
     bool HasOriginalVoice(TimelineArmToken token) const noexcept {
         const auto* row = Find(token);
         return row != nullptr && row->voice_.Valid();
@@ -288,6 +410,237 @@ public:
         return row != nullptr && row->voice_.Valid() && !voices_.OriginalVoiceReleased(row->voice_);
     }
 
+    enum class InstalledSourceRetirementRequest : std::uint8_t {
+        Requested, AlreadyReleased, Deferred, Refused
+    };
+    class PendingInstalledSourceRetirementReceipt {
+    public:
+        PendingInstalledSourceRetirementReceipt() noexcept = default;
+        PendingInstalledSourceRetirementReceipt(const PendingInstalledSourceRetirementReceipt&) = delete;
+        PendingInstalledSourceRetirementReceipt& operator=(const PendingInstalledSourceRetirementReceipt&) = delete;
+        PendingInstalledSourceRetirementReceipt(PendingInstalledSourceRetirementReceipt&& other) noexcept {
+            *this = std::move(other);
+        }
+        PendingInstalledSourceRetirementReceipt& operator=(PendingInstalledSourceRetirementReceipt&& other) noexcept {
+            if (this != &other) {
+                Release();
+                source_ = std::move(other.source_);
+                body_ = std::move(other.body_);
+                owner_ = std::exchange(other.owner_, nullptr);
+                registryIncarnation_ = std::exchange(other.registryIncarnation_, 0);
+                armIncarnation_ = std::exchange(other.armIncarnation_, 0);
+                episode_ = std::exchange(other.episode_, 0);
+                marker_ = std::exchange(other.marker_, 0);
+                identity_ = std::exchange(other.identity_, 0);
+                token_ = std::exchange(other.token_, TimelineArmToken{});
+                release_ = std::exchange(other.release_, VoiceReleaseObserver{});
+                terminal_ = std::exchange(other.terminal_, SourceTerminalToken{});
+                terminalReturned_ = std::exchange(other.terminalReturned_, false);
+            }
+            return *this;
+        }
+        bool Valid() const noexcept { return (source_.Valid() && body_.Valid()) || owner_ != nullptr; }
+        bool StorageReturned() const noexcept { return owner_ != nullptr; }
+        void Release() noexcept {
+            body_.Release(); source_.Release(); owner_ = nullptr;
+            registryIncarnation_ = armIncarnation_ = episode_ = marker_ = identity_ = 0;
+            token_ = {};
+            release_ = {};
+            terminal_ = {};
+            terminalReturned_ = false;
+        }
+    private:
+        friend class OriginalSourceSubmissionRegistry;
+        OriginalSourceLifetimePin source_;
+        VoicePool::OriginalSourceBodyLifetimePin body_;
+        const OriginalSourceSubmissionRegistry* owner_ = nullptr;
+        std::uint64_t registryIncarnation_ = 0;
+        std::uint64_t armIncarnation_ = 0;
+        std::uint64_t episode_ = 0;
+        std::uint64_t marker_ = 0;
+        VnVoiceHandle identity_ = 0;
+        TimelineArmToken token_{};
+        VoiceReleaseObserver release_{};
+        SourceTerminalToken terminal_{};
+        bool terminalReturned_ = false;
+    };
+private:
+    friend struct Engine;
+    bool PrepareEntryBoundGroupPublication(const OriginalSourceLifetimePin& source,
+        const VoicePool::OriginalSourceBodyLifetimePin& body, const CommandQueue::PreparedBatchProof& batch,
+        ArmGroupTable& groups, ArmGroupToken group, std::uint64_t frame,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease) noexcept {
+        if (!MatchesOriginal(source) ||
+            !MatchesEntryBoundInitialGroupSourcePair(source, body, batch, source.token_,
+                static_cast<const Record*>(source.row_)->originalSourceIdentity_, frame, binding, lease)) return false;
+        auto& row = *static_cast<Record*>(source.row_);
+        if (row.installPublication_.Valid()) return false;
+        return arms_.IssueGroupedPublicationAfterInstallation(row.arm_, &row, groups, group,
+            binding, lease, &row.groupInstallPublication_);
+    }
+    bool PrepareQueueBoundGroupPublication(const OriginalSourceLifetimePin& source,
+        const VoicePool::OriginalSourceBodyLifetimePin& body, const CommandQueue::PreparedBatchProof& batch,
+        ArmGroupTable& groups, ArmGroupToken group, std::uint64_t frame,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        const PrivatePendingQueueFrontierBinding& queue, const TimelineArmReaderPin& reader,
+        const OriginalQueueFutureGroupRegistration& original, const OriginalQueueFutureGroupRegistration& outer,
+        const ImmediateActionLane& lane, const PrivateImmediateLanePlacementProof& placement,
+        std::uint32_t eventOrdinal) noexcept {
+        if (!MatchesOriginal(source) ||
+            !MatchesEntryBoundInitialGroupSourcePair(source, body, batch, source.token_,
+                static_cast<const Record*>(source.row_)->originalSourceIdentity_, frame, binding, lease) ||
+            !arms_.PrivatePendingQueueFrontierStartReady(reader, source.token_, binding, lease, pool, decisions,
+                queue, original, outer, lane, placement, eventOrdinal)) return false;
+        auto& row = *static_cast<Record*>(source.row_);
+        if (row.installPublication_.Valid()) return false;
+        return arms_.IssueQueueGroupedPublicationAfterInstallation(row.arm_, &row, groups, group,
+            binding, lease, pool, decisions, queue, &row.groupInstallPublication_);
+    }
+    bool MatchesUnpublishedCommittedInitialGroupSourceStorage(const OriginalSourceLifetimePin& original,
+        const VoicePool::OriginalSourceBodyLifetimePin& body, const CommandQueue::PreparedBatchProof& batch,
+        TimelineArmToken arm, VnVoiceHandle sourceIdentity) const noexcept {
+        if (!MatchesOriginal(original) || !SameToken(original.token_, arm) || sourceIdentity == 0) return false;
+        const auto& row = *static_cast<const Record*>(original.row_);
+        const auto* native = arms_.Resolve(arm);
+        return row.State() == Phase::QueuePrepared && !row.wasPublished_ &&
+            !row.originalInstallationCompleted_.load(std::memory_order_acquire) &&
+            row.arm_.Valid() && row.arm_.Owner() == &arms_ && SameToken(row.arm_.Token(), arm) &&
+            row.voice_.Valid() && row.voice_.RenderHandle() == RenderOf(arm) &&
+            !voices_.OriginalVoiceReleased(row.voice_) && voices_.Resolve(row.voice_.RenderHandle()) != nullptr &&
+            voices_.MatchesOriginalSourceRetirementPair(row.voice_, body) &&
+            voices_.IsOriginalSourceBodyLifetimePinFor(body, arm, sourceIdentity) &&
+            native != nullptr && native->state.load(std::memory_order_acquire) == ArmState::PendingApply &&
+            native->pendingImmediateStart && native->originalSourceSubmission == &row &&
+            native->startedBlockSequence.load(std::memory_order_acquire) == 0 &&
+            native->tombstoneAudioSequence.load(std::memory_order_acquire) == 0 &&
+            native->logicalCompletionSequence.load(std::memory_order_acquire) == 0 &&
+            commands_.PreparedBatchContains(batch, row.range_) && row.count_ != 0 &&
+            HeaderMatches(row.body_[0], arm) && row.originalSourceIdentity_ == sourceIdentity &&
+            row.body_[0].payload.play.sourceIdentity == sourceIdentity;
+    }
+    // Only the original Engine producer may replace its unpublished children.
+    InstalledSourceRetirementRequest RequestPendingInstalledSourceRetirement(
+        const OriginalSourceLifetimePin& source,
+        const VoicePool::OriginalSourceBodyLifetimePin& body) noexcept {
+        using Result = InstalledSourceRetirementRequest;
+        if (!MatchesOriginal(source)) return Result::Refused;
+        auto& row = *static_cast<Record*>(source.row_);
+        if (!row.voice_.Valid() || !row.arm_.Valid() ||
+            !voices_.MatchesOriginalSourceRetirementPair(row.voice_, body) ||
+            !voices_.IsOriginalSourceBodyLifetimePinFor(body, row.token_, row.originalSourceIdentity_))
+            return Result::Refused;
+        if (voices_.OriginalVoiceReleased(row.voice_)) return Result::AlreadyReleased;
+        if (row.State() != Phase::Disposed || !row.wasPublished_ ||
+            !row.originalInstallationCompleted_.load(std::memory_order_acquire)) return Result::Refused;
+        const auto status = arms_.RequestOriginalPendingSourceRetirement(
+            row.arm_, &row, row.nativeSourceEpisode_);
+        if (status == TimelineArmTable::SourceCommandRowStatus::DeferredReservation) return Result::Deferred;
+        if (status != TimelineArmTable::SourceCommandRowStatus::Ready) return Result::Refused;
+        // The real Arm is cancelled before the audio request becomes visible.
+        voices_.RequestOriginalSourceBodyRetirement(body);
+        return Result::Requested;
+    }
+
+    InstalledSourceRetirementRequest RequestPendingInstalledSourceRetirementWithReceipt(
+        const OriginalSourceLifetimePin& source,
+        const VoicePool::OriginalSourceBodyLifetimePin& body,
+        PendingInstalledSourceRetirementReceipt* out) noexcept {
+        using Result = InstalledSourceRetirementRequest;
+        if (out == nullptr || out->Valid() ||
+            !MatchesOriginal(source)) return Result::Refused;
+        const auto& row = *static_cast<const Record*>(source.row_);
+        if (!IsOriginalInstalledSourceCurrent(source, row.originalSourceIdentity_)) return Result::Refused;
+        PendingInstalledSourceRetirementReceipt prepared;
+        if (!source.Borrow(&prepared.source_) || !body.Borrow(&prepared.body_)) return Result::Refused;
+        if (!voices_.CaptureOriginalSourceRetirementIdentity(row.voice_, body,
+                &prepared.release_, &prepared.terminal_)) return Result::Refused;
+        const auto result = RequestPendingInstalledSourceRetirement(source, body);
+        // AlreadyReleased alone does not prove an unplayed pending episode.
+        if (result != Result::Requested) return result == Result::AlreadyReleased ? Result::Refused : result;
+        *out = std::move(prepared);
+        return Result::Requested;
+    }
+
+    bool MatchesPendingInstalledSourceRetirementReceipt(
+        const PendingInstalledSourceRetirementReceipt& receipt, TimelineArmToken token) const noexcept {
+        if (receipt.owner_ != nullptr)
+            return receipt.owner_ == this && incarnation_ != 0 && receipt.registryIncarnation_ == incarnation_ &&
+                receipt.armIncarnation_ == arms_.Incarnation() && receipt.episode_ != 0 &&
+                receipt.marker_ != 0 && receipt.identity_ != 0 && SameToken(receipt.token_, token) &&
+                !receipt.source_.Valid() && !receipt.body_.Valid();
+        if (!MatchesOriginal(receipt.source_) || !SameToken(receipt.source_.token_, token)) return false;
+        const auto& row = *static_cast<const Record*>(receipt.source_.row_);
+        return row.arm_.Owner() == &arms_ && SameToken(row.arm_.Token(), token) &&
+            row.voice_.Valid() && voices_.MatchesOriginalSourceRetirementPair(row.voice_, receipt.body_) &&
+            voices_.IsOriginalSourceBodyLifetimePinFor(receipt.body_, token, row.originalSourceIdentity_);
+    }
+
+    bool PendingInstalledSourceRetirementSettled(
+        const PendingInstalledSourceRetirementReceipt& receipt, TimelineArmToken token) const noexcept {
+        if (!MatchesPendingInstalledSourceRetirementReceipt(receipt, token)) return false;
+        if (receipt.owner_ != nullptr) return true;
+        const auto& source = *static_cast<const Record*>(receipt.source_.row_);
+        // Receipt loans retain storage; physical release never waits for them.
+        return voices_.OriginalVoiceReleased(source.voice_) &&
+            arms_.OriginalPendingSourceRetirementSettled(source.arm_, &source, source.nativeSourceEpisode_);
+    }
+
+    bool ReturnPendingInstalledSourceRetirementStorage(
+        PendingInstalledSourceRetirementReceipt& receipt, TimelineArmToken token) noexcept {
+        if (!PendingInstalledSourceRetirementSettled(receipt, token) || incarnation_ == 0) return false;
+        if (receipt.owner_ != nullptr) return true;
+        const auto& source = *static_cast<const Record*>(receipt.source_.row_);
+        // Seal the actual terminal episode while its native owners still exist.
+        // Later matches must never consult a reused Source, Body or Arm row.
+        receipt.owner_ = this;
+        receipt.registryIncarnation_ = incarnation_;
+        receipt.armIncarnation_ = arms_.Incarnation();
+        receipt.episode_ = source.nativeSourceEpisode_;
+        receipt.marker_ = source.originalMarker_;
+        receipt.identity_ = source.originalSourceIdentity_;
+        receipt.token_ = source.token_;
+        receipt.body_.Release();
+        receipt.source_.Release();
+        return true;
+    }
+
+    bool MatchesPendingInstalledSourceRetirementIdentity(
+        const PendingInstalledSourceRetirementReceipt& receipt, TimelineArmToken arm,
+        VnVoiceHandle identity, VoiceReleaseObserver release, SourceTerminalToken terminal) const noexcept {
+        if (!PendingInstalledSourceRetirementSettled(receipt, arm) || identity == 0 ||
+            !release.Valid() || !terminal.Valid() || receipt.release_.slot != release.slot ||
+            receipt.release_.targetSequence != release.targetSequence || receipt.terminal_.slot != terminal.slot ||
+            receipt.terminal_.generation != terminal.generation) return false;
+        return receipt.owner_ != nullptr ? receipt.identity_ == identity
+            : static_cast<const Record*>(receipt.source_.row_)->originalSourceIdentity_ == identity;
+    }
+
+    bool CapturePendingInstalledSourceRetirementTerminal(
+        const PendingInstalledSourceRetirementReceipt& receipt, TimelineArmToken arm,
+        VnVoiceHandle identity, VoiceReleaseObserver release, SourceTerminalToken* out) const noexcept {
+        if (out == nullptr || !MatchesPendingInstalledSourceRetirementIdentity(
+                receipt, arm, identity, release, receipt.terminal_)) return false;
+        *out = receipt.terminal_;
+        return true;
+    }
+
+    void ObservePendingInstalledSourceTerminalReturn(PendingInstalledSourceRetirementReceipt& receipt,
+        TimelineArmToken arm, SourceTerminalToken terminal, const SourceTerminalRecord& source) noexcept {
+        if (!MatchesPendingInstalledSourceRetirementReceipt(receipt, arm) ||
+            receipt.terminal_.slot != terminal.slot || receipt.terminal_.generation != terminal.generation ||
+            source.render != RenderOf(arm) || source.release.slot != receipt.release_.slot ||
+            source.release.targetSequence != receipt.release_.targetSequence || source.occupied ||
+            !source.releaseSeen || !voices_.ReleaseObserved(source.release)) return;
+        receipt.terminalReturned_ = true;
+    }
+
+    bool PendingInstalledSourceTerminalReturned(const PendingInstalledSourceRetirementReceipt& receipt,
+        TimelineArmToken arm) const noexcept {
+        return PendingInstalledSourceRetirementSettled(receipt, arm) && receipt.terminalReturned_;
+    }
+
+public:
     bool DisposeUnpublishedVoice(TimelineArmToken token) noexcept {
         auto* row = Find(token);
         if (row == nullptr || !CanWithdrawUnpublished(token)) return false;
@@ -459,6 +812,22 @@ public:
     }
 
 private:
+    bool RetireRequestedInstalledSource(const OriginalSourceInstallationLoan& installation,
+        std::uint64_t blockIndex) noexcept {
+        if (installation.token_.slot >= capacity_) return false;
+        auto& row = rows_[installation.token_.slot];
+        if (!MatchesInstallationForSource(installation, &row, row.token_, row.originalSourceIdentity_) ||
+            row.State() != Phase::Disposed || !row.voice_.Valid() || !row.arm_.Valid()) return false;
+        if (arms_.RequestOriginalPendingSourceRetirement(row.arm_, &row, row.nativeSourceEpisode_) !=
+            TimelineArmTable::SourceCommandRowStatus::Ready) return false;
+        TimelineArmTable::SourceCommandRowProof cancellation;
+        if (arms_.ProveOriginalSourceCancellation(row.arm_, &row, &cancellation) !=
+            TimelineArmTable::SourceCommandRowStatus::Ready) return false;
+        if (!voices_.CancelTimelineBindingFromAudio(row.token_.renderSlot, row.token_.renderGeneration))
+            return false;
+        TimelineArmTable::TombstoneOriginalSourceCommand(cancellation, blockIndex);
+        return true;
+    }
     friend struct Engine;
     friend class MixerLoop;
     friend class OriginalSourceInstallationLoan;
@@ -853,6 +1222,8 @@ private:
         row.originalLifetime_.fetch_or(kOwnersReleased, std::memory_order_release);
     }
     static void CompleteOriginalDisposition(Record& row) noexcept {
+        row.installPublication_.Reset();
+        row.groupInstallPublication_.Reset();
         const auto previous = row.originalLifetime_.fetch_or(kDispositionComplete,
             std::memory_order_acq_rel);
         TryCloseOrigin(row);
@@ -875,6 +1246,16 @@ private:
             batch.reserved == 0 && batch.batchCommandCount != 0 && batch.batchCommandCount <= kMaxCommands &&
             SameToken(TokenOf(header), token);
     }
+    static std::uint64_t NextIncarnation() noexcept {
+        static std::atomic<std::uint64_t> next{1};
+        auto current = next.load(std::memory_order_relaxed);
+        while (current != 0) {
+            const auto successor = current == UINT64_MAX ? 0 : current + 1;
+            if (next.compare_exchange_weak(current, successor,
+                    std::memory_order_relaxed, std::memory_order_relaxed)) return current;
+        }
+        return 0;
+    }
     std::uint64_t nextNativeSourceEpisode_ = 1;
     bool nativeSourceEpisodeExhausted_ = false;
     TimelineArmTable& arms_;
@@ -883,6 +1264,7 @@ private:
     EffectPoolBank& effects_;
     const std::uint32_t capacity_;
     std::unique_ptr<Record[]> rows_;
+    const std::uint64_t incarnation_;
     Record* pending_ = nullptr;
     std::uint64_t nextOriginalMarker_ = 1;
     bool originalMarkerExhausted_ = false;
