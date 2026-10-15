@@ -252,7 +252,7 @@ MainWindow::MainWindow(
     InitializationMode initializationMode)
     : QMainWindow(parent)
 {
-    setWindowTitle("Harken Studio - Spatial Audio Designer");
+    setWindowTitle("Harken Studio");
     setMinimumSize(800, 600);
     resize(1800, 1100);
     setObjectName(QStringLiteral("MainWindow"));

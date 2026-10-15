@@ -273,7 +273,7 @@ set_target_properties(harken_hub PROPERTIES OUTPUT_NAME "HarkenHub")
 
 harken_attach_version_resource(
     harken_hub
-    "Harken Hub - HarkenStudio version and project manager"
+    "Harken Hub"
     "HarkenHub.exe"
     hub)
 
