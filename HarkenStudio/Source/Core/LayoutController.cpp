@@ -188,6 +188,16 @@ void LayoutController::setVisibleSingletonMaterializer(std::function<void()> mat
     visibleSingletonMaterializer_ = std::move(materializer);
 }
 
+void LayoutController::setSingletonSnapshotProvider(std::function<QVariantMap()> provider)
+{
+    singletonSnapshotProvider_ = std::move(provider);
+}
+
+void LayoutController::setSingletonStateRestorer(std::function<void(const QVariantMap&)> restorer)
+{
+    singletonStateRestorer_ = std::move(restorer);
+}
+
 void LayoutController::setInstanceCloser(std::function<void()> closer)
 {
     instanceCloser_ = std::move(closer);
@@ -365,6 +375,8 @@ void LayoutController::seedZoneHomeAreas()
 
 void LayoutController::applyDefaultLayout()
 {
+    if (singletonStateRestorer_)
+        singletonStateRestorer_({});
     collapsedZones_.clear();
     seedZoneHomeAreas();
 
@@ -816,6 +828,7 @@ void LayoutController::loadProjectLayout()
 {
     QByteArray state;
     QList<VNX::DockInstanceSpec> specs;
+    QVariantMap singletons;
     QJsonArray collapsed;
 
     const QString path = projectLayoutCacheFile();
@@ -839,6 +852,7 @@ void LayoutController::loadProjectLayout()
                     obj.value(QLatin1String("state")).toString().toLatin1());
                 specs = workspaceWindowInstanceSpecsFromJson(
                     obj.value(QLatin1String("instances")).toArray());
+                singletons = obj.value(QLatin1String("singletons")).toObject().toVariantMap();
                 collapsed = obj.value(QLatin1String("collapsedZones")).toArray();
                 currentLayoutName_ = obj.value(QLatin1String("baseLayout")).toString();
             }
@@ -849,6 +863,8 @@ void LayoutController::loadProjectLayout()
     seedZoneHomeAreas();
 
     if (dockManager_ && !state.isEmpty()) {
+        if (singletonStateRestorer_)
+            singletonStateRestorer_(singletons);
         restoreDockState(state);
         collapsedZonesFromJson(collapsed);
         currentLayoutFromCache_ = true;
@@ -879,6 +895,8 @@ void LayoutController::saveProjectLayout()
     obj["instances"] = workspaceWindowInstanceSpecsToJson(instanceSnapshotProvider_
                                         ? instanceSnapshotProvider_()
                                         : QList<VNX::DockInstanceSpec>());
+    if (singletonSnapshotProvider_)
+        obj["singletons"] = QJsonObject::fromVariantMap(singletonSnapshotProvider_());
     obj["collapsedZones"] = collapsedZonesToJson();
     obj["baseLayout"] = currentLayoutName_;
 
@@ -976,6 +994,8 @@ void LayoutController::onSaveNamedLayout()
     json["instances"] = workspaceWindowInstanceSpecsToJson(instanceSnapshotProvider_
                                         ? instanceSnapshotProvider_()
                                         : QList<VNX::DockInstanceSpec>());
+    if (singletonSnapshotProvider_)
+        json["singletons"] = QJsonObject::fromVariantMap(singletonSnapshotProvider_());
     json["collapsedZones"] = collapsedZonesToJson();
     json["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
 
@@ -1007,6 +1027,8 @@ bool LayoutController::applyNamedLayoutJson(const QString& name, const QJsonObje
 {
     ensureDocksForSpecs(
         workspaceWindowInstanceSpecsFromJson(json.value("instances").toArray()));
+    if (singletonStateRestorer_)
+        singletonStateRestorer_(json.value(QLatin1String("singletons")).toObject().toVariantMap());
 
     QByteArray dockState = QByteArray::fromBase64(json["dockState"].toString().toLatin1());
     if (!dockState.isEmpty() && dockManager_) {

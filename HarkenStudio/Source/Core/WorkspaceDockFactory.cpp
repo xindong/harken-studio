@@ -9,6 +9,7 @@
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/Information/InformationPanel.h"
 #include "Widgets/Inspector/InspectorPanel.h"
+#include "Widgets/PreviewPanel/PreviewPanel.h"
 #include "Widgets/SourceEditor/SourceEditorPanel.h"
 #include "Widgets/Timeline/TimelineEditorPanel.h"
 #include "Widgets/TransitionEditor/TransitionEditorPanel.h"
@@ -75,6 +76,8 @@ QAction* pinActionFor(QWidget* content)
         return action;
     }
     if (auto* panel = qobject_cast<GridEditorPanel*>(content))
+        return bindPinAction(panel);
+    if (auto* panel = qobject_cast<PreviewPanel*>(content))
         return bindPinAction(panel);
     if (auto* panel = qobject_cast<TransitionEditorPanel*>(content))
         return bindPinAction(panel);
@@ -191,7 +194,8 @@ void addDockBesideSubtree(ads::CDockManager* manager, ads::CDockWidget* dock,
 
 }
 
-void WorkspaceDockFactory::setContent(ads::CDockWidget* dock, QWidget* content)
+void WorkspaceDockFactory::setContent(ads::CDockWidget* dock, QWidget* content,
+                                      ads::CDockWidget::eInsertMode insertMode)
 {
     if (content && dock) {
         for (const WorkspaceWindowDescriptor& descriptor : defaultWorkspaceWindowDescriptors()) {
@@ -201,7 +205,7 @@ void WorkspaceDockFactory::setContent(ads::CDockWidget* dock, QWidget* content)
             }
         }
     }
-    dock->setWidget(content);
+    dock->setWidget(content, insertMode);
     if (auto* action = pinActionFor(content)) {
         auto actions = dock->titleBarActions();
         actions.append(action);

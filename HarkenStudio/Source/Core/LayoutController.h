@@ -50,6 +50,8 @@ public:
 
     void setInstanceSnapshotProvider(std::function<QList<VNX::DockInstanceSpec>()> provider);
     void setInstanceRestoreFactory(std::function<bool(const VNX::DockInstanceSpec&)> factory);
+    void setSingletonSnapshotProvider(std::function<QVariantMap()> provider);
+    void setSingletonStateRestorer(std::function<void(const QVariantMap&)> restorer);
     void setVisibleSingletonMaterializer(std::function<void()> materializer);
     void setInstanceCloser(std::function<void()> closer);
 
@@ -131,6 +133,8 @@ private:
     QActionGroup* layoutActionGroup_ = nullptr;
     std::function<QList<VNX::DockInstanceSpec>()> instanceSnapshotProvider_;
     std::function<bool(const VNX::DockInstanceSpec&)> instanceRestoreFactory_;
+    std::function<QVariantMap()> singletonSnapshotProvider_;
+    std::function<void(const QVariantMap&)> singletonStateRestorer_;
     std::function<void()> visibleSingletonMaterializer_;
     std::function<void()> instanceCloser_;
 

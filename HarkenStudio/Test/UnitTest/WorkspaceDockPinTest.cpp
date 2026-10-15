@@ -7,6 +7,7 @@
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/Information/InformationPanel.h"
 #include "Widgets/Inspector/InspectorPanel.h"
+#include "Widgets/PreviewPanel/PreviewPanel.h"
 #include "Widgets/SourceEditor/SourceEditorPanel.h"
 #include "Widgets/Timeline/TimelineEditorPanel.h"
 #include "Widgets/TransitionEditor/TransitionEditorPanel.h"
@@ -238,6 +239,7 @@ TEST_F(WorkspaceDockPinTest, DeletingTheActiveTabDisconnectsItsAction)
 TEST_F(WorkspaceDockPinTest, AllEditorBindingsUseTheExistingPanelState)
 {
     checkPanelBinding<VNX::InspectorPanel>(QStringLiteral("inspectorPinButton"));
+    checkPanelBinding<PreviewPanel>(QStringLiteral("dockPinButton"));
     checkPanelBinding<VNX::GridEditorPanel>(QStringLiteral("gridPin"));
     checkPanelBinding<VNX::TransitionEditorPanel>(QStringLiteral("transitionPin"));
     checkPanelBinding<VNX::TimelineEditorPanel>(QStringLiteral("timelinePin"));
