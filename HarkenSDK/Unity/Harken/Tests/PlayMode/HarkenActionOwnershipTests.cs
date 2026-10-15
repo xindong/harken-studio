@@ -526,7 +526,7 @@ namespace Harken.Unity.Tests
                 Set(Action, "actionName", selected.Name);
                 Set(Action, "projectId", publication.ProjectId);
                 settingsLease.Settings.SetPackDirectory(Root);
-                Assert.That(Runtime.ConfigureBeforeStartup("Audio/U4Original", "Init.pack",
+                Assert.That(Runtime.ConfigureBeforeStartup("Audio/U4Original", publication.InitPack.Path,
                     new[] { selected.OwnerPackStableId }, nullDevice, false), Is.EqualTo(VnResult.VN_OK));
                 Owner.SetActive(true);
                 Assert.That(Runtime.IsReady, Is.True);

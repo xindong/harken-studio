@@ -1626,7 +1626,7 @@ namespace Harken.Unity.Tests
                 Assert.That(GameplayPublication.Read(Root, null, out Publication, out string error),
                     Is.EqualTo(VnResult.VN_OK), error);
                 Assert.That(Publication.TryFindAction("Play_U4_A", out Action), Is.True);
-                Assert.That(Runtime.ConfigureBeforeStartup("Audio/U4Original", "Init.pack",
+                Assert.That(Runtime.ConfigureBeforeStartup("Audio/U4Original", Publication.InitPack.Path,
                     prepare ? new[] { Action.OwnerPackStableId } : Array.Empty<ulong>(), true, false),
                     Is.EqualTo(VnResult.VN_OK));
                 if (activate) Owner.SetActive(true);

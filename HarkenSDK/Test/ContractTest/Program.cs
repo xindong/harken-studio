@@ -103,6 +103,7 @@ namespace Harken.Test
                 GameplayPublicationContract.Run(gameplayRoot, renamedGameplayRoot, languageRoot);
             int zeroGc = RunZeroGc(currentWorldPath);   // 0 PASS, 1 FAIL, 2 SKIP
             int remoteNative = RemoteCommunicationContract.RunNative();
+            bool repositoryNativeOk = !requireNative || RepositoryPublicationContract.Run();
 
             Console.WriteLine();
             Console.WriteLine("ABI fidelity : " + (abiOk ? "PASS" : "FAIL"));
@@ -125,7 +126,8 @@ namespace Harken.Test
                 (!gameplayRequested ? "NOT REQUESTED" : gameplayOk ? "PASS" : "FAIL"));
             if (requireNative)
             {
-                bool nativeOk = namePost == 0 && zeroGc == 0 && remoteNative == 0;
+                Console.WriteLine("Repository publications: " + (repositoryNativeOk ? "PASS" : "FAIL"));
+                bool nativeOk = repositoryNativeOk && namePost == 0 && zeroGc == 0 && remoteNative == 0;
                 Console.WriteLine("Required native validation: " + (nativeOk ? "PASS" : "FAIL"));
                 if (namePost == 2 || zeroGc == 2 || remoteNative == 2)
                 {
@@ -133,7 +135,7 @@ namespace Harken.Test
                 }
             }
 
-            bool ok = waveformOk && variableSdkOk && abiOk && coordinatesOk && bootstrapOk && manifestOk && platformNativeOk && languageNativeOk && gameplayOk &&
+            bool ok = repositoryNativeOk && waveformOk && variableSdkOk && abiOk && coordinatesOk && bootstrapOk && manifestOk && platformNativeOk && languageNativeOk && gameplayOk &&
                 (nativeBootstrap == 0 || nativeBootstrap == 3 ||
                  (!requireNative && nativeBootstrap == 2)) &&
                 (namePost == 0 || (!requireNative && namePost == 2)) &&

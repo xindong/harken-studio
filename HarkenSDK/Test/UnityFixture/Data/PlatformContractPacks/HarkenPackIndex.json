@@ -2,13 +2,13 @@
     "platforms": [
         {
             "basePlatform": "Android",
-            "id": "88ed79a7-fda5-4494-bca6-14661720456d",
+            "id": "97a6bdcf-a408-4c4e-95b8-02a3d303edf1",
             "name": "Android_Low",
             "path": "Android_Low"
         },
         {
             "basePlatform": "Android",
-            "id": "0e7ced1d-0642-4ba2-bd6f-4a11fdf781fc",
+            "id": "c93de5a0-514d-46a9-88a3-3543c1c8c537",
             "name": "Android_High",
             "path": "Android_High"
         }

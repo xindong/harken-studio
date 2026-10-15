@@ -15,6 +15,7 @@
 #include <functional>
 #include <cstdint>
 #include <optional>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -87,6 +88,7 @@ public:
         int     mediaConversions = 0;
         int     mediaFallbacks = 0;
         uint64_t currentWorldSemanticFingerprint = 0;
+        std::map<harkenstudio::ObjectId, uint64_t> controlSoundContentRevisions;
     };
 
     struct PackBuildRecord
@@ -227,6 +229,7 @@ private:
 
     struct MediaCollectionStats
     {
+        std::map<harkenstudio::ObjectId, uint64_t> controlSoundContentRevisions;
         int cacheHits = 0;
         int conversions = 0;
         int fallbacks = 0;

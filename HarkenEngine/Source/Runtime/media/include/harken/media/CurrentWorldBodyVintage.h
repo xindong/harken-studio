@@ -22,8 +22,9 @@ inline constexpr std::uint32_t kCurrentWorldBodyVintageV14 = 14;
 inline constexpr std::uint32_t kCurrentWorldBodyVintageV15 = 15;
 inline constexpr std::uint32_t kCurrentWorldBodyVintageV16 = 16;
 inline constexpr std::uint32_t kCurrentWorldBodyVintageV17 = 17;
+inline constexpr std::uint32_t kCurrentWorldBodyVintageV18 = 18;
 inline constexpr std::uint32_t kCurrentWorldShippingBodyVintage =
-    kCurrentWorldBodyVintageV17;
+    kCurrentWorldBodyVintageV18;
 
 } // namespace harken
 

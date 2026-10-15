@@ -386,12 +386,21 @@ Editor Play Mode and active Editor preview sessions always start communication
 with their audio session. The same native library supports communication in
 Release builds; no Development Build or separate host process is required.
 
-The page stores its project-wide configuration in
-`Assets/Harken/Resources/HarkenProjectSettings.asset`. Commit this asset and its
-`.meta` with the game project. Unity includes it as a Resources asset in the
+The page initially creates its project-wide configuration at
+`Assets/Harken/Resources/HarkenProjectSettings.asset`. The parent directories
+can be changed, for example to `Assets/Audio/Resources/HarkenProjectSettings.asset`;
+keep the `Resources/HarkenProjectSettings.asset` resource path and a single copy.
+The Editor reuses the existing resource at its current location. Commit this asset
+and its `.meta` with the game project. Unity includes it as a Resources asset in the
 Player; it is independent of scene and prefab settings and survives SDK updates.
 Without a settings asset, communication and discovery use their enabled defaults.
 Conflicting resources with the same settings name fail build validation.
+
+Editor-only audio project settings are initially created at
+`Assets/Harken/Editor/HarkenEditorProjectSettings.asset` and are found by type.
+They can be moved or renamed to match the game project's directory layout,
+but must stay outside `Resources` so the audio project directory is not shipped.
+Keep a single Editor settings asset; duplicates fail settings lookup and build validation.
 
 The page's Network section contains the connection settings.
 `Remote Bind Address` defaults to `0.0.0.0` for the local machine and LAN.

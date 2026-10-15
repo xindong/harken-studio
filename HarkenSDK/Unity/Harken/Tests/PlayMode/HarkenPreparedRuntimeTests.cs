@@ -36,7 +36,7 @@ namespace Harken.Unity.Tests
             Set(runtime, "persistAcrossScenes", false);
             try
             {
-                Assert.That(runtime.ConfigureBeforeStartup("Unused", "Init.pack", new[] { row.OwnerPackStableId }, true, false),
+                Assert.That(runtime.ConfigureBeforeStartup("Unused", publication.InitPack.Path, new[] { row.OwnerPackStableId }, true, false),
                     Is.EqualTo(VnResult.VN_OK));
                 owner.SetActive(true);
                 ExpectStartupFailure(VnResult.VN_PACK_PROVIDER_FAILED);
@@ -252,7 +252,7 @@ namespace Harken.Unity.Tests
                 Assert.That(asset, Is.Not.Null, "Prepare HarkenUnityFixtureAssets before running this test.");
                 Assert.That(asset.Capture(out HarkenPreparedPacks prepared, out string error), Is.EqualTo(VnResult.VN_OK), error);
                 Assert.That(prepared.Publication.TryFindAction("Play_U4_A", out GameplayAction row), Is.True);
-                Assert.That(runtime.ConfigureBeforeStartup("UnusedSuppliedBytes", "Init.pack",
+                Assert.That(runtime.ConfigureBeforeStartup("UnusedSuppliedBytes", prepared.Publication.InitPack.Path,
                     new[] { row.OwnerPackStableId }, true, false), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(runtime.ConfigurePlatformBeforeStartup(prepared.Publication.Platform.Id), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(runtime.ConfigureLanguageBeforeStartup(prepared.Publication.Language), Is.EqualTo(VnResult.VN_OK));
@@ -318,7 +318,7 @@ namespace Harken.Unity.Tests
             Set(action, "projectId", captured.Publication.ProjectId);
             try
             {
-                Assert.That(runtime.ConfigureBeforeStartup("UnusedTextAssetPath", "Init.pack",
+                Assert.That(runtime.ConfigureBeforeStartup("UnusedTextAssetPath", captured.Publication.InitPack.Path,
                     new[] { row.OwnerPackStableId }, true, false), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(runtime.ConfigurePreparedSourceBeforeStartup(asset), Is.EqualTo(VnResult.VN_OK));
                 owner.SetActive(true);
@@ -366,7 +366,7 @@ namespace Harken.Unity.Tests
             Set(action, "playOnEnable", true);
             try
             {
-                Assert.That(runtime.ConfigureBeforeStartup("UnusedPreparedPath", "Init.pack", Array.Empty<ulong>(), true, false),
+                Assert.That(runtime.ConfigureBeforeStartup("UnusedPreparedPath", publication.InitPack.Path, Array.Empty<ulong>(), true, false),
                     Is.EqualTo(VnResult.VN_OK));
                 Assert.That(runtime.ConfigurePreparedBytesBeforeStartup(prepared), Is.EqualTo(VnResult.VN_OK));
                 owner.SetActive(true);
@@ -420,7 +420,7 @@ namespace Harken.Unity.Tests
             Set(runtime, "persistAcrossScenes", false);
             try
             {
-                Assert.That(runtime.ConfigureBeforeStartup("UnusedReaderPath", "Init.pack",
+                Assert.That(runtime.ConfigureBeforeStartup("UnusedReaderPath", captured.Publication.InitPack.Path,
                     new[] { row.OwnerPackStableId }, true, false), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(runtime.ConfigurePlatformBeforeStartup(captured.Publication.Platform.Id), Is.EqualTo(VnResult.VN_OK));
                 owner.SetActive(true);
@@ -466,7 +466,7 @@ namespace Harken.Unity.Tests
             Set(runtime, "persistAcrossScenes", false);
             try
             {
-                Assert.That(runtime.ConfigureBeforeStartup("UnusedMasterVolumePath", "Init.pack",
+                Assert.That(runtime.ConfigureBeforeStartup("UnusedMasterVolumePath", prepared.Publication.InitPack.Path,
                     Array.Empty<ulong>(), true, false), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(runtime.ConfigurePlatformBeforeStartup(prepared.Publication.Platform.Id), Is.EqualTo(VnResult.VN_OK));
                 owner.SetActive(true);

@@ -23,6 +23,10 @@ duplicated under this directory. Preparation copies it to both `GeneratedPacks`
 `HarkenPackManifest.json`, including `Init.pack` and the UUID-named Action Pack.
 `EditorProjectPackExporterManifest.ProductionWaveformGoldenIsRepeatable` verifies
 independent exports, canonical activation, and the exact three-frame stereo PCM.
+The retained v1 publication is a managed reader compatibility fixture; it is
+not used to start the current native Runtime. The v2 metadata fixtures below
+are regenerated together with the current Pack body vintage; they exercise
+metadata parsing and waveform construction, not full Runtime activation.
 
 `EditorPreviewDirect` and `EditorPreviewRandom` use the v2 canonical fixtures in
 `HarkenSDK/Test/Fixtures/EditorMetadata/2`. The Random fixture has three
@@ -92,6 +96,8 @@ The committed JSON and Pack fixtures are regenerated through the current
 production project/platform export chain. Set `HARKEN_UNITY_PLATFORM_FIXTURE_OUT`
 when running the focused editor fixture test to retain its exported publication
 for synchronization. Do not hand-edit manifests, indexes, or Pack binaries.
+Use each publication's Init path when configuring test startup; current exports
+use original `.bytes` files rather than the older `.pack` fixture names.
 
 ## Regenerate Playback Publications
 

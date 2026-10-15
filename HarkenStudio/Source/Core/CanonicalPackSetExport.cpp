@@ -2115,6 +2115,14 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     project, action->name, mediaPath, contentOpts);
                 if (!member.success)
                     return member;
+                for (const auto& [soundId, revision] : member.controlSoundContentRevisions) {
+                    const auto [found, inserted] = meta.soundContentRevisions.emplace(soundId, revision);
+                    if (!inserted && found->second != revision) {
+                        unit.error = QStringLiteral("Conflicting control media revision for Sound %1")
+                            .arg(VNX::objectIdString(soundId));
+                        return unit;
+                    }
+                }
                 unit.warnings += member.warnings;
                 unit.objectCount += member.objectCount;
                 unit.actionCount += member.actionCount;
@@ -2181,7 +2189,12 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     loopable ? media.loopStartFrame : 0,
                     loopable ? media.loopEndFrame : 0))
                 return unit;
-            meta.soundContentRevisions.emplace(media.soundId, revision);
+            const auto [found, inserted] = meta.soundContentRevisions.emplace(media.soundId, revision);
+            if (!inserted && found->second != revision) {
+                unit.error = QStringLiteral("Control and packed media revisions disagree for Sound %1")
+                    .arg(VNX::objectIdString(media.soundId));
+                return unit;
+            }
             ++meta.ownedResources;
             unit.success = true;
             unit.error.clear();
@@ -2221,6 +2234,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         if (packedActionIds.count(variant.actionStableId) == 0)
             continue;
         for (const ActionClosureMember& member : variant.closure.objects)
+            packedDefinitionIds.insert(member.stableId);
+        for (const ActionClosureMember& member : variant.closure.controlObjects)
             packedDefinitionIds.insert(member.stableId);
     }
     harkenprojectschema::VariableContractArtifactV1 variableContract;
@@ -2274,6 +2289,19 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                              world, &owners, &ownershipError))
             return fail(ownershipError);
 
+        // Normalize control-only definitions through the same slice/rebind path as
+        // published providers. This temporary owner is removed before encoding.
+        auto compilationOwners = owners;
+        PackMeta controlInputs;
+        controlInputs.language = language;
+        for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
+            const auto id = world.playableProperties[i].stableId;
+            if (owners.count(id) == 0
+                && !claimIdentity(&compilationOwners, id, controlInputs.packStableId,
+                    harkenstudiobuild::kInitCatalogIdentityClassPlayable, &compileError))
+                return fail(compileError);
+        }
+        packs.push_back(std::move(controlInputs));
         for (PackMeta& pack : packs) {
             if (!pack.language.isEmpty() && pack.language != language)
                 continue;
@@ -2295,7 +2323,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             pack.slicedActions.clear();
             pack.slicedVariables.clear();
             if (!sliceWorld(world, pack.packStableId,
-                            owners, &pack.slicedVariables, &pack.slicedPlayables, &pack.slicedOccurrences,
+                            compilationOwners, &pack.slicedVariables, &pack.slicedPlayables, &pack.slicedOccurrences,
                             &pack.slicedTracks, &pack.slicedPieces, &pack.slicedContainers,
                             &pack.slicedTransitions, &pack.slicedActions, &pack, &compileError))
                 return fail(compileError);
@@ -2447,6 +2475,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         if (actionFingerprintsChanged)
             return fail(QStringLiteral(
                 "Action program fingerprints did not converge after live rebind"));
+        packs.pop_back();
         for (PackMeta& pack : packs) {
             if (!packNeedsEncode(pack))
                 continue;

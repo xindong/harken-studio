@@ -1227,8 +1227,7 @@ void EngineIntegrationsPage::browseHarkenProject()
         this, QCoreApplication::translate("HarkenHub", "Select Harken Project"), harkenProjectEdit_->text(),
         QCoreApplication::translate("HarkenHub", "Harken Project (*.hsp)"));
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setOptions(QFileDialog::DontUseNativeDialog
-                       | QFileDialog::DontUseCustomDirectoryIcons);
+    dialog->setOptions(QFileDialog::DontUseCustomDirectoryIcons);
     dialog->setFileMode(QFileDialog::ExistingFile);
     connect(dialog, &QFileDialog::fileSelected, this, [this](const QString& path) {
         acceptHarkenProject(path, true);
@@ -1242,7 +1241,7 @@ void EngineIntegrationsPage::browseEngineProject()
         QCoreApplication::translate("HarkenHub", "Select Game Project"),
         engineProjectEdit_->text());
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setOptions(QFileDialog::DontUseNativeDialog | QFileDialog::ShowDirsOnly
+    dialog->setOptions(QFileDialog::ShowDirsOnly
                        | QFileDialog::DontUseCustomDirectoryIcons);
     dialog->setFileMode(QFileDialog::Directory);
     connect(dialog, &QFileDialog::fileSelected, this, [this](const QString& path) {
@@ -1256,7 +1255,7 @@ void EngineIntegrationsPage::browseEngineProject()
                 QCoreApplication::translate("HarkenHub", "Unreal Project (*.uproject)"));
             descriptorDialog->setObjectName(QStringLiteral("unrealProjectSelection"));
             descriptorDialog->setAttribute(Qt::WA_DeleteOnClose);
-            descriptorDialog->setOptions(QFileDialog::DontUseNativeDialog | QFileDialog::DontUseCustomDirectoryIcons);
+            descriptorDialog->setOptions(QFileDialog::DontUseCustomDirectoryIcons);
             descriptorDialog->setFileMode(QFileDialog::ExistingFile);
             connect(descriptorDialog, &QFileDialog::fileSelected, this, [this](const QString& descriptor) {
                 acceptEngineTarget(descriptor, true);
@@ -1278,7 +1277,7 @@ void EngineIntegrationsPage::browseSdkSource()
     auto* dialog = new QFileDialog(
         sdkSelectionDialog_, QCoreApplication::translate("HarkenHub", "Choose SDK Folder"), start);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
-    dialog->setOptions(QFileDialog::DontUseNativeDialog | QFileDialog::ShowDirsOnly
+    dialog->setOptions(QFileDialog::ShowDirsOnly
                        | QFileDialog::DontUseCustomDirectoryIcons);
     dialog->setFileMode(QFileDialog::Directory);
     connect(dialog, &QFileDialog::fileSelected, this, [this](const QString& path) {

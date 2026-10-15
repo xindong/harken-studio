@@ -10,6 +10,7 @@
 #include <harken_studio_build/PackFormat.h>
 #include <harken_studio_build/PackFormatV2.h>
 #include <harken_studio_build/EffectEncoding.h>
+#include <harken_studio_build/MediaContentRevision.h>
 
 #include <QCoreApplication>
 #include <QDir>
@@ -669,6 +670,24 @@ bool decodeAudioFileInterleaved(const QString& filePath,
     outChannels = static_cast<int>(channels);
     outSampleRate = static_cast<int>(sampleRate);
     return true;
+}
+
+bool computePackMediaContentRevision(const PackMediaDesc& media, uint64_t* revision)
+{
+    if (!revision || media.downmixToMono || !media.data.empty()
+        || media.format != PackMediaFormat::PcmFloat) return false;
+    std::vector<float> interleaved;
+    int channels = 0, sampleRate = 0;
+    if (!decodeAudioFileInterleaved(media.sourcePath, interleaved, channels, sampleRate)
+        || channels <= 0 || sampleRate <= 0 || interleaved.empty()
+        || interleaved.size() % static_cast<std::size_t>(channels) != 0) return false;
+    std::vector<const float*> planes(static_cast<std::size_t>(channels));
+    for (int c = 0; c < channels; ++c) planes[c] = interleaved.data() + c;
+    return harkenstudiobuild::ComputeMediaPcmContentRevisionV1(
+        static_cast<uint32_t>(sampleRate), static_cast<uint32_t>(channels),
+        interleaved.size() / static_cast<std::size_t>(channels), planes.data(),
+        static_cast<uint32_t>(channels), revision,
+        media.loopable ? media.loopStartFrame : 0, media.loopable ? media.loopEndFrame : 0);
 }
 
 AudioFileInfoData audioFileInfo(const QString& path)

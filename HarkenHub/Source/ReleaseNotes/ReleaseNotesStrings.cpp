@@ -1,6 +1,7 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Engine Integrations uses system file and folder pickers, restoring address-bar path navigation on Windows."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub and Studio downloads support the new release archive layout on GitHub and COS."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub and Studio update checks and downloads use the active release sources after the Harken rename."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Command-line update checks can verify Hub or Studio independently."),
