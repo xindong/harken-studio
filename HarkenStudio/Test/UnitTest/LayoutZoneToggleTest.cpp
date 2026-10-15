@@ -5,6 +5,7 @@
 #include "Core/BuiltinTheme.h"
 #include "Core/NamedLayoutStore.h"
 #include "Core/QtAdsThemeAdapter.h"
+#include "Core/WorkspaceWindowManager.h"
 
 #include <DockAreaTitleBar.h>
 #include <DockAreaWidget.h>
@@ -144,6 +145,48 @@ TEST(LayoutZoneToggleTest, CollapsingLeftZoneHidesEveryDockInTheColumn)
     EXPECT_TRUE(fixture.information->isClosed());
     EXPECT_FALSE(fixture.canvas->isClosed());
     EXPECT_FALSE(fixture.ai->isClosed());
+}
+
+TEST(LayoutZoneToggleTest, SingletonContentStateRestoresWithoutReplacingWindows)
+{
+    ZoneFixture fixture;
+    VNX::WorkspaceWindowManager workspace(VNX::defaultWorkspaceWindowCatalog(),
+                                          VNX::QtAdsWindowAdapter());
+    VNX::WorkspaceWindowManager::SingletonFactory factory;
+    factory.snapshotState = [](QWidget* content) {
+        return content->property("workspaceState").toMap();
+    };
+    factory.restoreState = [](QWidget* content, const QVariantMap& state) {
+        content->setProperty("workspaceState", state);
+    };
+    workspace.registerSingletonFactory(QStringLiteral("Preview"), factory);
+    workspace.registerSingletonFactory(QStringLiteral("Information"), factory);
+    ASSERT_TRUE(workspace.registerSingleton(QStringLiteral("Preview"), fixture.audition));
+    ASSERT_TRUE(workspace.registerSingleton(QStringLiteral("Information"), fixture.information));
+    fixture.controller->setSingletonSnapshotProvider([&] { return workspace.singletonStates(); });
+    fixture.controller->setSingletonStateRestorer(
+        [&](const QVariantMap& states) { workspace.restoreSingletonStates(states); });
+
+    QWidget* first = fixture.audition->widget();
+    QWidget* second = fixture.information->widget();
+    const QVariantMap firstState{{QStringLiteral("context"), QStringLiteral("first")}};
+    const QVariantMap secondState{{QStringLiteral("context"), QStringLiteral("second")}};
+    first->setProperty("workspaceState", firstState);
+    second->setProperty("workspaceState", secondState);
+    fixture.controller->saveProjectLayout();
+    first->setProperty("workspaceState", QVariantMap());
+    second->setProperty("workspaceState", QVariantMap());
+    fixture.controller->loadProjectLayout();
+
+    EXPECT_EQ(fixture.audition->widget(), first);
+    EXPECT_EQ(fixture.information->widget(), second);
+    EXPECT_EQ(first->property("workspaceState").toMap(), firstState);
+    EXPECT_EQ(second->property("workspaceState").toMap(), secondState);
+    EXPECT_TRUE(workspace.instanceSpecs().isEmpty());
+
+    fixture.controller->selectDefaultLayout();
+    EXPECT_TRUE(first->property("workspaceState").toMap().isEmpty());
+    EXPECT_TRUE(second->property("workspaceState").toMap().isEmpty());
 }
 
 TEST(LayoutZoneToggleTest, ExpandingLeftZoneRestoresEveryDockItHid)
