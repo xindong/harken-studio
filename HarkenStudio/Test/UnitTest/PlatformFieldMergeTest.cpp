@@ -1,3 +1,4 @@
+#include "Widgets/GridEditor/GridEditorWidget.h"
 #include "Core/Components/VSelection.h"
 #include "Support/FieldGroupTestUtils.h"
 #include "ActionManager.h"
@@ -975,8 +976,8 @@ TEST_F(PlatformFieldMergeInspector, PlatformChangesKeepSelectionRowsFreeOfPlayba
     const auto original = container->comp<VNX::VSelection>()->selections.shared;
     UndoRedoManager::instance().clear();
 
-    InspectorPanel panel;
-    panel.showItemInspector(container);
+    GridEditorWidget panel;
+    panel.bindItem(container);
     for (const bool all : {true, false, true}) {
         platforms.setAll(all);
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);

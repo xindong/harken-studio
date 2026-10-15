@@ -1,4 +1,5 @@
 #include "MixingEditorWidget.h"
+#include "GridEditorWidget.h"
 #include "MixingRowCanvas.h"
 
 #include "Core/ActionManager.h"
@@ -137,8 +138,7 @@ MixingEditorWidget::MixingEditorWidget(QWidget* parent) : QWidget(parent)
         [this](RefDomain, uint32_t id) { emit locateItem(id); });
     connect(navigation, &ObjectRefNavigation::navigateRequested, this, [this](RefDomain, uint32_t id) {
         const auto* item = ProjectManager::instance().findItemByObjectID(id);
-        const auto* selection = item ? item->comp<VSelection>() : nullptr;
-        if (selection && (selection->mode == SelectionMode::Match || selection->mode == SelectionMode::Blend))
+        if (GridEditorWidget::acceptsItem(item))
             emit drillRequested(item->guid);
         else emit navigateToItem(id);
     });

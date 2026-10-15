@@ -2074,9 +2074,6 @@ QFrame[matrixHeader="true"] {
     border: none;
 }
 QFrame[matrixHeader="true"][selected="true"] { background-color: @bgSelected@; }
-QFrame#listBox QAbstractItemView[tableRole="data"][compositeTable="true"] {
-    background-color: @bgSecondary@;
-}
 QFrame[matrixHeader="true"][warning="true"] { border-bottom: 1px solid @warning@; }
 QLineEdit[tableEditor="true"] {
     background-color: @bgPrimary@;

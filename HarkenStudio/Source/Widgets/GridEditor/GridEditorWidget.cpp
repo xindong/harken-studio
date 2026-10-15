@@ -3,6 +3,7 @@
 
 #include "MixingEditorWidget.h"
 #include "DiscreteGridWidget.h"
+#include "SelectionListWidget.h"
 #include "Core/Components/VSelection.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectTypes.h"
@@ -50,29 +51,12 @@ protected:
     }
 };
 
-QString selectionModeName(SelectionMode mode)
-{
-    switch (mode) {
-        case SelectionMode::Random:          return QObject::tr("Random");
-        case SelectionMode::Sequence:        return QObject::tr("Sequence");
-        case SelectionMode::Match:           return QObject::tr("Match");
-        case SelectionMode::Blend:           return QObject::tr("Blend");
-    }
-    return QString();
-}
-
 bool isOrDescendsFrom(const ProjectItem* item, const ProjectItem* ancestor)
 {
     for (const ProjectItem* it = item; it; it = it->parent)
         if (it == ancestor)
             return true;
     return false;
-}
-
-bool isSelectionGridItem(const ProjectItem* item)
-{
-    const auto* sel = item ? item->comp<VSelection>() : nullptr;
-    return sel && (sel->mode == SelectionMode::Match || sel->mode == SelectionMode::Blend);
 }
 
 }
@@ -124,6 +108,8 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
     editorStack_->addWidget(discreteGrid_);
     mixingEditor_ = new MixingEditorWidget(editorStack_);
     editorStack_->addWidget(mixingEditor_);
+    selectionList_ = new SelectionListWidget(editorStack_);
+    editorStack_->addWidget(selectionList_);
 
     stack_->addWidget(gridPage_);
 
@@ -140,6 +126,12 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
     connect(mixingEditor_, &MixingEditorWidget::navigateToItem,
             this, &GridEditorWidget::navigateToItem);
     connect(mixingEditor_, &MixingEditorWidget::locateItem,
+            this, &GridEditorWidget::locateItem);
+    connect(selectionList_, &SelectionListWidget::drillRequested,
+            this, &GridEditorWidget::drillInto);
+    connect(selectionList_, &SelectionListWidget::navigateToItem,
+            this, &GridEditorWidget::navigateToItem);
+    connect(selectionList_, &SelectionListWidget::locateItem,
             this, &GridEditorWidget::locateItem);
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             this, [this]() { refreshChrome(); });
@@ -197,7 +189,7 @@ bool GridEditorWidget::acceptsItem(const ProjectItem* item)
 {
     if (!item || !acceptsItemType(item->type))
         return false;
-    return isSelectionGridItem(item);
+    return item->comp<VSelection>() != nullptr;
 }
 
 bool GridEditorWidget::acceptsItemType(ProjectItem::Type type)
@@ -252,7 +244,7 @@ void GridEditorWidget::clearEditor()
 void GridEditorWidget::drillInto(const QUuid& target)
 {
     ProjectItem* inner = ProjectManager::instance().findItemByGuid(target);
-    if (!isSelectionGridItem(inner))
+    if (!acceptsItem(inner))
         return;
     drillPath_.push_back(target);
     refreshFromModel();
@@ -268,18 +260,14 @@ void GridEditorWidget::drillBackTo(int depth)
 
 void GridEditorWidget::refreshFromModel()
 {
-    const auto* sel = boundItem_ ? boundItem_->comp<VSelection>() : nullptr;
-    if (!isSelectionGridItem(boundItem_)) {
+    if (!acceptsItem(boundItem_)) {
         drillPath_.clear();
         displayItem_ = nullptr;
         discreteGrid_->setBoundItem(nullptr);
         mixingEditor_->setBoundItem(nullptr);
+        selectionList_->setBoundItem(nullptr);
         rebuildCrumbs({});
-        if (sel)
-            showEmptyState(tr("%1 mode — choose Match or Blend")
-                               .arg(selectionModeName(sel->mode)));
-        else
-            showEmptyState({});
+        showEmptyState({});
         return;
     }
 
@@ -287,7 +275,7 @@ void GridEditorWidget::refreshFromModel()
     size_t depth = 0;
     for (; depth < drillPath_.size(); ++depth) {
         ProjectItem* inner = ProjectManager::instance().findItemByGuid(drillPath_[depth]);
-        if (!isSelectionGridItem(inner))
+        if (!acceptsItem(inner))
             break;
         chain.push_back(inner);
     }
@@ -295,12 +283,16 @@ void GridEditorWidget::refreshFromModel()
 
     displayItem_ = chain.back();
     rebuildCrumbs(chain);
-    const bool match = displayItem_->comp<VSelection>()->mode == SelectionMode::Match;
+    const auto mode = displayItem_->comp<VSelection>()->mode;
+    const bool match = mode == SelectionMode::Match;
+    const bool blend = mode == SelectionMode::Blend;
     crumbBar_->setVisible(!drillPath_.empty());
     discreteGrid_->setBoundItem(match ? displayItem_ : nullptr);
-    mixingEditor_->setBoundItem(match ? nullptr : displayItem_);
+    mixingEditor_->setBoundItem(blend ? displayItem_ : nullptr);
+    selectionList_->setBoundItem(match || blend ? nullptr : displayItem_);
     editorStack_->setCurrentWidget(match ? static_cast<QWidget*>(discreteGrid_)
-                                        : static_cast<QWidget*>(mixingEditor_));
+                                 : blend ? static_cast<QWidget*>(mixingEditor_)
+                                         : static_cast<QWidget*>(selectionList_));
     stack_->setCurrentWidget(gridPage_);
     refreshChrome();
 }

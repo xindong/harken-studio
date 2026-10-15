@@ -16,6 +16,7 @@ namespace VNX {
 
 class MixingEditorWidget;
 class DiscreteGridWidget;
+class SelectionListWidget;
 struct ProjectItem;
 
 class GridEditorWidget : public QWidget
@@ -38,6 +39,7 @@ public:
     bool isShowingGrid() const;
     DiscreteGridWidget* discreteGrid() const { return discreteGrid_; }
     MixingEditorWidget* mixingEditor() const { return mixingEditor_; }
+    SelectionListWidget* selectionList() const { return selectionList_; }
     QString statusText() const;
 
     void drillInto(const QUuid& target);
@@ -75,6 +77,7 @@ private:
     QStackedWidget* editorStack_ = nullptr;
     DiscreteGridWidget* discreteGrid_ = nullptr;
     MixingEditorWidget* mixingEditor_ = nullptr;
+    SelectionListWidget* selectionList_ = nullptr;
 };
 
 }

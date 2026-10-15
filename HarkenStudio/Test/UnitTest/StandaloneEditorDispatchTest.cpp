@@ -537,7 +537,7 @@ TEST_F(EditorDockLayoutTest, TimelineLaunchReusesUnboundPanel)
     EXPECT_EQ(window_->allTimelineEditorPanels().size(), 2);
 }
 
-TEST_F(EditorDockLayoutTest, MatchAndBlendActivationOpenSelectionEditorRespectingPins)
+TEST_F(EditorDockLayoutTest, ContainerActivationOpensSelectionEditorRespectingPins)
 {
     auto& manager = VNX::ProjectManager::instance();
     auto* firstItem = manager.createItem(
@@ -551,16 +551,22 @@ TEST_F(EditorDockLayoutTest, MatchAndBlendActivationOpenSelectionEditorRespectin
     ASSERT_NE(router, nullptr);
     router->onProjectItemDoubleClicked(firstItem);
     drainEvents();
-    EXPECT_TRUE(window_->allGridEditorPanels().isEmpty());
+    ASSERT_EQ(window_->allGridEditorPanels().size(), 1);
     auto* inspector = window_->activeInspectorPanel();
     ASSERT_NE(inspector, nullptr);
     auto* mode = inspector->findChild<QComboBox*>(QStringLiteral("prop_mode"));
     ASSERT_NE(mode, nullptr);
-    mode->setCurrentIndex(mode->findData(static_cast<int>(VNX::SelectionMode::Match)));
-    drainEvents();
-    ASSERT_EQ(window_->allGridEditorPanels().size(), 1);
     auto* first = window_->allGridEditorPanels().front();
     EXPECT_EQ(first->boundItem(), firstItem);
+    for (auto selectionMode : {VNX::SelectionMode::Sequence, VNX::SelectionMode::Match,
+                               VNX::SelectionMode::Blend, VNX::SelectionMode::Random}) {
+        mode->setCurrentIndex(mode->findData(static_cast<int>(selectionMode)));
+        drainEvents();
+        ASSERT_EQ(window_->allGridEditorPanels().size(), 1);
+        EXPECT_EQ(window_->allGridEditorPanels().front(), first);
+        EXPECT_EQ(first->boundItem(), firstItem);
+        EXPECT_TRUE(first->isShowingGrid());
+    }
     auto* selectionDock = dock(QStringLiteral("GridEditorDock_%1").arg(first->panelId()));
     ASSERT_NE(selectionDock, nullptr);
     EXPECT_FALSE(selectionDock->isClosed());

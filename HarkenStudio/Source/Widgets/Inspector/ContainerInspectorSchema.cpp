@@ -20,7 +20,6 @@ const PropertySchema& containerInspectorSchema()
         auto rows = contentObjectInspectorRows(ProjectItem::Type::Container);
         rows.push_back(*pickSchemaField(VSelection::schema(), QLatin1String("mode")));
         rows.push_back(*pickSchemaField(VSelection::schema(), QLatin1String("variableResponse")));
-        rows.push_back(*pickSchemaField(VSelection::schema(), QLatin1String("selections")));
         rows.push_back(*pickSchemaField(VSelection::schema(), QLatin1String("playType")));
 
         PropertyDescriptor behavior;
