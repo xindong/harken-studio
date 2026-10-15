@@ -156,6 +156,30 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message>
+        <source>Hub and Studio updates now use the new GitHub repository, with COS downloads retained as a fallback.</source>
+        <translation>Hub 与 Studio 的更新入口已迁移到新的 GitHub 仓库，并保留 COS 备用下载。</translation>
+    </message>
+    <message>
+        <source>SDK integration retries temporary file locks on Windows instead of failing immediately.</source>
+        <translation>SDK 集成在 Windows 上遇到文件短暂占用时会自动重试，减少偶发失败。</translation>
+    </message>
+    <message>
+        <source>Choose SDKs bundled with installed Studio versions directly from the SDK source dropdown. Click anywhere in the field to open the list, or browse for another folder.</source>
+        <translation>SDK 源目录支持直接下拉选择已安装 Studio 附带的 SDK。点击目录框任意位置即可展开列表，也可手动选择其他文件夹。</translation>
+    </message>
+    <message>
+        <source>SDK checks show version changes and file counts grouped by addition, update, removal, and preservation. Preserved files are collapsed, and a separate check log highlights failures, warnings, and recommended actions.</source>
+        <translation>SDK 检查集中展示版本变化，按新增、更新、移除、保留分组列出文件和数量。保留项默认折叠，独立的检查日志突出失败、提醒和处理建议。</translation>
+    </message>
+    <message>
+        <source>New Studio installations use shorter folder names without lengthy build identifiers. Different builds of the same version can still be installed side by side.</source>
+        <translation>新安装的 Studio 使用更简短的目录名，移除冗长的构建标识；同一版本的不同构建仍可同时安装。</translation>
+    </message>
+    <message>
+        <source>Windows now displays the application name as Harken Hub without an additional description.</source>
+        <translation>Windows 中的应用名称简化为 Harken Hub，不再附带额外说明。</translation>
+    </message>
     <message><source>Engine Integrations uses system file and folder pickers, restoring address-bar path navigation on Windows.</source><translation>&#x5f15;&#x64ce;&#x96c6;&#x6210;&#x6062;&#x590d;&#x4f7f;&#x7528;&#x7cfb;&#x7edf;&#x539f;&#x751f;&#x6587;&#x4ef6;&#x548c;&#x6587;&#x4ef6;&#x5939;&#x9009;&#x62e9;&#x7a97;&#x53e3;&#xff0c;&#x53ef;&#x5728; Windows &#x5730;&#x5740;&#x680f;&#x7c98;&#x8d34;&#x8def;&#x5f84;&#x540e;&#x6309;&#x56de;&#x8f66;&#x76f4;&#x63a5;&#x5b9a;&#x4f4d;&#x3002;</translation></message>
     <message><source>Unreal SDK installation now rejects incomplete native headers before changing the game project.</source><translation>Unreal SDK &#x5b89;&#x88c5;&#x4f1a;&#x5728;&#x4fee;&#x6539;&#x6e38;&#x620f;&#x5de5;&#x7a0b;&#x524d;&#x62e6;&#x622a;&#x7f3a;&#x5c11;&#x5fc5;&#x9700;&#x539f;&#x751f;&#x5934;&#x6587;&#x4ef6;&#x7684; SDK&#x3002;</translation></message>
     <message><source>Hub and Studio downloads support the new release archive layout on GitHub and COS.</source><translation>Hub 和 Studio 下载已适配 GitHub 与 COS 的新发布归档目录。</translation></message>
@@ -2458,6 +2482,70 @@ Diagnostic log: %2</source>
         <translation>SDK 源目录</translation>
     </message>
     <message>
+        <source>Studio %1 | %2 SDK %3</source>
+        <translation>Studio %1 | %2 SDK %3</translation>
+    </message>
+    <message>
+        <source>File Changes</source>
+        <translation>文件差异</translation>
+    </message>
+    <message>
+        <source>Check Log</source>
+        <translation>检查日志</translation>
+    </message>
+    <message>
+        <source>Check Log (warnings: %1)</source>
+        <translation>检查日志（%1 项提醒）</translation>
+    </message>
+    <message>
+        <source>SDK version: %1 → %2</source>
+        <translation>SDK 版本：%1 → %2</translation>
+    </message>
+    <message>
+        <source>Add %1</source>
+        <translation>新增 %1</translation>
+    </message>
+    <message>
+        <source>Update %1</source>
+        <translation>更新 %1</translation>
+    </message>
+    <message>
+        <source>Remove %1</source>
+        <translation>移除 %1</translation>
+    </message>
+    <message>
+        <source>Keep %1</source>
+        <translation>保留 %1</translation>
+    </message>
+    <message>
+        <source>No SDK files need to be changed.</source>
+        <translation>无需更改 SDK 文件。</translation>
+    </message>
+    <message>
+        <source>Items needing attention: %1. View check log.</source>
+        <translation>有 %1 项需要留意，查看检查日志。</translation>
+    </message>
+    <message>
+        <source>SDK check failed. Review the check log for details.</source>
+        <translation>SDK 检查失败，请查看检查日志了解详情。</translation>
+    </message>
+    <message>
+        <source>All Harken-managed files match SDK %1; %2 Unity metadata file(s) and %3 optional target runtime file(s) are retained as expected.</source>
+        <translation>所有 Harken 管理的文件均与 SDK %1 一致；已正常保留 %2 个 Unity 元数据文件和 %3 个可选目标运行时文件。</translation>
+    </message>
+    <message>
+        <source>All Harken-managed files match SDK %1; %2 project-specific file(s) need review, while %3 Unity metadata and %4 optional runtime file(s) are retained normally.</source>
+        <translation>所有 Harken 管理的文件均与 SDK %1 一致；有 %2 个工程自定义文件需要检查，另有 %3 个 Unity 元数据文件和 %4 个可选运行时文件已正常保留。</translation>
+    </message>
+    <message>
+        <source>The project-specific files are outside Harken SDK ownership, so the check cannot determine whether they are still needed.</source>
+        <translation>这些工程自定义文件不由 Harken SDK 管理，无法自动判断是否仍需保留。</translation>
+    </message>
+    <message>
+        <source>Review only the project-specific files listed below. Unity-generated metadata requires no action.</source>
+        <translation>请检查下方列出的工程自定义文件。Unity 自动生成的元数据无需处理。</translation>
+    </message>
+    <message>
         <source>SDK Install Location</source>
         <translation>SDK 安装位置</translation>
     </message>
@@ -3766,12 +3854,16 @@ What this means: This SDK source cannot safely prepare the Unity project for %4 
         <translation>工程文件无效：%1</translation>
     </message>
     <message>
+        <source>Check-only mode did not change %1.</source>
+        <translation>本次仅检查，未修改 %1。</translation>
+    </message>
+    <message>
         <source>Check-only mode did not change Packages/com.harken.core.</source>
         <translation>仅检查模式未修改 Packages/com.harken.core。</translation>
     </message>
     <message>
-        <source>Review the file list, then use Check and integrate if these changes should be applied.</source>
-        <translation>请查看文件列表；如果需要应用这些变更，请先检查集成状态，再执行集成。</translation>
+        <source>Review the file list before confirming the SDK change.</source>
+        <translation>请核对文件列表，再确认更换 SDK。</translation>
     </message>
     <message>
         <source>%1 missing SDK file(s) will be added; %2 existing SDK file(s) need updating; %3 obsolete Harken-managed file(s) will be removed; %4 project-specific file(s) will be kept unchanged; %5 Unity-generated metadata file(s) and %6 optional target runtime file(s) will be kept automatically</source>
@@ -3804,7 +3896,7 @@ What this means: This SDK source cannot safely prepare the Unity project for %4 
         <translation>位置：%1 — %2 个文件（%3）</translation>
     </message>
     <message>
-        <source>%1 — %2 (%3 files)</source>
+        <source>%1 — %2 (files: %3)</source>
         <translation>%1 — %2（%3 个文件）</translation>
     </message>
     <message>

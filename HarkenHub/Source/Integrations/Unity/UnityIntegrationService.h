@@ -36,6 +36,12 @@ public:
         qint64 elapsedMs = 0;
     };
 
+    struct FileChange
+    {
+        QString action;
+        QString relative;
+    };
+
     struct Request
     {
         QString unityProjectPath;
@@ -73,6 +79,7 @@ public:
         QString migrationTargetPath;
         QString migrationPlanHash;
         QVector<StepResult> steps;
+        QVector<FileChange> fileChanges;
         QString unityProjectPath;
         QString sdkSourcePath;
         QString sdkInstallPath;
