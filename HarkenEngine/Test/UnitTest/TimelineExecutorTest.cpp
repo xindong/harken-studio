@@ -30,6 +30,8 @@ protected:
         harken::VariableReadCutStatus status = harken::VariableReadCutStatus::Waiting;
         std::uint32_t reads = 0;
         VnVoiceHandle native = 0;
+        harken::VariableServiceV1* variables = nullptr;
+        harken::VariableTimelineReadUseRef use{};
         harken::VoicePool* cancelDuringRead = nullptr;
         bool cancellationSucceeded = false;
     } source;
@@ -39,9 +41,35 @@ protected:
     harken::TimelineArmToken arm{};
     std::array<float, 512> samples{};
 
+    void PrepareReadUse(VnVoiceHandle native, std::uint64_t startFrame,
+        harken::TimelineArmToken* token) {
+        harken::VariableReadCutRef cut{};
+        ASSERT_TRUE(engine->variables.CaptureReadCut(0, startFrame, 1, 1, &cut));
+        harken::TimelineArmTable::PreparedCommitInput input{};
+        input.programGeneration = 1;
+        input.startFrame = startFrame;
+        ASSERT_TRUE(engine->timelineArms.Prepare(static_cast<std::uint32_t>(native),
+            static_cast<std::uint32_t>(native >> 32), startFrame, 0, 1, {}, &input.arm));
+        harken::TimelineArmTable::PreparedCommitProof preparation;
+        ASSERT_TRUE(engine->timelineArms.ProvePreparedCommit(input, &preparation));
+        harken::VariableTimelineReadUseRef use{};
+        ASSERT_TRUE(engine->variables.PrepareTimelineReadUse(cut, native,
+            engine->timelineArms, preparation, &use));
+        ASSERT_TRUE(engine->voices.BindPreparedTimelineReadUse(native, use, {startFrame, 1, 1}));
+        harken::TimelineArmTable::ConsumePreparedCommit(std::move(preparation));
+        ASSERT_TRUE(engine->variables.CommitTimelineReadUse(use));
+        ASSERT_EQ(harken::VariableReadCutStatus::Applied,
+            engine->variables.PublishReadCut(cut, startFrame));
+        ASSERT_TRUE(engine->variables.TransferReadCutToTimelineUses(cut));
+        *token = input.arm;
+        source.native = native;
+        source.use = use;
+    }
+
     void SetUp() override {
         ASSERT_EQ(VN_OK, session.InitResult());
         engine = session.Engine();
+        source.variables = &engine->variables;
         samples.fill(0.5f);
         harken::PCMView pcm{};
         pcm.channels[0] = samples.data();
@@ -50,25 +78,34 @@ protected:
         pcm.frames = samples.size();
         pcm.sampleRate = 48000;
         harken::ResolvedPanGains pan{};
-        engine->voices.AttachTimelineVariableStartAuthority({&source,
-            [](void* opaque, harken::VariableTimelineReadUseRef use, std::uint64_t handle) noexcept {
-                auto& probe = *static_cast<SourceProbe*>(opaque);
-                ++probe.reads;
-                if (probe.cancelDuringRead != nullptr) {
-                    probe.cancellationSucceeded = probe.cancelDuringRead->CancelTimelineBinding(
-                        static_cast<std::uint32_t>(handle), static_cast<std::uint32_t>(handle >> 32));
-                    probe.cancelDuringRead = nullptr;
-                }
-                return use.slot == 0 && use.generation == 1 && handle == probe.native
-                    ? probe.status : harken::VariableReadCutStatus::Failed;
-            }});
+        harken::VariableTimelineStartAuthority authority{};
+        authority.context = &source;
+        authority.ready = [](void* opaque, harken::VariableTimelineReadUseRef use,
+            std::uint64_t handle) noexcept {
+            auto& probe = *static_cast<SourceProbe*>(opaque);
+            ++probe.reads;
+            if (probe.cancelDuringRead != nullptr) {
+                probe.cancellationSucceeded = probe.cancelDuringRead->CancelTimelineBinding(
+                    static_cast<std::uint32_t>(handle), static_cast<std::uint32_t>(handle >> 32));
+                probe.cancelDuringRead = nullptr;
+            }
+            if (use.slot != probe.use.slot || use.generation != probe.use.generation ||
+                handle != probe.native) return harken::VariableReadCutStatus::Failed;
+            return probe.status == harken::VariableReadCutStatus::Applied
+                ? probe.variables->TimelineReadUseStartStatus(use, handle) : probe.status;
+        };
+        authority.provePlain = [](void* opaque, harken::VariableTimelineReadUseRef use,
+            std::uint64_t handle, const harken::TimelineArmTable::PlainAudioProof& proof,
+            harken::VariableTimelineInitializerProof* out) noexcept {
+            return static_cast<SourceProbe*>(opaque)->variables->ProveTimelineReadUseInitializer(
+                use, handle, proof, out);
+        };
+        authority.apply = &harken::VariableServiceV1::ApplyTimelineReadUseInitializer;
+        engine->voices.AttachTimelineVariableStartAuthority(authority);
         ASSERT_EQ(VN_OK, engine->voices.Play(pcm, 0, 1, 0, false, 0, 0, 0, pan,
             0, pcm.frames, 1, harken::ResampleProfile::LegacyCompatibility, &render, 1,
             UINT32_MAX, 0, true));
-        source.native = render;
-        ASSERT_TRUE(engine->voices.BindPreparedTimelineReadUse(render, {0, 1}, {16, 1, 1}));
-        ASSERT_TRUE(engine->timelineArms.Reserve(static_cast<std::uint32_t>(render),
-            static_cast<std::uint32_t>(render >> 32), 16, 0, 1, {}, &arm));
+        ASSERT_NO_FATAL_FAILURE(PrepareReadUse(render, 16, &arm));
         ASSERT_TRUE(engine->voices.CommitPreparedVoice(render));
         engine->voices.ApplyTimelineGatedPlay(render, 1, 0,
             (std::uint64_t{arm.generation} << 32) | arm.slot, 1);
@@ -349,9 +386,7 @@ TEST_F(TimelineVariableStart, BusyCancelledArmDoesNotBlockReusedNativeSlot) {
     ASSERT_NE(render, replacement);
     source.native = replacement;
     source.status = harken::VariableReadCutStatus::Applied;
-    ASSERT_TRUE(engine->voices.BindPreparedTimelineReadUse(replacement, {0, 1}, {272, 1, 1}));
-    ASSERT_TRUE(engine->timelineArms.Reserve(static_cast<std::uint32_t>(replacement),
-        static_cast<std::uint32_t>(replacement >> 32), 272, 0, 1, {}, &replacementArm));
+    ASSERT_NO_FATAL_FAILURE(PrepareReadUse(replacement, 272, &replacementArm));
     ASSERT_TRUE(engine->voices.CommitPreparedVoice(replacement));
     engine->voices.ApplyTimelineGatedPlay(replacement, 1, 0,
         (std::uint64_t{replacementArm.generation} << 32) | replacementArm.slot, 1);

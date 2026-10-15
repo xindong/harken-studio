@@ -1302,9 +1302,312 @@ TEST(ScheduledTransactionPool, PrivateLaneEntriesRetainActualFactorySourcesAndOr
     EXPECT_TRUE(foreignPool.ResetForEpoch(0, kEpoch + 1));
 }
 
-TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureEventsAndRefusalRetryPins) {
-    for (unsigned mode = 0; mode < 23; ++mode) {
+#endif
+
+TEST(ScheduledTransactionPool, AcceptedPrivateEntryRequiresNestedControllersAndOriginalNaturalTargetKind) {
+    for (unsigned mode = 0; mode < 5; ++mode) {
+        const bool replaceController = mode == 1;
         SCOPED_TRACE(mode);
+        Harness owners;
+        auto config = MakeConfig();
+        config.maxPlan03GroupHeadersPerPage = 8;
+        config.maxArmsPerGroup = 2;
+        config.maxImmediateLaneGroupRows = 8;
+        config.maxImmediateLaneOwnerGates = 5;
+        config.maxImmediateLaneDecisionGates = 8;
+        ScheduledTransactionPool pool;
+        ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+        harken::TimelineArmTable arms{4};
+        harken::DecisionTable decisions{8, 4};
+        harken::ArmGroupTable armGroups{2, 1};
+        harken::ImmediateActionLane lane;
+        ASSERT_TRUE(lane.Reset({1, 11, 11, config.quantumFrames, true, 8}));
+        const harken::ImmediateLaneDemand demand{11, 8, 6, 3};
+        harken::ImmediateLaneHandle handle{};
+        ASSERT_TRUE(lane.Reserve(17, demand, &handle));
+        const harken::DecisionReserveRequest request{{9}, 7, kEpoch, 1, 1, {}};
+        std::array<harken::DecisionToken, 8> tokens{};
+        std::array<harken::Plan03GroupSliceIdentity, 8> identities{};
+        std::array<harken::OriginalQueueFutureGroupRegistration, 8> originals{};
+        std::array<harken::ImmediateLaneAcceptedPrivateGroup, 8> groups{};
+        std::array<harken::ImmediateLaneMemberManifest, 6> members{};
+        std::array<harken::TimelineArmToken, 4> actualArms{};
+        std::array<harken::TimelineEventPayload, 5> payloads{};
+        std::array<harken::TimelineProgramView, 4> programs{};
+        std::array<const harken::TimelineProgramView*, 6> controls{};
+        for (unsigned index = 0; index < tokens.size(); ++index) {
+            auto groupRequest = request;
+            if (index >= 5) groupRequest.expectedContinuationGeneration = 2;
+            if (index >= 6) groupRequest.sliceCount = 2;
+            if (index == 7) tokens[index] = tokens[6];
+            else ASSERT_TRUE(decisions.Reserve(groupRequest, &tokens[index]));
+            harken::Plan03GroupSliceInput input{};
+            const auto relativeFrame = index < 5 ? 0u : index == 7 ? 200u : 100u;
+            input.executeFrame = 100 + relativeFrame;
+            input.decision = tokens[index];
+            input.sliceIndex = index == 7 ? 1u : 0u;
+            if (index < 2) {
+                auto& member = members[index];
+                member.programGeneration = 40 + index;
+                member.ownerInstance = owners.owner;
+                member.ownerEpoch = owners.ownerEpoch;
+                member.target.programSemanticFingerprint = 50 + index;
+                member.memberIndex = 0;
+                ASSERT_TRUE(arms.PreparePendingImmediateGrouped(index + 1, 3,
+                    member.programGeneration, member.target,
+                    harken::ParentAudioGroupRef{input.decision}, 0, &actualArms[index]));
+                member.arm = actualArms[index];
+                input.members = &actualArms[index];
+                input.memberCount = 1;
+                payloads[index].kind = harken::TimelineEventKind::Start;
+                payloads[index].target = member.target;
+                programs[index] = {member.programGeneration, &payloads[index], 1};
+            }
+            if (index == 6) {
+                for (unsigned side = 0; side < 2; ++side) {
+                    auto& member = members[side + 2];
+                    member.programGeneration = 42 + side;
+                    member.ownerInstance = owners.owner;
+                    member.ownerEpoch = owners.ownerEpoch;
+                    member.target.programSemanticFingerprint = 52 + side;
+                    member.memberIndex = side;
+                    member.kind = side == 0 ? harken::ImmediateLaneMemberKind::CurrentEventSpan :
+                        harken::ImmediateLaneMemberKind::FrozenFutureTarget;
+                    member.relativeFrame = side == 0 ? 100 : 200;
+                    member.eventSpanCount = side == 0 ? 1 : 2;
+                    ASSERT_TRUE(arms.PreparePendingImmediateGrouped(side + 3, 3,
+                        member.programGeneration, member.target, harken::ParentAudioGroupRef{input.decision},
+                        side, &actualArms[side + 2]));
+                    member.arm = actualArms[side + 2];
+                }
+                payloads[2].kind = harken::TimelineEventKind::Envelope;
+                payloads[2].envelopeDirection = harken::TimelineEnvelopeDirection::FadeOut;
+                payloads[2].target = members[2].target;
+                payloads[3].kind = harken::TimelineEventKind::Start;
+                payloads[3].target = members[3].target;
+                payloads[4].kind = harken::TimelineEventKind::Envelope;
+                payloads[4].envelopeDirection = harken::TimelineEnvelopeDirection::FadeIn;
+                payloads[4].target = members[3].target;
+                programs[2] = {42, &payloads[2], 1};
+                programs[3] = {43, &payloads[3], 2};
+            }
+            if (index >= 6) {
+                input.members = actualArms.data() + 2;
+                input.memberCount = 2;
+                input.sourceControlCount = 1;
+            }
+            harken::PreparedPrivateImmediateLaneGroup prepared;
+            harken::PrivateImmediateLaneGroupTransferProof proof;
+            ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &identities[index], &prepared));
+            ASSERT_TRUE(pool.ProvePrivateImmediateLaneGroupTransfer(prepared, 17, 100, input, arms, &proof));
+            ASSERT_TRUE(pool.ConsumePrivateImmediateLaneGroupTransfer(std::move(proof), &originals[index]));
+            groups[index].original = &originals[index];
+            groups[index].schedule = {identities[index], relativeFrame};
+            ASSERT_TRUE(originals[index].CaptureOriginalScope(pool, arms, &groups[index].scope));
+            ASSERT_TRUE(pool.BindImmediateLaneGroupOwner(identities[index], lane, 17, handle.slot, handle.generation));
+            ASSERT_TRUE(lane.DeclareGroup(handle, groups[index].schedule));
+            if (index < 2) {
+                members[index].group = identities[index];
+                ASSERT_TRUE(lane.DeclareMember(handle, members[index]));
+            }
+            if (index < controls.size()) {
+                controls[index] = decisions.PrepareFrontierControlProgram(tokens[index], 99);
+                ASSERT_NE(nullptr, controls[index]);
+            }
+        }
+        members[2].group = members[3].group = identities[6];
+        members[3].relatedGroup = identities[7];
+        members[4] = members[2];
+        members[4].kind = harken::ImmediateLaneMemberKind::HistoricalSourceCompletion;
+        members[4].group = identities[7];
+        members[4].relatedGroup = identities[6];
+        members[5] = members[3];
+        members[5].kind = harken::ImmediateLaneMemberKind::CurrentEventSpan;
+        members[5].group = identities[7];
+        members[5].relatedGroup = {};
+        for (unsigned index = 2; index < members.size(); ++index)
+            ASSERT_TRUE(lane.DeclareMember(handle, members[index]));
+        harken::ImmediateLaneAcceptedPrivateEntryScope scope{};
+        scope.entry = {tokens[2], 1, {owners.owner, owners.ownerEpoch, 0, 0,
+            owners.owner, owners.ownerEpoch, 0, 1}};
+        scope.coordinatorRequest = request;
+        scope.provisionalFrame = 100;
+        scope.firstMember = 0;
+        scope.memberCount = members.size();
+        scope.members = members.data();
+        scope.outerGroups = {identities[0], identities[1], identities[2]};
+        scope.groups = groups.data();
+        scope.groupCount = groups.size();
+        std::uint32_t ordinal = UINT32_MAX;
+        ASSERT_TRUE(lane.DeclareAcceptedPrivateVariableControlEntry(handle, 17, demand,
+            scope, pool, arms, decisions, &ordinal));
+        const harken::FrontierEntryReceiptRef childEntry{tokens[5], 2, scope.entry.owner};
+        std::array<harken::ImmediateLaneEvent, 11> events{};
+        constexpr std::array<unsigned, 11> eventGroups{2, 0, 1, 3, 4, 0, 1, 5, 6, 7, 7};
+        for (unsigned index = 0; index < events.size(); ++index) {
+            auto& event = events[index].event;
+            const auto group = eventGroups[index];
+            const auto* program = index < 5 || index == 7 ? controls[group] :
+                &programs[index < 7 ? group : index == 8 ? 2 : 3];
+            event.program = {program->generation, program};
+            if (index >= 5 && index != 7) event.armToken = actualArms[index < 7 ? group : index == 8 ? 2 : 3];
+            event.logicCommitSequence = 9;
+            event.executionOrdinal = 1;
+            event.eventIndex = index;
+            event.transactionOrdinal = index;
+            event.subeventPhase = index < 5 || index == 7 ? 10u : index == 8 ? 30u : index == 10 ? 40u : 20u;
+            event.rowSequence = index + 1;
+            event.transactionId = 9;
+            event.ownerInstanceHandle = owners.owner;
+            event.ownerInstanceScheduleEpoch = owners.ownerEpoch;
+            event.frozenTxnValid = true;
+            event.frontier.kind = harken::FrontierOperationKind::Entry;
+            event.frontier.entry = scope.entry;
+            event.frontier.owner = scope.entry.owner;
+            event.frontier.group = identities[group];
+            event.frontier.transport = kEpoch;
+            event.frontier.world = 7;
+            event.frontier.operationEventCount = 1;
+            event.frontier.entryEventOrdinal = index;
+            if (index >= 7) {
+                if (mode == 3 && index != 7) event.executionOrdinal = 0;
+                events[index].relativeFrame = index < 9 ? 100u : 200u;
+                event.frontier.entry = childEntry;
+                event.frontier.entryEventOrdinal = index < 9 ? index - 7u : index - 9u;
+                event.frontier.operationEventCount = index == 7 ? 1u : 2u;
+                if (index != 7) event.frontier.kind = harken::FrontierOperationKind::Dependent;
+                events[index].futureGroupedStart = index == 9;
+                if (index == 10) event.payload = 1;
+            }
+        }
+        const auto originalEvents = events;
+        if (replaceController) {
+            events[4] = events[3];
+            events[4].event.frontier.entryEventOrdinal = 4;
+        }
+        if (mode == 2) {
+            events[9].event.frontier.kind = harken::FrontierOperationKind::Genuine;
+            events[10].event.frontier.kind = harken::FrontierOperationKind::Genuine;
+        }
+        if (mode == 4) events[9].event.executionOrdinal = 0;
+        ASSERT_TRUE(lane.Prepare(handle, events.data(), events.size()));
+        std::uint64_t anchor = 0;
+        ASSERT_TRUE(lane.TryPlace(handle, 200, 0, &anchor));
+        ASSERT_TRUE(pool.RebaseImmediateLaneGroups(17, anchor));
+        for (const unsigned index : {2u, 0u, 1u, 3u, 4u}) {
+            const auto eventIndex = index == 2 ? 0u : index < 2 ? index + 1u : index;
+            const auto& event = originalEvents[eventIndex].event;
+            harken::FrontierGroupBinding binding{};
+            binding.role = index == 2 ? harken::FrontierGroupRole::Coordinator : harken::FrontierGroupRole::EntryMember;
+            binding.entry = scope.entry;
+            binding.primary = identities[2];
+            binding.operation.kind = harken::FrontierOperationKind::Entry;
+            binding.operation.owner = scope.entry.owner;
+            binding.operation.group = identities[index];
+            binding.operation.world = 7;
+            binding.operation.transport = kEpoch;
+            binding.operation.order = {anchor, 9, 1, eventIndex, eventIndex, 10, event.rowSequence};
+            if (index != 2) {
+                binding.operation.program = controls[index];
+                binding.operation.programGeneration = 99;
+                binding.variableSide = {index < 2 ? 0u : 1u, 1,
+                    static_cast<std::uint8_t>(index < 2 ? index : index - 3), 1, 0, 1};
+            }
+            ASSERT_TRUE(pool.BindPlan03GroupFrontier(identities[index], binding));
+        }
+        for (const unsigned index : {5u, 6u, 7u}) {
+            const auto eventIndex = index + 2u;
+            const auto& event = originalEvents[eventIndex].event;
+            harken::FrontierGroupBinding binding{};
+            binding.role = index == 5 ? harken::FrontierGroupRole::Coordinator :
+                index == 6 ? harken::FrontierGroupRole::EntryMember : harken::FrontierGroupRole::Future;
+            binding.entry = childEntry;
+            binding.primary = identities[5];
+            binding.operation.kind = index == 5 ? harken::FrontierOperationKind::Entry : harken::FrontierOperationKind::Dependent;
+            binding.operation.owner = scope.entry.owner;
+            binding.operation.group = identities[index];
+            binding.operation.world = 7;
+            binding.operation.transport = kEpoch;
+            binding.operation.order = {anchor + originalEvents[eventIndex].relativeFrame, 9, event.executionOrdinal,
+                eventIndex, eventIndex, event.subeventPhase, event.rowSequence};
+            if (index != 5) binding.queueInitial = {0, 1, 1, 77};
+            ASSERT_TRUE(pool.BindPlan03GroupFrontier(identities[index], binding));
+        }
+        harken::FrontierActivationDescriptor descriptor{};
+        descriptor.entry = scope.entry;
+        descriptor.primary = identities[2];
+        descriptor.order = {anchor, 9, 1, 0, 0, 10, 1};
+        descriptor.worldGeneration = 7;
+        descriptor.worldSemanticFingerprint = 77;
+        descriptor.expectedMemberCount = 4;
+        descriptor.expectedEntryEventCount = 7;
+        descriptor.programGeneration = 99;
+        ASSERT_TRUE(decisions.PrepareFrontierActivation(tokens[2], descriptor, pool));
+        harken::ArmGroupToken coordinator{};
+        ASSERT_TRUE(armGroups.Reserve(tokens[2], nullptr, 0, &coordinator));
+        std::array<harken::DecisionParticipantRef, 4> participants{};
+        constexpr std::array<unsigned, 4> participantGroups{0, 1, 3, 4};
+        for (unsigned index = 0; index < participants.size(); ++index) {
+            const auto token = tokens[participantGroups[index]];
+            participants[index] = {harken::DecisionParticipantKind::Subdecision, token.slot, token.generation};
+        }
+        harken::DecisionCommitPayload commit{};
+        commit.participants = participants.data();
+        commit.participantCount = participants.size();
+        commit.pages = {static_cast<std::uint32_t>(identities[2].committedRow), identities[2].rowClaimGeneration};
+        commit.armGroup = coordinator;
+        ASSERT_TRUE(decisions.Commit(tokens[2], commit));
+        auto childDescriptor = descriptor;
+        childDescriptor.entry = childEntry;
+        childDescriptor.primary = identities[5];
+        const auto& childControl = originalEvents[7].event;
+        childDescriptor.order = {anchor + 100, 9, 1, 7, 7, 10, childControl.rowSequence};
+        childDescriptor.expectedMemberCount = 1;
+        childDescriptor.expectedEntryEventCount = 2;
+        ASSERT_TRUE(decisions.PrepareFrontierActivation(tokens[5], childDescriptor, pool));
+        harken::ArmGroupToken childCoordinator{};
+        ASSERT_TRUE(armGroups.Reserve(tokens[5], nullptr, 0, &childCoordinator));
+        const harken::DecisionParticipantRef childParticipant{harken::DecisionParticipantKind::Subdecision,
+            tokens[6].slot, tokens[6].generation};
+        commit.participants = &childParticipant;
+        commit.participantCount = 1;
+        commit.pages = {static_cast<std::uint32_t>(identities[5].committedRow), identities[5].rowClaimGeneration};
+        commit.armGroup = childCoordinator;
+        ASSERT_TRUE(decisions.Commit(tokens[5], commit));
+        const bool accepted = mode == 0 || mode == 3;
+        EXPECT_EQ(accepted, lane.PinGroups(handle, pool, decisions, 8));
+        if (!accepted) EXPECT_FALSE(lane.Publish(handle));
+        ASSERT_TRUE(lane.Cancel(handle));
+        ASSERT_TRUE(lane.Retire(handle, 0));
+        ASSERT_TRUE(decisions.RollbackPreparedFrontierDecision(tokens[2], tokens[2]));
+        ASSERT_TRUE(decisions.CancelPreparedFrontierActivation(tokens[2]));
+        ASSERT_TRUE(decisions.RollbackPreparedFrontierDecision(tokens[5], tokens[5]));
+        ASSERT_TRUE(decisions.CancelPreparedFrontierActivation(tokens[5]));
+        for (const unsigned index : {0u, 1u, 3u, 4u, 2u, 6u, 7u, 5u})
+            ASSERT_TRUE(pool.DetachPlan03GroupFrontier(identities[index], 0));
+        ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 0, originals.data(), originals.size()));
+        for (const auto arm : actualArms) ASSERT_TRUE(arms.CancelPrepared(arm));
+        ASSERT_TRUE(armGroups.CancelBeforePublication(coordinator));
+        ASSERT_TRUE(armGroups.CancelBeforePublication(childCoordinator));
+        for (unsigned index = 0; index < 7; ++index) {
+            const auto token = tokens[index];
+            ASSERT_TRUE(decisions.Cancel(token));
+            ASSERT_TRUE(decisions.ReclaimCancelled(token));
+        }
+        EXPECT_EQ(0u, arms.LiveCount());
+        EXPECT_EQ(0u, decisions.LiveCount());
+        EXPECT_EQ(0u, armGroups.LiveCount());
+        EXPECT_EQ(0u, pool.CaptureImmediateLaneCohortGroups(17, nullptr, 0));
+        EXPECT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+    }
+}
+
+TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureEventsAndRefusalRetryPins) {
+    for (unsigned run = 0; run < 50; ++run) {
+        const auto mode = run < 46 ? run % 23 : 0;
+        const bool accepted = run >= 23;
+        const auto badEvent = run < 46 ? 0u : run - 45;
+        SCOPED_TRACE(run);
         Harness owners;
         auto config = MakeConfig();
         config.maxPlan03GroupHeadersPerPage = 6;
@@ -1326,6 +1629,8 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
         std::array<harken::ImmediateLanePrivateVariableControlEntryScope, 2> scopes{};
         std::array<std::array<harken::PreparedPrivateImmediateLaneGroup, 3>, 2> originals{};
         std::array<std::array<harken::PrivateImmediateLaneGroupTransferProof, 3>, 2> proofs{};
+        std::array<harken::OriginalQueueFutureGroupRegistration, 6> acceptedOriginals{};
+        std::array<harken::ImmediateLaneAcceptedPrivateGroup, 6> acceptedGroups{};
         std::array<std::array<harken::Plan03GroupSliceIdentity, 3>, 2> groups{};
         std::array<std::array<harken::DecisionToken, 3>, 2> tokens{};
         std::array<harken::TimelineArmToken, 4> actualArms{}, foreignTokens{};
@@ -1374,6 +1679,7 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
                     input.members = &actualArms[member];
                     input.memberCount = 1;
                     manifest.arm = actualArms[member];
+                    manifest.memberIndex = 0;
                     payloads[member].kind = harken::TimelineEventKind::Start;
                     payloads[member].target = manifest.target;
                     payloads[member].reserved = manifest.future ? harken::kTimelineEventTransientStartArm : 0u;
@@ -1393,24 +1699,25 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
                 {owners.owner, owners.ownerEpoch, 0, 0, owners.owner, owners.ownerEpoch, entry, entry + 1u}};
         }
         for (unsigned entry = 0; entry < 2; ++entry) {
-            ASSERT_TRUE(lane.DeclarePrivateVariableControlEntry(handle, 17, demand, scopes[entry],
-                pool, arms, decisions, originals[entry], proofs[entry], &ordinals[entry]));
-        }
-        if (mode >= 4) {
-            auto wrong = scopes[0].entry;
-            ++wrong.owner.serviceGeneration;
-            EXPECT_FALSE(lane.RequestPrivateEntryStop(handle, 17, 0, wrong));
-            EXPECT_FALSE(lane.RequestPrivateEntryStop(handle, 18, 0, scopes[0].entry));
-            EXPECT_FALSE(lane.RequestPrivateEntryStop(handle, 17, 2, scopes[0].entry));
-            if (mode == 4 || mode == 5 || mode == 6 || mode == 7 || mode == 10 || mode == 11 || mode == 13 || (mode >= 14 && mode <= 18))
-                ASSERT_TRUE(lane.RequestPrivateEntryStop(handle, 17, 0, scopes[0].entry));
-            if (mode == 4 || mode == 5 || mode == 11 || mode == 13 || (mode >= 14 && mode <= 16))
-                ASSERT_TRUE(lane.RequestPrivateEntryStop(handle, 17, 1, scopes[1].entry));
+            if (!accepted)
+                ASSERT_TRUE(lane.DeclarePrivateVariableControlEntry(handle, 17, demand, scopes[entry],
+                    pool, arms, decisions, originals[entry], proofs[entry], &ordinals[entry]));
         }
         for (unsigned entry = 0; entry < 2; ++entry) {
             for (unsigned side = 0; side < 3; ++side) {
-                EXPECT_EQ(groups[entry][side], ScheduledTransactionPool::ConsumePrivateImmediateLaneGroupTransfer(
-                    std::move(proofs[entry][side])));
+                if (accepted) {
+                    const auto index = entry * 3 + side;
+                    ASSERT_TRUE(pool.ConsumePrivateImmediateLaneGroupTransfer(
+                        std::move(proofs[entry][side]), &acceptedOriginals[index]));
+                    EXPECT_EQ(groups[entry][side], acceptedOriginals[index].Identity());
+                    auto& group = acceptedGroups[index];
+                    group.original = &acceptedOriginals[index];
+                    group.schedule = {groups[entry][side], 0};
+                    ASSERT_TRUE(group.original->CaptureOriginalScope(pool, arms, &group.scope));
+                } else {
+                    EXPECT_EQ(groups[entry][side], ScheduledTransactionPool::ConsumePrivateImmediateLaneGroupTransfer(
+                        std::move(proofs[entry][side])));
+                }
                 ASSERT_TRUE(pool.BindImmediateLaneGroupOwner(groups[entry][side], lane,
                     17, handle.slot, handle.generation));
                 ASSERT_TRUE(lane.DeclareGroup(handle, {groups[entry][side], 0}));
@@ -1453,6 +1760,43 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
                 event.frontier.entryEventOrdinal = local;
             }
         }
+        if (accepted) {
+            for (unsigned entry = 0; entry < 2; ++entry) {
+                harken::ImmediateLaneAcceptedPrivateEntryScope scope{};
+                scope.entry = scopes[entry].entry;
+                scope.coordinatorRequest = scopes[entry].coordinatorRequest;
+                scope.provisionalFrame = scopes[entry].provisionalFrame;
+                scope.firstMember = scopes[entry].firstMember;
+                scope.memberCount = scopes[entry].memberCount;
+                scope.members = scopes[entry].members;
+                scope.outerGroups = groups[entry];
+                scope.groups = acceptedGroups.data() + entry * 3;
+                scope.groupCount = 3;
+                auto wrong = scope;
+                ++wrong.coordinatorRequest.ticket.sequence;
+                EXPECT_FALSE(lane.DeclareAcceptedPrivateVariableControlEntry(handle, 17, demand, wrong,
+                    pool, arms, decisions, &ordinals[entry]));
+                ASSERT_TRUE(lane.DeclareAcceptedPrivateVariableControlEntry(handle, 17, demand, scope,
+                    pool, arms, decisions, &ordinals[entry]));
+                EXPECT_FALSE(lane.DeclareAcceptedPrivateVariableControlEntry(handle, 17, demand, scope,
+                    pool, arms, decisions, &ordinals[entry]));
+            }
+        }
+        if (mode >= 4) {
+            auto wrong = scopes[0].entry;
+            ++wrong.owner.serviceGeneration;
+            EXPECT_FALSE(lane.RequestPrivateEntryStop(handle, 17, 0, wrong));
+            EXPECT_FALSE(lane.RequestPrivateEntryStop(handle, 18, 0, scopes[0].entry));
+            EXPECT_FALSE(lane.RequestPrivateEntryStop(handle, 17, 2, scopes[0].entry));
+            if (mode == 4 || mode == 5 || mode == 6 || mode == 7 || mode == 10 || mode == 11 || mode == 13 || (mode >= 14 && mode <= 18))
+                ASSERT_TRUE(lane.RequestPrivateEntryStop(handle, 17, 0, scopes[0].entry));
+            if (mode == 4 || mode == 5 || mode == 11 || mode == 13 || (mode >= 14 && mode <= 16))
+                ASSERT_TRUE(lane.RequestPrivateEntryStop(handle, 17, 1, scopes[1].entry));
+        }
+        if (badEvent == 1) events[1].event.frontier.entryEventOrdinal = 0;
+        if (badEvent == 2) events[1].event.frontier.entryEventOrdinal = 10;
+        if (badEvent == 3) events[1].event.frontier.operationEventCount = 2;
+        if (badEvent == 4) events[1].event.frontier.operationOrdinal = 1;
         ASSERT_TRUE(lane.Prepare(handle, events.data(), 10));
         std::uint64_t anchor = 0;
         harken::PrivateImmediateLanePlacementProof placement;
@@ -1529,6 +1873,35 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
         harken::ImmediateLanePrivateVariableControlEntryMapping refused{};
         refused.coordinatorBucket = 4242;
         const auto sentinel = refused;
+        if (badEvent != 0) {
+            EXPECT_FALSE(lane.PinGroups(handle, pool, decisions, 6));
+            EXPECT_FALSE(lane.CapturePrivateVariableControlEntryMapping(handle, 17, 0,
+                scopes[0].entry, pool, arms, decisions, &refused));
+            EXPECT_EQ(sentinel, refused);
+            EXPECT_FALSE(lane.Publish(handle));
+            ASSERT_TRUE(lane.Cancel(handle));
+            ASSERT_TRUE(lane.Retire(handle, 0));
+            for (unsigned entry = 0; entry < 2; ++entry) {
+                ASSERT_TRUE(decisions.RollbackPreparedFrontierDecision(tokens[entry][2], tokens[entry][2]));
+                ASSERT_TRUE(decisions.CancelPreparedFrontierActivation(tokens[entry][2]));
+                for (const auto& group : groups[entry]) ASSERT_TRUE(pool.DetachPlan03GroupFrontier(group, 0));
+            }
+            ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 0, acceptedOriginals.data(), acceptedOriginals.size()));
+            for (const auto arm : actualArms) ASSERT_TRUE(arms.CancelPrepared(arm));
+            for (const auto arm : foreignTokens) ASSERT_TRUE(foreignArms.CancelPrepared(arm));
+            for (const auto group : coordinatorTokens) ASSERT_TRUE(coordinatorGroups.CancelBeforePublication(group));
+            for (const auto& entry : tokens) for (const auto token : entry) {
+                ASSERT_TRUE(decisions.Cancel(token));
+                ASSERT_TRUE(decisions.ReclaimCancelled(token));
+            }
+            EXPECT_EQ(0u, arms.LiveCount());
+            EXPECT_EQ(0u, foreignArms.LiveCount());
+            EXPECT_EQ(0u, decisions.LiveCount());
+            EXPECT_EQ(0u, coordinatorGroups.LiveCount());
+            EXPECT_EQ(0u, pool.CaptureImmediateLaneCohortGroups(17, nullptr, 0));
+            EXPECT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+            continue;
+        }
         if (mode == 2 || mode == 13) {
             EXPECT_FALSE(lane.PinGroups(handle, pool, decisions, 6));
             EXPECT_EQ(6u, lane.PrivatePinGroupCount(handle));
@@ -1594,7 +1967,8 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
                 for (unsigned side = 0; side < 3; ++side)
                     ASSERT_TRUE(pool.DetachPlan03GroupFrontier(groups[entry][side], 0));
             }
-            ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 0));
+            ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 0,
+                accepted ? acceptedOriginals.data() : nullptr, accepted ? acceptedOriginals.size() : 0));
             for (const auto arm : actualArms) ASSERT_TRUE(arms.CancelPrepared(arm));
             for (const auto arm : foreignTokens) ASSERT_TRUE(foreignArms.CancelPrepared(arm));
             for (const auto group : coordinatorTokens) ASSERT_TRUE(coordinatorGroups.CancelBeforePublication(group));
@@ -1963,7 +2337,8 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
             for (unsigned side = 0; side < 2; ++side) ASSERT_TRUE(pool.DetachPlan03GroupFrontier(groups[entry][side], completedSequence));
             ASSERT_TRUE(pool.DetachPlan03GroupFrontier(groups[entry][2], completedSequence));
         }
-        ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, completedSequence));
+        ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, completedSequence,
+            accepted ? acceptedOriginals.data() : nullptr, accepted ? acceptedOriginals.size() : 0));
         for (const auto arm : actualArms) ASSERT_TRUE(arms.CancelPrepared(arm));
         for (const auto arm : foreignTokens) ASSERT_TRUE(foreignArms.CancelPrepared(arm));
         for (const auto group : coordinatorTokens) ASSERT_TRUE(coordinatorGroups.CancelBeforePublication(group));
@@ -1980,6 +2355,7 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
     }
 }
 
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 struct MixedTimeGroupHarness {
     Harness owners;
     ScheduledTransactionPool pool;
@@ -2653,6 +3029,20 @@ TEST(ScheduledTransactionPool, MixedTimePinnedCrossSliceFuturePrecedesSlidUnrela
     EXPECT_EQ(groups[2], frozen.relatedGroup);
     EXPECT_EQ(tokens[1].generation, frozen.arm.generation);
     EXPECT_EQ(200u, frozen.fixedFrame);
+    ASSERT_EQ(2u, frozen.eventSpanCount);
+    ASSERT_NE(UINT32_MAX, frozen.secondEventOrdinal);
+    EXPECT_GT(frozen.secondEventOrdinal, frozen.eventOrdinal);
+    EXPECT_LT(frozen.secondEventOrdinal, events.size());
+    const auto originalFrozen = frozen;
+    payloads[2].target = targets[2];
+    EXPECT_FALSE(lane.CaptureFrozenFutureTarget(handle, groups[1], groups[2], &frozen));
+    EXPECT_EQ(originalFrozen.eventOrdinal, frozen.eventOrdinal);
+    EXPECT_EQ(originalFrozen.secondEventOrdinal, frozen.secondEventOrdinal);
+    EXPECT_EQ(originalFrozen.target, frozen.target);
+    payloads[2].target = targets[1];
+    ASSERT_TRUE(lane.CaptureFrozenFutureTarget(handle, groups[1], groups[2], &frozen));
+    EXPECT_EQ(originalFrozen.eventOrdinal, frozen.eventOrdinal);
+    EXPECT_EQ(originalFrozen.secondEventOrdinal, frozen.secondEventOrdinal);
     const auto* sentinel = future;
     EXPECT_FALSE(lane.FutureMember(handle.slot, handle.generation + 1, groups[2], 1, tokens[1], &future));
     EXPECT_FALSE(lane.FutureMember(handle.slot, handle.generation, groups[2], 0, tokens[0], &future));

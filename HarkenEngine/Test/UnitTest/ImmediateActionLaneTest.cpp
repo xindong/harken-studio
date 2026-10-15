@@ -863,7 +863,7 @@ TEST(ImmediateActionLane, ReservedMemberScopeRequiresExactActualDeclarationsAndO
         if (field == 3) ++wrong.buckets;
         EXPECT_FALSE(lane.MatchesReservedMembers(handle, 17, wrong, members.data(), 2));
     }
-    for (unsigned field = 0; field < 18; ++field) {
+    for (unsigned field = 0; field < 19; ++field) {
         auto wrong = members;
         auto& member = wrong[1];
         if (field == 0) ++member.group.rowClaimGeneration;
@@ -884,6 +884,7 @@ TEST(ImmediateActionLane, ReservedMemberScopeRequiresExactActualDeclarationsAndO
         if (field == 15) ++member.ownerInstance;
         if (field == 16) ++member.ownerEpoch;
         if (field == 17) std::swap(wrong[0], wrong[1]);
+        if (field == 18) member.secondEventOrdinal = 0;
         EXPECT_FALSE(lane.MatchesReservedMembers(handle, 17, demand, wrong.data(), 2));
         EXPECT_TRUE(lane.MatchesReservedMembers(handle, 17, demand, members.data(), 2));
     }

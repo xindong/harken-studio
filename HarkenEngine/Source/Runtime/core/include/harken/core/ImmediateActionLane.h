@@ -168,6 +168,7 @@ struct ImmediateLaneMemberManifest {
     std::uint64_t ownerEpoch = 0;
     ImmediateLaneTimeDomain timeDomain = ImmediateLaneTimeDomain::RelativeToAnchor;
     std::uint64_t fixedFrame = 0;
+    std::uint32_t secondEventOrdinal = UINT32_MAX;
 };
 
 // Borrowed original factory inputs, valid only for private declaration checks.
@@ -182,6 +183,26 @@ struct ImmediateLanePrivateVariableControlEntryScope {
     std::array<Plan03GroupSliceInput, 3> groups{};
 };
 
+// Accepted factories remain owned by their original producers. Declaration
+// borrows their inputs and records which outer Play owns each native group.
+struct ImmediateLaneAcceptedPrivateGroup {
+    const OriginalQueueFutureGroupRegistration* original = nullptr;
+    OriginalQueueFutureGroupScope scope{};
+    ImmediateLaneDeclaredGroup schedule{};
+};
+
+struct ImmediateLaneAcceptedPrivateEntryScope {
+    FrontierEntryReceiptRef entry{};
+    DecisionReserveRequest coordinatorRequest{};
+    std::uint64_t provisionalFrame = 0;
+    std::uint32_t firstMember = UINT32_MAX;
+    std::uint32_t memberCount = 0;
+    const ImmediateLaneMemberManifest* members = nullptr;
+    std::array<Plan03GroupSliceIdentity, 3> outerGroups{};
+    const ImmediateLaneAcceptedPrivateGroup* groups = nullptr;
+    std::uint32_t groupCount = 0;
+};
+
 // Indices into the original immutable lane arrays, not resource ownership.
 struct ImmediateLanePrivateVariableControlEntryMapping {
     std::array<std::uint32_t, 3> groups{UINT32_MAX, UINT32_MAX, UINT32_MAX};
@@ -189,6 +210,8 @@ struct ImmediateLanePrivateVariableControlEntryMapping {
     std::uint32_t firstMember = UINT32_MAX;
     std::uint32_t memberCount = 0;
     std::uint32_t coordinatorBucket = UINT32_MAX;
+    std::uint32_t ownedGroupCount = 0;
+    std::uint32_t ownedEventCount = 0;
     bool operator==(const ImmediateLanePrivateVariableControlEntryMapping&) const = default;
 };
 
@@ -207,6 +230,21 @@ struct ImmediateLanePrivateEntryTerminalProjection {
     std::uint32_t registeredEntryCount = 0;
     std::bitset<kMaxKnownScheduleLeaves + 3u> omitted{};
     bool operator==(const ImmediateLanePrivateEntryTerminalProjection&) const = default;
+};
+
+struct ImmediateLanePrivateEntryResultCell {
+    std::uint32_t bucketOrdinal = UINT32_MAX;
+    ImmediateLaneEntryOutcomeSnapshot outcome{};
+    bool omitted = false;
+};
+
+// Caller-owned stable storage, never a pointer into the reusable lane arena.
+struct ImmediateLanePrivateEntryResultView {
+    ImmediateLanePrivateEntryResultCell* cells = nullptr;
+    std::uint32_t capacity = 0;
+    std::uint32_t count = 0;
+    std::uint32_t coordinator = UINT32_MAX;
+    std::uint32_t registeredEntryCount = 0;
 };
 
 struct ImmediateLaneBucket {
@@ -444,7 +482,8 @@ public:
     std::uint32_t EventsPerAttempt() const noexcept { return config_.eventsPerAttempt; }
     std::size_t PrivateEntryStorageBytes() const noexcept {
         return static_cast<std::size_t>(config_.attempts) * config_.eventsPerAttempt *
-            (sizeof(PrivateEntryAssociation) + sizeof(PrivateEntryBucket) + 2u * sizeof(std::uint32_t));
+            (sizeof(PrivateEntryAssociation) + 2u * sizeof(PrivateEntryBucket) +
+             sizeof(ImmediateLaneDeclaredGroup) + 2u * sizeof(std::uint32_t));
     }
     std::uint32_t MaxEventsPerQuantum() const noexcept { return config_.maxEventsPerQuantum; }
     bool OwnsPrivate(ImmediateLaneHandle handle,
@@ -474,6 +513,11 @@ public:
         const DecisionTable& decisions,
         const std::array<PreparedPrivateImmediateLaneGroup, 3>& originals,
         const std::array<PrivateImmediateLaneGroupTransferProof, 3>& proofs) const noexcept;
+    bool DeclareAcceptedPrivateVariableControlEntry(ImmediateLaneHandle handle,
+        std::uint64_t root, ImmediateLaneDemand originalDemand,
+        const ImmediateLaneAcceptedPrivateEntryScope& scope,
+        const ScheduledTransactionPool& pool, const TimelineArmTable& arms,
+        const DecisionTable& decisions, std::uint32_t* outOrdinal) noexcept;
     bool OwnsNeverCommitted(ImmediateLaneHandle handle,
                              std::uint64_t root) const noexcept;
     bool HasDue(std::uint64_t quantum) const noexcept;
@@ -598,6 +642,14 @@ public:
         std::uint64_t root, std::uint32_t ordinal,
         const FrontierEntryReceiptRef& entry, std::uint64_t completedAudioSequence,
         ImmediateLanePrivateEntryTerminalProjection* out) const noexcept;
+    bool CapturePrivateEntryBucketShape(ImmediateLaneHandle handle,
+        std::uint64_t root, std::uint32_t ordinal,
+        const FrontierEntryReceiptRef& identity,
+        ImmediateLanePrivateEntryResultView* out) const noexcept;
+    bool CapturePrivateEntryTerminalProjection(ImmediateLaneHandle handle,
+        std::uint64_t root, std::uint32_t ordinal,
+        const FrontierEntryReceiptRef& identity, std::uint64_t completedAudioSequence,
+        ImmediateLanePrivateEntryResultView* out) const noexcept;
     bool CapturePrivateEntryOutcome(ImmediateLaneHandle handle,
         std::uint64_t root, std::uint32_t ordinal,
         const FrontierEntryReceiptRef& entry, std::uint32_t bucketOrdinal,
@@ -797,6 +849,8 @@ private:
         std::uint32_t firstMember = UINT32_MAX;
         std::uint32_t memberCount = 0;
         std::array<Plan03GroupSliceIdentity, 3> groups{};
+        std::uint32_t firstOwnedGroup = UINT32_MAX;
+        std::uint32_t ownedGroupCount = 0;
         ImmediateLanePrivateVariableControlEntryMapping mapping{};
         bool mappingValid = false;
         std::atomic<std::uint8_t> admission{0};
@@ -829,6 +883,9 @@ private:
     void AssignPlainControlWithdrawalScopes(ImmediateLaneHandle handle) noexcept;
     bool PlainReferenceAttempt(ImmediateLaneHandle handle, std::uint64_t root) const noexcept;
     bool BuildPrivateVariableControlEntryMapping(ImmediateLaneHandle handle,
+        const ImmediateLaneAttempt& attempt, const PrivateEntryAssociation& entry,
+        ImmediateLanePrivateVariableControlEntryMapping* out) const noexcept;
+    bool BuildAcceptedPrivateEntryMapping(ImmediateLaneHandle handle,
         const ImmediateLaneAttempt& attempt, const PrivateEntryAssociation& entry,
         ImmediateLanePrivateVariableControlEntryMapping* out) const noexcept;
     void InvalidatePrivateEntryMappings(ImmediateLaneHandle handle) noexcept;
@@ -865,6 +922,7 @@ private:
     std::unique_ptr<std::uint32_t[]> groupPlacementOrder_;
     std::unique_ptr<ImmediateLaneMemberManifest[]> members_;
     std::unique_ptr<PrivateEntryAssociation[]> privateEntries_;
+    std::unique_ptr<ImmediateLaneDeclaredGroup[]> privateOwnedGroups_;
     std::unique_ptr<PrivateEntryBucket[]> privateEntryBuckets_;
     std::unique_ptr<SourceWaitEntry[]> sourceWaitEntries_;
     std::unique_ptr<std::uint32_t[]> eventPrivateEntries_;

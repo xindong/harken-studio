@@ -649,7 +649,7 @@ struct SelectionInputTrace {
             std::vector<VnObjectId> parents;
             if (isQueue(outer)) parents = byProgram[2].front()->subjects;
             else {
-                EXPECT_EQ(inner == harken::ContainerModeV1::VariableControl ? 1u : 2u, byProgram[2].size());
+                EXPECT_EQ(2u, byProgram[2].size());
                 for (std::size_t index = 0; index < byProgram[2].size(); ++index) {
                     const auto& input = *byProgram[2][index];
                     EXPECT_TRUE(input.path.empty());
@@ -658,7 +658,7 @@ struct SelectionInputTrace {
                     parents.insert(parents.end(), input.subjects.begin(), input.subjects.end());
                 }
             }
-            if (inner == harken::ContainerModeV1::VariableControl) parents.resize(1);
+            if (isQueue(outer) && inner == harken::ContainerModeV1::VariableControl) parents.resize(1);
             parentOrder = parents;
             for (const auto parent : parents) {
                 ASSERT_GE(parent, harkentest::ObjectId(2304u));

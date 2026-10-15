@@ -672,8 +672,42 @@ TEST(BaselineRegression, VariableLowpassSweep) {
     ASSERT_TRUE(engine->params.BindVoiceTarget(kCutoffVariable,
         harkentest::RenderHandle(engine, handle),
         harken::kTargetVoiceLowpassCutoff, curve));
-    ASSERT_EQ(VN_OK, Vn_SetValue(kCutoffVariable, 1.0f));
-    harkentest::AdvanceVariableWrite(engine);
+    // Preserve the recorded main-branch audio positions independently of
+    // how many updates a Variable write needs before it reaches Applied.
+    constexpr std::uint64_t kInitialDrainBlock = 7;
+    constexpr std::uint64_t kFirstCaptureBlock = 18;
+    constexpr std::uint64_t kCaptureStrideBlocks = 10;
+    const auto setAndAdvanceTo = [&](float value, std::uint64_t targetBlock) {
+        ASSERT_LE(engine->mixer.BlocksRendered(), targetBlock);
+        ASSERT_EQ(0u, engine->variables.PendingCount());
+        const auto previousSequence = engine->logicCommits.Current();
+        const auto previousApplied = engine->variables.AppliedCount();
+        VnVariableTicketQueryDescV1 query{};
+        query.structSize = sizeof(query);
+        query.ticket.worldGeneration = engine->variables.CurrentWorldGeneration();
+        query.ticket.transportGeneration = engine->variables.CurrentTransportEpoch();
+        ASSERT_EQ(VN_OK, Vn_SetValue(kCutoffVariable, value));
+        query.ticket.sequence = engine->logicCommits.Current();
+        ASSERT_GT(query.ticket.sequence, previousSequence);
+        for (std::uint64_t block = engine->mixer.BlocksRendered();
+             block < targetBlock; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine->nullBackend.Pump(1);
+        }
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(targetBlock, engine->mixer.BlocksRendered());
+        VnVariableTicketQueryResultV1 result{};
+        result.structSize = sizeof(result);
+        ASSERT_EQ(VN_OK, Vn_QueryVariableTicket(&query, &result));
+        ASSERT_EQ(VN_VARIABLE_TICKET_FOUND, result.status);
+        ASSERT_EQ(VN_VARIABLE_OUTCOME_APPLIED, result.outcome);
+        ASSERT_EQ(previousApplied + 1u, engine->variables.AppliedCount());
+        ASSERT_EQ(0u, engine->variables.PendingCount());
+        float currentValue = 0.0f;
+        ASSERT_TRUE(engine->variables.CurrentValue(kCutoffVariable, &currentValue));
+        ASSERT_FLOAT_EQ(value, currentValue);
+    };
+    ASSERT_NO_FATAL_FAILURE(setAndAdvanceTo(1.0f, kInitialDrainBlock));
 
     const std::uint32_t blocks = ScenarioBlockCount(engine);
     std::vector<float> peaks;
@@ -686,8 +720,8 @@ TEST(BaselineRegression, VariableLowpassSweep) {
                              static_cast<double>(blocks - 1)
                        : 0.0;
         const float value = static_cast<float>(std::fabs(1.0 - 2.0 * p));
-        ASSERT_EQ(VN_OK, Vn_SetValue(kCutoffVariable, value));
-        harkentest::AdvanceVariableWrite(engine);
+        ASSERT_NO_FATAL_FAILURE(setAndAdvanceTo(
+            value, kFirstCaptureBlock - 1u + kCaptureStrideBlocks * b));
         PumpBlockPeaks(engine, &peaks);
     }
     CompareOrRecord("variable_lowpass_sweep", peaks);

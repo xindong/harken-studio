@@ -759,6 +759,7 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
             (applying || (row->disposition_ == Registry::Disposition::Cancel &&
                           target != row->voice_.RenderHandle()));
         VoicePool::SourceCommandMetadataAccess access(row->installProof_, applyMetadata);
+        if (applyMetadata) m_voices.SupersedeDeferredFirstOutput(command);
         if (row->progress_ == 0) {
             if (applying) VoicePool::BeginSourceCommandInstallation(row->installProof_,
                 command.payload.play.sourceIdentity, command.payload.play.sourceStartFrame, blockIndex);
@@ -1200,6 +1201,8 @@ std::uint32_t MixerLoop::DrainCommands(std::uint64_t blockIndex,
         // Only this bounded metadata dispatch can access the held source.
         VoicePool::SourceCommandMetadataAccess sourceMetadataAccess(
             pendingSourceInstall, command.opcode != kOpcodePlay);
+        // A later ordinary command supersedes the deferred value for its physical endpoint.
+        m_voices.SupersedeDeferredFirstOutput(command, pendingNativeStart);
         switch (command.opcode) {
         case kOpcodePlay:
             if (pendingSourceInstall.Valid()) {

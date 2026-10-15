@@ -1512,7 +1512,7 @@ TEST(AuthoredStopAudio, LaneStagedStartRequiresExactOriginalAndHeldNativeProofs)
     ASSERT_TRUE(h.lane.Finish(h.laneHandle.slot, bucket, true));
     h.audio.Render();
     for (unsigned frame = 0u; frame < kBlock; ++frame)
-        EXPECT_NEAR(frame < 16u ? 0.0f : kMonoCenterGain * 0.25f, h.audio.Sample(frame), 1e-6f);
+        EXPECT_NEAR(frame < 16u ? 0.0f : 0.25f, h.audio.Sample(frame), 1e-6f);
 }
 
 TEST(AuthoredStopAudio, LaneBucketClaimsAllCoordinatorsOrAbortsAllClaimedLeases) {

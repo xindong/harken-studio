@@ -206,6 +206,8 @@ public:
                                 std::uint32_t busGeneration,
                                 std::uint32_t targetId,
                                 TargetClaimOwner owner) noexcept;
+    void DropClaimedBaseline(std::uint32_t busIndex, std::uint32_t busGeneration,
+                             std::uint32_t targetId, TargetClaimOwner owner) noexcept;
     void ReleaseClaim(std::uint32_t busIndex, std::uint32_t targetId,
                       TargetClaimOwner owner,
                       ClaimReleaseReason reason =

@@ -279,7 +279,7 @@ TEST(CommandBudget, DirectPlayInitialBindingWaitsForWholeQuantumBudget) {
     const auto started = PumpBlock(engine);
     EXPECT_EQ(0u, Queued(engine));
     HARKENTEST_ASSERT_NON_SILENT(started.left);
-    EXPECT_NEAR(0.5f * kInvSqrt2 * 0.5f, started.left.back(), 1e-5f);
+    EXPECT_NEAR(0.5f * 0.5f, started.left.back(), 1e-5f);
     EXPECT_EQ(0u, engine->mixer.CommandProtocolViolationCount());
 }
 
@@ -319,7 +319,7 @@ TEST(CommandBudget, OversizedDirectPlayInitialBatchRefusesBeforePublishingOrClai
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
     const auto started = PumpBlock(engine);
     HARKENTEST_ASSERT_NON_SILENT(started.left);
-    EXPECT_NEAR(0.5f * kInvSqrt2 * 0.5f, started.left.back(), 1e-5f);
+    EXPECT_NEAR(0.5f * 0.5f, started.left.back(), 1e-5f);
 }
 
 TEST(CommandBudget, NeutralDirectBindingFitsSingleCommandBudget) {
@@ -345,7 +345,7 @@ TEST(CommandBudget, NeutralDirectBindingFitsSingleCommandBudget) {
     EXPECT_EQ(1u, Queued(engine));
     const auto started = PumpBlock(engine);
     HARKENTEST_ASSERT_NON_SILENT(started.left);
-    EXPECT_NEAR(0.5f * kInvSqrt2, started.left.back(), 1e-5f);
+    EXPECT_NEAR(0.5f, started.left.back(), 1e-5f);
 }
 
 TEST(CommandBudget, DirectToneBindingsShareOnePhysicalCommandBudget) {
@@ -423,7 +423,7 @@ TEST(CommandBudget, DirectStartQueueFullRollsBackVoicePreparationAndRecovers) {
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
     const auto started = PumpBlock(engine);
     HARKENTEST_ASSERT_NON_SILENT(started.left);
-    EXPECT_NEAR(0.5f * kInvSqrt2 * 0.5f, started.left.back(), 1e-5f);
+    EXPECT_NEAR(0.5f * 0.5f, started.left.back(), 1e-5f);
 }
 
 TEST(CommandBudget, TimelineArmBatchWaitsForWholeQuantumBudget) {

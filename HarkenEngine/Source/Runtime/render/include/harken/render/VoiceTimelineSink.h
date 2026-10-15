@@ -295,6 +295,13 @@ public:
             DecisionCommittedSnapshot decision{};
             if (!decisions_->CaptureCommitted(group.identity.decision,
                                               &decision)) {
+                // Cancelled private Decisions may retire before their invalidated
+                // page rows are consumed. They cannot claim audio or block other groups.
+                if (group.lease != nullptr &&
+                    group.lease->Capture().state == AudioSliceState::SliceInvalidated &&
+                    (decisions_->IsOpen(group.identity.decision) ||
+                     decisions_->IsCancelled(group.identity.decision) ||
+                     !decisions_->Contains(group.identity.decision))) continue;
                 return false;
             }
             if (decision.authoredStopInvalidated) {

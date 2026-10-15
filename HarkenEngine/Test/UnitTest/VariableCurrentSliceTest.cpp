@@ -591,7 +591,7 @@ TEST(VariableCurrentSlice, SuccessfulWriteThenDirectPlayUsesNewValueWithoutUpdat
         const float* output = engine->nullBackend.LastBlock();
         for (std::uint32_t frame = 0; frame < kBlockFrames; ++frame) {
             if (std::abs(output[frame * 2]) <= 1.0e-7f) continue;
-            EXPECT_NEAR(0.05f * DbToLinear(-12.0f) * std::sqrt(0.5f),
+            EXPECT_NEAR(0.05f * DbToLinear(-12.0f),
                         output[frame * 2], 1.0e-5f);
             heard = true;
             break;
@@ -643,8 +643,8 @@ TEST(VariableCurrentSlice, ConsecutiveDirectPlaysKeepOwnFirstPcmThenFollowLatest
             if (std::abs(output[2 * (kBlockFrames - 1)]) < 1e-7f) continue;
             heard = true;
             for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i) {
-                EXPECT_NEAR(0.05f, output[2 * i], 1e-5f);
-                EXPECT_NEAR(0.05f * DbToLinear(-12), output[2 * i + 1], 1e-5f);
+                EXPECT_NEAR(0.05f * std::sqrt(2.0f), output[2 * i], 1e-5f);
+                EXPECT_NEAR(0.05f * DbToLinear(-12) * std::sqrt(2.0f), output[2 * i + 1], 1e-5f);
             }
         }
         ASSERT_TRUE(heard);
@@ -656,7 +656,7 @@ TEST(VariableCurrentSlice, ConsecutiveDirectPlaysKeepOwnFirstPcmThenFollowLatest
         // The existing pan matrix takes 10 ms to settle after a live retarget.
         e.nullBackend.Pump((kSampleRate / 100 + kBlockFrames - 1) / kBlockFrames);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i) {
-            EXPECT_NEAR(0.1f, e.nullBackend.LastBlock()[2 * i], 1e-5f);
+            EXPECT_NEAR(0.1f * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-5f);
             EXPECT_NEAR(0, e.nullBackend.LastBlock()[2 * i + 1], 1e-5f);
         }
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -721,7 +721,7 @@ TEST(VariableCurrentSlice, SourceFreeDirectPlayRendersWithoutUpdate) {
     // Voice-volume curves interpolate amplitude, rather than the dB coordinates.
     const float midpointGain = (1 + DbToLinear(-12)) * 0.5f;
     for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-        EXPECT_NEAR(0.05f * midpointGain * std::sqrt(0.5f),
+        EXPECT_NEAR(0.05f * midpointGain,
             e.nullBackend.LastBlock()[2 * i], 1e-6f);
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_FALSE(e.variables.HasNativePublicationHold(harkentest::RenderHandle(&e, handle)));
@@ -768,7 +768,7 @@ TEST(VariableCurrentSlice, DirectSourceFailureAndStopReleaseWaitingVoiceAndAllow
         e.nullBackend.Pump(8);
         const float midpointGain = (1 + DbToLinear(-12)) * 0.5f;
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * midpointGain * std::sqrt(0.5f),
+            EXPECT_NEAR(0.05f * midpointGain,
                 e.nullBackend.LastBlock()[2 * i], 1e-6f);
     }
 }
@@ -813,7 +813,7 @@ TEST(VariableCurrentSlice, DirectQueueRefusalReleasesCapturedResourcesAndPreserv
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
     e.nullBackend.Pump(1);
     for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-        EXPECT_NEAR(0.05f * DbToLinear(-12) * std::sqrt(0.5f),
+        EXPECT_NEAR(0.05f * DbToLinear(-12),
             e.nullBackend.LastBlock()[2 * i], 1e-6f);
 }
 
@@ -866,12 +866,88 @@ TEST(VariableCurrentSlice, DirectStreamStarvationKeepsFirstValueThroughUpdateAnd
         e.streams.SyncServe();
         e.nullBackend.Pump(1);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * DbToLinear(-12) * std::sqrt(0.5f),
+            EXPECT_NEAR(0.05f * DbToLinear(-12),
                 e.nullBackend.LastBlock()[2 * i], 1e-6f);
         e.streams.SyncServe();
         e.nullBackend.Pump(1);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * std::sqrt(0.5f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
+            EXPECT_NEAR(0.05f, e.nullBackend.LastBlock()[2 * i], 1e-6f);
+    }
+}
+
+TEST(VariableCurrentSlice, DirectSettersSupersedeAcknowledgedVariableWhileStreamStarves) {
+    for (const std::uint32_t workers : {0u, 2u}) {
+        SCOPED_TRACE(workers);
+        auto config = MakeNullConfig(2, kBlockFrames, kSampleRate);
+        config.renderWorkerCount = workers;
+        config.prebufferMs = 1;
+        config.streamRingFrames = 512;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& e = *session.Engine();
+        InstallVariable(&e);
+        const auto sound = harkentest::ObjectId(7243);
+        harkentest::StreamSpec spec;
+        spec.soundId = sound;
+        spec.sampleRate = kSampleRate;
+        spec.channelCount = 1;
+        spec.chunkFrames = 256;
+        const std::string path = std::string(HARKEN_TEMP_DIR) + "/r03_direct_setter_starvation.stream";
+        harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(
+            spec, std::vector<float>(kSampleRate, 0.05f)));
+        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(sound, path.c_str()));
+        RegisterVoiceAttachment(harkentest::ObjectId(7244), sound);
+        const auto pitchBinding = harkentest::ObjectId(7245);
+        RegisterLinearBinding(pitchBinding, kVariable, VN_TARGET_SCOPE_VOICE,
+            harken::kTargetVoicePitch, 0, 1200);
+        VnBindingAttachDesc attach{};
+        attach.structSize = sizeof(attach);
+        attach.scopeKind = VN_TARGET_SCOPE_VOICE;
+        attach.objectId = sound;
+        ASSERT_EQ(VN_OK, Vn_AttachBinding(pitchBinding, &attach));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        e.nullBackend.Pump(2);
+        e.streams.SetThrottled(true);
+        e.streams.SyncServe();
+        ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 1));
+        const auto play = MakePlayDesc(sound);
+        VnVoiceHandle handle = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+        const auto render = harkentest::RenderHandle(&e, handle);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        e.nullBackend.Pump(8);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_FALSE(e.variables.HasNativePublicationHold(render));
+        ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 0));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        e.nullBackend.Pump(8);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        e.nullBackend.Pump(1);
+        ASSERT_NE(nullptr, e.voices.Resolve(render));
+        ASSERT_EQ(0u, e.voices.Resolve(render)->cascade.produced);
+        ASSERT_FLOAT_EQ(DbToLinear(-12), e.voices.Resolve(render)->gain.target);
+        ASSERT_DOUBLE_EQ(2, e.voices.Resolve(render)->resampler.TargetRatio());
+        ASSERT_FALSE(e.variables.HasNativePublicationHold(render));
+        ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, -6, 0));
+        ASSERT_EQ(VN_OK, Vn_SetVoicePitch(handle, 1.5f));
+        ASSERT_EQ(VN_OK, Vn_SetVoicePan(handle, -1));
+        e.nullBackend.Pump(1);
+        ASSERT_EQ(0u, e.voices.Resolve(render)->cascade.produced);
+        ASSERT_FLOAT_EQ(DbToLinear(-6), e.voices.Resolve(render)->gain.target);
+        ASSERT_NEAR(1.5, e.voices.Resolve(render)->resampler.TargetRatio(), 1e-7);
+        e.streams.SetThrottled(false);
+        for (std::uint32_t block = 0; block < 4; ++block) {
+            SCOPED_TRACE(block);
+            e.streams.SyncServe();
+            e.nullBackend.Pump(1);
+            ASSERT_GT(e.voices.Resolve(render)->cascade.produced, 0u);
+            EXPECT_FLOAT_EQ(DbToLinear(-6), e.voices.Resolve(render)->gain.target);
+            EXPECT_NEAR(1.5, e.voices.Resolve(render)->resampler.TargetRatio(), 1e-7);
+            for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
+                // The spatial mono law anchors stereo center at unity per side.
+                EXPECT_NEAR(0.05f * DbToLinear(-6) * std::sqrt(2.0f),
+                    e.nullBackend.LastBlock()[2 * i], 1e-6f);
+        }
     }
 }
 
@@ -909,14 +985,14 @@ TEST(VariableCurrentSlice, StagedStartsCaptureApplicableWritesAtCommitAndKeepOwn
             if (std::abs(output[2 * (kBlockFrames - 1) + 1]) < 1e-7f) continue;
             heard = true;
             for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i) {
-                EXPECT_NEAR(0.05f * DbToLinear(-12), output[2 * i], 1e-6f);
-                EXPECT_NEAR(0.05f, output[2 * i + 1], 1e-6f);
+                EXPECT_NEAR(0.05f * DbToLinear(-12) * std::sqrt(2.0f), output[2 * i], 1e-6f);
+                EXPECT_NEAR(0.05f * std::sqrt(2.0f), output[2 * i + 1], 1e-6f);
             }
         }
         ASSERT_TRUE(heard);
         e.nullBackend.Pump(1);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f, e.nullBackend.LastBlock()[2 * i], 1e-6f);
+            EXPECT_NEAR(0.05f * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
     }
 }
 
@@ -954,7 +1030,7 @@ TEST(VariableCurrentSlice, StagedInvalidCapturedVolumePreservesReservationForRet
     ASSERT_EQ(VN_OK, Vn_Update());
     e.nullBackend.Pump(8);
     for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-        EXPECT_NEAR(samples[0] * DbToLinear(380) * std::sqrt(0.5f),
+        EXPECT_NEAR(samples[0] * DbToLinear(380),
             e.nullBackend.LastBlock()[2 * i], 1e-5f);
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(0u, e.ledger.PendingStartCount());
@@ -1003,7 +1079,7 @@ TEST(VariableCurrentSlice, StagedSourceFailureOrStopReleasesNativeReceiptAndAllo
         e.nullBackend.Pump(8);
         const float midpointGain = (1 + DbToLinear(-12)) * 0.5f;
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * midpointGain * std::sqrt(0.5f),
+            EXPECT_NEAR(0.05f * midpointGain,
                 e.nullBackend.LastBlock()[2 * i], 1e-6f);
     }
 }
@@ -1059,7 +1135,7 @@ TEST(VariableCurrentSlice, LatePendingStartPublishesSourcesAndCalendarInSameUpda
             if (std::abs(output[2 * (kBlockFrames - 1)]) < 1e-7f) continue;
             heard = true;
             for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-                EXPECT_NEAR(0.05f * DbToLinear(-12) * std::sqrt(0.5f), output[2 * i], 1e-6f);
+                EXPECT_NEAR(0.05f * DbToLinear(-12), output[2 * i], 1e-6f);
         }
         ASSERT_TRUE(heard) << "late start needs no second Vn_Update";
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -1102,7 +1178,7 @@ TEST(VariableCurrentSlice, FreshStealAcceptsWriteAndRecapturesAtActualMaterializ
         if (std::abs(output[2 * (kBlockFrames - 1)]) < 1e-7f) continue;
         heard = true;
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * std::sqrt(0.5f), output[2 * i], 1e-6f);
+            EXPECT_NEAR(0.05f, output[2 * i], 1e-6f);
     }
     ASSERT_TRUE(heard);
 }
@@ -1207,7 +1283,7 @@ TEST(VariableCurrentSlice, ParkedReturnUsesNewValueWithoutWaitingForBankAck) {
         if (std::abs(output[2 * (kBlockFrames - 1)]) < 1e-7f) continue;
         heard = true;
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * std::sqrt(0.5f), output[2 * i], 1e-6f);
+            EXPECT_NEAR(0.05f, output[2 * i], 1e-6f);
     }
     ASSERT_TRUE(heard);
     for (std::uint32_t step = 0; step < 16 &&
@@ -1227,7 +1303,7 @@ TEST(VariableCurrentSlice, ParkedReturnUsesNewValueWithoutWaitingForBankAck) {
     ASSERT_EQ(harken::VariableSliceState::SliceApplied, e.variableSlices.State(laterSource));
     e.nullBackend.Pump(1);
     for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-        EXPECT_NEAR(0.05f * (1 + DbToLinear(-12)) * 0.5f * std::sqrt(0.5f),
+        EXPECT_NEAR(0.05f * (1 + DbToLinear(-12)) * 0.5f,
             e.nullBackend.LastBlock()[2 * i], 1e-6f);
 }
 
@@ -1341,7 +1417,7 @@ TEST(VariableCurrentSlice, ParkedRawBindingPartialRefusalRollsBackAndRetriesWith
     EXPECT_NEAR(DbToLinear(-3), ctx->gain.target, 1e-6f);
     EXPECT_NEAR(1200, e.params.ResolvedValue(retryRender, harken::kTargetVoicePitch), 1e-6f);
     for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-        EXPECT_NEAR(0.05f * DbToLinear(-3) * std::sqrt(0.5f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
+        EXPECT_NEAR(0.05f * DbToLinear(-3), e.nullBackend.LastBlock()[2 * i], 1e-6f);
 }
 
 TEST(VariableCurrentSlice, ParkedNonRecipeEffectsReduceEveryBindingFromReturnCut) {
@@ -1393,7 +1469,7 @@ TEST(VariableCurrentSlice, ParkedNonRecipeEffectsReduceEveryBindingFromReturnCut
     EXPECT_NEAR(DbToLinear(-12), state->targetGainLinear, 1e-6f);
     e.nullBackend.Pump(8);
     for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-        EXPECT_NEAR(0.05f * DbToLinear(-12) * std::sqrt(0.5f),
+        EXPECT_NEAR(0.05f * DbToLinear(-12),
             e.nullBackend.LastBlock()[2 * i], 1e-6f);
 }
 
@@ -1468,7 +1544,7 @@ TEST(VariableCurrentSlice, StreamPressureReturnKeepsCapturedFirstPcmThroughArena
         }
         ASSERT_TRUE(heard);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * DbToLinear(-12) * std::sqrt(0.5f),
+            EXPECT_NEAR(0.05f * DbToLinear(-12),
                 e.nullBackend.LastBlock()[2 * i], 1e-6f);
         for (std::uint32_t step = 0; step < 16 &&
              !e.variables.SliceForTicketForTests(laterSequence).Valid(); ++step) {
@@ -1479,7 +1555,7 @@ TEST(VariableCurrentSlice, StreamPressureReturnKeepsCapturedFirstPcmThroughArena
         e.streams.SyncServe();
         e.nullBackend.Pump(8);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * std::sqrt(0.5f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
+            EXPECT_NEAR(0.05f, e.nullBackend.LastBlock()[2 * i], 1e-6f);
     }
 }
 
@@ -4631,7 +4707,7 @@ TEST(VariableCurrentSlice, PlayInBankAckGapUsesCapturedValueForFirstPcm) {
         if (std::abs(output[2 * (kBlockFrames - 1) + 1]) < 1e-7f) continue;
         heard = true;
         for (std::uint32_t frame = kBlockFrames / 2; frame < kBlockFrames; ++frame)
-            EXPECT_NEAR(0.05f * DbToLinear(-12), output[2 * frame + 1], 1e-6f);
+            EXPECT_NEAR(0.05f * DbToLinear(-12) * std::sqrt(2.0f), output[2 * frame + 1], 1e-6f);
     }
     EXPECT_TRUE(heard);
 }
@@ -5052,18 +5128,49 @@ TEST(VariableCurrentSlice, PublicationWaitsForBankOnlySliceAndResetsBankGenerati
     InstallVariable(&e);
     VnEmitterHandle emitter = 0;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
-    ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 0.5f));
+    const VnVariableWriteV1 write{kVariable, 0.5f, 0};
+    VnVariableBatchDescV1 batch{};
+    batch.structSize = sizeof(batch);
+    batch.writeCount = 1;
+    batch.writes = &write;
+    VnVariableTicketV1 ticket{};
+    ASSERT_EQ(VN_OK, Vn_SetValues(&batch, &ticket));
     e.nullBackend.Pump(8);
     e.variables.BeginService(e, e.mixer.BlocksRendered(), kBlockFrames);
     e.variables.PrepareClaimedSlices(e);
+    const auto slice = e.variables.SliceForTicketForTests(ticket.sequence);
+    harken::VariableSliceSource source{};
+    ASSERT_TRUE(e.variableSlices.CaptureSource(slice, &source));
+    EXPECT_EQ(ticket.sequence, source.ticket);
+    EXPECT_EQ(ticket.worldGeneration, source.world);
+    EXPECT_EQ(ticket.transportGeneration, source.transport);
+    ASSERT_EQ(harken::VariableSliceState::PageCommitted, e.variableSlices.State(slice));
+    EXPECT_EQ(0u, e.variableSlices.AppliedBlockSequence(slice));
+    const auto effectiveFrame = e.variableSlices.EffectiveFrame(slice);
+    const auto expectTicket = [&](std::uint32_t outcome) {
+        VnVariableTicketQueryDescV1 query{};
+        query.structSize = sizeof(query);
+        query.ticket = ticket;
+        VnVariableTicketQueryResultV1 result{};
+        result.structSize = sizeof(result);
+        ASSERT_EQ(VN_OK, Vn_QueryVariableTicket(&query, &result));
+        EXPECT_EQ(VN_VARIABLE_TICKET_FOUND, result.status);
+        EXPECT_EQ(outcome, result.outcome);
+    };
     const auto definition = *e.variables.Definition(kVariable);
     harken::VariableServiceV1::PreparedPackDefinitions token;
     ASSERT_EQ(VN_BACKPRESSURE, e.variables.PreparePackDefinitions(&definition, 1,
         harken::PackVariablePublicationReason::InitPublication, 777, &token));
     EXPECT_EQ(0u, e.variables.AppliedCount());
+    ASSERT_NO_FATAL_FAILURE(expectTicket(VN_VARIABLE_OUTCOME_PENDING));
     e.nullBackend.Pump(8);
+    ASSERT_EQ(harken::VariableSliceState::SliceApplied, e.variableSlices.State(slice));
+    const auto appliedSequence = e.variableSlices.AppliedBlockSequence(slice);
+    EXPECT_EQ(effectiveFrame / kBlockFrames + 1u, appliedSequence);
+    EXPECT_LE(appliedSequence, e.mixer.BlocksRendered());
     e.variables.EndService(e);
     ASSERT_EQ(1u, e.variables.AppliedCount());
+    ASSERT_NO_FATAL_FAILURE(expectTicket(VN_VARIABLE_OUTCOME_APPLIED));
     e.nullBackend.Pump(1);
     e.variables.EndService(e);
     harken::detail::VariableServiceTestAccess::SeedGlobalBankVersionGeneration(e.variables, UINT32_MAX);
@@ -5076,7 +5183,9 @@ TEST(VariableCurrentSlice, PublicationWaitsForBankOnlySliceAndResetsBankGenerati
     harken::VariableOutcomeRecord record{};
     ASSERT_TRUE(e.variables.PopOutcome(&record));
     EXPECT_EQ(harken::VariableOutcomeKind::Applied, record.outcome);
-    EXPECT_GT(record.actualFrame, 0u);
+    EXPECT_EQ(ticket.sequence, record.acceptedTicket.sequence);
+    EXPECT_EQ(appliedSequence * kBlockFrames, record.actualFrame);
+    ASSERT_NO_FATAL_FAILURE(expectTicket(VN_VARIABLE_OUTCOME_APPLIED));
     e.variables.EndService(e);
     EXPECT_EQ(1u, e.variables.AppliedCount());
     ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 0.25f));
@@ -5865,6 +5974,7 @@ TEST(VariableCurrentSlice, FiniteOverflowWriteRowIsTargetRejected) {
     EXPECT_FLOAT_EQ(1.0f, busState->gain.target);
     EXPECT_EQ(invalidBefore, engine->voices.InvalidVolumeApplyCount());
     EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+    EXPECT_EQ(1u, engine->paramDropCount);
     EXPECT_FALSE(engine->params.ForeignClaim(render,
                                              harken::kTargetVoiceVolume));
     EXPECT_FALSE(engine->busTargets.ForeignClaim(
@@ -5878,6 +5988,41 @@ TEST(VariableCurrentSlice, FiniteOverflowWriteRowIsTargetRejected) {
     EXPECT_FLOAT_EQ(0.1f, QueryCurrentValue(kVariable));
     EXPECT_FLOAT_EQ(1.0f / 0.9f, voiceState->gain.target);
     EXPECT_FLOAT_EQ(0.9f + 0.1f * DbToLinear(-12.0f), busState->gain.target);
+    EXPECT_EQ(1u, engine->paramDropCount);
+}
+
+TEST(VariableCurrentSlice, RejectedVolumeCandidatesCountEachPhysicalTargetOnce) {
+    EngineSession session(MakeNullConfig(4, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    InstallVariable(engine);
+    const auto bus = harkentest::ObjectId(9);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(bus, VN_BUS_MASTER));
+    const auto voice = PlayDc(engine, harkentest::ObjectId(1), bus);
+    const auto render = harkentest::RenderHandle(engine, voice);
+    for (std::uint32_t binding = 0; binding < 2; ++binding)
+        ASSERT_TRUE(engine->params.BindVoiceTarget(kVariable, render,
+            harken::kTargetVoiceVolume, LinearCurve(0, 0, 1, 772)));
+    RegisterBusVolumeBinding(harkentest::ObjectId(1), bus, 0, 0, 1, 772);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine->nullBackend.Pump(2);
+    const auto dropsBefore = engine->paramDropCount;
+    const auto ticket = AcceptGlobalWrite(kVariable, 1);
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
+    EXPECT_EQ(VN_VARIABLE_OUTCOME_REJECTED_TARGET, QueryTicket(ticket).outcome);
+    EXPECT_EQ(dropsBefore + 2, engine->paramDropCount);
+    EXPECT_FLOAT_EQ(0, QueryCurrentValue(kVariable));
+    EXPECT_FLOAT_EQ(1, engine->voices.Resolve(render)->gain.target);
+    EXPECT_FLOAT_EQ(1, engine->buses.BusState(engine->buses.FindIndex(bus))->gain.target);
+    for (std::uint32_t step = 0; step < 4; ++step) {
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(dropsBefore + 2, engine->paramDropCount);
+    }
+    const auto legal = AcceptGlobalWrite(kVariable, 0.1f);
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
+    EXPECT_EQ(VN_VARIABLE_OUTCOME_APPLIED, QueryTicket(legal).outcome);
+    EXPECT_EQ(dropsBefore + 2, engine->paramDropCount);
 }
 
 TEST(VariableCurrentSlice, RejectedGlobalBatchRestoresAllEmitterOverridesAndProjections) {
@@ -7597,7 +7742,7 @@ TEST(VariableCurrentSlice, NativeVoiceWaitsForFullFifoInstallationAndCalendarInE
         for (std::uint32_t i = 0; i < kBlockFrames; ++i) {
             if (std::abs(output[i * 2]) <= 1e-7f) continue;
             produced = true;
-            EXPECT_NEAR(0.05f * DbToLinear(-12) * std::sqrt(0.5f), output[i * 2], 1e-5f);
+            EXPECT_NEAR(0.05f * DbToLinear(-12), output[i * 2], 1e-5f);
         }
         EXPECT_TRUE(produced);
         ASSERT_TRUE(e.variables.AcknowledgeNativeReadCut(identity));
@@ -7762,7 +7907,7 @@ TEST(VariableCurrentSlice, ConsumedSlicesWaitForFifoWithoutLosingDependencyOrder
         EXPECT_EQ(10u, e.variableSlices.AppliedBlockSequence(source));
         EXPECT_EQ(10u, e.variableSlices.AppliedBlockSequence(dependent));
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * std::sqrt(0.5f) * (cancelSource ? 1 : DbToLinear(-6)),
+            EXPECT_NEAR(0.05f * (cancelSource ? 1 : DbToLinear(-6)),
                 e.nullBackend.LastBlock()[2 * i], 1e-6f);
         EXPECT_EQ(cancelSource ? harken::kVariableSliceSourceRejected : 0u,
             e.variableSlices.InvalidationReasons(dependent));
@@ -7890,8 +8035,8 @@ TEST(VariableCurrentSlice, NativeVoicesPreserveOwnFirstOutputThenUseLatestVariab
         const auto checkOutput = [&](float leftDb, float rightDb) {
             const float* output = e.nullBackend.LastBlock();
             for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i) {
-                EXPECT_NEAR(0.05f * DbToLinear(leftDb), output[i * 2], 1e-5f);
-                EXPECT_NEAR(0.05f * DbToLinear(rightDb), output[i * 2 + 1], 1e-5f);
+                EXPECT_NEAR(0.05f * DbToLinear(leftDb) * std::sqrt(2.0f), output[i * 2], 1e-5f);
+                EXPECT_NEAR(0.05f * DbToLinear(rightDb) * std::sqrt(2.0f), output[i * 2 + 1], 1e-5f);
             }
         };
         checkOutput(-12, -6);
@@ -7962,12 +8107,12 @@ TEST(VariableCurrentSlice, FirstOutputOwnedWeightsKeepInitialMixAndAbsoluteSegme
             e.nullBackend.Pump(1);
             if (timeline) ASSERT_TRUE(injection.injected);
             for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-                EXPECT_NEAR(0.05f * 0.25f, e.nullBackend.LastBlock()[2 * i], 1e-6f);
+                EXPECT_NEAR(0.05f * 0.25f * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
             e.nullBackend.Pump(1);
             for (std::uint32_t i = 0; i < kBlockFrames; ++i) {
                 const float weight = 0.25f + 0.5f * static_cast<float>(kBlockFrames + i) /
                     static_cast<float>(4 * kBlockFrames - 1);
-                EXPECT_NEAR(0.05f * weight * 0.6f, e.nullBackend.LastBlock()[2 * i], 1e-6f);
+                EXPECT_NEAR(0.05f * weight * 0.6f * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
             }
             const auto* render = e.voices.Resolve(voice);
             ASSERT_NE(nullptr, render);
@@ -8007,10 +8152,10 @@ TEST(VariableCurrentSlice, FirstOutputOwnedWeightRemovalDoesNotResurrectCancelle
     EXPECT_FALSE(e.voices.ApplyOwnedVariableWeightSegment(voice, owner, latest));
     e.nullBackend.Pump(1);
     for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-        EXPECT_NEAR(0.025f, e.nullBackend.LastBlock()[2 * i], 1e-6f);
+        EXPECT_NEAR(0.025f * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
     e.nullBackend.Pump(1);
     for (std::uint32_t i = 0; i < kBlockFrames; ++i)
-        EXPECT_NEAR(0.05f, e.nullBackend.LastBlock()[2 * i], 1e-6f);
+        EXPECT_NEAR(0.05f * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
     EXPECT_FALSE(e.voices.ApplyOwnedVariableWeightSegment(voice, owner, latest));
     ASSERT_NE(nullptr, e.voices.Resolve(voice));
     EXPECT_FALSE(e.voices.Resolve(voice)->variableWeightControls[0].active);
@@ -8055,10 +8200,10 @@ TEST(VariableCurrentSlice, FirstOutputSurvivesStreamStarvationUntilRealPcm) {
         ring.PublishWrite(capacity);
         e.nullBackend.Pump(1);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * DbToLinear(-12), e.nullBackend.LastBlock()[2 * i], 1e-6f);
+            EXPECT_NEAR(0.05f * DbToLinear(-12) * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
         e.nullBackend.Pump(1);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f * DbToLinear(-6), e.nullBackend.LastBlock()[2 * i], 1e-6f);
+            EXPECT_NEAR(0.05f * DbToLinear(-6) * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
     }
 }
 
@@ -8116,7 +8261,7 @@ TEST(VariableCurrentSlice, FirstOutputOldEffectAndStoppedGenerationCannotChangeR
         ASSERT_NE(nullptr, state);
         EXPECT_FLOAT_EQ(1, state->targetGainLinear);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
-            EXPECT_NEAR(0.05f, e.nullBackend.LastBlock()[2 * i], 1e-6f);
+            EXPECT_NEAR(0.05f * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);
     }
 }
 

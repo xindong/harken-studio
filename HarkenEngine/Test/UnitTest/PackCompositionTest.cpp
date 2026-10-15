@@ -1955,6 +1955,14 @@ TEST(PackComposition, FirstInitPublicationTerminatesProvisionalContentWritesOnly
     EXPECT_EQ(world, record.world);
     EXPECT_EQ(transport, record.transport);
     EXPECT_EQ(frame, record.actualFrame);
+    VnVariableTicketQueryDescV1 query{};
+    query.structSize = sizeof(query);
+    query.ticket = {ticket, world, transport};
+    VnVariableTicketQueryResultV1 result{};
+    result.structSize = sizeof(result);
+    ASSERT_EQ(VN_OK, Vn_QueryVariableTicket(&query, &result));
+    EXPECT_EQ(VN_VARIABLE_TICKET_FOUND, result.status);
+    EXPECT_EQ(VN_VARIABLE_OUTCOME_TERMINATED_WORLD, result.outcome);
     EXPECT_FALSE(e.variables.PopOutcome(&record));
     EXPECT_EQ(world + 1, e.variables.CurrentWorldGeneration());
     EXPECT_EQ(1u, e.variables.TerminationCount());
@@ -9801,9 +9809,15 @@ TEST(PackComposition,
     VnPackHandle initHandle = 0;
     ASSERT_EQ(VN_OK, harkentest::LoadCanonicalPackOrActivateInit(
                          desc, &initHandle));
+    const auto variableWorld = engine->variables.CurrentWorldGeneration();
+    const auto initComposite = engine->packComposition.CompositeGeneration();
+    ASSERT_NE(0u, variableWorld);
     desc.utf8Path = packPath.c_str();
     VnPackHandle pack = 0;
     ASSERT_EQ(VN_OK, harkentest::LoadCanonicalPackOrActivateInit(desc, &pack));
+    ASSERT_EQ(variableWorld, engine->variables.CurrentWorldGeneration());
+    ASSERT_GT(engine->packComposition.CompositeGeneration(), initComposite);
+    ASSERT_NE(variableWorld, engine->packComposition.CompositeGeneration());
 
     VnPostActionDesc post{};
     post.structSize = sizeof(post);
@@ -9821,15 +9835,19 @@ TEST(PackComposition,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     EXPECT_FALSE(row->variableControlWorldUsesCurrentAuthority);
+    EXPECT_EQ(engine->packComposition.CompositeGeneration(), row->Invocation().worldGeneration);
     ASSERT_EQ(1u, row->variableControlDiscreteMemberCount);
     EXPECT_EQ(7u, row->variableControlDiscreteCurrentChildOrdinal);
 
+    harkentest::Capture initialPcm;
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 1.0f));
     for (std::uint32_t block = 0;
          block < 256 && !row->variableControlDiscreteRetargetPrepared;
          ++block) {
+        const auto before = engine->mixer.BlocksRendered();
         ASSERT_EQ(VN_OK, Vn_Update());
-        engine->nullBackend.Pump(1);
+        harkentest::PumpAndCapture(engine, 1, initialPcm);
+        ASSERT_EQ(before + 1u, engine->mixer.BlocksRendered());
     }
     ASSERT_TRUE(row->variableControlDiscreteRetargetPrepared);
     EXPECT_EQ(0u, row->variableControlDiscreteRetargetTargetMemberCount);
@@ -9840,31 +9858,40 @@ TEST(PackComposition,
               logicalBoundary);
     for (std::uint32_t block = 0;
          block < 64 && row->variableControlDiscreteRetargetPrepared; ++block) {
+        const auto before = engine->mixer.BlocksRendered();
         ASSERT_EQ(VN_OK, Vn_Update());
-        engine->nullBackend.Pump(1);
+        harkentest::PumpAndCapture(engine, 1, initialPcm);
+        ASSERT_EQ(before + 1u, engine->mixer.BlocksRendered());
     }
     ASSERT_FALSE(row->variableControlDiscreteRetargetPrepared);
+    HARKENTEST_ASSERT_NON_SILENT(initialPcm.left);
     EXPECT_EQ(0u, row->variableControlDiscreteMemberCount);
     EXPECT_EQ(8u, row->variableControlDiscreteCurrentChildOrdinal);
     EXPECT_TRUE(row->variableControlDiscreteHasZeroWorkCompletion);
     EXPECT_EQ(logicalBoundary,
               row->variableControlDiscreteZeroWorkCompletionFrame);
 
+    harkentest::Capture returnedPcm;
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 3.0f));
     for (std::uint32_t block = 0;
          block < 256 && !row->variableControlDiscreteRetargetPrepared;
          ++block) {
+        const auto before = engine->mixer.BlocksRendered();
         ASSERT_EQ(VN_OK, Vn_Update());
-        engine->nullBackend.Pump(1);
+        harkentest::PumpAndCapture(engine, 1, returnedPcm);
+        ASSERT_EQ(before + 1u, engine->mixer.BlocksRendered());
     }
     ASSERT_TRUE(row->variableControlDiscreteRetargetPrepared);
     EXPECT_EQ(1u, row->variableControlDiscreteRetargetTargetMemberCount);
     for (std::uint32_t block = 0;
          block < 64 && row->variableControlDiscreteRetargetPrepared; ++block) {
+        const auto before = engine->mixer.BlocksRendered();
         ASSERT_EQ(VN_OK, Vn_Update());
-        engine->nullBackend.Pump(1);
+        harkentest::PumpAndCapture(engine, 1, returnedPcm);
+        ASSERT_EQ(before + 1u, engine->mixer.BlocksRendered());
     }
     ASSERT_FALSE(row->variableControlDiscreteRetargetPrepared);
+    HARKENTEST_ASSERT_NON_SILENT(returnedPcm.left);
     EXPECT_EQ(1u, row->variableControlDiscreteMemberCount);
     EXPECT_EQ(7u, row->variableControlDiscreteCurrentChildOrdinal);
     EXPECT_FALSE(row->variableControlDiscreteHasZeroWorkCompletion);
@@ -9873,12 +9900,21 @@ TEST(PackComposition,
     VnActionFiringInfo info{};
     info.structSize = sizeof(info);
     for (std::uint32_t block = 0; block < 128; ++block) {
+        const auto before = engine->mixer.BlocksRendered();
         engine->nullBackend.Pump(1);
+        ASSERT_EQ(before + 1u, engine->mixer.BlocksRendered());
         ASSERT_EQ(VN_OK, Vn_Update());
         ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
         if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
     }
     ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+    const auto silentBefore = engine->mixer.BlocksRendered();
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(silentBefore + 1u, engine->mixer.BlocksRendered());
+    EXPECT_LE(harkentest::Peak(engine->nullBackend.LastBlock(),
+        engine->nullBackend.BlockFrames() * engine->nullBackend.Channels()),
+        harkentest::kSilenceFloor);
     ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
@@ -11859,12 +11895,20 @@ TEST(PackComposition, PackActionDelayedVariableControlCommitsExistingRoute) {
 }
 
 void VerifyPackActionDelayedGenericContainerPcmAndStop(
-    DelayedPackPlayTarget target, const char* label) {
+    DelayedPackPlayTarget target, const char* label,
+    std::uint64_t previousComposite = 0) {
     DelayedPackPlayFixture fixture(MakeNullConfig(8, 256, 48000), label,
                                    1000000000, target);
     ASSERT_EQ(VN_OK, fixture.session.InitResult());
     auto* engine = fixture.session.Engine();
     ASSERT_NE(nullptr, engine);
+    if (target == DelayedPackPlayTarget::VariableControl) {
+        ASSERT_GT(engine->packComposition.CompositeGeneration(), previousComposite);
+        ASSERT_NE(engine->variables.CurrentWorldGeneration(),
+            engine->packComposition.CompositeGeneration());
+        ASSERT_EQ(engine->packComposition.CompositeGeneration(),
+            fixture.record.targetPackLease.compositeGeneration);
+    }
     const auto playableBaseline = engine->playableInstances.LiveCount();
     const auto voiceBaseline = engine->voices.ActiveCount();
     const auto serviceBaseline = std::count_if(
@@ -11920,8 +11964,10 @@ void VerifyPackActionDelayedGenericContainerPcmAndStop(
     info.structSize = sizeof(info);
     bool reclaimed = false;
     for (std::uint32_t step = 0; step < 256; ++step) {
+        const auto before = engine->mixer.BlocksRendered();
         ASSERT_EQ(VN_OK, Vn_Update());
         engine->nullBackend.Pump(1);
+        ASSERT_EQ(before + 1u, engine->mixer.BlocksRendered());
         ASSERT_EQ(VN_OK, Vn_Update());
         ASSERT_EQ(VN_OK, Vn_QueryActionFiring(fixture.firing, &info));
         reclaimed = info.state == VN_ACTION_FIRING_TERMINAL_RETAINED &&
@@ -11949,6 +11995,13 @@ void VerifyPackActionDelayedGenericContainerPcmAndStop(
         if (reclaimed) break;
     }
     EXPECT_TRUE(reclaimed);
+    const auto silentBefore = engine->mixer.BlocksRendered();
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(silentBefore + 1u, engine->mixer.BlocksRendered());
+    EXPECT_LE(harkentest::Peak(engine->nullBackend.LastBlock(),
+        engine->nullBackend.BlockFrames() * engine->nullBackend.Channels()),
+        harkentest::kSilenceFloor);
     std::cerr << "delayed generic stop reclaimed=" << reclaimed
               << " playable=" << playableBaseline << '/'
               << engine->playableInstances.LiveCount()
@@ -11990,9 +12043,19 @@ TEST(PackComposition, PackActionDelayedSequenceQueuePcmAndStop) {
 }
 
 TEST(PackComposition, PackActionDelayedVariableControlPcmAndStop) {
+    std::uint64_t previousComposite = 0;
+    {
+        DelayedPackPlayFixture previous(MakeNullConfig(8, 256, 48000),
+            "f5-delayed-vc-world-before-term", 1000000000,
+            DelayedPackPlayTarget::Sound, false);
+        ASSERT_EQ(VN_OK, previous.session.InitResult());
+        ASSERT_NE(0u, previous.pack);
+        previousComposite = previous.session.Engine()->packComposition.CompositeGeneration();
+        ASSERT_NE(0u, previousComposite);
+    }
     VerifyPackActionDelayedGenericContainerPcmAndStop(
         DelayedPackPlayTarget::VariableControl,
-        "f5-delayed-variable-control-pcm-stop");
+        "f5-delayed-variable-control-pcm-stop", previousComposite);
 }
 
 void DiagnoseDeferredPackVariableControlFailure(bool afterTransfer) {
@@ -20535,6 +20598,73 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
     if (laterControl && selectionTrace == nullptr) selectionTrace = &localSelectionTrace;
     if (selectionTrace != nullptr) selectionTrace->Attach(engine);
     const bool randomControl = laterControl && outerMode == ContainerModeV1::Random;
+    const auto derivePlayableCallerSeed = [&](std::uint64_t actionCallerSeed) {
+        static constexpr char domain[] = "HARKEN-ACTION-PLAY-OCCURRENCE-V1";
+        MediaContentRevisionHasherV1 hash(domain, sizeof(domain));
+        hash.AddU64(actionCallerSeed);
+        hash.AddObjectId(image.action.actionStableId);
+        hash.AddU64(image.action.programSemanticFingerprint);
+        hash.AddU32(0);
+        SplitMix64 stream(hash.Finish());
+        return stream.Next();
+    };
+    std::uint64_t actionCallerSeed = 0;
+    if (randomControl) {
+        ASSERT_EQ(1u, cycles);
+        ASSERT_EQ(0u, wrappers);
+        const auto& program = image.containers[2];
+        ASSERT_EQ(rootRef.stableId, program.containerStableId);
+        ASSERT_EQ(MemoryScopeV1::Global, program.memoryScope);
+        ASSERT_EQ(RandomDisciplineV1::Draw, program.randomDiscipline);
+        ASSERT_EQ(1u, program.avoidLastN);
+        ASSERT_EQ(2u, program.childCount);
+        ASSERT_EQ(harkentest::ObjectId(2300u), program.children[0].playable.stableId);
+        const auto current = engine.variables.CurrentPlayableWorld();
+        SelectionMemoryKeyV1 key{};
+        key.world = current.generation;
+        key.containerStableId = program.containerStableId;
+        key.programSemanticFingerprint = program.programSemanticFingerprint;
+        key.memoryScope = program.memoryScope;
+        std::uint64_t fingerprint = current.identity.runtimeSemanticFingerprint;
+        if (entry == ContainerMatrixEntry::PackAction) {
+            const auto* published = engine.packComposition.Published();
+            ASSERT_NE(nullptr, published);
+            ASSERT_NE(nullptr, published->playbackStore);
+            key.world = published->compositeGeneration;
+            fingerprint = published->playbackStore->worldSemanticFingerprint;
+        }
+        ASSERT_FALSE(engine.selectionMemory.Snapshot(key).found);
+        SelectionSeedInputV1 input{};
+        input.worldSemanticFingerprint = fingerprint;
+        input.programStableId = program.containerStableId;
+        input.programSemanticFingerprint = program.programSemanticFingerprint;
+        input.memoryScope = program.memoryScope;
+        input.rootStableId = rootRef.stableId;
+        input.acceptedPostOrdinal = engine.logicCommits.Current() + 1u;
+        input.selectionOrdinal = 1u;
+        std::array<SelectionChildV1, 2> children{};
+        for (std::uint32_t index = 0; index < children.size(); ++index) {
+            const auto& child = program.children[index];
+            children[index] = {child.stableChildOrdinal, child.authoredStableOrder,
+                child.frequencyWeight, child.orderWeight};
+        }
+        // A complete two-choice warmup must start at Sound and finish at VC.
+        bool found = false;
+        for (; actionCallerSeed < 1024u; ++actionCallerSeed) {
+            input.callerSeed = derivePlayableCallerSeed(actionCallerSeed);
+            std::uint64_t seed = 0;
+            ASSERT_TRUE(ComputeSelectionSeedV1(input, &seed));
+            SplitMix64 stream(seed);
+            std::uint32_t ordinal = 0;
+            ASSERT_EQ(SelectionStatusV1::Ok, SelectRandomDrawV1(
+                children.data(), children.size(), nullptr, 0, &stream, &ordinal));
+            if (ordinal == program.children[0].stableChildOrdinal) {
+                found = true;
+                break;
+            }
+        }
+        ASSERT_TRUE(found);
+    }
     for (std::uint32_t attempt = 0; attempt < (stopAndReplay || randomControl ? 2u : 1u); ++attempt) {
     SCOPED_TRACE(attempt);
     const bool controlWarmup = randomControl && attempt == 0;
@@ -20548,14 +20678,7 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
         PlayableStartRequest request{};
         request.root = rootRef;
         request.emitter = emitter;
-        static constexpr char domain[] = "HARKEN-ACTION-PLAY-OCCURRENCE-V1";
-        MediaContentRevisionHasherV1 hash(domain, sizeof(domain));
-        hash.AddU64(0);
-        hash.AddObjectId(image.action.actionStableId);
-        hash.AddU64(image.action.programSemanticFingerprint);
-        hash.AddU32(0);
-        SplitMix64 seed(hash.Finish());
-        request.callerSeed = seed.Next();
+        request.callerSeed = derivePlayableCallerSeed(actionCallerSeed);
         if (directRefusal != DirectQueueRefusal::None) {
             const auto owners = [&]() {
                 return std::tuple(engine.playableInstances.LiveCount(), engine.containerPlayback.LiveCount(),
@@ -20601,6 +20724,7 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
         post.structSize = sizeof(post);
         post.actionId = image.action.actionStableId;
         post.emitter = emitter;
+        post.callerSeed = actionCallerSeed;
         engine.forceActionFinalOwnerCommitFailureForTest = refuseFinal;
         engine.actionFinalOwnerCommitFailureSkipForTest = refuseFinal && nestedParallelControl ? 1u : 0u;
         const auto commandHead = engine.commands.PublishedHead();
@@ -20647,7 +20771,6 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
                 return true;
             };
     }
-    std::uint32_t warmupOnsets = 0;
     if (randomControl) {
         const auto begin = selectionTrace->selections.begin() + selectionStart;
         const auto end = selectionTrace->selections.end();
@@ -20658,11 +20781,7 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
             [&](const auto& choice) { return choice.program == rootRef.stableId; }));
         EXPECT_TRUE(initial->path.empty());
         ASSERT_EQ(1u, initial->subjects.size());
-        if (controlWarmup) {
-            if (initial->subjects[0] != harkentest::ObjectId(2300u)) EXPECT_EQ(harkentest::ObjectId(laterWrapper ? 2304u : 2305u), initial->subjects[0]);
-            warmupOnsets = initial->subjects[0] == harkentest::ObjectId(2300u) ? 3u : 2u;
-        }
-        else EXPECT_EQ(harkentest::ObjectId(2300u), initial->subjects[0]);
+        ASSERT_EQ(harkentest::ObjectId(2300u), initial->subjects[0]);
     }
     if (matrixCase && parallelControl &&
         (innerMode == ContainerModeV1::Random || innerMode == ContainerModeV1::Sequence)) {
@@ -20698,6 +20817,7 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
     }
     FrontierTrace actual;
     bool stopped = false;
+    bool stopExitViolationReported = false;
     bool discreteExitRequested = false;
     bool discreteExitObserved = false;
     bool naturalRequested = false;
@@ -20749,6 +20869,24 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
             EXPECT_FALSE(engine.runtimeRecreateRequired);
         }
         ASSERT_EQ(VN_OK, updateResult);
+        if (stopThisRun && stopped && parallelControl && wrappers != 0 &&
+            !stopExitViolationReported) {
+            for (const auto& service : engine.playableServices) {
+                if (service.phase == EnginePlayableStartPhase::Free) continue;
+                const bool validReason = service.controlReason == PlayableControlReason::None ||
+                    service.controlReason == PlayableControlReason::StopRequested;
+                const bool validLifecycle = service.controlLifecycle != PlayableControlLifecycle::FailingSourceActive &&
+                    service.controlLifecycle != PlayableControlLifecycle::FailingAudibleRetiring;
+                if (validReason && validLifecycle) continue;
+                ADD_FAILURE() << "First invalid Stop exit: block=" << block
+                    << " service=" << service.identity.slot << '/' << service.identity.generation
+                    << " phase/lifecycle/reason=" << static_cast<unsigned>(service.phase) << '/'
+                    << static_cast<unsigned>(service.controlLifecycle) << '/'
+                    << static_cast<unsigned>(service.controlReason);
+                stopExitViolationReported = true;
+                break;
+            }
+        }
         if (replayAtFiringTerminal && attempt == 1u &&
             engine.queueNaturalEndRetirementHookForTest == nullptr) {
             deferredNaturalEndObserved = true;
@@ -20878,6 +21016,21 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
             (!replayAtFiringTerminal || attempt != 1u ||
              deferredNaturalEndVerified)) break;
     }
+    if (stopThisRun && parallelControl && wrappers != 0 && !replayAtFiringTerminal) {
+        ASSERT_TRUE(stopped);
+        ASSERT_EQ(0u, engine.voices.ActiveCount());
+        ASSERT_EQ(0u, engine.playableInstances.LiveCount());
+        ASSERT_EQ(0u, engine.containerPlayback.LiveCount());
+        ASSERT_EQ(0u, engine.playablePartitions.OccupiedCount());
+        ASSERT_EQ(0u, engine.timelineArms.LiveCount());
+        ASSERT_EQ(0u, engine.queueInstances.LiveCount());
+        ASSERT_EQ(0u, engine.variableControlInstances.LiveCount());
+        ASSERT_EQ(0u, engine.decisions.LiveCount());
+        ASSERT_EQ(0u, engine.armGroups.LiveCount());
+        ASSERT_TRUE(std::none_of(engine.initialFrontierArmPins.begin(),
+            engine.initialFrontierArmPins.end(),
+            [](const auto& owned) { return owned.pin.Valid(); }));
+    }
     if (cancelNestedBeforeStart) {
         EXPECT_TRUE(actual.heard.empty());
         EXPECT_EQ(0u, engine.playableInstances.LiveCount());
@@ -20894,9 +21047,10 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
         return;
     }
     const auto expectedCount = laterRefusal ? 1u : laterRetarget ? (laterWrapper ? 6u : 4u) :
-        controlWarmup ? (warmupOnsets == 3u && laterWrapper ? 5u : warmupOnsets) :
         laterControl ? (laterWrapper ? 5u : 3u) :
-        matrixCase && !parallelControl && innerMode == ContainerModeV1::VariableControl
+        matrixCase && (outerMode == ContainerModeV1::RandomQueue ||
+                       outerMode == ContainerModeV1::SequenceQueue) &&
+            innerMode == ContainerModeV1::VariableControl
         ? 2u : 4u * cycles;
     const auto expectedStopCount = stopAfterOnsets != 0
         ? stopAfterOnsets
@@ -20904,7 +21058,40 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
     ASSERT_EQ(stopThisRun ? expectedStopCount : expectedCount, actual.heard.size())
         << "natural requested/prelude/completion=" << naturalRequested << '/' << naturalPrelude << '/' << naturalCompletion
         << " recreate=" << engine.runtimeRecreateRequired;
-    if (controlWarmup) EXPECT_EQ(harkentest::ObjectId(warmupOnsets == 3u ? 2300u : 2302u), actual.heard.front().subject);
+    if (controlWarmup) {
+        std::vector<const SelectionInputTrace::Selection*> rootSelections;
+        for (auto index = selectionStart; index < selectionTrace->selections.size(); ++index) {
+            const auto& choice = selectionTrace->selections[index];
+            if (choice.program == rootRef.stableId) rootSelections.push_back(&choice);
+        }
+        ASSERT_EQ(2u, rootSelections.size());
+        for (std::uint32_t index = 0; index < rootSelections.size(); ++index) {
+            const auto& choice = *rootSelections[index];
+            ASSERT_EQ(1u, choice.subjects.size());
+            EXPECT_TRUE(choice.path.empty());
+            EXPECT_EQ(index, choice.loopIteration);
+            EXPECT_EQ(index, choice.selectionOrdinal);
+            EXPECT_EQ(harkentest::ObjectId(index == 0u ? 2300u : laterWrapper ? 2304u : 2305u),
+                choice.subjects[0]);
+        }
+        ASSERT_EQ(harkentest::ObjectId(2300u), actual.heard[0].subject);
+        for (std::uint32_t index = 1; index < actual.heard.size(); ++index) {
+            const auto& heard = actual.heard[index];
+            EXPECT_EQ(harkentest::ObjectId(index % 2u == 1u ? 2302u : 2303u), heard.subject);
+            EXPECT_GT(heard.start, actual.heard[0].complete);
+        }
+        ASSERT_FALSE(engine.playableInstances.Classify(root).live);
+        ASSERT_EQ(0u, engine.playableInstances.LiveCount());
+        ASSERT_EQ(0u, engine.containerPlayback.LiveCount());
+        ASSERT_EQ(0u, engine.playablePartitions.OccupiedCount());
+        ASSERT_EQ(0u, engine.timelineArms.LiveCount());
+        ASSERT_EQ(0u, engine.queueInstances.LiveCount());
+        ASSERT_EQ(0u, engine.variableControlInstances.LiveCount());
+        ASSERT_EQ(0u, engine.decisions.LiveCount());
+        ASSERT_EQ(0u, engine.armGroups.LiveCount());
+        ASSERT_EQ(0u, engine.voices.ActiveCount());
+        ASSERT_FALSE(engine.runtimeRecreateRequired);
+    }
     for (std::uint32_t index = 0; index < actual.heard.size(); ++index) {
         SCOPED_TRACE(index);
         const auto& heard = actual.heard[index];

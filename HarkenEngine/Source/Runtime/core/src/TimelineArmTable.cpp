@@ -2493,7 +2493,7 @@ void TimelineArmTable::ApplyPlainAudio(PlainAudioProof& proof) noexcept {
 bool TimelineArmTable::MatchesVariableInitializerStart(const PlainAudioProof& proof,
     TimelineArmToken token, std::uint64_t onsetFrame) const noexcept {
     const auto* row = Resolve(token);
-    return row != nullptr && proof.row_ == row && proof.starts_ && !proof.transient_ &&
+    return row != nullptr && proof.row_ == row && proof.starts_ &&
         proof.sequence_ != 0 && row->startFrame == onsetFrame &&
         row->startedBlockSequence.load(std::memory_order_acquire) == 0 &&
         !row->nativePrivateWithdrawn.load(std::memory_order_acquire) &&

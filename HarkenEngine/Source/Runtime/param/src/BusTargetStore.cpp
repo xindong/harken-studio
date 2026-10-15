@@ -586,6 +586,18 @@ void BusTargetStore::DropClaimedPublication(
     state.preparedOwner = {};
 }
 
+void BusTargetStore::DropClaimedBaseline(std::uint32_t busIndex,
+                                        std::uint32_t busGeneration,
+                                        std::uint32_t targetId,
+                                        TargetClaimOwner owner) noexcept {
+    if (busIndex >= m_maxBuses || targetId >= kBusTargetCount ||
+        m_activeGenerations[busIndex] != busGeneration) return;
+    auto& state = m_publish[PubIndexOf(busIndex, targetId)];
+    if (state.preparedOwner != owner) return;
+    MarkDropped(busIndex, targetId);
+    state.preCandidatePendingRampMs = 0;
+}
+
 void BusTargetStore::ReleaseClaim(std::uint32_t busIndex,
                                   std::uint32_t targetId,
                                   TargetClaimOwner owner,

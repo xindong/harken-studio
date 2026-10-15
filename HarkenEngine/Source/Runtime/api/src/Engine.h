@@ -1189,6 +1189,13 @@ public:
         return Owns(token, owner) && slots_[token.slot].published;
     }
 
+    bool PrivateCommitted(EnginePlayablePartitionToken token,
+                          EnginePlayableServiceToken owner) const noexcept {
+        return Owns(token, owner) && slots_[token.slot].committed &&
+            !slots_[token.slot].published && !slots_[token.slot].retiring &&
+            !slots_[token.slot].commitHeld && !slots_[token.slot].preparingCommitOwned;
+    }
+
     bool BeginRetirement(EnginePlayablePartitionToken token,
                          EnginePlayableServiceToken owner,
                          std::uint64_t completedSequence) noexcept {
@@ -1527,8 +1534,8 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         EnginePlayableServiceToken service{};
         EnginePlayablePartitionToken partition{};
         std::uint64_t invocationGeneration = 0;
-        ImmediateLanePrivateEntryBucketShape shape{};
-        ImmediateLanePrivateEntryTerminalProjection terminal{};
+        ImmediateLanePrivateEntryResultView shape{};
+        ImmediateLanePrivateEntryResultView terminal{};
         bool stopAccepted = false;
         bool projectionReceived = false;
         bool commonPinsRetired = false;
@@ -2418,6 +2425,7 @@ struct EngineImmediateEntryAttempt {
     bool producerAbortVoicesCaptured = false;
     bool producerAbortPrivateTailReady = false;
     bool producerAbortMembersMarked = false;
+    bool producerAbortClosing = false;
     bool producerAbortPendingVariableStop = false;
     bool producerExposureReleased = false;
     bool producerFailureCapacity = false;
@@ -3336,10 +3344,14 @@ struct EngineActionPlayStorage {
     } initialSelectionCensus;
     explicit EngineActionPlayStorage(std::uint32_t nodeCapacity =
         kMaxKnownScheduleLeaves + 64u + kSelectionPathNodeCapacity + 1u,
-        std::uint32_t memberCapacity = 0)
+        std::uint32_t memberCapacity = 0,
+        std::uint32_t laneMetadataCapacity = kMaxKnownScheduleLeaves)
           : variableControlRollbackEdges(memberCapacity),
             pendingInitialVcRetirement(memberCapacity), pendingInitialVcRows(memberCapacity),
             retiredInitialVcArms(memberCapacity),
+            privateInitialVcLaneMembers(laneMetadataCapacity),
+            privateInitialVcLaneGroups(laneMetadataCapacity),
+            privateInitialVcArmPreparations(laneMetadataCapacity),
             frontierServices(nodeCapacity), frontierQueues(nodeCapacity),
             queueFutureAttempts(nodeCapacity), queueFutureOwners(nodeCapacity),
             frontierPolicies(nodeCapacity), initialControlSlices(2u * nodeCapacity),
@@ -3445,6 +3457,16 @@ struct EngineActionPlayStorage {
     bool initialVcRetirementDecisionsOpen = false;
     bool initialVcUnboundRetirementConsumed = false;
     std::vector<TimelineArmToken> retiredInitialVcArms;
+    std::vector<ImmediateLaneMemberManifest> privateInitialVcLaneMembers;
+    std::vector<ImmediateLaneAcceptedPrivateGroup> privateInitialVcLaneGroups;
+    struct PrivateInitialVcArmPreparation {
+        TimelineArmTable::PreparedCommitInput input{};
+        EnginePlayableServiceReference queue{};
+        EnginePlayablePartitionToken partition{};
+        std::uint64_t rootGeneration = 0;
+        std::uint32_t logicalOrdinal = UINT32_MAX;
+    };
+    std::vector<PrivateInitialVcArmPreparation> privateInitialVcArmPreparations;
     std::uint32_t retiredInitialVcArmCount = 0;
     std::uint64_t retiredInitialVcAttemptGeneration = 0;
     std::uint64_t initialVcExactCommandAttemptGeneration = 0;
@@ -3484,7 +3506,9 @@ struct EngineActionPlayScratch {
           variableControlNestedParentIndices(persistent.variableControlNestedParentIndices),
           variableControlNestedPathOrdinals(persistent.variableControlNestedPathOrdinals),
           variableControlNestedModes(persistent.variableControlNestedModes),
-          variableControlInitialCommittedSlices(persistent.initialControlSlices) {}
+          variableControlInitialCommittedSlices(persistent.initialControlSlices) {
+        privateInitialVcPageCohort.laneMemberManifests = persistent.privateInitialVcLaneMembers;
+    }
     EngineActionPlayStorage& storage;
     std::uint32_t frontierServiceCount = 0;
     std::uint32_t frontierQueueCount = 0;
@@ -3515,8 +3539,11 @@ struct EngineActionPlayScratch {
         Plan03GroupSliceIdentity lanePrimary{};
         std::array<PreparedPrivateImmediateLaneGroup, 3> laneOriginals{};
         std::array<PrivateImmediateLaneGroupTransferProof, 3> laneTransferProofs{};
-        std::array<ImmediateLaneMemberManifest, kMaxKnownScheduleLeaves> laneMemberManifests{};
+        std::span<ImmediateLaneMemberManifest> laneMemberManifests{};
         std::uint32_t laneMemberCount = 0;
+        std::uint32_t laneOwnedGroupCount = 0;
+        bool laneAcceptedOriginals = false;
+        std::uint32_t laneArmPreparationCount = 0;
         ImmediateLaneHandle originalLane{};
         ImmediateLaneDemand originalLaneDemand{};
         bool laneTransferRequired = false;
@@ -3979,6 +4006,8 @@ struct EngineActionPlayScratch {
     std::uint32_t variableControlOuterPathContainerRowCount = 0;
     std::array<std::uint32_t, kSelectionPathNodeCapacity>
         variableControlNestedPrefixOrdinals{};
+    std::array<SelectionPathNodeV1, kSelectionPathNodeCapacity>
+        variableControlNestedPrefixPath{};
     std::uint32_t variableControlNestedPrefixCount = 0;
     PlayableInstanceHandle variableControlParentInstance = 0;
     std::uint64_t variableControlParentEpoch = 0;
@@ -4077,6 +4106,8 @@ struct EngineActionPlayScratch {
     TransitionInstanceToken queueTransition{};
     std::array<CommandRecord, kMaxKnownScheduleLeaves>
         queueSourceCommands{};
+    std::array<TimelineArmTable::PreparedCommitInput, kMaxKnownScheduleLeaves>
+        queueSourceArmPreparations{};
     const ContainerProgramViewV3* queueProgram = nullptr;
     std::uint32_t queueCurrentLeafOccurrenceCount = 0;
     std::uint32_t queueCompletionMutationCount = 0;
@@ -4744,6 +4775,7 @@ struct Engine {
             topology_ = std::exchange(other.topology_, {});
             retiredDecisions = std::exchange(other.retiredDecisions, {});
             reprepare_ = std::exchange(other.reprepare_, {});
+            boundAbort = std::exchange(other.boundAbort, {});
         }
     public:
         bool Empty() const noexcept {
@@ -4757,7 +4789,7 @@ struct Engine {
                 !reprepare_.replacementCommandsReserved && reprepare_.replacementCommandCount == 0 &&
                 !reprepare_.replacementLane.Valid() && reprepare_.replacementDemand.events == 0 &&
                 !selectionReservations[0].Valid() && !selectionReservations[1].Valid() && !topology_.sealed &&
-                nestedInitialSideCount == 0 && initialSelectionBatch.Empty();
+                nestedInitialSideCount == 0 && initialSelectionBatch.Empty() && !boundAbort.captured;
         }
         bool Close(Engine& receiver) noexcept {
             if (Empty()) return true;
@@ -4789,6 +4821,7 @@ struct Engine {
             reselectionRequested = false;
             nextSelectionFrame = 0;
             reprepare_ = {};
+            boundAbort = {};
             engine = nullptr;
             return true;
         }
@@ -4840,6 +4873,33 @@ struct Engine {
         std::array<RetiredDecision, 2> retiredDecisions{};
         bool RepreparePending() const noexcept { return reprepare_.engine != nullptr; }
         bool ReprepareReady() const noexcept { return reprepare_.phase == InitialReprepare::Phase::MembersReturned; }
+        struct QueueRetirement {
+            EnginePlayableServiceReference service{};
+            std::uint32_t recordSlot = UINT32_MAX;
+            std::uint32_t recordNext = UINT32_MAX;
+            std::uint64_t recordGeneration = 0;
+            bool continuation = true;
+            bool controlReturned = false;
+            DecisionToken initialDecision{};
+            ArmGroupToken initialGroup{};
+            bool canonicalInitial = false;
+            bool initialCommitted = false;
+            bool initialTransferred = false;
+            bool readersReturned = false;
+            bool recordReturned = false;
+            bool physicalReturned = false;
+            bool decisionsReturned = false;
+            bool factoriesReturned = false;
+        };
+        struct BoundAbort {
+            const EngineImmediateEntryAttempt* attempt = nullptr;
+            EngineActionPlayStorage* storage = nullptr;
+            std::uint64_t attemptGeneration = 0;
+            std::uint64_t storageGeneration = 0;
+            bool captured = false;
+            std::array<QueueRetirement, EngineActionPlayScratch::kPendingVariableReplacementQueueCapacity> queues{};
+            std::uint32_t queueCount = 0;
+        } boundAbort;
     private:
         friend struct Engine;
         struct InitialTopology {
@@ -4883,7 +4943,7 @@ struct Engine {
             ArmGroupToken coordinatorGroup{};
             std::array<DecisionToken, EngineActionPlayScratch::kPendingVariableReplacementControlCapacity> decisions{};
             std::array<ArmGroupToken, EngineActionPlayScratch::kPendingVariableReplacementControlCapacity> armGroups{};
-            std::array<Plan03GroupSliceIdentity, EngineActionPlayScratch::kPendingVariableReplacementControlCapacity + 4u>
+            std::array<Plan03GroupSliceIdentity, EngineActionPlayScratch::kPendingVariableReplacementGroupCapacity>
                 nativeGroups{};
             std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves> children{};
             std::array<std::uint64_t, kMaxKnownScheduleLeaves> childEpochs{};
@@ -4892,23 +4952,8 @@ struct Engine {
             std::array<bool, EngineActionPlayScratch::kPendingVariableReplacementControlCapacity> armGroupsReturned{};
             bool coordinatorGroupReturned = false;
             bool coordinatorReturned = false;
-            struct QueueRetirement {
-                EnginePlayableServiceReference service{};
-                std::uint32_t recordSlot = UINT32_MAX;
-                std::uint64_t recordGeneration = 0;
-                bool continuation = true;
-                bool controlReturned = false;
-                DecisionToken initialDecision{};
-                ArmGroupToken initialGroup{};
-                bool canonicalInitial = false;
-                bool initialCommitted = false;
-                bool initialTransferred = false;
-                bool readersReturned = false;
-                bool recordReturned = false;
-                bool physicalReturned = false;
-                bool decisionsReturned = false;
-                bool factoriesReturned = false;
-            } queue;
+            std::array<QueueRetirement, EngineActionPlayScratch::kPendingVariableReplacementQueueCapacity> queues{};
+            std::uint32_t queueCount = 0;
             std::array<bool, kMaxKnownScheduleLeaves> childrenReturned{};
             struct MemberStorage {
                 EnginePlayableMemberReference reference{};
@@ -5454,9 +5499,12 @@ public:
             playableServices[index].invocationGeneration = playableStarts[index].generation;
         }
         actionPlayStorage.reserve(ActionPlanScratchCapacity(resolved));
+        const auto privateLaneMetadataCapacity = std::max(resolved.maxTransactionEvents,
+            resolved.maxKnownScheduleLeaves * 4u);
         for (std::size_t index = 0; index < ActionPlanScratchCapacity(resolved); ++index)
             actionPlayStorage.emplace_back(resolved.maxPlayableInstances,
-                                           playableStorage.memberStride);
+                                           playableStorage.memberStride,
+                                           privateLaneMetadataCapacity);
         actionPlayScratch.reserve(actionPlayStorage.size());
         for (auto& storage : actionPlayStorage) actionPlayScratch.emplace_back(storage);
         for (auto& scratch : actionPlayScratch) {
@@ -5535,8 +5583,7 @@ public:
                                 transportEpochOwner.Current()) ||
             !immediateActionLane.Reset({
                 resolved.maxActionFirings,
-                std::max(resolved.maxTransactionEvents,
-                         resolved.maxKnownScheduleLeaves * 4u),
+                privateLaneMetadataCapacity,
                 resolved.maxEventsPerQuantum,
                 resolved.blockFrames, true,
                 resolved.maxPlan03GroupHeadersPerPage}) ||
@@ -5645,6 +5692,11 @@ public:
                 sizeof(ImmediateLaneEvent));
         pendingImmediateLaneEventsScratch.resize(
             immediateActionLane.EventsPerAttempt());
+        const auto receiverCells = static_cast<std::uint64_t>(playableServices.size()) *
+            immediateActionLane.EventsPerAttempt();
+        if (receiverCells > SIZE_MAX / sizeof(ImmediateLanePrivateEntryResultCell))
+            throw std::bad_alloc{};
+        privateImmediateEntryResults.resize(static_cast<std::size_t>(receiverCells));
         static_assert(std::numeric_limits<std::uint32_t>::max() <=
             std::numeric_limits<std::size_t>::max() /
                 sizeof(Plan03ImmediateLaneGroupDescriptor));
@@ -7684,7 +7736,7 @@ public:
     }
 
     bool IsRegisteredPrivateVcProducerFor(const EngineActionPlayScratch& scratch,
-        const EngineImmediateEntryAttempt& attempt) noexcept;
+        const EngineImmediateEntryAttempt& attempt, bool requirePreparedLeaves = true) noexcept;
 
     OriginalPendingVariableGroupHolder* OriginalPendingVariableGroupForProducer(
         EngineActionPlayScratch& scratch, const EngineImmediateEntryAttempt& attempt) noexcept {
@@ -7720,7 +7772,7 @@ public:
         if (!OwnsImmediateEntryAttemptStorage(attempt) || !attempt.active || attempt.generation == 0 ||
             (attempt.privateVcProducerCount != 0
                 ? !(capturedCohort ||
-                    IsRegisteredPrivateVcProducerFor(scratch, attempt))
+                    IsRegisteredPrivateVcProducerFor(scratch, attempt, !publicationPreflight))
                 : attempt.producerSlot >= actionPlayScratch.size() ||
                   &actionPlayScratch[attempt.producerSlot] != &scratch ||
                   scratch.storage.generation != attempt.producerGeneration) ||
@@ -7793,7 +7845,7 @@ public:
         auto& row = *scratch.row;
         // Only the factory-certified deterministic subtree domain is eligible.
         const bool queueDomain = group->queueNativeOriginCount != 0;
-        if ((!queueDomain && (attempt.queueContinuationCount != 0 || attempt.queueFutureCount != 0 ||
+        if ((!queueDomain && ((!registered && (attempt.queueContinuationCount != 0 || attempt.queueFutureCount != 0)) ||
             attempt.initialQueueCoordinator.Valid() || row.Invocation().variableControlOuterRootInstance != 0 ||
             scratch.frontierQueueCount != 0 ||
             scratch.queueFutureAttemptCount != 0)) ||
@@ -7811,9 +7863,15 @@ public:
                     if (token.slot >= actionPlayScratch.size()) return false;
                     const auto& producer = actionPlayScratch[token.slot];
                     if (producer.storage.generation != token.generation) return false;
-                    participant |= producer.row == &candidate &&
-                        (MatchesRegisteredPendingVariableCohortReprepare(producer, attempt) ||
-                         IsRegisteredPrivateVcProducerFor(producer, attempt));
+                    const bool registeredProducer = MatchesRegisteredPendingVariableCohortReprepare(producer, attempt) ||
+                        IsRegisteredPrivateVcProducerFor(producer, attempt);
+                    participant |= registeredProducer && (producer.row == &candidate ||
+                        std::any_of(producer.variableControlNestedServices.begin(),
+                            producer.variableControlNestedServices.begin() + producer.variableControlNestedVariableControlCount,
+                            [&](const auto& reference) { return ResolvePlayableService(reference) == &candidate; }) ||
+                        std::any_of(producer.storage.frontierServices.begin(),
+                            producer.storage.frontierServices.begin() + producer.frontierServiceCount,
+                            [&](const auto& owner) { return ResolvePlayableService(owner.service) == &candidate; }));
                     token = producer.privateInitialVcPageCohort.rootProducerNext;
                 }
             }
@@ -7840,8 +7898,7 @@ public:
             if (matches != 1) return false;
         }
         if (!capturedRetirement && actualChildren != row.variableControlChildCount) return false;
-        if (queueDomain)
-            return CanBeginPendingVariableQueueReprepare(scratch, attempt, *group, settled, outObservations);
+        if (queueDomain && !CanBeginPendingVariableQueueReprepare(scratch, attempt, *group, settled)) return false;
         ArmGroupSnapshot coordinator{};
         DecisionReserveRequest coordinatorInput{};
         coordinatorInput.ticket.sequence = row.ticket;
@@ -7858,9 +7915,11 @@ public:
             sideDecisions{row.variableControlDiscreteDecision, row.variableControlContinuousDecision};
         std::array<ArmGroupToken, EngineActionPlayScratch::kPendingVariableReplacementControlCapacity>
             sideGroups{row.variableControlDiscreteArmGroup, row.variableControlContinuousArmGroup};
-        std::array<Plan03GroupSliceIdentity, EngineActionPlayScratch::kPendingVariableReplacementControlCapacity + 4u>
-            nativeGroups{scratch.frontierDescriptor.primary,
-            row.initialLaneDiscreteGroup, row.initialLaneContinuousGroup};
+        auto& nativeGroups = group->reprepare_.nativeGroups;
+        nativeGroups = {};
+        nativeGroups[0] = scratch.frontierDescriptor.primary;
+        nativeGroups[1] = row.initialLaneDiscreteGroup;
+        nativeGroups[2] = row.initialLaneContinuousGroup;
         std::array<std::uint32_t, EngineActionPlayScratch::kPendingVariableReplacementControlCapacity>
             nativeCounts{row.variableControlInitialDiscreteMemberCount, row.variableControlInitialContinuousMemberCount};
         std::uint32_t nativeCount = 1;
@@ -7930,6 +7989,13 @@ public:
             nativeCounts[side] = captured.memberCount;
             ++nativeCount;
         }
+        std::uint32_t queueNative = 3u + group->nestedInitialSideCount;
+        for (const auto& origin : pendingVariableQueueNativeOrigins) {
+            if (origin.group != group) continue;
+            if (queueNative >= nativeGroups.size()) return false;
+            nativeGroups[queueNative++] = origin.identity;
+            ++nativeCount;
+        }
         std::array<TimelineArmObservation, kMaxKnownScheduleLeaves> observations{};
         for (std::uint32_t leaf = 0; leaf < group->leafCount; ++leaf) {
             auto& observation = observations[leaf];
@@ -7973,13 +8039,20 @@ public:
                     originalQueueGroupHolders[identity.committedRow], identity, attempt.root) ||
                 !timelinePool.PrivatePlan03GroupBindable(identity) ||
                 !timelinePool.ResolvePlan03GroupSliceProducer(identity, &native) || native.frontier != nullptr ||
-                native.lease == nullptr || native.lease->Capture().state != AudioSliceState::Ready ||
-                identity.sliceIndex != 0 || native.sourceControlCount != 0) return false;
+                native.lease == nullptr || native.lease->Capture().state != AudioSliceState::Ready) return false;
             const auto& owner = timelinePool.immediateLaneGroups_[identity.committedRow];
             const bool unbound = owner.laneOwner == nullptr && owner.laneSlot == UINT32_MAX && owner.laneGeneration == 0;
             const bool bound = owner.laneOwner == &immediateActionLane && owner.laneSlot == attempt.lane.slot &&
                 owner.laneGeneration == attempt.lane.generation;
             if (!unbound && !bound) return false;
+            const auto queueOrigin = std::find_if(pendingVariableQueueNativeOrigins.begin(), pendingVariableQueueNativeOrigins.end(),
+                [&](const auto& origin) { return origin.group == group && origin.identity == identity; });
+            if (queueOrigin != pendingVariableQueueNativeOrigins.end()) {
+                if (queueOrigin->disposed || native.memberCount != queueOrigin->scope.input.memberCount ||
+                    native.sourceControlCount != queueOrigin->scope.input.sourceControlCount) return false;
+                continue;
+            }
+            if (identity.sliceIndex != 0 || native.sourceControlCount != 0) return false;
             const auto role = static_cast<std::uint32_t>(std::find(nativeGroups.begin(), nativeGroups.end(), identity) - nativeGroups.begin());
             const auto decision = role == 0 ? scratch.frontierCoordinator : sideDecisions[role - 1];
             const auto memberCount = role == 0 ? 0u : nativeCounts[role - 1u];
@@ -8014,9 +8087,7 @@ public:
             sideDecisions{row.variableControlDiscreteDecision, row.variableControlContinuousDecision};
         std::array<ArmGroupToken, EngineActionPlayScratch::kPendingVariableReplacementControlCapacity>
             sideGroups{row.variableControlDiscreteArmGroup, row.variableControlContinuousArmGroup};
-        std::array<Plan03GroupSliceIdentity, EngineActionPlayScratch::kPendingVariableReplacementControlCapacity + 4u>
-            nativeGroups{scratch.frontierDescriptor.primary,
-            row.initialLaneDiscreteGroup, row.initialLaneContinuousGroup};
+        auto& nativeGroups = group->reprepare_.nativeGroups;
         for (std::uint32_t index = 0; index < group->nestedInitialSideCount; ++index) {
             const auto& captured = group->nestedInitialSides[index];
             sideDecisions[index + 2u] = captured.decision;
@@ -8084,7 +8155,6 @@ public:
         issued.coordinatorGroup = scratch.frontierCoordinatorGroup;
         issued.decisions = sideDecisions;
         issued.armGroups = sideGroups;
-        issued.nativeGroups = nativeGroups;
         issued.nativeGroupCount = nativeCount;
         issued.phase = OriginalPendingVariableGroupHolder::InitialReprepare::Phase::Issued;
         return true;
@@ -8115,6 +8185,7 @@ public:
         const EngineImmediateEntryAttempt& attempt, OriginalPendingVariableGroupHolder& group) noexcept;
     bool ReturnPendingVariableQueueReprepareReaders(EngineActionPlayScratch& scratch,
         EngineImmediateEntryAttempt& attempt, OriginalPendingVariableGroupHolder& group) noexcept;
+    bool ReturnPendingVariableQueueReprepareRecords(EngineImmediateEntryAttempt& attempt) noexcept;
     bool ServicePendingVariableQueueReprepare(EngineActionPlayScratch& scratch,
         EngineImmediateEntryAttempt& attempt, OriginalPendingVariableGroupHolder& group) noexcept;
 
@@ -8128,6 +8199,11 @@ public:
 
     std::size_t PendingVariableGroupStorageBytes() const noexcept {
         std::size_t censusBytes = 0;
+        for (const auto& storage : actionPlayStorage) {
+            censusBytes += storage.privateInitialVcLaneMembers.capacity() * sizeof(ImmediateLaneMemberManifest) +
+                storage.privateInitialVcLaneGroups.capacity() * sizeof(ImmediateLaneAcceptedPrivateGroup) +
+                storage.privateInitialVcArmPreparations.capacity() * sizeof(EngineActionPlayStorage::PrivateInitialVcArmPreparation);
+        }
         for (std::uint32_t index = 0; index < immediateEntryAttemptCapacity; ++index) {
             const auto& attempt = immediateEntryAttempts[index];
             censusBytes += attempt.selectionProducers.capacity() * sizeof(EngineInitialSelectionProducer) +
@@ -8152,6 +8228,7 @@ public:
                 2u * sizeof(OriginalDecisionLifetimePin)) +
             actionPlayScratch.capacity() * sizeof(EngineActionPlayScratch::PrivateInitialVcPageCohort) +
             playableServices.capacity() * sizeof(EnginePlayableServiceRow::PrivateImmediateEntryReceiver) +
+            privateImmediateEntryResults.capacity() * sizeof(ImmediateLanePrivateEntryResultCell) +
             immediateActionLane.PrivateEntryStorageBytes() + censusBytes;
     }
 
@@ -11353,6 +11430,7 @@ public:
     std::vector<TransactionRequest> pendingImmediateRequestsScratch;
     std::vector<ScheduledEventInput> pendingImmediateEventsScratch;
     std::vector<ImmediateLaneEvent> pendingImmediateLaneEventsScratch;
+    std::vector<ImmediateLanePrivateEntryResultCell> privateImmediateEntryResults;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandEventQuantaScratch;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandGroupQuantaScratch;
     std::vector<EngineInitialQueueTimingMember>

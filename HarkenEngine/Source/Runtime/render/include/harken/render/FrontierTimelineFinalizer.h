@@ -61,6 +61,9 @@ public:
     bool CollectStop(const AuthoredStopFenceDescriptor& descriptor,
                      const TimelineExecutionOrder& order) noexcept;
     void Finish() noexcept;
+    bool RejectLaneBucket(const ImmediateActionLane& lane,
+        const ImmediateLaneBucket* bucket, std::uint32_t laneSlot,
+        std::uint32_t laneGeneration) noexcept;
     // A lane bucket exposes all its entry coordinators or none of them.
     bool FinishLaneEntryBucket(
         bool (*claimBucket)(void*, ImmediateLaneBucketClaimReceipt*) noexcept,

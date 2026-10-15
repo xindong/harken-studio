@@ -394,8 +394,11 @@ static void CheckOrderedRecipeFirstPcm(std::uint32_t type, bool refuseArena) {
         }
         float* channels[] = {reference.data()};
         effect.process(state, channels, 1, 0, kBlock);
+        // Hard-panned mono retains the center-unity stereo normalization.
+        const float panGain = static_cast<float>(std::sqrt(2.0));
         for (std::uint32_t frame = 0; frame < kBlock; ++frame)
-            EXPECT_NEAR(reference[frame], engine.nullBackend.LastBlock()[2 * frame + channel], 2e-5f);
+            EXPECT_NEAR(reference[frame] * panGain,
+                engine.nullBackend.LastBlock()[2 * frame + channel], 2e-5f);
     }
     engine.nullBackend.Pump(8);
     for (const auto handle : handles) {
@@ -474,7 +477,13 @@ TEST(EffectParamBindingE2E,
     VnVoiceHandle handle = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
     ASSERT_EQ(VN_OK, Vn_BindVoiceAttenuation(handle, harkentest::ObjectId(211)));
-    engine->nullBackend.Pump(1);
+    Capture initial;
+    for (unsigned block = 0; block < 8 &&
+         !std::any_of(initial.left.begin(), initial.left.end(), [](float value) { return value != 0.0f; }); ++block)
+        harkentest::PumpAndCapture(engine, 1, initial);
+    HARKENTEST_ASSERT_NON_SILENT(initial.left);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_FALSE(engine->variables.HasNativePublicationHold(harkentest::RenderHandle(engine, handle)));
 
     ASSERT_EQ(VN_OK, listenerAt(0.0f));
     engine->nullBackend.Pump(1);

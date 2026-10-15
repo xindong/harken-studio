@@ -1337,6 +1337,19 @@ void ParamSystem::DropClaimedPublication(VnVoiceHandle handle,
     target.preparedOwner = {};
 }
 
+void ParamSystem::DropClaimedBaseline(VnVoiceHandle handle, std::uint32_t targetId,
+                                     TargetClaimOwner owner) noexcept {
+    VoiceState* state = StateFor(handle);
+    if (state == nullptr || targetId >= kBuiltinTargetCount) return;
+    auto& target = state->targets[targetId];
+    if (target.preparedOwner != owner) return;
+    // Consume the restored poison without releasing shared publication ownership.
+    RecordPublishedValue(*state, targetId, Reduce(*state, targetId), Pan2dOf(*state));
+    SetTargetClean(target);
+    target.pendingRampMs = 0;
+    target.preCandidatePendingRampMs = 0;
+}
+
 void ParamSystem::ReleaseClaim(VnVoiceHandle handle, std::uint32_t targetId,
                                TargetClaimOwner owner,
                                ClaimReleaseReason reason) noexcept {

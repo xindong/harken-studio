@@ -2750,7 +2750,7 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row) {
     }
     RunVariableEvaluators(engine);
     bool valid = true;
-    bool rejected = false;
+    std::uint32_t rejectedTargets = 0;
     const std::uint32_t count = slices_.TargetCount(row.slice);
     for (std::uint32_t i = 0; i < count; ++i) {
         VariableSliceTarget* existing = slices_.Target(row.slice, i);
@@ -2763,6 +2763,7 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row) {
         std::uint32_t rampMs = 0;
         std::uint32_t revision = 0;
         std::uint32_t effectType = target.locator.effectType;
+        bool poisoned = false;
         switch (target.locator.scope) {
         case VariableTargetScope::Voice: {
             float pan2d = 0.0f;
@@ -2772,7 +2773,7 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row) {
                 &revision, &pan2d);
             if (valid && target.locator.targetId == kTargetVoiceVolume &&
                 !TryVolumeGainFromDb(resolved)) {
-                rejected = true;
+                poisoned = true;
                 break;
             }
             ParamCommit commit{};
@@ -2795,7 +2796,7 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row) {
                 (target.locator.targetId == kBusTargetBusVolume ||
                  target.locator.targetId == kBusTargetBusOutputVolume) &&
                 !TryVolumeGainFromDb(resolved)) {
-                rejected = true;
+                poisoned = true;
                 break;
             }
             if (valid) {
@@ -2844,9 +2845,6 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row) {
             break;
         }
         }
-        if (rejected) {
-            break;
-        }
         if (!valid || revision != target.targetRevision ||
             effectType != target.locator.effectType) {
             valid = false;
@@ -2855,9 +2853,29 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row) {
         target.resolvedValue = resolved;
         target.rampMs = rampMs;
         *existing = target;
+        if (poisoned) ++rejectedTargets;
     }
     projection.Restore();
-    if (rejected) {
+    if (valid && rejectedTargets != 0) {
+        // The census contains unique physical targets; retries must not count drops.
+        engine.paramDropCount += rejectedTargets;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const auto& target = *slices_.Target(row.slice, i);
+            if (TryVolumeGainFromDb(target.resolvedValue)) continue;
+            if (target.locator.scope == VariableTargetScope::Voice &&
+                target.locator.targetId == kTargetVoiceVolume) {
+                const auto handle = static_cast<VnVoiceHandle>(target.locator.object);
+                if (!TryVolumeGainFromDb(engine.params.ResolvedValue(handle, target.locator.targetId)))
+                    engine.params.DropClaimedBaseline(handle, target.locator.targetId, row.publicationOwner);
+            } else if (target.locator.scope == VariableTargetScope::Bus &&
+                (target.locator.targetId == kBusTargetBusVolume ||
+                 target.locator.targetId == kBusTargetBusOutputVolume)) {
+                const auto bus = static_cast<std::uint32_t>(target.locator.object);
+                if (!TryVolumeGainFromDb(engine.busTargets.Reduce(bus, target.locator.targetId)))
+                    engine.busTargets.DropClaimedBaseline(bus, target.locator.objectGeneration,
+                        target.locator.targetId, row.publicationOwner);
+            }
+        }
         RejectPreparedRow(engine, row);
         return CandidateCaptureResult::Rejected;
     }
@@ -4882,7 +4900,7 @@ bool VariableServiceV1::OriginalPendingVariableGroupUsesMatch(Engine& engine,
         cut->entryPin.Valid() || cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::None ||
         cut->nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None ||
         cut->nativeCalendarRequired || cut->publishedSourceCount != 0 ||
-        cut->world != worldGeneration_ || cut->world != row.Invocation().worldGeneration ||
+        cut->world != worldGeneration_ ||
         cut->transport != transport_.Current() || cut->emitter != row.Invocation().invocationEmitter ||
         cut->sequence != row.ticket || cut->executionOrdinalExclusive != row.Invocation().actionExecutionOrdinal ||
         cut->preparationFailed.load(std::memory_order_acquire)) return false;
@@ -5015,7 +5033,7 @@ bool VariableServiceV1::BeginUnborrowedPendingVariableGroupCut(Engine& engine,
     const auto& row = *producer.row;
     if (cut == nullptr || cut->state.load(std::memory_order_acquire) != ReadCutState::Capturing ||
         !cut->pendingPlacement || !cut->actionOrderConsumed ||
-        cut->world != worldGeneration_ || cut->world != row.Invocation().worldGeneration ||
+        cut->world != worldGeneration_ ||
         cut->transport != transport_.Current() || cut->emitter != row.Invocation().invocationEmitter ||
         cut->sequence != row.ticket || cut->executionOrdinalExclusive != row.Invocation().actionExecutionOrdinal ||
         cut->timelineUseCount != 0 || cut->timelineOwnershipTransferred || cut->entryPin.Valid() ||
@@ -5086,7 +5104,7 @@ bool VariableServiceV1::MatchesPublishedPendingVariableGroupReadCut(Engine& engi
         cut->state.load(std::memory_order_acquire) != ReadCutState::Published ||
         !cut->pendingPlacement || !cut->actionOrderConsumed || !cut->finalPlacementCaptured || cut->needsRebuild ||
         cut->preparationFailed.load(std::memory_order_acquire) || cut->candidateAdmissionFailed ||
-        cut->world != worldGeneration_ || cut->world != row.Invocation().worldGeneration ||
+        cut->world != worldGeneration_ ||
         cut->transport != transport_.Current() || cut->transport != engine.timelinePool.Epoch() ||
         cut->emitter != row.Invocation().invocationEmitter || cut->sequence != row.ticket ||
         cut->executionOrdinalExclusive != row.Invocation().actionExecutionOrdinal || cut->executeFrame != anchor ||
@@ -5132,7 +5150,7 @@ bool VariableServiceV1::MatchesEntryBoundTimelineReadUse(VariableTimelineReadUse
         use->sourceOwner == &sources && sources.IsOriginalSourceLifetimePinFor(use->originalSource, arm) &&
         cut->state.load(std::memory_order_acquire) == ReadCutState::Published && cut->pendingPlacement &&
         cut->actionOrderConsumed && cut->executeFrame == anchor && cut->world == worldGeneration_ &&
-        cut->world == descriptor.worldGeneration && cut->transport == transport_.Current() &&
+        cut->transport == transport_.Current() &&
         cut->transport == descriptor.primary.transportEpoch && cut->sequence == descriptor.order.logicCommitSequence &&
         cut->executionOrdinalExclusive == descriptor.order.executionOrdinal && cut->timelineUseCount == leafCount &&
         !cut->timelineOwnershipTransferred && cut->entryUse.load(std::memory_order_acquire) == EntryReadUseState::Prepared &&
@@ -5461,12 +5479,13 @@ bool VariableServiceV1::PrepareFrontierEntryReadUse(VariableReadCutRef ref,
     if (cut == nullptr || !descriptor.Valid() || !(descriptor.initialVariables == ref) ||
         cut->entryUse.load(std::memory_order_acquire) != EntryReadUseState::None || cut->entryPin.Valid() ||
         cut->state.load(std::memory_order_acquire) != ReadCutState::Published || cut->timelineOwnershipTransferred ||
-        cut->world != descriptor.worldGeneration || cut->transport != descriptor.primary.transportEpoch ||
+        cut->world != worldGeneration_ || cut->transport != transport_.Current() ||
+        cut->transport != descriptor.primary.transportEpoch ||
         cut->executeFrame != descriptor.order.executeFrame || cut->sequence != descriptor.order.logicCommitSequence ||
         activation == nullptr || activation->State() != FrontierReceiptState::Prepared ||
         !(activation->Descriptor() == descriptor) ||
         !decisions.CaptureCommitted(descriptor.entry.coordinator, &coordinator) ||
-        coordinator.ticket.sequence != cut->sequence || coordinator.world != cut->world ||
+        coordinator.ticket.sequence != cut->sequence || coordinator.world != descriptor.worldGeneration ||
         coordinator.transport != cut->transport || coordinator.audioState != AudioGroupState::Pending ||
         coordinator.participantCount != descriptor.expectedMemberCount || coordinator.consumedSlices != 0 ||
         !pool.PrivatePlan03GroupBindable(descriptor.primary) ||

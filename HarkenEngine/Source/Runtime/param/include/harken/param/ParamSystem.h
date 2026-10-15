@@ -662,6 +662,8 @@ public:
                                 TargetClaimOwner owner) noexcept;
     void DropClaimedPublication(VnVoiceHandle handle, std::uint32_t targetId,
                                 TargetClaimOwner owner) noexcept;
+    void DropClaimedBaseline(VnVoiceHandle handle, std::uint32_t targetId,
+                             TargetClaimOwner owner) noexcept;
     void ReleaseClaim(VnVoiceHandle handle, std::uint32_t targetId,
                       TargetClaimOwner owner,
                       ClaimReleaseReason reason =

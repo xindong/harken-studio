@@ -1,7 +1,5 @@
 #pragma once
 
-#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
-namespace harken { struct Engine; struct EnginePreparedTimelineVoiceStart; struct EngineActionPlayScratch; }
 namespace harken::detail {
 
 enum class PendingVariablePrepareStageForTest {
@@ -10,6 +8,11 @@ enum class PendingVariablePrepareStageForTest {
     ContainerProofs, CommandBatchPrepared, SourcePairsPrepared, ReplacementPrepared,
     QueuePreludeBound, QueueSourceControlBound
 };
+}
+
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+namespace harken { struct Engine; struct EnginePreparedTimelineVoiceStart; struct EngineActionPlayScratch; }
+namespace harken::detail {
 void SetPendingVariablePrepareRefusalHookForTest(
     bool (*hook)(Engine&, EngineActionPlayScratch&, PendingVariablePrepareStageForTest, unsigned, void*),
     void* context) noexcept;

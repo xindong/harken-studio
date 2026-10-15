@@ -1968,13 +1968,13 @@ void VoicePool::ClearFirstOutput(Slot& slot) noexcept {
     }
 }
 
-bool VoicePool::DeferVariableCommandUntilFirstOutput(const CommandRecord& command,
-    VariablePlaybackOrder order, std::uint32_t targetRevision, VariableNativeEffectIdentity effect,
-    VariableToneBandValues toneBand) noexcept {
-    VnVoiceHandle handle = 0;
+std::uint32_t VoicePool::FirstOutputCommandKey(const CommandRecord& command,
+    VnVoiceHandle& handle) const noexcept {
+    handle = 0;
     std::uint32_t key = UINT32_MAX;
     switch (command.opcode) {
     case kOpcodeSetVoiceVolume:
+        if (command.flags != 0 && command.flags != kCommandFlagVariableWeightSegment) break;
         handle = command.payload.setVoiceVolume.handle;
         key = command.flags == kCommandFlagVariableWeightSegment ? 10u
             : command.payload.setVoiceVolume.outputOnly != 0 ? 1u : 0u;
@@ -2004,6 +2004,8 @@ bool VoicePool::DeferVariableCommandUntilFirstOutput(const CommandRecord& comman
         handle = compressor ? command.payload.setCompressorEffectParam.host : command.payload.setVoiceEffectParam.handle;
         const auto effectSlot = compressor ? command.payload.setCompressorEffectParam.slot : command.payload.setVoiceEffectParam.slot;
         const auto type = compressor ? command.payload.setCompressorEffectParam.effectType : command.payload.setVoiceEffectParam.effectType;
+        if ((compressor && type != VN_EFFECT_COMPRESSOR) ||
+            (!compressor && (command.flags != 0 || type == VN_EFFECT_COMPRESSOR))) break;
         const auto param = compressor ? 0u : command.payload.setVoiceEffectParam.paramIndex;
         if (effectSlot < m_fxSlotsPerVoice && param < kMaxEffectParamCount) {
             const auto physical = type == VN_EFFECT_THREE_BAND_TONE
@@ -2013,8 +2015,36 @@ bool VoicePool::DeferVariableCommandUntilFirstOutput(const CommandRecord& comman
         break;
     }
     default:
-        return false;
+        break;
     }
+    return key;
+}
+
+void VoicePool::SupersedeDeferredFirstOutput(const CommandRecord& command,
+    VnVoiceHandle initializingVoice) noexcept {
+    VnVoiceHandle handle = 0;
+    const auto key = FirstOutputCommandKey(command, handle);
+    if (handle == initializingVoice) return;
+    const auto* proof = m_commandMetadataProof;
+    if (proof != nullptr && proof->Valid() && proof->pool_ == this && proof->begun_ &&
+        proof->source_->Valid()) {
+        const auto token = proof->source_->Token();
+        if (static_cast<std::uint32_t>(handle) == token.renderSlot &&
+            static_cast<std::uint32_t>(handle >> 32) == token.renderGeneration) return;
+    }
+    auto* slot = key == UINT32_MAX ? nullptr : SlotForCommandMetadata(handle);
+    if (slot == nullptr || !FirstOutputProtected(*slot)) return;
+    const auto base = static_cast<std::size_t>(slot - m_slots.data()) * m_firstOutputStride;
+    m_firstOutputEndpoints[base + key].valid = false;
+    if (command.opcode == kOpcodeSetVoicePan && command.payload.setVoicePan.hasWidth != 0)
+        m_firstOutputEndpoints[base + 8].valid = false;
+}
+
+bool VoicePool::DeferVariableCommandUntilFirstOutput(const CommandRecord& command,
+    VariablePlaybackOrder order, std::uint32_t targetRevision, VariableNativeEffectIdentity effect,
+    VariableToneBandValues toneBand) noexcept {
+    VnVoiceHandle handle = 0;
+    const auto key = FirstOutputCommandKey(command, handle);
     auto* slot = SlotFor(handle);
     if (slot == nullptr || key == UINT32_MAX || !FirstOutputProtected(*slot)) return false;
     const auto state = slot->state.load(std::memory_order_acquire);

@@ -917,6 +917,10 @@ private:
     void* m_firstOutputCommandContext = nullptr;
     void (*m_firstOutputCommandConsumer)(void*, const CommandRecord&) noexcept = nullptr;
     void ClearFirstOutput(Slot& slot) noexcept;
+    std::uint32_t FirstOutputCommandKey(const CommandRecord& command,
+        VnVoiceHandle& handle) const noexcept;
+    void SupersedeDeferredFirstOutput(const CommandRecord& command,
+        VnVoiceHandle initializingVoice = 0) noexcept;
     void ApplyDeferredFirstOutput(Slot& slot) noexcept;
     DeferredFirstOutputEndpoint* FindFirstOutputWeightEndpoint(Slot& slot,
         VariableWeightControlIdentity owner, bool create) noexcept;

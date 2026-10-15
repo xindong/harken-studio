@@ -816,55 +816,112 @@ TEST_F(VoiceSetter, ParkReturnOverflowingVolumeDoesNotBecomeAudible) {
                            harkentest::RenderHandle(engine, parked)));
 }
 
-TEST_F(VoiceSetter, RejectedRawBindingParkReturnPreservesResources) {
-    session.reset();
-    VnConfig config = MakeNullConfig(1, kBlockFrames, kSampleRate);
-    config.maxParkedVoices = 1;
-    config.audibilityParkEnabled = 1;
-    config.parkThresholdDb = -40.0f;
-    session = std::make_unique<EngineSession>(config);
-    ASSERT_EQ(VN_OK, session->InitResult());
-    harken::Engine* engine = session->Engine();
-    ASSERT_EQ(harken::WorldInstallStatus::Ok,
-              harkentest::InstallSmoothDefinitions(engine, {harkentest::ObjectId(81)}, 0.0f, 1.0f).status);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
-    VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(1));
-    play.loopCount = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-    const VnVoiceHandle render = harkentest::RenderHandle(engine, handle);
-    harken::Curve curve;
-    const harken::CurvePoint points[] = {{0.0f, 0.0f}, {1.0f, 800.0f}};
-    const harken::CurveHandlePair handles[] = {{0.0f, 0.0f, 1.0f, 800.0f}};
-    ASSERT_TRUE(curve.SetPoints(points, handles, 2));
-    ASSERT_TRUE(engine->params.BindVoiceTarget(
-        harkentest::ObjectId(81), render, harken::kTargetVoiceVolume, curve));
-    ASSERT_EQ(VN_OK, Vn_Update());
-    Pump(2);
-    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, -80.0f, 0));
-    Pump(2);
-    ASSERT_EQ(VN_OK, Vn_Update());
-    Pump(2);
-    ASSERT_EQ(VN_OK, Vn_Update());
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked,
-              engine->ledger.Classify(handle).kind);
-    ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(81), 1.0f));
-    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
-    const auto demand = engine->propertyPublisher.WorstCaseCommits();
-    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, 0.0f, 0));
-    for (int attempt = 0; attempt < 3; ++attempt) {
+TEST_F(VoiceSetter, RejectedBindingParkReturnRetainsRecipeAndDiscardsTemporaryResources) {
+    for (const bool definitionBacked : {false, true}) {
+        SCOPED_TRACE(definitionBacked);
+        session.reset();
+        VnConfig config = MakeNullConfig(1, kBlockFrames, kSampleRate);
+        config.maxParkedVoices = 1;
+        config.audibilityParkEnabled = 1;
+        config.parkThresholdDb = -40.0f;
+        session = std::make_unique<EngineSession>(config);
+        ASSERT_EQ(VN_OK, session->InitResult());
+        harken::Engine *engine = session->Engine();
+        ASSERT_EQ(
+            harken::WorldInstallStatus::Ok,
+            harkentest::InstallSmoothDefinitions(engine, {harkentest::ObjectId(81)}, 0.0f, 1.0f)
+                .status);
+        samples.assign(kSampleRate, 0.05f);
+        desc = MonoDesc(samples, kSampleRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+        const harken::CurvePoint points[] = {{0.0f, 0.0f}, {1.0f, 800.0f}};
+        const harken::CurveHandlePair handles[] = {{0.0f, 0.0f, 1.0f, 800.0f}};
+        if (definitionBacked) {
+            ASSERT_EQ(VN_OK,
+                      harken::RegisterBinding(*engine, harkentest::ObjectId(10),
+                                              harkentest::ObjectId(81), harken::kTargetScopeVoice,
+                                              harken::kTargetVoiceVolume, points, handles, 2, 0));
+            ASSERT_EQ(VN_OK,
+                      harken::AttachBinding(*engine, harkentest::ObjectId(10),
+                                            harken::kTargetScopeVoice, harkentest::ObjectId(1)));
+        }
+        const auto baseDemand = engine->propertyPublisher.WorstCaseCommits();
+        VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(1));
+        play.loopCount = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+        const VnVoiceHandle render = harkentest::RenderHandle(engine, handle);
+        harken::Curve curve;
+        ASSERT_TRUE(curve.SetPoints(points, handles, 2));
+        if (!definitionBacked) {
+            ASSERT_TRUE(engine->params.BindVoiceTarget(harkentest::ObjectId(81), render,
+                                                       harken::kTargetVoiceVolume, curve));
+        }
+        ASSERT_EQ(baseDemand + 1, engine->propertyPublisher.WorstCaseCommits());
+        ASSERT_EQ(VN_OK, Vn_Update());
+        Pump(2);
+        ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, -80.0f, 0));
+        Pump(2);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        Pump(2);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto parked = engine->ledger.Classify(handle);
+        ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked, parked.kind);
+        Pump(2);
+        ASSERT_EQ(nullptr, engine->voices.Resolve(render));
+        const auto &record = engine->parkRecords[parked.ledgerSlot];
+        ASSERT_EQ(definitionBacked ? 1u : 0u, record.instanceReservedTargets);
+        ASSERT_EQ(definitionBacked ? 0u : 1u, record.bindings.size());
+        ASSERT_EQ(definitionBacked ? 1u : 0u, record.bindingInstances.size());
+        ASSERT_TRUE(record.heldPcmRef);
+        auto *const useCount = record.facts.view.useCount;
+        ASSERT_NE(nullptr, useCount);
+        const auto references = useCount->load(std::memory_order_acquire);
+        ASSERT_EQ(1u, references);
+        ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(handle, 0.0f, 0));
+        ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(81), 1.0f));
+        ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
+        const auto commandHead = engine->commands.PublishedHead();
+        const auto invalidApplies = engine->voices.InvalidVolumeApplyCount();
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            Pump(1);
+            EXPECT_EQ(harken::VoiceLedger::HandleKind::Parked,
+                      engine->ledger.Classify(handle).kind);
+            EXPECT_EQ(baseDemand + (definitionBacked ? 1u : 0u),
+                      engine->propertyPublisher.WorstCaseCommits());
+            EXPECT_EQ(0u, engine->voices.ActiveCount());
+            EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+            EXPECT_EQ(invalidApplies, engine->voices.InvalidVolumeApplyCount());
+            EXPECT_EQ(0u, engine->params.VoiceBindingCount(render));
+            EXPECT_TRUE(record.heldPcmRef);
+            EXPECT_EQ(references, useCount->load(std::memory_order_acquire));
+            EXPECT_EQ(definitionBacked ? 1u : 0u, record.instanceReservedTargets);
+            if (definitionBacked) {
+                ASSERT_EQ(1u, record.bindingInstances.size());
+                EXPECT_EQ(harkentest::ObjectId(10), record.bindingInstances[0].definitionId);
+            } else {
+                ASSERT_EQ(1u, record.bindings.size());
+                EXPECT_EQ(harkentest::ObjectId(81), record.bindings[0].variableId);
+                EXPECT_EQ(harken::kTargetVoiceVolume, record.bindings[0].targetId);
+                EXPECT_FLOAT_EQ(0.0f, record.bindings[0].curve.Eval(0.0f));
+                EXPECT_FLOAT_EQ(800.0f, record.bindings[0].curve.Eval(1.0f));
+            }
+            for (std::uint32_t sample = 0; sample < 2 * kBlockFrames; ++sample)
+                EXPECT_FLOAT_EQ(0.0f, engine->nullBackend.LastBlock()[sample]);
+        }
+        ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(81), 0.0f));
+        ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
         ASSERT_EQ(VN_OK, Vn_Update());
         Pump(1);
-        EXPECT_EQ(harken::VoiceLedger::HandleKind::Parked,
-                  engine->ledger.Classify(handle).kind);
-        EXPECT_EQ(demand, engine->propertyPublisher.WorstCaseCommits());
-        EXPECT_EQ(0u, engine->voices.ActiveCount());
+        EXPECT_EQ(harken::VoiceLedger::HandleKind::Live, engine->ledger.Classify(handle).kind);
+        const auto returnedRender = harkentest::RenderHandle(engine, handle);
+        ASSERT_NE(nullptr, engine->voices.Resolve(returnedRender));
+        EXPECT_EQ(1u, engine->voices.ActiveCount());
+        EXPECT_EQ(1u, engine->params.VoiceBindingCount(returnedRender));
+        EXPECT_EQ(baseDemand + 1, engine->propertyPublisher.WorstCaseCommits());
+        for (std::uint32_t sample = kBlockFrames; sample < 2 * kBlockFrames; ++sample)
+            EXPECT_NEAR(0.05f, engine->nullBackend.LastBlock()[sample], 1.0e-6f);
     }
-    ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(81), 0.0f));
-    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
-    ASSERT_EQ(VN_OK, Vn_Update());
-    Pump(1);
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Live,
-              engine->ledger.Classify(handle).kind);
 }
 
 TEST_F(VoiceSetter, PitchCommandRetunesTheResamplerInPlace) {

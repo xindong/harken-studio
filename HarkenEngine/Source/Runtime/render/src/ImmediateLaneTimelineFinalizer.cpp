@@ -253,8 +253,32 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
         }
         const bool grouped = admittedGroups != 0;
         bool continuation = false;
-        bool initialQueueCompletion = false;
-        bool conditionalTargetSpans = false;
+        const auto isInitialQueueCompletion = [](const Plan03PageGroupView& view) noexcept {
+            return view.frontier != nullptr && view.frontier->role == FrontierGroupRole::Future &&
+                view.frontier->queueInitial.Valid() && !view.frontier->queueConditional.Valid() &&
+                !view.frontier->variableSide.Valid() && view.frontier->transition.Valid() &&
+                view.identity.sliceIndex == 1u && view.memberCount == 2u && view.sourceControlCount == 1u;
+        };
+        const auto hasConditionalTargetSpans = [&](const Plan03PageGroupView& view) noexcept {
+            if (view.frontier == nullptr || !view.frontier->queueConditional.Valid() ||
+                view.frontier->queueInitial.Valid() || view.frontier->variableSide.Valid() ||
+                !view.frontier->transition.Valid() || view.members == nullptr) return false;
+            const auto& binding = *view.frontier;
+            const bool initial = binding.role == FrontierGroupRole::EntryMember &&
+                view.identity.sliceIndex == 0u && view.memberCount != 0u && view.sourceControlCount == 0u &&
+                binding.operation.order.executeFrame == binding.transition.audibleFrame;
+            const bool completion = binding.role == FrontierGroupRole::Future &&
+                view.identity.sliceIndex == 1u && view.memberCount > 1u && view.sourceControlCount == 1u &&
+                binding.operation.order.executeFrame > binding.transition.audibleFrame;
+            if (!initial && !completion) return false;
+            for (std::uint16_t member = view.sourceControlCount; member < view.memberCount; ++member) {
+                const ImmediateLaneEvent* mapped = nullptr;
+                std::uint16_t count = 0;
+                if (!state.lane->FutureMember(slot, bucket->attemptGeneration, view.identity,
+                        member, view.members[member], &mapped, &count) || (count != 1u && count != 2u)) return false;
+            }
+            return true;
+        };
         const bool futureOnly = !grouped && futureCount != 0;
         if (state.frontier != nullptr)
             state.frontier->BeginLane(quantum, state.blockFrames, *state.lane, bucket, slot);
@@ -274,43 +298,8 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                         view.frontier != nullptr && state.frontier->CollectGroup(view);
                     if (valid && view.frontier->role == FrontierGroupRole::Coordinator &&
                         view.frontier->prerequisite.Valid()) continuation = true;
-                    if (valid && view.frontier->role == FrontierGroupRole::EntryMember &&
-                        view.frontier->queueConditional.Valid() && !view.frontier->queueInitial.Valid() &&
-                        !view.frontier->variableSide.Valid() && view.frontier->transition.Valid() &&
-                        view.memberCount != 0u && view.sourceControlCount == 0u) {
-                        bool spans = view.identity.sliceIndex == 0u &&
-                            view.frontier->operation.order.executeFrame == view.frontier->transition.audibleFrame;
-                        for (std::uint16_t member = 0; spans && member < view.memberCount; ++member) {
-                            const ImmediateLaneEvent* mapped = nullptr;
-                            std::uint16_t count = 0;
-                            spans = state.lane->FutureMember(slot, bucket->attemptGeneration, view.identity,
-                                member, view.members[member], &mapped, &count) && (count == 1u || count == 2u);
-                        }
-                        conditionalTargetSpans = spans;
-                    }
-                    if (valid && admittedGroups == 1u && view.frontier->role == FrontierGroupRole::Future &&
-                        view.frontier->queueConditional.Valid() && !view.frontier->queueInitial.Valid() &&
-                        !view.frontier->variableSide.Valid() && view.frontier->transition.Valid() &&
-                        view.identity.sliceIndex == 1u && view.sourceControlCount == 1u && view.memberCount > 1u) {
-                        bool spans = view.frontier->operation.order.executeFrame > view.frontier->transition.audibleFrame;
-                        for (std::uint16_t member = view.sourceControlCount; spans && member < view.memberCount; ++member) {
-                            const ImmediateLaneEvent* mapped = nullptr;
-                            std::uint16_t count = 0;
-                            spans = state.lane->FutureMember(slot, bucket->attemptGeneration, view.identity,
-                                member, view.members[member], &mapped, &count) && (count == 1u || count == 2u);
-                        }
-                        conditionalTargetSpans = spans;
-                        continuation = continuation || spans;
-                    }
-                    if (valid && admittedGroups == 1u &&
-                        view.frontier->role == FrontierGroupRole::Future &&
-                        view.frontier->queueInitial.Valid() && !view.frontier->queueConditional.Valid() &&
-                        !view.frontier->variableSide.Valid() && view.frontier->transition.Valid() &&
-                        view.identity.sliceIndex == 1u && view.memberCount == 2u &&
-                        view.sourceControlCount == 1u) {
-                        initialQueueCompletion = true;
-                        continuation = true;
-                    }
+                    if (valid && view.frontier->role == FrontierGroupRole::Future &&
+                        (isInitialQueueCompletion(view) || hasConditionalTargetSpans(view))) continuation = true;
                 }
             }
         }
@@ -328,6 +317,17 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 event.executeFrame >= originalQuantumStart &&
                 event.executeFrame - originalQuantumStart < state.blockFrames && waitingShape;
             if (payload == nullptr) continue;
+            if (!grouped && !futureOnly && !registered && bucket->groupCount == 0 &&
+                bucket->memberCount == 0 && !event.frontier.Present() &&
+                !events[i].futureGroupedStart && program->role == TimelineProgramRole::Voice &&
+                payload->kind == TimelineEventKind::Start) {
+                TimelineArmTable::LaneAudioProof cancelled;
+                const auto* reader = state.lane->CapturedArmReader(
+                    {slot, bucket->attemptGeneration}, bucket, bucket->firstEvent + i);
+                if (reader != nullptr && arms_.ProveLaneCancelledStart(*reader, event,
+                        events[i].armProgramGeneration, quantum + 1u, &cancelled))
+                    continue;
+            }
             if (payload->kind == TimelineEventKind::ControllerActivation || payload->kind == TimelineEventKind::Start) {
                 const auto timing = state.frontier == nullptr ? VariableReadCutStatus::Applied :
                     state.frontier->LaneEventTimingStatus(event);
@@ -388,13 +388,8 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                         valid = false;
                         break;
                     }
-                    localInitialCompletion = initialQueueCompletion &&
-                        group.frontier->role == FrontierGroupRole::Future &&
-                        group.frontier->queueInitial.Valid();
-                    localConditionalSpans = conditionalTargetSpans &&
-                        (group.frontier->role == FrontierGroupRole::EntryMember ||
-                         group.frontier->role == FrontierGroupRole::Future) &&
-                        group.frontier->queueConditional.Valid() && group.frontier->transition.Valid();
+                    localInitialCompletion = isInitialQueueCompletion(group);
+                    localConditionalSpans = hasConditionalTargetSpans(group);
                 }
             }
             if (event.frontier.Present() &&
@@ -650,9 +645,12 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 bucket->attemptGeneration);
             claimed = claim.claimed;
             valid = valid && frontierApplied && claimed;
-            if (!claimed)
+            if (!claimed) {
+                (void)state.frontier->RejectLaneBucket(
+                    *state.lane, bucket, slot, bucket->attemptGeneration);
                 (void)state.lane->RejectCapturedBucket(
                     {slot, bucket->attemptGeneration}, bucket);
+            }
         } else {
             if (valid)
                 claimed = state.lane->ClaimRetainingCaptureOnRefusal(

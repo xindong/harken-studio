@@ -821,10 +821,10 @@ static void CheckOrderedActionFirstPcm(bool sameAction, bool fixedStart = false,
     EXPECT_NEAR(1, initialA->gain.current, 1e-6f);
     EXPECT_NEAR(b, initialB->gain.current, 1e-6f);
     for (std::uint32_t i = kBlock / 2; i < kBlock; ++i)
-        EXPECT_NEAR(0.5f * (1 + b) * std::sqrt(0.5f), engine.nullBackend.LastBlock()[2 * i], 1e-6f);
+        EXPECT_NEAR(0.5f * (1 + b), engine.nullBackend.LastBlock()[2 * i], 1e-6f);
     engine.nullBackend.Pump(1);
     for (std::uint32_t i = kBlock / 2; i < kBlock; ++i)
-        EXPECT_NEAR(b * std::sqrt(0.5f), engine.nullBackend.LastBlock()[2 * i], 1e-6f);
+        EXPECT_NEAR(b, engine.nullBackend.LastBlock()[2 * i], 1e-6f);
     ASSERT_EQ(VN_OK, Vn_Update());
     for (const auto render : renders) EXPECT_FALSE(engine.variables.HasNativePublicationHold(render));
 }
@@ -1006,7 +1006,7 @@ TEST(TimelineVoiceInstall, OlderProbeWithdrawalCannotPublishUninstalledFixedSoun
         engine.nullBackend.Pump(1);
         if (std::abs(engine.nullBackend.LastBlock()[2 * (kBlock - 1)]) > 1e-7f) {
             produced = true;
-            EXPECT_NEAR(0.5f * std::sqrt(0.5f),
+            EXPECT_NEAR(0.5f,
                 engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
         }
     }
@@ -1062,12 +1062,12 @@ TEST(TimelineVoiceInstall, PendingSoundIgnoresEarlierSequenceFutureWriteUntilItI
     }
     ASSERT_TRUE(produced);
     ASSERT_LT(engine.mixer.BlocksRendered() * kBlock, observed.requestedEffectiveFrame);
-    EXPECT_NEAR(0.5f * std::sqrt(0.5f), engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
+    EXPECT_NEAR(0.5f, engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
     while (engine.mixer.BlocksRendered() < 24) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine.nullBackend.Pump(1);
     }
-    EXPECT_NEAR(0.5f * std::pow(10.0f, -12.0f / 20.0f) * std::sqrt(0.5f),
+    EXPECT_NEAR(0.5f * std::pow(10.0f, -12.0f / 20.0f),
         engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_FALSE(engine.variables.HasNativePublicationHold(render));
@@ -1144,7 +1144,7 @@ static void CheckPendingSoundEarlyReleaseAndReuse(bool destroySourceEmitter) {
             produced = std::abs(engine.nullBackend.LastBlock()[2 * (kBlock - 1)]) > 1e-7f;
         }
         ASSERT_TRUE(produced);
-        EXPECT_NEAR(0.5f * std::sqrt(0.5f), engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
+        EXPECT_NEAR(0.5f, engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
         EXPECT_TRUE(engine.voices.ReleaseObserved(release));
         ASSERT_EQ(harken::PlayableControlStatus::Ok,
             harken::StopPlayable(engine, play.producedPlayableInstance, 0));
@@ -1202,7 +1202,7 @@ TEST(TimelineVoiceInstall, PendingReadCutCapacityRefusalRollsBackAndKeepsAccepte
         produced = std::abs(engine.nullBackend.LastBlock()[2 * (kBlock - 1)]) > 1e-7f;
     }
     ASSERT_TRUE(produced);
-    EXPECT_NEAR(0.5f * std::pow(10.0f, -12.0f / 20.0f) * std::sqrt(0.5f),
+    EXPECT_NEAR(0.5f * std::pow(10.0f, -12.0f / 20.0f),
         engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
     EXPECT_FALSE(engine.runtimeRecreateRequired);
 }
@@ -1260,7 +1260,7 @@ TEST(TimelineVoiceInstall, PendingTransportResetReleasesReaderBeforeFreshEpochPl
         produced = std::abs(engine.nullBackend.LastBlock()[2 * (kBlock - 1)]) > 1e-7f;
     }
     ASSERT_TRUE(produced);
-    EXPECT_NEAR(0.5f * std::sqrt(0.5f), engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
+    EXPECT_NEAR(0.5f, engine.nullBackend.LastBlock()[2 * (kBlock - 1)], 1e-6f);
     EXPECT_FALSE(engine.runtimeRecreateRequired);
 }
 
