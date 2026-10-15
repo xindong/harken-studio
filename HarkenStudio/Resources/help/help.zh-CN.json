@@ -3,368 +3,355 @@
   "types": {
     "Folder": {
       "title": "Folder",
-      "body": "文件夹只组织物理目录，不参与混音和播放。Layers、Actions、Variables、Attenuations 分区里可以新建文件夹，文件夹之间可以嵌套。在 Layers 分区，文件夹可以收纳音频对象树，不改变对象之间的混音层级和参数继承；文件夹不能放进音频对象内部。Busses 分区没有文件夹，总线直接套在总线上。"
+      "body": "组织项目文件，不影响播放或属性继承。文件夹可以嵌套，但不能放进音频对象或 Busses 分区。"
     },
     "Sound": {
       "title": "Sound",
-      "body": "Sound 是最小的播放单位，自己下面不能再放别的对象。它身上挂着一条或多条音频。具体播哪一条，在 Sources 里用 Active 指定，可以按平台分开；勾上 Per-language 后，每种语言各有一份列表。Offset of Start 会让每次播放都先等一段时间再出声。如果希望每次触发都换一条来播，要用 Container，而不是在 Sound 里随机。"
+      "body": "播放 Sources 中为当前平台和语言指定的音源。Sound 没有子对象；需要每次触发选择不同内容时，使用 Container。"
     },
     "Container": {
       "title": "Container",
-      "body": "Container 被触发时，决定播它下面的哪些对象。下面可以放 Sound、Container、Track 或 Piece。\n\nMode 决定选择规则。Random 按随机规则选择；Sequence 按名单顺序推进。这两种 Mode 的 Play Type 可选 Single 或 Queue：Single 每次触发选择一项，Queue 一次触发播完一轮，Loop 决定轮数。Match 通过条件表按 Variable 值决胜一行。Blend 同时启动各混合行中的全部成员，每个混合行以 Variable 为横轴、Mix (%) 为纵轴，用自由曲线控制每个 child 的 0–100% 增益。各成员百分比独立，不自动归一化。每个混合行中的同一 child 只有一条曲线，首尾点界定有效变量区间，区间外为 0%。移动首尾点调整区间，横向拖动曲线标题平移整条曲线，百分比保持不变；同一 child 在不同混合行中共用一份播放，各混合行的增益相乘。\n\nSelection Editor 为 Match 显示条件表，为 Blend 显示混合表，每行（row）包含一个可选的 Variable 和对应的百分比曲线。组合行为通过嵌套 Container 完成。Blend 中零增益的成员仍保持播放进度，增益恢复不会重新起播。Variable Response 决定使用起播时的结果，还是在播放期间跟随变量变化；它不会让已完成的 Container 持续存活。\n\n过渡规定如何离开当前子对象、进入下一个：可以立即切换，等待自然结束，等待下一个标记点，或等待 Exit 标记点。目标可以从 Entry 标记点开始，也可以从同一时间位置接续。一条过渡可以淡出前一个，插入桥段，再淡入后一个。过渡用于队列和 Live Match；Blend 通过混合行的曲线调整比例。"
+      "body": "按 Random、Sequence、Match 或 Blend 模式，选择或混合子级 Sound、Container、Track 和 Piece。嵌套 Container 可以组合选择规则。"
     },
     "Track": {
       "title": "Track",
-      "body": "Track 是一条绝对时间的音轨，可以直接被触发。轨上每一段指向一个 Sound、Container 或 Piece，并设置它从什么时间开始。真正播多长、循环几次、怎么淡入淡出，都看被指向的那个对象自己的设置。轨上画出来的长度只是看起来占多宽，不会把声音截短，已有的长度也不能改。来源长度清楚时会显示出来，长度不定时用占位。两段叠在一起就同时播，中间不会自动交叉淡化。Track 上不能打标记点。改 Track 自己的音量、音高这些，会作用到整条轨上的内容。"
+      "body": "在一条时间轴上编排 Sound、Container 或 Piece 片段。各片段在指定时间起播，播放行为由子对象自身设置决定；重叠片段同时播放。"
     },
     "Piece": {
       "title": "Piece",
-      "body": "Piece 给它下面的几条 Track 一个共同的时间起点，用来把多条轨对齐、叠在一起。Piece 下面只能直接放 Track。某一条 Track 上还可以再放另一个 Piece。\n\n可以在 Piece 上放三种标记点。Entry 和 Exit 用来告诉过渡从哪里进、从哪里出。Custom 是自己命名的位置，别的操作可以等到这个点再继续。播放时会不会真的用到某个点，要看调用它的 Action、队列或过渡是否支持。这一版不能按音乐时间、速度或小节来安排。以前做好的音乐时间轴会原样留着，但只能查看，不能修改。"
+      "body": "在共同的时间轴上对齐多条 Track，并提供 Entry、Exit 和 Custom 标记点控制播放时机。当前支持绝对时间编辑，已有的音乐时间轴只读。"
     },
     "Layer": {
       "title": "Layer",
-      "body": "Layer 用来把下面的 Layer、Sound、Container、Track、Piece 归在一起，并一起调它们。它不是一条总线：把 Layer 的音量降 3 dB，是下面每个声音在自己原来的音量上再降 3 dB，而不是先混成一路再降。输出总线和衰减这类“指向谁”的设置，没单独填时会用最近一个父级填过的。Layer 不能被游戏直接播放，它只影响下面的声音怎么出，不会自己开始播。"
+      "body": "组织音频对象，并统一设置它们的播放属性。音量和音高分别叠加到各后代对象；Layer 本身不能直接播放。"
     },
     "Bus": {
       "title": "Bus",
-      "body": "Bus 是真正把声音混到一起的地方。每条声音最终都进到一条总线上。这条总线加上自己的音量、音高和左右位置，再送到上一级总线，一直到最上面的 Master Bus。总线可以套总线，这棵树就是整份混音。"
+      "body": "汇总输入的音频，经自身参数处理后送往父总线。总线逐级嵌套，最终输出到 Master Bus。"
     },
     "Action": {
       "title": "Action",
-      "body": "Action 是游戏调用音频的入口。游戏触发它一次，它就按 Steps 里的顺序把好几件事做完。游戏能直接触发的只有内容对象和 Action。文件夹、Layer 这种只负责整理的对象，不能当触发目标。\n\n一步里可以做这些事：Play 开始播一个 Sound、Container、Track 或 Piece；Stop 停掉其中一个，并可以带淡出；Set Variable 改一个 Variable，可以改所有人共用的值，或只改一个发声体；Post Action 再去跑另一个 Action，不能指向自己；Reset 清掉一个 Container 记住的播放位置。随机和顺序容器可以清一个发声体，或清所有人共用的记忆。队列只能清一个发声体上记住的位置。Match 或 Blend 上这一步不会产生效果。"
+      "body": "一次触发执行一组音频指令：播放、停止、修改 Variable、触发其他 Action 或重置 Container 记忆。在 Steps 中设置操作和执行时机。"
     },
     "Variable": {
       "title": "Variable",
-      "body": "Variable 是游戏传给音频的一个数，用来跟着游戏情况改变声音。它有类型、取值范围、默认值和显示名称。\n\n游戏写入时可以写给所有人，界面上是 Global；也可以只写给一个发声体，界面上是 Emitter。在某个发声体里播放的声音，优先用这个发声体自己的数，没有才用 Global。同一个发声体上的声音都看这一份，包括从父级 Layer 算下来的。走总线、或者不在某个发声体里播的内容，只看 Global。\n\n只要对 Global 写一次，所有发声体上单独记的数都会被清掉，即使 Global 的数字本身没变。\n\n这个数可以去推音量、音高这类参数，也可以交给 Match 或 Blend 的 Container，用来选子对象，或在几个子对象之间混合。"
+      "body": "由游戏控制的数值，用于参数绑定和 Container 的选择或混合。Emitter 优先使用局部覆盖值，否则使用全局值；总线使用全局值。Global 写入会清除该变量的所有 Emitter 覆盖。"
     },
     "Attenuation": {
       "title": "Attenuation",
-      "body": "Attenuation 描述声音离听者越远，听起来怎么变。它是一份可以共用的资源：很多对象指向同一份，改一处，这些声音一起变。距离从听者身边算起，最远到 Max Distance。现在可以画两条曲线：音量和音高。音量是分贝偏移，从 0 降到 -96。音高是音分偏移，从 -1200 到 1200。"
+      "body": "定义音量和音高如何随听者距离变化。修改此资源会影响所有引用它的对象。"
     }
   },
   "fields": {
     "mixnode.volume": {
       "title": "Volume",
-      "body": "这个对象自己的音量，单位是分贝，可调范围是 -96 到 24。在 Sound、Container、Track、Piece、Layer 上，音量会顺着父级一层层相加，不是最终响度。比如对象自己是 -3 dB，父级 Layer 也是 -3 dB，听起来就是 -6 dB。填 0 表示不在这里再抬高或压低。\n\n把数值调低，这个对象以及受它影响的声音会变轻；调高则变响。",
+      "body": "音量增益，范围 -96～+24 dB，0 表示不变。内容对象的增益沿播放层级相加。",
       "byType": {
-        "Bus": "这是这条总线加在所有汇进来的声音上的音量，单位是分贝，范围是 -96 到 24。声音先在这里混成一路，这个音量会把整路一起抬高或压低，然后再送给上一级总线。填 0 表示不改变这路混音的大小。"
+        "Bus": "Bus 将此增益应用于汇总后的输入。"
       }
     },
     "mixnode.pitch": {
       "title": "Pitch",
-      "body": "这个对象的音高偏移，单位是音分，可调范围是 -4800 到 4800。100 音分是一个半音，1200 音分是一个八度。在内容对象上，父级的音高会再叠加上来，超出范围的部分会被限制住。填 0 表示音高不变。\n\n把数值调高，声音变高；调低，声音变低。",
+      "body": "音高偏移，范围 -4800～+4800 音分；100 音分为一个半音。内容对象的偏移沿播放层级相加。",
       "byType": {
-        "Bus": "这是这条总线加在所有汇进来的声音上的音高，单位是音分，范围是 -4800 到 4800。100 音分是一个半音，1200 音分是一个八度。填 0 表示经过这条总线时音高不变。"
+        "Bus": "当前不支持 Bus 变调：请保持为 0，否则无法试听或导出 Pack。"
       }
     },
     "mixnode.outputBusId": {
       "title": "Main Output",
-      "body": "这条总线要送去的上一级总线。总线一层层套上去，最后到主总线，所以这里显示的就是它在总线树里的位置。这一项只能看，不能在这里改。想换上一级，把这条总线拖到另一条总线下面。"
+      "body": "接收当前总线输出的父总线。此处只读；在树中移动总线可更换父总线。"
     },
     "mixnode.mainOutputBusRef": {
       "title": "Output Bus",
-      "body": "这个对象的声音要送进哪条总线。Output Bus 和 Output Volume 是同一组。取消 Inherit 之后，要在这里自己选一条总线，不能留空。\n\n这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。"
+      "body": "接收此对象主输出的总线。勾选 Inherit 时，Output Bus 和 Output Volume 一起继承父级；取消后自行选择总线，不可留空。"
     },
     "mixnode.outputBusVolume": {
       "title": "Output Volume",
-      "body": "声音送进主输出总线时，在这条连接上再加减多少分贝，范围是 -96 到 24。填 0 表示这条连接不再额外放大或衰减。它改的是送出去多少，不是这个对象自己的 Volume。在内容对象上，它不会和父级的 Output Volume 相加。",
+      "body": "主输出路由的增益，范围 -96～+24 dB，不影响 Sends。内容对象将此值与 Output Bus 一起继承，不与父级数值相加。",
       "byType": {
-        "Bus": "这条总线送给上一级时，再加减多少分贝，范围是 -96 到 24。它只改变往上送的那一路，不改变这条总线自己的 Volume，也不作用到从这里发出去的 Sends。",
-        "Sound": "这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。",
-        "Container": "这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。",
-        "Track": "这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。",
-        "Piece": "这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。",
-        "Layer": "这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。"
+        "Bus": "在 Bus 上，此值调整送往父总线的电平。"
       }
     },
     "mixnode.sends": {
       "title": "Sends",
-      "body": "除了主输出之外，再额外送到别的总线。比如主输出仍进对白总线，同时再送一份去混响总线。每一行选一条目标总线，并设这条发送的音量，单位是分贝，范围是 -96 到 24。同一条目标总线不能填两次。\n\n加一行就是多一条发送。删掉一行，这条额外通路就没有了。主输出不受影响。",
-      "byType": {
-        "Bus": "从这条总线再额外送到其他总线。每一行选一条目标，并设发送音量，单位是分贝，范围是 -96 到 24。这是主输出旁边的另一路，不会取代送给上一级的那路。这份名单只属于当前总线。",
-        "Sound": "这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。",
-        "Container": "这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。",
-        "Track": "这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。",
-        "Piece": "这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。",
-        "Layer": "这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。"
-      }
+      "body": "在主输出之外增加发送路由。每条发送指定 Target 总线和 Volume（-96～+24 dB），同一目标只能出现一次。"
     },
     "audio.loopCount": {
       "title": "Loop",
-      "body": "这个对象每次被触发后，一共播几遍。选 1 就是播一遍。把数字改大，就会按这个总数再重复。选 Infinite 会一直循环，直到被停掉。这个次数只属于当前对象，不会从父级继承。想让谁循环，就在谁身上设。",
+      "body": "播放总次数：1 为一次，Infinite 持续循环直到停止。在哪个对象上设置，就让哪个对象重复。",
       "byType": {
-        "Container": "如果 Mode 是 Random 或 Sequence，且 Play Type 选 Queue，这里的次数表示整列要循环几轮。选 1，队列走完一轮就停。把数字改大，就按这个轮数再走。选 Infinite，队列会一直循环。队列走到哪，记在每个发声体自己身上。"
+        "Container": "Random 或 Sequence 的 Queue 模式下，一次指完整播放一轮队列。"
       }
     },
     "spatial.spatialPanning": {
       "title": "Panning",
-      "body": "这个对象的左右位置。-1 在最左边，0 在正中，1 在最右边。往左拖，声音偏左；往右拖，声音偏右。这里的声像不会再和父级的声像相加。\n\n这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。"
+      "body": "2D 声像的左右位置：-1 为左，0 为中，+1 为右。启用 3D 时，仅影响 Spatialization Mix 中的 2D 部分。"
     },
     "spatial.spatialIs3DEnabled": {
       "title": "Enable 3D Spatialization",
-      "body": "勾选后，这个对象按它相对听者的位置来摆放，并使用距离衰减。取消勾选后，保持左右声像，不随距离变化。\n\n这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。"
+      "body": "根据 Emitter 相对监听者的位置定位单声道或立体声。距离变化按所选 Attenuation 处理，未选择时不产生距离衰减。关闭后使用 2D 声像。"
     },
     "spatial.spatialAttenuationDistanceScaling": {
       "title": "Distance Scale",
-      "body": "把这份衰减曲线用到的距离拉远或拉近，范围是 10% 到 1000%。100% 就是曲线上画的距离。改成 200%，同样的变化要到两倍远处才发生。改成 50%，变化会在更近的地方发生。\n\n这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。"
+      "body": "缩放所选 Attenuation 的作用距离，范围 10%～1000%。100% 使用原距离，200% 将作用距离扩大一倍。"
     },
     "spatial.spatialAttenuationRef": {
       "title": "Attenuation",
-      "body": "这个对象随距离变化时，用哪一份 Attenuation。Inherit 没勾上时，把这里清掉就是当前对象不使用衰减，不会自动改去用父级的那一份。\n\n这一组标题旁有 Inherit。勾着时，整组跟着最近的父级，这里的数值不能改。取消勾选后，数值记在当前对象上，可以单独调。在这一组上点右键，选 Rebuild Local from Current Effective Values，会把你现在听到的结果记到这个对象上。如果只选了一个平台，Reset Inherit 会丢掉该平台自己的选择，重新跟着所有平台共用的设置。"
+      "body": "启用 3D Spatialization 后使用的共享距离曲线。关闭 Inherit 后，留空表示不使用距离衰减。"
     },
     "selection.mode": {
       "title": "Mode",
-      "body": "Container 选择子对象的规则。Random 按随机规则选择；Sequence 按名单顺序推进。两者的 Play Type 选 Single 时，每次触发选择一项；选 Queue 时，一次触发播完一轮。Match 依据 Variable 条件决胜一行。Blend 同时启动各混合行中的全部成员，包括零增益成员，每个混合行以 Variable 驱动自由百分比曲线，纵轴为 Mix (%)。各成员百分比独立，不自动归一化。每个混合行中的同一 child 只有一条曲线，首尾点界定有效变量区间，区间外为 0%。移动首尾点调整区间，横向拖动曲线标题平移整条曲线，百分比保持不变；同一 child 在不同混合行中共用一份播放，各混合行的增益相乘。\n\nSelection Editor 为 Match 显示条件表，为 Blend 显示混合表，每行（row）包含一个可选的 Variable 和对应的百分比曲线，组合行为通过嵌套 Container 完成。Random 使用权重；Sequence 使用名单顺序。\n\nSelections 的加号在 Random 和 Sequence 中为 Add Child；Match 中提供 Add Child 和 Add Variable，两者均打开选择器；Blend 模式中为 Add Mixing，用于添加一行，每个混合行内的 Child 表格加号为 Add Child。可以先添加多个混合行，再分别选择 Variable；未设置 Variable 的混合行中，各 child 以 100% 参与混合。"
+      "body": "Random 按权重随机选择，Sequence 按列表顺序选择。Match 根据 Variable 条件选中一行；Blend 同时播放所有配置的成员，用 Variable 曲线控制各自的增益。"
     },
     "bus.pan": {
       "title": "Pan",
-      "body": "这条总线输出时的左右位置。-1 在最左边，0 在正中，1 在最右边。它只属于这条总线，不会从父总线继承。往一边拖，整路经过它的混音一起偏过去。"
+      "body": "当前不支持总线声像调整，请保持为 0。非零值会阻止试听和 Pack 导出。"
     },
     "bus.inputs": {
       "title": "Inputs",
-      "body": "哪些对象把主输出送进了这条总线，以及各自送进来的音量，单位是分贝。名单是自动列出来的，不能在这里改。要增加、去掉或改大小，去源对象上改 Output Bus 或 Output Volume。"
+      "body": "进入此总线的主输出路由及其电平，只读。修改来源对象的 Output Bus 或 Output Volume；子总线的路由需通过在树中移动来调整。"
     },
     "bus.receives": {
       "title": "Receives",
-      "body": "哪些对象额外发送到了这条总线，以及每条发送的音量，单位是分贝。名单是自动列出来的，不能在这里改。要增加、去掉或改大小，去发送方的 Sends 里改。"
+      "body": "进入此总线的发送路由及其电平，只读。修改来源对象的 Sends 即可调整。"
     },
     "variable.kind": {
       "title": "Kind",
-      "body": "这个 Variable 按整数变化，还是按小数连续变化。改成 Step，读到的值会四舍五入到整数。改成 Smooth，小数按原值使用。切换之后，范围和默认值会自动调整到新的合法数值上，避免停在两个整数之间，或超出范围。"
+      "body": "Step 将数值取整，Smooth 保留小数。切换 Kind 时也会调整 Range 和 Default Value。"
     },
     "variable.range": {
       "title": "Range",
-      "body": "这个 Variable 允许的最小值和最大值。两边一起修改，所以不会出现最小值大于最大值，或只改到一边的情况。两边都不能是负数。游戏写进来的数如果超出范围，读取时会收回来。想表示更大的数，就把范围拉宽。\n\nLabels 里的名字如果标在当前范围外面，名字仍会保留。范围再次包含那个数时，名字会重新显示出来。"
+      "body": "变量的最小值和最大值，均须非负。数值限制在此范围内；缩小范围不会删除范围外的标签。"
     },
     "variable.defaultValue": {
       "title": "Default Value",
-      "body": "游戏还没写入之前，这个 Variable 用的数。它始终有一个值，不存在“还没设置”。默认值会被限制在 Range 里面。如果类型是 Step，还会对齐到整数档。你改了类型或范围之后，默认值也会跟着调整，保证仍然合法。"
+      "body": "尚未写入时使用的值。始终限制在 Range 内，Step 变量还会取整。"
     },
     "variable.labels": {
       "title": "Labels",
-      "body": "给数值配一个便于辨认的名字。编辑器里会显示离当前值最近的那个名字，但游戏读到的仍是原来的数字，名字不会改变数值。\n\n加一行，填写对应的数值和名字。数值落在当前范围外也可以，名字会留着，等范围再次包含它时重新显示。"
+      "body": "为整数值命名，用于界面显示和 Match 条件。小数仅在四舍五入后的整数设有标签时显示该名称。"
     },
     "sound.scheduleOffsetSec": {
       "title": "Offset of Start",
-      "body": "这个 Sound 被触发之后，先等多少秒再出声。填 0 就是马上开始，不能填负数。等待时间属于整个 Sound，不属于其中某一条音频，所以换平台、换语言、或者直接触发，都会等这么久。"
+      "body": "Sound 起播前的延迟秒数，对所有音源生效。0 表示立即起播。"
     },
     "item.notes": {
       "title": "Notes",
-      "body": "留给后面打开这个工程的人看的备注。游戏运行时不会读到它，也不影响播放。怎么写都可以。"
+      "body": "此对象的项目备注，不影响播放。"
     },
     "spatial.spatializationMix": {
       "title": "Spatialization Mix",
-      "body": "已经打开 3D 的单声道声音，有多少按它所在的位置发声，有多少仍是平面声像。0 是完全平面，1 是完全按位置，中间则两种混在一起。把数值调高，声音更贴在它的位置上；调低，则更接近平面。\n\n没有打开 3D 的声音会记住这个数，但听起来不变。多声道声音也不会被它改变。所有平台共用这一个数，不能按平台分开设置。1 就是完全按位置来听。"
+      "body": "在 2D 声像（0）与 Emitter 空间定位（1）之间混合，适用于单声道和立体声。需启用 3D Spatialization；设为 0 时仍有距离衰减。所有平台共用此值。"
     },
     "selection.selections": {
       "title": "Selections",
-      "body": "Container 可以挑选的子对象，按名单中的顺序排列，每一行有一个权重。\n\nRandom 的 Play Type 选 Single、Discipline 选 Draw 时，这一列叫 Frequency。数字越大越容易被抽到；改成 0，这个子对象不参加抽取。Random 的 Discipline 选 Shuffle，或者 Play Type 选 Queue 时，这一列叫 Order，用来影响打乱后的先后，最小是 1，不能为 0。默认是 50，最大是 100。Sequence 不看权重，只按名单从上往下走。\n\n各平台先用这份共用名单。某个平台也可以另存自己的权重。在这里改名单，只改变以后能够挑到谁，不会因此开始播放。"
+      "body": "Random 的 Frequency 控制抽中概率（0 表示不参与），Order 影响打乱后的先后顺序；Sequence 按列表顺序播放。Match 用 Variable 条件选中一行。\n\nBlend 的每个混合行为子对象设置独立的 0–100% 增益曲线，不做归一化；曲线横向范围之外增益为 0%，未设置 Variable 的行贡献 100%。所有成员同时播放，0% 时也保持进度；同一子对象出现在多行时共用一份播放，各行增益相乘。"
     },
     "selection.behavior": {
       "title": "Behavior",
-      "body": "当前 Mode 和 Play Type 用得到的附加选项。用不到的会隐藏。\n\nDiscipline 只在 Random 且 Play Type 为 Single 时出现。选 Draw，每次触发按 Frequency 抽一个。选 Shuffle，先排好一整轮顺序再往下播，这一轮里不会再次抽到同一个。\n\nMin Repeat Gap 决定列表中的同一项再次被选中前，至少要先选多少次其他项。它出现在 Random 的两种 Play Type 下。间隔按选择次数计算，不按时间计算；0 表示不额外限制重复。最大为 8，且不能超过可参与选择的列表项个数减 1。\n\nMemory Scope 决定 Random 和 Sequence 在 Single 下把播放进度记在哪里。选 Per Emitter，每个发声体各记各的。选 Global，所有发声体共用一份进度。Queue 始终按发声体保存记忆，因此隐藏 Memory Scope。\n\n勾上 Resume From Last 后，队列会从该发声体上次停下的地方继续。如果还没有保存过位置，就从名单开头播放。Match 或 Blend 下这些选项都不会出现。"
+      "body": "设置 Random 和 Sequence 的重复限制与选择记忆。可用选项取决于 Mode 和 Play Type。"
     },
     "sound.distinguishLanguage": {
-      "title": "Per-language",
-      "body": "决定这个 Sound 的音频列表是所有语言共用，还是每种语言单独一份。\n\n不勾选时，不管当前是哪种语言，都播放同一批音频。勾选后，眼前的列表只属于编辑器里当前选中的语言。每种语言各自保存文件、裁剪、循环区域和 Active。某种语言如果还没有自己的列表，不会改用另一种语言的音频。勾不勾这一项，都不会切换正在编辑的平台。"
+      "title": "Language",
+      "body": "为每种语言分别设置音源和 Active。启用后在 Sources 的语言分组中编辑；缺少某种语言时不会借用其他语言的音源。"
     },
     "sound.sources": {
       "title": "Sources",
-      "body": "这个 Sound 可以播放的音频。选择 Import from file，或把音频文件拖进列表，就会增加一行。每一行的 Audio 是一个文件。Wave 用来修改这个文件：Trim Start 和 Trim End 决定从哪一帧播到哪一帧，Loop Region 标出循环时反复播放的那一段。这些修改只影响当前行。\n\nActive 决定实际播放哪一行，同时只有一行生效。没有单独指定的平台，使用所有平台共用的那一行。只选中一个平台时点击 Active，只更换这个平台。选中全部平台时点击，会改掉共用的选择，并清除各平台自己的指定。这不是每次触发时随机换一条。勾选 Per-language 之后，列表和 Active 都属于当前语言。"
+      "body": "导入或拖入音频，点击波形编辑该音源的裁剪和循环区域。Active 指定当前平台播放的音源；选中全部平台时修改 Active，会替换共用选择并清除各平台覆盖。"
     },
     "action.steps": {
       "title": "Steps",
-      "body": "游戏触发这个 Action 后，从上到下执行的每一步。每一行要选类型、目标，以及 Delay。Delay 是这一步执行前再等多少秒，从 0 到 60。把一行展开，才能看到这种类型专有的选项。\n\n选 Play，开始播一个 Sound、Container、Track 或 Piece。\n\n选 Stop，停掉其中一个。Fade Time 是淡出多长，单位是毫秒，从 0 到 60000。填 0 就是立刻停。\n\n选 Set Variable，把目标 Variable 写成 Value。数值会被限制在那个 Variable 的范围内；如果它是 Step，还会对齐到整数档。Scope 选 Global，改的是所有人共用的值，并清掉各个发声体上的单独数值。选 Emitter，只改当前这个发声体。\n\n选 Post Action，接着去跑另一个 Action。不能把目标选成正在编辑的这个 Action 自己。\n\n选 Reset，不会把 Container 播出来，只清它记住的位置。目标是 Random 或 Sequence 且 Play Type 为 Single 时，Scope 选 Emitter 清一个发声体，选 Global 清所有人共用的进度。Play Type 为 Queue 时，只能选 Emitter，清这个发声体记住的队列位置；不能选 Global。目标是 Match 或 Blend 时，这一步没有效果。"
+      "body": "每行设置操作、目标和 Delay（相对 Action 触发时刻的延迟秒数），展开行可编辑具体选项。\n\nPlay 开始播放；Stop 停止播放，可设置淡出。\nSet Variable 写入 Global 或 Emitter 值；Global 会清除 Emitter 覆盖。\nPost Action 触发其他 Action。\nReset 清除 Random 或 Sequence 的选择记忆；Queue 仅支持重置 Emitter 记忆。"
     },
     "tracktimeline.clips": {
       "title": "Clips",
-      "body": "这条 Track 上的片段。每一行的 Child 选择要播放的对象，可以是 Sound、Container 或 Piece。片段从轨上的哪个时间开始，在时间轴上设置。它播放多长、循环几次，以及淡变，都跟随这个对象自己的设置，不在这一行里修改。\n\n轨上显示的长度只决定这一段画多宽，不会把声音截短，已有的长度也不能编辑。两段时间重叠就会同时播放，这里不会自动做交叉淡化。"
+      "body": "按片段起点安排子对象播放。显示宽度不裁剪音频，时长、循环和淡化由子对象决定。重叠片段同时播放，不自动交叉淡化。"
     },
     "attenuation.dimensions": {
       "title": "Dimensions",
-      "body": "这份衰减上的曲线。每一行选一种属性，再编辑它的曲线。现在可以选音量或音高。音量是分贝偏移，从 0 到 -96。音高是音分偏移，从 -1200 到 1200。\n\n横轴是离听者的距离，从 0 到 Max Distance，所有曲线共用这一个最远距离。在曲线编辑器里改 Max Distance，最远的那个点会跟着移动。新建一条曲线时，近处是 0 偏移，远处落到 Max Distance。拖动曲线上的点，就是在改“到了这个距离，音量或音高偏移多少”。所有指向这份 Attenuation 的对象都听同一批曲线。"
+      "body": "编辑 Volume（−96 至 0 dB）和 Pitch（−1200 至 1200 音分）随距离变化的曲线。所有曲线共用从听者到 Max Distance 的距离轴。"
     },
     "selection.discipline": {
       "title": "Discipline",
-      "body": "Random 容器怎么抽子对象。选 Draw，每次触发按 Frequency 权重抽一个。选 Shuffle，先排好一轮不重复的顺序，再按这个顺序往下播，这一轮结束前不会重复。只有 Mode 是 Random 且 Play Type 是 Single 时才会出现。Queue 始终按顺序权重无放回排列。"
+      "body": "用于 Random Single：Draw 每次触发按 Frequency 抽取一项；Shuffle 按 Order 权重排好一轮顺序，每项选过一次后再开始下一轮。"
     },
     "selection.avoidRepeat": {
       "title": "Min Repeat Gap",
-      "body": "列表中的同一项再次被选中前，至少要先选多少次其他项。这个间隔按选择次数计算，不按时间计算。设为 0 时，不额外限制重复。\n\n用于 Random 的两种 Play Type。最大为 8，且不能超过可参与选择的列表项个数减 1。Random 的 Single + Draw 中 Frequency 为 0 的项不计入。"
+      "body": "Random 中，同一列表项再次被选中前，至少要先选择多少次其他项。0 表示不额外限制重复；上限为 8 与可选项数减 1 中的较小值。"
     },
     "selection.memoryScope": {
       "title": "Memory Scope",
-      "body": "Random 和 Sequence 在 Single 下把选择进度记在哪里。选 Per Emitter，每个发声体各记一份。选 Global，所有发声体共用一份。Queue 始终按发声体保存记忆，因此隐藏这个字段。"
+      "body": "用于 Random 或 Sequence 的 Single 播放：Per Emitter 为每个发射体分别记住选择进度，Global 让所有发射体共用进度。Queue 始终按发射体分别记忆。"
     },
     "selection.resumeFromLast": {
       "title": "Resume From Last",
-      "body": "勾选后，队列从该发声体上次停下的位置继续。如果还没有保存过位置，就从第一个子对象开始。不勾选时，每次触发都从开头播。只有 Random 或 Sequence 且 Play Type 为 Queue 时才会出现这个勾选。改成 Single 时仍保留这个值。"
+      "body": "从当前发射体保存的列表项开始播放队列。关闭此项或没有保存记录时，从新一轮开始。"
     },
     "selection.variableResponse": {
       "title": "Variable Response",
-      "body": "Variable 变化如何影响已经开始播放的 Match 或 Blend 实例。\n\nAt Start 在起播时固定结果：Match 固定选中的行，Blend 固定初始增益。后续变量变化只影响下一次 Play。Live 在实例仍然播放时更新 Match 的选择或 Blend 的增益。\n\n此字段不会让已完成内容持续存活。各混合行中的全部成员同时起播，零增益时也保持播放进度，增益恢复不会重新起播。所有选中内容及尾音自然结束后，Container 结束。\n\n同一 child 在不同混合行中共用一份播放，各混合行的增益相乘；每个混合行中的同一 child 只保留一条自由曲线。\n\nVariable Response 只控制本容器的选择或配比，不冻结 Variable 或 Binding，也不覆盖子容器自己的响应设置。"
+      "body": "Fixed 固定起播时的 Match 选择或 Blend 增益；Live 在播放期间随 Variable 变化更新。此设置不冻结属性 Binding，也不会让已结束的内容继续播放。"
     },
     "selection.playType": {
       "title": "Play Type",
-      "body": "Random 或 Sequence 在一次触发中播放多少项。Single 每次触发选择一项，是默认值。Queue 一次触发播完一轮，Loop 决定轮数。Random 的 Queue 按顺序权重无放回排列，每轮每项一次；Sequence 的 Queue 按名单顺序播放。\n\nDiscipline 只在 Random 的 Single 下可选。Queue 始终按发声体保存记忆，可使用 Resume From Last、Marker 拼接和过渡。改回 Single 会保留这些队列配置，但不执行；重新开启 Queue 后继续使用。"
+      "body": "Single 每次触发选择一项；Queue 连续播放一轮，轮数由 Loop 决定。Random Queue 按 Order 权重打乱顺序，每轮每项播放一次；Sequence Queue 按列表顺序播放。"
     }
   },
   "panels": {
     "settings": {
       "title": "Settings",
-      "body": "选择分类来修改设置。Apply 保存待应用的修改并关闭窗口，Cancel 放弃待应用的修改。Layout 中的重命名和删除会立即保存。"
+      "body": "Apply 保存修改并关闭窗口，Cancel 放弃修改。布局的重命名和删除立即保存。"
     },
     "settings.apply": {
       "title": "Apply",
-      "body": "保存待应用的设置修改并关闭窗口。Layout 中的重命名和删除已经即时保存。"
+      "body": "保存待应用的设置修改并关闭窗口。"
     },
     "settings.cancel": {
       "title": "Cancel",
-      "body": "关闭窗口并放弃尚未应用的设置修改。Layout 中的重命名和删除已经保存，不会被撤销。"
+      "body": "放弃尚未应用的设置修改并关闭窗口；布局的重命名和删除仍保留。"
     },
     "settings.general": {
       "title": "General",
-      "body": "选择编辑器主题、Information 的语言和开发者选项。修改在 Apply 后生效。"
+      "body": "设置编辑器主题、Information 语言和开发者模式。"
     },
     "settings.general.theme": {
       "title": "Theme",
-      "body": "选择编辑器的颜色和控件外观。额外的主题包安装在 %1。所选主题在 Apply 后生效。"
+      "body": "选择编辑器外观，Apply 后生效。额外的主题安装在 %1。"
     },
     "settings.general.language": {
       "title": "Language",
-      "body": "选择 Information 帮助内容使用的语言。编辑器界面目前使用英文。此选项与工程的目标语言分别设置。"
+      "body": "选择 Information 帮助语言，不影响编辑器界面和工程音频语言。"
     },
     "settings.general.developer": {
       "title": "Developer Mode",
-      "body": "在 Pack Manager 中显示 File、Version、CRC 列，以及 Preview Pack Structure 命令。"
+      "body": "在 Pack Exporter 中显示 File、Version、CRC32 列和 Preview Pack Structure 命令。"
     },
     "settings.layout": {
       "title": "Layout",
-      "body": "管理已保存的工作区布局。重命名和删除会立即保存，不受 Apply 和 Cancel 控制。内置的 Default 布局不能重命名或删除。"
+      "body": "重命名或删除已保存的布局，修改立即生效，Cancel 不会撤销。Default 不能重命名或删除。"
     },
     "settings.shortcuts": {
       "title": "Shortcuts",
-      "body": "双击快捷键，再按下新的按键即可重新绑定。右键可查看其他操作。修改在 Apply 后生效。"
+      "body": "双击快捷键后按下新按键即可重新绑定，右键可清除或恢复默认。Apply 保存修改。"
     },
     "settings.ai_agent": {
       "title": "AI Agent",
-      "body": "配置 AI Assistant 使用的连接、权限和工具。Apply 保存配置。Test Connection 使用当前填写的内容测试连接，不会保存。"
+      "body": "配置 AI Assistant 的连接、权限和可用工具。"
     },
     "settings.ai_agent.credentials": {
       "title": "Credentials",
-      "body": "设置服务的 Base URL、API Key、模型，以及以 token 为单位的上下文窗口。API Key 保存在操作系统凭据库中。密钥输入框留空会保留已保存的密钥，输入新密钥会替换旧密钥，Clear Saved Key 用于移除密钥。密钥修改只在 Apply 后保存。"
+      "body": "设置服务地址、模型、上下文 token 数和 API Key。Apply 时，密钥留空则保留原密钥，填入新值则替换，Clear Saved Key 则从系统凭据库中移除。"
     },
     "settings.ai_agent.connection": {
       "title": "Test Connection",
-      "body": "使用当前的 Base URL、模型和填写的 API Key 测试连接；密钥输入框留空时使用已保存的密钥。测试会发送一条简短请求，不会保存设置。"
+      "body": "使用当前地址、模型和填入或已保存的密钥发送简短请求，不保存设置。"
     },
     "settings.ai_agent.permission": {
       "title": "Permission",
-      "body": "Read-only 禁止所有写入。Ask 在需要确认的写入前请求批准。Auto 仅对符合自动批准条件且可撤销的命令跳过确认；目前启用的命令均不符合该条件，因此现有写入仍会请求批准。Legacy Bypass 与 Ask 行为相同。"
+      "body": "Read-only 禁止写入，Ask 在写入前请求批准。Auto 目前也会逐次请求批准，Legacy Bypass 等同于 Ask。"
     },
     "settings.ai_agent.tools": {
       "title": "Tool Scope",
-      "body": "选择 AI Assistant 可使用的工具范围：Read-only 用于查看，Authoring 用于编辑，Pack 用于导出，Live 用于测试。Effective tools 显示当前工具范围与权限模式共同允许的工具数量。"
+      "body": "选择用于查看、编辑、导出或实时测试的工具。Effective tools 显示当前工具范围与权限模式共同允许的工具数量。"
     },
     "settings.build": {
       "title": "Build",
-      "body": "配置工程的目标平台、目标语言和数据包输出目录。修改在 Apply 后保存。"
+      "body": "设置工程的目标平台、音频语言和数据包输出目录。"
     },
     "settings.build.platforms": {
       "title": "Target Platforms",
-      "body": "添加目标平台，或双击已有平台来编辑名称、基础平台和构建设置。工程至少保留一个平台。修改在 Apply 后保存。"
+      "body": "添加平台，或双击平台编辑名称、基础平台和构建设置。必须保留至少一个平台。"
     },
     "settings.build.languages": {
       "title": "Target Languages",
-      "body": "配置工程的音频语言。名称使用字母、数字和下划线。Sound 的 Source 区域启用 Language 后可以使用这些语言。修改在 Apply 后保存。"
+      "body": "定义启用 Language 的 Sound 可用的音频语言。名称仅使用英文字母、数字和下划线。"
     },
     "settings.build.output": {
       "title": "Pack Build Output",
-      "body": "选择导出数据包的保存目录。路径相对于工程文件所在目录保存，且不能与工程文件所在目录相同。留空时使用默认的 BuildPacks 目录。"
+      "body": "填写相对于工程的输出路径，留空使用 BuildPacks。不能使用工程根目录或对象目录。"
     },
     "BlueprintCanvas": {
       "title": "Blueprint Canvas",
-      "body": "Blueprint Canvas 以节点图显示当前视图中的对象及其关系。卡片代表一个对象，卡片中的行显示音量、音高、循环等已编写的属性。连线表示父子层级，或一条进入总线的音频通路。通路上的 Volume 节点是该连接的电平，对应主输出或一条 Send。将指针移到卡片、属性行或连线上，可在此阅读说明。在引脚之间拖拽可建立连接。"
+      "body": "查看和编辑对象关系与音频路由。拖拽引脚可连接对象，Volume 节点控制输出或 Send 的增益。"
     },
     "Explorer": {
       "title": "Explorer",
-      "body": "Explorer 是工程树，用于创建、重命名、移动和删除对象。将指针移到对象上可查看其类型。当前选择会驱动 Inspector；位于当前视图中的对象也会显示在 Blueprint Canvas 上。"
+      "body": "浏览和整理工程对象与源文件，选中对象后查看其属性。"
     },
     "Inspector": {
       "title": "Inspector",
-      "body": "Inspector 编辑当前选中的对象。将指针移到名称、滑杆、勾选框或菜单上，可查看该项改变什么。Inherit 处于勾选状态时，该组跟随最近的父级且不可编辑。取消 Inherit 后，数值写入当前对象。"
+      "body": "编辑选中对象的属性。取消属性组的 Inherit 勾选后，可编辑本地值。"
     },
     "Information": {
       "title": "Information",
-      "body": "Information 说明指针下方的对象、属性或命令。文字随指针移动。锁定标题栏后，可在编辑时保持当前说明。"
+      "body": "显示指针所在对象或控件的说明；点击标题栏的锁定按钮可保留当前内容。"
     },
-    "Audition": {
-      "title": "Audition",
-      "body": "Audition 在编辑器内试听当前选择。Play 与 Stop 控制这次试听。电平与播放位置跟随试听，不代表正在运行的游戏。"
+    "Preview": {
+      "title": "Preview",
+      "body": "调整选中对象的试听变量值，查看它们对绑定和选择规则的影响。这些数值仅临时生效。"
     },
     "Log": {
       "title": "Log",
-      "body": "Log 记录编辑器活动，包括加载、已完成的命令和失败原因。当某个命令没有产生预期结果时，先查看这里。"
+      "body": "查看编辑器消息、警告和错误，帮助定位问题。"
     },
     "ExportPacksManager": {
       "title": "Pack Exporter",
-      "body": "Pack Exporter 构建游戏运行时加载的数据包。在此选择要包含的内容并开始构建。该数据包不是编辑器工程的另一份副本。"
+      "body": "管理数据包内容，并为选定平台导出运行时数据包。"
     },
     "MonitorCatalog": {
       "title": "Monitor Catalog",
-      "body": "Monitor Catalog 列出本次会话中监视器捕获的事件。用它回顾已经记录的内容，再到其他监视视图中查看声音、总线和电平。"
+      "body": "搜索和筛选已捕获的运行时事件，选中记录可查看详情或定位工程对象。"
     },
     "AIAssistant": {
       "title": "AI Assistant",
-      "body": "AI Assistant 回答与当前工程有关的问题。在建议被应用之前，它不会修改属性。若要了解某个控件的行为，请将指针移到 Inspector 或 Blueprint Canvas 中的该控件上。"
+      "body": "询问工程问题，或通过已启用的工具请求修改；写入操作需要批准。"
     },
     "blueprint.select": {
       "title": "Select",
-      "body": "Select 用于在 Blueprint Canvas 上选择对象。单击卡片即可选中，在空白处拖拽可框选多个对象，选中的卡片可以移动。此模式不会建立新的连接。"
+      "body": "单击或框选卡片，拖拽卡片可移动，拖拽引脚可连接对象。"
     },
     "blueprint.pan": {
       "title": "Pan",
-      "body": "Pan 用于平移 Blueprint Canvas，不会选中对象。拖拽空白处即可滚动视图，以便查看窗口外的卡片。"
+      "body": "拖拽以平移画布视图。"
     },
     "blueprint.snap": {
       "title": "Snap to Grid",
-      "body": "Snap to Grid 在移动卡片时将其对齐到画布网格。关闭后，卡片会停留在松开指针的位置。"
+      "body": "移动卡片时对齐到网格。"
     },
     "blueprint.viewportFilter": {
       "title": "Viewport Filter",
-      "body": "Viewport Filter \u6309\u6761\u4ef6\u4ece\u84dd\u56fe\u89c6\u56fe\u4e2d\u6392\u9664\u5bf9\u8c61\u3002Filter Out All Sounds \u9690\u85cf\u6240\u6709 Sound \u5bf9\u8c61\u53ca\u5176\u76f4\u63a5\u8fde\u63a5\uff0c\u4e0d\u4fee\u6539\u8def\u7531\u6216\u6536\u7eb3\u72b6\u6001\u3002\u5c55\u5f00\u548c\u5b9a\u4f4d\u64cd\u4f5c\u4ecd\u7136\u9075\u5b88\u8fc7\u6ee4\u6761\u4ef6\u3002"
+      "body": "在画布中隐藏 Sound 及其连线，不修改工程。"
     },
     "blueprint.viewportVisibility": {
       "title": "Viewport Visibility",
-      "body": "Viewport Visibility \u9009\u62e9\u5361\u7247\u4e0a\u663e\u793a\u7684\u4fe1\u606f\uff0c\u5305\u62ec\u6ce2\u5f62\u3001Volume\u3001Pitch\u3001Offset of Start \u548c Loop\u3002\u5206\u7ec4\u4e2d\u4ec5\u90e8\u5206\u5b57\u6bb5\u663e\u793a\u65f6\uff0c\u52fe\u9009\u6846\u5448\u534a\u9009\u72b6\u6001\u3002\u9690\u85cf\u5b57\u6bb5\u4e0d\u4f1a\u4fee\u6539\u5df2\u7f16\u5199\u7684\u6570\u503c\u3002"
+      "body": "选择卡片上显示的波形和属性。"
     },
     "blueprint.resetLayout": {
       "title": "Reset Layout",
-      "body": "Reset Layout 放弃手动摆放的卡片位置，恢复 Blueprint Canvas 的自动排列。已编写的属性值不会改变。"
+      "body": "将手动摆放的卡片恢复为自动排列。"
     },
     "blueprint.zoom": {
       "title": "Zoom",
-      "body": "Zoom 设置 Blueprint Canvas 的显示比例。可选择百分比，或使用 Zoom to Fit 让当前卡片进入画面。比例不影响播放。"
+      "body": "选择缩放比例，或用 Zoom to Fit 将可见卡片完整显示。"
     },
     "list.add": {
       "title": "Add",
-      "body": "Add 在当前列表末尾增加一行，并使用该列表的默认值。在依赖它参与播放之前，请先填写引用或数值。"
+      "body": "向当前列表添加一项。"
     },
     "list.remove": {
       "title": "Remove",
-      "body": "Remove 从当前列表删除选中的行。除非命令明确是删除对象，否则被引用的对象仍保留在工程中，只是此列表不再使用该行。"
+      "body": "移除当前列表中选中的一项。"
     },
     "audition.play": {
-      "title": "Play/Stop",
-      "body": "Play 开始试听当前选择。若试听已经在进行，同一控件会将其停止。试听使用编辑器中当前显示的编写值。"
+      "title": "Play",
+      "body": "开始试听选中的可播放对象或 Action。"
     },
     "audition.stop": {
       "title": "Stop",
-      "body": "Stop 结束当前试听。它不改变选择，也不修改任何已编写的数值。"
+      "body": "停止所有编辑器试听。"
     },
     "audition.reset": {
-      "title": "Reset Audition",
-      "body": "Reset Audition 清除所选 Container 的试听记忆，例如顺序播放的位置或洗牌顺序。下一次 Play 会按该选择规则从头开始。"
+      "title": "Reset Container Selection",
+      "body": "清除选中 Random 或 Sequence Container 的试听选择记忆，包括队列进度。"
     }
   }
 }

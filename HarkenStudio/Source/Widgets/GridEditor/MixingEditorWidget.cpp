@@ -1,4 +1,5 @@
 #include "MixingEditorWidget.h"
+#include "GridEditorWidget.h"
 #include "MixingRowCanvas.h"
 
 #include "Core/ActionManager.h"
@@ -137,8 +138,7 @@ MixingEditorWidget::MixingEditorWidget(QWidget* parent) : QWidget(parent)
         [this](RefDomain, uint32_t id) { emit locateItem(id); });
     connect(navigation, &ObjectRefNavigation::navigateRequested, this, [this](RefDomain, uint32_t id) {
         const auto* item = ProjectManager::instance().findItemByObjectID(id);
-        const auto* selection = item ? item->comp<VSelection>() : nullptr;
-        if (selection && (selection->mode == SelectionMode::Match || selection->mode == SelectionMode::Blend))
+        if (GridEditorWidget::acceptsItem(item))
             emit drillRequested(item->guid);
         else emit navigateToItem(id);
     });
@@ -384,7 +384,7 @@ void MixingEditorWidget::buildRow(int index)
     view.canvas->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     view_->setIndexWidget(model_->index(index, 1), view.page);
     view_->setIndexWidget(model_->index(index, 2), view.canvas);
-    view_->setRowHeight(index, rowHeights_.value(row.guid, metrics.controlHeight * 11));
+    view_->setRowHeight(index, rowHeights_.value(row.guid, view_->verticalHeader()->minimumSectionSize()));
     connect(view.canvas, &MixingRowCanvas::clipSelected, this, [this, index, generation](int child) {
         if (isCurrent(generation)) selectChild(index, child);
     });

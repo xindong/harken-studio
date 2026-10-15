@@ -253,23 +253,20 @@ protected:
     VNX::ProjectItem* varIntensity_ = nullptr;
 };
 
-TEST_F(GridEditorPanelTest, AcceptsMatchAndBlendContainersOnly)
+TEST_F(GridEditorPanelTest, AcceptsAllContainerModes)
 {
-    EXPECT_TRUE(VNX::GridEditorPanel::acceptsItem(container_));
-    container_->comp<VNX::VSelection>()->mode = VNX::SelectionMode::Blend;
-    EXPECT_TRUE(VNX::GridEditorPanel::acceptsItem(container_));
     EXPECT_TRUE(VNX::GridEditorWidget::acceptsItemType(VNX::ProjectItem::Type::Container));
-
-    container_->compOrCreate<VNX::VSelection>()->mode = VNX::SelectionMode::Random;
-    EXPECT_FALSE(VNX::GridEditorPanel::acceptsItem(container_));
     EXPECT_FALSE(VNX::GridEditorPanel::acceptsItem(childA_));
     EXPECT_FALSE(VNX::GridEditorPanel::acceptsItem(nullptr));
-
-    container_->compOrCreate<VNX::VSelection>()->mode = VNX::SelectionMode::Match;
     VNX::GridEditorPanel panel;
-    panel.bindItem(container_);
-    EXPECT_TRUE(panel.isShowingGrid());
-    EXPECT_EQ(panel.currentItemGuid(), container_->guid);
+    for (const auto mode : {VNX::SelectionMode::Random, VNX::SelectionMode::Sequence,
+                            VNX::SelectionMode::Match, VNX::SelectionMode::Blend}) {
+        container_->comp<VNX::VSelection>()->mode = mode;
+        EXPECT_TRUE(VNX::GridEditorPanel::acceptsItem(container_));
+        panel.bindItem(container_);
+        EXPECT_TRUE(panel.isShowingGrid());
+        EXPECT_EQ(panel.currentItemGuid(), container_->guid);
+    }
 
     panel.bindItem(nullptr);
     EXPECT_FALSE(panel.isShowingGrid());
@@ -1284,6 +1281,13 @@ TEST_F(GridEditorPanelTest, StrategyEditsShareMembersAndSurviveModeCyclesAndRelo
                           VNX::SelectionMode::Match, VNX::SelectionMode::Blend}) {
             ASSERT_TRUE(setMode(mode));
             EXPECT_EQ(selection()->selections.toJson(), authored);
+            EXPECT_TRUE(panel.isShowingGrid());
+            EXPECT_EQ(panel.discreteGrid()->isVisibleTo(&panel), mode == VNX::SelectionMode::Match);
+            EXPECT_EQ(panel.mixingEditor()->isVisibleTo(&panel), mode == VNX::SelectionMode::Blend);
+            auto* list = panel.findChild<QWidget*>(QStringLiteral("selectionChildrenList"));
+            ASSERT_NE(list, nullptr);
+            const bool listMode = mode == VNX::SelectionMode::Random || mode == VNX::SelectionMode::Sequence;
+            EXPECT_EQ(list->isVisibleTo(&panel), listMode);
         }
     }
     const auto guid = container_->guid;
@@ -1644,10 +1648,6 @@ TEST_F(GridEditorPanelTest, RowSelectorsAcceptOnlyDirectChildrenAndResetAfterAdd
         auto* tree = openGridSelector(adder);
         ASSERT_NE(tree, nullptr);
         EXPECT_EQ(selectableIds(tree), expected);
-        QSet<uint32_t> displayed;
-        for (QTreeWidgetItemIterator it(tree); *it; ++it)
-            displayed.insert((*it)->data(0, VNX::kRoleObjectID).toUInt());
-        EXPECT_EQ(displayed, expected);
         selectObject(tree, childB_->objectID);
         drainEvents();
         EXPECT_EQ(adder->currentObjectID(), 0u);

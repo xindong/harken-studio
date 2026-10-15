@@ -1969,6 +1969,7 @@ TEST(UnityIntegrationService, ReportsUnreadableManagedFileInsteadOfCountingItAsC
     EXPECT_TRUE(result.steps[2].summary.contains(QStringLiteral("could not be read")));
     EXPECT_EQ(result.filesAdded, 0);
     EXPECT_EQ(result.filesChanged, 0);
+    EXPECT_TRUE(result.fileChanges.isEmpty());
     EXPECT_FALSE(result.targetAlreadyCurrent);
 }
 

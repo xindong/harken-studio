@@ -1,4 +1,5 @@
 #include "DiscreteGridWidget.h"
+#include "GridEditorWidget.h"
 
 #include "Core/ActionManager.h"
 #include "Core/Components/VSelection.h"
@@ -531,8 +532,7 @@ std::vector<std::optional<float>> DiscreteGridWidget::axisEvalValues() const
 bool DiscreteGridWidget::isNestedGridTarget(const QUuid& target) const
 {
     ProjectItem* item = ProjectManager::instance().findItemByGuid(target);
-    const auto* sel = item ? item->comp<VSelection>() : nullptr;
-    return sel && (sel->mode == SelectionMode::Match || sel->mode == SelectionMode::Blend);
+    return GridEditorWidget::acceptsItem(item);
 }
 
 bool DiscreteGridWidget::commitGrid(const DiscreteGridDef& next, const QString& undoText)

@@ -105,15 +105,17 @@ public:
         std::function<QTreeWidgetItem*(ProjectItem*)> build =
             [&](ProjectItem* item) -> QTreeWidgetItem* {
             std::vector<QTreeWidgetItem*> childRows;
-            if (request.directChildParentGuid.isNull()) {
+            if (request.directChildParentGuid.isNull() || item->guid == request.directChildParentGuid) {
                 for (const auto& child : item->children)
                     if (auto* row = build(child.get()))
                         childRows.push_back(row);
             }
 
-            const bool matchesType =
-                TypeFilter::matches(item->type, request.filterType, request.filterTypes);
-            if (!matchesType && childRows.empty())
+            const bool matchesFilter =
+                TypeFilter::matches(item->type, request.filterType, request.filterTypes)
+                && (request.directChildParentGuid.isNull()
+                    || (item->parent && item->parent->guid == request.directChildParentGuid));
+            if (!matchesFilter && childRows.empty())
                 return nullptr;
 
             const TimelineValidation authoring = request.onToggled
@@ -123,7 +125,7 @@ public:
                 }, [](uint32_t objectID) {
                     return ProjectManager::instance().findItemByObjectID(objectID);
                 });
-            const bool selectable = matchesType && authoring
+            const bool selectable = matchesFilter && authoring
                 && (!request.isSelectable || request.isSelectable(item->objectID));
 
             auto* row = new QTreeWidgetItem;
@@ -147,9 +149,8 @@ public:
 
         if (!request.directChildParentGuid.isNull()) {
             if (auto* parent = ProjectManager::instance().findItemByGuid(request.directChildParentGuid))
-                for (const auto& child : parent->children)
-                    if (auto* row = build(child.get()))
-                        tree->addTopLevelItem(row);
+                if (auto* row = build(parent))
+                    tree->addTopLevelItem(row);
             return;
         }
 

@@ -252,7 +252,7 @@ MainWindow::MainWindow(
     InitializationMode initializationMode)
     : QMainWindow(parent)
 {
-    setWindowTitle("Harken Studio - Spatial Audio Designer");
+    setWindowTitle("Harken Studio");
     setMinimumSize(800, 600);
     resize(1800, 1100);
     setObjectName(QStringLiteral("MainWindow"));
@@ -702,6 +702,12 @@ void MainWindow::initializeStructure(
         return workspaceWindowManager_
             ? workspaceWindowManager_->restoreInstance(spec)
             : panelRegistry_->recreate(spec);
+    });
+    layoutController_->setSingletonSnapshotProvider([this] {
+        return workspaceWindowManager_->singletonStates();
+    });
+    layoutController_->setSingletonStateRestorer([this](const QVariantMap& states) {
+        workspaceWindowManager_->restoreSingletonStates(states);
     });
     layoutController_->setVisibleSingletonMaterializer([this]() {
         refreshVisibleMaterializedSingletons();
@@ -1523,6 +1529,15 @@ void MainWindow::registerWorkspaceSingletonFactories()
     if (!workspaceWindowManager_)
         return;
 
+    WorkspaceWindowManager::SingletonFactory previewFactory;
+    previewFactory.snapshotState = [](QWidget* content) {
+        return qobject_cast<PreviewPanel*>(content)->snapshotState();
+    };
+    previewFactory.restoreState = [](QWidget* content, const QVariantMap& state) {
+        qobject_cast<PreviewPanel*>(content)->restoreState(state);
+    };
+    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("Preview"), std::move(previewFactory));
+
     workspaceWindowManager_->registerSingletonFactory(QStringLiteral("Log"), {
         []() -> QWidget* { return new LogPanel(); },
         {},
@@ -2120,8 +2135,13 @@ void MainWindow::createPrimaryWorkspaceDocks()
     previewDock_->setFeature(ads::CDockWidget::DockWidgetMovable, true);
     previewDock_->setFeature(ads::CDockWidget::DockWidgetFloatable, true);
     previewDock_->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromContent);
-    if (previewPanel_)
-        previewDock_->setWidget(previewPanel_, ads::CDockWidget::ForceNoScrollArea);
+    if (previewPanel_) {
+        WorkspaceDockFactory::setContent(previewDock_, previewPanel_, ads::CDockWidget::ForceNoScrollArea);
+        connect(previewPanel_, &PreviewPanel::contextChanged, this, [this] {
+            refreshBoundEditorDockTitles(tr("Preview"), {previewPanel_},
+                [](QWidget* panel) { return static_cast<PreviewPanel*>(panel)->boundItem(); });
+        });
+    }
     dockManager_->addDockWidget(ads::BottomDockWidgetArea, previewDock_);
 
     if (workspaceWindowManager_) {
@@ -3782,6 +3802,8 @@ bool MainWindow::saveNamedLayout(const QString& name, QString* pathOut)
         QString::fromLatin1(dockManager_->saveState().toBase64());
     json[QStringLiteral("instances")] =
         workspaceWindowInstanceSpecsToJson(workspaceWindowInstanceSpecs());
+    json[QStringLiteral("singletons")] =
+        QJsonObject::fromVariantMap(workspaceWindowManager_->singletonStates());
     json[QStringLiteral("savedAt")] = QDateTime::currentDateTime().toString(Qt::ISODate);
 
     return NamedLayoutStore::write(trimmed, json, pathOut);

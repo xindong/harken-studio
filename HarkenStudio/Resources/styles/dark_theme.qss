@@ -177,7 +177,6 @@ QMenuBar::item:pressed {
     color: @accentText@;
 }
 
-QMenu,
 QWidget[surfaceRole="popup"] {
     border: 1px solid @borderSecondary@;
 }
@@ -185,7 +184,8 @@ QWidget[surfaceRole="popup"] {
 QMenu {
     -qt-style-features: background-color;
     background-color: @bgTertiary@;
-    border-radius: @radiusMedium@px;
+    border: 1px solid @borderPrimary@;
+    border-radius: 0px;
     padding: 6px 0;
 }
 
@@ -2074,9 +2074,6 @@ QFrame[matrixHeader="true"] {
     border: none;
 }
 QFrame[matrixHeader="true"][selected="true"] { background-color: @bgSelected@; }
-QFrame#listBox QAbstractItemView[tableRole="data"][compositeTable="true"] {
-    background-color: @bgSecondary@;
-}
 QFrame[matrixHeader="true"][warning="true"] { border-bottom: 1px solid @warning@; }
 QLineEdit[tableEditor="true"] {
     background-color: @bgPrimary@;

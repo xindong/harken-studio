@@ -519,11 +519,7 @@ FileExplanation explainSdkFile(const QString& relative)
         QStringLiteral("The installed package will contain the supporting data expected by this SDK version.")};
 }
 
-struct FileChange
-{
-    QString action;
-    QString relative;
-};
+using FileChange = UnityIntegrationService::FileChange;
 
 QString changeTitle(const QString& action)
 {
@@ -2065,6 +2061,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
                 changes.push_back({QStringLiteral("add"), relative});
             step.details = describeFileChanges(
                 changes, result.sdkInstallPath);
+            result.fileChanges = changes;
             step.summary = QStringLiteral("No embedded Harken SDK is installed; %1 file(s) are ready to install.")
                                .arg(result.filesAdded);
             return;
@@ -2176,6 +2173,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         }
         step.details = describeFileChanges(
             changes, result.sdkInstallPath);
+        result.fileChanges = changes;
         result.staleFilesToRemove = staleFiles.size();
         result.targetOnlyFilesPreserved = preservedFiles.size();
         result.changesDetected = result.filesAdded > 0 ||
@@ -2216,7 +2214,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             step.summary = QStringLiteral("Check found SDK differences: %1.").arg(counts);
             step.cause = QStringLiteral("Check-only mode did not change %1.")
                              .arg(result.sdkInstallPath);
-            step.remediation = QStringLiteral("Review the file list, then use Check and integrate if these changes should be applied.");
+            step.remediation = QStringLiteral("Review the file list before confirming the SDK change.");
             return;
         }
         if (!request.confirmTargetChanges) {

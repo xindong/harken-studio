@@ -147,6 +147,33 @@ QWidget* WorkspaceWindowManager::singletonContent(const QString& typeId) const
     return dock ? dock->widget() : nullptr;
 }
 
+QVariantMap WorkspaceWindowManager::singletonStates() const
+{
+    QVariantMap states;
+    for (const QString& typeId : registeredSingletonTypeIds()) {
+        const auto factory = singletonFactories_.constFind(typeId);
+        if (factory == singletonFactories_.constEnd() || !factory->snapshotState)
+            continue;
+        if (QWidget* content = singletonContent(typeId))
+            states.insert(typeId, factory->snapshotState(content));
+    }
+    return states;
+}
+
+void WorkspaceWindowManager::restoreSingletonStates(const QVariantMap& states)
+{
+    for (const QString& typeId : registeredSingletonTypeIds()) {
+        const auto factory = singletonFactories_.constFind(typeId);
+        if (factory == singletonFactories_.constEnd() || !factory->restoreState)
+            continue;
+        QWidget* content = singletonContent(typeId);
+        if (!content && states.contains(typeId))
+            content = materializeSingletonContent(typeId);
+        if (content)
+            factory->restoreState(content, states.value(typeId).toMap());
+    }
+}
+
 bool WorkspaceWindowManager::showSingleton(const QString& typeId) const
 {
     auto* self = const_cast<WorkspaceWindowManager*>(this);

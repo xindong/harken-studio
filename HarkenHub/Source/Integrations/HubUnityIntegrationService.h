@@ -49,6 +49,12 @@ struct UnityIntegrationRequest
     QString migrationPlanHash;
 };
 
+struct UnityIntegrationFileChange
+{
+    QString action;
+    QString path;
+};
+
 struct UnityIntegrationResult
 {
     bool cancelled = false;
@@ -68,6 +74,7 @@ struct UnityIntegrationResult
     QString migrationTargetPath;
     QString migrationPlanHash;
     QVector<UnityIntegrationStep> steps;
+    QVector<UnityIntegrationFileChange> fileChanges;
     QString unityProjectPath;
     QString sdkSourcePath;
     QString sdkInstallPath;

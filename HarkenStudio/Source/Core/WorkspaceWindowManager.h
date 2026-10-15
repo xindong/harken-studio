@@ -24,6 +24,8 @@ public:
         std::function<QWidget*()> createContent;
         std::function<void(ads::CDockWidget*)> configureShell;
         std::function<void(QWidget*)> contentCreated;
+        std::function<QVariantMap(QWidget*)> snapshotState = {};
+        std::function<void(QWidget*, const QVariantMap&)> restoreState = {};
     };
 
     struct MultiInstanceFactory
@@ -64,6 +66,8 @@ public:
 
     QList<QString> registeredSingletonTypeIds() const;
     QList<ads::CDockWidget*> registeredSingletonDocks() const;
+    QVariantMap singletonStates() const;
+    void restoreSingletonStates(const QVariantMap& states);
 
     void registerMultiInstanceFactory(const QString& typeId, MultiInstanceFactory factory);
     bool createInstance(const QString& typeId) const;

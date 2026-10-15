@@ -23,6 +23,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QColor>
+#include <QComboBox>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDialog>
@@ -44,6 +45,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
@@ -55,9 +57,12 @@
 #include <QStackedWidget>
 #include <QStyle>
 #include <QTableWidget>
+#include <QTabWidget>
+#include <QTextBrowser>
 #include <QThreadPool>
 #include <QTimer>
 #include <QToolButton>
+#include <QTreeWidget>
 #include <QUuid>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -150,6 +155,13 @@ QString sdkVersion(const QString& path, EngineKind kind)
     const auto object = QJsonDocument::fromJson(file.readAll()).object();
     return object.value(kind == EngineKind::Unity
         ? QStringLiteral("version") : QStringLiteral("VersionName")).toString();
+}
+
+QString studioSdkPath(const InstalledVersion& version, EngineKind kind)
+{
+    return QDir(QFileInfo(version.executablePath).absolutePath()).filePath(
+        kind == EngineKind::Unity ? QStringLiteral("HarkenSDK/Unity/Harken")
+                                  : QStringLiteral("HarkenSDK/Unreal/Harken"));
 }
 
 QString targetInputPath(const EngineTargetRecord& target)
@@ -284,7 +296,7 @@ QString localizeIntegrationText(const QString& text)
         QStringLiteral("^(Files to add|Files to update|Obsolete files to remove|Files kept unchanged) — (.+) \\((\\d+) files\\)$"));
     const QRegularExpressionMatch changeGroupMatch = changeGroup.match(text);
     if (changeGroupMatch.hasMatch())
-        return hubTranslate(QStringLiteral("%1 — %2 (%3 files)"))
+        return hubTranslate(QStringLiteral("%1 — %2 (files: %3)"))
             .arg(hubTranslate(changeGroupMatch.captured(1)),
                  hubTranslate(changeGroupMatch.captured(2)),
                  changeGroupMatch.captured(3));
@@ -719,15 +731,24 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     selectionLayout->setSpacing(8);
     auto [sdkRowWidget, sdkPathRow] = makeRow(
         QCoreApplication::translate("HarkenHub", "SDK Source Directory"));
-    sdkPathEdit_ = new QLineEdit(sdkRowWidget);
+    sdkSourceCombo_ = new QComboBox(sdkRowWidget);
+    sdkSourceCombo_->setObjectName(QStringLiteral("sdkSourceSelector"));
+    sdkSourceCombo_->installEventFilter(this);
+    sdkSourceCombo_->setEditable(true);
+    sdkSourceCombo_->setInsertPolicy(QComboBox::NoInsert);
+    sdkSourceCombo_->setCompleter(nullptr);
+    sdkSourceCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    sdkPathEdit_ = sdkSourceCombo_->lineEdit();
     sdkPathEdit_->setObjectName(QStringLiteral("sdkSourcePath"));
     sdkPathEdit_->setPlaceholderText(
         QCoreApplication::translate("HarkenHub", "Runtime/SDK source path"));
     sdkPathEdit_->setReadOnly(true);
+    sdkPathEdit_->setCursor(Qt::ArrowCursor);
+    sdkPathEdit_->installEventFilter(this);
     sdkSourceBrowseButton_ = new QPushButton(
         QCoreApplication::translate("HarkenHub", "Choose SDK Folder..."), sdkRowWidget);
     sdkSourceBrowseButton_->setObjectName(QStringLiteral("sdkSourceBrowse"));
-    sdkPathRow->addWidget(sdkPathEdit_, 1);
+    sdkPathRow->addWidget(sdkSourceCombo_, 1);
     sdkPathRow->addWidget(sdkSourceBrowseButton_);
     selectionLayout->addWidget(sdkRowWidget);
 
@@ -777,11 +798,36 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     sdkSelectionSummary_->setWordWrap(true);
     sdkSelectionSummary_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     dialogLayout->addWidget(sdkSelectionSummary_);
-    sdkSelectionDetails_ = new QPlainTextEdit(sdkSelectionDialog_);
+    sdkResultsTabs_ = new QTabWidget(sdkSelectionDialog_);
+    sdkResultsTabs_->setObjectName(QStringLiteral("sdkCheckResults"));
+    auto* changesPage = new QWidget(sdkResultsTabs_);
+    auto* changesLayout = new QVBoxLayout(changesPage);
+    changesLayout->setContentsMargins(12, 12, 12, 8);
+    changesLayout->setSpacing(10);
+    sdkDiffSummary_ = new QLabel(changesPage);
+    sdkDiffSummary_->setObjectName(QStringLiteral("sdkDiffSummary"));
+    sdkDiffSummary_->setWordWrap(true);
+    sdkDiffSummary_->setTextFormat(Qt::RichText);
+    sdkDiffSummary_->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    connect(sdkDiffSummary_, &QLabel::linkActivated, this, [this]() {
+        sdkResultsTabs_->setCurrentIndex(1);
+    });
+    changesLayout->addWidget(sdkDiffSummary_);
+    sdkDiffTree_ = new QTreeWidget(changesPage);
+    sdkDiffTree_->setObjectName(QStringLiteral("sdkFileChanges"));
+    sdkDiffTree_->setHeaderHidden(true);
+    sdkDiffTree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    sdkDiffTree_->setUniformRowHeights(true);
+    sdkDiffTree_->setStyleSheet(QStringLiteral("QTreeWidget::item { padding: 4px; }"));
+    changesLayout->addWidget(sdkDiffTree_, 1);
+    sdkResultsTabs_->addTab(changesPage, QCoreApplication::translate("HarkenHub", "File Changes"));
+    sdkSelectionDetails_ = new QTextBrowser(sdkResultsTabs_);
     sdkSelectionDetails_->setObjectName(QStringLiteral("sdkSelectionDetails"));
-    sdkSelectionDetails_->setReadOnly(true);
-    sdkSelectionDetails_->setMinimumHeight(160);
-    dialogLayout->addWidget(sdkSelectionDetails_, 1);
+    sdkSelectionDetails_->setOpenLinks(false);
+    sdkSelectionDetails_->setOpenExternalLinks(false);
+    sdkResultsTabs_->addTab(sdkSelectionDetails_, QCoreApplication::translate("HarkenHub", "Check Log"));
+    sdkResultsTabs_->setMinimumHeight(160);
+    dialogLayout->addWidget(sdkResultsTabs_, 1);
     dialogLayout->addLayout(integrationActionRow);
     editorLayout->addWidget(formPanel);
 
@@ -924,6 +970,16 @@ EngineIntegrationsPage::EngineIntegrationsPage(
 
 bool EngineIntegrationsPage::eventFilter(QObject* watched, QEvent* event)
 {
+    if ((watched == sdkSourceCombo_ || watched == sdkPathEdit_)
+        && sdkSourceCombo_->isEnabled()
+        && (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease)
+        && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
+        if (event->type() == QEvent::MouseButtonPress)
+            sdkSourceCombo_->setFocus(Qt::MouseFocusReason);
+        else
+            sdkSourceCombo_->showPopup();
+        return true;
+    }
     if (watched == sdkSelectionDialog_ && operationRunning_
         && (event->type() == QEvent::Close
             || (event->type() == QEvent::KeyPress
@@ -1293,6 +1349,7 @@ void EngineIntegrationsPage::beginSdkSelection()
         || targetBlocked_) return;
     sdkSelection_ = SdkSelection{sdkPathEdit_->text(), sdkInstallPathEdit_->text(),
                                  sdkPathUserSelected_};
+    refreshInstalledSdkSources();
     clearResults();
     updateRemovalButtonState();
     setSummaryText(QCoreApplication::translate("HarkenHub", "No integration check has run."));
@@ -1300,7 +1357,10 @@ void EngineIntegrationsPage::beginSdkSelection()
         ? QCoreApplication::translate("HarkenHub", "Change SDK")
         : QCoreApplication::translate("HarkenHub", "Install SDK"));
     sdkSelectionDialog_->open();
-    sdkSourceBrowseButton_->setFocus();
+    if (sdkSourceCombo_->count() > 0)
+        sdkSourceCombo_->setFocus();
+    else
+        sdkSourceBrowseButton_->setFocus();
 }
 
 void EngineIntegrationsPage::cancelSdkSelection()
@@ -1629,19 +1689,43 @@ void EngineIntegrationsPage::updateDefaultSdkPath()
 {
     if (sdkPathUserSelected_ || !studioVersion_)
         return;
-    QString relative;
     const auto targets = targets_->list();
     const auto target = std::find_if(
         targets.begin(), targets.end(), [&](const EngineTargetRecord& value) {
             return value.targetId == selectedEngineTargetId_;
         });
-    if (target != targets.end()) {
-        relative = target->engineKind == EngineKind::Unity
-            ? QStringLiteral("HarkenSDK/Unity/Harken")
-            : QStringLiteral("HarkenSDK/Unreal/Harken");
+    setSdkPath(target == targets.end()
+                   ? QFileInfo(studioVersion_->executablePath).absolutePath()
+                   : studioSdkPath(*studioVersion_, target->engineKind), false);
+}
+
+void EngineIntegrationsPage::refreshInstalledSdkSources()
+{
+    const auto targets = targets_->list();
+    const auto target = std::find_if(targets.begin(), targets.end(), [this](const auto& value) {
+        return value.targetId == selectedEngineTargetId_;
+    });
+    if (target == targets.end()) return;
+    const QString selectedPath = sdkPathEdit_->text();
+    const QSignalBlocker comboBlocker(sdkSourceCombo_);
+    const QSignalBlocker editBlocker(sdkPathEdit_);
+    sdkSourceCombo_->clear();
+    auto versions = VersionScanner::scanInstalled();
+    std::stable_sort(versions.begin(), versions.end(), [](const auto& left, const auto& right) {
+        return left.releaseSequence > right.releaseSequence;
+    });
+    for (const auto& version : versions) {
+        const QString path = studioSdkPath(version, target->engineKind);
+        const QString bundledVersion = sdkVersion(path, target->engineKind);
+        if (bundledVersion.isEmpty()) continue;
+        sdkSourceCombo_->addItem(path, path);
+        sdkSourceCombo_->setItemData(sdkSourceCombo_->count() - 1,
+            QCoreApplication::translate("HarkenHub", "Studio %1 | %2 SDK %3")
+                .arg(versionLabel(version), engineName(target->engineKind), bundledVersion)
+                + QLatin1Char('\n') + QDir::toNativeSeparators(path), Qt::ToolTipRole);
     }
-    const QString root = QFileInfo(studioVersion_->executablePath).absolutePath();
-    setSdkPath(relative.isEmpty() ? root : QDir(root).filePath(relative), false);
+    sdkSourceCombo_->setEditText(selectedPath);
+    updateSdkSourceState();
 }
 
 void EngineIntegrationsPage::setSdkPath(
@@ -1666,6 +1750,19 @@ void EngineIntegrationsPage::updateSdkSourceState()
     });
     const EngineKind kind = target == targets.end() ? EngineKind::Unity : target->engineKind;
     const QString selectedPath = sdkPathEdit_->text().trimmed();
+    int selectedIndex = -1;
+    for (int index = 0; !selectedPath.isEmpty() && index < sdkSourceCombo_->count(); ++index) {
+        if (samePath(selectedPath, sdkSourceCombo_->itemData(index).toString())) {
+            selectedIndex = index;
+            break;
+        }
+    }
+    const QSignalBlocker comboBlocker(sdkSourceCombo_);
+    const QSignalBlocker editBlocker(sdkPathEdit_);
+    sdkSourceCombo_->setCurrentIndex(selectedIndex);
+    sdkSourceCombo_->setEditText(selectedPath);
+    sdkSourceCombo_->setToolTip(selectedIndex < 0 ? selectedPath
+        : sdkSourceCombo_->currentData(Qt::ToolTipRole).toString());
     sdkSourceAvailable_ = !sdkVersion(selectedPath, kind).isEmpty();
     sdkPathEdit_->setToolTip(selectedPath);
     sdkPathEdit_->setCursorPosition(0);
@@ -2012,6 +2109,10 @@ void EngineIntegrationsPage::clearResults()
     stepsTable_->setRowCount(0);
     detailEdit_->clear();
     sdkSelectionDetails_->clear();
+    sdkDiffSummary_->clear();
+    sdkDiffTree_->clear();
+    sdkResultsTabs_->setTabText(1, QCoreApplication::translate("HarkenHub", "Check Log"));
+    sdkResultsTabs_->setCurrentIndex(0);
     detailEdit_->hide();
     summaryLabel_->setToolTip(QString());
     updatePrimaryAction();
@@ -2221,6 +2322,16 @@ EngineIntegrationsPage::unityResultSteps(
                          localizeIntegrationText(step.cause),
                          localizeIntegrationText(step.remediation), details,
                          step.artifacts, step.elapsedMs});
+        if (step.id == QStringLiteral("compare_sdk")
+            && (step.status == UnityIntegrationStepStatus::Succeeded
+                || step.status == UnityIntegrationStepStatus::Warning)) {
+            auto& comparison = steps.back();
+            comparison.hasFileComparison = true;
+            comparison.attentionRequired = result.targetAlreadyCurrent
+                && step.status == UnityIntegrationStepStatus::Warning;
+            for (const auto& change : result.fileChanges)
+                comparison.fileChanges.push_back({change.path, change.action});
+        }
     }
     return steps;
 }
@@ -2732,6 +2843,13 @@ bool EngineIntegrationsPage::runUnreal(
     ResultStep compareStep;
     compareStep.id = QStringLiteral("compare_sdk");
     compareStep.title = QCoreApplication::translate("HarkenHub", "Compare installed SDK");
+    compareStep.hasFileComparison = plan.valid;
+    compareStep.attentionRequired = !plan.modifiedManagedFiles.isEmpty();
+    if (plan.valid) {
+        compareStep.fileChanges = plan.changes;
+        for (const QString& path : plan.preservedTargetFiles)
+            compareStep.fileChanges.push_back({path, QStringLiteral("preserve")});
+    }
     if (!plan.valid) {
         compareStep.status = ResultStatus::Skipped;
         compareStep.summary = QCoreApplication::translate("HarkenHub", "Comparison was skipped because SDK validation failed.");
@@ -2850,7 +2968,7 @@ void EngineIntegrationsPage::showResults(
         }
     }
     setSummaryText(summary);
-    sdkSelectionDetails_->setPlainText(confirmationDetails());
+    updateSdkCheckResults();
     if (selectedRow < 0 && !steps.isEmpty())
         selectedRow = 0;
     stepsTable_->resizeRowsToContents();
@@ -2870,6 +2988,144 @@ void EngineIntegrationsPage::showSelectedStep()
     const int row = stepsTable_->currentRow();
     if (row >= 0 && row < resultSteps_.size())
         detailEdit_->setPlainText(formatStepDetails(resultSteps_[row]));
+}
+
+void EngineIntegrationsPage::updateSdkCheckResults()
+{
+    sdkDiffTree_->clear();
+    const ResultStep* comparison = nullptr;
+    const ResultStep* failure = nullptr;
+    int warnings = 0;
+    QVector<const ResultStep*> logSteps;
+    for (const auto& step : resultSteps_) {
+        logSteps.push_back(&step);
+        if (step.hasFileComparison) comparison = &step;
+        if (step.status == ResultStatus::Failed && !failure) failure = &step;
+        if (step.attentionRequired || (step.status == ResultStatus::Warning
+            && step.id != QStringLiteral("compare_sdk"))) ++warnings;
+    }
+    const auto priority = [](const ResultStep* step) {
+        if (step->status == ResultStatus::Failed) return 0;
+        if (step->attentionRequired || (step->status == ResultStatus::Warning
+            && step->id != QStringLiteral("compare_sdk"))) return 1;
+        return step->hasFileComparison ? 2 : 3;
+    };
+    std::stable_sort(logSteps.begin(), logSteps.end(), [&](const auto* left, const auto* right) {
+        return priority(left) < priority(right);
+    });
+    QString log;
+    for (const auto* step : logSteps) log += formatStepHtml(*step);
+    sdkSelectionDetails_->setHtml(log);
+    sdkResultsTabs_->setTabText(1, warnings > 0
+        ? QCoreApplication::translate("HarkenHub", "Check Log (warnings: %1)").arg(warnings)
+        : QCoreApplication::translate("HarkenHub", "Check Log"));
+    sdkResultsTabs_->setCurrentIndex(failure || !comparison ? 1 : 0);
+    if (failure)
+        sdkSelectionSummary_->setText(QCoreApplication::translate(
+            "HarkenHub", "SDK check failed. Review the check log for details."));
+    if (!comparison) {
+        sdkDiffSummary_->clear();
+        return;
+    }
+
+    QStringList summary;
+    const auto targets = targets_->list();
+    const auto target = std::find_if(targets.begin(), targets.end(), [this](const auto& value) {
+        return value.targetId == selectedEngineTargetId_;
+    });
+    if (target != targets.end()) {
+        const QString sourceVersion = sdkVersion(sdkPathEdit_->text(), target->engineKind);
+        const QString currentVersion = sdkInstalled_ ? installedSdkVersion_
+            : QCoreApplication::translate("HarkenHub", "Not installed");
+        if (!sourceVersion.isEmpty() && !currentVersion.isEmpty())
+            summary << QStringLiteral("<b>%1</b>").arg(
+                QCoreApplication::translate("HarkenHub", "SDK version: %1 → %2")
+                    .arg(currentVersion, sourceVersion).toHtmlEscaped());
+    }
+    struct ChangeGroup
+    {
+        const char* action;
+        const char* color;
+        const char* countText;
+    };
+    const ChangeGroup groups[] = {
+        {"add", "#69D391", QT_TRANSLATE_NOOP("HarkenHub", "Add %1")},
+        {"replace", "#83B9FF", QT_TRANSLATE_NOOP("HarkenHub", "Update %1")},
+        {"remove", "#FF8B8B", QT_TRANSLATE_NOOP("HarkenHub", "Remove %1")},
+        {"preserve", "#9AA6B8", QT_TRANSLATE_NOOP("HarkenHub", "Keep %1")},
+    };
+    QStringList counts;
+    int modified = 0;
+    for (const auto& group : groups) {
+        const QString action = QString::fromLatin1(group.action);
+        QStringList paths;
+        for (const auto& change : comparison->fileChanges)
+            if (change.action == action) paths << change.path;
+        paths.sort();
+        const bool preserved = action == QStringLiteral("preserve");
+        if (!preserved) modified += paths.size();
+        counts << QStringLiteral("<span style='color:%1'><b>%2</b></span>")
+            .arg(QLatin1String(group.color), QCoreApplication::translate("HarkenHub", group.countText)
+                .arg(paths.size()).toHtmlEscaped());
+        if (paths.isEmpty()) continue;
+        auto* section = new QTreeWidgetItem(sdkDiffTree_,
+            {QStringLiteral("%1 (%2)").arg(localizeFileChangeAction(action)).arg(paths.size())});
+        QFont font = section->font(0);
+        font.setBold(true);
+        section->setFont(0, font);
+        section->setForeground(0, QColor(QLatin1String(group.color)));
+        for (const auto& path : paths) {
+            auto* item = new QTreeWidgetItem(section, {path});
+            item->setToolTip(0, path);
+        }
+        section->setExpanded(!preserved);
+    }
+    summary << counts.join(QStringLiteral("&nbsp;&nbsp;&nbsp;&nbsp;"));
+    if (modified == 0)
+        summary << QStringLiteral("<span style='color:#69D391'>%1</span>").arg(
+            QCoreApplication::translate("HarkenHub", "No SDK files need to be changed.").toHtmlEscaped());
+    if (failure)
+        summary.prepend(QStringLiteral("<span style='color:#FF8B8B'><b>%1</b></span>")
+            .arg(failure->summary.toHtmlEscaped()));
+    if (warnings > 0)
+        summary << QStringLiteral("<a href='log' style='color:#F0C36A'>%1</a>").arg(
+            QCoreApplication::translate("HarkenHub", "Items needing attention: %1. View check log.")
+                .arg(warnings).toHtmlEscaped());
+    sdkDiffSummary_->setText(summary.join(QStringLiteral("<br>")));
+}
+
+QString EngineIntegrationsPage::formatStepHtml(const ResultStep& step) const
+{
+    const auto text = [](const QString& value) {
+        return value.toHtmlEscaped().replace(QLatin1Char('\n'), QStringLiteral("<br>"));
+    };
+    const QString color = step.status == ResultStatus::Failed ? QStringLiteral("#FF8B8B")
+        : step.status == ResultStatus::Warning || step.status == ResultStatus::AwaitingConfirmation
+            ? QStringLiteral("#F0C36A")
+        : step.status == ResultStatus::Succeeded || step.status == ResultStatus::CheckPassed
+            ? QStringLiteral("#69D391") : QStringLiteral("#9AA6B8");
+    QString html = QStringLiteral("<h3 style='margin-top:18px;margin-bottom:6px'>%1"
+        " &nbsp; <span style='color:%2;font-size:small'>%3</span></h3><p><b>%4</b></p>")
+        .arg(text(step.title), color, text(statusText(step.status)), text(step.summary));
+    if (!step.cause.isEmpty())
+        html += QStringLiteral("<p>%1</p>").arg(text(step.cause));
+    if (!step.remediation.isEmpty())
+        html += QStringLiteral("<p style='color:%1'><b>%2</b></p>")
+            .arg(color, text(QCoreApplication::translate("HarkenHub", "Recommended action:\n%1")
+                .arg(step.remediation)));
+    for (const auto& detail : step.details) {
+        const int newline = detail.indexOf(QLatin1Char('\n'));
+        html += newline < 0 ? QStringLiteral("<p>%1</p>").arg(text(detail))
+            : QStringLiteral("<p><b>%1</b><br>%2</p>")
+                .arg(text(detail.left(newline)), text(detail.mid(newline + 1)));
+    }
+    if (!step.artifacts.isEmpty())
+        html += QStringLiteral("<p style='color:#9AA6B8'>%1</p>").arg(text(
+            QCoreApplication::translate("HarkenHub", "Files:\n%1").arg(step.artifacts.join(QLatin1Char('\n')))));
+    if (step.elapsedMs > 0)
+        html += QStringLiteral("<p style='color:#9AA6B8;font-size:small'>%1</p>").arg(text(
+            QCoreApplication::translate("HarkenHub", "Elapsed: %1 ms").arg(step.elapsedMs)));
+    return html + QStringLiteral("<hr>");
 }
 
 QString EngineIntegrationsPage::formatStepDetails(

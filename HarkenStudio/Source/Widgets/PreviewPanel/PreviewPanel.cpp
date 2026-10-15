@@ -20,7 +20,10 @@ PreviewPanel::PreviewPanel(QWidget* parent)
 
     auto& manager = VNX::ProjectManager::instance();
     connect(&manager, &VNX::ProjectManager::projectClosed, this,
-            [this] { setItem(nullptr); });
+            [this] {
+        setItem(nullptr);
+        setPinned(false);
+    });
     connect(&manager, &VNX::ProjectManager::itemCreated,
             this, &PreviewPanel::scheduleVariableRefresh);
     connect(&manager, &VNX::ProjectManager::itemDeleted,
@@ -39,6 +42,45 @@ PreviewPanel::PreviewPanel(QWidget* parent)
 void PreviewPanel::setItem(VNX::ProjectItem* item)
 {
     selectedItemId_ = item ? item->guid : QUuid();
+    if (pinned_) return;
+    boundItemId_ = selectedItemId_;
+    refreshVariables();
+}
+
+VNX::ProjectItem* PreviewPanel::boundItem() const
+{
+    return VNX::ProjectManager::instance().findItemByGuid(boundItemId_);
+}
+
+void PreviewPanel::setPinned(bool pinned)
+{
+    if (pinned_ == pinned) return;
+    pinned_ = pinned;
+    if (!pinned_) {
+        boundItemId_ = selectedItemId_;
+        refreshVariables();
+    }
+    emit pinToggled(pinned_);
+}
+
+QVariantMap PreviewPanel::snapshotState() const
+{
+    QVariantMap state;
+    if (pinned_ && boundItem())
+        state[QStringLiteral("pinnedObjectGuid")] = boundItemId_.toString(QUuid::WithoutBraces);
+    return state;
+}
+
+void PreviewPanel::restoreState(const QVariantMap& state)
+{
+    const auto* item = VNX::ProjectManager::instance().findItemByGuid(
+        QUuid(state.value(QStringLiteral("pinnedObjectGuid")).toString()));
+    boundItemId_ = item ? item->guid : selectedItemId_;
+    const bool pinned = item != nullptr;
+    if (pinned_ != pinned) {
+        pinned_ = pinned;
+        emit pinToggled(pinned_);
+    }
     refreshVariables();
 }
 
@@ -71,13 +113,21 @@ void PreviewPanel::scheduleVariableRefresh()
 void PreviewPanel::refreshVariables()
 {
     auto& manager = VNX::ProjectManager::instance();
-    const auto* item = manager.findItemByGuid(selectedItemId_);
+    const auto* item = boundItem();
+    if (!item && !boundItemId_.isNull()) {
+        boundItemId_ = QUuid();
+        if (pinned_) {
+            setPinned(false);
+            return;
+        }
+    }
     const auto dependencies = VNX::VariableConsumerSemantics::dependenciesForAudition(
         manager.currentProject(), item,
         VNX::toFieldGroupGuid(VNX::PlatformContextService::instance().context().primary));
     variableTable_->setVariables(dependencies.variables);
     bindingTable_->setConsumers(dependencies.consumers);
     updateGeometry();
+    emit contextChanged();
 }
 
 void PreviewPanel::setupUI()

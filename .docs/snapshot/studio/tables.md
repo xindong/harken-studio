@@ -1,6 +1,6 @@
 # Studio 公共表格规范与治理清单
 
-最近核对：2026-10-08。本文记录已确认的方案、业务边界及实施状态，供后续表格开发长期借鉴。Inspector 字段细节见 [inspector-tables.md](inspector-tables.md)。
+最近核对：2026-10-15。本文记录已确认的方案、业务边界及实施状态，供后续表格开发长期借鉴。Inspector 字段细节见 [inspector-tables.md](inspector-tables.md)。
 
 ## 职责边界
 
@@ -79,7 +79,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 | ID | 分类 | 位置 / 用途 | 当前入口 |
 |---|---|---|---|
 | C01 | config | Sound Inspector / Sources | SourcesSectionProvider |
-| C02 | config | Container Inspector / Selections | SelectionSectionProvider |
+| C02 | config | Container Selection Editor / Random、Sequence | SelectionListWidget |
 | C03 | config | Track Inspector / Clips | ClipsSectionProvider |
 | C04 | config | Action Inspector / Steps | StepsSectionProvider |
 | C05 | config | Attenuation Inspector / Dimensions | DimensionsSectionProvider |
@@ -116,7 +116,9 @@ Match Selection Editor 使用公共 `MatrixTableWidget`，定位与 Config Table
 
 Target 单元格和 Variable 表头均使用可编辑的标准 `ObjectRefWidget`，不包含变量试听控件。空表默认三列零行：`#`、`Target`、一个空 Variable 引用列；空引用只是编辑入口，不写入空 GUID。变量表头支持独立列选择，与行选择互斥；Ctrl 点击已选表头取消选择。控件由公共矩阵层按主题留白定位，左右让出原生列宽拖动区域，随比例列宽及主题切换同步。存在多列变量时，引用控件左侧提供独立的六点拖动柄，悬停显示水平移动箭头，起拖不占用 ObjectRef 区域；列边界显示原生调宽双箭头，调宽期间不切换成移动光标。单击定位、双击导航、选择器、更换引用的对象拖入及右键菜单沿用原有规则。条件单元格使用可输入的下拉框，通配值显示为 `*`，下拉项显示 `* (Any)`，真实名称为 `Any` 的 Label 保留其实际值；范围不超过 64 个整数时列出全部取值，超出时只列出标签，其余整数值直接输入，非整数和越界输入不提交。编辑器沿用 `TableItemDelegate` 的单元格留白，矩阵网格线和表头状态由集中皮肤提供。footer 仅保留右下角标准加减按钮：加号点击弹出菜单，不叠加菜单箭头；菜单提供 New Variable（Smooth / Step）、Select Variable 和 Select Child，减号删除当前所选行或变量列。变量列也可通过列头菜单删除。更换变量保留原匹配值，无法解析或超出新变量范围时拒绝替换。页面默认只有矩阵；双击嵌套 Target 进入其编辑器，并显示返回路径。
 
-Container 的四种选择策略统一保存于 `VSelection::selections`。Random/Sequence 在 Inspector 编辑简单条目表；Match 仍在独立 Selection Editor 编辑条件矩阵。矩阵是当前平台 selections 的编辑视图，通过 `set_item_property` 的 `selections` 字段整体提交，条目保存目标与条件，`matchAxes` 保存轴顺序。模式切换保留非活动策略数据，撤销、复制、引用清理及变量消费关系覆盖完整 selections；预览和 Pack 仅消费当前模式与平台。
+Container 的四种选择策略统一保存于 `VSelection::selections`，均在 Selection Editor 编辑。Random/Sequence 使用公共 `TableWidget` 的撑满表体，列为 `# | Child | Weight`，Sequence 隐藏 Weight；支持重复 Child、引用替换、增删、拖入及排序。Inspector 保留模式及行为字段，切换 Play Type 或 Discipline 同步刷新权重范围。双击 Container、模式切换、固定窗口及嵌套导航使用统一入口。所有策略视图通过 `set_item_property` 的 `selections` 字段整体提交当前平台数据；Match 条目保存目标与条件，`matchAxes` 保存轴顺序。模式切换保留非活动策略数据，撤销、复制、引用清理及变量消费关系覆盖完整 selections；预览和 Pack 仅消费当前模式与平台。
+
+Child 选择器仅展示当前 Container 及类型匹配的直属孩子，父级用于表达归属且不可选；不展示更高祖先、分类桶或孙级对象。
 
 无法解析的 Label 条件在编辑器中保留 `(missing)` 状态及原 GUID，未经修改的提交不会转为通配值。显式选择通配值、其他 Label 或输入有效整数后才替换条件，撤销可恢复原缺失引用。
 
@@ -124,7 +126,7 @@ Container 的四种选择策略统一保存于 `VSelection::selections`。Random
 
 匹配结果预览读取 Preview 的变量覆盖值，未覆盖时读取变量默认值，并应用变量范围与离散读取规则；它不依赖播放开始，也不追踪引擎内已经播放的实例。当前胜出行的条件单元格显示预览底色。条件与更早行完全相同的行，其行号显示警告色：Target 相同为重复行，Target 不同为无法胜出的行。单元格和 Target 提示显示具体原因与阻挡行号，并保留原有值与引用信息；编辑消除冲突后清除警告，撤销后恢复。预览与诊断不改变用户选择、未提交的编辑值或项目数据。
 
-Blend 模式的 Selection Editor 使用无表头的混合表，结构为 `# | Variable 与 Child 副表 | 混合曲线画布`。每行（row）对应一个可选的 Variable；控制区上方是可编辑的 Variable ObjectRef，下方是公共 `# | Child` 副表。画布横轴与 Variable Binding 共用 Variable 轴配置：Smooth 使用数值刻度与连续曲线，Step 使用整数刻度、Label 和阶梯预览；Kind、Label、Range 变化自动刷新，保留曲线原始坐标。纵轴显示 0–100% 混合比例。公共 `ResizableTableView` 承载跨行统一的比例分区宽度及独立行高，控制区与画布的边界、每行底边分别拖动调宽和调高；`#` 为固定宽度。画布不叠加外框，边界由宿主统一绘制；坐标轴保持 1px。分区边线止于最后一行，表格行外空白区与 Child 副表统一使用主题的次级背景。嵌套对象继续使用同一编辑器与返回路径。
+Blend 模式的 Selection Editor 使用无表头的混合表，结构为 `# | Variable 与 Child 副表 | 混合曲线画布`。每行（row）对应一个可选的 Variable；控制区上方是可编辑的 Variable ObjectRef，下方是公共 `# | Child` 副表。画布横轴与 Variable Binding 共用 Variable 轴配置：Smooth 使用数值刻度与连续曲线，Step 使用整数刻度、Label 和阶梯预览；Kind、Label、Range 变化自动刷新，保留曲线原始坐标。纵轴显示 0–100% 混合比例。公共 `ResizableTableView` 承载跨行统一的比例分区宽度及独立行高，控制区与画布的边界、每行底边分别拖动调宽和调高；`#` 为固定宽度。画布不叠加外框，边界由宿主统一绘制；坐标轴保持 1px。分区边线止于最后一行，表格行外空白区与 Child 副表统一使用公共表体的深色主背景 `bgPrimary`，与其他模式一致。嵌套对象继续使用同一编辑器与返回路径。
 
 右下角标准加减号管理混合行：加号菜单为 Add Mixing，添加一行后通过该行的 Variable 引用控件选择变量；减号为 Remove Mixing，移除当前行；外层 `#` 接入公共整行选中、拖动排序、插入位置提示、右键上下移动与键盘操作。整行选中高亮仅限外层 `#`，不覆盖 Variable、Child 副表和画布。每行的 Child 副表使用独立的右下角加减号、序号选择与拖动排序，整条曲线随成员移动。标准 ObjectRef 支持更换引用、定位和进入对象。更换 Variable 保留曲线数值坐标。所有业务写入通过 `selections` 命令形成撤销步骤；混合行是统一条目中混合曲线的编辑视图，存档字段 `blendAxes` 保存混合行身份、Variable 引用和行顺序，不另存成员名单。删除曲线保留条目的其他策略数据；调宽、调高属于编辑器布局状态。
 

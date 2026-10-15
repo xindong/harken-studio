@@ -26,7 +26,8 @@ struct WorkspaceDockCreateSpec
 class WorkspaceDockFactory
 {
 public:
-    static void setContent(ads::CDockWidget* dock, QWidget* content);
+    static void setContent(ads::CDockWidget* dock, QWidget* content,
+                           ads::CDockWidget::eInsertMode insertMode = ads::CDockWidget::AutoScrollArea);
     static ads::CDockWidget* createDetachedDock(const WorkspaceDockCreateSpec& spec);
     static ads::CDockWidget* createDock(ads::CDockManager* dockManager,
                                         const WorkspaceDockCreateSpec& spec);

@@ -89,9 +89,9 @@ void ProjectItemMenuController::buildNewChildMenu(QMenu* parentMenu)
     if (!parentMenu) return;
 
     newChildMenu_ = parentMenu->addMenu(tr("New Child"));
-    newFolderAction_ = newChildMenu_->addAction(tr("Folder"), this, [this]() { createFolder(); });
     const auto& types = ItemTypeCatalog::allTypes();
     buildCreationMenu(newChildMenu_, {types.begin(), types.end()});
+    newFolderAction_ = newChildMenu_->addAction(tr("Folder"), this, [this]() { createFolder(); });
 }
 
 void ProjectItemMenuController::buildCreationMenu(QMenu* menu, const std::vector<ProjectItem::Type>& types)

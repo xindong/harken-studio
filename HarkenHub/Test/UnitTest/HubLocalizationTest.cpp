@@ -32,6 +32,12 @@ TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
         QStringLiteral("Backed up and removed the Harken SDK and native runtimes; preserved 3 project-specific file(s)."),
         QStringLiteral("Installed SDK 1.2.3 from a verified staging directory; copied 12 managed file(s) and preserved 3 target-only file(s)."),
         QStringLiteral("Verified the content integrity of 12 Harken-managed SDK file(s)."),
+        QStringLiteral("Check-only mode did not change %1.").arg(path),
+        QStringLiteral("Review the file list before confirming the SDK change."),
+        QStringLiteral("All Harken-managed files match SDK 1.2.3; 12 Unity metadata file(s) and 2 optional target runtime file(s) are retained as expected."),
+        QStringLiteral("All Harken-managed files match SDK 1.2.3; 1 project-specific file(s) need review, while 12 Unity metadata and 2 optional runtime file(s) are retained normally."),
+        QStringLiteral("The project-specific files are outside Harken SDK ownership, so the check cannot determine whether they are still needed."),
+        QStringLiteral("Review only the project-specific files listed below. Unity-generated metadata requires no action."),
     };
     for (const QString& message : messages)
         EXPECT_EQ(VNH::HubUnityIntegrationService::localizeText(message), message);
@@ -43,6 +49,10 @@ TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
         QCoreApplication::removeTranslator(&translator);
     });
     for (const char* source : {"Change SDK...", "Change SDK", "Apply SDK Change...",
+                              "Studio %1 | %2 SDK %3", "File Changes", "Check Log", "Check Log (warnings: %1)",
+                              "SDK version: %1 → %2", "Add %1", "Update %1", "Remove %1", "Keep %1",
+                              "No SDK files need to be changed.", "Items needing attention: %1. View check log.",
+                              "SDK check failed. Review the check log for details.",
                               "Select Game Project", "Select a Unity or Unreal project", "Uninstall SDK...",
                               "Choose a directory inside this project's Plugins folder, for example Plugins/Audio/Harken.",
                               "The SDK cannot be placed inside another Unreal plugin. Choose a separate directory under Plugins.",

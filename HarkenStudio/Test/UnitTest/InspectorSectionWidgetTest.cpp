@@ -32,6 +32,7 @@
 #include "Widgets/Inspector/InspectorCustomizationBootstrap.h"
 #include "Widgets/Inspector/InspectorCustomizationRegistry.h"
 #include "Widgets/Inspector/InspectorPanel.h"
+#include "Widgets/GridEditor/GridEditorWidget.h"
 #include "Widgets/Inspector/InspectorLaunchEntry.h"
 #include "Widgets/Inspector/PropertyEditorEngine.h"
 #include "Widgets/Shared/InspectorFormRow.h"
@@ -443,8 +444,7 @@ TEST(InspectorContentLayout, CustomSectionsMatchContentInsetsAndControlEdgeAcros
         {ProjectItem::Type::Attenuation, "dimensions", "dimensionsListWidget", VNX::attenuationInspectorSchema()},
         {ProjectItem::Type::Action, "steps", "stepsListWidget", VNX::actionInspectorSchema()},
         {ProjectItem::Type::Sound, "sources", "sourcesListWidget", VNX::soundInspectorSchema()},
-        {ProjectItem::Type::Track, "clips", "clipsList", VNX::trackInspectorSchema()},
-        {ProjectItem::Type::Container, "selection", "selectionChildrenList", VNX::containerInspectorSchema()}
+        {ProjectItem::Type::Track, "clips", "clipsList", VNX::trackInspectorSchema()}
     };
     for (const auto& entry : cases) {
         for (int mode = 0; mode < 2; ++mode) {
@@ -482,10 +482,6 @@ TEST(InspectorContentLayout, CustomSectionsMatchContentInsetsAndControlEdgeAcros
             ASSERT_NE(customContent, nullptr);
             QWidget* first = table;
             QWidget* last = table;
-            if (entry.type == ProjectItem::Type::Container) {
-                first = section->findChild<QWidget*>(QStringLiteral("selectionFormRow_mode"));
-                last = section->findChild<QWidget*>(QStringLiteral("selectionFormRow_memoryScope"));
-            }
             ASSERT_NE(first, nullptr);
             ASSERT_NE(last, nullptr);
             auto* notesRow = notesLabel->parentWidget();
@@ -995,16 +991,8 @@ TEST(SelectionSectionWidget, KeepsFieldsFlatAndSeparatesRehearsalTools)
         ASSERT_NE(container, nullptr) << objectName;
         EXPECT_EQ(container->parentWidget(), behaviorPage) << objectName;
     }
-    auto* childrenList = section->findChild<QWidget*>(
-        QStringLiteral("selectionChildrenList"));
-    ASSERT_NE(childrenList, nullptr);
-    EXPECT_FALSE(isWithin(childrenList, behaviorPage));
-    EXPECT_EQ(behaviorPage->findChildren<QFrame*>(
-                  QStringLiteral("listBox"), Qt::FindDirectChildrenOnly).size(),
-              0);
-    EXPECT_EQ(childrenList->findChildren<QFrame*>(
-                  QStringLiteral("listBox"), Qt::FindDirectChildrenOnly).size(),
-              1);
+    EXPECT_EQ(section->findChild<QWidget*>(QStringLiteral("selectionChildrenList")), nullptr);
+    EXPECT_TRUE(section->findChildren<VNX::TableWidget*>().isEmpty());
 
     EXPECT_EQ(section->findChild<QToolButton*>(
                   QStringLiteral("launchEntryButton_selection")),
@@ -1059,9 +1047,7 @@ TEST(SelectionSectionWidget, ModeChangesKeepVisibleRowsCompact)
     auto* section = provider->build(&host);
     hostLayout->addWidget(section);
     hostLayout->addStretch(1);
-    auto* children = section->findChild<QWidget*>(QStringLiteral("selectionChildrenList"));
     auto* content = section->findChild<QWidget*>(QStringLiteral("selectionSectionContent"));
-    ASSERT_NE(children, nullptr);
     ASSERT_NE(content, nullptr);
     const auto& inspector = VNX::ThemeManager::instance().metrics().inspector;
     host.show();
@@ -1083,7 +1069,6 @@ TEST(SelectionSectionWidget, ModeChangesKeepVisibleRowsCompact)
             QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
 
             QList<QWidget*> rows;
-            if (children->isVisible()) rows.push_back(children);
             for (auto* row : content->findChildren<QWidget*>()) {
                 if (!row->isVisible()
                     || !row->objectName().startsWith(QStringLiteral("selectionFormRow_")))
@@ -1208,15 +1193,9 @@ TEST(SelectionSectionWidget, SelectionRowsUseInspectorFormContract)
     EXPECT_FALSE(memoryScope->isVisibleTo(section.get()));
 }
 
-TEST(SelectionSectionWidget, StandaloneOccurrenceRowsResolveBoundChildren)
+TEST(SelectionListWidget, StandaloneOccurrenceRowsResolveBoundChildren)
 {
     ensureApp();
-    VNX::registerBuiltinInspectorCustomizations();
-    auto* provider = VNX::InspectorCustomizationRegistry::instance().sectionProvider(
-        ProjectItem::Type::Container, QStringLiteral("selection"));
-    ASSERT_NE(provider, nullptr);
-
-    std::unique_ptr<QWidget> section(provider->build(nullptr));
     ProjectItem item(QStringLiteral("StandaloneContainer"),
                      ProjectItem::Type::Container);
     item.guid = QUuid::createUuid();
@@ -1230,8 +1209,9 @@ TEST(SelectionSectionWidget, StandaloneOccurrenceRowsResolveBoundChildren)
     ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::addContainerChildOccurrence(
         item, child->guid));
 
-    provider->bind(section.get(), &item);
-    auto* list = section->findChild<QWidget*>(
+    VNX::GridEditorWidget editor;
+    editor.bindItem(&item);
+    auto* list = editor.findChild<QWidget*>(
         QStringLiteral("selectionChildrenList"));
     ASSERT_NE(list, nullptr);
     QWidget* row = selectionChildRow(list, child->guid);
@@ -1263,20 +1243,13 @@ TEST(SelectionSectionWidget, InspectorSearchFindsVisiblePropertyLabels)
     auto* mode = panel.findChild<QComboBox*>(QStringLiteral("prop_mode"));
     auto* discipline = panel.findChild<QWidget*>(
         QStringLiteral("selectionFormRow_discipline"));
-    auto* childrenList = panel.findChild<QWidget*>(
-        QStringLiteral("selectionChildrenList"));
-    auto* weightHeader = panel.findChild<QLabel*>(
-        QStringLiteral("selectionChildWeightHeader"));
     ASSERT_NE(section, nullptr);
     ASSERT_NE(search, nullptr);
     ASSERT_NE(mode, nullptr);
     ASSERT_NE(discipline, nullptr);
-    ASSERT_NE(childrenList, nullptr);
-    ASSERT_NE(weightHeader, nullptr);
+    EXPECT_EQ(panel.findChild<QWidget*>(QStringLiteral("selectionChildrenList")), nullptr);
     EXPECT_EQ(panel.findChild<QWidget*>(QStringLiteral("selectionQueueGroup")), nullptr);
     EXPECT_FALSE(discipline->isHidden());
-    EXPECT_FALSE(childrenList->isHidden());
-    EXPECT_FALSE(weightHeader->isHidden());
 
     search->setText(QStringLiteral("Selection Mode"));
     EXPECT_FALSE(section->isHidden());
@@ -1285,8 +1258,6 @@ TEST(SelectionSectionWidget, InspectorSearchFindsVisiblePropertyLabels)
     search->clear();
     QCoreApplication::processEvents();
     EXPECT_FALSE(discipline->isHidden());
-    EXPECT_FALSE(childrenList->isHidden());
-    EXPECT_FALSE(weightHeader->isHidden());
 
     search->setText(QStringLiteral("Splice by Marker"));
     EXPECT_TRUE(section->isHidden());
@@ -1321,34 +1292,23 @@ TEST(SelectionSectionWidget, InspectorSearchFindsVisiblePropertyLabels)
     search->clear();
     QCoreApplication::processEvents();
     EXPECT_TRUE(discipline->isHidden());
-    EXPECT_FALSE(childrenList->isHidden());
-    EXPECT_TRUE(weightHeader->isHidden());
 
     selection->mode = VNX::SelectionMode::Match;
     emit VNX::ProjectManager::instance().itemPropertyChanged(
         &item, QStringLiteral("mode"));
     QCoreApplication::processEvents();
-    auto* childRow = selectionChildRow(childrenList, child->guid);
-    ASSERT_NE(childRow, nullptr);
-    EXPECT_EQ(childRow->findChild<QAbstractButton*>(QStringLiteral("selectionChildExpander")), nullptr);
-    EXPECT_TRUE(childrenList->isHidden());
     selection->mode = VNX::SelectionMode::Sequence;
     emit VNX::ProjectManager::instance().itemPropertyChanged(
         &item, QStringLiteral("mode"));
     QCoreApplication::processEvents();
-    childRow = selectionChildRow(childrenList, child->guid);
-    ASSERT_NE(childRow, nullptr);
-    EXPECT_FALSE(childrenList->isHidden());
     search->setText(QStringLiteral("Volume"));
     QCoreApplication::processEvents();
     EXPECT_TRUE(section->isHidden());
-    EXPECT_TRUE(childRow->isHidden());
     search->setText(QStringLiteral("Pitch"));
     QCoreApplication::processEvents();
     EXPECT_TRUE(section->isHidden());
     search->clear();
     QCoreApplication::processEvents();
-    EXPECT_FALSE(childRow->isHidden());
 
     search->setText(QStringLiteral("RenamedSearchChild"));
     EXPECT_TRUE(section->isHidden());
@@ -1356,10 +1316,7 @@ TEST(SelectionSectionWidget, InspectorSearchFindsVisiblePropertyLabels)
     emit VNX::ProjectManager::instance().itemRenamed(
         child.get(), QStringLiteral("SearchChild"));
     QCoreApplication::processEvents();
-    EXPECT_FALSE(section->isHidden());
-    QWidget* renamedRow = selectionChildRow(childrenList, child->guid);
-    ASSERT_NE(renamedRow, nullptr);
-    EXPECT_FALSE(renamedRow->isHidden());
+    EXPECT_TRUE(section->isHidden());
 }
 
 TEST(TimelineInspectorEntry, TrackAndPieceExposeInspectorContext)
@@ -1430,6 +1387,9 @@ TEST(ContainerInspectorMode, ComboCommitsSelectionMode)
 
     VNX::InspectorPanel panel;
     panel.showItemInspector(container);
+    VNX::GridEditorWidget editor;
+    editor.bindItem(container);
+    editor.show();
     auto* section = panel.findChild<VNX::CollapsibleSection*>(
         QStringLiteral("section_selection"));
     auto* behaviorPage = panel.findChild<QWidget*>(
@@ -1459,9 +1419,9 @@ TEST(ContainerInspectorMode, ComboCommitsSelectionMode)
     const int sequenceIndex = combo->findData(
         static_cast<int>(VNX::SelectionMode::Sequence));
     ASSERT_GE(sequenceIndex, 0);
-    auto* childrenList = panel.findChild<QWidget*>(
+    auto* childrenList = editor.findChild<QWidget*>(
         QStringLiteral("selectionChildrenList"));
-    auto* weightHeader = panel.findChild<QLabel*>(
+    auto* weightHeader = editor.findChild<QLabel*>(
         QStringLiteral("selectionChildWeightHeader"));
     auto* discipline = panel.findChild<QWidget*>(
         QStringLiteral("selectionFormRow_discipline"));
@@ -1650,10 +1610,9 @@ TEST(VariableInspectorRange, ConflictDialogListsEveryCellAndCanProceed)
     pm.closeProject();
 }
 
-TEST(SelectionSectionWidget, UnifiedChildrenListDragReordersAndUndo)
+TEST(SelectionListWidget, UnifiedChildrenListDragReordersAndUndo)
 {
     ensureApp();
-    VNX::registerBuiltinInspectorCustomizations();
     auto& pm = VNX::ProjectManager::instance();
     if (pm.isProjectOpen()) pm.closeProject();
     QTemporaryDir tempDir;
@@ -1699,11 +1658,11 @@ TEST(SelectionSectionWidget, UnifiedChildrenListDragReordersAndUndo)
     ASSERT_TRUE(firstOccurrence.has_value());
     ASSERT_TRUE(secondOccurrence.has_value());
 
-    VNX::InspectorPanel panel;
-    panel.showItemInspector(container);
+    VNX::GridEditorWidget panel;
+    panel.bindItem(container);
     panel.show();
-    VNX::InspectorPanel otherPanel;
-    otherPanel.showItemInspector(otherContainer);
+    VNX::GridEditorWidget otherPanel;
+    otherPanel.bindItem(otherContainer);
     otherPanel.setGeometry(panel.geometry());
     otherPanel.show();
     QCoreApplication::processEvents();
@@ -1786,10 +1745,9 @@ TEST(SelectionSectionWidget, UnifiedChildrenListDragReordersAndUndo)
     pm.closeProject();
 }
 
-TEST(SelectionSectionWidget, DroppedChildrenPreserveOwnershipAndPlatformScopedUndo)
+TEST(SelectionListWidget, DroppedChildrenPreserveOwnershipAndPlatformScopedUndo)
 {
     ensureApp();
-    VNX::registerBuiltinInspectorCustomizations();
     auto& pm = VNX::ProjectManager::instance();
     if (pm.isProjectOpen()) pm.closeProject();
     QTemporaryDir tempDir;
@@ -1819,9 +1777,9 @@ TEST(SelectionSectionWidget, DroppedChildrenPreserveOwnershipAndPlatformScopedUn
     context.setSelected({HarkenTest::PlatformIds::Android}, HarkenTest::PlatformIds::Android, false);
     const auto restoreContext = qScopeGuard([&] { context.setAll(true); });
     VNX::UndoRedoManager::instance().clear();
-    VNX::InspectorPanel panel;
+    VNX::GridEditorWidget panel;
     panel.resize(480, 720);
-    panel.showItemInspector(container);
+    panel.bindItem(container);
     panel.show();
     QCoreApplication::processEvents();
     auto* list = panel.findChild<QWidget*>(QStringLiteral("selectionChildrenList"));
@@ -1891,10 +1849,9 @@ TEST(SelectionSectionWidget, DroppedChildrenPreserveOwnershipAndPlatformScopedUn
     EXPECT_EQ(selection->selections, after);
 }
 
-TEST(SelectionSectionWidget, ChildrenFooterAddsAndUndoes)
+TEST(SelectionListWidget, ChildrenFooterAddsAndUndoes)
 {
     ensureApp();
-    VNX::registerBuiltinInspectorCustomizations();
     auto& pm = VNX::ProjectManager::instance();
     if (pm.isProjectOpen()) pm.closeProject();
     QTemporaryDir tempDir;
@@ -1934,9 +1891,9 @@ TEST(SelectionSectionWidget, ChildrenFooterAddsAndUndoes)
     EXPECT_EQ(remaining->parent, container);
     VNX::UndoRedoManager::instance().clear();
 
-    VNX::InspectorPanel panel;
+    VNX::GridEditorWidget panel;
     panel.resize(480, 720);
-    panel.showItemInspector(container);
+    panel.bindItem(container);
     panel.show();
     QCoreApplication::processEvents();
 
@@ -2085,11 +2042,10 @@ TEST(SelectionSectionWidget, ChildrenFooterAddsAndUndoes)
     pm.closeProject();
 }
 
-TEST(SelectionSectionWidget,
+TEST(SelectionListWidget,
      DuplicateOccurrencesReplaceExactlyAndPreserveIdentityOrderAndWeightsThroughUndo)
 {
     ensureApp();
-    VNX::registerBuiltinInspectorCustomizations();
     auto& pm = VNX::ProjectManager::instance();
     if (pm.isProjectOpen()) pm.closeProject();
     QTemporaryDir tempDir;
@@ -2125,8 +2081,8 @@ TEST(SelectionSectionWidget,
     EXPECT_EQ(shared->parent, container);
     EXPECT_EQ(replacement->parent, container);
 
-    VNX::InspectorPanel panel;
-    panel.showItemInspector(container);
+    VNX::GridEditorWidget panel;
+    panel.bindItem(container);
     panel.show();
     QCoreApplication::processEvents();
     auto* list = panel.findChild<QWidget*>(
@@ -2245,10 +2201,9 @@ TEST(SelectionSectionWidget,
     pm.closeProject();
 }
 
-TEST(SelectionSectionWidget, RandomWeightEditKeepsFocusedEditorAlive)
+TEST(SelectionListWidget, RandomWeightEditorTracksBehaviorWithoutLosingFocus)
 {
     ensureApp();
-    VNX::registerBuiltinInspectorCustomizations();
     auto& pm = VNX::ProjectManager::instance();
     if (pm.isProjectOpen()) pm.closeProject();
     QTemporaryDir tempDir;
@@ -2273,8 +2228,8 @@ TEST(SelectionSectionWidget, RandomWeightEditKeepsFocusedEditorAlive)
             *container, child->guid);
     ASSERT_TRUE(childOccurrence.has_value());
 
-    VNX::InspectorPanel panel;
-    panel.showItemInspector(container);
+    VNX::GridEditorWidget panel;
+    panel.bindItem(container);
     auto* weight = panel.findChild<QSpinBox*>(
         QStringLiteral("selectionBehaviorWeight"));
     ASSERT_NE(weight, nullptr);
@@ -2289,6 +2244,23 @@ TEST(SelectionSectionWidget, RandomWeightEditKeepsFocusedEditorAlive)
     EXPECT_EQ(panel.findChild<QSpinBox*>(
                   QStringLiteral("selectionBehaviorWeight")),
               weight);
+    EXPECT_EQ(weight->minimum(), 0);
+    const auto queued = VNX::ActionManager::instance().execute(
+        QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(container->objectID)},
+         {QStringLiteral("property"), QStringLiteral("playType")},
+         {QStringLiteral("value"), static_cast<int>(VNX::SelectionPlayType::Queue)}},
+        VNX::ActionSource::GUI);
+    ASSERT_TRUE(queued.success);
+    QCoreApplication::processEvents();
+    ASSERT_FALSE(weightGuard.isNull());
+    EXPECT_EQ(weight->minimum(), 1);
+    EXPECT_EQ(weight->value(), 1);
+    VNX::UndoRedoManager::instance().undoStack()->undo();
+    QCoreApplication::processEvents();
+    ASSERT_FALSE(weightGuard.isNull());
+    EXPECT_EQ(weight->minimum(), 0);
+    EXPECT_EQ(weight->value(), 1);
     pm.closeProject();
 }
 
@@ -2325,9 +2297,12 @@ TEST(SelectionSectionWidget, TypedBehaviorNumbersCommitOnceOnAccept)
 
     VNX::InspectorPanel panel;
     panel.showItemInspector(container);
+    VNX::GridEditorWidget editor;
+    editor.bindItem(container);
+    editor.show();
     panel.show();
 
-    auto* weight = panel.findChild<QSpinBox*>(
+    auto* weight = editor.findChild<QSpinBox*>(
         QStringLiteral("selectionBehaviorWeight"));
     ASSERT_NE(weight, nullptr);
     ASSERT_FALSE(weight->keyboardTracking());
@@ -2405,7 +2380,10 @@ TEST(SelectionSectionWidget, PlatformSwitchUsesIndependentRowsAndKeepsAuthoredBe
     context.setSelected({HarkenTest::PlatformIds::Android}, HarkenTest::PlatformIds::Android, false);
     VNX::InspectorPanel panel;
     panel.showItemInspector(container);
-    auto weights = panel.findChildren<QSpinBox*>(QStringLiteral("selectionBehaviorWeight"));
+    VNX::GridEditorWidget editor;
+    editor.bindItem(container);
+    editor.show();
+    auto weights = editor.findChildren<QSpinBox*>(QStringLiteral("selectionBehaviorWeight"));
     ASSERT_EQ(weights.size(), 1);
     EXPECT_EQ(weights.front()->value(), 23);
     auto* avoid = panel.findChild<QSpinBox*>(QStringLiteral("selectionBehaviorAvoidRepeat"));
@@ -2416,14 +2394,14 @@ TEST(SelectionSectionWidget, PlatformSwitchUsesIndependentRowsAndKeepsAuthoredBe
     memory->setCurrentIndex(memory->findData(static_cast<int>(VNX::SelectionMemoryScope::Global)));
     QCoreApplication::processEvents();
     EXPECT_EQ(selection->behavior.avoidRepeat, 9);
-    weights = panel.findChildren<QSpinBox*>(QStringLiteral("selectionBehaviorWeight"));
+    weights = editor.findChildren<QSpinBox*>(QStringLiteral("selectionBehaviorWeight"));
     weights.front()->setValue(71);
     QCoreApplication::processEvents();
     EXPECT_EQ(selection->selections.table(HarkenTest::PlatformIds::Android).occurrenceRows().front().weight, 71);
     EXPECT_EQ(selection->selections.shared, before.shared);
     context.setSelected({HarkenTest::PlatformIds::Windows}, HarkenTest::PlatformIds::Windows, false);
     QCoreApplication::processEvents();
-    weights = panel.findChildren<QSpinBox*>(QStringLiteral("selectionBehaviorWeight"));
+    weights = editor.findChildren<QSpinBox*>(QStringLiteral("selectionBehaviorWeight"));
     ASSERT_EQ(weights.size(), 10);
     for (const auto* weight : weights) EXPECT_EQ(weight->value(), 50);
     avoid = panel.findChild<QSpinBox*>(QStringLiteral("selectionBehaviorAvoidRepeat"));
@@ -2433,7 +2411,7 @@ TEST(SelectionSectionWidget, PlatformSwitchUsesIndependentRowsAndKeepsAuthoredBe
     EXPECT_EQ(selection->behavior.avoidRepeat, 9);
     context.setAll(true);
     QCoreApplication::processEvents();
-    weights = panel.findChildren<QSpinBox*>(QStringLiteral("selectionBehaviorWeight"));
+    weights = editor.findChildren<QSpinBox*>(QStringLiteral("selectionBehaviorWeight"));
     weights.front()->setValue(31);
     QCoreApplication::processEvents();
     EXPECT_FALSE(selection->selections.platforms.isEmpty());
@@ -3184,10 +3162,9 @@ TEST(PlayablePropertyInspector, RatingGroupDistinguishesInheritedAttenuationFrom
     pm.closeProject();
 }
 
-TEST(PlayablePropertyInspector, ContainerChildRowsKeepWeightWithoutPlaybackEditorsOrExpansion)
+TEST(SelectionListWidget, ContainerChildRowsKeepWeightWithoutPlaybackEditorsOrExpansion)
 {
     ensureApp();
-    VNX::registerBuiltinInspectorCustomizations();
     auto& pm = VNX::ProjectManager::instance();
     if (pm.isProjectOpen()) pm.closeProject();
     QTemporaryDir tempDir;
@@ -3213,15 +3190,14 @@ TEST(PlayablePropertyInspector, ContainerChildRowsKeepWeightWithoutPlaybackEdito
     const auto originalBehavior = container->comp<VNX::VSelection>()->behavior;
     VNX::UndoRedoManager::instance().clear();
 
-    VNX::InspectorPanel panel;
-    panel.showItemInspector(container);
+    VNX::GridEditorWidget panel;
+    panel.bindItem(container);
     auto* list = panel.findChild<QWidget*>(QStringLiteral("selectionChildrenList"));
     ASSERT_NE(list, nullptr);
     ASSERT_EQ(list->findChildren<QWidget*>(QStringLiteral("selectionChildRow")).size(), 2);
     EXPECT_TRUE(list->findChildren<QWidget*>(QStringLiteral("selectionChildOccurrence")).isEmpty());
     EXPECT_TRUE(list->findChildren<QToolButton*>(QStringLiteral("selectionChildExpander")).isEmpty());
     EXPECT_TRUE(list->findChildren<VNX::ParameterControlHost*>().isEmpty());
-    EXPECT_NE(panel.findChild<VNX::ParameterControlHost*>(QStringLiteral("prop_volume")), nullptr);
     auto* firstRow = selectionChildRow(list, first->guid);
     ASSERT_NE(firstRow, nullptr);
     auto* weight = firstRow->findChild<QSpinBox*>(QStringLiteral("selectionBehaviorWeight"));

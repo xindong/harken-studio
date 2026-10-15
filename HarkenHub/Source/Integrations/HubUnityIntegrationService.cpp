@@ -260,6 +260,8 @@ QString localizeUnityText(const QString& text)
         QRegularExpression expression;
         const char* source;
     } installationMessages[] = {
+        {QRegularExpression(QStringLiteral(R"(^Check-only mode did not change (.*)\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "Check-only mode did not change %1.")},
         {QRegularExpression(QStringLiteral(R"(^Ready to remove (\d+) Harken SDK/runtime file\(s\) and preserve (\d+) project-specific file\(s\)\.$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Ready to remove %1 Harken SDK/runtime file(s) and preserve %2 project-specific file(s).")},
         {QRegularExpression(QStringLiteral(R"(^Installed package: (.*)$)")),
@@ -408,6 +410,23 @@ QString localizeUnityText(const QString& text)
         "The installed SDK exactly matches selected SDK source %1.");
     if (!exactSdk.isEmpty())
         return exactSdk;
+
+    const QString managedCurrent = translateMatch(
+        QRegularExpression(QStringLiteral(R"(^All Harken-managed files match SDK (.*); (\d+) Unity metadata file\(s\) and (\d+) optional target runtime file\(s\) are retained as expected\.$)")),
+        "All Harken-managed files match SDK %1; %2 Unity metadata file(s) and %3 optional target runtime file(s) are retained as expected.");
+    if (!managedCurrent.isEmpty())
+        return managedCurrent;
+
+    const QString projectFilesNeedReview = translateMatch(
+        QRegularExpression(QStringLiteral(R"(^All Harken-managed files match SDK (.*); (\d+) project-specific file\(s\) need review, while (\d+) Unity metadata and (\d+) optional runtime file\(s\) are retained normally\.$)")),
+        "All Harken-managed files match SDK %1; %2 project-specific file(s) need review, while %3 Unity metadata and %4 optional runtime file(s) are retained normally.");
+    if (!projectFilesNeedReview.isEmpty())
+        return projectFilesNeedReview;
+
+    if (text == QStringLiteral("The project-specific files are outside Harken SDK ownership, so the check cannot determine whether they are still needed."))
+        return QCoreApplication::translate("HarkenHub", "The project-specific files are outside Harken SDK ownership, so the check cannot determine whether they are still needed.");
+    if (text == QStringLiteral("Review only the project-specific files listed below. Unity-generated metadata requires no action."))
+        return QCoreApplication::translate("HarkenHub", "Review only the project-specific files listed below. Unity-generated metadata requires no action.");
 
     const QRegularExpressionMatch managedDiffers = QRegularExpression(
         QStringLiteral(
@@ -583,6 +602,9 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     result.staleFilesToRemove = source.staleFilesToRemove;
     result.targetOnlyFilesPreserved = source.targetOnlyFilesPreserved;
     result.filesRemoved = source.filesRemoved;
+    result.fileChanges.reserve(source.fileChanges.size());
+    for (const auto& change : source.fileChanges)
+        result.fileChanges.push_back({change.action, change.relative});
     result.steps.reserve(source.steps.size());
     for (const auto& step : source.steps) {
         result.steps.push_back({
