@@ -234,7 +234,7 @@ namespace Harken.Unity.Tests
                 Assert.That(publication.TryFindAction("Play_U4_A", out GameplayAction selected), Is.True);
                 Set(Action, "actionName", selected.Name);
                 Set(Action, "projectId", publication.ProjectId);
-                Assert.That(Runtime.ConfigureBeforeStartup("Audio/SpatialPacks", "Init.pack", new[] { selected.OwnerPackStableId }, true, false), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Runtime.ConfigureBeforeStartup("Audio/SpatialPacks", publication.InitPack.Path, new[] { selected.OwnerPackStableId }, true, false), Is.EqualTo(VnResult.VN_OK));
                 Owner.SetActive(true);
             }
 
