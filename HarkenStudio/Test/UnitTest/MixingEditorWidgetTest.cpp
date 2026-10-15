@@ -490,8 +490,8 @@ TEST_F(MixingEditorWidgetTest, VariableKindRefreshKeepsCurvesAndMatchesRehearsal
     for (const auto& tick : data.textTicks)
         if (tick.rect.top() > data.graphRect.bottom()) labels.append(tick.text);
     for (const auto& label : variable->labels) EXPECT_TRUE(labels.contains(label.name));
-    const auto pick = QPointF(data.graphRect.left() + data.graphRect.width() * 1.3 / 3.0,
-                              data.graphRect.bottom() - data.graphRect.height() * (200.0 / 3.0) / 100.0);
+    const auto pick = QPointF(data.graphRect.left() + data.graphRect.width() * 2.4 / 3.0,
+                              data.graphRect.bottom() - data.graphRect.height() * (100.0 / 3.0) / 100.0);
     QMouseEvent press(QEvent::MouseButtonPress, pick, canvas->mapToGlobal(pick.toPoint()),
         Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
     QApplication::sendEvent(canvas, &press);

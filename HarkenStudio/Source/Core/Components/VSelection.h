@@ -127,7 +127,7 @@ inline const PropertySchema& VSelection::schema()
           } },
         { .field="variableResponse", .type=PropType::Enum, .label="Variable Response", .section=PropertySection::Selection,
           .flags={.serialize=false},
-          .options={{"At Start",0},{"Live",1}},
+          .options={{"Fixed",0},{"Live",1}},
           .get=[](const VNX::IComponent* c) {
               return QVariant(static_cast<int>(static_cast<const VSelection*>(c)->variableResponse()));
           },

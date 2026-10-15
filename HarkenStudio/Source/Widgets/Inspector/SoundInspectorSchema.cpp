@@ -60,7 +60,7 @@ const PropertySchema& soundInspectorSchema()
         sources.flags.serialize = false;
         sources.elementSchema = {
             {.field="sourceId", .type=PropType::ObjectRef, .label="Audio"},
-            {.field="range", .type=PropType::Struct, .label="Wave",
+            {.field="range", .type=PropType::Struct, .label="Waveform",
              .elementSchema={
                  {.field="trimStartFrame", .type=PropType::Int, .label="Trim Start"},
                  {.field="trimEndFrame", .type=PropType::Int, .label="Trim End"},

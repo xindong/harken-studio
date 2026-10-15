@@ -384,7 +384,7 @@ void MixingEditorWidget::buildRow(int index)
     view.canvas->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     view_->setIndexWidget(model_->index(index, 1), view.page);
     view_->setIndexWidget(model_->index(index, 2), view.canvas);
-    view_->setRowHeight(index, rowHeights_.value(row.guid, metrics.controlHeight * 11));
+    view_->setRowHeight(index, rowHeights_.value(row.guid, view_->verticalHeader()->minimumSectionSize()));
     connect(view.canvas, &MixingRowCanvas::clipSelected, this, [this, index, generation](int child) {
         if (isCurrent(generation)) selectChild(index, child);
     });
