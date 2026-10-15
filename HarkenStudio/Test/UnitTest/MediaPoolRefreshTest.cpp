@@ -3,13 +3,41 @@
 #include "AssetPipeline/AssetTypes.h"
 #include "AssetPipeline/MediaPool.h"
 #include "AssetPipeline/PathUtils.h"
+#include "AssetPipeline/WaveformCache.h"
+#include "Core/ProjectManager.h"
+#include "Core/LanguageContextService.h"
+#include "Core/PlatformContextService.h"
+#include "Core/SoundSourceSemantics.h"
+#include "Core/ThemeManager.h"
+#include "Core/UndoCommands.h"
+#include "Widgets/Blueprint/BlueprintCanvasWidget.h"
+#include "Widgets/Blueprint/NodeItem.h"
+#include "Widgets/Inspector/InspectorPanel.h"
+#include "Widgets/Inspector/Providers/SourceRangeThumb.h"
+#include "Widgets/Inspector/Providers/SourcesSectionProvider.h"
+#include "Widgets/ProjectExplorer/ProjectExplorer.h"
+#include "Widgets/ProjectTree/ProjectTreeWidget.h"
+#include "Widgets/Selector/ObjectRefWidget.h"
+#include "Widgets/SourceEditor/SourceEditorWidget.h"
+#include "Widgets/SourceEditor/SourceEditorWaveformView.h"
+#include "Support/ProjectPlatformTestUtils.h"
 
 #include <gtest/gtest.h>
 
+#include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QGraphicsScene>
+#include <QImage>
+#include <QLabel>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QScopeGuard>
 #include <QTemporaryDir>
+#include <QThreadPool>
+#include <QtCore/qtestsupport_core.h>
 
+#include <array>
 #include <vector>
 
 namespace {
@@ -108,4 +136,433 @@ TEST(MediaPoolRefreshTest, RefreshesMetadataAndHashForAnExternallyChangedSource)
 
     QObject::disconnect(connection);
     VNX::AssetRegistry::instance().clear();
+}
+
+TEST(MediaPoolRefreshTest, ReplacementPreservesFilesOnSelfCopyAndFailure)
+{
+    using namespace VNX;
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = AssetRegistry::instance();
+    registry.clear();
+    registry.setProjectRoot(dir.path());
+    const auto cleanup = qScopeGuard([&] { registry.clear(); });
+    const QString input = dir.filePath(QStringLiteral("Hit.wav"));
+    writeWav(input, 480, 0.2f);
+    AssetImporter importer;
+    importer.setProjectRoot(dir.path());
+    const auto imported = importer.importFile(input, nullptr);
+    ASSERT_TRUE(imported.success);
+    const AssetInfo original = *registry.getAsset(imported.sourceID);
+    const auto copied = MediaPool::instance().batchReplace({{original.sourceID, original.absolutePath}});
+    ASSERT_EQ(copied.size(), 1);
+    EXPECT_TRUE(copied.front().success);
+    EXPECT_EQ(AssetImporter::computeContentHash(original.absolutePath), original.contentHash);
+    const auto rejected = MediaPool::instance().batchReplace(
+        {{original.sourceID, dir.filePath(QStringLiteral("absent.wav"))}});
+    ASSERT_EQ(rejected.size(), 1);
+    EXPECT_FALSE(rejected.front().success);
+    EXPECT_EQ(AssetImporter::computeContentHash(original.absolutePath), original.contentHash);
+
+    AssetInfo duplicate = original;
+    duplicate.sourceID = registry.allocateStableID();
+    EXPECT_FALSE(registry.registerAsset(duplicate));
+    EXPECT_EQ(registry.getAssetByPath(original.relativePath)->sourceID, original.sourceID);
+    EXPECT_EQ(registry.count(), 1);
+}
+
+TEST(MediaPoolRefreshTest, ExternalFileLifecyclePreservesAuthoredReferencesAcrossViewsAndReload)
+{
+    using namespace VNX;
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    auto& media = MediaPool::instance();
+    const auto cleanup = qScopeGuard([&] {
+        UndoRedoManager::instance().clear();
+        manager.closeProject();
+    });
+    ProjectConfig config;
+    config.name = QStringLiteral("ExternalSources");
+    config.location = dir.path();
+    config.platforms = HarkenTest::platforms({QStringLiteral("Windows"), QStringLiteral("Android")});
+    ASSERT_TRUE(manager.createProject(config));
+    manager.setProjectLanguagesInternal({QStringLiteral("English"), QStringLiteral("Japanese")});
+    auto& languages = LanguageContextService::instance();
+    auto& platforms = PlatformContextService::instance();
+    const auto windows = HarkenTest::PlatformIds::Windows;
+    const auto android = HarkenTest::PlatformIds::Android;
+    languages.setLanguage(QStringLiteral("English"));
+    platforms.setSelected({windows}, windows, false);
+    manager.fileWatcher()->setDebounceInterval(50);
+    const auto debounce = qScopeGuard([&] { manager.fileWatcher()->setDebounceInterval(500); });
+    const QString projectPath = manager.currentProject()->projectPath;
+    const QString audioRoot = PathUtils::getAudioSourcesDir(registry.projectRoot());
+    const QString path = QDir(audioRoot).filePath(QStringLiteral("nested/external.wav"));
+    const QString otherPath = QDir(audioRoot).filePath(QStringLiteral("other.wav"));
+    ASSERT_TRUE(QDir().mkpath(QFileInfo(path).absolutePath()));
+    writeWav(path, 480, 0.1f);
+    writeWav(otherPath, 480, 0.2f);
+    ASSERT_TRUE(QTest::qWaitFor([&] {
+        return registry.findAssetByPath(path) && registry.findAssetByPath(otherPath);
+    }, 5000));
+    const uint32_t sourceID = registry.findAssetByPath(path)->sourceID;
+    const uint32_t otherID = registry.findAssetByPath(otherPath)->sourceID;
+    EXPECT_FALSE(registry.isUncommitted(sourceID));
+    auto* layer = manager.createItem(nullptr, QStringLiteral("Layer"), ProjectItem::Type::Layer);
+    ASSERT_NE(layer, nullptr);
+    auto* sound = manager.createItem(layer, QStringLiteral("ActiveMissing"), ProjectItem::Type::Sound);
+    auto* other = manager.createItem(layer, QStringLiteral("InactiveMissing"), ProjectItem::Type::Sound);
+    ASSERT_NE(sound, nullptr);
+    ASSERT_NE(other, nullptr);
+    SoundSourceDef source;
+    source.entryId = QUuid::createUuid();
+    source.sourceId = sourceID;
+    source.trimStartFrame = 12;
+    source.trimEndFrame = 240;
+    SoundSourceDef alternate;
+    alternate.entryId = QUuid::createUuid();
+    alternate.sourceId = otherID;
+    sound->comp<VSound>()->sources.plain.entries = {source, alternate};
+    other->comp<VSound>()->sources.plain.entries = {source, alternate};
+    SoundSourceSemantics::assignActive(sound->comp<VSound>()->sources.plain, source.entryId);
+    SoundSourceSemantics::assignActive(other->comp<VSound>()->sources.plain, alternate.entryId);
+    auto* component = sound->comp<VSound>();
+    component->distinguishLanguage = true;
+    component->sources.localized[QStringLiteral("English")] = component->sources.plain;
+    component->sources.plain = {};
+    auto& english = component->sources.localized[QStringLiteral("English")];
+    SoundSourceSemantics::assignActive(english, alternate.entryId, ProjectPlatformSemantics::idString(android));
+    auto& japanese = component->sources.localized[QStringLiteral("Japanese")];
+    alternate.entryId = QUuid::createUuid();
+    japanese.entries = {alternate};
+    SoundSourceSemantics::assignActive(japanese, alternate.entryId);
+    sound->markDirty();
+    other->markDirty();
+    const auto authored = SoundSourceSemantics::toJson(sound->comp<VSound>()->sources);
+    const QUuid soundGuid = sound->guid;
+    ProjectExplorer explorer;
+    BlueprintCanvasWidget blueprint;
+    blueprint.useSignalChain(layer);
+    BlueprintCanvasWidget projectBlueprint;
+    const auto originalFields = blueprint.nodeContentFields();
+    const auto restoreFields = qScopeGuard([&] {
+        blueprint.setNodeContentFields(originalFields);
+        projectBlueprint.setNodeContentFields(originalFields);
+    });
+    blueprint.setNodeContentFields(kAllNodeContentFields);
+    projectBlueprint.setNodeContentFields(kAllNodeContentFields);
+    InspectorPanel inspector;
+    SourcesSectionProvider provider;
+    std::unique_ptr<QWidget> sources(provider.build(&inspector));
+    provider.bind(sources.get(), sound);
+    int editorRequests = 0;
+    QObject::connect(&inspector, &InspectorPanel::externalEditorRequested, sources.get(),
+        [&](const ExternalEditorSelection& selection, bool) {
+            EXPECT_EQ(selection.kind, ExternalEditorSelection::Kind::Source);
+            EXPECT_EQ(selection.ownerGuid, soundGuid);
+            EXPECT_EQ(selection.sourceEntryId, source.entryId);
+            ++editorRequests;
+        });
+    SourceEditorWidget editor;
+    editor.bindSource(sourceID, soundGuid, source.entryId);
+    const auto* waveform = editor.findChild<SourceEditorWaveformView*>();
+    ASSERT_NE(waveform, nullptr);
+    const auto sourceVisible = [&] {
+        return !explorer.sourcesTree()->findItems(QStringLiteral("external.wav"),
+            Qt::MatchExactly | Qt::MatchRecursive).isEmpty();
+    };
+    const auto sourceReference = [&]() -> ObjectRefWidget* {
+        for (auto* ref : sources->findChildren<ObjectRefWidget*>())
+            if (ref->currentObjectID() == sourceID && ref->isVisibleTo(sources.get()))
+                return ref;
+        return nullptr;
+    };
+    const auto referenceInvalid = [&] {
+        const auto* ref = sourceReference();
+        return ref && ref->property("inputInvalid").toBool();
+    };
+    const auto clickWave = [&](bool enabled) {
+        auto* ref = sourceReference();
+        ASSERT_NE(ref, nullptr);
+        QWidget* row = ref->parentWidget();
+        while (row && row->objectName() != QStringLiteral("listRow"))
+            row = row->parentWidget();
+        ASSERT_NE(row, nullptr);
+        auto* thumb = row->findChild<SourceRangeThumb*>();
+        ASSERT_NE(thumb, nullptr);
+        EXPECT_EQ(thumb->isEnabled(), enabled);
+        const QPoint point = thumb->rect().center();
+        QMouseEvent press(QEvent::MouseButtonPress, point, thumb->mapToGlobal(point),
+            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(thumb, &press);
+        QMouseEvent release(QEvent::MouseButtonRelease, point, thumb->mapToGlobal(point),
+            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(thumb, &release);
+    };
+    const auto hasErrorPixels = [](const QImage& image) {
+        const QColor error = ThemeManager::instance().colors().error;
+        for (int y = 0; y < image.height(); ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor pixel = image.pixelColor(x, y);
+                if (pixel.alpha() > 128 && qAbs(pixel.red() - error.red()) < 3
+                    && qAbs(pixel.green() - error.green()) < 3
+                    && qAbs(pixel.blue() - error.blue()) < 3)
+                    return true;
+            }
+        }
+        return false;
+    };
+    const auto treeError = [&](const QString& name, bool icon = false) {
+        const auto rows = explorer.findChild<ProjectTreeWidget*>()->findItems(
+            name, Qt::MatchStartsWith | Qt::MatchRecursive);
+        if (rows.isEmpty()) return false;
+        return icon ? hasErrorPixels(rows.front()->icon(0).pixmap(QSize(20, 20)).toImage())
+            : rows.front()->foreground(0).color() == ThemeManager::instance().colors().error;
+    };
+    const auto blueprintError = [&](const QString& name, bool icon = false) {
+        for (auto* item : blueprint.scene()->items()) {
+            auto* node = dynamic_cast<NodeItem*>(item);
+            if (!node || node->title() != name) continue;
+            if (!icon)
+                return node->titleColor() == ThemeManager::instance().colors().error;
+            QImage image(QSize(qCeil(node->titleRect().left()), qCeil(node->titleRect().bottom())),
+                QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::transparent);
+            QPainter painter(&image);
+            node->paint(&painter, nullptr, nullptr);
+            painter.end();
+            return hasErrorPixels(image);
+        }
+        return false;
+    };
+    const auto expectIcons = [&](bool missing, bool active) {
+        auto* ref = sourceReference();
+        ASSERT_NE(ref, nullptr);
+        bool foundIcon = false;
+        for (auto* label : ref->findChildren<QLabel*>()) {
+            if (label->pixmap().isNull()) continue;
+            foundIcon = true;
+            EXPECT_EQ(hasErrorPixels(label->pixmap().toImage()), missing);
+        }
+        EXPECT_TRUE(foundIcon);
+        EXPECT_EQ(treeError(sound->name, true), active);
+        EXPECT_EQ(blueprintError(sound->name, true), active);
+        EXPECT_FALSE(treeError(other->name, true));
+        EXPECT_FALSE(blueprintError(other->name, true));
+    };
+    const auto soundNode = [&](const BlueprintCanvasWidget& canvas) -> NodeItem* {
+        for (auto* item : canvas.scene()->items())
+            if (auto* node = dynamic_cast<NodeItem*>(item); node && node->objectID() == sound->objectID)
+                return node;
+        return nullptr;
+    };
+    const QColor waveformBackground = ThemeManager::instance().snapshot()->domains.nodeGraphNode.waveformBg;
+    const auto renderWaveform = [&](const BlueprintCanvasWidget& canvas) {
+        auto* node = soundNode(canvas);
+        if (!node) return QImage{};
+        QImage image(node->shape().boundingRect().size().toSize(), QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        node->paint(&painter, nullptr, nullptr);
+        painter.end();
+        QRect background;
+        for (int y = 0; y < image.height(); ++y)
+            for (int x = 0; x < image.width(); ++x)
+                if (image.pixelColor(x, y) == waveformBackground)
+                    background = background.united(QRect(x, y, 1, 1));
+        return background.isEmpty() ? QImage{} : image.copy(background.adjusted(3, 3, -3, -3));
+    };
+    const auto waveformsMatch = [&](bool blank) {
+        for (const auto* canvas : {&blueprint, &projectBlueprint}) {
+            const auto image = renderWaveform(*canvas);
+            if (image.isNull()) return false;
+            bool empty = true;
+            for (int y = 0; y < image.height(); ++y)
+                for (int x = 0; x < image.width(); ++x)
+                    empty &= image.pixelColor(x, y) == waveformBackground;
+            if (empty != blank) return false;
+        }
+        return true;
+    };
+    ASSERT_TRUE(sourceVisible());
+    ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(false); }, 5000));
+    const std::array<std::pair<BlueprintCanvasWidget*, QSizeF>, 2> waveformViews{{
+        {&blueprint, soundNode(blueprint)->shape().boundingRect().size()},
+        {&projectBlueprint, soundNode(projectBlueprint)->shape().boundingRect().size()}
+    }};
+    clickWave(true);
+    EXPECT_EQ(editorRequests, 1);
+    expectIcons(false, false);
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(QFile::remove(path));
+    clickWave(true);
+    EXPECT_EQ(editorRequests, 1);
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(QTest::qWaitFor([&] {
+        return !sourceVisible() && referenceInvalid()
+            && !waveform->hasWaveform()
+            && media.cachedStatus(sourceID) == MediaStatus::Missing
+            && treeError(sound->name) && blueprintError(sound->name);
+    }, 5000));
+    EXPECT_FALSE(treeError(other->name));
+    EXPECT_FALSE(blueprintError(other->name));
+    clickWave(false);
+    EXPECT_EQ(editorRequests, 1);
+    expectIcons(true, true);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(true); }, 5000));
+    for (const auto& [canvas, size] : waveformViews) {
+        EXPECT_EQ(soundNode(*canvas)->shape().boundingRect().size(), size);
+        canvas->setNodeContentFields(kAllNodeContentFields & ~NodeContentFields(NodeContentField::Waveform));
+        EXPECT_TRUE(renderWaveform(*canvas).isNull());
+        EXPECT_LT(soundNode(*canvas)->contentHeight(), size.height());
+        canvas->setNodeContentFields(kAllNodeContentFields);
+        EXPECT_EQ(soundNode(*canvas)->shape().boundingRect().size(), size);
+    }
+    EXPECT_TRUE(waveformsMatch(true));
+    languages.setLanguage(QStringLiteral("Japanese"));
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !treeError(sound->name) && !blueprintError(sound->name); }, 5000));
+    expectIcons(true, false);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(false); }, 5000));
+    languages.setLanguage(QStringLiteral("English"));
+    ASSERT_TRUE(QTest::qWaitFor([&] { return treeError(sound->name) && blueprintError(sound->name); }, 5000));
+    expectIcons(true, true);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(true); }, 5000));
+    platforms.setSelected({android}, android, false);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !treeError(sound->name) && !blueprintError(sound->name); }, 5000));
+    expectIcons(true, false);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(false); }, 5000));
+    platforms.setSelected({windows}, windows, false);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return treeError(sound->name) && blueprintError(sound->name); }, 5000));
+    expectIcons(true, true);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(true); }, 5000));
+    EXPECT_EQ(SoundSourceSemantics::toJson(sound->comp<VSound>()->sources), authored);
+    EXPECT_EQ(registry.findAssetByPath(path)->sourceID, sourceID);
+    ASSERT_TRUE(manager.saveProject());
+
+    writeWav(path, 480, 0.1f);
+    ASSERT_TRUE(QTest::qWaitFor([&] {
+        return sourceVisible() && !referenceInvalid()
+            && media.cachedStatus(sourceID) != MediaStatus::Missing
+            && !treeError(sound->name) && !blueprintError(sound->name)
+            && waveform->hasWaveform()
+            && WaveformCache::isValid(path);
+    }, 5000));
+    clickWave(true);
+    EXPECT_EQ(editorRequests, 2);
+    expectIcons(false, false);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(false); }, 5000));
+    for (const auto& [canvas, size] : waveformViews)
+        EXPECT_EQ(soundNode(*canvas)->shape().boundingRect().size(), size);
+    EXPECT_EQ(registry.findAssetByPath(path)->sourceID, sourceID);
+    const QString oldHash = registry.getAsset(sourceID)->contentHash;
+    writeWav(path, 960, 0.3f);
+    ASSERT_TRUE(QTest::qWaitFor([&] {
+        return registry.getAsset(sourceID)->contentHash != oldHash && WaveformCache::isValid(path);
+    }, 5000));
+    EXPECT_EQ(registry.getAsset(sourceID)->metadata.totalSamples, 960u);
+    EXPECT_EQ(SoundSourceSemantics::toJson(sound->comp<VSound>()->sources), authored);
+
+    ASSERT_TRUE(audioRoot.startsWith(dir.path()));
+    ASSERT_TRUE(QDir(audioRoot).removeRecursively());
+    ASSERT_TRUE(QTest::qWaitFor([&] { return media.cachedStatus(sourceID) == MediaStatus::Missing; }, 5000));
+    ASSERT_TRUE(QDir().mkpath(QFileInfo(path).absolutePath()));
+    writeWav(path, 480, 0.4f);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return sourceVisible() && !referenceInvalid(); }, 5000));
+    ASSERT_TRUE(QFile::remove(path));
+    ASSERT_TRUE(QTest::qWaitFor([&] { return media.cachedStatus(sourceID) == MediaStatus::Missing; }, 5000));
+    ASSERT_TRUE(manager.saveProject());
+    manager.closeProject();
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    const auto* restored = manager.findItemByGuid(soundGuid);
+    ASSERT_NE(restored, nullptr);
+    EXPECT_EQ(SoundSourceSemantics::toJson(restored->comp<VSound>()->sources), authored);
+    EXPECT_EQ(registry.findAssetByPath(path)->sourceID, sourceID);
+    EXPECT_FALSE(registry.sourceFileExists(sourceID));
+}
+
+TEST(MediaPoolRefreshTest, SupersedingWaveformJobsNotifyViewsAfterProjectReopen)
+{
+    using namespace VNX;
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    auto& media = MediaPool::instance();
+    const auto cleanup = qScopeGuard([&] {
+        QThreadPool::globalInstance()->waitForDone();
+        QApplication::processEvents();
+        UndoRedoManager::instance().clear();
+        manager.closeProject();
+    });
+    ProjectConfig config;
+    config.name = QStringLiteral("WaveformReadyProbe");
+    config.location = dir.path();
+    config.platforms = HarkenTest::platforms({QStringLiteral("Windows")});
+    ASSERT_TRUE(manager.createProject(config));
+    manager.fileWatcher()->stopWatching();
+    const QString audioRoot = PathUtils::getAudioSourcesDir(registry.projectRoot());
+    const QString path = QDir(audioRoot).filePath(QStringLiteral("long.wav"));
+    writeWav(path, 48000 * 120, 0.2f);
+    AssetImporter importer;
+    AssetInfo info;
+    info.sourceID = registry.allocateStableID();
+    info.relativePath = "long.wav";
+    info.absolutePath = path;
+    info.metadata = importer.analyzeFile(path);
+    info.contentHash = AssetImporter::computeContentHash(path);
+    ASSERT_TRUE(registry.registerAsset(info, false));
+    auto* layer = manager.createItem(nullptr, "Layer", ProjectItem::Type::Layer);
+    ASSERT_NE(layer, nullptr);
+    auto* sound = manager.createItem(layer, "Sound", ProjectItem::Type::Sound);
+    ASSERT_NE(sound, nullptr);
+    SoundSourceDef source;
+    source.entryId = QUuid::createUuid();
+    source.sourceId = info.sourceID;
+    sound->comp<VSound>()->sources.plain.entries = {source};
+    SoundSourceSemantics::assignActive(sound->comp<VSound>()->sources.plain, source.entryId);
+    sound->markDirty();
+    const QString projectPath = manager.currentProject()->projectPath;
+    ASSERT_TRUE(manager.saveProject());
+    manager.closeProject();
+    QThreadPool::globalInstance()->waitForDone();
+    QApplication::processEvents();
+    WaveformCache::remove(path);
+    ASSERT_FALSE(WaveformCache::isValid(path));
+    int readyCount = 0;
+    const auto readyConnection = QObject::connect(&media, &MediaPool::waveformReady, &manager,
+        [&](uint32_t id) { if (id == info.sourceID) ++readyCount; });
+    QFuture<int> rebuild;
+    const auto rebuildConnection = QObject::connect(&manager, &ProjectManager::projectOpened, &manager,
+        [&](ProjectData* opened) { rebuild = WaveformCache::rebuildAllAsync(opened, audioRoot); });
+    const auto disconnect = qScopeGuard([&] {
+        QObject::disconnect(readyConnection);
+        QObject::disconnect(rebuildConnection);
+    });
+    BlueprintCanvasWidget blueprint;
+    blueprint.setNodeContentFields(kAllNodeContentFields);
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    ASSERT_TRUE(QTest::qWaitFor([&] { return rebuild.isFinished(); }, 10000));
+    QThreadPool::globalInstance()->waitForDone();
+    QApplication::processEvents();
+    ASSERT_TRUE(WaveformCache::isValid(path));
+    EXPECT_GT(readyCount, 0);
+    auto renderSound = [&]() {
+        for (auto* item : blueprint.scene()->items()) {
+            auto* node = dynamic_cast<NodeItem*>(item);
+            if (!node || node->title() != "Sound") continue;
+            QImage image(node->shape().boundingRect().size().toSize(), QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::transparent);
+            QPainter painter(&image);
+            node->paint(&painter, nullptr, nullptr);
+            return image;
+        }
+        return QImage{};
+    };
+    const QImage actual = renderSound();
+    ASSERT_FALSE(actual.isNull());
+    emit media.waveformReady(info.sourceID);
+    const QImage refreshed = renderSound();
+    EXPECT_TRUE(actual == refreshed) << "Blueprint stayed stale until a manual waveformReady notification";
 }

@@ -151,6 +151,12 @@ std::vector<float> WaveformPeakData::getMonoMaxPeaks() const
 }
 
 
+WaveformCache& WaveformCache::instance()
+{
+    static WaveformCache cache;
+    return cache;
+}
+
 QString WaveformCache::cachePath(const QString& audioFilePath)
 {
     return waveformCachePathForAudio(audioFilePath);
@@ -669,6 +675,8 @@ bool WaveformCache::writeVKD(const QString& vkdPath,
         QFile::remove(tempPath);
         return false;
     }
+    lock.unlock();
+    emit instance().cacheReady(audioFilePath);
 
     qDebug() << "[WaveformCache] Generated VKD v2:" << vkdPath
              << "| peaks:" << data.numPeaks

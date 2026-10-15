@@ -93,6 +93,12 @@ AssetInfo makeRegisteredAsset(uint32_t sourceId, const QString& name)
     asset.metadata.originalFormat = QStringLiteral("WAV");
     asset.metadata.durationSec = 1.0;
     asset.metadata.sampleRate = 48000;
+    asset.absolutePath = QDir(AssetRegistry::instance().projectRoot())
+                             .filePath(QStringLiteral("AudioSources/") + name);
+    QFile file(asset.absolutePath);
+    EXPECT_TRUE(file.open(QIODevice::WriteOnly));
+    file.write("audio");
+    file.close();
     EXPECT_TRUE(AssetRegistry::instance().registerAsset(asset));
     return asset;
 }

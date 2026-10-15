@@ -17,7 +17,6 @@
 #include "Widgets/Shared/TreeRowStyle.h"
 
 #include <QDirIterator>
-#include <QFileSystemWatcher>
 #include <QFrame>
 #include <QPainter>
 #include <QPixmap>
@@ -25,7 +24,6 @@
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSplitter>
-#include <QTimer>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
@@ -57,13 +55,8 @@ ProjectExplorer::ProjectExplorer(QWidget* parent)
     setObjectName("Explorer");
     initPanel();
 
-    sourcesWatcher_ = new QFileSystemWatcher(this);
-    auto* refreshTimer = new QTimer(this);
-    refreshTimer->setSingleShot(true);
-    refreshTimer->setInterval(75);
-    connect(sourcesWatcher_, &QFileSystemWatcher::directoryChanged, refreshTimer,
-            [refreshTimer]() { refreshTimer->start(); });
-    connect(refreshTimer, &QTimer::timeout, this, &ProjectExplorer::rebuildSourcesTree);
+    connect(ProjectManager::instance().fileWatcher(), &FileWatcher::sourcesChanged,
+            this, &ProjectExplorer::rebuildSourcesTree);
 
     auto& registry = AssetRegistry::instance();
     connect(&registry, &AssetRegistry::sourceFoldersChanged,
@@ -77,7 +70,8 @@ ProjectExplorer::ProjectExplorer(QWidget* parent)
     connect(&registry, &AssetRegistry::assetModified, this, [this](uint32_t sourceId) {
         if (QTreeWidgetItem* row = sourceRows_.value(sourceId, nullptr)) {
             if (const AssetInfo* asset = AssetRegistry::instance().getAsset(sourceId)) {
-                if (row->data(0, kSourcePathRole).toString() == asset->relativePath)
+                if (AssetRegistry::instance().sourceFileExists(sourceId)
+                    && row->data(0, kSourcePathRole).toString() == asset->relativePath)
                     updateSourceRow(row, *asset);
                 else
                     rebuildSourcesTree();
@@ -335,16 +329,13 @@ void ProjectExplorer::rebuildSourcesTree()
     sourceFolders_.clear();
 
     const QString audioRoot = SourceFileSystem::absolutePath({});
-    QStringList watchPaths;
     if (!audioRoot.isEmpty() && QDir(audioRoot).exists()) {
-        watchPaths.append(audioRoot);
         QDirIterator directories(audioRoot, QDir::Dirs | QDir::NoDotAndDotDot,
                                  QDirIterator::Subdirectories);
         while (directories.hasNext()) {
             directories.next();
             if (directories.fileInfo().isSymLink())
                 continue;
-            watchPaths.append(directories.filePath());
             ensureSourcesFolder(QDir(audioRoot).relativeFilePath(directories.filePath()));
         }
     }
@@ -356,7 +347,7 @@ void ProjectExplorer::rebuildSourcesTree()
     });
 
     for (const AssetInfo* asset : assets) {
-        if (!asset)
+        if (!asset || !AssetRegistry::instance().sourceFileExists(asset->sourceID))
             continue;
         auto* row = new SourceTreeItem();
         updateSourceRow(row, *asset);
@@ -378,11 +369,6 @@ void ProjectExplorer::rebuildSourcesTree()
         sourcesTree_->setCurrentItem(restored, 0, QItemSelectionModel::NoUpdate);
     applySourcesVisibility();
     sourcesTree_->verticalScrollBar()->setValue(scroll);
-    if (sourcesWatcher_) {
-        const auto previous = sourcesWatcher_->directories();
-        if (!previous.isEmpty()) sourcesWatcher_->removePaths(previous);
-        if (!watchPaths.isEmpty()) sourcesWatcher_->addPaths(watchPaths);
-    }
 }
 
 void ProjectExplorer::applySourcesVisibility()

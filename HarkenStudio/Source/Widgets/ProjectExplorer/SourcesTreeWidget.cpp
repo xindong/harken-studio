@@ -1,9 +1,11 @@
 #include "SourcesTreeWidget.h"
 
 #include "Core/AssetPipeline/AssetRegistry.h"
+#include "Core/AssetPipeline/AssetImporter.h"
 #include "Core/AssetPipeline/AudioImportGate.h"
 #include "Core/AssetPipeline/ImportAssetsCommand.h"
 #include "Core/AssetPipeline/SourceFileSystem.h"
+#include "Core/BaseDialog.h"
 #include "Core/ThemeManager.h"
 #include "Core/QtControlSkin.h"
 #include "Core/ShortcutManager.h"
@@ -13,22 +15,28 @@
 #include "Widgets/Shared/InlineRenameEdit.h"
 
 #include <QDesktopServices>
+#include <QComboBox>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDrag>
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QHeaderView>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QMenu>
 #include <QMimeData>
 #include <QPainter>
+#include <QPushButton>
 #include <QTimer>
 #include <QTreeWidgetItemIterator>
 #include <QUrl>
+#include <QVBoxLayout>
 
 namespace VNX {
 namespace {
@@ -65,13 +73,7 @@ SourcesTreeWidget::SourcesTreeWidget(QWidget* parent)
             [this, path, original](const QString& name, bool commit) {
                 QString error;
                 if (!SourceFileSystem::validateRename(path, name, &error)) return error;
-                if (commit && name != original) {
-                    QString renamedName;
-                    if (SourceFileSystem::rename(path, name, &error, &renamedName)) {
-                        const int slash = path.lastIndexOf(QLatin1Char('/'));
-                        selectPath((slash < 0 ? QString() : path.left(slash + 1)) + renamedName);
-                    }
-                }
+                if (commit && name != original) return renameSource(path, name);
                 return error;
             }, parent);
         return editor;
@@ -91,6 +93,49 @@ SourcesTreeWidget::SourcesTreeWidget(QWidget* parent)
         if (dropFolder_.isValid())
             expand(dropFolder_);
     });
+}
+
+QString SourcesTreeWidget::renameSource(const QString& path, const QString& name)
+{
+    const int slash = path.lastIndexOf(QLatin1Char('/'));
+    const QString prefix = slash < 0 ? QString() : path.left(slash + 1);
+    auto& registry = AssetRegistry::instance();
+    const auto* source = registry.getAssetByPath(path);
+    const auto* missing = registry.findAssetByPath(SourceFileSystem::absolutePath(prefix + name));
+    QString error;
+    if (source && missing && source->sourceID != missing->sourceID
+        && !QFileInfo::exists(missing->absolutePath)) {
+        const uint32_t sourceID = source->sourceID;
+        const uint32_t missingID = missing->sourceID;
+        const QString destination = missing->relativePath;
+        const QString projectRoot = registry.projectRoot();
+        BaseDialog dialog(this);
+        dialog.setObjectName(QStringLiteral("sourceRenameRestoreDialog"));
+        dialog.setWindowTitle(tr("Restore Missing Audio Source"));
+        auto* layout = new QVBoxLayout(&dialog);
+        auto* summary = new QLabel(tr("'%1' is missing.\n\n"
+            "Rename '%2' to '%1' and use its audio to restore the missing source references?\n"
+            "Existing references to both files will use the renamed audio, keeping their "
+            "ranges, loop settings and Active selections.").arg(destination, path), &dialog);
+        summary->setWordWrap(true);
+        layout->addWidget(summary);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+        buttons->button(QDialogButtonBox::Ok)->setText(tr("Rename and Restore"));
+        connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        layout->addWidget(buttons);
+        if (dialog.exec() != QDialog::Accepted) return {};
+        source = registry.getAsset(sourceID);
+        missing = registry.getAsset(missingID);
+        if (registry.projectRoot() != projectRoot || !source || !missing
+            || source->relativePath != path || missing->relativePath != destination)
+            return tr("The sources changed while the rename was being confirmed. Review them and try again.");
+        if (SourceFileSystem::restoreByRename(sourceID, missingID, &error)) selectPath(destination);
+    } else {
+        QString renamedName;
+        if (SourceFileSystem::rename(path, name, &error, &renamedName)) selectPath(prefix + renamedName);
+    }
+    return error;
 }
 
 QMimeData* SourcesTreeWidget::mimeData(const QList<QTreeWidgetItem*>& items) const
@@ -162,11 +207,128 @@ bool SourcesTreeWidget::importDroppedAudio(const QMimeData* mimeData, const QStr
         showError(tr("No supported audio files were found in the dropped files or folders."));
         return false;
     }
-    auto* command = ImportAssetsCommand::pushImportSources(files, folder);
+    const QString projectRoot = AssetRegistry::instance().projectRoot();
+    struct ImportGroup {
+        QString relativePath;
+        QString currentHash;
+        QStringList files;
+        QStringList hashes;
+        bool exists = false;
+        QTreeWidgetItem* row = nullptr;
+        QComboBox* choices = nullptr;
+    };
+    QList<ImportGroup> groups;
+    QMap<QString, qsizetype> indices;
+    for (const QString& file : files) {
+        QString relative = folder.isEmpty() ? QFileInfo(file).fileName()
+            : folder + QLatin1Char('/') + QFileInfo(file).fileName();
+        const QString destination = SourceFileSystem::absolutePath(relative);
+        if (destination.isEmpty() || (!folder.isEmpty() && !QFileInfo(destination).dir().exists())
+            || QFileInfo(destination).isDir()) {
+            showError(tr("'%1' is not a valid destination for an audio file.").arg(relative));
+            return false;
+        }
+        QString key = relative;
+#ifdef Q_OS_WIN
+        key = key.toCaseFolded();
+#endif
+        if (!indices.contains(key)) {
+            ImportGroup group;
+            const auto* asset = AssetRegistry::instance().findAssetByPath(destination);
+            group.relativePath = asset ? asset->relativePath : relative;
+            group.exists = QFileInfo::exists(destination);
+            if (QFileInfo::exists(destination)) {
+                group.currentHash = AssetImporter::computeContentHash(destination);
+                if (group.currentHash.isEmpty()) {
+                    showError(tr("Could not read '%1'.").arg(destination));
+                    return false;
+                }
+            }
+            indices.insert(key, groups.size());
+            groups.append(group);
+        }
+        auto& group = groups[indices.value(key)];
+        const QString hash = AssetImporter::computeContentHash(file);
+        if (hash.isEmpty()) {
+            showError(tr("Could not read '%1'.").arg(file));
+            return false;
+        }
+        if (!group.hashes.contains(hash)) {
+            group.files.append(file);
+            group.hashes.append(hash);
+        }
+    }
+
+    BaseDialog dialog(this);
+    dialog.setObjectName(QStringLiteral("sourceImportConflictDialog"));
+    dialog.setWindowTitle(tr("Import Audio Sources"));
+    dialog.resize(760, 400);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* summary = new QLabel(tr("Choose which files to replace. Uncheck a file to skip it.\n"
+        "When several dropped files have the same name, choose one incoming version."), &dialog);
+    summary->setWordWrap(true);
+    layout->addWidget(summary);
+    auto* conflicts = new QTreeWidget(&dialog);
+    conflicts->setObjectName(QStringLiteral("sourceImportConflicts"));
+    conflicts->setHeaderLabels({tr("Replace"), tr("Incoming file")});
+    conflicts->setRootIsDecorated(false);
+    conflicts->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    conflicts->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+    layout->addWidget(conflicts, 1);
+    for (auto& group : groups) {
+        if (group.files.size() == 1 && (!group.exists || group.hashes.first() == group.currentHash))
+            continue;
+        group.row = new QTreeWidgetItem(conflicts, {group.relativePath});
+        group.row->setFlags(group.row->flags() | Qt::ItemIsUserCheckable);
+        group.row->setCheckState(0, Qt::Checked);
+        if (group.files.size() > 1) {
+            group.choices = new QComboBox(conflicts);
+            for (const auto& file : group.files)
+                group.choices->addItem(QDir::toNativeSeparators(file));
+            conflicts->setItemWidget(group.row, 1, group.choices);
+        } else {
+            const QString file = QDir::toNativeSeparators(group.files.first());
+            group.row->setText(1, file);
+            group.row->setToolTip(1, file);
+        }
+    }
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("Import"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    if (conflicts->topLevelItemCount() > 0 && dialog.exec() != QDialog::Accepted)
+        return false;
+    if (projectRoot != AssetRegistry::instance().projectRoot())
+        return false;
+
+    QStringList selected;
+    QMap<QString, QString> replacements;
+    for (const auto& group : groups) {
+        if (group.row && group.row->checkState(0) != Qt::Checked)
+            continue;
+        const int choice = group.choices ? group.choices->currentIndex() : 0;
+        const QString file = group.files[choice];
+        const QString destination = SourceFileSystem::absolutePath(group.relativePath);
+        const QString currentHash = QFileInfo::exists(destination)
+            ? AssetImporter::computeContentHash(destination) : QString();
+        if (currentHash != group.currentHash
+            || AssetImporter::computeContentHash(file) != group.hashes[choice]) {
+            showError(tr("'%1' changed while import was being confirmed. Import it again to review the changes.")
+                .arg(group.relativePath));
+            return false;
+        }
+        selected.append(file);
+        if (group.exists && group.hashes[choice] != group.currentHash)
+            replacements.insert(group.relativePath, file);
+    }
+    if (selected.isEmpty())
+        return true;
+    auto* command = ImportAssetsCommand::pushImportSources(selected, folder, replacements);
     if (command->failCount() > 0)
         showError(tr("%1 audio file(s) could not be imported. See the log for details.")
             .arg(command->failCount()));
-    return command->successCount() > 0;
+    return command->successCount() > 0 || command->duplicateCount() > 0;
 }
 
 bool SourcesTreeWidget::moveDroppedSources(const QMimeData* mime, const QString& folder)

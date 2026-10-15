@@ -5,15 +5,19 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <memory>
 
 namespace VNX {
 
 struct ProjectFileBinding;
+class TransactionalUndoCommand;
 
 struct ImportResult
 {
     bool success = false;
     bool deduplicated = false;
+    bool copiedFile = false;
+    std::shared_ptr<TransactionalUndoCommand> fileChange;
     uint32_t sourceID = 0;
     QString relativePath;
     QString absolutePath;
@@ -35,7 +39,9 @@ public:
 
     ImportResult importFile(const QString& externalPath,
                             ProjectFileBinding* targetBinding,
-                            const QString& sourceFolder = {});
+                            const QString& sourceFolder = {},
+                            bool allowRename = true,
+                            uint32_t restoreSourceID = 0);
 
 
     AudioMetadata analyzeFile(const QString& path);

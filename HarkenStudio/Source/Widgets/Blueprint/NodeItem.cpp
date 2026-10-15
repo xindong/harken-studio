@@ -566,7 +566,7 @@ void NodeItem::updateContentHeight()
     const bool vertical = flowDir_ == CanvasFlowDirection::TB || flowDir_ == CanvasFlowDirection::BT;
     width_ = vertical ? std::max(kDefaultWidth, 2 * kPinColumnPad + (count - 1) * kPortPairSpacing) : kDefaultWidth;
     height_ = heightForContent(contentInfo_, !subtitle_.isEmpty(),
-                               waveformPeakData_.isValid() || !waveformPeaks_.empty(),
+                               blueprintWaveformMode_ || waveformPeakData_.isValid() || !waveformPeaks_.empty(),
                                blueprintWaveformMode_, count, contentFields_);
     if (auto* widget = contentWidget()) {
         contentProxy_->setVisible(widget->height() > 0);
@@ -749,13 +749,14 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
 
     const float headPad  = kBodyPadX;
     const float iconSize = 20.0f;
+    const QColor titleColor = titleColor_.isValid() ? titleColor_ : ngn.titleText;
     if (itemType_.has_value()) {
         const int iconY = static_cast<int>((kHeaderHeight - iconSize) * 0.5f) + 1;
         const QRect iconRect(static_cast<int>(headPad), iconY,
                              static_cast<int>(iconSize), static_cast<int>(iconSize));
         const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
         const qreal effectiveScale = painter->worldTransform().m11() * dpr;
-        const QPixmap iconPx = iconForItemType(*itemType_, ngn.titleText)
+        const QPixmap iconPx = iconForItemType(*itemType_, titleColor)
                                    .pixmap(iconRect.size(), effectiveScale);
         if (!iconPx.isNull()) {
             const bool smooth = painter->testRenderHint(QPainter::SmoothPixmapTransform);
@@ -768,7 +769,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
     const float textX = headPad + iconSize + 9.0f;
     const float textW = width_ - textX - headPad;
 
-    painter->setPen(titleColor_.isValid() ? titleColor_ : ngn.titleText);
+    painter->setPen(titleColor);
     QFont nameFont = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Bold);
     nameFont.setItalic(titleDirty_);
     painter->setFont(nameFont);
@@ -923,7 +924,7 @@ void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
     }
 
     if (contentFields_.testFlag(NodeContentField::Waveform)
-        && (waveformPeakData_.isValid() || !waveformPeaks_.empty())) {
+        && (blueprintWaveformMode_ || waveformPeakData_.isValid() || !waveformPeaks_.empty())) {
         y += kWaveformGap;
         const float waveH = blueprintWaveformMode_ ? kBlueprintWaveformHeight : kWaveformHeight;
         QRectF waveRect(padLeft, y, width_ - padLeft - padRight, waveH);
@@ -934,6 +935,10 @@ void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
 void NodeItem::paintWaveform(QPainter* painter, const QRectF& rect) const
 {
     const auto theme = ThemeManager::instance().snapshot();
+    const auto& ngnWf = theme->domains.nodeGraphNode;
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(ngnWf.waveformBg);
+    painter->drawRoundedRect(rect, 2, 2);
     auto pickColor = [&]() -> QColor {
         if (blueprintWaveformMode_) {
             return theme->domains.nodeGraphNode.blueprintWaveform;
@@ -946,11 +951,6 @@ void NodeItem::paintWaveform(QPainter* painter, const QRectF& rect) const
     };
 
     if (waveformPeakData_.isValid()) {
-        const auto& ngnWf = theme->domains.nodeGraphNode;
-        painter->setPen(Qt::NoPen);
-        painter->setBrush(ngnWf.waveformBg);
-        painter->drawRoundedRect(rect, 2, 2);
-
         const QColor waveColor = pickColor();
         QRect intRect(static_cast<int>(rect.x()), static_cast<int>(rect.y()),
                       static_cast<int>(rect.width()), static_cast<int>(rect.height()));

@@ -4,12 +4,12 @@
 #include "AssetRegistry.h"
 #include "AudioImportGate.h"
 #include "PathUtils.h"
+#include "SourceFileSystem.h"
 #include "../AuthoringPolicy.h"
 #include "../NameValidator.h"
 #include "../ProjectTypes.h"
 #include "../ProjectManager.h"
 #include "../FieldGroupProjectAdapter.h"
-#include "../ToastManager.h"
 #include "../UndoCommands.h"
 #include "../../Widgets/LogPanel/LogPanel.h"
 
@@ -49,12 +49,6 @@ static ImportAssetsCommand* pushCollected(std::unique_ptr<ImportAssetsCommand> c
     }
     ImportAssetsCommand* raw = command.release();
     UndoRedoManager::instance().push(raw);
-    if (raw->duplicateCount() > 0) {
-        ToastManager::instance().showToast(
-            QObject::tr("%1 file(s) matched existing audio content and were reused")
-                .arg(raw->duplicateCount()),
-            5000, ToastType::Info);
-    }
     return raw;
 }
 
@@ -62,7 +56,7 @@ ImportAssetsCommand::ImportAssetsCommand(const QStringList& externalPaths,
                                          ProjectFileBinding* targetBinding,
                                          ProjectItem* targetParent,
                                          QUndoCommand* parent)
-    : QUndoCommand(parent)
+    : TransactionalUndoCommand({}, parent, false)
     , externalPaths_(externalPaths)
     , targetBinding_(targetBinding)
     , targetParentObjectID_(targetParent ? targetParent->objectID : 0)
@@ -76,7 +70,7 @@ ImportAssetsCommand::ImportAssetsCommand(const QStringList& externalPaths,
 
 ImportAssetsCommand::ImportAssetsCommand(const QStringList& externalPaths,
                                          QUndoCommand* parent)
-    : QUndoCommand(parent)
+    : TransactionalUndoCommand({}, parent, false)
     , externalPaths_(externalPaths)
     , rootMode_(true)
 {
@@ -109,11 +103,41 @@ ImportAssetsCommand* ImportAssetsCommand::pushImportAtRoot(const QStringList& ex
 }
 
 ImportAssetsCommand* ImportAssetsCommand::pushImportSources(const QStringList& externalPaths,
-                                                          const QString& sourceFolder)
+                                                          const QString& sourceFolder,
+                                                          const QMap<QString, QString>& replacements)
 {
     auto command = std::make_unique<ImportAssetsCommand>(
         externalPaths, static_cast<ProjectFileBinding*>(nullptr));
     command->sourceFolder_ = sourceFolder;
+    command->sourceMode_ = true;
+    QMap<QString, QString> fileChanges = replacements;
+    for (const QString& path : externalPaths) {
+        const QString relative = sourceFolder.isEmpty() ? QFileInfo(path).fileName()
+            : sourceFolder + QLatin1Char('/') + QFileInfo(path).fileName();
+        const QString destination = SourceFileSystem::absolutePath(relative);
+        if (!fileChanges.contains(relative) && QFileInfo(destination).isFile()
+            && !AssetRegistry::instance().findAssetByPath(destination)) {
+            const QString hash = AssetImporter::computeContentHash(path);
+            if (!hash.isEmpty() && hash == AssetImporter::computeContentHash(destination))
+                fileChanges.insert(relative, path);
+        }
+    }
+    if (!fileChanges.isEmpty()) {
+        QString error;
+        auto replacement = SourceFileSystem::replaceFiles(fileChanges, &error);
+        if (!replacement) {
+            command->failCount_ = externalPaths.size();
+            LogPanel::logError(LogCategory::Import, error);
+            return pushCollected(std::move(command));
+        }
+        command->fileChanges_.append(std::move(replacement));
+        for (auto it = fileChanges.cbegin(); it != fileChanges.cend(); ++it) {
+            command->replacedPaths_.insert(it.key());
+            for (QString& path : command->externalPaths_)
+                if (path == it.value())
+                    path = SourceFileSystem::absolutePath(it.key());
+        }
+    }
     command->collectParentEntries();
     return pushCollected(std::move(command));
 }
@@ -196,7 +220,7 @@ void ImportAssetsCommand::collectParentEntries()
             }
         }
 
-        ImportResult result = importer.importFile(path, targetBinding_, sourceFolder_);
+        ImportResult result = importer.importFile(path, targetBinding_, sourceFolder_, !sourceMode_);
 
         if (!result.success) {
             ++failCount_;
@@ -204,17 +228,15 @@ void ImportAssetsCommand::collectParentEntries()
             continue;
         }
 
+        if (sourceMode_ && result.deduplicated && !result.fileChange
+            && !replacedPaths_.contains(result.relativePath)) {
+            ++duplicateCount_;
+            continue;
+        }
+
         ImportedEntry entry;
         entry.sourceID = result.sourceID;
-        entry.sourcePath = path;
-        entry.destPath = result.absolutePath;
         entry.relativePath = result.relativePath;
-        entry.ownsAsset = !result.deduplicated;
-        if (entry.ownsAsset) {
-            if (const AssetInfo* info = AssetRegistry::instance().getAsset(result.sourceID)) {
-                entry.assetInfo = *info;
-            }
-        }
 
         if (importParent) {
             entry.itemName = QFileInfo(result.absolutePath).completeBaseName();
@@ -231,13 +253,8 @@ void ImportAssetsCommand::collectParentEntries()
                 LogPanel::logError(LogCategory::Import,
                     QString("Failed: %1 - the object could not be created under '%2'")
                         .arg(path, importParent->name));
-                if (entry.ownsAsset
-                    && AssetRegistry::instance().isUncommitted(entry.sourceID)) {
-                    if (!entry.destPath.isEmpty() && QFileInfo::exists(entry.destPath)) {
-                        QFile::remove(entry.destPath);
-                    }
-                    AssetRegistry::instance().unregisterAsset(entry.sourceID);
-                }
+                if (result.fileChange)
+                    result.fileChange->tryReplay(false);
                 continue;
             }
 
@@ -250,10 +267,16 @@ void ImportAssetsCommand::collectParentEntries()
             ProjectManager::resyncItemToRuntime(newItem);
         }
 
+        if (result.fileChange)
+            fileChanges_.append(result.fileChange);
         entries_.append(entry);
 
         ++successCount_;
-        if (result.deduplicated) {
+        if (result.deduplicated && result.fileChange) {
+            LogPanel::logInfo(LogCategory::Import, QString("Restored: %1").arg(result.absolutePath));
+        } else if (sourceMode_ && replacedPaths_.contains(result.relativePath)) {
+            LogPanel::logInfo(LogCategory::Import, QString("Replaced: %1").arg(result.absolutePath));
+        } else if (result.deduplicated) {
             ++duplicateCount_;
             LogPanel::logInfo(LogCategory::Import,
                 QString("Reused existing asset (same content): %1").arg(QFileInfo(path).fileName()));
@@ -322,10 +345,7 @@ void ImportAssetsCommand::collectRootEntries()
 
         ImportedEntry entry;
         entry.sourceID = result.sourceID;
-        entry.sourcePath = path;
-        entry.destPath = result.absolutePath;
         entry.relativePath = result.relativePath;
-        entry.ownsAsset = !result.deduplicated;
 
         entry.itemName = ProjectManager::instance().suggestUniqueName(
             ProjectItem::Type::Sound,
@@ -351,31 +371,29 @@ void ImportAssetsCommand::collectRootEntries()
             ++failCount_;
             LogPanel::logError(LogCategory::Import,
                 QString("Failed: %1 - the object could not be created at root level").arg(path));
-            if (entry.ownsAsset
-                && AssetRegistry::instance().isUncommitted(entry.sourceID)) {
-                if (!entry.destPath.isEmpty() && QFileInfo::exists(entry.destPath)) {
-                    QFile::remove(entry.destPath);
-                }
-                AssetRegistry::instance().unregisterAsset(entry.sourceID);
-            }
+            if (result.fileChange)
+                result.fileChange->tryReplay(false);
             continue;
         }
 
         entry.itemGuid = newItem->guid;
 
-        if (entry.ownsAsset) {
+        if (!result.deduplicated) {
             if (AssetInfo* info = AssetRegistry::instance().getAsset(entry.sourceID)) {
                 info->ownerObjectGuid = newItem->guid.toString(QUuid::WithoutBraces);
-                entry.assetInfo = *info;
             }
         }
 
         ProjectManager::resyncItemToRuntime(newItem);
 
+        if (result.fileChange)
+            fileChanges_.append(result.fileChange);
         entries_.append(entry);
 
         ++successCount_;
-        if (result.deduplicated) {
+        if (result.deduplicated && result.fileChange) {
+            LogPanel::logInfo(LogCategory::Import, QString("Restored: %1").arg(result.absolutePath));
+        } else if (result.deduplicated) {
             ++duplicateCount_;
             LogPanel::logInfo(LogCategory::Import,
                 QString("Reused existing asset (same content): %1").arg(QFileInfo(path).fileName()));
@@ -391,7 +409,19 @@ void ImportAssetsCommand::collectRootEntries()
     }
 }
 
-void ImportAssetsCommand::redo()
+bool ImportAssetsCommand::apply(bool redo)
+{
+    bool rollbackFailed = false;
+    if (!SourceFileSystem::replayFiles(fileChanges_, redo, &rollbackFailed)) {
+        setObsolete(rollbackFailed);
+        return false;
+    }
+    if (redo) redoEntries();
+    else undoEntries();
+    return true;
+}
+
+void ImportAssetsCommand::redoEntries()
 {
     if (rootMode_) {
         redoRootMode();
@@ -406,24 +436,6 @@ void ImportAssetsCommand::redo()
     }
 
     for (ImportedEntry& entry : entries_) {
-        if (entry.ownsAsset && !AssetRegistry::instance().contains(entry.sourceID)) {
-            // undo() dropped the record and file only for uncommitted assets
-            // (committed ones were left registered, hence the contains() skip);
-            // restore both so references resolve and the asset is persisted on
-            // the next save. The sourceID is preserved, so existing tree nodes
-            // remain valid. Registering even when the copy fails is
-            // intentional: an honest Missing state beats a silently dropped
-            // asset.
-            if (!QFileInfo::exists(entry.destPath) && !entry.sourcePath.isEmpty()) {
-                if (!QFile::copy(entry.sourcePath, entry.destPath)) {
-                    LogPanel::logError(LogCategory::Import,
-                        QString("Cannot restore %1: original source %2 is no longer available")
-                            .arg(QFileInfo(entry.destPath).fileName(), entry.sourcePath));
-                }
-            }
-            AssetRegistry::instance().registerAsset(entry.assetInfo);
-        }
-
         if (entry.itemCreation) entry.itemCreation->redo();
     }
 
@@ -432,7 +444,7 @@ void ImportAssetsCommand::redo()
     }
 }
 
-void ImportAssetsCommand::undo()
+void ImportAssetsCommand::undoEntries()
 {
     if (rootMode_) {
         undoRootMode();
@@ -443,20 +455,6 @@ void ImportAssetsCommand::undo()
         const ImportedEntry& entry = *it;
         if (entry.itemCreation) entry.itemCreation->undo();
 
-        if (entry.ownsAsset) {
-            // Roll back only what was never committed to assets.json: drop the
-            // record and its copied file. A committed asset may still be
-            // referenced by the on-disk project (saved before the undo, then
-            // closed without saving), so it is left fully intact — record and
-            // file. If it stays unreferenced, the open-time reconcile pass
-            // reclaims both together.
-            if (AssetRegistry::instance().isUncommitted(entry.sourceID)) {
-                if (!entry.destPath.isEmpty() && QFileInfo::exists(entry.destPath)) {
-                    QFile::remove(entry.destPath);
-                }
-                AssetRegistry::instance().unregisterAsset(entry.sourceID);
-            }
-        }
     }
 
     if (targetBinding_ && targetBinding_->rootItem) {
@@ -478,17 +476,6 @@ void ImportAssetsCommand::redoRootMode()
     ProjectData* project = ProjectManager::instance().currentProject();
 
     for (ImportedEntry& entry : entries_) {
-        if (entry.ownsAsset && !AssetRegistry::instance().contains(entry.sourceID)) {
-            if (!QFileInfo::exists(entry.destPath) && !entry.sourcePath.isEmpty()) {
-                if (!QFile::copy(entry.sourcePath, entry.destPath)) {
-                    LogPanel::logError(LogCategory::Import,
-                        QString("Cannot restore %1: original source %2 is no longer available")
-                            .arg(QFileInfo(entry.destPath).fileName(), entry.sourcePath));
-                }
-            }
-            AssetRegistry::instance().registerAsset(entry.assetInfo);
-        }
-
         if (!project || !entry.rootSlot.valid()
             || ProjectManager::instance().findItemByGuid(entry.itemGuid)) {
             continue;
@@ -514,14 +501,6 @@ void ImportAssetsCommand::undoRootMode()
             }
         }
 
-        if (entry.ownsAsset) {
-            if (AssetRegistry::instance().isUncommitted(entry.sourceID)) {
-                if (!entry.destPath.isEmpty() && QFileInfo::exists(entry.destPath)) {
-                    QFile::remove(entry.destPath);
-                }
-                AssetRegistry::instance().unregisterAsset(entry.sourceID);
-            }
-        }
     }
 
     qDebug() << "Undo import: rolled back" << entries_.size() << "root-level imported entries";

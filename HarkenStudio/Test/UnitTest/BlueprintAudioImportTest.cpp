@@ -1,6 +1,10 @@
 #include "Core/ActionManager.h"
 #include "Core/AssetPipeline/AssetConverter.h"
+#include "Core/AssetPipeline/AssetImporter.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
+#include "Core/AssetPipeline/ImportAssetsCommand.h"
+#include "Core/AssetPipeline/ImportSoundSourcesCommand.h"
+#include "Core/AssetPipeline/SourceFileSystem.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/Components/VSound.h"
 #include "Core/LanguageContextService.h"
@@ -533,7 +537,7 @@ TEST_F(BlueprintAudioImportTest, BlankPartialBatchIgnoresLegacyCanvasRootAndCrea
     }
 }
 
-TEST_F(BlueprintAudioImportTest, SameContentFilesCreateDistinctChildrenWhileSharingOneAsset)
+TEST_F(BlueprintAudioImportTest, DifferentlyNamedFilesPreserveIndependentAssetsAcrossUndo)
 {
     auto* layer = create("Layer", T::Layer);
     auto* container = create("Container", T::Container, layer);
@@ -542,30 +546,34 @@ TEST_F(BlueprintAudioImportTest, SameContentFilesCreateDistinctChildrenWhileShar
     const auto second = wave("second.wav", 0.25f);
     const auto result = importFiles({first, second}, container->objectID);
     ASSERT_TRUE(result.success) << result.errorMessage.toStdString();
-    expectCounts(result, 2, 0, 1);
+    expectCounts(result, 2, 0, 0);
     ASSERT_EQ(container->children.size(), 2u);
     const auto* firstSound = container->children[0].get();
     const auto* secondSound = container->children[1].get();
     EXPECT_NE(firstSound->guid, secondSound->guid);
     EXPECT_NE(firstSound->objectID, secondSound->objectID);
-    EXPECT_EQ(firstSound->sourceID, secondSound->sourceID);
+    EXPECT_NE(firstSound->sourceID, secondSound->sourceID);
     const auto sourceID = firstSound->sourceID;
-    EXPECT_EQ(AssetRegistry::instance().count(), 1);
-    EXPECT_EQ(importedFiles().size(), 1);
+    const auto secondSourceID = secondSound->sourceID;
+    EXPECT_EQ(AssetRegistry::instance().count(), 2);
+    EXPECT_EQ(importedFiles().size(), 2);
     EXPECT_EQ(result.data.value(QStringLiteral("created_authoring_handles")).toArray().size(), 2);
     expectRegisteredWave(sourceID);
+    expectRegisteredWave(secondSourceID);
     ASSERT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
     ASSERT_TRUE(UndoRedoManager::instance().undo());
     drainAudioImportEvents();
     EXPECT_TRUE(container->children.empty());
     EXPECT_FALSE(AssetRegistry::instance().contains(sourceID));
+    EXPECT_FALSE(AssetRegistry::instance().contains(secondSourceID));
     ASSERT_TRUE(UndoRedoManager::instance().redo());
     drainAudioImportEvents();
     ASSERT_EQ(container->children.size(), 2u);
     EXPECT_EQ(container->children[0]->sourceID, sourceID);
-    EXPECT_EQ(container->children[1]->sourceID, sourceID);
-    EXPECT_EQ(AssetRegistry::instance().count(), 1);
+    EXPECT_EQ(container->children[1]->sourceID, secondSourceID);
+    EXPECT_EQ(AssetRegistry::instance().count(), 2);
     expectRegisteredWave(sourceID);
+    expectRegisteredWave(secondSourceID);
 }
 
 TEST_F(BlueprintAudioImportTest, SoundCanAppendSharedContentAgainWithoutDuplicatingTheAsset)
@@ -601,6 +609,147 @@ TEST_F(BlueprintAudioImportTest, SoundCanAppendSharedContentAgainWithoutDuplicat
     EXPECT_EQ(component->sources.plain.entries.back(), appended);
     EXPECT_EQ(AssetRegistry::instance().count(), 1);
     expectRegisteredWave(original.sourceId);
+}
+
+TEST_F(BlueprintAudioImportTest, SoundRestorationUsesItsReferencesAndPreservesSharedAuthoring)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    ASSERT_TRUE(QDir().mkdir(SourceFileSystem::absolutePath(QStringLiteral("FX"))));
+    const auto input = wave("Hit.wav", 0.2f);
+    auto* imported = ImportAssetsCommand::pushImportSources({input}, QStringLiteral("FX"));
+    ASSERT_EQ(imported->successCount(), 1);
+    const AssetInfo original = *registry.getAsset(imported->importedIDs().first());
+    auto* layer = create("Layer", T::Layer);
+    auto* sound = manager.createAudioItem(layer, QStringLiteral("Independent Name"),
+        original.relativePath, original.sourceID);
+    auto* shared = manager.createAudioItem(layer, QStringLiteral("Shared"),
+        original.relativePath, original.sourceID);
+    ASSERT_NE(sound, nullptr);
+    ASSERT_NE(shared, nullptr);
+    auto* component = sound->comp<VSound>();
+    auto duplicate = component->sources.plain.entries.front();
+    duplicate.entryId = QUuid::createUuid();
+    duplicate.trimStartFrame = 20;
+    duplicate.trimEndFrame = 200;
+    duplicate.loopRegion = SoundLoopRegion{40, 160};
+    component->sources.plain.entries.push_back(duplicate);
+    component->sources.plain.platforms[ProjectPlatformSemantics::idString(
+        HarkenTest::PlatformIds::Android)].active = duplicate.entryId;
+    const auto authored = component->sources;
+    const auto sharedAuthored = shared->comp<VSound>()->sources;
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(QFile::remove(original.absolutePath));
+    ASSERT_TRUE(QDir().rmdir(QFileInfo(original.absolutePath).absolutePath()));
+    wave("Hit.wav", 0.7f);
+    const QString incomingHash = AssetImporter::computeContentHash(input);
+    auto* unrelated = ImportAssetsCommand::pushImportSources({input});
+    ASSERT_EQ(unrelated->successCount(), 1);
+    const uint32_t unrelatedID = unrelated->importedIDs().first();
+    ASSERT_NE(unrelatedID, original.sourceID);
+    ASSERT_TRUE(manager.saveProject());
+    UndoRedoManager::instance().clear();
+
+    const auto result = importFiles({input}, sound->objectID);
+    ASSERT_TRUE(result.success) << result.errorMessage.toStdString();
+    expectCounts(result, 1, 0, 0);
+    EXPECT_EQ(result.data.value(QStringLiteral("source_ids")).toArray().first().toInteger(), original.sourceID);
+    EXPECT_EQ(component->sources, authored);
+    EXPECT_EQ(shared->comp<VSound>()->sources, sharedAuthored);
+    EXPECT_EQ(registry.getAsset(original.sourceID)->contentHash, incomingHash);
+    EXPECT_EQ(registry.getAsset(unrelatedID)->contentHash, incomingHash);
+    EXPECT_EQ(registry.count(), 2);
+    ASSERT_TRUE(QFile::remove(input));
+    ASSERT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
+    ASSERT_TRUE(UndoRedoManager::instance().undo());
+    EXPECT_FALSE(registry.sourceFileExists(original.sourceID));
+    EXPECT_EQ(component->sources, authored);
+    EXPECT_EQ(shared->comp<VSound>()->sources, sharedAuthored);
+    ASSERT_TRUE(UndoRedoManager::instance().redo());
+    EXPECT_TRUE(registry.sourceFileExists(original.sourceID));
+    EXPECT_EQ(AssetImporter::computeContentHash(original.absolutePath), incomingHash);
+    EXPECT_EQ(component->sources, authored);
+    EXPECT_EQ(shared->comp<VSound>()->sources, sharedAuthored);
+}
+
+TEST_F(BlueprintAudioImportTest, LayerRestorationKeepsResourceIdentityAndCreatesAnUndoableSound)
+{
+    auto* layer = create("Layer", T::Layer);
+    const auto input = wave("Hit.wav", 0.2f);
+    ASSERT_TRUE(importFiles({input}, layer->objectID).success);
+    ASSERT_EQ(layer->children.size(), 1u);
+    auto* originalSound = layer->children.front().get();
+    const auto authored = originalSound->comp<VSound>()->sources;
+    auto& registry = AssetRegistry::instance();
+    const AssetInfo original = *registry.getAsset(originalSound->sourceID);
+    ASSERT_TRUE(ProjectManager::instance().saveProject());
+    ASSERT_TRUE(QFile::remove(original.absolutePath));
+    wave("Hit.wav", 0.7f);
+    const auto result = importFiles({input}, layer->objectID);
+    ASSERT_TRUE(result.success) << result.errorMessage.toStdString();
+    expectCounts(result, 1, 0, 0);
+    ASSERT_EQ(layer->children.size(), 2u);
+    EXPECT_EQ(layer->children.back()->sourceID, original.sourceID);
+    EXPECT_EQ(originalSound->comp<VSound>()->sources, authored);
+    EXPECT_EQ(registry.count(), 1);
+    ASSERT_TRUE(QFile::remove(input));
+    ASSERT_TRUE(UndoRedoManager::instance().undo());
+    EXPECT_EQ(layer->children.size(), 1u);
+    EXPECT_FALSE(registry.sourceFileExists(original.sourceID));
+    EXPECT_EQ(originalSound->comp<VSound>()->sources, authored);
+    ASSERT_TRUE(UndoRedoManager::instance().redo());
+    EXPECT_EQ(layer->children.size(), 2u);
+    EXPECT_TRUE(registry.sourceFileExists(original.sourceID));
+    EXPECT_EQ(registry.count(), 1);
+}
+
+TEST_F(BlueprintAudioImportTest, AmbiguousRestorationLeavesTargetsAndHistoryUntouched)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    const auto input = wave("Hit.wav", 0.2f);
+    auto* sound = create("Sound", T::Sound);
+    auto* component = sound->comp<VSound>();
+    QList<AssetInfo> assets;
+    for (const auto& folder : {QStringLiteral("A"), QStringLiteral("B")}) {
+        ASSERT_TRUE(QDir().mkdir(SourceFileSystem::absolutePath(folder)));
+        auto* command = ImportAssetsCommand::pushImportSources({input}, folder);
+        ASSERT_EQ(command->successCount(), 1);
+        assets.append(*registry.getAsset(command->importedIDs().first()));
+        SoundSourceDef source;
+        source.entryId = QUuid::createUuid();
+        source.sourceId = assets.back().sourceID;
+        component->sources.plain.entries.push_back(source);
+    }
+    component->sources.plain.active = component->sources.plain.entries.front().entryId;
+    const auto authored = component->sources;
+    ASSERT_TRUE(manager.saveProject());
+    for (const auto& asset : assets)
+        ASSERT_TRUE(QFile::remove(asset.absolutePath));
+    UndoRedoManager::instance().clear();
+    EXPECT_FALSE(importFiles({input}, sound->objectID).success);
+    EXPECT_EQ(component->sources, authored);
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
+    for (const auto& asset : assets)
+        EXPECT_FALSE(registry.sourceFileExists(asset.sourceID));
+
+    ASSERT_TRUE(QDir(directory.path()).mkdir(QStringLiteral("Other")));
+    const auto competing = wave("Other/Hit.wav", 0.7f);
+    auto* binding = findFileBindingForItem(*manager.currentProject(), sound);
+    const auto entry = component->sources.plain.entries.front().entryId;
+    auto* conflict = ImportSoundSourcesCommand::pushImport({input, competing}, binding, sound, {}, entry);
+    EXPECT_EQ(conflict->successCount(), 0);
+    EXPECT_EQ(component->sources, authored);
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
+    for (const auto& asset : assets)
+        EXPECT_FALSE(registry.sourceFileExists(asset.sourceID));
+
+    auto* resolved = ImportSoundSourcesCommand::pushImport({competing}, binding, sound, {}, entry);
+    EXPECT_EQ(resolved->successCount(), 1);
+    EXPECT_TRUE(registry.sourceFileExists(assets.front().sourceID));
+    EXPECT_FALSE(registry.sourceFileExists(assets.back().sourceID));
+    EXPECT_EQ(component->sources, authored);
+    EXPECT_EQ(registry.count(), 2);
 }
 
 TEST_F(BlueprintAudioImportTest, RepeatedPathInOneDropImportsOnlyOnce)

@@ -250,6 +250,7 @@ private:
     void applyProjectItemSelection_();
     void refreshPlaybackActivity_();
     void refreshNodeTitles_();
+    void refreshNodeWaveforms_();
     void refreshPathFocus_();
     void updateNodeGridSnap_();
     bool nodeFieldEditing_() const;

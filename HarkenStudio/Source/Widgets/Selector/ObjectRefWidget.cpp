@@ -392,7 +392,9 @@ void ObjectRefWidget::refreshIcon()
         return;
     }
     const bool dim = readOnly_ || !selectorEnabled_;
-    const QIcon icon = refDomainAdapter(domain_).icon(objectID_, QColor());
+    const auto& adapter = refDomainAdapter(domain_);
+    const QIcon icon = adapter.icon(objectID_, adapter.isAvailable(objectID_)
+        ? QColor() : ThemeManager::instance().colors().error);
     iconLabel_->setPixmap(icon.pixmap(iconLabel_->size(), devicePixelRatioF(),
                                      dim ? QIcon::Disabled : QIcon::Normal));
 }
@@ -401,12 +403,14 @@ void ObjectRefWidget::refreshStyle()
 {
     const bool dim = readOnly_ || !selectorEnabled_;
     const bool invalid = !mixedValue_ && (!validationError_.isEmpty()
+        || (hasItem_ && !refDomainAdapter(domain_).isAvailable(objectID_))
         || (!hasItem_ && (objectID_ != 0 || !unresolvedReference_.isEmpty()
                          || (required_ && !inherited_))));
     QtControlSkin::setSemanticProperty(this, "inputInvalid", invalid);
     QtControlSkin::setSemanticProperty(this, "dimmed", dim);
     QtControlSkin::setSemanticProperty(nameLabel_, "dimmed", dim);
     QtControlSkin::setSemanticProperty(nameLabel_, "inherited", inherited_);
+    QtControlSkin::setSemanticProperty(nameLabel_, "inputInvalid", invalid);
 }
 
 void ObjectRefWidget::openSelector(QWidget* anchor)

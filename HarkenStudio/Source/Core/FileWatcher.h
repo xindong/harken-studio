@@ -23,6 +23,8 @@ public:
     void startWatching(const QString& projectRoot);
     void stopWatching();
     bool isWatching() const { return watching_; }
+    QStringList sourceFiles() const;
+    void refreshSources();
 
     void setDebounceInterval(int ms);
     int debounceInterval() const { return debounceMs_; }
@@ -33,6 +35,7 @@ signals:
     void filesAdded(const QStringList& paths);
     void filesRemoved(const QStringList& paths);
     void filesModified(const QStringList& paths);
+    void sourcesChanged();
     void packExternallyModified(const QString& wuPath);
 
 private slots:
@@ -41,8 +44,7 @@ private slots:
     void flushPendingChanges();
 
 private:
-    void scanDirectoryRecursive(const QString& dir, QSet<QString>& snapshot);
-    void watchDirectoryRecursive(const QString& dir);
+    QMap<QString, QPair<qint64, QDateTime>> scanSourceEntries() const;
     QMap<QString, QPair<qint64, QDateTime>> scanProjectEntries() const;
     void refreshWatches();
 
@@ -55,7 +57,7 @@ private:
     bool suppressed_ = false;
     int debounceMs_ = 500;
 
-    QSet<QString> lastSnapshot_;
+    QMap<QString, QPair<qint64, QDateTime>> sourceSnapshot_;
     QMap<QString, QPair<qint64, QDateTime>> projectSnapshot_;
     QSet<QString> pendingModified_;
     QSet<QString> pendingWUModified_;

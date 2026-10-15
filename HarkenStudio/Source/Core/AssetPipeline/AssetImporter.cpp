@@ -1,11 +1,13 @@
 
 #include "AssetImporter.h"
 #include "AssetRegistry.h"
+#include "MediaPool.h"
 #include "PathUtils.h"
 #include "SourceFileSystem.h"
 #include "AudioFormatCatalog.h"
 #include "WaveformCache.h"
 #include "../ProjectTypes.h"
+#include "../UndoCommands.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -39,11 +41,13 @@ void AssetImporter::setProjectRoot(const QString& root)
 
 ImportResult AssetImporter::importFile(const QString& externalPath,
                                         ProjectFileBinding* targetBinding,
-                                        const QString& sourceFolder)
+                                        const QString& sourceFolder,
+                                        bool allowRename,
+                                        uint32_t restoreSourceID)
 {
     ImportResult result;
 
-    if (!sourceFolder.isEmpty()) {
+    if (!sourceFolder.isEmpty() && restoreSourceID == 0) {
         const QString directory = SourceFileSystem::absolutePath(sourceFolder);
         if (directory.isEmpty() || !QFileInfo(directory).isDir()) {
             result.error = AssetError::E_CONVERSION_FAILED;
@@ -65,24 +69,69 @@ ImportResult AssetImporter::importFile(const QString& externalPath,
         return result;
     }
 
+    const QString destination = sourceFolder.isEmpty()
+        ? PathUtils::calculateImportDestination(externalPath, projectRoot_)
+        : QDir(SourceFileSystem::absolutePath(sourceFolder)).filePath(QFileInfo(externalPath).fileName());
     QString contentHash = computeContentHash(externalPath);
-    if (!contentHash.isEmpty()) {
-        const AssetInfo* existing = AssetRegistry::instance().findAssetByContentHash(contentHash);
-        if (existing && QFileInfo::exists(existing->absolutePath)) {
-            result.success = true;
-            result.deduplicated = true;
-            result.sourceID = existing->sourceID;
-            result.relativePath = existing->relativePath;
-            result.absolutePath = existing->absolutePath;
-            result.metadata = existing->metadata;
-            qDebug() << "[AssetImporter] Deduplicated (same content):"
-                     << QFileInfo(externalPath).fileName()
-                     << "-> existing SourceID:" << QString::number(existing->sourceID, 16);
+    if (contentHash.isEmpty()) {
+        result.error = AssetError::E_CONVERSION_FAILED;
+        result.errorMessage = tr("Could not read '%1'.").arg(externalPath);
+        emit importError(externalPath, result.errorMessage);
+        return result;
+    }
+    const auto& registry = AssetRegistry::instance();
+    const AssetInfo* existing = restoreSourceID != 0 ? registry.getAsset(restoreSourceID)
+        : allowRename ? registry.findAssetByPath(externalPath) : nullptr;
+    if (!existing && restoreSourceID == 0)
+        existing = registry.findAssetByPath(destination);
+    if (restoreSourceID != 0 && (!existing || registry.sourceFileExists(restoreSourceID))) {
+        result.error = AssetError::E_CONVERSION_FAILED;
+        result.errorMessage = tr("The missing source changed before it could be restored. Import it again.");
+        return result;
+    }
+    if (existing && !registry.sourceFileExists(existing->sourceID)) {
+        const uint32_t sourceID = existing->sourceID;
+        const QString relativePath = existing->relativePath;
+        result.fileChange = SourceFileSystem::replaceFiles(
+            {{relativePath, externalPath}}, &result.errorMessage);
+        if (!result.fileChange) {
+            result.error = AssetError::E_CONVERSION_FAILED;
             return result;
         }
+        existing = registry.getAsset(sourceID);
+    }
+    if (existing && (result.fileChange
+        || computeContentHash(existing->absolutePath) == contentHash)) {
+        const uint32_t sourceID = existing->sourceID;
+        if (!result.fileChange
+            && !MediaPool::instance().refreshSourceFile(sourceID, existing->absolutePath)) {
+            result.error = AssetError::E_CORRUPTED_FILE;
+            result.errorMessage = tr("Failed to read audio file metadata");
+            emit importError(externalPath, result.errorMessage);
+            return result;
+        }
+        existing = registry.getAsset(sourceID);
+        result.success = true;
+        result.deduplicated = true;
+        result.sourceID = existing->sourceID;
+        result.relativePath = existing->relativePath;
+        result.absolutePath = existing->absolutePath;
+        result.metadata = existing->metadata;
+        qDebug() << (result.fileChange ? "[AssetImporter] Restored:" : "[AssetImporter] Reused:")
+                 << QFileInfo(externalPath).fileName()
+                 << "-> existing SourceID:" << QString::number(existing->sourceID, 16);
+        return result;
     }
 
-    QString destPath = copyToAudioSources(externalPath, sourceFolder);
+    const bool alreadyStored = !allowRename && QFileInfo::exists(destination)
+        && computeContentHash(destination) == contentHash;
+    if (!allowRename && QFileInfo::exists(destination) && !alreadyStored) {
+        result.error = AssetError::E_CONVERSION_FAILED;
+        result.errorMessage = tr("'%1' has changed since import was confirmed. Import it again to choose whether to replace it.")
+            .arg(QFileInfo(destination).fileName());
+        return result;
+    }
+    QString destPath = alreadyStored ? destination : copyToAudioSources(externalPath, sourceFolder);
     if (destPath.isEmpty()) {
         result.error = AssetError::E_CONVERSION_FAILED;
         result.errorMessage = tr("Failed to copy file to AudioSources directory");
@@ -95,8 +144,9 @@ ImportResult AssetImporter::importFile(const QString& externalPath,
     uint32_t sourceID = AssetRegistry::instance().allocateStableID();
 
     AudioMetadata metadata = analyzeFile(destPath);
-    if (metadata.sampleRate == 0) {
-        QFile::remove(destPath);
+    if (metadata.sampleRate == 0 || metadata.totalSamples == 0) {
+        if (!alreadyStored)
+            QFile::remove(destPath);
         result.error = AssetError::E_CORRUPTED_FILE;
         result.errorMessage = tr("Failed to read audio file metadata");
         emit importError(externalPath, result.errorMessage);
@@ -114,21 +164,23 @@ ImportResult AssetImporter::importFile(const QString& externalPath,
     info.metadata = metadata;
     info.lastModified = QFileInfo(destPath).lastModified().toSecsSinceEpoch();
 
-    if (!AssetRegistry::instance().registerAsset(info)) {
-        QFile::remove(destPath);
+    result.fileChange = SourceFileSystem::registerImport(info, !alreadyStored, &result.errorMessage);
+    if (!result.fileChange) {
+        if (!alreadyStored)
+            QFile::remove(destPath);
         result.error = AssetError::E_ID_COLLISION;
-        result.errorMessage = tr("Failed to register asset");
         emit importError(externalPath, result.errorMessage);
         return result;
     }
 
     result.success = true;
+    result.copiedFile = !alreadyStored;
     result.sourceID = sourceID;
     result.relativePath = relativePath;
     result.absolutePath = destPath;
     result.metadata = metadata;
 
-    WaveformCache::generateAsync(destPath);
+    MediaPool::instance().refreshWaveform(sourceID);
 
     qDebug() << "Imported:" << QFileInfo(externalPath).fileName()
              << "-> SourceID:" << QString::number(sourceID, 16);
@@ -390,6 +442,8 @@ QString AssetImporter::copyToAudioSources(const QString& externalPath, const QSt
     qDebug() << "  projectRoot_:" << projectRoot_;
 
     QString destPath = PathUtils::calculateImportDestination(externalPath, projectRoot_);
+    if (sourceFolder.isEmpty() && !PathUtils::ensureDirectory(PathUtils::getAudioSourcesDir(projectRoot_)))
+        return {};
     if (!sourceFolder.isEmpty()) {
         const QString directory = SourceFileSystem::absolutePath(sourceFolder);
         if (directory.isEmpty() || !QFileInfo(directory).isDir())
@@ -398,14 +452,14 @@ QString AssetImporter::copyToAudioSources(const QString& externalPath, const QSt
     }
     qDebug() << "  destPath:" << destPath;
 
-    if (QFile::exists(destPath)) {
+    if (QFile::exists(destPath) || AssetRegistry::instance().findAssetByPath(destPath)) {
         QFileInfo info(destPath);
         QString baseName = info.completeBaseName();
         QString ext = info.suffix();
         QDir dir = info.absoluteDir();
 
         int counter = 1;
-        while (QFile::exists(destPath)) {
+        while (QFile::exists(destPath) || AssetRegistry::instance().findAssetByPath(destPath)) {
             destPath = dir.absoluteFilePath(QString("%1_%2.%3").arg(baseName).arg(counter).arg(ext));
             ++counter;
         }

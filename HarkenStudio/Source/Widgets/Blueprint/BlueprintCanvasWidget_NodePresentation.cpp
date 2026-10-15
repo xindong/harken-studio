@@ -2,6 +2,7 @@
 
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AssetPipeline/MediaPool.h"
+#include "Core/AssetPipeline/WaveformCache.h"
 #include "Core/LanguageContextService.h"
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
@@ -9,6 +10,21 @@
 #include "Core/ThemeManager.h"
 
 namespace VNX {
+
+void BlueprintCanvasWidget::refreshNodeWaveforms_()
+{
+    if (!activeSource_) return;
+    for (const auto& desc : activeSource_->buildNodes()) {
+        if (!desc.waveformMode) continue;
+        const auto kind = desc.kind == BlueprintNodeKind::ProjectItem ? NodeKind::ProjectItem : NodeKind::Bus;
+        const auto found = nodeMap_.find(NodeKey{kind, desc.id, desc.occurrenceIndex});
+        if (found == nodeMap_.end()) continue;
+        WaveformPeakData peaks;
+        if (!desc.mediaPath.isEmpty() && !WaveformCache::load(desc.mediaPath, peaks))
+            peaks = {};
+        found->second->setWaveformPeakData(peaks, desc.waveformRange);
+    }
+}
 
 void BlueprintCanvasWidget::refreshNodeTitles_()
 {

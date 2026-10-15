@@ -357,10 +357,8 @@ TEST_F(PlacementRulesTest, RootLevelIpcImportDedupReportsNewlyCreatedSound)
     ASSERT_TRUE(project->layers.empty());
 
     const QString wavPathA = tempDir_.path() + QStringLiteral("/Root_Import_Dedup_A.wav");
-    const QString wavPathB = tempDir_.path() + QStringLiteral("/Root_Import_Dedup_B.wav");
     const std::vector<float> samples{0.0f, 0.5f, -0.5f, 0.0f};
     writeWavF32(wavPathA, samples);
-    writeWavF32(wavPathB, samples);
 
     auto* first = ImportAssetsCommand::pushImportAtRoot({wavPathA});
     ASSERT_EQ(first->successCount(), 1);
@@ -378,7 +376,7 @@ TEST_F(PlacementRulesTest, RootLevelIpcImportDedupReportsNewlyCreatedSound)
     server.setProjectManager(&ProjectManager::instance());
     const QJsonObject response = server.dispatchCommand(
         QStringLiteral("import_audio"),
-        {{QStringLiteral("path"), wavPathB}});
+        {{QStringLiteral("path"), wavPathA}});
     ASSERT_EQ(response.value(QStringLiteral("status")).toString(),
               QStringLiteral("ok"));
 

@@ -16,7 +16,6 @@
 #include "Core/AssetPipeline/AudioImportGate.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AssetPipeline/MediaPool.h"
-#include "Core/AssetPipeline/WaveformCache.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/Components/VSelection.h"
 #include "Core/FontManager.h"
@@ -490,15 +489,26 @@ BlueprintCanvasWidget::BlueprintCanvasWidget(QWidget* parent)
             this, &BlueprintCanvasWidget::refreshOutputVolumePreview_);
     connect(&pm, &ProjectManager::busChanged,
             this, &BlueprintCanvasWidget::onBusChanged);
+    const auto refreshSource = [this]() {
+        if (activeSource_ == pathSource_.get()) schedulePathRefresh_();
+        else scheduleChainRefresh_();
+    };
     connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
-            this, [this]() {
+            this, [this, refreshSource]() {
         cancelConnection_();
-        schedulePathRefresh_();
+        refreshSource();
     });
     connect(&LanguageContextService::instance(), &LanguageContextService::languageChanged,
-            this, &BlueprintCanvasWidget::schedulePathRefresh_);
+            this, [this, refreshSource]() {
+        refreshNodeTitles_();
+        refreshSource();
+    });
     connect(&AssetRegistry::instance(), &AssetRegistry::assetModified,
             this, &BlueprintCanvasWidget::schedulePathRefresh_);
+    connect(&AssetRegistry::instance(), &AssetRegistry::assetModified,
+            this, &BlueprintCanvasWidget::refreshNodeWaveforms_);
+    connect(&MediaPool::instance(), &MediaPool::waveformReady,
+            this, &BlueprintCanvasWidget::refreshNodeWaveforms_);
     connect(&pm, &ProjectManager::projectPlatformEdited,
             this, &BlueprintCanvasWidget::schedulePathRefresh_);
     connect(&pm.variableRehearsal(), &VariableRehearsal::rehearsalChanged,
@@ -669,15 +679,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
             item->setFlag(QGraphicsItem::ItemIsSelectable, false);
         }
 
-        if (d.waveformMode) {
-            item->setBlueprintWaveformMode(true);
-            if (!d.mediaPath.isEmpty()) {
-                WaveformPeakData peaks;
-                if (WaveformCache::load(d.mediaPath, peaks) && peaks.isValid()) {
-                    item->setWaveformPeakData(peaks, d.waveformRange);
-                }
-            }
-        }
+        item->setBlueprintWaveformMode(d.waveformMode);
 
         if (d.overrideBadge >= 0) {
             item->setOverrideBadge(d.overrideBadge != 0);
@@ -820,6 +822,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
         if (selectedPathKeys_.empty() && selectedPathEdgeKeys_.empty()) emit selectionCleared();
     }
     refreshNodeTitles_();
+    refreshNodeWaveforms_();
     refreshPlaybackActivity_();
     refreshPathFocus_();
     emit signalChainViewChanged();

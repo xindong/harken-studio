@@ -97,6 +97,7 @@ public:
 
 
     bool refreshSourceFile(uint32_t sourceID, const QString& absolutePath);
+    void refreshWaveform(uint32_t sourceID);
 
 signals:
     void mediaStatusChanged(uint32_t sourceID, VNX::MediaStatus newStatus);
@@ -104,6 +105,7 @@ signals:
     void batchOperationComplete(int succeeded, int failed);
     void mediaHotSwapped(uint32_t sourceID, const QString& path);
     void statusCacheRefreshed();
+    void waveformReady(uint32_t sourceID);
     void batchReplaceFinished(QVector<VNX::BatchReplaceResult> results);
 
 private:
@@ -134,6 +136,7 @@ private:
                                  PendingReplace& pending,
                                  BatchReplaceResult& result);
     void commitReplacements(const QVector<PendingReplace>& pending);
+    void synchronizeSourceFiles(const QStringList& paths);
 
     bool isSourceFileMissing(const AssetInfo& info) const;
     bool hasAnyValidCache(const AssetInfo& info) const;

@@ -3,6 +3,7 @@
 
 #include "AssetTypes.h"
 #include "../ProjectTypes.h"
+#include "../UndoCommands.h"
 
 #include <QUndoCommand>
 #include <QStringList>
@@ -18,7 +19,7 @@ struct ImportResult;
 struct ProjectItem;
 class CreateProjectItemCommand;
 
-class ImportAssetsCommand : public QUndoCommand
+class ImportAssetsCommand : public TransactionalUndoCommand
 {
 public:
     ImportAssetsCommand(const QStringList& externalPaths,
@@ -47,10 +48,8 @@ public:
     static ImportAssetsCommand* pushImportAtRoot(const QStringList& externalPaths,
                                                 const QUuid& outputBusGuid = {});
     static ImportAssetsCommand* pushImportSources(const QStringList& externalPaths,
-                                                const QString& sourceFolder = {});
-
-    void undo() override;
-    void redo() override;
+                                                const QString& sourceFolder = {},
+                                                const QMap<QString, QString>& replacements = {});
 
     QList<uint32_t> importedIDs() const;
     QList<QUuid> importedItemGuids() const;
@@ -62,21 +61,11 @@ public:
     int duplicateCount() const { return duplicateCount_; }
 
 private:
-    // One record per successfully imported file. `ownsAsset` is false for a
-    // deduplicated import (the content already existed): such an entry only
-    // owns a tree node, never the physical file or the registry record, so
-    // rollback must leave the shared asset untouched. `assetInfo` snapshots the
-    // owned record at import time so redo can re-register it verbatim with the
-    // same sourceID after an undo tore it down.
     struct ImportedEntry {
         uint32_t sourceID = 0;
-        QString sourcePath;
-        QString destPath;
         QString relativePath;
         QString itemName;
         QUuid itemGuid;
-        bool ownsAsset = false;
-        AssetInfo assetInfo;
         std::shared_ptr<CreateProjectItemCommand> itemCreation;
 
         // Root-mode only: the command holds the root binding slot itself (the
@@ -87,6 +76,9 @@ private:
     };
 
     ProjectItem* resolveParentForRedo() const;
+    bool apply(bool redo) override;
+    void redoEntries();
+    void undoEntries();
     void collectParentEntries();
     void collectRootEntries();
     void redoRootMode();
@@ -98,6 +90,9 @@ private:
     bool rootMode_ = false;
     QUuid rootOutputBusGuid_;
     QString sourceFolder_;
+    bool sourceMode_ = false;
+    QSet<QString> replacedPaths_;
+    QList<std::shared_ptr<TransactionalUndoCommand>> fileChanges_;
 
     QList<ImportedEntry> entries_;
     int successCount_ = 0;

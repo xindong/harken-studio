@@ -1,4 +1,5 @@
 #include "SourceEditorWaveformView.h"
+#include "Core/AssetPipeline/MediaPool.h"
 
 #include "Core/SoundSourceSemantics.h"
 #include "Core/NumericFormat.h"
@@ -56,6 +57,12 @@ SourceEditorWaveformView::SourceEditorWaveformView(QWidget* parent, Presentation
     });
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             this, [this]() { refreshTimelineControls(); update(); });
+    connect(&MediaPool::instance(), &MediaPool::waveformReady, this, [this](uint32_t sourceID) {
+        if (asset_ && asset_->sourceID == sourceID && WaveformCache::load(path_, peaks_)) {
+            ++requestRevision_;
+            setState(State::Ready);
+        }
+    });
     if (presentation_ == Presentation::TrimEditor)
         setupTimeline();
 }
@@ -93,7 +100,7 @@ void SourceEditorWaveformView::setAsset(const AssetInfo* asset)
         }
         return;
     }
-    if (nextPath == path_ && sameContent) {
+    if (nextPath == path_ && sameContent && QFileInfo(nextPath).isFile()) {
         if (state_ == State::Generating || state_ == State::Ready
             || (state_ == State::Unavailable && nextPath.isEmpty())) {
             update();
@@ -501,6 +508,8 @@ void SourceEditorWaveformView::loadAsset(const QString& path)
         setState(WaveformCache::load(path, peaks_)
                      ? State::Ready
                      : State::Unavailable);
+        if (state_ == State::Ready && asset_)
+            emit MediaPool::instance().waveformReady(asset_->sourceID);
     });
     watcher->setFuture(WaveformCache::generateAsync(path));
 }

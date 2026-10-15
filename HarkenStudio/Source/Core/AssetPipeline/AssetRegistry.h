@@ -39,7 +39,7 @@ public:
     uint32_t allocateStableID();
 
 
-    bool registerAsset(const AssetInfo& info);
+    bool registerAsset(const AssetInfo& info, bool uncommitted = true);
 
     void unregisterAsset(uint32_t sourceID);
 
@@ -59,6 +59,7 @@ public:
     const AssetInfo* findAssetByPath(const QString& absolutePath) const;
 
     bool contains(uint32_t sourceID) const;
+    bool sourceFileExists(uint32_t sourceID) const;
 
     QList<uint32_t> getAllSourceIDs() const;
 

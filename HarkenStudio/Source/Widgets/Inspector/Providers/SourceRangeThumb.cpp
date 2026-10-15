@@ -1,6 +1,8 @@
 #include "Widgets/Inspector/Providers/SourceRangeThumb.h"
 
 #include "Core/SoundSourceSemantics.h"
+#include "Core/AssetPipeline/AssetRegistry.h"
+#include "Core/AssetPipeline/MediaPool.h"
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/WaveformRenderer.h"
@@ -30,9 +32,13 @@ SourceRangeThumb::SourceRangeThumb(QWidget* parent)
     : QWidget(parent)
 {
     setObjectName(QStringLiteral("sourceRangeThumb"));
-    setCursor(Qt::PointingHandCursor);
+    setEnabled(false);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     QtControlSkin::setSemanticProperty(this, "fieldRole", QStringLiteral("preview"));
+    connect(&MediaPool::instance(), &MediaPool::waveformReady, this, [this](uint32_t sourceID) {
+        if (source_.sourceId == sourceID)
+            setSource(source_, AssetRegistry::instance().getAsset(sourceID));
+    });
 }
 
 void SourceRangeThumb::setSource(const SoundSourceDef& source, const AssetInfo* asset)
@@ -40,10 +46,13 @@ void SourceRangeThumb::setSource(const SoundSourceDef& source, const AssetInfo* 
     source_ = source;
     asset_ = asset ? std::optional<AssetInfo>{*asset} : std::nullopt;
     peaks_ = {};
-    if (asset && !asset->absolutePath.isEmpty())
+    sourceMissing_ = !AssetRegistry::instance().sourceFileExists(source.sourceId);
+    setEnabled(!sourceMissing_);
+    setCursor(sourceMissing_ ? Qt::ArrowCursor : Qt::PointingHandCursor);
+    if (!sourceMissing_ && asset && !asset->absolutePath.isEmpty())
         WaveformCache::load(asset->absolutePath, peaks_);
     const auto range = SoundSourceSemantics::effectiveRange(source_, asset);
-    const bool warning = range && !range->intact();
+    const bool warning = !sourceMissing_ && range && !range->intact();
     QtControlSkin::setSemanticProperty(this, "rangeWarning", warning);
     update();
 }
@@ -52,6 +61,7 @@ void SourceRangeThumb::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     QtControlSkin::paintFieldFrame(painter, this);
+    if (sourceMissing_) return;
     painter.setRenderHint(QPainter::Antialiasing);
     const auto& colors = ThemeManager::instance().colors();
     const auto& style = ThemeManager::instance().snapshot()->domains.waveform;
@@ -61,7 +71,7 @@ void SourceRangeThumb::paintEvent(QPaintEvent*)
     } else {
         painter.setPen(colors.textMuted);
         painter.drawText(inner, Qt::AlignCenter,
-                         asset_ ? tr("Waveform unavailable") : tr("Missing source"));
+                         tr("Waveform unavailable"));
         return;
     }
 

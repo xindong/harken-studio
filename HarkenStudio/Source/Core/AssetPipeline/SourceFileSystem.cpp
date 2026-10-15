@@ -1,16 +1,25 @@
 #include "SourceFileSystem.h"
 
 #include "AssetRegistry.h"
+#include "AssetImporter.h"
+#include "MediaPool.h"
 #include "PathUtils.h"
+#include "WaveformCache.h"
+#include "RuntimeBridge/PackagingBridge.h"
 #include "../ProjectDataPolicy.h"
 #include "../NameValidator.h"
 #include "../ProjectManager.h"
+#include "../LanguageContextService.h"
+#include "../PlatformContextService.h"
+#include "../SoundSourceEditing.h"
 #include "../ToastManager.h"
 #include "../UndoCommands.h"
 
 #include <QDir>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QSet>
+#include <QTemporaryDir>
 #include <QUuid>
 #include <QDebug>
 
@@ -19,15 +28,26 @@
 namespace VNX::SourceFileSystem {
 namespace {
 
+struct FileRevision {
+    std::shared_ptr<QTemporaryDir> storage;
+    QString file;
+    AudioMetadata metadata;
+    QString hash;
+};
+
 struct Change {
     QString from;
     QString to;
     bool directory = false;
+    std::shared_ptr<FileRevision> before = {};
+    std::shared_ptr<FileRevision> after = {};
 
-    Change reversed() const { return {to, from, directory}; }
+    Change reversed() const { return {to, from, directory, after, before}; }
 };
 
 QList<Change> pendingChanges;
+
+enum class ApplyMode { Record, Transient, Discard };
 
 QString pathKey(const QString& path)
 {
@@ -77,7 +97,13 @@ bool applyFileChange(const Change& change, QString* error)
         return fail(error, QObject::tr("The source path must stay inside AudioSources."));
 
     bool ok = false;
-    if (change.from.isEmpty()) {
+    if (change.after) {
+        if (change.after->file.isEmpty()) {
+            ok = !QFileInfo::exists(to) || QFile::remove(to);
+        } else {
+            ok = copyFile(change.after->file, to);
+        }
+    } else if (change.from.isEmpty()) {
         ok = QDir().mkdir(to);
     } else if (change.to.isEmpty()) {
         ok = QDir().rmdir(from);
@@ -96,18 +122,62 @@ void publishChanges(const QList<Change>& changes, bool record)
     auto& registry = AssetRegistry::instance();
     for (const Change& change : changes) {
         const auto* asset = change.directory ? nullptr : registry.getAssetByPath(change.from);
-        const bool retain = change.directory || (asset && !registry.isUncommitted(asset->sourceID));
+        const bool retain = change.directory || (change.after && !asset)
+            || (asset && !registry.isUncommitted(asset->sourceID));
         if (record && retain)
             pendingChanges.append(change);
-        if (!change.from.isEmpty() && !change.to.isEmpty())
+        if (change.after) {
+            const QString path = absolutePath(change.to);
+            WaveformCache::remove(path);
+            if (asset) {
+                const uint32_t sourceID = asset->sourceID;
+                registry.invalidateAllCaches(sourceID);
+                if (!registry.updateSourceFile(sourceID, change.after->metadata, path,
+                    change.after->hash, QFileInfo(path).lastModified().toSecsSinceEpoch()))
+                    emit registry.assetModified(sourceID);
+                HarkenEditor::Bridge::mediaRegistryRegister(sourceID, path);
+                emit MediaPool::instance().mediaHotSwapped(sourceID, path);
+                if (!change.after->file.isEmpty())
+                    MediaPool::instance().refreshWaveform(sourceID);
+            }
+            if (!asset && !change.after->file.isEmpty())
+                WaveformCache::generateAsync(path);
+        } else if (!change.from.isEmpty() && !change.to.isEmpty())
             registry.relocateSourcePaths(change.from, change.to);
     }
     syncSoundPaths();
     emit registry.sourceFoldersChanged();
 }
 
-bool applyBatch(const QList<Change>& changes, bool record, QString* error, bool* rollbackFailed = nullptr)
+bool validateSourcePaths(const QList<Change>& changes, QString* error)
 {
+    QSet<QString> destinations;
+    for (const auto& asset : AssetRegistry::instance().snapshot()) {
+        QString path = asset.relativePath;
+        bool relocated = false;
+        for (const auto& change : changes) {
+            if (change.after || change.from.isEmpty() || change.to.isEmpty()) continue;
+            const QString from = pathKey(change.from);
+            if (pathKey(path) == from || (change.directory && pathKey(path).startsWith(from + QLatin1Char('/')))) {
+                path = change.to + path.mid(change.from.size());
+                relocated = true;
+            }
+        }
+        const QString key = pathKey(path);
+        const bool occupied = !relocated && std::any_of(changes.cbegin(), changes.cend(), [&](const Change& change) {
+            return !change.after && !change.to.isEmpty() && pathKey(change.to) == key;
+        });
+        if (occupied || destinations.contains(key))
+            return fail(error, QObject::tr("'%1' is still used by another source record. Restore that source or choose another name.")
+                .arg(path));
+        destinations.insert(key);
+    }
+    return true;
+}
+
+bool applyBatch(const QList<Change>& changes, ApplyMode mode, QString* error, bool* rollbackFailed = nullptr)
+{
+    if (mode != ApplyMode::Discard && !validateSourcePaths(changes, error)) return false;
     QList<Change> steps;
     for (const Change& change : changes) {
         if (change.from != change.to && pathKey(change.from) == pathKey(change.to)) {
@@ -134,7 +204,8 @@ bool applyBatch(const QList<Change>& changes, bool record, QString* error, bool*
                 }
             }
             if (!remaining.isEmpty()) {
-                publishChanges(remaining, record);
+                if (mode != ApplyMode::Discard)
+                    publishChanges(remaining, mode == ApplyMode::Record);
                 if (rollbackFailed)
                     *rollbackFailed = true;
                 failure += QLatin1Char('\n') + QObject::tr(
@@ -145,7 +216,8 @@ bool applyBatch(const QList<Change>& changes, bool record, QString* error, bool*
         }
         applied.append(step);
     }
-    publishChanges(changes, record);
+    if (mode != ApplyMode::Discard)
+        publishChanges(changes, mode == ApplyMode::Record);
     return true;
 }
 
@@ -167,7 +239,7 @@ private:
         }
         QString error;
         bool rollbackFailed = false;
-        if (applyBatch(changes, true, &error, &rollbackFailed))
+        if (applyBatch(changes, ApplyMode::Record, &error, &rollbackFailed))
             return true;
         setObsolete(rollbackFailed);
         qWarning().noquote() << error;
@@ -178,12 +250,149 @@ private:
     QList<Change> changes_;
 };
 
+class ImportCommand : public TransactionalUndoCommand
+{
+public:
+    ImportCommand(const AssetInfo& asset, const QList<Change>& changes)
+        : TransactionalUndoCommand(QObject::tr("Import audio source")), asset_(asset), changes_(changes) {}
+
+private:
+    bool apply(bool redo) override
+    {
+        auto& registry = AssetRegistry::instance();
+        if (redo && !removed_) return true;
+        if (!redo && !registry.isUncommitted(asset_.sourceID)) return true;
+        QString error;
+        if (redo && (registry.contains(asset_.sourceID)
+            || registry.findAssetByPath(asset_.absolutePath) || QFileInfo::exists(asset_.absolutePath))) {
+            error = QObject::tr("Cannot restore '%1': the source ID or path is already in use.")
+                .arg(asset_.relativePath);
+        } else {
+            QList<Change> changes;
+            if (redo) changes = changes_;
+            else {
+                if (const auto* current = registry.getAsset(asset_.sourceID))
+                    asset_.ownerObjectGuid = current->ownerObjectGuid;
+                for (auto it = changes_.crbegin(); it != changes_.crend(); ++it)
+                    changes.append(it->reversed());
+            }
+            bool rollbackFailed = false;
+            if (applyBatch(changes, ApplyMode::Transient, &error, &rollbackFailed)) {
+                if (!redo) {
+                    registry.unregisterAsset(asset_.sourceID);
+                    removed_ = true;
+                    return true;
+                }
+                if (registry.registerAsset(asset_)) {
+                    removed_ = false;
+                    MediaPool::instance().refreshWaveform(asset_.sourceID);
+                    return true;
+                }
+                QList<Change> rollback;
+                for (auto it = changes.crbegin(); it != changes.crend(); ++it)
+                    rollback.append(it->reversed());
+                rollbackFailed = !applyBatch(rollback, ApplyMode::Transient, nullptr);
+                error = QObject::tr("Could not restore the source record for '%1'.").arg(asset_.relativePath);
+            }
+            setObsolete(rollbackFailed);
+        }
+        qWarning().noquote() << error;
+        ToastManager::instance().showToast(error, 5000, ToastType::Error);
+        return false;
+    }
+
+    AssetInfo asset_;
+    QList<Change> changes_;
+    bool removed_ = false;
+};
+
+class RestoreByRenameCommand : public TransactionalUndoCommand
+{
+public:
+    RestoreByRenameCommand(const AssetInfo& source, const AssetInfo& missing)
+        : TransactionalUndoCommand(QObject::tr("Rename and restore audio source"), nullptr, false)
+        , source_(source), missing_(missing)
+        , missingUncommitted_(AssetRegistry::instance().isUncommitted(missing.sourceID))
+    {
+        const auto collect = [&](auto&& self, ProjectItem* item) -> void {
+            if (const auto* sound = item->comp<VSound>()) {
+                Reference reference{item->guid, sound->sources, sound->sources};
+                const auto replace = [&](SoundSourceSet& set) {
+                    for (auto& entry : set.entries)
+                        if (entry.sourceId == missing_.sourceID) entry.sourceId = source_.sourceID;
+                };
+                replace(reference.after.plain);
+                for (auto& set : reference.after.localized) replace(set);
+                if (reference.before != reference.after) references_.append(reference);
+            }
+            for (const auto& child : item->children) self(self, child.get());
+        };
+        for (const auto* binding : ProjectManager::instance().currentProject()->allFileBindings())
+            if (binding->rootItem) collect(collect, binding->rootItem.get());
+    }
+
+private:
+    bool apply(bool redo) override
+    {
+        auto& registry = AssetRegistry::instance();
+        auto& manager = ProjectManager::instance();
+        QString error;
+        const auto* source = registry.getAsset(source_.sourceID);
+        const auto* missing = registry.getAsset(missing_.sourceID);
+        const QString from = redo ? source_.relativePath : missing_.relativePath;
+        const QString to = redo ? missing_.relativePath : source_.relativePath;
+        if (!source || source->relativePath != from || !registry.sourceFileExists(source_.sourceID)
+            || QFileInfo::exists(absolutePath(to)) || (redo && (!missing || missing->relativePath != to))
+            || (!redo && missing)
+            || std::any_of(references_.cbegin(), references_.cend(), [&](const Reference& ref) {
+                const auto* item = manager.findItemByGuid(ref.guid);
+                return !item || !item->comp<VSound>();
+            })) {
+            error = QObject::tr("The sources changed before the rename could be applied. Review them and try again.");
+        } else {
+            if (redo) registry.unregisterAsset(missing_.sourceID);
+            bool rollbackFailed = false;
+            if (applyBatch({{from, to, false}}, ApplyMode::Record, &error, &rollbackFailed)) {
+                if (!redo && !registry.registerAsset(missing_, missingUncommitted_)) {
+                    rollbackFailed = !applyBatch({{to, from, false}}, ApplyMode::Record, nullptr);
+                    error = QObject::tr("Could not restore the missing source record.");
+                } else {
+                    for (const auto& ref : references_) {
+                        auto* item = manager.findItemByGuid(ref.guid);
+                        item->comp<VSound>()->sources = redo ? ref.after : ref.before;
+                        SoundSourceEditing::syncActiveProjection(*item,
+                            PlatformContextService::instance().context().primary,
+                            SoundSourceEditing::previewLanguage(*item, LanguageContextService::instance().language()));
+                        item->markDirty();
+                        emit manager.itemPropertyChanged(item, QStringLiteral("sources"));
+                        ProjectManager::resyncItemToRuntime(item);
+                    }
+                    MediaPool::instance().refreshSourceFile(source_.sourceID, absolutePath(to));
+                    return true;
+                }
+            } else if (redo && !registry.registerAsset(missing_, missingUncommitted_)) {
+                rollbackFailed = true;
+            }
+            setObsolete(rollbackFailed);
+        }
+        qWarning().noquote() << error;
+        ToastManager::instance().showToast(error, 5000, ToastType::Error);
+        return false;
+    }
+
+    struct Reference { QUuid guid; SoundSources before; SoundSources after; };
+    AssetInfo source_;
+    AssetInfo missing_;
+    bool missingUncommitted_;
+    QList<Reference> references_;
+};
+
 bool push(const QList<Change>& changes, const QString& label, QString* error)
 {
     if (changes.isEmpty())
         return false;
     bool rollbackFailed = false;
-    if (!applyBatch(changes, true, error, &rollbackFailed)) {
+    if (!applyBatch(changes, ApplyMode::Record, error, &rollbackFailed)) {
         if (rollbackFailed) {
             UndoRedoManager::instance().clear();
             UndoRedoManager::instance().undoStack()->resetClean();
@@ -206,7 +415,7 @@ bool validateMove(const QString& from, const QString& to, QString* error)
         return fail(error, QObject::tr("A folder cannot be moved into itself."));
     if (pathKey(from) != pathKey(to) && QFileInfo::exists(absolutePath(to)))
         return fail(error, QObject::tr("'%1' already exists.").arg(to));
-    return true;
+    return validateSourcePaths({{from, to, QFileInfo(absolutePath(from)).isDir()}}, error);
 }
 
 }
@@ -299,6 +508,27 @@ bool rename(const QString& path, const QString& name, QString* error, QString* r
     return true;
 }
 
+bool restoreByRename(uint32_t sourceID, uint32_t missingID, QString* error)
+{
+    auto& registry = AssetRegistry::instance();
+    const auto* source = registry.getAsset(sourceID);
+    const auto* missing = registry.getAsset(missingID);
+    if (sourceID == missingID || !source || !missing || !registry.sourceFileExists(sourceID)
+        || registry.sourceFileExists(missingID) || absolutePath(source->relativePath).isEmpty()
+        || absolutePath(missing->relativePath).isEmpty())
+        return fail(error, QObject::tr("The source or missing destination changed. Review them and try again."));
+    auto command = std::make_unique<RestoreByRenameCommand>(*source, *missing);
+    if (!command->tryReplay(true)) {
+        if (command->isObsolete()) {
+            UndoRedoManager::instance().clear();
+            UndoRedoManager::instance().undoStack()->resetClean();
+        }
+        return fail(error, QObject::tr("Could not rename and restore the source."));
+    }
+    UndoRedoManager::instance().push(command.release());
+    return true;
+}
+
 static QList<Change> planMove(const QStringList& paths, const QString& parentPath, QString* error)
 {
     if (absolutePath(parentPath).isEmpty() || !QFileInfo(absolutePath(parentPath)).isDir()) {
@@ -349,6 +579,139 @@ bool removeEmptyFolder(const QString& path, QString* error)
     return push({{path, {}, true}}, QObject::tr("Delete source folder %1").arg(path), error);
 }
 
+std::unique_ptr<TransactionalUndoCommand> replaceFiles(
+    const QMap<QString, QString>& replacements, QString* error)
+{
+    if (replacements.isEmpty())
+        return {};
+    const auto storage = std::make_shared<QTemporaryDir>(
+        QDir(PathUtils::getDotCacheDir(AssetRegistry::instance().projectRoot()))
+            .filePath(QStringLiteral("source-import-XXXXXX")));
+    if (!storage->isValid()) {
+        fail(error, QObject::tr("Could not keep a copy of the audio files for undo."));
+        return {};
+    }
+
+    AssetImporter importer;
+    QList<Change> changes;
+    for (auto it = replacements.cbegin(); it != replacements.cend(); ++it) {
+        const QString destination = absolutePath(it.key());
+        if (destination.isEmpty() || QFileInfo(destination).isDir()) {
+            fail(error, QObject::tr("The destination source path is invalid."));
+            return {};
+        }
+        auto before = std::make_shared<FileRevision>();
+        auto after = std::make_shared<FileRevision>();
+        before->storage = after->storage = storage;
+        if (const auto* asset = AssetRegistry::instance().getAssetByPath(it.key())) {
+            before->metadata = asset->metadata;
+            before->hash = asset->contentHash;
+        }
+        const auto capture = [&](const QString& source, const QString& name,
+                                 FileRevision& revision) {
+            revision.file = storage->filePath(name + QLatin1Char('.') + QFileInfo(source).suffix());
+            if (!QFile::copy(source, revision.file))
+                return fail(error, QObject::tr("Could not prepare '%1' for replacement.").arg(source));
+            revision.metadata = importer.analyzeFile(revision.file);
+            revision.hash = AssetImporter::computeContentHash(revision.file);
+            return !revision.hash.isEmpty()
+                || fail(error, QObject::tr("Could not read '%1'.").arg(source));
+        };
+        if (QFileInfo::exists(destination)
+            && !capture(destination, QString::number(changes.size()) + QStringLiteral("-before"), *before))
+            return {};
+        if (!capture(it.value(), QString::number(changes.size()) + QStringLiteral("-after"), *after))
+            return {};
+        if (after->metadata.sampleRate == 0 || after->metadata.totalSamples == 0) {
+            fail(error, QObject::tr("Could not read audio data from '%1'.").arg(it.value()));
+            return {};
+        }
+        changes.append({it.key(), it.key(), false, before, after});
+    }
+    bool rollbackFailed = false;
+    if (!applyBatch(changes, ApplyMode::Record, error, &rollbackFailed)) {
+        if (rollbackFailed) {
+            UndoRedoManager::instance().clear();
+            UndoRedoManager::instance().undoStack()->resetClean();
+        }
+        return {};
+    }
+    return std::make_unique<FileCommand>(changes, QObject::tr("Replace audio sources"));
+}
+
+std::unique_ptr<TransactionalUndoCommand> registerImport(
+    const AssetInfo& asset, bool copiedFile, QString* error)
+{
+    QList<Change> changes;
+    if (copiedFile) {
+        const QString cache = PathUtils::getDotCacheDir(AssetRegistry::instance().projectRoot());
+        if (!PathUtils::ensureDirectory(cache)) {
+            fail(error, QObject::tr("Could not create the audio undo directory."));
+            return {};
+        }
+        const auto storage = std::make_shared<QTemporaryDir>(
+            QDir(cache).filePath(QStringLiteral("source-import-XXXXXX")));
+        if (!storage->isValid()) {
+            fail(error, QObject::tr("Could not keep a copy of the audio file for undo."));
+            return {};
+        }
+        auto before = std::make_shared<FileRevision>();
+        before->metadata = asset.metadata;
+        before->hash = asset.contentHash;
+        auto after = std::make_shared<FileRevision>(*before);
+        after->storage = storage;
+        after->file = storage->filePath(QStringLiteral("import.") + QFileInfo(asset.absolutePath).suffix());
+        if (!QFile::copy(asset.absolutePath, after->file)
+            || AssetImporter::computeContentHash(after->file) != asset.contentHash) {
+            fail(error, QObject::tr("Could not keep a copy of '%1' for undo.").arg(asset.relativePath));
+            return {};
+        }
+        changes.append({asset.relativePath, asset.relativePath, false, before, after});
+    }
+    if (!AssetRegistry::instance().registerAsset(asset, copiedFile)) {
+        fail(error, QObject::tr("Could not register '%1': the source ID or path is already in use.")
+            .arg(asset.relativePath));
+        return {};
+    }
+    return std::make_unique<ImportCommand>(asset, changes);
+}
+
+bool replayFiles(const QList<std::shared_ptr<TransactionalUndoCommand>>& commands,
+                 bool redo, bool* rollbackFailed)
+{
+    *rollbackFailed = false;
+    QList<TransactionalUndoCommand*> applied;
+    for (qsizetype step = 0; step < commands.size(); ++step) {
+        auto* command = commands[redo ? step : commands.size() - step - 1].get();
+        if (!command->tryReplay(redo)) {
+            *rollbackFailed = command->isObsolete();
+            for (auto it = applied.crbegin(); it != applied.crend(); ++it)
+                if (!(*it)->tryReplay(!redo)) *rollbackFailed = true;
+            return false;
+        }
+        applied.append(command);
+    }
+    return true;
+}
+
+bool copyFile(const QString& source, const QString& destination)
+{
+    QFile input(source);
+    QSaveFile output(destination);
+    if (!input.open(QIODevice::ReadOnly)
+        || !QDir().mkpath(QFileInfo(destination).absolutePath())
+        || !output.open(QIODevice::WriteOnly))
+        return false;
+    QByteArray buffer(1024 * 1024, Qt::Uninitialized);
+    qint64 count = 0;
+    while ((count = input.read(buffer.data(), buffer.size())) > 0) {
+        if (output.write(buffer.constData(), count) != count)
+            return false;
+    }
+    input.close();
+    return count == 0 && output.commit();
+}
+
 void commitChanges()
 {
     pendingChanges.clear();
@@ -358,7 +721,7 @@ void discardChanges()
 {
     for (auto it = pendingChanges.crbegin(); it != pendingChanges.crend(); ++it) {
         QString error;
-        if (!applyBatch({it->reversed()}, false, &error))
+        if (!applyBatch({it->reversed()}, ApplyMode::Discard, &error))
             qWarning().noquote() << error;
     }
     pendingChanges.clear();
