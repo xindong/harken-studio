@@ -153,6 +153,9 @@ TEST(EditorAssetConverterCache, WritesF32WavAndStoresRemappedLoop)
     VNX::AssetInfo singleSample = info;
     singleSample.sourceID = VNX::AssetRegistry::instance().allocateStableID();
     ASSERT_NE(singleSample.sourceID, 0u);
+    singleSample.relativePath = QStringLiteral("single-sample.wav");
+    singleSample.absolutePath = QDir(audioRoot).filePath(singleSample.relativePath);
+    ASSERT_TRUE(QFile::copy(sourcePath, singleSample.absolutePath));
     singleSample.metadata.loopInfo.loopStart = 1;
     singleSample.metadata.loopInfo.loopEnd = 1;
     ASSERT_TRUE(VNX::AssetRegistry::instance().registerAsset(singleSample));

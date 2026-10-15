@@ -6,6 +6,7 @@
 #include "Components/VPiece.h"
 #include "Components/VTrack.h"
 #include "Components/VVariable.h"
+#include "AssetPipeline/AssetConverter.h"
 #include "AssetPipeline/AssetRegistry.h"
 #include "Core/ActionManager.h"
 #include "Core/AuditionManager.h"
@@ -42,12 +43,14 @@
 
 #include <array>
 #include <tuple>
+#include <vector>
 
 #include <QApplication>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QAbstractSocket>
 #include <QComboBox>
+#include <QDir>
 #include <QGraphicsScene>
 #include <QJsonDocument>
 #include <QPointer>
@@ -272,9 +275,15 @@ TEST_P(ObjectRefStudioNavigationTest, LocatesOnClickAndOpensOnDoubleClickWithout
     VNX::AssetInfo asset;
     asset.sourceID = piece_->objectID;
     asset.relativePath = QStringLiteral("reference.wav");
+    asset.absolutePath = QDir(VNX::AssetRegistry::instance().projectRoot())
+                             .filePath(QStringLiteral("AudioSources/reference.wav"));
     asset.metadata.originalFormat = QStringLiteral("WAV");
     asset.metadata.sampleRate = 48000;
-    asset.metadata.channels = 2;
+    asset.metadata.channels = 1;
+    asset.metadata.totalSamples = 480;
+    asset.metadata.durationSec = 0.01;
+    ASSERT_TRUE(VNX::AssetConverter::writeFloatWav(
+        asset.absolutePath, std::vector<float>(480, 0.0f), 1, 48000));
     ASSERT_TRUE(VNX::AssetRegistry::instance().registerAsset(asset));
 
     auto* containerDock = addContent(QStringLiteral("ObjectReferenceContainer"),
