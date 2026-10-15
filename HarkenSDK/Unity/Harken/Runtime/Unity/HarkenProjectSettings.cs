@@ -100,6 +100,12 @@ namespace Harken.Unity
         {
             HarkenProjectSettings settings = ActiveForStartup();
             config.maxVoices = settings.MaxVoices;
+            // A single emitter stop can address every render voice atomically.
+            if (config.maxVoices > DefaultMaxVoices)
+            {
+                config.commandQueueDepth = Math.Max(config.commandQueueDepth, config.maxVoices);
+                config.maxControlCommandsPerQuantum = Math.Max(config.maxControlCommandsPerQuantum, config.maxVoices);
+            }
             config.maxPacks = settings.MaxPacks;
             config.maxActions = settings.MaxActions;
             config.maxActionFirings = settings.MaxActionFirings;

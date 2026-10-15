@@ -109,6 +109,18 @@ namespace Harken.Unity.Tests
             finally { AssetDatabase.DeleteAsset(path); }
         }
 
+        [TestCase(256u, 0u, 0u)]
+        [TestCase(512u, 0u, 512u)]
+        [TestCase(512u, 1024u, 1024u)]
+        public void StartupCommandCapacityCanStopEveryVoice(uint voices, uint existing, uint expected)
+        {
+            settings.SetMaxVoices(voices);
+            var config = new VnConfig { commandQueueDepth = existing, maxControlCommandsPerQuantum = existing };
+            HarkenProjectSettings.ApplyStartupCapacity(ref config);
+            Assert.That(config.commandQueueDepth, Is.EqualTo(expected));
+            Assert.That(config.maxControlCommandsPerQuantum, Is.EqualTo(expected));
+        }
+
         [Test]
         public void PersistedSettingsKeepExplicitStartupCapacities()
         {

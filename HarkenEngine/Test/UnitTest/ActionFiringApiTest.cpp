@@ -30454,6 +30454,276 @@ TEST(ActionFiringApi, SeekAndFiringHandlesDoNotReviveAfterRuntimeRestart) {
               Vn_QueryActionFiring(oldFiring, &firingInfo));
 }
 
+namespace {
+
+void PumpEmitterTest(harken::Engine& engine, std::uint32_t blocks) {
+    const auto before = engine.mixer.BlocksRendered();
+    for (std::uint32_t i = 0; i < blocks; ++i) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+    }
+    ASSERT_EQ(before + blocks, engine.mixer.BlocksRendered());
+    ASSERT_EQ(VN_OK, Vn_Update());
+}
+
+float EmitterTestPeak(harken::Engine& engine) {
+    return harkentest::Peak(engine.nullBackend.LastBlock(),
+        engine.nullBackend.BlockFrames() * engine.nullBackend.Channels());
+}
+
+VnActionFiringInfo EmitterFiringInfo(VnActionFiringHandle firing) {
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    EXPECT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+    return info;
+}
+
+void ExpectEmitterStopsPlayable(int kind) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(16, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::vector<float> samples(kind == 3 ? 2048 : 48000, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &pcm));
+    CanonicalActionWorld image(
+        engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
+        engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
+    if (kind == 0) {
+        image.properties[0].payload.presentMask |= UINT64_C(0x8);
+        image.properties[0].payload.values[3].bits = UINT32_MAX;
+        image.RelinkFirstSound();
+        image.MakeImmediateSoundPlayAction();
+    } else if (kind == 1) image.MakeImmediateCompositeTrackPlayAction();
+    else if (kind == 2) image.MakeImmediateCompositePiecePlayAction();
+    else if (kind == 3) image.MakeImmediateSequenceQueuePlayAction();
+    else image.MakeImmediateVariableControlPlayAction();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harken::InstallContainerWorldV1(engine, image.world).status);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    auto desc = ValidPostDesc();
+    desc.actionId = image.actions[9].actionStableId;
+    desc.emitter = emitter;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    PumpEmitterTest(engine, 8);
+    ASSERT_GT(EmitterTestPeak(engine), 0.01f);
+    ASSERT_GT(engine.voices.ActiveCount(), 0u);
+    ASSERT_EQ(VN_OK, Vn_StopEmitter(emitter, 1));
+    EXPECT_EQ(VN_OK, Vn_StopEmitter(emitter, 1));
+    PumpEmitterTest(engine, 16);
+    EXPECT_LT(EmitterTestPeak(engine), 0.000001f);
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_EQ(0u, engine.playableInstances.LiveCount());
+    EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, EmitterFiringInfo(firing).state);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    // Cross the Queue's original child boundary after cancellation.
+    PumpEmitterTest(engine, 64);
+    EXPECT_LT(EmitterTestPeak(engine), 0.000001f);
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    PumpEmitterTest(engine, 8);
+    EXPECT_GT(EmitterTestPeak(engine), 0.01f);
+}
+
+} // namespace
+
+TEST(ActionFiringApi, EmitterStopReclaimsLoopingSound) { ExpectEmitterStopsPlayable(0); }
+TEST(ActionFiringApi, EmitterStopReclaimsTrack) { ExpectEmitterStopsPlayable(1); }
+TEST(ActionFiringApi, EmitterStopReclaimsPiece) { ExpectEmitterStopsPlayable(2); }
+TEST(ActionFiringApi, EmitterStopReclaimsQueueWithoutRestartingSuccessor) { ExpectEmitterStopsPlayable(3); }
+TEST(ActionFiringApi, EmitterStopReclaimsVariableControl) { ExpectEmitterStopsPlayable(4); }
+
+TEST(ActionFiringApi, EmitterStopPreservesOtherEmittersAndUnscopedPlayback) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::vector<float> samples(48000, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision);
+    image.MakeImmediateSoundPlayAction();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    VnEmitterHandle emitters[3]{};
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitters[0]));
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitters[1]));
+    VnActionFiringHandle firings[3]{};
+    auto desc = ValidPostDesc();
+    desc.actionId = image.actions[9].actionStableId;
+    for (int i = 0; i < 3; ++i) {
+        desc.emitter = emitters[i];
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firings[i]));
+    }
+    PumpEmitterTest(engine, 8);
+    ASSERT_EQ(3u, engine.voices.ActiveCount());
+    ASSERT_EQ(VN_OK, Vn_StopEmitter(emitters[0], 0));
+    PumpEmitterTest(engine, 16);
+    EXPECT_EQ(2u, engine.voices.ActiveCount());
+    EXPECT_GT(EmitterTestPeak(engine), 0.01f);
+    EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, EmitterFiringInfo(firings[0]).state);
+    EXPECT_EQ(VN_ACTION_FIRING_ACTIVE, EmitterFiringInfo(firings[1]).state);
+    EXPECT_EQ(VN_ACTION_FIRING_ACTIVE, EmitterFiringInfo(firings[2]).state);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firings[0]));
+}
+
+TEST(ActionFiringApi, EmitterStopPreservesIndependentDelayedStep) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::vector<float> samples(48000, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision);
+    image.MakeImmediateSoundPlayAction();
+    image.steps[12] = image.steps[0];
+    image.steps[12].authoredEventIndex = 1;
+    const auto targetFrame = engine.timelinePool.WindowEndFrame() + 128u * engine.config.blockFrames;
+    SetAbsoluteTime(&image.steps[12].delay, DelayNanosecondsForTargetFrame(engine, targetFrame));
+    image.actions[9].stepCount = image.actions[9].expandedStepOccurrenceCount = 2;
+    image.actions[9].directFeatureMask = image.actions[9].transitiveFeatureMask = 1;
+    image.actions[9].programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(image.actions[9]);
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    auto desc = ValidPostDesc();
+    desc.actionId = image.actions[9].actionStableId;
+    desc.emitter = emitter;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    PumpEmitterTest(engine, 8);
+    ASSERT_GT(EmitterTestPeak(engine), 0.01f);
+    ASSERT_EQ(VN_OK, Vn_StopEmitter(emitter, 0));
+    PumpEmitterTest(engine, 16);
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_EQ(VN_ACTION_FIRING_ACTIVE, EmitterFiringInfo(firing).state);
+    EXPECT_GT(engine.actionFirings.OwnedDeferredCount(firing), 0u);
+    float value = 1.0f;
+    ASSERT_TRUE(engine.variables.CurrentValue(image.variables[0].variableId, &value));
+    EXPECT_FLOAT_EQ(0.0f, value);
+    PumpEmitterTest(engine, static_cast<std::uint32_t>(targetFrame / engine.config.blockFrames) + 16u);
+    VnActionStepResult step{};
+    step.structSize = sizeof(step);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 1, &step));
+    EXPECT_EQ(VN_OK, step.result);
+    EXPECT_EQ(VN_ACTION_STEP_SUCCEEDED, step.state);
+    ASSERT_TRUE(engine.variables.CurrentValue(image.variables[0].variableId, &value));
+    EXPECT_FLOAT_EQ(0.5f, value);
+    EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, EmitterFiringInfo(firing).state);
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+}
+
+TEST(ActionFiringApi, EmitterStopCompletesExistingAuthoredStopObserver) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::vector<float> samples(48000, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+    CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision);
+    image.MakeImmediateSoundPlayAndSeparateStopActions();
+    image.SetSeparateStopFade(20000000);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    auto desc = ValidPostDesc();
+    desc.emitter = emitter;
+    desc.actionId = image.actions[9].actionStableId;
+    VnActionFiringHandle play = 0, stop = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &play));
+    PumpEmitterTest(engine, 8);
+    desc.actionId = image.actions[8].actionStableId;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &stop));
+    VnActionStepResult step{};
+    step.structSize = sizeof(step);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(play, 0, &step));
+    harken::PlayableRetirementObserver observer{};
+    ASSERT_TRUE(engine.playableInstances.CaptureRetirementObserver(step.producedPlayableInstance, &observer));
+    ASSERT_EQ(stop, observer.actionFiring);
+    ASSERT_EQ(VN_OK, Vn_StopEmitter(emitter, 0));
+    PumpEmitterTest(engine, 64);
+    EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, EmitterFiringInfo(play).state);
+    EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, EmitterFiringInfo(stop).state);
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_EQ(0u, engine.playableInstances.LiveCount());
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(play));
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stop));
+}
+
+TEST(ActionFiringApi, EmitterStopPreflightsMixedPlaybackAtomically) {
+    for (int mode = 0; mode < 3; ++mode) {
+        SCOPED_TRACE(mode);
+        auto config = harkentest::MakeNullConfig(12, 64, 48000);
+        config.commandQueueDepth = mode == 1 ? 8 : 256;
+        config.maxControlCommandsPerQuantum = mode == 2 ? 8 : 256;
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        std::vector<float> samples(48000, 0.25f);
+        const auto pcm = harkentest::MonoDesc(samples, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+        CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision);
+        image.MakeImmediateSoundPlayAction();
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+        VnEmitterHandle emitter = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+        auto desc = ValidPostDesc();
+        desc.actionId = image.actions[9].actionStableId;
+        desc.emitter = emitter;
+        std::vector<VnActionFiringHandle> firings;
+        for (int i = 0; i < 8; ++i) {
+            VnActionFiringHandle firing = 0;
+            ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+            firings.push_back(firing);
+            PumpEmitterTest(engine, 8);
+        }
+        auto rawDesc = harkentest::MakePlayDesc(CanonicalActionWorld::kFirstSound);
+        rawDesc.emitterHandle = emitter;
+        VnVoiceHandle raw = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&rawDesc, &raw));
+        PumpEmitterTest(engine, 8);
+        ASSERT_EQ(9u, engine.voices.ActiveCount());
+        std::vector<std::pair<harken::PlayableInstanceHandle, std::uint64_t>> epochs;
+        for (auto firing : firings) {
+            VnActionStepResult step{};
+            step.structSize = sizeof(step);
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));
+            epochs.emplace_back(step.producedPlayableInstance,
+                engine.playableInstances.Classify(step.producedPlayableInstance).scheduleEpoch);
+        }
+        harken::CommandRecord filler{};
+        filler.opcode = harken::kOpcodeStop;
+        filler.payload.stop.handle = UINT64_MAX;
+        if (mode == 0) {
+            while (engine.commands.FreeSlots() > 8) ASSERT_TRUE(engine.commands.TryPush(filler));
+        }
+        const auto published = engine.commands.PublishedHead();
+        EXPECT_EQ(mode == 0 ? VN_BACKPRESSURE : VN_NO_VOICE, Vn_StopEmitter(emitter, 0));
+        EXPECT_EQ(published, engine.commands.PublishedHead());
+        EXPECT_FALSE(engine.ledger.IsTerminating(harkentest::RenderHandle(&engine, raw)));
+        for (const auto& [root, epoch] : epochs) EXPECT_EQ(epoch, engine.playableInstances.Classify(root).scheduleEpoch);
+        for (auto firing : firings) EXPECT_EQ(VN_ACTION_FIRING_ACTIVE, EmitterFiringInfo(firing).state);
+        PumpEmitterTest(engine, 1);
+        if (mode == 0) {
+            ASSERT_EQ(VN_OK, Vn_StopEmitter(emitter, 0));
+            PumpEmitterTest(engine, 16);
+            EXPECT_EQ(0u, engine.voices.ActiveCount());
+            EXPECT_EQ(0u, engine.playableInstances.LiveCount());
+            EXPECT_LT(EmitterTestPeak(engine), 0.000001f);
+            for (auto firing : firings) EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        } else {
+            EXPECT_EQ(VN_NO_VOICE, Vn_StopEmitter(emitter, 0));
+            EXPECT_EQ(9u, engine.voices.ActiveCount());
+            EXPECT_GT(EmitterTestPeak(engine), 0.01f);
+        }
+    }
+}
+
+
 TEST(ActionFiringApi, StopAllCancelsMixedPlaybackAfterAtomicCapacityPreflight) {
     harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
