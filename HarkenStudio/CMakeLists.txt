@@ -434,7 +434,7 @@ endif()
 
 harken_attach_version_resource(
     harken_editor
-    "Harken Studio - Professional Audio Middleware Editor"
+    "Harken Studio"
     "HarkenStudio.exe")
 
 set_target_properties(harken_editor PROPERTIES
