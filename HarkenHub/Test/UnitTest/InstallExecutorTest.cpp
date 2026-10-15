@@ -6,8 +6,10 @@
 #include "Transactions/HandoffArea.h"
 #include "Transactions/InstallIndex.h"
 #include "Transactions/RepairExecutor.h"
+#include "Transactions/UninstallExecutor.h"
 #include "Transactions/TransactionJournal.h"
 #include "Transactions/TransactionDiagnostics.h"
+#include "Versions/VersionScanner.h"
 #include "ZipTestUtils.h"
 
 #include <gtest/gtest.h>
@@ -23,6 +25,7 @@
 #include <QLockFile>
 #include <QTemporaryDir>
 
+#include <algorithm>
 #include <memory>
 
 using VNH::InstallExecutor;
@@ -59,7 +62,8 @@ QByteArray sha256Hex(const QByteArray& data)
     return QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex();
 }
 
-QString buildPackage(const QString& path)
+QString buildPackage(const QString& path,
+                     const QString& buildId = QStringLiteral("run12.abcd1234"))
 {
     const QByteArray binary = QByteArrayLiteral("stub-binary");
     const QByteArray asset = QByteArrayLiteral("payload-data");
@@ -79,13 +83,13 @@ QString buildPackage(const QString& path)
     QJsonObject manifest;
     manifest[QStringLiteral("product")] = QStringLiteral("HarkenStudio");
     manifest[QStringLiteral("version")] = QStringLiteral("1.4.0");
-    manifest[QStringLiteral("buildId")] = QStringLiteral("run12.abcd1234");
+    manifest[QStringLiteral("buildId")] = buildId;
     manifest[QStringLiteral("channel")] = QStringLiteral("stable");
     manifest[QStringLiteral("files")] = files;
 
     QJsonObject capabilities;
     capabilities[QStringLiteral("studioVersion")] = QStringLiteral("1.4.0");
-    capabilities[QStringLiteral("buildId")] = QStringLiteral("run12.abcd1234");
+    capabilities[QStringLiteral("buildId")] = buildId;
     capabilities[QStringLiteral("capabilitiesVersion")] = 2;
 
     const std::vector<TestEntry> entries = {
@@ -118,9 +122,11 @@ protected:
         ASSERT_FALSE(archivePath.isEmpty());
     }
 
-    QJsonObject payloadForArchive() const
+    QJsonObject payloadForArchive(
+        const QString& buildId = QStringLiteral("run12.abcd1234")) const
     {
         QJsonObject payload = baseManifestPayload();
+        payload[QStringLiteral("buildId")] = buildId;
         payload[QStringLiteral("packageSize")] = QFileInfo(archivePath).size();
         payload[QStringLiteral("sha256")] =
             PackageReader::fileSha256Hex(archivePath);
@@ -138,8 +144,10 @@ protected:
 
     QString targetPath() const
     {
-        return VNH::studioVersionsRoot() +
-               QStringLiteral("/1.4.0-run12.abcd1234");
+        return QDir(VNH::studioVersionsRoot()).filePath(
+            QStringLiteral("1.4.0-stable-%1-%2").arg(
+                VNH::ManifestVerifier::hostPlatform(),
+                VNH::ManifestVerifier::hostArchitecture()));
     }
 
     QTemporaryDir dir;
@@ -352,24 +360,107 @@ TEST_F(InstallExecutorTest, PackageHashMismatchIsRejected)
     EXPECT_FALSE(QFileInfo::exists(targetPath()));
 }
 
-TEST_F(InstallExecutorTest, TargetConflictIsRejected)
+TEST_F(InstallExecutorTest, OccupiedTargetIsPreserved)
 {
     ASSERT_TRUE(QDir().mkpath(targetPath()));
+    QFile existing(targetPath() + QStringLiteral("/existing.txt"));
+    ASSERT_TRUE(existing.open(QIODevice::WriteOnly));
+    existing.write("keep");
+    existing.close();
     const QString transactionId = placeHandoff(payloadForArchive());
 
     const auto outcome =
         InstallExecutor::run(transactionId, keys.publicKey, kNow);
-    EXPECT_FALSE(outcome.ok);
-    EXPECT_EQ(outcome.failureCode, QStringLiteral("TargetConflict"));
-    const auto summaries = VNH::TransactionDiagnostics::summarize();
-    ASSERT_EQ(summaries.size(), 1u);
-    EXPECT_EQ(summaries.front().transactionId, transactionId);
-    EXPECT_EQ(summaries.front().failureDetail, outcome.error);
-    const auto message = VNH::TransactionDiagnostics::failureMessage(transactionId);
-    EXPECT_TRUE(message.contains(QStringLiteral("already exists")));
-    EXPECT_TRUE(message.contains(targetPath()));
-    EXPECT_TRUE(message.contains(QStringLiteral("TargetConflict")));
-    EXPECT_TRUE(QFileInfo::exists(targetPath()));
+    ASSERT_TRUE(outcome.ok) << outcome.error.toStdString();
+    EXPECT_NE(outcome.installPath, targetPath());
+    EXPECT_EQ(readAll(existing.fileName()), QByteArrayLiteral("keep"));
+    ASSERT_EQ(InstallIndex::snapshot().records.size(), 1u);
+    EXPECT_EQ(VNH::VersionScanner::scanInstalled().size(), 1u);
+}
+
+TEST_F(InstallExecutorTest, RegisteredBuildCannotBeInstalledAgainAtANewPath)
+{
+    auto outcome = InstallExecutor::run(placeHandoff(payloadForArchive()),
+                                        keys.publicKey, kNow);
+    ASSERT_TRUE(outcome.ok) << outcome.error.toStdString();
+    auto record = InstallIndex::snapshot().records.front();
+    for (const bool legacyPath : {false, true}) {
+        if (legacyPath) {
+            const QString path = QDir(VNH::studioVersionsRoot()).filePath(
+                record.semanticVersion + QLatin1Char('-') + record.buildId);
+            ASSERT_TRUE(QDir().rename(record.installPath, path));
+            record.installPath = path;
+            QString error;
+            ASSERT_TRUE(InstallIndex::commitInstallation(record, 7, &error));
+        }
+        const QString transactionId = placeHandoff(payloadForArchive());
+        outcome = InstallExecutor::run(transactionId, keys.publicKey, kNow, true);
+        EXPECT_FALSE(outcome.ok);
+        EXPECT_EQ(outcome.failureCode, QStringLiteral("TargetConflict"));
+        const auto summaries = VNH::TransactionDiagnostics::summarize();
+        const auto summary = std::find_if(
+            summaries.begin(), summaries.end(), [&transactionId](const auto& item) {
+                return item.transactionId == transactionId;
+            });
+        ASSERT_NE(summary, summaries.end());
+        EXPECT_EQ(summary->failureDetail, outcome.error);
+        const QString message = VNH::TransactionDiagnostics::failureMessage(transactionId);
+        EXPECT_TRUE(message.contains(record.installPath));
+        EXPECT_TRUE(message.contains(QStringLiteral("TargetConflict")));
+        ASSERT_EQ(InstallIndex::snapshot().records.size(), 1u);
+        EXPECT_EQ(InstallIndex::snapshot().records.front().installPath, record.installPath);
+        EXPECT_EQ(VNH::VersionScanner::scanInstalled().size(), 1u);
+    }
+}
+
+TEST_F(InstallExecutorTest, MissingRegisteredDirectoryIsReservedForRepair)
+{
+    VNH::InstalledVersionRecord existing;
+    existing.buildId = QStringLiteral("previous-build");
+    existing.semanticVersion = QStringLiteral("1.4.0");
+    existing.installPath = targetPath();
+    existing.healthState = QStringLiteral("NeedsRepair");
+    QString error;
+    ASSERT_TRUE(InstallIndex::commitInstallation(existing, 6, &error));
+    const auto outcome = InstallExecutor::run(placeHandoff(payloadForArchive()),
+                                              keys.publicKey, kNow);
+    ASSERT_TRUE(outcome.ok) << outcome.error.toStdString();
+    EXPECT_NE(outcome.installPath, existing.installPath);
+    EXPECT_FALSE(QFileInfo::exists(existing.installPath));
+    EXPECT_EQ(InstallIndex::snapshot().records.size(), 2u);
+}
+
+TEST_F(InstallExecutorTest, SameVersionBuildsHaveIndependentInstallAndMaintenancePaths)
+{
+    const auto first = InstallExecutor::run(placeHandoff(payloadForArchive()),
+                                            keys.publicKey, kNow);
+    ASSERT_TRUE(first.ok) << first.error.toStdString();
+    const QString secondBuild = QStringLiteral("run13.ef567890");
+    ASSERT_FALSE(buildPackage(archivePath, secondBuild).isEmpty());
+    const auto second = InstallExecutor::run(
+        placeHandoff(payloadForArchive(secondBuild)), keys.publicKey, kNow);
+    ASSERT_TRUE(second.ok) << second.error.toStdString();
+    EXPECT_NE(first.installPath, second.installPath);
+    ASSERT_EQ(InstallIndex::snapshot().records.size(), 2u);
+    EXPECT_EQ(VNH::VersionScanner::scanInstalled().size(), 2u);
+
+    QFile damaged(second.installPath + QStringLiteral("/data/asset.bin"));
+    ASSERT_TRUE(damaged.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    damaged.write("tampered");
+    damaged.close();
+    const EnvGuard trustAnchor("HARKEN_HUB_MANIFEST_PUBKEY",
+                               QString::fromLatin1(keys.publicKey.toHex()));
+    const auto repaired = VNH::RepairExecutor::run(secondBuild, kNow.addDays(90));
+    ASSERT_TRUE(repaired.ok) << repaired.error.toStdString();
+    EXPECT_EQ(readAll(damaged.fileName()), QByteArrayLiteral("payload-data"));
+    const auto removed = VNH::UninstallExecutor::run(secondBuild, kNow);
+    ASSERT_TRUE(removed.ok) << removed.error.toStdString();
+    EXPECT_FALSE(QFileInfo::exists(second.installPath));
+    EXPECT_EQ(readAll(first.installPath + QStringLiteral("/data/asset.bin")),
+              QByteArrayLiteral("payload-data"));
+    ASSERT_EQ(InstallIndex::snapshot().records.size(), 1u);
+    EXPECT_EQ(InstallIndex::snapshot().records.front().buildId, first.buildId);
+    EXPECT_EQ(VNH::VersionScanner::scanInstalled().size(), 1u);
 }
 
 TEST_F(InstallExecutorTest, MissingHandoffIsRejected)
