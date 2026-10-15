@@ -15,6 +15,7 @@
 
 #include <QApplication>
 #include <QAction>
+#include <QAbstractItemView>
 #include <QComboBox>
 #include <QCryptographicHash>
 #include <QDialogButtonBox>
@@ -32,6 +33,8 @@
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QStackedWidget>
+#include <QStyle>
+#include <QStyleOptionComboBox>
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -788,19 +791,36 @@ TEST_F(EngineIntegrationsPageTest, SdkSelectionCancelKeepsSavedStateAndApplyUpda
     EXPECT_TRUE(savedPath->isReadOnly());
     EXPECT_TRUE(field("Select a .hsp project file")->isReadOnly());
 
-    const auto selectInstalledSdk = [&]() {
+    const auto selectInstalledSdk = [&](bool clickArrow) {
         startSdkSelection();
         auto* sources = page->findChild<QComboBox*>(QStringLiteral("sdkSourceSelector"));
         ASSERT_NE(sources, nullptr);
         const int index = sources->findData(sdkPath);
         ASSERT_GE(index, 0);
-        sources->setCurrentIndex(index);
+        if (clickArrow) {
+            QStyleOptionComboBox option;
+            option.initFrom(sources);
+            option.editable = sources->isEditable();
+            const QRect arrow = sources->style()->subControlRect(
+                QStyle::CC_ComboBox, &option, QStyle::SC_ComboBoxArrow, sources);
+            QTest::mouseClick(sources, Qt::LeftButton, Qt::NoModifier, arrow.center());
+        } else {
+            QTest::mouseClick(sources->lineEdit(), Qt::LeftButton);
+        }
+        QCoreApplication::processEvents();
+        ASSERT_TRUE(sources->view()->isVisible());
+        const auto item = sources->model()->index(index, 0);
+        QTest::mouseClick(sources->view()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                          sources->view()->visualRect(item).center());
+        QCoreApplication::processEvents();
+        EXPECT_FALSE(sources->view()->isVisible());
+        EXPECT_EQ(sources->lineEdit()->text(), sdkPath);
         const QString screenshots = qEnvironmentVariable("HARKEN_HUB_TEST_SCREENSHOT_DIR");
         if (!screenshots.isEmpty())
             EXPECT_TRUE(page->findChild<QDialog*>(QStringLiteral("sdkSelectionDialog"))->grab().save(
                 QDir(screenshots).filePath("sdk-installed-source-en.png")));
     };
-    selectInstalledSdk();
+    selectInstalledSdk(false);
     EXPECT_TRUE(version->text().contains(QStringLiteral("1.0.0")));
     EXPECT_EQ(savedPath->text(), QDir::toNativeSeparators(installed));
     EXPECT_EQ(integrations.list().front().sdkSourcePath, originalSource);
@@ -832,7 +852,7 @@ TEST_F(EngineIntegrationsPageTest, SdkSelectionCancelKeepsSavedStateAndApplyUpda
     ASSERT_TRUE(waitForVersion());
     EXPECT_FALSE(browse->isVisible());
     EXPECT_EQ(field("Runtime/SDK source path")->text(), originalSource);
-    selectInstalledSdk();
+    selectInstalledSdk(true);
     primary()->click();
     EXPECT_TRUE(version->text().contains(QStringLiteral("2.0.0")));
     EXPECT_EQ(savedPath->text(), QDir::toNativeSeparators(installed));
