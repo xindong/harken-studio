@@ -305,18 +305,101 @@ TEST(CurrentWorldInstall, DirectWorldEnvelopeRequiresCurrentShippingVintage) {
     RunnableWorld image;
     std::vector<std::uint8_t> artifact;
     ASSERT_TRUE(harken::EncodeCurrentWorldArtifactV1(image.world, artifact));
-    ASSERT_EQ(17u, harken::kCurrentWorldShippingBodyVintage);
+    ASSERT_EQ(18u, harken::kCurrentWorldShippingBodyVintage);
     harken::CurrentWorldArtifactHeaderV1 header;
     ASSERT_EQ(harken::CurrentWorldLoadStatusV1::Ok,
               harken::InspectCurrentWorldArtifactHeaderV1(
                   artifact.data(), artifact.size(), artifact.size(), header));
     for (const std::uint32_t retired :
-         {0u, 2u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u}) {
+         {0u, 2u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u}) {
         harken::StoreLE32(artifact.data() + 20, retired);
         EXPECT_EQ(harken::CurrentWorldLoadStatusV1::UnsupportedBody,
                   harken::InspectCurrentWorldArtifactHeaderV1(
                       artifact.data(), artifact.size(), artifact.size(), header));
     }
+}
+
+TEST(CurrentWorldInstall, StopControlReferenceMayBeAbsentButMustBeWellFormed) {
+    harken::ActionStepProgramViewV1 step{};
+    step.opcode = harken::ActionOpcodeV1::Stop;
+    step.target.kind = harken::ActionTargetKindV1::Sound;
+    step.target.stableId = harkentest::ObjectId(10);
+    step.target.expectedProgramSemanticFingerprint = 123;
+    step.delay = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
+    step.fade = step.delay;
+    step.cooldown = step.delay;
+    harken::ActionProgramViewV1 action{};
+    action.actionStableId = harkentest::ObjectId(99);
+    action.steps = &step;
+    action.stepCount = 1;
+    action.expandedStepOccurrenceCount = 1;
+    action.expandedFiringCount = 1;
+    harken::ContainerWorldInstallViewV1 world{};
+    world.actions = &action;
+    world.actionCount = 1;
+    world.identity.capabilityMask = harken::kWorldCapabilityActionDefinitions;
+    const auto validate = [&] {
+        action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+        world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV5(world);
+        return harken::ValidateCurrentWorldV1(world);
+    };
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, validate());
+    const auto valid = step;
+    harken::VariableDefinitionV1 variable{};
+    variable.variableId = harkentest::ObjectId(98);
+    variable.kind = harken::VariableKindV1::Smooth;
+    variable.rangeMax = 1.0f;
+    world.variables = &variable;
+    world.variableCount = 1;
+    world.identity.capabilityMask |= harken::kWorldCapabilityVariableDefinitions;
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, validate());
+    for (const auto id : {action.actionStableId, variable.variableId}) {
+        step = valid;
+        step.target.stableId = id;
+        EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld, validate());
+        step = valid;
+        step.quantizeTiming = harken::ActionQuantizeTimingV1::NextBeat;
+        step.quantizeReference = step.target;
+        step.quantizeReference.stableId = id;
+        action.directFeatureMask = action.transitiveFeatureMask = 2;
+        EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld, validate());
+        action.directFeatureMask = action.transitiveFeatureMask = 0;
+    }
+    step = valid;
+    step.target.expectedProgramSemanticFingerprint = 0;
+    EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld, validate());
+    step = valid;
+    step.target.stableId = {};
+    EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld, validate());
+    step = valid;
+    step.target.kind = harken::ActionTargetKindV1::Action;
+    EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld, validate());
+    step = valid;
+    step.target.reserved = 1;
+    EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld, validate());
+    step = valid;
+    step.opcode = harken::ActionOpcodeV1::Play;
+    EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld, validate());
+    step = valid;
+    step.quantizeTiming = harken::ActionQuantizeTimingV1::NextBeat;
+    step.quantizeReference = step.target;
+    step.quantizeReference.stableId = harkentest::ObjectId(11);
+    action.directFeatureMask = action.transitiveFeatureMask = 2;
+    EXPECT_EQ(harken::WorldInstallStatus::Ok, validate());
+    step.quantizeReference.expectedProgramSemanticFingerprint = 0;
+    EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld, validate());
+    step = valid;
+    action.directFeatureMask = action.transitiveFeatureMask = 0;
+    RunnableWorld known;
+    world = known.world;
+    world.actions = &action;
+    world.actionCount = 1;
+    world.identity.capabilityMask |= harken::kWorldCapabilityActionDefinitions;
+    EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld, validate());
+    step.target.expectedProgramSemanticFingerprint = known.properties[0].programSemanticFingerprint;
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, validate());
+    step.target.kind = harken::ActionTargetKindV1::Container;
+    EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld, validate());
 }
 
 TEST(CurrentWorldInstall, PreviousShippingBodyCannotUseCurrentDecodeModes) {

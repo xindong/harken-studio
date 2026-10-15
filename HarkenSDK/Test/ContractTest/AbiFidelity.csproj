@@ -41,10 +41,15 @@
     <Compile Include="VariableSdkContract.cs" />
     <Compile Include="RemoteCommunicationContract.cs" />
     <Compile Include="EditorWaveformContract.cs" />
+    <Compile Include="RepositoryPublicationContract.cs" />
     <Content Include="..\Fixtures\EditorMetadata\1\**\*.json"
              Link="EditorMetadata\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\Fixtures\EditorMetadata\2\**\*.json"
              Link="EditorMetadataV2\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\UnityFixture\Data\**\*.json;..\UnityFixture\Data\**\*.pack;..\UnityFixture\Data\**\*.bytes"
+             Link="NativePublications\UnityFixture\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\Unity\Harken\Samples~\PlayableDemo\PackSource\**\*.json;..\..\Unity\Harken\Samples~\PlayableDemo\PackSource\**\*.bytes"
+             Link="NativePublications\PlayableDemo\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\..\HarkenEngine\Source\Tooling\VariableCatalog\variable_catalog.json"
              Link="VariableCatalog.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

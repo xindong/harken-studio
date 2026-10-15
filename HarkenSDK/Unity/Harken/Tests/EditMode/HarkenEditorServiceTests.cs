@@ -80,7 +80,7 @@ namespace Harken.Unity.Tests
         public void SessionlessReplacePackRefusesCanonicalLifecycleWithoutNativeCall()
         {
             string root = Root();
-            string initPath = Path.Combine(root, "Init.pack");
+            string initPath = Path.Combine(root, Catalog().Publication.InitPack.Path);
             Assert.That(File.Exists(initPath), Is.True);
             Assert.That(Packs.ReplacePack(default, initPath, root),
                 Is.EqualTo(VnResult.VN_INVALID_ARG));

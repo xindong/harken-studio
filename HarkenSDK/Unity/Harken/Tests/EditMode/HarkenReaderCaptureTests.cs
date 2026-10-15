@@ -31,7 +31,7 @@ namespace Harken.Unity.Tests
                     return files.TryGetValue(path, out byte[] bytes) ? (byte[])bytes.Clone() : null;
                 }, out HarkenPreparedPacks prepared, out _, out string error), Is.EqualTo(VnResult.VN_OK), error);
                 Assert.That(prepared.SelectedManifestPath, Is.EqualTo(manifest));
-                Assert.That(requested, Does.Contain(root + "/Init.pack"));
+                Assert.That(requested, Does.Contain(root + "/" + prepared.Publication.InitPack.Path));
                 Assert.That(requested, Has.All.StartsWith(root + "/"));
                 Assert.That(lease.Settings.PackDirectory, Is.EqualTo(root));
             }
@@ -69,7 +69,7 @@ namespace Harken.Unity.Tests
         public void CaptureMissingBytesReturnsContentNotLoadedWithoutPartialPublication()
         {
             Dictionary<string, byte[]> files = LogicalFiles(U4Logical, "U4Original");
-            files.Remove(U4Logical + "/Init.pack");
+            files.Remove(InitPath(files, U4Logical));
             AssertFailedCapture(Manifest(U4Logical), MemoryReader(files), VnResult.VN_CONTENT_NOT_LOADED);
             AssertFailedCapture(Manifest(U4Logical), path => null, VnResult.VN_CONTENT_NOT_LOADED);
         }
@@ -91,7 +91,8 @@ namespace Harken.Unity.Tests
         public void CaptureReturnsTypedResultForInitAndContentHashMismatch()
         {
             Dictionary<string, byte[]> initFiles = LogicalFiles(U4Logical, "U4Original");
-            initFiles[U4Logical + "/Init.pack"] = Mutate(initFiles[U4Logical + "/Init.pack"]);
+            string initPath = InitPath(initFiles, U4Logical);
+            initFiles[initPath] = Mutate(initFiles[initPath]);
             AssertFailedCapture(Manifest(U4Logical), MemoryReader(initFiles), VnResult.VN_PACK_HASH_MISMATCH);
 
             Dictionary<string, byte[]> contentFiles = LogicalFiles(U4Logical, "U4Original");
@@ -258,6 +259,13 @@ namespace Harken.Unity.Tests
                 Is.EqualTo(expected));
             Assert.That(prepared, Is.Null);
             Assert.That(manifestBytes, Is.Null);
+        }
+
+        private static string InitPath(Dictionary<string, byte[]> files, string logicalRoot)
+        {
+            Assert.That(GameplayPublication.Parse(Encoding.UTF8.GetString(files[Manifest(logicalRoot)]),
+                null, null, out GameplayPublication publication, out string error), Is.EqualTo(VnResult.VN_OK), error);
+            return logicalRoot + "/" + publication.InitPack.Path;
         }
 
         private static string Manifest(string logicalRoot) => logicalRoot + "/" + PackManifest.ManifestFileName;

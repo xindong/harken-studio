@@ -103,15 +103,15 @@ const ProjectItem* byObjectId(const ItemIndex& index, uint32_t objectId)
 
 bool localizedClosure(const ActionClosurePlan& closure, const ItemIndex& index)
 {
-    for (const ActionClosureMember& member : closure.objects) {
-        if (member.type != ProjectItem::Type::Sound)
-            continue;
-        const ProjectItem* item = byObjectId(index, member.objectId);
-        const auto* sound = item ? item->comp<VSound>() : nullptr;
-        if (sound && sound->distinguishLanguage)
-            return true;
-    }
-    return false;
+    const auto localized = [&](const auto& members) {
+        return std::any_of(members.begin(), members.end(), [&](const auto& member) {
+            if (member.type != ProjectItem::Type::Sound) return false;
+            const ProjectItem* item = byObjectId(index, member.objectId);
+            const auto* sound = item ? item->comp<VSound>() : nullptr;
+            return sound && sound->distinguishLanguage;
+        });
+    };
+    return localized(closure.objects) || localized(closure.controlObjects);
 }
 
 PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actionStableId,

@@ -59915,8 +59915,7 @@ engine.runtimeRecreateRequired = true;
         }
         const auto& firing = engine.actionFiringPlanScratch[planned.firingIndex];
         const std::uint32_t recordStart = plan->deferredPreparedCount;
-        const bool nativeTarget = planned.step->opcode == harken::ActionOpcodeV1::Stop ||
-            planned.step->opcode == harken::ActionOpcodeV1::Reset ||
+        const bool nativeTarget = planned.step->opcode == harken::ActionOpcodeV1::Reset ||
             planned.step->opcode == harken::ActionOpcodeV1::PostAction;
         if (planned.step->opcode == harken::ActionOpcodeV1::Play) {
             if (plan->deferredPreparedCount >= engine.actionDeferredScratch.size()) {
@@ -59935,7 +59934,6 @@ engine.runtimeRecreateRequired = true;
                 harken::PackAuthorityMode::Pack &&
             (planned.step->opcode == harken::ActionOpcodeV1::Reset ||
              planned.step->opcode == harken::ActionOpcodeV1::Play ||
-             planned.step->opcode == harken::ActionOpcodeV1::Stop ||
              planned.step->opcode == harken::ActionOpcodeV1::PostAction)) {
             harken::PackIdentityLookup target{};
             const VnResult acquired = engine.AcquirePackIdentityLease(
@@ -60014,7 +60012,6 @@ engine.runtimeRecreateRequired = true;
                 engine.packComposition.Authority() ==
                     harken::PackAuthorityMode::Pack &&
                 (planned.step->opcode == harken::ActionOpcodeV1::Play ||
-                 planned.step->opcode == harken::ActionOpcodeV1::Stop ||
                  planned.step->opcode == harken::ActionOpcodeV1::Reset ||
                  planned.step->opcode == harken::ActionOpcodeV1::PostAction)) {
                 if (targetPackLease.leaseToken != 0) {

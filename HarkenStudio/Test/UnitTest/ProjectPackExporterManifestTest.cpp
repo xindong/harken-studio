@@ -385,6 +385,47 @@ void readCanonicalWorld(const QString& path, QByteArray& bytes,
     ASSERT_NE(world.ProductionView(), nullptr);
 }
 
+void activateExportedNames(const QString& outputDir, const QStringList& names,
+                          const QString& language = {},
+                          std::map<QString, VnPackHandle>* handles = nullptr)
+{
+    const auto manifestDir = language.isEmpty() ? outputDir : QDir(outputDir).filePath(language);
+    const auto packs = readManifest(manifestDir).value(QStringLiteral("packs")).toArray();
+    std::vector<QByteArray> paths;
+    std::vector<VnCanonicalPackSetMemberV1> members;
+    QStringList memberNames;
+    const auto root = QFileInfo(outputDir).absoluteFilePath().toUtf8();
+    for (const auto& value : packs) {
+        const auto pack = value.toObject();
+        const auto name = pack.value(QStringLiteral("name")).toString();
+        const auto variant = pack.value(QStringLiteral("language")).toString();
+        if ((name != QStringLiteral("Init") && !names.contains(name))
+            || (!variant.isEmpty() && variant != language)) continue;
+        paths.push_back(QDir(outputDir).filePath(pack.value(QStringLiteral("path")).toString()).toUtf8());
+        VnCanonicalPackSetMemberV1 member{};
+        member.structSize = sizeof(member);
+        member.flags = VN_CANONICAL_PACK_SET_MEMBER_ROOT;
+        member.packKind = name == QStringLiteral("Init")
+            ? VN_CANONICAL_PACK_SET_MEMBER_INIT : VN_CANONICAL_PACK_SET_MEMBER_CONTENT;
+        member.packStableId = pack.value(QStringLiteral("packStableId")).toString().toULongLong();
+        member.utf8ContainmentRoot = root.constData();
+        members.push_back(member);
+        memberNames.push_back(name);
+    }
+    ASSERT_EQ(members.size(), names.size() + 1u);
+    std::vector<VnCanonicalPackSetMemberResultV1> rows(members.size());
+    for (size_t i = 0; i < members.size(); ++i) {
+        members[i].utf8Path = paths[i].constData();
+        rows[i].structSize = sizeof(rows[i]);
+    }
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(
+        members.data(), static_cast<uint32_t>(members.size()), rows.data(), report));
+    if (handles)
+        for (size_t i = 0; i < rows.size(); ++i)
+            handles->emplace(memberNames[i], rows[i].handle);
+}
+
 void expectMediaMatchesDefinition(const QByteArray& bytes,
                                   const harken::PackTocEntry& media,
                                   const harken::PlayablePropertyProgramViewV1& property)
@@ -613,6 +654,372 @@ void renamePublicationToLegacy(const QDir& dir, bool wrapped)
 }
 
 } // namespace
+
+TEST(EditorProjectPackExporterManifest, StopOnlyPublishesNoTargetMediaOrDefinitions)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    VNX::AssetRegistry::instance().clear();
+    VNX::AssetRegistry::instance().setProjectRoot(dir.path());
+    const auto sharedSource = registerToneAsset(dir.path(), QStringLiteral("music.wav"), 1.0f, 48000);
+    const auto soloSource = registerToneAsset(dir.path(), QStringLiteral("unused.wav"), 0.5f);
+    auto project = HarkenTest::projectWithPlatforms({"Windows"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), sharedSource, soloSource,
+        {{QStringLiteral("StopMusic"), 21, kSharedSoundObjectId}}));
+    project.actions.front().rootItem->children.front()->comp<VNX::VAction>()->steps.front().type =
+        VNX::VActionStep::Type::Stop;
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions options;
+    options.platform = HarkenTest::platformIdString("Windows");
+    const auto result = exporter.ExportAllPacks(project, dir.path(), options);
+    ASSERT_TRUE(result.success) << result.error.toStdString();
+    QByteArray bytes;
+    harken::PackCanonicalImage image;
+    harken::CurrentWorldBodyImage body;
+    ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(QDir(dir.path()).filePath(
+        variantFileName(project, harkentest::StudioObjectId(21 + kStableIdBias))), bytes, image, body));
+    EXPECT_TRUE(image.media.empty());
+    EXPECT_EQ(body.ProductionView()->playablePropertyCount, 0u);
+    ASSERT_EQ(body.ProductionView()->actionCount, 1u);
+    {
+        harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        ASSERT_NO_FATAL_FAILURE(activateExportedNames(dir.path(), {QStringLiteral("StopMusic")}));
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = harkentest::ToRuntime(harkentest::StudioObjectId(21 + kStableIdBias));
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    }
+    VNX::AssetRegistry::instance().clear();
+}
+
+TEST(EditorProjectPackExporterManifest, StopControlsKeepLocalizedFingerprintsAndMixedPlaybackMedia)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    VNX::AssetRegistry::instance().clear();
+    VNX::AssetRegistry::instance().setProjectRoot(dir.path());
+    const auto early = registerToneAsset(dir.path(), QStringLiteral("early.wav"), 0.25f);
+    const auto target = registerToneAsset(dir.path(), QStringLiteral("target.wav"), 0.75f, 48000);
+    auto project = HarkenTest::projectWithPlatforms({"Windows"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), early, target,
+        {{QStringLiteral("PlayEarly"), 21, 1}, {QStringLiteral("PlayTarget"), 22, 2},
+         {QStringLiteral("StopTarget"), 23, 2}, {QStringLiteral("PostStop"), 24, 23},
+         {QStringLiteral("Mixed"), 25, 2}, {QStringLiteral("StopThenPlay"), 26, 2},
+         {QStringLiteral("PlayThenStop"), 27, 2}}));
+    auto& actions = project.actions.front().rootItem->children;
+    actions[2]->comp<VNX::VAction>()->steps[0].type = VNX::VActionStep::Type::Stop;
+    actions[3]->comp<VNX::VAction>()->steps[0].type = VNX::VActionStep::Type::PostAction;
+    auto stop = actions[2]->comp<VNX::VAction>()->steps[0];
+    auto play = actions[1]->comp<VNX::VAction>()->steps[0];
+    actions[4]->comp<VNX::VAction>()->steps = {stop, actions[0]->comp<VNX::VAction>()->steps[0]};
+    actions[5]->comp<VNX::VAction>()->steps = {stop, play};
+    actions[6]->comp<VNX::VAction>()->steps = {play, stop};
+    ASSERT_NO_FATAL_FAILURE(localizeSoloSound(project, target));
+    const auto japanese = registerToneAsset(dir.path(), QStringLiteral("target_ja.wav"), 0.4f, 24000);
+    VNX::AudioSourceData localizedSource;
+    localizedSource.sourceID = japanese;
+    localizedSource.relativePath = QStringLiteral("target_ja.wav");
+    project.audioSources.push_back(localizedSource);
+    project.layers.front().rootItem->children[1]->comp<VNX::VSound>()
+        ->sources.localized[QStringLiteral("ja")].entries.front().sourceId = japanese;
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions options;
+    options.platform = HarkenTest::platformIdString("Windows");
+    const auto result = exporter.ExportAllPacks(project, dir.path(), options);
+    ASSERT_TRUE(result.success) << result.error.toStdString();
+    const auto packs = readManifest(dir.path()).value(QStringLiteral("packs")).toArray();
+    for (const auto& language : project.projectLanguages) {
+        SCOPED_TRACE(language.toStdString());
+        QByteArray playBytes;
+        harken::PackCanonicalImage playImage;
+        harken::CurrentWorldBodyImage playBody;
+        ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(QDir(dir.path()).filePath(
+            variantFileName(project, harkentest::StudioObjectId(22 + kStableIdBias), language)),
+            playBytes, playImage, playBody));
+        ASSERT_EQ(playImage.media.size(), 1u);
+        ASSERT_EQ(playBody.ProductionView()->playablePropertyCount, 1u);
+        const auto fingerprint = playBody.ProductionView()->playableProperties[0].programSemanticFingerprint;
+        for (uint32_t id : {23u, 24u, 25u, 26u, 27u}) {
+            SCOPED_TRACE(id);
+            QByteArray bytes;
+            harken::PackCanonicalImage image;
+            harken::CurrentWorldBodyImage body;
+            ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(QDir(dir.path()).filePath(
+                variantFileName(project, harkentest::StudioObjectId(id + kStableIdBias), language)),
+                bytes, image, body));
+            if (id == 23 || id == 24) {
+                EXPECT_TRUE(image.media.empty());
+                EXPECT_EQ(body.ProductionView()->playablePropertyCount, 0u);
+            } else {
+                ASSERT_EQ(image.media.size(), 1u);
+                EXPECT_EQ(image.media[0].soundId, harkentest::StudioObjectId((id == 25 ? 1 : 2) + kStableIdBias));
+            }
+            ASSERT_EQ(body.ProductionView()->actionCount, 1u);
+            const auto& action = body.ProductionView()->actions[0];
+            for (uint32_t i = 0; i < action.stepCount; ++i)
+                if (action.steps[i].opcode == harken::ActionOpcodeV1::Stop)
+                    EXPECT_EQ(action.steps[i].target.expectedProgramSemanticFingerprint, fingerprint);
+        }
+        for (const auto& value : packs) {
+            const auto pack = value.toObject();
+            if (pack.value(QStringLiteral("name")).toString() == QStringLiteral("StopTarget"))
+                EXPECT_EQ(pack.value(QStringLiteral("dependencies")).toArray().size(), 1);
+        }
+        harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        ASSERT_NO_FATAL_FAILURE(activateExportedNames(dir.path(),
+            {QStringLiteral("PlayEarly"), QStringLiteral("PlayTarget"), QStringLiteral("StopTarget"),
+             QStringLiteral("PostStop"), QStringLiteral("Mixed"), QStringLiteral("StopThenPlay"),
+             QStringLiteral("PlayThenStop")}, language));
+    }
+    VNX::AssetRegistry::instance().clear();
+}
+
+TEST(EditorProjectPackExporterManifest, StopContainerAndQuantizeReferenceDoNotOwnDescendantMedia)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    for (bool queue : {false, true}) {
+        SCOPED_TRACE(queue);
+        QTemporaryDir dir;
+        ASSERT_TRUE(dir.isValid());
+        VNX::AssetRegistry::instance().clear();
+        VNX::AssetRegistry::instance().setProjectRoot(dir.path());
+        const auto source = registerToneAsset(dir.path(), QStringLiteral("one.wav"), 0.25f);
+        const auto target = registerToneAsset(dir.path(), QStringLiteral("two.wav"), 0.75f);
+        auto project = HarkenTest::projectWithPlatforms({"Windows"});
+        ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), source, target,
+            {{QStringLiteral("PlayContainer"), 21, 40}, {QStringLiteral("StopContainer"), 22, 40},
+             {QStringLiteral("GroupedStop"), 23, 40}, {QStringLiteral("GroupedPlay"), 24, 1}}));
+        ASSERT_NO_FATAL_FAILURE(localizeSoloSound(project, target));
+        auto layer = project.layers.front().rootItem;
+        auto sound = layer->children[1];
+        layer->children.erase(layer->children.begin() + 1);
+        auto container = makeItem(QStringLiteral("Container"), VNX::ProjectItem::Type::Container, 40);
+        addChild(layer, container);
+        addChild(container, sound);
+        auto* selection = container->comp<VNX::VSelection>();
+        selection->mode = queue ? VNX::SelectionMode::Sequence : VNX::SelectionMode::Random;
+        selection->playType = queue ? VNX::SelectionPlayType::Queue : VNX::SelectionPlayType::Single;
+        selection->behavior.memoryScope = queue ? VNX::SelectionMemoryScope::PerEmitter
+                                                : VNX::SelectionMemoryScope::Global;
+        ASSERT_TRUE(VNX::PlayablePropertyAuthoringV1::addContainerChildOccurrence(*container, sound->guid));
+        auto& actions = project.actions.front().rootItem->children;
+        for (size_t index : {1u, 2u}) {
+            auto& stop = actions[index]->comp<VNX::VAction>()->steps[0];
+            stop.type = VNX::VActionStep::Type::Stop;
+            stop.quantize.timing = VNX::QuantizeTiming::NextBeat;
+            stop.quantize.referenceObjectID = 40;
+        }
+        VNX::PackGroup group;
+        group.name = QStringLiteral("MixedGroup");
+        group.actionIds = {actions[2]->runtimeId(), actions[3]->runtimeId()};
+        project.packGroups.push_back(group);
+        VNX::ProjectPackExporter exporter;
+        VNX::ProjectPackExporter::ExportOptions options;
+        options.platform = HarkenTest::platformIdString("Windows");
+        const auto result = exporter.ExportAllPacks(project, dir.path(), options);
+        ASSERT_TRUE(result.success) << result.error.toStdString();
+        for (const auto& language : project.projectLanguages) {
+            for (const auto& name : {QStringLiteral("StopContainer"), QStringLiteral("MixedGroup")}) {
+                QByteArray bytes;
+                harken::PackCanonicalImage image;
+                harken::CurrentWorldBodyImage body;
+                ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(QDir(dir.path()).filePath(
+                    language + QStringLiteral("/") + name + QStringLiteral(".bytes")), bytes, image, body));
+                EXPECT_EQ(body.ProductionView()->containerCount, 0u);
+                if (name == QStringLiteral("StopContainer")) {
+                    EXPECT_TRUE(image.media.empty());
+                    EXPECT_EQ(body.ProductionView()->playablePropertyCount, 0u);
+                } else {
+                    ASSERT_EQ(image.media.size(), 1u);
+                    EXPECT_EQ(image.media[0].soundId, harkentest::StudioObjectId(1 + kStableIdBias));
+                }
+            }
+            harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
+            ASSERT_EQ(VN_OK, session.InitResult());
+            ASSERT_NO_FATAL_FAILURE(activateExportedNames(dir.path(),
+                {QStringLiteral("PlayContainer"), QStringLiteral("StopContainer"), QStringLiteral("MixedGroup")}, language));
+        }
+    }
+    VNX::AssetRegistry::instance().clear();
+}
+
+TEST(EditorProjectPackExporterManifest, StopTimelineTargetsDoNotPublishSchedulesOrMedia)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    for (const auto type : {VNX::ProjectItem::Type::Track, VNX::ProjectItem::Type::Piece}) {
+        for (bool withProvider : {false, true}) {
+            SCOPED_TRACE(static_cast<int>(type));
+            SCOPED_TRACE(withProvider);
+            QTemporaryDir dir;
+            ASSERT_TRUE(dir.isValid());
+            VNX::AssetRegistry::instance().clear();
+            VNX::AssetRegistry::instance().setProjectRoot(dir.path());
+            const auto source = registerToneAsset(dir.path(), QStringLiteral("one.wav"), 0.25f);
+            const auto other = registerToneAsset(dir.path(), QStringLiteral("two.wav"), 0.75f);
+            auto project = HarkenTest::projectWithPlatforms({"Windows"});
+            ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), source, other,
+                {{QStringLiteral("StopTimeline"), 21, 40}, {QStringLiteral("PlayTimeline"), 22, 40}}));
+            auto& actions = project.actions.front().rootItem->children;
+            actions[0]->comp<VNX::VAction>()->steps[0].type = VNX::VActionStep::Type::Stop;
+            if (!withProvider) actions.pop_back();
+            auto target = makeItem(QStringLiteral("Timeline"), type, 40);
+            addChild(project.layers.front().rootItem, target);
+            auto track = target;
+            if (type == VNX::ProjectItem::Type::Piece) {
+                track = makeItem(QStringLiteral("Track"), VNX::ProjectItem::Type::Track, 41);
+                addChild(target, track);
+            }
+            auto sound = makeItem(QStringLiteral("ClipSound"), VNX::ProjectItem::Type::Sound, 42);
+            HarkenTest::setSharedSoundSource(*sound, source);
+            addChild(track, sound);
+            VNX::Clip clip;
+            clip.clipGuid = QUuid::createUuid();
+            clip.targetGuid = sound->guid;
+            clip.duration = 1000000;
+            auto* timeline = track->comp<VNX::VTrack>();
+            ASSERT_TRUE(timeline->clips.mintOccurrenceOrdinal(&clip));
+            timeline->clips.items.push_back(clip);
+            VNX::ProjectPackExporter exporter;
+            VNX::ProjectPackExporter::ExportOptions options;
+            options.platform = HarkenTest::platformIdString("Windows");
+            const auto result = exporter.ExportAllPacks(project, dir.path(), options);
+            ASSERT_TRUE(result.success) << result.error.toStdString();
+            QByteArray bytes;
+            harken::PackCanonicalImage image;
+            harken::CurrentWorldBodyImage body;
+            ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(QDir(dir.path()).filePath(
+                QStringLiteral("StopTimeline.bytes")), bytes, image, body));
+            EXPECT_TRUE(image.media.empty());
+            EXPECT_EQ(body.ProductionView()->playablePropertyCount, 0u);
+            EXPECT_EQ(body.ProductionView()->trackScheduleCount, 0u);
+            EXPECT_EQ(body.ProductionView()->pieceScheduleCount, 0u);
+            harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
+            ASSERT_EQ(VN_OK, session.InitResult());
+            ASSERT_NO_FATAL_FAILURE(activateExportedNames(dir.path(), withProvider
+                ? QStringList{QStringLiteral("StopTimeline"), QStringLiteral("PlayTimeline")}
+                : QStringList{QStringLiteral("StopTimeline")}));
+        }
+    }
+    VNX::AssetRegistry::instance().clear();
+}
+
+TEST(EditorProjectPackExporterManifest, MediaFreeDelayedStopCapturesOnlyExistingInstances)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    VNX::AssetRegistry::instance().clear();
+    VNX::AssetRegistry::instance().setProjectRoot(dir.path());
+    const auto source = registerToneAsset(dir.path(), QStringLiteral("long.wav"), 0.75f, 96000);
+    const auto unused = registerToneAsset(dir.path(), QStringLiteral("unused.wav"), 0.25f);
+    auto project = HarkenTest::projectWithPlatforms({"Windows"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), source, unused,
+        {{QStringLiteral("Play"), 21, 1}, {QStringLiteral("Stop"), 22, 1}}));
+    auto& stop = project.actions.front().rootItem->children[1]->comp<VNX::VAction>()->steps[0];
+    stop.type = VNX::VActionStep::Type::Stop;
+    stop.delay = 500.0f;
+    stop.fadeTime = 10.0f;
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions options;
+    options.platform = HarkenTest::platformIdString("Windows");
+    const auto result = exporter.ExportAllPacks(project, dir.path(), options);
+    ASSERT_TRUE(result.success) << result.error.toStdString();
+    for (int scenario = 0; scenario != 6; ++scenario) {
+        SCOPED_TRACE(scenario);
+        harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        std::map<QString, VnPackHandle> handles;
+        ASSERT_NO_FATAL_FAILURE(activateExportedNames(dir.path(), scenario == 0
+            ? QStringList{QStringLiteral("Stop")}
+            : QStringList{QStringLiteral("Play"), QStringLiteral("Stop")}, {}, &handles));
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
+        VnActionFiringHandle playFiring = 0, stopFiring = 0;
+        const auto postAction = [&](uint32_t id, VnActionFiringHandle* firing) {
+            post.actionId = harkentest::ToRuntime(harkentest::StudioObjectId(id + kStableIdBias));
+            return Vn_PostAction(&post, firing);
+        };
+        if (scenario >= 2) ASSERT_EQ(VN_OK, postAction(21, &playFiring));
+        ASSERT_EQ(VN_OK, postAction(22, &stopFiring));
+        EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(stopFiring));
+        ASSERT_EQ(1u, session.Engine()->actionDeferredRecords.LiveCount());
+        harken::ActionDeferredRecordToken token{};
+        harken::ActionDeferredRecord record{};
+        harken::ActionDeferredRecordState state{};
+        ASSERT_TRUE(session.Engine()->actionDeferredRecords.CaptureAt(0, &token, &record, &state));
+        EXPECT_EQ(record.targetPackLease.leaseToken, 0u);
+        EXPECT_EQ(record.rootPlayable != 0, scenario >= 2);
+        if (scenario == 1) ASSERT_EQ(VN_OK, postAction(21, &playFiring));
+        if (scenario == 3) ASSERT_EQ(VN_OK, Vn_StopActionFiring(stopFiring, 0));
+        VnActionStepResult playStep{};
+        playStep.structSize = sizeof(playStep);
+        if (playFiring != 0) ASSERT_EQ(VN_OK, Vn_QueryActionStep(playFiring, 0, &playStep));
+        harken::PackResourceRevisionToken oldRevision = 0;
+        if (scenario == 4) {
+            harken::PackRevisionKey oldKey{};
+            const auto provider = handles.at(QStringLiteral("Play"));
+            ASSERT_TRUE(session.Engine()->packs.ActiveRevisionIdentity(provider, &oldKey, &oldRevision));
+            ASSERT_EQ(VN_OK, Vn_UnloadPack(provider));
+            EXPECT_EQ(session.Engine()->packs.RetiringCount(), 1u);
+            EXPECT_TRUE(session.Engine()->playableInstances.Classify(playStep.producedPlayableInstance).live);
+        }
+        if (scenario == 5) {
+            const auto oldRoot = playStep.producedPlayableInstance;
+            ASSERT_EQ(VN_OK, Vn_StopActionFiring(playFiring, 0));
+            for (int block = 0; block != 8; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                session.Engine()->nullBackend.Pump(1);
+            }
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_FALSE(session.Engine()->playableInstances.Classify(oldRoot).live);
+            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(playFiring));
+            ASSERT_EQ(VN_OK, postAction(21, &playFiring));
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(playFiring, 0, &playStep));
+            EXPECT_EQ(static_cast<uint32_t>(oldRoot), static_cast<uint32_t>(playStep.producedPlayableInstance));
+            EXPECT_NE(oldRoot, playStep.producedPlayableInstance);
+        }
+        for (int block = 0; block != 150; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            session.Engine()->nullBackend.Pump(1);
+            if (scenario == 4 && block == 30) {
+                const auto* pcm = session.Engine()->nullBackend.LastBlock();
+                const auto samples = session.Engine()->nullBackend.BlockFrames()
+                    * session.Engine()->nullBackend.Channels();
+                ASSERT_TRUE(std::any_of(pcm, pcm + samples, [](float sample) {
+                    return std::abs(sample) > 1e-4f;
+                }));
+                EXPECT_TRUE(session.Engine()->playableInstances.Classify(playStep.producedPlayableInstance).live);
+            }
+        }
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(session.Engine()->actionDeferredRecords.LiveCount(), 0u);
+        EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stopFiring));
+        if (playFiring != 0)
+            EXPECT_EQ(session.Engine()->playableInstances.Classify(playStep.producedPlayableInstance).live,
+                      scenario != 2 && scenario != 4);
+        if (scenario == 4) {
+            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(playFiring));
+            for (int block = 0; block != 4; ++block) {
+                session.Engine()->nullBackend.Pump(1);
+                ASSERT_EQ(VN_OK, Vn_Update());
+            }
+            EXPECT_EQ(session.Engine()->packs.RetiringCount(), 0u);
+            harken::PCMView exact{};
+            EXPECT_EQ(VN_CONTENT_NOT_LOADED, session.Engine()->packs.LookupExact(oldRevision,
+                harkentest::ToRuntime(harkentest::StudioObjectId(1 + kStableIdBias)),
+                session.Engine()->registry, &exact));
+        }
+    }
+    VNX::AssetRegistry::instance().clear();
+}
 
 TEST(EditorProjectPackExporterManifest, CurrentSchemaCoversAllPackTypes)
 {

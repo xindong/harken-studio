@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using Harken.Unity.Editor;
 using NUnit.Framework;
 using UnityEditor;
@@ -56,13 +57,23 @@ namespace Harken.Unity.Tests
             Directory.CreateDirectory(folder);
             try
             {
-                string legacy = Path.Combine(Application.streamingAssetsPath, "Audio", "U4Original");
-                foreach (string file in Directory.GetFiles(legacy))
-                    if (!file.EndsWith(".meta"))
-                        File.Copy(file, Path.Combine(folder, Path.GetFileName(file) +
-                            (wrapped && file.EndsWith(".pack") ? ".bytes" : "")));
+                string source = Path.Combine(Application.streamingAssetsPath, "Audio", "U4Original");
+                Assert.That(GameplayPublication.Read(source, null, out var publication, out string readError),
+                    Is.EqualTo(VnResult.VN_OK), readError);
+                string manifest = File.ReadAllText(Path.Combine(source, PackManifest.ManifestFileName));
+                foreach (var pack in publication.Packs)
+                {
+                    string legacyPath = Path.ChangeExtension(pack.Path, ".pack");
+                    var pathField = new Regex("\"path\"\\s*:\\s*\"" + Regex.Escape(pack.Path) + "\"");
+                    Assert.That(pathField.Matches(manifest).Count, Is.EqualTo(1), pack.Path);
+                    manifest = pathField.Replace(manifest, _ => "\"path\":\"" + legacyPath + "\"");
+                    File.Copy(Path.Combine(source, pack.Path),
+                        Path.Combine(folder, legacyPath + (wrapped ? ".bytes" : "")));
+                }
+                File.WriteAllText(Path.Combine(folder, PackManifest.ManifestFileName), manifest);
                 var catalog = new HarkenEditorCatalog();
                 Assert.That(catalog.Refresh(folder), Is.EqualTo(VnResult.VN_OK), catalog.Diagnostic);
+                Assert.That(catalog.Publication.InitPack.Path, Is.EqualTo("Init.pack"));
                 Assert.That(catalog.GetPreparationOrder("Play_U4_A", out var ids, out string error), Is.EqualTo(VnResult.VN_OK), error);
                 using (var preview = new HarkenEditorPreview())
                 {

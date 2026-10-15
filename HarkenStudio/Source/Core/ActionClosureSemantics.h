@@ -113,6 +113,8 @@ struct ActionClosurePlan
     std::vector<ActionClosureMember> actions;
     std::vector<ActionClosureMember> objects;
     std::vector<ActionClosureMedia> media;
+    std::vector<ActionClosureMember> controlObjects;
+    std::vector<ActionClosureMedia> controlMedia;
     std::vector<ActionClosureEdge> edges;
     std::vector<ActionClosureDiagnostic> diagnostics;
     std::vector<ActionClosureCapabilityRequirement> capabilities;
