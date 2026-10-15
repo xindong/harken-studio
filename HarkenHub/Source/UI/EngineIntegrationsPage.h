@@ -12,14 +12,18 @@
 
 class QLabel;
 class QAction;
+class QComboBox;
 class QLineEdit;
 class QDialog;
 class QPlainTextEdit;
 class QPushButton;
 class QStackedWidget;
 class QTableWidget;
+class QTabWidget;
+class QTextBrowser;
 class QTimer;
 class QToolButton;
+class QTreeWidget;
 
 namespace VNH {
 
@@ -90,6 +94,9 @@ private:
         QStringList details;
         QStringList artifacts;
         qint64 elapsedMs = 0;
+        bool hasFileComparison = false;
+        std::vector<IntegrationFileChange> fileChanges;
+        bool attentionRequired = false;
     };
 
     void beginNewEditor(const QString& harkenProjectPath = QString());
@@ -132,6 +139,7 @@ private:
                                      InstalledVersion* version);
     void updateStudioVersionFields();
     void updateDefaultSdkPath();
+    void refreshInstalledSdkSources();
     void setSdkPath(const QString& path, bool userSelected);
     void setEditorLocked(bool locked);
     void clearResults();
@@ -151,6 +159,8 @@ private:
                      const QString& summary,
                      const QString& preferredStep = QString());
     void showSelectedStep();
+    void updateSdkCheckResults();
+    QString formatStepHtml(const ResultStep& step) const;
     QString formatStepDetails(const ResultStep& step) const;
     QString confirmationDetails() const;
     QString statusText(ResultStatus status) const;
@@ -175,6 +185,7 @@ private:
     QTableWidget* table_ = nullptr;
     QLineEdit* harkenProjectEdit_ = nullptr;
     QLineEdit* engineProjectEdit_ = nullptr;
+    QComboBox* sdkSourceCombo_ = nullptr;
     QLineEdit* sdkPathEdit_ = nullptr;
     QPushButton* sdkSourceBrowseButton_ = nullptr;
     QLineEdit* sdkInstallPathEdit_ = nullptr;
@@ -186,7 +197,10 @@ private:
     QPushButton* sdkCheckButton_ = nullptr;
     QDialog* sdkSelectionDialog_ = nullptr;
     QLabel* sdkSelectionSummary_ = nullptr;
-    QPlainTextEdit* sdkSelectionDetails_ = nullptr;
+    QTabWidget* sdkResultsTabs_ = nullptr;
+    QLabel* sdkDiffSummary_ = nullptr;
+    QTreeWidget* sdkDiffTree_ = nullptr;
+    QTextBrowser* sdkSelectionDetails_ = nullptr;
     QPushButton* integrateButton_ = nullptr;
     QPushButton* changeSdkButton_ = nullptr;
     QPushButton* cancelSdkButton_ = nullptr;

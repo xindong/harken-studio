@@ -15,6 +15,8 @@
 
 #include <QApplication>
 #include <QAction>
+#include <QAbstractItemView>
+#include <QComboBox>
 #include <QCryptographicHash>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -31,13 +33,18 @@
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QStackedWidget>
+#include <QStyle>
+#include <QStyleOptionComboBox>
 #include <QTableWidget>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTextBrowser>
 #include <QThreadPool>
 #include <QThread>
 #include <QTimer>
 #include <QTranslator>
+#include <QTreeWidget>
 
 #include <memory>
 
@@ -655,8 +662,6 @@ TEST_F(EngineIntegrationsPageTest, ExternalSdkInstallsWithoutStudioAndFolderCanc
     auto* source = page->findChild<QLineEdit*>(QStringLiteral("sdkSourcePath"));
     ASSERT_NE(source, nullptr);
     EXPECT_EQ(source->text(), sdkPath);
-    EXPECT_EQ(source->parentWidget(), browse->parentWidget());
-    EXPECT_EQ(source->parentWidget()->findChildren<QLineEdit*>().size(), 1);
     EXPECT_TRUE(source->isReadOnly());
     EXPECT_TRUE(primary()->isEnabled());
     checkButton()->click();
@@ -748,7 +753,22 @@ TEST_F(EngineIntegrationsPageTest, SdkSelectionCancelKeepsSavedStateAndApplyUpda
     ASSERT_TRUE(service.run(request).success);
     const QString installed = QDir(unityPath).filePath("Packages/com.harken.core");
     writeFile(installed + "/package.json.meta", "guid: stable-package-guid");
-    sdkPath = dir.filePath("standalone-sdk-2");
+    VNH::InstalledVersionRecord studio;
+    studio.buildId = "sdk-update-build";
+    studio.semanticVersion = "2.0.0";
+    studio.healthState = "Installed";
+    studio.installPath = dir.filePath("versions/sdk-update-build");
+    const QString binary = QDir(studio.installPath).filePath(VNH::studioBinaryRelativePath());
+    writeFile(binary, "studio");
+    writeFile(QDir(studio.installPath).filePath("package-manifest.json"),
+              QJsonDocument(QJsonObject{{"product", "HarkenStudio"},
+                  {"buildId", studio.buildId}, {"version", studio.semanticVersion}}).toJson());
+    writeFile(QDir(studio.installPath).filePath("capabilities.json"),
+              QJsonDocument(HarkenHubTest::studioCapabilities(
+                  studio.buildId, studio.semanticVersion)).toJson());
+    QString error;
+    ASSERT_TRUE(VNH::InstallIndex::commitInstallation(studio, 1, &error));
+    sdkPath = QDir(QFileInfo(binary).absolutePath()).filePath("HarkenSDK/Unity/Harken");
     makeSdk();
     writeFile(QDir(sdkPath).filePath("package.json"),
               R"({"name":"com.harken.core","version":"2.0.0"})");
@@ -771,7 +791,41 @@ TEST_F(EngineIntegrationsPageTest, SdkSelectionCancelKeepsSavedStateAndApplyUpda
     EXPECT_TRUE(savedPath->isReadOnly());
     EXPECT_TRUE(field("Select a .hsp project file")->isReadOnly());
 
-    selectSdkFolder(sdkPath);
+    const auto selectInstalledSdk = [&](bool clickArrow) {
+        startSdkSelection();
+        auto* sources = page->findChild<QComboBox*>(QStringLiteral("sdkSourceSelector"));
+        ASSERT_NE(sources, nullptr);
+        const int index = sources->findData(sdkPath);
+        ASSERT_GE(index, 0);
+        if (clickArrow) {
+            QStyleOptionComboBox option;
+            option.initFrom(sources);
+            option.editable = sources->isEditable();
+            const QRect arrow = sources->style()->subControlRect(
+                QStyle::CC_ComboBox, &option, QStyle::SC_ComboBoxArrow, sources);
+            QTest::mouseClick(sources, Qt::LeftButton, Qt::NoModifier, arrow.center());
+        } else {
+            QTest::mouseClick(sources->lineEdit(), Qt::LeftButton);
+        }
+        QCoreApplication::processEvents();
+        ASSERT_TRUE(sources->view()->isVisible());
+        const auto item = sources->model()->index(index, 0);
+        sources->view()->scrollTo(item);
+        const QRect itemRect = sources->view()->visualRect(item).intersected(
+            sources->view()->viewport()->rect());
+        ASSERT_FALSE(itemRect.isEmpty());
+        QTest::mouseMove(sources->view()->viewport(), itemRect.center());
+        QTest::mouseClick(sources->view()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                          itemRect.center());
+        QCoreApplication::processEvents();
+        EXPECT_FALSE(sources->view()->isVisible());
+        EXPECT_EQ(sources->lineEdit()->text(), sdkPath);
+        const QString screenshots = qEnvironmentVariable("HARKEN_HUB_TEST_SCREENSHOT_DIR");
+        if (!screenshots.isEmpty())
+            EXPECT_TRUE(page->findChild<QDialog*>(QStringLiteral("sdkSelectionDialog"))->grab().save(
+                QDir(screenshots).filePath("sdk-installed-source-en.png")));
+    };
+    selectInstalledSdk(false);
     EXPECT_TRUE(version->text().contains(QStringLiteral("1.0.0")));
     EXPECT_EQ(savedPath->text(), QDir::toNativeSeparators(installed));
     EXPECT_EQ(integrations.list().front().sdkSourcePath, originalSource);
@@ -781,6 +835,15 @@ TEST_F(EngineIntegrationsPageTest, SdkSelectionCancelKeepsSavedStateAndApplyUpda
     checkButton()->click();
     EXPECT_TRUE(version->text().contains(QStringLiteral("1.0.0")));
     EXPECT_EQ(integrations.list().front().sdkSourcePath, originalSource);
+    const QString screenshots = qEnvironmentVariable("HARKEN_HUB_TEST_SCREENSHOT_DIR");
+    if (!screenshots.isEmpty()) {
+        auto* dialog = page->findChild<QDialog*>(QStringLiteral("sdkSelectionDialog"));
+        auto* tabs = dialog->findChild<QTabWidget*>(QStringLiteral("sdkCheckResults"));
+        QCoreApplication::processEvents();
+        EXPECT_TRUE(dialog->grab().save(QDir(screenshots).filePath("sdk-changes-en.png")));
+        tabs->setCurrentIndex(1);
+        EXPECT_TRUE(dialog->grab().save(QDir(screenshots).filePath("sdk-check-log-en.png")));
+    }
     page->findChild<QPushButton*>(QStringLiteral("cancelSdkSelection"))->click();
     EXPECT_FALSE(browse->isVisible());
     EXPECT_FALSE(primary()->isVisible());
@@ -794,7 +857,7 @@ TEST_F(EngineIntegrationsPageTest, SdkSelectionCancelKeepsSavedStateAndApplyUpda
     ASSERT_TRUE(waitForVersion());
     EXPECT_FALSE(browse->isVisible());
     EXPECT_EQ(field("Runtime/SDK source path")->text(), originalSource);
-    selectSdkFolder(sdkPath);
+    selectInstalledSdk(true);
     primary()->click();
     EXPECT_TRUE(version->text().contains(QStringLiteral("2.0.0")));
     EXPECT_EQ(savedPath->text(), QDir::toNativeSeparators(installed));
@@ -1022,6 +1085,7 @@ TEST_F(EngineIntegrationsPageTest, LocalizedGuidanceUsesSummaryUntilChecking)
         "QPushButton { background-color: #2A3140; border: 1px solid #3D4554; padding: 8px 16px; }"
         "QPushButton:disabled { background-color: #171C28; color: #555555; border-color: #272D3A; }"));
     makeSdk();
+    writeFile(QDir(sdkPath).filePath("Runtime/LegacySupport.cs"), "legacy");
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityPath;
@@ -1133,6 +1197,9 @@ TEST_F(EngineIntegrationsPageTest, LocalizedGuidanceUsesSummaryUntilChecking)
         auto* sdkDialog = page->findChild<QDialog*>(QStringLiteral("sdkSelectionDialog"));
         ASSERT_NE(sdkDialog, nullptr);
         ASSERT_TRUE(sdkDialog->isVisible());
+        if (!screenshotRoot.isEmpty())
+            EXPECT_TRUE(sdkDialog->grab().save(QDir(screenshotRoot).filePath(
+                chinese ? QStringLiteral("sdk-selection-zh.png") : QStringLiteral("sdk-selection-en.png"))));
         check = checkButton();
         EXPECT_TRUE(source->isVisible());
         auto* sourceBrowse = page->findChild<QPushButton*>(QStringLiteral("sdkSourceBrowse"));
@@ -1161,9 +1228,44 @@ TEST_F(EngineIntegrationsPageTest, LocalizedGuidanceUsesSummaryUntilChecking)
             QCoreApplication::processEvents();
             EXPECT_TRUE(page->grab().save(QDir(screenshotRoot).filePath(
                 chinese ? QStringLiteral("sdk-unity-open-zh.png") : QStringLiteral("sdk-unity-open-en.png"))));
+            EXPECT_TRUE(sdkDialog->grab().save(QDir(screenshotRoot).filePath(
+                chinese ? QStringLiteral("sdk-check-failed-zh.png") : QStringLiteral("sdk-check-failed-en.png"))));
         }
         ASSERT_TRUE(QFile::remove(unityLock));
         check->click();
+        if (!screenshotRoot.isEmpty()) {
+            QCoreApplication::processEvents();
+            EXPECT_TRUE(sdkDialog->grab().save(QDir(screenshotRoot).filePath(
+                chinese ? QStringLiteral("sdk-current-zh.png") : QStringLiteral("sdk-current-en.png"))));
+            const QString projectFile = QDir(unityPath).filePath(
+                request.sdkInstallPath + "/Runtime/ProjectOnly.cs");
+            writeFile(projectFile, "project-only");
+            check->click();
+            QCoreApplication::processEvents();
+            EXPECT_TRUE(sdkDialog->grab().save(QDir(screenshotRoot).filePath(
+                chinese ? QStringLiteral("sdk-attention-zh.png") : QStringLiteral("sdk-attention-en.png"))));
+            auto* tabs = sdkDialog->findChild<QTabWidget*>(QStringLiteral("sdkCheckResults"));
+            tabs->setCurrentIndex(1);
+            EXPECT_TRUE(sdkDialog->grab().save(QDir(screenshotRoot).filePath(
+                chinese ? QStringLiteral("sdk-attention-log-zh.png") : QStringLiteral("sdk-attention-log-en.png"))));
+            writeFile(QDir(sdkPath).filePath("package.json"),
+                      R"({"name":"com.harken.core","version":"2.0.0"})");
+            writeFile(QDir(sdkPath).filePath("Runtime/AdditionalSupport.cs"), "additional");
+            ASSERT_TRUE(QFile::remove(QDir(sdkPath).filePath("Runtime/LegacySupport.cs")));
+            check->click();
+            QCoreApplication::processEvents();
+            EXPECT_TRUE(sdkDialog->grab().save(QDir(screenshotRoot).filePath(
+                chinese ? QStringLiteral("sdk-changes-zh.png") : QStringLiteral("sdk-changes-en.png"))));
+            tabs->setCurrentIndex(1);
+            EXPECT_TRUE(sdkDialog->grab().save(QDir(screenshotRoot).filePath(
+                chinese ? QStringLiteral("sdk-check-log-zh.png") : QStringLiteral("sdk-check-log-en.png"))));
+            writeFile(QDir(screenshotRoot).filePath(chinese ? "sdk-check-log-zh.txt" : "sdk-check-log-en.txt"),
+                      sdkDialog->findChild<QTextBrowser*>(QStringLiteral("sdkSelectionDetails"))->toPlainText().toUtf8());
+            makeSdk();
+            writeFile(QDir(sdkPath).filePath("Runtime/LegacySupport.cs"), "legacy");
+            ASSERT_TRUE(QFile::remove(QDir(sdkPath).filePath("Runtime/AdditionalSupport.cs")));
+            ASSERT_TRUE(QFile::remove(projectFile));
+        }
         page->findChild<QPushButton*>(QStringLiteral("cancelSdkSelection"))->click();
         EXPECT_FALSE(source->isVisible());
         EXPECT_FALSE(primary()->isVisible());
@@ -1629,8 +1731,20 @@ TEST_F(EngineIntegrationsPageTest, FailedUnlinkKeepsRelationshipAndSourceChangeI
     ASSERT_EQ(integrations.list().size(), 1);
     EXPECT_EQ(integrations.list().front().integrationId, id);
     startSdkSelection();
+    writeFile(QDir(sdkPath).filePath("package.json"),
+              R"({"name":"com.harken.core","version":"2.0.0"})");
+    checkButton()->click();
+    auto* changes = page->findChild<QTreeWidget*>(QStringLiteral("sdkFileChanges"));
+    auto* log = page->findChild<QTextBrowser*>(QStringLiteral("sdkSelectionDetails"));
+    ASSERT_NE(changes, nullptr);
+    ASSERT_NE(log, nullptr);
+    EXPECT_GT(changes->topLevelItemCount(), 0);
+    EXPECT_FALSE(log->toPlainText().isEmpty());
     field("Runtime/SDK source path")->setText(dir.filePath("missing-sdk"));
     EXPECT_EQ(steps()->rowCount(), 0);
+    EXPECT_EQ(changes->topLevelItemCount(), 0);
+    EXPECT_TRUE(log->toPlainText().isEmpty());
+    EXPECT_TRUE(page->findChild<QLabel*>(QStringLiteral("sdkDiffSummary"))->text().isEmpty());
     EXPECT_FALSE(primary()->isEnabled());
     field("Runtime/SDK source path")->setText(sdkPath);
     EXPECT_TRUE(primary()->isEnabled());

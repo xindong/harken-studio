@@ -1,7 +1,13 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Choose SDKs bundled with installed Studio versions directly from the SDK source dropdown. Click anywhere in the field to open the list, or browse for another folder."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "SDK checks show version changes and file counts grouped by addition, update, removal, and preservation. Preserved files are collapsed, and a separate check log highlights failures, warnings, and recommended actions."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "New Studio installations use shorter folder names without lengthy build identifiers. Different builds of the same version can still be installed side by side."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Windows now displays the application name as Harken Hub without an additional description."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Engine Integrations uses system file and folder pickers, restoring address-bar path navigation on Windows."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub and Studio updates now use the new GitHub repository, with COS downloads retained as a fallback."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "SDK integration retries temporary file locks on Windows instead of failing immediately."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub and Studio downloads support the new release archive layout on GitHub and COS."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub and Studio update checks and downloads use the active release sources after the Harken rename."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Command-line update checks can verify Hub or Studio independently."),

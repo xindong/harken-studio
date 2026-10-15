@@ -7,9 +7,35 @@
   },
   "releases": [
     {
+      "version": "0.1.58",
+      "date": "2026-10-15",
+      "pullRequests": [30, 31],
+      "contributors": [
+        "liuxin2-sys"
+      ],
+      "changes": [
+        {
+          "category": "added",
+          "text": "Choose SDKs bundled with installed Studio versions directly from the SDK source dropdown. Click anywhere in the field to open the list, or browse for another folder."
+        },
+        {
+          "category": "improved",
+          "text": "SDK checks show version changes and file counts grouped by addition, update, removal, and preservation. Preserved files are collapsed, and a separate check log highlights failures, warnings, and recommended actions."
+        },
+        {
+          "category": "improved",
+          "text": "New Studio installations use shorter folder names without lengthy build identifiers. Different builds of the same version can still be installed side by side."
+        },
+        {
+          "category": "improved",
+          "text": "Windows now displays the application name as Harken Hub without an additional description."
+        }
+      ]
+    },
+    {
       "version": "0.1.57",
       "date": "2026-10-14",
-      "pullRequests": [20],
+      "pullRequests": [18, 20],
       "contributors": [
         "liuxin2-sys"
       ],
@@ -17,6 +43,14 @@
         {
           "category": "improved",
           "text": "Engine Integrations uses system file and folder pickers, restoring address-bar path navigation on Windows."
+        },
+        {
+          "category": "improved",
+          "text": "Hub and Studio updates now use the new GitHub repository, with COS downloads retained as a fallback."
+        },
+        {
+          "category": "improved",
+          "text": "SDK integration retries temporary file locks on Windows instead of failing immediately."
         }
       ]
     },
