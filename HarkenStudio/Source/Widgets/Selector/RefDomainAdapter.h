@@ -34,6 +34,7 @@ public:
     virtual ~IRefDomainAdapter() = default;
 
     virtual bool exists(uint32_t id) const = 0;
+    virtual bool isAvailable(uint32_t id) const { return exists(id); }
     virtual QString displayName(uint32_t id) const = 0;
     virtual QString tooltip(uint32_t id) const = 0;
     virtual QIcon icon(uint32_t id, const QColor& tint) const = 0;

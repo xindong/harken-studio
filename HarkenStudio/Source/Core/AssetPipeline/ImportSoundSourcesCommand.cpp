@@ -2,6 +2,7 @@
 
 #include "AssetImporter.h"
 #include "AssetRegistry.h"
+#include "SourceFileSystem.h"
 #include "../LanguageContextService.h"
 #include "../PlatformContextService.h"
 #include "../ProjectLanguageSemantics.h"
@@ -9,12 +10,13 @@
 #include "../ProjectTypes.h"
 #include "../SoundSourceEditing.h"
 #include "../SoundSourceSemantics.h"
-#include "../ToastManager.h"
 #include "../UndoCommands.h"
+#include "../ToastManager.h"
 #include "../../Widgets/LogPanel/LogPanel.h"
 
 #include <QFile>
 #include <QFileInfo>
+#include <QSet>
 
 #include <algorithm>
 #include <memory>
@@ -28,7 +30,7 @@ ImportSoundSourcesCommand::ImportSoundSourcesCommand(
     ProjectItem* targetSound,
     QString language,
     QUndoCommand* parent)
-    : QUndoCommand(parent)
+    : TransactionalUndoCommand({}, parent, false)
     , externalPaths_(externalPaths)
     , targetBinding_(targetBinding)
     , targetObjectID_(targetSound ? targetSound->objectID : 0)
@@ -43,10 +45,12 @@ ImportSoundSourcesCommand* ImportSoundSourcesCommand::pushImport(
     const QStringList& externalPaths,
     ProjectFileBinding* targetBinding,
     ProjectItem* targetSound,
-    const QString& language)
+    const QString& language,
+    const QUuid& targetEntry)
 {
     auto command = std::make_unique<ImportSoundSourcesCommand>(
         externalPaths, targetBinding, targetSound, language);
+    command->targetEntry_ = targetEntry;
     command->collectEntries();
     if (command->successCount() == 0) {
         static std::vector<std::unique_ptr<ImportSoundSourcesCommand>> failed;
@@ -56,12 +60,6 @@ ImportSoundSourcesCommand* ImportSoundSourcesCommand::pushImport(
     }
     ImportSoundSourcesCommand* raw = command.release();
     UndoRedoManager::instance().push(raw);
-    if (raw->duplicateCount() > 0) {
-        ToastManager::instance().showToast(
-            QObject::tr("%1 file(s) matched existing audio content and were reused")
-                .arg(raw->duplicateCount()),
-            5000, ToastType::Info);
-    }
     return raw;
 }
 
@@ -113,6 +111,30 @@ void ImportSoundSourcesCommand::collectEntries()
     }
 
     localized_ = sound->distinguishLanguage;
+    uint32_t explicitSource = 0;
+    if (!targetEntry_.isNull()) {
+        const auto locate = [&](const SoundSourceSet& set, const QString& language) {
+            for (const auto& source : set.entries) {
+                if (source.entryId == targetEntry_) {
+                    explicitSource = source.sourceId;
+                    language_ = language;
+                    return;
+                }
+            }
+        };
+        if (localized_) {
+            for (auto it = sound->sources.localized.cbegin(); it != sound->sources.localized.cend(); ++it)
+                locate(it.value(), it.key());
+        } else {
+            locate(sound->sources.plain, {});
+        }
+        if (explicitSource == 0) {
+            failCount_ = externalPaths_.size();
+            return;
+        }
+        if (AssetRegistry::instance().sourceFileExists(explicitSource))
+            explicitSource = 0;
+    }
     if (localized_) {
         if (language_.isEmpty())
             language_ = LanguageContextService::instance().language();
@@ -135,10 +157,71 @@ void ImportSoundSourcesCommand::collectEntries()
     hadSourceSet_ = !localized_ || sound->sources.localized.contains(language_);
     previousSources_ = localized_ ? sound->sources.localized.value(language_) : sound->sources.plain;
 
+    auto& registry = AssetRegistry::instance();
+    const auto sameName = [](const QString& path, const QString& other) {
+        return QFileInfo(path).fileName().compare(QFileInfo(other).fileName(),
+#ifdef Q_OS_WIN
+            Qt::CaseInsensitive
+#else
+            Qt::CaseSensitive
+#endif
+        ) == 0;
+    };
+    const auto report = [](const QString& error) {
+        LogPanel::logError(LogCategory::Import, error);
+        ToastManager::instance().showToast(error, 5000, ToastType::Error);
+    };
+    struct PlannedImport { QString path; uint32_t restoreID = 0; };
+    QList<PlannedImport> plan;
+    QMap<uint32_t, QString> versions;
+    QSet<uint32_t> conflicts;
+    QStringList files = externalPaths_;
+    files.removeDuplicates();
+    for (const QString& path : files) {
+        QSet<uint32_t> candidates;
+        const auto* explicitAsset = registry.getAsset(explicitSource);
+        if (explicitAsset && sameName(path, explicitAsset->relativePath)) {
+            candidates.insert(explicitSource);
+        } else {
+            for (const auto& source : previousSources_.entries) {
+                const auto* asset = registry.getAsset(source.sourceId);
+                if (asset && !registry.sourceFileExists(source.sourceId)
+                    && sameName(path, asset->relativePath))
+                    candidates.insert(source.sourceId);
+            }
+        }
+        if (candidates.size() > 1) {
+            ++failCount_;
+            report(QObject::tr("Several missing sources are named '%1'. Drop the file onto the source row to restore.")
+                .arg(QFileInfo(path).fileName()));
+            continue;
+        }
+        const uint32_t restoreID = candidates.isEmpty() ? 0 : *candidates.cbegin();
+        if (restoreID != 0) {
+            const QString hash = AssetImporter::computeContentHash(path);
+            if (versions.contains(restoreID)) {
+                if (!hash.isEmpty() && hash == versions.value(restoreID))
+                    continue;
+                conflicts.insert(restoreID);
+            } else {
+                versions.insert(restoreID, hash);
+            }
+        }
+        plan.append({path, restoreID});
+    }
+    for (uint32_t id : conflicts)
+        report(QObject::tr("Several files target '%1'. Import one version at a time.")
+            .arg(registry.getAsset(id)->relativePath));
+
     AssetImporter importer;
     importer.setProjectRoot(AssetRegistry::instance().projectRoot());
-    for (const QString& path : externalPaths_) {
-        const ImportResult result = importer.importFile(path, targetBinding_);
+    for (const auto& planned : plan) {
+        if (conflicts.contains(planned.restoreID)) {
+            ++failCount_;
+            continue;
+        }
+        const QString& path = planned.path;
+        const ImportResult result = importer.importFile(path, targetBinding_, {}, true, planned.restoreID);
         if (!result.success) {
             ++failCount_;
             LogPanel::logError(LogCategory::Import, QString("Failed: %1 - %2")
@@ -148,14 +231,10 @@ void ImportSoundSourcesCommand::collectEntries()
 
         ImportedEntry entry;
         entry.sourceID = result.sourceID;
-        entry.sourcePath = path;
-        entry.destPath = result.absolutePath;
-        entry.ownsAsset = !result.deduplicated;
-        entry.source.entryId = QUuid::createUuid();
+        if (planned.restoreID == 0)
+            entry.source.entryId = QUuid::createUuid();
         entry.source.sourceId = result.sourceID;
         const AssetInfo* info = AssetRegistry::instance().getAsset(result.sourceID);
-        if (entry.ownsAsset && info)
-            entry.assetInfo = *info;
         if (info)
             entry.source.rangeContentHash = info->contentHash;
         if (const auto seed = SoundSourceSemantics::fileLoopRegion(info)) {
@@ -163,8 +242,10 @@ void ImportSoundSourcesCommand::collectEntries()
             entry.source.loopProvenance = SoundLoopProvenance::File;
         }
         entries_.push_back(entry);
+        if (result.fileChange)
+            fileChanges_.append(result.fileChange);
         ++successCount_;
-        if (result.deduplicated) ++duplicateCount_;
+        if (result.deduplicated && !result.fileChange) ++duplicateCount_;
     }
 }
 
@@ -174,6 +255,8 @@ void ImportSoundSourcesCommand::applyEntries(ProjectItem* target, VSound* sound)
         return;
     auto& set = localized_ ? sound->sources.localized[language_] : sound->sources.plain;
     for (const ImportedEntry& entry : entries_) {
+        if (entry.source.entryId.isNull())
+            continue;
         const bool present = std::any_of(
             set.entries.begin(), set.entries.end(),
             [&entry](const SoundSourceDef& source) {
@@ -186,7 +269,21 @@ void ImportSoundSourcesCommand::applyEntries(ProjectItem* target, VSound* sound)
     notifyChanged(target);
 }
 
-void ImportSoundSourcesCommand::redo()
+bool ImportSoundSourcesCommand::apply(bool redo)
+{
+    if (!resolveTarget())
+        return false;
+    bool rollbackFailed = false;
+    if (!SourceFileSystem::replayFiles(fileChanges_, redo, &rollbackFailed)) {
+        setObsolete(rollbackFailed);
+        return false;
+    }
+    if (redo) redoEntries();
+    else undoEntries();
+    return true;
+}
+
+void ImportSoundSourcesCommand::redoEntries()
 {
     ProjectItem* target = resolveTarget();
     auto* sound = target ? target->comp<VSound>() : nullptr;
@@ -205,17 +302,10 @@ void ImportSoundSourcesCommand::redo()
         return;
     }
 
-    for (const ImportedEntry& entry : entries_) {
-        if (entry.ownsAsset && !AssetRegistry::instance().contains(entry.sourceID)) {
-            if (!QFileInfo::exists(entry.destPath) && !entry.sourcePath.isEmpty())
-                QFile::copy(entry.sourcePath, entry.destPath);
-            AssetRegistry::instance().registerAsset(entry.assetInfo);
-        }
-    }
     applyEntries(target, sound);
 }
 
-void ImportSoundSourcesCommand::undo()
+void ImportSoundSourcesCommand::undoEntries()
 {
     ProjectItem* target = resolveTarget();
     auto* sound = target ? target->comp<VSound>() : nullptr;
@@ -228,13 +318,6 @@ void ImportSoundSourcesCommand::undo()
         sound->sources.plain = previousSources_;
     }
 
-    for (const ImportedEntry& entry : entries_) {
-        if (entry.ownsAsset && AssetRegistry::instance().isUncommitted(entry.sourceID)) {
-            if (!entry.destPath.isEmpty() && QFileInfo::exists(entry.destPath))
-                QFile::remove(entry.destPath);
-            AssetRegistry::instance().unregisterAsset(entry.sourceID);
-        }
-    }
     notifyChanged(target);
 }
 

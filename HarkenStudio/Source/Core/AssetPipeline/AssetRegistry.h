@@ -28,9 +28,10 @@ public:
 
     QString projectRoot() const;
     void setPlatforms(const QVector<ProjectPlatform>& platforms);
-    MediaBuildSnapshot buildSnapshot() const;
+    MediaBuildSnapshot buildSnapshot(bool resolveMissingHashes = true) const;
     MediaBuildSnapshot buildSnapshot(const QString& projectRoot,
-                                     const QVector<ProjectPlatform>& platforms) const;
+                                     const QVector<ProjectPlatform>& platforms,
+                                     bool resolveMissingHashes = true) const;
     bool accepts(const MediaConversionRequest& request) const;
 
     void clear();
@@ -39,7 +40,7 @@ public:
     uint32_t allocateStableID();
 
 
-    bool registerAsset(const AssetInfo& info);
+    bool registerAsset(const AssetInfo& info, bool uncommitted = true);
 
     void unregisterAsset(uint32_t sourceID);
 
@@ -59,6 +60,7 @@ public:
     const AssetInfo* findAssetByPath(const QString& absolutePath) const;
 
     bool contains(uint32_t sourceID) const;
+    bool sourceFileExists(uint32_t sourceID) const;
 
     QList<uint32_t> getAllSourceIDs() const;
 

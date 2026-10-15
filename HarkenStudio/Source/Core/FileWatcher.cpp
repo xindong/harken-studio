@@ -1,6 +1,7 @@
 
 #include "FileWatcher.h"
 #include "ItemTypeCatalog.h"
+#include "AssetPipeline/AudioFormatCatalog.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -21,15 +22,10 @@ FileWatcher::FileWatcher(QObject* parent)
     suppressTimer_.setSingleShot(true);
     connect(&suppressTimer_, &QTimer::timeout, this, [this]() {
         suppressed_ = false;
-        pendingModified_.clear();
         pendingWUModified_.clear();
         if (!watching_) return;
-        lastSnapshot_.clear();
-        QString AudioSourcesDir = QDir(projectRoot_).filePath("AudioSources");
-        if (QDir(AudioSourcesDir).exists())
-            scanDirectoryRecursive(AudioSourcesDir, lastSnapshot_);
         projectSnapshot_ = scanProjectEntries();
-        refreshWatches();
+        flushPendingChanges();
     });
 }
 
@@ -45,16 +41,9 @@ void FileWatcher::startWatching(const QString& projectRoot)
     projectRoot_ = projectRoot;
     watching_ = true;
 
-    QString AudioSourcesDir = QDir(projectRoot_).filePath("AudioSources");
-    if (QDir(AudioSourcesDir).exists())
-        watchDirectoryRecursive(AudioSourcesDir);
-
+    sourceSnapshot_ = scanSourceEntries();
     projectSnapshot_ = scanProjectEntries();
     refreshWatches();
-
-    lastSnapshot_.clear();
-    if (QDir(AudioSourcesDir).exists())
-        scanDirectoryRecursive(AudioSourcesDir, lastSnapshot_);
 
     qDebug() << "[FileWatcher] Started watching" << projectRoot_
              << "| dirs:" << watcher_.directories().size()
@@ -76,7 +65,7 @@ void FileWatcher::stopWatching()
     if (!watcher_.files().isEmpty())
         watcher_.removePaths(watcher_.files());
 
-    lastSnapshot_.clear();
+    sourceSnapshot_.clear();
     projectSnapshot_.clear();
     watching_ = false;
 
@@ -88,81 +77,82 @@ void FileWatcher::setDebounceInterval(int ms)
     debounceMs_ = qMax(50, ms);
 }
 
+QStringList FileWatcher::sourceFiles() const
+{
+    QStringList files;
+    for (auto it = sourceSnapshot_.cbegin(); it != sourceSnapshot_.cend(); ++it)
+        if (it.value().first >= 0) files.append(it.key());
+    return files;
+}
+
 void FileWatcher::suppressSelfWrites(int durationMs)
 {
     suppressed_ = true;
-    pendingModified_.clear();
     pendingWUModified_.clear();
     suppressTimer_.start(qMax(50, durationMs));
 }
 
-void FileWatcher::onDirectoryChanged(const QString& path)
+void FileWatcher::onDirectoryChanged(const QString&)
 {
     if (!watching_) return;
-    if (suppressed_) return;
-
-    QSet<QString> currentSnapshot;
-    QString AudioSourcesDir = QDir(projectRoot_).filePath("AudioSources");
-
-    if (path == AudioSourcesDir || path.startsWith(AudioSourcesDir + QChar('/'))) {
-        scanDirectoryRecursive(AudioSourcesDir, currentSnapshot);
-
-        QSet<QString> added = currentSnapshot - lastSnapshot_;
-        QSet<QString> removed = lastSnapshot_ - currentSnapshot;
-
-        if (!added.isEmpty())
-            emit filesAdded(added.values());
-        if (!removed.isEmpty())
-            emit filesRemoved(removed.values());
-
-        lastSnapshot_ = currentSnapshot;
-
-        QFileInfo info(path);
-        if (info.isDir() && !watcher_.directories().contains(path))
-            watchDirectoryRecursive(path);
-    }
-    if (!debounceTimer_.isActive())
-        debounceTimer_.start(debounceMs_);
+    debounceTimer_.start(debounceMs_);
 }
 
 void FileWatcher::onFileChanged(const QString& path)
 {
     if (!watching_) return;
 
-    if (suppressed_) {
-        if (QFileInfo::exists(path) && !watcher_.files().contains(path))
-            watcher_.addPath(path);
-        return;
-    }
-
-    if (projectSnapshot_.contains(path)) {
-        pendingWUModified_.insert(path);
-    } else {
+    if (sourceSnapshot_.contains(path)) {
         pendingModified_.insert(path);
+    } else if (!suppressed_) {
+        pendingWUModified_.insert(path);
     }
 
     if (QFileInfo::exists(path) && !watcher_.files().contains(path))
         watcher_.addPath(path);
 
-    if (!debounceTimer_.isActive())
-        debounceTimer_.start(debounceMs_);
+    debounceTimer_.start(debounceMs_);
+}
+
+void FileWatcher::refreshSources()
+{
+    if (!watching_) return;
+    const auto sources = scanSourceEntries();
+    QStringList added;
+    QStringList removed;
+    QStringList modified;
+    for (auto it = sources.cbegin(); it != sources.cend(); ++it) {
+        if (it.value().first < 0) continue;
+        if (!sourceSnapshot_.contains(it.key()))
+            added.append(it.key());
+        else if (sourceSnapshot_.value(it.key()) != it.value() || pendingModified_.contains(it.key()))
+            modified.append(it.key());
+    }
+    for (auto it = sourceSnapshot_.cbegin(); it != sourceSnapshot_.cend(); ++it)
+        if (it.value().first >= 0 && !sources.contains(it.key())) removed.append(it.key());
+    const bool sourceChanges = sources != sourceSnapshot_ || !modified.isEmpty();
+    sourceSnapshot_ = sources;
+    pendingModified_.clear();
+    refreshWatches();
+    if (!removed.isEmpty()) emit filesRemoved(removed);
+    if (!added.isEmpty()) emit filesAdded(added);
+    if (!modified.isEmpty()) emit filesModified(modified);
+    if (sourceChanges) emit sourcesChanged();
 }
 
 void FileWatcher::flushPendingChanges()
 {
-    if (!watching_ || suppressed_) return;
-    const auto current = scanProjectEntries();
-    for (auto it = current.cbegin(); it != current.cend(); ++it)
-        if (!projectSnapshot_.contains(it.key()) || projectSnapshot_.value(it.key()) != it.value())
-            pendingWUModified_.insert(it.key());
-    for (auto it = projectSnapshot_.cbegin(); it != projectSnapshot_.cend(); ++it)
-        if (!current.contains(it.key())) pendingWUModified_.insert(it.key());
-    projectSnapshot_ = current;
-    refreshWatches();
-    if (!pendingModified_.isEmpty()) {
-        emit filesModified(pendingModified_.values());
-        pendingModified_.clear();
+    if (!watching_) return;
+    if (!suppressed_) {
+        const auto current = scanProjectEntries();
+        for (auto it = current.cbegin(); it != current.cend(); ++it)
+            if (!projectSnapshot_.contains(it.key()) || projectSnapshot_.value(it.key()) != it.value())
+                pendingWUModified_.insert(it.key());
+        for (auto it = projectSnapshot_.cbegin(); it != projectSnapshot_.cend(); ++it)
+            if (!current.contains(it.key())) pendingWUModified_.insert(it.key());
+        projectSnapshot_ = current;
     }
+    refreshSources();
 
     const auto changed = std::exchange(pendingWUModified_, QSet<QString>{});
     for (const QString& wuPath : changed)
@@ -197,37 +187,36 @@ void FileWatcher::refreshWatches()
     QSet<QString> watched;
     for (const auto& path : watcher_.directories()) watched.insert(path);
     for (const auto& path : watcher_.files()) watched.insert(path);
-    const QString audioSources = QDir(projectRoot_).filePath(QStringLiteral("AudioSources"));
+    QSet<QString> desired{projectRoot_};
+    for (auto it = projectSnapshot_.cbegin(); it != projectSnapshot_.cend(); ++it)
+        desired.insert(it.key());
+    for (auto it = sourceSnapshot_.cbegin(); it != sourceSnapshot_.cend(); ++it)
+        desired.insert(it.key());
     QStringList removed;
     for (const auto& path : watched) {
-        if (path != projectRoot_ && !projectSnapshot_.contains(path)
-            && path != audioSources && !path.startsWith(audioSources + QChar('/')))
+        if (!desired.contains(path))
             removed.append(path);
     }
     if (!removed.isEmpty()) watcher_.removePaths(removed);
-    if (!watched.contains(projectRoot_) && QDir(projectRoot_).exists())
-        watcher_.addPath(projectRoot_);
-    for (auto it = projectSnapshot_.cbegin(); it != projectSnapshot_.cend(); ++it)
-        if (!watched.contains(it.key())) watcher_.addPath(it.key());
+    for (const auto& path : desired)
+        if (!watched.contains(path)) watcher_.addPath(path);
 }
 
-void FileWatcher::scanDirectoryRecursive(const QString& dir, QSet<QString>& snapshot)
+QMap<QString, QPair<qint64, QDateTime>> FileWatcher::scanSourceEntries() const
 {
-    QDirIterator it(dir, QDir::Files, QDirIterator::Subdirectories);
+    QMap<QString, QPair<qint64, QDateTime>> entries;
+    const QString root = QDir(projectRoot_).filePath(QStringLiteral("AudioSources"));
+    if (!QDir(root).exists()) return entries;
+    entries.insert(root, {-1, QFileInfo(root).lastModified()});
+    QDirIterator it(root, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::NoSymLinks,
+                    QDirIterator::Subdirectories);
     while (it.hasNext()) {
-        it.next();
-        snapshot.insert(it.filePath());
+        const QString path = it.next();
+        const QFileInfo file = it.fileInfo();
+        if (file.isDir() || AudioFormatCatalog::containsExtension(file.suffix()))
+            entries.insert(path, {file.isDir() ? -1 : file.size(), file.lastModified()});
     }
-}
-
-void FileWatcher::watchDirectoryRecursive(const QString& dir)
-{
-    watcher_.addPath(dir);
-    QDirIterator it(dir, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        it.next();
-        watcher_.addPath(it.filePath());
-    }
+    return entries;
 }
 
 }

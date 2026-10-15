@@ -1843,6 +1843,7 @@ VNX--ObjectRefWidget QLabel { background: transparent; border: none; }
 VNX--ObjectRefWidget QLabel#refName { color: @textPrimary@; }
 VNX--ObjectRefWidget QLabel#refName[inherited="true"],
 VNX--ObjectRefWidget QLabel#refName[dimmed="true"] { color: @textSecondary@; }
+VNX--ObjectRefWidget QLabel#refName[inputInvalid="true"] { color: @error@; }
 
 QLineEdit[inputInvalid="true"]:enabled,
 QPlainTextEdit[inputInvalid="true"]:enabled,

@@ -9,6 +9,8 @@
 #include "Core/AssetPipeline/AudioImportGate.h"
 #include "Core/AssetPipeline/ImportSoundSourcesCommand.h"
 #include "Core/AssetPipeline/MediaPool.h"
+#include "Core/AssetPipeline/SourceFileSystem.h"
+#include "Core/ToastManager.h"
 #include "Core/Components/VSound.h"
 #include "Core/LanguageContextService.h"
 #include "Core/PlatformContextService.h"
@@ -237,9 +239,13 @@ protected:
         auto* w = static_cast<QWidget*>(watched);
         if (w == this || isAncestorOf(w)) {
             const QEvent::Type type = event->type();
+            QWidget* row = w;
+            while (row && row->parentWidget() != rows_)
+                row = row->parentWidget();
+            const QUuid targetEntry = row ? QUuid(row->property("entryId").toString()) : QUuid();
             if (type == QEvent::DragEnter || type == QEvent::DragMove) {
                 auto* drag = static_cast<QDropEvent*>(event);
-                if (canAppendSources() && AudioImportGate::mimeHasAudio(drag->mimeData())) {
+                if (canAppendSources(targetEntry) && AudioImportGate::mimeHasAudio(drag->mimeData())) {
                     drag->setDropAction(Qt::CopyAction);
                     drag->accept();
                     return true;
@@ -247,10 +253,10 @@ protected:
             } else if (type == QEvent::Drop) {
                 auto* drop = static_cast<QDropEvent*>(event);
                 const QStringList paths = AudioImportGate::extractAudioFiles(drop->mimeData());
-                if (canAppendSources() && !paths.isEmpty()) {
+                if (canAppendSources(targetEntry) && !paths.isEmpty()) {
                     drop->setDropAction(Qt::CopyAction);
                     drop->accept();
-                    importExternalPaths(paths);
+                    importExternalPaths(paths, targetEntry);
                     return true;
                 }
             }
@@ -396,11 +402,11 @@ private:
         importExternalPaths(paths);
     }
 
-    void importExternalPaths(const QStringList& paths)
+    void importExternalPaths(const QStringList& paths, const QUuid& targetEntry = {})
     {
-        if (!canAppendSources() || paths.isEmpty())
+        if (!canAppendSources(targetEntry) || paths.isEmpty())
             return;
-        const QString language = distinguishLanguage() ? currentGroupLanguage() : QString();
+        const QString language = distinguishLanguage() ? currentGroupLanguage(targetEntry) : QString();
         if (distinguishLanguage() && language.isEmpty())
             return;
         ProjectData* project = ProjectManager::instance().currentProject();
@@ -408,17 +414,26 @@ private:
             ? findFileBindingForItem(*project, boundItem_) : nullptr;
         if (binding)
             ImportSoundSourcesCommand::pushImport(
-                paths, binding, boundItem_, language);
+                paths, binding, boundItem_, language, targetEntry);
     }
 
     void relink(uint32_t sourceId)
     {
+        const QString projectRoot = AssetRegistry::instance().projectRoot();
         const QString path = QFileDialog::getOpenFileName(
             this, QObject::tr("Relink Audio Source"), {},
             QObject::tr("Audio Files (%1)").arg(AudioFormatCatalog::filePatterns().join(' ')));
-        if (path.isEmpty())
+        if (path.isEmpty() || projectRoot != AssetRegistry::instance().projectRoot())
             return;
-        MediaPool::instance().batchReplaceAsync({{sourceId, path}});
+        const auto* asset = AssetRegistry::instance().getAsset(sourceId);
+        if (!asset || QFileInfo(path).canonicalFilePath() == QFileInfo(asset->absolutePath).canonicalFilePath())
+            return;
+        QString error;
+        auto command = SourceFileSystem::replaceFiles({{asset->relativePath, path}}, &error);
+        if (command)
+            UndoRedoManager::instance().push(command.release());
+        else
+            ToastManager::instance().showToast(error, 5000, ToastType::Error);
     }
 
     int moveTarget(int index, int delta) const
@@ -496,11 +511,11 @@ private:
                            "Right-click an affected source for repair actions.");
     }
 
-    bool canAppendSources() const
+    bool canAppendSources(const QUuid& targetEntry = {}) const
     {
         const auto* sound = boundItem_ ? boundItem_->comp<VSound>() : nullptr;
         return sound && (!sound->distinguishLanguage
-            || (!currentGroupLanguage().isEmpty() && missingLanguageEntries().isEmpty()));
+            || (!currentGroupLanguage(targetEntry).isEmpty() && missingLanguageEntries().isEmpty()));
     }
 
     void removeMissingLanguageSources()
@@ -619,9 +634,15 @@ private:
                        : QStringList();
     }
 
-    QString currentGroupLanguage() const
+    QString currentGroupLanguage(const QUuid& targetEntry = {}) const
     {
         const QStringList languages = buildLanguages();
+        if (!targetEntry.isNull()) {
+            for (const auto& source : sources_)
+                if (source.entry.entryId == targetEntry && languages.contains(source.language))
+                    return source.language;
+            return {};
+        }
         if (selected_ >= 0 && selected_ < static_cast<int>(sources_.size())) {
             const QString selected = sources_[selected_].language;
             if (languages.contains(selected))
@@ -700,6 +721,8 @@ private:
     void openRangeEditor(int index)
     {
         if (!boundItem_ || index < 0 || index >= static_cast<int>(sources_.size()))
+            return;
+        if (!AssetRegistry::instance().sourceFileExists(sources_[index].entry.sourceId))
             return;
         for (QWidget* parent = parentWidget(); parent; parent = parent->parentWidget()) {
             auto* inspector = qobject_cast<InspectorPanel*>(parent);
@@ -928,9 +951,9 @@ private:
         auto* rangeCell = box_->createCell(row);
         DebugTint::tintContainer(rangeCell, DebugTint::Role::ColDelay);
         rangeCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        rangeCell->setEnabled(canEdit);
         auto* thumb = new SourceRangeThumb(rangeCell);
         thumb->setSource(source, AssetRegistry::instance().getAsset(source.sourceId));
-        thumb->setEnabled(canEdit);
         QObject::connect(thumb, &SourceRangeThumb::clicked, this, [this, index]() {
             selectRow(index);
             openRangeEditor(index);

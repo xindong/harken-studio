@@ -1,4 +1,5 @@
 #include "AssetPipeline/AssetRegistry.h"
+#include "AssetPipeline/PathUtils.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
 #include "Widgets/Selector/RefDomainAdapter.h"
 #include "Widgets/Selector/SelectorWindow.h"
@@ -12,11 +13,14 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDropEvent>
+#include <QDir>
+#include <QFile>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMimeData>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
+#include <QTemporaryDir>
 
 #include <functional>
 
@@ -42,6 +46,12 @@ AssetInfo makeAsset(uint32_t sourceId, const QString& relativePath)
     info.metadata.durationSec = 1.25;
     info.metadata.sampleRate = 48000;
     info.metadata.channels = 2;
+    info.absolutePath = QDir(PathUtils::getAudioSourcesDir(AssetRegistry::instance().projectRoot()))
+                            .filePath(relativePath);
+    QDir().mkpath(QFileInfo(info.absolutePath).absolutePath());
+    QFile file(info.absolutePath);
+    EXPECT_TRUE(file.open(QIODevice::WriteOnly));
+    file.write("audio");
     return info;
 }
 
@@ -109,12 +119,15 @@ protected:
     {
         ensureApp();
         AssetRegistry::instance().clear();
+        ASSERT_TRUE(temp_.isValid());
+        AssetRegistry::instance().setProjectRoot(temp_.path());
     }
 
     void TearDown() override
     {
         AssetRegistry::instance().clear();
     }
+    QTemporaryDir temp_;
 };
 
 }

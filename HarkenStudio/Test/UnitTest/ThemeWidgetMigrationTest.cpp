@@ -1,4 +1,6 @@
 #include "ActionManager.h"
+#include "Core/AssetPipeline/AssetConverter.h"
+#include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/BaseDialog.h"
 #include "Core/BindingEditing.h"
 #include "Core/BuiltinTheme.h"
@@ -31,10 +33,13 @@
 
 #include <gtest/gtest.h>
 
+#include <vector>
+
 #include <QApplication>
 #include <QAction>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QDir>
 #include <QEnterEvent>
 #include <QImage>
 #include <QLabel>
@@ -233,6 +238,20 @@ TEST(ThemeWidgetMigration, TableFieldFramesShareGeometryColorsAndStates)
     auto* gridReference = new VNX::GridHeaderRef(&form);
     gridReference->setCurrentObjectID(variable->objectID);
     auto* source = new VNX::SourceRangeThumb(&form);
+    VNX::AssetInfo asset;
+    asset.sourceID = VNX::AssetRegistry::instance().allocateStableID();
+    asset.relativePath = QStringLiteral("short.wav");
+    asset.absolutePath = QDir(VNX::AssetRegistry::instance().projectRoot())
+                             .filePath(QStringLiteral("AudioSources/short.wav"));
+    asset.metadata.sampleRate = 48000;
+    asset.metadata.channels = 1;
+    asset.metadata.totalSamples = 64;
+    ASSERT_TRUE(VNX::AssetConverter::writeFloatWav(
+        asset.absolutePath, std::vector<float>(64, 0.0f), 1, 48000));
+    ASSERT_TRUE(VNX::AssetRegistry::instance().registerAsset(asset));
+    VNX::SoundSourceDef trimmed;
+    trimmed.sourceId = asset.sourceID;
+    source->setSource(trimmed, &asset);
     auto* fade = new VNX::TransitionFadeButton(&form);
     const QList<QWidget*> standalone = {text, search, numeric, combo, reference,
                                         gridReference, source, fade};
@@ -329,16 +348,12 @@ TEST(ThemeWidgetMigration, TableFieldFramesShareGeometryColorsAndStates)
         expectFrame(swatch, theme.ui.colors.borderSecondary, QColor(QStringLiteral("#808080")));
     }
 
-    VNX::AssetInfo asset;
-    asset.absolutePath = directory.filePath(QStringLiteral("short.wav"));
-    asset.metadata.totalSamples = 64;
-    VNX::SoundSourceDef trimmed;
     trimmed.trimEndFrame = 128;
     source->setSource(trimmed, &asset);
     ASSERT_TRUE(source->property("rangeWarning").toBool());
     EXPECT_EQ(render(source).pixelColor(0, 0), VNX::ThemeManager::instance().colors().warning);
     source->setSource(VNX::SoundSourceDef{}, nullptr);
     EXPECT_FALSE(source->property("rangeWarning").toBool());
-    expectFrame(source, VNX::ThemeManager::instance().colors().borderSecondary,
-                VNX::ThemeManager::instance().colors().bgSecondary);
+    expectFrame(source, VNX::ThemeManager::instance().colors().borderPrimary,
+                VNX::ThemeManager::instance().colors().bgPrimary);
 }

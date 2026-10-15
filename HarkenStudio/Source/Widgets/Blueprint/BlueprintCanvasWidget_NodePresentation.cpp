@@ -2,6 +2,7 @@
 
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AssetPipeline/MediaPool.h"
+#include "Core/AssetPipeline/WaveformCache.h"
 #include "Core/LanguageContextService.h"
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
@@ -9,6 +10,26 @@
 #include "Core/ThemeManager.h"
 
 namespace VNX {
+
+void BlueprintCanvasWidget::refreshNodeWaveforms_(uint32_t sourceID)
+{
+    const auto refresh = [](const QString& path, const std::vector<WaveformNode>& nodes) {
+        WaveformPeakData peaks;
+        if (!path.isEmpty() && !WaveformCache::load(path, peaks))
+            peaks = {};
+        for (const auto& node : nodes)
+            node.item->setWaveformPeakData(peaks, node.range);
+    };
+    if (sourceID != 0) {
+        const auto* asset = AssetRegistry::instance().getAsset(sourceID);
+        if (!asset) return;
+        const auto nodes = waveformNodes_.constFind(asset->absolutePath);
+        if (nodes != waveformNodes_.cend()) refresh(nodes.key(), nodes.value());
+        return;
+    }
+    for (auto nodes = waveformNodes_.cbegin(); nodes != waveformNodes_.cend(); ++nodes)
+        refresh(nodes.key(), nodes.value());
+}
 
 void BlueprintCanvasWidget::refreshNodeTitles_()
 {

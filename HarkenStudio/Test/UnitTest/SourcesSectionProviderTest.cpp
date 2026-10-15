@@ -1,6 +1,8 @@
 #include "ActionManager.h"
 #include "AssetPipeline/AssetRegistry.h"
+#include "AssetPipeline/ImportAssetsCommand.h"
 #include "AssetPipeline/PathUtils.h"
+#include "AssetPipeline/SourceFileSystem.h"
 #include "Components/VSound.h"
 #include "LanguageContextService.h"
 #include "MemorySettingsStorage.h"
@@ -1368,6 +1370,63 @@ TEST_F(SourcesSectionProviderTest, RemovingMissingLanguagesKeepsDormantBankAndIs
     VNX::UndoRedoManager::instance().undo();
     QCoreApplication::processEvents();
     EXPECT_EQ(sound->sources, before);
+}
+
+TEST_F(SourcesSectionProviderTest, MissingSourceDropUsesActualRowLanguageAndPreservesAuthoring)
+{
+    using namespace VNX;
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    manager.setProjectLanguagesInternal({QStringLiteral("English"), QStringLiteral("Japanese")});
+    LanguageContextService::instance().setLanguage(QStringLiteral("English"));
+    ASSERT_TRUE(setDistinguishLanguage(true));
+    const QString input = temp_.filePath(QStringLiteral("Line.wav"));
+    writeWav(input, 0.25f);
+    SoundSources sources;
+    QList<AssetInfo> assets;
+    for (const auto& language : {QStringLiteral("English"), QStringLiteral("Japanese")}) {
+        ASSERT_TRUE(QDir().mkdir(SourceFileSystem::absolutePath(language)));
+        auto* command = ImportAssetsCommand::pushImportSources({input}, language);
+        ASSERT_EQ(command->successCount(), 1);
+        assets.append(*registry.getAsset(command->importedIDs().first()));
+        SoundSourceDef source;
+        source.entryId = QUuid::createUuid();
+        source.sourceId = assets.back().sourceID;
+        source.trimStartFrame = 12;
+        source.trimEndFrame = 240;
+        sources.localized[language].entries = {source};
+        sources.localized[language].active = source.entryId;
+    }
+    ASSERT_TRUE(applySourceState(sources));
+    const auto authored = sound_->comp<VSound>()->sources;
+    ASSERT_TRUE(manager.saveProject());
+    for (const auto& asset : assets)
+        ASSERT_TRUE(QFile::remove(asset.absolutePath));
+    bindSection();
+    auto* list = widget_->findChild<QWidget*>(QStringLiteral("sourcesListWidget"));
+    ASSERT_NE(list, nullptr);
+    list->setProperty("selectedRow", 0);
+    ObjectRefWidget* target = nullptr;
+    for (auto* row : visibleRows())
+        if (QUuid(row->property("entryId").toString()) == sources.localized["Japanese"].entries.front().entryId)
+            target = row->findChild<ObjectRefWidget*>(QStringLiteral("sourceRef"));
+    ASSERT_NE(target, nullptr);
+    writeWav(input, 0.75f);
+    QMimeData mime;
+    mime.setUrls({QUrl::fromLocalFile(input)});
+    QDropEvent drop(QPointF(5, 5), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    ASSERT_TRUE(list->eventFilter(target, &drop));
+    ASSERT_TRUE(drop.isAccepted());
+    EXPECT_EQ(sound_->comp<VSound>()->sources, authored);
+    EXPECT_FALSE(registry.sourceFileExists(assets.front().sourceID));
+    EXPECT_TRUE(registry.sourceFileExists(assets.back().sourceID));
+    EXPECT_EQ(registry.count(), 2);
+    ASSERT_TRUE(UndoRedoManager::instance().undo());
+    EXPECT_FALSE(registry.sourceFileExists(assets.back().sourceID));
+    EXPECT_EQ(sound_->comp<VSound>()->sources, authored);
+    ASSERT_TRUE(UndoRedoManager::instance().redo());
+    EXPECT_TRUE(registry.sourceFileExists(assets.back().sourceID));
+    EXPECT_EQ(sound_->comp<VSound>()->sources, authored);
 }
 
 TEST_F(SourcesSectionProviderTest, ExternalDropsUseTheSelectedRowOrCurrentBarAndOneUndo)

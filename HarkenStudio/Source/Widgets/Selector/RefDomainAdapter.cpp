@@ -208,6 +208,11 @@ public:
         return AssetRegistry::instance().contains(id);
     }
 
+    bool isAvailable(uint32_t id) const override
+    {
+        return AssetRegistry::instance().sourceFileExists(id);
+    }
+
     QString displayName(uint32_t id) const override
     {
         const AssetInfo* asset = AssetRegistry::instance().getAsset(id);
@@ -227,7 +232,7 @@ public:
             ThemeAssetVariant{QSize(), 1.0, 0, tint}).icon;
     }
 
-    bool matchesFilter(uint32_t, const RefFilter&) const override { return true; }
+    bool matchesFilter(uint32_t id, const RefFilter&) const override { return isAvailable(id); }
 
     QList<QMetaObject::Connection> connectChanged(
         QObject* ctx, std::function<void(uint32_t)> onChanged) const override
@@ -235,6 +240,7 @@ public:
         auto* registry = &AssetRegistry::instance();
         auto invoke = [cb = std::move(onChanged)](uint32_t id) { cb(id); };
         return {
+            QObject::connect(registry, &AssetRegistry::assetRegistered, ctx, invoke),
             QObject::connect(registry, &AssetRegistry::assetModified, ctx, invoke),
             QObject::connect(registry, &AssetRegistry::assetUnregistered, ctx, invoke),
         };
@@ -273,7 +279,7 @@ public:
         };
 
         for (const AssetInfo* asset : assets) {
-            if (!asset)
+            if (!asset || !isAvailable(asset->sourceID))
                 continue;
             const uint32_t id = asset->sourceID;
             const bool selectable = !request.isSelectable || request.isSelectable(id);

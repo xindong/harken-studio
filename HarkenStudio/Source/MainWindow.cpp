@@ -3585,13 +3585,6 @@ void MainWindow::connectSignals()
         openSourceEditor(sourceId);
     });
 
-    connect(&ProjectManager::instance(), &ProjectManager::projectOpened,
-            this, [](ProjectData* project) {
-        if (!project) return;
-        QString projectDir = QFileInfo(project->projectPath).absolutePath();
-        QString AudioSourcesDir = QDir(projectDir).filePath("AudioSources");
-        WaveformCache::rebuildAllAsync(project, AudioSourcesDir);
-    });
     connect(&ProjectManager::instance(), &ProjectManager::projectClosed,
             this, [this]() {
         busController_->clearSelection();
@@ -3621,8 +3614,7 @@ void MainWindow::connectSignals()
                 const AssetInfo* asset = AssetRegistry::instance().findAssetByPath(filePath);
                 sourceID = asset ? asset->sourceID : 0;
             }
-            if (sourceID == 0
-                || !MediaPool::instance().refreshSourceFile(sourceID, filePath))
+            if (sourceID == 0)
                 continue;
             bool ok = AudioEngine::instance().swapMedia(sourceID, filePath.toStdString());
             if (ok) ++swapCount;

@@ -95,7 +95,7 @@ uint32_t AssetRegistry::allocateStableID()
 }
 
 
-bool AssetRegistry::registerAsset(const AssetInfo& info)
+bool AssetRegistry::registerAsset(const AssetInfo& info, bool uncommitted)
 {
     QMutexLocker lock(&mutex_);
     if (info.sourceID == 0) {
@@ -111,9 +111,24 @@ bool AssetRegistry::registerAsset(const AssetInfo& info)
         }
     }
 
+    const QString path = PathUtils::normalizeToUnix(info.relativePath);
+    for (auto it = assets_.cbegin(); it != assets_.cend(); ++it) {
+        if (it.key() != info.sourceID && PathUtils::normalizeToUnix(it->relativePath).compare(path,
+#ifdef Q_OS_WIN
+                Qt::CaseInsensitive
+#else
+                Qt::CaseSensitive
+#endif
+            ) == 0) {
+            qWarning() << "Cannot register: source path already belongs to another asset";
+            return false;
+        }
+    }
+
     assets_[info.sourceID] = info;
     updatePathIndex(info);
-    uncommittedIDs_.insert(info.sourceID);
+    if (uncommitted)
+        uncommittedIDs_.insert(info.sourceID);
 
     lock.unlock();
     emit assetRegistered(info.sourceID);
@@ -232,7 +247,13 @@ const AssetInfo* AssetRegistry::findAssetByPath(const QString& absolutePath) con
     }
 
     for (auto it = assets_.constBegin(); it != assets_.constEnd(); ++it) {
-        if (it.value().absolutePath.compare(absolutePath, Qt::CaseInsensitive) == 0) {
+        if (it.value().absolutePath.compare(absolutePath,
+#ifdef Q_OS_WIN
+                Qt::CaseInsensitive
+#else
+                Qt::CaseSensitive
+#endif
+            ) == 0) {
             return &it.value();
         }
     }
@@ -260,6 +281,17 @@ QList<const AssetInfo*> AssetRegistry::getAllAssets() const
         result.append(&it.value());
     }
     return result;
+}
+
+bool AssetRegistry::sourceFileExists(uint32_t sourceID) const
+{
+    QMutexLocker lock(&mutex_);
+    const auto asset = assets_.constFind(sourceID);
+    if (asset == assets_.cend()) return false;
+    const QString path = asset->absolutePath.isEmpty()
+        ? PathUtils::toAbsolutePath(asset->relativePath, PathUtils::getAudioSourcesDir(projectRoot_))
+        : asset->absolutePath;
+    return QFileInfo(path).isFile();
 }
 
 QList<uint32_t> AssetRegistry::getMissingAssets() const
@@ -350,7 +382,7 @@ void AssetRegistry::setPlatforms(const QVector<ProjectPlatform>& platforms)
     }
 }
 
-MediaBuildSnapshot AssetRegistry::buildSnapshot() const
+MediaBuildSnapshot AssetRegistry::buildSnapshot(bool resolveMissingHashes) const
 {
     QString root;
     QVector<ProjectPlatform> platforms;
@@ -359,11 +391,11 @@ MediaBuildSnapshot AssetRegistry::buildSnapshot() const
         root = projectRoot_;
         platforms = platforms_;
     }
-    return buildSnapshot(root, platforms);
+    return buildSnapshot(root, platforms, resolveMissingHashes);
 }
 
 MediaBuildSnapshot AssetRegistry::buildSnapshot(
-    const QString& root, const QVector<ProjectPlatform>& platforms) const
+    const QString& root, const QVector<ProjectPlatform>& platforms, bool resolveMissingHashes) const
 {
     MediaBuildSnapshot result;
     result.projectRoot = root;
@@ -394,7 +426,7 @@ MediaBuildSnapshot AssetRegistry::buildSnapshot(
         for (const auto& asset : assets) result.assets.insert(asset.sourceID, asset);
     }
     for (auto& asset : result.assets) {
-        if (asset.contentHash.isEmpty())
+        if (resolveMissingHashes && asset.contentHash.isEmpty())
             asset.contentHash = AssetImporter::computeContentHash(asset.absolutePath);
     }
     return result;

@@ -130,8 +130,9 @@ void ProjectTreePanel::initPanel()
 
     connect(&MediaPool::instance(), &MediaPool::statusCacheRefreshed,
             this, [this]() {
-        if (treeWidget_)
-            treeWidget_->viewport()->update();
+        for (auto it = itemMap_.cbegin(); it != itemMap_.cend(); ++it)
+            if (it.value()->type == ProjectItem::Type::Sound)
+                updateTreeItem(it.key(), it.value());
     }, Qt::QueuedConnection);
 
     connect(&ProjectManager::instance(), &ProjectManager::busChanged,
@@ -2101,9 +2102,6 @@ void ProjectTreePanel::updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* pr
         ? objectLabels_->label(*projectItem) : projectItem->name;
     treeItem->setText(0, dirty ? name + QStringLiteral(" *") : name);
 
-    const QIcon icon = iconForItem(*projectItem);
-    treeItem->setIcon(0, decorateItemIcon(icon, projectItem));
-
     QString tooltip = QString("%1 - %2").arg(typeToString(projectItem->type), projectItem->name);
     const QString language = SoundSourceEditing::previewLanguage(
         *projectItem, LanguageContextService::instance().language());
@@ -2122,11 +2120,11 @@ void ProjectTreePanel::updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* pr
         tooltip = tr("Sound: %1\nSource: %2").arg(projectItem->name, activePath);
     }
 
+    QColor statusColor;
     if (activeSourceID != 0)
     {
         MediaStatus mediaStatus = MediaPool::instance().cachedStatus(activeSourceID);
         const auto& tc = ThemeManager::instance().colors();
-        QColor statusColor;
         QString statusLabel;
 
         switch (mediaStatus) {
@@ -2174,6 +2172,8 @@ void ProjectTreePanel::updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* pr
                        QString::number(asset->metadata.channels);
         }
     }
+
+    treeItem->setIcon(0, decorateItemIcon(iconForItem(*projectItem, statusColor), projectItem));
 
     if (const auto* project = ProjectManager::instance().currentProject()) {
         QString path = objectLabels_ ? objectLabels_->path(*projectItem) : QString{};

@@ -2,6 +2,7 @@
 
 #include "AssetTypes.h"
 #include "../Components/VSound.h"
+#include "../UndoCommands.h"
 
 #include <QList>
 #include <QStringList>
@@ -14,7 +15,7 @@ namespace VNX {
 struct ProjectFileBinding;
 struct ProjectItem;
 
-class ImportSoundSourcesCommand : public QUndoCommand
+class ImportSoundSourcesCommand : public TransactionalUndoCommand
 {
 public:
     ImportSoundSourcesCommand(const QStringList& externalPaths,
@@ -26,10 +27,8 @@ public:
     static ImportSoundSourcesCommand* pushImport(const QStringList& externalPaths,
                                                   ProjectFileBinding* targetBinding,
                                                   ProjectItem* targetSound,
-                                                  const QString& language = {});
-
-    void undo() override;
-    void redo() override;
+                                                  const QString& language = {},
+                                                  const QUuid& targetEntry = {});
 
     QList<uint32_t> importedIDs() const;
     int successCount() const { return successCount_; }
@@ -40,21 +39,22 @@ private:
     struct ImportedEntry {
         SoundSourceDef source;
         uint32_t sourceID = 0;
-        QString sourcePath;
-        QString destPath;
-        bool ownsAsset = false;
-        AssetInfo assetInfo;
     };
 
     ProjectItem* resolveTarget() const;
     void notifyChanged(ProjectItem* target) const;
     void collectEntries();
     void applyEntries(ProjectItem* target, VSound* sound);
+    bool apply(bool redo) override;
+    void redoEntries();
+    void undoEntries();
 
     QStringList externalPaths_;
     ProjectFileBinding* targetBinding_ = nullptr;
     uint32_t targetObjectID_ = 0;
     QString language_;
+    QUuid targetEntry_;
+    QList<std::shared_ptr<TransactionalUndoCommand>> fileChanges_;
     std::vector<ImportedEntry> entries_;
     bool localized_ = false;
     bool hadSourceSet_ = false;

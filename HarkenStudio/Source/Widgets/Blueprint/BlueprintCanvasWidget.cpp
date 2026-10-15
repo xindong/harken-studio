@@ -16,7 +16,6 @@
 #include "Core/AssetPipeline/AudioImportGate.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AssetPipeline/MediaPool.h"
-#include "Core/AssetPipeline/WaveformCache.h"
 #include "Core/Components/VMixNode.h"
 #include "Core/Components/VSelection.h"
 #include "Core/FontManager.h"
@@ -490,15 +489,26 @@ BlueprintCanvasWidget::BlueprintCanvasWidget(QWidget* parent)
             this, &BlueprintCanvasWidget::refreshOutputVolumePreview_);
     connect(&pm, &ProjectManager::busChanged,
             this, &BlueprintCanvasWidget::onBusChanged);
+    const auto refreshSource = [this]() {
+        if (activeSource_ == pathSource_.get()) schedulePathRefresh_();
+        else scheduleChainRefresh_();
+    };
     connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
-            this, [this]() {
+            this, [this, refreshSource]() {
         cancelConnection_();
-        schedulePathRefresh_();
+        refreshSource();
     });
     connect(&LanguageContextService::instance(), &LanguageContextService::languageChanged,
-            this, &BlueprintCanvasWidget::schedulePathRefresh_);
+            this, [this, refreshSource]() {
+        refreshNodeTitles_();
+        refreshSource();
+    });
     connect(&AssetRegistry::instance(), &AssetRegistry::assetModified,
-            this, &BlueprintCanvasWidget::schedulePathRefresh_);
+            this, refreshSource);
+    connect(&AssetRegistry::instance(), &AssetRegistry::assetModified,
+            this, &BlueprintCanvasWidget::refreshNodeWaveforms_);
+    connect(&MediaPool::instance(), &MediaPool::waveformReady,
+            this, &BlueprintCanvasWidget::refreshNodeWaveforms_);
     connect(&pm, &ProjectManager::projectPlatformEdited,
             this, &BlueprintCanvasWidget::schedulePathRefresh_);
     connect(&pm.variableRehearsal(), &VariableRehearsal::rehearsalChanged,
@@ -535,6 +545,7 @@ void BlueprintCanvasWidget::clearScene()
 {
     locationPing_->stop();
     locationPingObjectID_ = 0;
+    chainRefreshPending_ = false;
     finishNodeEdits_(false);
     QToolTip::hideText();
     connectHint_->hide();
@@ -560,6 +571,7 @@ void BlueprintCanvasWidget::clearScene()
     // one by one, and removeItem emits selectionChanged synchronously when a selected
     // node is removed — that would re-enter onSceneSelectionChanged mid-teardown.
     nodeMap_.clear();
+    waveformNodes_.clear();
     inputVisibility_.clear();
     edges_.clear();
     gainNodes_.clear();
@@ -654,6 +666,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
                             pathRefreshPending_ = false;
                             schedulePathRefresh_();
                         }
+                        if (chainRefreshPending_) scheduleChainRefresh_();
                     });
             }
             const uint32_t nid = d.id;
@@ -669,15 +682,9 @@ void BlueprintCanvasWidget::materializeFromSource_()
             item->setFlag(QGraphicsItem::ItemIsSelectable, false);
         }
 
-        if (d.waveformMode) {
-            item->setBlueprintWaveformMode(true);
-            if (!d.mediaPath.isEmpty()) {
-                WaveformPeakData peaks;
-                if (WaveformCache::load(d.mediaPath, peaks) && peaks.isValid()) {
-                    item->setWaveformPeakData(peaks, d.waveformRange);
-                }
-            }
-        }
+        item->setBlueprintWaveformMode(d.waveformMode);
+        if (d.waveformMode)
+            waveformNodes_[d.mediaPath].push_back({item, d.waveformRange});
 
         if (d.overrideBadge >= 0) {
             item->setOverrideBadge(d.overrideBadge != 0);
@@ -820,6 +827,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
         if (selectedPathKeys_.empty() && selectedPathEdgeKeys_.empty()) emit selectionCleared();
     }
     refreshNodeTitles_();
+    refreshNodeWaveforms_();
     refreshPlaybackActivity_();
     refreshPathFocus_();
     emit signalChainViewChanged();
@@ -3008,8 +3016,14 @@ bool BlueprintCanvasWidget::focusItem(ProjectItem* item, const PlacementContext*
 
 void BlueprintCanvasWidget::scheduleChainRefresh_()
 {
+    if (activeSource_ != chainSource_.get()) return;
+    chainRefreshPending_ = true;
+    if (chainRefreshScheduled_) return;
+    chainRefreshScheduled_ = true;
     QMetaObject::invokeMethod(this, [this]() {
-        if (activeSource_ != chainSource_.get()) return;
+        chainRefreshScheduled_ = false;
+        if (activeSource_ != chainSource_.get() || !chainRefreshPending_ || nodeFieldEditing_()) return;
+        chainRefreshPending_ = false;
         materializeFromSource_();
         refreshTransitionWatch_();
     }, Qt::QueuedConnection);

@@ -6,7 +6,6 @@
 
 #include "Widgets/ProjectTree/ProjectTreePanel.h"
 
-class QFileSystemWatcher;
 class QSplitter;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -53,7 +52,6 @@ private:
     ExplorerSection* sourcesSection_ = nullptr;
     QWidget* collapsedSpace_ = nullptr;
     QList<int> expandedSizes_ = {300, 200};
-    QFileSystemWatcher* sourcesWatcher_ = nullptr;
     QTreeWidget* sourcesTree_ = nullptr;
     QHash<uint32_t, QTreeWidgetItem*> sourceRows_;
     QHash<QString, QTreeWidgetItem*> sourceFolders_;

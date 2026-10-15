@@ -6,7 +6,7 @@
 #include <QVector>
 #include <QMap>
 #include <QHash>
-#include <QFuture>
+#include <QFutureWatcher>
 #include <cstdint>
 #include <atomic>
 
@@ -97,6 +97,7 @@ public:
 
 
     bool refreshSourceFile(uint32_t sourceID, const QString& absolutePath);
+    void refreshWaveform(uint32_t sourceID);
 
 signals:
     void mediaStatusChanged(uint32_t sourceID, VNX::MediaStatus newStatus);
@@ -104,6 +105,7 @@ signals:
     void batchOperationComplete(int succeeded, int failed);
     void mediaHotSwapped(uint32_t sourceID, const QString& path);
     void statusCacheRefreshed();
+    void waveformReady(uint32_t sourceID);
     void batchReplaceFinished(QVector<VNX::BatchReplaceResult> results);
 
 private:
@@ -134,6 +136,11 @@ private:
                                  PendingReplace& pending,
                                  BatchReplaceResult& result);
     void commitReplacements(const QVector<PendingReplace>& pending);
+    void synchronizeSourceFiles(const QStringList& paths);
+    void synchronizeSourceFilesAsync(const QStringList& paths);
+    void commitSourceFile(uint32_t sourceID, const QString& absolutePath,
+                          const AudioMetadata& metadata, const QString& contentHash,
+                          uint64_t lastModified);
 
     bool isSourceFileMissing(const AssetInfo& info) const;
     bool hasAnyValidCache(const AssetInfo& info) const;
@@ -152,6 +159,8 @@ private:
     mutable ProjectPlatformId statusCachePlatform_ = {};
 
     std::atomic<bool> asyncRefreshRunning_{false};
+    QFutureWatcherBase* sourceRefreshWatcher_ = nullptr;
+    uint64_t sourceRefreshGeneration_ = 0;
     uint64_t cacheGeneration_ = 0;
 };
 

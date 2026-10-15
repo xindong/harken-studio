@@ -2934,6 +2934,7 @@ void ProjectManager::reconcileAssetsOnOpen(int bindingLoadFailures)
 bool ProjectManager::saveProject()
 {
     if (!m_currentProject) return false;
+    m_fileWatcher.refreshSources();
     if (!PathUtils::isValidPackBuildOutputDir(m_currentProject->packBuildOutputDir,
                                              m_currentProject->projectPath)) {
         emit errorOccurred(PathUtils::packBuildOutputLocationError());
@@ -2985,8 +2986,10 @@ bool ProjectManager::saveProject()
         emit errorOccurred(QStringLiteral("Cannot prepare the asset registry for saving"));
         return false;
     }
-    if (!m_serializer.prepareProjectSave(stagedProjectPath, stagedProject))
+    if (!m_serializer.prepareProjectSave(stagedProjectPath, stagedProject)) {
+        emit errorOccurred(m_serializer.lastError());
         return false;
+    }
     const auto cancelPreparedSave = qScopeGuard([&] { m_serializer.cancelProjectSave(); });
 
     bool hierarchySaveOk = saveActionsBucket(stagedRoot.path(), stagedProject.projectId,

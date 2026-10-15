@@ -3,6 +3,7 @@
 
 #include <QString>
 #include <QFuture>
+#include <QObject>
 #include <cstdint>
 #include <vector>
 
@@ -69,9 +70,13 @@ struct WaveformPeakData
     const float* getSideMaxPeaks() const { return hasMidSideData() ? midSidePeaks.data() + numPeaks * 2 + 1 : nullptr; }
 };
 
-class WaveformCache
+class WaveformCache : public QObject
 {
+    Q_OBJECT
+
 public:
+    static WaveformCache& instance();
+
     static bool generate(const QString& audioFilePath, uint32_t targetPeaks = VKD::DEFAULT_NUM_PEAKS);
 
     static QFuture<bool> generateAsync(const QString& audioFilePath, uint32_t targetPeaks = VKD::DEFAULT_NUM_PEAKS);
@@ -96,7 +101,12 @@ public:
                                          const QString& audioSourcesDir,
                                          int maxConcurrent = 4);
 
+signals:
+    void cacheReady(const QString& audioFilePath);
+
 private:
+    WaveformCache() = default;
+
     static bool generateForRevision(const QString& audioFilePath,
                                     uint32_t targetPeaks,
                                     quint64 revision);

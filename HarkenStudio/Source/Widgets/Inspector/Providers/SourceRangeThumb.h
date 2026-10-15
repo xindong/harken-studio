@@ -30,6 +30,7 @@ private:
     SoundSourceDef source_;
     std::optional<AssetInfo> asset_;
     WaveformPeakData peaks_;
+    bool sourceMissing_ = true;
 };
 
 }

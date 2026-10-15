@@ -1,5 +1,6 @@
 #include "PackagingBridge.h"
 #include "ProjectSyncBridge.h"
+#include "Utils/AudioFileReader.h"
 #include <harken_studio_build/BindingTransition.h>
 #include <harken_studio_build/BindingTargets.h>
 
@@ -234,8 +235,8 @@ bool parseAiff(const QByteArray& bytes, AiffDescriptor& out)
 
 bool readAiffFile(const QString& path, QByteArray& bytes, AiffDescriptor& descriptor)
 {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly))
+    VNX::AudioFileReader file(path);
+    if (!file.openReadOnly())
         return false;
     bytes = file.readAll();
     return !bytes.isEmpty() && parseAiff(bytes, descriptor);
@@ -309,7 +310,7 @@ size_t oggRead(void* pointer, size_t size, size_t count, void* dataSource)
     return bytes <= 0 ? 0 : static_cast<size_t>(bytes) / size;
 }
 
-int oggSeek(void* dataSource, ogg_int64_t offset, int origin)
+int seekAudioFile(void* dataSource, ogg_int64_t offset, int origin)
 {
     if (dataSource == nullptr)
         return -1;
@@ -340,19 +341,19 @@ int oggClose(void*)
     return 0;
 }
 
-bool openOgg(const QString& path, QFile& file, OggVorbis_File& vorbis)
+bool openOgg(const QString& path, VNX::AudioFileReader& file, OggVorbis_File& vorbis)
 {
     file.setFileName(path);
-    if (!file.open(QIODevice::ReadOnly))
+    if (!file.openReadOnly())
         return false;
-    const ov_callbacks callbacks{oggRead, oggSeek, oggClose, oggTell};
+    const ov_callbacks callbacks{oggRead, seekAudioFile, oggClose, oggTell};
     return ov_open_callbacks(&file, &vorbis, nullptr, 0, callbacks) == 0;
 }
 
 bool decodeOggFile(const QString& path, std::vector<float>& outInterleaved,
                    int& outChannels, int& outSampleRate)
 {
-    QFile file;
+    VNX::AudioFileReader file;
     OggVorbis_File vorbis{};
     if (!openOgg(path, file, vorbis))
         return false;
@@ -468,7 +469,7 @@ AudioFileInfoData aiffFileInfo(const QString& path)
 AudioFileInfoData oggFileInfo(const QString& path)
 {
     AudioFileInfoData out;
-    QFile file;
+    VNX::AudioFileReader file;
     OggVorbis_File vorbis{};
     if (!openOgg(path, file, vorbis))
         return out;
@@ -496,6 +497,27 @@ AudioFileInfoData oggFileInfo(const QString& path)
     }
     ov_clear(&vorbis);
     return out;
+}
+
+bool initAudioDecoder(VNX::AudioFileReader& file, ma_decoder& decoder)
+{
+    if (!file.openReadOnly())
+        return false;
+    const auto read = [](ma_decoder* decoder, void* output, size_t bytes, size_t* bytesRead) -> ma_result {
+        auto* file = static_cast<VNX::AudioFileReader*>(decoder->pUserData);
+        const qint64 count = file->read(static_cast<char*>(output), static_cast<qint64>(bytes));
+        if (bytesRead)
+            *bytesRead = count > 0 ? static_cast<size_t>(count) : 0;
+        return count < 0 ? MA_IO_ERROR : (count == 0 ? MA_AT_END : MA_SUCCESS);
+    };
+    const auto seek = [](ma_decoder* decoder, ma_int64 offset, ma_seek_origin origin) -> ma_result {
+        auto* file = static_cast<VNX::AudioFileReader*>(decoder->pUserData);
+        const int whence = origin == ma_seek_origin_start ? SEEK_SET
+            : (origin == ma_seek_origin_current ? SEEK_CUR : SEEK_END);
+        return seekAudioFile(file, offset, whence) == 0 ? MA_SUCCESS : MA_BAD_SEEK;
+    };
+    const ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    return ma_decoder_init(read, seek, &file, &config, &decoder) == MA_SUCCESS;
 }
 
 QString quoteProcessError(QProcess& process)
@@ -615,17 +637,10 @@ bool decodeAudioFileInterleaved(const QString& filePath,
     if (isAiffPath(filePath))
         return decodeAiffFile(filePath, outInterleaved, outChannels, outSampleRate);
 
-    ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
     ma_decoder decoder{};
-#ifdef _WIN32
-    if (ma_decoder_init_file_w(reinterpret_cast<const wchar_t*>(filePath.utf16()),
-                               &config, &decoder) != MA_SUCCESS)
+    VNX::AudioFileReader file(filePath);
+    if (!initAudioDecoder(file, decoder))
         return false;
-#else
-    const QByteArray pathUtf8 = filePath.toUtf8();
-    if (ma_decoder_init_file(pathUtf8.constData(), &config, &decoder) != MA_SUCCESS)
-        return false;
-#endif
 
     const ma_uint32 channels = decoder.outputChannels;
     const ma_uint32 sampleRate = decoder.outputSampleRate;
@@ -698,17 +713,10 @@ AudioFileInfoData audioFileInfo(const QString& path)
         return aiffFileInfo(path);
 
     AudioFileInfoData out;
-    ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);
     ma_decoder decoder{};
-#ifdef _WIN32
-    if (ma_decoder_init_file_w(reinterpret_cast<const wchar_t*>(path.utf16()),
-                               &config, &decoder) != MA_SUCCESS)
+    VNX::AudioFileReader file(path);
+    if (!initAudioDecoder(file, decoder))
         return out;
-#else
-    const QByteArray pathUtf8 = path.toUtf8();
-    if (ma_decoder_init_file(pathUtf8.constData(), &config, &decoder) != MA_SUCCESS)
-        return out;
-#endif
     ma_uint64 frameCount = 0;
     if (ma_decoder_get_length_in_pcm_frames(&decoder, &frameCount) != MA_SUCCESS)
         frameCount = 0;

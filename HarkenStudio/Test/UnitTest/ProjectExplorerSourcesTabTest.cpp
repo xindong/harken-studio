@@ -1,6 +1,11 @@
 #include "AssetPipeline/AssetRegistry.h"
+#include "AssetPipeline/AssetImporter.h"
 #include "AssetPipeline/PathUtils.h"
 #include "AssetPipeline/ImportAssetsCommand.h"
+#include "AssetPipeline/ImportSoundSourcesCommand.h"
+#include "AssetPipeline/MediaPool.h"
+#include "Core/FileWatcher.h"
+#include "Core/SoundSourceSemantics.h"
 #include "AssetPipeline/SourceFileSystem.h"
 #include "Components/VSound.h"
 #include "ProjectManager.h"
@@ -122,6 +127,12 @@ AssetInfo makeAsset(uint32_t sourceId, const QString& relativePath)
     info.metadata.durationSec = 1.25;
     info.metadata.sampleRate = 48000;
     info.metadata.channels = 2;
+    info.absolutePath = QDir(PathUtils::getAudioSourcesDir(AssetRegistry::instance().projectRoot()))
+                            .filePath(relativePath);
+    QDir().mkpath(QFileInfo(info.absolutePath).absolutePath());
+    QFile file(info.absolutePath);
+    EXPECT_TRUE(file.open(QIODevice::WriteOnly));
+    file.write("audio");
     return info;
 }
 
@@ -205,6 +216,231 @@ protected:
 };
 
 }
+
+TEST_F(ProjectExplorerSourcesTabTest, RestoringMissingFilesPreservesSharedIdentityAcrossUndoAndReload)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    ASSERT_TRUE(QDir().mkdir(SourceFileSystem::absolutePath(QStringLiteral("FX"))));
+    const QString input = tempDir_.filePath(QStringLiteral("Hit.wav"));
+    writeWavF32(input, {0.0f, 0.5f, -0.5f, 0.0f});
+    QMimeData mime;
+    mime.setUrls({QUrl::fromLocalFile(input)});
+    auto* tree = static_cast<SourcesTreeWidget*>(explorer_->sourcesTree());
+    ASSERT_TRUE(tree->importDroppedAudio(&mime, QStringLiteral("FX")));
+    const AssetInfo original = *registry.getAssetByPath(QStringLiteral("FX/Hit.wav"));
+    auto* sound = manager.createRootAudioItem(QStringLiteral("Independent Name"),
+        original.relativePath, original.sourceID);
+    ASSERT_NE(sound, nullptr);
+    const auto guid = sound->guid;
+    const auto authored = sound->comp<VSound>()->sources;
+    const QString projectPath = manager.currentProject()->projectPath;
+    ASSERT_TRUE(manager.saveProject());
+
+    QString incomingHash;
+    for (float amplitude : {0.5f, 0.25f}) {
+        ASSERT_TRUE(QFile::remove(original.absolutePath));
+        writeWavF32(input, {0.0f, amplitude, -amplitude, 0.0f});
+        incomingHash = AssetImporter::computeContentHash(input);
+        int dialogs = 0;
+        QTimer timer;
+        QObject::connect(&timer, &QTimer::timeout, [&] {
+            if (auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget())) {
+                ++dialogs;
+                dialog->reject();
+            }
+        });
+        timer.start(0);
+        const bool imported = tree->importDroppedAudio(&mime, QStringLiteral("FX"));
+        timer.stop();
+        ASSERT_TRUE(imported);
+        EXPECT_EQ(dialogs, 0);
+        EXPECT_EQ(registry.count(), 1);
+        EXPECT_EQ(registry.getAsset(original.sourceID)->contentHash, incomingHash);
+        EXPECT_EQ(registry.getAssetByPath(original.relativePath)->sourceID, original.sourceID);
+        EXPECT_EQ(sound->comp<VSound>()->sources, authored);
+        ASSERT_TRUE(QFile::remove(input));
+        ASSERT_TRUE(UndoRedoManager::instance().undo());
+        EXPECT_FALSE(QFileInfo(original.absolutePath).exists());
+        EXPECT_TRUE(registry.contains(original.sourceID));
+        ASSERT_TRUE(UndoRedoManager::instance().redo());
+        EXPECT_EQ(AssetImporter::computeContentHash(original.absolutePath), incomingHash);
+        EXPECT_EQ(sound->comp<VSound>()->sources, authored);
+    }
+
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    sound = manager.findItemByGuid(guid);
+    ASSERT_NE(sound, nullptr);
+    EXPECT_EQ(sound->comp<VSound>()->sources, authored);
+    ASSERT_NE(registry.getAsset(original.sourceID), nullptr);
+    EXPECT_EQ(registry.getAsset(original.sourceID)->contentHash, incomingHash);
+    EXPECT_TRUE(registry.sourceFileExists(original.sourceID));
+    EXPECT_EQ(registry.count(), 1);
+}
+
+TEST_F(ProjectExplorerSourcesTabTest, ExistingPhysicalFileKeepsIdentityAcrossImportUndoAndDiscovery)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    auto& undo = UndoRedoManager::instance();
+    MediaPool::instance();
+    const QString input = tempDir_.filePath(QStringLiteral("Existing.wav"));
+    const QString destination = SourceFileSystem::absolutePath(QStringLiteral("Existing.wav"));
+    writeWavF32(destination, {0.0f, 0.25f, -0.25f, 0.0f});
+    const QString before = AssetImporter::computeContentHash(destination);
+    writeWavF32(input, {0.0f, 0.75f, -0.75f, 0.0f});
+    const QString after = AssetImporter::computeContentHash(input);
+    auto* imported = ImportAssetsCommand::pushImportSources(
+        {input}, {}, {{QStringLiteral("Existing.wav"), input}});
+    ASSERT_EQ(imported->successCount(), 1);
+    const uint32_t id = imported->importedIDs().first();
+    auto* sound = ImportAssetsCommand::pushImportAtRoot({destination});
+    ASSERT_EQ(sound->successCount(), 1);
+    const QUuid guid = sound->importedItemGuids().first();
+    ASSERT_TRUE(undo.undo());
+    ASSERT_TRUE(undo.undo());
+    EXPECT_EQ(AssetImporter::computeContentHash(destination), before);
+    manager.fileWatcher()->refreshSources();
+    ASSERT_NE(registry.findAssetByPath(destination), nullptr);
+    EXPECT_EQ(registry.findAssetByPath(destination)->sourceID, id);
+    ASSERT_TRUE(QFile::remove(input));
+    ASSERT_TRUE(undo.redo());
+    ASSERT_TRUE(undo.redo());
+    EXPECT_EQ(AssetImporter::computeContentHash(destination), after);
+    ASSERT_NE(manager.findItemByGuid(guid), nullptr);
+    EXPECT_EQ(manager.findItemByGuid(guid)->sourceID, id);
+    EXPECT_TRUE(registry.sourceFileExists(id));
+    EXPECT_EQ(registry.count(), 1);
+}
+
+TEST_F(ProjectExplorerSourcesTabTest, RedoConflictsPreserveExternalFilesAndDoNotRestoreDanglingSounds)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    auto& undo = UndoRedoManager::instance();
+    MediaPool::instance();
+    const QString input = tempDir_.filePath(QStringLiteral("Conflict.wav"));
+    writeWavF32(input, {0.0f, 0.25f, -0.25f, 0.0f});
+    auto* imported = ImportAssetsCommand::pushImportAtRoot({input});
+    ASSERT_EQ(imported->successCount(), 1);
+    const uint32_t id = imported->importedIDs().first();
+    const QUuid guid = imported->importedItemGuids().first();
+    const QString destination = registry.getAsset(id)->absolutePath;
+    ASSERT_TRUE(undo.undo());
+    writeWavF32(destination, {0.0f, 0.75f, -0.75f, 0.0f});
+    const QString externalHash = AssetImporter::computeContentHash(destination);
+    manager.fileWatcher()->refreshSources();
+    ASSERT_NE(registry.findAssetByPath(destination), nullptr);
+    const uint32_t externalId = registry.findAssetByPath(destination)->sourceID;
+    ASSERT_NE(externalId, id);
+    const int index = undo.undoStack()->index();
+    EXPECT_FALSE(undo.redo());
+    EXPECT_EQ(undo.undoStack()->index(), index);
+    EXPECT_EQ(manager.findItemByGuid(guid), nullptr);
+    EXPECT_EQ(AssetImporter::computeContentHash(destination), externalHash);
+    EXPECT_EQ(registry.findAssetByPath(destination)->sourceID, externalId);
+    EXPECT_FALSE(registry.contains(id));
+}
+
+TEST_F(ProjectExplorerSourcesTabTest, ReuseValidatesCurrentAudioAndRefreshesItsMetadata)
+{
+    auto& registry = AssetRegistry::instance();
+    const QString input = tempDir_.filePath(QStringLiteral("Reuse.wav"));
+    writeWavF32(input, {0.0f, 0.25f, -0.25f, 0.0f});
+    auto* imported = ImportAssetsCommand::pushImportAtRoot({input});
+    ASSERT_EQ(imported->successCount(), 1);
+    const uint32_t id = imported->importedIDs().first();
+    const QString destination = registry.getAsset(id)->absolutePath;
+    {
+        QFile file(destination);
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+        file.write("invalid audio");
+    }
+    const int history = UndoRedoManager::instance().undoStack()->count();
+    auto* rejected = ImportAssetsCommand::pushImportAtRoot({destination});
+    EXPECT_EQ(rejected->successCount(), 0);
+    EXPECT_EQ(rejected->failCount(), 1);
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), history);
+    QMimeData mime;
+    mime.setUrls({QUrl::fromLocalFile(destination)});
+    auto* tree = static_cast<SourcesTreeWidget*>(explorer_->sourcesTree());
+    EXPECT_FALSE(tree->importDroppedAudio(&mime));
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), history);
+    writeWavF32(destination, {0.0f, 0.75f, -0.75f, 0.0f, 0.5f, -0.5f});
+    EXPECT_TRUE(tree->importDroppedAudio(&mime));
+    EXPECT_EQ(registry.getAsset(id)->metadata.totalSamples, 6u);
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), history);
+    auto* reused = ImportAssetsCommand::pushImportAtRoot({destination});
+    ASSERT_EQ(reused->successCount(), 1);
+    EXPECT_EQ(reused->importedIDs().first(), id);
+    EXPECT_EQ(registry.getAsset(id)->metadata.totalSamples, 6u);
+    EXPECT_EQ(registry.getAsset(id)->contentHash, AssetImporter::computeContentHash(destination));
+    EXPECT_EQ(registry.count(), 1);
+}
+
+#ifdef Q_OS_WIN
+TEST_F(ProjectExplorerSourcesTabTest, ImportUndoRollsBackFileLocksAcrossDestinationsAndKeepsRedoCopies)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    auto& undo = UndoRedoManager::instance();
+    MediaPool::instance();
+    for (const QString& mode : {QStringLiteral("Sources"), QStringLiteral("Root"),
+                               QStringLiteral("Layer"), QStringLiteral("Sound")}) {
+        SCOPED_TRACE(mode.toStdString());
+        auto* layer = manager.createItem(nullptr, mode, ProjectItem::Type::Layer);
+        auto* target = manager.createItem(layer, QStringLiteral("Target"), ProjectItem::Type::Sound);
+        auto* binding = findFileBindingForItem(*manager.currentProject(), layer);
+        QStringList paths;
+        for (const auto& name : {QStringLiteral("A"), QStringLiteral("B")}) {
+            const QString path = tempDir_.filePath(mode + name + QStringLiteral(".wav"));
+            writeWavF32(path, {0.0f, 0.25f, -0.25f, 0.0f});
+            paths.append(path);
+        }
+        QList<uint32_t> ids;
+        if (mode == QLatin1String("Sound"))
+            ids = ImportSoundSourcesCommand::pushImport(paths, binding, target)->importedIDs();
+        else if (mode == QLatin1String("Sources"))
+            ids = ImportAssetsCommand::pushImportSources(paths)->importedIDs();
+        else if (mode == QLatin1String("Root"))
+            ids = ImportAssetsCommand::pushImportAtRoot(paths)->importedIDs();
+        else
+            ids = ImportAssetsCommand::pushImport(paths, binding, layer)->importedIDs();
+        ASSERT_EQ(ids.size(), 2);
+        const AssetInfo first = *registry.getAsset(ids.front());
+        const AssetInfo second = *registry.getAsset(ids.back());
+        const int index = undo.undoStack()->index();
+        const auto authored = target->comp<VSound>()->sources;
+        {
+            HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(first.absolutePath.utf16()),
+                GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+            const auto release = qScopeGuard([&] { CloseHandle(handle); });
+            EXPECT_FALSE(undo.undo());
+            EXPECT_EQ(undo.undoStack()->index(), index);
+            EXPECT_EQ(target->comp<VSound>()->sources, authored);
+            manager.fileWatcher()->refreshSources();
+            for (const auto& asset : {first, second}) {
+                ASSERT_NE(registry.findAssetByPath(asset.absolutePath), nullptr);
+                EXPECT_EQ(registry.findAssetByPath(asset.absolutePath)->sourceID, asset.sourceID);
+                EXPECT_EQ(AssetImporter::computeContentHash(asset.absolutePath), asset.contentHash);
+            }
+        }
+        for (const QString& path : paths) ASSERT_TRUE(QFile::remove(path));
+        ASSERT_TRUE(undo.undo());
+        manager.fileWatcher()->refreshSources();
+        for (uint32_t id : ids) EXPECT_FALSE(registry.contains(id));
+        ASSERT_TRUE(undo.redo());
+        for (const auto& asset : {first, second}) {
+            EXPECT_TRUE(registry.sourceFileExists(asset.sourceID));
+            EXPECT_EQ(AssetImporter::computeContentHash(asset.absolutePath), asset.contentHash);
+        }
+        EXPECT_EQ(target->comp<VSound>()->sources, authored);
+    }
+}
+#endif
 
 TEST_F(ProjectExplorerSourcesTabTest, ListsRegisteredAssetsAndNestedFolders)
 {
@@ -555,7 +791,8 @@ TEST_F(ProjectExplorerSourcesTabTest, DroppingDuplicateAudioPreservesExistingSou
     ASSERT_NE(sound, nullptr);
     const QUuid soundGuid = sound->guid;
 
-    const QString duplicatePath = tempDir_.filePath(QStringLiteral("Duplicate.wav"));
+    ASSERT_TRUE(QDir(tempDir_.path()).mkdir(QStringLiteral("Reimport")));
+    const QString duplicatePath = tempDir_.filePath(QStringLiteral("Reimport/Existing.wav"));
     ASSERT_TRUE(QFile::copy(firstPath, duplicatePath));
     const QString newPath = tempDir_.filePath(QStringLiteral("New.wav"));
     writeWavF32(newPath, {0.0f, 0.25f, -0.25f, 0.0f});
@@ -565,7 +802,6 @@ TEST_F(ProjectExplorerSourcesTabTest, DroppingDuplicateAudioPreservesExistingSou
 
     EXPECT_EQ(registry.count(), 2);
     EXPECT_EQ(tree->topLevelItemCount(), 2);
-    EXPECT_EQ(findRow(tree, QStringLiteral("Duplicate.wav")), nullptr);
     ASSERT_EQ(manager.currentProject()->layers.size(), 1u);
     EXPECT_EQ(manager.findItemByGuid(soundGuid), sound);
 
@@ -578,6 +814,190 @@ TEST_F(ProjectExplorerSourcesTabTest, DroppingDuplicateAudioPreservesExistingSou
     ASSERT_EQ(manager.currentProject()->layers.size(), 1u);
     EXPECT_EQ(manager.findItemByGuid(soundGuid), sound);
 }
+
+TEST_F(ProjectExplorerSourcesTabTest, PartialReplacementPreservesIndependentReferencesAcrossUndoAndSave)
+{
+    auto& registry = AssetRegistry::instance();
+    auto& manager = ProjectManager::instance();
+    auto& undo = UndoRedoManager::instance();
+    auto* tree = static_cast<SourcesTreeWidget*>(explorer_->sourcesTree());
+    const QString first = tempDir_.filePath(QStringLiteral("First.wav"));
+    const QString second = tempDir_.filePath(QStringLiteral("Second.wav"));
+    writeWavF32(first, {0.0f, 0.5f, -0.5f, 0.0f});
+    ASSERT_TRUE(QFile::copy(first, second));
+    QMimeData initial;
+    initial.setUrls({QUrl::fromLocalFile(first), QUrl::fromLocalFile(second)});
+    ASSERT_TRUE(tree->importDroppedAudio(&initial));
+    ASSERT_EQ(registry.count(), 2);
+    const auto* firstAsset = registry.getAssetByPath(QStringLiteral("First.wav"));
+    const auto* secondAsset = registry.getAssetByPath(QStringLiteral("Second.wav"));
+    ASSERT_NE(firstAsset, nullptr);
+    ASSERT_NE(secondAsset, nullptr);
+    const uint32_t firstID = firstAsset->sourceID;
+    const uint32_t secondID = secondAsset->sourceID;
+    EXPECT_NE(firstID, secondID);
+    const QString beforeHash = firstAsset->contentHash;
+    QList<QUuid> soundGuids;
+    for (const QString& name : {QStringLiteral("First use"), QStringLiteral("Shared use")}) {
+        auto* sound = manager.createRootAudioItem(name, QStringLiteral("First.wav"), firstID);
+        ASSERT_NE(sound, nullptr);
+        soundGuids.append(sound->guid);
+    }
+    ASSERT_TRUE(manager.saveProject());
+    const QString projectPath = manager.currentProject()->projectPath;
+    const int beforeIndex = undo.undoStack()->index();
+    ASSERT_TRUE(tree->importDroppedAudio(&initial));
+    EXPECT_EQ(undo.undoStack()->index(), beforeIndex);
+    EXPECT_TRUE(undo.isClean());
+
+    writeWavF32(first, {0.0f, 0.25f, -0.25f, 0.25f, -0.25f, 0.0f});
+    writeWavF32(second, {0.0f, 0.75f, -0.75f, 0.0f});
+    const QString added = tempDir_.filePath(QStringLiteral("Added.wav"));
+    ASSERT_TRUE(QFile::copy(first, added));
+    const QString afterHash = AssetImporter::computeContentHash(first);
+    QMimeData replacement;
+    replacement.setUrls({QUrl::fromLocalFile(first), QUrl::fromLocalFile(second), QUrl::fromLocalFile(added)});
+    bool confirmed = false;
+    QTimer::singleShot(0, [&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        ASSERT_NE(dialog, nullptr);
+        auto* conflicts = dialog->findChild<QTreeWidget*>(QStringLiteral("sourceImportConflicts"));
+        ASSERT_NE(conflicts, nullptr);
+        ASSERT_EQ(conflicts->topLevelItemCount(), 2);
+        for (int i = 0; i < conflicts->topLevelItemCount(); ++i) {
+            auto* row = conflicts->topLevelItem(i);
+            EXPECT_EQ(row->checkState(0), Qt::Checked);
+            if (row->text(0) == QStringLiteral("Second.wav"))
+                row->setCheckState(0, Qt::Unchecked);
+        }
+        confirmed = true;
+        dialog->accept();
+    });
+    ASSERT_TRUE(tree->importDroppedAudio(&replacement));
+    ASSERT_TRUE(confirmed);
+    EXPECT_EQ(undo.undoStack()->index(), beforeIndex + 1);
+    ASSERT_EQ(registry.count(), 3);
+    const uint32_t addedID = registry.getAssetByPath(QStringLiteral("Added.wav"))->sourceID;
+    EXPECT_NE(addedID, firstID);
+    EXPECT_NE(addedID, secondID);
+    ASSERT_TRUE(QFile::remove(first));
+    const auto expectRevision = [&](const QString& hash, uint64_t frames) {
+        ASSERT_NE(registry.getAsset(firstID), nullptr);
+        ASSERT_NE(registry.getAsset(secondID), nullptr);
+        EXPECT_EQ(registry.getAsset(firstID)->relativePath, QStringLiteral("First.wav"));
+        EXPECT_EQ(registry.getAsset(firstID)->contentHash, hash);
+        EXPECT_EQ(registry.getAsset(firstID)->metadata.totalSamples, frames);
+        EXPECT_EQ(AssetImporter::computeContentHash(registry.getAsset(firstID)->absolutePath), hash);
+        EXPECT_EQ(registry.getAsset(secondID)->contentHash, beforeHash);
+        EXPECT_EQ(AssetImporter::computeContentHash(registry.getAsset(secondID)->absolutePath), beforeHash);
+        for (const auto& guid : soundGuids) {
+            const auto* sound = manager.findItemByGuid(guid);
+            ASSERT_NE(sound, nullptr);
+            EXPECT_EQ(sound->sourceID, firstID);
+            EXPECT_EQ(sound->comp<VSound>()->sources.plain.entries.front().sourceId, firstID);
+        }
+    };
+    expectRevision(afterHash, 6);
+    ASSERT_TRUE(undo.undo());
+    expectRevision(beforeHash, 4);
+    EXPECT_FALSE(registry.contains(addedID));
+    ASSERT_TRUE(undo.redo());
+    expectRevision(afterHash, 6);
+    EXPECT_TRUE(registry.contains(addedID));
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(undo.undo());
+    expectRevision(beforeHash, 4);
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    expectRevision(afterHash, 6);
+    EXPECT_TRUE(registry.contains(addedID));
+}
+
+TEST_F(ProjectExplorerSourcesTabTest, CancelledOrInvalidReplacementPreservesFilesAndHistory)
+{
+    auto& registry = AssetRegistry::instance();
+    auto& undo = UndoRedoManager::instance();
+    auto* tree = static_cast<SourcesTreeWidget*>(explorer_->sourcesTree());
+    const QString input = tempDir_.filePath(QStringLiteral("Existing.wav"));
+    writeWavF32(input, {0.0f, 0.5f, -0.5f, 0.0f});
+    QMimeData initial;
+    initial.setUrls({QUrl::fromLocalFile(input)});
+    ASSERT_TRUE(tree->importDroppedAudio(&initial));
+    ASSERT_TRUE(ProjectManager::instance().saveProject());
+    const auto asset = *registry.getAssetByPath(QStringLiteral("Existing.wav"));
+    const int index = undo.undoStack()->index();
+    const QString added = tempDir_.filePath(QStringLiteral("Added.wav"));
+    writeWavF32(added, {0.0f, 0.25f, -0.25f, 0.0f});
+    {
+        QFile file(input);
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+        ASSERT_EQ(file.write("invalid audio"), 13);
+    }
+    QMimeData replacement;
+    replacement.setUrls({QUrl::fromLocalFile(input), QUrl::fromLocalFile(added)});
+    for (bool accept : {false, true}) {
+        QTimer::singleShot(0, [accept]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            ASSERT_NE(dialog, nullptr);
+            if (accept) dialog->accept();
+            else dialog->reject();
+        });
+        EXPECT_FALSE(tree->importDroppedAudio(&replacement));
+        EXPECT_EQ(undo.undoStack()->index(), index);
+        EXPECT_TRUE(undo.isClean());
+        EXPECT_EQ(registry.count(), 1);
+        EXPECT_EQ(AssetImporter::computeContentHash(asset.absolutePath), asset.contentHash);
+        EXPECT_EQ(registry.getAsset(asset.sourceID)->contentHash, asset.contentHash);
+    }
+}
+
+#ifdef Q_OS_WIN
+TEST_F(ProjectExplorerSourcesTabTest, ReplacementReplayFailurePreservesContentReferencesAndHistory)
+{
+    auto& registry = AssetRegistry::instance();
+    auto& manager = ProjectManager::instance();
+    auto& undo = UndoRedoManager::instance();
+    const QStringList names{QStringLiteral("A.wav"), QStringLiteral("B.wav")};
+    QStringList files;
+    QStringList oldHashes;
+    QStringList newHashes;
+    QList<uint32_t> ids;
+    QMap<QString, QString> replacements;
+    for (const QString& name : names) {
+        const QString file = tempDir_.filePath(name);
+        writeWavF32(file, {0.0f, 0.5f, -0.5f, 0.0f});
+        auto* command = ImportAssetsCommand::pushImportSources({file});
+        ASSERT_EQ(command->successCount(), 1);
+        ids.append(command->importedIDs().first());
+        files.append(file);
+        oldHashes.append(AssetImporter::computeContentHash(file));
+        replacements.insert(name, file);
+        writeWavF32(file, {0.0f, 0.25f, -0.25f, 0.0f});
+        newHashes.append(AssetImporter::computeContentHash(file));
+    }
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_EQ(ImportAssetsCommand::pushImportSources(files, {}, replacements)->successCount(), 2);
+    for (bool redo : {false, true}) {
+        const int index = undo.undoStack()->index();
+        const QString blocked = SourceFileSystem::absolutePath(redo ? names.last() : names.first());
+        const HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(blocked.utf16()),
+            GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+        {
+            const auto release = qScopeGuard([&]() { CloseHandle(handle); });
+            EXPECT_FALSE(redo ? undo.redo() : undo.undo());
+        }
+        EXPECT_EQ(undo.undoStack()->index(), index);
+        for (int i = 0; i < names.size(); ++i) {
+            const QString hash = redo ? oldHashes[i] : newHashes[i];
+            EXPECT_EQ(registry.getAssetByPath(names[i])->sourceID, ids[i]);
+            EXPECT_EQ(registry.getAsset(ids[i])->contentHash, hash);
+            EXPECT_EQ(AssetImporter::computeContentHash(SourceFileSystem::absolutePath(names[i])), hash);
+        }
+        ASSERT_TRUE(redo ? undo.redo() : undo.undo());
+    }
+}
+#endif
 
 TEST_F(ProjectExplorerSourcesTabTest, FailedDropDoesNotChangeProjectOrUndoStack)
 {
@@ -1617,6 +2037,282 @@ TEST_F(ProjectExplorerSourcesTabTest, SourceRenameEditsInPlaceAndRejectsInvalidN
     EXPECT_EQ(AssetRegistry::instance().getAsset(id)->relativePath, QStringLiteral("Hit.wav"));
 }
 
+TEST_F(ProjectExplorerSourcesTabTest, ConfirmedRenamePreservesSourceIdentityAndAllReferenceSettingsAcrossHistoryAndReload)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    auto& undo = UndoRedoManager::instance();
+    const QString first = tempDir_.filePath(QStringLiteral("A.wav"));
+    const QString second = tempDir_.filePath(QStringLiteral("B.wav"));
+    writeWavF32(first, {0.0f, 0.5f, -0.5f, 0.0f});
+    writeWavF32(second, {0.0f, 0.25f, -0.25f, 0.0f});
+    ASSERT_EQ(ImportAssetsCommand::pushImportSources({first, second})->successCount(), 2);
+    const auto missing = *registry.getAssetByPath(QStringLiteral("A.wav"));
+    const auto source = *registry.getAssetByPath(QStringLiteral("B.wav"));
+    auto* usesA = manager.createRootAudioItem(QStringLiteral("Uses A"), missing.relativePath, missing.sourceID);
+    auto* usesB = manager.createRootAudioItem(QStringLiteral("Uses B"), source.relativePath, source.sourceID);
+    ASSERT_NE(usesA, nullptr);
+    ASSERT_NE(usesB, nullptr);
+    manager.currentProject()->projectLanguages = {QStringLiteral("English"), QStringLiteral("Japanese")};
+    auto& sources = usesA->comp<VSound>()->sources;
+    sources.localized[QStringLiteral("English")] = {};
+    sources.localized[QStringLiteral("Japanese")] = {};
+    const QString platform = manager.currentProject()->platformIds().first();
+    for (auto* set : SoundSourceSemantics::sourceSets(sources)) {
+        SoundSourceDef entry;
+        entry.entryId = QUuid::createUuid();
+        entry.sourceId = missing.sourceID;
+        entry.trimStartFrame = 1;
+        entry.trimEndFrame = 4;
+        entry.loopRegion = SoundLoopRegion{2, 3};
+        entry.rangeContentHash = missing.contentHash;
+        SoundSourceDef alternate = entry;
+        alternate.entryId = QUuid::createUuid();
+        alternate.sourceId = source.sourceID;
+        alternate.trimStartFrame = 0;
+        set->entries = {entry, alternate};
+        set->active = entry.entryId;
+        set->platforms[platform].active = alternate.entryId;
+    }
+    const auto beforeA = sources;
+    const auto beforeB = usesB->comp<VSound>()->sources;
+    auto afterA = beforeA;
+    for (auto* set : SoundSourceSemantics::sourceSets(afterA)) set->entries.front().sourceId = source.sourceID;
+    const QUuid guidA = usesA->guid;
+    const QUuid guidB = usesB->guid;
+    const QString projectPath = manager.currentProject()->projectPath;
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(QFile::remove(missing.absolutePath));
+    manager.fileWatcher()->refreshSources();
+    const int history = undo.undoStack()->count();
+
+    explorer_->resize(420, 600);
+    explorer_->show();
+    auto* tree = explorer_->sourcesTree();
+    for (bool confirm : {false, true}) {
+        auto* row = findRow(tree, source.relativePath);
+        ASSERT_NE(row, nullptr);
+        tree->setCurrentItem(row);
+        QKeyEvent f2(QEvent::KeyPress, Qt::Key_F2, Qt::NoModifier);
+        QApplication::sendEvent(tree, &f2);
+        auto* editor = tree->findChild<InlineRenameEdit*>();
+        ASSERT_NE(editor, nullptr);
+        editor->setText(missing.relativePath);
+        EXPECT_FALSE(editor->property("inputInvalid").toBool());
+        EXPECT_EQ(QApplication::activeModalWidget(), nullptr);
+        int dialogs = 0;
+        QTimer timer;
+        QObject::connect(&timer, &QTimer::timeout, [&] {
+            if (auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget())) {
+                EXPECT_EQ(dialog->objectName(), QStringLiteral("sourceRenameRestoreDialog"));
+                ++dialogs;
+                if (confirm) dialog->accept();
+                else dialog->reject();
+            }
+        });
+        timer.start(1);
+        EXPECT_TRUE(editor->finish(true));
+        timer.stop();
+        EXPECT_EQ(dialogs, 1);
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        if (!confirm) {
+            EXPECT_EQ(undo.undoStack()->count(), history);
+            EXPECT_EQ(usesA->comp<VSound>()->sources, beforeA);
+            EXPECT_EQ(registry.getAsset(source.sourceID)->relativePath, source.relativePath);
+            EXPECT_NE(findRow(tree, source.relativePath), nullptr);
+            EXPECT_FALSE(QFile::exists(missing.absolutePath));
+        }
+    }
+    EXPECT_EQ(undo.undoStack()->count(), history + 1);
+    EXPECT_FALSE(registry.contains(missing.sourceID));
+    EXPECT_EQ(registry.getAsset(source.sourceID)->relativePath, missing.relativePath);
+    EXPECT_EQ(usesA->comp<VSound>()->sources, afterA);
+    EXPECT_EQ(usesB->comp<VSound>()->sources, beforeB);
+    EXPECT_FALSE(QFile::exists(source.absolutePath));
+    EXPECT_EQ(AssetImporter::computeContentHash(missing.absolutePath), source.contentHash);
+    ASSERT_TRUE(undo.undo());
+    EXPECT_EQ(usesA->comp<VSound>()->sources, beforeA);
+    EXPECT_EQ(usesB->comp<VSound>()->sources, beforeB);
+    EXPECT_TRUE(registry.contains(missing.sourceID));
+    EXPECT_EQ(registry.getAsset(source.sourceID)->relativePath, source.relativePath);
+    EXPECT_FALSE(QFile::exists(missing.absolutePath));
+    ASSERT_TRUE(undo.redo());
+    EXPECT_EQ(usesA->comp<VSound>()->sources, afterA);
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(undo.undo());
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    EXPECT_FALSE(registry.contains(missing.sourceID));
+    ASSERT_NE(registry.getAsset(source.sourceID), nullptr);
+    EXPECT_EQ(registry.getAsset(source.sourceID)->relativePath, missing.relativePath);
+    EXPECT_EQ(AssetImporter::computeContentHash(missing.absolutePath), source.contentHash);
+    EXPECT_FALSE(QFile::exists(source.absolutePath));
+    ASSERT_NE(manager.findItemByGuid(guidA), nullptr);
+    ASSERT_NE(manager.findItemByGuid(guidB), nullptr);
+    EXPECT_EQ(manager.findItemByGuid(guidA)->comp<VSound>()->sources, afterA);
+    EXPECT_EQ(manager.findItemByGuid(guidB)->comp<VSound>()->sources, beforeB);
+}
+
+TEST_F(ProjectExplorerSourcesTabTest, DiscardingSourceMergeRestoresTheSavedPathsAndReferences)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    const QString first = tempDir_.filePath(QStringLiteral("A.wav"));
+    const QString second = tempDir_.filePath(QStringLiteral("B.wav"));
+    writeWavF32(first, {0.0f, 0.5f, -0.5f, 0.0f});
+    writeWavF32(second, {0.0f, 0.25f, -0.25f, 0.0f});
+    ASSERT_EQ(ImportAssetsCommand::pushImportSources({first, second})->successCount(), 2);
+    const auto missing = *registry.getAssetByPath(QStringLiteral("A.wav"));
+    const auto source = *registry.getAssetByPath(QStringLiteral("B.wav"));
+    auto* sound = manager.createRootAudioItem(QStringLiteral("Uses A"), missing.relativePath, missing.sourceID);
+    ASSERT_NE(sound, nullptr);
+    const auto guid = sound->guid;
+    const auto authored = sound->comp<VSound>()->sources;
+    const auto projectPath = manager.currentProject()->projectPath;
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(QFile::remove(missing.absolutePath));
+#ifdef Q_OS_WIN
+    {
+        const int history = UndoRedoManager::instance().undoStack()->count();
+        const HANDLE locked = CreateFileW(reinterpret_cast<const wchar_t*>(source.absolutePath.utf16()),
+            GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        ASSERT_NE(locked, INVALID_HANDLE_VALUE);
+        const auto unlock = qScopeGuard([&] { CloseHandle(locked); });
+        EXPECT_FALSE(SourceFileSystem::restoreByRename(source.sourceID, missing.sourceID));
+        EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), history);
+        EXPECT_TRUE(registry.contains(missing.sourceID));
+        EXPECT_EQ(registry.getAsset(source.sourceID)->relativePath, source.relativePath);
+        EXPECT_EQ(sound->comp<VSound>()->sources, authored);
+    }
+#endif
+    for (bool undone : {false, true}) {
+        ASSERT_TRUE(SourceFileSystem::restoreByRename(source.sourceID, missing.sourceID));
+        if (undone) ASSERT_TRUE(UndoRedoManager::instance().undo());
+        ASSERT_TRUE(manager.closeProject());
+        ASSERT_TRUE(manager.loadProject(projectPath));
+        ASSERT_NE(registry.getAsset(missing.sourceID), nullptr);
+        ASSERT_NE(registry.getAsset(source.sourceID), nullptr);
+        EXPECT_EQ(registry.getAsset(source.sourceID)->relativePath, source.relativePath);
+        EXPECT_FALSE(QFile::exists(missing.absolutePath));
+        EXPECT_EQ(AssetImporter::computeContentHash(source.absolutePath), source.contentHash);
+        ASSERT_NE(manager.findItemByGuid(guid), nullptr);
+        EXPECT_EQ(manager.findItemByGuid(guid)->comp<VSound>()->sources, authored);
+    }
+}
+
+TEST_F(ProjectExplorerSourcesTabTest, MissingSourcePathsRemainReservedForFileFolderAndHistoryOperations)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    auto& undo = UndoRedoManager::instance();
+    const QString input = tempDir_.filePath(QStringLiteral("Hit.wav"));
+    writeWavF32(input, {0.0f, 0.5f, -0.5f, 0.0f});
+    for (const auto& folder : {QStringLiteral("Reserved"), QStringLiteral("Moving")}) {
+        ASSERT_TRUE(SourceFileSystem::createFolder({}, folder));
+        ASSERT_EQ(ImportAssetsCommand::pushImportSources({input}, folder)->successCount(), 1);
+    }
+    const auto reserved = *registry.getAssetByPath(QStringLiteral("Reserved/Hit.wav"));
+    const auto moving = *registry.getAssetByPath(QStringLiteral("Moving/Hit.wav"));
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(QFile::remove(reserved.absolutePath));
+    const int history = undo.undoStack()->count();
+    QString error;
+    EXPECT_FALSE(SourceFileSystem::move({moving.relativePath}, QStringLiteral("Reserved"), &error));
+    EXPECT_FALSE(error.isEmpty());
+    ASSERT_TRUE(QDir().rmdir(QFileInfo(reserved.absolutePath).absolutePath()));
+    EXPECT_FALSE(SourceFileSystem::rename(QStringLiteral("Moving"), QStringLiteral("Reserved"), &error));
+    EXPECT_FALSE(error.isEmpty());
+    EXPECT_EQ(undo.undoStack()->count(), history);
+    EXPECT_EQ(registry.getAsset(moving.sourceID)->relativePath, moving.relativePath);
+    EXPECT_TRUE(QFile::exists(moving.absolutePath));
+    ASSERT_TRUE(SourceFileSystem::rename(moving.relativePath, QStringLiteral("Changed.wav")));
+    writeWavF32(moving.absolutePath, {0.0f, 0.25f, -0.25f, 0.0f});
+    manager.fileWatcher()->refreshSources();
+    ASSERT_NE(registry.findAssetByPath(moving.absolutePath), nullptr);
+    const uint32_t externalID = registry.findAssetByPath(moving.absolutePath)->sourceID;
+    ASSERT_NE(externalID, moving.sourceID);
+    ASSERT_TRUE(QFile::remove(moving.absolutePath));
+    const int index = undo.undoStack()->index();
+    EXPECT_FALSE(undo.undo());
+    EXPECT_EQ(undo.undoStack()->index(), index);
+    EXPECT_EQ(registry.getAsset(moving.sourceID)->relativePath, QStringLiteral("Moving/Changed.wav"));
+    EXPECT_EQ(registry.getAsset(externalID)->relativePath, moving.relativePath);
+    ASSERT_TRUE(manager.saveProject());
+}
+
+TEST_F(ProjectExplorerSourcesTabTest, ExternalRenameRestoresTheDestinationIdentityAndLeavesTheOriginalMissing)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    const QString first = tempDir_.filePath(QStringLiteral("A.wav"));
+    const QString second = tempDir_.filePath(QStringLiteral("B.wav"));
+    writeWavF32(first, {0.0f, 0.5f, -0.5f, 0.0f});
+    writeWavF32(second, {0.0f, 0.25f, -0.25f, 0.0f});
+    ASSERT_EQ(ImportAssetsCommand::pushImportSources({first, second})->successCount(), 2);
+    const auto missing = *registry.getAssetByPath(QStringLiteral("A.wav"));
+    const auto source = *registry.getAssetByPath(QStringLiteral("B.wav"));
+    auto* usesA = manager.createRootAudioItem(QStringLiteral("Uses A"), missing.relativePath, missing.sourceID);
+    auto* usesB = manager.createRootAudioItem(QStringLiteral("Uses B"), source.relativePath, source.sourceID);
+    ASSERT_NE(usesA, nullptr);
+    ASSERT_NE(usesB, nullptr);
+    const auto guidA = usesA->guid;
+    const auto guidB = usesB->guid;
+    const auto beforeA = usesA->comp<VSound>()->sources;
+    const auto beforeB = usesB->comp<VSound>()->sources;
+    const auto projectPath = manager.currentProject()->projectPath;
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(QFile::remove(missing.absolutePath));
+    manager.fileWatcher()->refreshSources();
+    ASSERT_TRUE(QFile::rename(source.absolutePath, missing.absolutePath));
+    manager.fileWatcher()->refreshSources();
+    EXPECT_EQ(registry.findAssetByPath(missing.absolutePath)->sourceID, missing.sourceID);
+    EXPECT_EQ(registry.findAssetByPath(source.absolutePath)->sourceID, source.sourceID);
+    EXPECT_EQ(registry.getAsset(missing.sourceID)->contentHash, source.contentHash);
+    EXPECT_TRUE(registry.sourceFileExists(missing.sourceID));
+    EXPECT_FALSE(registry.sourceFileExists(source.sourceID));
+    EXPECT_EQ(usesA->comp<VSound>()->sources, beforeA);
+    EXPECT_EQ(usesB->comp<VSound>()->sources, beforeB);
+    EXPECT_NE(findRow(explorer_->sourcesTree(), missing.relativePath), nullptr);
+    EXPECT_EQ(findRow(explorer_->sourcesTree(), source.relativePath), nullptr);
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    EXPECT_TRUE(registry.sourceFileExists(missing.sourceID));
+    EXPECT_FALSE(registry.sourceFileExists(source.sourceID));
+    ASSERT_NE(manager.findItemByGuid(guidA), nullptr);
+    ASSERT_NE(manager.findItemByGuid(guidB), nullptr);
+    EXPECT_EQ(manager.findItemByGuid(guidA)->comp<VSound>()->sources, beforeA);
+    EXPECT_EQ(manager.findItemByGuid(guidB)->comp<VSound>()->sources, beforeB);
+}
+
+TEST_F(ProjectExplorerSourcesTabTest, InvalidSourceRegistryCannotSilentlyFailProjectSave)
+{
+    auto& manager = ProjectManager::instance();
+    auto& registry = AssetRegistry::instance();
+    const QString input = tempDir_.filePath(QStringLiteral("Hit.wav"));
+    writeWavF32(input, {0.0f, 0.5f, -0.5f, 0.0f});
+    ASSERT_EQ(ImportAssetsCommand::pushImportSources({input})->successCount(), 1);
+    const auto source = *registry.getAssetByPath(QStringLiteral("Hit.wav"));
+    ASSERT_TRUE(manager.saveProject());
+    QFile project(manager.currentProject()->projectPath);
+    ASSERT_TRUE(project.open(QIODevice::ReadOnly));
+    const auto saved = project.readAll();
+    project.close();
+    QStringList errors;
+    QObject observer;
+    QObject::connect(&manager, &ProjectManager::errorOccurred, &observer,
+        [&](const QString& error) { errors.append(error); });
+    registry.getAsset(source.sourceID)->relativePath = QStringLiteral("../Hit.wav");
+    EXPECT_FALSE(manager.saveProject());
+    ASSERT_FALSE(errors.isEmpty());
+    EXPECT_FALSE(errors.last().isEmpty());
+    ASSERT_TRUE(project.open(QIODevice::ReadOnly));
+    EXPECT_EQ(project.readAll(), saved);
+    project.close();
+    registry.getAsset(source.sourceID)->relativePath = source.relativePath;
+    ASSERT_TRUE(manager.saveProject());
+}
+
 TEST_F(ProjectExplorerSourcesTabTest, FolderMoveRenameAndSavePreserveSharedSoundReferences)
 {
     ASSERT_TRUE(SourceFileSystem::createFolder({}, QStringLiteral("FX")));
@@ -1862,6 +2558,7 @@ TEST_F(ProjectExplorerSourcesTabTest, DiscardRestoresSavedFilesAndRemovesUncommi
 {
     const QString input = tempDir_.filePath(QStringLiteral("Keep.wav"));
     writeWavF32(input, {0.0f, 0.5f, -0.5f, 0.0f});
+    const QString savedHash = AssetImporter::computeContentHash(input);
     auto* command = ImportAssetsCommand::pushImportSources({input});
     ASSERT_EQ(command->successCount(), 1);
     const uint32_t id = command->importedIDs().first();
@@ -1878,8 +2575,14 @@ TEST_F(ProjectExplorerSourcesTabTest, DiscardRestoresSavedFilesAndRemovesUncommi
     const QString extra = tempDir_.filePath(QStringLiteral("Unsaved.wav"));
     writeWavF32(extra, {0.0f, 0.25f, -0.25f, 0.0f});
     ASSERT_EQ(ImportAssetsCommand::pushImportSources({extra}, QStringLiteral("Renamed"))->successCount(), 1);
+    writeWavF32(input, {0.0f, 0.75f, -0.75f, 0.0f});
+    writeWavF32(extra, {0.0f, 0.125f, -0.125f, 0.0f});
+    ASSERT_EQ(ImportAssetsCommand::pushImportSources({input, extra}, QStringLiteral("Renamed"),
+        {{QStringLiteral("Renamed/Keep.wav"), input}, {QStringLiteral("Renamed/Unsaved.wav"), extra}})
+        ->successCount(), 2);
     ASSERT_TRUE(manager.closeProject());
     EXPECT_TRUE(QFile::exists(QDir(audioRoot).filePath(QStringLiteral("Keep.wav"))));
+    EXPECT_EQ(AssetImporter::computeContentHash(QDir(audioRoot).filePath(QStringLiteral("Keep.wav"))), savedHash);
     EXPECT_FALSE(QDir(QDir(audioRoot).filePath(QStringLiteral("New"))).exists());
     EXPECT_FALSE(QDir(QDir(audioRoot).filePath(QStringLiteral("Renamed"))).exists());
     EXPECT_TRUE(QFile::exists(extra));

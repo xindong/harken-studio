@@ -2,6 +2,7 @@
 #pragma once
 
 #include <QGraphicsView>
+#include <QHash>
 #include <QMargins>
 #include <QPointF>
 #include <QSet>
@@ -206,6 +207,11 @@ private:
     };
 
     std::unordered_map<NodeKey, NodeItem*, NodeKeyHash> nodeMap_;
+    struct WaveformNode {
+        NodeItem* item = nullptr;
+        std::optional<WaveformFrameRange> range;
+    };
+    QHash<QString, std::vector<WaveformNode>> waveformNodes_;
     std::vector<ConnectionPath*> edges_;
     std::vector<NodeItem*> gainNodes_;
     std::vector<ConnectionPath*> gainOutputEdges_;
@@ -220,6 +226,8 @@ private:
     std::vector<QPointF> gainDragStartPositions_;
     bool pathRefreshPending_ = false;
     bool pathRefreshScheduled_ = false;
+    bool chainRefreshPending_ = false;
+    bool chainRefreshScheduled_ = false;
     std::unique_ptr<PropertyEditSession> nodeEditSession_;
     std::unique_ptr<SignalPathGainEditSession> gainEditSession_;
     bool gridSnapEnabled_ = true;
@@ -250,6 +258,7 @@ private:
     void applyProjectItemSelection_();
     void refreshPlaybackActivity_();
     void refreshNodeTitles_();
+    void refreshNodeWaveforms_(uint32_t sourceID = 0);
     void refreshPathFocus_();
     void updateNodeGridSnap_();
     bool nodeFieldEditing_() const;

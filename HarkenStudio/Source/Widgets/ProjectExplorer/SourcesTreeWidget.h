@@ -50,6 +50,7 @@ protected:
 
 private:
     QString folderForItem(QTreeWidgetItem* item) const;
+    QString renameSource(const QString& path, const QString& name);
     void renameCurrent();
     void deleteCurrentFolder();
     void showContextMenu(QTreeWidgetItem* item, const QPoint& globalPosition);
