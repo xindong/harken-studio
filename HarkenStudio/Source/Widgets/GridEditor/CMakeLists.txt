@@ -9,6 +9,8 @@ add_library(harken_editor_grid_editor STATIC
     GridEditorPanel.h
     GridEditorWidget.cpp
     GridEditorWidget.h
+    SelectionListWidget.cpp
+    SelectionListWidget.h
     GridHeaderRef.h
     GridValueFormatting.h
 )

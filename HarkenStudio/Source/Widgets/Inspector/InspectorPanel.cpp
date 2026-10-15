@@ -743,11 +743,7 @@ void InspectorPanel::onSearchTextChanged(const QString& text)
                 section->setExpanded(true);
                 continue;
             }
-            QWidget* selectionList = section->findChild<QWidget*>(
-                QStringLiteral("selectionChildrenList"));
-            bool match = section->title().toLower().contains(lowerText)
-                || (selectionList
-                    && selectionList->property("hasSearchMatch").toBool());
+            bool match = section->title().toLower().contains(lowerText);
             for (const auto& field : section->property("inspectorFieldNames").toStringList())
                 if (field.toLower().contains(lowerText)) match = true;
             if (!match && section->property("searchDescendants").toBool())

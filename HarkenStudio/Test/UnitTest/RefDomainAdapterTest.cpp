@@ -141,7 +141,7 @@ TEST_F(RefDomainAdapterTest, ProjectObjectPopulateWritesRoles)
     EXPECT_EQ(found->text(0), childBus_->name);
 }
 
-TEST_F(RefDomainAdapterTest, DirectChildScopeLimitsDisplayAndAcceptanceWhilePreservingCurrentValue)
+TEST_F(RefDomainAdapterTest, DirectChildScopeRetainsParentContextWhileLimitingAcceptance)
 {
     auto& manager = ProjectManager::instance();
     auto* direct = manager.createItem(childBus_, QStringLiteral("DirectBus"), ProjectItem::Type::Bus);
@@ -170,10 +170,16 @@ TEST_F(RefDomainAdapterTest, DirectChildScopeLimitsDisplayAndAcceptanceWhilePres
     auto* tree = selector->findChild<QTreeWidget*>();
     ASSERT_NE(tree, nullptr);
     QSet<uint32_t> displayed;
-    for (QTreeWidgetItemIterator it(tree); *it; ++it)
-        displayed.insert((*it)->data(0, kRoleObjectID).toUInt());
-    EXPECT_EQ(displayed, (QSet<uint32_t>{direct->objectID, branch->objectID}));
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        const uint32_t id = (*it)->data(0, kRoleObjectID).toUInt();
+        displayed.insert(id);
+        EXPECT_EQ((*it)->data(0, kRoleSelectable).toBool(), reference.canAcceptObject(id));
+    }
+    EXPECT_EQ(displayed, (QSet<uint32_t>{childBus_->objectID, direct->objectID, branch->objectID}));
+    ASSERT_EQ(tree->topLevelItemCount(), 1);
+    EXPECT_EQ(tree->topLevelItem(0)->data(0, kRoleObjectID).toUInt(), childBus_->objectID);
     ASSERT_NE(tree->currentItem(), nullptr);
+    EXPECT_EQ(tree->currentItem()->parent(), tree->topLevelItem(0));
     EXPECT_EQ(tree->currentItem()->data(0, kRoleObjectID).toUInt(), direct->objectID);
     EXPECT_TRUE(tree->currentItem()->isSelected());
     int changes = 0;
