@@ -20,6 +20,8 @@
 #include <QRegularExpression>
 #include <QThread>
 
+#include <algorithm>
+
 namespace VNH {
 
 namespace {
@@ -283,15 +285,32 @@ InstallOutcome InstallExecutor::run(const QString& transactionId,
                                    "manifest channel %2")
                         .arg(packageResult.channel, manifest.channel));
 
+    for (const auto& record : index.records) {
+        if (record.buildId == manifest.buildId)
+            return fail(transactionId, manifest.buildId,
+                        QStringLiteral("TargetConflict"),
+                        QStringLiteral("Build is already registered at: %1")
+                            .arg(record.installPath));
+    }
+
     const QString versionsRoot = studioVersionsRoot();
-    const QString targetDir = versionsRoot + QStringLiteral("/") +
-                              manifest.version + QStringLiteral("-") +
-                              manifest.buildId;
-    if (QFileInfo::exists(targetDir))
-        return fail(transactionId, manifest.buildId,
-                    QStringLiteral("TargetConflict"),
-                    QStringLiteral("Install target already exists: %1")
-                        .arg(targetDir));
+    const QString targetBase = QDir(versionsRoot).filePath(
+        QStringLiteral("%1-%2-%3-%4").arg(
+            manifest.version, manifest.channel, manifest.platform.toLower(),
+            manifest.architecture.toLower()));
+    const auto occupied = [&index](const QString& path) {
+        const QFileInfo target(path);
+        if (target.exists() || target.isSymbolicLink() || target.isJunction())
+            return true;
+        return std::any_of(index.records.begin(), index.records.end(),
+                           [&target](const InstalledVersionRecord& record) {
+            return QFileInfo(record.installPath).absoluteFilePath().compare(
+                       target.absoluteFilePath(), Qt::CaseInsensitive) == 0;
+        });
+    };
+    QString targetDir = targetBase;
+    for (int suffix = 2; occupied(targetDir); ++suffix)
+        targetDir = targetBase + QStringLiteral("-%1").arg(suffix);
 
     cleanup.extractDir = versionsRoot + QStringLiteral("/.staging-") +
                          transactionId;
