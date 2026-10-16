@@ -237,10 +237,9 @@ int main(int argc, char* argv[])
                 return 3;
             }
         }
-        if (projectFile.isEmpty() || !hubArguments.present) {
+        if (projectFile.isEmpty()) {
             QString error;
-            if (!VNX::HubLauncher::open(VNX::HubPage::Projects, &error,
-                                        true, projectFile)) {
+            if (!VNX::HubLauncher::open(VNX::HubPage::Projects, &error, true)) {
                 loading.showFailure(error);
                 return 3;
             }
