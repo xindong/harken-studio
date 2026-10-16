@@ -14,7 +14,8 @@
 #include "Widgets/Blueprint/BlueprintCanvasWidget.h"
 #include "Widgets/Blueprint/NodeItem.h"
 #include "Widgets/Inspector/InspectorPanel.h"
-#include "Widgets/Inspector/Providers/SourceRangeThumb.h"
+#include "Widgets/Common/SourceRangeThumb.h"
+#include "Widgets/GridEditor/SelectionWaveform.h"
 #include "Widgets/Inspector/Providers/SourcesSectionProvider.h"
 #include "Widgets/ProjectExplorer/ProjectExplorer.h"
 #include "Widgets/ProjectTree/ProjectTreeWidget.h"
@@ -270,6 +271,14 @@ TEST(MediaPoolRefreshTest, ExternalFileLifecyclePreservesAuthoredReferencesAcros
         });
     SourceEditorWidget editor;
     editor.bindSource(sourceID, soundGuid, source.entryId);
+    SelectionWaveform selectionWaveform(soundGuid);
+    int selectionEditorRequests = 0;
+    QObject::connect(&selectionWaveform, &SelectionWaveform::sourceEditorRequested,
+        &selectionWaveform, [&](const QUuid& owner, const QUuid& entry) {
+            EXPECT_EQ(owner, soundGuid);
+            EXPECT_EQ(entry, source.entryId);
+            ++selectionEditorRequests;
+        });
     const auto* waveform = editor.findChild<SourceEditorWaveformView*>();
     ASSERT_NE(waveform, nullptr);
     const auto sourceVisible = [&] {
@@ -295,14 +304,17 @@ TEST(MediaPoolRefreshTest, ExternalFileLifecyclePreservesAuthoredReferencesAcros
         ASSERT_NE(row, nullptr);
         auto* thumb = row->findChild<SourceRangeThumb*>();
         ASSERT_NE(thumb, nullptr);
-        EXPECT_EQ(thumb->isEnabled(), enabled);
-        const QPoint point = thumb->rect().center();
-        QMouseEvent press(QEvent::MouseButtonPress, point, thumb->mapToGlobal(point),
-            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(thumb, &press);
-        QMouseEvent release(QEvent::MouseButtonRelease, point, thumb->mapToGlobal(point),
-            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-        QApplication::sendEvent(thumb, &release);
+        for (auto* preview : {thumb, static_cast<SourceRangeThumb*>(&selectionWaveform)}) {
+            EXPECT_EQ(preview->isEnabled(), enabled);
+            const QPoint point = preview->rect().center();
+            QMouseEvent press(QEvent::MouseButtonPress, point, preview->mapToGlobal(point),
+                Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(preview, &press);
+            QMouseEvent release(QEvent::MouseButtonRelease, point, preview->mapToGlobal(point),
+                Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(preview, &release);
+        }
+        EXPECT_EQ(selectionEditorRequests, editorRequests);
     };
     const auto hasErrorPixels = [](const QImage& image) {
         const QColor error = ThemeManager::instance().colors().error;
@@ -426,18 +438,26 @@ TEST(MediaPoolRefreshTest, ExternalFileLifecyclePreservesAuthoredReferencesAcros
     EXPECT_TRUE(waveformsMatch(true));
     languages.setLanguage(QStringLiteral("Japanese"));
     ASSERT_TRUE(QTest::qWaitFor([&] { return !treeError(sound->name) && !blueprintError(sound->name); }, 5000));
+    EXPECT_TRUE(selectionWaveform.isEnabled());
     expectIcons(true, false);
     ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(false); }, 5000));
     languages.setLanguage(QStringLiteral("English"));
     ASSERT_TRUE(QTest::qWaitFor([&] { return treeError(sound->name) && blueprintError(sound->name); }, 5000));
+    EXPECT_FALSE(selectionWaveform.isEnabled());
     expectIcons(true, true);
     ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(true); }, 5000));
     platforms.setSelected({android}, android, false);
     ASSERT_TRUE(QTest::qWaitFor([&] { return !treeError(sound->name) && !blueprintError(sound->name); }, 5000));
+    EXPECT_TRUE(selectionWaveform.isEnabled());
     expectIcons(true, false);
     ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(false); }, 5000));
     platforms.setSelected({windows}, windows, false);
     ASSERT_TRUE(QTest::qWaitFor([&] { return treeError(sound->name) && blueprintError(sound->name); }, 5000));
+    EXPECT_FALSE(selectionWaveform.isEnabled());
+    platforms.setAll(true);
+    EXPECT_FALSE(selectionWaveform.isEnabled());
+    EXPECT_FALSE(selectionWaveform.toolTip().isEmpty());
+    platforms.setSelected({windows}, windows, false);
     expectIcons(true, true);
     ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(true); }, 5000));
     EXPECT_EQ(SoundSourceSemantics::toJson(sound->comp<VSound>()->sources), authored);

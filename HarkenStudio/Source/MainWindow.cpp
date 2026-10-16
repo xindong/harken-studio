@@ -391,6 +391,7 @@ void MainWindow::initializeStructure(
     {
         StandaloneEditorTypeInfo info;
         info.label = tr("External Editor");
+        info.clearOnUnrelatedSelection = false;
         info.dockObjectPrefix = QStringLiteral("CurveEditorDock");
         info.createConfigured = [this](int id) -> QWidget* {
             auto* ed = new ExternalEditorPanel(this);
@@ -455,6 +456,10 @@ void MainWindow::initializeStructure(
                 }
             });
             connect(ed, &GridEditorPanel::locateItem, this, &MainWindow::locateProjectItem);
+            connect(ed, &GridEditorPanel::sourceEditorRequested, this,
+                    [this](const QUuid& soundGuid, const QUuid& entryId) {
+                openExternalEditor(ExternalEditorSelection::source(soundGuid, entryId));
+            });
             wireStandaloneEditorPin(ed);
             return ed;
         };
@@ -2663,7 +2668,9 @@ QWidget* MainWindow::createStandaloneEditorPanelWithId(const QString& type, int 
     ads::CDockAreaWidget* anchorArea = nullptr;
     ads::CDockAreaWidget* inspectorArea = nullptr;
     bool seedBelowHeight = false;
-    if (ti.openBelowCentralArea) {
+    if (type == QLatin1String("ExternalEditor")) {
+        layoutController_->setPlacementHint(dockObjectName, PreferredOpenArea::RestoreSaved);
+    } else if (ti.openBelowCentralArea) {
         for (QWidget* panel : panelRegistry_->allPanels(type)) {
             auto* existing = dockOfPanel(panel);
             if (existing && !existing->isClosed() && !existing->isInFloatingContainer()) {
@@ -2783,14 +2790,6 @@ void MainWindow::pushSelectionToStandaloneEditors(ProjectItem* item,
 {
     for (const QString& type : standaloneEditorTypes_.keys()) {
         const StandaloneEditorTypeInfo ti = standaloneEditorTypes_.value(type);
-        if (type == QLatin1String("ExternalEditor")) {
-            for (QWidget* widget : panelRegistry_->allPanels(type)) {
-                auto* editor = qobject_cast<ExternalEditorPanel*>(widget);
-                if (editor && !editor->acceptsSelection(item))
-                    collapseUnrelatedStandaloneEditor(type, editor, reason);
-            }
-            continue;
-        }
         if (type == QLatin1String("TimelineEditor") && item && item->type == ProjectItem::Type::Track) {
             auto* owner = TimelineEditorPanel::timelineOwner(item);
             ads::CDockWidget* matchingDock = nullptr;

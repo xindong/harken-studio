@@ -1,6 +1,7 @@
 #include "MixingEditorWidget.h"
 #include "GridEditorWidget.h"
 #include "MixingRowCanvas.h"
+#include "SelectionWaveform.h"
 
 #include "Core/ActionManager.h"
 #include "Core/Components/VSelection.h"
@@ -316,7 +317,9 @@ void MixingEditorWidget::buildRow(int index)
     view.children = new TableWidget(TableOptions{TableKind::Config, TableBodySizing::Expanding}, view.page);
     view.children->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     view.children->setColumns(QStringLiteral("mixing.children"), {
-        {QStringLiteral("index"), QStringLiteral("#"), 0}, {QStringLiteral("target"), tr("Child"), 1}});
+        {QStringLiteral("index"), QStringLiteral("#"), 0},
+        {QStringLiteral("target"), tr("Child"), 400},
+        {QStringLiteral("waveform"), tr("Waveform"), 600}});
     auto* footer = view.children->footer();
     footer->addButton()->setToolTip(tr("Add Child"));
     view.removeChild = footer->removeButton();
@@ -373,7 +376,14 @@ void MixingEditorWidget::buildRow(int index)
         rowLayout->addWidget(number);
         rowLayout->addWidget(cell, 1);
         view.children->rowsLayout()->addWidget(childRow);
-        view.children->registerRow(childRow, {number, cell});
+        auto* waveformCell = view.children->createCell(childRow);
+        waveformCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        auto* waveform = new SelectionWaveform(target, waveformCell);
+        connect(waveform, &SelectionWaveform::sourceEditorRequested,
+                this, &MixingEditorWidget::sourceEditorRequested);
+        waveformCell->addWidget(waveform);
+        rowLayout->addWidget(waveformCell);
+        view.children->registerRow(childRow, {number, cell, waveformCell});
         view.childRows.push_back(childRow);
         view.refs.push_back(ref);
         if (selectedChildren_.value(row.guid) == target) view.selected = child;

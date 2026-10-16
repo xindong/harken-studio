@@ -1,5 +1,6 @@
 #include "SelectionListWidget.h"
 #include "GridEditorWidget.h"
+#include "SelectionWaveform.h"
 
 #include "Core/ActionManager.h"
 #include "Core/Components/VSelection.h"
@@ -149,8 +150,13 @@ void SelectionListWidget::setBoundItem(ProjectItem* item)
 
 void SelectionListWidget::setWeightVisible(bool visible)
 {
+    if (weightVisible_ == visible) return;
     weightVisible_ = visible;
     box_->setColumnVisible(2, visible);
+    box_->setColumnWeights(
+        visible ? QStringLiteral("SelectionChildren.Random")
+                : QStringLiteral("SelectionChildren.Sequence"),
+        {0, visible ? 200 : 400, 200, 600});
 }
 
 bool SelectionListWidget::eventFilter(QObject* watched, QEvent* event)
@@ -182,10 +188,11 @@ bool SelectionListWidget::eventFilter(QObject* watched, QEvent* event)
 QWidget* SelectionListWidget::buildHeader()
 {
     box_->setAccessibleName(tr("Selections"));
-    box_->setColumns(QStringLiteral("SelectionChildren"), {
+    box_->setColumns(QStringLiteral("SelectionChildren.Random"), {
         {QStringLiteral("Number"), QStringLiteral("#"), 0},
-        {QStringLiteral("Child"), tr("Child"), 720, 0, QStringLiteral("selectionChildHeader")},
-        {QStringLiteral("Weight"), tr("Weight"), 280, 0, QStringLiteral("selectionChildWeightHeader")}
+        {QStringLiteral("Child"), tr("Child"), 200, 0, QStringLiteral("selectionChildHeader")},
+        {QStringLiteral("Weight"), tr("Weight"), 200, 0, QStringLiteral("selectionChildWeightHeader")},
+        {QStringLiteral("Waveform"), tr("Waveform"), 600}
     });
     return box_->header();
 }
@@ -290,8 +297,16 @@ QWidget* SelectionListWidget::buildRow(int index, const SelectionEntry& occurren
     weightCell->setVisible(weightVisible_);
     layout->addWidget(weightCell);
 
+    auto* waveformCell = box_->createCell(row);
+    waveformCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    auto* waveform = new SelectionWaveform(child->guid, waveformCell);
+    connect(waveform, &SelectionWaveform::sourceEditorRequested,
+            this, &SelectionListWidget::sourceEditorRequested);
+    waveformCell->addWidget(waveform);
+    layout->addWidget(waveformCell);
+
     rowWidgets_.push_back(row);
-    box_->registerRow(row, {number, childCell, weightCell});
+    box_->registerRow(row, {number, childCell, weightCell, waveformCell});
     return row;
 }
 

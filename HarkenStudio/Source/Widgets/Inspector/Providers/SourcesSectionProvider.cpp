@@ -23,7 +23,7 @@
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/LayoutDebugTint.h"
-#include "Widgets/Inspector/Providers/SourceRangeThumb.h"
+#include "Widgets/Common/SourceRangeThumb.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
 #include "Widgets/Selector/SelectorWindow.h"
 #include "Widgets/Shared/InspectorFormRow.h"

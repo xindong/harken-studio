@@ -69,6 +69,8 @@ add_library(harken_editor_common STATIC
     SegmentedControl.cpp
     SegmentedControl.h
     SwitchIndicator.h
+    SourceRangeThumb.cpp
+    SourceRangeThumb.h
     ToggleSwitch.cpp
     ToggleSwitch.h
     ValueSegmentedControl.cpp

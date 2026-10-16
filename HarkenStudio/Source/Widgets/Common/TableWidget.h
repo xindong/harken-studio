@@ -85,6 +85,7 @@ public:
     void moveColumn(int logicalColumn, int visualIndex);
     QList<int> columnOrder() const;
     void setColumns(const QString& key, const QList<TableColumn>& columns);
+    void setColumnWeights(const QString& key, const QList<int>& weights);
     int columnCount() const { return static_cast<int>(columns_.size()); }
     QLabel* headerCell(int column) const;
     void setColumnMinimumWidth(int column, int width);

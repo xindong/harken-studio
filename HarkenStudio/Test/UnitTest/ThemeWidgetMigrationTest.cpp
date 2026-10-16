@@ -28,7 +28,7 @@
 #include "Widgets/Inspector/BindingFieldEditor.h"
 #include "Widgets/Inspector/Drawers/ColorFieldDrawer.h"
 #include "Widgets/Inspector/Providers/DimensionsSectionProvider.h"
-#include "Widgets/Inspector/Providers/SourceRangeThumb.h"
+#include "Widgets/Common/SourceRangeThumb.h"
 #include "Widgets/TransitionEditor/TransitionFadeButton.h"
 
 #include <gtest/gtest.h>
