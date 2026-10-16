@@ -78,7 +78,6 @@ private:
     void populateProjectPackTable();
     void populateSettings();
     void populatePlatformControls();
-    void populateViewFilter();
     void applyNameFilter();
     void updateExportButton();
     void applyDeveloperColumns();
@@ -123,11 +122,7 @@ private:
     QPushButton*  exportBtn_ = nullptr;
     SegmentedControl* platformChipsRow_ = nullptr;
     bool          platformUpdating_ = false;
-    QWidget*      viewFilterBar_ = nullptr;
     QLineEdit*    searchEdit_ = nullptr;
-    QWidget*      viewButtonsRow_ = nullptr;
-    bool          viewUpdating_ = false;
-    QStringList   viewPlatforms_;
 
     QLineEdit* buildOutputDirEdit_ = nullptr;
     QComboBox* conversionFailurePolicyCombo_ = nullptr;

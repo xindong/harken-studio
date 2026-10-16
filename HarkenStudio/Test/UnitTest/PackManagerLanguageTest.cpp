@@ -245,7 +245,7 @@ TEST_F(PackManagerLanguageTest, ContinuousColumnResizeIsStableWithDeveloperColum
     }
 }
 
-TEST_F(PackManagerLanguageTest, PlatformSelectorsKeepContentWidthsAcrossResizeAndRefresh)
+TEST_F(PackManagerLanguageTest, ExportPlatformSelectorKeepsContentWidthsAcrossResizeAndRefresh)
 {
     panel_->setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
     auto& manager = VNX::ProjectManager::instance();
@@ -262,22 +262,18 @@ TEST_F(PackManagerLanguageTest, PlatformSelectorsKeepContentWidthsAcrossResizeAn
         for (const int width : {1000, 1800, 700}) {
             SCOPED_TRACE(width);
             resizePanel(width);
-            const auto controls = panel_->findChildren<VNX::SegmentedControl*>();
-            ASSERT_EQ(controls.size(), 2);
-            for (auto* control : controls) expectNaturalWidth(control);
             auto* selector = panel_->findChild<VNX::SegmentedControl*>("packPlatformChips");
+            ASSERT_NE(selector, nullptr);
+            expectNaturalWidth(selector);
             auto* exportButton = panel_->findChild<QPushButton*>("projectPackGenerateAllBtn");
             ASSERT_NE(exportButton, nullptr);
             EXPECT_LT(selector->mapTo(panel_.get(), QPoint(selector->width(), 0)).x(),
                       exportButton->mapTo(panel_.get(), QPoint()).x());
-            auto* filters = panel_->findChild<QWidget*>("packViewFilterButtons");
-            auto* viewBar = panel_->findChild<QWidget*>("packViewFilterBar");
-            EXPECT_EQ(filters->mapTo(viewBar, QPoint(filters->width(), 0)).x(), viewBar->width());
         }
     }
 }
 
-TEST_F(PackManagerLanguageTest, BothPlatformSelectorsCompressAndRecoverWithoutChangingSelection)
+TEST_F(PackManagerLanguageTest, ExportPlatformSelectorCompressesAndRecoversWithoutChangingSelection)
 {
     panel_->setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
     auto& manager = VNX::ProjectManager::instance();
@@ -290,23 +286,21 @@ TEST_F(PackManagerLanguageTest, BothPlatformSelectorsCompressAndRecoverWithoutCh
     for (const int width : {2800, 420, 2800, 420, 2800}) {
         SCOPED_TRACE(width);
         resizePanel(width);
-        const auto controls = panel_->findChildren<VNX::SegmentedControl*>();
-        ASSERT_EQ(controls.size(), 2);
-        for (auto* control : controls) {
-            EXPECT_TRUE(panel_->rect().contains(QRect(control->mapTo(panel_.get(), QPoint()), control->size())));
-            if (width > 420) {
-                expectNaturalWidth(control);
-            } else {
-                ASSERT_LT(control->width(), control->sizeHint().width());
-                for (int i = 0; i < selected.size(); ++i) {
-                    auto* button = control->button(i);
-                    ASSERT_NE(button, nullptr);
-                    EXPECT_TRUE(button->isVisible());
-                    EXPECT_TRUE(button->isChecked());
-                    EXPECT_EQ(button->property("segmentValue").toString(), selected[i]);
-                    EXPECT_TRUE(control->rect().contains(button->geometry()));
-                    EXPECT_NEAR(button->width(), double(control->width()) * button->sizeHint().width() / control->sizeHint().width(), 1);
-                }
+        auto* control = panel_->findChild<VNX::SegmentedControl*>("packPlatformChips");
+        ASSERT_NE(control, nullptr);
+        EXPECT_TRUE(panel_->rect().contains(QRect(control->mapTo(panel_.get(), QPoint()), control->size())));
+        if (width > 420) {
+            expectNaturalWidth(control);
+        } else {
+            ASSERT_LT(control->width(), control->sizeHint().width());
+            for (int i = 0; i < selected.size(); ++i) {
+                auto* button = control->button(i);
+                ASSERT_NE(button, nullptr);
+                EXPECT_TRUE(button->isVisible());
+                EXPECT_TRUE(button->isChecked());
+                EXPECT_EQ(button->property("segmentValue").toString(), selected[i]);
+                EXPECT_TRUE(control->rect().contains(button->geometry()));
+                EXPECT_NEAR(button->width(), double(control->width()) * button->sizeHint().width() / control->sizeHint().width(), 1);
             }
         }
         EXPECT_EQ(panel_->generationPlatforms(), selected);
