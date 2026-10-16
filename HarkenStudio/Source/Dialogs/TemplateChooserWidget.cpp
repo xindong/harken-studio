@@ -1,6 +1,7 @@
 
 #include "TemplateChooserWidget.h"
 #include "Core/FontManager.h"
+#include "Widgets/Common/DialogFormLayout.h"
 
 #include <QButtonGroup>
 #include <QFileDialog>
@@ -62,15 +63,13 @@ void TemplateChooserWidget::buildUi()
     root->setSpacing(14);
 
     {
-        auto* row = new QHBoxLayout();
+        auto* row = new DialogFormLayout();
         nameLabel_ = new QLabel(tr("Project Name:"), this);
-        nameLabel_->setMinimumWidth(110);
         nameEdit_ = new QLineEdit(QStringLiteral("MyGame_Audio"), this);
         nameEdit_->setPlaceholderText(tr("Enter project name"));
         connect(nameEdit_, &QLineEdit::textChanged,
                 this, &TemplateChooserWidget::onNameChanged);
-        row->addWidget(nameLabel_);
-        row->addWidget(nameEdit_, 1);
+        row->addRow(nameLabel_, nameEdit_);
         root->addLayout(row);
     }
 

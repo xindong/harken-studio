@@ -533,7 +533,6 @@ TEST(QtControlSkin, ApplicationStyleSheetIsDerivedFromSnapshot)
         "    background-color: #fffff4cc;\n"
         "    color: #ff000000;\n"
         "}")));
-    EXPECT_TRUE(styleSheet.contains(QStringLiteral("QPushButton[settingsRole=\"primary\"]")));
     EXPECT_TRUE(styleSheet.contains(QStringLiteral("color: #ffc0c0c0;")));
     EXPECT_TRUE(styleSheet.contains(QStringLiteral("background-color: rgba(32, 16, 0, 24);")));
     EXPECT_FALSE(styleSheet.contains(QStringLiteral("@shellMenuText@")));
@@ -564,9 +563,10 @@ TEST(QtControlSkin, ButtonStatesRemainDistinctAndDisabledIgnoresInteraction)
     const auto restore = qScopeGuard([&]() { qApp->setStyleSheet(previousStyle); });
     const auto skin = builtinSkin();
     qApp->setStyleSheet(skin.applicationStyleSheet());
-    for (const QString role : {QString(), QStringLiteral("secondary"), QStringLiteral("primary")}) {
+    for (bool isDefault : {false, true}) {
+        SCOPED_TRACE(isDefault);
         QPushButton button;
-        if (!role.isEmpty()) VNX::QtControlSkin::setSemanticProperty(&button, "settingsRole", role);
+        button.setDefault(isDefault);
         button.resize(120, 40);
         button.ensurePolished();
         const auto render = [&](QStyle::State state) {
@@ -575,6 +575,7 @@ TEST(QtControlSkin, ButtonStatesRemainDistinctAndDisabledIgnoresInteraction)
             QStyleOptionButton option;
             option.initFrom(&button);
             option.state = state;
+            if (isDefault) option.features |= QStyleOptionButton::DefaultButton;
             QPainter painter(&image);
             button.style()->drawControl(QStyle::CE_PushButton, &option, &painter, &button);
             return image;
@@ -583,11 +584,10 @@ TEST(QtControlSkin, ButtonStatesRemainDistinctAndDisabledIgnoresInteraction)
         const auto hover = render(QStyle::State_Enabled | QStyle::State_MouseOver);
         const auto pressed = render(QStyle::State_Enabled | QStyle::State_MouseOver | QStyle::State_Sunken);
         const auto disabled = render(QStyle::State_None);
-        EXPECT_NE(normal, hover) << role.toStdString();
-        EXPECT_NE(hover, pressed) << role.toStdString();
-        EXPECT_NE(normal, disabled) << role.toStdString();
-        EXPECT_EQ(disabled, render(QStyle::State_MouseOver | QStyle::State_Sunken))
-            << role.toStdString();
+        EXPECT_NE(normal, hover);
+        EXPECT_NE(hover, pressed);
+        EXPECT_NE(normal, disabled);
+        EXPECT_EQ(disabled, render(QStyle::State_MouseOver | QStyle::State_Sunken));
     }
 }
 

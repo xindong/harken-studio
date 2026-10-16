@@ -31,8 +31,9 @@ PreferencesDialog::SecretStoreAccess productionSecretStoreAccess()
 
 }
 
-PreferencesDialog::PreferencesDialog(QWidget* parent)
-    : PreferencesDialog(productionSecretStoreAccess(), ThemeManager::instance(), parent)
+PreferencesDialog::PreferencesDialog(QWidget* parent, SaveCurrentLayout saveCurrentLayout)
+    : PreferencesDialog(productionSecretStoreAccess(), ThemeManager::instance(), parent,
+                        std::move(saveCurrentLayout))
 {
 }
 
@@ -43,7 +44,7 @@ PreferencesDialog::PreferencesDialog(SecretStoreAccess secretStore, QWidget* par
 
 PreferencesDialog::PreferencesDialog(SecretStoreAccess secretStore,
                                      ThemeManager& themeManager,
-                                     QWidget* parent)
+                                     QWidget* parent, SaveCurrentLayout saveCurrentLayout)
     : SettingsShellDialog(parent)
 {
     setWindowTitle(tr("Preferences"));
@@ -51,7 +52,7 @@ PreferencesDialog::PreferencesDialog(SecretStoreAccess secretStore,
     addPage(new GeneralPage(themeManager, this));
     addPage(new ShortcutsPage(this));
 
-    auto* layoutPage = new LayoutPage(this);
+    auto* layoutPage = new LayoutPage(this, std::move(saveCurrentLayout));
     connect(layoutPage, &LayoutPage::layoutRenamed,
             this, &PreferencesDialog::layoutRenamed);
     connect(layoutPage, &LayoutPage::layoutDeleted,

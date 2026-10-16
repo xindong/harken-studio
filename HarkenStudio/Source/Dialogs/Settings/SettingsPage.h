@@ -1,8 +1,8 @@
 
 #pragma once
 
-#include <QFormLayout>
-#include <QGroupBox>
+#include "Widgets/Common/DialogFormLayout.h"
+
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -26,10 +26,9 @@ signals:
     void dirtyChanged();
 
 protected:
-    QVBoxLayout* makePageBody(const QString& title);
-    QVBoxLayout* makePageBody(QWidget* host, const QString& title);
-    QGroupBox* makeGroup(const QString& title);
-    QFormLayout* makeForm();
+    QVBoxLayout* makePageBody();
+    QWidget* makeSection(const QString& title);
+    DialogFormLayout* makeForm();
 };
 
 }

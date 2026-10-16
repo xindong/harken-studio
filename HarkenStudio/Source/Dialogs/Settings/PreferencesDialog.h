@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Dialogs/Settings/Pages/AIAgentPage.h"
+#include "Dialogs/Settings/Pages/LayoutPage.h"
 #include "Dialogs/Settings/SettingsShellDialog.h"
 
 namespace VNX {
@@ -14,11 +15,12 @@ class PreferencesDialog : public SettingsShellDialog
 
 public:
     using SecretStoreAccess = AIAgentPage::SecretStoreAccess;
+    using SaveCurrentLayout = LayoutPage::SaveCurrentLayout;
 
-    explicit PreferencesDialog(QWidget* parent = nullptr);
+    explicit PreferencesDialog(QWidget* parent = nullptr, SaveCurrentLayout saveCurrentLayout = {});
     explicit PreferencesDialog(SecretStoreAccess secretStore, QWidget* parent = nullptr);
     PreferencesDialog(SecretStoreAccess secretStore, ThemeManager& themeManager,
-                      QWidget* parent = nullptr);
+                      QWidget* parent = nullptr, SaveCurrentLayout saveCurrentLayout = {});
 
 signals:
     void aiAgentConfigApplied();

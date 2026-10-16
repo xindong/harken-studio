@@ -13,8 +13,10 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QKeySequenceEdit>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QMouseEvent>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QStackedWidget>
@@ -68,21 +70,6 @@ public:
     ProbePreferencesDialog(VNX::ThemeManager& themeManager)
         : VNX::PreferencesDialog(inertSecretStore(), themeManager, nullptr)
     {
-    }
-
-    int confirmCalls = 0;
-    bool discardAnswer = true;
-
-    void invokeReject()
-    {
-        reject();
-    }
-
-protected:
-    bool confirmDiscard() override
-    {
-        ++confirmCalls;
-        return discardAnswer;
     }
 };
 
@@ -232,39 +219,47 @@ TEST_F(SettingsApplyContractTest, SuccessfulApplyPersistsAndClosesDialog)
     EXPECT_EQ(VNX::AppSettings::instance().developerMode(), nextValue);
 }
 
-TEST_F(SettingsApplyContractTest, DirtyRejectAsksConfirmDiscard)
+TEST_F(SettingsApplyContractTest, DismissalDiscardsDraftWithoutConfirmation)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
     VNX::ThemeManager manager(
         root.path(), std::make_unique<VNX::MemorySettingsStorage>());
-    ProbePreferencesDialog dialog(manager);
-    dialog.show();
-    auto* check = developerCheck(dialog);
-    auto* apply = applyButton(dialog);
-    ASSERT_NE(check, nullptr);
-    ASSERT_NE(apply, nullptr);
-
     const bool stored = VNX::AppSettings::instance().developerMode();
-    const bool original = check->isChecked();
-    check->setChecked(!original);
+    for (int dismissal = 0; dismissal < 3; ++dismissal) {
+        SCOPED_TRACE(dismissal);
+        ProbePreferencesDialog dialog(manager);
+        dialog.show();
+        auto* check = developerCheck(dialog);
+        auto* cancel = dialog.findChild<QPushButton*>(QStringLiteral("settingsCancelButton"));
+        ASSERT_NE(check, nullptr);
+        ASSERT_NE(cancel, nullptr);
+        EXPECT_EQ(check->isChecked(), stored);
+        check->setChecked(!stored);
 
-    dialog.discardAnswer = false;
-    dialog.invokeReject();
-    EXPECT_TRUE(dialog.isVisible());
-    EXPECT_EQ(dialog.confirmCalls, 1);
-    EXPECT_TRUE(apply->isEnabled());
-    EXPECT_EQ(check->isChecked(), !original);
-    EXPECT_EQ(VNX::AppSettings::instance().developerMode(), stored);
-
-    dialog.discardAnswer = true;
-    dialog.invokeReject();
-    EXPECT_FALSE(dialog.isVisible());
-    EXPECT_EQ(dialog.confirmCalls, 2);
-    EXPECT_EQ(VNX::AppSettings::instance().developerMode(), stored);
+        bool prompted = false;
+        QTimer::singleShot(0, &dialog, [&] {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                prompted = true;
+                box->reject();
+            }
+        });
+        if (dismissal == 0)
+            cancel->click();
+        else if (dismissal == 1) {
+            QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+            QApplication::sendEvent(&dialog, &escape);
+        } else
+            dialog.close();
+        QApplication::processEvents();
+        EXPECT_FALSE(prompted);
+        EXPECT_FALSE(dialog.isVisible());
+        EXPECT_EQ(dialog.result(), QDialog::Rejected);
+        EXPECT_EQ(VNX::AppSettings::instance().developerMode(), stored);
+    }
 }
 
-TEST_F(SettingsApplyContractTest, CleanRejectSkipsConfirmDiscard)
+TEST_F(SettingsApplyContractTest, CleanRejectClosesDialog)
 {
     QTemporaryDir root;
     ASSERT_TRUE(root.isValid());
@@ -272,9 +267,9 @@ TEST_F(SettingsApplyContractTest, CleanRejectSkipsConfirmDiscard)
         root.path(), std::make_unique<VNX::MemorySettingsStorage>());
     ProbePreferencesDialog dialog(manager);
     dialog.show();
-    dialog.invokeReject();
+    dialog.reject();
     EXPECT_FALSE(dialog.isVisible());
-    EXPECT_EQ(dialog.confirmCalls, 0);
+    EXPECT_EQ(dialog.result(), QDialog::Rejected);
 }
 
 TEST_F(SettingsApplyContractTest, FailedApplyJumpsToFailingPage)

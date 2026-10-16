@@ -1,7 +1,6 @@
 
 #include "Dialogs/Settings/Pages/ShortcutsPage.h"
 
-#include "Core/QtControlSkin.h"
 #include "Core/ShortcutManager.h"
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/SearchField.h"
@@ -24,7 +23,7 @@ namespace VNX {
 ShortcutsPage::ShortcutsPage(QWidget* parent)
     : SettingsPage(parent)
 {
-    auto* body = makePageBody(tr("Shortcuts"));
+    auto* body = makePageBody();
 
     shortcutSearchEdit_ = new SearchField();
     shortcutSearchEdit_->setObjectName(QStringLiteral("shortcutSearchField"));
@@ -75,8 +74,6 @@ ShortcutsPage::ShortcutsPage(QWidget* parent)
     auto* btnRow = new QHBoxLayout();
     auto* resetBtn = new QPushButton(tr("Reset to Defaults"));
     resetBtn->setObjectName(QStringLiteral("shortcutResetButton"));
-    QtControlSkin::setSemanticProperty(resetBtn, "settingsRole",
-                                       QStringLiteral("secondary"));
     connect(resetBtn, &QPushButton::clicked, this, [this]() {
         resetShortcutsToDefaults();
     });

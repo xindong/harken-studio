@@ -1,13 +1,9 @@
 
 #include "Dialogs/Settings/SettingsShellDialog.h"
 
-#include "Core/QtControlSkin.h"
 #include "Core/ContextInfo.h"
 
-#include <QAbstractButton>
-#include <QFrame>
 #include <QHBoxLayout>
-#include <QMessageBox>
 #include <QVBoxLayout>
 
 namespace VNX {
@@ -40,12 +36,6 @@ SettingsShellDialog::SettingsShellDialog(QWidget* parent)
 
     mainLayout->addLayout(contentLayout, 1);
 
-    auto* separator = new QFrame();
-    separator->setObjectName(QStringLiteral("settingsSeparator"));
-    separator->setFrameShape(QFrame::HLine);
-    separator->setFixedHeight(1);
-    mainLayout->addWidget(separator);
-
     auto* buttonLayout = new QHBoxLayout();
     buttonLayout->setContentsMargins(16, 12, 16, 0);
     buttonLayout->setSpacing(12);
@@ -54,8 +44,6 @@ SettingsShellDialog::SettingsShellDialog(QWidget* parent)
     applyButton_ = new QPushButton(tr("Apply"));
     applyButton_->setObjectName(QStringLiteral("settingsApplyButton"));
     ContextInfo::tag(applyButton_, ContextTopic::forPanel(QStringLiteral("settings.apply")));
-    QtControlSkin::setSemanticProperty(applyButton_, "settingsRole",
-                                       QStringLiteral("primary"));
     connect(applyButton_, &QPushButton::clicked,
             this, &SettingsShellDialog::onApplyClicked);
     buttonLayout->addWidget(applyButton_);
@@ -64,8 +52,6 @@ SettingsShellDialog::SettingsShellDialog(QWidget* parent)
     cancelButton_->setObjectName(QStringLiteral("settingsCancelButton"));
     ContextInfo::tag(cancelButton_, ContextTopic::forPanel(QStringLiteral("settings.cancel")));
     cancelButton_->setAutoDefault(false);
-    QtControlSkin::setSemanticProperty(cancelButton_, "settingsRole",
-                                       QStringLiteral("secondary"));
     connect(cancelButton_, &QPushButton::clicked, this, &QDialog::reject);
     buttonLayout->addWidget(cancelButton_);
 
@@ -152,28 +138,6 @@ void SettingsShellDialog::onApplyClicked()
         committed.append(page);
     }
     accept();
-}
-
-bool SettingsShellDialog::confirmDiscard()
-{
-    QMessageBox box(this);
-    box.setIcon(QMessageBox::Question);
-    box.setWindowTitle(tr("Unsaved Changes"));
-    box.setText(tr("Discard the changes you have not applied?"));
-    QPushButton* discard = box.addButton(tr("Discard Changes"),
-                                         QMessageBox::AcceptRole);
-    QPushButton* keep = box.addButton(tr("Keep Editing"),
-                                      QMessageBox::RejectRole);
-    box.setDefaultButton(keep);
-    box.exec();
-    return box.clickedButton() == discard;
-}
-
-void SettingsShellDialog::reject()
-{
-    if (anyDirty() && !confirmDiscard())
-        return;
-    BaseDialog::reject();
 }
 
 }
