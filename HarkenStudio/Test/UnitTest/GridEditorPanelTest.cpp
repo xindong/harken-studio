@@ -149,7 +149,7 @@ VNX::ObjectRefWidget* axisControlFor(QWidget* widget, const QUuid& variableId)
     auto* grid = qobject_cast<VNX::DiscreteGridWidget*>(widget);
     const int axis = grid->boundItem()->comp<VNX::VSelection>()->matchGrid().axisIndex(variableId);
     auto* matrix = grid->findChild<VNX::MatrixTableWidget*>();
-    return qobject_cast<VNX::ObjectRefWidget*>(matrix->headerWidget(axis + 2));
+    return qobject_cast<VNX::ObjectRefWidget*>(matrix->headerWidget(axis + 3));
 }
 
 } // namespace
@@ -287,27 +287,29 @@ TEST_F(GridEditorPanelTest, MatrixEditingPreservesColumnSharesAndUsesConfigRowDe
     ASSERT_NE(matrix, nullptr);
     auto* table = matrix->table();
     EXPECT_EQ(table->currentRow(), -1);
-    table->setColumnWidth(2, table->columnWidth(2) + 30);
-    const QList<int> widths{table->columnWidth(0), table->columnWidth(1), table->columnWidth(2), table->columnWidth(3)};
-    table->setCurrentCell(1, 3);
+    table->setColumnWidth(3, table->columnWidth(3) + 30);
+    QList<int> widths;
+    for (int column = 0; column < table->columnCount(); ++column)
+        widths.append(table->columnWidth(column));
+    table->setCurrentCell(1, 4);
     ASSERT_TRUE(panel.discreteGrid()->commitCellEdit(1, 1, std::nullopt));
     drainEvents();
     EXPECT_EQ(table->currentRow(), 1);
-    EXPECT_EQ(table->currentColumn(), 3);
+    EXPECT_EQ(table->currentColumn(), 4);
     for (int column = 0; column < widths.size(); ++column)
         EXPECT_EQ(table->columnWidth(column), widths[column]);
     EXPECT_EQ(table->horizontalScrollBar()->maximum(), 0);
-    table->openPersistentEditor(table->item(1, 3));
+    table->openPersistentEditor(table->item(1, 4));
     QPointer<QComboBox> editor = qobject_cast<QComboBox*>(
-        table->indexWidget(table->model()->index(1, 3)));
+        table->indexWidget(table->model()->index(1, 4)));
     ASSERT_NE(editor, nullptr);
     editor->setCurrentIndex(editor->findData(1));
     emit VNX::ThemeManager::instance().themeChanged(VNX::ThemeManager::instance().snapshot());
     drainEvents();
     ASSERT_NE(editor, nullptr);
     EXPECT_EQ(editor->currentData().toInt(), 1);
-    EXPECT_EQ(table->columnWidth(3), widths[3]);
-    table->closePersistentEditor(table->item(1, 3));
+    EXPECT_EQ(table->columnWidth(4), widths[4]);
+    table->closePersistentEditor(table->item(1, 4));
     auto* remove = panel.findChild<QToolButton*>(QStringLiteral("gridRemoveBtn"));
     ASSERT_NE(remove, nullptr);
     remove->click();
@@ -498,7 +500,7 @@ TEST_F(GridEditorPanelTest, WildcardChoiceDoesNotCollideWithARealLabelNamedAny)
     panel.show();
     drainEvents();
     auto* table = panel.discreteGrid()->table();
-    auto* cell = table->item(0, 2);
+    auto* cell = table->item(0, 3);
     auto* viewport = table->viewport();
     const auto center = table->visualItemRect(cell).center();
     clickWidget(viewport, center);
@@ -512,7 +514,7 @@ TEST_F(GridEditorPanelTest, WildcardChoiceDoesNotCollideWithARealLabelNamedAny)
     clickWidget(choices->viewport(), choices->visualRect(choices->model()->index(0, 0)).center());
     drainEvents();
     EXPECT_EQ(selection()->matchGrid().cellAt(0, 0), std::nullopt);
-    EXPECT_FALSE(table->item(0, 2)->data(Qt::UserRole).isValid());
+    EXPECT_FALSE(table->item(0, 3)->data(Qt::UserRole).isValid());
     EXPECT_EQ(undoStack()->count(), base + 1);
     undoStack()->undo();
     drainEvents();
@@ -533,7 +535,7 @@ TEST_F(GridEditorPanelTest, WideRangeCellAcceptsATypedValueOutsideTheListedLabel
     panel.show();
     drainEvents();
     auto* table = panel.discreteGrid()->table();
-    auto* cell = table->item(0, 2);
+    auto* cell = table->item(0, 3);
     table->openPersistentEditor(cell);
     auto* editor = qobject_cast<QComboBox*>(table->indexWidget(table->indexFromItem(cell)));
     ASSERT_NE(editor, nullptr);
@@ -547,8 +549,8 @@ TEST_F(GridEditorPanelTest, WideRangeCellAcceptsATypedValueOutsideTheListedLabel
     EXPECT_EQ(cellValue(0, 0), std::optional<int>(42));
     EXPECT_EQ(undoStack()->count(), base + 1);
 
-    table->openPersistentEditor(table->item(0, 2));
-    editor = qobject_cast<QComboBox*>(table->indexWidget(table->indexFromItem(table->item(0, 2))));
+    table->openPersistentEditor(table->item(0, 3));
+    editor = qobject_cast<QComboBox*>(table->indexWidget(table->indexFromItem(table->item(0, 3))));
     ASSERT_NE(editor, nullptr);
     editor->lineEdit()->setText(QStringLiteral("3.5"));
     QApplication::sendEvent(editor, &enter);
@@ -575,7 +577,7 @@ TEST_F(GridEditorPanelTest, MissingLabelSurvivesUnchangedEditingAndExplicitRepla
     auto* grid = panel.discreteGrid();
     auto* table = grid->table();
     const auto openEditor = [&] {
-        auto* cell = table->item(0, 2);
+        auto* cell = table->item(0, 3);
         table->openPersistentEditor(cell);
         return qobject_cast<QComboBox*>(table->indexWidget(table->indexFromItem(cell)));
     };
@@ -588,7 +590,7 @@ TEST_F(GridEditorPanelTest, MissingLabelSurvivesUnchangedEditingAndExplicitRepla
     EXPECT_EQ(undoStack()->index(), base);
     EXPECT_EQ(undoStack()->count(), base);
     EXPECT_EQ(grid->winnerRow(), 1);
-    table->closePersistentEditor(table->item(0, 2));
+    table->closePersistentEditor(table->item(0, 3));
     for (int replacement : {-1, 1, 42}) {
         SCOPED_TRACE(replacement);
         editor = openEditor();
@@ -629,7 +631,7 @@ TEST_F(GridEditorPanelTest, HeaderDragReordersDecisiveOrderAsOneUndoStep)
     EXPECT_EQ(panel.discreteGrid()->winnerRow(), 1);
 
     const int base = undoStack()->count();
-    panel.discreteGrid()->table()->horizontalHeader()->moveSection(2, 3);
+    panel.discreteGrid()->table()->horizontalHeader()->moveSection(3, 4);
     drainEvents();
 
     ASSERT_EQ(selection()->matchGrid().axes.size(), 2u);
@@ -668,7 +670,7 @@ TEST_F(GridEditorPanelTest, HeaderHandlesReorderPriorityWithDisplayAnimationAndC
     ASSERT_NE(chips[1], nullptr);
     const int handleWidth = VNX::ThemeManager::instance().metrics().table.compactColumnWidth;
     const QPoint from(chips[0]->parentWidget()->x() - handleWidth / 2, header->height() / 2);
-    const QPoint to(header->sectionViewportPosition(3) + header->sectionSize(3) * 3 / 4,
+    const QPoint to(header->sectionViewportPosition(4) + header->sectionSize(4) * 3 / 4,
                     from.y());
     auto* viewport = header->viewport();
     ASSERT_EQ(viewport->childAt(from), nullptr);
@@ -699,7 +701,7 @@ TEST_F(GridEditorPanelTest, HeaderHandlesReorderPriorityWithDisplayAnimationAndC
     EXPECT_EQ(chips[1]->mapTo(viewport, QPoint()).x(), secondX);
     EXPECT_EQ(undoStack()->count(), base);
     EXPECT_EQ(grid->table()->currentRow(), -1);
-    EXPECT_EQ(matrix->selectedColumn(), 2);
+    EXPECT_EQ(matrix->selectedColumn(), 3);
     moveMouse(QEvent::MouseButtonPress, from);
     moveMouse(QEvent::MouseMove, to);
     moveMouse(QEvent::MouseButtonRelease, to);
@@ -709,7 +711,7 @@ TEST_F(GridEditorPanelTest, HeaderHandlesReorderPriorityWithDisplayAnimationAndC
     EXPECT_EQ(grid->winnerRow(), 1);
     EXPECT_EQ(undoStack()->count(), base + 1);
     EXPECT_EQ(grid->table()->currentRow(), -1);
-    EXPECT_EQ(matrix->selectedColumn(), 3);
+    EXPECT_EQ(matrix->selectedColumn(), 4);
     EXPECT_EQ(cellValue(0, 1), std::optional<int>(0));
     EXPECT_EQ(cellValue(1, 0), std::optional<int>(0));
     auto* intensityControl = axisControlFor(grid, varIntensity_->guid);
@@ -718,7 +720,7 @@ TEST_F(GridEditorPanelTest, HeaderHandlesReorderPriorityWithDisplayAnimationAndC
     ASSERT_NE(surfaceControl, nullptr);
     EXPECT_LT(intensityControl->mapTo(header->viewport(), QPoint()).x(),
               surfaceControl->mapTo(header->viewport(), QPoint()).x());
-    for (int column : {0, 1}) {
+    for (int column : {0, 1, 2}) {
         const QPoint locked(header->sectionViewportPosition(column) + header->sectionSize(column) / 2,
                             header->height() / 2);
         dragWidget(viewport, locked, to);
@@ -729,7 +731,7 @@ TEST_F(GridEditorPanelTest, HeaderHandlesReorderPriorityWithDisplayAnimationAndC
     undoStack()->undo();
     drainEvents();
     EXPECT_EQ(selection()->matchGrid().axes, (std::vector<QUuid>{varSurface_->guid, varIntensity_->guid}));
-    EXPECT_EQ(matrix->selectedColumn(), 2);
+    EXPECT_EQ(matrix->selectedColumn(), 3);
     EXPECT_EQ(grid->winnerRow(), 0);
     const auto beforeUnbind = selection()->matchGrid().toJson();
     const int undoIndex = undoStack()->index();
@@ -740,7 +742,7 @@ TEST_F(GridEditorPanelTest, HeaderHandlesReorderPriorityWithDisplayAnimationAndC
     finishAnimations();
     EXPECT_EQ(selection()->matchGrid().toJson(), beforeUnbind);
     EXPECT_EQ(undoStack()->index(), undoIndex);
-    EXPECT_EQ(grid->table()->columnCount(), 3);
+    EXPECT_EQ(grid->table()->columnCount(), 4);
     EXPECT_EQ(grid->table()->rowCount(), 0);
 }
 
@@ -811,7 +813,7 @@ TEST_F(GridEditorPanelTest, AxisOrderDecidesTheTieBreakWinner)
                    rowJson(childB_, QJsonArray{QJsonValue(), 0})}));
     EXPECT_EQ(panel.discreteGrid()->winnerRow(), 0);
 
-    panel.discreteGrid()->table()->horizontalHeader()->moveSection(2, 3);
+    panel.discreteGrid()->table()->horizontalHeader()->moveSection(3, 4);
     drainEvents();
     EXPECT_EQ(panel.discreteGrid()->winnerRow(), 1);
 }
@@ -828,14 +830,14 @@ TEST_F(GridEditorPanelTest, DuplicateAndUnreachableRulesStayVisibleUntilEditedAn
     auto* table = grid->table();
     EXPECT_EQ(grid->winnerRow(), 0);
     EXPECT_EQ(table->item(0, 0)->data(VNX::TableTextRole).toInt(), static_cast<int>(VNX::TableTextState::Normal));
-    const auto duplicateTip = table->item(1, 2)->toolTip();
-    const auto unreachableTip = table->item(2, 2)->toolTip();
+    const auto duplicateTip = table->item(1, 3)->toolTip();
+    const auto unreachableTip = table->item(2, 3)->toolTip();
     EXPECT_FALSE(duplicateTip.isEmpty());
     EXPECT_FALSE(unreachableTip.isEmpty());
     EXPECT_NE(duplicateTip, unreachableTip);
     for (int row : {1, 2}) {
         EXPECT_EQ(table->item(row, 0)->data(VNX::TableTextRole).toInt(), static_cast<int>(VNX::TableTextState::Warning));
-        EXPECT_EQ(table->item(row, 2)->background().style(), Qt::NoBrush);
+        EXPECT_EQ(table->item(row, 3)->background().style(), Qt::NoBrush);
         auto* ref = qobject_cast<VNX::ObjectRefWidget*>(table->cellWidget(row, 1));
         ASSERT_NE(ref, nullptr);
         EXPECT_EQ(ref->toolTip(), table->item(row, 1)->toolTip());
@@ -854,38 +856,38 @@ TEST_F(GridEditorPanelTest, DuplicateAndUnreachableRulesStayVisibleUntilEditedAn
     ASSERT_TRUE(rehearsal.setOverride(varSurface_->guid, 1.0f));
     drainEvents();
     EXPECT_EQ(grid->winnerRow(), -1);
-    EXPECT_EQ(table->item(1, 2)->toolTip(), duplicateTip);
+    EXPECT_EQ(table->item(1, 3)->toolTip(), duplicateTip);
     ASSERT_TRUE(rehearsal.setOverride(varSurface_->guid, 0.0f));
     drainEvents();
-    EXPECT_EQ(table->item(1, 2)->toolTip(), duplicateTip);
+    EXPECT_EQ(table->item(1, 3)->toolTip(), duplicateTip);
     EXPECT_EQ(selection()->selections.toJson(), authored);
     EXPECT_EQ(undoStack()->count(), undoCount);
 
     ASSERT_TRUE(grid->commitCellEdit(1, 0, 1));
     drainEvents();
     EXPECT_EQ(table->item(1, 0)->data(VNX::TableTextRole).toInt(), static_cast<int>(VNX::TableTextState::Normal));
-    EXPECT_LT(table->item(1, 2)->toolTip().size(), duplicateTip.size());
-    EXPECT_EQ(table->item(2, 2)->toolTip(), unreachableTip);
+    EXPECT_LT(table->item(1, 3)->toolTip().size(), duplicateTip.size());
+    EXPECT_EQ(table->item(2, 3)->toolTip(), unreachableTip);
     ASSERT_TRUE(grid->commitCellEdit(2, 0, std::nullopt));
     drainEvents();
     EXPECT_EQ(table->item(2, 0)->data(VNX::TableTextRole).toInt(), static_cast<int>(VNX::TableTextState::Normal));
-    EXPECT_LT(table->item(2, 2)->toolTip().size(), unreachableTip.size());
+    EXPECT_LT(table->item(2, 3)->toolTip().size(), unreachableTip.size());
     EXPECT_EQ(grid->winnerRow(), 0);
     EXPECT_EQ(undoStack()->count(), undoCount + 2);
     undoStack()->undo();
     undoStack()->undo();
     drainEvents();
     EXPECT_EQ(selection()->selections.toJson(), authored);
-    EXPECT_EQ(table->item(1, 2)->toolTip(), duplicateTip);
+    EXPECT_EQ(table->item(1, 3)->toolTip(), duplicateTip);
     EXPECT_EQ(table->item(1, 0)->data(VNX::TableTextRole).toInt(), static_cast<int>(VNX::TableTextState::Warning));
     EXPECT_EQ(table->item(2, 0)->data(VNX::TableTextRole).toInt(), static_cast<int>(VNX::TableTextState::Warning));
-    EXPECT_EQ(table->item(2, 2)->toolTip(), unreachableTip);
+    EXPECT_EQ(table->item(2, 3)->toolTip(), unreachableTip);
 
     ASSERT_TRUE(grid->commitRemoveAxis(0));
     drainEvents();
     EXPECT_TRUE(selection()->matchGrid().axes.empty());
     ASSERT_EQ(table->rowCount(), 3);
-    EXPECT_EQ(table->columnCount(), 3);
+    EXPECT_EQ(table->columnCount(), 4);
     EXPECT_FALSE(table->item(1, 1)->toolTip().isEmpty());
     EXPECT_FALSE(table->item(2, 1)->toolTip().isEmpty());
     EXPECT_NE(table->item(1, 1)->toolTip(), table->item(2, 1)->toolTip());
@@ -894,8 +896,8 @@ TEST_F(GridEditorPanelTest, DuplicateAndUnreachableRulesStayVisibleUntilEditedAn
     undoStack()->undo();
     drainEvents();
     EXPECT_EQ(selection()->selections.toJson(), authored);
-    EXPECT_EQ(table->item(1, 2)->toolTip(), duplicateTip);
-    EXPECT_EQ(table->item(2, 2)->toolTip(), unreachableTip);
+    EXPECT_EQ(table->item(1, 3)->toolTip(), duplicateTip);
+    EXPECT_EQ(table->item(2, 3)->toolTip(), unreachableTip);
 }
 
 TEST_F(GridEditorPanelTest, RestoredTargetRefreshesItsInformationWithoutLosingDiagnosticsOrPendingSelection)
@@ -972,8 +974,8 @@ TEST_F(GridEditorPanelTest, StepLabelsAndPreviewChangesMarkTheWinnerWithoutSelec
     VNX::GridEditorPanel panel;
     panel.bindItem(container_);
     auto* grid = panel.discreteGrid();
-    EXPECT_EQ(grid->table()->item(0, 2)->text(), variable->labels[0].name);
-    EXPECT_EQ(grid->table()->item(1, 2)->text(), variable->labels[1].name);
+    EXPECT_EQ(grid->table()->item(0, 3)->text(), variable->labels[0].name);
+    EXPECT_EQ(grid->table()->item(1, 3)->text(), variable->labels[1].name);
     EXPECT_EQ(grid->winnerRow(), 0);
 
     VNX::ProjectManager::instance().variableRehearsal().setOverride(varSurface_->guid, 1.0f);
@@ -1032,7 +1034,7 @@ TEST_F(GridEditorPanelTest, AuditionUpdatesWinnerWithoutInterruptingCellEdit)
     drainEvents();
     auto* grid = panel.discreteGrid();
     auto* table = grid->table();
-    auto* cell = table->item(0, 2);
+    auto* cell = table->item(0, 3);
     table->openPersistentEditor(cell);
     QPointer<QComboBox> editor = qobject_cast<QComboBox*>(table->indexWidget(table->indexFromItem(cell)));
     ASSERT_NE(editor, nullptr);
@@ -1147,14 +1149,14 @@ TEST_F(GridEditorPanelTest, DeletedVariableRemovesItsAxisAndUndoRestoresWinner)
     drainEvents();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     EXPECT_EQ(container_->comp<VNX::VSelection>()->matchGrid().axisIndex(variableId), -1);
-    EXPECT_EQ(grid->table()->columnCount(), 3);
+    EXPECT_EQ(grid->table()->columnCount(), 4);
     EXPECT_EQ(grid->winnerRow(), 0);
 
     undoStack()->undo();
     drainEvents();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     ASSERT_NE(manager.findItemByGuid(variableId), nullptr);
-    EXPECT_EQ(grid->table()->columnCount(), 4);
+    EXPECT_EQ(grid->table()->columnCount(), 5);
     auto* restoredControl = axisControlFor(grid, variableId);
     ASSERT_NE(restoredControl, nullptr);
     EXPECT_TRUE(restoredControl->isEnabled());
@@ -1412,12 +1414,12 @@ TEST_F(GridEditorPanelTest, EmptyMatchesCanBeAuthoredThroughTheHeaderAndFooter)
     auto* grid = panel.discreteGrid();
     auto* matrix = grid->findChild<VNX::MatrixTableWidget*>();
     ASSERT_EQ(grid->table()->rowCount(), 0);
-    ASSERT_EQ(grid->table()->columnCount(), 3);
+    ASSERT_EQ(grid->table()->columnCount(), 4);
     EXPECT_EQ(grid->table()->horizontalHeaderItem(0)->text(), QStringLiteral("#"));
     ASSERT_FALSE(grid->table()->verticalHeader()->isVisibleTo(grid));
     const auto selectionsBefore = selection()->selections.shared.occurrenceRows();
     const int base = undoStack()->count();
-    auto* ref = qobject_cast<VNX::ObjectRefWidget*>(matrix->headerWidget(2));
+    auto* ref = qobject_cast<VNX::ObjectRefWidget*>(matrix->headerWidget(3));
     ASSERT_NE(ref, nullptr);
     EXPECT_EQ(ref->currentObjectID(), 0u);
     auto* tree = openGridSelector(ref);
@@ -1452,7 +1454,7 @@ TEST_F(GridEditorPanelTest, EmptyMatchesCanBeAuthoredThroughTheHeaderAndFooter)
     drainEvents();
     EXPECT_TRUE(selection()->matchGrid().empty());
     EXPECT_EQ(grid->table()->rowCount(), 0);
-    EXPECT_EQ(grid->table()->columnCount(), 3);
+    EXPECT_EQ(grid->table()->columnCount(), 4);
     EXPECT_EQ(selection()->selections.shared.occurrenceRows(), selectionsBefore);
 }
 
@@ -1522,7 +1524,7 @@ TEST_F(GridEditorPanelTest, EditableHeadersPreserveConditionsAndMembershipThroug
     const auto beforeTable = selection()->selections.shared;
     const auto ruleOrdinal = selection()->matchGrid().rows.front().stableRuleOrdinal;
     ASSERT_TRUE(ruleOrdinal.has_value());
-    auto* ref = qobject_cast<VNX::ObjectRefWidget*>(matrix->headerWidget(2));
+    auto* ref = qobject_cast<VNX::ObjectRefWidget*>(matrix->headerWidget(3));
     ASSERT_NE(ref, nullptr);
     EXPECT_FALSE(ref->isReadOnly());
     EXPECT_TRUE(grid->findChildren<VNX::RehearsalSlider*>().isEmpty());
@@ -1669,15 +1671,15 @@ TEST_F(GridEditorPanelTest, AxisSelectorReopensWithNewVariableWithoutClosingCell
         VNX::SelectorWindow::dismiss();
     }
     auto* table = panel.discreteGrid()->table();
-    table->openPersistentEditor(table->item(0, 2));
-    auto* edit = qobject_cast<QComboBox*>(table->indexWidget(table->indexFromItem(table->item(0, 2))));
+    table->openPersistentEditor(table->item(0, 3));
+    auto* edit = qobject_cast<QComboBox*>(table->indexWidget(table->indexFromItem(table->item(0, 3))));
     ASSERT_NE(edit, nullptr);
     edit->setCurrentIndex(edit->findData(1));
     auto* created = VNX::ProjectManager::instance().createItem(
         nullptr, QStringLiteral("CreatedWhileEditing"), VNX::ProjectItem::Type::Variable);
     ASSERT_NE(created, nullptr);
     drainEvents();
-    EXPECT_EQ(table->indexWidget(table->indexFromItem(table->item(0, 2))), edit);
+    EXPECT_EQ(table->indexWidget(table->indexFromItem(table->item(0, 3))), edit);
     EXPECT_EQ(edit->currentData().toInt(), 1);
     for (const QString& name : {QStringLiteral("gridAddAxisRef")}) {
         auto* adder = panel.findChild<VNX::ObjectRefWidget*>(name);
@@ -1701,13 +1703,13 @@ TEST_F(GridEditorPanelTest, DiscreteAxisCanBeRemovedWithoutSelectingRows)
     ASSERT_NE(remove, nullptr);
     EXPECT_FALSE(remove->isEnabled());
     auto* header = widget->table()->horizontalHeader();
-    const QPoint position(header->sectionViewportPosition(3) + header->sectionSize(3) / 2,
+    const QPoint position(header->sectionViewportPosition(4) + header->sectionSize(4) / 2,
                           header->height() - 1);
     clickWidget(header->viewport(), position);
     EXPECT_FALSE(widget->table()->selectionModel()->hasSelection());
     EXPECT_TRUE(remove->isEnabled());
     auto* matrix = widget->findChild<VNX::MatrixTableWidget*>();
-    EXPECT_EQ(matrix->selectedColumn(), 3);
+    EXPECT_EQ(matrix->selectedColumn(), 4);
     auto* ref = axisControlFor(widget, varIntensity_->guid);
     ASSERT_NE(ref, nullptr);
     bool menuOpened = false;
@@ -1728,14 +1730,14 @@ TEST_F(GridEditorPanelTest, DiscreteAxisCanBeRemovedWithoutSelectingRows)
     EXPECT_FALSE(widget->table()->selectionModel()->hasSelection());
     EXPECT_EQ(selection()->matchGrid().axes, std::vector<QUuid>{varSurface_->guid});
     EXPECT_EQ(undoStack()->count(), base + 1);
-    EXPECT_EQ(matrix->selectedColumn(), 2);
+    EXPECT_EQ(matrix->selectedColumn(), 3);
     ref = axisControlFor(widget, varSurface_->guid);
     const int handleWidth = VNX::ThemeManager::instance().metrics().table.compactColumnWidth;
     const QPoint handle(ref->parentWidget()->x() - handleWidth / 2, header->height() / 2);
     matrix->clearSelection();
     EXPECT_FALSE(remove->isEnabled());
     clickWidget(header->viewport(), handle);
-    EXPECT_EQ(matrix->selectedColumn(), 2);
+    EXPECT_EQ(matrix->selectedColumn(), 3);
     EXPECT_TRUE(remove->isEnabled());
     remove->click();
     drainEvents();

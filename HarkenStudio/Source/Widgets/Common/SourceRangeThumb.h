@@ -10,7 +10,7 @@
 
 namespace VNX {
 
-class SourceRangeThumb final : public QWidget
+class SourceRangeThumb : public QWidget
 {
     Q_OBJECT
 
@@ -18,6 +18,7 @@ public:
     explicit SourceRangeThumb(QWidget* parent = nullptr);
 
     void setSource(const SoundSourceDef& source, const AssetInfo* asset);
+    void clearSource(const QString& text = {});
 
 signals:
     void clicked();
@@ -29,7 +30,8 @@ protected:
 private:
     SoundSourceDef source_;
     std::optional<AssetInfo> asset_;
-    WaveformPeakData peaks_;
+    std::shared_ptr<const WaveformPeakData> peaks_;
+    QString emptyText_;
     bool sourceMissing_ = true;
 };
 

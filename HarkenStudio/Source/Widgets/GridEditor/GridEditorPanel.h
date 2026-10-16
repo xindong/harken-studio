@@ -50,6 +50,7 @@ signals:
     void pinToggled(bool pinned);
     void navigateToItem(uint32_t objectID);
     void locateItem(uint32_t objectID);
+    void sourceEditorRequested(const QUuid& soundGuid, const QUuid& entryId);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

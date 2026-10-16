@@ -1,4 +1,4 @@
-#include "Widgets/Inspector/Providers/SourceRangeThumb.h"
+#include "SourceRangeThumb.h"
 
 #include "Core/SoundSourceSemantics.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
@@ -43,31 +43,42 @@ SourceRangeThumb::SourceRangeThumb(QWidget* parent)
 
 void SourceRangeThumb::setSource(const SoundSourceDef& source, const AssetInfo* asset)
 {
+    emptyText_.clear();
     source_ = source;
     asset_ = asset ? std::optional<AssetInfo>{*asset} : std::nullopt;
-    peaks_ = {};
     sourceMissing_ = !AssetRegistry::instance().sourceFileExists(source.sourceId);
     setEnabled(!sourceMissing_);
     setCursor(sourceMissing_ ? Qt::ArrowCursor : Qt::PointingHandCursor);
-    if (!sourceMissing_ && asset && !asset->absolutePath.isEmpty())
-        WaveformCache::load(asset->absolutePath, peaks_);
+    peaks_ = !sourceMissing_ && asset && !asset->absolutePath.isEmpty()
+        ? WaveformCache::loadShared(asset->absolutePath) : nullptr;
     const auto range = SoundSourceSemantics::effectiveRange(source_, asset);
     const bool warning = !sourceMissing_ && range && !range->intact();
     QtControlSkin::setSemanticProperty(this, "rangeWarning", warning);
     update();
 }
 
+void SourceRangeThumb::clearSource(const QString& text)
+{
+    setSource({}, nullptr);
+    emptyText_ = text;
+}
+
 void SourceRangeThumb::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     QtControlSkin::paintFieldFrame(painter, this);
+    const QRect inner = rect().adjusted(2, 2, -2, -2);
+    if (!emptyText_.isEmpty()) {
+        painter.setPen(ThemeManager::instance().colors().textMuted);
+        painter.drawText(inner, Qt::AlignCenter, emptyText_);
+        return;
+    }
     if (sourceMissing_) return;
     painter.setRenderHint(QPainter::Antialiasing);
     const auto& colors = ThemeManager::instance().colors();
     const auto& style = ThemeManager::instance().snapshot()->domains.waveform;
-    const QRect inner = rect().adjusted(2, 2, -2, -2);
-    if (peaks_.isValid()) {
-        WaveformRenderer::render(painter, inner, peaks_, style);
+    if (peaks_ && peaks_->isValid()) {
+        WaveformRenderer::render(painter, inner, *peaks_, style);
     } else {
         painter.setPen(colors.textMuted);
         painter.drawText(inner, Qt::AlignCenter,

@@ -115,8 +115,6 @@ add_library(harken_editor_inspector STATIC
     Providers/SelectionSectionProvider.h
     Providers/SourcesSectionProvider.cpp
     Providers/SourcesSectionProvider.h
-    Providers/SourceRangeThumb.cpp
-    Providers/SourceRangeThumb.h
     Providers/StepsSectionProvider.cpp
     Providers/StepsSectionProvider.h
     # Attenuation inspector S1: Dimensions list (one row per dimension type with

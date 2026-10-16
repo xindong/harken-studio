@@ -15,7 +15,7 @@
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Inspector/InspectorCustomizationBootstrap.h"
 #include "Widgets/Inspector/InspectorCustomizationRegistry.h"
-#include "Widgets/Inspector/Providers/SourceRangeThumb.h"
+#include "Widgets/Common/SourceRangeThumb.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
 #include "Widgets/SourceEditor/SourceRangeEditor.h"
 #include "Widgets/SourceEditor/SourceEditorWaveformView.h"

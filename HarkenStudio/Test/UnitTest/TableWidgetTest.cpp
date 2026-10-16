@@ -734,6 +734,18 @@ TEST_F(TableWidgetTest, CellEditorsShareSpaceThroughResizingHidingAndMovingColum
         table.setColumnVisible(1, true);
         check();
         EXPECT_EQ(cell->width(), initialWidth);
+        const QString alternateLayout = QStringLiteral("CellGeometryAlternate%1").arg(count);
+        table.setColumnWeights(alternateLayout, {1, 3});
+        check();
+        EXPECT_LT(cell->width(), initialWidth);
+        const int alternateWidth = cell->width();
+        table.setColumnWeights(QStringLiteral("CellGeometry%1").arg(count), {1, 1});
+        check();
+        EXPECT_EQ(cell->width(), initialWidth);
+        table.setColumnWeights(alternateLayout, {1, 3});
+        check();
+        EXPECT_EQ(cell->width(), alternateWidth);
+        EXPECT_EQ(text->text(), QStringLiteral("unfinished text"));
         table.moveColumn(0, 1);
         check();
         EXPECT_GT(cell->x(), other->x());

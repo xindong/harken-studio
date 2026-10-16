@@ -186,6 +186,19 @@ QLabel* TableWidget::headerCell(int column) const
     return labels_.at(column);
 }
 
+void TableWidget::setColumnWeights(const QString& key, const QList<int>& weights)
+{
+    Q_ASSERT(weights.size() == columns_.size());
+    QStringList keys;
+    for (int i = 0; i < columns_.size(); ++i) {
+        columns_[i].weight = weights[i];
+        keys.append(columns_[i].id);
+    }
+    columnLayout_ = TableColumnLayout(weights);
+    columnLayout_.setKey(key, keys);
+    scheduleLayout();
+}
+
 void TableWidget::setColumnMinimumWidth(int column, int width)
 {
     columns_[column].minimumWidth = width;

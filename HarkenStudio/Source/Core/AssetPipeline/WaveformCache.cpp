@@ -45,6 +45,21 @@ QHash<QString, quint64>& waveformRevisions()
     return revisions;
 }
 
+struct SharedWaveform
+{
+    qint64 sourceSize;
+    qint64 sourceMtime;
+    qint64 cacheSize;
+    qint64 cacheMtime;
+    std::weak_ptr<const WaveformPeakData> data;
+};
+
+QHash<QString, SharedWaveform>& sharedWaveforms()
+{
+    static QHash<QString, SharedWaveform> waveforms;
+    return waveforms;
+}
+
 std::atomic<quint64>& waveformRevisionCounter()
 {
     static std::atomic<quint64> counter{0};
@@ -167,6 +182,7 @@ bool WaveformCache::remove(const QString& audioFilePath)
 {
     QMutexLocker lock(&waveformWriteMutex());
     waveformRevisions().remove(normalizedAudioPath(audioFilePath));
+    sharedWaveforms().remove(normalizedAudioPath(audioFilePath));
     QString path = cachePath(audioFilePath);
     if (QFile::exists(path)) {
         return QFile::remove(path);
@@ -314,6 +330,42 @@ bool WaveformCache::generateForRevision(const QString& audioFilePath,
                     sourceFileSize, sourceMtime, revision);
 }
 
+
+std::shared_ptr<const WaveformPeakData> WaveformCache::loadShared(const QString& audioFilePath)
+{
+    const QString path = normalizedAudioPath(audioFilePath);
+    QMutexLocker lock(&waveformWriteMutex());
+    auto& waveforms = sharedWaveforms();
+    const QFileInfo sourceInfo(path);
+    const QFileInfo cacheInfo(cachePath(path));
+    if (!sourceInfo.exists() || !cacheInfo.exists()) {
+        waveforms.remove(path);
+        return {};
+    }
+
+    const qint64 sourceSize = sourceInfo.size();
+    const qint64 sourceMtime = sourceInfo.lastModified().toMSecsSinceEpoch();
+    const qint64 cacheSize = cacheInfo.size();
+    const qint64 cacheMtime = cacheInfo.lastModified().toMSecsSinceEpoch();
+    const auto existing = waveforms.constFind(path);
+    if (existing != waveforms.cend()
+        && existing->sourceSize == sourceSize && existing->sourceMtime == sourceMtime
+        && existing->cacheSize == cacheSize && existing->cacheMtime == cacheMtime) {
+        if (auto data = existing->data.lock())
+            return data;
+    }
+
+    waveforms.removeIf([](QHash<QString, SharedWaveform>::iterator it) {
+        return it->data.expired();
+    });
+    auto data = std::make_shared<WaveformPeakData>();
+    if (!load(path, *data)) {
+        waveforms.remove(path);
+        return {};
+    }
+    waveforms.insert(path, {sourceSize, sourceMtime, cacheSize, cacheMtime, data});
+    return data;
+}
 
 bool WaveformCache::load(const QString& audioFilePath, WaveformPeakData& outData)
 {
@@ -662,6 +714,7 @@ bool WaveformCache::writeVKD(const QString& vkdPath,
         QFile::remove(tempPath);
         return false;
     }
+    sharedWaveforms().remove(normalizedAudioPath(audioFilePath));
     QFile::remove(vkdPath);
     if (!QFile::rename(tempPath, vkdPath)) {
         qWarning() << "[WaveformCache] Failed to rename temp VKD to final:" << vkdPath;

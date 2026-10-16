@@ -1,5 +1,6 @@
 #include "DiscreteGridWidget.h"
 #include "GridEditorWidget.h"
+#include "SelectionWaveform.h"
 
 #include "Core/ActionManager.h"
 #include "Core/Components/VSelection.h"
@@ -38,6 +39,7 @@ namespace VNX {
 
 namespace {
 
+constexpr int kFirstAxisColumn = 3;
 constexpr int GridBaseToolTipRole = Qt::UserRole + 1;
 
 QString variableKindName(VariableKind kind)
@@ -76,7 +78,7 @@ public:
         edit->setEditable(true);
         edit->setInsertPolicy(QComboBox::NoInsert);
         edit->addItem(tr("* (Any)"), QVariant());
-        if (const auto* variable = variable_(index.column() - 2)) {
+        if (const auto* variable = variable_(index.column() - kFirstAxisColumn)) {
             const double begin = std::max(0.0, std::ceil(static_cast<double>(variable->rangeMin)));
             const double end = std::min(static_cast<double>(VariableSemantics::kStepExactIntBound),
                                        std::floor(static_cast<double>(variable->rangeMax)));
@@ -130,7 +132,7 @@ public:
             if (!ok || value < 0 || value > VariableSemantics::kStepExactIntBound) return;
             cell = value;
         }
-        commit_(index.row(), index.column() - 2, cell);
+        commit_(index.row(), index.column() - kFirstAxisColumn, cell);
     }
 
 private:
@@ -181,7 +183,7 @@ DiscreteGridWidget::DiscreteGridWidget(QWidget* parent)
         bool referenced = axis >= 0;
         if (axis >= 0 && axis < static_cast<int>(axisHeaderRefs_.size())) {
             axisHeaderRefs_[axis]->setCurrentObjectID(item->objectID);
-            table_->horizontalHeaderItem(axis + 2)->setToolTip(axisHeaderRefs_[axis]->toolTip());
+            table_->horizontalHeaderItem(axis + kFirstAxisColumn)->setToolTip(axisHeaderRefs_[axis]->toolTip());
         }
         for (int row = 0; row < static_cast<int>(grid_.rows.size()); ++row) {
             if (grid_.rows[row].target == item->guid) {
@@ -249,7 +251,7 @@ void DiscreteGridWidget::buildUi()
     matrix_ = new MatrixTableWidget(this);
     table_ = matrix_->table();
     table_->setObjectName(QStringLiteral("discreteGridTable"));
-    matrix_->setColumnsReorderable(true, 2);
+    matrix_->setColumnsReorderable(true, kFirstAxisColumn);
     matrix_->setRowMoveHandler([this](int from, int to) { commitMoveRow(from, to); });
     table_->setEditTriggers(QAbstractItemView::EditKeyPressed);
     table_->setItemDelegate(new GridCellDelegate(
@@ -285,13 +287,13 @@ void DiscreteGridWidget::buildUi()
     });
     connect(removeBtn_, &QToolButton::clicked, this, [this] {
         const int column = matrix_->selectedColumn();
-        if (column >= 2) commitRemoveAxis(column - 2);
+        if (column >= kFirstAxisColumn) commitRemoveAxis(column - kFirstAxisColumn);
         else commitRemoveRow(table_->currentRow());
     });
     connect(table_, &QTableWidget::itemSelectionChanged, this,
         [this] { if (!updating_) refreshActions(); });
     connect(matrix_, &MatrixTableWidget::columnMoveRequested, this,
-        [this](int from, int to) { moveAxis(from - 2, to - 2); });
+        [this](int from, int to) { moveAxis(from - kFirstAxisColumn, to - kFirstAxisColumn); });
     connect(matrix_, &MatrixTableWidget::columnSelectionChanged, this,
         [this] { if (!updating_) refreshActions(); });
 }
@@ -317,7 +319,7 @@ void DiscreteGridWidget::reload()
         PlatformContextService::instance().context())).matchGrid() : DiscreteGridDef{};
     const int selectedColumn = matrix_->selectedColumn();
     bool columnSelected = selectedColumn >= 0;
-    const int oldAxis = selectedColumn >= 0 ? selectedColumn - 2 : table_->currentColumn() - 2;
+    const int oldAxis = selectedColumn >= 0 ? selectedColumn - kFirstAxisColumn : table_->currentColumn() - kFirstAxisColumn;
     int selectedRow = selectedColumn >= 0 ? -1 : table_->currentRow();
     int selectedAxis = oldAxis >= 0 && oldAxis < static_cast<int>(grid_.axes.size())
         ? next.axisIndex(grid_.axes[oldAxis]) : oldAxis;
@@ -335,11 +337,11 @@ void DiscreteGridWidget::reload()
     grid_ = next;
     rebuildTable();
     if (selectedRow >= 0)
-        table_->setCurrentCell(selectedRow, std::max(0, selectedAxis + 2));
+        table_->setCurrentCell(selectedRow, std::max(0, selectedAxis + kFirstAxisColumn));
     else {
         table_->setCurrentIndex({});
         table_->clearSelection();
-        if (columnSelected && selectedAxis >= 0) matrix_->setSelectedColumn(selectedAxis + 2);
+        if (columnSelected && selectedAxis >= 0) matrix_->setSelectedColumn(selectedAxis + kFirstAxisColumn);
     }
     table_->verticalScrollBar()->setValue(scrollY);
     refreshActions();
@@ -359,20 +361,21 @@ void DiscreteGridWidget::rebuildTable()
     axisHeaderRefs_.clear();
     targetRefs_.clear();
     table_->clear();
-    table_->setColumnCount(std::max(1, axisCount) + 2);
+    table_->setColumnCount(std::max(1, axisCount) + kFirstAxisColumn);
     table_->setRowCount(rowCount);
     QList<TableColumn> columns{
         {QStringLiteral("index"), QStringLiteral("#"), 0},
-        {QStringLiteral("target"), tr("Child"), 1}};
+        {QStringLiteral("target"), tr("Child"), 250},
+        {QStringLiteral("waveform"), tr("Waveform"), 250}};
     for (const auto& axis : grid_.axes)
-        columns.append({axis.toString(QUuid::WithoutBraces), {}, 1});
-    if (grid_.axes.empty()) columns.append({QStringLiteral("empty"), {}, 1});
+        columns.append({axis.toString(QUuid::WithoutBraces), {}, 500});
+    if (grid_.axes.empty()) columns.append({QStringLiteral("empty"), {}, 500});
     matrix_->setViewColumns(QStringLiteral("matches.%1").arg(
         boundItem_ ? boundItem_->guid.toString(QUuid::WithoutBraces) : QString()), columns);
     matrix_->setRowNumberColumn(0);
 
     if (axisCount == 0)
-        table_->setHorizontalHeaderItem(2, new QTableWidgetItem());
+        table_->setHorizontalHeaderItem(kFirstAxisColumn, new QTableWidgetItem());
     for (int a = 0; a < axisCount; ++a) {
         auto* header = new QTableWidgetItem();
         ProjectItem* varItem = ProjectManager::instance().findItemByGuid(grid_.axes[a]);
@@ -388,7 +391,7 @@ void DiscreteGridWidget::rebuildTable()
             header->setToolTip(tr("Variable not found. The axis keeps its reference."));
             header->setForeground(ThemeManager::instance().colors().error);
         }
-        table_->setHorizontalHeaderItem(a + 2, header);
+        table_->setHorizontalHeaderItem(a + kFirstAxisColumn, header);
     }
 
     for (int r = 0; r < rowCount; ++r) {
@@ -399,10 +402,13 @@ void DiscreteGridWidget::rebuildTable()
         auto* target = new QTableWidgetItem();
         target->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         table_->setItem(r, 1, target);
+        auto* waveform = new QTableWidgetItem();
+        waveform->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        table_->setItem(r, 2, waveform);
         if (axisCount == 0) {
             auto* cell = new QTableWidgetItem();
             cell->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-            table_->setItem(r, 2, cell);
+            table_->setItem(r, kFirstAxisColumn, cell);
         }
         for (int a = 0; a < axisCount; ++a) {
             const auto reference = grid_.cellAt(r, a);
@@ -420,7 +426,7 @@ void DiscreteGridWidget::rebuildTable()
                     item->setData(TableTextRole, static_cast<int>(TableTextState::Error));
                     item->setToolTip(tr("Label not found. The cell keeps its reference."));
                     ++invalidByAxis[a];
-                    table_->setItem(r, a + 2, item);
+                    table_->setItem(r, a + kFirstAxisColumn, item);
                     continue;
                 }
                 item->setData(Qt::UserRole, *cell);
@@ -441,14 +447,14 @@ void DiscreteGridWidget::rebuildTable()
                 item->setData(TableTextRole, static_cast<int>(TableTextState::Muted));
                 item->setToolTip(tr("* (Any)"));
             }
-            table_->setItem(r, a + 2, item);
+            table_->setItem(r, a + kFirstAxisColumn, item);
         }
     }
 
     for (int a = 0; a < axisCount; ++a) {
         if (invalidByAxis[a] == 0)
             continue;
-        if (auto* header = table_->horizontalHeaderItem(a + 2)) {
+        if (auto* header = table_->horizontalHeaderItem(a + kFirstAxisColumn)) {
             header->setForeground(ThemeManager::instance().colors().error);
             header->setToolTip(
                 header->toolTip() + QStringLiteral("\n")
@@ -461,7 +467,7 @@ void DiscreteGridWidget::rebuildTable()
     rebuildReferenceWidgets();
     for (int row = 0; row < rowCount; ++row)
         for (int axis = 0; axis < axisCount; ++axis)
-            table_->item(row, axis + 2)->setData(GridBaseToolTipRole, table_->item(row, axis + 2)->toolTip());
+            table_->item(row, axis + kFirstAxisColumn)->setData(GridBaseToolTipRole, table_->item(row, axis + kFirstAxisColumn)->toolTip());
 }
 
 void DiscreteGridWidget::refreshDerived()
@@ -500,13 +506,13 @@ void DiscreteGridWidget::refreshDerived()
         targetRefs_[r]->setSupplementalToolTip(targetDetails.join(QLatin1Char('\n')));
         table_->item(r, 1)->setToolTip(targetRefs_[r]->toolTip());
         for (int axis = 0; axis < static_cast<int>(grid_.axes.size()); ++axis) {
-            auto* item = table_->item(r, axis + 2);
+            auto* item = table_->item(r, axis + kFirstAxisColumn);
             QString tip = item->data(GridBaseToolTipRole).toString();
             if (!warning.isEmpty()) tip += (tip.isEmpty() ? QString() : QStringLiteral("\n")) + warning;
             item->setToolTip(tip);
         }
         for (int a = 0; a < static_cast<int>(grid_.axes.size()); ++a)
-            table_->item(r, a + 2)->setBackground(r == winner_ ? highlight : QBrush());
+            table_->item(r, a + kFirstAxisColumn)->setBackground(r == winner_ ? highlight : QBrush());
     }
 
     table_->viewport()->update();
@@ -626,7 +632,7 @@ bool DiscreteGridWidget::commitAddRow(const QUuid& target)
     if (!next.addRow(target))
         return false;
     if (!commitGrid(next, tr("Add Match Row"))) return false;
-    requestedSelection_ = std::pair{static_cast<int>(next.rows.size()) - 1, (table_->currentColumn() - 2)};
+    requestedSelection_ = std::pair{static_cast<int>(next.rows.size()) - 1, (table_->currentColumn() - kFirstAxisColumn)};
     return true;
 }
 
@@ -649,7 +655,7 @@ bool DiscreteGridWidget::commitMoveRow(int from, int to)
     next.rows.erase(next.rows.begin() + from);
     next.rows.insert(next.rows.begin() + to, std::move(row));
     if (!commitGrid(next, tr("Reorder Match Rows"))) return false;
-    requestedSelection_ = std::pair{to, -2};
+    requestedSelection_ = std::pair{to, -kFirstAxisColumn};
     return true;
 }
 
@@ -661,7 +667,7 @@ bool DiscreteGridWidget::commitReplaceRow(int row, const QUuid& target)
     DiscreteGridDef next = grid_;
     next.rows[row].target = target;
     if (!commitGrid(next, tr("Replace Match Child"))) return false;
-    requestedSelection_ = std::pair{row, (table_->currentColumn() - 2)};
+    requestedSelection_ = std::pair{row, (table_->currentColumn() - kFirstAxisColumn)};
     return true;
 }
 
@@ -683,7 +689,7 @@ void DiscreteGridWidget::refreshActions()
     addBtn_->setEnabled(bound);
     rowAdder_->setEnabled(hasChildren);
     addRowAction_->setEnabled(hasChildren);
-    const int axis = matrix_->selectedColumn() - 2;
+    const int axis = matrix_->selectedColumn() - kFirstAxisColumn;
     const bool columnSelected = axis >= 0 && axis < static_cast<int>(grid_.axes.size());
     const bool rowSelected = table_->currentRow() >= 0
         && table_->currentRow() < static_cast<int>(grid_.rows.size());
@@ -693,7 +699,7 @@ void DiscreteGridWidget::refreshActions()
 
 void DiscreteGridWidget::rebuildReferenceWidgets()
 {
-    for (int axis = 0; axis < table_->columnCount() - 2; ++axis) {
+    for (int axis = 0; axis < table_->columnCount() - kFirstAxisColumn; ++axis) {
         auto* ref = new ObjectRefWidget(matrix_);
         ref->setObjectName(QStringLiteral("gridAxisHeaderRef"));
         ref->setFilterType(ProjectItem::Type::Variable);
@@ -726,11 +732,11 @@ void DiscreteGridWidget::rebuildReferenceWidgets()
             else
                 ref->setCurrentObjectID(0);
         });
-        matrix_->setHeaderWidget(axis + 2, ref);
-        ref->parentWidget()->setToolTip(table_->horizontalHeaderItem(axis + 2)->toolTip());
-        matrix_->setHeaderWarning(axis + 2,
-            table_->horizontalHeaderItem(axis + 2)->foreground().style() != Qt::NoBrush);
-        table_->horizontalHeaderItem(axis + 2)->setText(QString());
+        matrix_->setHeaderWidget(axis + kFirstAxisColumn, ref);
+        ref->parentWidget()->setToolTip(table_->horizontalHeaderItem(axis + kFirstAxisColumn)->toolTip());
+        matrix_->setHeaderWarning(axis + kFirstAxisColumn,
+            table_->horizontalHeaderItem(axis + kFirstAxisColumn)->foreground().style() != Qt::NoBrush);
+        table_->horizontalHeaderItem(axis + kFirstAxisColumn)->setText(QString());
         axisHeaderRefs_.push_back(ref);
     }
     for (int row = 0; row < static_cast<int>(grid_.rows.size()); ++row) {
@@ -763,6 +769,12 @@ void DiscreteGridWidget::rebuildReferenceWidgets()
         });
         table_->setCellWidget(row, 1, ref);
         targetRefs_.push_back(ref);
+        auto* waveformCell = matrix_->createCell(table_);
+        auto* waveform = new SelectionWaveform(target, waveformCell);
+        connect(waveform, &SelectionWaveform::sourceEditorRequested,
+                this, &DiscreteGridWidget::sourceEditorRequested);
+        waveformCell->addWidget(waveform);
+        table_->setCellWidget(row, 2, waveformCell);
     }
 }
 

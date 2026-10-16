@@ -50,6 +50,7 @@ signals:
     void navigateToItem(uint32_t objectID);
     void locateItem(uint32_t objectID);
     void drillRequested(const QUuid& target);
+    void sourceEditorRequested(const QUuid& soundGuid, const QUuid& entryId);
 
 private:
     void buildUi();
