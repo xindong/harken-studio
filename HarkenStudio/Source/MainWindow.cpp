@@ -1133,7 +1133,7 @@ void MainWindow::setupMenuBar()
                 continue;
             const QString typeId = summary.value(QStringLiteral("typeId")).toString();
             const QString name = summary.value(QStringLiteral("name")).toString();
-            QAction* action = viewsMenu->addAction(summary.value(QStringLiteral("title")).toString());
+            QAction* action = viewsMenu->addAction(workspacePanelTitle(typeId));
             action->setObjectName(QStringLiteral("viewToggle_%1").arg(name));
             action->setCheckable(true);
             action->setChecked(summary.value(QStringLiteral("visible")).toBool());
