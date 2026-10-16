@@ -8,6 +8,7 @@
 #define HARKEN_RENDER_MIXER_LOOP_H
 
 #include "harken/core/BlockArena.h"
+#include "harken/core/ChannelPeakAccumulator.h"
 #include "harken/core/CommandQueue.h"
 #include "harken/core/ActionSeekTable.h"
 #include "harken/core/EngineConfig.h"
@@ -29,6 +30,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace harken {
@@ -67,6 +69,11 @@ public:
     // into it at the end of every block; Vn_CaptureSnapshot reads the
     // stable half through Capture().
     const SnapshotBuffer& Snapshots() const { return m_snapshots; }
+
+    // Logic thread only. Enable before playback; storage remains published
+    // until destruction after the device callback has stopped.
+    void EnableChannelPeakMetering();
+    bool TakeChannelPeaks(ChannelPeakBatch& batch);
 
     // The ceiling in force for the next block's drain. Admission has to refuse
     // an indivisible batch this cannot take, so it must ask the drain rather
@@ -275,6 +282,9 @@ private:
     // the mixer only appends. The armed gate keeps the unarmed cost to one
     // relaxed load per block.
     MeterBlockRing& m_meterRing;
+    std::unique_ptr<ChannelPeakAccumulator> m_channelPeakStorage;
+    std::atomic<ChannelPeakAccumulator*> m_channelPeaks{nullptr};
+    std::uint64_t m_channelPeakConsumeSerial = 0;
     OriginalSourceSubmissionRegistry* m_originalSources = nullptr;
     TimelineArmTable* m_timelineArms = nullptr;
     struct PendingControlAck {

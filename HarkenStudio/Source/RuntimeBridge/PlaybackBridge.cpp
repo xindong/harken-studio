@@ -293,6 +293,7 @@ void EngineSession::update()
         settlePendingBusCache();
     }
 }
+void EngineSession::publishMeterPeaks() { Detail::runtimePublishMeterPeaks(); }
 int EngineSession::activeVoiceCount() const { return Detail::runtimeActiveVoiceCount(); }
 void EngineSession::masterMeterPeak(float& l, float& r) const { Detail::runtimeMasterMeterPeak(l, r); }
 float EngineSession::audioCpuPercent() const { return Detail::runtimeAudioCpuPercent(); }
@@ -549,25 +550,7 @@ void EngineSession::setBusSoloById(harkenstudio::ObjectId busId, bool solo)
 
 bool EngineSession::busMeterPeakById(harkenstudio::ObjectId busId, float& l, float& r) const
 {
-    if (harkenstudio::IsNull(busId))
-        return false;
-
-    VnSnapshot snapshot{};
-    if (!Detail::runtimeCaptureSnapshot(snapshot))
-        return false;
-
-    const uint32_t count = std::min<uint32_t>(snapshot.busCount, VN_SNAPSHOT_MAX_BUSES);
-    for (uint32_t i = 0; i < count; ++i)
-    {
-        if (snapshot.busIds[i] != toNative(busId))
-            continue;
-        if (harken::IsNull(snapshot.busIds[i]))
-            return false;
-        l = snapshot.busChannelPeaks[i * VN_MAX_CHANNELS];
-        r = snapshot.busChannelPeaks[i * VN_MAX_CHANNELS + (snapshot.mixChannelCount == 1 ? 0 : 1)];
-        return true;
-    }
-    return false;
+    return Detail::runtimeBusMeterPeak(busId, l, r);
 }
 
 void EngineSession::setVoicePitchByName(const QString& soundName, float cents)

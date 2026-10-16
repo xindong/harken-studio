@@ -108,6 +108,7 @@ add_executable(harken_runtime_tests
     UnitTest/PcmRegistryTest.cpp
     UnitTest/BlockArenaTest.cpp
     UnitTest/SnapshotTest.cpp
+    UnitTest/ChannelPeakMeterTest.cpp
     UnitTest/SourceCursorMirrorTest.cpp
     UnitTest/TransportTest.cpp
     UnitTest/VoicePoolTest.cpp

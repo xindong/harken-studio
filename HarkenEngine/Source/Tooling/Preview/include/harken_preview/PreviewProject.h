@@ -9,6 +9,20 @@ extern "C" {
 
 typedef uint64_t VnPreviewProjectHandle;
 
+/* Per-lane maxima since the preceding successful take on this engine.
+ * consumeSerial identifies a consumption batch, not an audio block.
+ * Lanes change windows independently. Only the Studio service pass consumes;
+ * panels share its cache. Call on the logic thread. */
+typedef struct VnPreviewChannelPeaksV1 {
+    uint32_t structSize;
+    uint32_t mixChannelCount;
+    uint32_t busCount;
+    uint32_t reserved0;
+    uint64_t consumeSerial;
+    VnBusId busIds[VN_SNAPSHOT_MAX_BUSES];
+    float channelPeaks[VN_SNAPSHOT_MAX_BUSES * VN_MAX_CHANNELS];
+} VnPreviewChannelPeaksV1;
+
 typedef struct VnPreviewBusV1 {
     VnBusId id;
     VnBusId parent;
@@ -100,6 +114,8 @@ uint32_t VnPreview_QueryOwnerRevision(uint64_t ownerId, uint64_t* outRevision);
 uint32_t VnPreview_HasPlayableConsumers(void);
 uint32_t VnPreview_HasAction(VnObjectId actionId);
 void VnPreview_PumpNullMixer(uint32_t blockCount);
+VnResult VnPreview_EnableChannelPeakMetering(void);
+VnResult VnPreview_TakeChannelPeaks(VnPreviewChannelPeaksV1* outPeaks);
 VnResult VnPreview_RegisterPcm(VnSoundId soundId, const VnPCMDesc* desc,
     uint64_t loopStartFrame, uint64_t loopEndFrame, uint64_t* outContentRevision);
 VnResult VnPreview_PlayVoiceRaw(const VnPlayDesc* desc, VnVoiceHandle* outHandle);

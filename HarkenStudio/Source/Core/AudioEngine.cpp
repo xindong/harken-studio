@@ -877,6 +877,7 @@ void AudioEngine::onRuntimeServiceTimer()
 {
     if (session_) {
         session_->update();
+        session_->publishMeterPeaks();
         if (playing_)
             session_->masterMeterPeak(masterMeterPeakL_, masterMeterPeakR_);
         else {

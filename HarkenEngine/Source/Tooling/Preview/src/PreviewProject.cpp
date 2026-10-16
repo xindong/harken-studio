@@ -433,6 +433,33 @@ void VnPreview_PumpNullMixer(uint32_t blockCount) {
     if (auto* engine = ActiveEngine()) harken::PumpNullMixerForProjectGenerationV1(*engine, blockCount);
 }
 
+VnResult VnPreview_EnableChannelPeakMetering(void) {
+    auto* engine = ActiveEngine();
+    if (!engine) return VN_NOT_INITIALIZED;
+    try {
+        engine->mixer.EnableChannelPeakMetering();
+        return VN_OK;
+    } catch (const std::bad_alloc&) {
+        return VN_DEVICE_ERROR;
+    }
+}
+
+VnResult VnPreview_TakeChannelPeaks(VnPreviewChannelPeaksV1* outPeaks) {
+    if (!outPeaks || outPeaks->structSize != sizeof(*outPeaks)) return VN_INVALID_ARG;
+    *outPeaks = {};
+    outPeaks->structSize = sizeof(*outPeaks);
+    auto* engine = ActiveEngine();
+    if (!engine) return VN_NOT_INITIALIZED;
+    harken::ChannelPeakBatch batch;
+    if (!engine->mixer.TakeChannelPeaks(batch)) return VN_NOT_INITIALIZED;
+    outPeaks->mixChannelCount = batch.mixChannelCount;
+    outPeaks->busCount = batch.busCount;
+    outPeaks->consumeSerial = batch.consumeSerial;
+    std::copy(batch.busIds.begin(), batch.busIds.end(), outPeaks->busIds);
+    std::copy(batch.channelPeaks.begin(), batch.channelPeaks.end(), outPeaks->channelPeaks);
+    return VN_OK;
+}
+
 VnResult VnPreview_RegisterPcm(VnSoundId id, const VnPCMDesc* desc,
     uint64_t loopStartFrame, uint64_t loopEndFrame, uint64_t* revision) {
     if (revision) *revision = 0;

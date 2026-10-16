@@ -6,6 +6,9 @@
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorCaptureHub.h"
 #include "UnitTest/StudioObjectIdTestSupport.h"
+#include "UnitTest/TestUtil.h"
+#include "RuntimeBridge/PlaybackBridge.h"
+#include "RuntimeBridge/RuntimeLink.h"
 
 #include <gtest/gtest.h>
 
@@ -139,6 +142,94 @@ TEST(MeterPanel, StereoPeaksRemainIndependentWhilePressingThePlot)
         EXPECT_FALSE(panel.clipped(channel));
         EXPECT_FLOAT_EQ(panel.heldPeakDb(channel), panel.levelDb(channel));
     }
+}
+
+TEST(MeterBridge, ServiceWindowIsSharedAndAuxiliaryUpdatesDoNotConsumePeaks)
+{
+    ensureApp();
+    VNX::AudioEngine::instance().shutdown();
+    HarkenEditor::Bridge::EngineSessionConfig config;
+    config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+    config.bufferSize = 128;
+    auto session = HarkenEditor::Bridge::EngineSession::create(config);
+    ASSERT_NE(nullptr, session);
+    ASSERT_EQ(HarkenEditor::Bridge::kEngineOk, session->startOutput());
+    const auto busId = harkentest::StudioObjectId(8302);
+    const auto nativeBusId = harkentest::ToRuntime(busId);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(nativeBusId, VN_BUS_MASTER));
+    std::vector<float> samples(128 * 8 * 2, 0.05f);
+    for (std::size_t frame = 0; frame < 128; ++frame) {
+        samples[2 * frame] = 0.8f;
+        samples[2 * frame + 1] = 0.2f;
+    }
+    const auto pcm = harkentest::InterleavedDesc(samples, 2, 48000);
+    const auto soundId = harkentest::ToRuntime(harkentest::StudioObjectId(8303));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(soundId, &pcm));
+    auto play = harkentest::MakePlayDesc(soundId);
+    play.busId = nativeBusId;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    session->pumpNullMixer(2);
+    HarkenEditor::Bridge::Detail::runtimeUpdate();
+    HarkenEditor::Bridge::Detail::runtimeUpdate();
+    session->update();
+    session->update();
+    session->publishMeterPeaks();
+    for (int reader = 0; reader < 3; ++reader) {
+        float left = 0.0f, right = 0.0f;
+        session->masterMeterPeak(left, right);
+        EXPECT_NEAR(0.8f, left, 1e-5f);
+        EXPECT_NEAR(0.2f, right, 1e-5f);
+        ASSERT_TRUE(session->busMeterPeakById(busId, left, right));
+        EXPECT_NEAR(0.8f, left, 1e-5f);
+        EXPECT_NEAR(0.2f, right, 1e-5f);
+    }
+    // Getter calls leave the next window intact until the service pass.
+    session->pumpNullMixer(1);
+    float left = 0.0f, right = 0.0f;
+    session->masterMeterPeak(left, right);
+    EXPECT_NEAR(0.8f, left, 1e-5f);
+    session->update();
+    session->publishMeterPeaks();
+    session->masterMeterPeak(left, right);
+    EXPECT_NEAR(0.05f, left, 1e-5f);
+    EXPECT_NEAR(0.05f, right, 1e-5f);
+    session->update();
+    session->publishMeterPeaks();
+    ASSERT_TRUE(session->busMeterPeakById(busId, left, right));
+    EXPECT_FLOAT_EQ(0.0f, left);
+    EXPECT_FLOAT_EQ(0.0f, right);
+    session->pumpNullMixer(1);
+    session->stopAll(0);
+    session->update();
+    session->update();
+    session->publishMeterPeaks();
+    session->masterMeterPeak(left, right);
+    EXPECT_NEAR(0.05f, left, 1e-5f);
+    session->publishMeterPeaks();
+    session->masterMeterPeak(left, right);
+    EXPECT_FLOAT_EQ(0.0f, left);
+    session->stopOutput();
+    session->masterMeterPeak(left, right);
+    EXPECT_FLOAT_EQ(0.0f, left);
+    EXPECT_FLOAT_EQ(0.0f, right);
+    ASSERT_EQ(HarkenEditor::Bridge::kEngineOk, session->startOutput());
+    session->pumpNullMixer(1);
+    session->update();
+    session->publishMeterPeaks();
+    session->masterMeterPeak(left, right);
+    EXPECT_FLOAT_EQ(0.0f, left);
+    EXPECT_FLOAT_EQ(0.0f, right);
+    std::fill(samples.begin(), samples.end(), 0.02f);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(soundId, &pcm));
+    play.busId = VN_BUS_MASTER;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    session->pumpNullMixer(2);
+    session->update();
+    session->publishMeterPeaks();
+    session->masterMeterPeak(left, right);
+    EXPECT_NEAR(0.02f, left, 1e-5f);
+    EXPECT_NEAR(0.02f, right, 1e-5f);
 }
 
 TEST(MeterSource, CaptureChangesAndTapRetirementStayIsolatedToTheirConsumers)

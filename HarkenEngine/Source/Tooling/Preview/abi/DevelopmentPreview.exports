@@ -27,6 +27,7 @@ EXPORTS
     VnPreview_CapturePlaybackPaths
     VnPreview_CommitProject
     VnPreview_DrainProjectAcks
+    VnPreview_EnableChannelPeakMetering
     VnPreview_HasAction
     VnPreview_HasPlayableConsumers
     VnPreview_PlayPlayable
@@ -43,6 +44,7 @@ EXPORTS
     VnPreview_ResetPlayable
     VnPreview_SetVoiceProperty
     VnPreview_StopPlayable
+    VnPreview_TakeChannelPeaks
 
 ; The identifier prefixes and the capability name this surface owns. A token
 ; here appearing anywhere in a gameplay product, or in a generator input, means
