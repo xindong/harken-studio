@@ -6,7 +6,7 @@
   "files": [
     {
       "path": "allowlist_monitor_functions.json",
-      "sha256": "b1ff1814f43ac8a3a75f7ff5e2d01f87cb89b9abcebb824042c2db05577c2e06",
+      "sha256": "c11813a004c37c48d2b30fe265b2c3681733cace16af4decd609c7dde91740c1",
       "isProvisional": false,
       "producingPackage": "m0-5",
       "contractVersion": 1,
@@ -24,7 +24,7 @@
     },
     {
       "path": "contract.expected.json",
-      "sha256": "9d1944e00bf265c827d682aa9bf58905740134cf3436f24da41fc94acbd1b34c",
+      "sha256": "bc4fb56ab9e9d63822f93cf329de515eea185798898628e3d168fea87854745f",
       "isProvisional": false,
       "producingPackage": "m0-5",
       "contractVersion": 1,

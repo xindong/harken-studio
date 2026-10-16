@@ -1219,6 +1219,7 @@ bool QueueInstanceTable::AcquireInternal(
         row.rootInstance = request.rootInstance;
         row.containerStableId = request.containerStableId;
         row.programSemanticFingerprint = request.programSemanticFingerprint;
+        row.monitorIdentity = request.monitorIdentity;
         row.childCount = request.childCount;
         row.cycle = request.cycle;
         row.resumePosition = request.resumePosition;
@@ -1234,6 +1235,7 @@ bool QueueInstanceTable::AcquireInternal(
         row.resetIntentCounter = 0;
         row.resetIntentGeneration = 0;
         row.resetOrder = {};
+        row.monitorReset = {};
         row.pendingResetIntent = 0;
         row.signalReservation = SignalReservation::None;
         row.nextStateOwner = NextStateOwner::None;
@@ -1326,6 +1328,7 @@ bool QueueInstanceTable::CancelPreparedAcquire(
     }
     ConsumeOriginalLifetimePinAfterReclaim(originalBaseline, row);
     row.world = 0;
+    row.monitorIdentity = {};
     row.projectId = {};
     row.rootInstance = 0;
     row.containerStableId = {};
@@ -1389,6 +1392,40 @@ bool QueueInstanceTable::Capture(QueueInstanceToken token,
     if (out == nullptr) return false;
     const Row* row = Resolve(token);
     return row != nullptr && CaptureRowSnapshot(*row, out);
+}
+
+bool QueueInstanceTable::CaptureMonitorReset(QueueInstanceToken token,
+    MonitorQueueResetObservation* out) const noexcept {
+    const auto* row = Resolve(token);
+    if (out == nullptr || row == nullptr ||
+        row->monitorReset.stage == MonitorQueueResetObservation::Stage::None) return false;
+    *out = row->monitorReset;
+    return true;
+}
+
+void QueueInstanceTable::RecordMonitorResetSelection(QueueInstanceToken token,
+    QueueExecutionOrderV1 order, const MonitorControlCause& cause) noexcept {
+    auto* row = Resolve(token);
+    EffectiveQueueState current{};
+    // Native replacement uses the same zero-frame normalization at selection.
+    if (order.executeFrame == 0) order.executeFrame = logicNow_;
+    if (row == nullptr || row->resetIntentGeneration == 0 ||
+        row->resetOrder.executeFrame != order.executeFrame ||
+        row->resetOrder.sequence != order.sequence ||
+        row->resetOrder.executionOrdinal != order.executionOrdinal ||
+        !LoadMirror(*row, &current)) return;
+    if (row->monitorReset.resetIntent == row->resetIntentGeneration) return;
+    row->monitorReset = {cause, order, row->resetIntentGeneration, current.version,
+        row->pendingNext.version, MonitorQueueResetObservation::Stage::Selected};
+}
+
+MonitorControlCause QueueInstanceTable::MarkMonitorResetApplied(Row& row,
+    std::uint64_t intent, std::uint64_t previousVersion, std::uint64_t nextVersion) noexcept {
+    if (intent == 0 || row.monitorReset.resetIntent != intent) return {};
+    row.monitorReset.previousVersion = previousVersion;
+    row.monitorReset.stage = MonitorQueueResetObservation::Stage::Applied;
+    row.monitorReset.nextVersion = nextVersion;
+    return row.monitorReset.cause;
 }
 
 bool QueueInstanceTable::CaptureRowSnapshot(
@@ -1462,7 +1499,8 @@ bool QueueInstanceTable::ResolveEffective(
 
 bool QueueInstanceTable::ResolveNextSelection(
     QueueInstanceToken token, EffectiveQueueState* outCurrent,
-    EffectiveQueueState* outNext, bool* outReset) const noexcept {
+    EffectiveQueueState* outNext, bool* outReset, MonitorQueueResetObservation* observation) const noexcept {
+    if (observation != nullptr) *observation = {};
     if (outCurrent == nullptr || outNext == nullptr || outReset == nullptr) {
         return false;
     }
@@ -1474,6 +1512,8 @@ bool QueueInstanceTable::ResolveNextSelection(
     if (!row->resetPending.load(std::memory_order_acquire)) return true;
     if (!ProjectReset(*row, *outCurrent, outNext)) return false;
     *outReset = true;
+    if (observation != nullptr && row->monitorReset.resetIntent == row->resetIntentGeneration)
+        *observation = row->monitorReset;
     return true;
 }
 
@@ -1490,7 +1530,8 @@ bool QueueInstanceTable::ProjectReset(
 bool QueueInstanceTable::ResolveNextSelection(
     QueueInstanceToken token, QueueExecutionOrderV1 selectionOrder,
     EffectiveQueueState* outCurrent, EffectiveQueueState* outNext,
-    std::uint64_t* outResetIntent) const noexcept {
+    std::uint64_t* outResetIntent, MonitorQueueResetObservation* observation) const noexcept {
+    if (observation != nullptr) *observation = {};
     if (outCurrent == nullptr || outNext == nullptr || outResetIntent == nullptr ||
         selectionOrder.sequence == 0) return false;
     const Row* row = Resolve(token);
@@ -1502,6 +1543,8 @@ bool QueueInstanceTable::ResolveNextSelection(
         !QueueExecutionPrecedes(row->resetOrder, selectionOrder)) return true;
     if (!ProjectReset(*row, *outCurrent, outNext)) return false;
     *outResetIntent = row->resetIntentGeneration;
+    if (observation != nullptr && row->monitorReset.resetIntent == *outResetIntent)
+        *observation = row->monitorReset;
     return true;
 }
 
@@ -1630,7 +1673,7 @@ QueueResetStatusV1 QueueInstanceTable::PrepareResetInternal(
 QueueResetStatusV1 QueueInstanceTable::CommitPreparedReset(
     PreparedQueueResetSetV1* prepared,
     LogicCommitSequence sequence,
-    std::uint64_t executeFrame) noexcept {
+    std::uint64_t executeFrame, const MonitorControlCause& cause) noexcept {
     if (prepared == nullptr || prepared->owner_ != this ||
         !prepared->prepared_ || sequence == 0 ||
         (executeFrame != UINT64_MAX && executeFrame != prepared->order_.executeFrame)) {
@@ -1681,6 +1724,10 @@ QueueResetStatusV1 QueueInstanceTable::CommitPreparedReset(
         row.resetIntentGeneration = ++row.resetIntentCounter;
         row.resetOrder = prepared->order_;
         row.resetOrder.sequence = sequence;
+        row.monitorReset = {cause, row.resetOrder, row.resetIntentGeneration, current.version,
+            row.resetNext.version, row.pendingConsumesReset.load(std::memory_order_acquire) &&
+                row.pendingResetIntent == row.resetIntentGeneration
+                ? MonitorQueueResetObservation::Stage::Selected : MonitorQueueResetObservation::Stage::Intent};
         row.resetExecuteFrame = row.resetOrder.executeFrame;
         row.resetPending.store(row.resetExecuteFrame <= logicNow_, std::memory_order_release);
         row.resetReservation = 0;
@@ -2924,11 +2971,26 @@ bool QueueInstanceTable::SettleActivated(
             ConditionalQueueActivation::Activated) {
         return false;
     }
+    EffectiveQueueState monitorPrevious{};
+    (void)LoadMirror(*row, &monitorPrevious);
     if (!StoreMirror(*row, row->pendingNext)) return false;
+    MonitorLifecycleFacts facts = row->monitorIdentity;
+    facts.controlCause = {};
+    facts.logicCommitSequence = 0;
+    facts.reasonKnown = false;
+    facts.projectId = row->projectId;
+    facts.programSemanticFingerprint = row->programSemanticFingerprint;
+    facts.arrangingInstance = row->rootInstance;
     if (row->pendingConsumesReset.exchange(false,
                                            std::memory_order_acq_rel)) {
+        facts.controlCause = MarkMonitorResetApplied(*row, row->pendingResetIntent, monitorPrevious.version, row->pendingNext.version);
+        facts.logicCommitSequence = row->resetOrder.sequence;
         ConsumeResetIntent(*row, row->pendingResetIntent);
-    }
+    } else facts.publishLegacy = false;
+    const auto handle = (static_cast<std::uint64_t>(token.generation) << 32) | token.slot;
+    ObserveMonitorLifecycle(MonitorLifecyclePhase::QueueAdvance, handle, token.generation,
+        row->world, row->containerStableId, row->rootInstance, 0, 0, 0,
+        row->pendingNext.version, facts);
     row->pendingResetIntent = 0;
     EndOriginalConditionalFuture(*row);
     row->nextStateOwner = NextStateOwner::None;
@@ -2971,12 +3033,17 @@ bool QueueInstanceTable::AdvanceAfterSignalCompletion(
         return false;
     }
     if (!StoreMirror(*row, next)) return false;
+    MonitorLifecycleFacts facts = row->monitorIdentity;
+    facts.reasonKnown = false;
+    facts.controlCause = {};
+    facts.logicCommitSequence = 0;
     if (consumesReset) {
+        facts.controlCause = MarkMonitorResetApplied(*row, row->resetIntentGeneration, current.version, next.version);
+        facts.logicCommitSequence = row->resetOrder.sequence;
         ConsumeResetIntent(*row, row->resetIntentGeneration);
     }
     const std::uint64_t handle =
         (static_cast<std::uint64_t>(token.generation) << 32) | token.slot;
-    MonitorLifecycleFacts facts{};
     facts.projectId = row->projectId;
     facts.programSemanticFingerprint = row->programSemanticFingerprint;
     facts.arrangingInstance = row->rootInstance;
@@ -3103,11 +3170,16 @@ bool QueueInstanceTable::SettleSignalAdvance(
         return false;
     if (outcome == QueueSignalOutcomeV1::InFlight) return true;
     if (outcome == QueueSignalOutcomeV1::Applied) {
+        EffectiveQueueState monitorPrevious{};
+        (void)LoadMirror(*row, &monitorPrevious);
         if (!StoreMirror(*row, row->pendingNext)) return false;
+        MonitorLifecycleFacts facts = row->monitorIdentity;
+        facts.reasonKnown = false;
+        facts.controlCause = MarkMonitorResetApplied(*row, accepted.resetIntent, monitorPrevious.version, row->pendingNext.version);
+        facts.logicCommitSequence = accepted.order.sequence;
         ConsumeResetIntent(*row, accepted.resetIntent);
         const auto handle = (static_cast<std::uint64_t>(accepted.queue.generation) << 32) |
             accepted.queue.slot;
-        MonitorLifecycleFacts facts{};
         facts.projectId = row->projectId;
         facts.programSemanticFingerprint = row->programSemanticFingerprint;
         facts.arrangingInstance = row->rootInstance;
@@ -3171,9 +3243,13 @@ bool QueueInstanceTable::RetireConditionalForAbort(
     const ConditionalQueueActivation activation =
         row->pendingActivation.load(std::memory_order_acquire);
     if (activation == ConditionalQueueActivation::Activated) {
+        EffectiveQueueState monitorPrevious{};
+        (void)LoadMirror(*row, &monitorPrevious);
         if (!StoreMirror(*row, row->pendingNext)) return false;
         if (row->pendingConsumesReset.exchange(
                 false, std::memory_order_acq_rel)) {
+            (void)MarkMonitorResetApplied(*row, row->pendingResetIntent,
+                monitorPrevious.version, row->pendingNext.version);
             ConsumeResetIntent(*row, row->pendingResetIntent);
         }
         row->pendingResetIntent = 0;
@@ -3766,7 +3842,7 @@ QueueFailureDisposition QueueInstanceTable::FailContainer(
                             std::memory_order_release);
     const std::uint64_t handle =
         (static_cast<std::uint64_t>(token.generation) << 32) | token.slot;
-    MonitorLifecycleFacts facts{};
+    MonitorLifecycleFacts facts = row->monitorIdentity;
     facts.projectId = row->projectId;
     facts.programSemanticFingerprint = row->programSemanticFingerprint;
     facts.arrangingInstance = row->rootInstance;
@@ -3804,7 +3880,7 @@ QueueFailureDisposition QueueInstanceTable::FailContainerBeforeConditional(
     }
     const std::uint64_t handle =
         (static_cast<std::uint64_t>(token.generation) << 32) | token.slot;
-    MonitorLifecycleFacts facts{};
+    MonitorLifecycleFacts facts = row->monitorIdentity;
     facts.projectId = row->projectId;
     facts.programSemanticFingerprint = row->programSemanticFingerprint;
     facts.arrangingInstance = row->rootInstance;

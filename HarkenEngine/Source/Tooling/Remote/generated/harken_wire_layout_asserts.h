@@ -1799,6 +1799,300 @@ static_assert(offsetof(VnMonitorCapabilities, resolvedRawAudioByteRate) == 192,
 static_assert(offsetof(VnMonitorCapabilities, hardRawAudioByteRate) == 200,
               "wire table offset drift: VnMonitorCapabilities.hardRawAudioByteRate");
 
+static_assert(sizeof(VnMonitorFactRequest) == 16,
+              "wire table size drift: VnMonitorFactRequest");
+static_assert(offsetof(VnMonitorFactRequest, sequence) == 0,
+              "wire table offset drift: VnMonitorFactRequest.sequence");
+static_assert(offsetof(VnMonitorFactRequest, operation) == 8,
+              "wire table offset drift: VnMonitorFactRequest.operation");
+static_assert(offsetof(VnMonitorFactRequest, origin) == 12,
+              "wire table offset drift: VnMonitorFactRequest.origin");
+
+static_assert(sizeof(VnMonitorFactCause) == 24,
+              "wire table size drift: VnMonitorFactCause");
+static_assert(offsetof(VnMonitorFactCause, action) == 0,
+              "wire table offset drift: VnMonitorFactCause.action");
+static_assert(offsetof(VnMonitorFactCause, parentPlayable) == 8,
+              "wire table offset drift: VnMonitorFactCause.parentPlayable");
+static_assert(offsetof(VnMonitorFactCause, executionOrdinal) == 16,
+              "wire table offset drift: VnMonitorFactCause.executionOrdinal");
+static_assert(offsetof(VnMonitorFactCause, reserved0) == 20,
+              "wire table offset drift: VnMonitorFactCause.reserved0");
+
+static_assert(sizeof(VnMonitorFactTarget) == 80,
+              "wire table size drift: VnMonitorFactTarget");
+static_assert(offsetof(VnMonitorFactTarget, handle) == 0,
+              "wire table offset drift: VnMonitorFactTarget.handle");
+static_assert(offsetof(VnMonitorFactTarget, projectId) == 8,
+              "wire table offset drift: VnMonitorFactTarget.projectId");
+static_assert(offsetof(VnMonitorFactTarget, objectId) == 24,
+              "wire table offset drift: VnMonitorFactTarget.objectId");
+static_assert(offsetof(VnMonitorFactTarget, worldGeneration) == 40,
+              "wire table offset drift: VnMonitorFactTarget.worldGeneration");
+static_assert(offsetof(VnMonitorFactTarget, programSemanticFingerprint) == 48,
+              "wire table offset drift: VnMonitorFactTarget.programSemanticFingerprint");
+static_assert(offsetof(VnMonitorFactTarget, contentRevision) == 56,
+              "wire table offset drift: VnMonitorFactTarget.contentRevision");
+static_assert(offsetof(VnMonitorFactTarget, kind) == 64,
+              "wire table offset drift: VnMonitorFactTarget.kind");
+static_assert(offsetof(VnMonitorFactTarget, contentKind) == 68,
+              "wire table offset drift: VnMonitorFactTarget.contentKind");
+static_assert(offsetof(VnMonitorFactTarget, scope) == 72,
+              "wire table offset drift: VnMonitorFactTarget.scope");
+static_assert(offsetof(VnMonitorFactTarget, reserved0) == 76,
+              "wire table offset drift: VnMonitorFactTarget.reserved0");
+
+static_assert(sizeof(VnMonitorIdentityFactV1) == 456,
+              "wire table size drift: VnMonitorIdentityFactV1");
+static_assert(offsetof(VnMonitorIdentityFactV1, structSize) == 0,
+              "wire table offset drift: VnMonitorIdentityFactV1.structSize");
+static_assert(offsetof(VnMonitorIdentityFactV1, reserved0) == 4,
+              "wire table offset drift: VnMonitorIdentityFactV1.reserved0");
+static_assert(offsetof(VnMonitorIdentityFactV1, stateCutId) == 8,
+              "wire table offset drift: VnMonitorIdentityFactV1.stateCutId");
+static_assert(offsetof(VnMonitorIdentityFactV1, identityRevision) == 16,
+              "wire table offset drift: VnMonitorIdentityFactV1.identityRevision");
+static_assert(offsetof(VnMonitorIdentityFactV1, fact) == 24,
+              "wire table offset drift: VnMonitorIdentityFactV1.fact");
+
+static_assert(sizeof(VnMonitorIdentityCutBeginV1) == 136,
+              "wire table size drift: VnMonitorIdentityCutBeginV1");
+static_assert(offsetof(VnMonitorIdentityCutBeginV1, structSize) == 0,
+              "wire table offset drift: VnMonitorIdentityCutBeginV1.structSize");
+static_assert(offsetof(VnMonitorIdentityCutBeginV1, reserved0) == 4,
+              "wire table offset drift: VnMonitorIdentityCutBeginV1.reserved0");
+static_assert(offsetof(VnMonitorIdentityCutBeginV1, stateCutId) == 8,
+              "wire table offset drift: VnMonitorIdentityCutBeginV1.stateCutId");
+static_assert(offsetof(VnMonitorIdentityCutBeginV1, identityRevision) == 16,
+              "wire table offset drift: VnMonitorIdentityCutBeginV1.identityRevision");
+static_assert(offsetof(VnMonitorIdentityCutBeginV1, deltaProducerId) == 24,
+              "wire table offset drift: VnMonitorIdentityCutBeginV1.deltaProducerId");
+static_assert(offsetof(VnMonitorIdentityCutBeginV1, deltaSourceSequence) == 32,
+              "wire table offset drift: VnMonitorIdentityCutBeginV1.deltaSourceSequence");
+static_assert(offsetof(VnMonitorIdentityCutBeginV1, symbolProducerId) == 40,
+              "wire table offset drift: VnMonitorIdentityCutBeginV1.symbolProducerId");
+static_assert(offsetof(VnMonitorIdentityCutBeginV1, symbolSourceSequence) == 48,
+              "wire table offset drift: VnMonitorIdentityCutBeginV1.symbolSourceSequence");
+static_assert(offsetof(VnMonitorIdentityCutBeginV1, capacityLimit) == 56,
+              "wire table offset drift: VnMonitorIdentityCutBeginV1.capacityLimit");
+static_assert(offsetof(VnMonitorIdentityCutBeginV1, namespaceTrueCount) == 64,
+              "wire table offset drift: VnMonitorIdentityCutBeginV1.namespaceTrueCount");
+
+static_assert(sizeof(VnMonitorIdentityCutEndV1) == 104,
+              "wire table size drift: VnMonitorIdentityCutEndV1");
+static_assert(offsetof(VnMonitorIdentityCutEndV1, structSize) == 0,
+              "wire table offset drift: VnMonitorIdentityCutEndV1.structSize");
+static_assert(offsetof(VnMonitorIdentityCutEndV1, result) == 4,
+              "wire table offset drift: VnMonitorIdentityCutEndV1.result");
+static_assert(offsetof(VnMonitorIdentityCutEndV1, stateCutId) == 8,
+              "wire table offset drift: VnMonitorIdentityCutEndV1.stateCutId");
+static_assert(offsetof(VnMonitorIdentityCutEndV1, identityRevision) == 16,
+              "wire table offset drift: VnMonitorIdentityCutEndV1.identityRevision");
+static_assert(offsetof(VnMonitorIdentityCutEndV1, checksum) == 24,
+              "wire table offset drift: VnMonitorIdentityCutEndV1.checksum");
+static_assert(offsetof(VnMonitorIdentityCutEndV1, namespaceEmittedCount) == 32,
+              "wire table offset drift: VnMonitorIdentityCutEndV1.namespaceEmittedCount");
+
+static_assert(sizeof(VnMonitorExecutionFactV1) == 432,
+              "wire table size drift: VnMonitorExecutionFactV1");
+static_assert(offsetof(VnMonitorExecutionFactV1, structSize) == 0,
+              "wire table offset drift: VnMonitorExecutionFactV1.structSize");
+static_assert(offsetof(VnMonitorExecutionFactV1, factKind) == 4,
+              "wire table offset drift: VnMonitorExecutionFactV1.factKind");
+static_assert(offsetof(VnMonitorExecutionFactV1, subjectNamespace) == 6,
+              "wire table offset drift: VnMonitorExecutionFactV1.subjectNamespace");
+static_assert(offsetof(VnMonitorExecutionFactV1, contentKind) == 7,
+              "wire table offset drift: VnMonitorExecutionFactV1.contentKind");
+static_assert(offsetof(VnMonitorExecutionFactV1, validityLo) == 8,
+              "wire table offset drift: VnMonitorExecutionFactV1.validityLo");
+static_assert(offsetof(VnMonitorExecutionFactV1, validityHi) == 16,
+              "wire table offset drift: VnMonitorExecutionFactV1.validityHi");
+static_assert(offsetof(VnMonitorExecutionFactV1, timestampNs) == 24,
+              "wire table offset drift: VnMonitorExecutionFactV1.timestampNs");
+static_assert(offsetof(VnMonitorExecutionFactV1, projectId) == 32,
+              "wire table offset drift: VnMonitorExecutionFactV1.projectId");
+static_assert(offsetof(VnMonitorExecutionFactV1, contentRevision) == 48,
+              "wire table offset drift: VnMonitorExecutionFactV1.contentRevision");
+static_assert(offsetof(VnMonitorExecutionFactV1, factFlags) == 56,
+              "wire table offset drift: VnMonitorExecutionFactV1.factFlags");
+static_assert(offsetof(VnMonitorExecutionFactV1, reserved0) == 60,
+              "wire table offset drift: VnMonitorExecutionFactV1.reserved0");
+static_assert(offsetof(VnMonitorExecutionFactV1, request) == 64,
+              "wire table offset drift: VnMonitorExecutionFactV1.request");
+static_assert(offsetof(VnMonitorExecutionFactV1, playbackRequest) == 80,
+              "wire table offset drift: VnMonitorExecutionFactV1.playbackRequest");
+static_assert(offsetof(VnMonitorExecutionFactV1, causedByRequest) == 96,
+              "wire table offset drift: VnMonitorExecutionFactV1.causedByRequest");
+static_assert(offsetof(VnMonitorExecutionFactV1, controlRequest) == 112,
+              "wire table offset drift: VnMonitorExecutionFactV1.controlRequest");
+static_assert(offsetof(VnMonitorExecutionFactV1, selectionRequest) == 128,
+              "wire table offset drift: VnMonitorExecutionFactV1.selectionRequest");
+static_assert(offsetof(VnMonitorExecutionFactV1, control) == 144,
+              "wire table offset drift: VnMonitorExecutionFactV1.control");
+static_assert(offsetof(VnMonitorExecutionFactV1, selection) == 168,
+              "wire table offset drift: VnMonitorExecutionFactV1.selection");
+static_assert(offsetof(VnMonitorExecutionFactV1, root) == 192,
+              "wire table offset drift: VnMonitorExecutionFactV1.root");
+static_assert(offsetof(VnMonitorExecutionFactV1, serviceLeaf) == 200,
+              "wire table offset drift: VnMonitorExecutionFactV1.serviceLeaf");
+static_assert(offsetof(VnMonitorExecutionFactV1, resourceOwner) == 208,
+              "wire table offset drift: VnMonitorExecutionFactV1.resourceOwner");
+static_assert(offsetof(VnMonitorExecutionFactV1, logicalVoice) == 216,
+              "wire table offset drift: VnMonitorExecutionFactV1.logicalVoice");
+static_assert(offsetof(VnMonitorExecutionFactV1, renderActivation) == 224,
+              "wire table offset drift: VnMonitorExecutionFactV1.renderActivation");
+static_assert(offsetof(VnMonitorExecutionFactV1, originEmitter) == 232,
+              "wire table offset drift: VnMonitorExecutionFactV1.originEmitter");
+static_assert(offsetof(VnMonitorExecutionFactV1, hostSession) == 240,
+              "wire table offset drift: VnMonitorExecutionFactV1.hostSession");
+static_assert(offsetof(VnMonitorExecutionFactV1, hostLocalSequence) == 248,
+              "wire table offset drift: VnMonitorExecutionFactV1.hostLocalSequence");
+static_assert(offsetof(VnMonitorExecutionFactV1, originHostRevision) == 256,
+              "wire table offset drift: VnMonitorExecutionFactV1.originHostRevision");
+static_assert(offsetof(VnMonitorExecutionFactV1, currentStateEmitter) == 264,
+              "wire table offset drift: VnMonitorExecutionFactV1.currentStateEmitter");
+static_assert(offsetof(VnMonitorExecutionFactV1, currentSpatialEmitter) == 272,
+              "wire table offset drift: VnMonitorExecutionFactV1.currentSpatialEmitter");
+static_assert(offsetof(VnMonitorExecutionFactV1, originKind) == 280,
+              "wire table offset drift: VnMonitorExecutionFactV1.originKind");
+static_assert(offsetof(VnMonitorExecutionFactV1, hostOwnership) == 284,
+              "wire table offset drift: VnMonitorExecutionFactV1.hostOwnership");
+static_assert(offsetof(VnMonitorExecutionFactV1, stateBinding) == 288,
+              "wire table offset drift: VnMonitorExecutionFactV1.stateBinding");
+static_assert(offsetof(VnMonitorExecutionFactV1, spatialBinding) == 292,
+              "wire table offset drift: VnMonitorExecutionFactV1.spatialBinding");
+static_assert(offsetof(VnMonitorExecutionFactV1, terminalKind) == 296,
+              "wire table offset drift: VnMonitorExecutionFactV1.terminalKind");
+static_assert(offsetof(VnMonitorExecutionFactV1, result) == 300,
+              "wire table offset drift: VnMonitorExecutionFactV1.result");
+static_assert(offsetof(VnMonitorExecutionFactV1, readCutKey) == 304,
+              "wire table offset drift: VnMonitorExecutionFactV1.readCutKey");
+static_assert(offsetof(VnMonitorExecutionFactV1, readCutSequence) == 312,
+              "wire table offset drift: VnMonitorExecutionFactV1.readCutSequence");
+static_assert(offsetof(VnMonitorExecutionFactV1, audioBlock) == 320,
+              "wire table offset drift: VnMonitorExecutionFactV1.audioBlock");
+static_assert(offsetof(VnMonitorExecutionFactV1, ownerEpoch) == 328,
+              "wire table offset drift: VnMonitorExecutionFactV1.ownerEpoch");
+static_assert(offsetof(VnMonitorExecutionFactV1, frameOffset) == 336,
+              "wire table offset drift: VnMonitorExecutionFactV1.frameOffset");
+static_assert(offsetof(VnMonitorExecutionFactV1, frameSpan) == 340,
+              "wire table offset drift: VnMonitorExecutionFactV1.frameSpan");
+static_assert(offsetof(VnMonitorExecutionFactV1, readCutOrdinalExclusive) == 344,
+              "wire table offset drift: VnMonitorExecutionFactV1.readCutOrdinalExclusive");
+static_assert(offsetof(VnMonitorExecutionFactV1, reserved1) == 348,
+              "wire table offset drift: VnMonitorExecutionFactV1.reserved1");
+static_assert(offsetof(VnMonitorExecutionFactV1, target) == 352,
+              "wire table offset drift: VnMonitorExecutionFactV1.target");
+
+static_assert(sizeof(VnMonitorSubscriptionStatusV2) == 112,
+              "wire table size drift: VnMonitorSubscriptionStatusV2");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, structSize) == 0,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.structSize");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, requestedStreamKindMask) == 4,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.requestedStreamKindMask");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, resolvedStreamKindMask) == 8,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.resolvedStreamKindMask");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, subscriptionGeneration) == 12,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.subscriptionGeneration");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, requestedPermissionMask) == 16,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.requestedPermissionMask");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, acceptedPermissionMask) == 20,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.acceptedPermissionMask");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, deniedPermissionMask) == 24,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.deniedPermissionMask");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, unsupportedPermissionMask) == 28,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.unsupportedPermissionMask");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, monitorSessionEpoch) == 32,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.monitorSessionEpoch");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, rawAudioDecision) == 40,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.rawAudioDecision");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, symbolsDecision) == 44,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.symbolsDecision");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, baselineCapacity) == 48,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.baselineCapacity");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, baselineCount) == 52,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.baselineCount");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, baselines) == 56,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.baselines");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, acceptedExecutionFactVersion) == 64,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.acceptedExecutionFactVersion");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, baselineAvailability) == 68,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.baselineAvailability");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, supportedFactKinds) == 72,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.supportedFactKinds");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, symbolAvailability) == 88,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.symbolAvailability");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, reserved0) == 92,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.reserved0");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, identityUnavailableCount) == 96,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.identityUnavailableCount");
+static_assert(offsetof(VnMonitorSubscriptionStatusV2, baselineStateCutId) == 104,
+              "wire table offset drift: VnMonitorSubscriptionStatusV2.baselineStateCutId");
+
+static_assert(sizeof(VnMonitorSessionDescV2) == 40,
+              "wire table size drift: VnMonitorSessionDescV2");
+static_assert(offsetof(VnMonitorSessionDescV2, structSize) == 0,
+              "wire table offset drift: VnMonitorSessionDescV2.structSize");
+static_assert(offsetof(VnMonitorSessionDescV2, requestedStreamKindMask) == 4,
+              "wire table offset drift: VnMonitorSessionDescV2.requestedStreamKindMask");
+static_assert(offsetof(VnMonitorSessionDescV2, requestRawAudio) == 8,
+              "wire table offset drift: VnMonitorSessionDescV2.requestRawAudio");
+static_assert(offsetof(VnMonitorSessionDescV2, requestSymbols) == 12,
+              "wire table offset drift: VnMonitorSessionDescV2.requestSymbols");
+static_assert(offsetof(VnMonitorSessionDescV2, consumerQueueBytes) == 16,
+              "wire table offset drift: VnMonitorSessionDescV2.consumerQueueBytes");
+static_assert(offsetof(VnMonitorSessionDescV2, requestedPermissionMask) == 24,
+              "wire table offset drift: VnMonitorSessionDescV2.requestedPermissionMask");
+static_assert(offsetof(VnMonitorSessionDescV2, reserved0) == 28,
+              "wire table offset drift: VnMonitorSessionDescV2.reserved0");
+static_assert(offsetof(VnMonitorSessionDescV2, requestedExecutionFactVersion) == 32,
+              "wire table offset drift: VnMonitorSessionDescV2.requestedExecutionFactVersion");
+static_assert(offsetof(VnMonitorSessionDescV2, reserved1) == 36,
+              "wire table offset drift: VnMonitorSessionDescV2.reserved1");
+
+static_assert(sizeof(VnMonitorEventSessionStatusV2) == 120,
+              "wire table size drift: VnMonitorEventSessionStatusV2");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, structSize) == 0,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.structSize");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, state) == 4,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.state");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, monitorSessionEpoch) == 8,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.monitorSessionEpoch");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, startedTimestampNs) == 16,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.startedTimestampNs");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, stoppedTimestampNs) == 24,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.stoppedTimestampNs");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, sourceDroppedRecords) == 32,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.sourceDroppedRecords");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, deliveryDroppedRecords) == 40,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.deliveryDroppedRecords");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, acceptedExecutionFactVersion) == 48,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.acceptedExecutionFactVersion");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, baselineAvailability) == 52,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.baselineAvailability");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, supportedFactKinds) == 56,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.supportedFactKinds");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, requestedPermissionMask) == 72,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.requestedPermissionMask");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, acceptedPermissionMask) == 76,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.acceptedPermissionMask");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, deniedPermissionMask) == 80,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.deniedPermissionMask");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, unsupportedPermissionMask) == 84,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.unsupportedPermissionMask");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, acceptedStreamKindMask) == 88,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.acceptedStreamKindMask");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, symbolsDecision) == 92,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.symbolsDecision");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, symbolAvailability) == 96,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.symbolAvailability");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, reserved0) == 100,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.reserved0");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, identityUnavailableCount) == 104,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.identityUnavailableCount");
+static_assert(offsetof(VnMonitorEventSessionStatusV2, baselineStateCutId) == 112,
+              "wire table offset drift: VnMonitorEventSessionStatusV2.baselineStateCutId");
+
 static_assert(sizeof(VnMonitorSessionDesc) == 32,
               "wire table size drift: VnMonitorSessionDesc");
 static_assert(offsetof(VnMonitorSessionDesc, structSize) == 0,
@@ -2803,6 +3097,96 @@ static_assert(offsetof(VnEmitterCreateDescV1, flags) == 4,
               "wire table offset drift: VnEmitterCreateDescV1.flags");
 static_assert(offsetof(VnEmitterCreateDescV1, reserved0) == 8,
               "wire table offset drift: VnEmitterCreateDescV1.reserved0");
+
+static_assert(sizeof(VnMonitorHostSessionV1) == 32,
+              "wire table size drift: VnMonitorHostSessionV1");
+static_assert(offsetof(VnMonitorHostSessionV1, structSize) == 0,
+              "wire table offset drift: VnMonitorHostSessionV1.structSize");
+static_assert(offsetof(VnMonitorHostSessionV1, emitterCapacity) == 4,
+              "wire table offset drift: VnMonitorHostSessionV1.emitterCapacity");
+static_assert(offsetof(VnMonitorHostSessionV1, engineInstance) == 8,
+              "wire table offset drift: VnMonitorHostSessionV1.engineInstance");
+static_assert(offsetof(VnMonitorHostSessionV1, sdkSession) == 16,
+              "wire table offset drift: VnMonitorHostSessionV1.sdkSession");
+static_assert(offsetof(VnMonitorHostSessionV1, reserved0) == 24,
+              "wire table offset drift: VnMonitorHostSessionV1.reserved0");
+
+static_assert(sizeof(VnMonitorHostRegistrationV1) == 56,
+              "wire table size drift: VnMonitorHostRegistrationV1");
+static_assert(offsetof(VnMonitorHostRegistrationV1, structSize) == 0,
+              "wire table offset drift: VnMonitorHostRegistrationV1.structSize");
+static_assert(offsetof(VnMonitorHostRegistrationV1, ownershipKind) == 4,
+              "wire table offset drift: VnMonitorHostRegistrationV1.ownershipKind");
+static_assert(offsetof(VnMonitorHostRegistrationV1, engineInstance) == 8,
+              "wire table offset drift: VnMonitorHostRegistrationV1.engineInstance");
+static_assert(offsetof(VnMonitorHostRegistrationV1, sdkSession) == 16,
+              "wire table offset drift: VnMonitorHostRegistrationV1.sdkSession");
+static_assert(offsetof(VnMonitorHostRegistrationV1, emitter) == 24,
+              "wire table offset drift: VnMonitorHostRegistrationV1.emitter");
+static_assert(offsetof(VnMonitorHostRegistrationV1, localSequence) == 32,
+              "wire table offset drift: VnMonitorHostRegistrationV1.localSequence");
+static_assert(offsetof(VnMonitorHostRegistrationV1, registrationRevision) == 40,
+              "wire table offset drift: VnMonitorHostRegistrationV1.registrationRevision");
+static_assert(offsetof(VnMonitorHostRegistrationV1, reserved0) == 48,
+              "wire table offset drift: VnMonitorHostRegistrationV1.reserved0");
+
+static_assert(sizeof(VnMonitorHostRegistrationV2) == 512,
+              "wire table size drift: VnMonitorHostRegistrationV2");
+static_assert(offsetof(VnMonitorHostRegistrationV2, structSize) == 0,
+              "wire table offset drift: VnMonitorHostRegistrationV2.structSize");
+static_assert(offsetof(VnMonitorHostRegistrationV2, ownershipKind) == 4,
+              "wire table offset drift: VnMonitorHostRegistrationV2.ownershipKind");
+static_assert(offsetof(VnMonitorHostRegistrationV2, engineInstance) == 8,
+              "wire table offset drift: VnMonitorHostRegistrationV2.engineInstance");
+static_assert(offsetof(VnMonitorHostRegistrationV2, sdkSession) == 16,
+              "wire table offset drift: VnMonitorHostRegistrationV2.sdkSession");
+static_assert(offsetof(VnMonitorHostRegistrationV2, emitter) == 24,
+              "wire table offset drift: VnMonitorHostRegistrationV2.emitter");
+static_assert(offsetof(VnMonitorHostRegistrationV2, localSequence) == 32,
+              "wire table offset drift: VnMonitorHostRegistrationV2.localSequence");
+static_assert(offsetof(VnMonitorHostRegistrationV2, registrationRevision) == 40,
+              "wire table offset drift: VnMonitorHostRegistrationV2.registrationRevision");
+static_assert(offsetof(VnMonitorHostRegistrationV2, reserved0) == 48,
+              "wire table offset drift: VnMonitorHostRegistrationV2.reserved0");
+static_assert(offsetof(VnMonitorHostRegistrationV2, nameBytes) == 56,
+              "wire table offset drift: VnMonitorHostRegistrationV2.nameBytes");
+static_assert(offsetof(VnMonitorHostRegistrationV2, pathBytes) == 58,
+              "wire table offset drift: VnMonitorHostRegistrationV2.pathBytes");
+static_assert(offsetof(VnMonitorHostRegistrationV2, sceneBytes) == 60,
+              "wire table offset drift: VnMonitorHostRegistrationV2.sceneBytes");
+static_assert(offsetof(VnMonitorHostRegistrationV2, descriptionFlags) == 62,
+              "wire table offset drift: VnMonitorHostRegistrationV2.descriptionFlags");
+static_assert(offsetof(VnMonitorHostRegistrationV2, name) == 64,
+              "wire table offset drift: VnMonitorHostRegistrationV2.name");
+static_assert(offsetof(VnMonitorHostRegistrationV2, path) == 128,
+              "wire table offset drift: VnMonitorHostRegistrationV2.path");
+static_assert(offsetof(VnMonitorHostRegistrationV2, scene) == 384,
+              "wire table offset drift: VnMonitorHostRegistrationV2.scene");
+
+static_assert(sizeof(VnMonitorHostObjectSymbolV1) == 312,
+              "wire table size drift: VnMonitorHostObjectSymbolV1");
+static_assert(offsetof(VnMonitorHostObjectSymbolV1, structSize) == 0,
+              "wire table offset drift: VnMonitorHostObjectSymbolV1.structSize");
+static_assert(offsetof(VnMonitorHostObjectSymbolV1, factKind) == 4,
+              "wire table offset drift: VnMonitorHostObjectSymbolV1.factKind");
+static_assert(offsetof(VnMonitorHostObjectSymbolV1, stateCutId) == 8,
+              "wire table offset drift: VnMonitorHostObjectSymbolV1.stateCutId");
+static_assert(offsetof(VnMonitorHostObjectSymbolV1, cutRevision) == 16,
+              "wire table offset drift: VnMonitorHostObjectSymbolV1.cutRevision");
+static_assert(offsetof(VnMonitorHostObjectSymbolV1, hostSession) == 24,
+              "wire table offset drift: VnMonitorHostObjectSymbolV1.hostSession");
+static_assert(offsetof(VnMonitorHostObjectSymbolV1, hostSequence) == 32,
+              "wire table offset drift: VnMonitorHostObjectSymbolV1.hostSequence");
+static_assert(offsetof(VnMonitorHostObjectSymbolV1, registrationRevision) == 40,
+              "wire table offset drift: VnMonitorHostObjectSymbolV1.registrationRevision");
+static_assert(offsetof(VnMonitorHostObjectSymbolV1, field) == 48,
+              "wire table offset drift: VnMonitorHostObjectSymbolV1.field");
+static_assert(offsetof(VnMonitorHostObjectSymbolV1, textBytes) == 52,
+              "wire table offset drift: VnMonitorHostObjectSymbolV1.textBytes");
+static_assert(offsetof(VnMonitorHostObjectSymbolV1, flags) == 54,
+              "wire table offset drift: VnMonitorHostObjectSymbolV1.flags");
+static_assert(offsetof(VnMonitorHostObjectSymbolV1, text) == 56,
+              "wire table offset drift: VnMonitorHostObjectSymbolV1.text");
 
 } // namespace harkenremote
 

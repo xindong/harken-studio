@@ -26,7 +26,8 @@ inline constexpr std::uint64_t kCapabilityCatalog = 2;
 inline constexpr std::uint64_t kCapabilityControl = 4;
 inline constexpr std::uint64_t kCapabilityMonitorRecords = 8;
 inline constexpr std::uint64_t kCapabilityEventCapture = 16;
-inline constexpr std::uint64_t kCapabilities = 31;
+inline constexpr std::uint64_t kCapabilityExecutionObservation = 32;
+inline constexpr std::uint64_t kCapabilities = 63;
 
 enum class Message : std::uint16_t {
     Hello = 1,
@@ -48,6 +49,8 @@ enum class Message : std::uint16_t {
     EventSeal = 35,
     EventStatus = 36,
     EventRecords = 37,
+    EventStartV2 = 38,
+    EventStatusV2 = 39,
     Goodbye = 40,
     Discover = 100,
     Announcement = 101
@@ -331,6 +334,31 @@ struct EventCaptureStatus {
     std::uint64_t transportDroppedRecords = 0;
 };
 
+struct EventCaptureRequestV2 {
+    std::uint32_t executionFactVersion = 1;
+    std::uint32_t requestedStreamKindMask = 0;
+    std::uint32_t requestedPermissionMask = 0;
+    std::uint32_t requestSymbols = 0;
+    std::uint64_t consumerQueueBytes = 0;
+};
+
+struct EventCaptureStatusV2 {
+    EventCaptureStatus base{};
+    std::uint32_t acceptedExecutionFactVersion = 0;
+    std::uint32_t baselineAvailability = 0;
+    std::uint64_t supportedFactKinds[2]{};
+    std::uint32_t requestedPermissionMask = 0;
+    std::uint32_t acceptedPermissionMask = 0;
+    std::uint32_t deniedPermissionMask = 0;
+    std::uint32_t unsupportedPermissionMask = 0;
+    std::uint32_t acceptedStreamKindMask = 0;
+    std::uint32_t symbolsDecision = 0;
+    std::uint32_t symbolAvailability = 0;
+    std::uint32_t reserved0 = 0;
+    std::uint64_t identityUnavailableCount = 0;
+    std::uint64_t baselineStateCutId = 0;
+};
+
 inline void Encode(Writer &w, const Hello &v) {
     w.U32(v.major);
     w.U32(v.minor);
@@ -506,11 +534,60 @@ inline void Encode(Writer &w, const EventCaptureStatus &v) {
     w.U64(v.deliveryDroppedRecords);
     w.U64(v.transportDroppedRecords);
 }
-inline bool Decode(Reader &r, EventCaptureStatus &v) {
+inline bool DecodeEventCaptureStatusPrefix(Reader &r, EventCaptureStatus &v) {
     return r.I32(v.result) && r.U32(v.state) && v.state <= 2 &&
         r.U64(v.sessionEpoch) && r.U64(v.startedTimestampNs) && r.U64(v.stoppedTimestampNs) &&
         r.U64(v.sourceDroppedRecords) && r.U64(v.deliveryDroppedRecords) &&
-        r.U64(v.transportDroppedRecords) && r.Done();
+        r.U64(v.transportDroppedRecords);
+}
+inline bool Decode(Reader &r, EventCaptureStatus &v) {
+    return DecodeEventCaptureStatusPrefix(r, v) && r.Done();
+}
+
+inline void Encode(Writer &w, const EventCaptureRequestV2 &v) {
+    w.U32(v.executionFactVersion);
+    w.U32(v.requestedStreamKindMask);
+    w.U32(v.requestedPermissionMask);
+    w.U32(v.requestSymbols);
+    w.U64(v.consumerQueueBytes);
+}
+inline bool Decode(Reader &r, EventCaptureRequestV2 &v) {
+    return r.U32(v.executionFactVersion) && r.U32(v.requestedStreamKindMask) &&
+        r.U32(v.requestedPermissionMask) && r.U32(v.requestSymbols) && v.requestSymbols <= 1 &&
+        r.U64(v.consumerQueueBytes) && r.Done();
+}
+inline void Encode(Writer &w, const EventCaptureStatusV2 &v) {
+    Encode(w, v.base);
+    w.U32(v.acceptedExecutionFactVersion);
+    w.U32(v.baselineAvailability);
+    for (auto kinds : v.supportedFactKinds) w.U64(kinds);
+    w.U32(v.requestedPermissionMask);
+    w.U32(v.acceptedPermissionMask);
+    w.U32(v.deniedPermissionMask);
+    w.U32(v.unsupportedPermissionMask);
+    w.U32(v.acceptedStreamKindMask);
+    w.U32(v.symbolsDecision);
+    w.U32(v.symbolAvailability);
+    w.U32(v.reserved0);
+    w.U64(v.identityUnavailableCount);
+    w.U64(v.baselineStateCutId);
+}
+inline bool Decode(Reader &r, EventCaptureStatusV2 &v) {
+    return DecodeEventCaptureStatusPrefix(r, v.base) &&
+        r.U32(v.acceptedExecutionFactVersion) && v.acceptedExecutionFactVersion <= 1 &&
+        r.U32(v.baselineAvailability) && v.baselineAvailability <= 5 &&
+        r.U64(v.supportedFactKinds[0]) && r.U64(v.supportedFactKinds[1]) &&
+        r.U32(v.requestedPermissionMask) && r.U32(v.acceptedPermissionMask) &&
+        r.U32(v.deniedPermissionMask) && r.U32(v.unsupportedPermissionMask) &&
+        r.U32(v.acceptedStreamKindMask) && r.U32(v.symbolsDecision) && v.symbolsDecision <= 3 &&
+        r.U32(v.symbolAvailability) && v.symbolAvailability <= 5 &&
+        r.U32(v.reserved0) && v.reserved0 == 0 &&
+        r.U64(v.identityUnavailableCount) && r.U64(v.baselineStateCutId) && r.Done() &&
+        (v.acceptedPermissionMask & v.deniedPermissionMask) == 0 &&
+        (v.acceptedPermissionMask & v.unsupportedPermissionMask) == 0 &&
+        (v.deniedPermissionMask & v.unsupportedPermissionMask) == 0 &&
+        (v.acceptedPermissionMask | v.deniedPermissionMask | v.unsupportedPermissionMask) ==
+            v.requestedPermissionMask;
 }
 
 template <class T> Frame MakeFrame(Message type, std::uint32_t requestId, const T &value) {

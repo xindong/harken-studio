@@ -270,6 +270,9 @@ void ReapFirings() {
         g_remoteFirings.end());
 }
 
+void (*g_beforeCommandDispatchForTests)(void*) = nullptr;
+void* g_beforeCommandDispatchContextForTests = nullptr;
+
 class Server {
   public:
     VnRemoteConfig config{};
@@ -287,6 +290,7 @@ class Server {
     std::uint64_t epoch = 0;
     std::uint64_t nextEpoch = 1;
     std::uint64_t negotiatedCapabilities = 0;
+    std::uint32_t observationAllowedMask = 0;
     Socket listener = kInvalidSocket;
     Socket discovery = kInvalidSocket;
     std::thread worker;
@@ -303,6 +307,8 @@ class Server {
     VnMonitorSessionHandle eventSession = 0;
     std::uint64_t eventLastPush = 0;
     std::vector<std::uint8_t> eventBuffer;
+    bool eventV2 = false;
+    std::uint32_t eventAllowedMask = 0;
 
     ~Server() { Stop(); }
 
@@ -432,6 +438,7 @@ class Server {
         welcomed = false;
         closeRequested = false;
         negotiatedCapabilities = 0;
+        observationAllowedMask = 0;
         inbound.clear();
         outbound.clear();
         inboundBytes = outboundBytes = 0;
@@ -486,7 +493,7 @@ class Server {
             welcome.minor = std::min(hello.minor, kProtocolMinor);
             welcome.capabilities &= hello.capabilities;
 #if defined(HARKEN_MONITOR_HUB_ABSENT)
-            welcome.capabilities &= ~kCapabilityEventCapture;
+            welcome.capabilities &= ~(kCapabilityEventCapture | kCapabilityExecutionObservation);
 #endif
             auto bytes = EncodeFrame(MakeFrame(Message::Welcome, frame.requestId, welcome));
             std::lock_guard<std::mutex> lock(mutex);
@@ -500,6 +507,11 @@ class Server {
             welcomed = true;
             epoch = connectionEpoch;
             negotiatedCapabilities = welcome.capabilities;
+            // The explicitly started development transport grants observation only.
+            // Client capabilities and request masks cannot extend this policy.
+            observationAllowedMask = (welcome.capabilities & kCapabilityExecutionObservation) != 0
+                ? (VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE |
+                   VN_MONITOR_PERM_SYMBOLS) : 0;
             status.state = VN_REMOTE_CONNECTED;
             status.clientCount = 1;
             status.sessionId = connectionEpoch;
@@ -760,37 +772,61 @@ class Server {
         eventLastPush = 0;
     }
 
-    EventCaptureStatus EventStatus() {
-        EventCaptureStatus result;
-        VnMonitorEventSessionStatus current{};
+    EventCaptureStatusV2 EventStatus() {
+        EventCaptureStatusV2 result;
+        VnMonitorEventSessionStatusV2 current{};
         current.structSize = sizeof(current);
-        result.result = Vn_MonitorGetEventSessionStatus(eventSession, &current);
-        result.state = current.state;
-        result.sessionEpoch = current.monitorSessionEpoch;
-        result.startedTimestampNs = current.startedTimestampNs;
-        result.stoppedTimestampNs = current.stoppedTimestampNs;
-        result.sourceDroppedRecords = current.sourceDroppedRecords;
-        result.deliveryDroppedRecords = current.deliveryDroppedRecords;
+        result.base.result = Vn_MonitorGetEventSessionStatus(eventSession,
+            reinterpret_cast<VnMonitorEventSessionStatus*>(&current));
+        result.base.state = current.state;
+        result.base.sessionEpoch = current.monitorSessionEpoch;
+        result.base.startedTimestampNs = current.startedTimestampNs;
+        result.base.stoppedTimestampNs = current.stoppedTimestampNs;
+        result.base.sourceDroppedRecords = current.sourceDroppedRecords;
+        result.base.deliveryDroppedRecords = current.deliveryDroppedRecords;
+        result.acceptedExecutionFactVersion = current.acceptedExecutionFactVersion;
+        result.baselineAvailability = current.baselineAvailability;
+        std::copy(std::begin(current.supportedFactKinds), std::end(current.supportedFactKinds),
+                  std::begin(result.supportedFactKinds));
+        result.requestedPermissionMask = current.requestedPermissionMask;
+        result.acceptedPermissionMask = current.acceptedPermissionMask;
+        result.deniedPermissionMask = current.deniedPermissionMask;
+        result.unsupportedPermissionMask = current.unsupportedPermissionMask;
+        result.acceptedStreamKindMask = current.acceptedStreamKindMask;
+        result.symbolsDecision = current.symbolsDecision;
+        result.symbolAvailability = current.symbolAvailability;
+        result.identityUnavailableCount = current.identityUnavailableCount;
+        result.baselineStateCutId = current.baselineStateCutId;
         return result;
     }
 
-    EventCaptureStatus StartEventCapture() {
-        EventCaptureStatus result;
+    EventCaptureStatusV2 StartEventCapture(const EventCaptureRequestV2* request = nullptr) {
+        EventCaptureStatusV2 result;
         if (eventSession != 0) {
-            result.result = VN_IN_USE;
+            result.base.result = VN_IN_USE;
             return result;
         }
-        VnMonitorSessionDesc desc{};
-        desc.structSize = sizeof(desc);
-        desc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
-        desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
-        desc.consumerQueueBytes = 1048576;
-        result.result = monitor::OpenEventSession(&desc, &eventSession, true,
-                                                  identity.instanceId ^ logicEpoch);
-        if (result.result != VN_OK) return result;
+        VnMonitorSessionDescV2 desc{};
+        desc.structSize = request ? sizeof(desc) : sizeof(VnMonitorSessionDesc);
+        desc.requestedStreamKindMask = request ? request->requestedStreamKindMask : VN_MONITOR_STREAM_EVENT;
+        desc.requestedPermissionMask = request ? request->requestedPermissionMask : VN_MONITOR_PERM_OBSERVE_EVENTS;
+        desc.consumerQueueBytes = request ? request->consumerQueueBytes : 1048576;
+        desc.requestSymbols = request ? request->requestSymbols : 0;
+        desc.requestedExecutionFactVersion = request ? request->executionFactVersion : 0;
+        result.base.result = monitor::OpenEventSession(
+            reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &eventSession, true,
+            identity.instanceId ^ logicEpoch, eventAllowedMask);
+        if (result.base.result != VN_OK) return result;
+        eventV2 = request != nullptr;
         eventBuffer.resize(65536);
         eventLastPush = 0;
         return EventStatus();
+    }
+
+    bool QueueEventStatus(const EventCaptureStatusV2& status, std::uint32_t requestId,
+                          std::uint64_t currentEpoch, bool v2) {
+        return Queue(v2 ? MakeFrame(Message::EventStatusV2, requestId, status)
+                        : MakeFrame(Message::EventStatus, requestId, status.base), currentEpoch);
     }
 
     void PumpEvents(std::uint64_t currentEpoch) {
@@ -803,20 +839,20 @@ class Server {
         poll.bufferBytes = eventBuffer.size();
         VnMonitorPollResult result{};
         result.structSize = sizeof(result);
-        if (status.result == VN_OK) status.result = Vn_MonitorPoll(eventSession, &poll, &result);
-        if (status.result == VN_OK && result.bytesWritten != 0) {
+        if (status.base.result == VN_OK) status.base.result = Vn_MonitorPoll(eventSession, &poll, &result);
+        if (status.base.result == VN_OK && result.bytesWritten != 0) {
             MonitorRecords records;
-            records.sessionEpoch = status.sessionEpoch;
+            records.sessionEpoch = status.base.sessionEpoch;
             records.recordCount = result.recordsWritten;
             records.bytes.assign(eventBuffer.begin(), eventBuffer.begin() + result.bytesWritten);
             if (!Queue(MakeFrame(Message::EventRecords, 0, records), currentEpoch, true)) {
-                status.result = VN_BACKPRESSURE;
-                status.transportDroppedRecords = result.recordsWritten;
+                status.base.result = VN_BACKPRESSURE;
+                status.base.transportDroppedRecords = result.recordsWritten;
             }
         }
-        if (status.result == VN_OK) status = EventStatus();
-        const bool queued = Queue(MakeFrame(Message::EventStatus, 0, status), currentEpoch);
-        if (!queued || status.result != VN_OK || status.state == VN_MONITOR_EVENT_SESSION_DRAINED)
+        if (status.base.result == VN_OK) status = EventStatus();
+        const bool queued = QueueEventStatus(status, 0, currentEpoch, eventV2);
+        if (!queued || status.base.result != VN_OK || status.base.state == VN_MONITOR_EVENT_SESSION_DRAINED)
             CloseEventCapture();
     }
 
@@ -1049,18 +1085,24 @@ class Server {
 
     void PumpLogic() {
         std::uint64_t currentEpoch = 0, capabilities = 0;
+        std::uint32_t allowedObservations = 0;
         {
             std::lock_guard<std::mutex> lock(mutex);
             currentEpoch = epoch;
             capabilities = negotiatedCapabilities;
+            allowedObservations = observationAllowedMask;
         }
         if (logicEpoch != currentEpoch) {
             CloseMonitor();
             CloseEventCapture();
             logicEpoch = currentEpoch;
+            eventV2 = false;
+            eventAllowedMask = allowedObservations;
         }
         if (currentEpoch == 0)
             return;
+        if (auto hook = std::exchange(g_beforeCommandDispatchForTests, nullptr))
+            hook(g_beforeCommandDispatchContextForTests);
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2);
         for (std::uint32_t i = 0; i < config.maxCommandsPerUpdate; ++i) {
             if (i != 0 && std::chrono::steady_clock::now() >= deadline)
@@ -1068,6 +1110,9 @@ class Server {
             Request request;
             {
                 std::lock_guard<std::mutex> lock(mutex);
+                // A new connection must first refresh its grant on the logic
+                // thread. Leave its requests queued for that next update.
+                if (epoch != currentEpoch) break;
                 if (inbound.empty())
                     break;
                 request = std::move(inbound.front());
@@ -1102,22 +1147,31 @@ class Server {
                 }
             } else if (frame.type == Message::EventStart && frame.payload.empty() &&
                        (capabilities & kCapabilityEventCapture) != 0) {
-                Queue(MakeFrame(Message::EventStatus, frame.requestId, StartEventCapture()), request.epoch);
+                QueueEventStatus(StartEventCapture(), frame.requestId, request.epoch, false);
+            } else if (frame.type == Message::EventStartV2) {
+                EventCaptureRequestV2 value;
+                EventCaptureStatusV2 result;
+                if ((capabilities & kCapabilityExecutionObservation) == 0)
+                    result.base.result = VN_MONITOR_UNSUPPORTED;
+                else if (!DecodePayload(frame, value)) result.base.result = VN_INVALID_ARG;
+                else result = StartEventCapture(&value);
+                QueueEventStatus(result, frame.requestId, request.epoch, true);
             } else if (frame.type == Message::EventSeal &&
-                       (capabilities & kCapabilityEventCapture) != 0) {
+                       (capabilities & (kCapabilityEventCapture | kCapabilityExecutionObservation)) != 0) {
                 Reader reader(frame.payload);
                 std::uint64_t requestedSession = 0;
                 auto result = EventStatus();
-                if (!reader.U64(requestedSession) || !reader.Done()) result.result = VN_INVALID_ARG;
-                else if (result.result == VN_OK && requestedSession != result.sessionEpoch)
-                    result.result = VN_MONITOR_STALE_SESSION;
-                else if (result.result == VN_OK) {
-                    result.result = Vn_MonitorSealEventSession(eventSession);
-                    if (result.result == VN_OK) result = EventStatus();
+                const bool replyV2 = eventV2;
+                if (!reader.U64(requestedSession) || !reader.Done()) result.base.result = VN_INVALID_ARG;
+                else if (result.base.result == VN_OK && requestedSession != result.base.sessionEpoch)
+                    result.base.result = VN_MONITOR_STALE_SESSION;
+                else if (result.base.result == VN_OK) {
+                    result.base.result = Vn_MonitorSealEventSession(eventSession);
+                    if (result.base.result == VN_OK) result = EventStatus();
                 }
-                if (result.result == VN_OK && result.state == VN_MONITOR_EVENT_SESSION_DRAINED)
+                if (result.base.result == VN_OK && result.base.state == VN_MONITOR_EVENT_SESSION_DRAINED)
                     CloseEventCapture();
-                Queue(MakeFrame(Message::EventStatus, frame.requestId, result), request.epoch);
+                QueueEventStatus(result, frame.requestId, request.epoch, replyV2);
             } else if (frame.type == Message::MonitorStart &&
                        (capabilities & kCapabilityMonitorRecords) != 0) {
                 MonitorRequest requestValue;
@@ -1263,7 +1317,20 @@ void Pump() {
     }
 }
 
+void SetBeforeCommandDispatchForTests(void (*hook)(void*), void* context) {
+    g_beforeCommandDispatchForTests = hook;
+    g_beforeCommandDispatchContextForTests = context;
+}
+
+unsigned PendingCommandsForTests() {
+    if (!g_server) return 0;
+    std::lock_guard<std::mutex> lock(g_server->mutex);
+    return static_cast<unsigned>(g_server->inbound.size());
+}
+
 void Shutdown(bool engineTerminating) {
+    g_beforeCommandDispatchForTests = nullptr;
+    g_beforeCommandDispatchContextForTests = nullptr;
     if (g_server) {
         g_server->Stop();
         g_server->CloseMonitor();

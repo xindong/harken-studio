@@ -379,6 +379,11 @@ void ApplyTimelineControlEvent(VoiceRenderContext& ctx,
             if (ctx.timelineStopPending ||
                 (ctx.timelineFallbackStopActive && ctx.fading)) return;
         }
+        if (!ctx.monitorControlAdopted) {
+            ctx.monitorControlAdopted = true;
+            ctx.monitorTimelineControlAdopted = true;
+            ctx.monitorAdoptedControlCause = event.controlCause;
+        }
         ctx.timelineStopPending = true;
         ctx.timelineStopOffset = event.offset;
         ctx.timelineStopFrame = event.authoredRootStop ? ctx.authoredRootStopFrame :
@@ -450,6 +455,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     ctx.logicalSourceOutputFramesThisBlock = 0;
     ctx.stagedSourceTerminal = SourceTerminalKind::None;
     ctx.stagedSourceTerminalOffset = 0;
+    ctx.monitorStoppedBeforeCascade = false;
 
     const VoiceEventSpan& timelineSpan = ctx.timelineEvents;
 
@@ -481,6 +487,11 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     if (rootStopArrived && (prebufferWaiting ||
         (ctx.timelineGated && ctx.authoredRootStopFrame <= quantumStart + earliestStart))) {
         ctx.authoredRootStopApplied = true;
+        if (!ctx.monitorControlAdopted) {
+            ctx.monitorControlAdopted = true;
+            ctx.monitorTimelineControlAdopted = true;
+            ctx.monitorAdoptedControlCause = ctx.authoredRootStopControl.controlCause;
+        }
         ctx.stagedSourceTerminal = SourceTerminalKind::Stop;
         ctx.stagedSourceTerminalOffset = static_cast<std::uint32_t>(
             ctx.authoredRootStopFrame > quantumStart ? ctx.authoredRootStopFrame - quantumStart : 0);
@@ -529,6 +540,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
         ? ctx.timelineFallbackStopFrame : ctx.timelineStopFrame;
     if (ctx.authoredRootStopApplied && pendingStopFrame < quantumStart &&
         quantumStart - pendingStopFrame >= ctx.timelineStopDeclickFrames) {
+        ctx.monitorStoppedBeforeCascade = true;
         ctx.phase = SourcePhase::Done;
         ctx.starvedThisBlock = false;
         ctx.lastResult = StageResult{0, SourcePhase::Done};

@@ -4,8 +4,15 @@
 #include "Engine.h"
 #include "MonitorDerivedDispatch.h"
 #include "MonitorProducerRing.h"
+#include "MonitorExecutionCodec.h"
+#include "MonitorLifecycleProjection.h"
+#include "MonitorExecutionProducer.h"
+#include "MonitorIdentitySnapshot.h"
+#include "MonitorIdentityState.h"
+#include "MonitorIdentityCut.h"
 #include "MonitorRecordPack.h"
 #include "MonitorSessionFileWrite.h"
+#include "MonitorRecordingCodec.h"
 
 #include "harken/core/AllocGuard.h"
 #include "harken/core/LogRing.h"
@@ -152,12 +159,17 @@ struct DropAccum {
 
     void Note(std::uint64_t sourceSequence, std::uint64_t bytes,
               std::uint32_t dropReason) {
+        NoteRange(sourceSequence, sourceSequence, 1, bytes, dropReason);
+    }
+
+    void NoteRange(std::uint64_t first, std::uint64_t last, std::uint64_t count,
+                   std::uint64_t bytes, std::uint32_t dropReason) {
         if (recordCount == 0) {
-            firstSourceSequence = sourceSequence;
+            firstSourceSequence = first;
         }
-        lastSourceSequence = sourceSequence;
-        recordCount += 1;
-        byteCount += bytes;
+        lastSourceSequence = last;
+        recordCount = UINT64_MAX - recordCount < count ? UINT64_MAX : recordCount + count;
+        byteCount = UINT64_MAX - byteCount < bytes ? UINT64_MAX : byteCount + bytes;
         reason = dropReason;
         if (streamId == 0) {
             streamId = kSyntheticStreamId;
@@ -233,6 +245,7 @@ struct PackedRecord {
     std::vector<std::uint8_t> bytes;
     std::uint64_t sourceSequence = 0;
     std::uint32_t recordKind = 0;
+    MonitorProducerOrigin origin{};
 };
 
 struct ConsumerQueue {
@@ -242,30 +255,49 @@ struct ConsumerQueue {
     std::uint64_t epoch = 0;
     std::uint64_t generation = 0;
     std::deque<PackedRecord> records;
-    DropAccum drop{};
+    std::deque<PackedRecord> deferredSymbols;
+    std::uint32_t symbolStreamKind = VN_MONITOR_STREAM_EVENT;
+    bool symbolBaselineActive = false;
+    // Every typed producer has an independent source sequence.
+    static constexpr std::size_t kDropStreamCount = 6;
+    std::array<DropAccum, kDropStreamCount> drops{};
     std::uint64_t droppedRecords = 0;
+    std::array<std::uint64_t, kDropStreamCount> cumulativeDrops{};
+    bool recordingReceiver = false;
     std::mutex mutex;
 
     void Reset(std::uint64_t budget, std::uint32_t stage, std::uint64_t newEpoch,
-               std::uint64_t newGeneration) {
+               std::uint64_t newGeneration, std::uint32_t symbolKind = VN_MONITOR_STREAM_EVENT) {
         std::lock_guard<std::mutex> lock(mutex);
         budgetBytes = budget;
         usedBytes = 0;
         nextDelivery = 1;
         epoch = newEpoch;
         generation = newGeneration;
+        symbolStreamKind = symbolKind;
         records.clear();
-        drop.Clear();
+        deferredSymbols.clear();
+        symbolBaselineActive = false;
+        for (auto& drop : drops) drop.Clear();
         droppedRecords = 0;
-        drop.stage = stage;
-        drop.streamId = kSyntheticStreamId;
+        cumulativeDrops = {};
+        recordingReceiver = false;
+        for (auto& drop : drops) drop.stage = stage;
+        drops[0].streamId = kSyntheticStreamId;
+        drops[1].streamId = kExecutionLogicStream;
+        drops[2].streamId = kExecutionAudioStream;
+        drops[3].streamId = kIdentityDeltaStream;
+        drops[4].streamId = kIdentityBaselineStream;
+        drops[5].streamId = kHostSymbolStream;
     }
 
     void Detach() {
         std::lock_guard<std::mutex> lock(mutex);
         records.clear();
+        deferredSymbols.clear();
+        symbolBaselineActive = false;
         usedBytes = 0;
-        drop.Clear();
+        for (auto& drop : drops) drop.Clear();
         epoch = 0;
         generation = 0;
     }
@@ -309,6 +341,28 @@ struct StateCut {
     bool settled = false;
 };
 
+struct IdentityStaging {
+    std::vector<MonitorExecutionFact> rows;
+    std::vector<MonitorHostSymbolValue> symbols;
+    std::uint32_t identityCount = 0;
+    VnMonitorIdentityCutBeginV1 begin{};
+    std::uint64_t engine = 0;
+    std::uint64_t firstSequence = 0;
+    std::uint64_t checksum = kIdentityChecksumSeed;
+    std::uint64_t emitted[9]{};
+    std::uint32_t count = 0;
+    std::uint32_t cursor = 0;
+    bool active = false;
+    bool sourceComplete = false;
+    bool requested = false;
+    MonitorIdentityCutVerifier delivered;
+};
+
+bool IsIdentityRecord(std::uint32_t kind) {
+    return kind == VN_MONITOR_RECORD_IDENTITY_FACT || kind == VN_MONITOR_RECORD_IDENTITY_CUT_BEGIN ||
+        kind == VN_MONITOR_RECORD_IDENTITY_CUT_END || kind == VN_MONITOR_RECORD_HOST_OBJECT_SYMBOL;
+}
+
 struct Session {
     std::atomic<bool> live{false};
     std::uint64_t generation = 0;
@@ -323,6 +377,10 @@ struct Session {
     std::uint32_t requestSymbols = 0;
     std::uint32_t rawAudioDecision = 0;
     std::uint32_t symbolsDecision = 0;
+    std::uint32_t executionFactVersion = 0;
+    std::array<std::uint64_t, 2> supportedFactKinds{};
+    std::uint32_t baselineAvailability = VN_MONITOR_OBSERVATION_NOT_REQUESTED;
+    std::uint32_t symbolAvailability = VN_MONITOR_OBSERVATION_NOT_REQUESTED;
     std::uint64_t principalHash = 0;
     std::uint64_t consumerQueueBytes = 0;
     std::uint64_t firstExpectedTimeSeriesSequence = 0;
@@ -333,7 +391,24 @@ struct Session {
     std::atomic<ConsumerQueue*> queuePtr{nullptr};
     std::unique_ptr<ConsumerQueue> queue;
     StateCut cut{};
+    IdentityStaging identity;
+    std::uint64_t identityStart = 0;
+    std::uint64_t identityEnd = 0;
+    DropAccum identityDrops{};
+    DropAccum baselineDrops{};
+    std::uint64_t symbolStart = 0, symbolEnd = 0;
+    std::array<std::uint64_t, 2> symbolUnavailableStart{}, symbolUnavailableEnd{};
+    DropAccum symbolDrops{};
+    bool sealRequested = false;
     bool eventCatalog = false;
+    bool recordingReceiver = false;
+    bool identityInterestReleased = false;
+    std::array<std::uint64_t, 2> ringStarts{}, ringEnds{}, logStarts{}, nativeLogDrops{};
+    std::array<std::uint64_t, 2> logFiltered{}, logLost{}, logDownstreamEnds{};
+    std::array<std::uint64_t, 2> rawDropStarts{}, rawDropsAtEnd{};
+    std::array<std::uint64_t, 4> unavailableStarts{}, unavailableAtEnd{};
+    std::uint64_t logBudgetDropsAtEnd = 0;
+    std::uint64_t controlStart = 0, controlEnd = 0, controlDrops = 0;
     std::uint64_t eventStartedNs = 0;
     std::uint64_t eventStoppedNs = 0;
     std::uint64_t lastEventSequence = 0;
@@ -343,6 +418,9 @@ struct Session {
     std::uint64_t logDropBaseline = 0;
     bool eventDrained = false;
     std::uint64_t finalSourceDrops = 0;
+    std::array<std::uint64_t, 2> executionStarts{};
+    std::array<std::uint64_t, 2> executionEnds{};
+    std::array<DropAccum, 2> executionSourceDrops{};
 
     void Reset() {
         live.store(false, std::memory_order_release);
@@ -359,6 +437,10 @@ struct Session {
         requestSymbols = 0;
         rawAudioDecision = 0;
         symbolsDecision = 0;
+        executionFactVersion = 0;
+        supportedFactKinds = {};
+        baselineAvailability = VN_MONITOR_OBSERVATION_NOT_REQUESTED;
+        symbolAvailability = VN_MONITOR_OBSERVATION_NOT_REQUESTED;
         principalHash = 0;
         consumerQueueBytes = 0;
         firstExpectedTimeSeriesSequence = 0;
@@ -367,7 +449,23 @@ struct Session {
         resyncRequired.store(false, std::memory_order_relaxed);
         streamTerminated.store(false, std::memory_order_relaxed);
         cut = {};
+        identity = {};
+        identityStart = identityEnd = 0;
+        identityDrops = {};
+        baselineDrops = {};
+        symbolStart = symbolEnd = 0;
+        symbolUnavailableStart = symbolUnavailableEnd = {};
+        symbolDrops = {};
+        sealRequested = false;
         eventCatalog = false;
+        recordingReceiver = false;
+        identityInterestReleased = false;
+        ringStarts = ringEnds = logStarts = nativeLogDrops = {};
+        logFiltered = logLost = logDownstreamEnds = {};
+        rawDropStarts = rawDropsAtEnd = {};
+        unavailableStarts = unavailableAtEnd = {};
+        logBudgetDropsAtEnd = 0;
+        controlStart = controlEnd = controlDrops = 0;
         eventStartedNs = 0;
         eventStoppedNs = 0;
         lastEventSequence = 0;
@@ -377,11 +475,34 @@ struct Session {
         logDropBaseline = 0;
         eventDrained = false;
         finalSourceDrops = 0;
+        executionStarts = {};
+        executionEnds = {};
+        executionSourceDrops = {};
         if (queue) {
             queue->Detach();
         }
     }
 };
+
+bool WantsSymbols(const Session& session) {
+    return session.executionFactVersion == 1 && session.requestSymbols != 0 &&
+        (session.acceptedPermissionMask & VN_MONITOR_PERM_SYMBOLS) != 0 &&
+        (session.acceptedStreamKindMask & (VN_MONITOR_STREAM_STATE | VN_MONITOR_STREAM_EVENT)) != 0;
+}
+
+std::uint32_t SymbolStreamKind(const Session& session) {
+    return (session.acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0
+        ? VN_MONITOR_STREAM_STATE : VN_MONITOR_STREAM_EVENT;
+}
+
+void MarkSymbolIncomplete(Session& session) {
+    session.symbolAvailability = VN_MONITOR_OBSERVATION_INCOMPLETE;
+    if ((session.acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0) {
+        session.baselineAvailability = VN_MONITOR_OBSERVATION_INCOMPLETE;
+        if (session.cut.settled && session.cut.result == VN_MONITOR_STATE_CUT_COMPLETE)
+            session.cut.result = VN_MONITOR_STATE_CUT_TRUNCATED;
+    }
+}
 
 struct RetiredSession {
     std::uint64_t generation = 0;
@@ -402,6 +523,25 @@ struct ProcessOwner {
     std::atomic<std::uint32_t> pollEntered{0};
     MonitorProducerRing producerRing;
     MonitorProducerRing logicRing;
+    std::array<MonitorExecutionProducer, 2> executionProducers;
+    MonitorProducerRing identityRing;
+    MonitorIdentityProducer identityProducer;
+    MonitorIdentityMirror identityMirror;
+    MonitorProducerRing symbolRing;
+    MonitorHostSymbolProducer symbolProducer;
+    MonitorHostSymbolMirror symbolMirror;
+    std::atomic<bool> symbolResourcesReady{false};
+    std::uint64_t symbolStorageBytes = 0;
+    std::uint64_t observationRevision = 1;
+    std::uint32_t symbolObservers = 0;
+    std::atomic<bool> identityResourcesReady{false};
+    std::uint64_t nextIdentitySequence = 1;
+    std::uint64_t identityStorageBytes = 0;
+    std::uint32_t identityMutationDepth = 0;
+    std::uint32_t identityObservers = 0;
+    std::uint32_t pendingIdentitySeals = 0;
+    std::uint64_t identityRefreshes = 0;
+    std::int32_t dropIdentityRowForTests = -1;
     std::vector<std::uint8_t> drainScratch{};
     std::vector<std::uint8_t> audioPackScratch{};
     std::vector<float> interleaveScratch{};
@@ -413,6 +553,13 @@ struct ProcessOwner {
     std::atomic<std::uint32_t> internalEnabledMask{0};
     std::atomic<std::uint32_t> observerCount{0};
     std::atomic<std::uint32_t> eventObservers{0};
+    std::atomic<std::uint32_t> executionObservers{0};
+    std::array<std::atomic<std::uint64_t>, 2> ringProjectionCompleted{}, logProjectionCompleted{};
+    std::array<std::uint64_t, 2> pendingRingTickets{};
+    std::array<std::uint64_t, 2> logTranscriptLast{};
+    std::uint64_t controlPublished = 0;
+    std::array<std::uint64_t, 4> logicUnavailable{};
+    std::atomic<bool> recorderLogicPending{false};
     std::atomic<std::uint64_t> lastEventFanoutSequence{0};
     struct Recorder {
         std::uint32_t state = VN_MONITOR_RECORDING_STATE_STOPPED;
@@ -428,9 +575,22 @@ struct ProcessOwner {
         std::filesystem::path path;
         std::ofstream file;
         std::mutex mutex;
+        bool typed = false;
+        bool forceIncomplete = false;
+        bool identityCleanupPending = false;
+        std::uint32_t stopReason = 0;
+        VnMonitorSessionHandle receiver = 0;
+        RecordingDescriptor descriptor{};
+        RecordingEnd end{};
+        MonitorRecordingVerifier verifier;
+        std::vector<std::uint8_t> frameBuffer;
         bool failNextWriteForTests = false;
         bool failNextOptionalWriteForTests = false;
         bool failOptionalRestoreForTests = false;
+        void (*beforeFailureCleanupForTests)(void*) = nullptr;
+        void* failureCleanupContextForTests = nullptr;
+        void (*afterReceiverOpenForTests)(void*) = nullptr;
+        void* receiverOpenContextForTests = nullptr;
 
         void ResetStopped() {
             state = VN_MONITOR_RECORDING_STATE_STOPPED;
@@ -442,8 +602,16 @@ struct ProcessOwner {
             fileByteBudget = 0;
             unflushedBytes = 0;
             queueEpoch = 0;
+            typed = forceIncomplete = identityCleanupPending = false;
+            stopReason = 0;
+            receiver = 0;
+            descriptor = {};
+            end = {};
+            verifier = {};
             path.clear();
             failNextWriteForTests = false;
+            beforeFailureCleanupForTests = afterReceiverOpenForTests = nullptr;
+            failureCleanupContextForTests = receiverOpenContextForTests = nullptr;
             if (file.is_open()) {
                 file.close();
             }
@@ -594,7 +762,8 @@ struct ProcessOwner {
         std::uint64_t bytes = 0;
         for (const Session& session : sessions) {
             if (session.live.load(std::memory_order_acquire)) {
-                bytes += session.consumerQueueBytes;
+                bytes += session.consumerQueueBytes + session.identity.rows.size() * sizeof(MonitorExecutionFact) +
+                    session.identity.symbols.size() * sizeof(MonitorHostSymbolValue);
             }
         }
         return bytes;
@@ -615,7 +784,7 @@ struct ProcessOwner {
         const std::uint32_t slots =
             LiveSlotsLocked() + RetiredSlotsLocked() + extraSlots;
         const std::uint64_t bytes =
-            LiveQueueBytesLocked() + RetiredQueueBytesLocked() + extraBytes;
+            LiveQueueBytesLocked() + RetiredQueueBytesLocked() + identityStorageBytes + symbolStorageBytes + extraBytes;
         return slots > VN_MONITOR_HARD_PROCESS_SESSION_SLOTS ||
                bytes > VN_MONITOR_HARD_PROCESS_QUEUE_BYTES;
     }
@@ -806,6 +975,29 @@ ProcessOwner& Owner() {
 
 VnResult RequireEngineAndLogicThread(bool pollPath);
 bool PublishPacked(const std::uint8_t* bytes, std::uint32_t size);
+void StopOwnedRecordingLocked(ProcessOwner& owner, VnMonitorSessionHandle handle,
+    std::uint64_t lease, std::uint32_t reason);
+void CleanupRecordingReceiverLocked(ProcessOwner& owner);
+Session* FindLive(ProcessOwner& owner, VnMonitorSessionHandle handle, bool allowRecording);
+std::uint32_t ReadPackedU32(const std::uint8_t* bytes, std::size_t offset);
+bool IsStateCutBoundRecordKind(std::uint32_t recordKind);
+
+// The same projection controls raw-source accounting and private receiver delivery.
+bool TypedRawProjection(const std::uint8_t* bytes, std::uint32_t size) {
+    if (!bytes || size < kPackedEnvelopeBytes) return false;
+    const auto kind = ReadPackedU32(bytes, 0);
+    if (ReadPackedU32(bytes, 12) == VN_MONITOR_STREAM_STATE) return false;
+    if (kind == VN_MONITOR_RECORD_EVENT_DETAIL && size < kPackedEnvelopeBytes + 12) return false;
+    return kind == VN_MONITOR_RECORD_EVENT_DETAIL ? RecordingKeepsLegacy(kind,
+        ReadPackedU32(bytes, kPackedEnvelopeBytes + 4), ReadPackedU32(bytes, kPackedEnvelopeBytes + 8)) : RecordingKeepsLegacy(kind);
+}
+
+std::uint32_t RecordingRawStreams(const std::uint8_t* bytes, std::uint32_t size, MonitorProducerOrigin origin = {}) {
+    if (!TypedRawProjection(bytes, size) || origin.source >= static_cast<unsigned>(RecordingSource::AudioLog)) return 0;
+    // Audio capture also produces synchronous measurement records on the drain thread.
+    return ReadPackedU32(bytes, 12) | (ReadPackedU32(bytes, 0) == VN_MONITOR_RECORD_AUDIO_CHUNK
+        ? VN_MONITOR_STREAM_TIME_SERIES : 0u);
+}
 struct LiveTapSnapshot {
     std::uint32_t kind = 0;
     std::uint32_t selector = 0;
@@ -1517,6 +1709,7 @@ bool ExpireLeaseIfDueLocked(ProcessOwner& owner) {
         owner.lease.expiryExecuteFrame) {
         return false;
     }
+    StopOwnedRecordingLocked(owner, owner.lease.holder, owner.lease.generation, kLeaseReasonExpiry);
     owner.lease.held = false;
     owner.lease.holder = 0;
     owner.lease.principalHash = 0;
@@ -1530,6 +1723,7 @@ void DisconnectHolderLocked(ProcessOwner& owner, VnMonitorSessionHandle handle) 
     if (!owner.lease.held || owner.lease.holder != handle) {
         return;
     }
+    StopOwnedRecordingLocked(owner, owner.lease.holder, owner.lease.generation, kLeaseReasonDisconnect);
     owner.lease.held = false;
     owner.lease.holder = 0;
     owner.lease.principalHash = 0;
@@ -1542,6 +1736,7 @@ void DisconnectRemoteControlLocked(ProcessOwner& owner) {
     if (!owner.lease.held) {
         return;
     }
+    StopOwnedRecordingLocked(owner, owner.lease.holder, owner.lease.generation, kLeaseReasonDisconnect);
     owner.lease.held = false;
     owner.lease.holder = 0;
     owner.lease.principalHash = 0;
@@ -1676,7 +1871,8 @@ bool EnqueueRecord(ConsumerQueue& queue, const std::uint8_t* bytes,
                    std::uint32_t size, std::uint64_t sourceSequence,
                    std::uint32_t recordKind, std::uint32_t dropStage,
                    bool countDropOnFull, std::uint64_t expectedEpoch = 0,
-                   std::uint64_t expectedGeneration = 0) {
+                   std::uint64_t expectedGeneration = 0, bool deferSymbol = false,
+                   MonitorProducerOrigin origin = {}) {
     std::lock_guard<std::mutex> lock(queue.mutex);
     if (expectedEpoch != 0 && queue.epoch != expectedEpoch) {
         return false;
@@ -1687,9 +1883,18 @@ bool EnqueueRecord(ConsumerQueue& queue, const std::uint8_t* bytes,
     if (queue.budgetBytes > 0 &&
         queue.usedBytes + size > queue.budgetBytes) {
         if (countDropOnFull) {
-            queue.drop.stage = dropStage;
-            queue.drop.Note(sourceSequence, size, VN_MONITOR_EVENT_DROP);
+            const auto stream = ReadPackedU64(bytes, 24);
+            unsigned index = 0;
+            if (recordKind == VN_MONITOR_RECORD_EXECUTION_FACT)
+                index = stream == kExecutionLogicStream ? 1u : (stream == kExecutionAudioStream ? 2u : 0u);
+            else if (IsIdentityRecord(recordKind))
+                index = stream == kIdentityDeltaStream ? 3u : (stream == kIdentityBaselineStream ? 4u :
+                    (stream == kHostSymbolStream ? 5u : 0u));
+            auto& drop = queue.drops[index];
+            drop.stage = dropStage;
+            drop.Note(sourceSequence, size, VN_MONITOR_EVENT_DROP);
             ++queue.droppedRecords;
+            ++queue.cumulativeDrops[index];
         }
         return false;
     }
@@ -1697,58 +1902,69 @@ bool EnqueueRecord(ConsumerQueue& queue, const std::uint8_t* bytes,
     record.bytes.assign(bytes, bytes + size);
     record.sourceSequence = sourceSequence;
     record.recordKind = recordKind;
-    const std::uint64_t delivery = queue.nextDelivery++;
+    record.origin = origin;
+    const std::uint64_t delivery = deferSymbol ? 0 : queue.nextDelivery++;
     StampDelivery(record.bytes.data(), size, delivery);
-    if (recordKind == VN_MONITOR_RECORD_EVENT_DETAIL) {
+    if (recordKind == VN_MONITOR_RECORD_EVENT_DETAIL || queue.recordingReceiver ||
+        (recordKind >= VN_MONITOR_RECORD_EXECUTION_FACT && recordKind <= VN_MONITOR_RECORD_HOST_OBJECT_SYMBOL)) {
         WriteU64(record.bytes.data() + kPackedSessionEpochOffset, queue.epoch);
     }
     queue.usedBytes += size;
-    queue.records.push_back(std::move(record));
+    if (deferSymbol) queue.deferredSymbols.push_back(std::move(record));
+    else queue.records.push_back(std::move(record));
     return true;
 }
 
 bool FlushDropSummary(ProcessOwner& owner, ConsumerQueue& queue,
                       std::uint32_t dropStage, std::uint64_t expectedEpoch = 0,
-                      std::uint64_t expectedGeneration = 0) {
-    VnMonitorDropSummary snapshot{};
-    {
-        std::lock_guard<std::mutex> lock(queue.mutex);
-        if (expectedEpoch != 0 && queue.epoch != expectedEpoch) {
+                      std::uint64_t expectedGeneration = 0, bool deferSymbols = false) {
+    for (unsigned index = 0; index != queue.drops.size(); ++index) {
+        VnMonitorDropSummary snapshot{};
+        bool deferBucket = false;
+        {
+            std::lock_guard<std::mutex> lock(queue.mutex);
+            if (expectedEpoch != 0 && queue.epoch != expectedEpoch) {
+                return false;
+            }
+            if (expectedGeneration != 0 && queue.generation != expectedGeneration) {
+                return false;
+            }
+            const auto& drop = queue.drops[index];
+            if (drop.recordCount == 0) continue;
+            snapshot.structSize = sizeof(snapshot);
+            snapshot.stage = drop.stage ? drop.stage : dropStage;
+            snapshot.streamId = drop.streamId;
+            snapshot.firstSourceSequence = drop.firstSourceSequence;
+            snapshot.lastSourceSequence = drop.lastSourceSequence;
+            snapshot.recordCount = drop.recordCount;
+            snapshot.byteCount = drop.byteCount;
+            snapshot.reason = drop.reason;
+            deferBucket = snapshot.streamId == kHostSymbolStream &&
+                (deferSymbols || queue.symbolBaselineActive || !queue.deferredSymbols.empty());
+        }
+        std::uint8_t packed[kScratchBytes];
+        const std::uint64_t sourceSequence = owner.nextDropSourceSequence++;
+        const std::uint32_t size =
+            PackDropSummaryRecord(packed, sizeof(packed), snapshot, sourceSequence);
+        if (size == 0) {
             return false;
         }
-        if (expectedGeneration != 0 && queue.generation != expectedGeneration) {
+        if (snapshot.streamId == kIdentityDeltaStream || snapshot.streamId == kIdentityBaselineStream)
+            WriteU32(packed + 12, VN_MONITOR_STREAM_STATE);
+        if (snapshot.streamId == kHostSymbolStream) WriteU32(packed + 12, queue.symbolStreamKind);
+        if (EnqueueRecord(queue, packed, size, sourceSequence,
+                          VN_MONITOR_RECORD_DROP_SUMMARY, dropStage, false,
+                          expectedEpoch, expectedGeneration, deferBucket)) {
+            std::lock_guard<std::mutex> lock(queue.mutex);
+            if ((expectedEpoch == 0 || queue.epoch == expectedEpoch) &&
+                (expectedGeneration == 0 || queue.generation == expectedGeneration)) {
+                queue.drops[index].Clear();
+            }
+        } else {
             return false;
         }
-        if (queue.drop.recordCount == 0) {
-            return true;
-        }
-        snapshot.structSize = sizeof(snapshot);
-        snapshot.stage = queue.drop.stage ? queue.drop.stage : dropStage;
-        snapshot.streamId = queue.drop.streamId;
-        snapshot.firstSourceSequence = queue.drop.firstSourceSequence;
-        snapshot.lastSourceSequence = queue.drop.lastSourceSequence;
-        snapshot.recordCount = queue.drop.recordCount;
-        snapshot.byteCount = queue.drop.byteCount;
-        snapshot.reason = queue.drop.reason;
     }
-    std::uint8_t packed[kScratchBytes];
-    const std::uint64_t sourceSequence = owner.nextDropSourceSequence++;
-    const std::uint32_t size =
-        PackDropSummaryRecord(packed, sizeof(packed), snapshot, sourceSequence);
-    if (size == 0) {
-        return false;
-    }
-    if (EnqueueRecord(queue, packed, size, sourceSequence,
-                      VN_MONITOR_RECORD_DROP_SUMMARY, dropStage, false,
-                      expectedEpoch, expectedGeneration)) {
-        std::lock_guard<std::mutex> lock(queue.mutex);
-        if ((expectedEpoch == 0 || queue.epoch == expectedEpoch) &&
-            (expectedGeneration == 0 || queue.generation == expectedGeneration)) {
-            queue.drop.Clear();
-        }
-        return true;
-    }
-    return false;
+    return true;
 }
 
 std::uint64_t PackedStateCutId(const std::uint8_t* bytes, std::uint32_t size) {
@@ -1836,7 +2052,64 @@ bool TargetStillLive(ProcessOwner& owner, ConsumerQueue* queue,
     return LiveSessionMatching(owner, queue, epoch, generation) != nullptr;
 }
 
-void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t size) {
+// owner.mutex is held across eligibility, enqueue and verification. Cut freeze
+// cannot overtake a delta already selected for this session.
+void FanoutIdentityLocked(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t size) {
+    VnMonitorRecordHeader header{};
+    if (!ReadIdentityHeader(bytes, size, header)) return;
+    const auto cut = PackedStateCutId(bytes, size);
+    const auto sequence = header.sourceSequence;
+    const bool symbol = header.recordKind == VN_MONITOR_RECORD_HOST_OBJECT_SYMBOL;
+    const auto* payload = bytes + kPackedEnvelopeBytes;
+    for (auto& session : owner.sessions) {
+        if (!session.live.load(std::memory_order_acquire) || session.executionFactVersion != 1 ||
+            (session.acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) == 0 || session.eventDrained ||
+            session.streamTerminated.load(std::memory_order_acquire) || !session.queue) continue;
+        if (symbol && !WantsSymbols(session)) continue;
+        if (cut != 0) {
+            if (session.cut.id != cut || session.epoch != header.monitorSessionEpoch) continue;
+        } else if (session.identity.requested || sequence <= session.identityStart ||
+            (session.eventStoppedNs != 0 && sequence > session.identityEnd)) continue;
+        FlushDropSummary(owner, *session.queue, VN_MONITOR_DROP_HUB_FANOUT, session.epoch, session.generation, session.identity.active);
+        const bool delivered = EnqueueRecord(*session.queue, bytes, size, sequence, header.recordKind,
+            VN_MONITOR_DROP_HUB_FANOUT, true, session.epoch, session.generation);
+        if (!delivered) {
+            if (WantsSymbols(session)) MarkSymbolIncomplete(session);
+            session.baselineAvailability = VN_MONITOR_OBSERVATION_INCOMPLETE;
+            if (session.cut.settled && session.cut.result == VN_MONITOR_STATE_CUT_COMPLETE)
+                session.cut.result = VN_MONITOR_STATE_CUT_TRUNCATED;
+            continue;
+        }
+        if (cut == 0) continue;
+        if (header.recordKind == VN_MONITOR_RECORD_IDENTITY_CUT_BEGIN) {
+            VnMonitorIdentityCutBeginV1 value{};
+            if (DecodeIdentityBegin(header, payload, header.payloadBytes, value))
+                session.cut.beginDelivered = session.identity.delivered.Begin(header, value);
+        } else if (header.recordKind == VN_MONITOR_RECORD_IDENTITY_FACT) {
+            VnMonitorIdentityFactV1 value{};
+            if (DecodeIdentityFact(header, payload, header.payloadBytes, value))
+                session.identity.delivered.Row(header, value);
+        } else if (symbol) {
+            VnMonitorHostObjectSymbolV1 value{};
+            if (DecodeHostSymbol(header, payload, header.payloadBytes, value))
+                session.identity.delivered.Row(header, value);
+        } else {
+            VnMonitorIdentityCutEndV1 value{};
+            if (DecodeIdentityEnd(header, payload, header.payloadBytes, value)) {
+                session.cut.endDelivered = true;
+                session.identity.delivered.End(header, value);
+            }
+        }
+    }
+}
+
+void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t size,
+               MonitorProducerOrigin origin = {}) {
+    if (IsIdentityRecord(ReadPackedU32(bytes, 0))) {
+        std::lock_guard<std::mutex> lock(owner.mutex);
+        FanoutIdentityLocked(owner, bytes, size);
+        return;
+    }
     const std::uint64_t sourceSequence =
         ReadPackedU64(bytes, kPackedSourceSequenceOffset);
     const std::uint32_t recordKind = ReadPackedU32(bytes, 0);
@@ -1853,7 +2126,7 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
     const std::uint32_t recordVersion = ReadPackedU32(bytes, 4);
     const bool unknownKind = recordKind == VN_MONITOR_RECORD_UNKNOWN ||
         (recordKind >= VN_MONITOR_RECORD_INVALID &&
-         recordKind != VN_MONITOR_RECORD_EVENT_DETAIL);
+         recordKind != VN_MONITOR_RECORD_EVENT_DETAIL && recordKind != VN_MONITOR_RECORD_EXECUTION_FACT && !IsIdentityRecord(recordKind));
     const bool unknownVersion = recordVersion != 1u;
     const bool unknownRecord = unknownKind || unknownVersion;
     const bool requiredUnknown =
@@ -1870,14 +2143,48 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
                 continue;
             }
             if (session.eventDrained) continue;
-            if (session.eventCatalog) {
+            if (session.recordingReceiver && recordKind != VN_MONITOR_RECORD_EXECUTION_FACT) {
+                if (!TypedRawProjection(bytes, size) || (session.acceptedStreamKindMask & streamKind) == 0) continue;
+                if (origin.source == static_cast<unsigned>(RecordingSource::LogicRing) ||
+                    origin.source == static_cast<unsigned>(RecordingSource::AudioRing)) {
+                    const auto index = origin.source - 1;
+                    if (origin.ticket <= session.ringStarts[index] ||
+                        (session.eventStoppedNs != 0 && origin.ticket > session.ringEnds[index])) continue;
+                } else if (origin.source == static_cast<unsigned>(RecordingSource::AudioLog) ||
+                    origin.source == static_cast<unsigned>(RecordingSource::LogicLog)) {
+                    const auto index = origin.source - 3;
+                    const auto end = index == 0 ? session.sealedAudioLogs : session.sealedLogicLogs;
+                    if (origin.ticket <= session.logStarts[index] ||
+                        (session.eventStoppedNs != 0 && origin.ticket > end)) continue;
+                } else continue;
+                FlushDropSummary(owner, *session.queue, VN_MONITOR_DROP_RECORDER_QUEUE, session.epoch, session.generation);
+                EnqueueRecord(*session.queue, bytes, size, sourceSequence, recordKind,
+                    VN_MONITOR_DROP_RECORDER_QUEUE, true, session.epoch, session.generation, false, origin);
+                continue;
+            }
+            if (recordKind == VN_MONITOR_RECORD_EXECUTION_FACT) {
+                if (session.executionFactVersion != 1) continue;
+                const auto producerId = ReadPackedU64(bytes, 32);
+                if (producerId != kExecutionLogicProducer && producerId != kExecutionAudioProducer) continue;
+                const auto producerIndex = producerId == kExecutionLogicProducer ? 0u : 1u;
+                if (sourceSequence <= session.executionStarts[producerIndex] ||
+                    (session.eventStoppedNs != 0 && sourceSequence > session.executionEnds[producerIndex])) continue;
+            } else if (session.eventCatalog) {
                 if (recordKind != VN_MONITOR_RECORD_EVENT_DETAIL) {
                     continue;
                 }
-                const auto timestamp = ReadPackedU64(bytes, kPackedEnvelopeBytes + 24);
-                if (timestamp < session.eventStartedNs ||
-                    (session.eventStoppedNs != 0 && timestamp > session.eventStoppedNs)) {
-                    continue;
+                if (session.executionFactVersion == 1 && ExecutionReplacesLegacyEvent(
+                    ReadPackedU32(bytes, kPackedEnvelopeBytes + 4),
+                    ReadPackedU32(bytes, kPackedEnvelopeBytes + 8))) continue;
+                if (session.executionFactVersion == 1 && origin.source >= 3 && origin.source <= 4) {
+                    const auto index = origin.source - 3;
+                    const auto end = index == 0 ? session.sealedAudioLogs : session.sealedLogicLogs;
+                    if (origin.ticket <= session.logStarts[index] ||
+                        (session.eventStoppedNs != 0 && origin.ticket > end)) continue;
+                } else {
+                    const auto timestamp = ReadPackedU64(bytes, kPackedEnvelopeBytes + 24);
+                    if (timestamp < session.eventStartedNs ||
+                        (session.eventStoppedNs != 0 && timestamp > session.eventStoppedNs)) continue;
                 }
             } else if (recordKind == VN_MONITOR_RECORD_EVENT_DETAIL) {
                 continue;
@@ -1978,7 +2285,7 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
                          generation);
         const bool delivered =
             EnqueueRecord(*queue, bytes, size, sourceSequence, recordKind,
-                          VN_MONITOR_DROP_HUB_FANOUT, true, epoch, generation);
+                          VN_MONITOR_DROP_HUB_FANOUT, true, epoch, generation, false, origin);
         if (requiredUnknown) {
             std::lock_guard<std::mutex> lock(owner.mutex);
             if (Session* live = LiveSessionMatching(owner, queue, epoch, generation)) {
@@ -1994,6 +2301,9 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
         VN_MONITOR_DROP_RECORDER_QUEUE, VN_MONITOR_DROP_REMOTE_TRANSPORT,
         VN_MONITOR_DROP_REMOTE_TRANSPORT};
     for (std::uint32_t i = 0; i < kInternalConsumerCount; ++i) {
+        // Legacy recorder/transport queues have no typed owner grant. Typed
+        // recording installs its own authorized projection before enabling it.
+        if (recordKind == VN_MONITOR_RECORD_EXECUTION_FACT || IsIdentityRecord(recordKind)) continue;
         if ((owner.internalEnabledMask.load(std::memory_order_acquire) &
              (1u << i)) == 0) {
             continue;
@@ -2047,6 +2357,15 @@ void ProcessPendingOnDrain(ProcessOwner& owner) {
             size = PrepareActivationLocked(
                 owner, packed, sizeof(packed),
                 stop ? kPlanReasonStop : kPlanReasonApply);
+            const auto ticket = owner.controlPublished == UINT64_MAX ? 0 : ++owner.controlPublished;
+            for (auto& session : owner.sessions) {
+                if (!session.live.load(std::memory_order_acquire) || !session.recordingReceiver || session.eventDrained ||
+                    session.eventStoppedNs != 0 || (session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) == 0) continue;
+                if (size == 0 || ticket == 0) ++session.controlDrops;
+                else EnqueueRecord(*session.queue, packed, size, ReadPackedU64(packed, kPackedSourceSequenceOffset),
+                    VN_MONITOR_RECORD_CAPTURE_PLAN_ACTIVATED, VN_MONITOR_DROP_RECORDER_QUEUE, true, session.epoch,
+                    session.generation, false, {static_cast<unsigned>(RecordingSource::Control), 0, ticket});
+            }
         }
         RetireLingeringLocked(owner);
     }
@@ -2064,18 +2383,359 @@ bool PendingReadyToActivate(const ProcessOwner& owner) {
            owner.pendingReadyFrame.load(std::memory_order_acquire);
 }
 
+void NoteExecutionSourceDrop(ProcessOwner& owner, unsigned producerIndex,
+    std::uint64_t first, std::uint64_t last) {
+    std::lock_guard<std::mutex> lock(owner.mutex);
+    for (auto& session : owner.sessions) {
+        if (!session.live.load(std::memory_order_acquire) || session.executionFactVersion != 1 || session.eventDrained ||
+            (session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) == 0)
+            continue;
+        const auto begin = session.executionStarts[producerIndex];
+        if (begin == UINT64_MAX) continue;
+        const auto clippedFirst = std::max(first, begin + 1);
+        const auto clippedLast = session.eventStoppedNs != 0 ? std::min(last, session.executionEnds[producerIndex]) : last;
+        if (clippedFirst > clippedLast) continue;
+        const auto count = clippedLast - clippedFirst + 1;
+        session.eventSourceDrops = UINT64_MAX - session.eventSourceDrops < count ? UINT64_MAX : session.eventSourceDrops + count;
+        VnMonitorDropSummary summary{};
+        summary.structSize = sizeof(summary);
+        summary.stage = VN_MONITOR_DROP_SOURCE_PRODUCER;
+        summary.streamId = producerIndex == 0 ? kExecutionLogicStream : kExecutionAudioStream;
+        summary.firstSourceSequence = clippedFirst;
+        summary.lastSourceSequence = clippedLast;
+        summary.recordCount = count;
+        summary.byteCount = count > UINT64_MAX / kExecutionRecordBytes ? UINT64_MAX : count * kExecutionRecordBytes;
+        summary.reason = VN_MONITOR_EVENT_DROP;
+        session.executionSourceDrops[producerIndex].NoteRange(clippedFirst, clippedLast,
+            count, summary.byteCount, summary.reason);
+        std::uint8_t packed[kScratchBytes];
+        const auto sequence = owner.nextDropSourceSequence++;
+        const auto size = PackDropSummaryRecord(packed, sizeof(packed), summary, sequence);
+        if (size != 0 && session.queue) {
+            WriteU32(packed + 12, VN_MONITOR_STREAM_EVENT);
+            EnqueueRecord(*session.queue, packed, size, sequence, VN_MONITOR_RECORD_DROP_SUMMARY,
+                VN_MONITOR_DROP_HUB_FANOUT, true, session.epoch, session.generation);
+        }
+    }
+}
+
+void NoteIdentitySourceDropLocked(ProcessOwner& owner, std::uint64_t first, std::uint64_t last) {
+    for (auto& session : owner.sessions) {
+        if (!session.live.load(std::memory_order_acquire) || session.executionFactVersion != 1 ||
+            (session.acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) == 0 || session.eventDrained ||
+            session.identity.requested || session.identityStart == UINT64_MAX) continue;
+        const auto lo = std::max(first, session.identityStart + 1);
+        const auto hi = session.eventStoppedNs == 0 ? last : std::min(last, session.identityEnd);
+        if (lo > hi) continue;
+        const auto count = hi - lo + 1;
+        session.identityDrops.NoteRange(lo, hi, count,
+            count > UINT64_MAX / kIdentityRecordBytes ? UINT64_MAX : count * kIdentityRecordBytes, VN_MONITOR_EVENT_DROP);
+        session.baselineAvailability = VN_MONITOR_OBSERVATION_INCOMPLETE;
+        if (session.cut.settled && session.cut.result == VN_MONITOR_STATE_CUT_COMPLETE)
+            session.cut.result = VN_MONITOR_STATE_CUT_TRUNCATED;
+        VnMonitorDropSummary summary{};
+        summary.structSize = sizeof(summary);
+        summary.stage = VN_MONITOR_DROP_SOURCE_PRODUCER;
+        summary.streamId = kIdentityDeltaStream;
+        summary.firstSourceSequence = lo;
+        summary.lastSourceSequence = hi;
+        summary.recordCount = count;
+        summary.byteCount = count > UINT64_MAX / kIdentityRecordBytes ? UINT64_MAX : count * kIdentityRecordBytes;
+        summary.reason = VN_MONITOR_EVENT_DROP;
+        std::uint8_t bytes[kScratchBytes]{};
+        const auto sequence = owner.nextDropSourceSequence++;
+        const auto size = PackDropSummaryRecord(bytes, sizeof(bytes), summary, sequence);
+        if (size != 0 && session.queue) {
+            WriteU32(bytes + 12, VN_MONITOR_STREAM_STATE);
+            EnqueueRecord(*session.queue, bytes, size, sequence, VN_MONITOR_RECORD_DROP_SUMMARY,
+                VN_MONITOR_DROP_HUB_FANOUT, true, session.epoch, session.generation);
+        }
+    }
+}
+
+bool DrainIdentityBaseline(ProcessOwner& owner, std::uint8_t* scratch, std::uint32_t scratchBytes) {
+    std::uint32_t size = 0;
+    std::uint64_t epoch = 0, generation = 0, cut = 0;
+    bool ending = false;
+    {
+        std::lock_guard<std::mutex> lock(owner.mutex);
+        for (auto& session : owner.sessions) {
+            auto& stage = session.identity;
+            if (!session.live.load(std::memory_order_acquire) || !stage.active) continue;
+            epoch = session.epoch;
+            generation = session.generation;
+            cut = stage.begin.stateCutId;
+            const auto sequence = stage.firstSequence + stage.cursor;
+            std::uint32_t expectedBytes = kIdentityRecordBytes;
+            if (stage.cursor == 0) {
+                expectedBytes = PackedRecordBytes(kIdentityBeginBytes);
+                const auto header = IdentityCutHeader(stage.engine, sequence, epoch,
+                    VN_MONITOR_RECORD_IDENTITY_CUT_BEGIN, kIdentityBeginBytes);
+                size = PackIdentityBegin(scratch, scratchBytes, header, stage.begin);
+            } else if (stage.cursor <= stage.identityCount) {
+                auto fact = stage.rows[stage.cursor - 1];
+                fact.sourceSequence = sequence;
+                size = PackIdentityFact(scratch, scratchBytes, fact, cut, stage.begin.identityRevision);
+                if (size != 0) {
+                    WriteU64(scratch + kPackedSessionEpochOffset, epoch);
+                    VnMonitorRecordHeader header{};
+                    VnMonitorIdentityFactV1 value{};
+                    if (ReadIdentityHeader(scratch, size, header) &&
+                        DecodeIdentityFact(header, scratch + kPackedEnvelopeBytes, header.payloadBytes, value)) {
+                        stage.checksum = IdentityRowChecksum(stage.checksum, header, value);
+                        ++stage.emitted[value.fact.subjectNamespace];
+                    } else size = 0;
+                }
+                if (owner.dropIdentityRowForTests == static_cast<std::int32_t>(stage.cursor - 1)) {
+                    owner.dropIdentityRowForTests = -1;
+                    size = 0;
+                }
+            } else if (stage.cursor <= stage.count) {
+                expectedBytes = kHostSymbolRecordBytes;
+                const auto fieldIndex = stage.cursor - stage.identityCount - 1;
+                auto source = HostSymbolField(stage.symbols[fieldIndex / 3], fieldIndex % 3 + 1,
+                    VN_MONITOR_SYMBOL_UPSERT, stage.begin.identityRevision);
+                source.sourceSequence = sequence;
+                size = PackHostSymbol(scratch, scratchBytes, source, cut, VN_MONITOR_STREAM_STATE);
+                if (size != 0) {
+                    WriteU64(scratch + kPackedSessionEpochOffset, epoch);
+                    VnMonitorRecordHeader header{};
+                    VnMonitorHostObjectSymbolV1 value{};
+                    if (ReadIdentityHeader(scratch, size, header) &&
+                        DecodeHostSymbol(header, scratch + kPackedEnvelopeBytes, header.payloadBytes, value)) {
+                        stage.checksum = HostSymbolRowChecksum(stage.checksum, header, value);
+                        ++stage.emitted[VN_MONITOR_SUBJECT_HOST_SYMBOL];
+                    } else size = 0;
+                }
+                if (owner.dropIdentityRowForTests == static_cast<std::int32_t>(stage.cursor - 1)) {
+                    owner.dropIdentityRowForTests = -1;
+                    size = 0;
+                }
+            } else {
+                expectedBytes = PackedRecordBytes(kIdentityEndBytes);
+                ending = true;
+                VnMonitorIdentityCutEndV1 value{};
+                value.structSize = sizeof(value);
+                value.stateCutId = cut;
+                value.identityRevision = stage.begin.identityRevision;
+                value.result = stage.sourceComplete ? VN_MONITOR_STATE_CUT_COMPLETE : VN_MONITOR_STATE_CUT_TRUNCATED;
+                value.checksum = stage.checksum;
+                std::copy(std::begin(stage.emitted), std::end(stage.emitted), value.namespaceEmittedCount);
+                const auto header = IdentityCutHeader(stage.engine, sequence, epoch,
+                    VN_MONITOR_RECORD_IDENTITY_CUT_END, kIdentityEndBytes);
+                size = PackIdentityEnd(scratch, scratchBytes, header, value);
+            }
+            if (size == 0) {
+                stage.sourceComplete = false;
+                session.baselineDrops.NoteRange(sequence, sequence, 1, expectedBytes, VN_MONITOR_EVENT_DROP);
+            }
+            ++stage.cursor;
+            break;
+        }
+    }
+    if (cut == 0) return false;
+    if (size != 0) FanoutOne(owner, scratch, size);
+    if (ending) {
+        std::lock_guard<std::mutex> lock(owner.mutex);
+        for (auto& session : owner.sessions) {
+            if (!session.live.load(std::memory_order_acquire) || session.epoch != epoch ||
+                session.generation != generation || session.cut.id != cut) continue;
+            auto& stage = session.identity;
+            stage.active = false;
+            {
+                std::lock_guard<std::mutex> queueLock(session.queue->mutex);
+                session.queue->symbolBaselineActive = false;
+            }
+            session.cut.settled = true;
+            session.cut.emittedCount = static_cast<std::uint32_t>(stage.delivered.Received());
+            session.cut.checksum = stage.delivered.Checksum();
+            const bool complete = stage.sourceComplete && stage.delivered.Complete() &&
+                session.baselineAvailability != VN_MONITOR_OBSERVATION_INCOMPLETE;
+            session.cut.result = complete ? VN_MONITOR_STATE_CUT_COMPLETE :
+                (session.cut.beginDelivered ? VN_MONITOR_STATE_CUT_TRUNCATED : VN_MONITOR_STATE_CUT_ABORTED);
+            session.baselineAvailability = complete ? VN_MONITOR_OBSERVATION_AVAILABLE : VN_MONITOR_OBSERVATION_INCOMPLETE;
+            if (WantsSymbols(session)) session.symbolAvailability = session.baselineAvailability;
+        }
+    }
+    return true;
+}
+
+bool DrainIdentityOne(ProcessOwner& owner, std::uint8_t* scratch, std::uint32_t scratchBytes) {
+    // All immutable baselines precede deltas. Each session then filters deltas
+    // by its own frozen source start, independent of other sessions' cut ranges.
+    if (DrainIdentityBaseline(owner, scratch, scratchBytes)) return true;
+    if (!owner.identityResourcesReady.load(std::memory_order_acquire)) return false;
+    std::lock_guard<std::mutex> lock(owner.mutex);
+    for (const auto& session : owner.sessions)
+        if (session.live.load(std::memory_order_acquire) && session.identity.active) return true;
+    auto& producer = owner.identityProducer;
+    const auto drop = [&](std::uint64_t first, std::uint64_t last) { NoteIdentitySourceDropLocked(owner, first, last); };
+    const auto dispatch = [&] {
+        return producer.DispatchPending([&](const MonitorIdentityDelta& delta) {
+            auto fact = delta.fact;
+            fact.sourceSequence = delta.sourceSequence;
+            const auto size = PackIdentityFact(scratch, scratchBytes, fact, 0, delta.revision);
+            if (size == 0) return false;
+            FanoutIdentityLocked(owner, scratch, size);
+            return true;
+        }, drop);
+    };
+    if (producer.HasPending()) return dispatch();
+    const auto published = producer.Published();
+    std::uint32_t size = 0;
+    if (!owner.identityRing.TryPop(scratch, scratchBytes, &size) || size == 0)
+        return producer.FinishEmpty(published, drop);
+    if (!producer.Stage(scratch, size)) return false;
+    return dispatch();
+}
+
+bool SymbolWindow(const Session& session, std::uint64_t sequence) {
+    return session.live.load(std::memory_order_acquire) && WantsSymbols(session) &&
+        !session.eventDrained && !session.streamTerminated.load(std::memory_order_acquire) &&
+        !session.identity.requested && sequence > session.symbolStart &&
+        (session.eventStoppedNs == 0 || sequence <= session.symbolEnd) && session.queue;
+}
+
+bool DeferSymbols(const Session& session) {
+    std::lock_guard<std::mutex> lock(session.queue->mutex);
+    return session.identity.active || !session.queue->deferredSymbols.empty();
+}
+
+void NoteSymbolSourceDropLocked(ProcessOwner& owner, std::uint64_t first, std::uint64_t last) {
+    for (auto& session : owner.sessions) {
+        if (!session.live.load(std::memory_order_acquire) || !WantsSymbols(session) ||
+            session.eventDrained || session.identity.requested || session.symbolStart == UINT64_MAX) continue;
+        const auto lo = std::max(first, session.symbolStart + 1);
+        const auto hi = session.eventStoppedNs == 0 ? last : std::min(last, session.symbolEnd);
+        if (lo > hi) continue;
+        const auto count = hi - lo + 1;
+        const auto bytes = count > UINT64_MAX / kHostSymbolRecordBytes ? UINT64_MAX : count * kHostSymbolRecordBytes;
+        session.symbolDrops.NoteRange(lo, hi, count, bytes, VN_MONITOR_EVENT_DROP);
+        MarkSymbolIncomplete(session);
+        VnMonitorDropSummary summary{};
+        summary.structSize = sizeof(summary);
+        summary.stage = VN_MONITOR_DROP_SOURCE_PRODUCER;
+        summary.streamId = kHostSymbolStream;
+        summary.firstSourceSequence = lo;
+        summary.lastSourceSequence = hi;
+        summary.recordCount = count;
+        summary.byteCount = bytes;
+        summary.reason = VN_MONITOR_EVENT_DROP;
+        std::uint8_t packed[kScratchBytes]{};
+        const auto sequence = owner.nextDropSourceSequence++;
+        const auto size = PackDropSummaryRecord(packed, sizeof(packed), summary, sequence);
+        if (size != 0 && session.queue) {
+            WriteU32(packed + 12, SymbolStreamKind(session));
+            EnqueueRecord(*session.queue, packed, size, sequence, VN_MONITOR_RECORD_DROP_SUMMARY,
+                VN_MONITOR_DROP_HUB_FANOUT, false, session.epoch, session.generation, DeferSymbols(session));
+        }
+    }
+}
+
+bool DrainHostSymbolOne(ProcessOwner& owner, std::uint8_t* scratch, std::uint32_t scratchBytes) {
+    if (!owner.symbolResourcesReady.load(std::memory_order_acquire)) return false;
+    std::lock_guard<std::mutex> lock(owner.mutex);
+    auto& producer = owner.symbolProducer;
+    const auto drop = [&](std::uint64_t first, std::uint64_t last) { NoteSymbolSourceDropLocked(owner, first, last); };
+    const auto dispatch = [&] {
+        return producer.DispatchPending([&](const MonitorHostSymbolSource& source) {
+            // Validate even if every destination has closed or excludes this window.
+            if (PackHostSymbol(scratch, scratchBytes, source, 0, VN_MONITOR_STREAM_EVENT) == 0) return false;
+            for (auto& session : owner.sessions) {
+                if (!SymbolWindow(session, source.sourceSequence)) continue;
+                const bool defer = DeferSymbols(session);
+                FlushDropSummary(owner, *session.queue, VN_MONITOR_DROP_HUB_FANOUT, session.epoch, session.generation, defer);
+                const auto size = PackHostSymbol(scratch, scratchBytes, source, 0, SymbolStreamKind(session));
+                WriteU64(scratch + kPackedSessionEpochOffset, session.epoch);
+                if (!EnqueueRecord(*session.queue, scratch, size, source.sourceSequence,
+                    VN_MONITOR_RECORD_HOST_OBJECT_SYMBOL, VN_MONITOR_DROP_HUB_FANOUT, true,
+                    session.epoch, session.generation, defer)) MarkSymbolIncomplete(session);
+            }
+            return true;
+        }, drop);
+    };
+    if (producer.HasPending()) return dispatch();
+    const auto published = producer.Published();
+    std::uint32_t size = 0;
+    if (!owner.symbolRing.TryPop(scratch, scratchBytes, &size) || size == 0)
+        return producer.FinishEmpty(published, drop);
+    if (!producer.Stage(scratch, size)) return false;
+    return dispatch();
+}
+
+bool DrainDeferredSymbols(ProcessOwner& owner) {
+    std::lock_guard<std::mutex> lock(owner.mutex);
+    bool moved = false;
+    for (auto& session : owner.sessions) {
+        if (!session.live.load(std::memory_order_acquire) || session.identity.active ||
+            session.identity.requested || !session.queue) continue;
+        auto& queue = *session.queue;
+        std::lock_guard<std::mutex> queueLock(queue.mutex);
+        if (queue.deferredSymbols.empty()) continue;
+        auto record = std::move(queue.deferredSymbols.front());
+        queue.deferredSymbols.pop_front();
+        StampDelivery(record.bytes.data(), static_cast<std::uint32_t>(record.bytes.size()), queue.nextDelivery++);
+        queue.records.push_back(std::move(record));
+        moved = true;
+    }
+    return moved;
+}
+
+// Every path gets one bounded opportunity; a long cut cannot starve EVENT-only symbols.
+bool DrainTypedOne(ProcessOwner& owner, std::uint8_t* scratch, std::uint32_t scratchBytes) {
+    const bool identity = DrainIdentityOne(owner, scratch, scratchBytes);
+    const bool symbol = DrainHostSymbolOne(owner, scratch, scratchBytes);
+    const bool deferred = DrainDeferredSymbols(owner);
+    return identity || symbol || deferred;
+}
+
 bool DrainOneFrom(ProcessOwner& owner, MonitorProducerRing& ring,
                   std::uint8_t* scratch, std::uint32_t scratchBytes) {
+    const unsigned producerIndex = &ring == &owner.logicRing ? 0u : 1u;
+    auto& execution = owner.executionProducers[producerIndex];
+    const auto drop = [&](std::uint64_t first, std::uint64_t last) {
+        NoteExecutionSourceDrop(owner, producerIndex, first, last);
+    };
+    const auto dispatch = [&] {
+        const bool progressed = execution.DispatchPending([&](const MonitorExecutionFact& fact) {
+            const auto size = PackExecutionFact(scratch, scratchBytes, fact,
+                producerIndex == 0 ? kExecutionLogicProducer : kExecutionAudioProducer,
+                producerIndex == 0 ? kExecutionLogicStream : kExecutionAudioStream);
+            if (size == 0) return false;
+            FanoutOne(owner, scratch, size);
+            return true;
+        }, drop);
+        if (!execution.HasPending() && owner.pendingRingTickets[producerIndex] != 0) {
+            owner.ringProjectionCompleted[producerIndex].store(owner.pendingRingTickets[producerIndex], std::memory_order_release);
+            owner.pendingRingTickets[producerIndex] = 0;
+        }
+        return progressed;
+    };
+    if (execution.HasPending()) return dispatch();
+    const auto publishedBeforeRead = execution.Published();
     std::uint32_t size = 0;
-    if (!ring.TryPop(scratch, scratchBytes, &size) || size == 0) {
-        return false;
+    std::uint32_t sourceKind = 0;
+    MonitorProducerOrigin origin{};
+    std::uint64_t ticket = 0;
+    if (!ring.TryPop(scratch, scratchBytes, &size, &sourceKind, &origin, &ticket) || size == 0) {
+        return execution.FinishEmpty(publishedBeforeRead, drop);
     }
     owner.drainEntered.fetch_add(1, std::memory_order_acq_rel);
     while (owner.drainHold.load(std::memory_order_acquire) &&
            !owner.drainStop.load(std::memory_order_acquire)) {
         std::this_thread::yield();
     }
-    FanoutOne(owner, scratch, size);
+    if (sourceKind == kExecutionSourceKind) {
+        owner.pendingRingTickets[producerIndex] = ticket;
+        if (!execution.Stage(scratch, size)) {
+            owner.ringProjectionCompleted[producerIndex].store(ticket, std::memory_order_release);
+            owner.pendingRingTickets[producerIndex] = 0;
+            return true;
+        }
+        return dispatch();
+    }
+    if (origin.source == 0) origin = {producerIndex + 1, 0, ticket};
+    FanoutOne(owner, scratch, size, origin);
     const std::uint32_t recordKind = ReadPackedU32(scratch, 0);
     if (recordKind == VN_MONITOR_RECORD_AUDIO_CHUNK) {
         std::array<VnMonitorMeasurementRequest,
@@ -2111,8 +2771,10 @@ bool DrainOneFrom(ProcessOwner& owner, MonitorProducerRing& ring,
             tapCount != 0) {
             struct EmitCtx {
                 ProcessOwner* owner = nullptr;
+                MonitorProducerOrigin origin{};
             } ctx;
             ctx.owner = &owner;
+            ctx.origin = origin;
             DispatchDerivedAudioChunk(
                 measurements.data(), measurementCount, taps.data(), tapCount,
                 scratch, size,
@@ -2122,12 +2784,13 @@ bool DrainOneFrom(ProcessOwner& owner, MonitorProducerRing& ring,
                         emit.bytes == nullptr || emit.size == 0) {
                         return false;
                     }
-                    FanoutOne(*typed->owner, emit.bytes, emit.size);
+                    FanoutOne(*typed->owner, emit.bytes, emit.size, typed->origin);
                     return true;
                 },
                 &ctx, activeCapturePlanGeneration);
         }
     }
+    owner.ringProjectionCompleted[producerIndex].store(ticket, std::memory_order_release);
     return true;
 }
 
@@ -2280,59 +2943,174 @@ bool TryWriteOptionalRecorderChunkLocked(ProcessOwner::Recorder& recorder,
     return true;
 }
 
+bool RecordingSourcesDrained(const ProcessOwner& owner, const Session& session, bool forced) {
+    if (session.eventStoppedNs == 0 || (session.sealRequested && !forced)) return false;
+    const auto streams = session.acceptedStreamKindMask;
+    if ((streams & VN_MONITOR_STREAM_EVENT) != 0) {
+        for (unsigned i = 0; i != 2; ++i) {
+            if (session.executionEnds[i] > session.executionStarts[i] &&
+                owner.executionProducers[i].Completed() < session.executionEnds[i]) return false;
+            const auto logEnd = i == 0 ? session.sealedAudioLogs : session.sealedLogicLogs;
+            if (!forced && logEnd > session.logStarts[i] && (owner.logProjectionCompleted[i].load(std::memory_order_acquire) < logEnd ||
+                owner.ringProjectionCompleted[0].load(std::memory_order_acquire) < session.logDownstreamEnds[i])) return false;
+        }
+    }
+    if ((streams & VN_MONITOR_STREAM_STATE) != 0 && (session.identity.requested || session.identity.active ||
+        (session.identityEnd > session.identityStart && owner.identityProducer.Completed() < session.identityEnd))) return false;
+    if (WantsSymbols(session) && session.symbolEnd > session.symbolStart && owner.symbolProducer.Completed() < session.symbolEnd) return false;
+    for (unsigned i = 0; i != 2; ++i)
+        if (session.ringEnds[i] > session.ringStarts[i] &&
+            owner.ringProjectionCompleted[i].load(std::memory_order_acquire) < session.ringEnds[i]) return false;
+    return true;
+}
+
+RecordingEnd RecordingEndSnapshot(const ProcessOwner& owner, const Session& session,
+    const ProcessOwner::Recorder& recorder) {
+    RecordingEnd end{};
+    const auto& descriptor = recorder.descriptor;
+    end.engine = descriptor.engine;
+    end.epoch = descriptor.epoch;
+    end.recordingEpoch = descriptor.recordingEpoch;
+    end.stoppedNs = session.eventStoppedNs;
+    end.stopReason = recorder.stopReason;
+    end.controlEnd = (session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) != 0 ? session.controlEnd : descriptor.controlStart;
+    end.controlDrops = session.controlDrops;
+    end.boundaryComplete = recorder.forceIncomplete ? 0u : 1u;
+    const auto streams = session.acceptedStreamKindMask;
+    for (unsigned i = 0; i != 4; ++i) {
+        const bool subscribed = i < 2 ? (streams & VN_MONITOR_STREAM_EVENT) != 0 :
+            i == 2 ? (streams & VN_MONITOR_STREAM_STATE) != 0 : WantsSymbols(session);
+        end.ends[i] = !subscribed ? descriptor.starts[i] : i < 2 ? session.executionEnds[i] :
+            i == 2 ? session.identityEnd : session.symbolEnd;
+        end.completed[i] = i < 2 ? owner.executionProducers[i].Completed() :
+            i == 2 ? owner.identityProducer.Completed() : owner.symbolProducer.Completed();
+        end.unavailable[i] = subscribed && session.unavailableAtEnd[i] > descriptor.unavailableStarts[i]
+            ? session.unavailableAtEnd[i] - descriptor.unavailableStarts[i] : 0;
+    }
+    for (unsigned i = 0; i != 2; ++i) {
+        end.sourceDrops[i + 1] = session.executionSourceDrops[i].recordCount;
+        end.ringEnds[i] = session.ringEnds[i];
+        end.ringCompleted[i] = owner.ringProjectionCompleted[i].load(std::memory_order_acquire);
+        end.rawDrops[i] = session.rawDropsAtEnd[i] - descriptor.rawDropStarts[i];
+        end.logEnds[i] = (streams & VN_MONITOR_STREAM_EVENT) == 0 ? descriptor.logStarts[i] :
+            i == 0 ? session.sealedAudioLogs : session.sealedLogicLogs;
+        const bool downstream = owner.ringProjectionCompleted[0].load(std::memory_order_acquire) >= session.logDownstreamEnds[i];
+        end.logCompleted[i] = downstream ? owner.logProjectionCompleted[i].load(std::memory_order_acquire) : descriptor.logStarts[i];
+        end.nativeLogDrops[i] = (streams & VN_MONITOR_STREAM_EVENT) != 0 ? session.logLost[i] +
+            (i == 0 ? session.logBudgetDropsAtEnd - session.nativeLogDrops[0] : 0) : 0;
+        end.logFiltered[i] = session.logFiltered[i];
+    }
+    end.sourceDrops[3] = session.identityDrops.recordCount;
+    end.sourceDrops[4] = session.baselineDrops.recordCount;
+    end.sourceDrops[5] = session.symbolDrops.recordCount;
+    std::copy(session.queue->cumulativeDrops.begin(), session.queue->cumulativeDrops.end(), end.deliveryDrops);
+    end.eventSourceDrops = session.eventSourceDrops;
+    end.baselineAvailability = session.baselineAvailability;
+    end.symbolAvailability = session.symbolAvailability;
+    end.recordCount = recorder.verifier.Records();
+    end.checksum = recorder.verifier.Checksum();
+    return end;
+}
+
 void PumpRecorder(ProcessOwner& owner) {
-    std::lock_guard<std::mutex> lock(owner.recorder.mutex);
-    if (owner.recorder.state != VN_MONITOR_RECORDING_STATE_ACTIVE &&
-        owner.recorder.state != VN_MONITOR_RECORDING_STATE_STOPPING) {
-        return;
-    }
-    if (!owner.internals[kInternalRecorder]) {
-        return;
-    }
-    ConsumerQueue& queue = *owner.internals[kInternalRecorder];
-    for (;;) {
+    // A finite batch leaves time for source drain even during sustained recording.
+    for (unsigned batch = 0; batch != 64; ++batch) {
+        std::unique_lock<std::mutex> ownerLock(owner.mutex);
+        ExpireLeaseIfDueLocked(owner);
+        std::unique_lock<std::mutex> recorderLock(owner.recorder.mutex);
+        auto& recorder = owner.recorder;
+        if (recorder.state != VN_MONITOR_RECORDING_STATE_ACTIVE &&
+            recorder.state != VN_MONITOR_RECORDING_STATE_STOPPING) return;
+        auto* session = recorder.typed ? FindLive(owner, recorder.receiver, true) : nullptr;
+        auto* queue = recorder.typed ? (session ? session->queue.get() : nullptr) : owner.internals[kInternalRecorder].get();
+        if (!queue) return;
         PackedRecord record;
+        bool finish = false;
         {
-            std::lock_guard<std::mutex> queueLock(queue.mutex);
-            if (queue.records.empty()) {
-                break;
-            }
-            record = std::move(queue.records.front());
-            queue.records.pop_front();
-            if (queue.usedBytes >= record.bytes.size()) {
-                queue.usedBytes -= record.bytes.size();
+            std::lock_guard<std::mutex> queueLock(queue->mutex);
+            if (!queue->records.empty()) {
+                record = std::move(queue->records.front());
+                queue->records.pop_front();
+                queue->usedBytes -= record.bytes.size();
             } else {
-                queue.usedBytes = 0;
+                finish = recorder.state == VN_MONITOR_RECORDING_STATE_STOPPING &&
+                    (!recorder.typed || (queue->deferredSymbols.empty() && RecordingSourcesDrained(owner, *session, recorder.forceIncomplete)));
+                if (!finish) return;
+                if (recorder.typed) {
+                    recorder.end = RecordingEndSnapshot(owner, *session, recorder);
+                    session->eventDrained = true;
+                }
             }
         }
-        if (!WriteRecorderChunkLocked(owner.recorder, VN_MONITOR_CHUNK_EVENTS,
-                                      VN_MONITOR_CHUNK_REQUIRED,
-                                      record.bytes.data(), record.bytes.size())) {
-            owner.internalEnabledMask.fetch_and(~(1u << kInternalRecorder),
-                                                std::memory_order_release);
-            queue.Detach();
+        ownerLock.unlock();
+        bool written = true;
+        if (!record.bytes.empty()) {
+            if (recorder.typed) {
+                recorder.frameBuffer.resize(kRecordingPositionBytes + record.bytes.size());
+                PackRecordingPosition(recorder.frameBuffer.data(), {static_cast<RecordingSource>(record.origin.source),
+                    0, record.origin.ticket, record.bytes.size()});
+                std::memcpy(recorder.frameBuffer.data() + kRecordingPositionBytes, record.bytes.data(), record.bytes.size());
+                written = recorder.verifier.Record(recorder.frameBuffer.data(), recorder.frameBuffer.size()) &&
+                    WriteRecorderChunkLocked(recorder, VN_MONITOR_CHUNK_EXECUTION_RECORD, VN_MONITOR_CHUNK_REQUIRED,
+                        recorder.frameBuffer.data(), recorder.frameBuffer.size());
+            } else written = WriteRecorderChunkLocked(recorder, VN_MONITOR_CHUNK_EVENTS, VN_MONITOR_CHUNK_REQUIRED,
+                record.bytes.data(), record.bytes.size());
+        } else if (finish) {
+            if (recorder.typed) {
+                std::uint8_t packed[kRecordingEndBytes]{};
+                ExecutionPayloadWriter write{packed};
+                VisitRecordingEnd(write, recorder.end);
+                written = recorder.verifier.End(recorder.end) && WriteRecorderChunkLocked(recorder,
+                    VN_MONITOR_CHUNK_EXECUTION_END, VN_MONITOR_CHUNK_REQUIRED, packed, sizeof(packed));
+            }
+            if (written) {
+                recorder.file.flush();
+                written = recorder.file.good();
+            }
+            if (written) {
+                recorder.file.close();
+                recorder.unflushedBytes = 0;
+                recorder.state = VN_MONITOR_RECORDING_STATE_STOPPED;
+                recorder.errorReason = 0;
+                recorder.recoveryNeeded = recorder.typed && !recorder.verifier.Complete() ? 1u : 0u;
+                owner.internalEnabledMask.fetch_and(~(1u << kInternalRecorder), std::memory_order_release);
+                if (recorder.typed) owner.recorderLogicPending.store(true, std::memory_order_release);
+                return;
+            }
+        }
+        if (!written) {
+            if (recorder.state != VN_MONITOR_RECORDING_STATE_FAILED) FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
+            owner.internalEnabledMask.fetch_and(~(1u << kInternalRecorder), std::memory_order_release);
+            const bool typed = recorder.typed;
+            const auto failedReceiver = recorder.receiver;
+            const auto failedEpoch = recorder.queueEpoch;
+            const auto beforeCleanup = recorder.beforeFailureCleanupForTests;
+            auto* cleanupContext = recorder.failureCleanupContextForTests;
+            recorder.beforeFailureCleanupForTests = nullptr;
+            recorder.failureCleanupContextForTests = nullptr;
+            recorder.identityCleanupPending |= typed;
+            recorderLock.unlock();
+            if (beforeCleanup) beforeCleanup(cleanupContext);
+            // Reenter the owner only after releasing the writer lock.
+            std::lock_guard<std::mutex> failedLock(owner.mutex);
+            std::lock_guard<std::mutex> failedRecorderLock(owner.recorder.mutex);
+            if (owner.recorder.queueEpoch != failedEpoch || owner.recorder.typed != typed ||
+                owner.recorder.receiver != failedReceiver) return;
+            if (typed) {
+                if (auto* receiver = FindLive(owner, failedReceiver, true)) receiver->eventDrained = true;
+                owner.recorderLogicPending.store(true, std::memory_order_release);
+            } else queue->Detach();
             return;
         }
     }
-    if (owner.recorder.state == VN_MONITOR_RECORDING_STATE_STOPPING) {
-        if (owner.recorder.file.is_open()) {
-            owner.recorder.file.flush();
-            if (!owner.recorder.file.good()) {
-                FailRecorderLocked(owner.recorder, VN_MONITOR_RECORDING_FAILED);
-                owner.internalEnabledMask.fetch_and(~(1u << kInternalRecorder),
-                                                    std::memory_order_release);
-                queue.Detach();
-                return;
-            }
-            owner.recorder.file.close();
-        }
-        owner.recorder.unflushedBytes = 0;
-        owner.recorder.state = VN_MONITOR_RECORDING_STATE_STOPPED;
-        owner.recorder.errorReason = 0;
-        owner.recorder.recoveryNeeded = 0;
-        owner.internalEnabledMask.fetch_and(~(1u << kInternalRecorder),
-                                            std::memory_order_release);
-    }
+    owner.WakeDrain();
+}
+
+bool DrainOneRound(ProcessOwner& owner, std::uint8_t* scratch, std::uint32_t scratchBytes) {
+    const bool typed = DrainTypedOne(owner, scratch, scratchBytes);
+    const bool logic = DrainOneFrom(owner, owner.logicRing, scratch, scratchBytes);
+    const bool audio = DrainOneFrom(owner, owner.producerRing, scratch, scratchBytes);
+    return typed || logic || audio;
 }
 
 void DrainLoop(ProcessOwner* owner) {
@@ -2348,20 +3126,18 @@ void DrainLoop(ProcessOwner* owner) {
         if (PendingReadyToActivate(*owner)) {
             ProcessPendingOnDrain(*owner);
         }
-        if (DrainOneFrom(*owner, owner->logicRing, scratch, scratchBytes) ||
-            DrainOneFrom(*owner, owner->producerRing, scratch, scratchBytes)) {
+        if (DrainOneRound(*owner, scratch, scratchBytes)) {
             PumpRecorder(*owner);
             continue;
         }
         PumpRecorder(*owner);
         if (!owner->drainStop.load(std::memory_order_acquire) &&
-            owner->logicRing.Empty() && owner->producerRing.Empty() &&
+            owner->logicRing.Empty() && owner->producerRing.Empty() && owner->identityRing.Empty() && owner->symbolRing.Empty() &&
             !PendingReadyToActivate(*owner)) {
             owner->WaitForDrainWake(wakeGeneration);
         }
     }
-    while (DrainOneFrom(*owner, owner->logicRing, scratch, scratchBytes) ||
-           DrainOneFrom(*owner, owner->producerRing, scratch, scratchBytes)) {
+    while (DrainOneRound(*owner, scratch, scratchBytes)) {
     }
 }
 
@@ -2381,6 +3157,14 @@ void ReleaseCaptureResources(ProcessOwner& owner) {
     owner.internalEnabledMask.store(0, std::memory_order_release);
     owner.producerRing.Clear();
     owner.logicRing.Clear();
+    owner.identityResourcesReady.store(false, std::memory_order_release);
+    owner.identityRing.Clear();
+    owner.identityMirror.Clear();
+    owner.identityStorageBytes = 0;
+    owner.symbolResourcesReady.store(false, std::memory_order_release);
+    owner.symbolRing.Clear();
+    owner.symbolMirror.Clear();
+    owner.symbolStorageBytes = 0;
     std::vector<std::uint8_t>().swap(owner.drainScratch);
     std::vector<std::uint8_t>().swap(owner.audioPackScratch);
     std::vector<float>().swap(owner.interleaveScratch);
@@ -2392,18 +3176,24 @@ void EnsureCaptureResources(ProcessOwner& owner) {
         return;
     }
     const std::uint32_t slotBytes = PackedProducerSlotBytes();
-    const std::uint32_t producerSlots = std::clamp(
-        static_cast<std::uint32_t>(VN_MONITOR_DEFAULT_PRODUCER_RING_BYTES /
-                                   slotBytes),
-        8u, static_cast<std::uint32_t>(VN_MONITOR_HARD_PRODUCER_RING_BYTES /
-                                     slotBytes));
+    const auto slotCost = slotBytes + MonitorProducerRing::kSlotMetadataBytes;
+    std::uint32_t producerSlots = 1;
+    while (producerSlots * UINT64_C(2) * slotCost <= VN_MONITOR_DEFAULT_PRODUCER_RING_BYTES)
+        producerSlots *= 2;
+    // Logic facts and logs use the same byte budget without reserving audio chunks.
+    static_assert(sizeof(MonitorExecutionFact) <= PackedRecordBytes(sizeof(VnMonitorEventDetailV2)));
+    const auto logicSlotBytes = PackedLogicProducerSlotBytes();
+    const auto logicSlotCost = logicSlotBytes + MonitorProducerRing::kSlotMetadataBytes;
+    std::uint32_t logicSlots = 1;
+    while (logicSlots * UINT64_C(2) * logicSlotCost <= VN_MONITOR_DEFAULT_PRODUCER_RING_BYTES)
+        logicSlots *= 2;
     try {
         owner.producerRing.Init(producerSlots, slotBytes);
         if (owner.failCaptureResourcesForTests) {
             owner.failCaptureResourcesForTests = false;
             throw std::bad_alloc();
         }
-        owner.logicRing.Init(producerSlots, slotBytes);
+        owner.logicRing.Init(logicSlots, logicSlotBytes);
         owner.drainScratch.assign(slotBytes, 0);
         owner.audioPackScratch.assign(slotBytes, 0);
         owner.interleaveScratch.assign(kInterleaveScratchFloats, 0.0f);
@@ -2444,13 +3234,13 @@ bool StartDrain(ProcessOwner& owner) {
 }
 
 bool PublishToRing(MonitorProducerRing& ring, const std::uint8_t* bytes,
-                   std::uint32_t size) {
+                   std::uint32_t size, MonitorProducerOrigin origin = {}) {
     if (bytes == nullptr || size == 0) {
         return false;
     }
     ProcessOwner& owner = Owner();
 #if !defined(HARKEN_MONITOR_HUB_ABSENT)
-    if (!ring.TryPush(bytes, size)) {
+    if (!ring.TryPush(bytes, size, 0, origin, RecordingRawStreams(bytes, size, origin))) {
         const std::uint64_t sourceSequence =
             ReadPackedU64(bytes, kPackedSourceSequenceOffset);
         if (&ring == &owner.producerRing) {
@@ -2543,7 +3333,7 @@ VnResult GateControlEntry() {
     return RequireEngineAndLogicThread(false);
 }
 
-Session* FindLive(ProcessOwner& owner, VnMonitorSessionHandle handle) {
+Session* FindLive(ProcessOwner& owner, VnMonitorSessionHandle handle, bool allowRecording = false) {
     const std::uint32_t slot = HandleSlot(handle);
     const std::uint64_t generation = HandleGeneration(handle);
     if (slot >= owner.sessions.size()) {
@@ -2551,10 +3341,43 @@ Session* FindLive(ProcessOwner& owner, VnMonitorSessionHandle handle) {
     }
     Session& session = owner.sessions[slot];
     if (!session.live.load(std::memory_order_acquire) ||
-        session.generation != generation) {
+        session.generation != generation || (session.recordingReceiver && !allowRecording)) {
         return nullptr;
     }
     return &session;
+}
+
+void RetireSessionLocked(ProcessOwner& owner, Session& session) {
+    if (session.sealRequested) --owner.pendingIdentitySeals;
+    if (session.eventCatalog) owner.eventObservers.fetch_sub(1, std::memory_order_release);
+    if (session.executionFactVersion == 1) {
+        if ((session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) != 0)
+            owner.executionObservers.fetch_sub(1, std::memory_order_release);
+        if (!session.identityInterestReleased) {
+            if ((session.acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0) --owner.identityObservers;
+            if (WantsSymbols(session)) --owner.symbolObservers;
+        }
+    }
+    owner.RetireIfPollingLocked(session);
+    session.Reset();
+    owner.observerCount.fetch_sub(1, std::memory_order_release);
+}
+
+void CleanupRecordingReceiverLocked(ProcessOwner& owner) {
+    std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
+    auto& recorder = owner.recorder;
+    if (!recorder.typed || recorder.receiver == 0) return;
+    auto* session = FindLive(owner, recorder.receiver, true);
+    if (!session) return;
+    if (recorder.identityCleanupPending && !session->identityInterestReleased) {
+        if ((session->acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0) --owner.identityObservers;
+        if (WantsSymbols(*session)) --owner.symbolObservers;
+        session->identityInterestReleased = true;
+    }
+    recorder.identityCleanupPending = false;
+    if (recorder.state == VN_MONITOR_RECORDING_STATE_ACTIVE || recorder.state == VN_MONITOR_RECORDING_STATE_STOPPING) return;
+    RetireSessionLocked(owner, *session);
+    recorder.receiver = 0;
 }
 
 void FillCapabilities(VnMonitorCapabilities* out, const ProcessOwner& owner) {
@@ -2595,6 +3418,30 @@ void FillCapabilities(VnMonitorCapabilities* out, const ProcessOwner& owner) {
     out->hardRawAudioByteRate = VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE;
 }
 
+void ObserveEmitterChange(MonitorEmitterRegistry::Change change,
+                           const MonitorEmitterOrigin& origin) noexcept {
+    if (!ExecutionObservationEnabled() || !LogicThreadReady()) return;
+    auto& engine = *Owner().engine;
+    MonitorExecutionFact fact{};
+    fact.engine = engine.monitorRequests.EngineInstance();
+    fact.timestamp = LogTimestampNs();
+    fact.subjectNamespace = VN_MONITOR_SUBJECT_EMITTER;
+    fact.body.execution.identity.handle = origin.emitter;
+    SetSourceField(fact, VN_MONITOR_FACT_FIELD_SUBJECT);
+    SetSourceField(fact, VN_MONITOR_FACT_FIELD_TIMESTAMP);
+    switch (change) {
+    case MonitorEmitterRegistry::Change::Created: fact.kind = VN_MONITOR_FACT_EMITTER_CREATED; break;
+    case MonitorEmitterRegistry::Change::BindingChanged: fact.kind = VN_MONITOR_FACT_EMITTER_BINDING_CHANGED; break;
+    case MonitorEmitterRegistry::Change::Destroyed: fact.kind = VN_MONITOR_FACT_EMITTER_DESTROYED; break;
+    }
+    // A destroyed emitter's origin is a saved value. Never query its reused
+    // slot for historical metadata; only resolve current binding by generation.
+    const auto context = engine.emitters.Context(origin.emitter);
+    CaptureFactEmitters(fact, origin,
+        engine.monitorEmitters.CaptureBinding(origin, context.stateEmitter, context.spatialEmitter));
+    PublishExecutionFact(fact);
+}
+
 VnResult OnEngineInit(Engine* engine) {
     ProcessOwner& owner = Owner();
     bool failAfterThread = false;
@@ -2605,6 +3452,7 @@ VnResult OnEngineInit(Engine* engine) {
             return VN_IN_USE;
         }
         owner.engine = engine;
+        engine->monitorEmitters.SetChangeSink(ObserveEmitterChange);
         owner.logicThread = std::this_thread::get_id();
         owner.nextTimeSeriesSequence.store(1, std::memory_order_relaxed);
         owner.lifecycleSeen = {};
@@ -2618,6 +3466,24 @@ VnResult OnEngineInit(Engine* engine) {
                                           std::memory_order_relaxed);
         owner.observerCount.store(0, std::memory_order_release);
         owner.eventObservers.store(0, std::memory_order_release);
+        owner.executionObservers.store(0, std::memory_order_release);
+        for (auto& producer : owner.executionProducers) producer.Reset();
+        for (auto& completed : owner.ringProjectionCompleted) completed.store(0, std::memory_order_relaxed);
+        for (auto& completed : owner.logProjectionCompleted) completed.store(0, std::memory_order_relaxed);
+        owner.pendingRingTickets = owner.logTranscriptLast = {};
+        owner.controlPublished = 0;
+        owner.logicUnavailable = {};
+        owner.recorderLogicPending.store(false, std::memory_order_relaxed);
+        owner.identityProducer.Reset();
+        owner.symbolProducer.Reset();
+        owner.observationRevision = 1;
+        owner.nextIdentitySequence = 1;
+        owner.identityMutationDepth = 0;
+        owner.identityObservers = 0;
+        owner.symbolObservers = 0;
+        owner.pendingIdentitySeals = 0;
+        owner.identityRefreshes = 0;
+        owner.dropIdentityRowForTests = -1;
         owner.lastEventFanoutSequence.store(0, std::memory_order_release);
         owner.internalEnabledMask.store(0, std::memory_order_release);
         owner.drainPausedForTests = false;
@@ -2664,6 +3530,12 @@ void OnEngineTeardown(Engine* engine) {
     }
     owner.observerCount.store(0, std::memory_order_release);
     owner.eventObservers.store(0, std::memory_order_release);
+    owner.executionObservers.store(0, std::memory_order_release);
+    owner.identityObservers = 0;
+    owner.symbolObservers = 0;
+    owner.pendingIdentitySeals = 0;
+    owner.identityMutationDepth = 0;
+    if (engine != nullptr) engine->monitorEmitters.SetChangeSink(nullptr);
     ReleaseCaptureResources(owner);
     {
         std::lock_guard<std::mutex> lock(owner.recorder.mutex);
@@ -2794,12 +3666,281 @@ VnResult CaptureRegistry(uint32_t kind, void* out, uint32_t capacityBytes,
     return VN_OK;
 }
 
+VnResult ReadExecutionVersion(const VnMonitorSessionDesc* desc, std::uint32_t& version) {
+    version = 0;
+    if (desc == nullptr || (desc->structSize != sizeof(VnMonitorSessionDesc) &&
+        desc->structSize != sizeof(VnMonitorSessionDescV2))) return VN_INVALID_ARG;
+    if (desc->reserved0 != 0) return VN_INVALID_ARG;
+    if (desc->structSize == sizeof(VnMonitorSessionDescV2)) {
+        std::uint32_t extension[2]{};
+        std::memcpy(extension, reinterpret_cast<const std::uint8_t*>(desc) +
+            sizeof(VnMonitorSessionDesc), sizeof(extension));
+        if (extension[1] != 0) return VN_INVALID_ARG;
+        if (extension[0] > 1) return VN_MONITOR_UNSUPPORTED;
+        version = extension[0];
+    }
+    return VN_OK;
+}
+
+bool IdentitySafeBoundary(const ProcessOwner& owner) {
+    return LogicThreadReady() && owner.identityMutationDepth == 0 && owner.engine->callbackDispatchDepth == 0;
+}
+
+std::array<std::uint64_t, 2> SymbolUnavailableNow(const ProcessOwner& owner) {
+    return {owner.symbolProducer.Unavailable(), owner.symbolMirror.Unavailable()};
+}
+
+std::uint64_t SymbolUnavailable(const ProcessOwner& owner, const Session& session) {
+    if (!WantsSymbols(session)) return 0;
+    const auto now = session.eventStoppedNs == 0 ? SymbolUnavailableNow(owner) : session.symbolUnavailableEnd;
+    std::uint64_t total = 0;
+    for (unsigned i = 0; i != now.size(); ++i) {
+        const auto count = now[i] - session.symbolUnavailableStart[i];
+        total = count > UINT64_MAX - total ? UINT64_MAX : total + count;
+    }
+    return total;
+}
+
+bool CaptureSymbolSlot(const ProcessOwner& owner, std::size_t slot, MonitorHostSymbolValue& value) {
+    return owner.engine->monitorEmitters.CaptureDescriptionAt(static_cast<std::uint32_t>(slot),
+        value.origin, value.description);
+}
+
+// Called with owner.mutex held, after a complete logical-boundary refresh.
+VnResult FreezeIdentityCut(ProcessOwner& owner, Session& session, std::uint32_t hint) {
+    auto& stage = session.identity;
+    if (stage.active) return VN_BACKPRESSURE;
+    {
+        std::lock_guard<std::mutex> queueLock(session.queue->mutex);
+        if (!session.queue->deferredSymbols.empty()) return VN_BACKPRESSURE;
+    }
+    if (owner.nextIdentitySequence == 0) return VN_MONITOR_UNSUPPORTED;
+    const auto domain = stage.rows.size() + UINT64_C(3) * stage.symbols.size();
+    const auto capacity = hint == 0 ? domain : std::min<std::uint64_t>(hint, domain);
+    stage.begin = {};
+    stage.begin.structSize = sizeof(stage.begin);
+    stage.begin.stateCutId = owner.nextIdentitySequence;
+    stage.begin.identityRevision = owner.observationRevision;
+    stage.begin.deltaProducerId = kIdentityDeltaProducer;
+    stage.begin.deltaSourceSequence = owner.identityProducer.Published();
+    stage.begin.capacityLimit = domain;
+    stage.sourceComplete = owner.identityMirror.Copy(
+        std::span<MonitorExecutionFact>(stage.rows.data(), std::min<std::uint64_t>(capacity, stage.rows.size())),
+        stage.identityCount, stage.begin.namespaceTrueCount);
+    stage.count = stage.identityCount;
+    stage.sourceComplete &= owner.identityProducer.Unavailable() == 0;
+    if (WantsSymbols(session)) {
+        stage.begin.symbolProducerId = kHostSymbolProducer;
+        stage.begin.symbolSourceSequence = owner.symbolProducer.Published();
+        const auto remaining = capacity - stage.count;
+        std::uint32_t hosts = 0;
+        stage.sourceComplete &= owner.symbolMirror.Copy(
+            std::span<MonitorHostSymbolValue>(stage.symbols.data(),
+                std::min<std::uint64_t>(stage.symbols.size(), (remaining + 2) / 3)),
+            hosts, stage.begin.namespaceTrueCount[VN_MONITOR_SUBJECT_HOST_SYMBOL]);
+        const auto fields = std::min<std::uint64_t>(remaining, UINT64_C(3) * hosts);
+        stage.count += static_cast<std::uint32_t>(fields);
+        stage.sourceComplete &= fields == stage.begin.namespaceTrueCount[VN_MONITOR_SUBJECT_HOST_SYMBOL] &&
+            owner.symbolProducer.Unavailable() == 0;
+        session.symbolStart = stage.begin.symbolSourceSequence;
+        session.symbolAvailability = VN_MONITOR_OBSERVATION_PENDING;
+    }
+    if (static_cast<std::uint64_t>(stage.count) + 1 > UINT64_MAX - owner.nextIdentitySequence)
+        return VN_MONITOR_UNSUPPORTED;
+    stage.firstSequence = owner.nextIdentitySequence;
+    const auto end = stage.firstSequence + stage.count + 1;
+    owner.nextIdentitySequence = end == UINT64_MAX ? 0 : end + 1;
+    stage.engine = owner.engine->monitorRequests.EngineInstance();
+    stage.cursor = 0;
+    stage.checksum = kIdentityChecksumSeed;
+    std::fill(std::begin(stage.emitted), std::end(stage.emitted), 0);
+    stage.delivered = {};
+    stage.active = true;
+    {
+        std::lock_guard<std::mutex> queueLock(session.queue->mutex);
+        session.queue->symbolBaselineActive = WantsSymbols(session);
+    }
+    stage.requested = false;
+    session.identityStart = stage.begin.deltaSourceSequence;
+    session.cut = {};
+    session.cut.id = stage.begin.stateCutId;
+    session.cut.beginSourceSequence = stage.firstSequence;
+    session.cut.endSourceSequence = end;
+    session.baselineAvailability = VN_MONITOR_OBSERVATION_PENDING;
+    owner.WakeDrain();
+    return VN_OK;
+}
+
+void SealAtIdentityBoundary(ProcessOwner& owner, Session& session) {
+    if (session.sealRequested) --owner.pendingIdentitySeals;
+    session.sealRequested = false;
+    if (session.eventStoppedNs != 0) return;
+    if (session.executionFactVersion == 1 && (session.acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0) {
+        session.identityEnd = owner.identityProducer.Published();
+        --owner.identityObservers;
+    }
+    if (WantsSymbols(session)) {
+        session.symbolEnd = owner.symbolProducer.Published();
+        session.symbolUnavailableEnd = SymbolUnavailableNow(owner);
+        --owner.symbolObservers;
+    }
+    session.eventStoppedNs = LogTimestampNs();
+    session.identityInterestReleased = true;
+    session.sealedAudioLogs = owner.engine->logRing.PublishedCount();
+    session.sealedLogicLogs = owner.engine->logicLogRing.PublishedCount();
+    for (unsigned i = 0; i != owner.executionProducers.size(); ++i)
+        session.executionEnds[i] = owner.executionProducers[i].Published();
+    if (session.recordingReceiver) {
+        session.ringEnds[0] = std::max(session.ringStarts[0], owner.logicRing.PublishedForStreams(session.acceptedStreamKindMask));
+        session.ringEnds[1] = std::max(session.ringStarts[1], owner.producerRing.PublishedForStreams(session.acceptedStreamKindMask));
+        session.rawDropsAtEnd = {owner.logicRing.DroppedForStreams(session.acceptedStreamKindMask),
+            owner.producerRing.DroppedForStreams(session.acceptedStreamKindMask)};
+        session.unavailableAtEnd = owner.logicUnavailable;
+        session.unavailableAtEnd[0] = owner.executionProducers[0].Unavailable();
+        session.unavailableAtEnd[1] = owner.executionProducers[1].Unavailable();
+        session.logBudgetDropsAtEnd = owner.engine->logRing.QuantumBudgetDropCount();
+        session.controlEnd = owner.controlPublished;
+    }
+}
+
+void StopOwnedRecordingLocked(ProcessOwner& owner, VnMonitorSessionHandle handle,
+    std::uint64_t lease, std::uint32_t reason) {
+    std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
+    auto& recorder = owner.recorder;
+    if (!recorder.typed || (recorder.state != VN_MONITOR_RECORDING_STATE_ACTIVE &&
+        recorder.state != VN_MONITOR_RECORDING_STATE_STOPPING) ||
+        recorder.descriptor.owner != handle || recorder.descriptor.leaseGeneration != lease) return;
+    auto* session = FindLive(owner, recorder.receiver, true);
+    if (!session) return;
+    const bool alreadyStopping = recorder.state == VN_MONITOR_RECORDING_STATE_STOPPING;
+    recorder.state = VN_MONITOR_RECORDING_STATE_STOPPING;
+    if (!alreadyStopping) recorder.stopReason = reason;
+    if (std::this_thread::get_id() == owner.logicThread) {
+        if (alreadyStopping) return;
+        if (IdentitySafeBoundary(owner)) SealAtIdentityBoundary(owner, *session);
+        else {
+            if (!session->sealRequested) ++owner.pendingIdentitySeals;
+            session->sealRequested = true;
+        }
+    } else {
+        // No logic scan or interest mutation is permitted on this thread.
+        recorder.forceIncomplete = recorder.identityCleanupPending = true;
+        if (session->eventStoppedNs != 0) {
+            owner.recorderLogicPending.store(true, std::memory_order_release);
+            owner.WakeDrain();
+            return;
+        }
+        session->eventStoppedNs = LogTimestampNs();
+        session->sealedAudioLogs = owner.engine->logRing.PublishedCount();
+        session->sealedLogicLogs = owner.engine->logicLogRing.PublishedCount();
+        for (unsigned i = 0; i != 2; ++i) session->executionEnds[i] = owner.executionProducers[i].Published();
+        session->identityEnd = owner.identityProducer.Published();
+        session->symbolEnd = owner.symbolProducer.Published();
+        session->ringEnds = {std::max(session->ringStarts[0], owner.logicRing.PublishedForStreams(session->acceptedStreamKindMask)),
+            std::max(session->ringStarts[1], owner.producerRing.PublishedForStreams(session->acceptedStreamKindMask))};
+        session->rawDropsAtEnd = {owner.logicRing.DroppedForStreams(session->acceptedStreamKindMask),
+            owner.producerRing.DroppedForStreams(session->acceptedStreamKindMask)};
+        session->unavailableAtEnd = owner.logicUnavailable;
+        session->unavailableAtEnd[0] = owner.executionProducers[0].Unavailable();
+        session->unavailableAtEnd[1] = owner.executionProducers[1].Unavailable();
+        session->logBudgetDropsAtEnd = owner.engine->logRing.QuantumBudgetDropCount();
+        session->controlEnd = owner.controlPublished;
+        if (session->identity.requested) {
+            session->identity.requested = false;
+            session->baselineAvailability = VN_MONITOR_OBSERVATION_INCOMPLETE;
+        }
+        owner.recorderLogicPending.store(true, std::memory_order_release);
+    }
+    owner.WakeDrain();
+}
+
+void RefreshIdentityBoundary() noexcept {
+    auto& owner = Owner();
+    if (owner.recorderLogicPending.load(std::memory_order_acquire) && IdentitySafeBoundary(owner)) {
+        std::lock_guard<std::mutex> lock(owner.mutex);
+        CleanupRecordingReceiverLocked(owner);
+        owner.recorderLogicPending.store(false, std::memory_order_release);
+    }
+    if ((owner.identityObservers == 0 && owner.symbolObservers == 0 && owner.pendingIdentitySeals == 0) ||
+        !IdentitySafeBoundary(owner)) return;
+    const auto beforeIdentity = owner.identityMirror.Revision();
+    const auto beforeSymbols = owner.symbolMirror.Revision();
+    const bool canAdvance = owner.observationRevision != UINT64_MAX;
+    const auto revision = canAdvance ? owner.observationRevision + 1 : owner.observationRevision;
+    if (owner.identityObservers != 0) {
+        ++owner.identityRefreshes;
+        owner.identityMirror.Refresh(
+        [&](std::size_t slot, MonitorExecutionFact& fact) { return CaptureIdentitySlot(*owner.engine, slot, fact); },
+        [&](const MonitorExecutionFact& fact, std::uint64_t) {
+            MonitorIdentityDelta delta{};
+            delta.engine = fact.engine;
+            delta.revision = revision;
+            delta.fact = fact;
+            owner.identityProducer.Publish(owner.identityRing, delta, fact.engine);
+        }, canAdvance);
+    }
+    if (owner.symbolObservers != 0) {
+        owner.symbolMirror.Refresh(
+            [&](std::size_t slot, MonitorHostSymbolValue& value) { return CaptureSymbolSlot(owner, slot, value); },
+            [&](const MonitorHostSymbolValue& value, unsigned kind) {
+                for (unsigned field = 1; field <= 3; ++field) {
+                    const auto source = HostSymbolField(value, field, kind, revision);
+                    owner.symbolProducer.Publish(owner.symbolRing, source, source.engine);
+                }
+            }, canAdvance);
+    }
+    if (owner.identityMirror.Revision() != beforeIdentity || owner.symbolMirror.Revision() != beforeSymbols)
+        owner.observationRevision = revision;
+    std::lock_guard<std::mutex> lock(owner.mutex);
+    owner.logicUnavailable = {owner.executionProducers[0].Unavailable(), owner.executionProducers[1].Unavailable(),
+        owner.identityProducer.Unavailable() + owner.identityMirror.Unavailable(),
+        owner.symbolProducer.Unavailable() + owner.symbolMirror.Unavailable()};
+    for (auto& session : owner.sessions) {
+        if (!session.live.load(std::memory_order_acquire) || session.executionFactVersion != 1 ||
+            session.eventStoppedNs != 0) continue;
+        if ((session.acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0) {
+            if (session.identity.requested && FreezeIdentityCut(owner, session, 0) != VN_OK) {
+                session.baselineAvailability = VN_MONITOR_OBSERVATION_INCOMPLETE;
+                session.identity.requested = false;
+                session.cut.settled = true;
+                if (WantsSymbols(session)) MarkSymbolIncomplete(session);
+            }
+            if (owner.identityProducer.Unavailable() != 0 || owner.identityMirror.Unavailable() != 0) {
+                session.baselineAvailability = VN_MONITOR_OBSERVATION_INCOMPLETE;
+                if (session.cut.settled && session.cut.result == VN_MONITOR_STATE_CUT_COMPLETE)
+                    session.cut.result = VN_MONITOR_STATE_CUT_TRUNCATED;
+            }
+        }
+        if (WantsSymbols(session) && SymbolUnavailable(owner, session) != 0) MarkSymbolIncomplete(session);
+    }
+    for (auto& session : owner.sessions)
+        if (session.live.load(std::memory_order_acquire) && session.sealRequested)
+            SealAtIdentityBoundary(owner, session);
+    owner.WakeDrain();
+}
+
+IdentityMutationScope::IdentityMutationScope() noexcept {
+    auto& owner = Owner();
+    if (!LogicThreadReady()) return;
+    engine_ = owner.engine->monitorRequests.EngineInstance();
+    ++owner.identityMutationDepth;
+}
+
+IdentityMutationScope::~IdentityMutationScope() {
+    auto& owner = Owner();
+    // Never dereference the old engine: teardown can occur within an Update.
+    if (!LogicThreadReady() || owner.engine->monitorRequests.EngineInstance() != engine_ ||
+        owner.identityMutationDepth == 0) return;
+    --owner.identityMutationDepth;
+    RefreshIdentityBoundary();
+}
+
 VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
                                     bool remote,
                                     std::uint32_t remoteGrant,
                                     std::uint64_t principalHash,
                                     VnMonitorSessionHandle* outHandle,
-                                    bool eventCatalog = false) {
+                                    bool eventCatalog = false, bool recordingReceiver = false) {
     if (desc == nullptr || outHandle == nullptr) {
         return VN_INVALID_ARG;
     }
@@ -2807,12 +3948,15 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     if (gate != VN_OK) {
         return gate;
     }
-    if (!ValidStructSize(desc->structSize, sizeof(VnMonitorSessionDesc))) {
-        return VN_INVALID_ARG;
-    }
-    if (!ReservedZero(desc->reserved0)) {
-        return VN_INVALID_ARG;
-    }
+    std::uint32_t executionVersion = 0;
+    const auto versionResult = ReadExecutionVersion(desc, executionVersion);
+    if (versionResult != VN_OK) return versionResult;
+#if defined(HARKEN_MONITOR_HUB_ABSENT)
+    if (executionVersion != 0) return VN_MONITOR_UNSUPPORTED;
+#endif
+    if (executionVersion != 0 && (desc->requestSymbols > 1 || desc->requestRawAudio > 1 ||
+        (eventCatalog && ((desc->requestedPermissionMask & VN_MONITOR_PERM_OBSERVE_EVENTS) == 0 ||
+            (desc->requestedStreamKindMask & VN_MONITOR_STREAM_EVENT) == 0)))) return VN_INVALID_ARG;
     const std::uint64_t requestedQueue =
         desc->consumerQueueBytes == 0 ? VN_MONITOR_DEFAULT_CONSUMER_QUEUE_BYTES
                                       : desc->consumerQueueBytes;
@@ -2840,6 +3984,16 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
             allowedStreams |= VN_MONITOR_STREAM_OPTIONAL_AUDIO;
         }
     }
+    if (executionVersion != 0) {
+        if ((desc->requestedPermissionMask & VN_MONITOR_PERM_OBSERVE_EVENTS) == 0)
+            allowedStreams &= ~VN_MONITOR_STREAM_EVENT;
+        if ((desc->requestedPermissionMask & VN_MONITOR_PERM_OBSERVE_STATE) == 0)
+            allowedStreams &= ~VN_MONITOR_STREAM_STATE;
+        if ((desc->requestedPermissionMask & VN_MONITOR_PERM_OBSERVE_MEASUREMENTS) == 0)
+            allowedStreams &= ~VN_MONITOR_STREAM_TIME_SERIES;
+        if ((desc->requestedPermissionMask & VN_MONITOR_PERM_RAW_AUDIO) == 0)
+            allowedStreams &= ~VN_MONITOR_STREAM_OPTIONAL_AUDIO;
+    }
     const std::uint32_t acceptedMask =
         desc->requestedStreamKindMask & principal.observeMask & allowedStreams;
     if ((desc->requestedStreamKindMask & kObserveStreamMask) != 0 &&
@@ -2847,13 +4001,40 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
         return VN_MONITOR_PERMISSION_DENIED;
     }
 
+    if (eventCatalog && executionVersion != 0 && (acceptedMask & VN_MONITOR_STREAM_EVENT) == 0)
+        return VN_MONITOR_PERMISSION_DENIED;
+
     ProcessOwner& owner = Owner();
     std::unique_lock<std::mutex> lock(owner.mutex);
     owner.SweepRetiredLocked();
     if (owner.LiveSlotsLocked() >= VN_MONITOR_DEFAULT_SESSIONS_PER_ENGINE) {
         return VN_MONITOR_SESSION_CAPACITY;
     }
-    if (owner.WouldExceedLocked(1, requestedQueue)) {
+    const bool identityRequested = executionVersion == 1 && (acceptedMask & VN_MONITOR_STREAM_STATE) != 0;
+    const auto identityCapacity = identityRequested ? IdentitySlotCapacity(*owner.engine) : 0;
+    const bool symbolsRequested = executionVersion == 1 && desc->requestSymbols != 0 &&
+        (desc->requestedPermissionMask & VN_MONITOR_PERM_SYMBOLS) != 0 &&
+        (acceptedMask & (VN_MONITOR_STREAM_STATE | VN_MONITOR_STREAM_EVENT)) != 0 &&
+        (!remote || (remoteGrant & VN_MONITOR_PERM_SYMBOLS) != 0);
+    const auto symbolCapacity = symbolsRequested ? owner.engine->monitorEmitters.Capacity() : 0;
+    const auto symbolStagingCapacity = identityRequested ? symbolCapacity : 0;
+    if (identityCapacity + UINT64_C(3) * symbolStagingCapacity > UINT32_MAX - 2)
+        return VN_MONITOR_BUDGET_EXCEEDED;
+    const auto identityStagingBytes = identityCapacity * sizeof(MonitorExecutionFact);
+    const auto stagingBytes = identityStagingBytes + symbolStagingCapacity * sizeof(MonitorHostSymbolValue);
+    constexpr auto identitySlotBytes = sizeof(MonitorIdentityDelta) + MonitorProducerRing::kSlotMetadataBytes;
+    std::uint32_t identitySlots = 1;
+    while (identitySlots * UINT64_C(2) * identitySlotBytes <= VN_MONITOR_DEFAULT_PRODUCER_RING_BYTES)
+        identitySlots *= 2;
+    const auto newIdentityBytes = identityRequested && !owner.identityResourcesReady.load(std::memory_order_acquire)
+        ? identityStagingBytes + identitySlots * identitySlotBytes : 0;
+    constexpr auto symbolSlotBytes = sizeof(MonitorHostSymbolSource) + MonitorProducerRing::kSlotMetadataBytes;
+    std::uint32_t symbolSlots = 1;
+    while (symbolSlots * UINT64_C(2) * symbolSlotBytes <= VN_MONITOR_DEFAULT_PRODUCER_RING_BYTES)
+        symbolSlots *= 2;
+    const auto newSymbolBytes = symbolsRequested && !owner.symbolResourcesReady.load(std::memory_order_acquire)
+        ? symbolCapacity * sizeof(MonitorHostSymbolValue) + symbolSlots * symbolSlotBytes : 0;
+    if (owner.WouldExceedLocked(1, requestedQueue + stagingBytes + newIdentityBytes + newSymbolBytes)) {
         return VN_MONITOR_SESSION_CAPACITY;
     }
     Session* slot = nullptr;
@@ -2873,12 +4054,44 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
         if (!slot->queue) {
             newQueue = std::make_unique<ConsumerQueue>();
         }
+        if (identityRequested) {
+            slot->identity.rows.assign(identityCapacity, {});
+            if (!owner.identityResourcesReady.load(std::memory_order_acquire)) {
+                owner.identityMirror.Reset(identityCapacity);
+                owner.identityRing.Init(identitySlots, sizeof(MonitorIdentityDelta));
+                owner.identityStorageBytes = identityStagingBytes + identitySlots * identitySlotBytes;
+                owner.identityResourcesReady.store(true, std::memory_order_release);
+            }
+        }
+        if (symbolsRequested) {
+            if (identityRequested) slot->identity.symbols.assign(symbolStagingCapacity, {});
+            if (!owner.symbolResourcesReady.load(std::memory_order_acquire)) {
+                owner.symbolMirror.Reset(symbolCapacity);
+                owner.symbolRing.Init(symbolSlots, sizeof(MonitorHostSymbolSource));
+                owner.symbolStorageBytes = newSymbolBytes;
+                owner.symbolResourcesReady.store(true, std::memory_order_release);
+            }
+            if (owner.symbolObservers == 0)
+                owner.symbolMirror.Seed([&](std::size_t index, MonitorHostSymbolValue& value) {
+                    return CaptureSymbolSlot(owner, index, value);
+                });
+        }
 #if !defined(HARKEN_MONITOR_HUB_ABSENT)
         if (!StartDrain(owner)) {
+            slot->identity = {};
             return VN_IN_USE;
         }
 #endif
     } catch (const std::bad_alloc&) {
+        slot->identity = {};
+        if (!owner.identityResourcesReady.load(std::memory_order_acquire)) {
+            owner.identityMirror.Clear();
+            owner.identityRing.Clear();
+        }
+        if (!owner.symbolResourcesReady.load(std::memory_order_acquire)) {
+            owner.symbolMirror.Clear();
+            owner.symbolRing.Clear();
+        }
         return VN_MONITOR_BUDGET_EXCEEDED;
     }
     slot->generation = owner.nextGeneration++;
@@ -2899,10 +4112,42 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     } else {
         acceptedPerm = (requestedPerm & kObservePermissionMask) |
                        (requestedPerm & kCaptureControlPermission) |
-                       (requestedPerm & kRecordPermission);
-        unsupportedPerm = requestedPerm &
-                          (VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_SYMBOLS);
+                       (requestedPerm & kRecordPermission) |
+                       (executionVersion == 1 ? requestedPerm & (VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_SYMBOLS) : 0);
+        unsupportedPerm = executionVersion == 1 ? 0u :
+            requestedPerm & (VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_SYMBOLS);
     }
+    if (executionVersion != 0) {
+        if ((acceptedMask & VN_MONITOR_STREAM_STATE) == 0) acceptedPerm &= ~VN_MONITOR_PERM_OBSERVE_STATE;
+        if ((acceptedMask & VN_MONITOR_STREAM_EVENT) == 0) acceptedPerm &= ~VN_MONITOR_PERM_OBSERVE_EVENTS;
+        if ((acceptedMask & VN_MONITOR_STREAM_TIME_SERIES) == 0) acceptedPerm &= ~VN_MONITOR_PERM_OBSERVE_MEASUREMENTS;
+        if ((acceptedMask & VN_MONITOR_STREAM_OPTIONAL_AUDIO) == 0) acceptedPerm &= ~VN_MONITOR_PERM_RAW_AUDIO;
+        if ((acceptedMask & (VN_MONITOR_STREAM_STATE | VN_MONITOR_STREAM_EVENT)) == 0)
+            acceptedPerm &= ~VN_MONITOR_PERM_SYMBOLS;
+    }
+    slot->executionFactVersion = executionVersion;
+    slot->supportedFactKinds = {};
+    if (executionVersion == 1) {
+        slot->supportedFactKinds[0] = (UINT64_C(1) << VN_MONITOR_FACT_REQUEST_SUBMITTED) |
+            (UINT64_C(1) << VN_MONITOR_FACT_REQUEST_RETURNED) |
+            (UINT64_C(1) << VN_MONITOR_FACT_EMITTER_CREATED) |
+            (UINT64_C(1) << VN_MONITOR_FACT_EMITTER_DESTROYED) |
+            (UINT64_C(1) << VN_MONITOR_FACT_EMITTER_BINDING_CHANGED) |
+            (UINT64_C(1) << VN_MONITOR_FACT_IDENTITY_UPSERT) |
+            (UINT64_C(1) << VN_MONITOR_FACT_IDENTITY_TOMBSTONE);
+        for (unsigned phase = 1; phase <= static_cast<unsigned>(MonitorLifecyclePhase::PreparedCandidate); ++phase) {
+            const auto kind = LifecycleFactKind(static_cast<MonitorLifecyclePhase>(phase));
+            if (kind != 0) slot->supportedFactKinds[0] |= UINT64_C(1) << kind;
+        }
+    }
+    slot->baselineAvailability = executionVersion != 0 &&
+        (desc->requestedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0
+            ? ((acceptedMask & VN_MONITOR_STREAM_STATE) != 0
+                ? VN_MONITOR_OBSERVATION_PENDING : VN_MONITOR_OBSERVATION_DENIED)
+            : VN_MONITOR_OBSERVATION_NOT_REQUESTED;
+    slot->symbolAvailability = executionVersion != 0 && desc->requestSymbols != 0
+        ? (symbolsRequested ? (identityRequested ? VN_MONITOR_OBSERVATION_PENDING : VN_MONITOR_OBSERVATION_AVAILABLE)
+            : VN_MONITOR_OBSERVATION_DENIED) : VN_MONITOR_OBSERVATION_NOT_REQUESTED;
     slot->acceptedPermissionMask = acceptedPerm;
     slot->unsupportedPermissionMask = unsupportedPerm;
     slot->deniedPermissionMask = requestedPerm & ~(acceptedPerm | unsupportedPerm);
@@ -2922,13 +4167,51 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     slot->resyncRequired.store(false, std::memory_order_relaxed);
     slot->streamTerminated.store(false, std::memory_order_relaxed);
     slot->cut = {};
+    slot->identity.requested = identityRequested;
+    slot->unavailableStarts = owner.logicUnavailable;
+    slot->unavailableStarts[0] = owner.executionProducers[0].Unavailable();
+    slot->unavailableStarts[1] = owner.executionProducers[1].Unavailable();
+    slot->identityStart = owner.identityProducer.Published();
+    slot->identityEnd = 0;
+    slot->identityDrops = {};
+    slot->identityDrops.stage = VN_MONITOR_DROP_SOURCE_PRODUCER;
+    slot->identityDrops.streamId = kIdentityDeltaStream;
+    slot->baselineDrops = {};
+    slot->baselineDrops.stage = VN_MONITOR_DROP_SOURCE_PRODUCER;
+    slot->baselineDrops.streamId = kIdentityBaselineStream;
+    slot->symbolUnavailableStart = SymbolUnavailableNow(owner);
+    slot->symbolStart = owner.symbolProducer.Published();
+    slot->symbolEnd = 0;
+    slot->symbolUnavailableEnd = {};
+    slot->symbolDrops = {};
+    slot->symbolDrops.stage = VN_MONITOR_DROP_SOURCE_PRODUCER;
+    slot->symbolDrops.streamId = kHostSymbolStream;
+    slot->sealRequested = false;
     slot->eventCatalog = eventCatalog;
-    slot->eventStartedNs = eventCatalog ? LogTimestampNs() : 0;
+    slot->recordingReceiver = recordingReceiver;
+    slot->identityInterestReleased = false;
+    // Loss bounds enclose the publication window: losses first on open, last on seal.
+    slot->rawDropStarts = {owner.logicRing.DroppedForStreams(acceptedMask), owner.producerRing.DroppedForStreams(acceptedMask)};
+    slot->ringStarts = {owner.logicRing.Published(), owner.producerRing.Published()};
+    slot->ringEnds = {};
+    slot->nativeLogDrops = {owner.engine->logRing.QuantumBudgetDropCount(), 0};
+    slot->logStarts = {owner.engine->logRing.PublishedCount(), owner.engine->logicLogRing.PublishedCount()};
+    slot->logFiltered = slot->logLost = slot->logDownstreamEnds = {};
+    slot->controlStart = owner.controlPublished;
+    slot->controlEnd = slot->controlDrops = 0;
+    slot->eventStartedNs = eventCatalog || recordingReceiver ? LogTimestampNs() : 0;
     slot->eventStoppedNs = 0;
     slot->lastEventSequence = 0;
     slot->eventSourceDrops = 0;
     slot->eventDrained = false;
     slot->finalSourceDrops = 0;
+    for (unsigned i = 0; i != owner.executionProducers.size(); ++i) {
+        slot->executionStarts[i] = owner.executionProducers[i].Published();
+        slot->executionEnds[i] = 0;
+        slot->executionSourceDrops[i] = {};
+        slot->executionSourceDrops[i].stage = VN_MONITOR_DROP_SOURCE_PRODUCER;
+        slot->executionSourceDrops[i].streamId = i == 0 ? kExecutionLogicStream : kExecutionAudioStream;
+    }
     slot->logDropBaseline = owner.engine->logRing.DroppedCount() +
         owner.engine->logicLogRing.DroppedCount() +
         owner.engine->logRing.QuantumBudgetDropCount();
@@ -2936,21 +4219,27 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
         slot->queue = std::move(newQueue);
     }
     slot->queue->Reset(requestedQueue, VN_MONITOR_DROP_HUB_FANOUT, slot->epoch,
-                       slot->generation);
+                       slot->generation, SymbolStreamKind(*slot));
+    slot->queue->recordingReceiver = recordingReceiver;
     slot->queuePtr.store(slot->queue.get(), std::memory_order_release);
     slot->live.store(true, std::memory_order_release);
     if (eventCatalog) {
         owner.eventObservers.fetch_add(1, std::memory_order_release);
     }
+    if (slot->executionFactVersion == 1 && (acceptedMask & VN_MONITOR_STREAM_EVENT) != 0)
+        owner.executionObservers.fetch_add(1, std::memory_order_release);
+    if (identityRequested) ++owner.identityObservers;
+    if (symbolsRequested) ++owner.symbolObservers;
     if (owner.observerCount.fetch_add(1, std::memory_order_release) == 0) {
         owner.lifecycleSeen = {};
         owner.lifecycleSeenNext = 0;
     }
     *outHandle = PackHandle(slotIndex, slot->generation);
     lock.unlock();
+    RefreshIdentityBoundary();
     // DSP three-quantity payload cannot fit frozen TimeSeries/Aggregate.
     // Publish one capability-unavailable DROP after the session is live.
-    if (!eventCatalog) {
+    if (!eventCatalog && !recordingReceiver) {
         harken::ObserveMonitorDspGap();
     }
     return VN_OK;
@@ -2971,19 +4260,28 @@ VnResult OpenRemoteSession(const VnMonitorSessionDesc* desc,
 
 VnResult OpenEventSession(const VnMonitorSessionDesc* desc,
                           VnMonitorSessionHandle* outHandle,
-                          bool remote, std::uint64_t principalHash) {
+                          bool remote, std::uint64_t principalHash, std::uint32_t remoteGrant) {
 #if defined(HARKEN_MONITOR_HUB_ABSENT)
     (void)desc;
     (void)outHandle;
     (void)remote;
     (void)principalHash;
+    (void)remoteGrant;
     return VN_MONITOR_UNSUPPORTED;
 #else
-    if (desc == nullptr || desc->requestedStreamKindMask != VN_MONITOR_STREAM_EVENT ||
-        desc->requestRawAudio != 0 || desc->requestSymbols != 0) {
+    std::uint32_t version = 0;
+    const auto versionResult = ReadExecutionVersion(desc, version);
+    if (versionResult != VN_OK) return versionResult;
+    if (desc->requestRawAudio != 0) return VN_INVALID_ARG;
+    if (version == 0) {
+        if (desc->requestedStreamKindMask != VN_MONITOR_STREAM_EVENT || desc->requestSymbols != 0)
+            return VN_INVALID_ARG;
+    } else if ((desc->requestedStreamKindMask & VN_MONITOR_STREAM_EVENT) == 0 ||
+        (desc->requestedStreamKindMask & ~(VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE)) != 0) {
         return VN_INVALID_ARG;
     }
-    return OpenSessionWithPermissions(desc, remote, VN_MONITOR_PERM_OBSERVE_EVENTS,
+    return OpenSessionWithPermissions(desc, remote,
+                                      version == 0 ? VN_MONITOR_PERM_OBSERVE_EVENTS : remoteGrant,
                                       principalHash, outHandle, true);
 #endif
 }
@@ -2992,21 +4290,30 @@ VnResult SealEventSession(VnMonitorSessionHandle handle) {
     const auto gate = RequireEngineAndLogicThread(false);
     if (gate != VN_OK) return gate;
     auto& owner = Owner();
+    if (owner.engine->callbackDispatchDepth != 0) return VN_BACKPRESSURE;
+    RefreshIdentityBoundary();
     std::lock_guard<std::mutex> lock(owner.mutex);
     auto* session = FindLive(owner, handle);
     if (!session) return VN_MONITOR_STALE_SESSION;
     if (!session->eventCatalog) return VN_INVALID_ARG;
-    if (session->eventStoppedNs == 0) {
-        session->eventStoppedNs = LogTimestampNs();
-        session->sealedAudioLogs = owner.engine->logRing.PublishedCount();
-        session->sealedLogicLogs = owner.engine->logicLogRing.PublishedCount();
+    if (session->eventStoppedNs != 0) return VN_OK;
+    // Identity and symbol endpoints must include the outer Update transaction.
+    // Pure EVENT sessions retain their synchronous seal and restart behavior.
+    if (session->executionFactVersion == 1 && owner.identityMutationDepth != 0 &&
+        ((session->acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0 || WantsSymbols(*session))) {
+        if (!session->sealRequested) ++owner.pendingIdentitySeals;
+        session->sealRequested = true;
     }
+    else SealAtIdentityBoundary(owner, *session);
     return VN_OK;
 }
 
 VnResult GetEventSessionStatus(VnMonitorSessionHandle handle,
                                VnMonitorEventSessionStatus* outStatus) {
-    if (!outStatus || outStatus->structSize != sizeof(*outStatus)) return VN_INVALID_ARG;
+    if (outStatus == nullptr) return VN_INVALID_ARG;
+    const auto requestedSize = outStatus->structSize;
+    if (requestedSize != sizeof(VnMonitorEventSessionStatus) &&
+        requestedSize != sizeof(VnMonitorEventSessionStatusV2)) return VN_INVALID_ARG;
     const auto gate = RequireEngineAndLogicThread(false);
     if (gate != VN_OK) return gate;
     auto& owner = Owner();
@@ -3014,28 +4321,69 @@ VnResult GetEventSessionStatus(VnMonitorSessionHandle handle,
     auto* session = FindLive(owner, handle);
     if (!session) return VN_MONITOR_STALE_SESSION;
     if (!session->eventCatalog) return VN_INVALID_ARG;
-    *outStatus = {};
-    outStatus->structSize = sizeof(*outStatus);
-    outStatus->monitorSessionEpoch = session->epoch;
-    outStatus->startedTimestampNs = session->eventStartedNs;
-    outStatus->stoppedTimestampNs = session->eventStoppedNs;
+    VnMonitorEventSessionStatusV2 status{};
+    status.structSize = requestedSize;
+    if (session->sealRequested) status.state = VN_MONITOR_EVENT_SESSION_SEALED;
+    status.monitorSessionEpoch = session->epoch;
+    status.startedTimestampNs = session->eventStartedNs;
+    status.stoppedTimestampNs = session->eventStoppedNs;
     const auto logDrops = owner.engine->logRing.DroppedCount() +
         owner.engine->logicLogRing.DroppedCount() + owner.engine->logRing.QuantumBudgetDropCount();
-    outStatus->sourceDroppedRecords = session->eventSourceDrops + logDrops - session->logDropBaseline;
+    status.sourceDroppedRecords = session->eventSourceDrops + logDrops - session->logDropBaseline +
+        session->identityDrops.recordCount + session->baselineDrops.recordCount + session->symbolDrops.recordCount;
     std::lock_guard<std::mutex> queueLock(session->queue->mutex);
-    outStatus->deliveryDroppedRecords = session->queue->droppedRecords;
+    status.deliveryDroppedRecords = session->queue->droppedRecords;
     if (session->eventStoppedNs != 0) {
-        const bool drained = owner.engine->logRing.ConsumedCount() >= session->sealedAudioLogs &&
+        bool executionDrained = true;
+        if (session->executionFactVersion == 1)
+            for (unsigned i = 0; i != owner.executionProducers.size(); ++i)
+                executionDrained &= owner.executionProducers[i].Completed() >= session->executionEnds[i];
+        const bool identityDrained = session->executionFactVersion != 1 ||
+            (session->acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) == 0 ||
+            (!session->identity.requested && !session->identity.active &&
+                owner.identityProducer.Completed() >= session->identityEnd);
+        const bool symbolDrained = !WantsSymbols(*session) ||
+            (owner.symbolProducer.Completed() >= session->symbolEnd && session->queue->deferredSymbols.empty());
+        const bool legacyDrained = executionDrained && identityDrained && symbolDrained && owner.engine->logRing.ConsumedCount() >= session->sealedAudioLogs &&
             owner.engine->logicLogRing.ConsumedCount() >= session->sealedLogicLogs &&
-            owner.lastEventFanoutSequence.load(std::memory_order_acquire) >= session->lastEventSequence &&
-            session->queue->records.empty();
+            owner.lastEventFanoutSequence.load(std::memory_order_acquire) >= session->lastEventSequence;
+        const bool drained = (session->executionFactVersion == 1 ? RecordingSourcesDrained(owner, *session, false) : legacyDrained) &&
+            session->queue->deferredSymbols.empty() && session->queue->records.empty();
         if (drained && !session->eventDrained) {
             session->eventDrained = true;
-            session->finalSourceDrops = outStatus->sourceDroppedRecords;
+            session->finalSourceDrops = status.sourceDroppedRecords;
         }
-        outStatus->state = session->eventDrained ? VN_MONITOR_EVENT_SESSION_DRAINED : VN_MONITOR_EVENT_SESSION_SEALED;
-        if (session->eventDrained) outStatus->sourceDroppedRecords = session->finalSourceDrops;
+        status.state = session->eventDrained ? VN_MONITOR_EVENT_SESSION_DRAINED : VN_MONITOR_EVENT_SESSION_SEALED;
+        if (session->eventDrained) status.sourceDroppedRecords = session->finalSourceDrops;
     }
+    status.acceptedExecutionFactVersion = session->executionFactVersion;
+    std::copy(session->supportedFactKinds.begin(), session->supportedFactKinds.end(), status.supportedFactKinds);
+    status.baselineAvailability = session->baselineAvailability;
+    status.symbolAvailability = session->symbolAvailability;
+    status.requestedPermissionMask = session->requestedPermissionMask;
+    status.acceptedPermissionMask = session->acceptedPermissionMask;
+    status.deniedPermissionMask = session->deniedPermissionMask;
+    status.unsupportedPermissionMask = session->unsupportedPermissionMask;
+    status.acceptedStreamKindMask = session->acceptedStreamKindMask;
+    status.symbolsDecision = session->symbolsDecision;
+    status.baselineStateCutId = session->executionFactVersion != 0 ? session->cut.id : 0;
+    const auto requestUnavailable = owner.engine->monitorRequests.UnavailableCount();
+    const auto hostUnavailable = owner.engine->monitorEmitters.UnavailableCount();
+    status.identityUnavailableCount = UINT64_MAX - requestUnavailable < hostUnavailable
+        ? UINT64_MAX : requestUnavailable + hostUnavailable;
+    for (const auto& producer : owner.executionProducers) {
+        const auto unavailable = (session->acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) != 0 ? producer.Unavailable() : 0;
+        status.identityUnavailableCount = UINT64_MAX - status.identityUnavailableCount < unavailable
+            ? UINT64_MAX : status.identityUnavailableCount + unavailable;
+    }
+    if ((session->acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0)
+        for (auto unavailable : {owner.identityProducer.Unavailable(), owner.identityMirror.Unavailable()})
+            status.identityUnavailableCount = UINT64_MAX - status.identityUnavailableCount < unavailable
+                ? UINT64_MAX : status.identityUnavailableCount + unavailable;
+    const auto symbolUnavailable = SymbolUnavailable(owner, *session);
+    status.identityUnavailableCount = UINT64_MAX - status.identityUnavailableCount < symbolUnavailable
+        ? UINT64_MAX : status.identityUnavailableCount + symbolUnavailable;
+    std::memcpy(outStatus, &status, requestedSize);
     return VN_OK;
 }
 
@@ -3043,13 +4391,41 @@ bool EventCatalogEnabled() {
     return Owner().eventObservers.load(std::memory_order_acquire) != 0 && LogicThreadReady();
 }
 
-void PublishEventDetail(const VnMonitorEventDetail& detail,
+bool ExecutionObservationEnabled() noexcept {
+    return Owner().executionObservers.load(std::memory_order_acquire) != 0;
+}
+
+std::uint64_t ExecutionEngineInstance() noexcept {
+    return LogicThreadReady() ? Owner().engine->monitorRequests.EngineInstance() : 0;
+}
+
+bool PublishExecutionFact(MonitorExecutionFact fact, bool audioProducer) noexcept {
+#if defined(HARKEN_MONITOR_HUB_ABSENT)
+    (void)fact;
+    (void)audioProducer;
+    return false;
+#else
+    auto& owner = Owner();
+    if (!ExecutionObservationEnabled() || (!audioProducer && !LogicThreadReady())) return false;
+    // Identity cuts have per-session staging/watermarks. Keep this source
+    // sequence EVENT-only so a dropped STATE item cannot taint EVENT grants.
+    if (fact.kind == VN_MONITOR_FACT_IDENTITY_UPSERT || fact.kind == VN_MONITOR_FACT_IDENTITY_TOMBSTONE) return false;
+    auto& ring = audioProducer ? owner.producerRing : owner.logicRing;
+    const bool result = owner.executionProducers[audioProducer ? 1 : 0].Publish(ring, fact,
+        owner.engine->monitorRequests.EngineInstance());
+    owner.WakeDrain();
+    return result;
+#endif
+}
+
+bool PublishEventDetail(const VnMonitorEventDetail& detail,
                          std::uint32_t entityKind, VnObjectId stableId,
                          VnObjectId projectId,
                          std::uint64_t worldGeneration,
                          std::uint64_t instanceHandle, std::uint64_t instanceGeneration,
-                         std::uint64_t programFingerprint) {
-    if (!EventCatalogEnabled()) return;
+                         std::uint64_t programFingerprint,
+                         std::uint32_t logSource, std::uint64_t logTicket) {
+    if (!EventCatalogEnabled()) return false;
     auto& owner = Owner();
     LifecycleEnvelope envelope{};
     envelope.sourceSequence = NextLogicSourceSequence();
@@ -3089,15 +4465,27 @@ void PublishEventDetail(const VnMonitorEventDetail& detail,
     const auto projectBytes = ObjectIdBytes(projectId);
     std::memcpy(payload + sizeof(detail), projectBytes.data(), projectBytes.size());
     std::lock_guard<std::mutex> lock(owner.mutex);
-    const bool published = PublishLogicPacked(packed, bytes);
+    const MonitorProducerOrigin origin{logSource, 0, logTicket};
+    const bool published = PublishToRing(owner.logicRing, packed, bytes, origin);
     for (auto& session : owner.sessions) {
         if (!session.live.load(std::memory_order_acquire) || !session.eventCatalog ||
             session.eventDrained ||
-            detail.timestampNs < session.eventStartedNs ||
-            (session.eventStoppedNs != 0 && detail.timestampNs > session.eventStoppedNs)) continue;
+            (!(session.executionFactVersion == 1 && logSource >= 3 && logSource <= 4) &&
+             !session.recordingReceiver && (detail.timestampNs < session.eventStartedNs ||
+                (session.eventStoppedNs != 0 && detail.timestampNs > session.eventStoppedNs)))) continue;
+        if (session.executionFactVersion == 1) {
+            if (logSource >= 3 && logSource <= 4) {
+                const auto i = logSource - 3;
+                const auto end = i == 0 ? session.sealedAudioLogs : session.sealedLogicLogs;
+                if (logTicket <= session.logStarts[i] || (session.eventStoppedNs != 0 && logTicket > end)) continue;
+                if (published) session.logDownstreamEnds[i] = owner.logicRing.Published();
+            } else if (session.recordingReceiver && session.eventStoppedNs != 0) continue;
+        }
+        if (session.executionFactVersion == 1 && ExecutionReplacesLegacyEvent(detail.category, detail.code)) continue;
         if (published) session.lastEventSequence = envelope.sourceSequence;
         else ++session.eventSourceDrops;
     }
+    return published;
 }
 
 void ObserveOperation(std::uint32_t operation, VnResult result,
@@ -3166,8 +4554,9 @@ void ObserveOperation(std::uint32_t operation, VnResult result,
 void ObserveDiagnostic(std::uint32_t level, std::uint32_t code,
                         std::uint64_t arg0, std::uint64_t arg1,
                         std::uint64_t timestampNs, VnObjectId objectId, VnObjectId projectId,
-                        const char* text) {
-    if (!EventCatalogEnabled() || level < VN_LOG_WARN) return;
+                        const char* text, std::uint32_t logSource, std::uint64_t logTicket) {
+    if (!EventCatalogEnabled()) return;
+    const bool eligible = level >= VN_LOG_WARN;
     VnMonitorEventDetail detail{};
     detail.structSize = sizeof(detail);
     detail.category = VN_MONITOR_EVENT_CATEGORY_DIAGNOSTIC;
@@ -3182,7 +4571,43 @@ void ObserveDiagnostic(std::uint32_t level, std::uint32_t code,
             ++detail.textBytes;
         }
     }
-    PublishEventDetail(detail, VN_MONITOR_ENTITY_NONE, objectId, projectId, 0);
+    if (eligible) PublishEventDetail(detail, VN_MONITOR_ENTITY_NONE, objectId, projectId, 0, 0, 0, 0, logSource, logTicket);
+    if (logSource < 3 || logSource > 4 || logTicket == 0) return;
+    auto& owner = Owner();
+    std::lock_guard<std::mutex> lock(owner.mutex);
+    const auto index = logSource - 3;
+    const auto previous = owner.logTranscriptLast[index];
+    for (auto& session : owner.sessions) {
+        if (!session.live.load(std::memory_order_acquire) || !session.recordingReceiver || session.eventDrained ||
+            (session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) == 0) continue;
+        const auto first = std::max(previous, session.logStarts[index]);
+        const auto end = session.eventStoppedNs == 0 ? logTicket : std::min(logTicket,
+            index == 0 ? session.sealedAudioLogs : session.sealedLogicLogs);
+        if (end > first) session.logLost[index] += end - first - (end == logTicket ? 1u : 0u);
+        if (!eligible && logTicket > session.logStarts[index] && end == logTicket) ++session.logFiltered[index];
+    }
+    owner.logTranscriptLast[index] = logTicket;
+    owner.logProjectionCompleted[index].store(logTicket, std::memory_order_release);
+    owner.WakeDrain();
+}
+
+void CompleteLogTranscription(std::uint32_t source, std::uint64_t consumed) {
+    if (source < 3 || source > 4 || !EventCatalogEnabled()) return;
+    auto& owner = Owner();
+    std::lock_guard<std::mutex> lock(owner.mutex);
+    const auto index = source - 3;
+    const auto previous = owner.logTranscriptLast[index];
+    for (auto& session : owner.sessions) {
+        if (!session.live.load(std::memory_order_acquire) || !session.recordingReceiver || session.eventDrained ||
+            (session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) == 0) continue;
+        const auto end = session.eventStoppedNs == 0 ? consumed : std::min(consumed,
+            index == 0 ? session.sealedAudioLogs : session.sealedLogicLogs);
+        const auto first = std::max(previous, session.logStarts[index]);
+        if (end > first) session.logLost[index] += end - first;
+    }
+    owner.logTranscriptLast[index] = std::max(previous, consumed);
+    owner.logProjectionCompleted[index].store(owner.logTranscriptLast[index], std::memory_order_release);
+    owner.WakeDrain();
 }
 
 VnResult CloseSession(VnMonitorSessionHandle handle) {
@@ -3191,18 +4616,14 @@ VnResult CloseSession(VnMonitorSessionHandle handle) {
         return gate;
     }
     ProcessOwner& owner = Owner();
+    RefreshIdentityBoundary();
     std::lock_guard<std::mutex> lock(owner.mutex);
     Session* session = FindLive(owner, handle);
     if (session == nullptr) {
         return VN_MONITOR_STALE_SESSION;
     }
     DisconnectHolderLocked(owner, handle);
-    if (session->eventCatalog) {
-        owner.eventObservers.fetch_sub(1, std::memory_order_release);
-    }
-    owner.RetireIfPollingLocked(*session);
-    session->Reset();
-    owner.observerCount.fetch_sub(1, std::memory_order_release);
+    RetireSessionLocked(owner, *session);
     return VN_OK;
 }
 
@@ -3215,10 +4636,15 @@ VnResult GetSubscriptionStatus(VnMonitorSessionHandle handle,
     if (gate != VN_OK) {
         return gate;
     }
-    if (!ValidStructSize(outStatus->structSize,
-                         sizeof(VnMonitorSubscriptionStatus))) {
+    const auto requestedSize = outStatus->structSize;
+    if (requestedSize != sizeof(VnMonitorSubscriptionStatus) &&
+        requestedSize != sizeof(VnMonitorSubscriptionStatusV2)) {
         return VN_INVALID_ARG;
     }
+    auto* destination = outStatus;
+    VnMonitorSubscriptionStatus legacy{};
+    std::memcpy(&legacy, outStatus, sizeof(legacy));
+    outStatus = &legacy;
     ProcessOwner& owner = Owner();
     std::lock_guard<std::mutex> lock(owner.mutex);
     Session* session = FindLive(owner, handle);
@@ -3235,11 +4661,14 @@ VnResult GetSubscriptionStatus(VnMonitorSessionHandle handle,
     VnMonitorStreamBaseline* callerBaselines = outStatus->baselines;
     const std::uint32_t matchingCount =
          ((resolvedMask & VN_MONITOR_STREAM_TIME_SERIES) ? 1u : 0u) +
-         ((resolvedMask & VN_MONITOR_STREAM_STATE) ? 1u : 0u);
+         ((resolvedMask & VN_MONITOR_STREAM_STATE) ? (session->executionFactVersion == 1 ? 2u : 1u) : 0u) +
+         (WantsSymbols(*session) ? 1u : 0u);
     if (matchingCount > 0 &&
         ((callerBaselines == nullptr && callerCapacity != 0) ||
           (callerBaselines != nullptr && callerCapacity < matchingCount))) {
          outStatus->baselineCount = matchingCount;
+         std::memcpy(reinterpret_cast<std::uint8_t*>(destination) +
+             offsetof(VnMonitorSubscriptionStatus, baselineCount), &matchingCount, sizeof(matchingCount));
          return VN_MONITOR_BUFFER_TOO_SMALL;
     }
     std::memset(outStatus, 0, sizeof(*outStatus));
@@ -3272,13 +4701,54 @@ VnResult GetSubscriptionStatus(VnMonitorSessionHandle handle,
         if (resolvedMask & VN_MONITOR_STREAM_STATE) {
             std::memset(&callerBaselines[written], 0, sizeof(callerBaselines[written]));
             callerBaselines[written].structSize = sizeof(callerBaselines[written]);
-            callerBaselines[written].streamId = kSyntheticStateStreamId;
-            callerBaselines[written].firstExpectedSourceSequence =
-                session->firstExpectedStateSequence;
+            callerBaselines[written].streamId = session->executionFactVersion == 1 ? kIdentityDeltaStream : kSyntheticStateStreamId;
+            callerBaselines[written].firstExpectedSourceSequence = session->executionFactVersion == 1
+                ? (session->identityStart == UINT64_MAX ? 0 : session->identityStart + 1) : session->firstExpectedStateSequence;
             callerBaselines[written].streamKind = VN_MONITOR_STREAM_STATE;
             ++written;
+            if (session->executionFactVersion == 1) {
+                callerBaselines[written] = {};
+                callerBaselines[written].structSize = sizeof(callerBaselines[written]);
+                callerBaselines[written].streamId = kIdentityBaselineStream;
+                callerBaselines[written].firstExpectedSourceSequence = session->cut.beginSourceSequence;
+                callerBaselines[written].streamKind = VN_MONITOR_STREAM_STATE;
+                ++written;
+            }
+        }
+        if (WantsSymbols(*session)) {
+            callerBaselines[written] = {};
+            callerBaselines[written].structSize = sizeof(callerBaselines[written]);
+            callerBaselines[written].streamId = kHostSymbolStream;
+            callerBaselines[written].streamKind = SymbolStreamKind(*session);
+            callerBaselines[written].firstExpectedSourceSequence =
+                session->symbolStart == UINT64_MAX ? 0 : session->symbolStart + 1;
         }
     }
+    VnMonitorSubscriptionStatusV2 status{};
+    std::memcpy(&status, &legacy, sizeof(legacy));
+    status.structSize = requestedSize;
+    status.acceptedExecutionFactVersion = session->executionFactVersion;
+    status.baselineAvailability = session->baselineAvailability;
+    status.symbolAvailability = session->symbolAvailability;
+    std::copy(session->supportedFactKinds.begin(), session->supportedFactKinds.end(), status.supportedFactKinds);
+    status.baselineStateCutId = session->executionFactVersion != 0 ? session->cut.id : 0;
+    const auto requestUnavailable = owner.engine->monitorRequests.UnavailableCount();
+    const auto hostUnavailable = owner.engine->monitorEmitters.UnavailableCount();
+    status.identityUnavailableCount = UINT64_MAX - requestUnavailable < hostUnavailable
+        ? UINT64_MAX : requestUnavailable + hostUnavailable;
+    for (const auto& producer : owner.executionProducers) {
+        const auto unavailable = (session->acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) != 0 ? producer.Unavailable() : 0;
+        status.identityUnavailableCount = UINT64_MAX - status.identityUnavailableCount < unavailable
+            ? UINT64_MAX : status.identityUnavailableCount + unavailable;
+    }
+    if ((session->acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0)
+        for (auto unavailable : {owner.identityProducer.Unavailable(), owner.identityMirror.Unavailable()})
+            status.identityUnavailableCount = UINT64_MAX - status.identityUnavailableCount < unavailable
+                ? UINT64_MAX : status.identityUnavailableCount + unavailable;
+    const auto symbolUnavailable = SymbolUnavailable(owner, *session);
+    status.identityUnavailableCount = UINT64_MAX - status.identityUnavailableCount < symbolUnavailable
+        ? UINT64_MAX : status.identityUnavailableCount + symbolUnavailable;
+    std::memcpy(destination, &status, requestedSize);
     return VN_OK;
 }
 
@@ -3375,10 +4845,7 @@ VnResult Poll(VnMonitorSessionHandle handle, const VnMonitorPollDesc* desc,
                                      queue->records.begin() +
                                          static_cast<std::ptrdiff_t>(copied.size()));
                 remaining = queue->records.size();
-                queue->usedBytes = 0;
-                for (const PackedRecord& record : queue->records) {
-                    queue->usedBytes += record.bytes.size();
-                }
+                queue->usedBytes -= written;
             }
         }
         if (copied.empty() && nextBytes > 0) {
@@ -3450,43 +4917,37 @@ VnResult GetConsumerStatus(VnMonitorSessionHandle handle,
     if (queue == nullptr) {
         return VN_OK;
     }
-    DropAccum snapshot;
+    constexpr auto executionSourceOffset = 1 + ConsumerQueue::kDropStreamCount;
+    constexpr auto identitySourceOffset = executionSourceOffset + 2;
+    std::array<DropAccum, identitySourceOffset + 3> snapshots{};
+    if (session->executionFactVersion != 1 || (session->acceptedStreamKindMask & ~VN_MONITOR_STREAM_STATE) != 0)
+        snapshots[0] = owner.producerDrop.Snapshot();
+    snapshots[identitySourceOffset] = session->identityDrops;
+    snapshots[identitySourceOffset + 1] = session->baselineDrops;
+    snapshots[identitySourceOffset + 2] = session->symbolDrops;
     {
         std::lock_guard<std::mutex> queueLock(queue->mutex);
-        snapshot = queue->drop;
+        std::copy(queue->drops.begin(), queue->drops.end(), snapshots.begin() + 1);
     }
-    const DropAccum producer = owner.producerDrop.Snapshot();
-    *requiredCount = (producer.recordCount > 0 ? 1u : 0u) +
-                     (snapshot.recordCount > 0 ? 1u : 0u);
-    if (*requiredCount == 0) {
-        return VN_OK;
-    }
-    if (outSummaries == nullptr || capacity < *requiredCount) {
-        return VN_MONITOR_BUFFER_TOO_SMALL;
-    }
+    // Source counters remain queryable even when their in-stream summary was
+    // dropped. This also covers ordinary V2 sessions without Catalog status.
+    std::copy(session->executionSourceDrops.begin(), session->executionSourceDrops.end(), snapshots.begin() + executionSourceOffset);
+    for (const auto& snapshot : snapshots) if (snapshot.recordCount != 0) ++*requiredCount;
+    if (*requiredCount == 0) return VN_OK;
+    if (outSummaries == nullptr || capacity < *requiredCount) return VN_MONITOR_BUFFER_TOO_SMALL;
     std::uint32_t written = 0;
-    if (producer.recordCount > 0) {
-        std::memset(&outSummaries[written], 0, sizeof(outSummaries[written]));
-        outSummaries[written].structSize = sizeof(outSummaries[written]);
-        outSummaries[written].stage = VN_MONITOR_DROP_SOURCE_PRODUCER;
-        outSummaries[written].streamId = producer.streamId;
-        outSummaries[written].firstSourceSequence = producer.firstSourceSequence;
-        outSummaries[written].lastSourceSequence = producer.lastSourceSequence;
-        outSummaries[written].recordCount = producer.recordCount;
-        outSummaries[written].byteCount = producer.byteCount;
-        outSummaries[written].reason = producer.reason;
-        ++written;
-    }
-    if (snapshot.recordCount > 0) {
-        std::memset(&outSummaries[written], 0, sizeof(outSummaries[written]));
-        outSummaries[written].structSize = sizeof(outSummaries[written]);
-        outSummaries[written].stage = snapshot.stage;
-        outSummaries[written].streamId = snapshot.streamId;
-        outSummaries[written].firstSourceSequence = snapshot.firstSourceSequence;
-        outSummaries[written].lastSourceSequence = snapshot.lastSourceSequence;
-        outSummaries[written].recordCount = snapshot.recordCount;
-        outSummaries[written].byteCount = snapshot.byteCount;
-        outSummaries[written].reason = snapshot.reason;
+    for (const auto& snapshot : snapshots) {
+        if (snapshot.recordCount == 0) continue;
+        auto& summary = outSummaries[written++];
+        summary = {};
+        summary.structSize = sizeof(summary);
+        summary.stage = snapshot.stage;
+        summary.streamId = snapshot.streamId;
+        summary.firstSourceSequence = snapshot.firstSourceSequence;
+        summary.lastSourceSequence = snapshot.lastSourceSequence;
+        summary.recordCount = snapshot.recordCount;
+        summary.byteCount = snapshot.byteCount;
+        summary.reason = snapshot.reason;
     }
     return VN_OK;
 }
@@ -3510,6 +4971,9 @@ VnResult RequestStateCut(VnMonitorSessionHandle handle,
         return VN_MONITOR_PERMISSION_DENIED;
     }
     ProcessOwner& owner = Owner();
+    // Callback reentrancy and an open outer transaction are not valid cuts.
+    if (!IdentitySafeBoundary(owner)) return VN_BACKPRESSURE;
+    RefreshIdentityBoundary();
     std::uint64_t expectedEpoch = 0;
     std::uint64_t expectedGeneration = 0;
     {
@@ -3522,6 +4986,12 @@ VnResult RequestStateCut(VnMonitorSessionHandle handle,
             session->cut = {};
             session->cut.result = VN_MONITOR_STATE_CUT_ABORTED;
             return VN_MONITOR_PERMISSION_DENIED;
+        }
+        if (session->eventStoppedNs != 0) return VN_INVALID_ARG;
+        if (session->executionFactVersion == 1) {
+            const auto result = FreezeIdentityCut(owner, *session, desc->requestedCapacityHint);
+            if (result == VN_OK) *outStateCutId = session->cut.id;
+            return result;
         }
         if (desc->requestedCapacityHint != 0 &&
             desc->requestedCapacityHint < kStateCutRequiredRecords) {
@@ -3608,9 +5078,8 @@ VnResult GetStateCutStatus(VnMonitorSessionHandle handle, uint64_t stateCutId,
     if (session->cut.id == 0 || session->cut.id != stateCutId) {
         return VN_MONITOR_STALE_SESSION;
     }
-    SettleStateCutFromDelivery(
-        &session->cut,
-        owner.lastLogicFanoutSequence.load(std::memory_order_acquire));
+    if (session->executionFactVersion == 0) SettleStateCutFromDelivery(
+        &session->cut, owner.lastLogicFanoutSequence.load(std::memory_order_acquire));
     if (!session->cut.settled) {
         return VN_MONITOR_STALE_SESSION;
     }
@@ -3639,6 +5108,7 @@ VnResult AcquireCaptureControl(VnMonitorSessionHandle handle,
         return VN_INVALID_ARG;
     }
     ProcessOwner& owner = Owner();
+    RefreshIdentityBoundary();
     std::lock_guard<std::mutex> lock(owner.mutex);
     ExpireLeaseIfDueLocked(owner);
     Session* session = FindLive(owner, handle);
@@ -3651,6 +5121,7 @@ VnResult AcquireCaptureControl(VnMonitorSessionHandle handle,
     if (owner.lease.held && owner.lease.holder != handle) {
         return VN_IN_USE;
     }
+    if (owner.lease.held) StopOwnedRecordingLocked(owner, handle, owner.lease.generation, kLeaseReasonAcquire);
     owner.lease.generation += 1;
     owner.lease.held = true;
     owner.lease.holder = handle;
@@ -3670,6 +5141,7 @@ VnResult ReleaseCaptureControl(VnMonitorSessionHandle handle,
         return gate;
     }
     ProcessOwner& owner = Owner();
+    RefreshIdentityBoundary();
     std::lock_guard<std::mutex> lock(owner.mutex);
     ExpireLeaseIfDueLocked(owner);
     Session* session = FindLive(owner, handle);
@@ -3679,6 +5151,7 @@ VnResult ReleaseCaptureControl(VnMonitorSessionHandle handle,
     if (!IsCurrentHolderLocked(owner, *session, handle, leaseGeneration)) {
         return VN_MONITOR_STALE_LEASE;
     }
+    StopOwnedRecordingLocked(owner, handle, leaseGeneration, kLeaseReasonRelease);
     owner.lease.held = false;
     owner.lease.holder = 0;
     owner.lease.principalHash = 0;
@@ -3882,7 +5355,7 @@ VnResult GetEffectiveCapturePlan(VnMonitorSessionHandle handle,
     return VN_OK;
 }
 
-VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
+VnResult StartLegacyRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
                         const VnMonitorRecordingDesc* desc) {
     const VnResult gate = GateControlEntry();
     if (gate != VN_OK) {
@@ -3912,6 +5385,7 @@ VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
     if (!IsCurrentHolderLocked(owner, *session, handle, leaseGeneration)) {
         return VN_MONITOR_STALE_LEASE;
     }
+    if (session->executionFactVersion != 0) return VN_MONITOR_UNSUPPORTED;
     std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
     if (owner.recorder.state == VN_MONITOR_RECORDING_STATE_ACTIVE ||
         owner.recorder.state == VN_MONITOR_RECORDING_STATE_STOPPING) {
@@ -3943,7 +5417,7 @@ VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
         return FailAndRemoveStartFileLocked(owner.recorder,
                                             VN_MONITOR_RECORDING_FAILED);
     }
-    owner.recorder.queueEpoch = owner.nextEpoch;
+    owner.recorder.queueEpoch = owner.nextEpoch++;
     owner.internals[kInternalRecorder]->Reset(
         owner.recorder.fileByteBudget, VN_MONITOR_DROP_RECORDER_QUEUE,
         owner.recorder.queueEpoch, 0);
@@ -3979,12 +5453,134 @@ VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
     return VN_OK;
 }
 
+VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
+                        const VnMonitorRecordingDesc* desc) {
+    const auto gate = GateControlEntry();
+    if (gate != VN_OK) return gate;
+    if (!desc || !desc->utf8Path || desc->structSize != sizeof(*desc) || desc->reserved0 != 0) return VN_INVALID_ARG;
+    if (desc->fileByteBudget > VN_MONITOR_HARD_SESSION_FILE_BYTES) return VN_MONITOR_BUDGET_EXCEEDED;
+    std::filesystem::path path;
+    if (!TryMakeUtf8Path(desc->utf8Path, &path)) return VN_INVALID_ARG;
+    auto& owner = Owner();
+    if (IdentitySafeBoundary(owner)) RefreshIdentityBoundary();
+    VnMonitorSessionDescV2 receiverDesc{};
+    RecordingDescriptor descriptor{};
+    {
+        std::unique_lock<std::mutex> lock(owner.mutex);
+        ExpireLeaseIfDueLocked(owner);
+        CleanupRecordingReceiverLocked(owner);
+        auto* session = FindLive(owner, handle);
+        if (!session) return VN_MONITOR_STALE_SESSION;
+        if (session->executionFactVersion == 0) {
+            lock.unlock();
+            return StartLegacyRecording(handle, leaseGeneration, desc);
+        }
+        if ((session->acceptedPermissionMask & kRecordPermission) == 0) return VN_MONITOR_PERMISSION_DENIED;
+        if (!IsCurrentHolderLocked(owner, *session, handle, leaseGeneration)) return VN_MONITOR_STALE_LEASE;
+        if (!IdentitySafeBoundary(owner)) return VN_BACKPRESSURE;
+        std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
+        if (owner.recorder.state == VN_MONITOR_RECORDING_STATE_ACTIVE ||
+            owner.recorder.state == VN_MONITOR_RECORDING_STATE_STOPPING) return VN_IN_USE;
+        descriptor.owner = handle;
+        descriptor.ownerGeneration = session->generation;
+        descriptor.ownerEpoch = session->epoch;
+        descriptor.leaseGeneration = leaseGeneration;
+        descriptor.engine = owner.engine->monitorRequests.EngineInstance();
+        descriptor.recordingEpoch = owner.nextEpoch++;
+        descriptor.schema = session->executionFactVersion;
+        descriptor.streams = session->acceptedStreamKindMask;
+        descriptor.permissions = session->acceptedPermissionMask;
+        descriptor.requestSymbols = session->requestSymbols;
+        std::copy(session->supportedFactKinds.begin(), session->supportedFactKinds.end(), descriptor.supported);
+        receiverDesc.structSize = sizeof(receiverDesc);
+        receiverDesc.requestedStreamKindMask = descriptor.streams;
+        receiverDesc.requestedPermissionMask = descriptor.permissions & ~(kRecordPermission | kCaptureControlPermission);
+        receiverDesc.consumerQueueBytes = VN_MONITOR_DEFAULT_RECORDER_QUEUE_BYTES;
+        receiverDesc.requestSymbols = session->requestSymbols;
+        receiverDesc.requestRawAudio = session->requestRawAudio;
+        receiverDesc.requestedExecutionFactVersion = descriptor.schema;
+    }
+    VnMonitorSessionHandle receiver = 0;
+    const auto opened = OpenSessionWithPermissions(reinterpret_cast<const VnMonitorSessionDesc*>(&receiverDesc), false, 0, 0,
+        &receiver, (descriptor.streams & VN_MONITOR_STREAM_EVENT) != 0, true);
+    if (opened != VN_OK) return opened;
+    void (*afterOpen)(void*) = nullptr;
+    void* openContext = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(owner.recorder.mutex);
+        afterOpen = owner.recorder.afterReceiverOpenForTests;
+        openContext = owner.recorder.receiverOpenContextForTests;
+        owner.recorder.afterReceiverOpenForTests = nullptr;
+        owner.recorder.receiverOpenContextForTests = nullptr;
+    }
+    if (afterOpen) afterOpen(openContext);
+    std::lock_guard<std::mutex> ownerLock(owner.mutex);
+    auto* session = FindLive(owner, handle);
+    auto* subscription = FindLive(owner, receiver, true);
+    const auto discard = [&](VnResult result) {
+        if (subscription) RetireSessionLocked(owner, *subscription);
+        return result;
+    };
+    if (!session || session->epoch != descriptor.ownerEpoch ||
+        !IsCurrentHolderLocked(owner, *session, handle, leaseGeneration)) return discard(VN_MONITOR_STALE_LEASE);
+    if (!subscription || subscription->acceptedStreamKindMask != descriptor.streams ||
+        subscription->acceptedPermissionMask != receiverDesc.requestedPermissionMask ||
+        subscription->executionFactVersion != descriptor.schema) return discard(VN_MONITOR_PERMISSION_DENIED);
+    std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
+    auto& recorder = owner.recorder;
+    recorder.ResetStopped();
+    recorder.typed = true;
+    recorder.receiver = receiver;
+    descriptor.epoch = subscription->epoch;
+    descriptor.startedNs = subscription->eventStartedNs;
+    descriptor.controlStart = subscription->controlStart;
+    std::copy(subscription->executionStarts.begin(), subscription->executionStarts.end(), descriptor.starts);
+    descriptor.starts[2] = subscription->identityStart;
+    descriptor.starts[3] = subscription->symbolStart;
+    std::copy(subscription->ringStarts.begin(), subscription->ringStarts.end(), descriptor.ringStarts);
+    std::copy(subscription->logStarts.begin(), subscription->logStarts.end(), descriptor.logStarts);
+    std::copy(subscription->rawDropStarts.begin(), subscription->rawDropStarts.end(), descriptor.rawDropStarts);
+    std::copy(subscription->unavailableStarts.begin(), subscription->unavailableStarts.end(), descriptor.unavailableStarts);
+    if ((descriptor.streams & VN_MONITOR_STREAM_STATE) != 0) {
+        descriptor.cutId = subscription->cut.id;
+        descriptor.cutRevision = subscription->identity.begin.identityRevision;
+        descriptor.cutFirst = subscription->cut.beginSourceSequence;
+        descriptor.cutLast = subscription->cut.endSourceSequence;
+    }
+    recorder.descriptor = descriptor;
+    recorder.fileByteBudget = desc->fileByteBudget == 0 ? VN_MONITOR_DEFAULT_SESSION_FILE_BYTES : desc->fileByteBudget;
+    const auto fail = [&](VnResult reason) {
+        FailAndRemoveStartFileLocked(recorder, reason);
+        recorder.receiver = 0;
+        return discard(reason);
+    };
+    if (!recorder.verifier.Begin(descriptor)) return fail(VN_MONITOR_INCOMPATIBLE);
+    recorder.path = path;
+    recorder.file.open(path, std::ios::binary | std::ios::trunc);
+    if (!recorder.file.is_open()) return fail(VN_MONITOR_RECORDING_FAILED);
+    std::uint8_t header[kSessionFileHeaderPackedBytes];
+    PackSessionFileHeader(header, 1, descriptor.engine, 0, 0);
+    recorder.file.write(reinterpret_cast<const char*>(header), sizeof(header));
+    if (!recorder.file.good()) return fail(VN_MONITOR_RECORDING_FAILED);
+    recorder.fileBytes = sizeof(header);
+    recorder.queueEpoch = descriptor.epoch;
+    recorder.state = VN_MONITOR_RECORDING_STATE_ACTIVE;
+    std::uint8_t packed[kRecordingDescriptorBytes]{};
+    ExecutionPayloadWriter write{packed};
+    VisitRecordingDescriptor(write, descriptor);
+    if (!WriteRecorderChunkLocked(recorder, VN_MONITOR_CHUNK_EXECUTION_DESCRIPTOR, VN_MONITOR_CHUNK_REQUIRED, packed, sizeof(packed)))
+        return fail(RecorderFailureResult(recorder));
+    owner.WakeDrain();
+    return VN_OK;
+}
+
 VnResult StopRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration) {
     const VnResult gate = GateControlEntry();
     if (gate != VN_OK) {
         return gate;
     }
     ProcessOwner& owner = Owner();
+    RefreshIdentityBoundary();
     std::lock_guard<std::mutex> lock(owner.mutex);
     ExpireLeaseIfDueLocked(owner);
     Session* session = FindLive(owner, handle);
@@ -3994,6 +5590,12 @@ VnResult StopRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration) 
     if (!IsCurrentHolderLocked(owner, *session, handle, leaseGeneration)) {
         return VN_MONITOR_STALE_LEASE;
     }
+    {
+        std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
+        if (owner.recorder.typed && (owner.recorder.descriptor.owner != handle ||
+            owner.recorder.descriptor.leaseGeneration != leaseGeneration)) return VN_MONITOR_STALE_LEASE;
+    }
+    StopOwnedRecordingLocked(owner, handle, leaseGeneration, kLeaseReasonRelease);
     std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
     if (owner.recorder.state == VN_MONITOR_RECORDING_STATE_ACTIVE) {
         owner.recorder.state = VN_MONITOR_RECORDING_STATE_STOPPING;
@@ -4030,9 +5632,11 @@ VnResult GetRecordingStatus(VnMonitorSessionHandle handle,
     outStatus->state = owner.recorder.state;
     outStatus->fileBytes = owner.recorder.fileBytes;
     outStatus->lastCommittedChunk = owner.recorder.lastCommittedChunk;
-    if (owner.internals[kInternalRecorder]) {
-        std::lock_guard<std::mutex> queueLock(owner.internals[kInternalRecorder]->mutex);
-        outStatus->queueBytes = owner.internals[kInternalRecorder]->usedBytes;
+    const auto* receiver = owner.recorder.typed ? FindLive(owner, owner.recorder.receiver, true) : nullptr;
+    auto* queue = owner.recorder.typed ? (receiver ? receiver->queue.get() : nullptr) : owner.internals[kInternalRecorder].get();
+    if (queue) {
+        std::lock_guard<std::mutex> queueLock(queue->mutex);
+        outStatus->queueBytes = queue->usedBytes;
     }
     outStatus->recoveryNeeded = owner.recorder.recoveryNeeded;
     outStatus->errorReason = owner.recorder.errorReason;
@@ -4071,9 +5675,83 @@ void DrainOnceForTests() {
     std::uint8_t* scratch = owner.drainScratch.data();
     const std::uint32_t scratchBytes =
         static_cast<std::uint32_t>(owner.drainScratch.size());
-    while (DrainOneFrom(owner, owner.logicRing, scratch, scratchBytes) ||
-           DrainOneFrom(owner, owner.producerRing, scratch, scratchBytes)) {
+    while (DrainOneRound(owner, scratch, scratchBytes)) {
     }
+}
+
+void DrainRoundForTests() {
+    auto& owner = Owner();
+    DrainOneRound(owner, owner.drainScratch.data(), static_cast<std::uint32_t>(owner.drainScratch.size()));
+}
+
+void PumpRecorderForTests() { PumpRecorder(Owner()); }
+
+VnMonitorSessionHandle RecordingReceiverForTests() {
+    auto& owner = Owner();
+    std::lock_guard<std::mutex> lock(owner.recorder.mutex);
+    return owner.recorder.receiver;
+}
+
+void SetRecordingQueueBudgetForTests(std::uint64_t bytes) {
+    auto& owner = Owner();
+    std::lock_guard<std::mutex> lock(owner.mutex);
+    std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
+    auto* session = FindLive(owner, owner.recorder.receiver, true);
+    if (!session) return;
+    std::lock_guard<std::mutex> queueLock(session->queue->mutex);
+    session->queue->budgetBytes = bytes;
+}
+
+void DrainOneIdentityForTests() {
+    auto& owner = Owner();
+    DrainIdentityOne(owner, owner.drainScratch.data(), static_cast<std::uint32_t>(owner.drainScratch.size()));
+}
+void DrainOneTypedForTests() {
+    auto& owner = Owner();
+    DrainTypedOne(owner, owner.drainScratch.data(), static_cast<std::uint32_t>(owner.drainScratch.size()));
+}
+std::uint64_t SymbolPublishedForTests() { return Owner().symbolProducer.Published(); }
+std::uint32_t SymbolRingCapacityForTests() { return Owner().symbolRing.Capacity(); }
+std::uint64_t DeferredSymbolBytesForTests(VnMonitorSessionHandle handle) {
+    auto& owner = Owner();
+    std::lock_guard<std::mutex> lock(owner.mutex);
+    auto* session = FindLive(owner, handle);
+    if (!session || !session->queue) return 0;
+    std::lock_guard<std::mutex> queueLock(session->queue->mutex);
+    std::uint64_t bytes = 0;
+    for (const auto& record : session->queue->deferredSymbols) bytes += record.bytes.size();
+    return bytes;
+}
+std::uint64_t ConsumerUsedBytesForTests(VnMonitorSessionHandle handle) {
+    auto& owner = Owner();
+    std::lock_guard<std::mutex> lock(owner.mutex);
+    auto* session = FindLive(owner, handle);
+    if (!session || !session->queue) return 0;
+    std::lock_guard<std::mutex> queueLock(session->queue->mutex);
+    return session->queue->usedBytes;
+}
+void ExhaustSymbolSourcesForTests() {
+    auto& owner = Owner();
+    if (!owner.drainRunning.load(std::memory_order_acquire) && owner.symbolRing.Empty())
+        owner.symbolProducer.Reset(UINT64_MAX);
+}
+void ExhaustObservationRevisionForTests() { Owner().observationRevision = UINT64_MAX; }
+void DropIdentityRowForTests(std::int32_t row) { Owner().dropIdentityRowForTests = row; }
+std::uint64_t IdentityRefreshesForTests() { return Owner().identityRefreshes; }
+std::uint32_t IdentityRingCapacityForTests() { return Owner().identityRing.Capacity(); }
+void ExhaustIdentitySourcesForTests(bool baseline) {
+    auto& owner = Owner();
+    // Only legal after StopDrainForTests and a complete manual drain.
+    if (!owner.drainRunning.load(std::memory_order_acquire) && owner.identityRing.Empty()) {
+        if (baseline) owner.nextIdentitySequence = 0;
+        else owner.identityProducer.Reset(UINT64_MAX);
+    }
+}
+
+void DrainOneProducerForTests(bool audioProducer) {
+    auto& owner = Owner();
+    auto& ring = audioProducer ? owner.producerRing : owner.logicRing;
+    while (DrainOneFrom(owner, ring, owner.drainScratch.data(), static_cast<std::uint32_t>(owner.drainScratch.size()))) {}
 }
 
 VnResult EnableMonitorEndpoint(std::uint32_t profile) {
@@ -4339,7 +6017,7 @@ VnMonitorDropSummary InternalDropForTests(std::uint32_t index) {
         return summary;
     }
     std::lock_guard<std::mutex> lock(owner.internals[index]->mutex);
-    const DropAccum& drop = owner.internals[index]->drop;
+    const DropAccum& drop = owner.internals[index]->drops[0];
     summary.stage = drop.stage;
     summary.streamId = drop.streamId;
     summary.firstSourceSequence = drop.firstSourceSequence;
@@ -4358,6 +6036,20 @@ void SetRecorderWriteFailureForTests(bool fail) {
     ProcessOwner& owner = Owner();
     std::lock_guard<std::mutex> lock(owner.recorder.mutex);
     owner.recorder.failNextWriteForTests = fail;
+}
+
+void SetBeforeRecorderFailureCleanupForTests(void (*callback)(void*), void* context) {
+    auto& recorder = Owner().recorder;
+    std::lock_guard<std::mutex> lock(recorder.mutex);
+    recorder.beforeFailureCleanupForTests = callback;
+    recorder.failureCleanupContextForTests = context;
+}
+
+void SetAfterRecordingReceiverOpenForTests(void (*callback)(void*), void* context) {
+    auto& recorder = Owner().recorder;
+    std::lock_guard<std::mutex> lock(recorder.mutex);
+    recorder.afterReceiverOpenForTests = callback;
+    recorder.receiverOpenContextForTests = context;
 }
 
 void SetRecorderOptionalWriteFailureForTests(bool fail) {
@@ -4654,7 +6346,7 @@ void PublishTimeSeriesQuantum(std::uint32_t callbackCpuUs,
         if (size == 0) {
             continue;
         }
-        if (!owner.producerRing.TryPush(packed, size)) {
+        if (!owner.producerRing.TryPush(packed, size, 0, {}, monitor::RecordingRawStreams(packed, size))) {
             owner.producerDrop.Note(sourceSequence, size, VN_MONITOR_EVENT_DROP);
             continue;
         }
@@ -4824,7 +6516,7 @@ void PublishPackedAudioChunk(ProcessOwner& owner, std::uint8_t* packed,
     if (size == 0) {
         return;
     }
-    if (!owner.producerRing.TryPush(packed, size)) {
+    if (!owner.producerRing.TryPush(packed, size, 0, {}, monitor::RecordingRawStreams(packed, size))) {
         owner.producerDrop.Note(sourceSequence, size,
                                 VN_MONITOR_DROP_SOURCE_PRODUCER);
         return;
@@ -4867,7 +6559,7 @@ bool MaybeFollowSlotRebind(ProcessOwner& owner, std::uint32_t tapIndex,
     if (size == 0) {
         return false;
     }
-    if (!owner.producerRing.TryPush(packed, size)) {
+    if (!owner.producerRing.TryPush(packed, size, 0, {}, monitor::RecordingRawStreams(packed, size))) {
         owner.producerDrop.Note(sourceSequence, size,
                                 VN_MONITOR_DROP_SOURCE_PRODUCER);
         return false;
@@ -4904,7 +6596,7 @@ bool MaybeExactInstanceStale(ProcessOwner& owner, std::uint32_t tapIndex,
     if (size == 0) {
         return false;
     }
-    if (!owner.producerRing.TryPush(packed, size)) {
+    if (!owner.producerRing.TryPush(packed, size, 0, {}, monitor::RecordingRawStreams(packed, size))) {
         owner.producerDrop.Note(sourceSequence, size,
                                 VN_MONITOR_DROP_SOURCE_PRODUCER);
         return false;
@@ -5119,6 +6811,8 @@ namespace {
 std::uint32_t LifecycleEntityKind(MonitorLifecyclePhase phase,
                                   std::uint8_t playableKind) noexcept {
     switch (phase) {
+    case MonitorLifecyclePhase::PreparedCandidate:
+    case MonitorLifecyclePhase::SelectionCommitted: return 0;
     case MonitorLifecyclePhase::EffectInstalled:
     case MonitorLifecyclePhase::EffectReleased:
         return VN_MONITOR_ENTITY_EFFECT;
@@ -5154,6 +6848,8 @@ std::uint32_t LifecycleEntityKind(MonitorLifecyclePhase phase,
 
 std::uint32_t LifecycleEventClass(MonitorLifecyclePhase phase) noexcept {
     switch (phase) {
+    case MonitorLifecyclePhase::PreparedCandidate:
+    case MonitorLifecyclePhase::SelectionCommitted: return 0;
     case MonitorLifecyclePhase::EffectInstalled:
         return VN_MONITOR_EVENT_START;
     case MonitorLifecyclePhase::EffectReleased:
@@ -5255,6 +6951,18 @@ void ObserveMonitorLifecycle(MonitorLifecyclePhase phase,
     if (!monitor::LogicThreadReady()) {
         return;
     }
+    if (monitor::ExecutionObservationEnabled() && monitor::LifecycleFactKind(phase) != 0) {
+        const auto context = owner.engine->emitters.Context(facts.emitterOrigin.emitter);
+        const auto binding = owner.engine->monitorEmitters.CaptureBinding(facts.emitterOrigin,
+            context.stateEmitter, context.spatialEmitter);
+        auto fact = monitor::CaptureLifecycleFact(phase, monitor::ExecutionEngineInstance(),
+            instanceHandle, instanceGeneration, worldGeneration, stableId, relatedActionHandle,
+            reason, playableKind, facts, binding);
+        fact.timestamp = LogTimestampNs();
+        monitor::SetSourceField(fact, VN_MONITOR_FACT_FIELD_TIMESTAMP);
+        monitor::PublishExecutionFact(fact);
+    }
+    if (!facts.publishLegacy || phase == MonitorLifecyclePhase::SelectionCommitted) return;
     monitor::ProcessOwner::LifecycleDedupeKey key{};
     key.instanceHandle = instanceHandle;
     key.instanceGeneration = instanceGeneration;
@@ -5501,6 +7209,15 @@ void ObserveMonitorEffectRelease(std::uint64_t instanceHandle,
     envelope.reason = reason;
     PublishObjectEnvelope(MonitorObjectKind::EffectRelease, envelope,
                           MonitorObjectPhase::EffectRelease);
+}
+
+void ObserveMonitorSelectionUnavailable() noexcept {
+#if !defined(HARKEN_MONITOR_HUB_ABSENT)
+    if (!monitor::ExecutionObservationEnabled() || !monitor::LogicThreadReady()) return;
+    auto& owner = monitor::Owner();
+    owner.executionProducers[0].DeclareDrop(owner.engine->monitorRequests.EngineInstance());
+    owner.WakeDrain();
+#endif
 }
 
 void ObserveMonitorDspGap() noexcept {

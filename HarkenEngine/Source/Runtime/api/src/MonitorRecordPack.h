@@ -177,7 +177,7 @@ inline std::uint32_t PackedGainReductionBytes() {
 
 inline std::uint32_t PackedAggregateBytes() { return PackedRecordBytes(40u); }
 
-inline std::uint32_t PackedProducerSlotBytes() {
+inline std::uint32_t PackedLogicProducerSlotBytes() {
     std::uint32_t bytes = PackedTimeSeriesBytes();
     bytes = bytes < PackedDropSummaryBytes() ? PackedDropSummaryBytes() : bytes;
     bytes = bytes < PackedControlRecordBytes() ? PackedControlRecordBytes()
@@ -189,9 +189,14 @@ inline std::uint32_t PackedProducerSlotBytes() {
     bytes = bytes < PackedStateUpsertBytes() ? PackedStateUpsertBytes() : bytes;
     bytes = bytes < PackedStateTombstoneBytes() ? PackedStateTombstoneBytes()
                                                 : bytes;
+    const auto detail = PackedRecordBytes(sizeof(VnMonitorEventDetailV2));
+    return bytes < detail ? detail : bytes;
+}
+
+inline std::uint32_t PackedProducerSlotBytes() {
+    const auto bytes = PackedLogicProducerSlotBytes();
     const std::uint32_t audio = PackedAudioChunkMaxBytes();
-    bytes = bytes < audio ? audio : bytes;
-    return bytes;
+    return bytes < audio ? audio : bytes;
 }
 
 inline void PackHeader(std::uint8_t* out, const VnMonitorRecordHeader& header) {

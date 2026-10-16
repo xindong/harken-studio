@@ -178,6 +178,7 @@ struct VoiceTimelineEvent {
     const CurveLUT* envelopeCurve = nullptr;
     TimelineExecutionOrder order{};
     AuthoredStopOperationIdentity authoredStopOperation{};
+    MonitorControlCause controlCause{};
     FrozenFrontierEventProof frontierProof{};
 };
 
@@ -193,6 +194,10 @@ struct VoiceRenderContext {
     SourceTerminalToken sourceTerminalToken{};
     std::uint32_t sourceTerminalStreamGeneration = 0;
     SourceTerminalKind stagedSourceTerminal = SourceTerminalKind::None;
+    MonitorControlCause monitorAdoptedControlCause{};
+    bool monitorControlAdopted = false;
+    bool monitorTimelineControlAdopted = false;
+    bool monitorStoppedBeforeCascade = false;
     std::uint32_t stagedSourceTerminalOffset = 0;
     const BiquadTrigTable* biquadTrig = nullptr;
     std::uint32_t engineSampleRate = 0;

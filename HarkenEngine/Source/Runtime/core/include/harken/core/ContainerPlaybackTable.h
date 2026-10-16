@@ -201,7 +201,9 @@ public:
     ~PreparedPlayableTreeStep();
 
     bool PrepareInstance(PlayableInstanceTable& table, PlayableKind kind,
-                         PlayableInstanceHandle parent = 0) noexcept;
+                         PlayableInstanceHandle parent = 0,
+                         const MonitorRequestContext& request = {},
+                         const MonitorEmitterOrigin& emitterOrigin = {}) noexcept;
     bool PrepareContainer(PlayableInstanceTable& instanceTable,
                           ContainerPlaybackTable& table,
                           PlayableInstanceHandle instance,
@@ -343,8 +345,10 @@ public:
     PlayableTreeExecutor& operator=(PlayableTreeExecutor&& other) noexcept;
 
     bool PrepareInstance(PlayableInstanceTable& table, PlayableKind kind,
-                         PlayableInstanceHandle parent = 0) noexcept {
-        return step_.PrepareInstance(table, kind, parent);
+                         PlayableInstanceHandle parent = 0,
+                         const MonitorRequestContext& request = {},
+                         const MonitorEmitterOrigin& emitterOrigin = {}) noexcept {
+        return step_.PrepareInstance(table, kind, parent, request, emitterOrigin);
     }
 
     bool PrepareContainer(
@@ -551,6 +555,14 @@ public:
         const PlayableRootMetadata& metadata) noexcept {
         return !step_.CommitProofsRequired() && instanceTable_ == &table && externalInstance_ != nullptr &&
                table.SetPreparedRootMetadata(*externalInstance_, metadata);
+    }
+
+    bool SetPreparedContentIdentity(PlayableInstanceTable& table,
+        PlayableInstanceHandle handle, const MonitorContentIdentity& identity) noexcept {
+        if (step_.CommitProofsRequired()) return false;
+        const auto* token = externalInstance_ != nullptr && externalInstance_->Handle() == handle
+            ? externalInstance_ : step_.FindPreparedInstanceToken(handle);
+        return token != nullptr && table.SetPreparedContentIdentity(*token, identity);
     }
 
     bool Commit(PlayableInstanceTable& table) noexcept {

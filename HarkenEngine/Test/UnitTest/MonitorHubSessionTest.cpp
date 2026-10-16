@@ -100,6 +100,55 @@ TEST(MonitorHubSession, RemotePermissionsDoNotRestrictLocalConsumer) {
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(local));
 }
 
+TEST(MonitorHubSession, TypedLocalRawPermissionRequiresBothRequestAndAllowedStream) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    struct PrincipalScope {
+        ~PrincipalScope() { harken::monitor::ClearHostPrincipalForTests(); }
+    } principal;
+    for (unsigned mode = 0; mode != 4; ++mode) {
+        SCOPED_TRACE(mode);
+        harken::monitor::SetHostPrincipalForTests(true, VN_MONITOR_STREAM_EVENT |
+            (mode == 1 ? 0u : VN_MONITOR_STREAM_OPTIONAL_AUDIO));
+        VnMonitorSessionDescV2 desc{};
+        desc.structSize = sizeof(desc);
+        desc.requestedExecutionFactVersion = 1;
+        desc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT |
+            (mode == 3 ? 0u : VN_MONITOR_STREAM_OPTIONAL_AUDIO);
+        desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS |
+            (mode == 2 ? 0u : VN_MONITOR_PERM_RAW_AUDIO);
+        desc.requestRawAudio = 1;
+        VnMonitorSessionHandle handle = 0;
+        ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &handle));
+        VnMonitorSubscriptionStatusV2 status{};
+        status.structSize = sizeof(status);
+        ASSERT_EQ(VN_OK, Vn_MonitorGetSubscriptionStatus(handle,
+            reinterpret_cast<VnMonitorSubscriptionStatus*>(&status)));
+        EXPECT_EQ(mode == 0 ? VN_MONITOR_PERM_RAW_AUDIO : 0u, status.acceptedPermissionMask & VN_MONITOR_PERM_RAW_AUDIO);
+        EXPECT_EQ(mode == 0 ? VN_MONITOR_STREAM_OPTIONAL_AUDIO : 0u,
+            status.resolvedStreamKindMask & VN_MONITOR_STREAM_OPTIONAL_AUDIO);
+        EXPECT_EQ(0u, status.unsupportedPermissionMask & VN_MONITOR_PERM_RAW_AUDIO);
+        EXPECT_EQ(mode == 1 || mode == 3 ? VN_MONITOR_PERM_RAW_AUDIO : 0u,
+            status.deniedPermissionMask & VN_MONITOR_PERM_RAW_AUDIO);
+        EXPECT_EQ(mode == 0 ? 2u : 3u, status.rawAudioDecision);
+        EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+    }
+    harken::monitor::ClearHostPrincipalForTests();
+    auto legacy = MakeSessionDesc();
+    legacy.requestedStreamKindMask = VN_MONITOR_STREAM_OPTIONAL_AUDIO;
+    legacy.requestedPermissionMask = VN_MONITOR_PERM_RAW_AUDIO;
+    legacy.requestRawAudio = 1;
+    VnMonitorSessionHandle handle = 0;
+    ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(&legacy, &handle));
+    VnMonitorSubscriptionStatus status{};
+    status.structSize = sizeof(status);
+    ASSERT_EQ(VN_OK, Vn_MonitorGetSubscriptionStatus(handle, &status));
+    EXPECT_EQ(0u, status.acceptedPermissionMask & VN_MONITOR_PERM_RAW_AUDIO);
+    EXPECT_EQ(VN_MONITOR_PERM_RAW_AUDIO, status.unsupportedPermissionMask & VN_MONITOR_PERM_RAW_AUDIO);
+    EXPECT_EQ(3u, status.rawAudioDecision);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+}
+
 TEST(MonitorHubSession, FailedFirstCaptureAllocationReleasesResourcesAndAllowsRetry) {
     harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());

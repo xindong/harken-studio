@@ -23,6 +23,30 @@ struct MonitorInstanceKey {
     bool Valid() const noexcept { return handle != 0 && generation != 0; }
 };
 
+struct MonitorContentIdentity {
+    VnObjectId projectId{};
+    VnObjectId stableId{};
+    std::uint64_t worldGeneration = 0;
+    std::uint64_t programSemanticFingerprint = 0;
+    std::uint64_t contentRevision = 0;
+};
+
+struct MonitorOccurrenceIdentity {
+    std::uint64_t arrangingInstance = 0;
+    VnObjectId clipId{};
+    std::uint32_t loopIteration = 0;
+    std::uint32_t occurrenceOrdinal = 0;
+    bool valid = false;
+    bool loopKnown = false;
+};
+
+inline MonitorContentIdentity MakeMonitorContentIdentity(
+    VnObjectId projectId, std::uint64_t worldGeneration,
+    const PlayableRefV1& content) noexcept {
+    return {projectId, content.stableId, worldGeneration,
+            content.expectedProgramSemanticFingerprint, content.contentRevision};
+}
+
 inline bool SameMonitorInstanceKey(const MonitorInstanceKey& a,
                                    const MonitorInstanceKey& b) noexcept {
     return a.handle == b.handle && a.generation == b.generation;

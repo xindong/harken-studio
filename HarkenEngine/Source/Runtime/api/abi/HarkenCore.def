@@ -40,9 +40,11 @@ EXPORTS
     Vn_LoadPack
     Vn_MonitorAcquireCaptureControl
     Vn_MonitorApplyCapturePlan
+    Vn_MonitorBeginHostSession
     Vn_MonitorCaptureRegistry
     Vn_MonitorCloseSession
     Vn_MonitorCompareSessions
+    Vn_MonitorEndHostSession
     Vn_MonitorGetCapabilities
     Vn_MonitorGetCaptureControlStatus
     Vn_MonitorGetConsumerStatus
@@ -54,6 +56,8 @@ EXPORTS
     Vn_MonitorOpenEventSession
     Vn_MonitorOpenSession
     Vn_MonitorPoll
+    Vn_MonitorRegisterHost
+    Vn_MonitorRegisterHostV2
     Vn_MonitorReleaseCaptureControl
     Vn_MonitorRequestStateCut
     Vn_MonitorSealEventSession

@@ -3417,7 +3417,12 @@ enum {
     VN_MONITOR_RECORD_CLOCK_ANCHOR = 20,
     VN_MONITOR_RECORD_REGISTRY_REVISION = 21,
     VN_MONITOR_RECORD_INVALID = 22,
-    VN_MONITOR_RECORD_EVENT_DETAIL = 23
+    VN_MONITOR_RECORD_EVENT_DETAIL = 23,
+    VN_MONITOR_RECORD_EXECUTION_FACT = 24,
+    VN_MONITOR_RECORD_IDENTITY_FACT = 25,
+    VN_MONITOR_RECORD_IDENTITY_CUT_BEGIN = 26,
+    VN_MONITOR_RECORD_IDENTITY_CUT_END = 27,
+    VN_MONITOR_RECORD_HOST_OBJECT_SYMBOL = 28
 };
 
 enum {
@@ -3602,7 +3607,10 @@ enum {
     VN_MONITOR_CHUNK_TRACE_CORRELATION = 10,
     VN_MONITOR_CHUNK_DROP_SUMMARIES = 11,
     VN_MONITOR_CHUNK_FINAL_INDEX = 12,
-    VN_MONITOR_CHUNK_RECOVERY_INDEX = 13
+    VN_MONITOR_CHUNK_RECOVERY_INDEX = 13,
+    VN_MONITOR_CHUNK_EXECUTION_DESCRIPTOR = 14,
+    VN_MONITOR_CHUNK_EXECUTION_RECORD = 15,
+    VN_MONITOR_CHUNK_EXECUTION_END = 16
 };
 
 #define VN_MONITOR_SESSION_FORMAT_MAJOR 1u
@@ -3796,6 +3804,310 @@ typedef struct VnMonitorSessionDesc {
     uint32_t reserved0;
 } VnMonitorSessionDesc;
 
+/* Execution records use independent field validity and the existing envelope. */
+
+enum {
+    VN_MONITOR_FACT_UNKNOWN = 0,
+    VN_MONITOR_FACT_REQUEST_SUBMITTED = 1,
+    VN_MONITOR_FACT_REQUEST_RETURNED = 2,
+    VN_MONITOR_FACT_REQUEST_TERMINAL = 3,
+    VN_MONITOR_FACT_PLAYABLE_PREPARED = 4,
+    VN_MONITOR_FACT_PLAYABLE_ACTIVE = 5,
+    VN_MONITOR_FACT_PLAYABLE_LOGICAL_COMPLETE = 6,
+    VN_MONITOR_FACT_PLAYABLE_AUDIBLE_RETIRING = 7,
+    VN_MONITOR_FACT_PLAYABLE_RETIRED = 8,
+    VN_MONITOR_FACT_PLAYABLE_CANCELED = 9,
+    VN_MONITOR_FACT_ACTION_ACCEPTED = 10,
+    VN_MONITOR_FACT_ACTION_STOPPED = 11,
+    VN_MONITOR_FACT_ACTION_RESULT = 12,
+    VN_MONITOR_FACT_ACTION_REJECTED = 13,
+    VN_MONITOR_FACT_QUEUE_ADVANCED = 14,
+    VN_MONITOR_FACT_QUEUE_FAILED = 15,
+    VN_MONITOR_FACT_TRANSITION_STARTED = 16,
+    VN_MONITOR_FACT_TRANSITION_STOPPED = 17,
+    VN_MONITOR_FACT_TRANSITION_REJECTED = 18,
+    VN_MONITOR_FACT_VOICE_PENDING = 19,
+    VN_MONITOR_FACT_VOICE_LIVE = 20,
+    VN_MONITOR_FACT_VOICE_PARKED = 21,
+    VN_MONITOR_FACT_VOICE_ENDED = 22,
+    VN_MONITOR_FACT_SELECTION_COMMITTED = 23,
+    VN_MONITOR_FACT_EMITTER_CREATED = 24,
+    VN_MONITOR_FACT_EMITTER_DESTROYED = 25,
+    VN_MONITOR_FACT_EMITTER_BINDING_CHANGED = 26,
+    VN_MONITOR_FACT_HOST_REGISTERED = 27,
+    VN_MONITOR_FACT_HOST_UNREGISTERED = 28,
+    VN_MONITOR_FACT_IDENTITY_UPSERT = 29,
+    VN_MONITOR_FACT_IDENTITY_TOMBSTONE = 30,
+    VN_MONITOR_FACT_RENDER_STARTED = 31,
+    VN_MONITOR_FACT_SOURCE_ENDED = 32,
+    VN_MONITOR_FACT_RENDER_ACTIVATION_ENDED = 33,
+    VN_MONITOR_FACT_LOGICAL_VOICE_TERMINAL = 34,
+    VN_MONITOR_FACT_ACTION_TERMINAL = 35,
+    VN_MONITOR_FACT_WAITING = 36,
+    VN_MONITOR_FACT_SOURCE_APPLIED = 37,
+    VN_MONITOR_FACT_SEEK_APPLIED = 38,
+    VN_MONITOR_FACT_RESOURCE_RETIRED = 39
+};
+
+enum {
+    VN_MONITOR_FACT_FIELD_SUBJECT = 0,
+    VN_MONITOR_FACT_FIELD_PROJECT = 1,
+    VN_MONITOR_FACT_FIELD_CONTENT_OBJECT = 2,
+    VN_MONITOR_FACT_FIELD_CONTENT_WORLD = 3,
+    VN_MONITOR_FACT_FIELD_CONTENT_SEMANTIC = 4,
+    VN_MONITOR_FACT_FIELD_CONTENT_LINEAGE = 5,
+    VN_MONITOR_FACT_FIELD_CONTENT_REVISION = 6,
+    VN_MONITOR_FACT_FIELD_PLAYBACK_REQUEST = 7,
+    VN_MONITOR_FACT_FIELD_PLAYBACK_OPERATION = 8,
+    VN_MONITOR_FACT_FIELD_PLAYBACK_ORIGIN = 9,
+    VN_MONITOR_FACT_FIELD_CONTROL_REQUEST = 10,
+    VN_MONITOR_FACT_FIELD_CONTROL_OPERATION = 11,
+    VN_MONITOR_FACT_FIELD_CONTROL_ORIGIN = 12,
+    VN_MONITOR_FACT_FIELD_CONTROL_ACTION = 13,
+    VN_MONITOR_FACT_FIELD_CONTROL_PARENT = 14,
+    VN_MONITOR_FACT_FIELD_CONTROL_ORDINAL = 15,
+    VN_MONITOR_FACT_FIELD_SELECTION_REQUEST = 16,
+    VN_MONITOR_FACT_FIELD_SELECTION_OPERATION = 17,
+    VN_MONITOR_FACT_FIELD_SELECTION_ORIGIN = 18,
+    VN_MONITOR_FACT_FIELD_SELECTION_ACTION = 19,
+    VN_MONITOR_FACT_FIELD_SELECTION_PARENT = 20,
+    VN_MONITOR_FACT_FIELD_SELECTION_ORDINAL = 21,
+    VN_MONITOR_FACT_FIELD_PARENT_PLAYABLE = 22,
+    VN_MONITOR_FACT_FIELD_PARENT_ACTION = 23,
+    VN_MONITOR_FACT_FIELD_ROOT = 24,
+    VN_MONITOR_FACT_FIELD_RELATED_ACTION = 25,
+    VN_MONITOR_FACT_FIELD_SERVICE_LEAF = 26,
+    VN_MONITOR_FACT_FIELD_RESOURCE_OWNER = 27,
+    VN_MONITOR_FACT_FIELD_LOGICAL_VOICE = 28,
+    VN_MONITOR_FACT_FIELD_RENDER_ACTIVATION = 29,
+    VN_MONITOR_FACT_FIELD_ORIGIN_EMITTER = 30,
+    VN_MONITOR_FACT_FIELD_ORIGIN_KIND = 31,
+    VN_MONITOR_FACT_FIELD_HOST_KEY = 32,
+    VN_MONITOR_FACT_FIELD_HOST_REVISION = 33,
+    VN_MONITOR_FACT_FIELD_HOST_OWNERSHIP = 34,
+    VN_MONITOR_FACT_FIELD_CURRENT_STATE_EMITTER = 35,
+    VN_MONITOR_FACT_FIELD_CURRENT_SPATIAL_EMITTER = 36,
+    VN_MONITOR_FACT_FIELD_STATE_BINDING = 37,
+    VN_MONITOR_FACT_FIELD_SPATIAL_BINDING = 38,
+    VN_MONITOR_FACT_FIELD_LOGIC_COMMIT = 39,
+    VN_MONITOR_FACT_FIELD_READ_CUT_KEY = 40,
+    VN_MONITOR_FACT_FIELD_READ_CUT_SEQUENCE = 41,
+    VN_MONITOR_FACT_FIELD_READ_CUT_ORDINAL = 42,
+    VN_MONITOR_FACT_FIELD_EXECUTE_FRAME = 43,
+    VN_MONITOR_FACT_FIELD_GRAPH_FRAME = 44,
+    VN_MONITOR_FACT_FIELD_TRANSPORT = 45,
+    VN_MONITOR_FACT_FIELD_AUDIO_BLOCK = 46,
+    VN_MONITOR_FACT_FIELD_FRAME_OFFSET = 47,
+    VN_MONITOR_FACT_FIELD_FRAME_SPAN = 48,
+    VN_MONITOR_FACT_FIELD_ARRANGING = 49,
+    VN_MONITOR_FACT_FIELD_CLIP = 50,
+    VN_MONITOR_FACT_FIELD_LOOP = 51,
+    VN_MONITOR_FACT_FIELD_OCCURRENCE = 52,
+    VN_MONITOR_FACT_FIELD_OWNER_EPOCH = 53,
+    VN_MONITOR_FACT_FIELD_RESULT = 54,
+    VN_MONITOR_FACT_FIELD_REASON = 55,
+    VN_MONITOR_FACT_FIELD_TERMINAL_KIND = 56,
+    VN_MONITOR_FACT_FIELD_TIMESTAMP = 57,
+    VN_MONITOR_FACT_FIELD_REQUEST = 58,
+    VN_MONITOR_FACT_FIELD_REQUEST_OPERATION = 59,
+    VN_MONITOR_FACT_FIELD_REQUEST_ORIGIN = 60,
+    VN_MONITOR_FACT_FIELD_CAUSED_BY_REQUEST = 61,
+    VN_MONITOR_FACT_FIELD_CAUSED_BY_OPERATION = 62,
+    VN_MONITOR_FACT_FIELD_CAUSED_BY_ORIGIN = 63,
+    VN_MONITOR_FACT_FIELD_TARGET_HANDLE = 64,
+    VN_MONITOR_FACT_FIELD_TARGET_VALIDATED = 65,
+    VN_MONITOR_FACT_FIELD_TARGET_PROJECT = 66,
+    VN_MONITOR_FACT_FIELD_TARGET_OBJECT = 67,
+    VN_MONITOR_FACT_FIELD_TARGET_WORLD = 68,
+    VN_MONITOR_FACT_FIELD_TARGET_SEMANTIC = 69,
+    VN_MONITOR_FACT_FIELD_TARGET_REVISION = 70,
+    VN_MONITOR_FACT_FIELD_TARGET_KIND = 71,
+    VN_MONITOR_FACT_FIELD_TARGET_CONTENT_KIND = 72,
+    VN_MONITOR_FACT_FIELD_TARGET_SCOPE = 73
+};
+
+enum {
+    VN_MONITOR_SUBJECT_NONE = 0,
+    VN_MONITOR_SUBJECT_PLAYABLE = 1,
+    VN_MONITOR_SUBJECT_ACTION = 2,
+    VN_MONITOR_SUBJECT_LOGICAL_VOICE = 3,
+    VN_MONITOR_SUBJECT_RENDER_ACTIVATION = 4,
+    VN_MONITOR_SUBJECT_EMITTER = 5,
+    VN_MONITOR_SUBJECT_QUEUE = 6,
+    VN_MONITOR_SUBJECT_TRANSITION = 7,
+    VN_MONITOR_SUBJECT_HOST_SYMBOL = 8
+};
+
+enum {
+    VN_MONITOR_CONTENT_UNKNOWN = 0,
+    VN_MONITOR_CONTENT_SOUND = 1,
+    VN_MONITOR_CONTENT_CONTAINER = 2,
+    VN_MONITOR_CONTENT_TRACK = 3,
+    VN_MONITOR_CONTENT_PIECE = 4,
+    VN_MONITOR_CONTENT_ACTION = 5,
+    VN_MONITOR_CONTENT_MEDIA = 6
+};
+
+enum {
+    VN_MONITOR_TARGET_NONE = 0,
+    VN_MONITOR_TARGET_PLAYABLE = 1,
+    VN_MONITOR_TARGET_ACTION = 2,
+    VN_MONITOR_TARGET_LOGICAL_VOICE = 3,
+    VN_MONITOR_TARGET_RENDER_ACTIVATION = 4,
+    VN_MONITOR_TARGET_EMITTER = 5,
+    VN_MONITOR_TARGET_PREVIEW_PLAYABLE = 6,
+    VN_MONITOR_TARGET_CONTENT = 7
+};
+
+enum {
+    VN_MONITOR_FACT_FLAG_IDENTITY_INCOMPLETE = 1,
+    VN_MONITOR_FACT_FLAG_CONTROL_INCOMPLETE = 2
+};
+
+typedef struct VnMonitorFactRequest {
+    uint64_t sequence;
+    uint32_t operation;
+    uint32_t origin;
+} VnMonitorFactRequest;
+
+typedef struct VnMonitorFactCause {
+    uint64_t action;
+    uint64_t parentPlayable;
+    uint32_t executionOrdinal;
+    uint32_t reserved0;
+} VnMonitorFactCause;
+
+typedef struct VnMonitorFactTarget {
+    uint64_t handle;
+    VnObjectId projectId;
+    VnObjectId objectId;
+    uint64_t worldGeneration;
+    uint64_t programSemanticFingerprint;
+    uint64_t contentRevision;
+    uint32_t kind;
+    uint32_t contentKind;
+    uint32_t scope;
+    uint32_t reserved0;
+} VnMonitorFactTarget;
+
+typedef struct VnMonitorExecutionFactV1 {
+    uint32_t structSize;
+    uint16_t factKind;
+    uint8_t subjectNamespace;
+    uint8_t contentKind;
+    uint64_t validityLo;
+    uint64_t validityHi;
+    uint64_t timestampNs;
+    VnObjectId projectId;
+    uint64_t contentRevision;
+    uint32_t factFlags;
+    uint32_t reserved0;
+    VnMonitorFactRequest request;
+    VnMonitorFactRequest playbackRequest;
+    VnMonitorFactRequest causedByRequest;
+    VnMonitorFactRequest controlRequest;
+    VnMonitorFactRequest selectionRequest;
+    VnMonitorFactCause control;
+    VnMonitorFactCause selection;
+    uint64_t root;
+    uint64_t serviceLeaf;
+    uint64_t resourceOwner;
+    uint64_t logicalVoice;
+    uint64_t renderActivation;
+    uint64_t originEmitter;
+    uint64_t hostSession;
+    uint64_t hostLocalSequence;
+    uint64_t originHostRevision;
+    uint64_t currentStateEmitter;
+    uint64_t currentSpatialEmitter;
+    uint32_t originKind;
+    uint32_t hostOwnership;
+    uint32_t stateBinding;
+    uint32_t spatialBinding;
+    uint32_t terminalKind;
+    int32_t result;
+    uint64_t readCutKey;
+    uint64_t readCutSequence;
+    uint64_t audioBlock;
+    uint64_t ownerEpoch;
+    uint32_t frameOffset;
+    uint32_t frameSpan;
+    uint32_t readCutOrdinalExclusive;
+    uint32_t reserved1;
+    VnMonitorFactTarget target;
+} VnMonitorExecutionFactV1;
+
+/* STATE identity revision is independent of native ReadCut and EVENT sequences. */
+typedef struct VnMonitorIdentityFactV1 {
+    uint32_t structSize;
+    uint32_t reserved0;
+    uint64_t stateCutId;
+    uint64_t identityRevision;
+    VnMonitorExecutionFactV1 fact;
+} VnMonitorIdentityFactV1;
+
+enum {
+    VN_MONITOR_HOST_SYMBOL_NAME = 1,
+    VN_MONITOR_HOST_SYMBOL_PATH = 2,
+    VN_MONITOR_HOST_SYMBOL_SCENE = 3
+};
+
+enum {
+    VN_MONITOR_SYMBOL_UPSERT = 1,
+    VN_MONITOR_SYMBOL_TOMBSTONE = 2
+};
+
+/* Emitter and engine identities live in the envelope. Empty text is a value. */
+typedef struct VnMonitorHostObjectSymbolV1 {
+    uint32_t structSize;
+    uint32_t factKind;
+    uint64_t stateCutId;
+    uint64_t cutRevision;
+    uint64_t hostSession;
+    uint64_t hostSequence;
+    uint64_t registrationRevision;
+    uint32_t field;
+    uint16_t textBytes;
+    uint16_t flags;
+    uint8_t text[256];
+} VnMonitorHostObjectSymbolV1;
+
+/* HOST_SYMBOL counts individual fields, including valid empty fields. */
+typedef struct VnMonitorIdentityCutBeginV1 {
+    uint32_t structSize;
+    uint32_t reserved0;
+    uint64_t stateCutId;
+    uint64_t identityRevision;
+    uint64_t deltaProducerId;
+    uint64_t deltaSourceSequence;
+    uint64_t symbolProducerId;
+    uint64_t symbolSourceSequence;
+    uint64_t capacityLimit;
+    uint64_t namespaceTrueCount[9];
+} VnMonitorIdentityCutBeginV1;
+
+typedef struct VnMonitorIdentityCutEndV1 {
+    uint32_t structSize;
+    uint32_t result;
+    uint64_t stateCutId;
+    uint64_t identityRevision;
+    uint64_t checksum;
+    uint64_t namespaceEmittedCount[9];
+} VnMonitorIdentityCutEndV1;
+
+/* Exact legacy prefix; extensions require the full declared V2 size. */
+typedef struct VnMonitorSessionDescV2 {
+    uint32_t structSize;
+    uint32_t requestedStreamKindMask;
+    uint32_t requestRawAudio;
+    uint32_t requestSymbols;
+    uint64_t consumerQueueBytes;
+    uint32_t requestedPermissionMask;
+    uint32_t reserved0;
+    uint32_t requestedExecutionFactVersion;
+    uint32_t reserved1;
+} VnMonitorSessionDescV2;
+
 typedef struct VnMonitorSubscriptionStatus {
     uint32_t structSize;
     uint32_t requestedStreamKindMask;
@@ -3812,6 +4124,31 @@ typedef struct VnMonitorSubscriptionStatus {
     uint32_t baselineCount;
     VnMonitorStreamBaseline* baselines;
 } VnMonitorSubscriptionStatus;
+
+/* Exact legacy prefix with execution observation negotiation. */
+typedef struct VnMonitorSubscriptionStatusV2 {
+    uint32_t structSize;
+    uint32_t requestedStreamKindMask;
+    uint32_t resolvedStreamKindMask;
+    uint32_t subscriptionGeneration;
+    uint32_t requestedPermissionMask;
+    uint32_t acceptedPermissionMask;
+    uint32_t deniedPermissionMask;
+    uint32_t unsupportedPermissionMask;
+    uint64_t monitorSessionEpoch;
+    uint32_t rawAudioDecision;
+    uint32_t symbolsDecision;
+    uint32_t baselineCapacity;
+    uint32_t baselineCount;
+    VnMonitorStreamBaseline* baselines;
+    uint32_t acceptedExecutionFactVersion;
+    uint32_t baselineAvailability;
+    uint64_t supportedFactKinds[2];
+    uint32_t symbolAvailability;
+    uint32_t reserved0;
+    uint64_t identityUnavailableCount;
+    uint64_t baselineStateCutId;
+} VnMonitorSubscriptionStatusV2;
 
 typedef struct VnMonitorStateCutDesc {
     uint32_t structSize;
@@ -4197,6 +4534,39 @@ typedef struct VnMonitorEventSessionStatus {
     uint64_t deliveryDroppedRecords;
 } VnMonitorEventSessionStatus;
 
+enum {
+    VN_MONITOR_OBSERVATION_NOT_REQUESTED = 0,
+    VN_MONITOR_OBSERVATION_AVAILABLE = 1,
+    VN_MONITOR_OBSERVATION_PENDING = 2,
+    VN_MONITOR_OBSERVATION_DENIED = 3,
+    VN_MONITOR_OBSERVATION_UNSUPPORTED = 4,
+    VN_MONITOR_OBSERVATION_INCOMPLETE = 5
+};
+
+/* Exact legacy prefix; extensions require the full declared V2 size. */
+typedef struct VnMonitorEventSessionStatusV2 {
+    uint32_t structSize;
+    uint32_t state;
+    uint64_t monitorSessionEpoch;
+    uint64_t startedTimestampNs;
+    uint64_t stoppedTimestampNs;
+    uint64_t sourceDroppedRecords;
+    uint64_t deliveryDroppedRecords;
+    uint32_t acceptedExecutionFactVersion;
+    uint32_t baselineAvailability;
+    uint64_t supportedFactKinds[2];
+    uint32_t requestedPermissionMask;
+    uint32_t acceptedPermissionMask;
+    uint32_t deniedPermissionMask;
+    uint32_t unsupportedPermissionMask;
+    uint32_t acceptedStreamKindMask;
+    uint32_t symbolsDecision;
+    uint32_t symbolAvailability;
+    uint32_t reserved0;
+    uint64_t identityUnavailableCount;
+    uint64_t baselineStateCutId;
+} VnMonitorEventSessionStatusV2;
+
 typedef struct VnMonitorTimeSeriesSample {
     uint32_t structSize;
     uint32_t metricId;
@@ -4346,6 +4716,59 @@ typedef struct VnMonitorRemoteFrameCounter {
     uint32_t reserved0;
     uint64_t messageCounter;
 } VnMonitorRemoteFrameCounter;
+
+/* Optional SDK diagnostics. No registration transfers emitter ownership or
+ * grants observation permissions. Call on the engine logic thread. */
+typedef struct VnMonitorHostSessionV1 {
+    uint32_t structSize;
+    uint32_t emitterCapacity;
+    uint64_t engineInstance;
+    uint64_t sdkSession;
+    uint64_t reserved0;
+} VnMonitorHostSessionV1;
+
+enum {
+    VN_MONITOR_HOST_UNKNOWN = 0,
+    VN_MONITOR_HOST_UNITY_EMITTER = 1,
+    VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE = 2
+};
+
+typedef struct VnMonitorHostRegistrationV1 {
+    uint32_t structSize;
+    uint32_t ownershipKind;
+    uint64_t engineInstance;
+    uint64_t sdkSession;
+    VnEmitterHandle emitter;
+    uint64_t localSequence;
+    uint64_t registrationRevision;
+    uint64_t reserved0;
+} VnMonitorHostRegistrationV1;
+
+/* Atomic host identity and bounded UTF-8 description. Lengths exclude NUL.
+ * descriptionFlags bit 0 means a source description was truncated.
+ * The exact V1 prefix remains unchanged; this is a separate optional API. */
+typedef struct VnMonitorHostRegistrationV2 {
+    uint32_t structSize;
+    uint32_t ownershipKind;
+    uint64_t engineInstance;
+    uint64_t sdkSession;
+    VnEmitterHandle emitter;
+    uint64_t localSequence;
+    uint64_t registrationRevision;
+    uint64_t reserved0;
+    uint16_t nameBytes;
+    uint16_t pathBytes;
+    uint16_t sceneBytes;
+    uint16_t descriptionFlags;
+    uint8_t name[64];
+    uint8_t path[256];
+    uint8_t scene[128];
+} VnMonitorHostRegistrationV2;
+
+VnResult Vn_MonitorRegisterHostV2(const VnMonitorHostRegistrationV2* desc);
+VnResult Vn_MonitorBeginHostSession(VnMonitorHostSessionV1* outSession);
+VnResult Vn_MonitorEndHostSession(uint64_t engineInstance, uint64_t sdkSession);
+VnResult Vn_MonitorRegisterHost(const VnMonitorHostRegistrationV1* desc);
 
 VnResult Vn_MonitorGetCapabilities(VnMonitorCapabilities* outCapabilities);
 VnResult Vn_MonitorOpenSession(const VnMonitorSessionDesc* desc,

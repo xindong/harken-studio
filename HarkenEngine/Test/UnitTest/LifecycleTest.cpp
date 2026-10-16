@@ -176,6 +176,35 @@ TEST(MiniaudioStopHandoff,
     EXPECT_EQ(2u, injection.callCount.load(std::memory_order_acquire));
 }
 
+TEST(MonitorSelectionPool, CaptureCopiesCauseForkAndCancellationDoNotAllocate) {
+    harken::VoiceLedger ledger(1, 1, 3);
+    std::uint32_t slot = 0;
+    ASSERT_TRUE(ledger.AcquirePlayableOwned({0, UINT64_C(1) << 32}, &slot));
+    ASSERT_FALSE(allocation_probe::enabled);
+    ASSERT_EQ(nullptr, allocation_probe::countIf);
+    const auto before = allocation_probe::count;
+    harken::MonitorControlCause cause{};
+    cause.executionOrdinal = 4;
+    allocation_probe::enabled = true;
+    bool captured = false;
+    bool forked = false;
+    {
+        harken::VoiceLedger::MonitorSelection original;
+        captured = ledger.CaptureMonitorSelection(slot, UINT64_C(1) << 32, &original);
+        auto alias = original;
+        alias.SetCause(cause);
+        harken::MonitorLifecycleFacts facts{};
+        forked = alias.CaptureFacts(&facts) && facts.selectionCause.executionOrdinal == 4;
+        original = std::move(alias);
+        alias = original;
+        original = {};
+    }
+    allocation_probe::enabled = false;
+    EXPECT_TRUE(captured);
+    EXPECT_TRUE(forked);
+    EXPECT_EQ(before, allocation_probe::count);
+}
+
 TEST(NullBackendLifecycle, InitRenderBlocksTerm) {
     const VnConfig config = MakeNullConfig();
     ASSERT_FALSE(allocation_probe::enabled);
@@ -185,6 +214,7 @@ TEST(NullBackendLifecycle, InitRenderBlocksTerm) {
     const VnResult initialized = Vn_Init(&config);
     allocation_probe::enabled = false;
     const auto initializationBytes = allocation_probe::bytes;
+    testing::Test::RecordProperty("initialization_bytes", std::to_string(initializationBytes));
     ASSERT_EQ(VN_OK, initialized);
     EXPECT_GT(initializationBytes, 0u);
     // Keep default-capacity preallocation below the 4 GiB scratch regression.

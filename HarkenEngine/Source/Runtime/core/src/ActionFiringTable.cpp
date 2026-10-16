@@ -219,15 +219,17 @@ bool ActionFiringTable::SetPreparedProgramFingerprint(
 
 bool ActionFiringTable::PrepareRoot(
     VnObjectId actionId, std::uint64_t worldGeneration,
-    std::uint32_t directStepCount, PreparedActionFiring* out) noexcept {
+    std::uint32_t directStepCount, PreparedActionFiring* out,
+    const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin) noexcept {
     return PrepareRoot(actionId,
                        ActionFiringOwnerStamp::DirectWorld(worldGeneration),
-                       directStepCount, out);
+                       directStepCount, out, request, emitterOrigin);
 }
 
 bool ActionFiringTable::PrepareRoot(
     VnObjectId actionId, const ActionFiringOwnerStamp& owner,
-    std::uint32_t directStepCount, PreparedActionFiring* out) noexcept {
+    std::uint32_t directStepCount, PreparedActionFiring* out,
+    const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin) noexcept {
     if (out == nullptr || actionId == VnObjectId{} || !owner.Valid() ||
         directStepCount > kMaxActionSteps) {
         return false;
@@ -247,6 +249,9 @@ bool ActionFiringTable::PrepareRoot(
             }
         }
         row.state = SlotState::Prepared;
+        row.playbackRequest = request;
+        row.emitterOrigin = emitterOrigin;
+        row.controlCause = {};
         row.actionId = actionId;
         row.owner = owner;
         row.worldGeneration =
@@ -315,6 +320,9 @@ bool ActionFiringTable::PrepareChild(
         }
         const ActionFiringHandle handle = MakeHandle(slot, row.generation);
         row.state = SlotState::Prepared;
+        row.playbackRequest = parentRow->playbackRequest;
+        row.emitterOrigin = parentRow->emitterOrigin;
+        row.controlCause = {};
         row.actionId = actionId;
         row.owner = owner;
         row.worldGeneration =
@@ -380,6 +388,9 @@ bool ActionFiringTable::PrepareChild(
         }
         const ActionFiringHandle handle = MakeHandle(slot, row.generation);
         row.state = SlotState::Prepared;
+        row.playbackRequest = parentRow->playbackRequest;
+        row.emitterOrigin = parentRow->emitterOrigin;
+        row.controlCause = {};
         row.actionId = actionId;
         row.owner = owner;
         row.worldGeneration =
@@ -945,7 +956,13 @@ bool ActionFiringTable::CommitTree(
     const bool ok = committed != 0 && TryFinalizeSubtree(rootHandle);
     if (ok) {
         MonitorLifecycleFacts facts{};
+        facts.playbackRequest = row->playbackRequest;
+        facts.emitterOrigin = row->emitterOrigin;
+        facts.controlCause = row->controlCause;
         facts.projectId = row->owner.projectId;
+        facts.parentAction = row->parent;
+        facts.root = row->root;
+        facts.relatedAction = 0;
         facts.programSemanticFingerprint = row->programSemanticFingerprint;
         facts.logicCommitSequence = acceptedLogicSequence;
         ObserveMonitorLifecycle(
@@ -958,7 +975,13 @@ bool ActionFiringTable::CommitTree(
                 live->outcome == ActionFiringOutcome::Failed ||
                 live->outcome == ActionFiringOutcome::Cancelled;
             MonitorLifecycleFacts terminalFacts{};
+            terminalFacts.playbackRequest = live->playbackRequest;
+            terminalFacts.emitterOrigin = live->emitterOrigin;
+            terminalFacts.controlCause = live->controlCause;
             terminalFacts.projectId = live->owner.projectId;
+            terminalFacts.parentAction = live->parent;
+            terminalFacts.root = live->root;
+            terminalFacts.relatedAction = rootHandle;
             terminalFacts.programSemanticFingerprint = live->programSemanticFingerprint;
             terminalFacts.logicCommitSequence = live->acceptedLogicSequence;
             ObserveMonitorLifecycle(
@@ -1127,7 +1150,8 @@ bool ActionFiringTable::AbandonPreparedSubtree(
 }
 
 bool ActionFiringTable::MarkStoppingSubtree(
-    ActionFiringHandle handle, ActionTerminalReason reason) noexcept {
+    ActionFiringHandle handle, ActionTerminalReason reason,
+    const MonitorControlCause& cause) noexcept {
     Row* row = Resolve(handle);
     if (row == nullptr || reason == ActionTerminalReason::None) {
         return false;
@@ -1139,13 +1163,16 @@ bool ActionFiringTable::MarkStoppingSubtree(
         row->state != SlotState::Stopping) {
         return false;
     }
+    // A child can finalize its parent while cancellation recurses. Capture
+    // the first accepted cause before that terminal propagation publishes it.
+    if (row->state == SlotState::Active) row->controlCause = cause;
     for (ActionFiringHandle child = row->firstChild; child != 0;) {
         Row* childRow = Resolve(child);
         if (childRow == nullptr) {
             return false;
         }
         const ActionFiringHandle next = childRow->nextSibling;
-        if (!MarkStoppingSubtree(child, reason)) {
+        if (!MarkStoppingSubtree(child, reason, cause)) {
             return false;
         }
         child = next;
@@ -1167,7 +1194,8 @@ bool ActionFiringTable::MarkStoppingSubtree(
 }
 
 bool ActionFiringTable::MarkStopping(
-    ActionFiringHandle handle, ActionTerminalReason reason) noexcept {
+    ActionFiringHandle handle, ActionTerminalReason reason,
+    const MonitorControlCause& cause) noexcept {
     Row* row = Resolve(handle);
     if (row == nullptr || row->parent != 0 ||
         reason == ActionTerminalReason::None) {
@@ -1180,10 +1208,16 @@ bool ActionFiringTable::MarkStopping(
         !BumpCancellationEpoch(handle)) {
         return false;
     }
-    const bool ok = MarkStoppingSubtree(handle, reason);
+    const bool ok = MarkStoppingSubtree(handle, reason, cause);
     if (ok) {
         MonitorLifecycleFacts facts{};
+        facts.playbackRequest = row->playbackRequest;
+        facts.emitterOrigin = row->emitterOrigin;
+        facts.controlCause = row->controlCause;
         facts.projectId = row->owner.projectId;
+        facts.parentAction = row->parent;
+        facts.root = row->root;
+        facts.relatedAction = 0;
         facts.programSemanticFingerprint = row->programSemanticFingerprint;
         facts.logicCommitSequence = row->acceptedLogicSequence;
         ObserveMonitorLifecycle(
@@ -1195,7 +1229,8 @@ bool ActionFiringTable::MarkStopping(
 }
 
 bool ActionFiringTable::MarkTreeStopping(
-    ActionFiringHandle member, ActionTerminalReason reason) noexcept {
+    ActionFiringHandle member, ActionTerminalReason reason,
+    const MonitorControlCause& cause) noexcept {
     Row* row = Resolve(member);
     if (row == nullptr || reason == ActionTerminalReason::None) {
         return false;
@@ -1215,10 +1250,16 @@ bool ActionFiringTable::MarkTreeStopping(
         !BumpCancellationEpoch(rootHandle)) {
         return false;
     }
-    const bool ok = MarkStoppingSubtree(rootHandle, reason);
+    const bool ok = MarkStoppingSubtree(rootHandle, reason, cause);
     if (ok) {
         MonitorLifecycleFacts facts{};
+        facts.playbackRequest = root->playbackRequest;
+        facts.emitterOrigin = root->emitterOrigin;
+        facts.controlCause = root->controlCause;
         facts.projectId = root->owner.projectId;
+        facts.parentAction = root->parent;
+        facts.root = root->root;
+        facts.relatedAction = rootHandle;
         facts.programSemanticFingerprint = root->programSemanticFingerprint;
         facts.logicCommitSequence = root->acceptedLogicSequence;
         ObserveMonitorLifecycle(
@@ -1268,7 +1309,13 @@ bool ActionFiringTable::MarkTerminal(
             outcome == ActionFiringOutcome::Failed ||
             outcome == ActionFiringOutcome::Cancelled;
         MonitorLifecycleFacts facts{};
+        facts.playbackRequest = row->playbackRequest;
+        facts.emitterOrigin = row->emitterOrigin;
+        facts.controlCause = row->controlCause;
         facts.projectId = row->owner.projectId;
+        facts.parentAction = row->parent;
+        facts.root = row->root;
+        facts.relatedAction = 0;
         facts.programSemanticFingerprint = row->programSemanticFingerprint;
         facts.logicCommitSequence = row->acceptedLogicSequence;
         ObserveMonitorLifecycle(
@@ -1339,6 +1386,10 @@ bool ActionFiringTable::Capture(ActionFiringHandle handle,
     case SlotState::Quarantined:
         return false;
     }
+    snapshot.playbackRequest = row->playbackRequest;
+    snapshot.emitterOrigin = row->emitterOrigin;
+    snapshot.controlCause = row->controlCause;
+    snapshot.root = row->root;
     snapshot.outcome = row->outcome;
     snapshot.terminalReason = row->terminalReason;
     snapshot.actionId = row->actionId;
@@ -1355,6 +1406,15 @@ bool ActionFiringTable::Capture(ActionFiringHandle handle,
     snapshot.livePlayableCount = row->livePlayableCount;
     *out = snapshot;
     return true;
+}
+
+ActionFiringHandle ActionFiringTable::CaptureMonitorIdentityAt(
+    std::uint32_t slot, ActionFiringSnapshot* out) const noexcept {
+    if (out == nullptr) return 0;
+    *out = {};
+    if (slot >= rows_.size()) return 0;
+    const auto handle = MakeHandle(slot, rows_[slot].generation);
+    return Capture(handle, out) ? handle : 0;
 }
 
 ActionFiringHandle ActionFiringTable::ActiveRootAt(std::uint32_t slot) const noexcept {

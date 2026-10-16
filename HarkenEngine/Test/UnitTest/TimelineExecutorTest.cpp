@@ -1191,6 +1191,29 @@ TEST(TimelineArmTable, PendingImmediateBindsOnlyAfterAckAndBeforePublication) {
     EXPECT_FALSE(table.BindPendingImmediateStart(direct, 1024, 1024));
 }
 
+TEST(TimelineArmTable, CancellationObservationDistinguishesNewWinnerFromRepeatedAndStaleCalls) {
+    harken::TimelineArmTable table(1);
+    harken::TimelineArmToken arm{};
+    ASSERT_TRUE(table.ReservePendingImmediate(0, 1, 7, {}, &arm));
+    bool newlyCancelled = false;
+    ASSERT_TRUE(table.RequestCancel(arm, &newlyCancelled));
+    EXPECT_TRUE(newlyCancelled);
+    ASSERT_TRUE(table.RequestCancel(arm, &newlyCancelled));
+    EXPECT_FALSE(newlyCancelled);
+    ASSERT_TRUE(table.Tombstone(arm, 4));
+    newlyCancelled = true;
+    EXPECT_FALSE(table.RequestCancel(arm, &newlyCancelled));
+    EXPECT_FALSE(newlyCancelled);
+    ASSERT_TRUE(table.Reclaim(arm, 5));
+    harken::TimelineArmToken next{};
+    ASSERT_TRUE(table.ReservePendingImmediate(0, 2, 9, {}, &next));
+    newlyCancelled = true;
+    EXPECT_FALSE(table.RequestCancel(arm, &newlyCancelled));
+    EXPECT_FALSE(newlyCancelled);
+    ASSERT_TRUE(table.RequestCancel(next, &newlyCancelled));
+    EXPECT_TRUE(newlyCancelled);
+}
+
 TEST(TimelineArmTable, NeverPublishedCancellationRejectsAudioVisibleArms) {
     harken::TimelineArmTable table(3);
     harken::TimelineArmToken pending{};

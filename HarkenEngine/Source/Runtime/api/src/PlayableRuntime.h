@@ -6,6 +6,7 @@
 #include "harken/core/PlayableInstanceTable.h"
 #include "harken/core/PlayablePropertyCut.h"
 #include "harken/core/TimelineProgram.h"
+#include "harken/core/MonitorRequest.h"
 
 #include <cstdint>
 
@@ -79,6 +80,8 @@ struct PlayableStartRequest {
     PlayableRefV1 root{};
     std::uint64_t callerSeed = 0;
     std::uint64_t emitter = 0;
+    MonitorRequestContext playbackRequest{};
+    MonitorEmitterOrigin emitterOrigin{};
 };
 
 struct PlayableStartResult {
@@ -153,7 +156,7 @@ PlayableStartResult StartPlayable(
     const PlayableStartRequest& request) noexcept;
 PlayableControlStatus StopPlayable(
     Engine& engine, PlayableInstanceHandle instance,
-    std::uint32_t fadeMs) noexcept;
+    std::uint32_t fadeMs, const MonitorControlCause& cause = {}) noexcept;
 PlayableControlStatus QueryPlayable(
     const Engine& engine, PlayableInstanceHandle instance,
     PlayableControlState* out) noexcept;
@@ -170,12 +173,13 @@ PlayableStartResult StartCurrentPlayable(
     const PlayableStartRequest& request) noexcept;
 PlayableStartResult StartCurrentPlayableByIdentity(
     PlayableKindV1 kind, VnObjectId stableId,
-    std::uint64_t emitter) noexcept;
+    std::uint64_t emitter, const MonitorRequestContext& playbackRequest = {}) noexcept;
 PlayableResetStatus ResetCurrentPlayableByIdentity(
     PlayableKindV1 kind, VnObjectId stableId,
-    std::uint64_t emitter) noexcept;
+    std::uint64_t emitter, const MonitorControlCause& cause = {}) noexcept;
 PlayableControlStatus StopCurrentPlayable(
-    PlayableInstanceHandle instance, std::uint32_t fadeMs) noexcept;
+    PlayableInstanceHandle instance, std::uint32_t fadeMs,
+    const MonitorControlCause& cause = {}) noexcept;
 PlayableControlStatus QueryCurrentPlayable(
     PlayableInstanceHandle instance, PlayableControlState* out) noexcept;
 

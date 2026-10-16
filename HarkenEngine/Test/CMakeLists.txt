@@ -41,6 +41,9 @@ target_include_directories(harken_remote_runtime_tests PRIVATE
 gtest_discover_tests(harken_remote_runtime_tests)
 
 add_executable(harken_monitor_runtime_tests
+    UnitTest/MonitorExecutionCodecTest.cpp
+    UnitTest/MonitorExecutionProducerTest.cpp
+    UnitTest/MonitorExecutionIdentityTest.cpp
     UnitTest/MonitorHubSessionTest.cpp
     UnitTest/MonitorHubFanoutTest.cpp
     UnitTest/MonitorHubSubscriptionTest.cpp
@@ -286,6 +289,7 @@ add_executable(harken_runtime_tests
     UnitTest/ResolvedSlotTicketTest.cpp
     UnitTest/LogicCommitBundleTest.cpp
     UnitTest/ActionFiringTableTest.cpp
+    UnitTest/MonitorRequestTest.cpp
     UnitTest/ActionSeekTableTest.cpp
     UnitTest/ActionCooldownTableTest.cpp
     UnitTest/ActionDeferredRecordTableTest.cpp

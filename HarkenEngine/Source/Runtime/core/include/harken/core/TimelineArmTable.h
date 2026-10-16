@@ -990,7 +990,7 @@ public:
     bool AcknowledgeLogicalComplete(
         TimelineArmToken token,
         std::uint64_t completionSequence) noexcept;
-    bool RequestCancel(TimelineArmToken token) noexcept;
+    bool RequestCancel(TimelineArmToken token, bool* newlyCancelled = nullptr) noexcept;
     bool RequestCancelNeverPublished(TimelineArmToken token) noexcept;
     void SetNeverPublishedCancelHookForTests(
         void (*hook)(void*), void* context) noexcept {

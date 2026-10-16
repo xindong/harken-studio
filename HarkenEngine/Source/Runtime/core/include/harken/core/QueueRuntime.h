@@ -278,6 +278,7 @@ struct QueueInstanceCreateRequest {
     std::uint32_t emitterGeneration = 0;
     EffectiveQueueState initial{};
     EffectiveQueueState resetInitial{};
+    MonitorLifecycleFacts monitorIdentity{};
 };
 
 class QueueInstanceTable;
@@ -427,6 +428,17 @@ struct QueueExecutionOrderV1 {
     std::uint64_t executeFrame = 0;
     LogicCommitSequence sequence = 0;
     std::uint32_t executionOrdinal = 0;
+};
+
+// Logic-owned observation; it never participates in Queue selection or proof.
+struct MonitorQueueResetObservation {
+    enum class Stage : std::uint8_t { None, Intent, Selected, Applied };
+    MonitorControlCause cause{};
+    QueueExecutionOrderV1 order{};
+    std::uint64_t resetIntent = 0;
+    std::uint64_t previousVersion = 0;
+    std::uint64_t nextVersion = 0;
+    Stage stage = Stage::None;
 };
 
 inline bool QueueExecutionPrecedes(QueueExecutionOrderV1 left,
@@ -927,6 +939,10 @@ public:
         OriginalLifetimePin* originalBaseline = nullptr) noexcept;
     bool Capture(QueueInstanceToken token,
                  QueueInstanceSnapshot* out) const noexcept;
+    bool CaptureMonitorReset(QueueInstanceToken token,
+        MonitorQueueResetObservation* out) const noexcept;
+    void RecordMonitorResetSelection(QueueInstanceToken token, QueueExecutionOrderV1 order,
+        const MonitorControlCause& cause) noexcept;
     bool ProvePendingConditionalIdentity(QueueInstanceToken token,
         ConditionalQueueVersionToken version,
         DecisionToken decision) const noexcept;
@@ -935,12 +951,12 @@ public:
     bool ResolveNextSelection(QueueInstanceToken token,
                               EffectiveQueueState* outCurrent,
                               EffectiveQueueState* outNext,
-                              bool* outReset) const noexcept;
+                              bool* outReset, MonitorQueueResetObservation* observation = nullptr) const noexcept;
     bool ResolveNextSelection(QueueInstanceToken token,
                               QueueExecutionOrderV1 selectionOrder,
                               EffectiveQueueState* outCurrent,
                               EffectiveQueueState* outNext,
-                              std::uint64_t* outResetIntent) const noexcept;
+                              std::uint64_t* outResetIntent, MonitorQueueResetObservation* observation = nullptr) const noexcept;
     bool ResolveResetSelection(
         QueueInstanceToken token,
         EffectiveQueueState* outCurrent,
@@ -956,7 +972,8 @@ public:
     QueueResetStatusV1 CommitPreparedReset(
         PreparedQueueResetSetV1* prepared,
         LogicCommitSequence sequence,
-        std::uint64_t executeFrame = UINT64_MAX) noexcept;
+        std::uint64_t executeFrame = UINT64_MAX,
+        const MonitorControlCause& cause = {}) noexcept;
     void ApplyDue(std::uint64_t now) noexcept;
     QueueResetStatusV1 CancelPreparedReset(
         PreparedQueueResetSetV1* prepared) noexcept;
@@ -1185,6 +1202,8 @@ private:
         std::uint64_t resetIntentCounter = 0;
         std::uint64_t resetIntentGeneration = 0;
         QueueExecutionOrderV1 resetOrder{};
+        MonitorQueueResetObservation monitorReset{};
+        MonitorLifecycleFacts monitorIdentity{};
         std::uint64_t pendingResetIntent = 0;
         SignalReservation signalReservation = SignalReservation::None;
         NextStateOwner nextStateOwner = NextStateOwner::None;
@@ -1358,6 +1377,8 @@ private:
     static bool ProjectReset(const Row& row, const EffectiveQueueState& current,
                              EffectiveQueueState* out) noexcept;
     static void ConsumeResetIntent(Row& row, std::uint64_t intent) noexcept;
+    static MonitorControlCause MarkMonitorResetApplied(Row& row,
+        std::uint64_t intent, std::uint64_t previousVersion, std::uint64_t nextVersion) noexcept;
     static bool SignalOwnsNext(const Row& row) noexcept {
         return row.signalReservation != SignalReservation::None ||
                row.nextStateOwner == NextStateOwner::AcceptedSignal;

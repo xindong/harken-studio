@@ -308,6 +308,7 @@ def extract_struct_fields(body: str, struct_name: str) -> list[str]:
 PRIMITIVE_SCALARS = {
     "char": "u8",
     "uint8_t": "u8",
+    "uint16_t": "u16",
     "int32_t": "i32",
     "uint32_t": "u32",
     "int64_t": "i64",
