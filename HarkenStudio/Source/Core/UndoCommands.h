@@ -234,23 +234,6 @@ private:
     QString newName_;
 };
 
-class ReusePublishedActionNameCommand : public TransactionalUndoCommand
-{
-public:
-    ReusePublishedActionNameCommand(
-        ProjectItem* item,
-        const QString& oldName,
-        const QString& publishedName,
-        QUndoCommand* undoParent = nullptr
-    );
-
-private:
-    bool apply(bool redo) override;
-    ProjectItem* item_;
-    QString oldName_;
-    QString publishedName_;
-};
-
 class SetItemColorCommand : public QUndoCommand
 {
 public:

@@ -683,8 +683,6 @@ bool fillInitGameplayCatalog(const ProjectData& project,
         else if (harkenstudio::IsNull(item->runtimeId()) || item->guid.isNull() ||
                  item->nameBindingRevision == 0)
             problem = QStringLiteral("Action '%1' is missing publication identity").arg(item->name);
-        else if (actionNameTakeoverForbidden(project, item->name, item->guid))
-            problem = QStringLiteral("Action name '%1' requires explicit published-name reuse").arg(item->name);
         if (!problem.isEmpty()) {
             validNames = false;
             if (error) *error = problem;

@@ -353,134 +353,90 @@ TEST_F(ActionIdentityTest, VariableRenamePreservesGuidAndReleasesFormerName)
     EXPECT_EQ(variable->guid, guid);
 }
 
-TEST_F(ActionIdentityTest, CreationAndRenameAvoidFormerPublishedNames)
+TEST_F(ActionIdentityTest, NameReusePreservesIdentityAcrossRenameUndoRedo)
 {
     auto& manager = ProjectManager::instance();
-    ProjectItem* original = createAction(QStringLiteral("Play_A"));
-    ProjectItem* other = createAction(QStringLiteral("Play_Other"));
-    ASSERT_NE(original, nullptr);
-    ASSERT_NE(other, nullptr);
-    const auto originalRevision = original->nameBindingRevision;
-    const auto otherRevision = other->nameBindingRevision;
-    const auto historySize = historyOf(manager).size();
-    ASSERT_TRUE(manager.renameItem(original, QStringLiteral("Play_B")));
-    EXPECT_EQ(original->name, QStringLiteral("Play_B"));
-    EXPECT_EQ(manager.findNameConflict(
-                  QStringLiteral("Play_A"), ProjectItem::Type::Action, nullptr),
-              nullptr);
+    for (auto type : {ProjectItem::Type::Action, ProjectItem::Type::Variable}) {
+        SCOPED_TRACE(static_cast<int>(type));
+        auto* original = manager.createItem(nullptr, QStringLiteral("Name_A"), type);
+        auto* other = manager.createItem(nullptr, QStringLiteral("Name_Other"), type);
+        ASSERT_NE(original, nullptr);
+        ASSERT_NE(other, nullptr);
+        const QUuid originalGuid = original->guid;
+        const QUuid otherGuid = other->guid;
+        ASSERT_TRUE(manager.renameItem(original, QStringLiteral("Name_B")));
 
-    auto* created = createAction(QStringLiteral("Play_A"));
-    ASSERT_NE(created, nullptr);
-    EXPECT_EQ(created->name, QStringLiteral("Play_A_01"));
-    EXPECT_EQ(other->name, QStringLiteral("Play_Other"));
-    EXPECT_TRUE(manager.renameItem(other, QStringLiteral("Play_A")));
-    EXPECT_EQ(other->name, QStringLiteral("Play_A_02"));
-    EXPECT_EQ(other->nameBindingRevision, otherRevision + 1);
-    EXPECT_EQ(original->name, QStringLiteral("Play_B"));
-    EXPECT_EQ(original->nameBindingRevision, originalRevision + 1);
-    EXPECT_EQ(historyOf(manager).size(), historySize + 3);
-    QString error;
-    EXPECT_FALSE(manager.reusePublishedActionName(
-        other, QStringLiteral("Play_Never"), &error));
-    EXPECT_FALSE(error.isEmpty());
-    EXPECT_EQ(other->name, QStringLiteral("Play_A_02"));
-    EXPECT_EQ(other->nameBindingRevision, otherRevision + 1);
+        auto* created = manager.createItem(nullptr, QStringLiteral("Name_A"), type);
+        ASSERT_NE(created, nullptr);
+        const QUuid createdGuid = created->guid;
+        EXPECT_EQ(created->name, QStringLiteral("Name_A"));
+        EXPECT_NE(createdGuid, originalGuid);
+        ASSERT_TRUE(manager.renameItem(other, QStringLiteral("Name_A")));
+        EXPECT_EQ(other->name, QStringLiteral("Name_A_01"));
+
+        ASSERT_TRUE(manager.deleteItem(created));
+        ASSERT_TRUE(manager.renameItem(other, QStringLiteral("Name_A")));
+        EXPECT_EQ(other->name, QStringLiteral("Name_A"));
+        EXPECT_EQ(other->guid, otherGuid);
+
+        auto& undo = UndoRedoManager::instance();
+        ASSERT_TRUE(undo.undo());
+        EXPECT_EQ(other->name, QStringLiteral("Name_A_01"));
+        ASSERT_TRUE(undo.undo());
+        EXPECT_EQ(manager.findItemByGuid(createdGuid), created);
+        EXPECT_EQ(created->name, QStringLiteral("Name_A"));
+        ASSERT_TRUE(undo.undo());
+        EXPECT_EQ(other->name, QStringLiteral("Name_Other"));
+        ASSERT_TRUE(undo.undo());
+        EXPECT_EQ(manager.findItemByGuid(createdGuid), nullptr);
+        ASSERT_TRUE(undo.undo());
+        EXPECT_EQ(original->name, QStringLiteral("Name_A"));
+        EXPECT_EQ(original->guid, originalGuid);
+
+        ASSERT_TRUE(undo.redo());
+        EXPECT_EQ(original->name, QStringLiteral("Name_B"));
+        ASSERT_TRUE(undo.redo());
+        EXPECT_EQ(manager.findItemByGuid(createdGuid), created);
+        EXPECT_EQ(created->name, QStringLiteral("Name_A"));
+    }
 }
 
-TEST_F(ActionIdentityTest, ReusePublishedActionNameUndoRedo)
+TEST_F(ActionIdentityTest, NameReusePreservesIdentityAcrossDeleteUndoRedo)
 {
     auto& manager = ProjectManager::instance();
-    ProjectItem* retired = createAction(QStringLiteral("Play_Old"));
-    ProjectItem* target = createAction(QStringLiteral("Play_New"));
-    ASSERT_NE(retired, nullptr);
-    ASSERT_NE(target, nullptr);
-    const QUuid targetGuid = target->guid;
-    const harkenstudio::ObjectId targetId = target->runtimeId();
-    ASSERT_TRUE(manager.renameItem(retired, QStringLiteral("Play_Retired")));
-    EXPECT_EQ(target->nameBindingRevision, 1u);
+    for (auto type : {ProjectItem::Type::Action, ProjectItem::Type::Variable}) {
+        SCOPED_TRACE(static_cast<int>(type));
+        auto* original = manager.createItem(nullptr, QStringLiteral("Name_Gone"), type);
+        ASSERT_NE(original, nullptr);
+        const QUuid originalGuid = original->guid;
+        ASSERT_TRUE(manager.deleteItem(original));
+        EXPECT_EQ(manager.findItemByGuid(originalGuid), nullptr);
 
-    QString error;
-    ASSERT_TRUE(manager.reusePublishedActionName(
-        target, QStringLiteral("Play_Old"), &error));
-    EXPECT_TRUE(error.isEmpty());
-    EXPECT_EQ(target->guid, targetGuid);
-    EXPECT_EQ(target->runtimeId(), targetId);
-    EXPECT_EQ(target->name, QStringLiteral("Play_Old"));
-    EXPECT_EQ(target->nameBindingRevision, 2u);
-    auto rows = historyForGuid(manager, targetGuid);
-    ASSERT_EQ(rows.size(), 2u);
-    EXPECT_EQ(rows[0].event, QStringLiteral("created"));
-    EXPECT_EQ(rows[1].event, QStringLiteral("reuse_approved"));
-    EXPECT_EQ(rows[1].name, QStringLiteral("Play_Old"));
-    EXPECT_TRUE(rows[1].priorName.isEmpty());
-    EXPECT_EQ(rows[1].nameBindingRevision, 2u);
-    for (const auto& row : rows)
-        EXPECT_NE(row.event, QStringLiteral("renamed_from"));
+        auto* replacement = manager.createItem(nullptr, QStringLiteral("Name_Gone"), type);
+        ASSERT_NE(replacement, nullptr);
+        const QUuid replacementGuid = replacement->guid;
+        EXPECT_EQ(replacement->name, QStringLiteral("Name_Gone"));
+        EXPECT_NE(replacementGuid, originalGuid);
 
-    ASSERT_TRUE(UndoRedoManager::instance().undo());
-    EXPECT_EQ(target->name, QStringLiteral("Play_New"));
-    EXPECT_EQ(target->guid, targetGuid);
-    EXPECT_EQ(target->runtimeId(), targetId);
-    EXPECT_EQ(target->nameBindingRevision, 3u);
-    rows = historyForGuid(manager, targetGuid);
-    ASSERT_EQ(rows.size(), 3u);
-    EXPECT_EQ(rows[2].event, QStringLiteral("reuse_undone"));
-    EXPECT_EQ(rows[2].name, QStringLiteral("Play_New"));
-    EXPECT_EQ(rows[2].priorName, QStringLiteral("Play_Old"));
-    EXPECT_EQ(rows[2].nameBindingRevision, 3u);
+        auto& undo = UndoRedoManager::instance();
+        ASSERT_TRUE(undo.undo());
+        EXPECT_EQ(manager.findItemByGuid(replacementGuid), nullptr);
+        ASSERT_TRUE(undo.undo());
+        EXPECT_EQ(manager.findItemByGuid(originalGuid), original);
+        EXPECT_EQ(original->name, QStringLiteral("Name_Gone"));
+        ASSERT_TRUE(undo.redo());
+        EXPECT_EQ(manager.findItemByGuid(originalGuid), nullptr);
+        ASSERT_TRUE(undo.redo());
+        EXPECT_EQ(manager.findItemByGuid(replacementGuid), replacement);
+        EXPECT_EQ(replacement->name, QStringLiteral("Name_Gone"));
 
-    ASSERT_TRUE(UndoRedoManager::instance().redo());
-    EXPECT_EQ(target->name, QStringLiteral("Play_Old"));
-    EXPECT_EQ(target->nameBindingRevision, 4u);
-    rows = historyForGuid(manager, targetGuid);
-    ASSERT_EQ(rows.size(), 4u);
-    EXPECT_EQ(rows[3].event, QStringLiteral("reuse_approved"));
-    EXPECT_EQ(rows[3].name, QStringLiteral("Play_Old"));
-    EXPECT_TRUE(rows[3].priorName.isEmpty());
-    EXPECT_EQ(rows[0].event, QStringLiteral("created"));
-    for (const auto& row : rows)
-        EXPECT_NE(row.event, QStringLiteral("renamed_from"));
-}
-
-TEST_F(ActionIdentityTest, DeleteRecreateWithoutReuse)
-{
-    auto& manager = ProjectManager::instance();
-    ProjectItem* original = createAction(QStringLiteral("Play_Gone"));
-    ASSERT_NE(original, nullptr);
-    const QUuid originalGuid = original->guid;
-    const harkenstudio::ObjectId originalId = original->runtimeId();
-    const auto originalRevision = original->nameBindingRevision;
-    ASSERT_TRUE(manager.deleteItem(original));
-    EXPECT_EQ(manager.findItemByGuid(originalGuid), nullptr);
-    EXPECT_EQ(manager.findNameConflict(
-                  QStringLiteral("Play_Gone"), ProjectItem::Type::Action, nullptr),
-              nullptr);
-    const auto deletedRows = historyForGuid(manager, originalGuid);
-    ASSERT_FALSE(deletedRows.empty());
-    EXPECT_EQ(deletedRows.back().event, QStringLiteral("deleted"));
-    EXPECT_EQ(deletedRows.back().name, QStringLiteral("Play_Gone"));
-    EXPECT_EQ(deletedRows.back().runtimeId(), originalId);
-    EXPECT_EQ(deletedRows.back().nameBindingRevision, originalRevision);
-
-    auto* suffixed = createAction(QStringLiteral("Play_Gone"));
-    ASSERT_NE(suffixed, nullptr);
-    EXPECT_EQ(suffixed->name, QStringLiteral("Play_Gone_01"));
-    ProjectItem* replacement = createAction(QStringLiteral("Play_Holder"));
-    ASSERT_NE(replacement, nullptr);
-    EXPECT_NE(replacement->guid, originalGuid);
-    EXPECT_NE(replacement->runtimeId(), originalId);
-    const auto replacementRevision = replacement->nameBindingRevision;
-    QString error;
-    ASSERT_TRUE(manager.reusePublishedActionName(
-        replacement, QStringLiteral("Play_Gone"), &error));
-    EXPECT_TRUE(error.isEmpty());
-    EXPECT_EQ(replacement->name, QStringLiteral("Play_Gone"));
-    EXPECT_NE(replacement->guid, originalGuid);
-    EXPECT_NE(replacement->runtimeId(), originalId);
-    EXPECT_EQ(replacement->nameBindingRevision, replacementRevision + 1);
-    EXPECT_EQ(manager.findNameConflict(
-                  QStringLiteral("Play_Gone"), ProjectItem::Type::Action, nullptr),
-              replacement);
+        ASSERT_TRUE(undo.undo());
+        auto* recreated = manager.createItem(nullptr, QStringLiteral("Name_Gone"), type);
+        ASSERT_NE(recreated, nullptr);
+        EXPECT_EQ(recreated->name, QStringLiteral("Name_Gone"));
+        EXPECT_NE(recreated->guid, originalGuid);
+        EXPECT_NE(recreated->guid, replacementGuid);
+    }
 }
 
 TEST_F(ActionIdentityTest, NamesAvoidConflictsAcrossFolders)
@@ -507,7 +463,7 @@ TEST_F(ActionIdentityTest, NamesAvoidConflictsAcrossFolders)
               nullptr);
 }
 
-TEST_F(ActionIdentityTest, DeletedHistorySurvivesSaveReopen)
+TEST_F(ActionIdentityTest, DeletedHistoryDoesNotReserveNameAfterReopen)
 {
     auto& manager = ProjectManager::instance();
     ProjectItem* action = createAction(QStringLiteral("Play_Keep"));
@@ -523,9 +479,17 @@ TEST_F(ActionIdentityTest, DeletedHistorySurvivesSaveReopen)
     EXPECT_EQ(rows.back().event, QStringLiteral("deleted"));
     EXPECT_EQ(rows.back().name, QStringLiteral("Play_Keep"));
     EXPECT_EQ(rows.back().runtimeId(), runtimeStableId);
-    auto* suffixed = createAction(QStringLiteral("Play_Keep"));
-    ASSERT_NE(suffixed, nullptr);
-    EXPECT_EQ(suffixed->name, QStringLiteral("Play_Keep_01"));
+    auto* replacement = createAction(QStringLiteral("Play_Keep"));
+    ASSERT_NE(replacement, nullptr);
+    EXPECT_EQ(replacement->name, QStringLiteral("Play_Keep"));
+    EXPECT_NE(replacement->guid, guid);
+    const QUuid replacementGuid = replacement->guid;
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_NO_FATAL_FAILURE(reopen());
+    replacement = manager.findItemByGuid(replacementGuid);
+    ASSERT_NE(replacement, nullptr);
+    EXPECT_EQ(replacement->name, QStringLiteral("Play_Keep"));
+    EXPECT_EQ(manager.findItemByGuid(guid), nullptr);
 }
 
 TEST_F(ActionIdentityTest, UndoDeleteRestoresSameIdentity)
