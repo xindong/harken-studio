@@ -5,6 +5,7 @@
 #include <QFuture>
 #include <QObject>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace VNX {
@@ -82,6 +83,8 @@ public:
     static QFuture<bool> generateAsync(const QString& audioFilePath, uint32_t targetPeaks = VKD::DEFAULT_NUM_PEAKS);
 
     static bool load(const QString& audioFilePath, WaveformPeakData& outData);
+
+    static std::shared_ptr<const WaveformPeakData> loadShared(const QString& audioFilePath);
 
     static WaveformPeakData readRange(const QString& audioFilePath,
                                       uint64_t startFrame, uint64_t frameCount,

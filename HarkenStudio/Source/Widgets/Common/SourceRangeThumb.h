@@ -30,7 +30,7 @@ protected:
 private:
     SoundSourceDef source_;
     std::optional<AssetInfo> asset_;
-    WaveformPeakData peaks_;
+    std::shared_ptr<const WaveformPeakData> peaks_;
     QString emptyText_;
     bool sourceMissing_ = true;
 };

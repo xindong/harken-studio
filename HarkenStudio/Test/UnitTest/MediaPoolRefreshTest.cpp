@@ -27,6 +27,7 @@
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QGraphicsScene>
@@ -697,6 +698,111 @@ TEST(MediaPoolRefreshTest, WaveformNotificationsUpdateSharedNodesWithoutClearing
         for (size_t index = 0; index < sounds.size(); ++index)
             EXPECT_EQ(render(*canvas, sounds[index]), before[index]);
     }
+}
+
+TEST(MediaPoolRefreshTest, SharedWaveformsFollowPreviewLifetimeAcrossRangeEdits)
+{
+    using namespace VNX;
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = AssetRegistry::instance();
+    registry.clear();
+    registry.setProjectRoot(dir.path());
+    const auto cleanup = qScopeGuard([&] { registry.clear(); });
+    const QString audioRoot = PathUtils::getAudioSourcesDir(dir.path());
+    ASSERT_TRUE(QDir().mkpath(audioRoot));
+    AssetInfo asset;
+    asset.sourceID = registry.allocateStableID();
+    asset.relativePath = QStringLiteral("shared.wav");
+    asset.absolutePath = QDir(audioRoot).filePath(asset.relativePath);
+    writeWav(asset.absolutePath, 480, 0.2f);
+    AssetImporter importer;
+    asset.metadata = importer.analyzeFile(asset.absolutePath);
+    ASSERT_TRUE(registry.registerAsset(asset, false));
+    ASSERT_TRUE(WaveformCache::generate(asset.absolutePath));
+
+    std::weak_ptr<const WaveformPeakData> shared;
+    {
+        SourceRangeThumb first;
+        SourceRangeThumb second;
+        SoundSourceDef source;
+        source.sourceId = asset.sourceID;
+        first.setSource(source, &asset);
+        shared = WaveformCache::loadShared(asset.absolutePath);
+        ASSERT_FALSE(shared.expired());
+        EXPECT_EQ(shared.lock(), WaveformCache::loadShared(QDir(audioRoot).filePath("./shared.wav")));
+
+        source.trimStartFrame = 120;
+        second.setSource(source, &asset);
+        first.clearSource();
+        ASSERT_FALSE(shared.expired());
+
+        second.resize(240, 36);
+        const QImage before = second.grab().toImage();
+        source.trimEndFrame = 240;
+        second.setSource(source, &asset);
+        EXPECT_FALSE(shared.expired());
+        EXPECT_NE(second.grab().toImage(), before);
+    }
+    EXPECT_TRUE(shared.expired());
+}
+
+TEST(MediaPoolRefreshTest, SharedWaveformsRefreshAfterSourceAndCacheChanges)
+{
+    using namespace VNX;
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("shared.wav"));
+    writeWav(path, 480, 0.2f);
+    ASSERT_TRUE(WaveformCache::generate(path, 128));
+    const auto original = WaveformCache::loadShared(path);
+    ASSERT_NE(original, nullptr);
+    ASSERT_TRUE(original->isValid());
+    EXPECT_FLOAT_EQ(original->peaks[1], 0.2f);
+    QFile cache(WaveformCache::cachePath(path));
+    ASSERT_TRUE(cache.open(QIODevice::ReadOnly));
+    const QByteArray originalCache = cache.readAll();
+    cache.close();
+
+    ASSERT_TRUE(WaveformCache::generate(path, 64));
+    const auto rebuilt = WaveformCache::loadShared(path);
+    ASSERT_NE(rebuilt, nullptr);
+    EXPECT_EQ(rebuilt->numPeaks, 64u);
+    EXPECT_EQ(original->numPeaks, 128u);
+
+    ASSERT_TRUE(cache.open(QIODevice::WriteOnly));
+    ASSERT_EQ(cache.write(originalCache), originalCache.size());
+    cache.close();
+    const auto replaced = WaveformCache::loadShared(path);
+    ASSERT_NE(replaced, nullptr);
+    EXPECT_EQ(replaced->numPeaks, 128u);
+    EXPECT_EQ(rebuilt->numPeaks, 64u);
+
+    ASSERT_TRUE(WaveformCache::remove(path));
+    EXPECT_EQ(WaveformCache::loadShared(path), nullptr);
+    ASSERT_TRUE(WaveformCache::generate(path, 128));
+    const auto restored = WaveformCache::loadShared(path);
+    ASSERT_NE(restored, nullptr);
+    ASSERT_TRUE(QFile::remove(WaveformCache::cachePath(path)));
+    EXPECT_EQ(WaveformCache::loadShared(path), nullptr);
+    ASSERT_TRUE(WaveformCache::generate(path, 128));
+    const auto beforeEdit = WaveformCache::loadShared(path);
+    ASSERT_NE(beforeEdit, nullptr);
+
+    const QDateTime changedTime = QFileInfo(path).lastModified().addSecs(1);
+    writeWav(path, 480, 0.6f);
+    QFile audio(path);
+    ASSERT_TRUE(audio.open(QIODevice::ReadWrite));
+    ASSERT_TRUE(audio.setFileTime(changedTime, QFileDevice::FileModificationTime));
+    audio.close();
+    EXPECT_EQ(WaveformCache::loadShared(path), nullptr);
+    ASSERT_TRUE(WaveformCache::generate(path, 128));
+    const auto updated = WaveformCache::loadShared(path);
+    ASSERT_NE(updated, nullptr);
+    EXPECT_FLOAT_EQ(updated->peaks[1], 0.6f);
+    EXPECT_FLOAT_EQ(beforeEdit->peaks[1], 0.2f);
+    ASSERT_TRUE(QFile::remove(path));
+    EXPECT_EQ(WaveformCache::loadShared(path), nullptr);
 }
 
 TEST(MediaPoolRefreshTest, CacheRemovalInvalidatesPendingWaveformPublication)

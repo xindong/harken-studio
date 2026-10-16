@@ -46,12 +46,11 @@ void SourceRangeThumb::setSource(const SoundSourceDef& source, const AssetInfo* 
     emptyText_.clear();
     source_ = source;
     asset_ = asset ? std::optional<AssetInfo>{*asset} : std::nullopt;
-    peaks_ = {};
     sourceMissing_ = !AssetRegistry::instance().sourceFileExists(source.sourceId);
     setEnabled(!sourceMissing_);
     setCursor(sourceMissing_ ? Qt::ArrowCursor : Qt::PointingHandCursor);
-    if (!sourceMissing_ && asset && !asset->absolutePath.isEmpty())
-        WaveformCache::load(asset->absolutePath, peaks_);
+    peaks_ = !sourceMissing_ && asset && !asset->absolutePath.isEmpty()
+        ? WaveformCache::loadShared(asset->absolutePath) : nullptr;
     const auto range = SoundSourceSemantics::effectiveRange(source_, asset);
     const bool warning = !sourceMissing_ && range && !range->intact();
     QtControlSkin::setSemanticProperty(this, "rangeWarning", warning);
@@ -78,8 +77,8 @@ void SourceRangeThumb::paintEvent(QPaintEvent*)
     painter.setRenderHint(QPainter::Antialiasing);
     const auto& colors = ThemeManager::instance().colors();
     const auto& style = ThemeManager::instance().snapshot()->domains.waveform;
-    if (peaks_.isValid()) {
-        WaveformRenderer::render(painter, inner, peaks_, style);
+    if (peaks_ && peaks_->isValid()) {
+        WaveformRenderer::render(painter, inner, *peaks_, style);
     } else {
         painter.setPen(colors.textMuted);
         painter.drawText(inner, Qt::AlignCenter,
