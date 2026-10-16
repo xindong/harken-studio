@@ -76,7 +76,7 @@ public:
     bool hasNamedLayout() const { return !currentLayoutName_.isEmpty(); }
     void onResetCurrentLayout();
     bool resetCurrentLayout();
-    void onSaveNamedLayout();
+    QString saveCurrentLayout(QWidget* dialogParent);
     void onLoadNamedLayout(const QString& name);
     bool loadNamedLayout(const QString& name);
     void onDeleteNamedLayout(const QString& name);

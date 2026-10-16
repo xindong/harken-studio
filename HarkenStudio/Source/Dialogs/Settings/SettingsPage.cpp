@@ -3,6 +3,7 @@
 
 #include "Core/QtControlSkin.h"
 #include "Core/ContextInfo.h"
+#include "Widgets/Common/PanelScrollArea.h"
 
 #include <QLabel>
 
@@ -17,45 +18,38 @@ void SettingsPage::revert()
 {
 }
 
-QVBoxLayout* SettingsPage::makePageBody(const QString& title)
-{
-    return makePageBody(this, title);
-}
-
-QVBoxLayout* SettingsPage::makePageBody(QWidget* host, const QString& title)
+QVBoxLayout* SettingsPage::makePageBody()
 {
     ContextInfo::tag(this, ContextTopic::forPanel(QStringLiteral("settings.") + pageId()));
-    auto* layout = new QVBoxLayout(host);
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
+    auto* scroll = new PanelScrollArea(this);
+    auto* content = new QWidget(scroll);
+    scroll->setWidget(content);
+    outer->addWidget(scroll);
+    auto* layout = new QVBoxLayout(content);
     layout->setContentsMargins(24, 24, 24, 24);
     layout->setSpacing(16);
-
-    auto* titleLabel = new QLabel(title, host);
-    QtControlSkin::setSemanticProperty(titleLabel, "settingsRole",
-                                       QStringLiteral("title"));
-    layout->addWidget(titleLabel);
-
     return layout;
 }
 
-QGroupBox* SettingsPage::makeGroup(const QString& title)
+QWidget* SettingsPage::makeSection(const QString& title)
 {
-    auto* box = new QGroupBox(title);
-    QtControlSkin::setSemanticProperty(box, "settingsRole",
-                                       QStringLiteral("group"));
-    auto* inner = new QVBoxLayout(box);
-    inner->setContentsMargins(16, 20, 16, 16);
-    inner->setSpacing(12);
-    return box;
+    auto* section = new QWidget();
+    auto* inner = new QVBoxLayout(section);
+    inner->setContentsMargins(0, 0, 0, 0);
+    inner->setSpacing(DialogFormLayout::RowSpacing);
+    auto* label = new QLabel(title, section);
+    QtControlSkin::setSemanticProperty(label, "settingsRole",
+                                       QStringLiteral("subtitle"));
+    inner->addWidget(label);
+    return section;
 }
 
-QFormLayout* SettingsPage::makeForm()
+DialogFormLayout* SettingsPage::makeForm()
 {
-    auto* form = new QFormLayout();
-    form->setHorizontalSpacing(16);
-    form->setVerticalSpacing(12);
-    form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    return form;
+    return new DialogFormLayout();
 }
 
 }

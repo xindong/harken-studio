@@ -23,6 +23,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QInputDialog>
+#include <QMessageBox>
 #include <QLineEdit>
 #include <QFile>
 #include <QFileInfo>
@@ -971,21 +972,22 @@ bool LayoutController::resetCurrentLayout()
     return applyNamedLayoutJson(name, json);
 }
 
-void LayoutController::onSaveNamedLayout()
+QString LayoutController::saveCurrentLayout(QWidget* dialogParent)
 {
     bool ok = false;
-    QString name = QInputDialog::getText(host_, tr("Save Layout"),
+    QString name = QInputDialog::getText(dialogParent, tr("Save Layout"),
                                          tr("Layout name:"), QLineEdit::Normal,
                                          QString(), &ok);
-    if (!ok || name.trimmed().isEmpty()) return;
+    if (!ok || name.trimmed().isEmpty()) return {};
     name = name.trimmed();
 
     if (NamedLayoutStore::isReservedName(name)) {
-        emit statusMessage(tr("Layout name '%1' is reserved").arg(name));
-        return;
+        QMessageBox::warning(dialogParent, tr("Save Layout"),
+                             tr("Layout name '%1' is reserved").arg(name));
+        return {};
     }
 
-    if (!dockManager_) return;
+    if (!dockManager_) return {};
     QByteArray dockState = dockManager_->saveState();
 
     QJsonObject json;
@@ -1003,9 +1005,11 @@ void LayoutController::onSaveNamedLayout()
         currentLayoutName_ = name;
         saveProjectLayout();
         emit statusMessage(tr("Layout '%1' saved").arg(name));
-    } else {
-        emit statusMessage(tr("Layout '%1' could not be saved").arg(name));
+        return name;
     }
+    QMessageBox::warning(dialogParent, tr("Save Layout"),
+                         tr("Layout '%1' could not be saved").arg(name));
+    return {};
 }
 
 void LayoutController::onLoadNamedLayout(const QString& name)
@@ -1132,7 +1136,7 @@ void LayoutController::rebuildLayoutsMenu()
     QAction* saveAction = layoutsMenu_->addAction(tr("Save Current Layout..."));
     saveAction->setObjectName("saveLayoutAction");
     connect(saveAction, &QAction::triggered,
-            this, &LayoutController::onSaveNamedLayout);
+            this, [this] { saveCurrentLayout(host_); });
 }
 
 }

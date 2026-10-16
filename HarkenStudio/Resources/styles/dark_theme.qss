@@ -478,41 +478,20 @@ QWidget#Explorer QTreeWidget#ProjectTreeWidget {
    Buttons
    ========================================================================== */
 
-QPushButton,
-QPushButton[settingsRole="secondary"] {
+QPushButton {
     background-color: @bgHover@;
     border: none;
-    padding: 8px 16px;
+    padding: 4px 16px;
     border-radius: 0px;
     color: @textPrimary@;
-    font-weight: 500;
+    font-weight: normal;
 }
 
-QPushButton:hover,
-QPushButton[settingsRole="secondary"]:hover {
+QPushButton:hover {
     background-color: @bgTertiary@;
 }
 
-QPushButton:pressed,
-QPushButton[settingsRole="secondary"]:pressed {
-    background-color: @accent@;
-    color: @accentText@;
-}
-
-/* Primary Action Button (Cyan) */
-QPushButton[primary="true"] {
-    background-color: @auditionPlayOverlay@;
-    border: 1px solid @accent@;
-    color: @accent@;
-}
-
-QPushButton[primary="true"]:hover {
-    background-color: @accentSoft@;
-    border-color: @accentHover@;
-    color: @accentHover@;
-}
-
-QPushButton[primary="true"]:pressed {
+QPushButton:pressed {
     background-color: @accent@;
     color: @accentText@;
 }
@@ -1192,6 +1171,7 @@ QScrollBar::handle:vertical:hover {
 QTreeWidget#ProjectTreeWidget QScrollBar::handle:vertical:disabled,
 QTreeWidget#SelectorTreeWidget QScrollBar::handle:vertical:disabled,
 QTreeWidget#projectSourcesTree QScrollBar::handle:vertical:disabled,
+QScrollBar[scrollRole="panel"]::handle:vertical:disabled,
 QPlainTextEdit[fieldRole="inspectorText"] QScrollBar::handle:vertical:disabled,
 QScrollBar#sourceWaveChannelScroll::handle:vertical:disabled,
 QScrollBar#timelineVerticalScroll::handle:vertical:disabled {
@@ -1396,7 +1376,6 @@ QWidget#embeddedEditorTitleBar QLabel { background: transparent; color: @textSec
 #settingsCategoryList {
     background-color: @bgSecondary@;
     border: none;
-    border-right: 1px solid @borderPrimary@;
     outline: none;
 }
 
@@ -1418,22 +1397,21 @@ QWidget#embeddedEditorTitleBar QLabel { background: transparent; color: @textSec
     color: @textPrimary@;
 }
 
-#settingsContentStack,
-#aiAgentPage,
-#aiAgentScrollArea,
-#aiAgentScrollArea > QWidget > QWidget {
+#settingsContentStack {
     background-color: @bgPrimary@;
 }
 
-#settingsSeparator {
-    background-color: @sectionSeparator@;
+QScrollArea[scrollRole="panel"],
+QScrollArea[scrollRole="panel"] > QWidget > QWidget,
+QScrollBar[scrollRole="panel"]:vertical {
+    background-color: @bgPrimary@;
     border: none;
 }
 
-*[settingsRole="title"] {
-    color: @accent@;
-    font-size: @titlePointSize@pt;
+QLabel[settingsRole="subtitle"] {
+    color: @textPrimary@;
     font-weight: bold;
+    background: transparent;
 }
 
 *[settingsRole="hint"] {
@@ -1441,51 +1419,12 @@ QWidget#embeddedEditorTitleBar QLabel { background: transparent; color: @textSec
     font-size: @captionPointSize@pt;
 }
 
-*[settingsRole="formLabel"] {
+QLabel[dialogRole="label"] {
     color: @textSecondary@;
-    font-weight: 500;
     background: transparent;
 }
 
-*[settingsRole="field"] {
-    background-color: @bgSecondary@;
-    border: 1px solid @borderSecondary@;
-    border-radius: @radiusMedium@px;
-    color: @textPrimary@;
-}
-
-*[settingsRole="combo"] {
-    background-color: @bgSecondary@;
-    border: 1px solid @borderSecondary@;
-    border-radius: @radiusSmall@px;
-    color: @textPrimary@;
-}
-
-*[settingsRole="group"] {
-    border: 1px solid @borderPrimary@;
-    border-radius: @radiusMedium@px;
-}
-
-QPushButton[settingsRole="primary"] {
-    background-color: @accent@;
-    border: none;
-    color: @accentText@;
-    padding: 8px 24px;
-    border-radius: 0px;
-    font-weight: bold;
-}
-
-QPushButton[settingsRole="primary"]:hover {
-    background-color: @accentHover@;
-}
-
-QPushButton[settingsRole="primary"]:pressed {
-    background-color: @accent@;
-}
-
-QPushButton:disabled,
-QPushButton[settingsRole="secondary"]:disabled,
-QPushButton[settingsRole="primary"]:disabled {
+QPushButton:disabled {
     background-color: @bgSecondary@;
     color: @textDisabled@;
     border-color: @borderPrimary@;
@@ -1518,7 +1457,7 @@ QLineEdit[settingsRole="invalid"] { border: 1px solid @error@; }
 #aboutSummary {
     background-color: @bgSecondary@;
     border: 1px solid @borderPrimary@;
-    border-radius: @radiusMedium@px;
+    border-radius: 0px;
 }
 
 QLabel[aboutRole="key"] {
@@ -1534,21 +1473,6 @@ QLabel[aboutRole="value"] {
 #aboutDeveloperTitle {
     color: @textSecondary@;
     font-weight: 500;
-}
-
-#aboutDeveloperInformation {
-    background-color: @bgSecondary@;
-    border: 1px solid @borderPrimary@;
-    border-radius: @radiusMedium@px;
-    color: @textSecondary@;
-    padding: 10px;
-    selection-background-color: @accent@;
-    selection-color: @accentText@;
-}
-
-#aboutDeveloperInformation:focus {
-    border-color: @accent@;
-    background-color: @bgSecondary@;
 }
 
 #aboutCopyright {
@@ -1645,7 +1569,6 @@ QPushButton[templateRole="card"] {
     background-color: @bgSecondary@;
     color: @textPrimary@;
     border: 1px solid @borderSecondary@;
-    border-radius: @radiusMedium@px;
     padding: 0px;
     text-align: center;
     min-width: 96px;
@@ -1935,16 +1858,6 @@ QLabel[bindingUnit="cent"] { color: @textMuted@; }
 
 QWidget[surfaceRole="secondary"],
 QWidget[surfaceRole="popup"] { background-color: @bgSecondary@; }
-QPushButton[buttonRole="accent"] {
-    background-color: @accent@;
-    color: @accentText@;
-}
-QPushButton[buttonRole="accent"]:hover { background-color: @accentHover@; }
-QPushButton[buttonRole="accent"]:disabled {
-    background-color: @bgSecondary@;
-    color: @textDisabled@;
-}
-QPushButton[buttonRole="accent"][squared="true"] { border-radius: 0px; }
 
 /* ==========================================================================
    Application shell semantic roles
@@ -2086,7 +1999,6 @@ QLineEdit[tableEditor="true"] {
     padding: 0 @tableCellPaddingX@px;
 }
 QWidget#packPlatformChips QCheckBox:unchecked { color: @textMuted@; }
-QPushButton#projectPackGenerateAllBtn:disabled { background: @bgSecondary@; color: @textDisabled@; }
 QWidget#MonitorPerformancePanel,
 QWidget#MonitorPlayablesPanel,
 QWidget#MonitorEffectsPanel,

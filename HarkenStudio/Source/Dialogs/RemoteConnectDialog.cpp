@@ -4,12 +4,12 @@
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
 #include "RuntimeBridge/RemoteConnection.h"
+#include "Widgets/Common/DialogFormLayout.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
 #include "Widgets/Common/TableWidget.h"
 
 #include <QAction>
-#include <QFormLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -71,7 +71,6 @@ RemoteConnectDialog::RemoteConnectDialog(HarkenEditor::Bridge::RemoteConnection*
     connect_ = new QPushButton(tr("Connect"), this);
     connect_->setObjectName(QStringLiteral("remoteConnect"));
     connect_->setDefault(true);
-    QtControlSkin::setSemanticProperty(connect_, "buttonRole", QStringLiteral("accent"));
     disconnect_ = new QPushButton(tr("Disconnect"), this);
     disconnect_->setObjectName(QStringLiteral("remoteDisconnect"));
     connectionRow->addWidget(connect_);
@@ -165,8 +164,7 @@ void RemoteConnectDialog::openManualConnection()
     auto* layout = new QVBoxLayout(&dialog);
     layout->setContentsMargins(16, 16, 16, 16);
     layout->setSpacing(12);
-    auto* form = new QFormLayout();
-    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    auto* form = new DialogFormLayout();
     auto* address = new QLineEdit(&dialog);
     address->setObjectName(QStringLiteral("remoteAddress"));
     address->setPlaceholderText(tr("Host name or IP address"));
@@ -185,7 +183,6 @@ void RemoteConnectDialog::openManualConnection()
     auto* submit = buttons->addButton(tr("Connect"), QDialogButtonBox::AcceptRole);
     submit->setObjectName(QStringLiteral("remoteManualConnect"));
     submit->setDefault(true);
-    QtControlSkin::setSemanticProperty(submit, "buttonRole", QStringLiteral("accent"));
     layout->addWidget(buttons);
     const auto validate = [this, address, port, submit] {
         using HarkenEditor::Bridge::RemoteConnectionState;

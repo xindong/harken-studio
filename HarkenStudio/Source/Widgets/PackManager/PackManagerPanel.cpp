@@ -17,6 +17,7 @@
 #include "../../Core/ToastManager.h"
 #include "../../Core/UndoCommands.h"
 #include "../Common/LayoutDebugTint.h"
+#include "../Common/DialogFormLayout.h"
 #include "../Common/ProportionalTreeWidget.h"
 #include "../Common/TableItemDelegate.h"
 #include "../Common/TableWidget.h"
@@ -46,7 +47,6 @@
 #include <QHash>
 #include <QSet>
 #include <QUndoStack>
-#include <QFormLayout>
 #include <QStyledItemDelegate>
 #include <QMenu>
 #include <QMessageBox>
@@ -613,8 +613,6 @@ QWidget* PackManagerPanel::createToolbar()
 
     exportBtn_ = new QPushButton(tr("Export All"));
     exportBtn_->setObjectName("projectPackGenerateAllBtn");
-    exportBtn_->setProperty("buttonRole", QStringLiteral("accent"));
-    exportBtn_->setProperty("squared", true);
     exportBtn_->setToolTip(
         tr("Export every pack targeted to the selected platform(s). "
            "Init is always rebuilt."));
@@ -637,10 +635,7 @@ void PackManagerPanel::createSettingsDialog()
     dialogLayout->setContentsMargins(16, 16, 16, 16);
     dialogLayout->setSpacing(12);
 
-    auto* form = new QFormLayout();
-    form->setLabelAlignment(Qt::AlignLeft);
-    form->setHorizontalSpacing(12);
-    form->setVerticalSpacing(12);
+    auto* form = new DialogFormLayout();
 
     buildOutputDirEdit_ = new QLineEdit();
     buildOutputDirEdit_->setObjectName("packSettingsBuildOutputDirEdit");

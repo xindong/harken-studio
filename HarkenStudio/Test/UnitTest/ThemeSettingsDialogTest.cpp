@@ -161,8 +161,6 @@ TEST_F(ThemeSettingsDialogTest, UsesCentralApplicationSkinRoles)
     ASSERT_NE(apply, nullptr);
     ASSERT_NE(combo, nullptr);
     ASSERT_NE(tree, nullptr);
-    EXPECT_EQ(apply->property("settingsRole").toString(), QStringLiteral("primary"));
-    EXPECT_EQ(combo->property("settingsRole").toString(), QStringLiteral("combo"));
     EXPECT_EQ(tree->property("tableRole").toString(), QStringLiteral("data"));
     auto* table = qobject_cast<VNX::TableWidget*>(tree->parentWidget());
     ASSERT_NE(table, nullptr);

@@ -16,12 +16,15 @@
 #include <QPushButton>
 #include <QTreeWidget>
 
+#include <utility>
+
 namespace VNX {
 
-LayoutPage::LayoutPage(QWidget* parent)
+LayoutPage::LayoutPage(QWidget* parent, SaveCurrentLayout saveCurrentLayout)
     : SettingsPage(parent)
+    , saveCurrentLayout_(std::move(saveCurrentLayout))
 {
-    auto* body = makePageBody(tr("Layout"));
+    auto* body = makePageBody();
 
     auto* table = new TableWidget(TableOptions::display(), this);
     layoutTree_ = table->createItemView(QStringLiteral("layoutTree"),
@@ -41,18 +44,20 @@ LayoutPage::LayoutPage(QWidget* parent)
     body->addWidget(layoutImmediateStatusLabel_);
 
     auto* btnRow = new QHBoxLayout();
+    auto* saveButton = new QPushButton(tr("Save Current Layout..."));
+    saveButton->setObjectName(QStringLiteral("layoutSaveButton"));
+    saveButton->setEnabled(bool(saveCurrentLayout_));
+    connect(saveButton, &QPushButton::clicked, this, &LayoutPage::onLayoutSaveClicked);
+    btnRow->addWidget(saveButton);
+
     layoutRenameButton_ = new QPushButton(tr("Rename..."));
     layoutRenameButton_->setObjectName(QStringLiteral("layoutRenameButton"));
-    QtControlSkin::setSemanticProperty(layoutRenameButton_, "settingsRole",
-                                       QStringLiteral("secondary"));
     connect(layoutRenameButton_, &QPushButton::clicked,
             this, &LayoutPage::onLayoutRenameClicked);
     btnRow->addWidget(layoutRenameButton_);
 
     layoutDeleteButton_ = new QPushButton(tr("Delete"));
     layoutDeleteButton_->setObjectName(QStringLiteral("layoutDeleteButton"));
-    QtControlSkin::setSemanticProperty(layoutDeleteButton_, "settingsRole",
-                                       QStringLiteral("secondary"));
     connect(layoutDeleteButton_, &QPushButton::clicked,
             this, &LayoutPage::onLayoutDeleteClicked);
     btnRow->addWidget(layoutDeleteButton_);
@@ -116,6 +121,23 @@ void LayoutPage::updateLayoutButtons()
         layoutRenameButton_->setEnabled(userLayout);
     if (layoutDeleteButton_)
         layoutDeleteButton_->setEnabled(userLayout);
+}
+
+void LayoutPage::onLayoutSaveClicked()
+{
+    const QString name = saveCurrentLayout_(this);
+    if (name.isEmpty())
+        return;
+    populateLayoutTree();
+    for (int row = 0; row < layoutTree_->topLevelItemCount(); ++row) {
+        auto* item = layoutTree_->topLevelItem(row);
+        if (item->data(0, Qt::UserRole).toString() == name) {
+            layoutTree_->setCurrentItem(item);
+            layoutTree_->scrollToItem(item);
+            break;
+        }
+    }
+    layoutImmediateStatusLabel_->setText(tr("Saved."));
 }
 
 void LayoutPage::onLayoutRenameClicked()

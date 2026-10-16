@@ -3,6 +3,8 @@
 
 #include "Dialogs/Settings/SettingsPage.h"
 
+#include <functional>
+
 class QLabel;
 class QPushButton;
 class QTreeWidget;
@@ -16,7 +18,9 @@ class LayoutPage : public SettingsPage
     Q_OBJECT
 
 public:
-    explicit LayoutPage(QWidget* parent = nullptr);
+    using SaveCurrentLayout = std::function<QString(QWidget*)>;
+
+    explicit LayoutPage(QWidget* parent = nullptr, SaveCurrentLayout saveCurrentLayout = {});
 
     QString pageId() const override;
     QString categoryLabel() const override;
@@ -31,6 +35,7 @@ signals:
 private:
     void populateLayoutTree();
     void updateLayoutButtons();
+    void onLayoutSaveClicked();
     void onLayoutRenameClicked();
     void onLayoutDeleteClicked();
 
@@ -38,6 +43,7 @@ private:
     QLabel* layoutImmediateStatusLabel_ = nullptr;
     QPushButton* layoutRenameButton_ = nullptr;
     QPushButton* layoutDeleteButton_ = nullptr;
+    SaveCurrentLayout saveCurrentLayout_;
 };
 
 }

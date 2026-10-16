@@ -6,18 +6,15 @@
 #include "Core/ContextInfo.h"
 #include "Core/ProjectLanguageSemantics.h"
 #include "Core/ProjectManager.h"
-#include "Core/QtControlSkin.h"
 
 #include "Dialogs/Settings/ProjectPlatformDialog.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
 #include <QTreeWidget>
-#include <QScrollArea>
 #include <QDir>
 #include <QFileDialog>
 #include <QFocusEvent>
-#include <QFrame>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -92,17 +89,9 @@ protected:
 ProjectBuildPage::ProjectBuildPage(QWidget* parent)
     : SettingsPage(parent)
 {
-    auto* outer = new QVBoxLayout(this);
-    outer->setContentsMargins(0, 0, 0, 0);
-    auto* scroll = new QScrollArea(this);
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
-    auto* content = new QWidget(scroll);
-    scroll->setWidget(content);
-    outer->addWidget(scroll);
-    auto* body = makePageBody(content, tr("Build"));
+    auto* body = makePageBody();
 
-    auto* platformsGroup = makeGroup(tr("Target Platforms"));
+    auto* platformsGroup = makeSection(tr("Target Platforms"));
     ContextInfo::tag(platformsGroup, ContextTopic::forPanel(QStringLiteral("settings.build.platforms")));
     auto* platformsBox = new TableWidget(platformsGroup);
     platformList_ = platformsBox->createItemView(QStringLiteral("projectPlatformList"),
@@ -123,7 +112,7 @@ ProjectBuildPage::ProjectBuildPage(QWidget* parent)
     });
     body->addWidget(platformsGroup);
 
-    auto* languagesGroup = makeGroup(tr("Target Languages"));
+    auto* languagesGroup = makeSection(tr("Target Languages"));
     ContextInfo::tag(languagesGroup, ContextTopic::forPanel(QStringLiteral("settings.build.languages")));
     targetLanguagesBox_ = new TableWidget(languagesGroup);
     targetLanguagesBox_->setSelectionClearHandler([this] { selectTargetLanguageRow(-1); });
@@ -147,12 +136,10 @@ ProjectBuildPage::ProjectBuildPage(QWidget* parent)
 
     body->addWidget(languagesGroup);
 
-    auto* packGroup = makeGroup(tr("Pack Build Output"));
+    auto* packGroup = makeSection(tr("Pack Build Output"));
     ContextInfo::tag(packGroup, ContextTopic::forPanel(QStringLiteral("settings.build.output")));
     auto* form = makeForm();
     auto* dirLabel = new QLabel(tr("Relative Directory:"));
-    QtControlSkin::setSemanticProperty(dirLabel, "settingsRole",
-                                       QStringLiteral("formLabel"));
 
     auto* rowWidget = new QWidget();
     auto* row = new QHBoxLayout(rowWidget);
@@ -162,14 +149,10 @@ ProjectBuildPage::ProjectBuildPage(QWidget* parent)
     packBuildOutputDirEdit_ = new QLineEdit();
     packBuildOutputDirEdit_->setObjectName("packBuildOutputDirEdit");
     packBuildOutputDirEdit_->setPlaceholderText(PathUtils::buildPacksDirName() + '/');
-    QtControlSkin::setSemanticProperty(packBuildOutputDirEdit_, "settingsRole",
-                                       QStringLiteral("field"));
     packBuildOutputDirEdit_->setValidator(new QRegularExpressionValidator(
         QRegularExpression(QStringLiteral("[^*?<>|]*")), packBuildOutputDirEdit_));
     packBuildOutputDirBrowseBtn_ = new QPushButton(tr("Browse..."));
     packBuildOutputDirBrowseBtn_->setObjectName("packBuildOutputDirBrowseBtn");
-    QtControlSkin::setSemanticProperty(packBuildOutputDirBrowseBtn_, "settingsRole",
-                                       QStringLiteral("secondary"));
     row->addWidget(packBuildOutputDirEdit_, 1);
     row->addWidget(packBuildOutputDirBrowseBtn_, 0);
     form->addRow(dirLabel, rowWidget);
@@ -310,8 +293,6 @@ void ProjectBuildPage::appendTargetLanguageRow(const QString& value)
     edit->setPlaceholderText(tr("Language"));
     edit->setValidator(new QRegularExpressionValidator(
         QRegularExpression(QStringLiteral("[A-Za-z0-9_]*")), edit));
-    QtControlSkin::setSemanticProperty(edit, "settingsRole",
-                                       QStringLiteral("field"));
 
     row->onMousePress = [this, row]() {
         selectTargetLanguageRow(targetLanguageRows_.indexOf(row));
