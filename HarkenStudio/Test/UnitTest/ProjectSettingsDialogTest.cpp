@@ -583,7 +583,6 @@ TEST_F(ProjectSettingsDialogTest, IllegalCharactersCannotBeTyped)
     EXPECT_FALSE(edit->text().contains(QLatin1Char('<')));
     EXPECT_FALSE(edit->text().contains(QLatin1Char('>')));
     EXPECT_FALSE(edit->text().contains(QLatin1Char('|')));
-    EXPECT_EQ(edit->property("settingsRole").toString(), QStringLiteral("field"));
 }
 
 TEST_F(ProjectSettingsDialogTest, PackBuildDirectoryIsRelativeAndEmptyRestoresDefault)
@@ -840,13 +839,8 @@ TEST_F(ProjectSettingsDialogTest, CancelDiscardsPlatformCreationRenameAndDeletio
     enterPlatform(dialog, "Renamed", "Windows", 0, false);
     list->setCurrentItem(list->topLevelItem(1));
     dialog.findChild<QToolButton*>("projectPlatformDelete")->click();
-    QTimer::singleShot(0, []() {
-        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
-        ASSERT_NE(box, nullptr);
-        for (auto* button : box->buttons())
-            if (box->buttonRole(button) == QMessageBox::AcceptRole) { button->click(); break; }
-    });
     dialog.findChild<QPushButton*>("settingsCancelButton")->click();
+    EXPECT_FALSE(dialog.isVisible());
     EXPECT_EQ(dialog.result(), QDialog::Rejected);
     EXPECT_EQ(ProjectPlatformSemantics::platformsToJson(ProjectManager::instance().currentProject()->platforms), expected);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);

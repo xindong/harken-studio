@@ -24,8 +24,6 @@ public:
 protected:
     void addPage(SettingsPage* page);
     void loadPages();
-    void reject() override;
-    virtual bool confirmDiscard();
 
 private:
     void onApplyClicked();

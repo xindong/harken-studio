@@ -13,6 +13,8 @@ add_library(harken_editor_common STATIC
     TimeAxis.h
     CollapsibleSection.cpp
     CollapsibleSection.h
+    DialogFormLayout.cpp
+    DialogFormLayout.h
     DropZoneWidget.cpp
     DropZoneWidget.h
     FocusFilter.h
@@ -25,6 +27,8 @@ add_library(harken_editor_common STATIC
     ParameterValueEditor.cpp
     ParameterValueEditor.h
     ParameterPresenter.h
+    PanelScrollArea.cpp
+    PanelScrollArea.h
     ParameterControlHost.cpp
     ParameterControlHost.h
     LinearSliderPresenter.cpp

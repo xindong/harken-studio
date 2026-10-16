@@ -3,7 +3,6 @@
 
 #include "Core/AppSettings.h"
 #include "Core/ContextInfo.h"
-#include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
 #include "Core/ThemePackageParser.h"
 
@@ -20,34 +19,26 @@ GeneralPage::GeneralPage(ThemeManager& themeManager, QWidget* parent)
     : SettingsPage(parent)
     , themeManager_(&themeManager)
 {
-    auto* body = makePageBody(tr("General"));
+    auto* body = makePageBody();
 
-    auto* appearance = makeGroup(tr("Appearance"));
+    auto* appearance = makeSection(tr("Appearance"));
     auto* appearanceForm = makeForm();
     auto* themeLabel = new QLabel(tr("Theme:"));
-    QtControlSkin::setSemanticProperty(themeLabel, "settingsRole",
-                                       QStringLiteral("formLabel"));
     themeCombo_ = new QComboBox();
     themeCombo_->setObjectName(QStringLiteral("appearanceThemeCombo"));
     const auto themeTopic = ContextTopic::forPanel(QStringLiteral("settings.general.theme"),
         {QDir::toNativeSeparators(themeManager_->userThemesRoot())});
     ContextInfo::tag(themeCombo_, themeTopic);
     ContextInfo::tag(themeLabel, themeTopic);
-    QtControlSkin::setSemanticProperty(themeCombo_, "settingsRole",
-                                       QStringLiteral("combo"));
     themeLabel->setBuddy(themeCombo_);
     appearanceForm->addRow(themeLabel, themeCombo_);
 
     auto* languageLabel = new QLabel(tr("Language:"));
-    QtControlSkin::setSemanticProperty(languageLabel, "settingsRole",
-                                       QStringLiteral("formLabel"));
     languageCombo_ = new QComboBox();
     languageCombo_->setObjectName(QStringLiteral("appearanceLanguageCombo"));
     const auto languageTopic = ContextTopic::forPanel(QStringLiteral("settings.general.language"));
     ContextInfo::tag(languageCombo_, languageTopic);
     ContextInfo::tag(languageLabel, languageTopic);
-    QtControlSkin::setSemanticProperty(languageCombo_, "settingsRole",
-                                       QStringLiteral("combo"));
     populateLanguageCombo();
     languageLabel->setBuddy(languageCombo_);
     appearanceForm->addRow(languageLabel, languageCombo_);
@@ -55,11 +46,13 @@ GeneralPage::GeneralPage(ThemeManager& themeManager, QWidget* parent)
 
     body->addWidget(appearance);
 
-    auto* developer = makeGroup(tr("Developer"));
-    developerModeCheck_ = new QCheckBox(tr("Developer mode"));
+    auto* developer = makeSection(tr("Developer"));
+    auto* developerForm = makeForm();
+    developerModeCheck_ = new QCheckBox();
     developerModeCheck_->setObjectName(QStringLiteral("developerModeCheck"));
     ContextInfo::tag(developer, ContextTopic::forPanel(QStringLiteral("settings.general.developer")));
-    developer->layout()->addWidget(developerModeCheck_);
+    developerForm->addRow(tr("Developer mode"), developerModeCheck_);
+    static_cast<QVBoxLayout*>(developer->layout())->addLayout(developerForm);
     body->addWidget(developer);
 
     body->addStretch();

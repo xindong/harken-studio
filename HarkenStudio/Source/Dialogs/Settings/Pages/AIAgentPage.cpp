@@ -11,14 +11,12 @@
 #include "Core/QtControlSkin.h"
 
 #include <QComboBox>
-#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QUrl>
@@ -36,46 +34,21 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
     if (!secretStore_.erase)
         secretStore_.erase = [](const QString&, const QString&) { return false; };
 
-    auto* outer = new QVBoxLayout(this);
-    outer->setContentsMargins(0, 0, 0, 0);
-    outer->setSpacing(0);
+    auto* layout = makePageBody();
 
-    auto* scrollArea = new QScrollArea();
-    scrollArea->setObjectName(QStringLiteral("aiAgentScrollArea"));
-    scrollArea->setWidgetResizable(true);
-    scrollArea->setFrameShape(QFrame::NoFrame);
-    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    outer->addWidget(scrollArea);
-
-    auto* page = new QWidget();
-    page->setObjectName(QStringLiteral("aiAgentPage"));
-    auto* layout = makePageBody(page, tr("AI Agent"));
-
-    auto* credGroup = makeGroup(tr("Credentials"));
+    auto* credGroup = makeSection(tr("Credentials"));
     ContextInfo::tag(credGroup, ContextTopic::forPanel(QStringLiteral("settings.ai_agent.credentials")));
     auto* credForm = makeForm();
-
-    auto addFormLabel = [](const QString& text) {
-        auto* label = new QLabel(text);
-        QtControlSkin::setSemanticProperty(label, "settingsRole",
-                                           QStringLiteral("formLabel"));
-        return label;
-    };
 
     aiBaseUrlEdit_ = new QLineEdit();
     aiBaseUrlEdit_->setObjectName("aiBaseUrlEdit");
     aiBaseUrlEdit_->setPlaceholderText(QStringLiteral("https://your-gateway/v1"));
-    QtControlSkin::setSemanticProperty(aiBaseUrlEdit_, "settingsRole",
-                                       QStringLiteral("field"));
-    credForm->addRow(addFormLabel(tr("Base URL:")), aiBaseUrlEdit_);
+    credForm->addRow(tr("Base URL:"), aiBaseUrlEdit_);
 
     aiApiKeyEdit_ = new QLineEdit();
     aiApiKeyEdit_->setObjectName("aiApiKeyEdit");
     aiApiKeyEdit_->setEchoMode(QLineEdit::Password);
     aiApiKeyEdit_->setPlaceholderText(tr("API key"));
-    QtControlSkin::setSemanticProperty(aiApiKeyEdit_, "settingsRole",
-                                       QStringLiteral("field"));
 
     auto* apiKeyRowWidget = new QWidget();
     auto* apiKeyRow = new QHBoxLayout(apiKeyRowWidget);
@@ -85,31 +58,25 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
 
     aiApiKeyClearButton_ = new QPushButton(tr("Clear Saved Key"));
     aiApiKeyClearButton_->setObjectName("aiApiKeyClearButton");
-    QtControlSkin::setSemanticProperty(aiApiKeyClearButton_, "settingsRole",
-                                       QStringLiteral("secondary"));
     apiKeyRow->addWidget(aiApiKeyClearButton_);
-    credForm->addRow(addFormLabel(tr("API Key:")), apiKeyRowWidget);
+    credForm->addRow(tr("API Key:"), apiKeyRowWidget);
 
     aiApiKeyStatusLabel_ = new QLabel();
     aiApiKeyStatusLabel_->setObjectName("aiApiKeyStatusLabel");
-    credForm->addRow(addFormLabel(tr("Stored Key:")), aiApiKeyStatusLabel_);
+    aiApiKeyStatusLabel_->setWordWrap(true);
+    credForm->addRow(tr("Stored Key:"), aiApiKeyStatusLabel_);
 
     aiModelEdit_ = new QLineEdit();
     aiModelEdit_->setObjectName("aiModelEdit");
     aiModelEdit_->setPlaceholderText(QStringLiteral("claude-opus-4-6"));
-    QtControlSkin::setSemanticProperty(aiModelEdit_, "settingsRole",
-                                       QStringLiteral("field"));
-    credForm->addRow(addFormLabel(tr("Model:")), aiModelEdit_);
+    credForm->addRow(tr("Model:"), aiModelEdit_);
 
     aiContextWindowSpin_ = new QSpinBox();
     aiContextWindowSpin_->setObjectName(QStringLiteral("aiContextWindowSpin"));
     aiContextWindowSpin_->setRange(4096, 2000000);
     aiContextWindowSpin_->setSingleStep(4096);
     aiContextWindowSpin_->setToolTip(tr("tokens"));
-    aiContextWindowSpin_->setMaximumWidth(160);
-    QtControlSkin::setSemanticProperty(aiContextWindowSpin_, "settingsRole",
-                                       QStringLiteral("field"));
-    credForm->addRow(addFormLabel(tr("Context Window:")), aiContextWindowSpin_);
+    credForm->addRow(tr("Context Window:"), aiContextWindowSpin_);
 
     auto* connectionTestWidget = new QWidget();
     auto* connectionTestRow = new QHBoxLayout(connectionTestWidget);
@@ -120,8 +87,6 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
     aiConnectionTestButton_->setObjectName("aiConnectionTestButton");
     ContextInfo::tag(aiConnectionTestButton_,
         ContextTopic::forPanel(QStringLiteral("settings.ai_agent.connection")));
-    QtControlSkin::setSemanticProperty(aiConnectionTestButton_, "settingsRole",
-                                       QStringLiteral("secondary"));
     connectionTestRow->addWidget(aiConnectionTestButton_);
 
     aiConnectionTestLabel_ = new QLabel();
@@ -129,7 +94,7 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
     aiConnectionTestLabel_->setTextFormat(Qt::PlainText);
     aiConnectionTestLabel_->setWordWrap(true);
     connectionTestRow->addWidget(aiConnectionTestLabel_, 1);
-    credForm->addRow(connectionTestWidget);
+    credForm->addRow(QString(), connectionTestWidget);
 
     connect(aiApiKeyClearButton_, &QPushButton::clicked,
             this, &AIAgentPage::onAIApiKeyClearClicked);
@@ -140,42 +105,37 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
 
     layout->addWidget(credGroup);
 
-    auto* permGroup = makeGroup(tr("Permission"));
+    auto* permGroup = makeSection(tr("Permission"));
     ContextInfo::tag(permGroup, ContextTopic::forPanel(QStringLiteral("settings.ai_agent.permission")));
     auto* permForm = makeForm();
     aiPermissionModeCombo_ = new QComboBox();
     aiPermissionModeCombo_->setObjectName("aiPermissionModeCombo");
     for (const auto& metadata : permissionMetadata())
         aiPermissionModeCombo_->addItem(tr(metadata.label), QString::fromLatin1(metadata.id));
-    QtControlSkin::setSemanticProperty(aiPermissionModeCombo_, "settingsRole",
-                                       QStringLiteral("combo"));
-    permForm->addRow(addFormLabel(tr("Mode:")), aiPermissionModeCombo_);
+    permForm->addRow(tr("Mode:"), aiPermissionModeCombo_);
     static_cast<QVBoxLayout*>(permGroup->layout())->addLayout(permForm);
 
     layout->addWidget(permGroup);
 
-    auto* scopeGroup = makeGroup(tr("Tool Scope"));
+    auto* scopeGroup = makeSection(tr("Tool Scope"));
     ContextInfo::tag(scopeGroup, ContextTopic::forPanel(QStringLiteral("settings.ai_agent.tools")));
     auto* scopeForm = makeForm();
     aiToolProfileCombo_ = new QComboBox();
     aiToolProfileCombo_->setObjectName("aiToolProfileCombo");
     for (const auto& metadata : toolProfileMetadata())
         aiToolProfileCombo_->addItem(tr(metadata.label), toId(metadata.profile));
-    QtControlSkin::setSemanticProperty(aiToolProfileCombo_, "settingsRole",
-                                       QStringLiteral("combo"));
-    scopeForm->addRow(addFormLabel(tr("Profile:")), aiToolProfileCombo_);
+    scopeForm->addRow(tr("Profile:"), aiToolProfileCombo_);
 
     aiToolVisibilityLabel_ = new QLabel();
     aiToolVisibilityLabel_->setObjectName(QStringLiteral("aiToolVisibilityLabel"));
-    scopeForm->addRow(addFormLabel(tr("Effective tools:")), aiToolVisibilityLabel_);
+    aiToolVisibilityLabel_->setWordWrap(true);
+    scopeForm->addRow(tr("Effective tools:"), aiToolVisibilityLabel_);
     static_cast<QVBoxLayout*>(scopeGroup->layout())->addLayout(scopeForm);
     layout->addWidget(scopeGroup);
 
     auto* resetRow = new QHBoxLayout();
     auto* resetBtn = new QPushButton(tr("Reset to Defaults"));
     resetBtn->setObjectName(QStringLiteral("aiResetDefaultsButton"));
-    QtControlSkin::setSemanticProperty(resetBtn, "settingsRole",
-                                       QStringLiteral("secondary"));
     connect(resetBtn, &QPushButton::clicked, this, [this]() {
         resetAIAgentSettings();
     });
@@ -205,7 +165,6 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
 
     refreshAIToolVisibility();
     layout->addStretch();
-    scrollArea->setWidget(page);
 }
 
 QString AIAgentPage::pageId() const

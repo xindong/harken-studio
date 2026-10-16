@@ -4373,7 +4373,9 @@ void MainWindow::onOpenPreferences()
 
 void MainWindow::onOpenPreferences(const QString& pageId)
 {
-    PreferencesDialog dialog(this);
+    PreferencesDialog dialog(this, [this](QWidget* dialogParent) {
+        return layoutController_->saveCurrentLayout(dialogParent);
+    });
     connect(&dialog, &PreferencesDialog::layoutRenamed,
             layoutController_, &LayoutController::onNamedLayoutRenamed);
     connect(&dialog, &PreferencesDialog::layoutDeleted,

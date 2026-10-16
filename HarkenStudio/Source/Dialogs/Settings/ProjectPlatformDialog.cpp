@@ -1,6 +1,7 @@
 #include "ProjectPlatformDialog.h"
 
-#include "Core/QtControlSkin.h"
+#include "Widgets/Common/DialogFormLayout.h"
+#include "Widgets/Common/PanelScrollArea.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
@@ -8,7 +9,6 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include "Widgets/Common/DecimalSpinBox.h"
-#include <QFormLayout>
 #include <QFrame>
 #include <QLabel>
 #include <QLineEdit>
@@ -16,7 +16,6 @@
 #include <QPushButton>
 #include <QRegularExpressionValidator>
 #include <QSignalBlocker>
-#include <QScrollArea>
 #include <QToolButton>
 #include <QTreeWidget>
 
@@ -88,8 +87,7 @@ bool editPolicy(SizePolicy& policy, bool create, const std::vector<SizePolicy>& 
     dialog.setObjectName("platformSizePolicyDialog");
     dialog.resize(340, 160);
     auto* layout = new QVBoxLayout(&dialog);
-    auto* form = new QFormLayout();
-    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    auto* form = new DialogFormLayout();
     auto* limit = new QWidget(&dialog);
     auto* limitLayout = new QHBoxLayout(limit);
     limitLayout->setContentsMargins(0, 0, 0, 0);
@@ -134,7 +132,6 @@ bool editPolicy(SizePolicy& policy, bool create, const std::vector<SizePolicy>& 
     error->hide();
     layout->addWidget(error);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    QtControlSkin::setSemanticProperty(buttons->button(QDialogButtonBox::Ok), "settingsRole", QStringLiteral("primary"));
     layout->addWidget(buttons);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&]() {
@@ -170,16 +167,13 @@ ProjectPlatformDialog::ProjectPlatformDialog(const ProjectPlatform& platform, bo
     setWindowTitle(create ? tr("Create Platform") : tr("Edit Platform"));
     resize(440, 360);
     auto* root = new QVBoxLayout(this);
-    auto* scroll = new QScrollArea(this);
-    scroll->setWidgetResizable(true);
-    scroll->setFrameShape(QFrame::NoFrame);
+    auto* scroll = new PanelScrollArea(this);
     auto* page = new QWidget(scroll);
     scroll->setWidget(page);
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(0, 0, 0, 0);
     root->addWidget(scroll, 1);
-    auto* form = new QFormLayout();
-    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    auto* form = new DialogFormLayout();
     auto* name = new QLineEdit(platform.name, this);
     name->setObjectName("projectPlatformName");
     form->addRow(tr("Name:"), name);
@@ -189,10 +183,10 @@ ProjectPlatformDialog::ProjectPlatformDialog(const ProjectPlatform& platform, bo
     base->setCurrentText(ProjectPlatformSemantics::basePlatformName(platform.basePlatform));
     form->addRow(tr("Base platform:"), base);
     layout->addLayout(form);
-    auto* resample = new QCheckBox(tr("Resample"), this);
+    auto* resample = new QCheckBox(this);
     resample->setObjectName("platformResample");
     resample->setChecked(profile_.performResample);
-    layout->addWidget(resample);
+    form->addRow(tr("Resample"), resample);
     auto* content = new TableWidget(this);
     content->setEnabled(profile_.performResample);
     layout->addWidget(content);
@@ -278,7 +272,6 @@ ProjectPlatformDialog::ProjectPlatformDialog(const ProjectPlatform& platform, bo
         });
     });
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Reset | QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-    QtControlSkin::setSemanticProperty(buttons->button(QDialogButtonBox::Ok), "settingsRole", QStringLiteral("primary"));
     buttons->setObjectName("projectPlatformDialogButtons");
     buttons->button(QDialogButtonBox::Reset)->setObjectName("projectPlatformReset");
     connect(buttons->button(QDialogButtonBox::Reset), &QPushButton::clicked, this, resetProfile);
