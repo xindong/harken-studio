@@ -572,26 +572,6 @@ bool RenameProjectItemCommand::apply(bool redo)
     return ProjectManager::instance().renameItemInternal(item_, redo ? newName_ : oldName_);
 }
 
-ReusePublishedActionNameCommand::ReusePublishedActionNameCommand(
-    ProjectItem* item,
-    const QString& oldName,
-    const QString& publishedName,
-    QUndoCommand* undoParent)
-    : TransactionalUndoCommand(QObject::tr("Reuse published name %1").arg(publishedName), undoParent)
-    , item_(item)
-    , oldName_(oldName)
-    , publishedName_(publishedName)
-{}
-
-bool ReusePublishedActionNameCommand::apply(bool redo)
-{
-    if (!item_) return false;
-    return ProjectManager::instance().renameItemInternal(
-        item_, redo ? publishedName_ : oldName_,
-        redo ? ProjectManager::RenamePolicy::ApproveNameReuse
-             : ProjectManager::RenamePolicy::UndoNameReuse);
-}
-
 SetItemColorCommand::SetItemColorCommand(
     ProjectItem* item,
     uint32_t oldColor,

@@ -1804,10 +1804,7 @@ QString ProjectManager::suggestUniqueName(ProjectItem::Type type,
     return NameValidator::makeUniqueName(baseName.normalized(QString::NormalizationForm_C), [&](const QString& candidate) {
         const QString key = type == ProjectItem::Type::Attenuation ? candidate.toCaseFolded() : candidate;
         return !reservedNames.contains(key)
-            && (bucketUnique ? isNameUnique(candidate, type, excludeItem) : !siblingConflict(candidate))
-            && (type != ProjectItem::Type::Action || !m_currentProject
-                || !actionNameTakeoverForbidden(*m_currentProject, candidate,
-                                                excludeItem ? excludeItem->guid : QUuid{}));
+            && (bucketUnique ? isNameUnique(candidate, type, excludeItem) : !siblingConflict(candidate));
     });
 }
 
@@ -3297,25 +3294,6 @@ void recordNamedObjectDeleted(ProjectData* project, ProjectItem& item)
     appendPublishedNameHistory(project, item, QStringLiteral("deleted"));
 }
 
-void recordNamedObjectReuse(ProjectData* project, ProjectItem& item,
-                       bool approved, const QString& fromName)
-{
-    if (!project || item.type != ProjectItem::Type::Action) return;
-    if (item.nameBindingRevision < std::numeric_limits<uint64_t>::max())
-        ++item.nameBindingRevision;
-    appendPublishedNameHistory(
-        project, item,
-        approved ? QStringLiteral("reuse_approved") : QStringLiteral("reuse_undone"),
-        approved ? QString() : fromName);
-}
-
-QString formerPublishedNameMessage(const QString& name, ProjectItem::Type type)
-{
-    return QStringLiteral(
-        "The %1 name \"%2\" was previously published by another %1.")
-        .arg(type == ProjectItem::Type::Action ? QStringLiteral("Action") : QStringLiteral("Variable"), name);
-}
-
 }
 
 PhysicalFolder* ProjectManager::createFolder(PhysicalFolder* parent, const QString& name,
@@ -3783,8 +3761,7 @@ ProjectItem* ProjectManager::createRootAudioItem(const QString& name,
 
 void ProjectManager::applyRenameSideEffects(ProjectItem* item,
                                             const QString& fromName,
-                                            const QString& toName,
-                                            bool recordPublishedNameHistory)
+                                            const QString& toName)
 {
     if (!item) return;
 
@@ -3881,7 +3858,7 @@ void ProjectManager::applyRenameSideEffects(ProjectItem* item,
                 project, item->guid, &self, {QStringLiteral("attenuationRef")});
     }
 
-    if (recordPublishedNameHistory && fromName != toName)
+    if (fromName != toName)
         recordNamedObjectRenamed(self.currentProject(), *item, fromName);
 }
 
@@ -3929,8 +3906,6 @@ bool ProjectManager::prepareItemRename(ProjectItem* item, const QString& request
     if (!item || !m_currentProject || findItemByGuid(item->guid) != item)
         return fail(tr("The object no longer exists."));
     const bool resolveConflicts = policy == RenamePolicy::ResolveConflicts;
-    const bool reuseName = policy == RenamePolicy::ApproveNameReuse
-        || policy == RenamePolicy::UndoNameReuse;
     newName = requestedName.normalized(QString::NormalizationForm_C);
     if (item->name == newName) return true;
 
@@ -3948,10 +3923,6 @@ bool ProjectManager::prepareItemRename(ProjectItem* item, const QString& request
     if (const ProjectItem* conflict = findNameConflict(newName, item->type, item)) {
         return fail(nameConflictMessage(newName, item->type, *conflict));
     }
-    if (!reuseName && item->type == ProjectItem::Type::Action
-        && actionNameTakeoverForbidden(*m_currentProject, newName, item->guid)) {
-        return fail(formerPublishedNameMessage(newName, item->type));
-    }
     return true;
 }
 
@@ -3968,63 +3939,16 @@ bool ProjectManager::renameItemInternal(ProjectItem* item, const QString& reques
     }
     if (error) error->clear();
     if (item->name == newName) return true;
-    const bool reuseName = policy == RenamePolicy::ApproveNameReuse
-        || policy == RenamePolicy::UndoNameReuse;
 
     QString oldName = item->name;
     item->name = newName;
 
-    applyRenameSideEffects(item, oldName, newName, !reuseName);
-    if (reuseName)
-        recordNamedObjectReuse(m_currentProject.get(), *item,
-                          policy == RenamePolicy::ApproveNameReuse, oldName);
+    applyRenameSideEffects(item, oldName, newName);
 
     item->markDirty();
 
     emit itemRenamed(item, oldName);
 
-    return true;
-}
-
-bool ProjectManager::reusePublishedActionName(ProjectItem* target,
-                                              const QString& publishedName,
-                                              QString* error)
-{
-    const auto fail = [this, error](const QString& message) {
-        if (error) *error = message;
-        emit errorOccurred(message);
-        return false;
-    };
-    if (error) error->clear();
-    if (!m_currentProject)
-        return fail(QStringLiteral("No project loaded."));
-    if (!target || target->type != ProjectItem::Type::Action
-        || findItemByGuid(target->guid) != target) {
-        return fail(QStringLiteral(
-            "reusePublishedActionName requires a live Action in the current project."));
-    }
-    NameValidator::Result vr;
-    if (!NameValidator::validateItemName(publishedName, target->type, &vr)) {
-        return fail(QStringLiteral("Invalid name '%1': %2")
-                        .arg(publishedName, NameValidator::resultMessage(vr)));
-    }
-    if (target->name == publishedName)
-        return true;
-    if (const ProjectItem* conflict =
-            findNameConflict(publishedName, target->type, target)) {
-        return fail(nameConflictMessage(publishedName, target->type, *conflict));
-    }
-    if (!publishedActionNameOwnedByOtherGuid(
-            *m_currentProject, publishedName, target->guid)) {
-        return fail(QStringLiteral(
-            "The name \"%1\" is not a previously published name of another object in this bucket.")
-                        .arg(publishedName));
-    }
-
-    const QString oldName = target->name;
-    if (!renameItemInternal(target, publishedName, RenamePolicy::ApproveNameReuse)) return false;
-    UndoRedoManager::instance().push(
-        new ReusePublishedActionNameCommand(target, oldName, publishedName));
     return true;
 }
 
@@ -6137,9 +6061,7 @@ bool ProjectManager::attachRootBinding(ProjectData* project, const RootBindingSl
     const auto& root = *slot.binding.rootItem;
     if (root.type == ProjectItem::Type::Action || root.type == ProjectItem::Type::Variable) {
         if (!NameValidator::validateItemName(root.name, root.type)
-            || !project->findItemsBySelector(root.name, root.type).empty()
-            || (root.type == ProjectItem::Type::Action
-                && actionNameTakeoverForbidden(*project, root.name, root.guid)))
+            || !project->findItemsBySelector(root.name, root.type).empty())
             return false;
     }
     const int insertAt = slot.index < 0 ? static_cast<int>(bucket->size())

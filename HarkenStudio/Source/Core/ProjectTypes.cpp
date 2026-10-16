@@ -460,30 +460,4 @@ bool validateProjectObjectIdentities(const ProjectData& project, QString* error)
     return true;
 }
 
-bool publishedActionNameOwnedByOtherGuid(const ProjectData& project,
-                                        const QString& name, const QUuid& targetGuid)
-{
-    for (const auto& row : project.actionPublishedNameHistory) {
-        if (row.objectGuid != targetGuid && (row.name == name || row.priorName == name))
-            return true;
-    }
-    return false;
-}
-
-bool actionNameTakeoverForbidden(const ProjectData& project,
-                                const QString& name, const QUuid& targetGuid)
-{
-    if (!publishedActionNameOwnedByOtherGuid(project, name, targetGuid))
-        return false;
-    bool approved = false;
-    for (const auto& row : project.actionPublishedNameHistory) {
-        if (row.objectGuid != targetGuid) continue;
-        if (row.event == QLatin1String("reuse_approved") && row.name == name)
-            approved = true;
-        else if (row.event == QLatin1String("reuse_undone") && row.priorName == name)
-            approved = false;
-    }
-    return !approved;
-}
-
 }

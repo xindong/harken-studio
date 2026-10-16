@@ -1076,10 +1076,6 @@ inline bool validateProjectTree(const ProjectItem* root)
 }
 
 bool validateProjectObjectIdentities(const ProjectData& project, QString* error = nullptr);
-bool publishedActionNameOwnedByOtherGuid(const ProjectData& project,
-                                        const QString& name, const QUuid& targetGuid);
-bool actionNameTakeoverForbidden(const ProjectData& project,
-                                const QString& name, const QUuid& targetGuid);
 
 inline ObjectIdRepairResult ensureUniqueObjectIds(ProjectData& project)
 {

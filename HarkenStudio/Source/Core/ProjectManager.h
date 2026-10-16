@@ -55,7 +55,6 @@ class ProjectExplorer;
 class Hierarchy;
 class CreateProjectItemCommand;
 class DeleteProjectItemCommand;
-class ReusePublishedActionNameCommand;
 class MoveItemCommand;
 class SequenceReorderCommand;
 class IPCServer;
@@ -104,7 +103,6 @@ public:
     friend class BusController;
     friend class CreateProjectItemCommand;
     friend class DeleteProjectItemCommand;
-    friend class ReusePublishedActionNameCommand;
     friend class MoveItemCommand;
     friend class SequenceReorderCommand;
     friend class BlueprintSendConnectCommand;
@@ -142,8 +140,7 @@ public:
 
     static void applyRenameSideEffects(ProjectItem* item,
                                        const QString& fromName,
-                                       const QString& toName,
-                                       bool recordPublishedNameHistory = true);
+                                       const QString& toName);
     static bool hasRuntimePresence(const ProjectItem* item);
     static void unregisterItemFromRuntime(ProjectItem* item);
 
@@ -265,12 +262,9 @@ public:
     bool renameItem(ProjectItem* item, const QString& newName, QString* error = nullptr);
     bool validateItemRename(ProjectItem* item, const QString& newName,
                              QString* error = nullptr) const;
-    enum class RenamePolicy { ResolveConflicts, Exact, ApproveNameReuse, UndoNameReuse };
+    enum class RenamePolicy { ResolveConflicts, Exact };
     bool renameItemInternal(ProjectItem* item, const QString& newName,
                             RenamePolicy policy = RenamePolicy::Exact, QString* error = nullptr);
-    bool reusePublishedActionName(ProjectItem* target,
-                                  const QString& publishedName,
-                                  QString* error = nullptr);
     bool deleteItem(ProjectItem* item);
     bool canCreateItem(ProjectItem* parent, ProjectItem::Type type,
                        const QString& bucketFolderHint = {}) const;

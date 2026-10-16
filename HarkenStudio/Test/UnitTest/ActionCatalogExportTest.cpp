@@ -429,7 +429,7 @@ TEST_F(ActionCatalogExportTest, DuplicateUnicodeTargetsExportWithDistinctIdentit
     EXPECT_EQ(catalogOf(outputDir).value(QStringLiteral("actions")).toArray().size(), 2);
 }
 
-TEST_F(ActionCatalogExportTest, CloneAvoidsAnotherActionsFormerNameAndPublishes)
+TEST_F(ActionCatalogExportTest, CloneReusesReleasedNameAndPublishes)
 {
     auto& manager = ProjectManager::instance();
     ASSERT_TRUE(seedPackableAction());
@@ -439,7 +439,7 @@ TEST_F(ActionCatalogExportTest, CloneAvoidsAnotherActionsFormerNameAndPublishes)
     ASSERT_TRUE(manager.deleteItem(former));
     auto* clone = manager.duplicateItem(action_);
     ASSERT_NE(clone, nullptr);
-    ASSERT_EQ(clone->name, QStringLiteral("Play_Fire_02"));
+    ASSERT_EQ(clone->name, QStringLiteral("Play_Fire_01"));
     const auto result = exportPacks(QDir(tempDir_.path()).filePath("out-takeover"));
     EXPECT_TRUE(result.success) << result.error.toStdString();
 }
@@ -506,23 +506,27 @@ TEST_F(ActionCatalogExportTest, KeywordAndPrefixedNamesCanPublish)
     }
 }
 
-TEST_F(ActionCatalogExportTest, ExplicitReuseAndUndoRedoExportOnlyCurrentName)
+TEST_F(ActionCatalogExportTest, NameReuseAndUndoRedoExportCurrentIdentity)
 {
     auto& manager = ProjectManager::instance();
     ASSERT_TRUE(seedPackableAction());
     auto* former = manager.createItem(nullptr, QStringLiteral("Play_Old"),
                                       ProjectItem::Type::Action);
     ASSERT_NE(former, nullptr);
+    const auto actionId = action_->runtimeId();
+    const QString outputDir = QDir(tempDir_.path()).filePath("out-reuse");
+    const auto published = exportPacks(outputDir);
+    ASSERT_TRUE(published.success) << published.error.toStdString();
     ASSERT_TRUE(manager.deleteItem(former));
     QString error;
-    ASSERT_TRUE(manager.reusePublishedActionName(action_, QStringLiteral("Play_Old"), &error));
-    const QString outputDir = QDir(tempDir_.path()).filePath("out-reuse");
+    ASSERT_TRUE(manager.renameItem(action_, QStringLiteral("Play_Old"), &error));
     auto check = [&](const QString& currentName, uint64_t revision) {
         const auto result = exportPacks(outputDir);
         ASSERT_TRUE(result.success) << result.error.toStdString();
         const auto image = parseInit(outputDir);
         EXPECT_TRUE(image.gameplayCatalog.retired.empty());
         ASSERT_EQ(image.gameplayCatalog.active.size(), 1u);
+        EXPECT_EQ(image.gameplayCatalog.active.front().actionStableId, actionId);
         EXPECT_EQ(image.gameplayCatalog.active.front().nameBindingRevision, revision);
         EXPECT_EQ(catalogOf(outputDir).value("actions").toArray().at(0).toObject()
                       .value("name").toString(), currentName);
