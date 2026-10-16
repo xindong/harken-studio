@@ -8,6 +8,7 @@
 #include "../../Core/BaseDialog.h"
 #include "../../Core/Components/VAction.h"
 #include "../../Core/PackBuildPlan.h"
+#include "../../Core/PlatformContextService.h"
 #include "../../Core/ProjectPackExporter.h"
 #include "../../Core/ProjectManager.h"
 #include "../../Core/ProjectTypes.h"
@@ -456,6 +457,8 @@ PackManagerPanel::PackManagerPanel(QWidget* parent)
     setupUI();
 
     auto& pm = ProjectManager::instance();
+    connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
+            this, [this](const PlatformContext&) { populateProjectPackTable(); });
     connect(&pm, &ProjectManager::packGroupsChanged, this,
             [this]() { populateProjectPackTable(); });
     connect(&pm, &ProjectManager::actionPackTargetingChanged, this,
@@ -486,13 +489,8 @@ PackManagerPanel::PackManagerPanel(QWidget* parent)
     connect(&pm, &ProjectManager::packBuildOutputDirChanged, this,
             [this](const QString&) { refreshPackList(); });
 
-    connect(&pm, &ProjectManager::packExportCurrentPlatformChanged, this,
-            [this](const QString&) { populatePlatformControls(); });
     connect(&pm, &ProjectManager::packExportSelectedPlatformsChanged, this,
-            [this](const QStringList&) {
-        populatePlatformControls();
-        populateProjectPackTable();
-    });
+            [this](const QStringList&) { populatePlatformControls(); });
     connect(&pm, &ProjectManager::targetPlatformsChanged, this,
             [this](const QStringList&) {
         populatePlatformControls();
@@ -512,7 +510,7 @@ PackManagerPanel::PackManagerPanel(QWidget* parent)
     });
     connect(&pm, &ProjectManager::projectClosed, this, [this]() {
         static_cast<TableWidget*>(packTree_->parentWidget())->clearSelection();
-        viewPlatforms_.clear();
+        searchEdit_->clear();
         lastResults_.clear();
         populatePlatformControls();
         refreshPackList();
@@ -551,30 +549,12 @@ void PackManagerPanel::setupUI()
     objectSendWarningLabel_->setVisible(false);
     contentLayout->addWidget(objectSendWarningLabel_);
 
-    viewFilterBar_ = new QWidget();
-    viewFilterBar_->setObjectName("packViewFilterBar");
-    DebugTint::tintContainer(viewFilterBar_);
-    auto* viewBarLayout = new QHBoxLayout(viewFilterBar_);
-    viewBarLayout->setContentsMargins(0, 0, 0, 0);
-    viewBarLayout->setSpacing(10);
     searchEdit_ = new SearchField();
     searchEdit_->setObjectName("packSearchEdit");
     searchEdit_->setMaximumWidth(240);
     connect(searchEdit_, &QLineEdit::textChanged,
             this, &PackManagerPanel::applyNameFilter);
-    viewBarLayout->addWidget(searchEdit_, 1);
-    viewBarLayout->addStretch(1);
-    viewButtonsRow_ = new QWidget();
-    viewButtonsRow_->setObjectName("packViewFilterButtons");
-    viewButtonsRow_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
-    DebugTint::tintContainer(viewButtonsRow_);
-    viewButtonsRow_->setMinimumWidth(1);
-    auto* viewButtonsLayout = new QHBoxLayout(viewButtonsRow_);
-    viewButtonsLayout->setContentsMargins(0, 0, 0, 0);
-    viewButtonsLayout->setSpacing(0);
-    viewBarLayout->addWidget(viewButtonsRow_);
-    viewFilterBar_->setVisible(false);
-    contentLayout->addWidget(viewFilterBar_);
+    contentLayout->addWidget(searchEdit_);
 
     auto* table = new TableWidget(TableOptions::display(), content);
     packTree_ = table->createCustomView(QStringLiteral("packTree"),
@@ -620,7 +600,7 @@ QWidget* PackManagerPanel::createToolbar()
     row->setContentsMargins(4, 4, 4, 4);
     row->setSpacing(8);
 
-    auto* platformLabel = new QLabel(tr("Platforms:"));
+    auto* platformLabel = new QLabel(tr("Export Platforms:"));
     platformLabel->setObjectName("packPlatformLabel");
     platformLabel->setProperty("textRole", QStringLiteral("muted"));
     row->addWidget(platformLabel);
@@ -759,73 +739,7 @@ void PackManagerPanel::populatePlatformControls()
     }
 
     platformUpdating_ = false;
-    populateViewFilter();
     updateExportButton();
-}
-
-void PackManagerPanel::populateViewFilter()
-{
-    if (!viewFilterBar_ || !viewButtonsRow_)
-        return;
-
-    const QStringList scope =
-        effectiveSelectedPlatforms(ProjectManager::instance().currentProject());
-    QStringList pruned;
-    for (const QString& platform : scope)
-        if (viewPlatforms_.contains(platform))
-            pruned << platform;
-    viewPlatforms_ = pruned.isEmpty() ? scope : pruned;
-
-    viewUpdating_ = true;
-    auto* buttonsLayout = static_cast<QHBoxLayout*>(viewButtonsRow_->layout());
-    while (QLayoutItem* item = buttonsLayout->takeAt(0)) {
-        delete item->widget();
-        delete item;
-    }
-
-    if (!scope.isEmpty()) {
-        QList<QPair<QString, QVariant>> options;
-        for (const QString& platform : scope)
-            options.append({platformName(platform), platform});
-        auto* control = new SegmentedControl(viewButtonsRow_);
-        control->setAdaptiveSizing(true);
-        control->setOptions(options, false);
-        buttonsLayout->addWidget(control);
-        for (int i = 0; i < scope.size(); ++i) {
-            const QString platform = scope.at(i);
-            auto* button = control->button(i);
-            button->setObjectName(QStringLiteral("packViewFilter_") + platform);
-            button->setChecked(viewPlatforms_.contains(platform));
-            button->setFocusPolicy(Qt::NoFocus);
-            button->setToolTip(tr("Show %1 in table").arg(platformName(platform)));
-            connect(button, &QToolButton::toggled, this,
-                    [this, platform, button](bool on) {
-                        if (viewUpdating_)
-                            return;
-                        if (!on && viewPlatforms_.size() <= 1) {
-                            viewUpdating_ = true;
-                            button->setChecked(true);
-                            viewUpdating_ = false;
-                            return;
-                        }
-                        const QStringList scopeNow = effectiveSelectedPlatforms(
-                            ProjectManager::instance().currentProject());
-                        QStringList next;
-                        for (const QString& p : scopeNow)
-                            if (p == platform ? on : viewPlatforms_.contains(p))
-                                next << p;
-                        if (next == viewPlatforms_)
-                            return;
-                        viewPlatforms_ = next;
-                        populateProjectPackTable();
-                    });
-        }
-    }
-    viewUpdating_ = false;
-
-    viewFilterBar_->setVisible(!scope.isEmpty());
-    if (scope.isEmpty() && searchEdit_ && !searchEdit_->text().isEmpty())
-        searchEdit_->clear();
 }
 
 void PackManagerPanel::applyNameFilter()
@@ -950,6 +864,7 @@ void PackManagerPanel::populateProjectPackTable()
     auto* project = pm.currentProject();
     const bool open = project != nullptr;
     packTree_->setVisible(open);
+    searchEdit_->setVisible(open);
     if (!project) {
         packTreeUpdating_ = false;
         if (objectSendWarningLabel_)
@@ -959,7 +874,11 @@ void PackManagerPanel::populateProjectPackTable()
     }
 
     const QString ext = HarkenEditor::Bridge::packArtifactExtension();
-    const QStringList viewPlatforms = viewPlatforms_;
+    const auto& context = PlatformContextService::instance().context();
+    const auto viewScope = currentWorldPlatformScope(context);
+    const QStringList viewPlatforms = viewScope
+        ? QStringList{ProjectPlatformSemantics::idString(*viewScope)} : QStringList{};
+    const auto& editPlatforms = context.selected;
     QHash<QString, QString> outputDirs;
     for (const QString& platform : viewPlatforms)
         outputDirs.insert(platform, platformOutputDirFor(platform));
@@ -1275,22 +1194,24 @@ void PackManagerPanel::populateProjectPackTable()
         return true;
     };
 
-    auto viewCheckState = [&viewPlatforms](
+    auto editCheckState = [&editPlatforms](
             const std::function<bool(const QString&)>& included) {
         int onCount = 0;
-        for (const QString& platform : viewPlatforms)
-            if (included(platform))
+        for (const auto& platform : editPlatforms)
+            if (included(ProjectPlatformSemantics::idString(platform)))
                 ++onCount;
         return onCount == 0 ? Qt::Unchecked
-            : onCount == viewPlatforms.size() ? Qt::Checked
+            : onCount == editPlatforms.size() ? Qt::Checked
                                               : Qt::PartiallyChecked;
     };
-    auto partialTooltip = [&viewPlatforms](
+    auto partialTooltip = [&editPlatforms](
             const std::function<bool(const QString&)>& included) {
         QStringList inc;
         QStringList exc;
-        for (const QString& platform : viewPlatforms)
-            (included(platform) ? inc : exc) << platformName(platform);
+        for (const auto& platform : editPlatforms) {
+            const QString id = ProjectPlatformSemantics::idString(platform);
+            (included(id) ? inc : exc) << platformName(id);
+        }
         return tr("Included: %1\nExcluded: %2")
             .arg(inc.join(QStringLiteral(", ")), exc.join(QStringLiteral(", ")));
     };
@@ -1302,7 +1223,7 @@ void PackManagerPanel::populateProjectPackTable()
         for (harkenstudio::ObjectId id : g.actionIds)
             groupedIds.insert(id);
 
-    const bool matrixEditable = !viewPlatforms.isEmpty();
+    const bool matrixEditable = !editPlatforms.isEmpty();
 
     for (const PackGroup& g : groups) {
         std::vector<harkenstudio::ObjectId> members;
@@ -1324,9 +1245,9 @@ void PackManagerPanel::populateProjectPackTable()
             return g.includesPlatform(platform);
         };
         const Qt::CheckState checkState = matrixEditable
-            ? viewCheckState(groupIncludes) : Qt::Unchecked;
-        const bool excluded = exportable && matrixEditable
-            && checkState == Qt::Unchecked;
+            ? editCheckState(groupIncludes) : Qt::Unchecked;
+        const bool excluded = exportable && !viewPlatforms.isEmpty()
+            && !groupIncludes(viewPlatforms.front());
         if (exportable && matrixEditable) {
             groupItem->setCheckState(kColName, checkState);
             if (checkState == Qt::PartiallyChecked)
@@ -1394,8 +1315,8 @@ void PackManagerPanel::populateProjectPackTable()
             return actionIncludes(unit.stableId, platform);
         };
         const Qt::CheckState checkState = matrixEditable
-            ? viewCheckState(unitIncludes) : Qt::Unchecked;
-        const bool excluded = matrixEditable && checkState == Qt::Unchecked;
+            ? editCheckState(unitIncludes) : Qt::Unchecked;
+        const bool excluded = !viewPlatforms.isEmpty() && !unitIncludes(viewPlatforms.front());
         if (matrixEditable) {
             item->setCheckState(kColName, checkState);
             if (checkState == Qt::PartiallyChecked)
@@ -1703,7 +1624,8 @@ void PackManagerPanel::onPackItemChanged(QTreeWidgetItem* item, int column)
 void PackManagerPanel::toggleUnitPlatform(QTreeWidgetItem* item, bool include)
 {
     auto* project = ProjectManager::instance().currentProject();
-    if (!project || viewPlatforms_.isEmpty())
+    const auto& editPlatforms = PlatformContextService::instance().context().selected;
+    if (!project || editPlatforms.isEmpty())
         return;
 
     const QStringList allPlatforms = effectivePlatforms(project);
@@ -1735,11 +1657,12 @@ void PackManagerPanel::toggleUnitPlatform(QTreeWidgetItem* item, bool include)
 
     const QSet<QString> currentSet(current.cbegin(), current.cend());
     QSet<QString> next = currentSet;
-    for (const QString& platform : viewPlatforms_) {
+    for (const auto& platform : editPlatforms) {
+        const QString id = ProjectPlatformSemantics::idString(platform);
         if (include)
-            next.insert(platform);
+            next.insert(id);
         else
-            next.remove(platform);
+            next.remove(id);
     }
     if (next == currentSet)
         return;

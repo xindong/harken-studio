@@ -21,6 +21,8 @@
 #include <QTemporaryDir>
 #include <QToolButton>
 
+#include <algorithm>
+
 namespace {
 using namespace VNX;
 namespace Platforms = ProjectPlatformSemantics;
@@ -199,6 +201,7 @@ TEST_F(ProjectPlatformUiIpc, LegacyNamesAndMixedFieldsFailBeforeBuildOrMutation)
 TEST_F(ProjectPlatformUiIpc, NarrowPackSelectorExportsOnlyTheRequestedSiblingAndReportsCapturedNames)
 {
     for (int i = 0; i < 6; ++i) create(QString("Android_Long_Quality_Preset_%1").arg(i));
+    PlatformContextService::instance().setSelected({QUuid(low)}, QUuid(low), false);
     PackManagerPanel panel;
     panel.resize(380, 480);
     panel.show();
@@ -215,9 +218,7 @@ TEST_F(ProjectPlatformUiIpc, NarrowPackSelectorExportsOnlyTheRequestedSiblingAnd
     }
     QApplication::processEvents();
     EXPECT_EQ(panel.generationPlatforms(), QStringList{high});
-    auto* view = panel.findChild<QToolButton*>("packViewFilter_" + high);
-    ASSERT_NE(view, nullptr);
-    EXPECT_EQ(view->text(), QStringLiteral("Android_High"));
+    EXPECT_EQ(PlatformContextService::instance().context().primary, QUuid(low));
     QStringList requested;
     QObject::connect(&panel, &PackManagerPanel::exportRequested, &panel,
         [&](const QStringList& ids, const QStringList&) {
@@ -247,6 +248,84 @@ TEST_F(ProjectPlatformUiIpc, NarrowPackSelectorExportsOnlyTheRequestedSiblingAnd
     }
     ProjectManager::instance().closeProject();
     EXPECT_TRUE(call("get_pack_build_status").value("result").toObject().value("result").toObject().isEmpty());
+}
+
+TEST_F(ProjectPlatformUiIpc, GlobalContextSeparatesObservationEditingAndExportScope)
+{
+    auto& manager = ProjectManager::instance();
+    auto& context = PlatformContextService::instance();
+    context.setSelected({QUuid(low)}, QUuid(low), false);
+    manager.setPackExportSelectedPlatformsInternal({high});
+    PackManagerPanel panel;
+    auto* tree = panel.findChild<QTreeWidget*>();
+    ASSERT_NE(tree, nullptr);
+    const auto row = [&]() {
+        return tree->findItems(QStringLiteral("Play"), Qt::MatchExactly | Qt::MatchRecursive).value(0);
+    };
+    ASSERT_NE(row(), nullptr);
+    const auto* action = manager.findItemByRuntimeStableId(actionId);
+    ASSERT_NE(action, nullptr);
+    for (const auto& platform : {low, high}) {
+        PackGenerationRecord record;
+        record.source = QStringLiteral("Action");
+        record.packName = action->name;
+        record.objectID = action->objectID;
+        record.platform = platform;
+        record.success = true;
+        record.elapsedMs = platform == low ? 10 : 20;
+        panel.addGenerationResult(record);
+    }
+    panel.refreshPackList();
+    EXPECT_EQ(row()->text(5), QStringLiteral("10 ms"));
+    EXPECT_EQ(row()->checkState(0), Qt::Checked);
+
+    manager.setPackExportSelectedPlatformsInternal({});
+    EXPECT_TRUE(panel.generationPlatforms().isEmpty());
+    EXPECT_EQ(row()->text(5), QStringLiteral("10 ms"));
+    EXPECT_TRUE(row()->flags().testFlag(Qt::ItemIsUserCheckable));
+    row()->setCheckState(0, Qt::Unchecked);
+    context.setSelected({QUuid(high)}, QUuid(high), false);
+    QApplication::processEvents();
+    const auto included = [&](const QString& platform) {
+        const auto& targeting = manager.currentProject()->actionPackTargeting;
+        return std::none_of(targeting.begin(), targeting.end(), [&](const auto& entry) {
+            return entry.stableId == actionId && !entry.includesPlatform(platform);
+        });
+    };
+    EXPECT_FALSE(included(low));
+    EXPECT_TRUE(included(high));
+    EXPECT_EQ(row()->text(5), QStringLiteral("20 ms"));
+    EXPECT_EQ(row()->checkState(0), Qt::Checked);
+
+    context.setAll(true);
+    EXPECT_EQ(row()->text(5), QStringLiteral("20 ms"));
+    EXPECT_EQ(row()->checkState(0), Qt::PartiallyChecked);
+    row()->setCheckState(0, Qt::Unchecked);
+    QApplication::processEvents();
+    for (const auto& platform : manager.currentProject()->platformIds())
+        EXPECT_FALSE(included(platform));
+    UndoRedoManager::instance().undoStack()->undo();
+    EXPECT_FALSE(included(low));
+    EXPECT_TRUE(included(high));
+    EXPECT_EQ(row()->checkState(0), Qt::PartiallyChecked);
+
+    context.setSelected({QUuid(low)}, QUuid(low), true);
+    EXPECT_EQ(row()->text(5), QStringLiteral("10 ms"));
+    EXPECT_EQ(row()->checkState(0), Qt::PartiallyChecked);
+    row()->setCheckState(0, Qt::Checked);
+    QApplication::processEvents();
+    for (const auto& platform : manager.currentProject()->platformIds())
+        EXPECT_TRUE(included(platform));
+
+    manager.setPackExportSelectedPlatformsInternal({high});
+    QStringList requested;
+    QObject::connect(&panel, &PackManagerPanel::exportRequested, &panel,
+        [&](const QStringList& ids, const QStringList&) { requested = ids; });
+    panel.findChild<QPushButton*>("projectPackGenerateAllBtn")->click();
+    EXPECT_EQ(requested, QStringList{high});
+    EXPECT_EQ(row()->text(5), QStringLiteral("10 ms"));
+    EXPECT_EQ(context.context().primary, QUuid(low));
+    EXPECT_TRUE(context.context().all);
 }
 
 }
