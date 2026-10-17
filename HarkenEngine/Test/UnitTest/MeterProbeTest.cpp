@@ -969,6 +969,38 @@ TEST(MeterProbe, UninstallWithdrawsContributionToNeutral) {
     EXPECT_EQ(0u, engine->meterProbes.BindingCount(*engine));
 }
 
+TEST(MeterProbe, RepeatedWithdrawalReturnsSharedSliceResources) {
+    EngineSession session(ProbeConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_TRUE(engine.variableSlices.Reset(4, 8, 8, 2));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kSourceBus, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kTargetBus, VN_BUS_MASTER));
+    const auto targetIndex = engine.buses.FindIndex(kTargetBus);
+    for (int iteration = 0; iteration < 6; ++iteration) {
+        SCOPED_TRACE(iteration);
+        std::uint32_t generation = 0;
+        ASSERT_EQ(VN_OK, harken::InstallMeterProbe(engine, kProbe, kSourceBus,
+            VN_BUS_METER_TAP_POST_EFFECTS, 0, 0, &generation));
+        DefineSidechain(&engine, kSidechain, kProbe, generation);
+        ASSERT_EQ(VN_OK, harken::AttachMeterProbeBinding(engine, kSidechain,
+            VN_TARGET_SCOPE_BUS, kTargetBus, 0,
+            engine.buses.GenerationAt(targetIndex)));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(2);
+        ASSERT_EQ(VN_OK, harken::UninstallMeterProbe(engine, kProbe, generation));
+        for (int step = 0; step < 12; ++step) {
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        EXPECT_FALSE(engine.meterDetectors.IsProbe(kProbe));
+        EXPECT_EQ(0u, engine.meterProbeWithdrawalCount);
+        EXPECT_EQ(4u, engine.variableSlices.FreeRowCount());
+        EXPECT_EQ(2u, engine.variableSlices.FreePayloadCount());
+        EXPECT_EQ(8u, engine.variableSlices.FreeTargetCapacity());
+    }
+}
+
 TEST(MeterProbe, SourceBusDestroyRetiresProbeAndWithdraws) {
     EngineSession session(ProbeConfig());
     ASSERT_EQ(VN_OK, session.InitResult());

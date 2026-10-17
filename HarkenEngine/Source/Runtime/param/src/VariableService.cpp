@@ -1677,9 +1677,8 @@ bool VariableServiceV1::SealPreparedActionSourcesImpl(const ActionOrderIdentity&
     std::sort(rows.begin(), rows.begin() + count,
         [](const WriteRow* a, const WriteRow* b) { return PublicationPrecedes(*a, *b); });
     for (std::size_t index = 0; index < count; ++index) {
-        for (std::uint32_t source = 0; source < slices_.SourceCount(rows[index]->slice); ++source) {
-            const auto* dependency = slices_.Source(rows[index]->slice, source);
-            if (dependency == nullptr) return false;
+        std::uint32_t cursor = 0;
+        while (const auto* dependency = slices_.NextSource(rows[index]->slice, &cursor)) {
             if (slices_.State(dependency->slice) != VariableSliceState::Prepared) continue;
             const bool earlier = std::any_of(rows.begin(), rows.begin() + index,
                 [&](const auto* prior) { return prior->slice.slot == dependency->slice.slot &&
@@ -3471,6 +3470,9 @@ void VariableServiceV1::EndService(Engine& engine) {
                 ? VariableOutcomeKind::TargetRejected : VariableOutcomeKind::EmitterDestroyed;
             FinalizeBatch(row, outcome, {},
                         appliedBlock * engine.config.blockFrames);
+            const bool acknowledged = slices_.Acknowledge(row.slice);
+            assert(acknowledged);
+            (void)acknowledged;
             continue;
         }
         if (state != VariableSliceState::SliceApplied) {
@@ -3501,6 +3503,9 @@ void VariableServiceV1::EndService(Engine& engine) {
                         : VariableOutcomeKind::Applied,
                     {},
                     appliedBlock * engine.config.blockFrames);
+        const bool acknowledged = slices_.Acknowledge(row.slice);
+        assert(acknowledged);
+        (void)acknowledged;
     }
     observedBlock_ = blocksRendered;
     ReclaimHistoryRows();
@@ -4031,9 +4036,8 @@ bool VariableServiceV1::PreparedSourceDependsOn(VariableSliceRef source,
     for (std::size_t index = 0; index < count; ++index) {
         const auto current = visited[index];
         if (current.slot == cancelled.slot && current.generation == cancelled.generation) return true;
-        for (std::uint32_t dependency = 0; dependency < slices_.SourceCount(current); ++dependency) {
-            const auto* next = slices_.Source(current, dependency);
-            if (next == nullptr) continue;
+        std::uint32_t cursor = 0;
+        while (const auto* next = slices_.NextSource(current, &cursor)) {
             if (next->ticket < cancelledIdentity.ticket) continue;
             const bool seen = std::any_of(visited.begin(), visited.begin() + count,
                 [&](const auto prior) { return prior.slot == next->slice.slot &&
