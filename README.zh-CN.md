@@ -156,13 +156,6 @@ cmake --preset macos-dev    # Ninja + Apple Clang → build-nc/(单一日常通�
     cmake --build build-nc --config RelWithDebInfo [--target <harken_core|harken_editor|harken_hub>]
     ```
 
-## 法务文档
-
-- 安装及使用许可协议与隐私政策：[中文](USER_TERMS.zh-CN.md) | [English](USER_TERMS.md)
-- Harken Studio 开源发布总说明：[中文](OPEN_SOURCE_RELEASE_NOTICE.zh-CN.txt) | [English](OPEN_SOURCE_RELEASE_NOTICE.txt)
-
-根目录中的这些文件是 Hub 和 Studio 发布时使用的正文源文件。Hub 和安装器从中自动生成各自的展示格式；开源许可证及第三方声明仍见 [LICENSE](LICENSE) 和 [NOTICE](NOTICE)。
-
 ## 项目结构
 
 ```
