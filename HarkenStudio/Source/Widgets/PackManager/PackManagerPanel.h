@@ -5,7 +5,6 @@
 
 #include <QWidget>
 #include <QDialog>
-#include <QPushButton>
 #include <QLabel>
 #include <QTreeWidget>
 #include <QCheckBox>
@@ -24,10 +23,13 @@
 
 #include "../../Core/PackGenerationRecord.h"
 
+class QAction;
+
 namespace VNX {
 
 struct ProjectData;
 class SegmentedControl;
+class SplitButton;
 class ProportionalTreeWidget;
 
 class PackManagerPanel : public QWidget
@@ -56,7 +58,8 @@ public:
     static QString humanBytes(qint64 bytes);
 
 signals:
-    void exportRequested(const QStringList& platforms, const QStringList& unitNames);
+    void exportRequested(const QStringList& platforms, const QStringList& unitNames,
+                         bool includeUnchecked);
     void revealActionRequested(uint32_t objectID);
 
 protected:
@@ -85,7 +88,7 @@ private:
     void commitSelectedPlatforms(const QStringList& platforms);
 
     QStringList selectedUnitNames() const;
-    void requestExport(const QStringList& unitNames);
+    void requestExport(const QStringList& unitNames, bool includeUnchecked = false);
     void toggleUnitPlatform(QTreeWidgetItem* item, bool include);
 
     static QString platformName(const QString& id);
@@ -119,7 +122,8 @@ private:
 
     QHash<QString, PackGenerationResult> lastResults_;
 
-    QPushButton*  exportBtn_ = nullptr;
+    SplitButton*  exportBtn_ = nullptr;
+    QAction*      exportAllAction_ = nullptr;
     SegmentedControl* platformChipsRow_ = nullptr;
     bool          platformUpdating_ = false;
     QLineEdit*    searchEdit_ = nullptr;

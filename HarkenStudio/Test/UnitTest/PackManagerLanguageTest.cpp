@@ -25,7 +25,7 @@
 #include <QJsonDocument>
 #include <QMouseEvent>
 #include <QScrollBar>
-#include <QPushButton>
+#include <QAbstractButton>
 #include <QTemporaryDir>
 #include <QToolButton>
 #include <QTreeWidgetItemIterator>
@@ -265,7 +265,7 @@ TEST_F(PackManagerLanguageTest, ExportPlatformSelectorKeepsContentWidthsAcrossRe
             auto* selector = panel_->findChild<VNX::SegmentedControl*>("packPlatformChips");
             ASSERT_NE(selector, nullptr);
             expectNaturalWidth(selector);
-            auto* exportButton = panel_->findChild<QPushButton*>("projectPackGenerateAllBtn");
+            auto* exportButton = panel_->findChild<QAbstractButton*>("projectPackGenerateAllBtn");
             ASSERT_NE(exportButton, nullptr);
             EXPECT_LT(selector->mapTo(panel_.get(), QPoint(selector->width(), 0)).x(),
                       exportButton->mapTo(panel_.get(), QPoint()).x());
