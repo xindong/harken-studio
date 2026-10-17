@@ -135,17 +135,39 @@ protected:
 
     QJsonObject call(const QString& command, const QJsonObject& args = {})
     {
+        constexpr int responseTimeoutMs = 10000;
         const QString id = QStringLiteral("phase6-%1").arg(++request_);
+        SCOPED_TRACE((command + QLatin1Char(' ') + id).toStdString());
         const QByteArray payload = QJsonDocument(QJsonObject{
             {QStringLiteral("cmd"), command},
             {QStringLiteral("args"), args},
             {QStringLiteral("request_id"), id}}).toJson(QJsonDocument::Compact)
             + QByteArrayLiteral("\n");
-        EXPECT_EQ(socket_.write(payload), payload.size());
+        if (socket_.write(payload) != payload.size()) {
+            ADD_FAILURE() << "Failed to write complete IPC request: "
+                          << socket_.errorString().toStdString();
+            return {};
+        }
         socket_.flush();
-        if (!TestSupport::spinUntil([this] { return socket_.canReadLine(); })) return {};
-        const QJsonObject response =
-            QJsonDocument::fromJson(socket_.readLine().trimmed()).object();
+        const bool ready = TestSupport::spinUntil([this] {
+            return socket_.canReadLine()
+                || socket_.state() != QAbstractSocket::ConnectedState;
+        }, responseTimeoutMs);
+        if (!ready || !socket_.canReadLine()) {
+            ADD_FAILURE() << "No complete IPC response (timeout=" << responseTimeoutMs
+                          << " ms, socket state=" << socket_.state()
+                          << ", buffered bytes=" << socket_.bytesAvailable()
+                          << "): " << socket_.errorString().toStdString();
+            return {};
+        }
+        QJsonParseError error;
+        const QJsonDocument document =
+            QJsonDocument::fromJson(socket_.readLine().trimmed(), &error);
+        if (error.error != QJsonParseError::NoError || !document.isObject()) {
+            ADD_FAILURE() << "Invalid IPC response object: " << error.errorString().toStdString();
+            return {};
+        }
+        const QJsonObject response = document.object();
         EXPECT_EQ(response.value(QStringLiteral("request_id")).toString(), id);
         return response;
     }

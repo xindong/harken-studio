@@ -301,11 +301,11 @@ TEST_F(ProjectPlatformModel, TwoAndroidInstancesRoundTripEveryAuthoredReference)
     sources->sources.plain.platforms[lowString].active = firstEntry;
     sources->sources.plain.platforms[highString].active = secondEntry;
     sources->sources.plain.active = firstEntry;
-    project->packGroups = {{QStringLiteral("Low"), {}, false, {lowString}},
-                           {QStringLiteral("None"), {}, false, {}}};
     auto* action = manager.createItem(nullptr, QStringLiteral("Action"), ProjectItem::Type::Action);
     ASSERT_NE(action, nullptr);
-    project->actionPackTargeting = {{action->runtimeId(), false, {highString}}};
+    project->actionPackTargeting = {{action->runtimeId(), false, {highString}},
+                                    {action->runtimeId(), false, {lowString}, QStringLiteral("English")},
+                                    {action->runtimeId(), false, {}, QStringLiteral("Japanese")}};
     ProjectData::DeploymentProfile deployment;
     deployment.profileId = QStringLiteral("test");
     deployment.name = QStringLiteral("Device");
@@ -326,9 +326,9 @@ TEST_F(ProjectPlatformModel, TwoAndroidInstancesRoundTripEveryAuthoredReference)
     EXPECT_EQ(Platforms::platformsToJson(project->platforms), platformsJson);
     EXPECT_EQ(project->packExportCurrentPlatformId, highString);
     EXPECT_EQ(project->packExportSelectedPlatformIds, (QStringList{highString, lowString}));
-    EXPECT_EQ(project->packGroups[0].platformIds, QStringList{lowString});
-    EXPECT_FALSE(project->packGroups[1].allPlatforms);
-    EXPECT_TRUE(project->packGroups[1].platformIds.isEmpty());
+    EXPECT_EQ(project->actionPackTargeting[1].platformIds, QStringList{lowString});
+    EXPECT_FALSE(project->actionPackTargeting[2].allPlatforms);
+    EXPECT_TRUE(project->actionPackTargeting[2].platformIds.isEmpty());
     EXPECT_EQ(project->actionPackTargeting[0].platformIds, QStringList{highString});
     EXPECT_EQ(project->deploymentProfiles[0].platformIds, QStringList{highString});
     sound = manager.findItemByGuid(soundId);

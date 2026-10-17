@@ -367,7 +367,7 @@ QString unrestrictedSystemPrompt()
         "container, editor, meter (level/spectrum data), ui, audition, undo. "
         "Write/authoring categories: project (canonical object tree: create_item, "
         "delete_item, rename_item, move_item, set_item_property; pack metadata: "
-        "create_pack_group), "
+        "set_action_pack_targeting), "
         "mixer (buses/sends: create_bus, set_bus_volume_db, set_send), "
         "spatial (create_attenuation, set_attenuation_curve, "
         "bind_attenuation_to_object, set_game_object_position), container "

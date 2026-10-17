@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TableColumnLayout.h"
+#include "TableGroupHeader.h"
 
 #include <QFrame>
 #include <QModelIndex>
@@ -96,7 +97,7 @@ public:
     QVBoxLayout* rowsLayout();
     QLabel* bodyMessage();
     ListFooter* footer(bool standardButtons = true);
-    QLabel* createGroupHeader(const QString& text);
+    TableGroupHeader* createGroupHeader(const QString& text, const TableGroupOptions& options = {});
     ListFooter* createGroupFooter(bool standardButtons = true);
     QTableView* createModelView(const QString& name, QAbstractItemModel* model);
     ProportionalTreeWidget* createItemView(const QString& name, const QStringList& headers,

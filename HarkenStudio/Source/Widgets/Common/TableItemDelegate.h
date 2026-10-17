@@ -10,7 +10,8 @@ enum TableDataRole {
     TableGroupRole = Qt::UserRole + 1024,
     TableTextRole,
     TableDropTargetRole,
-    TableCursorRole
+    TableCursorRole,
+    TableGroupCollapsibleRole
 };
 
 enum class TableTextState { Normal, Muted, Disabled, Error, Modified, Custom, Success, Warning };

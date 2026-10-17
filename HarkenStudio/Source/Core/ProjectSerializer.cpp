@@ -1586,6 +1586,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
         }
     }
 
+    project.dissolvePackGroups();
     project.actionPublishedNameHistory.clear();
     if (root.contains(QLatin1String(kActionPublishedNameHistory))) {
         for (const auto& value : root[QLatin1String(kActionPublishedNameHistory)].toArray()) {

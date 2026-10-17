@@ -882,42 +882,13 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
         kSpatialNearFarActionObjectId, *spatialSound);
     addBinding(project.actions, actionsRoot);
 
-    VNX::PackGroup groupA;
-    groupA.name = QStringLiteral("ExportedPackContent");
-    groupA.actionIds = {
-        immediateAction->runtimeId(),
-        delayedAction->runtimeId(),
-        verticalAction->runtimeId(),
-        randomAction->runtimeId(),
-        nestedRandomAction->runtimeId(),
-        queueSoundAction->runtimeId(),
-        queueTrackAction->runtimeId(),
-        queuePieceAction->runtimeId(),
-        discreteAction->runtimeId(),
-        continuousAction->runtimeId(),
-        initiallySilentAction->runtimeId(),
-        directTrackAction->runtimeId(),
-        directPieceAction->runtimeId(),
-        sharedLeafAction->runtimeId(),
-        twoPlayAction->runtimeId(),
-    };
-    groupA.allPlatforms = false;
-    groupA.platformIds = {HarkenTest::platformIdString("Windows")};
-    project.packGroups.push_back(groupA);
+    for (const auto& action : {immediateAction, delayedAction, verticalAction, randomAction,
+                               nestedRandomAction, queueSoundAction, queueTrackAction, queuePieceAction,
+                               discreteAction, continuousAction, initiallySilentAction, directTrackAction,
+                               directPieceAction, sharedLeafAction, twoPlayAction, packBAction, spatialAction})
+        project.actionPackTargeting.push_back({action->runtimeId(), false,
+            {HarkenTest::platformIdString("Windows")}});
 
-    VNX::PackGroup groupB;
-    groupB.name = QStringLiteral("ExportedPackPackB");
-    groupB.actionIds = {packBAction->runtimeId()};
-    groupB.allPlatforms = false;
-    groupB.platformIds = {HarkenTest::platformIdString("Windows")};
-    project.packGroups.push_back(groupB);
-
-    VNX::PackGroup spatialGroup;
-    spatialGroup.name = QStringLiteral("ExportedPackSpatialNearFar");
-    spatialGroup.actionIds = {spatialAction->runtimeId()};
-    spatialGroup.allPlatforms = false;
-    spatialGroup.platformIds = {HarkenTest::platformIdString("Windows")};
-    project.packGroups.push_back(spatialGroup);
 }
 
 QJsonObject readManifest(const QString& outputDir)
@@ -1861,8 +1832,8 @@ TEST_F(AuthoredPackLifecycle, SavedWindowsProjectPreviewAndPackRenderSameBusVolu
     actionBinding.rootItem = *actionChild;
     actionBinding.rootItem->parent = nullptr;
     project_.actions = {actionBinding};
-    project_.packGroups.resize(1);
-    project_.packGroups.front().actionIds = {actionBinding.rootItem->runtimeId()};
+    project_.actionPackTargeting = {{actionBinding.rootItem->runtimeId(), false,
+        {HarkenTest::platformIdString("Windows")}}};
     project_.variables.clear();
     project_.attenuationItems.clear();
     project_.nextObjectID = 1000;
@@ -2093,8 +2064,8 @@ TEST_F(AuthoredPackLifecycle, SavedWindowsProjectPreviewAndPackRenderSameBusSend
     actionBinding.rootItem = *actionChild;
     actionBinding.rootItem->parent = nullptr;
     project_.actions = {actionBinding};
-    project_.packGroups.resize(1);
-    project_.packGroups.front().actionIds = {actionBinding.rootItem->runtimeId()};
+    project_.actionPackTargeting = {{actionBinding.rootItem->runtimeId(), false,
+        {HarkenTest::platformIdString("Windows")}}};
     project_.variables.clear();
     project_.attenuationItems.clear();
     project_.nextObjectID = 1000;
@@ -3652,7 +3623,6 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
 
     auto actionsRoot = project_.actions.front().rootItem;
     ASSERT_NE(nullptr, actionsRoot);
-    ASSERT_FALSE(project_.packGroups.empty());
     for (const auto& test : cases) {
         auto action = makeItem(test.name, VNX::ProjectItem::Type::Action, test.objectId);
         VNX::VActionStep step = playStep(*contentSound, 5.0f);
@@ -3660,7 +3630,8 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
         step.quantize.referenceObjectID = directPiece->objectID;
         step.quantize.referenceName = directPiece->name;
         action->comp<VNX::VAction>()->steps = {step};
-        project_.packGroups.front().actionIds.push_back(action->runtimeId());
+        project_.actionPackTargeting.push_back({action->runtimeId(), false,
+            {HarkenTest::platformIdString("Windows")}});
         addChild(actionsRoot, action);
     }
 
@@ -3677,7 +3648,8 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
     quantizedStop.quantize.referenceName = directPiece->name;
     quantizedStop.fadeTime = 10.0f;
     stopAction->comp<VNX::VAction>()->steps = {immediatePlay, quantizedStop};
-    project_.packGroups.front().actionIds.push_back(stopAction->runtimeId());
+    project_.actionPackTargeting.push_back({stopAction->runtimeId(), false,
+        {HarkenTest::platformIdString("Windows")}});
     addChild(actionsRoot, stopAction);
 
     struct DelayedCompositeCase {
@@ -3706,7 +3678,8 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
         stop.fadeTime = 2.0f;
         action->comp<VNX::VAction>()->steps = {
             playStep(*test.target), stop};
-        project_.packGroups.front().actionIds.push_back(action->runtimeId());
+        project_.actionPackTargeting.push_back({action->runtimeId(), false,
+            {HarkenTest::platformIdString("Windows")}});
         addChild(actionsRoot, action);
     }
 
@@ -4627,7 +4600,7 @@ TEST_F(ExportedPackLifecycle, HostPackPlayNullPostsVerticalContainer)
         std::string("pack-play --null --seconds 0.2 --root ") +
         QFileInfo(preparedExportedPackDir()).absoluteFilePath().toStdString() + " --action " +
         harkenstudio::ObjectIdString(harkentest::StudioObjectId(kVerticalContainerActionObjectId + kStableIdBias)) +
-        " --content ExportedPackContent");
+        " --content ExportedPackVerticalContainer");
     ASSERT_EQ(0, run.exitCode) << run.output;
     EXPECT_NE(std::string::npos, run.output.find("non-silent")) << run.output;
     EXPECT_EQ(std::string::npos, run.output.find("LoadCurrentWorld"))
@@ -4670,7 +4643,7 @@ TEST_F(ExportedPackLifecycle, HostPackPlayLoadsTheManifestInitPath)
             std::string("pack-play --null --seconds 0.2 --root ") +
             QFileInfo(exportedPackDir).absoluteFilePath().toStdString() + " --action " +
             harkenstudio::ObjectIdString(harkentest::StudioObjectId(kVerticalContainerActionObjectId + kStableIdBias)) +
-            " --content ExportedPackContent");
+            " --content ExportedPackVerticalContainer");
         ASSERT_EQ(0, run.exitCode) << run.output;
         EXPECT_NE(std::string::npos, run.output.find("non-silent")) << run.output;
     }
@@ -4683,7 +4656,7 @@ TEST_F(ExportedPackLifecycle, HostPackPlayNullRepeatsInOneSession)
         "--caller-seed 5 --seconds 0.2 --root " +
         QFileInfo(preparedExportedPackDir()).absoluteFilePath().toStdString() + " --action " +
         harkenstudio::ObjectIdString(harkentest::StudioObjectId(kVerticalContainerActionObjectId + kStableIdBias)) +
-        " --content ExportedPackContent");
+        " --content ExportedPackVerticalContainer");
     ASSERT_EQ(0, run.exitCode) << run.output;
     const QString output = QString::fromStdString(run.output);
     ASSERT_EQ(2, output.count(QStringLiteral("pack-play trigger "))) << run.output;
@@ -4728,7 +4701,7 @@ TEST_F(AuthoredPackLifecycle, DISABLED_HostCaptureReadyGateOrdersFirstTrigger)
         std::string("pack-play --null --no-recovery --seconds 0.2 --root \"") +
         QFileInfo(exportedPackDir).absoluteFilePath().toStdString() + "\" --action " +
         harkenstudio::ObjectIdString(harkentest::StudioObjectId(kImmediateSoundActionObjectId + kStableIdBias)) +
-        " --content ExportedPackContent --capture-ready-gate \"" +
+        " --content ExportedPackVerticalContainer --capture-ready-gate \"" +
         staleGate.toStdString() + "\" --capture-ready-timeout-ms 1000");
     EXPECT_NE(0, staleRun.exitCode) << staleRun.output;
     EXPECT_NE(std::string::npos,
@@ -4792,7 +4765,7 @@ TEST_F(ExportedPackLifecycle, WasapiImmediateSoundHarness)
         std::string("pack-play --seconds 0.4 --root ") +
         QFileInfo(preparedExportedPackDir()).absoluteFilePath().toStdString() + " --action " +
         harkenstudio::ObjectIdString(harkentest::StudioObjectId(kImmediateSoundActionObjectId + kStableIdBias)) +
-        " --content ExportedPackContent");
+        " --content ExportedPackImmediateSound");
     if (run.output.find("SKIPPED") != std::string::npos)
         GTEST_SKIP() << "No real WASAPI device\n" << run.output;
     ASSERT_EQ(0, run.exitCode) << run.output;
@@ -4827,7 +4800,7 @@ TEST_F(ExportedPackLifecycle, RelWithDebInfoQualificationReport)
         QFileInfo(preparedExportedPackDir()).absoluteFilePath().toStdString() + " --next-root " +
         QFileInfo(nextDir).absoluteFilePath().toStdString() + " --action " +
         harkenstudio::ObjectIdString(harkentest::StudioObjectId(kVerticalContainerActionObjectId + kStableIdBias)) +
-        " --content ExportedPackContent 2>&1";
+        " --content ExportedPackVerticalContainer 2>&1";
     FILE* pipe = _popen(cmd.c_str(), "rt");
     ASSERT_NE(nullptr, pipe);
     std::string output;

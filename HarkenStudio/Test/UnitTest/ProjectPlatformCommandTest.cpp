@@ -262,7 +262,9 @@ TEST_F(ProjectPlatformCommand, BaseChangeResetsStoredProfileAndPreservesReferenc
     sources->sources.plain.entries = {{entry, 11}};
     sources->sources.plain.active = entry;
     sources->sources.plain.platforms[id].active = entry;
-    project().packGroups = {{"Mobile", {}, false, {id}}};
+    auto* action = manager().createItem(nullptr, "Action", ProjectItem::Type::Action);
+    ASSERT_NE(action, nullptr);
+    project().actionPackTargeting = {{action->runtimeId(), false, {id}, QStringLiteral("English")}};
     project().packExportSelectedPlatformIds = {id};
     PlatformContextService::instance().setSelected({QUuid(id)}, QUuid(id), false);
     undo().clear();
@@ -336,9 +338,8 @@ TEST_F(ProjectPlatformCommand, DeleteCleansEveryReferenceAtomicallyAndUndoRestor
     sources->sources.plain.platforms[low].active = firstEntry;
     sources->sources.plain.platforms[high].active = secondEntry;
     sources->sources.plain.active = firstEntry;
-    project().packGroups = {{"Low", {action->runtimeId()}, false, {low}},
-                            {"All", {}, true, {low}}, {"Mixed", {}, false, {high, low}}};
-    project().actionPackTargeting = {{action->runtimeId(), false, {low}}};
+    project().actionPackTargeting = {{action->runtimeId(), false, {low}, QStringLiteral("English")},
+                                     {action->runtimeId(), false, {high, low}, QStringLiteral("Japanese")}};
     ProjectData::DeploymentProfile deployment;
     deployment.profileId = "mobile";
     deployment.name = "Mobile";
@@ -392,11 +393,7 @@ TEST_F(ProjectPlatformCommand, DeleteCleansEveryReferenceAtomicallyAndUndoRestor
     ASSERT_EQ(sources->sources.plain.platforms.size(), 1);
     EXPECT_TRUE(sources->sources.plain.platforms.contains(high));
     EXPECT_FALSE(sources->sources.plain.active.isNull());
-    EXPECT_FALSE(project().packGroups[0].allPlatforms);
-    EXPECT_TRUE(project().packGroups[0].platformIds.isEmpty());
-    EXPECT_TRUE(project().packGroups[1].allPlatforms);
-    EXPECT_TRUE(project().packGroups[1].platformIds.isEmpty());
-    EXPECT_EQ(project().packGroups[2].platformIds, QStringList{high});
+    EXPECT_EQ(project().actionPackTargeting[1].platformIds, QStringList{high});
     EXPECT_FALSE(project().actionPackTargeting[0].allPlatforms);
     EXPECT_TRUE(project().actionPackTargeting[0].platformIds.isEmpty());
     EXPECT_TRUE(project().deploymentProfiles[0].platformIds.isEmpty());
@@ -427,8 +424,8 @@ TEST_F(ProjectPlatformCommand, DeleteCleansEveryReferenceAtomicallyAndUndoRestor
     EXPECT_EQ(Platforms::find(project().platforms, QUuid(low)), nullptr);
     EXPECT_TRUE(Platforms::validateProject(project()));
     EXPECT_TRUE(project().packExportSelectedPlatformIds.isEmpty());
-    EXPECT_FALSE(project().packGroups[0].allPlatforms);
-    EXPECT_TRUE(project().packGroups[0].platformIds.isEmpty());
+    EXPECT_FALSE(project().actionPackTargeting[0].allPlatforms);
+    EXPECT_TRUE(project().actionPackTargeting[0].platformIds.isEmpty());
 }
 
 TEST_F(ProjectPlatformCommand, LastPlatformIsProtectedAndRecreatedNameGetsNewIdentity)
