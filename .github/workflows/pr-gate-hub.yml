@@ -33,12 +33,19 @@ jobs:
           -DHARKEN_BUILD_HUB=ON -DHARKEN_BUILD_HUB_UNIT_TESTS=ON
       - name: Build diagnostic tests
         run: cmake --build build-hub --config Release --target harken_hub_tests
+      - name: Record filesystem environment
+        shell: powershell
+        continue-on-error: true
+        run: |
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber
+          Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled,IoavProtectionEnabled
+          Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct | Select-Object displayName
       - name: Capture recovery failures across fresh processes
         shell: python
         run: |
           import json, os, pathlib, subprocess, time
           root = pathlib.Path.cwd()
-          evidence = root / '.temp' / 'issue-51-diagnosis'
+          evidence = root / '.temp' / ('issue-51-' + os.environ['GITHUB_RUN_ID'])
           evidence.mkdir(parents=True, exist_ok=True)
           env = os.environ.copy()
           env['PATH'] = str(pathlib.Path(env['VENUS_QT_DIR']) / 'bin') + os.pathsep + env['PATH']
@@ -72,5 +79,5 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: issue-51-${{ github.run_id }}-${{ matrix.slot }}-${{ runner.name }}
-          path: .temp/issue-51-diagnosis/
+          path: .temp/issue-51-${{ github.run_id }}/
           retention-days: 14

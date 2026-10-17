@@ -8,6 +8,13 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QDebug>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <restartmanager.h>
+#pragma comment(lib, "Rstrtmgr.lib")
+#endif
 
 namespace VNH {
 
@@ -28,10 +35,52 @@ bool saveRoot(const QJsonObject& root)
     if (!QDir().mkpath(QFileInfo(path).dir().path()))
         return false;
     QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly))
+    if (!file.open(QIODevice::WriteOnly)) {
+        qWarning().noquote() << "DIAGNOSTIC state open failed:" << path << file.error() << file.errorString();
         return false;
+    }
     const QByteArray json = QJsonDocument(root).toJson(QJsonDocument::Indented);
-    return file.write(json) == json.size() && file.commit();
+    if (file.write(json) != json.size()) {
+        qWarning().noquote() << "DIAGNOSTIC state write failed:" << path << file.error() << file.errorString();
+        return false;
+    }
+    const bool committed = file.commit();
+    if (!committed) {
+        qWarning().noquote() << "DIAGNOSTIC state commit failed:" << path << file.error() << file.errorString();
+#ifdef Q_OS_WIN
+        DWORD session = 0;
+        WCHAR key[CCH_RM_SESSION_KEY + 1] = {};
+        DWORD result = RmStartSession(&session, 0, key);
+        if (result == ERROR_SUCCESS) {
+            const QString nativePath = QDir::toNativeSeparators(path);
+            LPCWSTR resource = reinterpret_cast<LPCWSTR>(nativePath.utf16());
+            result = RmRegisterResources(session, 1, &resource, 0, nullptr, 0, nullptr);
+            UINT needed = 0;
+            UINT count = 0;
+            DWORD reboot = 0;
+            if (result == ERROR_SUCCESS)
+                result = RmGetList(session, &needed, &count, nullptr, &reboot);
+            QList<RM_PROCESS_INFO> processes;
+            if (result == ERROR_MORE_DATA) {
+                processes.resize(needed);
+                count = needed;
+                result = RmGetList(session, &needed, &count, processes.data(), &reboot);
+            }
+            qWarning() << "DIAGNOSTIC lock query:" << result << "processes=" << count;
+            if (result == ERROR_SUCCESS) {
+                for (UINT index = 0; index < count; ++index)
+                    qWarning() << "DIAGNOSTIC locking process:"
+                        << processes[index].Process.dwProcessId
+                        << QString::fromWCharArray(processes[index].strAppName)
+                        << QString::fromWCharArray(processes[index].strServiceShortName);
+            }
+            RmEndSession(session);
+        } else {
+            qWarning() << "DIAGNOSTIC lock session failed:" << result;
+        }
+#endif
+    }
+    return committed;
 }
 
 }
