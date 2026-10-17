@@ -10,11 +10,15 @@
 #include <QCryptographicHash>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QDebug>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <functional>
 #include <type_traits>
 
 namespace {
+
+std::function<void()> timeoutDiagnostics;
 
 bool spinUntil(const std::function<bool()>& predicate)
 {
@@ -22,7 +26,10 @@ bool spinUntil(const std::function<bool()>& predicate)
     timer.start();
     while (!predicate() && timer.elapsed() < 10000)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-    return predicate();
+    const bool complete = predicate();
+    if (!complete && timeoutDiagnostics)
+        timeoutDiagnostics();
+    return complete;
 }
 
 template<class Updater>
@@ -90,10 +97,35 @@ protected:
         checkerOptions.product = isHub ? "hub" : "harken";
         checkerOptions.channel = channel;
         checkerOptions.manifestPublicKey = keys.publicKey;
+        QObject::connect(checker, &VNH::UpdateChecker::checkFinished, checker,
+                         [this](const VNH::UpdateCheckResult& result) {
+                             lastCheck = result;
+                         });
+        timeoutDiagnostics = [this]() {
+            const auto state = update.currentState();
+            if constexpr (!isHub)
+                qWarning() << "DIAGNOSTIC downloading=" << update.isDownloading();
+            qWarning().noquote() << "DIAGNOSTIC state=" << state.state
+                << "failure=" << state.failureCode
+                << "checking=" << checker->isChecking()
+                << "feedRequests=" << feed.requestCount()
+                << "packageRequests=" << download.requestCount()
+                << "lastCheckOk=" << lastCheck.ok
+                << "lastCheckNotModified=" << lastCheck.notModified
+                << "lastCheckError=" << lastCheck.error
+                << "packageExists=" << QFileInfo::exists(state.downloadPath)
+                << "manifestExists=" << QFileInfo::exists(state.manifestEnvelopePath);
+            QFile persisted(VNH::UpdateStateStore::filePath());
+            const bool opened = persisted.open(QIODevice::ReadOnly);
+            qWarning().noquote() << "DIAGNOSTIC persistedOpen=" << opened
+                << "persistedError=" << persisted.errorString()
+                << "persistedBytes=" << (opened ? persisted.readAll() : QByteArray());
+        };
     }
 
     void TearDown() override
     {
+        timeoutDiagnostics = {};
         update.stop();
         qunsetenv("HARKEN_HUB_USER_ROOT");
         qunsetenv("HARKEN_HUB_MACHINE_ROOT");
@@ -113,6 +145,7 @@ protected:
     Updater update;
     VNH::UpdateChecker* checker = nullptr;
     VNH::UpdateChecker::Options checkerOptions;
+    VNH::UpdateCheckResult lastCheck;
 };
 
 using Updaters = ::testing::Types<VNH::UpdateCoordinator, VNH::HubSelfUpdate>;
