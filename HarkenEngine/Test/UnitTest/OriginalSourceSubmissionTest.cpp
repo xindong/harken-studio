@@ -29,6 +29,8 @@ using Registry = harken::OriginalSourceSubmissionRegistry;
 
 VnConfig SourceBodyConfig() {
     auto config = harkentest::MakeNullConfig(4, kFrames, kRate);
+    // Source lifetime coverage does not require the default nested Action scratch.
+    config.maxTriggerDepth = 2;
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 2;
     return config;

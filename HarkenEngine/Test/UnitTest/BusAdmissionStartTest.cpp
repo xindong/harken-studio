@@ -214,6 +214,15 @@ harken::BusAdmissionClaimKeyV1 StudioKey() {
     return key;
 }
 
+VnConfig AdmissionConfig(
+    std::uint32_t mixLayout = VN_CHANNEL_LAYOUT_DEFAULT,
+    std::uint32_t deviceLayout = VN_CHANNEL_LAYOUT_DEFAULT) {
+    auto config = harkentest::MakeNullConfigLayout(4, 64, 48000, mixLayout, deviceLayout);
+    // Bus admission coverage does not require the default nested Action scratch.
+    config.maxTriggerDepth = 2;
+    return config;
+}
+
 struct AdmissionSession {
     VnConfig config;
     harkentest::EngineSession session;
@@ -223,8 +232,7 @@ struct AdmissionSession {
     explicit AdmissionSession(
         std::uint32_t mixLayout = VN_CHANNEL_LAYOUT_DEFAULT,
         std::uint32_t deviceLayout = VN_CHANNEL_LAYOUT_DEFAULT)
-        : config(harkentest::MakeNullConfigLayout(4, 64, 48000, mixLayout,
-                                                 deviceLayout)),
+        : config(AdmissionConfig(mixLayout, deviceLayout)),
           session(config),
           image(0) {
         EXPECT_EQ(session.InitResult(), VN_OK);
@@ -870,7 +878,7 @@ TEST(BusAdmissionStart, OpenMatchingClaimAdmitsAndPendingBackpressures) {
 }
 
 struct StagedTraceFixture {
-    harkentest::EngineSession session{harkentest::MakeNullConfig(4, 64, 48000)};
+    harkentest::EngineSession session{AdmissionConfig()};
     AdmissionWorldImage image{1};
     std::string path = std::string(HARKEN_TEMP_DIR "/") + "u3_9_staged_pair.vtrc";
     std::uint32_t plan = harken::kInvalidTopologyPlanIndex;
@@ -1247,8 +1255,7 @@ std::uint32_t OccupiedAdmissionCount(const harken::Engine& engine) {
 }
 
 TEST(BusAdmissionStart, PairedCommitRecyclesStaleCurrentWorldAdmissionRows) {
-    VnConfig config = harkentest::MakeNullConfigLayout(
-        4, 64, 48000, VN_CHANNEL_LAYOUT_DEFAULT, VN_CHANNEL_LAYOUT_DEFAULT);
+    VnConfig config = AdmissionConfig();
     config.maxBusTopologyOwners = 2;
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
