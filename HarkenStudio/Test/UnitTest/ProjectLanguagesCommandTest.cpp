@@ -6,7 +6,9 @@
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QFile>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QStringList>
 #include <QTemporaryDir>
@@ -151,17 +153,16 @@ TEST_F(ProjectLanguagesCommandTest, RejectsOverlongName)
     EXPECT_EQ(stack()->count(), 0);
 }
 
-TEST_F(ProjectLanguagesCommandTest, AcceptsEmptyList)
+TEST_F(ProjectLanguagesCommandTest, RejectsEmptyListWithoutMutationOrHistory)
 {
-    const auto r = setLanguages({});
-    ASSERT_TRUE(r.success);
-
-    EXPECT_TRUE(languages().isEmpty());
-    EXPECT_EQ(stack()->count(), 1);
-
-    stack()->undo();
-    EXPECT_EQ(languages(),
-              (QStringList{QStringLiteral("English"), QStringLiteral("Japanese")}));
+    const auto before = languages();
+    for (const QStringList& requested : {QStringList{}, QStringList{QStringLiteral("  ")}}) {
+        const auto r = setLanguages(requested);
+        EXPECT_FALSE(r.success);
+        EXPECT_EQ(r.errorCode, QStringLiteral("INVALID_ARGS"));
+        EXPECT_EQ(languages(), before);
+        EXPECT_EQ(stack()->count(), 0);
+    }
 }
 
 TEST_F(ProjectLanguagesCommandTest, SameValueIsNoOp)
@@ -214,4 +215,34 @@ TEST_F(ProjectLanguagesCommandTest, SurvivesSaveAndReload)
 
     EXPECT_EQ(languages(),
               (QStringList{QStringLiteral("Korean"), QStringLiteral("Japanese")}));
+}
+
+TEST_F(ProjectLanguagesCommandTest, LegacyEmptyLanguagesLoadWithAPersistableDefault)
+{
+    auto& pm = VNX::ProjectManager::instance();
+    const QString projectPath = pm.currentProject()->projectPath;
+    QFile file(projectPath);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    const auto original = QJsonDocument::fromJson(file.readAll()).object();
+    file.close();
+    for (const QJsonValue& legacy : {QJsonValue(), QJsonValue(QJsonArray{}),
+                                    QJsonValue(QJsonArray{QStringLiteral("SFX")})}) {
+        pm.closeProject();
+        auto root = original;
+        auto content = root.value(QStringLiteral("content")).toObject();
+        if (legacy.isNull()) content.remove(QStringLiteral("projectLanguages"));
+        else content.insert(QStringLiteral("projectLanguages"), legacy);
+        root.insert(QStringLiteral("content"), content);
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        file.write(QJsonDocument(root).toJson());
+        file.close();
+        ASSERT_TRUE(pm.loadProject(projectPath));
+        EXPECT_EQ(languages(), QStringList{QStringLiteral("English")});
+        EXPECT_FALSE(pm.removeProjectLanguage(QStringLiteral("English")));
+        ASSERT_TRUE(pm.saveProject());
+        ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+        const auto saved = QJsonDocument::fromJson(file.readAll()).object().value("content").toObject();
+        EXPECT_EQ(saved.value("projectLanguages").toArray(), QJsonArray{QStringLiteral("English")});
+        file.close();
+    }
 }

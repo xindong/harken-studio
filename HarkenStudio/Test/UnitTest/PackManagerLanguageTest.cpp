@@ -10,6 +10,7 @@
 #include "Core/ThemeManager.h"
 #include "RuntimeBridge/PackagingBridge.h"
 #include "Widgets/Common/SegmentedControl.h"
+#include "Widgets/Common/TableGroupHeader.h"
 #include "Widgets/Common/TableItemDelegate.h"
 #include "Widgets/PackManager/PackManagerPanel.h"
 
@@ -160,12 +161,12 @@ protected:
     std::unique_ptr<VNX::PackManagerPanel> panel_;
 };
 
-TEST_F(PackManagerLanguageTest, SectionCaptionsRetainEmphasisAcrossResizeAndColumnMovement)
+TEST_F(PackManagerLanguageTest, GroupCaptionsMatchSharedHeadersAcrossResizeAndColumnMovement)
 {
     panel_->setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
     auto* tree = panel_->findChild<QTreeWidget*>();
     ASSERT_NE(tree, nullptr);
-    const auto& colors = VNX::ThemeManager::instance().colors();
+    VNX::TableGroupHeader reference({}, nullptr, &VNX::ThemeManager::instance());
     for (int width : {1000, 520, 760}) {
         resizePanel(width);
         tree->header()->moveSection(tree->header()->visualIndex(0), width == 520 ? 2 : 0);
@@ -177,20 +178,21 @@ TEST_F(PackManagerLanguageTest, SectionCaptionsRetainEmphasisAcrossResizeAndColu
         QStringList captions;
         for (QTreeWidgetItemIterator it(tree); *it; ++it) {
             auto* row = *it;
-            if (!row->data(0, VNX::TableSectionRole).toBool()) continue;
+            if (!row->data(0, VNX::TableGroupRole).toBool()) continue;
             captions.append(row->text(0));
             SCOPED_TRACE(row->text(0).toStdString());
             const QRect rect = tree->visualItemRect(row);
             ASSERT_FALSE(rect.isEmpty());
-            EXPECT_EQ(image.pixelColor(1, rect.center().y()), colors.accent);
-            EXPECT_EQ(image.pixel(image.width() - 8, rect.center().y()), colors.headerBackground.lighter(108).rgba());
-            EXPECT_EQ(image.pixelColor(image.width() - 8, rect.top()), colors.sectionSeparator);
-            EXPECT_EQ(image.pixelColor(image.width() - 8, rect.bottom()), colors.sectionSeparator);
+            reference.setText(row->text(0));
+            reference.resize(image.width(), reference.height());
+            EXPECT_EQ(rect.height(), reference.height());
+            EXPECT_EQ(image.copy(0, rect.top(), image.width(), rect.height()),
+                reference.grab().toImage().convertToFormat(image.format()));
             EXPECT_FALSE(row->flags().testFlag(Qt::ItemIsSelectable));
         }
         EXPECT_EQ(captions, (QStringList{"System", "Content"}));
         ASSERT_NE(actionRow(), nullptr);
-        EXPECT_FALSE(actionRow()->data(0, VNX::TableSectionRole).toBool());
+        EXPECT_FALSE(actionRow()->data(0, VNX::TableGroupRole).toBool());
     }
 }
 
@@ -428,7 +430,7 @@ TEST_F(PackManagerLanguageTest, MissingLanguagesCannotReuseAnOldFlatArtifact)
 {
     writeArtifact({});
     auto& pm = VNX::ProjectManager::instance();
-    pm.setProjectLanguagesInternal({});
+    pm.setProjectLanguagesInternal({QStringLiteral("Korean")});
     ASSERT_NE(actionRow(), nullptr);
     EXPECT_TRUE(actionRow()->data(0, Qt::UserRole + 5).toString().isEmpty());
 

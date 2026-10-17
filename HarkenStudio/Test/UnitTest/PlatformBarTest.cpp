@@ -4,7 +4,6 @@
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectTypes.h"
-#include "Widgets/Common/SegmentedControl.h"
 #include "Widgets/PlatformBar/PlatformBar.h"
 
 #include <gtest/gtest.h>
@@ -392,12 +391,12 @@ TEST(PlatformBar, TogglingAllOffEditsOnlyPrimary)
     pm.closeProject();
 }
 
-VNX::SegmentedControl* languagesOf(VNX::PlatformBar& bar)
+QComboBox* languagesOf(VNX::PlatformBar& bar)
 {
-    return bar.findChild<VNX::SegmentedControl*>(QStringLiteral("platformBarLanguages"));
+    return bar.findChild<QComboBox*>(QStringLiteral("platformBarLanguages"));
 }
 
-TEST(PlatformBar, LanguageSegmentsHiddenUntilProjectHasLanguages)
+TEST(PlatformBar, LanguageSelectionFollowsProjectMembershipAndContext)
 {
     ensureApp();
     auto& pm = VNX::ProjectManager::instance();
@@ -418,9 +417,10 @@ TEST(PlatformBar, LanguageSegmentsHiddenUntilProjectHasLanguages)
     bar.show();
     auto* languages = languagesOf(bar);
     ASSERT_NE(languages, nullptr);
-    EXPECT_EQ(languages->button(0), nullptr);
-    EXPECT_FALSE(languages->isVisible());
-    EXPECT_TRUE(VNX::LanguageContextService::instance().language().isEmpty());
+    EXPECT_EQ(languages->count(), 1);
+    EXPECT_TRUE(languages->isVisible());
+    EXPECT_EQ(languages->currentData().toString(), QStringLiteral("English"));
+    EXPECT_EQ(VNX::LanguageContextService::instance().language(), QStringLiteral("English"));
     auto* platforms = platformsOf(bar);
     auto* all = allButtonOf(bar);
     ASSERT_NE(platforms, nullptr);
@@ -430,51 +430,43 @@ TEST(PlatformBar, LanguageSegmentsHiddenUntilProjectHasLanguages)
     EXPECT_TRUE(all->isChecked());
 
     pm.setProjectLanguagesInternal(names({"English", "Japanese"}));
-    ASSERT_NE(languages->button(0), nullptr);
-    ASSERT_NE(languages->button(1), nullptr);
-    EXPECT_EQ(languages->button(2), nullptr);
+    ASSERT_EQ(languages->count(), 2);
     EXPECT_TRUE(languages->isVisible());
-    EXPECT_EQ(languages->button(0)->text(), QStringLiteral("English"));
-    EXPECT_EQ(languages->button(1)->text(), QStringLiteral("Japanese"));
-    EXPECT_TRUE(languages->button(0)->isChecked());
-    EXPECT_FALSE(languages->button(1)->isChecked());
+    EXPECT_EQ(languages->itemText(0), QStringLiteral("English"));
+    EXPECT_EQ(languages->itemText(1), QStringLiteral("Japanese"));
+    EXPECT_EQ(languages->currentIndex(), 0);
     EXPECT_EQ(VNX::LanguageContextService::instance().language(), QStringLiteral("English"));
 
-    languages->button(1)->click();
-    EXPECT_FALSE(languages->button(0)->isChecked());
-    EXPECT_TRUE(languages->button(1)->isChecked());
+    languages->setCurrentIndex(1);
+    EXPECT_EQ(languages->currentData().toString(), QStringLiteral("Japanese"));
     EXPECT_EQ(VNX::LanguageContextService::instance().language(), QStringLiteral("Japanese"));
 
-    languages->button(1)->click();
-    EXPECT_TRUE(languages->button(1)->isChecked());
+    languages->setCurrentIndex(1);
+    EXPECT_EQ(languages->currentData().toString(), QStringLiteral("Japanese"));
     EXPECT_EQ(VNX::LanguageContextService::instance().language(), QStringLiteral("Japanese"));
 
     pm.setProjectLanguagesInternal(names({"Japanese", "English"}));
-    ASSERT_NE(languages->button(0), nullptr);
-    ASSERT_NE(languages->button(1), nullptr);
-    EXPECT_EQ(languages->button(0)->text(), QStringLiteral("Japanese"));
-    EXPECT_TRUE(languages->button(0)->isChecked());
-    EXPECT_FALSE(languages->button(1)->isChecked());
+    ASSERT_EQ(languages->count(), 2);
+    EXPECT_EQ(languages->currentData().toString(), QStringLiteral("Japanese"));
     EXPECT_EQ(VNX::LanguageContextService::instance().language(), QStringLiteral("Japanese"));
 
     pm.setProjectLanguagesInternal(names({"Korean", "English"}));
-    ASSERT_NE(languages->button(0), nullptr);
-    ASSERT_NE(languages->button(1), nullptr);
-    EXPECT_EQ(languages->button(0)->text(), QStringLiteral("Korean"));
-    EXPECT_TRUE(languages->button(0)->isChecked());
-    EXPECT_FALSE(languages->button(1)->isChecked());
+    ASSERT_EQ(languages->count(), 2);
+    EXPECT_EQ(languages->currentData().toString(), QStringLiteral("Korean"));
     EXPECT_EQ(VNX::LanguageContextService::instance().language(), QStringLiteral("Korean"));
 
     pm.setProjectLanguagesInternal({});
-    EXPECT_EQ(languages->button(0), nullptr);
-    EXPECT_FALSE(languages->isVisible());
-    EXPECT_TRUE(VNX::LanguageContextService::instance().language().isEmpty());
+    EXPECT_EQ(languages->count(), 2);
+    EXPECT_TRUE(languages->isVisible());
+    EXPECT_EQ(VNX::LanguageContextService::instance().language(), QStringLiteral("Korean"));
     EXPECT_TRUE(bar.isVisible());
     EXPECT_TRUE(platforms->isVisible());
     EXPECT_TRUE(all->isVisible());
     EXPECT_TRUE(all->isChecked());
 
     pm.closeProject();
+    EXPECT_EQ(languages->count(), 0);
+    EXPECT_FALSE(languages->isVisible());
     VNX::LanguageContextService::instance().setStorageForTesting(
         VNX::SettingsStorageFactory::create(
             VNX::SettingsStorageFactory::StorageType::QSettings,

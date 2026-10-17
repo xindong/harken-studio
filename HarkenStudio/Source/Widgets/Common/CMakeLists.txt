@@ -38,6 +38,8 @@ add_library(harken_editor_common STATIC
     ElidedLabel.h
     TableColumnLayout.cpp
     TableColumnLayout.h
+    TableGroupHeader.cpp
+    TableGroupHeader.h
     TableItemDelegate.cpp
     TableItemDelegate.h
     TableWidget.cpp

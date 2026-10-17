@@ -92,7 +92,14 @@ public:
         v->addWidget(box_);
         buildHeader();
         rows_ = box_->rowsWidget();
-        buildFooter();
+        footer_ = box_->footer();
+        configureFooter(footer_, {});
+        auto* message = box_->bodyMessage();
+        message->setObjectName(QStringLiteral("sourceMissingLanguages"));
+        message->setText(missingLanguagesHint());
+        message->setContextMenuPolicy(Qt::CustomContextMenu);
+        QObject::connect(message, &QWidget::customContextMenuRequested, this,
+                         [this](const QPoint& pos) { showMissingLanguagesMenu(pos); });
         box_->setRowMoveHandler([this](int from, int to) { moveRow(from, to); },
             [this](int from, int to) {
                 return boundItem_ && missingLanguageEntries().isEmpty()
@@ -111,13 +118,15 @@ public:
                          [this](uint32_t) { reloadFromItem(); });
         QObject::connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
                          this, [this](const PlatformContext&) { refreshActiveColumn(); });
-        QObject::connect(&ProjectManager::instance(), &ProjectManager::targetPlatformsChanged,
-                         this, [this](const QStringList&) { refreshActiveColumn(); });
         QObject::connect(&LanguageContextService::instance(), &LanguageContextService::languageChanged,
                          this, [this](const QString&) {
-                             refreshSelectionChrome();
-                             refreshActiveColumn();
+                             if (distinguishLanguage()) {
+                                 box_->clearSelection();
+                                 rebuildRows();
+                             }
                          });
+        QObject::connect(&ProjectManager::instance(), &ProjectManager::targetPlatformsChanged,
+                         this, [this](const QStringList&) { refreshActiveColumn(); });
         QObject::connect(&ProjectManager::instance(), &ProjectManager::projectLanguagesChanged,
                          this, [this](QStringList) { reloadFromItem(); });
         QObject::connect(&ProjectManager::instance(), &ProjectManager::itemDeleted, this,
@@ -150,17 +159,15 @@ public:
 
     void setBoundItem(ProjectItem* item)
     {
-        if (boundItem_ != item) {
+        if (boundItem_ != item)
             box_->clearSelection();
-            selectedGroupLanguage_.clear();
-        }
         boundItem_ = item;
         reloadFromItem();
     }
 
-    bool appendExisting(uint32_t sourceId)
+    bool appendExisting(uint32_t sourceId, const QString& language)
     {
-        if (!canAppendSources() || !AssetRegistry::instance().contains(sourceId))
+        if (!canAppendSources(language) || !AssetRegistry::instance().contains(sourceId))
             return false;
         auto* sound = boundItem_->comp<VSound>();
         if (!sound)
@@ -168,9 +175,6 @@ public:
         SoundSourceDef source;
         source.entryId = QUuid::createUuid();
         source.sourceId = sourceId;
-        const QString language = distinguishLanguage() ? currentGroupLanguage() : QString();
-        if (distinguishLanguage() && language.isEmpty())
-            return false;
         if (const AssetInfo* asset = AssetRegistry::instance().getAsset(sourceId)) {
             source.rangeContentHash = asset->contentHash;
             if (const auto seed = SoundSourceSemantics::fileLoopRegion(asset)) {
@@ -187,7 +191,7 @@ public:
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override
     {
-        if (!canAppendSources() || !AudioImportGate::mimeHasAudio(event->mimeData())) {
+        if (!canAppendSources(importLanguage()) || !AudioImportGate::mimeHasAudio(event->mimeData())) {
             event->ignore();
             return;
         }
@@ -197,7 +201,7 @@ protected:
 
     void dragMoveEvent(QDragMoveEvent* event) override
     {
-        if (!canAppendSources() || !AudioImportGate::mimeHasAudio(event->mimeData())) {
+        if (!canAppendSources(importLanguage()) || !AudioImportGate::mimeHasAudio(event->mimeData())) {
             event->ignore();
             return;
         }
@@ -208,13 +212,13 @@ protected:
     void dropEvent(QDropEvent* event) override
     {
         const QStringList paths = AudioImportGate::extractAudioFiles(event->mimeData());
-        if (!canAppendSources() || paths.isEmpty()) {
+        if (!canAppendSources(importLanguage()) || paths.isEmpty()) {
             event->ignore();
             return;
         }
         event->setDropAction(Qt::CopyAction);
         event->accept();
-        importExternalPaths(paths);
+        importExternalPaths(paths, importLanguage());
     }
 
     bool event(QEvent* event) override
@@ -223,10 +227,8 @@ protected:
             const auto* change = static_cast<QDynamicPropertyChangeEvent*>(event);
             if (change->propertyName() == "selectedRow")
                 selectRow(property("selectedRow").toInt());
-            else if (change->propertyName() == "selectedGroup")
-                selectGroup(property("selectedGroup").toString());
             else if (change->propertyName() == "appendSourceId")
-                appendExisting(property("appendSourceId").toUInt());
+                appendExisting(property("appendSourceId").toUInt(), importLanguage());
         }
         return QWidget::event(event);
     }
@@ -245,7 +247,7 @@ protected:
             const QUuid targetEntry = row ? QUuid(row->property("entryId").toString()) : QUuid();
             if (type == QEvent::DragEnter || type == QEvent::DragMove) {
                 auto* drag = static_cast<QDropEvent*>(event);
-                if (canAppendSources(targetEntry) && AudioImportGate::mimeHasAudio(drag->mimeData())) {
+                if (canAppendSources(importLanguage()) && AudioImportGate::mimeHasAudio(drag->mimeData())) {
                     drag->setDropAction(Qt::CopyAction);
                     drag->accept();
                     return true;
@@ -253,10 +255,10 @@ protected:
             } else if (type == QEvent::Drop) {
                 auto* drop = static_cast<QDropEvent*>(event);
                 const QStringList paths = AudioImportGate::extractAudioFiles(drop->mimeData());
-                if (canAppendSources(targetEntry) && !paths.isEmpty()) {
+                if (canAppendSources(importLanguage()) && !paths.isEmpty()) {
                     drop->setDropAction(Qt::CopyAction);
                     drop->accept();
-                    importExternalPaths(paths, targetEntry);
+                    importExternalPaths(paths, importLanguage(), targetEntry);
                     return true;
                 }
             }
@@ -267,11 +269,7 @@ protected:
                 rowHost = rowHost->parentWidget();
             if (rowHost && rowHost->property("rowIndex").isValid()) {
                 selectRow(rowHost->property("rowIndex").toInt());
-            } else if (rowHost && !rowHost->property("groupLanguage").toString().isEmpty()) {
-                const QString language = rowHost->property("groupLanguage").toString();
-                if (buildLanguages().contains(language))
-                    selectGroup(language);
-            } else if ((selected_ >= 0 || !selectedGroupLanguage_.isEmpty())
+            } else if (selected_ >= 0
                        && w != this && !isAncestorOf(w)
                        && !w->isAncestorOf(this)
                        && w->window() == window()) {
@@ -294,42 +292,30 @@ private:
         return box_->header();
     }
 
-    QWidget* buildFooter()
+    void configureFooter(ListFooter* foot, const QString& language)
     {
-        auto* foot = box_->footer();
-        addBtn_ = foot->addButton();
-        addBtn_->setObjectName(QStringLiteral("listAdd_sources"));
-        removeBtn_ = foot->removeButton();
-        removeBtn_->setObjectName(QStringLiteral("listRemoveSelected_sources"));
-
-        QObject::connect(addBtn_, &QToolButton::clicked, this, [this]() { showAddMenu(); });
-        QObject::connect(removeBtn_, &QToolButton::clicked, this, [this]() { removeSelected(); });
-
-        return foot;
+        foot->setProperty("groupLanguage", language);
+        auto* add = foot->addButton();
+        add->setObjectName(QStringLiteral("listAdd_sources"));
+        auto* remove = foot->removeButton();
+        remove->setObjectName(QStringLiteral("listRemoveSelected_sources"));
+        QObject::connect(add, &QToolButton::clicked, this,
+            [this, add, language] { showAddMenu(add, language); });
+        QObject::connect(remove, &QToolButton::clicked, this, [this, language] {
+            if (selected_ >= 0 && selected_ < static_cast<int>(sources_.size())
+                && sources_[selected_].language == language)
+                removeSelected();
+        });
     }
 
     void selectRow(int index)
     {
-        QString group;
-        if (index >= 0 && index < static_cast<int>(sources_.size())) {
-            const QString language = sources_[index].language;
-            if (buildLanguages().contains(language))
-                group = language;
-        }
-        if (selected_ == index && selectedGroupLanguage_ == group)
+        if (index >= 0 && (index >= static_cast<int>(sources_.size())
+                          || sources_[index].language != importLanguage()))
+            index = -1;
+        if (selected_ == index)
             return;
         selected_ = index;
-        selectedGroupLanguage_ = group;
-        refreshSelectionChrome();
-    }
-
-    void selectGroup(const QString& language)
-    {
-        const QString group = buildLanguages().contains(language) ? language : QString();
-        box_->clearSelection();
-        selectedGroupLanguage_ = group;
-        if (!group.isEmpty())
-            LanguageContextService::instance().setLanguage(group);
         refreshSelectionChrome();
     }
 
@@ -340,40 +326,36 @@ private:
             row->style()->unpolish(row);
             row->style()->polish(row);
         }
-        for (QWidget* header : groupHeaders_) {
-            header->setProperty(
-                "selected",
-                selected_ < 0 && header->property("groupLanguage").toString() == selectedGroupLanguage_
-                    && selectedGroupLanguage_ == LanguageContextService::instance().language()
-                    && !selectedGroupLanguage_.isEmpty());
-            header->style()->unpolish(header);
-            header->style()->polish(header);
-        }
         const QSet<QUuid> missing = missingLanguageEntries();
         const bool hasSelected = selected_ >= 0 && selected_ < static_cast<int>(sources_.size());
-        if (removeBtn_) {
-            const bool canRemove = hasSelected && (missing.isEmpty()
+        const auto refreshFooter = [&](ListFooter* foot, const QString& language) {
+            const bool canRemove = hasSelected && sources_[selected_].language == language && (missing.isEmpty()
                 || (missing.size() == 1 && missing.contains(sources_[selected_].entry.entryId)));
-            removeBtn_->setEnabled(canRemove);
-            removeBtn_->setToolTip(!missing.isEmpty() && !canRemove ? missingLanguagesHint() : QString());
-        }
-        if (addBtn_) {
-            addBtn_->setEnabled(canAppendSources());
-            addBtn_->setToolTip(missing.isEmpty() ? QString() : missingLanguagesHint());
-        }
+            foot->removeButton()->setEnabled(canRemove);
+            foot->removeButton()->setToolTip(!missing.isEmpty() && !canRemove ? missingLanguagesHint() : QString());
+            foot->addButton()->setEnabled(canAppendSources(language));
+            foot->addButton()->setToolTip(missing.isEmpty() ? QString() : missingLanguagesHint());
+        };
+        refreshFooter(footer_, {});
+        for (auto it = groupFooters_.cbegin(); it != groupFooters_.cend(); ++it)
+            refreshFooter(it.value(), it.key());
     }
 
-    void showAddMenu()
+    void showAddMenu(QToolButton* anchor, const QString& language)
     {
+        if (!canAppendSources(language))
+            return;
         QMenu menu(this);
         QAction* importAction = menu.addAction(QObject::tr("Import from file…"));
-        QObject::connect(importAction, &QAction::triggered, this, [this]() { importFiles(); });
+        QObject::connect(importAction, &QAction::triggered, anchor,
+            [this, language] { importFiles(language); });
         QAction* existingAction = menu.addAction(QObject::tr("Add existing…"));
-        QObject::connect(existingAction, &QAction::triggered, this, [this]() { chooseExisting(); });
-        menu.exec(addBtn_->mapToGlobal(QPoint(0, addBtn_->height())));
+        QObject::connect(existingAction, &QAction::triggered, anchor,
+            [this, anchor, language] { chooseExisting(anchor, language); });
+        menu.exec(anchor->mapToGlobal(QPoint(0, anchor->height())));
     }
 
-    void chooseExisting()
+    void chooseExisting(QToolButton* anchor, const QString& language)
     {
         if (!boundItem_)
             return;
@@ -382,39 +364,43 @@ private:
         SelectorRequest req;
         req.title = QObject::tr("Add Existing Source");
         req.domain = RefDomain::AudioAsset;
-        req.onSelected = [self, ownerAtOpen](uint32_t id) {
+        req.onSelected = [self, ownerAtOpen, language](uint32_t id) {
             if (!self || !self->boundItem_ || self->boundItem_->objectID != ownerAtOpen)
                 return;
-            self->appendExisting(id);
+            self->appendExisting(id, language);
         };
-        SelectorWindow::open(req, addBtn_);
+        SelectorWindow::open(req, this)->move(anchor->mapToGlobal(QPoint(0, anchor->height())));
     }
 
-    void importFiles()
+    void importFiles(QString language)
     {
         if (!boundItem_)
             return;
+        const QPointer<SourcesListWidget> self(this);
+        const uint32_t ownerAtOpen = boundItem_->objectID;
         const QStringList paths = QFileDialog::getOpenFileNames(
             this, QObject::tr("Import Audio Sources"), {},
             QObject::tr("Audio Files (%1)").arg(AudioFormatCatalog::filePatterns().join(' ')));
-        if (paths.isEmpty())
+        if (paths.isEmpty() || !self || !self->boundItem_ || self->boundItem_->objectID != ownerAtOpen)
             return;
-        importExternalPaths(paths);
+        self->importExternalPaths(paths, language);
     }
 
-    void importExternalPaths(const QStringList& paths, const QUuid& targetEntry = {})
+    void importExternalPaths(const QStringList& paths, const QString& language,
+                             const QUuid& targetEntry = {})
     {
-        if (!canAppendSources(targetEntry) || paths.isEmpty())
+        if (!canAppendSources(language) || paths.isEmpty())
             return;
-        const QString language = distinguishLanguage() ? currentGroupLanguage(targetEntry) : QString();
-        if (distinguishLanguage() && language.isEmpty())
-            return;
+        QUuid restoreEntry;
+        for (const auto& source : sources_)
+            if (source.entry.entryId == targetEntry && source.language == language)
+                restoreEntry = targetEntry;
         ProjectData* project = ProjectManager::instance().currentProject();
         ProjectFileBinding* binding = project
             ? findFileBindingForItem(*project, boundItem_) : nullptr;
         if (binding)
             ImportSoundSourcesCommand::pushImport(
-                paths, binding, boundItem_, language, targetEntry);
+                paths, binding, boundItem_, language, restoreEntry);
     }
 
     void relink(uint32_t sourceId)
@@ -508,14 +494,35 @@ private:
     static QString missingLanguagesHint()
     {
         return QObject::tr("Move or remove sources with missing languages before editing. "
-                           "Right-click an affected source for repair actions.");
+                           "Right-click the message below the table for repair actions.");
     }
 
-    bool canAppendSources(const QUuid& targetEntry = {}) const
+    void showMissingLanguagesMenu(const QPoint& pos)
+    {
+        if (missingLanguageEntries().isEmpty())
+            return;
+        QMenu menu(this);
+        auto* destinations = menu.addMenu(QObject::tr("Move all sources with missing languages to"));
+        for (const QString& language : buildLanguages()) {
+            auto* destination = destinations->addAction(language);
+            destination->setObjectName(QStringLiteral("sourceMoveAllMissingLanguagesTo_") + language);
+            QObject::connect(destination, &QAction::triggered, this, [this, language]() {
+                moveSourcesToLanguage(missingLanguageEntries(), language);
+            });
+        }
+        auto* removeAll = menu.addAction(QObject::tr("Remove all sources with missing languages"));
+        removeAll->setObjectName(QStringLiteral("sourceRemoveAllMissingLanguages"));
+        QObject::connect(removeAll, &QAction::triggered, this,
+                         [this]() { removeMissingLanguageSources(); });
+        menu.exec(box_->bodyMessage()->mapToGlobal(pos));
+    }
+
+    bool canAppendSources(const QString& language) const
     {
         const auto* sound = boundItem_ ? boundItem_->comp<VSound>() : nullptr;
-        return sound && (!sound->distinguishLanguage
-            || (!currentGroupLanguage(targetEntry).isEmpty() && missingLanguageEntries().isEmpty()));
+        return sound && (sound->distinguishLanguage
+            ? buildLanguages().contains(language) && missingLanguageEntries().isEmpty()
+            : language.isEmpty());
     }
 
     void removeMissingLanguageSources()
@@ -634,20 +641,11 @@ private:
                        : QStringList();
     }
 
-    QString currentGroupLanguage(const QUuid& targetEntry = {}) const
+    QString importLanguage() const
     {
-        const QStringList languages = buildLanguages();
-        if (!targetEntry.isNull()) {
-            for (const auto& source : sources_)
-                if (source.entry.entryId == targetEntry && languages.contains(source.language))
-                    return source.language;
+        if (!distinguishLanguage())
             return {};
-        }
-        if (selected_ >= 0 && selected_ < static_cast<int>(sources_.size())) {
-            const QString selected = sources_[selected_].language;
-            if (languages.contains(selected))
-                return selected;
-        }
+        const QStringList languages = buildLanguages();
         const QString bar = LanguageContextService::instance().language();
         return languages.contains(bar) ? bar : QString();
     }
@@ -808,14 +806,12 @@ private:
         }
         selected_ = -1;
         for (int index = 0; index < static_cast<int>(sources_.size()); ++index) {
-            if (sources_[index].entry.entryId == selectedEntry) {
+            if (sources_[index].entry.entryId == selectedEntry
+                && sources_[index].language == importLanguage()) {
                 selected_ = index;
-                selectedGroupLanguage_ = sources_[index].language;
                 break;
             }
         }
-        if (selected_ < 0 && !selectedEntry.isNull())
-            selectedGroupLanguage_.clear();
         if (toggle_) {
             QSignalBlocker blocker(toggle_);
             toggle_->setChecked(sound && sound->distinguishLanguage);
@@ -878,31 +874,6 @@ private:
             if (!canEdit && !moveTo->isEnabled())
                 moveTo->setToolTip(missingLanguagesHint());
             row->addAction(moveTo);
-            if (missing.contains(source.entryId) && missing.size() > 1) {
-                if (!languages.isEmpty()) {
-                    auto* moveAll = new QAction(
-                        QObject::tr("Move all sources with missing languages to"), row);
-                    moveAll->setObjectName(QStringLiteral("sourceMoveAllMissingLanguagesTo"));
-                    auto* destinations = new QMenu(row);
-                    destinations->setObjectName(QStringLiteral("sourceMoveAllMissingLanguagesMenu"));
-                    for (const QString& language : languages) {
-                        auto* destination = destinations->addAction(language);
-                        destination->setObjectName(
-                            QStringLiteral("sourceMoveAllMissingLanguagesTo_") + language);
-                        QObject::connect(destination, &QAction::triggered, this, [this, language]() {
-                            moveSourcesToLanguage(missingLanguageEntries(), language);
-                        });
-                    }
-                    moveAll->setMenu(destinations);
-                    row->addAction(moveAll);
-                }
-                auto* removeAll = new QAction(
-                    QObject::tr("Remove all sources with missing languages"), row);
-                removeAll->setObjectName(QStringLiteral("sourceRemoveAllMissingLanguages"));
-                QObject::connect(removeAll, &QAction::triggered, this,
-                                 [this]() { removeMissingLanguageSources(); });
-                row->addAction(removeAll);
-            }
         }
         row->addAction(relinkAction);
         QObject::connect(row, &QWidget::customContextMenuRequested, row,
@@ -927,7 +898,7 @@ private:
         h->setContentsMargins(0, 0, 0, 0);
         h->setSpacing(0);
 
-        auto* number = box_->createRowNumber(row, index);
+        auto* number = box_->createRowNumber(row, index, static_cast<int>(rowWidgets_.size()) + 1);
         number->setEnabled(canEdit);
         h->addWidget(number);
 
@@ -973,7 +944,7 @@ private:
         activeCell->addWidget(active, 0, Qt::AlignCenter);
         h->addWidget(activeCell);
 
-        box_->registerRow(row, {number, sourceCell, rangeCell, activeCell});
+        box_->registerRow(row, {number, sourceCell, rangeCell, activeCell}, nullptr, sources_[index].language);
         rowWidgets_.push_back(row);
         return row;
     }
@@ -989,11 +960,9 @@ private:
             delete it;
         }
         rowWidgets_.clear();
-        groupHeaders_.clear();
-        if (!buildLanguages().contains(selectedGroupLanguage_))
-            selectedGroupLanguage_.clear();
-        if (removeBtn_)
-            removeBtn_->setEnabled(false);
+        groupFooters_.clear();
+        footer_->setVisible(!distinguishLanguage());
+        box_->bodyMessage()->setVisible(!missingLanguageEntries().isEmpty());
 
         if (!distinguishLanguage()) {
             for (int i = 0; i < static_cast<int>(sources_.size()); ++i)
@@ -1004,24 +973,20 @@ private:
             return;
         }
 
-        const QStringList languages = buildLanguages();
-        QSet<int> placed;
-        auto addGroup = [&](const QString& language) {
-            rl->addWidget(buildGroupHeader(language));
+        const QString language = importLanguage();
+        if (!language.isEmpty()) {
+            auto* header = box_->createGroupHeader(language);
+            header->setObjectName(QStringLiteral("sourceLanguageGroup"));
+            header->setProperty("groupLanguage", language);
             for (int i = 0; i < static_cast<int>(sources_.size()); ++i) {
                 if (sources_[i].language != language)
                     continue;
                 rl->addWidget(buildRow(i));
-                placed.insert(i);
             }
-        };
-        for (const QString& language : languages)
-            addGroup(language);
-        for (int i = 0; i < static_cast<int>(sources_.size()); ++i) {
-            if (!placed.contains(i))
-                rl->addWidget(buildRow(i));
+            auto* foot = box_->createGroupFooter();
+            configureFooter(foot, language);
+            groupFooters_.insert(language, foot);
         }
-        markLastRow();
         refreshSelectionChrome();
         refreshActiveColumn();
     }
@@ -1036,35 +1001,14 @@ private:
         row->style()->polish(row);
     }
 
-    QWidget* buildGroupHeader(const QString& language)
-    {
-        auto* header = new QWidget(rows_);
-        header->setObjectName(QStringLiteral("sourceLanguageGroup"));
-        header->setAttribute(Qt::WA_StyledBackground, true);
-        header->setProperty("groupLanguage", language);
-        header->setProperty("selected", false);
-        header->setCursor(Qt::PointingHandCursor);
-        groupHeaders_.push_back(header);
-        auto* h = new QHBoxLayout(header);
-        h->setContentsMargins(0, 0, 0, 0);
-        h->setSpacing(0);
-        auto* label = new QLabel(language, header);
-        label->setObjectName(QStringLiteral("sourceLanguageGroupLabel"));
-        h->addWidget(label);
-        box_->registerGroupRow(header);
-        return header;
-    }
-
     QCheckBox* toggle_ = nullptr;
     TableWidget* box_ = nullptr;
     QWidget* rows_ = nullptr;
-    QToolButton* addBtn_ = nullptr;
-    QToolButton* removeBtn_ = nullptr;
+    ListFooter* footer_ = nullptr;
+    QMap<QString, ListFooter*> groupFooters_;
     std::vector<QWidget*> rowWidgets_;
-    std::vector<QWidget*> groupHeaders_;
     std::vector<SourceRow> sources_;
     int selected_ = -1;
-    QString selectedGroupLanguage_;
     ProjectItem* boundItem_ = nullptr;
 };
 

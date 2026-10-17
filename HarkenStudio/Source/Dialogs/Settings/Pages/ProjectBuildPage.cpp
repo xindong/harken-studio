@@ -351,7 +351,7 @@ void ProjectBuildPage::updateTargetLanguageRowState()
     }
 
     if (targetLanguageRemoveBtn_)
-        targetLanguageRemoveBtn_->setEnabled(selectedTargetLanguageRow_ >= 0);
+        targetLanguageRemoveBtn_->setEnabled(selectedTargetLanguageRow_ >= 0 && targetLanguageRows_.size() > 1);
 }
 
 void ProjectBuildPage::onAddTargetLanguageClicked()
@@ -366,7 +366,8 @@ void ProjectBuildPage::onAddTargetLanguageClicked()
 
 void ProjectBuildPage::onRemoveTargetLanguageClicked()
 {
-    if (selectedTargetLanguageRow_ < 0 || selectedTargetLanguageRow_ >= targetLanguageRows_.size())
+    if (selectedTargetLanguageRow_ < 0 || selectedTargetLanguageRow_ >= targetLanguageRows_.size()
+        || targetLanguageRows_.size() <= 1)
         return;
 
     targetLanguagesBox_->removeSelectedRow([this] {

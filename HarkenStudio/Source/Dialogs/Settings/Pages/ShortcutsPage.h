@@ -8,10 +8,11 @@
 
 class QKeySequenceEdit;
 class QLineEdit;
-class QTreeWidget;
 class QTreeWidgetItem;
 
 namespace VNX {
+
+class ProportionalTreeWidget;
 
 inline constexpr const char* kSettingsPageShortcuts = "shortcuts";
 
@@ -45,7 +46,7 @@ private:
     QString effectiveConflict(const QString& id, const QKeySequence& sequence) const;
 
     QLineEdit* shortcutSearchEdit_ = nullptr;
-    QTreeWidget* shortcutTree_ = nullptr;
+    ProportionalTreeWidget* shortcutTree_ = nullptr;
     QTreeWidgetItem* shortcutCaptureItem_ = nullptr;
     QKeySequenceEdit* shortcutCaptureEdit_ = nullptr;
     QHash<QString, QKeySequence> pendingShortcuts_;

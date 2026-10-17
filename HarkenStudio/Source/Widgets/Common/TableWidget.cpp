@@ -6,6 +6,7 @@
 #include "LayoutDebugTint.h"
 #include "ListFooter.h"
 #include "ProportionalTreeWidget.h"
+#include "TableGroupHeader.h"
 #include "TableItemDelegate.h"
 #include "ElidedLabel.h"
 
@@ -256,6 +257,17 @@ ListFooter* TableWidget::footer(bool standardButtons)
     return footer_;
 }
 
+ListFooter* TableWidget::createGroupFooter(bool standardButtons)
+{
+    auto* footer = new ListFooter(rowsWidget(), standardButtons, themeManager_);
+    QtControlSkin::setSemanticProperty(footer, "tableGroupFooter", true);
+    footer->installEventFilter(this);
+    DebugTint::tint(footer, DebugTint::Role::Foot);
+    rowsLayout()->addWidget(footer);
+    scheduleLayout();
+    return footer;
+}
+
 QTableView* TableWidget::createModelView(const QString& name, QAbstractItemModel* model)
 {
     Q_ASSERT(!rows_ && !view_);
@@ -454,11 +466,13 @@ TableCell* TableWidget::createCell(QWidget* parent)
     return new TableCell(parent, themeManager_);
 }
 
-void TableWidget::registerRow(QWidget* row, const QList<QWidget*>& cells, QWidget* details)
+void TableWidget::registerRow(QWidget* row, const QList<QWidget*>& cells, QWidget* details,
+                              const QString& groupId)
 {
     Q_ASSERT(cells.size() == columns_.size());
     Row binding;
     binding.widget = row;
+    binding.groupId = groupId;
     row->setAttribute(Qt::WA_StyledBackground, true);
     if (row->objectName() != QLatin1String("listRow")) row->setProperty("listRow", true);
     row->installEventFilter(this);
@@ -545,11 +559,12 @@ QLabel* TableWidget::createRowNumber(QWidget* row, int index, std::optional<int>
     return number;
 }
 
-void TableWidget::registerGroupRow(QWidget* row)
+QLabel* TableWidget::createGroupHeader(const QString& text)
 {
-    QtControlSkin::setSemanticProperty(row, "tableGroup", true);
-    groups_.append(row);
-    applyTheme();
+    auto* header = new TableGroupHeader(text, rowsWidget(), themeManager_);
+    rowsLayout()->addWidget(header);
+    scheduleLayout();
+    return header;
 }
 
 void TableWidget::setRowMoveHandler(std::function<void(int, int)> handler,
@@ -629,7 +644,7 @@ void TableWidget::setRowSelectionHandler(std::function<void(QWidget*)> handler)
     rowSelectionHandler_ = std::move(handler);
 }
 
-QList<QWidget*> TableWidget::selectableWidgetRows() const
+QList<QWidget*> TableWidget::selectableWidgetRows(const std::optional<QString>& groupId) const
 {
     QList<QWidget*> rows;
     if (!rows_) return rows;
@@ -640,7 +655,9 @@ QList<QWidget*> TableWidget::selectableWidgetRows() const
             || (widget->isHidden() && widget->testAttribute(Qt::WA_WState_ExplicitShowHide)))
             continue;
         if (std::any_of(rowBindings_.begin(), rowBindings_.end(),
-                       [widget](const Row& row) { return row.widget == widget; }))
+                       [widget, &groupId](const Row& row) {
+                           return row.widget == widget && (!groupId || row.groupId == *groupId);
+                       }))
             rows.append(widget);
     }
     return rows;
@@ -676,6 +693,7 @@ bool TableWidget::removeSelectedRow(const std::function<bool()>& remove, const Q
 {
     if (!remove) return false;
     int position = -1;
+    QString groupId;
     const QPointer<QAbstractItemModel> model = view_ ? view_->model() : nullptr;
     if (view_) {
         const auto rows = selectableViewRows();
@@ -690,7 +708,10 @@ bool TableWidget::removeSelectedRow(const std::function<bool()>& remove, const Q
         const auto rows = selectableWidgetRows();
         for (int i = 0; i < rows.size(); ++i)
             if (rows[i]->property("selected").toBool()) {
-                position = i;
+                const auto row = std::find_if(rowBindings_.begin(), rowBindings_.end(),
+                    [&](const Row& row) { return row.widget == rows[i]; });
+                groupId = row->groupId;
+                position = selectableWidgetRows(groupId).indexOf(rows[i]);
                 break;
             }
     }
@@ -698,7 +719,7 @@ bool TableWidget::removeSelectedRow(const std::function<bool()>& remove, const Q
     const QPointer<TableWidget> self(this);
     const bool removed = remove();
     if (!self || !removed || position < 0) return removed;
-    QTimer::singleShot(0, this, [this, generation, position, model] {
+    QTimer::singleShot(0, this, [this, generation, position, model, groupId] {
         if (generation != selectionGeneration_) return;
         if (view_) {
             if (!model || view_->model() != model) return;
@@ -732,7 +753,7 @@ bool TableWidget::removeSelectedRow(const std::function<bool()>& remove, const Q
                 view->setFocus(Qt::OtherFocusReason);
             }
         } else {
-            const auto rows = selectableWidgetRows();
+            const auto rows = selectableWidgetRows(groupId);
             if (rows.isEmpty()) {
                 clearSelection();
                 return;
@@ -1123,15 +1144,6 @@ void TableWidget::applyTheme()
     headerClip_->setFixedHeight(height);
     if (options_.bodySizing == TableBodySizing::Expanding)
         scroll_->setMinimumHeight(bodyHeightForContent(0));
-    groups_.removeIf([](const auto& group) { return group.isNull(); });
-    for (const auto& group : groups_) {
-        group->setFont(headerFont);
-        group->setFixedHeight(height);
-        if (auto* layout = group->layout())
-            layout->setContentsMargins(metrics.cellPaddingX, metrics.cellPaddingY,
-                                       metrics.cellPaddingX, metrics.cellPaddingY);
-        updateCellMetrics(group);
-    }
     for (const auto& row : rowBindings_)
         for (const auto& cell : row.cells)
             if (cell) updateCellMetrics(cell);
@@ -1154,6 +1166,15 @@ void TableWidget::refreshLayout()
     if (!rows_ || applyingLayout_) return;
     const QScopedValueRollback guard(applyingLayout_, true);
     ensurePolished();
+    bool lastWidget = true;
+    for (int i = rows_->layout()->count() - 1; i >= 0; --i) {
+        auto* widget = rows_->layout()->itemAt(i)->widget();
+        if (!widget || (widget->isHidden() && widget->testAttribute(Qt::WA_WState_ExplicitShowHide)))
+            continue;
+        if (widget->property("tableGroupFooter").toBool())
+            QtControlSkin::setSemanticProperty(widget, "lastRow", lastWidget);
+        lastWidget = false;
+    }
     layout_->activate();
     const int headerHeight = headerClip_->isHidden() ? 0 : headerClip_->height();
     static_cast<TableRowsScrollArea*>(scroll_)->setViewportMargins(0, headerHeight, 0, 0);
@@ -1341,7 +1362,9 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
         auto* mouse = static_cast<QMouseEvent*>(event);
         if (mouse->button() == Qt::LeftButton) {
             const QPoint global = mouse->globalPosition().toPoint();
-            bool blank = watched == footer_ && !footer_->childAt(footer_->mapFromGlobal(global));
+            const auto* footer = qobject_cast<ListFooter*>(watched);
+            bool blank = footer && (footer == footer_ || footer->parentWidget() == rows_)
+                && !footer->childAt(footer->mapFromGlobal(global));
             if (view_ && watched == view_->viewport()) {
                 const auto index = view_->indexAt(view_->viewport()->mapFromGlobal(global));
                 blank = !index.isValid();

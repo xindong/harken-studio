@@ -37,7 +37,6 @@ ShortcutsPage::ShortcutsPage(QWidget* parent)
     auto* table = new TableWidget(TableOptions::display(), this);
     shortcutTree_ = table->createItemView(QStringLiteral("shortcutTree"),
         {tr("Command"), tr("Shortcut"), tr("Default")}, {380, 170, 150});
-    shortcutTree_->setUniformRowHeights(true);
     shortcutTree_->setAllColumnsShowFocus(true);
     shortcutTree_->setContextMenuPolicy(Qt::CustomContextMenu);
 
@@ -170,10 +169,7 @@ void ShortcutsPage::populateShortcutTree()
         if (entries.isEmpty())
             continue;
 
-        QTreeWidgetItem* catItem = new QTreeWidgetItem({ShortcutManager::categoryName(cat)});
-        catItem->setFlags(Qt::ItemIsEnabled);
-        catItem->setData(0, TableGroupRole, true);
-        shortcutTree_->addTopLevelItem(catItem);
+        auto* catItem = shortcutTree_->createGroup(ShortcutManager::categoryName(cat));
 
         for (const ShortcutInfo& info : entries)
         {

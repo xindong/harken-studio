@@ -402,6 +402,7 @@ TEST(ThemeMetricsMigration, TableGeometryUpdatesInPlaceAcrossWidgetAndNativeBodi
         {QStringLiteral("Name"), QStringLiteral("Name"), 500},
         {QStringLiteral("Value"), QStringLiteral("Value"), 500}
     });
+    auto* widgetGroup = table.createGroupHeader(QStringLiteral("Parameters"));
     auto* row = new QWidget(table.rowsWidget());
     row->setProperty("selected", true);
     auto* layout = new QHBoxLayout(row);
@@ -423,6 +424,7 @@ TEST(ThemeMetricsMigration, TableGeometryUpdatesInPlaceAcrossWidgetAndNativeBodi
     auto* footer = table.footer();
     VNX::ProportionalTreeWidget native({500, 500}, nullptr, manager.get());
     native.setHeaderLabels({"Name", "Value"});
+    auto* nativeGroup = native.createGroup(QStringLiteral("Parameters"));
     auto* item = new QTreeWidgetItem(&native, {"Parameter", "value"});
     native.setCurrentItem(item);
     VNX::TableWidget listTable(nullptr, manager.get());
@@ -461,6 +463,7 @@ TEST(ThemeMetricsMigration, TableGeometryUpdatesInPlaceAcrossWidgetAndNativeBodi
         EXPECT_EQ(changes, 0);
     };
     checkCell();
+    EXPECT_EQ(widgetGroup->height(), native.visualItemRect(nativeGroup).height());
     EXPECT_EQ(table.headerCell(0)->font().pointSize(), name->font().pointSize());
     EXPECT_EQ(native.header()->font().pointSize(), name->font().pointSize());
     EXPECT_EQ(table.headerCell(0)->font().pointSize(), 10);
@@ -471,6 +474,8 @@ TEST(ThemeMetricsMigration, TableGeometryUpdatesInPlaceAcrossWidgetAndNativeBodi
     table.refreshLayout();
     const auto& metrics = manager->metrics().table;
     checkCell();
+    EXPECT_EQ(widgetGroup->height(), native.visualItemRect(nativeGroup).height());
+    EXPECT_GE(widgetGroup->height(), metrics.headerHeight);
     EXPECT_GT(otherEdit->x() - edit->geometry().right() - 1, oldGap);
     EXPECT_EQ(table.header()->height(), native.header()->height());
     EXPECT_EQ(table.headerCell(0)->font().pointSize(), name->font().pointSize());

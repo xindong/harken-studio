@@ -1744,24 +1744,16 @@ QFrame#listBox[rowNumberSelection="true"] QWidget[tableRowNumber="true"][selecte
     background-color: @bgSelected@;
     border-left-color: @accent@;
 }
-QFrame#listBox QWidget[tableGroup="true"] {
-    background-color: @headerBackground@;
-    border: none;
-    border-bottom: 1px solid @borderPrimary@;
-    border-left: 2px solid transparent;
-}
-QFrame#listBox QWidget[tableGroup="true"][selected="true"] {
-    border-left-color: @accent@;
-}
-QFrame#listBox QWidget[tableGroup="true"] QLabel {
-    color: @textMuted@;
-    font-size: @bodyPointSize@pt;
-    background: transparent;
-}
 QWidget#listFoot {
     background-color: @headerBackground@;
     border: none;
     border-top: 1px solid @borderPrimary@;
+}
+QWidget#listFoot[tableGroupFooter="true"] {
+    border-top: none;
+}
+QWidget#listFoot[tableGroupFooter="true"][lastRow="false"] {
+    border-bottom: 1px solid @borderPrimary@;
 }
 QToolButton[listFootBtn="true"] {
     border: none;

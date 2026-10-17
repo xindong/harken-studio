@@ -1158,11 +1158,8 @@ void PackManagerPanel::populateProjectPackTable()
         item->setData(0, kPackPathRole, packPath);
     };
 
-    auto* systemSection = new QTreeWidgetItem(packTree_);
-    systemSection->setText(kColName, tr("System"));
+    auto* systemSection = packTree_->createGroup(tr("System"));
     systemSection->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Section));
-    systemSection->setData(0, TableSectionRole, true);
-    systemSection->setFlags(Qt::ItemIsEnabled);
 
     auto addSystemPack = [&](const QString& label, const QString& baseName,
                              const QString& tooltip) {
@@ -1179,11 +1176,8 @@ void PackManagerPanel::populateProjectPackTable()
     addSystemPack(tr("Init"), QStringLiteral("Init"),
         tr("Buses, sends and attenuations. Rebuilt on every export."));
 
-    auto* contentSection = new QTreeWidgetItem(packTree_);
-    contentSection->setText(kColName, tr("Content"));
+    auto* contentSection = packTree_->createGroup(tr("Content"));
     contentSection->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Section));
-    contentSection->setData(0, TableSectionRole, true);
-    contentSection->setFlags(Qt::ItemIsEnabled);
 
     const std::vector<ActionPackTargeting> targeting = pm.getActionPackTargeting();
     auto actionIncludes = [&targeting](harkenstudio::ObjectId stableId, const QString& platform) {

@@ -1,4 +1,5 @@
 #include "TableItemDelegate.h"
+#include "TableGroupHeader.h"
 
 #include "Core/ThemeManager.h"
 #include "Core/QtControlSkin.h"
@@ -45,6 +46,10 @@ void TableItemDelegate::updateEditorGeometry(QWidget* editor, const QStyleOption
 QSize TableItemDelegate::sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const
 {
     QSize size = QStyledItemDelegate::sizeHint(option, index);
+    if (index.siblingAtColumn(0).data(TableGroupRole).toBool()) {
+        size.setHeight(TableGroupHeader::preferredHeight(themeManager_));
+        return size;
+    }
     const auto& metrics = themeManager_->metrics().table;
     size.setHeight(std::max(metrics.rowHeight,
         std::max(size.height(), QtControlSkin(themeManager_->snapshot()).fieldHeight())
@@ -108,29 +113,6 @@ void TableItemDelegate::paintContents(QPainter* painter, const QStyleOptionViewI
                                      const QModelIndex& index) const
 {
     QStyledItemDelegate::paint(painter, option, index);
-}
-
-void TableItemDelegate::paintGroup(QPainter* painter, const QRect& rect, const QString& text,
-                                  const QFont& font, ThemeManager* themeManager, bool section)
-{
-    const auto& colors = themeManager->colors();
-    const auto& metrics = themeManager->metrics().table;
-    painter->save();
-    painter->fillRect(rect, section ? colors.headerBackground.lighter(108) : colors.headerBackground);
-    if (section)
-        painter->fillRect(QRect(rect.left(), rect.top(), 3, rect.height()), colors.accent);
-    painter->setPen(section ? colors.sectionSeparator : colors.borderPrimary);
-    if (section) painter->drawLine(rect.topLeft(), rect.topRight());
-    painter->drawLine(rect.bottomLeft(), rect.bottomRight());
-    painter->setPen(section ? colors.textPrimary : colors.textMuted);
-    QFont captionFont = font;
-    if (section) captionFont.setBold(true);
-    painter->setFont(captionFont);
-    const auto content = rect.adjusted(section ? 10 : metrics.cellPaddingX, 0,
-                                      section ? -6 : -metrics.cellPaddingX, 0);
-    painter->drawText(content, Qt::AlignLeft | Qt::AlignVCenter,
-        QFontMetrics(captionFont).elidedText(text, Qt::ElideRight, content.width()));
-    painter->restore();
 }
 
 }

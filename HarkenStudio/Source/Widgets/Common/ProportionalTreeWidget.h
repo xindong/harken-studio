@@ -18,6 +18,7 @@ public:
     void setColumnsHidden(const QList<int>& columns, bool hidden);
     void setColumnLayoutKey(const QString& key);
     void setColumnsFitToWidth(bool fit);
+    QTreeWidgetItem* createGroup(const QString& text);
 
 protected:
     void drawRow(QPainter* painter, const QStyleOptionViewItem& option,
