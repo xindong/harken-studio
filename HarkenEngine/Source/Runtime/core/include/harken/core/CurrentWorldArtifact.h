@@ -46,6 +46,7 @@ struct CurrentWorldArtifactHeaderV1 {
     std::uint64_t bodyChecksum = 0;
     std::uint64_t runtimeSemanticFingerprint = 0;
     std::uint64_t capabilityMask = 0;
+    std::uint32_t bodyVintage = kCurrentWorldShippingBodyVintage;
 };
 
 CurrentWorldLoadStatusV1 InspectCurrentWorldArtifactHeaderV1(

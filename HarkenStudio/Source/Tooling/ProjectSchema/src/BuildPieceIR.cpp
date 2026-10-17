@@ -215,11 +215,13 @@ std::optional<BuildIndexes> ValidateBuildInputs(
             previousMarker = markerIt->second;
         }
         const PieceDef& modelPiece = *modelIt->second;
+        const auto bounds = DerivePieceTimelineBounds(project, modelPiece);
+        if (!bounds || pieceFacts->bounds != *bounds) return std::nullopt;
         if (pieceFacts->startKind != modelPiece.startPoint.kind ||
             pieceFacts->startMarkerId != modelPiece.startPoint.markerId) {
             return std::nullopt;
         }
-        std::int64_t expectedStartCoordinate = 0;
+        std::int64_t expectedStartCoordinate = bounds->nominalStart;
         if (modelPiece.startPoint.kind == StartPointKind::Marker) {
             const auto startMarker =
                 modelMarkerByMarkerId.find(modelPiece.startPoint.markerId);
@@ -539,6 +541,8 @@ std::optional<PieceIR> BuildPieceIRImpl(
             const PieceNormalization& pn = *factsIt->second;
             irPiece.startKind = pn.startKind;
             irPiece.startCoordinate = pn.startCoordinate;
+            irPiece.entryMarker = piece.entryMarker;
+            irPiece.bounds = pn.bounds;
             irPiece.startMarkerId = pn.startMarkerId;
             for (const StableId markerStableId : pn.markersByMarkerId) {
                 const auto markerIt = markerById.find(markerStableId);

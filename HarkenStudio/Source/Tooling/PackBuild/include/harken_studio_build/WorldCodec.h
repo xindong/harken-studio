@@ -27,6 +27,9 @@ enum class CurrentWorldBodyDecodeResult : std::uint8_t {
 bool EncodeCurrentWorldShippingBody(
     const ContainerWorldInstallViewV1& world,
     std::vector<std::uint8_t>& out) noexcept;
+bool EncodeCurrentWorldBodyV19(
+    const ContainerWorldInstallViewV1& world,
+    std::vector<std::uint8_t>& out) noexcept;
 class CurrentWorldBodyImage {
 public:
     CurrentWorldBodyImage() noexcept;

@@ -120,6 +120,11 @@ struct InputMarker {
     std::int64_t position = 0;
 };
 
+struct InputEntryMarker {
+    AuthoringGuid guid{};
+    std::int64_t position = 0;
+};
+
 // A Piece's authored time spec. Carried as its own optional so a node that has
 // no business owning one (anything but a Piece) can still be handed one, and be
 // refused for it.
@@ -171,6 +176,7 @@ struct InputNode : PlayablePropertyPayloadV1 {
     std::optional<InputPieceTimeSpec> timeSpec;
     std::optional<InputStartPoint> startPoint;
     std::vector<InputMarker> markers;
+    std::optional<InputEntryMarker> entryMarker;
 };
 
 // A whole authored project. Nodes are a flat list; the structural tree is

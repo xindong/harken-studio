@@ -59,6 +59,7 @@ enum class DiagnosticCode : std::uint32_t {
     OccurrencePropertiesOnNonContainer = 127,
     OccurrenceOrdinalOverflow = 128,
     ContainerChildOccurrencesOnNonContainer = 129,
+    EntryMarkerOnNonPiece = 130,
 
     // Stage 2 — stable identity.
     DuplicateGuid = 200,             // two authored objects share one GUID
@@ -88,6 +89,7 @@ enum class DiagnosticCode : std::uint32_t {
     MultipleExitMarkers = 501,              // a Piece declares more than one exit marker
     NegativeClipDuration = 502,
     ClipEndOverflow = 503,
+    InvalidPieceTimelineBounds = 504,
 
     // Reference-slot resolution.
     ReferenceChainDepthExceeded = 600,   // a placement/organizational chain ran past the depth ceiling

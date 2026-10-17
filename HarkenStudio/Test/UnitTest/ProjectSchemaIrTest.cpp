@@ -522,6 +522,23 @@ TEST(ProjectSchemaIr, RejectsStalePieceStartCoordinate) {
     EXPECT_FALSE(BuildPieceIRForStructureOnly(*front.project, stale, resources).has_value());
 }
 
+TEST(ProjectSchemaIr, EntryAndBoundsSurviveIrAndStaleBoundsAreRejected) {
+    const auto front = CompileFrontEnd(fixtures::EntryTimeline());
+    ASSERT_TRUE(front.ok());
+    const auto resources = ResidentResources(*front.project);
+    const auto ir = BuildPieceIRForStructureOnly(*front.project, *front.facts, resources);
+    ASSERT_TRUE(ir);
+    ASSERT_EQ(1u, ir->pieces().size());
+    const auto& piece = ir->pieces()[0];
+    ASSERT_TRUE(piece.entryMarker);
+    EXPECT_EQ(G(5), piece.entryMarker->id);
+    EXPECT_EQ(100, piece.startCoordinate);
+    EXPECT_EQ((PieceTimelineBounds{-100, 400, 100, 300}), piece.bounds);
+    auto stale = *front.facts;
+    --stale.pieces[0].bounds.contentStart;
+    EXPECT_FALSE(BuildPieceIRForStructureOnly(*front.project, stale, resources));
+}
+
 TEST(ProjectSchemaIr, RejectsStaleMarkerOrderWithSameIds) {
     const FrontEndResult front =
         CompileFrontEnd(fixtures::NormalizationOrdering());

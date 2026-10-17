@@ -755,6 +755,7 @@ WorldInstallResult VariableServiceV1::InstallImpl(
         actionProgramViews_.push_back(row.view);
     }
     identity_ = install.identity;
+    sourceBodyVintage_ = install.sourceBodyVintage;
     capacity_ = install.capacity;
     ++worldGeneration_;
     globalBankVersionGeneration_ = 1;
@@ -1037,6 +1038,7 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
         out.actionProgramViews_.push_back(row.view);
     }
     out.identity_ = install.identity;
+    out.sourceBodyVintage_ = install.sourceBodyVintage;
     out.capacity_ = install.capacity;
     out.valid_ = true;
     out.idempotent_ = false;
@@ -1057,6 +1059,7 @@ ContainerWorldInstallViewV1 VariableServiceV1::PreparedWorldInstallViewV1(
     if (prepared.idempotent_) return CurrentWorldInstallView();
     ContainerWorldInstallViewV1 view{};
     view.identity = prepared.identity_;
+    view.sourceBodyVintage = prepared.sourceBodyVintage_;
     view.capacity = prepared.capacity_;
     view.variables = prepared.definitionViews_.data();
     view.variableCount = static_cast<std::uint32_t>(prepared.definitionViews_.size());
@@ -1195,6 +1198,7 @@ WorldGeneration VariableServiceV1::CommitPreparedCurrentWorldImageV1(
     actionPrograms_.swap(prepared.actionPrograms_);
     actionProgramViews_.swap(prepared.actionProgramViews_);
     identity_ = prepared.identity_;
+    sourceBodyVintage_ = prepared.sourceBodyVintage_;
     capacity_ = prepared.capacity_;
     ++worldGeneration_;
     globalBankVersionGeneration_ = 1;

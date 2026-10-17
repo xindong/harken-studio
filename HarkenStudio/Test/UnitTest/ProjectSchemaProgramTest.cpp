@@ -69,6 +69,21 @@ TEST(ProjectSchemaProgram, AssemblesFromIr) {
     EXPECT_FALSE(program->capacityEstimate().scopes.empty());
 }
 
+TEST(ProjectSchemaProgram, EntryPositionChangesSemanticsButMarkerGuidDoesNot) {
+    auto input = fixtures::EntryTimeline();
+    const auto original = BuildProgramFrom(input);
+    ASSERT_TRUE(original);
+    input.nodes[0].entryMarker->position = 101;
+    const auto moved = BuildProgramFrom(input);
+    ASSERT_TRUE(moved);
+    EXPECT_NE(original->programSemanticFingerprint(), moved->programSemanticFingerprint());
+    input.nodes[0].entryMarker->position = 100;
+    input.nodes[0].entryMarker->guid = fixtures::G(55);
+    const auto renamed = BuildProgramFrom(input);
+    ASSERT_TRUE(renamed);
+    EXPECT_EQ(original->programSemanticFingerprint(), renamed->programSemanticFingerprint());
+}
+
 TEST(ProjectSchemaProgram, UuidReassignmentChangesProgramAndLineageIdentity) {
     ProjectInput base = fixtures::IrLineageMix();
     ProjectInput renumbered = fixtures::IrLineageMix();

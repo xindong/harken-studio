@@ -26,8 +26,9 @@ inline constexpr std::uint64_t kWorldCapabilitySequenceQueue = UINT64_C(1) << 6;
 inline constexpr std::uint64_t kWorldCapabilityVariableControl = UINT64_C(1) << 7;
 inline constexpr std::uint64_t kWorldCapabilityTransition = UINT64_C(1) << 8;
 inline constexpr std::uint64_t kWorldCapabilityActionDefinitions = UINT64_C(1) << 9;
+inline constexpr std::uint64_t kWorldCapabilityEntryScheduling = UINT64_C(1) << 10;
 inline constexpr std::uint64_t kWorldCapabilityKnownMask =
-    (UINT64_C(1) << 10) - 1;
+    (UINT64_C(1) << 11) - 1;
 inline constexpr std::uint64_t kWorldCapabilityUnit2Mask =
     kWorldCapabilityVariableDefinitions |
     kWorldCapabilityPlayableProperties |
@@ -294,17 +295,67 @@ enum class ActionQuantizeTimingV1 : std::uint32_t {
     NaturalEnd = 4,
     CurrentLoopEnd = 5,
     ExitMarker = 6,
+    EntryMarker = 7,
+    ReferenceExitMarker = 8,
+    TargetNextMarker = 9,
 };
 
+constexpr bool ActionQuantizeTimingReadableV1(
+    ActionOpcodeV1 opcode, ActionQuantizeTimingV1 timing,
+    std::uint32_t bodyVintage) noexcept {
+    if (!IsReadableCurrentWorldBodyVintage(bodyVintage)) return false;
+    switch (opcode) {
+    case ActionOpcodeV1::Play:
+        switch (timing) {
+        case ActionQuantizeTimingV1::Immediate:
+        case ActionQuantizeTimingV1::NextBeat:
+        case ActionQuantizeTimingV1::NextBar:
+        case ActionQuantizeTimingV1::NextMarker:
+            return true;
+        case ActionQuantizeTimingV1::EntryMarker:
+        case ActionQuantizeTimingV1::ReferenceExitMarker:
+            return bodyVintage == kCurrentWorldBodyVintageV19;
+        default: return false;
+        }
+    case ActionOpcodeV1::Stop:
+        switch (timing) {
+        case ActionQuantizeTimingV1::Immediate:
+        case ActionQuantizeTimingV1::NextBeat:
+        case ActionQuantizeTimingV1::NextBar:
+        case ActionQuantizeTimingV1::NextMarker:
+        case ActionQuantizeTimingV1::NaturalEnd:
+        case ActionQuantizeTimingV1::CurrentLoopEnd:
+        case ActionQuantizeTimingV1::ExitMarker:
+            return true;
+        case ActionQuantizeTimingV1::EntryMarker:
+        case ActionQuantizeTimingV1::ReferenceExitMarker:
+        case ActionQuantizeTimingV1::TargetNextMarker:
+            return bodyVintage == kCurrentWorldBodyVintageV19;
+        default: return false;
+        }
+    case ActionOpcodeV1::PostAction:
+        switch (timing) {
+        case ActionQuantizeTimingV1::Immediate: return true;
+        case ActionQuantizeTimingV1::NextBeat:
+        case ActionQuantizeTimingV1::NextBar:
+        case ActionQuantizeTimingV1::NextMarker:
+            return bodyVintage == kCurrentWorldBodyVintageV18;
+        default: return false;
+        }
+    case ActionOpcodeV1::SetVariable:
+    case ActionOpcodeV1::Reset:
+        return timing == ActionQuantizeTimingV1::Immediate;
+    }
+    return false;
+}
+
 constexpr bool ActionQuantizeTimingSupportedV1(
-    ActionOpcodeV1 opcode, ActionQuantizeTimingV1 timing) noexcept
-{
-    const auto value = static_cast<std::uint32_t>(timing);
-    if (opcode == ActionOpcodeV1::Stop)
-        return value <= static_cast<std::uint32_t>(ActionQuantizeTimingV1::ExitMarker);
-    if (opcode == ActionOpcodeV1::Play)
-        return value <= static_cast<std::uint32_t>(ActionQuantizeTimingV1::NextMarker);
-    return timing == ActionQuantizeTimingV1::Immediate;
+    ActionOpcodeV1 opcode, ActionQuantizeTimingV1 timing,
+    std::uint32_t bodyVintage = kCurrentWorldShippingBodyVintage) noexcept {
+    if (!IsReadableCurrentWorldBodyVintage(bodyVintage)) return false;
+    if (opcode == ActionOpcodeV1::PostAction)
+        return timing == ActionQuantizeTimingV1::Immediate;
+    return ActionQuantizeTimingReadableV1(opcode, timing, bodyVintage);
 }
 
 enum class ActionScopeV1 : std::uint32_t {
@@ -441,6 +492,18 @@ struct ScheduleMarkerV1 {
     std::int64_t position = 0;
 };
 
+struct ScheduleEntryMarkerV1 {
+    harkenstudio::ObjectId stableMarkerId{};
+    std::int64_t position = 0;
+};
+
+struct PieceTimelineBoundsV1 {
+    std::int64_t contentStart = 0;
+    std::int64_t contentEnd = 0;
+    std::int64_t nominalStart = 0;
+    std::int64_t nominalEnd = 0;
+};
+
 struct PieceScheduleProgramViewV1 {
     PlayableRefV1 rootDefinition{};
     std::uint64_t scheduleSemanticFingerprint = 0;
@@ -455,6 +518,8 @@ struct PieceScheduleProgramViewV1 {
     std::uint32_t markerCount = 0;
     const ScheduleTrackRefV1* trackRefs = nullptr;
     const ScheduleMarkerV1* markers = nullptr;
+    ScheduleEntryMarkerV1 entryMarker{};
+    PieceTimelineBoundsV1 bounds{};
 };
 
 struct TrackPieceScheduleKeyV1 {
@@ -863,11 +928,17 @@ std::uint64_t ComputeTrackScheduleFingerprintV1(
     const TrackScheduleProgramViewV1& row) noexcept;
 std::uint64_t ComputePieceScheduleFingerprintV1(
     const PieceScheduleProgramViewV1& row) noexcept;
+std::uint64_t ComputePieceScheduleFingerprintV2(
+    const PieceScheduleProgramViewV1& row) noexcept;
+std::uint64_t ComputePieceScheduleFingerprintV1(
+    const PieceScheduleProgramViewV1& row, std::uint32_t bodyVintage) noexcept;
 std::uint64_t ComputeActionProgramFingerprintV1(
     const ActionProgramViewV1& program) noexcept;
 std::uint64_t ComputeCurrentWorldFingerprintV4(
     const ContainerWorldInstallViewV1& world) noexcept;
 std::uint64_t ComputeCurrentWorldFingerprintV5(
+    const ContainerWorldInstallViewV1& world) noexcept;
+std::uint64_t ComputeCurrentWorldFingerprintV6(
     const ContainerWorldInstallViewV1& world) noexcept;
 TransitionProgramClassV1 ClassifyTransitionProgramV1(
     const TransitionProgramViewV1& program) noexcept;

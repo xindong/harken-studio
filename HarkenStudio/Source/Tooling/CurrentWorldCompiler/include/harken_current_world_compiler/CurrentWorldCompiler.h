@@ -144,6 +144,7 @@ enum class CompileStatusV1 : std::uint32_t {
     InvalidCanonicalWorld = 7,
     TransitionCapabilityUnavailable = 8,
     InvalidActionAuthoring = 9,
+    EntryScheduleCapabilityUnavailable = 10,
 };
 
 class OwningCurrentWorldV1;
@@ -170,7 +171,7 @@ private:
         const harkenstudiobuild::WorldCapacitySummaryV1&,
         const std::vector<TransitionProgramAuthoringV1>&,
         const std::vector<ActionProgramAuthoringV1>&,
-        const harkenbuscompiler::CompiledBusIdSetV1*);
+        const harkenbuscompiler::CompiledBusIdSetV1*, std::uint32_t);
 
     struct OwnedPayload {
         harkenstudiobuild::PlayablePropertyPayloadViewV1 view{};
@@ -257,6 +258,7 @@ private:
 struct CompileResultV1 {
     CompileStatusV1 status = CompileStatusV1::InvalidProject;
     harkenstudio::ObjectId relatedStableId{};
+    std::uint32_t relatedEventIndex = UINT32_MAX;
     std::unique_ptr<OwningCurrentWorldV1> world;
 
     bool ok() const noexcept { return status == CompileStatusV1::Ok; }
@@ -270,7 +272,8 @@ CompileResultV1 CompileCurrentWorldV1(
     const harkenstudiobuild::WorldCapacitySummaryV1& capacity = {},
     const std::vector<TransitionProgramAuthoringV1>& transitions = {},
     const std::vector<ActionProgramAuthoringV1>& actions = {},
-    const harkenbuscompiler::CompiledBusIdSetV1* busIds = nullptr);
+    const harkenbuscompiler::CompiledBusIdSetV1* busIds = nullptr,
+    std::uint32_t bodyVintage = harkenstudiobuild::kCurrentWorldShippingBodyVintage);
 
 } // namespace harkencurrentworldcompiler
 

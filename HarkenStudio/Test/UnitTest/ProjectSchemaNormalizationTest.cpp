@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <map>
+#include <limits>
 #include <vector>
 
 namespace harkenprojectschema {
@@ -123,6 +124,64 @@ TEST(ProjectSchemaNormalization, EntryStartResolvesToZero) {
     EXPECT_EQ(piece->startKind, StartPointKind::Entry);
     EXPECT_EQ(piece->startCoordinate, 0);
     EXPECT_EQ(piece->startMarkerId, 0u);
+}
+
+TEST(ProjectSchemaNormalization, MovableEntryPreservesAuthoredCoordinatesAndBounds) {
+    const auto result = CompileFrontEnd(fixtures::EntryTimeline());
+    ASSERT_TRUE(result.ok()) << RenderDiagnostics(result.diagnostics);
+    const auto* piece = FindObject(*result.project, G(1));
+    ASSERT_NE(nullptr, piece);
+    ASSERT_TRUE(piece->piece.entryMarker);
+    EXPECT_EQ(G(5), piece->piece.entryMarker->id);
+    EXPECT_EQ(100, piece->piece.entryMarker->position);
+    EXPECT_EQ(2u, piece->piece.markers.size());
+    const auto* track = FindObject(*result.project, G(2));
+    ASSERT_NE(nullptr, track);
+    EXPECT_EQ(-100, track->track.clips[0].time);
+    const auto* facts = FindPiece(*result.facts, piece->chassis().id);
+    ASSERT_NE(nullptr, facts);
+    EXPECT_EQ((PieceTimelineBounds{-100, 400, 100, 300}), facts->bounds);
+    EXPECT_EQ(100, facts->startCoordinate);
+    EXPECT_EQ(2u, facts->markersByMarkerId.size());
+    EXPECT_NE(std::string::npos, RenderNormalizedFacts(*result.facts).find(
+        "content=[-100,400) nominal=[100,300)"));
+}
+
+TEST(ProjectSchemaNormalization, ImplicitEntryUsesActualContentStart) {
+    for (const std::int64_t start : {-100, 200}) {
+        auto input = fixtures::EntryTimeline();
+        input.nodes[0].entryMarker.reset();
+        input.nodes[0].markers.clear();
+        input.nodes[1].clips[0].time = start;
+        const auto result = CompileFrontEnd(input);
+        ASSERT_TRUE(result.ok()) << RenderDiagnostics(result.diagnostics);
+        const auto& piece = result.facts->pieces[0];
+        EXPECT_EQ(start, piece.startCoordinate);
+        EXPECT_EQ((PieceTimelineBounds{start, start + 500, start, start + 500}), piece.bounds);
+    }
+    auto empty = fixtures::EntryTimeline();
+    empty.nodes[0].entryMarker.reset();
+    empty.nodes[0].markers.clear();
+    empty.nodes[1].clips.clear();
+    const auto result = CompileFrontEnd(empty);
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(PieceTimelineBounds{}, result.facts->pieces[0].bounds);
+}
+
+TEST(ProjectSchemaNormalization, EntryIdentityAndTimelineErrorsRefusePartialOutput) {
+    auto duplicate = fixtures::EntryTimeline();
+    duplicate.nodes[0].entryMarker->guid = G(4);
+    ExpectSingleRefusal(duplicate, DiagnosticCode::DuplicateGuid);
+    auto nonPiece = fixtures::EntryTimeline();
+    nonPiece.nodes[0].entryMarker.reset();
+    nonPiece.nodes[2].entryMarker = InputEntryMarker{G(5), 100};
+    ExpectSingleRefusal(nonPiece, DiagnosticCode::EntryMarkerOnNonPiece);
+    auto reversed = fixtures::EntryTimeline();
+    reversed.nodes[0].entryMarker->position = 301;
+    ExpectSingleRefusal(reversed, DiagnosticCode::InvalidPieceTimelineBounds);
+    auto overflow = fixtures::EntryTimeline();
+    overflow.nodes[0].entryMarker->position = (std::numeric_limits<std::int64_t>::min)();
+    ExpectSingleRefusal(overflow, DiagnosticCode::InvalidPieceTimelineBounds);
 }
 
 TEST(ProjectSchemaNormalization, MusicalMapNotSingletonRefused) {

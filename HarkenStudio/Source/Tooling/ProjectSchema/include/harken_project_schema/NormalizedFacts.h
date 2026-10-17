@@ -26,14 +26,11 @@ namespace harkenprojectschema {
 struct PieceNormalization {
     StableId piece = kUnmintedStableId;
 
-    // Where the Piece begins, echoed for legibility, and the coordinate that
-    // start resolves to in the Piece's own time domain. Entry is always
-    // coordinate 0 (a pickup would sit at a negative clip coordinate, not here);
-    // a Marker start resolves to the authored position of the marker it names.
     StartPointKind startKind = StartPointKind::Entry;
     std::int64_t startCoordinate = 0;
     // The marker the start names, or the reserved id 0 for an Entry start.
     MarkerId startMarkerId = kReservedMarkerId;
+    PieceTimelineBounds bounds{};
 
     // The Piece's markers in ascending MarkerId order — the canonical enumeration,
     // independent of the order they were authored in. Holds marker stable ids.
@@ -58,6 +55,9 @@ struct NormalizedFacts {
     std::vector<PieceNormalization> pieces;
     std::vector<TrackNormalization> tracks;
 };
+
+std::optional<PieceTimelineBounds> DerivePieceTimelineBounds(
+    const CanonicalProject& project, const PieceDef& piece) noexcept;
 
 }  // namespace harkenprojectschema
 

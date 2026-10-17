@@ -806,7 +806,7 @@ TEST(PackCanonicalFormat, UnknownProgramBodyVintageIsIncompatible) {
                      std::move(requirement));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 11,
                      PartitionPayload(11, 1,
-                                      kCurrentWorldShippingBodyVintage + 1));
+                                      kCurrentWorldBodyVintageV19 + 1));
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackCanonicalImage image;
     EXPECT_EQ(VN_PACK_INCOMPATIBLE,

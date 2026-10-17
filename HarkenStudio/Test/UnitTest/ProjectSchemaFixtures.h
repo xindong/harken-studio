@@ -113,6 +113,24 @@ inline ProjectInput Valid() {
     return in;
 }
 
+inline ProjectInput EntryTimeline() {
+    auto piece = Node(ContentKind::Piece, 1);
+    piece.ownedChildren = {G(2)};
+    piece.timeSpec = AbsoluteTime();
+    piece.startPoint = EntryStart();
+    piece.entryMarker = InputEntryMarker{G(5), 100};
+    piece.markers = {MakeMarker(6, 1, MarkerKind::Custom, 200),
+                     MakeMarker(7, 2, MarkerKind::Exit, 300)};
+    auto track = Node(ContentKind::Track, 2);
+    track.ownedChildren = {G(3)};
+    track.clips = {Clip(4, 3, -100)};
+    track.clips[0].duration = 500;
+    ProjectInput input;
+    input.nodes = {piece, track, Node(ContentKind::Sound, 3)};
+    input.roots = {G(1)};
+    return input;
+}
+
 // ---- invalid: parent-Track ----------------------------------------------
 // A Track owns a Track. Tracks are flat; the edge is refused by the ownership
 // kind rule. Seen from the child, this is exactly "a Track with a parent-Track".

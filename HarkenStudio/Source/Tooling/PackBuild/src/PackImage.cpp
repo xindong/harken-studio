@@ -1579,15 +1579,14 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             if (!parsed) {
                 return harkenstudiobuild::kPackInvalid;
             }
-            if (partitionHeader.bodyVintage !=
-                kCanonicalDefinitionPartitionBodyVintage) {
+            if (!IsReadableCurrentWorldBodyVintage(partitionHeader.bodyVintage)) {
                 return harkenstudiobuild::kPackIncompatible;
             }
             CurrentWorldBodyImage body;
             const CurrentWorldBodyDecodeResult decoded = body.DecodeWithResult(
                 payload + partitionHeader.headerBytes,
                 static_cast<std::size_t>(partitionHeader.bodyBytes),
-                kCanonicalDefinitionPartitionBodyVintage);
+                partitionHeader.bodyVintage);
             if (decoded != CurrentWorldBodyDecodeResult::Ok) {
                 return decoded == CurrentWorldBodyDecodeResult::Capacity
                            ? harkenstudiobuild::kPackResidentCapacity

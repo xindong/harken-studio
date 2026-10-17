@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <type_traits>
 #include <utility>
 
 namespace harken {
@@ -92,7 +93,7 @@ const PlayablePropertyProgramViewV1* FindLayer(
     return nullptr;
 }
 
-const ContainerProgramViewV3* FindContainer(
+ContainerProgramHandleV1 FindContainer(
     const PlayableWorldViewV1& world,
     const PlayableRefV1& ref) noexcept {
     for (std::uint32_t i = 0; i < world.containerCount; ++i) {
@@ -100,10 +101,11 @@ const ContainerProgramViewV3* FindContainer(
         if (row.containerStableId == ref.stableId &&
             row.programSemanticFingerprint ==
                 ref.expectedProgramSemanticFingerprint) {
-            return &row;
+            return {ProgramKindV1::Container, ref.stableId, row.programSemanticFingerprint,
+                    world.ProgramSource(), world.InitialClosureCapabilities(), &row};
         }
     }
-    return nullptr;
+    return {};
 }
 
 const ContainerChildProgramViewV2* FindChild(
@@ -117,24 +119,28 @@ const ContainerChildProgramViewV2* FindChild(
     return nullptr;
 }
 
-const TrackScheduleProgramViewV1* FindTrackSchedule(
+TrackProgramHandleV1 FindTrackSchedule(
     const PlayableWorldViewV1& world,
     const PlayableRefV1& ref) noexcept {
     for (std::uint32_t i = 0; i < world.trackScheduleCount; ++i) {
         const auto& row = world.trackSchedules[i];
-        if (SameRef(row.rootDefinition, ref)) return &row;
+        if (SameRef(row.rootDefinition, ref))
+            return {ProgramKindV1::Track, ref.stableId, row.scheduleSemanticFingerprint,
+                    world.ProgramSource(), world.InitialClosureCapabilities(), &row};
     }
-    return nullptr;
+    return {};
 }
 
-const PieceScheduleProgramViewV1* FindPieceSchedule(
+PieceProgramHandleV1 FindPieceSchedule(
     const PlayableWorldViewV1& world,
     const PlayableRefV1& ref) noexcept {
     for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i) {
         const auto& row = world.pieceSchedules[i];
-        if (SameRef(row.rootDefinition, ref)) return &row;
+        if (SameRef(row.rootDefinition, ref))
+            return {ProgramKindV1::Piece, ref.stableId, row.scheduleSemanticFingerprint,
+                    world.ProgramSource(), world.InitialClosureCapabilities(), &row};
     }
-    return nullptr;
+    return {};
 }
 
 const ScheduleClipPlacementV1* FindPlacement(
@@ -205,24 +211,24 @@ const PlayablePropertyProgramViewV1* FindLayer(
                : nullptr;
 }
 
-const ContainerProgramViewV3* FindContainer(
+ContainerProgramHandleV1 FindContainer(
     const PackPlaybackView& world, const PlayableRefV1& ref) noexcept {
     return world.ResolveContainer(ref.stableId,
                                   ref.expectedProgramSemanticFingerprint);
 }
 
-const TrackScheduleProgramViewV1* FindTrackSchedule(
+TrackProgramHandleV1 FindTrackSchedule(
     const PackPlaybackView& world, const PlayableRefV1& ref) noexcept {
-    const TrackScheduleProgramViewV1* row =
+    const auto row =
         world.ResolveTrack(ref.stableId, 0);
-    return row != nullptr && SameRef(row->rootDefinition, ref) ? row : nullptr;
+    return row != nullptr && SameRef(row->rootDefinition, ref) ? row : TrackProgramHandleV1{};
 }
 
-const PieceScheduleProgramViewV1* FindPieceSchedule(
+PieceProgramHandleV1 FindPieceSchedule(
     const PackPlaybackView& world, const PlayableRefV1& ref) noexcept {
-    const PieceScheduleProgramViewV1* row =
+    const auto row =
         world.ResolvePiece(ref.stableId, 0);
-    return row != nullptr && SameRef(row->rootDefinition, ref) ? row : nullptr;
+    return row != nullptr && SameRef(row->rootDefinition, ref) ? row : PieceProgramHandleV1{};
 }
 
 const PlayableOccurrencePropertyViewV1* FindOccurrence(
@@ -399,7 +405,14 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
     const auto addPayload = [&](const PlayablePropertyPayloadViewV1& payload,
                                 const ResolvedPlayablePathRowV1& pathRow) {
         if (output.path.size() >= config_.maxPathRows) return false;
-        output.path.push_back(pathRow);
+        auto sourcedRow = pathRow;
+        if constexpr (std::is_same_v<World, PackPlaybackView>) {
+            sourcedRow.source = world.ResolveProgramSource(
+                pathRow.contentPropertyKind, pathRow.stableId);
+        } else {
+            sourcedRow.source = world.ProgramSource();
+        }
+        output.path.push_back(sourcedRow);
         output.payloads.push_back(&payload);
         return true;
     };
@@ -454,7 +467,7 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
            cursor.kind == PlayableKindV1::Track ||
            cursor.kind == PlayableKindV1::Piece) {
         if (cursor.kind == PlayableKindV1::Piece) {
-            const auto* piece = FindPieceSchedule(world, cursor);
+            const auto piece = FindPieceSchedule(world, cursor);
             if (piece == nullptr || piece->trackRefCount == 0 ||
                 piece->trackRefs == nullptr) {
                 return ResolvedPlayablePropertyCutStatusV1::
@@ -496,7 +509,7 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
             if (selectedTrackIds != nullptr &&
                 selectedTrackIds[selectedIndex] != cursor.stableId)
                 return ResolvedPlayablePropertyCutStatusV1::PathMismatch;
-            const auto* track = FindTrackSchedule(world, cursor);
+            const auto track = FindTrackSchedule(world, cursor);
             const auto* placement =
                 track == nullptr
                     ? nullptr
@@ -544,7 +557,7 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
         }
         if (selectedTrackIds != nullptr && selectedTrackIds[selectedIndex] != VnObjectId{})
             return ResolvedPlayablePropertyCutStatusV1::PathMismatch;
-        const auto* container = FindContainer(world, cursor);
+        const auto container = FindContainer(world, cursor);
         if (container == nullptr) {
             return ResolvedPlayablePropertyCutStatusV1::UnknownPlayable;
         }

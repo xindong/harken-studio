@@ -157,8 +157,18 @@ std::uint64_t ComputeProgramSemanticFingerprint(const PieceIR& ir) {
             h.U64(meter.denominator);
         }
         h.U64(static_cast<std::uint32_t>(piece.startKind));
-        h.I64(piece.startCoordinate);
+        // Preserve the legacy default-entry hash; the V19 schedule hashes the bounds.
+        h.I64(piece.startKind == StartPointKind::Entry && !piece.entryMarker
+                  ? 0 : piece.startCoordinate);
         h.U64(piece.startMarkerId);
+        if (piece.entryMarker) {
+            h.U64(UINT64_C(0x454e5452593139));
+            h.I64(piece.entryMarker->position);
+            h.I64(piece.bounds.contentStart);
+            h.I64(piece.bounds.contentEnd);
+            h.I64(piece.bounds.nominalStart);
+            h.I64(piece.bounds.nominalEnd);
+        }
         h.U64(piece.markers.size());
         for (const IrMarker& marker : piece.markers) {
             h.Guid(marker.guid);

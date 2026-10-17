@@ -31,6 +31,7 @@
 #include "SharedQueueTrace.h"
 #include "SharedFrontierTrace.h"
 #include "TimelineVoiceInstallTestSupport.h"
+#include "harken_studio_build/PackImage.h"
 
 #include <gtest/gtest.h>
 
@@ -782,10 +783,12 @@ std::vector<std::uint8_t> WrapWorldPartitionWithOwnedDefinitionCount(
     const ContainerWorldInstallViewV1& world,
     std::uint64_t ownedDefinitionCount) {
     std::vector<std::uint8_t> body;
-    EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
+    EXPECT_TRUE(world.sourceBodyVintage == kCurrentWorldBodyVintageV19
+        ? EncodeCurrentWorldBodyV19(world, body)
+        : EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header;
     header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
-    header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
+    header.bodyVintage = world.sourceBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
     header.packStableId = packStableId;
@@ -1768,7 +1771,7 @@ TEST(PackComposition, KeptPackAIdentitySurvivesPackBUnload) {
     EXPECT_EQ(VN_OK, session.Engine()->packComposition.ValidateLease(
                          admitted.owner.pack));
     EXPECT_EQ(pinnedAction, session.Engine()->packComposition.FindActionAtLease(
-                                admitted.owner.pack, harkentest::ObjectId(2002)));
+                                admitted.owner.pack, harkentest::ObjectId(2002)).programView);
     const PackIdentityLookup beforeUnload =
         session.Engine()->packComposition.Lookup(harkentest::ObjectId(2002));
     ASSERT_EQ(PackIdentityReadiness::Active, beforeUnload.readiness);
@@ -1786,7 +1789,7 @@ TEST(PackComposition, KeptPackAIdentitySurvivesPackBUnload) {
     EXPECT_EQ(VN_OK, session.Engine()->packComposition.ValidateLease(
                          admitted.owner.pack));
     EXPECT_EQ(pinnedAction, session.Engine()->packComposition.FindActionAtLease(
-                                admitted.owner.pack, harkentest::ObjectId(2002)));
+                                admitted.owner.pack, harkentest::ObjectId(2002)).programView);
     ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
     firing = 0;
     EXPECT_EQ(VN_OK, Vn_PostAction(&post, &firing));
@@ -2062,7 +2065,7 @@ protected:
         const auto* published = composition.Published();
         Validation check;
         check.expected = published;
-        check.action = composition.FindActionIn(*published, harkentest::ObjectId(2002));
+        check.action = composition.FindActionIn(*published, harkentest::ObjectId(2002)).programView;
         check.checksum = Fnv1a64(bytes.data(), bytes.size());
         for (const auto& owner : published->owners) {
             if (owner.packStableId == 22) {
@@ -2431,9 +2434,9 @@ TEST(PackComposition,
     ASSERT_EQ(VN_OK,
               Vn_ReplacePack(packB,
                              reinterpret_cast<const VnPackDesc*>(&desc)));
-    const ActionProgramViewV1* activeChild =
+    const auto activeChild =
         session.Engine()->packComposition.FindAction(harkentest::ObjectId(3003));
-    const ActionProgramViewV1* anchoredChild =
+    const auto anchoredChild =
         session.Engine()->packComposition.FindActionAtLease(
             childSnapshot.owner.pack, harkentest::ObjectId(3003));
     ASSERT_NE(nullptr, activeChild);
@@ -2664,7 +2667,7 @@ TEST(PackComposition, ReplaceKeepsPinnedOldRevision) {
 
     EXPECT_EQ(7u, pinnedLease.partitionRevision);
     EXPECT_EQ(pinnedAction, session.Engine()->packComposition.FindActionIn(
-                                *pinnedView, harkentest::ObjectId(2002)));
+                                *pinnedView, harkentest::ObjectId(2002)).programView);
     ASSERT_NE(nullptr, pinnedAction);
     ASSERT_NE(nullptr, pinnedAction->steps);
     EXPECT_EQ(0x3f000000u, pinnedAction->steps[0].valueBits);
@@ -2803,7 +2806,7 @@ TEST(PackComposition,
               session.Engine()->packComposition.ValidateLease(before.lease));
     EXPECT_EQ(before.action,
               session.Engine()->packComposition.FindActionAtLease(
-                  before.lease, kChildActionId));
+                  before.lease, kChildActionId).programView);
     const PackIdentityLookup after =
         session.Engine()->packComposition.Lookup(kChildActionId);
     ASSERT_EQ(PackIdentityReadiness::Active, after.readiness);
@@ -2888,7 +2891,7 @@ TEST(PackComposition, ReplaceKeepsAnchoredOldDefinitionRevision) {
     EXPECT_EQ(8u, after.lease.partitionRevision);
     EXPECT_EQ(0xbf000000u, after.action->steps[0].valueBits);
 
-    const ActionProgramViewV1* anchored =
+    const auto anchored =
         session.Engine()->packComposition.FindActionAtLease(
             predecessorAnchor, harkentest::ObjectId(2002));
     ASSERT_NE(nullptr, anchored);
@@ -3155,9 +3158,9 @@ TEST(PackCompositionContract, ActionAnchorPinsTransitiveProviderResources) {
               Vn_ReplacePack(packC,
                              reinterpret_cast<const VnPackDesc*>(&desc)));
 
-    const ActionProgramViewV1* activeB =
+    const auto activeB =
         session.Engine()->packComposition.FindAction(harkentest::ObjectId(3003));
-    const ActionProgramViewV1* activeC =
+    const auto activeC =
         session.Engine()->packComposition.FindAction(harkentest::ObjectId(4004));
     ASSERT_NE(nullptr, activeB);
     ASSERT_NE(nullptr, activeC);
@@ -3248,7 +3251,7 @@ TEST(PackComposition, CanonicalUnloadKeepsAnchoredRevisionUntilRelease) {
               session.Engine()->packComposition.Lookup(harkentest::ObjectId(2002)).readiness);
     EXPECT_FALSE(session.Engine()->registry.Lookup(kSoundId).Valid());
     EXPECT_EQ(1u, session.Engine()->packs.RetiringCount());
-    const ActionProgramViewV1* anchoredAction =
+    const auto anchoredAction =
         session.Engine()->packComposition.FindActionAtLease(anchor.lease,
                                                              harkentest::ObjectId(2002));
     ASSERT_NE(nullptr, anchoredAction);
@@ -3337,7 +3340,7 @@ TEST(PackComposition, CanonicalUnloadExRefusesAnchorWithoutMutation) {
     EXPECT_EQ(compositeGeneration,
               session.Engine()->packComposition.CompositeGeneration());
     EXPECT_EQ(anchor.action,
-              session.Engine()->packComposition.FindAction(harkentest::ObjectId(2002)));
+              session.Engine()->packComposition.FindAction(harkentest::ObjectId(2002)).programView);
     PackRevisionKey afterKey{};
     PackResourceRevisionToken afterToken = 0;
     ASSERT_TRUE(session.Engine()->packs.ActiveRevisionIdentity(
@@ -3473,7 +3476,7 @@ TEST(PackCompositionContract, RetirementCapacityRefusesBeforePublishingSuccessor
     ASSERT_EQ(2u, packs.RetiringCount());
 
     const std::uint64_t compositeBefore = composition.CompositeGeneration();
-    const ActionProgramViewV1* actionBefore = composition.FindAction(harkentest::ObjectId(2002));
+    const auto actionBefore = composition.FindAction(harkentest::ObjectId(2002));
     ASSERT_NE(nullptr, actionBefore);
     ASSERT_NE(nullptr, actionBefore->steps);
     EXPECT_EQ(0x3e800000u, actionBefore->steps[0].valueBits);
@@ -3806,7 +3809,7 @@ TEST(PackCompositionContract, LeaseTokenExhaustionNeverWraps) {
     EXPECT_EQ(0u, exhaustedWhileLive.lease.leaseToken);
     EXPECT_EQ(nullptr, exhaustedWhileLive.action);
     EXPECT_EQ(beforeMax.action,
-              composition.FindActionAtLease(beforeMax.lease, harkentest::ObjectId(2002)));
+              composition.FindActionAtLease(beforeMax.lease, harkentest::ObjectId(2002)).programView);
 
     EXPECT_EQ(VN_OK, composition.ReleaseLease(beforeMax.lease));
     EXPECT_EQ(VN_OK, composition.ReleaseLease(atMax.lease));
@@ -4027,7 +4030,7 @@ TEST(PackComposition, ReplaceSwapsPackTableMedia) {
     ASSERT_EQ(VN_OK, Vn_ReplacePack(packA, reinterpret_cast<const VnPackDesc*>(&desc)));
 
     EXPECT_EQ(pinnedAction, session.Engine()->packComposition.FindActionIn(
-                                *pinnedView, harkentest::ObjectId(2002)));
+                                *pinnedView, harkentest::ObjectId(2002)).programView);
     ASSERT_NE(nullptr, pinnedAction);
     ASSERT_NE(nullptr, pinnedAction->steps);
     EXPECT_EQ(0x3f000000u, pinnedAction->steps[0].valueBits);
@@ -5519,12 +5522,33 @@ TEST(PackComposition, DeclaredSharedChildPublishesFromContentRoot) {
     ASSERT_TRUE(composition.PlaybackViewAtLease(playable.lease, &view));
     EXPECT_EQ(2u, view.OwnerCount());
     ASSERT_NE(nullptr, view.ResolveContainer(kContainerId, 0));
+    const auto containerHandle = view.ResolveContainer(kContainerId, 0);
+    EXPECT_EQ(kContentPack, containerHandle.source.ownerStableId);
+    EXPECT_EQ(7u, containerHandle.source.ownerRevision);
+    EXPECT_EQ(playable.lease.leaseToken, containerHandle.source.leaseIdentity);
+    EXPECT_EQ(18u, containerHandle.source.sourceBodyVintage);
+    const auto providerSource = view.ResolveProgramSource(
+        playableproperties::ContentPropertyKindV1::Sound, kSoundId);
+    EXPECT_EQ(kSharedPack, providerSource.ownerStableId);
+    EXPECT_EQ(9u, providerSource.ownerRevision);
+    EXPECT_EQ(playable.lease.leaseToken, providerSource.leaseIdentity);
+    ResolvedPlayablePropertyCutStorageV1 cut;
+    ASSERT_TRUE(cut.Reset({}));
+    const auto selectedOrdinal = containerHandle->children[0].stableChildOrdinal;
+    ASSERT_EQ(ResolvedPlayablePropertyCutStatusV1::Ok,
+              cut.Resolve(view, PlayableRefFromProperty(*containerProperty), &selectedOrdinal, 1));
+    for (std::uint32_t i = 0; i < cut.View().pathCount; ++i) {
+        const auto& path = cut.View().path[i];
+        EXPECT_EQ(path.stableId == kSoundId ? kSharedPack : kContentPack,
+                  path.source.ownerStableId);
+    }
     ASSERT_NE(nullptr,
               view.ResolveProperty(
                   playableproperties::ContentPropertyKindV1::Sound, kSoundId));
     EXPECT_EQ(nullptr, view.ResolveContainer(kContainerId, 1));
     PlayableWorldViewV1 world{};
     ASSERT_TRUE(composition.PlayableWorldAtLease(playable.lease, &world));
+    EXPECT_EQ(containerHandle.source, world.ProgramSource());
     bool sawSharedSound = false;
     for (std::uint32_t i = 0; i < world.propertyCount; ++i) {
         if (world.properties[i].stableId == kSoundId) {
@@ -5713,7 +5737,7 @@ TEST(PackCompositionContract, RequiredDependencyRevisionMismatchKeepsPublication
     ASSERT_NE(nullptr, publishedBefore);
     const std::uint64_t generationBefore =
         composition.CompositeGeneration();
-    const ActionProgramViewV1* providerActionBefore =
+    const auto providerActionBefore =
         composition.FindAction(kProviderAction);
     ASSERT_NE(nullptr, providerActionBefore);
     PackComposition::CandidateOwner consumerOwner;
@@ -5965,7 +5989,7 @@ TEST(PackComposition,
     ASSERT_NE(nullptr, publishedAtDepth64);
     const std::uint64_t generationAtDepth64 =
         composition.CompositeGeneration();
-    const ActionProgramViewV1* acceptedRoot =
+    const auto acceptedRoot =
         composition.FindAction(kProviderFirstAction);
     ASSERT_NE(nullptr, acceptedRoot);
     const std::uint64_t acceptedRootFingerprint =
@@ -6135,7 +6159,7 @@ TEST(PackCompositionContract, OldPlaybackViewReadsOldRevisionAfterReplace) {
     ASSERT_EQ(VN_OK, composition.CommitPreparedLease(&oldLookup.lease, 0));
     PackPlaybackView oldView;
     ASSERT_TRUE(composition.PlaybackViewAtLease(oldLookup.lease, &oldView));
-    const ContainerProgramViewV3* oldProgram =
+    const auto oldProgram =
         oldView.ResolveContainer(kContainerId, 0);
     ASSERT_NE(nullptr, oldProgram);
     EXPECT_EQ(propertyA.programSemanticFingerprint,
@@ -6147,7 +6171,7 @@ TEST(PackCompositionContract, OldPlaybackViewReadsOldRevisionAfterReplace) {
 
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, packB, kPackHandle, 8));
     ASSERT_TRUE(composition.PlaybackViewAtLease(oldLookup.lease, &oldView));
-    const ContainerProgramViewV3* stillOld =
+    const auto stillOld =
         oldView.ResolveContainer(kContainerId, 0);
     ASSERT_NE(nullptr, stillOld);
     EXPECT_EQ(propertyA.programSemanticFingerprint,
@@ -6159,11 +6183,18 @@ TEST(PackCompositionContract, OldPlaybackViewReadsOldRevisionAfterReplace) {
     ASSERT_EQ(VN_OK, composition.CommitPreparedLease(&newLookup.lease, 0));
     PackPlaybackView newView;
     ASSERT_TRUE(composition.PlaybackViewAtLease(newLookup.lease, &newView));
-    const ContainerProgramViewV3* successor =
+    const auto successor =
         newView.ResolveContainer(kContainerId, 0);
     ASSERT_NE(nullptr, successor);
     EXPECT_EQ(propertyB.programSemanticFingerprint,
               successor->programSemanticFingerprint);
+    EXPECT_EQ(kPackStableId, oldProgram.source.ownerStableId);
+    EXPECT_EQ(oldLookup.lease.partitionRevision, oldProgram.source.ownerRevision);
+    EXPECT_EQ(oldLookup.lease.leaseToken, oldProgram.source.leaseIdentity);
+    EXPECT_EQ(kCurrentWorldShippingBodyVintage, oldProgram.source.sourceBodyVintage);
+    EXPECT_EQ(oldProgram.source, stillOld.source);
+    EXPECT_NE(oldProgram.source.ownerRevision, successor.source.ownerRevision);
+    EXPECT_NE(oldProgram.source.leaseIdentity, successor.source.leaseIdentity);
     EXPECT_EQ(VN_OK, composition.ReleaseLease(oldLookup.lease));
     EXPECT_EQ(VN_OK, composition.ReleaseLease(newLookup.lease));
 }
@@ -8839,7 +8870,7 @@ bool ExpectedFrozenQuantizeFrame(const EnginePlayableServiceRow& pieceRow,
     if (outFrame == nullptr) {
         return false;
     }
-    const PieceScheduleProgramViewV1* piece =
+    const auto piece =
         pieceRow.Invocation().packPlaybackView.ResolvePiece(pieceRow.root.stableId, 0);
     if (piece == nullptr) {
         return false;
@@ -24396,3 +24427,107 @@ TEST_P(QueueBusQualification, ReplacementPreservesPlaybackAndReclaimsForReplay) 
 
 INSTANTIATE_TEST_SUITE_P(SequenceRandomNested, QueueBusQualification,
     ::testing::Values(0u, 1u, 2u));
+
+TEST(PackComposition, InitialCapabilityUsesActualReachableDefinitionsAndQueueEntry) {
+    std::array<PlayablePropertyProgramViewV1, 3> legacyProperties{};
+    for (unsigned i = 0; i < legacyProperties.size(); ++i) {
+        legacyProperties[i].stableId = harkentest::ObjectId(i + 1);
+        legacyProperties[i].programSemanticFingerprint = 101 + i;
+        legacyProperties[i].contentPropertyKind =
+            playableproperties::ContentPropertyKindV1::Container;
+    }
+    auto modernProperty = MakeSoundProperty(harkentest::ObjectId(4));
+    std::array<ContainerChildProgramViewV2, 2> children{};
+    children[0].stableChildOrdinal = 1;
+    children[0].frequencyWeight = 1;
+    children[0].playable = {PlayableKindV1::Container, 0, legacyProperties[1].stableId,
+                           legacyProperties[1].programSemanticFingerprint};
+    children[1].stableChildOrdinal = 2;
+    children[1].frequencyWeight = 1;
+    children[1].playable = {PlayableKindV1::Sound, 0, modernProperty.stableId,
+                           modernProperty.programSemanticFingerprint};
+    ContainerProgramViewV3 root{};
+    root.containerStableId = legacyProperties[0].stableId;
+    root.mode = ContainerModeV1::SequenceQueue;
+    root.children = children.data();
+    root.childCount = 2;
+    ContainerWorldInstallViewV1 worlds[2]{};
+    worlds[0].playableProperties = legacyProperties.data();
+    worlds[0].playablePropertyCount = legacyProperties.size();
+    worlds[0].containers = &root;
+    worlds[0].containerCount = 1;
+    worlds[1].sourceBodyVintage = 19;
+    worlds[1].playableProperties = &modernProperty;
+    worlds[1].playablePropertyCount = 1;
+    std::vector<ProgramCapabilitySummaryV1> summaries;
+    const auto capability = [&](VnObjectId id) {
+        const auto found = std::find_if(summaries.begin(), summaries.end(),
+            [&](const auto& row) { return row.stableId == id; });
+        EXPECT_NE(summaries.end(), found);
+        return found != summaries.end() ? found->initialClosureCapabilities : UINT32_MAX;
+    };
+    ASSERT_TRUE(BuildProgramCapabilitySummariesV1(worlds, 2, summaries));
+    EXPECT_EQ(0u, capability(legacyProperties[0].stableId));
+    EXPECT_EQ(0u, capability(legacyProperties[2].stableId));
+    EXPECT_EQ(kProgramCapabilityEntrySchedulingV1, capability(modernProperty.stableId));
+    root.initialSequenceCursor = 1;
+    ASSERT_TRUE(BuildProgramCapabilitySummariesV1(worlds, 2, summaries));
+    EXPECT_EQ(kProgramCapabilityEntrySchedulingV1, capability(legacyProperties[0].stableId));
+    root.initialSequenceCursor = 0;
+    root.resumePosition = 1;
+    ASSERT_TRUE(BuildProgramCapabilitySummariesV1(worlds, 2, summaries));
+    EXPECT_EQ(kProgramCapabilityEntrySchedulingV1, capability(legacyProperties[0].stableId));
+    root.mode = ContainerModeV1::Random;
+    children[1].frequencyWeight = 0;
+    ASSERT_TRUE(BuildProgramCapabilitySummariesV1(worlds, 2, summaries));
+    EXPECT_EQ(0u, capability(legacyProperties[0].stableId));
+    children[1].frequencyWeight = 1;
+    ASSERT_TRUE(BuildProgramCapabilitySummariesV1(worlds, 2, summaries));
+    EXPECT_EQ(kProgramCapabilityEntrySchedulingV1, capability(legacyProperties[0].stableId));
+    ++children[1].playable.expectedProgramSemanticFingerprint;
+    EXPECT_FALSE(BuildProgramCapabilitySummariesV1(worlds, 2, summaries));
+    EXPECT_TRUE(summaries.empty());
+    --children[1].playable.expectedProgramSemanticFingerprint;
+    children[0].playable = {PlayableKindV1::Container, 0, legacyProperties[0].stableId,
+                           legacyProperties[0].programSemanticFingerprint};
+    EXPECT_FALSE(BuildProgramCapabilitySummariesV1(worlds, 2, summaries));
+    worlds[1].sourceBodyVintage = 18;
+    ASSERT_TRUE(BuildProgramCapabilitySummariesV1(worlds, 2, summaries));
+    EXPECT_TRUE(summaries.empty());
+}
+
+TEST(PackComposition, V19PartitionReaderAndFallbackKeepVintageButActivationStaysDisabled) {
+    auto property = MakeSoundProperty(harkentest::ObjectId(20));
+    ContainerWorldInstallViewV1 world{};
+    world.sourceBodyVintage = 19;
+    world.identity.projectId = {0x1234, 0};
+    world.playableProperties = &property;
+    world.playablePropertyCount = 1;
+    world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(world);
+    world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV6(world);
+    ASSERT_EQ(WorldInstallStatus::Ok, detail::ValidateCurrentWorldPartitionLocalV1(world));
+    const auto bytes = BuildCanonicalPartitionPack(22, 1, 7, WrapWorldPartition(22, 7, world, 1));
+    PackCanonicalImage image;
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+    EXPECT_EQ(19u, image.partitionHeader.bodyVintage);
+    harkenstudiobuild::PackCanonicalImage studioImage;
+    ASSERT_EQ(harkenstudiobuild::kPackOk,
+              harkenstudiobuild::ParsePackCanonicalImage(bytes.data(), bytes.size(), &studioImage));
+    EXPECT_EQ(19u, studioImage.partitionHeader.bodyVintage);
+    PackComposition composition(4, 8, 4);
+    PackComposition::CandidateOwner candidate;
+    ASSERT_EQ(VN_OK, composition.PrepareCandidate(image, 1, &candidate));
+    EXPECT_EQ(19u, candidate.partitionBodyVintage);
+    EXPECT_EQ(nullptr, candidate.body);
+    CurrentWorldBodyImage decoded;
+    ASSERT_TRUE(decoded.Decode(candidate.partitionBody.data(), candidate.partitionBody.size(),
+        candidate.partitionBodyVintage, CurrentWorldDecodeMode::StrictArtifact));
+    EXPECT_EQ(19u, decoded.ProductionView()->sourceBodyVintage);
+    PackComposition::PreparedCommit prepared;
+    std::vector<PackComposition::CandidateOwner> candidates;
+    candidates.push_back(std::move(candidate));
+    EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, composition.PrepareCommit(
+        std::move(candidates), nullptr, 0, 8, 0, &prepared));
+    EXPECT_FALSE(prepared.IsPrepared());
+    EXPECT_EQ(nullptr, composition.Published());
+}

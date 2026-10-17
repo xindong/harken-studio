@@ -176,6 +176,11 @@ void AppendPieceTime(std::string* s, const PieceDef& piece) {
     }
     *s += "  start kind=" + std::string(StartKindName(piece.startPoint.kind)) +
           " markerId=" + U(piece.startPoint.markerId) + "\n";
+    if (piece.entryMarker) {
+        *s += "  entry " + U(piece.entryMarker->id) +
+              " guid=" + Guid(piece.entryMarker->guid) +
+              " pos=" + I(piece.entryMarker->position) + "\n";
+    }
     for (const Marker& marker : piece.markers) {
         *s += "  marker " + U(marker.id) + " guid=" + Guid(marker.guid) +
               " markerId=" + U(marker.markerId) + " kind=" + MarkerKindName(marker.kind) +
@@ -195,6 +200,8 @@ const char* DiagnosticCodeName(DiagnosticCode code) {
             return "StartPointOnNonPiece";
         case DiagnosticCode::MarkersOnNonPiece:
             return "MarkersOnNonPiece";
+        case DiagnosticCode::EntryMarkerOnNonPiece:
+            return "EntryMarkerOnNonPiece";
         case DiagnosticCode::PieceMissingTimeSpec:
             return "PieceMissingTimeSpec";
         case DiagnosticCode::PieceMissingStartPoint:
@@ -289,6 +296,8 @@ const char* DiagnosticCodeName(DiagnosticCode code) {
             return "NegativeClipDuration";
         case DiagnosticCode::ClipEndOverflow:
             return "ClipEndOverflow";
+        case DiagnosticCode::InvalidPieceTimelineBounds:
+            return "InvalidPieceTimelineBounds";
         case DiagnosticCode::ReferenceChainDepthExceeded:
             return "ReferenceChainDepthExceeded";
         case DiagnosticCode::SendCountExceedsLayoutLimit:
@@ -507,6 +516,8 @@ std::string RenderNormalizedFacts(const NormalizedFacts& facts) {
         s += "piece " + U(p.piece) +
              " start=" + std::string(StartKindName(p.startKind)) +
              " coord=" + I(p.startCoordinate) + " markerId=" + U(p.startMarkerId) +
+             " content=[" + I(p.bounds.contentStart) + "," + I(p.bounds.contentEnd) +
+             ") nominal=[" + I(p.bounds.nominalStart) + "," + I(p.bounds.nominalEnd) + ")" +
              " markers:";
         for (const StableId id : p.markersByMarkerId) {
             s += " " + U(id);
@@ -592,6 +603,8 @@ std::string RenderPieceIR(const PieceIR& ir) {
              " time=" + std::string(TimeKindName(p.timeSpec.kind)) +
              " start=" + std::string(StartKindName(p.startKind)) +
              " coord=" + I(p.startCoordinate) + " markerId=" + U(p.startMarkerId) +
+             " content=[" + I(p.bounds.contentStart) + "," + I(p.bounds.contentEnd) +
+             ") nominal=[" + I(p.bounds.nominalStart) + "," + I(p.bounds.nominalEnd) + ")" +
              " markers:";
         for (const IrMarker& c : p.markers) {
             s += " " + U(c.id) + "/" + U(c.markerId) + ":" +
@@ -602,6 +615,9 @@ std::string RenderPieceIR(const PieceIR& ir) {
             s += " " + U(id);
         }
         s += "\n";
+        if (p.entryMarker) {
+            s += "  entry " + U(p.entryMarker->id) + "@" + I(p.entryMarker->position) + "\n";
+        }
         for (const TempoMapEntry& tempo : p.timeSpec.tempoMap) {
             s += "  tempo tick=" + I(tempo.tick) +
                  " uspq=" + I(tempo.microsPerQuarter) + "\n";

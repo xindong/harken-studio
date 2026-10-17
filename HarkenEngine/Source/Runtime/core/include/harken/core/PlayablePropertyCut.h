@@ -4,6 +4,7 @@
 #include <harken/ObjectId.h>
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/PlaybackPath.h"
+#include "harken/core/ProgramHandle.h"
 
 #include <cstdint>
 #include <vector>
@@ -38,6 +39,18 @@ struct PlayableWorldViewV1 {
     std::uint32_t containerCount = 0;
     const TransitionProgramViewV1* transitions = nullptr;
     std::uint32_t transitionCount = 0;
+    std::uint32_t sourceBodyVintage = kCurrentWorldShippingBodyVintage;
+    std::uint64_t ownerRevision = 0;
+    std::uint64_t leaseIdentity = 0;
+    std::uint64_t ownerStableId = 0;
+
+    ProgramSourceIdentityV1 ProgramSource() const noexcept {
+        return {generation, ownerStableId, ownerRevision, leaseIdentity, sourceBodyVintage};
+    }
+    std::uint32_t InitialClosureCapabilities() const noexcept {
+        return sourceBodyVintage == kCurrentWorldBodyVintageV19
+            ? kProgramCapabilityEntrySchedulingV1 : 0u;
+    }
 };
 
 enum class ResolvedPlayablePathRowKindV1 : std::uint8_t {
@@ -55,6 +68,7 @@ struct ResolvedPlayablePathRowV1 {
     std::uint64_t programSemanticFingerprint = 0;
     std::uint32_t stableOccurrenceOrdinal = UINT32_MAX;
     VnObjectId clipId{};
+    ProgramSourceIdentityV1 source{};
 };
 
 struct ResolvedPlayableSpatialV1 {

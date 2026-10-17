@@ -4,7 +4,8 @@
 // write table is kCurrentWorldShippingBodyVintage, also named
 // kCanonicalDefinitionPartitionBodyVintage. Shipping pack readers
 // (Vn_LoadPack / ParsePackCanonicalImage) and the DirectWorld preview
-// envelope decode only that table. Decode of 2-8 remains for
+// envelope read V18 and V19. New playback capability remains gated at install.
+// Decode of 2-8 remains for
 // Tooling/Host trace replay and historical fixtures; it is not a
 // shipping program contract. Do not register this integer in schema
 // catalog.json. Extra program fields occupy existing slots, or mint a
@@ -67,6 +68,10 @@ bool EncodeCurrentWorldBodyV9(
     const ContainerWorldInstallViewV1& world,
     std::vector<std::uint8_t>& out) noexcept;
 
+bool EncodeCurrentWorldBodyV19(
+    const ContainerWorldInstallViewV1& world,
+    std::vector<std::uint8_t>& out) noexcept;
+
 bool EncodeCurrentWorldShippingBodyRawAttempt(
     const ContainerWorldInstallViewV1& world,
     std::vector<std::uint8_t>& out) noexcept;
@@ -82,7 +87,7 @@ public:
     CurrentWorldBodyImage(const CurrentWorldBodyImage&) = delete;
     CurrentWorldBodyImage& operator=(const CurrentWorldBodyImage&) = delete;
 
-    // StrictArtifact accepts kCurrentWorldShippingBodyVintage only.
+    // StrictArtifact accepts the explicit production reader table.
     // ReplayRawAttempt retains bounded historical decoding for tooling.
     // bodyVintage 2-8 is Tooling/Host trace replay and unit fixtures.
     CurrentWorldBodyDecodeResult DecodeWithResult(

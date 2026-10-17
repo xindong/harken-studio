@@ -351,6 +351,7 @@ public:
         ContainerWorldInstallViewV1 view{};
         if (!hasWorld_) return view;
         view.identity = identity_;
+        view.sourceBodyVintage = sourceBodyVintage_;
         view.variables = definitionViews_.empty()
             ? nullptr : definitionViews_.data();
         view.variableCount = static_cast<std::uint32_t>(definitionViews_.size());
@@ -390,6 +391,7 @@ public:
         if (!hasWorld_) return view;
         view.generation = worldGeneration_;
         view.identity = identity_;
+        view.sourceBodyVintage = sourceBodyVintage_;
         view.properties = playablePropertyViews_.empty()
                               ? nullptr
                               : playablePropertyViews_.data();
@@ -930,6 +932,7 @@ public:
         WorldGeneration sourceWorld_ = 0;
         std::uint64_t sourceBankOrdinal_ = 0;
         WorldIdentityV1 identity_{};
+        std::uint32_t sourceBodyVintage_ = kCurrentWorldShippingBodyVintage;
         WorldCapacitySummaryV1 capacity_{};
         std::vector<DefinitionRow> definitions_;
         std::vector<VariableDefinitionV1> definitionViews_;
@@ -1346,6 +1349,7 @@ private:
     std::vector<GatheredTarget> censusScratch_;
     bool hasWorld_ = false;
     WorldIdentityV1 identity_{};
+    std::uint32_t sourceBodyVintage_ = kCurrentWorldShippingBodyVintage;
     WorldCapacitySummaryV1 capacity_{};
     WorldGeneration worldGeneration_ = 0;
     LogicCommitCoordinator& commits_;
