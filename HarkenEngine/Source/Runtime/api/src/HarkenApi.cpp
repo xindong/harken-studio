@@ -5131,6 +5131,7 @@ void TeardownEngine(Engine* engine) {
     harken::monitor::OnEngineTeardown(engine);
     engine->voices.DiscardAllStreamParkMailboxes();
     if (engine->trace != nullptr) engine->trace->RecordSessionTerminate();
+    engine->variables.ReleaseOrdinaryReservations(*engine);
     engine->variables.TerminateSession();
     engine->CompleteVariableOperation();
     if (engine->trace != nullptr) {
@@ -90430,6 +90431,13 @@ VnResult Vn_Update(void) {
     }
     harken::detail::g_callbackExceptionPending = false;
     harken::VariableOperationScope variableOperation(engine, false);
+    struct OrdinaryVariableReservationScope {
+        harken::Engine* engine;
+        ~OrdinaryVariableReservationScope() {
+            if (harken::detail::ActiveEngine() == engine)
+                engine->variables.ReleaseOrdinaryReservations(*engine);
+        }
+    } ordinaryVariableReservations{engine};
     try {
     /* A streaming thread that has died stops being able to reclaim the slots
      * the audio thread retires, so the logic thread takes that over; and it

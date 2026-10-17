@@ -91,6 +91,18 @@ const VariableSliceTable::Payload* VariableSliceTable::ResolvePayload(const Row*
     return row != nullptr && row->payload < payloadCapacity_ ? &payloads_[row->payload] : nullptr;
 }
 
+VariableSliceTable::ReservationStatus VariableSliceTable::ReservationAvailability(
+    std::uint32_t exactTargetCount) const noexcept {
+    if (exactTargetCount > maxTargetsPerSlice_ || exactTargetCount > targetPoolCapacity_)
+        return ReservationStatus::TargetLimit;
+    if (freeRows_.empty()) return ReservationStatus::ProofCapacity;
+    if (freePayloads_.empty()) return ReservationStatus::PayloadCapacity;
+    if (exactTargetCount != 0 && std::none_of(freeRanges_.begin(), freeRanges_.end(),
+            [&](const FreeRange& range) { return range.count >= exactTargetCount; }))
+        return ReservationStatus::TargetSpan;
+    return ReservationStatus::Ready;
+}
+
 bool VariableSliceTable::Reserve(std::uint64_t world, std::uint64_t transport,
                                  std::uint64_t ticket,
                                  std::uint64_t effectiveFrame,
@@ -101,13 +113,7 @@ bool VariableSliceTable::Reserve(std::uint64_t world, std::uint64_t transport,
         return false;
     }
     *out = {};
-    if (exactTargetCount > maxTargetsPerSlice_ ||
-        exactTargetCount > targetPoolCapacity_) {
-        return false;
-    }
-    if (freeRows_.empty() || freePayloads_.empty()) {
-        return false;
-    }
+    if (ReservationAvailability(exactTargetCount) != ReservationStatus::Ready) return false;
     const auto freeSlot = freeRows_.back();
     std::size_t rangeIndex = freeRanges_.size();
     for (std::size_t i = 0; exactTargetCount != 0 && i < freeRanges_.size(); ++i) {

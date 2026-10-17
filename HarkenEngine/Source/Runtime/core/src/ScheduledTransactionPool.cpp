@@ -6403,36 +6403,38 @@ ReserveResult ScheduledTransactionPool::ReserveHeldCurrentSlice(
     return ReserveCurrentSliceImpl(input, latePolicy, publicationFrontier, out);
 }
 
-ReserveResult ScheduledTransactionPool::ReserveCurrentSliceImpl(
+ReserveResult ScheduledTransactionPool::PreflightHeldCurrentSlice(
     const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
-    std::uint64_t publicationFrontier, HeldCurrentSliceToken* held) {
+    std::uint64_t publicationFrontier) const noexcept {
+    return PlanCurrentSlicePlacement(input, latePolicy, publicationFrontier, true);
+}
+
+ReserveResult ScheduledTransactionPool::PlanCurrentSlicePlacement(
+    const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
+    std::uint64_t publicationFrontier, bool publicationHeld) const noexcept {
     ReserveResult result{};
     publicationFrontier = std::max(publicationFrontier, publishCutoffFrame_);
     std::uint64_t frame = input.executeFrame;
     if (!Valid() || input.logicCommitSequence == 0 ||
         (input.kind != CurrentSliceKind::VariableBankCut &&
          input.kind != CurrentSliceKind::MeterProbeWithdrawal &&
-         input.kind != CurrentSliceKind::NativeStartCalendar) ||
-        input.slice.slot == UINT32_MAX || input.slice.generation == 0) {
+         input.kind != CurrentSliceKind::NativeStartCalendar)) {
         result.status = ReserveStatus::Refused;
         return result;
     }
     if (frame < publicationFrontier) {
         if (latePolicy == PrePublishLatePolicy::Drop) {
             result.status = ReserveStatus::DroppedLate;
-            ++droppedLateCount_;
             return result;
         }
         if (latePolicy == PrePublishLatePolicy::Refuse) {
             result.status = ReserveStatus::Refused;
             result.refusal = ReserveRefusal::Late;
-            ++refusalCounts_[static_cast<std::size_t>(result.refusal)];
             return result;
         }
         if (latePolicy == PrePublishLatePolicy::NextEquivalentBoundary) {
             result.status = ReserveStatus::Refused;
             result.refusal = ReserveRefusal::NeedsBoundaryResolution;
-            ++refusalCounts_[static_cast<std::size_t>(result.refusal)];
             return result;
         }
         frame = publicationFrontier;
@@ -6442,7 +6444,6 @@ ReserveResult ScheduledTransactionPool::ReserveCurrentSliceImpl(
     if (!PageForFrame(frame, &page)) {
         result.status = ReserveStatus::Refused;
         result.refusal = ReserveRefusal::OutsideWindow;
-        ++refusalCounts_[static_cast<std::size_t>(result.refusal)];
         return result;
     }
     const std::uint32_t ring = RingIndex(page);
@@ -6451,7 +6452,6 @@ ReserveResult ScheduledTransactionPool::ReserveCurrentSliceImpl(
             pageHeaders_[ring].absoluteQuantumIndex) {
         result.status = ReserveStatus::Refused;
         result.refusal = ReserveRefusal::Late;
-        ++refusalCounts_[static_cast<std::size_t>(result.refusal)];
         return result;
     }
     const auto base = static_cast<std::size_t>(ring) * currentSliceStorageCapacity_;
@@ -6461,18 +6461,38 @@ ReserveResult ScheduledTransactionPool::ReserveCurrentSliceImpl(
         if ((pageCurrentSlices_[base + i].kind == CurrentSliceKind::NativeStartCalendar) == native) ++quotaCount;
     const auto quota = native ? config_.maxNativeStartCalendarsPerQuantum : config_.maxCurrentSlicesPerQuantum;
     if (quotaCount >= quota || pageCurrentSliceCount_[ring] >= currentSliceStorageCapacity_ ||
-        (held != nullptr && pagePublicationHolds_[ring] == UINT64_MAX)) {
+        (publicationHeld && pagePublicationHolds_[ring] == UINT64_MAX)) {
         result.status = ReserveStatus::Refused;
         result.refusal = ReserveRefusal::PageEventCapacity;
-        ++refusalCounts_[static_cast<std::size_t>(result.refusal)];
         return result;
     }
     if (nextCurrentSliceSequence_ == 0 || nextCurrentSliceSequence_ == UINT64_MAX) {
         result.status = ReserveStatus::Refused;
         result.refusal = ReserveRefusal::CommitSerialExhausted;
-        ++refusalCounts_[static_cast<std::size_t>(result.refusal)];
         return result;
     }
+    result.status = ReserveStatus::Committed;
+    result.firstFrame = frame;
+    result.lastFrame = frame;
+    return result;
+}
+
+ReserveResult ScheduledTransactionPool::ReserveCurrentSliceImpl(
+    const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
+    std::uint64_t publicationFrontier, HeldCurrentSliceToken* held) {
+    if (input.slice.slot == UINT32_MAX || input.slice.generation == 0) return {};
+    auto result = PlanCurrentSlicePlacement(input, latePolicy, publicationFrontier, held != nullptr);
+    if (result.status != ReserveStatus::Committed) {
+        if (result.status == ReserveStatus::DroppedLate) ++droppedLateCount_;
+        else if (result.refusal != ReserveRefusal::None)
+            ++refusalCounts_[static_cast<std::size_t>(result.refusal)];
+        return result;
+    }
+    const auto frame = result.firstFrame;
+    std::uint32_t page = 0;
+    if (!PageForFrame(frame, &page)) return {};
+    const auto ring = RingIndex(page);
+    const auto base = static_cast<std::size_t>(ring) * currentSliceStorageCapacity_;
     CurrentSliceRow& row =
         pageCurrentSlices_[base + pageCurrentSliceCount_[ring]++];
     row.executeFrame = frame;

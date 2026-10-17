@@ -5393,6 +5393,41 @@ TEST(ScheduledTransactionPool, HeldCurrentSliceMoveAndScopeExitCancelOnlyTheOwni
     ASSERT_TRUE(secondPool.CancelHeldCurrentSlice(&second));
 }
 
+TEST(ScheduledTransactionPool, CurrentSlicePreflightDoesNotConsumeQuotaOrChangeRefusalCounters) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 1;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    harken::ScheduledCurrentSliceInput input{};
+    input.executeFrame = 20;
+    input.logicCommitSequence = 7;
+    for (unsigned i = 0; i < 4; ++i) {
+        const auto ready = pool.PreflightHeldCurrentSlice(input,
+            PrePublishLatePolicy::ExecuteAtEarliestSafeFrame, 100);
+        EXPECT_EQ(ReserveStatus::Committed, ready.status);
+        EXPECT_EQ(100u, ready.firstFrame);
+        EXPECT_TRUE(ready.rescheduled);
+        EXPECT_EQ(ReserveStatus::DroppedLate,
+            pool.PreflightHeldCurrentSlice(input, PrePublishLatePolicy::Drop, 100).status);
+    }
+    EXPECT_EQ(0u, pool.DroppedLateCount());
+    EXPECT_TRUE(pool.CanResetForEpoch(0, kEpoch + 1));
+    input.slice = {0, 1};
+    harken::HeldCurrentSliceToken held;
+    const auto actual = pool.ReserveHeldCurrentSlice(input,
+        PrePublishLatePolicy::ExecuteAtEarliestSafeFrame, 100, &held);
+    ASSERT_EQ(ReserveStatus::Committed, actual.status);
+    EXPECT_EQ(100u, actual.firstFrame);
+    const auto refused = pool.PreflightHeldCurrentSlice(input,
+        PrePublishLatePolicy::ExecuteAtEarliestSafeFrame, 100);
+    EXPECT_EQ(ReserveStatus::Refused, refused.status);
+    EXPECT_EQ(ReserveRefusal::PageEventCapacity, refused.refusal);
+    EXPECT_EQ(0u, pool.RefusalCount(ReserveRefusal::PageEventCapacity));
+    ASSERT_TRUE(pool.CancelHeldCurrentSlice(&held));
+    EXPECT_EQ(ReserveStatus::Committed, pool.PreflightHeldCurrentSlice(input,
+        PrePublishLatePolicy::ExecuteAtEarliestSafeFrame, 100).status);
+}
+
 TEST(ScheduledTransactionPool, HeldCurrentSliceReschedulingRetainsSemanticActionOrder) {
     auto config = MakeConfig();
     config.maxCurrentSlicesPerQuantum = 2;

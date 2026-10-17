@@ -158,6 +158,7 @@ namespace Harken.Test
         {
             VnConfig config = HarkenEngine.DefaultConfig();
             config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+            config.maxEmitters = 384;
             Require(HarkenEngine.Init(config));
             try
             {
@@ -226,17 +227,44 @@ namespace Harken.Test
                     VnResult.VN_GAMEPLAY_WRONG_PROJECT, "project-qualified writes use the loaded Pack identity");
                 Check(Values.SetValue("VehicleRPM", "00000000-0000-0000-0000-000000000001", "Missing") ==
                     VnResult.VN_NO_VARIABLE_LABEL, "name-based label writes resolve the current Variable");
+                var emitters = new Emitter[320];
+                for (int index = 0; index < emitters.Length; ++index)
+                    Require(Emitter.Create(out emitters[index]));
+                before = GC.GetAllocatedBytesForCurrentThread();
+                for (int index = 0; index < emitters.Length; ++index)
+                    Require(Values.SetValue(variable, 0.75f, emitters[index]));
+                allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                Check(allocated == 0, "320 scoped native writes allocate no managed memory");
+                foreach (Emitter emitter in emitters)
+                {
+                    Require(emitter.QueryVariable(variable, out query));
+                    Check(query.pendingCount > 0, "all 320 scoped writes are accepted before Update");
+                }
+                Require(emitters[0].QueryVariable(variable, out query));
+                uint pendingBefore = query.pendingCount;
+                before = GC.GetAllocatedBytesForCurrentThread();
+                for (int index = 0; index < 10000; ++index)
+                    Require(Values.SetValue(variable, (index & 1) == 0 ? 0.25f : 0.75f, emitters[0]));
+                allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                Check(allocated == 0, "10000 replacements allocate no managed memory");
+                Require(emitters[0].QueryVariable(variable, out query));
+                Check(query.pendingCount == pendingBefore,
+                    "10000 unobserved replacements do not accumulate active writes");
+                foreach (Emitter emitter in emitters) Require(emitter.Destroy());
                 Require(a.Destroy());
                 Check(Values.SetValue(variable, 0, a) == VnResult.VN_STALE_HANDLE,
                     "stale concrete emitter cannot fall back to global");
                 Check(Values.SetValue("VehicleRPM", 0, a) == VnResult.VN_STALE_HANDLE,
                     "named stale concrete emitter cannot fall back to global");
-                Console.WriteLine("[Variable SDK native] typed/raw/deprecated acceptance, order, invalid emitter and zero-GC PASS");
+                Console.WriteLine("[Variable SDK native] scoped320/replacements10000, order, invalid emitter and zero-GC PASS");
             }
             finally { HarkenEngine.Term(); }
         }
 
-        private static void Require(VnResult result) => Check(result == VnResult.VN_OK, result.ToString());
+        private static void Require(VnResult result)
+        {
+            if (result != VnResult.VN_OK) throw new InvalidOperationException(result.ToString());
+        }
         private static void Check(bool condition, string message)
         {
             if (!condition) throw new InvalidOperationException(message);

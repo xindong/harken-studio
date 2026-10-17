@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -27,6 +28,12 @@ void SetParkedReadCutCapturedHookForTest(
     void (*hook)(Engine&, VariableReadCutRef, void*), void* context) noexcept;
 
 struct VariableServiceTestAccess {
+    static bool HasHeldPlacements(const VariableServiceV1& service) {
+        for (std::size_t slot = 0; slot < service.history_.size(); ++slot)
+            if (service.history_[slot].placementHeld || service.preparedWritePlacements_[slot].IsHeld())
+                return true;
+        return false;
+    }
     static bool ReadCutStorageAlive(const VariableServiceV1& service, VariableReadCutRef ref) {
         return service.ResolveReadCut(ref) != nullptr;
     }
@@ -1294,13 +1301,16 @@ TEST(VariableCurrentSlice, ParkedReturnUsesNewValueWithoutWaitingForBankAck) {
             EXPECT_NEAR(0.05f, output[2 * i], 1e-6f);
     }
     ASSERT_TRUE(heard);
-    for (std::uint32_t step = 0; step < 16 &&
-         !e.variables.SliceForTicketForTests(laterSequence).Valid(); ++step) {
+    harken::VariableSliceRef laterSource{};
+    for (std::uint32_t step = 0; step < 16; ++step) {
+        laterSource = e.variables.SliceForTicketForTests(laterSequence);
+        const auto state = e.variableSlices.State(laterSource);
+        if (state == harken::VariableSliceState::PageCommitted ||
+            state == harken::VariableSliceState::SliceApplied) break;
         e.nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
         ASSERT_EQ(harken::VoiceLedger::HandleKind::Live, e.ledger.Classify(handle).kind);
     }
-    const auto laterSource = e.variables.SliceForTicketForTests(laterSequence);
     ASSERT_TRUE(laterSource.Valid());
     for (std::uint32_t step = 0; step < 16 &&
          e.variableSlices.State(laterSource) != harken::VariableSliceState::SliceApplied; ++step) {
@@ -2028,8 +2038,8 @@ TEST(VariableCurrentSlice,
         MakeAcceptedWriteDue(engine);
         EXPECT_FALSE(engine->variables.SliceForTicketForTests(ticket).Valid());
         const auto blocked = engine->variables.SliceForTicketForTests(ticket + 1);
-        ASSERT_TRUE(blocked.Valid());
-        EXPECT_EQ(harken::VariableSliceState::Prepared, engine->variableSlices.State(blocked));
+        EXPECT_FALSE(blocked.Valid());
+        EXPECT_EQ(3u, engine->variables.PendingCount());
         const auto separate = engine->variables.SliceForTicketForTests(ticket + 2);
         ASSERT_TRUE(separate.Valid());
         EXPECT_EQ(harken::VariableSliceState::PageCommitted, engine->variableSlices.State(separate));
@@ -4998,13 +5008,13 @@ TEST(VariableCurrentSlice,
 }
 
 TEST(VariableCurrentSlice,
-     PersistentRoundRobinReachesThirtyThirdKeyUnderSlicePressure) {
-    constexpr std::uint32_t kKeyCount =
-        harken::kVariableWritesPerService + 1;
+     OrderedServiceReachesIndependentBankOnlyKeyUnderTargetPressure) {
+    constexpr std::uint32_t kTargetKeys = 32;
+    constexpr std::uint32_t kKeyCount = kTargetKeys + 1;
     constexpr VnVariableId kFirstVariable = harkentest::OffsetObjectId(kVariable, 100);
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
-    config.maxBindings = harken::kVariableWritesPerService;
-    config.maxBindingAttachments = harken::kVariableWritesPerService;
+    config.maxBindings = kTargetKeys;
+    config.maxBindingAttachments = kTargetKeys;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -5019,7 +5029,7 @@ TEST(VariableCurrentSlice,
               harkentest::InstallDefinitionsWorld(
                   engine, definitions.data(), kKeyCount, 0x52523333)
                   .status);
-    for (std::uint32_t i = 0; i < harken::kVariableWritesPerService; ++i) {
+    for (std::uint32_t i = 0; i < kTargetKeys; ++i) {
         RegisterLinearBinding(harkentest::ObjectId(9000 + i), harkentest::OffsetObjectId(kFirstVariable, i),
                               VN_TARGET_SCOPE_BUS,
                               harken::kBusTargetBusVolume, 0.0f, -6.0f);
@@ -5073,14 +5083,14 @@ TEST(VariableCurrentSlice,
         engine->nullBackend.Pump(1);
         engine->variables.EndService(*engine);
     }
-    EXPECT_EQ(harken::kVariableWritesPerService,
+    EXPECT_EQ(kTargetKeys,
               engine->variables.PendingCount());
     EXPECT_EQ(1u, engine->variables.AppliedCount());
     float current = -1.0f;
     ASSERT_TRUE(engine->variables.CurrentValue(
-        harkentest::OffsetObjectId(kFirstVariable, harken::kVariableWritesPerService), &current));
+        harkentest::OffsetObjectId(kFirstVariable, kTargetKeys), &current));
     EXPECT_FLOAT_EQ(0.5f, current);
-    for (std::uint32_t i = 0; i < harken::kVariableWritesPerService; ++i) {
+    for (std::uint32_t i = 0; i < kTargetKeys; ++i) {
         ASSERT_TRUE(engine->variables.CurrentValue(harkentest::OffsetObjectId(kFirstVariable, i),
                                                   &current));
         EXPECT_FLOAT_EQ(0.0f, current);
@@ -6320,6 +6330,357 @@ TEST(VariableCurrentSlice,
                                             harken::kTargetVoiceVolume));
     EXPECT_NE(500u, VoiceLastPublishedRampMs(engine, render,
                                              harken::kTargetVoiceVolume));
+}
+
+TEST(VariableCurrentSlice, ReadCutPreparationLeavesSixtyThreeUnrelatedVariablesPending) {
+    EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    std::array<harken::VariableDefinitionV1, 64> definitions{};
+    std::array<harken::VariableAcceptResult, 64> writes{};
+    for (std::uint32_t i = 0; i < definitions.size(); ++i)
+        definitions[i] = MakeVariableDefinition(harkentest::OffsetObjectId(kVariable, i),
+            harken::VariableKindV1::Smooth, 0, 1, 0);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallDefinitionsWorld(&e, definitions.data(), definitions.size()).status);
+    const auto observed = harken::ObserveVariableCallAt(e.variables.CurrentWorldGeneration(),
+        e.variables.CurrentTransportEpoch(), kBlockFrames, 0, 0);
+    for (std::uint32_t i = 0; i < writes.size(); ++i) {
+        writes[i] = e.variables.AcceptGlobal(definitions[i].variableId, 0.75f,
+            observed, e.params, e.bindings, e.busTargets);
+        ASSERT_EQ(VN_OK, writes[i].result);
+    }
+    harken::VariableReadCutRef cut{};
+    ASSERT_TRUE(e.variables.CaptureReadCut(0, 4 * kBlockFrames,
+        writes.back().ticket.sequence + 1, 0, &cut));
+    float value = 0;
+    ASSERT_TRUE(e.variables.ReadCutValue(cut, definitions.back().variableId, &value));
+    ASSERT_FLOAT_EQ(0.75f, value);
+    ASSERT_TRUE(e.variables.PrepareReadCutSources(e, cut));
+    const auto source = e.variables.SliceForTicketForTests(writes.back().ticket.sequence);
+    ASSERT_EQ(harken::VariableSliceState::PageCommitted, e.variableSlices.State(source));
+    for (std::uint32_t i = 0; i + 1 < writes.size(); ++i)
+        EXPECT_FALSE(e.variables.SliceForTicketForTests(writes[i].ticket.sequence).Valid());
+    EXPECT_FALSE(harken::detail::VariableServiceTestAccess::HasHeldPlacements(e.variables));
+    EXPECT_EQ(harken::VariableReadCutStatus::Waiting, e.variables.PublishReadCut(cut, 4 * kBlockFrames));
+    e.variables.PublishPreparedPlaybackPages();
+    e.nullBackend.Pump(8);
+    e.variables.EndService(e);
+    EXPECT_EQ(1u, e.variables.AppliedCount());
+    EXPECT_EQ(63u, e.variables.PendingCount());
+    EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
+}
+
+TEST(VariableCurrentSlice, ReadCutPreparationClosesOverPhysicalFilterPredecessorOnly) {
+    EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    const auto q = harkentest::OffsetObjectId(kVariable, 1);
+    const auto unrelated = harkentest::OffsetObjectId(kVariable, 2);
+    const std::array definitions = {
+        MakeVariableDefinition(kVariable, harken::VariableKindV1::Smooth, 0, 1, 0),
+        MakeVariableDefinition(q, harken::VariableKindV1::Smooth, 0, 1, 0),
+        MakeVariableDefinition(unrelated, harken::VariableKindV1::Smooth, 0, 1, 0)};
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallDefinitionsWorld(&e, definitions.data(), definitions.size()).status);
+    const auto render = harkentest::RenderHandle(&e, PlayDc(&e, harkentest::ObjectId(9971), VN_BUS_MASTER));
+    ASSERT_TRUE(e.params.BindVoiceTarget(kVariable, render, harken::kTargetVoiceLowpassCutoff,
+        LinearCurve(0, 20000, 1, 1000)));
+    ASSERT_TRUE(e.params.BindVoiceTarget(q, render, harken::kTargetVoiceLowpassQ, LinearCurve(0, 0, 1, 1)));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    e.nullBackend.Pump(4);
+    auto observed = harken::ObserveVariableCallAt(e.variables.CurrentWorldGeneration(),
+        e.variables.CurrentTransportEpoch(), kBlockFrames, e.timelinePool.WindowStartFrame(),
+        e.timelinePool.PublishCutoffFrame());
+    const auto ignored = e.variables.AcceptGlobal(unrelated, 1, observed, e.params, e.bindings, e.busTargets);
+    const auto prior = e.variables.AcceptGlobal(kVariable, 1, observed, e.params, e.bindings, e.busTargets);
+    const auto root = e.variables.AcceptGlobal(q, 1, observed, e.params, e.bindings, e.busTargets);
+    ASSERT_EQ(VN_OK, ignored.result);
+    ASSERT_EQ(VN_OK, prior.result);
+    ASSERT_EQ(VN_OK, root.result);
+    const auto frame = e.variables.EarliestReadCutFrame(e);
+    harken::VariableReadCutRef cut{};
+    ASSERT_TRUE(e.variables.CaptureReadCut(0, frame, root.ticket.sequence + 1, 0, &cut));
+    float value = 0;
+    ASSERT_TRUE(e.variables.ReadCutValue(cut, q, &value));
+    ASSERT_TRUE(e.variables.PrepareReadCutSources(e, cut));
+    const auto source = e.variables.SliceForTicketForTests(prior.ticket.sequence);
+    const auto dependent = e.variables.SliceForTicketForTests(root.ticket.sequence);
+    ASSERT_EQ(harken::VariableSliceState::PageCommitted, e.variableSlices.State(source));
+    ASSERT_EQ(harken::VariableSliceState::PageCommitted, e.variableSlices.State(dependent));
+    EXPECT_FALSE(e.variables.SliceForTicketForTests(ignored.ticket.sequence).Valid());
+    EXPECT_EQ(1u, e.variableSlices.SourceCount(dependent));
+    const auto& slices = std::as_const(e.variableSlices);
+    ASSERT_NE(nullptr, slices.Target(dependent, 0));
+    EXPECT_FLOAT_EQ(1000, slices.Target(dependent, 0)->command.payload.setVoiceFilter.cutoffHz);
+    EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
+}
+
+TEST(VariableCurrentSlice, OrdinaryTargetDebtProtectsRecoveredSpanFromRepeatedReadCuts) {
+    for (unsigned variant = 0; variant < 6; ++variant) {
+        SCOPED_TRACE(variant);
+        EngineSession session(CurrentSliceConfig(8, kBlockFrames, kSampleRate));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& e = *session.Engine();
+        const auto small = harkentest::OffsetObjectId(kVariable, 1);
+        const std::array definitions = {
+            MakeVariableDefinition(kVariable, harken::VariableKindV1::Smooth, 0, 1, 0),
+            MakeVariableDefinition(small, harken::VariableKindV1::Smooth, 0, 1, 0)};
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            harkentest::InstallDefinitionsWorld(&e, definitions.data(), definitions.size()).status);
+        VnVoiceHandle firstRender = 0;
+        for (std::uint32_t i = 0; i < 5; ++i) {
+            const auto render = harkentest::RenderHandle(&e,
+                PlayDc(&e, harkentest::ObjectId(9950 + i), VN_BUS_MASTER));
+            if (i == 0) firstRender = render;
+            ASSERT_TRUE(e.params.BindVoiceTarget(i < 4 ? kVariable : small, render,
+                harken::kTargetVoiceVolume, LinearCurve(0, 0, 1, -6)));
+        }
+        ASSERT_EQ(VN_OK, Vn_Update());
+        e.nullBackend.Pump(4);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        e.nullBackend.Pump(2);
+        ASSERT_TRUE(e.variableSlices.Reset(32, 4, 8, 32));
+        std::array<harken::VariableSliceRef, 4> blockers{};
+        for (std::uint32_t i = 0; i < blockers.size(); ++i)
+            ASSERT_TRUE(e.variableSlices.Reserve(999, 1, i + 1, 0, i + 1, 2, &blockers[i]));
+        ASSERT_TRUE(e.variableSlices.AbandonPrepared(blockers[0]));
+        ASSERT_TRUE(e.variableSlices.AbandonPrepared(blockers[2]));
+        ASSERT_EQ(4u, e.variableSlices.FreeTargetCapacity());
+        ASSERT_EQ(harken::VariableSliceTable::ReservationStatus::TargetSpan,
+            e.variableSlices.ReservationAvailability(4));
+        harken::VariableSliceRef foreign{};
+        if (variant == 1) {
+            ASSERT_TRUE(e.variableSlices.Reserve(999, 1, 10, 0, 10, 0, &foreign));
+            ASSERT_TRUE(e.params.TryClaim(firstRender, harken::kTargetVoiceVolume, foreign,
+                e.params.TargetRevision(firstRender, harken::kTargetVoiceVolume)));
+        }
+        auto observed = harken::ObserveVariableCallAt(e.variables.CurrentWorldGeneration(),
+            e.variables.CurrentTransportEpoch(), kBlockFrames, e.timelinePool.WindowStartFrame(),
+            e.timelinePool.PublishCutoffFrame());
+        const auto ordinary = e.variables.AcceptGlobal(kVariable, 1, observed,
+            e.params, e.bindings, e.busTargets);
+        ASSERT_EQ(VN_OK, ordinary.result);
+        const auto publishUnrelatedPlay = [&] {
+            const auto play = MakePlayDesc(harkentest::ObjectId(9950));
+            VnVoiceHandle voice = 0;
+            ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+            ASSERT_LT(e.commands.SettledFrontier(), e.commands.PublishedHead());
+        };
+        if (variant == 4) publishUnrelatedPlay();
+        e.variables.BeginService(e, e.mixer.BlocksRendered(), kBlockFrames);
+        e.variables.PrepareClaimedSlices(e);
+        EXPECT_FALSE(e.variables.SliceForTicketForTests(ordinary.ticket.sequence).Valid());
+        ASSERT_FALSE(harken::detail::VariableServiceTestAccess::HasHeldPlacements(e.variables));
+        if (variant == 4) {
+            e.nullBackend.Pump(1);
+            publishUnrelatedPlay();
+        }
+        if (variant == 5) {
+            ASSERT_TRUE(e.variableSlices.Reserve(999, 1, 10, 0, 10, 0, &foreign));
+            ASSERT_TRUE(e.params.TryClaim(firstRender, harken::kTargetVoiceVolume, foreign,
+                e.params.TargetRevision(firstRender, harken::kTargetVoiceVolume)));
+            e.variables.BeginService(e, e.mixer.BlocksRendered(), kBlockFrames);
+            e.variables.PrepareClaimedSlices(e);
+            publishUnrelatedPlay();
+            e.params.ReleaseClaim(firstRender, harken::kTargetVoiceVolume, foreign);
+            ASSERT_TRUE(e.variableSlices.AbandonPrepared(foreign));
+        }
+        if (variant == 2) {
+            ASSERT_EQ(VN_OK, e.variables.AcceptGlobal(kVariable, 0.75f, observed,
+                e.params, e.bindings, e.busTargets).result);
+            EXPECT_EQ(1u, e.variables.SupersededCount());
+        }
+        const auto competitor = e.variables.AcceptGlobal(small, 1, observed,
+            e.params, e.bindings, e.busTargets);
+        ASSERT_EQ(VN_OK, competitor.result);
+        harken::VariableReadCutRef cut{};
+        ASSERT_TRUE(e.variables.CaptureReadCut(0, e.variables.EarliestReadCutFrame(e),
+            competitor.ticket.sequence + 1, 0, &cut));
+        float value = 0;
+        ASSERT_TRUE(e.variables.ReadCutValue(cut, small, &value));
+        for (unsigned attempt = 0; attempt < 16; ++attempt) {
+            ASSERT_TRUE(e.variables.PrepareReadCutSources(e, cut));
+            EXPECT_EQ(variant == 1 || variant == 2,
+                e.variables.SliceForTicketForTests(competitor.ticket.sequence).Valid());
+        }
+        ASSERT_TRUE(e.variableSlices.AbandonPrepared(blockers[1]));
+        if (variant == 0 || variant >= 3) {
+            ASSERT_EQ(harken::VariableSliceTable::ReservationStatus::Ready,
+                e.variableSlices.ReservationAvailability(4));
+            if (variant == 3) {
+                const auto play = MakePlayDesc(harkentest::ObjectId(9950));
+                VnVoiceHandle laterVoice = 0;
+                ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &laterVoice));
+                ASSERT_LT(e.commands.SettledFrontier(), e.commands.PublishedHead());
+            }
+            for (unsigned attempt = 0; attempt < 16; ++attempt) {
+                ASSERT_TRUE(e.variables.PrepareReadCutSources(e, cut));
+                EXPECT_FALSE(e.variables.SliceForTicketForTests(competitor.ticket.sequence).Valid());
+            }
+        }
+        if (variant == 1) {
+            e.params.ReleaseClaim(firstRender, harken::kTargetVoiceVolume, foreign);
+            ASSERT_TRUE(e.variableSlices.AbandonPrepared(foreign));
+        }
+        ASSERT_TRUE(e.variables.ReleaseReadCut(cut));
+        for (unsigned step = 0; step < 16 && e.variables.PendingCount() != 0; ++step) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            e.nullBackend.Pump(1);
+        }
+        EXPECT_EQ(0u, e.variables.PendingCount());
+        EXPECT_EQ(2u, e.variables.AppliedCount());
+        EXPECT_FALSE(harken::detail::VariableServiceTestAccess::HasHeldPlacements(e.variables));
+        ASSERT_TRUE(e.variableSlices.AbandonPrepared(blockers[3]));
+    }
+}
+
+TEST(VariableCurrentSlice, BankOnlyPrivateSourceCannotGrantTargetDebtBypass) {
+  for (bool existingTargets : {false, true}) {
+    SCOPED_TRACE(existingTargets);
+    EngineSession session(CurrentSliceConfig(4, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto &e = *session.Engine();
+    const auto small = harkentest::OffsetObjectId(kVariable, 1);
+    const auto bankOnly = harkentest::OffsetObjectId(kVariable, 2);
+    const std::array definitions = {
+        MakeVariableDefinition(kVariable, harken::VariableKindV1::Smooth, 0, 1,
+                               0),
+        MakeVariableDefinition(small, harken::VariableKindV1::Smooth, 0, 1, 0),
+        MakeVariableDefinition(bankOnly, harken::VariableKindV1::Smooth, 0, 1,
+                               0)};
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+              harkentest::InstallDefinitionsWorld(&e, definitions.data(),
+                                                  definitions.size())
+                  .status);
+    for (std::uint32_t i = 0; i < (existingTargets ? 4u : 3u); ++i) {
+      const auto render = harkentest::RenderHandle(
+          &e, PlayDc(&e, harkentest::ObjectId(9980 + i), VN_BUS_MASTER));
+      ASSERT_TRUE(e.params.BindVoiceTarget(
+          i < 2 ? kVariable : (i == 2 ? small : bankOnly), render,
+          harken::kTargetVoiceVolume, LinearCurve(0, 0, 1, -6)));
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    e.nullBackend.Pump(4);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    e.nullBackend.Pump(2);
+    ASSERT_TRUE(e.variableSlices.Reset(32, 2, existingTargets ? 3 : 2, 32));
+    harken::VariableSliceRef blocker{};
+    ASSERT_TRUE(e.variableSlices.Reserve(999, 1, 1, 0, 1, 1, &blocker));
+    const auto observed = harken::ObserveVariableCallAt(
+        e.variables.CurrentWorldGeneration(),
+        e.variables.CurrentTransportEpoch(), kBlockFrames,
+        e.timelinePool.WindowStartFrame(), e.timelinePool.PublishCutoffFrame());
+    const auto ordinary = e.variables.AcceptGlobal(
+        kVariable, 1, observed, e.params, e.bindings, e.busTargets);
+    ASSERT_EQ(VN_OK, ordinary.result);
+    const auto prepareOrdinary = [&] {
+      e.variables.BeginService(e, e.mixer.BlocksRendered(), kBlockFrames);
+      e.variables.PrepareClaimedSlices(e);
+      ASSERT_FALSE(
+          e.variables.SliceForTicketForTests(ordinary.ticket.sequence).Valid());
+    };
+    if (!existingTargets)
+      prepareOrdinary();
+    harken::PreparedVariableWriteToken bankWrite, targetWrite;
+    ASSERT_EQ(
+        VN_OK,
+        e.variables.PrepareGlobalWrite(bankOnly, 1, observed, 0, &bankWrite)
+            .result);
+    ASSERT_EQ(
+        VN_OK,
+        e.variables.PrepareGlobalWrite(small, 1, observed, 1, &targetWrite)
+            .result);
+    harken::LogicCommitCoordinator::PreparedIssue issue;
+    ASSERT_EQ(harken::LogicCommitCoordinator::IssueStatus::Issued,
+              e.logicCommits.PrepareIssue(&issue));
+    ASSERT_TRUE(e.variables.BindPreparedActionWriteOrder(bankWrite, issue));
+    ASSERT_TRUE(e.variables.BindPreparedActionWriteOrder(targetWrite, issue));
+    harken::VariableReadCutRef cut{};
+    ASSERT_TRUE(e.variables.CaptureActionReadCut(
+        0, e.variables.EarliestReadCutFrame(e), issue, 2, &cut));
+    float value = 0;
+    ASSERT_TRUE(e.variables.ReadCutValue(cut, bankOnly, &value));
+    ASSERT_TRUE(e.variables.PrepareActionReadCutSources(e, cut, issue));
+    ASSERT_TRUE(
+        harken::detail::VariableServiceTestAccess::PreparedSliceForOrder(
+            e.variables, issue.Sequence(), 0)
+            .Valid());
+    if (existingTargets)
+      prepareOrdinary();
+    ASSERT_TRUE(e.variableSlices.AbandonPrepared(blocker));
+    ASSERT_TRUE(e.variables.ReadCutValue(cut, small, &value));
+    EXPECT_EQ(existingTargets,
+              e.variables.PrepareActionReadCutSources(e, cut, issue));
+    EXPECT_EQ(existingTargets,
+              harken::detail::VariableServiceTestAccess::PreparedSliceForOrder(
+                  e.variables, issue.Sequence(), 1)
+                  .Valid());
+    if (existingTargets) {
+      ASSERT_TRUE(e.variables.SealPreparedActionSources(issue));
+      auto consumed = e.logicCommits.ConsumePreparedIssue(std::move(issue));
+      e.variables.CommitPreparedActionWrite(&bankWrite, consumed);
+      e.variables.CommitPreparedActionWrite(&targetWrite, consumed);
+      e.variables.CommitPreparedActionSources(consumed);
+      e.variables.PublishPreparedPlaybackPages();
+    } else {
+      e.variables.CancelPreparedWrite(&bankWrite);
+      e.variables.CancelPreparedWrite(&targetWrite);
+    }
+    ASSERT_TRUE(e.variables.ReleaseReadCut(cut));
+    for (unsigned step = 0; step < 16 && e.variables.PendingCount() != 0;
+         ++step) {
+      ASSERT_EQ(VN_OK, Vn_Update());
+      e.nullBackend.Pump(1);
+    }
+    EXPECT_EQ(0u, e.variables.PendingCount());
+    EXPECT_EQ(existingTargets ? 3u : 1u, e.variables.AppliedCount());
+  }
+}
+
+TEST(VariableCurrentSlice, OrdinaryReservationsEndWithinUpdateAcrossCallbackExits) {
+    struct State { harken::Engine* engine = nullptr; VnEmitterHandle emitter = 0;
+        unsigned mode = 0; bool sawHold = false; unsigned calls = 0; };
+    for (unsigned mode = 0; mode < 4; ++mode) {
+        SCOPED_TRACE(mode);
+        State state{};
+        state.mode = mode;
+        auto config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
+        config.notificationUserData = &state;
+        config.onNotification = [](const VnNotification*, void* context) {
+            auto& s = *static_cast<State*>(context);
+            ++s.calls;
+            s.sawHold = harken::detail::VariableServiceTestAccess::HasHeldPlacements(s.engine->variables);
+            if (s.mode == 0) s.engine->nullBackend.Pump(8);
+            if (s.mode == 1) (void)Vn_DestroyEmitter(s.emitter);
+            if (s.mode == 2) Vn_Term();
+            if (s.mode == 3) throw std::runtime_error("callback failure");
+        };
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        state.engine = session.Engine();
+        InstallVariable(state.engine);
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&state.emitter));
+        state.engine->nullBackend.Pump(2);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_SetEmitterValue(state.emitter, kVariable, 0.75f));
+        VnNotification notification{};
+        notification.type = VN_NOTIFY_DEGRADATION_OCCURRED;
+        ASSERT_TRUE(state.engine->logicNotifications.Push(notification));
+        EXPECT_EQ(mode == 3 ? VN_DEVICE_ERROR : VN_OK, Vn_Update());
+        EXPECT_EQ(1u, state.calls);
+        EXPECT_TRUE(state.sawHold);
+        if (mode == 2) { EXPECT_EQ(nullptr, session.Engine()); continue; }
+        EXPECT_FALSE(harken::detail::VariableServiceTestAccess::HasHeldPlacements(state.engine->variables));
+        if (mode == 1) EXPECT_EQ(0u, state.engine->variables.PendingCount());
+        if (mode == 0) {
+            for (unsigned step = 0; step < 12 && state.engine->variables.PendingCount() != 0; ++step) {
+                state.engine->nullBackend.Pump(1);
+                ASSERT_EQ(VN_OK, Vn_Update());
+            }
+            EXPECT_EQ(1u, state.engine->variables.AppliedCount());
+        }
+    }
 }
 
 TEST(VariableCurrentSlice, LatePlacementUsesActualOrderWithinOnePageAndAcrossServiceRounds) {
