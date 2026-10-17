@@ -3075,7 +3075,8 @@ bool VariableServiceV1::PrepareCurrentSlice(Engine& engine, WriteRow& row) {
         if (row.used && row.requestedFrame < timeline_.WindowEndFrame() &&
             CensusCanClaim(engine, row, count)) {
             // Freeze the first allocator wait; later commands cannot move this eligibility frontier.
-            if (!row.poolBlocked) row.requiredCommandFrontier = engine.commands.PublishedHead();
+            if (!row.poolBlocked && !row.frontierCaptured)
+                row.requiredCommandFrontier = engine.commands.PublishedHead();
             row.poolBlocked = true;
             row.poolBlockReason = availability;
         }
@@ -3159,7 +3160,8 @@ bool VariableServiceV1::PrepareCurrentSlice(Engine& engine, WriteRow& row) {
         ResetPreparedRow(engine, row);
         return false;
     }
-    row.requiredCommandFrontier = engine.commands.PublishedHead();
+    if (!row.frontierCaptured || count != 0)
+        row.requiredCommandFrontier = engine.commands.PublishedHead();
     row.frontierCaptured = true;
     row.state = RowState::WaitingFrontier;
     return true;
@@ -3474,8 +3476,16 @@ void VariableServiceV1::ReserveOrdinaryWork(Engine& engine) {
 void VariableServiceV1::ReleaseOrdinaryReservations(Engine& engine) noexcept {
     for (std::uint32_t i = 0; i < scheduledGroupCount_; ++i) {
         auto& row = history_[scheduledGroups_[i]];
-        if (row.used && row.placementHeld && row.state != RowState::PageCommitted)
+        if (row.used && row.placementHeld && row.state != RowState::PageCommitted) {
+            const bool bankOnlyFrontier = row.frontierCaptured && slices_.TargetCount(row.slice) == 0;
+            const auto frontier = row.requiredCommandFrontier;
             ResetPreparedRow(engine, row);
+            if (bankOnlyFrontier) {
+                row.requiredCommandFrontier = frontier;
+                row.frontierCaptured = true;
+                SyncBatchState(row);
+            }
+        }
     }
 }
 

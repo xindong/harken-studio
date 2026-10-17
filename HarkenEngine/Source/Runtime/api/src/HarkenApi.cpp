@@ -38692,8 +38692,8 @@ PendingVariableGroupSelectionResult ServiceRegisteredPendingVariableGroupSelecti
         if (program == nullptr || !engine.variables.BeginPreparedPendingVariableGroupPlacement(engine, producer, attempt, placement, &reader) ||
             !EvaluatePendingVariableGroupSelection(engine, *producer.row, *program, reader, verified) ||
             !PendingVariableGroupSelectionsMatch(selections[index], verified) ||
-            !engine.variables.PrepareReadCutSources(engine, engine.acceptedPendingVariableGroups[producer.row->identity.slot].cut) ||
-            !engine.StagePreparedPendingVariableGroupChildren(producer, attempt, placement)) return withdraw(Result::Waiting);
+            !engine.StagePreparedPendingVariableGroupChildren(producer, attempt, placement) ||
+            !engine.variables.PrepareReadCutSources(engine, engine.acceptedPendingVariableGroups[producer.row->identity.slot].cut)) return withdraw(Result::Waiting);
     }
     for (auto* producer : std::span{producers.data(), count}) {
         if (producer->row->pendingCancellationIntent != 0) continue;
@@ -38810,8 +38810,8 @@ bool FilePendingVariableControlLane(harken::Engine& engine,
                 if (program == nullptr || !EvaluatePendingVariableGroupSelection(engine, *nested, *program, reader, decision) ||
                     PendingVariableGroupSelectionChanged(*nested, *program, decision)) return false;
             }
-            if (!engine.variables.PrepareReadCutSources(engine, group->cut)) return false;
             if (!StageRegisteredPendingVariableGroupInitializers(engine, scratch, attempt, placement, reader)) return false;
+            if (!engine.variables.PrepareReadCutSources(engine, group->cut)) return false;
             if (!engine.variables.OriginalPendingVariableGroupReadyToFreeze(engine, scratch, attempt, placement, outWaiting)) return false;
             if (!engine.variables.FreezeOriginalPendingVariableGroup(engine, scratch, attempt, placement)) return false;
         }
@@ -38885,8 +38885,8 @@ bool FileRegisteredPrivateVcRoot(harken::Engine& engine,
             if (outWaiting != nullptr) *outWaiting = true;
             return false;
         }
-        if (!engine.variables.PrepareReadCutSources(engine, group.cut)) return false;
         if (!StageRegisteredPendingVariableGroupInitializers(engine, *producer, attempt, placement, reader)) return false;
+        if (!engine.variables.PrepareReadCutSources(engine, group.cut)) return false;
         token = producer->privateInitialVcPageCohort.rootProducerNext;
     }
     if (token.Valid()) return false;
@@ -65939,8 +65939,14 @@ bool Engine::FreezePreparedPendingVariableGroupChildren(EngineActionPlayScratch&
     const EngineImmediateEntryAttempt& attempt, const PrivateImmediateLanePlacementProof& placement,
     bool* outWaiting) noexcept {
     if (outWaiting != nullptr) *outWaiting = false;
-    return StagePreparedPendingVariableGroupChildren(producer, attempt, placement) &&
-        variables.FreezePreparedPendingVariableGroup(*this, producer, attempt, placement, outWaiting);
+    if (!StagePreparedPendingVariableGroupChildren(producer, attempt, placement)) return false;
+    bool waiting = false;
+    if (!variables.PreparedPendingVariableGroupReadyToFreeze(*this, producer, attempt, placement, &waiting)) {
+        if (!waiting) return false;
+        const auto* child = OriginalPreparedPendingVariableGroupChildren(producer, attempt, placement);
+        if (child == nullptr || !variables.PrepareReadCutSources(*this, child->pendingVariableReplacementCut)) return false;
+    }
+    return variables.FreezePreparedPendingVariableGroup(*this, producer, attempt, placement, outWaiting);
 }
 
 bool Engine::StagePreparedPendingVariableGroupChildren(EngineActionPlayScratch& producer,

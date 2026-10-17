@@ -3444,6 +3444,54 @@ TEST(VariableCurrentSlice, LaterUnrelatedCommandsDoNotRaiseCapturedFrontier) {
     EXPECT_EQ(0u, engine->variables.PendingCount());
 }
 
+TEST(VariableCurrentSlice, NewPhysicalTargetWaitsForInstallationAfterBankOnlyPreparation) {
+    EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    InstallVariable(engine);
+    const auto sound = harkentest::ObjectId(7391);
+    const std::vector<float> samples(kSampleRate, 0.05f);
+    const auto pcm = MonoDesc(samples, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    auto observed = harken::ObserveVariableCallAt(engine->variables.CurrentWorldGeneration(),
+        engine->variables.CurrentTransportEpoch(), kBlockFrames, 0, 0);
+    const auto accepted = engine->variables.AcceptGlobal(kVariable, 1.0f, observed,
+        engine->params, engine->bindings, engine->busTargets);
+    ASSERT_EQ(VN_OK, accepted.result);
+    engine->variables.BeginService(*engine, engine->mixer.BlocksRendered(), kBlockFrames);
+    const auto bankOnly = engine->variables.SliceForTicketForTests(accepted.ticket.sequence);
+    ASSERT_TRUE(bankOnly.Valid());
+    ASSERT_EQ(0u, engine->variableSlices.TargetCount(bankOnly));
+
+    auto play = MakePlayDesc(sound);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    const auto render = harkentest::RenderHandle(engine, voice);
+    ASSERT_TRUE(engine->params.BindVoiceTarget(kVariable, render,
+        harken::kTargetVoiceVolume, LinearCurve(0.0f, 0.0f, 1.0f, -12.0f)));
+    ASSERT_LT(engine->commands.SettledFrontier(), engine->commands.PublishedHead());
+    engine->mixer.SetMaxCommandsPerQuantumForTest(0);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto physical = engine->variables.SliceForTicketForTests(accepted.ticket.sequence);
+    ASSERT_TRUE(physical.Valid());
+    ASSERT_EQ(1u, engine->variableSlices.TargetCount(physical));
+    engine->nullBackend.Pump(8);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(0u, engine->variables.AppliedCount());
+    EXPECT_EQ(1u, engine->variables.PendingCount());
+    float value = -1.0f;
+    ASSERT_TRUE(engine->variables.CurrentValue(kVariable, &value));
+    EXPECT_FLOAT_EQ(0.0f, value);
+
+    engine->mixer.SetMaxCommandsPerQuantumForTest(UINT32_MAX);
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
+    EXPECT_EQ(1u, engine->variables.AppliedCount());
+    EXPECT_EQ(0u, engine->variables.PendingCount());
+    ASSERT_TRUE(engine->variables.CurrentValue(kVariable, &value));
+    EXPECT_FLOAT_EQ(1.0f, value);
+    EXPECT_FLOAT_EQ(-12.0f, engine->params.ResolvedValue(render, harken::kTargetVoiceVolume));
+}
+
 TEST(VariableCurrentSlice, EmitterLifecycleResolvesAroundAudioClaim) {
     {
         VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
