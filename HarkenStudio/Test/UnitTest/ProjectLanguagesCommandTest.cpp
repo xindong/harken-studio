@@ -1,4 +1,6 @@
 #include "ActionManager.h"
+#include "LanguageContextService.h"
+#include "MemorySettingsStorage.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
 #include "UndoCommands.h"
@@ -12,6 +14,8 @@
 #include <QJsonObject>
 #include <QStringList>
 #include <QTemporaryDir>
+
+#include <memory>
 
 namespace {
 
@@ -104,6 +108,51 @@ TEST_F(ProjectLanguagesCommandTest, UndoRedoRestoresExactly)
 
     stack()->redo();
     EXPECT_EQ(languages(), (QStringList{QStringLiteral("Korean")}));
+}
+
+TEST_F(ProjectLanguagesCommandTest, LoadedLegacyNamesSurviveUndoRedoAndReload)
+{
+    auto& pm = VNX::ProjectManager::instance();
+    const QStringList legacy = {QStringLiteral("zh-CN"), QString(33, QLatin1Char('A'))};
+    const QStringList replacement = {QStringLiteral("English")};
+    const QString projectPath = pm.currentProject()->projectPath;
+    ASSERT_TRUE(pm.closeProject());
+    QFile file(projectPath);
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    auto root = QJsonDocument::fromJson(file.readAll()).object();
+    file.close();
+    auto content = root.value(QStringLiteral("content")).toObject();
+    content.insert(QStringLiteral("projectLanguages"), QJsonArray::fromStringList(legacy));
+    root.insert(QStringLiteral("content"), content);
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    const auto bytes = QJsonDocument(root).toJson();
+    ASSERT_EQ(file.write(bytes), bytes.size());
+    file.close();
+    ASSERT_TRUE(pm.loadProject(projectPath));
+    ASSERT_EQ(languages(), legacy);
+    VNX::LanguageContextService context(std::make_unique<VNX::MemorySettingsStorage>());
+    EXPECT_EQ(context.availableLanguages(), legacy);
+    EXPECT_EQ(context.language(), legacy.front());
+    EXPECT_FALSE(setLanguages(legacy).success);
+    EXPECT_EQ(stack()->count(), 0);
+
+    ASSERT_TRUE(setLanguages(replacement).success);
+    EXPECT_EQ(languages(), replacement);
+    EXPECT_EQ(context.language(), replacement.front());
+    ASSERT_TRUE(VNX::UndoRedoManager::instance().undo());
+    EXPECT_EQ(languages(), legacy);
+    EXPECT_EQ(context.availableLanguages(), legacy);
+    EXPECT_EQ(context.language(), legacy.front());
+    ASSERT_TRUE(VNX::UndoRedoManager::instance().redo());
+    EXPECT_EQ(languages(), replacement);
+    EXPECT_EQ(context.availableLanguages(), replacement);
+    ASSERT_TRUE(VNX::UndoRedoManager::instance().undo());
+    ASSERT_TRUE(pm.saveProject());
+    ASSERT_TRUE(pm.closeProject());
+    ASSERT_TRUE(pm.loadProject(projectPath));
+    EXPECT_EQ(languages(), legacy);
+    EXPECT_EQ(context.availableLanguages(), legacy);
+    EXPECT_EQ(context.language(), legacy.front());
 }
 
 TEST_F(ProjectLanguagesCommandTest, RejectsDuplicateIgnoringCase)

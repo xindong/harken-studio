@@ -1900,11 +1900,10 @@ QStringList ProjectManager::getProjectLanguages() const
 
 void ProjectManager::setProjectLanguagesInternal(const QStringList& value)
 {
-    if (!m_currentProject) return;
-    const auto normalized = ProjectLanguageSemantics::normalize(value);
-    if (!normalized.ok() || m_currentProject->projectLanguages == normalized.value) return;
-    m_currentProject->projectLanguages = normalized.value;
-    emit projectLanguagesChanged(normalized.value);
+    if (!m_currentProject || value.isEmpty()) return;
+    if (m_currentProject->projectLanguages == value) return;
+    m_currentProject->projectLanguages = value;
+    emit projectLanguagesChanged(value);
 }
 
 void ProjectManager::setDefaultLanguage(const QString& languageName)
