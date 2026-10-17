@@ -2344,6 +2344,7 @@ TEST(CurrentWorldCompiler,
     auto childAuthoring = Authored(harkenstudiobuild::ContainerModeV1::Random,
                                    harkenstudiobuild::RandomDisciplineV1::Draw);
     childAuthoring.containerStableId = harkentest::StudioObjectId(4);
+    childAuthoring.authoredStableOrder = 1;
     auto materializations = Materializations();
     materializations.push_back(
         {harkenplayableproperties::ContentPropertyKindV1::Container,
@@ -2357,6 +2358,12 @@ TEST(CurrentWorldCompiler,
 
     for (const std::uint32_t vintage : {18u, 19u}) {
         SCOPED_TRACE(vintage);
+        auto withoutTransition = parentAuthoring;
+        withoutTransition.transitionProgramIndex = UINT32_MAX;
+        const auto baseline = harkencurrentworldcompiler::CompileCurrentWorldV1(
+            project, {}, materializations, {withoutTransition, childAuthoring}, {},
+            {}, {}, nullptr, vintage);
+        ASSERT_TRUE(baseline.ok()) << static_cast<std::uint32_t>(baseline.status);
         const auto result = harkencurrentworldcompiler::CompileCurrentWorldV1(
             project, {}, materializations, {parentAuthoring, childAuthoring}, {},
             {transition}, {}, nullptr, vintage);
@@ -2596,6 +2603,7 @@ TEST(CurrentWorldCompiler,
     auto second = Authored(harkenstudiobuild::ContainerModeV1::SequenceQueue,
                            harkenstudiobuild::RandomDisciplineV1::Draw);
     second.containerStableId = harkentest::StudioObjectId(4);
+    second.authoredStableOrder = 1;
 
     harkencurrentworldcompiler::TransitionProgramAuthoringV1 transition{};
     transition.ownerContainerStableId = first.containerStableId;
@@ -2612,6 +2620,11 @@ TEST(CurrentWorldCompiler,
 
     for (const std::uint32_t vintage : {18u, 19u}) {
         SCOPED_TRACE(vintage);
+        auto validTransition = transition;
+        validTransition.rules = {fallback};
+        const auto baseline = harkencurrentworldcompiler::CompileCurrentWorldV1(
+            project, {}, materializations, {first, second}, {}, {validTransition}, {}, nullptr, vintage);
+        ASSERT_TRUE(baseline.ok()) << static_cast<std::uint32_t>(baseline.status);
         const auto result = harkencurrentworldcompiler::CompileCurrentWorldV1(
             project, {}, materializations, {first, second}, {}, {transition}, {}, nullptr, vintage);
         EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::InvalidCanonicalWorld,
