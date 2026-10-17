@@ -51,6 +51,8 @@ VnConfig ParkConfig(std::uint32_t maxVoices = 4,
                     std::uint32_t maxParkedVoices = 4,
                     float thresholdDb = -40.0f, std::uint32_t enabled = 1) {
     VnConfig config = MakeNullConfig(maxVoices, kBlock, kRate);
+    // Parking coverage does not require the default nested Action scratch.
+    config.maxTriggerDepth = 2;
     config.maxParkedVoices = maxParkedVoices;
     config.audibilityParkEnabled = enabled;
     config.parkThresholdDb = thresholdDb;

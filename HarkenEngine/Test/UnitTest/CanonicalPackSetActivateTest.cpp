@@ -32,14 +32,22 @@ namespace {
 using harkentest::ActivateInitPathV1;
 using harkentest::ActivateInitPathWithBus2V1;
 using harkentest::EngineSession;
-using harkentest::MakeNullConfig;
 using harkentest::PackAdmissionOpenForInit;
 using harkentest::PackMasterHolder;
+
+VnConfig CanonicalActivationConfig(std::uint32_t maxVoices = 0,
+                                   std::uint32_t blockFrames = 0,
+                                   std::uint32_t sampleRate = 0) {
+    auto config = harkentest::MakeNullConfig(maxVoices, blockFrames, sampleRate);
+    // Pack activation coverage does not require the default nested Action scratch.
+    config.maxTriggerDepth = 2;
+    return config;
+}
 
 TEST(CanonicalPackSetActivate, PathInitOnlyActivateRetryUnload) {
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-activate";
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
 
     const auto first = ActivateInitPathV1(directory);
@@ -80,7 +88,7 @@ TEST(CanonicalPackSetActivate, PathInitOnlyActivateRetryUnload) {
 }
 
 TEST(CanonicalPackSetActivate, CommandQueueRefusalReturnsPreparedTopologyPlan) {
-    VnConfig config = MakeNullConfig();
+    VnConfig config = CanonicalActivationConfig();
     config.commandQueueDepth = 16;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -120,7 +128,7 @@ TEST(CanonicalPackSetActivate, PreviewDifferentFingerprintBlocksPack) {
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) /
         "canonical-pack-set-activate-preview";
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     ASSERT_FALSE(session.Engine()->previewMasterHolders.empty());
     auto& holder = session.Engine()->previewMasterHolders.front();
@@ -138,7 +146,7 @@ TEST(CanonicalPackSetActivate, MasterBus2WritesPackCookieAndUnloads) {
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) /
         "canonical-pack-set-activate-bus2";
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto first = ActivateInitPathWithBus2V1(directory);
     ASSERT_EQ(VN_OK, first.result);
@@ -163,7 +171,7 @@ TEST(CanonicalPackSetActivate, MasterBus2WritesPackCookieAndUnloads) {
 }
 
 TEST(CanonicalPackSetActivate, LaterMissingMemberPreservesEmptyState) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "late-member";
     const std::string initPath = (directory / "Init.pack").string();
@@ -189,7 +197,7 @@ TEST(CanonicalPackSetActivate, LaterMissingMemberPreservesEmptyState) {
 }
 
 TEST(CanonicalPackSetActivate, MasterClashPreservesEmptyPackState) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     ASSERT_FALSE(session.Engine()->previewMasterHolders.empty());
     auto& holder = session.Engine()->previewMasterHolders.front();
@@ -207,7 +215,7 @@ TEST(CanonicalPackSetActivate, MasterClashPreservesEmptyPackState) {
 }
 
 TEST(CanonicalPackSetActivate, InitReplaceKeepsHandleAndSingleSlot) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto first = harkentest::ActivateInitPathV1(
         std::filesystem::path(HARKEN_TEMP_DIR) / "replace");
@@ -228,7 +236,7 @@ TEST(CanonicalPackSetActivate, InitReplaceKeepsHandleAndSingleSlot) {
 }
 
 TEST(CanonicalPackSetActivate, UnloadWithForeignChildPreservesGraph) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto first = harkentest::ActivateInitPathWithBus2V1(
         std::filesystem::path(HARKEN_TEMP_DIR) / "foreign-child");
@@ -250,7 +258,7 @@ TEST(CanonicalPackSetActivate, UnloadWithForeignChildPreservesGraph) {
 }
 
 TEST(CanonicalPackSetActivate, UnloadRetryIncludesBaseRevision) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto first = harkentest::ActivateInitPathV1(
         std::filesystem::path(HARKEN_TEMP_DIR) / "unload-retry");
@@ -331,7 +339,7 @@ struct ReentrantSetProvider {
 TEST(CanonicalPackSetActivate, ProviderAcquireAndReleaseRejectAllMutationFamilies) {
     for (int mode = 0; mode != 3; ++mode) {
         SCOPED_TRACE(mode);
-        EngineSession session(MakeNullConfig());
+        EngineSession session(CanonicalActivationConfig());
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
         ReentrantSetProvider provider;
@@ -374,7 +382,7 @@ TEST(CanonicalPackSetActivate, ProviderAcquireAndReleaseRejectAllMutationFamilie
 }
 
 TEST(CanonicalPackSetActivate, SameRevisionWrongExpectedHandleIsNotExactRetry) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto first = ActivateInitPathV1(
         std::filesystem::path(HARKEN_TEMP_DIR) / "retry-wrong-handle");
@@ -401,7 +409,7 @@ TEST(CanonicalPackSetActivate, SameRevisionWrongExpectedHandleIsNotExactRetry) {
 TEST(CanonicalPackSetActivate, LoadPackRefusesCurrentVintageInit) {
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-loadpack-init";
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto written = ActivateInitPathV1(directory);
     ASSERT_EQ(VN_OK, written.result);
@@ -430,7 +438,7 @@ TEST(CanonicalPackSetActivate, LoadPackRefusesCurrentVintageInit) {
 }
 
 TEST(CanonicalPackSetActivate, LoadPackRefusesInitWithoutKind24Snapshot) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     using namespace harkentest::packfoundation;
     ImageBuilder builder(harken::kPackKindInit);
@@ -460,7 +468,7 @@ TEST(CanonicalPackSetActivate, LoadPackRefusesInitWithoutKind24Snapshot) {
 }
 
 TEST(CanonicalPackSetActivate, ProductionV1LoadsAndInspectsButCannotActivate) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     using namespace harkentest::packfoundation;
     harken::PackRequirementBlock requirement;
@@ -524,7 +532,7 @@ TEST(CanonicalPackSetActivate, InspectInitWithoutKind24SnapshotIsBadPack) {
 }
 
 TEST(CanonicalPackSetActivate, ActivateInitWithoutKind24SnapshotIsBadPack) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     using namespace harkentest::packfoundation;
     ImageBuilder builder(harken::kPackKindInit);
@@ -546,7 +554,7 @@ TEST(CanonicalPackSetActivate, LoadPackRefusesLiveActivatedInit) {
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) /
         "canonical-pack-set-loadpack-live-init";
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto written = ActivateInitPathV1(directory);
     ASSERT_EQ(VN_OK, written.result);
@@ -564,7 +572,7 @@ TEST(CanonicalPackSetActivate, LoadPackRefusesLiveActivatedInit) {
 TEST(CanonicalPackSetActivate, PendingVoiceRecipePinsPackAttenuationGeneration) {
     constexpr std::uint32_t kBlock = 256;
     constexpr std::uint32_t kRate = 48000;
-    VnConfig config = MakeNullConfig(1, kBlock, kRate);
+    VnConfig config = CanonicalActivationConfig(1, kBlock, kRate);
     config.voiceStealPolicy = 2;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -643,7 +651,7 @@ TEST(CanonicalPackSetActivate, PendingVoiceRecipePinsPackAttenuationGeneration) 
 }
 
 TEST(CanonicalPackSetActivate, ContentWrongInitTripleIsStaleRevision) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-stale-triple";
@@ -683,7 +691,7 @@ TEST(CanonicalPackSetActivate, ContentWrongInitTripleIsStaleRevision) {
 }
 
 TEST(CanonicalPackSetActivate, SnapshotSendInstallsProspectiveEdge) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     constexpr float kLevelDb = -6.0f;
     const auto first = harkentest::ActivateInitBytesV1(
@@ -723,7 +731,7 @@ TEST(CanonicalPackSetActivate, SnapshotSendInstallsProspectiveEdge) {
 }
 
 TEST(CanonicalPackSetActivate, SnapshotSendPreservesForeignLiveSend) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto foreignSource = VN_OBJECT_ID(0, 80);
     const auto foreignTarget = VN_OBJECT_ID(0, 81);
@@ -779,7 +787,7 @@ TEST(CanonicalPackSetActivate, SnapshotSendPreservesForeignLiveSend) {
 }
 
 TEST(CanonicalPackSetActivate, ForeignSendCycleRefusesReplacementAndAllowsRetry) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) /
         "canonical-pack-set-foreign-cycle";
@@ -841,7 +849,7 @@ TEST(CanonicalPackSetActivate, ForeignSendCycleRefusesReplacementAndAllowsRetry)
 }
 
 TEST(CanonicalPackSetActivate, ForeignSendConsumesPackSourceCapacityWithoutMutation) {
-    auto config = harkentest::MakeNullConfig();
+    auto config = CanonicalActivationConfig();
     config.busSendSlotsPerBus = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -892,7 +900,7 @@ TEST(CanonicalPackSetActivate, ForeignSendConsumesPackSourceCapacityWithoutMutat
 }
 
 TEST(CanonicalPackSetActivate, DuplicateSnapshotSendIsBadPack) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto first = harkentest::ActivateInitBytesV1(
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-dup-send",
@@ -906,7 +914,7 @@ TEST(CanonicalPackSetActivate, DuplicateSnapshotSendIsBadPack) {
 }
 
 TEST(CanonicalPackSetActivate, ExactRetryIncludesProviderIdentity) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     struct Provider {
         std::vector<std::uint8_t> bytes = harkentest::BuildMasterOnlyInitBytes();
@@ -1110,7 +1118,7 @@ TEST(CanonicalPackSetActivate, TraceActiveActivateNoLongerReturnsCapabilityUnava
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) /
         "canonical-pack-set-trace-active";
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::string tracePath =
         (std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set.vtrc").string();
@@ -1132,7 +1140,7 @@ TEST(CanonicalPackSetActivate, TraceActiveActivateNoLongerReturnsCapabilityUnava
 TEST(CanonicalPackSetActivate, TraceStartActivateWritesCall135) {
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-activate-journal";
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::filesystem::path tracePath =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-activate-journal.vtrc";
@@ -1166,7 +1174,7 @@ TEST(CanonicalPackSetActivate, HostReplaysSuccessfulActivateCall135) {
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) /
         "canonical-pack-set-activate-host-replay";
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::filesystem::path tracePath =
         std::filesystem::path(HARKEN_TEMP_DIR) /
@@ -1248,7 +1256,7 @@ TEST(CanonicalPackSetActivate, HostKeepsPublishedAfterBadPackActivate) {
 }
 
 TEST(CanonicalPackSetActivate, TraceActiveBadStructSizeWritesNoActivateJournal) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::filesystem::path tracePath =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-activate-badarg.vtrc";
@@ -1270,7 +1278,7 @@ TEST(CanonicalPackSetActivate, TraceActiveBadStructSizeWritesNoActivateJournal) 
 
 
 TEST(CanonicalPackSetActivate, JournalsFailedCanonicalLoadWithoutPublish) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-load-refusal";
@@ -1396,7 +1404,7 @@ VnResult UnloadSet(VnPackHandle initHandle, std::uint64_t baseRevision) {
 }
 
 TEST(CanonicalPackSetActivate, InitMasterBusBindingInstallsAndUnloads) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-master";
@@ -1433,7 +1441,7 @@ TEST(CanonicalPackSetActivate, InitMasterBusBindingInstallsAndUnloads) {
 }
 
 TEST(CanonicalPackSetActivate, InitBus2BindingUsesLiveIndex) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-bus2";
@@ -1463,7 +1471,7 @@ TEST(CanonicalPackSetActivate, InitBus2BindingUsesLiveIndex) {
 }
 
 TEST(CanonicalPackSetActivate, AfterAllPreparedBeforeCommitRollsBackBindings) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-fault";
@@ -1513,7 +1521,7 @@ TEST(CanonicalPackSetActivate, AfterAllPreparedBeforeCommitRollsBackBindings) {
 }
 
 TEST(CanonicalPackSetActivate, SameHandleReplaceDiffsBindings) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-replace";
@@ -1589,7 +1597,7 @@ TEST(CanonicalPackSetActivate, SameHandleReplaceDiffsBindings) {
 }
 
 TEST(CanonicalPackSetActivate, CallerTakenCookieIsSkippedOnUnload) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-cookie";
@@ -1621,7 +1629,7 @@ TEST(CanonicalPackSetActivate, CallerTakenCookieIsSkippedOnUnload) {
 }
 
 TEST(CanonicalPackSetActivate, InitAndContentVoiceBindingsStayOnOwnCookies) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = harkentest::MakeDC(48000, 0.5f);
     const VnPCMDesc pcm = harkentest::MonoDesc(dc, 48000);
@@ -1675,7 +1683,7 @@ TEST(CanonicalPackSetActivate, InitAndContentVoiceBindingsStayOnOwnCookies) {
 }
 
 TEST(CanonicalPackSetActivate, ContentBusBindingDoesNotEnterTable) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = harkentest::MakeDC(48000, 0.5f);
     const VnPCMDesc pcm = harkentest::MonoDesc(dc, 48000);
@@ -1715,7 +1723,7 @@ TEST(CanonicalPackSetActivate, ContentBusBindingDoesNotEnterTable) {
 }
 
 TEST(CanonicalPackSetActivate, InitVoiceBindingIsRefused) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-init-voice";
@@ -1736,7 +1744,7 @@ TEST(CanonicalPackSetActivate, InitVoiceBindingIsRefused) {
 }
 
 TEST(CanonicalPackSetActivate, InitBusEffectParamIsNotKindRefused) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-bus-effect";
@@ -1767,7 +1775,7 @@ TEST(CanonicalPackSetActivate, InitBusEffectParamIsNotKindRefused) {
 }
 
 TEST(CanonicalPackSetActivate, VoiceEffectParamDoesNotEnterTable) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = harkentest::MakeDC(48000, 0.5f);
     const VnPCMDesc pcm = harkentest::MonoDesc(dc, 48000);
@@ -1815,7 +1823,7 @@ TEST(CanonicalPackSetActivate, VoiceEffectParamDoesNotEnterTable) {
 
 TEST(CanonicalPackSetActivate, BindingCapacityRefusalsLeaveEmptyState) {
     {
-        VnConfig config = MakeNullConfig();
+        VnConfig config = CanonicalActivationConfig();
         config.maxBindings = 1;
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -1832,7 +1840,7 @@ TEST(CanonicalPackSetActivate, BindingCapacityRefusalsLeaveEmptyState) {
         EXPECT_EQ(nullptr, session.Engine()->bindings.Find(kBusBindingId));
     }
     {
-        VnConfig config = MakeNullConfig();
+        VnConfig config = CanonicalActivationConfig();
         config.maxBindingAttachments = 1;
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -1853,7 +1861,7 @@ TEST(CanonicalPackSetActivate, BindingCapacityRefusalsLeaveEmptyState) {
         EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
     }
     {
-        VnConfig config = MakeNullConfig();
+        VnConfig config = CanonicalActivationConfig();
         config.commandQueueDepth = 2;
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -1874,7 +1882,7 @@ TEST(CanonicalPackSetActivate, BindingCapacityRefusalsLeaveEmptyState) {
 }
 
 TEST(CanonicalPackSetActivate, ReplaceCanonicalPackSwapsContentBindings) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = harkentest::MakeDC(48000, 0.5f);
     const VnPCMDesc pcm = harkentest::MonoDesc(dc, 48000);
@@ -1924,7 +1932,7 @@ TEST(CanonicalPackSetActivate, ReplaceCanonicalPackSwapsContentBindings) {
 }
 
 TEST(CanonicalPackSetActivate, UnloadPackOnInitLeavesCanonicalBindings) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-unloadpack";
@@ -1940,7 +1948,7 @@ TEST(CanonicalPackSetActivate, UnloadPackOnInitLeavesCanonicalBindings) {
 }
 
 TEST(CanonicalPackSetActivate, ReplaceDroppingBus2DetachesBeforeRetire) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-drop-bus2";
@@ -1970,7 +1978,7 @@ TEST(CanonicalPackSetActivate, ReplaceDroppingBus2DetachesBeforeRetire) {
 }
 
 TEST(CanonicalPackSetActivate, ReplaceKeepsBindingWhenBus2Retires) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-keep-bus2-row";
@@ -2012,7 +2020,7 @@ TEST(CanonicalPackSetActivate, ReplaceKeepsBindingWhenBus2Retires) {
 }
 
 TEST(CanonicalPackSetActivate, IdentityChangeRebindsSameTriple) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-identity";
@@ -2059,7 +2067,7 @@ TEST(CanonicalPackSetActivate, IdentityChangeRebindsSameTriple) {
 }
 
 TEST(CanonicalPackSetActivate, CallerTakenCookieIsSkippedOnReplace) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-binding-cookie-replace";
@@ -2105,7 +2113,7 @@ TEST(CanonicalPackSetActivate, CallerTakenCookieIsSkippedOnReplace) {
 }
 
 TEST(CanonicalPackSetActivate, KeepContentManifestUnloadsAfterInitReplace) {
-    EngineSession session(MakeNullConfig());
+    EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = harkentest::MakeDC(48000, 0.5f);
     const VnPCMDesc pcm = harkentest::MonoDesc(dc, 48000);

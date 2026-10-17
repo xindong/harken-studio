@@ -11,6 +11,13 @@
 
 namespace {
 
+VnConfig MeasurementBudgetConfig() {
+    auto config = harkentest::MakeNullConfig();
+    // Measurement budgets do not require the default nested Action scratch.
+    config.maxTriggerDepth = 2;
+    return config;
+}
+
 VnMonitorMeasurementRequest MakePeak() {
     VnMonitorMeasurementRequest request{};
     request.structSize = sizeof(request);
@@ -50,7 +57,7 @@ VnResult OpenAudioControl(VnMonitorSessionHandle* handle) {
 } // namespace
 
 TEST(MonitorMeasure, BudgetRejectsUserBudgetBelowPredictedCost) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementBudgetConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     ASSERT_EQ(VN_OK, OpenAudioControl(&handle));
@@ -86,7 +93,7 @@ TEST(MonitorMeasure, BudgetRejectsUserBudgetBelowPredictedCost) {
 }
 
 TEST(MonitorMeasure, BudgetRejectsTwoTapsBelowScaledDerivedCost) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementBudgetConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     ASSERT_EQ(VN_OK, OpenAudioControl(&handle));
@@ -115,7 +122,7 @@ TEST(MonitorMeasure, BudgetRejectsTwoTapsBelowScaledDerivedCost) {
 }
 
 TEST(MonitorMeasure, BudgetAccepts512SpectrumAtHopScaledRate) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementBudgetConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     ASSERT_EQ(VN_OK, OpenAudioControl(&handle));
@@ -161,7 +168,7 @@ TEST(MonitorMeasure, BudgetAccepts512SpectrumAtHopScaledRate) {
 }
 
 TEST(MonitorMeasure, BudgetRejectsOverlappedSpectrumWhenBudgetFitsOneWindow) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementBudgetConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     ASSERT_EQ(VN_OK, OpenAudioControl(&handle));
@@ -205,7 +212,7 @@ TEST(MonitorMeasure, BudgetRejectsOverlappedSpectrumWhenBudgetFitsOneWindow) {
 }
 
 TEST(MonitorMeasure, BudgetRejectsOneFrameWaveformWhenBudgetFitsCoarseBuckets) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementBudgetConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     ASSERT_EQ(VN_OK, OpenAudioControl(&handle));
@@ -254,7 +261,7 @@ TEST(MonitorMeasure, BudgetRejectsOneFrameWaveformWhenBudgetFitsCoarseBuckets) {
 }
 
 TEST(MonitorMeasure, BudgetAccepts4096SpectrumWhenBudgetFitsHopScaledRate) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementBudgetConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     ASSERT_EQ(VN_OK, OpenAudioControl(&handle));
@@ -305,7 +312,7 @@ TEST(MonitorMeasure, BudgetAccepts4096SpectrumWhenBudgetFitsHopScaledRate) {
 }
 
 TEST(MonitorMeasure, BudgetAcceptsWideWaveformBucketsWhenBudgetFitsFrameRate) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementBudgetConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     ASSERT_EQ(VN_OK, OpenAudioControl(&handle));
@@ -349,7 +356,7 @@ TEST(MonitorMeasure, BudgetAcceptsWideWaveformBucketsWhenBudgetFitsFrameRate) {
 }
 
 TEST(MonitorMeasure, BudgetZeroUsesPredictedAndDoesNotBypassHardCeiling) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementBudgetConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     ASSERT_EQ(VN_OK, OpenAudioControl(&handle));
@@ -379,7 +386,7 @@ TEST(MonitorMeasure, BudgetZeroUsesPredictedAndDoesNotBypassHardCeiling) {
 }
 
 TEST(MonitorMeasure, BudgetTimeSeriesOnly1024IsNotDerivedAudio) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementBudgetConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc{};
@@ -407,7 +414,7 @@ TEST(MonitorMeasure, BudgetTimeSeriesOnly1024IsNotDerivedAudio) {
 }
 
 TEST(MonitorMeasure, BudgetPartialKindFailureRollsBackWholePlan) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementBudgetConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     ASSERT_EQ(VN_OK, OpenAudioControl(&handle));
@@ -457,7 +464,7 @@ TEST(MonitorMeasure, BudgetPartialKindFailureRollsBackWholePlan) {
 }
 
 TEST(MonitorMeasure, BudgetHardCeilingStillRejects) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementBudgetConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc{};
@@ -484,7 +491,7 @@ TEST(MonitorMeasure, BudgetHardCeilingStillRejects) {
 }
 
 TEST(MonitorMeasure, FixedRingCapacityIsStableAcrossSessionReopen) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementBudgetConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     EXPECT_EQ(0u, harken::monitor::ProducerRingCapacityForTests());
     VnMonitorSessionHandle handle = 0;
@@ -508,7 +515,7 @@ TEST(MonitorMeasure, BudgetCapabilityMatchesImplementedLoudnessWindows) {
                                RateCase{3364, 1}, RateCase{44100, 1},
                                RateCase{48000, 1}, RateCase{384000, 1}}) {
         SCOPED_TRACE(rate.sampleRate);
-        auto config = harkentest::MakeNullConfig();
+        auto config = MeasurementBudgetConfig();
         config.sampleRate = rate.sampleRate;
         harkentest::EngineSession engine(config);
         ASSERT_EQ(VN_OK, engine.InitResult());

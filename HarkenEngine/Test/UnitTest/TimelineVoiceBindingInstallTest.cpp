@@ -24,7 +24,6 @@ namespace {
 
 using harkentest::EngineSession;
 using harkentest::MakeDC;
-using harkentest::MakeNullConfig;
 using harkentest::MonoDesc;
 
 constexpr std::uint32_t kBlock = 64;
@@ -33,6 +32,15 @@ constexpr VnObjectId kVariable = harkentest::ObjectId(7);
 constexpr VnObjectId kBinding = harkentest::ObjectId(9001);
 constexpr VnObjectId kSound = harkentest::ObjectId(21);
 constexpr VnObjectId kAction = harkentest::ObjectId(41);
+
+VnConfig TimelineInstallConfig(std::uint32_t maxVoices = 0,
+                               std::uint32_t blockFrames = 0,
+                               std::uint32_t sampleRate = 0) {
+    auto config = harkentest::MakeNullConfig(maxVoices, blockFrames, sampleRate);
+    // Voice installation coverage does not require the default nested Action scratch.
+    config.maxTriggerDepth = 2;
+    return config;
+}
 
 harken::PlayablePropertyPayloadViewV1 ResolvedPayload(float spread = 0.0f) {
     harken::PlayablePropertyPayloadViewV1 payload{};
@@ -247,7 +255,7 @@ harken::ResolvedPlayablePropertyCutViewV1 ResolveSoundCut(
 } // namespace
 
 TEST(TimelineVoiceInstall, AuthoredSpreadPercentMapsOnceToRuntimeWidth) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -282,7 +290,7 @@ TEST(TimelineVoiceInstall, AuthoredSpreadPercentMapsOnceToRuntimeWidth) {
 }
 
 TEST(TimelineVoiceInstall, InvalidAuthoredSpreadIsRejectedBeforeRuntimeWidth) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -304,7 +312,7 @@ TEST(TimelineVoiceInstall, InvalidAuthoredSpreadIsRejectedBeforeRuntimeWidth) {
 }
 
 TEST(TimelineVoiceInstall, StartupLiveUpdateAndReplayUseSameSpreadMapping) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -364,7 +372,7 @@ TEST(TimelineVoiceInstall, StartupLiveUpdateAndReplayUseSameSpreadMapping) {
 }
 
 TEST(TimelineVoiceInstall, TwoDimensionalRenderDoesNotConsumeWidth) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -419,7 +427,7 @@ TEST(TimelineVoiceInstall, TwoDimensionalRenderDoesNotConsumeWidth) {
 }
 
 TEST(TimelineVoiceInstall, NoLeaseCollectsAttachedVoiceBinding) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -442,7 +450,7 @@ TEST(TimelineVoiceInstall, NoLeaseCollectsAttachedVoiceBinding) {
 }
 
 TEST(TimelineVoiceInstall, NoLeaseCopySurvivesCatalogChange) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -473,7 +481,7 @@ TEST(TimelineVoiceInstall, NoLeaseCopySurvivesCatalogChange) {
 }
 
 TEST(TimelineVoiceInstall, NoLeaseAbsenceIsZeroBindings) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -492,7 +500,7 @@ TEST(TimelineVoiceInstall, NoLeaseAbsenceIsZeroBindings) {
 }
 
 TEST(TimelineVoiceInstall, InstallCreatesVoiceInstance) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -539,7 +547,7 @@ TEST(TimelineVoiceInstall, InstallCreatesVoiceInstance) {
 }
 
 TEST(TimelineVoiceInstall, FirstSampleUsesCurrentVariableValue) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -573,7 +581,7 @@ TEST(TimelineVoiceInstall, FirstSampleUsesCurrentVariableValue) {
 }
 
 TEST(TimelineVoiceInstall, LiveSetValueUpdatesContribution) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -611,7 +619,7 @@ TEST(TimelineVoiceInstall, LiveSetValueUpdatesContribution) {
 }
 
 TEST(TimelineVoiceInstall, StopRetiresVoiceBindingInstance) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -653,7 +661,7 @@ TEST(TimelineVoiceInstall, StopRetiresVoiceBindingInstance) {
 }
 
 TEST(TimelineVoiceInstall, DirectWorldPostActionAttachesVoiceBinding) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -685,7 +693,7 @@ TEST(TimelineVoiceInstall, DirectWorldPostActionAttachesVoiceBinding) {
 }
 
 TEST(TimelineVoiceInstall, DirectWorldPostActionWithoutAttachmentHasNoInstance) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -717,7 +725,7 @@ TEST(TimelineVoiceInstall, DirectWorldPostActionWithoutAttachmentHasNoInstance) 
 static void CheckOrderedActionFirstPcm(bool sameAction, bool fixedStart = false,
     std::int64_t delayNanoseconds = 4000000, bool delayedWrites = false,
     bool refuseAudioArena = false) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -870,7 +878,7 @@ TEST(TimelineVoiceInstall, PendingSameActionWritesKeepOwnInitialPcmAcrossAudioAr
 }
 
 TEST(TimelineVoiceInstall, CancelFixedSameFramePlayReleasesPageAndKeepsVariableWrite) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -929,7 +937,7 @@ TEST(TimelineVoiceInstall, CancelFixedSameFramePlayReleasesPageAndKeepsVariableW
 }
 
 TEST(TimelineVoiceInstall, OlderProbeWithdrawalCannotPublishUninstalledFixedSoundPage) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1024,7 +1032,7 @@ TEST(TimelineVoiceInstall, OlderProbeWithdrawalCannotPublishUninstalledFixedSoun
 }
 
 TEST(TimelineVoiceInstall, PendingSoundIgnoresEarlierSequenceFutureWriteUntilItIsDue) {
-    EngineSession session(MakeNullConfig(2, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(2, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1077,7 +1085,7 @@ TEST(TimelineVoiceInstall, PendingSoundIgnoresEarlierSequenceFutureWriteUntilItI
 }
 
 static void CheckPendingSoundEarlyReleaseAndReuse(bool destroySourceEmitter) {
-    auto config = MakeNullConfig(1, kBlock, kRate);
+    auto config = TimelineInstallConfig(1, kBlock, kRate);
     config.maxEmitters = 1;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1166,7 +1174,7 @@ TEST(TimelineVoiceInstall, PendingStopBeforeInstallationReleasesReaderAndAllowsF
 }
 
 TEST(TimelineVoiceInstall, PendingReadCutCapacityRefusalRollsBackAndKeepsAcceptedWrite) {
-    EngineSession session(MakeNullConfig(1, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(1, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1208,7 +1216,7 @@ TEST(TimelineVoiceInstall, PendingReadCutCapacityRefusalRollsBackAndKeepsAccepte
 }
 
 TEST(TimelineVoiceInstall, PendingTransportResetReleasesReaderBeforeFreshEpochPlayback) {
-    EngineSession session(MakeNullConfig(1, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(1, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1265,7 +1273,7 @@ TEST(TimelineVoiceInstall, PendingTransportResetReleasesReaderBeforeFreshEpochPl
 }
 
 static void CheckFixedSoundMissedDeadline(bool lateInstallation) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1333,7 +1341,7 @@ TEST(TimelineVoiceInstall, FixedSoundStalePublicationFailsDeadlineWithoutPcm) {
 }
 
 TEST(TimelineVoiceInstall, SnapshotOwnedSurvivesCallerStorageOverwrite) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -1376,7 +1384,7 @@ TEST(TimelineVoiceInstall, SnapshotOwnedSurvivesCallerStorageOverwrite) {
 }
 
 TEST(TimelineVoiceInstall, PreviewRefreshIsExplicitAndRespectsPitchGuard) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -1469,7 +1477,7 @@ float FreshSourcePeak(harken::Engine& engine) {
 }
 
 TEST(TimelineVoiceInstall, OriginalSourceActualTwoPlayPublicationCompletesBothBodiesAndFreshPcm) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1497,7 +1505,7 @@ TEST(TimelineVoiceInstall, OriginalSourceActualTwoPlayPublicationCompletesBothBo
 }
 
 TEST(TimelineVoiceInstall, OriginalSourceBusyRealRowLeavesWholeQueueAndAcknowledgesFreshBlock) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1522,7 +1530,7 @@ TEST(TimelineVoiceInstall, OriginalSourceBusyRealRowLeavesWholeQueueAndAcknowled
 }
 
 TEST(TimelineVoiceInstall, OriginalSourceMaximumBlockRefusesBeforeActualPop) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1540,7 +1548,7 @@ TEST(TimelineVoiceInstall, OriginalSourceMaximumBlockRefusesBeforeActualPop) {
 }
 
 TEST(TimelineVoiceInstall, OriginalSourceCancelDisposesOriginalAndKeepsSiblingFreshPcm) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1564,7 +1572,7 @@ TEST(TimelineVoiceInstall, OriginalSourceCancelDisposesOriginalAndKeepsSiblingFr
 }
 
 TEST(TimelineVoiceInstall, OriginalSourceCorruptWireCountUsesOriginalRangeAndKeepsSibling) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1590,7 +1598,7 @@ TEST(TimelineVoiceInstall, OriginalSourceCorruptWireCountUsesOriginalRangeAndKee
 
 TEST(TimelineVoiceInstall, OriginalSourceTerminationWithdrawsPublishedLifetimeLoansAfterJoin) {
     {
-        EngineSession session(MakeNullConfig(8, kBlock, kRate));
+        EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
         ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1601,7 +1609,7 @@ TEST(TimelineVoiceInstall, OriginalSourceTerminationWithdrawsPublishedLifetimeLo
         ASSERT_EQ(1u, tokens.size());
         EXPECT_EQ(SourceRegistry::Phase::Published, engine.originalSourceSubmissions.Find(tokens[0])->State());
     }
-    EngineSession restarted(MakeNullConfig(8, kBlock, kRate));
+    EngineSession restarted(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, restarted.InitResult());
     EXPECT_EQ(0u, harken::detail::VoicePoolReleaseTestAccess::OriginalOwnerCount(restarted.Engine()->voices));
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1612,7 +1620,7 @@ TEST(TimelineVoiceInstall, OriginalSourceTerminationWithdrawsPublishedLifetimeLo
 }
 
 TEST(TimelineVoiceInstall, OriginalSourceUnpublishedRollbackDoesNotCancelSameHandleReplacement) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1647,7 +1655,7 @@ TEST(TimelineVoiceInstall, OriginalSourceUnpublishedRollbackDoesNotCancelSameHan
 }
 
 TEST(TimelineVoiceInstall, OriginalSourceCancelReleaseHeldAcrossBlocksUsesFinalDispositionFence) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
@@ -1698,7 +1706,7 @@ TEST(TimelineVoiceInstall, OriginalSourceCancelReleaseHeldAcrossBlocksUsesFinalD
 }
 
 TEST(TimelineVoiceInstall, OriginalSourceUnpublishedRollbackPreservesActualReplacementBindingsAndMirror) {
-    EngineSession session(MakeNullConfig(8, kBlock, kRate));
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
