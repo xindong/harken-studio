@@ -227,7 +227,7 @@ void PrintDownmixNullDrillUsage() {
         "output (engine_downmix_<layout>.f32) as raw interleaved float32,\n"
         "plus a manifest.json. --seconds defaults to 6 and accepts [5, 60];\n"
         "--out defaults to .temp/nulldrill. Judge with\n"
-        "  python .scripts/downmix_null_reference.py [<dir>]\n");
+        "  python HarkenEngine/Test/E2E/downmix_null_reference.py [<dir>]\n");
 }
 
 int RunDownmixNullDrill(int argc, char** argv) {
@@ -342,7 +342,7 @@ int RunDownmixNullDrill(int argc, char** argv) {
     }
 
     std::printf("downmix-null-drill wrote artifacts to %s\n"
-                "judge with: python .scripts/downmix_null_reference.py %s\n",
+                "judge with: python HarkenEngine/Test/E2E/downmix_null_reference.py %s\n",
                 outDir.string().c_str(), outDir.string().c_str());
     return 0;
 }

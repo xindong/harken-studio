@@ -335,7 +335,7 @@ if(HARKEN_BUILD_RT_QUALIFICATION)
     if(WIN32)
         target_link_libraries(harken_core_rt_qualification PUBLIC advapi32 ws2_32 iphlpapi)
     endif()
-    add_subdirectory(Source/Tooling/Qualification)
+    add_subdirectory(Tool/Qualification)
 endif()
 
 if(HARKEN_BUILD_TOOLS)
@@ -419,10 +419,10 @@ _harken_add_python_regen_target(
     "Regenerating Native/Unity/Unreal Variable catalog constants from variable_catalog.json"
 )
 
-# Remote-control channel (Source/Tooling): a static tooling library the
+# Remote-control channel (Tool/Remote): a static tooling library the
 # host embeds for its remote-serve verb. Never linked into a game; drives
 # the engine only through the public C API.
-add_subdirectory(Source/Tooling/Remote)
+add_subdirectory(Tool/Remote)
 
 # Development preview play surface (Source/Tooling): the C entry face a
 # Studio-side host uses to hear one registered program. A tooling library because
@@ -438,9 +438,9 @@ add_subdirectory(Source/Tooling/Preview)
 # schema front-end is one — the work belongs to migration/compilation, not the
 # runtime — and Qt-free despite reading a Qt-authored format.
 
-# Host-side tooling executables (Source/Tooling): the demo/serve host
+# Host-side tooling executables (Tool/Host): the demo/serve host
 # and the .pack compiler. The spec's host/ module lives here physically —
 # never part of the shipping library, driving the engine as a game would.
-add_subdirectory(Source/Tooling/Host)
+add_subdirectory(Tool/Host)
 
 endif()

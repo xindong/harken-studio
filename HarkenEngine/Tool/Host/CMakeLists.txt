@@ -28,7 +28,7 @@ if(HARKEN_ENABLE_STAGE_TAPS)
 endif()
 
 add_executable(harken_host_selection_copy_test
-    PackPlaySelectionTest.cpp
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Test/UnitTest/PackPlaySelectionTest.cpp
 )
 target_include_directories(harken_host_selection_copy_test PRIVATE
     ${HARKEN_SCHEMA_GENERATED_CORE_DIR}
@@ -41,7 +41,7 @@ target_include_directories(harken_host_selection_copy_test PRIVATE
     ${HARKEN_RUNTIME_DIR}/render/include
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../Common
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Common
 )
 target_link_libraries(harken_host_selection_copy_test PRIVATE harken_core)
 
@@ -56,7 +56,7 @@ target_include_directories(harken_host PRIVATE
     ${HARKEN_RUNTIME_DIR}/render/include
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../Common
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Common
 )
 
 if(WIN32)

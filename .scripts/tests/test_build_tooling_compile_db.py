@@ -55,7 +55,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
                 "HarkenEngine/Source/Runtime/core/src/Core.cpp", "harken_core"
             ),
             self._entry(
-                "HarkenEngine/Source/Tooling/Host/Main.cpp", "harken_host"
+                "HarkenEngine/Tool/Host/Main.cpp", "harken_host"
             ),
             self._entry(
                 "HarkenEngine/Test/UnitTest/CoreTest.cpp", "harken_runtime_tests"
@@ -112,7 +112,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
                     extra="-DSHARED_VARIANT=1",
                 ),
                 self._entry(
-                    "HarkenEngine/Source/Tooling/Host/Main.cpp",
+                    "HarkenEngine/Tool/Host/Main.cpp",
                     "harken_packc",
                     extra="-DALTERNATE_TOOL=1",
                 ),
@@ -156,7 +156,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
                     "HarkenStudio/Test/ThirdParty/VendorTest.cpp", "vendor_test"
                 ),
                 self._entry(
-                    "HarkenEngine/Source/Tooling/Remote/generated/Wire.cpp",
+                    "HarkenEngine/Tool/Remote/generated/Wire.cpp",
                     "harken_remote",
                 ),
             ]

@@ -181,6 +181,11 @@ harken/
 ├── (build*/)                             # Build output, compiled artifacts
 ├── cmake/                                # Build identity injection
 ├── HarkenEngine/                         # harken_core — the sound engine runtime core
+│   ├── Source/                          # Runtime, product libraries, and shared code generation
+│   ├── Tool/                            # Internal development hosts, probes, and clients
+│   ├── Test/                            # Tests, acceptance drivers, fixtures, and test helpers
+│   ├── ThirdParty/                      # Bundled third-party dependencies
+│   └── Examples/                        # Engine integration examples
 ├── HarkenHub/                            # HarkenHub — the standalone launcher
 ├── HarkenSchema/                         # Independent Editor and Pack JSON contracts
 ├── HarkenSDK/                            # HarkenSDK — shared engine SDK root (Unity/Harken + Unreal/Harken)
@@ -192,3 +197,10 @@ harken/
 ├── USER_TERMS*.md                        # Privacy policy and license agreement
 └── README*.md | LICENSE | VERSION | NOTICE
 ```
+
+`HarkenEngine/Tool/` contains the internal Host, Qualification, and named-pipe
+Remote tools. Their checks belong in `HarkenEngine/Test/`. Product libraries
+such as Preview and shared API/code-generation inputs remain in `Source/Tooling/`.
+The Studio-to-game connection is implemented in `Source/Runtime/remote/` and is
+separate from the internal pipe tools. Repository-wide workflow scripts remain
+in `.scripts/`.

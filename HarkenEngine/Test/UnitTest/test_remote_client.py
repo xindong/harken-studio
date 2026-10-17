@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(
     0,
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "remote"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "Tool", "Remote"),
 )
 
 import remote_client  # noqa: E402

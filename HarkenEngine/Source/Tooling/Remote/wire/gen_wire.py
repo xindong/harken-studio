@@ -3,18 +3,18 @@
 
 Reads harken_wire_table.json (the single source of truth for protocol
 constants, opcodes, marshalled struct layouts, and per-function policies)
-and emits:
+and emits under <repo>/HarkenEngine/Tool/Remote:
 
-  ../generated/harken_wire_ids.h        protocol constants + opcode enum
-  ../generated/harken_wire_layout_asserts.h
+  generated/harken_wire_ids.h           protocol constants + opcode enum
+  generated/harken_wire_layout_asserts.h
                                        static asserts pinning every described
                                        field offset / struct size against the
                                        real public header (drift = compile
                                        error, never silent wire corruption)
-  ../generated/harken_wire_desc_meta.h  per-desc-type section-decode traits
-  ../generated/harken_wire_dispatch.inl the command switch: decode params,
+  generated/harken_wire_desc_meta.h     per-desc-type section-decode traits
+  generated/harken_wire_dispatch.inl    the command switch: decode params,
                                        call the C API, encode the reply
-  <repo>/.scripts/remote/harken_wire.py the Python protocol module (embeds the
+  harken_wire.py                       the Python protocol module (embeds the
                                        table verbatim; the driver script and
                                        future SDK emitters consume it)
 
@@ -40,9 +40,9 @@ import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TABLE_PATH = os.path.join(SCRIPT_DIR, "harken_wire_table.json")
-GENERATED_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "generated"))
 REPO_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", "..", "..", ".."))
-PY_MODULE_PATH = os.path.join(REPO_ROOT, ".scripts", "remote", "harken_wire.py")
+GENERATED_DIR = os.path.join(REPO_ROOT, "HarkenEngine", "Tool", "Remote", "generated")
+PY_MODULE_PATH = os.path.join(REPO_ROOT, "HarkenEngine", "Tool", "Remote", "harken_wire.py")
 
 C_HEADER = (
     "/* generated, do not edit.\n"
