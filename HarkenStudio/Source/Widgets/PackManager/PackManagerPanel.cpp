@@ -23,6 +23,7 @@
 #include "../Common/TableWidget.h"
 #include "../Common/SearchField.h"
 #include "../Common/SegmentedControl.h"
+#include "../Common/SplitButton.h"
 #include "../Common/SwitchIndicator.h"
 #include "../LogPanel/LogPanel.h"
 
@@ -51,6 +52,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QProcess>
+#include <QPushButton>
 #include <QSignalBlocker>
 #include <QTimer>
 #include <QToolButton>
@@ -534,8 +536,6 @@ void PackManagerPanel::setupUI()
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
-    mainLayout->addWidget(createToolbar());
-
     auto* content = new QWidget();
     DebugTint::tintContainer(content);
     auto* contentLayout = new QVBoxLayout(content);
@@ -551,7 +551,6 @@ void PackManagerPanel::setupUI()
 
     searchEdit_ = new SearchField();
     searchEdit_->setObjectName("packSearchEdit");
-    searchEdit_->setMaximumWidth(240);
     connect(searchEdit_, &QLineEdit::textChanged,
             this, &PackManagerPanel::applyNameFilter);
     contentLayout->addWidget(searchEdit_);
@@ -580,6 +579,7 @@ void PackManagerPanel::setupUI()
     connect(packTree_, &QTreeWidget::itemChanged,
             this, &PackManagerPanel::onPackItemChanged);
     contentLayout->addWidget(table, 1);
+    contentLayout->addWidget(createToolbar());
 
     applyDeveloperColumns();
 
@@ -595,9 +595,8 @@ QWidget* PackManagerPanel::createToolbar()
 {
     auto* toolbar = new QWidget();
     toolbar->setObjectName("packToolbar");
-    toolbar->setProperty("surfaceRole", QStringLiteral("secondary"));
     auto* row = new QHBoxLayout(toolbar);
-    row->setContentsMargins(4, 4, 4, 4);
+    row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(8);
 
     auto* platformLabel = new QLabel(tr("Export Platforms:"));
@@ -611,12 +610,17 @@ QWidget* PackManagerPanel::createToolbar()
     row->addWidget(platformChipsRow_);
     row->addStretch(1);
 
-    exportBtn_ = new QPushButton(tr("Export All"));
-    exportBtn_->setObjectName("projectPackGenerateAllBtn");
-    exportBtn_->setToolTip(
-        tr("Export every pack targeted to the selected platform(s). "
+    exportBtn_ = new SplitButton();
+    auto* primaryButton = exportBtn_->primaryButton();
+    primaryButton->setObjectName("projectPackGenerateAllBtn");
+    primaryButton->setToolTip(
+        tr("Export checked packs to the selected platforms. "
            "Init is always rebuilt."));
-    connect(exportBtn_, &QPushButton::clicked,
+    exportBtn_->dropdownButton()->setAccessibleName(tr("More export actions"));
+    exportBtn_->dropdownButton()->setToolTip(tr("More export actions"));
+    exportAllAction_ = exportBtn_->addAction(
+        tr("Export All"), this, [this] { requestExport({}, true); });
+    connect(primaryButton, &QPushButton::clicked,
             this, &PackManagerPanel::onExportClicked);
     row->addWidget(exportBtn_);
 
@@ -1523,17 +1527,19 @@ void PackManagerPanel::onExportClicked()
     requestExport({});
 }
 
-void PackManagerPanel::requestExport(const QStringList& unitNames)
+void PackManagerPanel::requestExport(const QStringList& unitNames, bool includeUnchecked)
 {
-    if (!ProjectManager::instance().currentProject())
+    const auto* project = ProjectManager::instance().currentProject();
+    if (!project)
         return;
-    const QStringList platforms = generationPlatforms();
+    const QStringList platforms = includeUnchecked
+        ? effectivePlatforms(project) : generationPlatforms();
     if (platforms.isEmpty()) {
         ToastManager::instance().showToast(
             tr("Select at least one platform to export"), 2000, ToastType::Info);
         return;
     }
-    emit exportRequested(platforms, unitNames);
+    emit exportRequested(platforms, unitNames, includeUnchecked);
 }
 
 QStringList PackManagerPanel::selectedUnitNames() const
@@ -1564,9 +1570,33 @@ void PackManagerPanel::updateExportButton()
 {
     if (!exportBtn_)
         return;
-    auto* project = ProjectManager::instance().currentProject();
-    exportBtn_->setEnabled(project
-        && !effectiveSelectedPlatforms(project).isEmpty());
+    const auto* project = ProjectManager::instance().currentProject();
+    const QStringList platforms = effectivePlatforms(project);
+    const QStringList selectedPlatforms = effectiveSelectedPlatforms(project);
+    bool partial = selectedPlatforms.size() != platforms.size();
+    if (project && !partial) {
+        const auto actionIds = ProjectPackExporter::CollectActionStableIds(*project);
+        const auto excludesPlatforms = [&platforms](const auto& targeting) {
+            return std::any_of(platforms.cbegin(), platforms.cend(),
+                [&targeting](const QString& platform) {
+                    return !targeting.includesPlatform(platform);
+                });
+        };
+        partial = std::any_of(project->actionPackTargeting.cbegin(),
+                             project->actionPackTargeting.cend(),
+            [&](const ActionPackTargeting& targeting) {
+                return actionIds.count(targeting.stableId) != 0 && excludesPlatforms(targeting);
+            }) || std::any_of(project->packGroups.cbegin(), project->packGroups.cend(),
+            [&](const PackGroup& group) {
+                return excludesPlatforms(group)
+                    && std::any_of(group.actionIds.cbegin(), group.actionIds.cend(),
+                        [&actionIds](harkenstudio::ObjectId id) { return actionIds.count(id) != 0; });
+            });
+    }
+    exportBtn_->primaryButton()->setText(partial ? tr("Export Checked") : tr("Export All"));
+    exportBtn_->setEnabled(project && !platforms.isEmpty());
+    exportBtn_->primaryButton()->setEnabled(!selectedPlatforms.isEmpty());
+    exportAllAction_->setVisible(partial);
 }
 
 void PackManagerPanel::onPackItemChanged(QTreeWidgetItem* item, int column)

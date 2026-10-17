@@ -496,6 +496,49 @@ QPushButton:pressed {
     color: @accentText@;
 }
 
+VNX--SplitButton {
+    background-color: @bgHover@;
+}
+
+QPushButton[splitButtonPart="primary"],
+QPushButton[splitButtonPart="action"],
+QToolButton[splitButtonPart="dropdown"] {
+    background-color: @bgHover@;
+    border: none;
+    border-radius: 0;
+    color: @textPrimary@;
+}
+
+QToolButton[splitButtonPart="dropdown"] {
+    padding: 0;
+}
+
+QPushButton[splitButtonPart="primary"]:hover:enabled,
+QPushButton[splitButtonPart="action"]:hover:enabled,
+QToolButton[splitButtonPart="dropdown"]:hover:enabled {
+    background-color: @bgTertiary@;
+}
+
+QPushButton[splitButtonPart="primary"]:pressed:enabled,
+QPushButton[splitButtonPart="action"]:pressed:enabled,
+QToolButton[splitButtonPart="dropdown"]:pressed:enabled {
+    background-color: @accent@;
+    color: @accentText@;
+}
+
+VNX--SplitButton:disabled,
+QPushButton[splitButtonPart="primary"]:disabled,
+QPushButton[splitButtonPart="action"]:disabled,
+QToolButton[splitButtonPart="dropdown"]:disabled {
+    background-color: @bgSecondary@;
+    color: @textDisabled@;
+}
+
+QFrame[splitButtonPart="divider"] {
+    background-color: @borderPrimary@;
+    border: none;
+}
+
 /* Danger Button (Magenta) */
 QPushButton[danger="true"] {
     background-color: transparent;
