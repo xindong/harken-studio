@@ -6638,6 +6638,137 @@ TEST(VariableCurrentSlice, BankOnlyPrivateSourceCannotGrantTargetDebtBypass) {
   }
 }
 
+TEST(VariableCurrentSlice, SustainedDirectPlayDoesNotStarveOrdinaryScopedWrites) {
+    constexpr std::uint32_t blockFrames = 256;
+    EngineSession session(CurrentSliceConfig(32, blockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    std::array<harken::VariableDefinitionV1, 8> definitions{};
+    for (std::uint32_t i = 0; i < definitions.size(); ++i)
+        definitions[i] = MakeVariableDefinition(harkentest::OffsetObjectId(kVariable, i),
+            harken::VariableKindV1::Smooth, 0, 1, 0);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallDefinitionsWorld(&e, definitions.data(), definitions.size()).status);
+    std::array<VnEmitterHandle, 128> emitters{};
+    for (auto& emitter : emitters) ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    const auto sound = harkentest::ObjectId(9990);
+    const std::vector<float> samples(4 * blockFrames, 0.05f);
+    const auto pcm = MonoDesc(samples, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    RegisterVoiceAttachment(harkentest::ObjectId(9991), sound);
+    for (unsigned block = 0; block < 16; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        e.nullBackend.Pump(1);
+    }
+    for (std::uint32_t frame = 0; frame < 96; ++frame) {
+        SCOPED_TRACE(frame);
+        for (std::uint32_t i = 0; i < 32; ++i) {
+            const auto index = (frame * 32 + i) % 1024;
+            ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitters[index / 8],
+                definitions[index % 8].variableId, (frame & 1) ? 0.25f : 0.75f));
+        }
+        auto play = MakePlayDesc(sound);
+        play.emitterHandle = emitters[(frame * 4) % emitters.size()];
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        e.nullBackend.Pump(1);
+        ASSERT_LE(e.variables.PendingCount(), 256u);
+        EXPECT_FALSE(harken::detail::VariableServiceTestAccess::HasHeldPlacements(e.variables));
+    }
+    for (unsigned block = 0; block < 16 && e.variables.PendingCount() != 0; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        e.nullBackend.Pump(1);
+    }
+    EXPECT_EQ(0u, e.variables.PendingCount());
+    EXPECT_EQ(96u * 32u, e.variables.AppliedCount());
+    EXPECT_EQ(0u, e.variables.RefusalCount());
+    EXPECT_EQ(0u, e.variables.SupersededCount());
+}
+
+TEST(VariableCurrentSlice, SustainedUnrelatedPlayDoesNotStarveClaimedPhysicalTarget) {
+    EngineSession session(CurrentSliceConfig(8, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    InstallVariable(&e);
+    const auto render = harkentest::RenderHandle(&e,
+        PlayDc(&e, harkentest::ObjectId(9992), VN_BUS_MASTER));
+    ASSERT_TRUE(e.params.BindVoiceTarget(kVariable, render, harken::kTargetVoiceVolume,
+        LinearCurve(0, 0, 1, -12)));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    e.nullBackend.Pump(2);
+    const auto sound = harkentest::ObjectId(9993);
+    const std::vector<float> samples(2 * kBlockFrames, 0.05f);
+    const auto pcm = MonoDesc(samples, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 1));
+    for (unsigned block = 0; block < 24; ++block) {
+        const auto play = MakePlayDesc(sound);
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        e.nullBackend.Pump(1);
+    }
+    EXPECT_EQ(0u, e.variables.PendingCount());
+    EXPECT_EQ(1u, e.variables.AppliedCount());
+    ASSERT_NE(nullptr, e.voices.Resolve(render));
+    EXPECT_NEAR(DbToLinear(-12), e.voices.Resolve(render)->gain.target, 1.0e-6f);
+    EXPECT_FALSE(e.params.ForeignClaim(render, harken::kTargetVoiceVolume));
+}
+
+TEST(VariableCurrentSlice, RelocatedOrdinarySlicesPreserveSharedFilterPrefix) {
+    EngineSession session(CurrentSliceConfig(8, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    const auto q = harkentest::OffsetObjectId(kVariable, 1);
+    const std::array definitions = {
+        MakeVariableDefinition(kVariable, harken::VariableKindV1::Smooth, 0, 1, 0),
+        MakeVariableDefinition(q, harken::VariableKindV1::Smooth, 0, 1, 0)};
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallDefinitionsWorld(&e, definitions.data(), definitions.size()).status);
+    const auto render = harkentest::RenderHandle(&e,
+        PlayDc(&e, harkentest::ObjectId(9994), VN_BUS_MASTER));
+    ASSERT_TRUE(e.params.BindVoiceTarget(kVariable, render, harken::kTargetVoiceLowpassCutoff,
+        LinearCurve(0, 20000, 1, 1000)));
+    ASSERT_TRUE(e.params.BindVoiceTarget(q, render, harken::kTargetVoiceLowpassQ,
+        LinearCurve(0, 0, 1, 1)));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    e.nullBackend.Pump(2);
+    const auto sound = harkentest::ObjectId(9995);
+    const std::vector<float> samples(2 * kBlockFrames, 0.05f);
+    const auto pcm = MonoDesc(samples, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    const auto first = AcceptGlobalWrite(kVariable, 1);
+    const auto second = AcceptGlobalWrite(q, 1);
+    bool checkedPrefix = false;
+    for (unsigned block = 0; block < 24; ++block) {
+        const auto play = MakePlayDesc(sound);
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto prior = e.variables.SliceForTicketForTests(first.sequence);
+        const auto later = e.variables.SliceForTicketForTests(second.sequence);
+        if (!checkedPrefix && e.variableSlices.State(later) == harken::VariableSliceState::PageCommitted) {
+            ASSERT_EQ(harken::VariableSliceState::PageCommitted, e.variableSlices.State(prior));
+            ASSERT_EQ(1u, e.variableSlices.TargetCount(later));
+            EXPECT_EQ(1u, e.variableSlices.SourceCount(later));
+            EXPECT_LE(e.variableSlices.EffectiveFrame(prior), e.variableSlices.EffectiveFrame(later));
+            const auto& slices = std::as_const(e.variableSlices);
+            ASSERT_NE(nullptr, slices.Target(later, 0));
+            const auto& filter = slices.Target(later, 0)->command.payload.setVoiceFilter;
+            EXPECT_FLOAT_EQ(1000, filter.cutoffHz);
+            EXPECT_FLOAT_EQ(harken::kToneDefaultQ * 2, filter.q);
+            checkedPrefix = true;
+        }
+        e.nullBackend.Pump(1);
+    }
+    EXPECT_TRUE(checkedPrefix);
+    EXPECT_EQ(0u, e.variables.PendingCount());
+    EXPECT_EQ(2u, e.variables.AppliedCount());
+    EXPECT_FLOAT_EQ(1000, e.params.ResolvedValue(render, harken::kTargetVoiceLowpassCutoff));
+    EXPECT_FLOAT_EQ(harken::kToneDefaultQ * 2, e.params.ResolvedValue(render, harken::kTargetVoiceLowpassQ));
+}
+
 TEST(VariableCurrentSlice, OrdinaryReservationsEndWithinUpdateAcrossCallbackExits) {
     struct State { harken::Engine* engine = nullptr; VnEmitterHandle emitter = 0;
         unsigned mode = 0; bool sawHold = false; unsigned calls = 0; };

@@ -2827,6 +2827,8 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row, WorkSpan
     if (!RecensusMatches(engine, row)) {
         return CandidateCaptureResult::Retry;
     }
+    // Bank-only writes still await their slice; they have no physical snapshot or sources to project.
+    if (slices_.TargetCount(row.slice) == 0) return CandidateCaptureResult::Ready;
     VariableProjectionGuard projection(engine);
     if (!projection.Valid()) {
         return CandidateCaptureResult::Retry;
@@ -3577,8 +3579,13 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
                 row.state == RowState::SlicePrepared;
             if (row.state == RowState::Terminal || row.state == RowState::PageCommitted || privateReady) continue;
             auto& held = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
-            if (row.used && row.placementHeld && row.committedFrame < nextOpenFrame)
-                ResetPreparedRow(engine, row);
+            if (row.used && row.placementHeld && row.committedFrame < nextOpenFrame) {
+                // Moving the calendar does not invalidate these claims or their captured FIFO frontier.
+                const bool cancelled = timeline_.CancelHeldCurrentSlice(&held);
+                assert(cancelled);
+                if (!cancelled) return;
+                row.placementHeld = false;
+            }
             if (row.state == RowState::Pending && !PrepareCurrentSlice(engine, row)) continue;
             if (!row.slice.Valid() || (row.state != RowState::WaitingFrontier &&
                 row.state != RowState::SlicePrepared)) continue;
