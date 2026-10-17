@@ -1574,7 +1574,7 @@ TEST_F(SourcesSectionProviderTest, RemovingMissingLanguagesKeepsDormantBankAndIs
     EXPECT_FALSE(widget_->findChild<QWidget*>("sourceMissingLanguages")->isHidden());
 }
 
-TEST_F(SourcesSectionProviderTest, MissingSourceDropUsesContextLanguageAndPreservesAuthoring)
+TEST_F(SourcesSectionProviderTest, MissingSourceRowDropDisambiguatesNamesWithinCurrentLanguageAndPreservesAuthoring)
 {
     using namespace VNX;
     auto& manager = ProjectManager::instance();
@@ -1586,53 +1586,77 @@ TEST_F(SourcesSectionProviderTest, MissingSourceDropUsesContextLanguageAndPreser
     writeWav(input, 0.25f);
     SoundSources sources;
     QList<AssetInfo> assets;
-    for (const auto& language : {QStringLiteral("English"), QStringLiteral("Japanese")}) {
-        ASSERT_TRUE(QDir().mkdir(SourceFileSystem::absolutePath(language)));
-        auto* command = ImportAssetsCommand::pushImportSources({input}, language);
+    const QStringList folders = {QStringLiteral("English/First"),
+                                 QStringLiteral("English/Second"), QStringLiteral("Japanese")};
+    for (int i = 0; i < folders.size(); ++i) {
+        ASSERT_TRUE(QDir().mkpath(SourceFileSystem::absolutePath(folders[i])));
+        auto* command = ImportAssetsCommand::pushImportSources({input}, folders[i]);
         ASSERT_EQ(command->successCount(), 1);
         assets.append(*registry.getAsset(command->importedIDs().first()));
         SoundSourceDef source;
         source.entryId = QUuid::createUuid();
         source.sourceId = assets.back().sourceID;
-        source.trimStartFrame = 12;
-        source.trimEndFrame = 240;
-        sources.localized[language].entries = {source};
-        sources.localized[language].active = source.entryId;
+        source.trimStartFrame = 12 + i;
+        source.trimEndFrame = 240 + i;
+        auto& set = sources.localized[i < 2 ? QStringLiteral("English") : QStringLiteral("Japanese")];
+        set.entries.push_back(source);
+        set.active = source.entryId;
     }
+    auto& english = sources.localized[QStringLiteral("English")];
+    SoundSourceSemantics::assignActive(english, english.entries.front().entryId,
+                                     HarkenTest::platformIdString("Windows"));
     ASSERT_TRUE(applySourceState(sources));
     const auto authored = sound_->comp<VSound>()->sources;
     ASSERT_TRUE(manager.saveProject());
     for (const auto& asset : assets)
         ASSERT_TRUE(QFile::remove(asset.absolutePath));
     bindSection();
+    widget_->resize(900, 300);
+    widget_->show();
+    QCoreApplication::processEvents();
     auto* list = widget_->findChild<QWidget*>(QStringLiteral("sourcesListWidget"));
     ASSERT_NE(list, nullptr);
     list->setProperty("selectedRow", 0);
-    ASSERT_EQ(visibleRows().size(), 1);
-    ObjectRefWidget* target = nullptr;
-    for (auto* row : visibleRows())
-        if (QUuid(row->property("entryId").toString()) == sources.localized["English"].entries.front().entryId)
-            target = row->findChild<ObjectRefWidget*>(QStringLiteral("sourceRef"));
-    ASSERT_NE(target, nullptr);
+    ASSERT_EQ(visibleRows().size(), 2);
     writeWav(input, 0.75f);
     QMimeData mime;
     mime.setUrls({QUrl::fromLocalFile(input)});
-    const QPoint position = target->mapTo(list, QPoint(5, 5));
-    QDragEnterEvent enter(position, Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(list, &enter);
-    ASSERT_TRUE(enter.isAccepted());
-    QDropEvent drop(position, Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
-    QApplication::sendEvent(list, &drop);
-    ASSERT_TRUE(drop.isAccepted());
+    const int undoCount = UndoRedoManager::instance().undoStack()->count();
+    QDragEnterEvent ambiguousEnter(QPoint(5, 5), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(list, &ambiguousEnter);
+    ASSERT_TRUE(ambiguousEnter.isAccepted());
+    QDropEvent ambiguousDrop(QPoint(5, 5), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(list, &ambiguousDrop);
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), undoCount);
+    for (const auto& asset : assets)
+        EXPECT_FALSE(registry.sourceFileExists(asset.sourceID));
     EXPECT_EQ(sound_->comp<VSound>()->sources, authored);
-    EXPECT_TRUE(registry.sourceFileExists(assets.front().sourceID));
-    EXPECT_FALSE(registry.sourceFileExists(assets.back().sourceID));
-    EXPECT_EQ(registry.count(), 2);
-    ASSERT_TRUE(UndoRedoManager::instance().undo());
+
+    ObjectRefWidget* target = nullptr;
+    for (auto* row : visibleRows())
+        if (QUuid(row->property("entryId").toString()) == english.entries.back().entryId)
+            target = row->findChild<ObjectRefWidget*>(QStringLiteral("sourceRef"));
+    ASSERT_NE(target, nullptr);
+    QDragEnterEvent enter(target->rect().center(), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &enter);
+    ASSERT_TRUE(enter.isAccepted());
+    QDropEvent drop(target->rect().center(), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &drop);
+    ASSERT_TRUE(drop.isAccepted());
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), undoCount + 1);
+    EXPECT_EQ(sound_->comp<VSound>()->sources, authored);
     EXPECT_FALSE(registry.sourceFileExists(assets.front().sourceID));
+    EXPECT_TRUE(registry.sourceFileExists(assets[1].sourceID));
+    EXPECT_FALSE(registry.sourceFileExists(assets.back().sourceID));
+    EXPECT_EQ(registry.count(), 3);
+    ASSERT_TRUE(UndoRedoManager::instance().undo());
+    for (const auto& asset : assets)
+        EXPECT_FALSE(registry.sourceFileExists(asset.sourceID));
     EXPECT_EQ(sound_->comp<VSound>()->sources, authored);
     ASSERT_TRUE(UndoRedoManager::instance().redo());
-    EXPECT_TRUE(registry.sourceFileExists(assets.front().sourceID));
+    EXPECT_FALSE(registry.sourceFileExists(assets.front().sourceID));
+    EXPECT_TRUE(registry.sourceFileExists(assets[1].sourceID));
+    EXPECT_FALSE(registry.sourceFileExists(assets.back().sourceID));
     EXPECT_EQ(sound_->comp<VSound>()->sources, authored);
 }
 
