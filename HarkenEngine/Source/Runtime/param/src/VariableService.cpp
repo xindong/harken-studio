@@ -3439,8 +3439,7 @@ void VariableServiceV1::RefreshOrdinaryDebt(Engine& engine) noexcept {
     }
     if (earliest != nullptr) {
         const auto slot = static_cast<std::uint32_t>(earliest - history_.data());
-        ordinaryDebt_ = {slot, historyGenerations_[slot], earliest->ticket.sequence,
-            earliest->world, earliest->transport};
+        ordinaryDebt_ = {slot, historyGenerations_[slot], earliest->ticket.sequence};
     }
 }
 
