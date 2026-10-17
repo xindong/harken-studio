@@ -184,6 +184,80 @@ TEST(VariableCapacity, SaturatedEightMemberReplacementUsesNetCreditsAtomically) 
     EXPECT_FALSE(outcomes.Overflowed());
 }
 
+TEST(VariableCapacity, SaturatedValidBatchRefusalPreservesTheObservedWholeBatchThroughApplication) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto definitions = SmoothBank(9);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        InstallDefinitionsWorld(engine, definitions.data(), static_cast<std::uint32_t>(definitions.size())).status);
+    auto observation = harken::ObserveVariableCallAt(engine->variables.CurrentWorldGeneration(),
+        engine->variables.CurrentTransportEpoch(), 256, 0, 0);
+    observation.requestedEffectiveFrame = 4u * 256;
+    std::array<VnVariableWriteV1, 8> writes{};
+    for (std::uint32_t i = 0; i < writes.size(); ++i)
+        writes[i] = {harkentest::ObjectId(i + 1), 0.25f, 0};
+    const auto original = engine->variables.AcceptGlobalBatch(writes.data(),
+        static_cast<std::uint32_t>(writes.size()), observation,
+        engine->params, engine->bindings, engine->busTargets);
+    ASSERT_EQ(VN_OK, original.result);
+    auto filler = observation;
+    const auto capacity = engine->variables.PendingCapacity();
+    for (std::uint32_t i = 0; i < capacity - writes.size(); ++i) {
+        filler.requestedEffectiveFrame = static_cast<std::uint64_t>(128u + i) * 256;
+        ASSERT_EQ(VN_OK, engine->variables.AcceptGlobal(harkentest::ObjectId(9), 0.5f,
+            filler, engine->params, engine->bindings, engine->busTargets).result);
+    }
+    ASSERT_EQ(capacity, engine->variables.PendingCount());
+    harken::VariableReadCutRef cut{};
+    ASSERT_TRUE(engine->variables.CaptureReadCut(0, observation.requestedEffectiveFrame,
+        original.ticket.sequence + 1, UINT32_MAX, &cut));
+    float value = 0;
+    ASSERT_TRUE(engine->variables.ReadCutValue(cut, writes[0].variableId, &value));
+    ASSERT_FLOAT_EQ(0.25f, value);
+    const auto issued = engine->logicCommits.IssuedCount();
+    harkentest::VariableOutcomeCapture outcomes(*engine);
+    for (auto& write : writes) write.value = 0.75f;
+    const auto refused = engine->variables.AcceptGlobalBatch(writes.data(),
+        static_cast<std::uint32_t>(writes.size()), observation,
+        engine->params, engine->bindings, engine->busTargets);
+    EXPECT_EQ(VN_VARIABLE_TRANSACTION_EXHAUSTED, refused.result);
+    EXPECT_EQ(0u, refused.ticket.sequence);
+    EXPECT_EQ(issued, engine->logicCommits.IssuedCount());
+    EXPECT_EQ(capacity, engine->variables.PendingCount());
+    EXPECT_EQ(0u, engine->variables.SupersededCount());
+    EXPECT_EQ(0u, outcomes.Count());
+    ASSERT_TRUE(engine->variables.ReadCutValue(cut, writes[0].variableId, &value));
+    EXPECT_FLOAT_EQ(0.25f, value);
+    VnVariableTicketQueryDescV1 query{};
+    query.structSize = sizeof(query);
+    query.ticket = {original.ticket.sequence, engine->variables.CurrentWorldGeneration(),
+        engine->variables.CurrentTransportEpoch()};
+    VnVariableTicketQueryResultV1 result{};
+    result.structSize = sizeof(result);
+    ASSERT_EQ(VN_OK, Vn_QueryVariableTicket(&query, &result));
+    EXPECT_EQ(VN_VARIABLE_OUTCOME_PENDING, result.outcome);
+    for (unsigned quantum = 0; quantum < 24 && outcomes.Count() < writes.size(); ++quantum) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(writes.size(), outcomes.Count());
+    for (const auto& write : writes) {
+        harken::VariableOutcomeRecord outcome{};
+        ASSERT_TRUE(outcomes.Pop(&outcome));
+        EXPECT_EQ(original.ticket.sequence, outcome.acceptedTicket.sequence);
+        EXPECT_EQ(harken::VariableOutcomeKind::Applied, outcome.outcome);
+        EXPECT_FLOAT_EQ(0.25f, ReadValue(engine, write.variableId));
+    }
+    ASSERT_EQ(VN_OK, Vn_QueryVariableTicket(&query, &result));
+    EXPECT_EQ(VN_VARIABLE_OUTCOME_APPLIED, result.outcome);
+    EXPECT_EQ(issued, engine->logicCommits.IssuedCount());
+    EXPECT_EQ(0u, engine->variables.SupersededCount());
+    EXPECT_FALSE(outcomes.Overflowed());
+    EXPECT_TRUE(engine->variables.ReleaseReadCut(cut));
+}
+
 void RunReplacementSeries(bool traced) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());

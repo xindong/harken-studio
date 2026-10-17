@@ -4198,6 +4198,7 @@ std::size_t VariableServiceV1::ReadCutStorageBytes() const noexcept {
 
 std::size_t VariableServiceV1::StorageBytes() const noexcept {
     return ReadCutStorageBytes() + slices_.StorageBytes() +
+        censusScratch_.capacity() * sizeof(GatheredTarget) +
         history_.capacity() * sizeof(WriteRow) + freeSlots_.capacity() * sizeof(std::uint32_t) +
         outcomes_.capacity() * sizeof(VariableOutcomeRecord) +
         ticketQueryRecords_.capacity() * sizeof(TicketQueryRecord) +
