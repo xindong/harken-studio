@@ -4103,8 +4103,7 @@ VariableServiceV1::WriteRow* VariableServiceV1::ResolveHistory(HistoryRef ref) n
     if (!ref.Valid() || ref.slot >= history_.size() ||
         historyGenerations_[ref.slot] != ref.generation) return nullptr;
     auto& row = history_[ref.slot];
-    if (row.world != ref.world || row.transport != ref.transport ||
-        (row.ticket.Valid() && row.ticket.sequence != ref.sequence)) return nullptr;
+    if (row.ticket.Valid() && row.ticket.sequence != ref.sequence) return nullptr;
     return row.used || row.reserved || row.observers != 0 ? &row : nullptr;
 }
 
@@ -4343,7 +4342,7 @@ bool VariableServiceV1::CaptureReadCutImpl(
             }
         }
         const auto historySlot = static_cast<std::uint32_t>(leader - history_.data());
-        value.source = {historySlot, historyGenerations_[historySlot], sequenceOf(*leader), cut.world, cut.transport};
+        value.source = {historySlot, historyGenerations_[historySlot], sequenceOf(*leader)};
     }
     cut.state.store(ReadCutState::Capturing, std::memory_order_release);
     *out = {slot, cut.generation.load(std::memory_order_relaxed)};
@@ -4432,7 +4431,7 @@ bool VariableServiceV1::RebuildPendingReadCut(ReadCutRow& cut, std::uint64_t log
                 if (cut.candidatePins.test(slot) && history_[slot].batchLeader &&
                     history_[slot].batchId == winner->batchId) { leader = &history_[slot]; break; }
         const auto slot = static_cast<std::uint32_t>(leader - history_.data());
-        value.source = {slot, historyGenerations_[slot], leader->ticket.sequence, cut.world, cut.transport};
+        value.source = {slot, historyGenerations_[slot], leader->ticket.sequence};
     }
     cut.finalPlacementCaptured = true;
     cut.needsRebuild = false;

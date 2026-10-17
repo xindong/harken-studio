@@ -1117,10 +1117,9 @@ private:
         std::uint32_t slot = UINT32_MAX;
         std::uint32_t generation = 0;
         LogicCommitSequence sequence = 0;
-        WorldGeneration world = 0;
-        TransportEpoch transport = 0;
         bool Valid() const noexcept { return slot != UINT32_MAX && generation != 0; }
     };
+    static_assert(sizeof(HistoryRef) == 16);
     struct ReadCutValueRow {
         VnVariableId variableId{};
         float value = 0.0f;
