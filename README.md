@@ -156,15 +156,6 @@ Single daily channel:
     cmake --build build-nc --config RelWithDebInfo [--target <harken_core|harken_editor|harken_hub>]
     ```
 
-## Legal Documents
-
-- Installation and Use License Agreement and Privacy Policy: [English](USER_TERMS.md) | [Simplified Chinese](USER_TERMS.zh-CN.md)
-- Harken Studio Open-Source Release Notice: [English](OPEN_SOURCE_RELEASE_NOTICE.txt) | [Simplified Chinese](OPEN_SOURCE_RELEASE_NOTICE.zh-CN.txt)
-
-These root files are the maintained sources for Hub and Studio releases. Hub and
-its installers generate their display formats from the user terms. [LICENSE](LICENSE)
-and [NOTICE](NOTICE) retain the open-source license and third-party attributions.
-
 ## Project Layout
 
 ```
