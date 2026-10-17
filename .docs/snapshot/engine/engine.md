@@ -1,7 +1,23 @@
 # HarkenEngine 现状快照
 
 最近核对：2026-07-30。路径缩写：`Runtime/` = `HarkenEngine/Source/Runtime/`，
-`Tooling/` = `HarkenEngine/Source/Tooling/`；测试指 `HarkenEngine/Test/`。
+`Tooling/` = `HarkenEngine/Source/Tooling/`，`Tool/` = `HarkenEngine/Tool/`；测试指 `HarkenEngine/Test/`。
+
+## 目录与开发边界
+
+本节与远程通道于 2026-10-17 核对，其余条目保留各自核对日期。
+
+| 目录 | 归属 |
+|---|---|
+| `HarkenEngine/Source/` | 引擎运行时、产品使用的库与共享代码生成。`Tooling/Preview` 是 Studio 使用的预览库；ABI、SDK Binding、Effects、VariableCatalog 等生成区域仍在此处 |
+| `HarkenEngine/Tool/` | 内部开发工具：`Host` 提供最小引擎宿主与运行探针，`Qualification` 提供资格检测工具，`Remote` 提供宿主侧命名管道服务、Python 客户端及生成的协议代码 |
+| `HarkenEngine/Test/` | 单元、端到端、性能等测试与夹具；工具自身测试放在 `UnitTest/`，管道验收入口为 `E2E/remote_acceptance_drive.py` |
+| `HarkenEngine/ThirdParty/` | 随仓维护的第三方依赖 |
+| `HarkenEngine/Examples/` | 面向引擎接入方的使用示例 |
+
+目录按用途划分，不按语言划分。Python 管道客户端归入 `Tool/Remote/`，给出通过或失败结论的下混参考验收归入 `Test/E2E/downmix_null_reference.py`；全仓构建、发布和质量门禁编排仍由 `.scripts/` 承担。
+
+`Tooling/Remote/wire/harken_wire_table.json` 同时供 ABI 与 SDK 生成使用，因此该表和 `gen_wire.py` 保留在 `Source/`。内部管道服务及其生成产物归入 `Tool/Remote/`，不把共享产品合同随开发工具一起迁走。
 
 ## 渲染与混音
 
@@ -39,7 +55,8 @@
 |---|---|---|---|
 | 一致快照与阶段抽头 | 音频侧无等待发布、读者付代价、块内自洽、抽头只观测不介入 | `core/PinnedSnapshot3`（三槽 pin 变体，契约同）+StageTap，撕裂压测覆盖 | 一致 |
 | trace 录制与回放 | — | `api/src/TraceRecorder`（全 API 调用流）+`harken_host trace-replay`；历史 CurrentWorld 仅支持有限诊断，明确拒绝 pre-#443 V5–V7 内嵌 Binding/Curve，范围与样本见[历史诊断约定](../../../HarkenEngine/Test/UnitTest/fixtures/current-world-pre443/README.md)（本项核对：2026-09-08） | 未记载 |
-| 远程控制 | 宿主侧工具通道、逻辑线程安全点执行、单一描述表生成+门禁防漂移 | `Tooling/Remote`（harken_wire_table.json，93 opcode，订阅推送）；传输仅 Windows named pipe；Studio 现为进程内直连 | 一致 |
+| 内部宿主管道 | 宿主侧工具通道、逻辑线程安全点执行、单一描述表生成+门禁防漂移 | `Tool/Remote/` + `harken_host remote-serve`；Windows named pipe 连接 Python 客户端，用于独立驱动引擎、验证 Pack 热替换、快照与可选 trace 回放；不进入游戏运行库 | 一致 |
+| Studio / 游戏远程连接 | 游戏进程内提供通信，Studio 连接运行中的引擎进行观测与控制 | `Runtime/remote/` 提供 TCP 通信与 UDP 发现，SDK 调用 `Vn_RemoteStart` 启动，Studio `RemoteConnection` 使用独立的 `Protocol.h`；本地试听仍通过进程内 C API | 已实现 |
 
 ## 对象与参数（运行时侧）
 

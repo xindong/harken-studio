@@ -72,6 +72,8 @@ add_library(harken_editor_common STATIC
     SearchField.h
     SegmentedControl.cpp
     SegmentedControl.h
+    SplitButton.cpp
+    SplitButton.h
     SwitchIndicator.h
     SourceRangeThumb.cpp
     SourceRangeThumb.h

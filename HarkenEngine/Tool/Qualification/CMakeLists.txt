@@ -72,7 +72,7 @@ target_include_directories(harken_rt_qualification PRIVATE
 
 if(HARKEN_RT_PROBE_DEFINITIONS)
     add_executable(harken_rt_probe_test
-        RtProbeTest.cpp
+        ${CMAKE_SOURCE_DIR}/HarkenEngine/Test/UnitTest/RtProbeTest.cpp
     )
     target_link_libraries(harken_rt_probe_test PRIVATE
         harken_core_rt_qualification

@@ -17,7 +17,7 @@
 #include "Support/AITestSupport.h"
 
 #include <gtest/gtest.h>
-#include <QPushButton>
+#include <QAbstractButton>
 #include <QTemporaryDir>
 #include <QToolButton>
 
@@ -225,7 +225,7 @@ TEST_F(ProjectPlatformUiIpc, NarrowPackSelectorExportsOnlyTheRequestedSiblingAnd
             requested = ids;
             ASSERT_EQ(call("export_pack", {{"platform_id", ids.first()}, {"output_path", directory.filePath("Output")}}).value("status").toString(), QStringLiteral("ok"));
         });
-    panel.findChild<QPushButton*>("projectPackGenerateAllBtn")->click();
+    panel.findChild<QAbstractButton*>("projectPackGenerateAllBtn")->click();
     EXPECT_EQ(requested, QStringList{high});
     ASSERT_TRUE(TestSupport::spinUntil([&]() {
         return !call("get_pack_build_status").value("result").toObject().value("in_progress").toBool();
@@ -321,7 +321,7 @@ TEST_F(ProjectPlatformUiIpc, GlobalContextSeparatesObservationEditingAndExportSc
     QStringList requested;
     QObject::connect(&panel, &PackManagerPanel::exportRequested, &panel,
         [&](const QStringList& ids, const QStringList&) { requested = ids; });
-    panel.findChild<QPushButton*>("projectPackGenerateAllBtn")->click();
+    panel.findChild<QAbstractButton*>("projectPackGenerateAllBtn")->click();
     EXPECT_EQ(requested, QStringList{high});
     EXPECT_EQ(row()->text(5), QStringLiteral("10 ms"));
     EXPECT_EQ(context.context().primary, QUuid(low));

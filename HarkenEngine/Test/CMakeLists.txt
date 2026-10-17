@@ -14,8 +14,8 @@ target_include_directories(harken_object_identity_tests PRIVATE
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/remote/include
     ${HARKEN_RUNTIME_DIR}/render/include
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Remote/include
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Remote/generated)
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Remote/include
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Remote/generated)
 target_link_libraries(harken_object_identity_tests PRIVATE harken_core GTest::gtest_main)
 if(WIN32 AND TARGET harken_host)
     add_dependencies(harken_object_identity_tests harken_host)
@@ -59,7 +59,7 @@ add_executable(harken_monitor_runtime_tests
     UnitTest/monitor_remote_codec.cpp)
 target_link_libraries(harken_monitor_runtime_tests PRIVATE harken_core GTest::gtest_main)
 target_include_directories(harken_monitor_runtime_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Remote/generated
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Remote/generated
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
     ${HARKEN_RUNTIME_DIR}/core/contract/include
@@ -371,7 +371,7 @@ target_include_directories(harken_runtime_tests PRIVATE
     ${HARKEN_RUNTIME_DIR}/render/include
     ${CMAKE_CURRENT_SOURCE_DIR}
     # The host tool's pure parsing helpers are unit-tested here.
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Host
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Host
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Common
     # The packc authoring-range predicate (RecipeParamInAuthoredRange) is pinned
     # here against the runtime effect-parameter validator for accept-domain
@@ -578,7 +578,7 @@ gtest_discover_tests(harken_render_worker_deadline_tests
 # The qualification presets are Visual Studio and MSVC only, so this is also the
 # first time these sources are compiled by clang-cl.
 add_executable(harken_rt_probe_worker_tests
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Qualification/RtProbeTest.cpp
+    UnitTest/RtProbeTest.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/RtProbe.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/RenderWorkerPool.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/AllocGuard.cpp
