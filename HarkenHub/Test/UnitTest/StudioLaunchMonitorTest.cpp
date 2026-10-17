@@ -27,6 +27,7 @@ struct Capture
 {
     QStringList stages;
     int readyCount = 0;
+    int forwardedCount = 0;
     int failedCount = 0;
     QString failure;
 };
@@ -39,6 +40,8 @@ Capture* wire(StudioLaunchMonitor& monitor, Capture& capture)
                      });
     QObject::connect(&monitor, &StudioLaunchMonitor::ready,
                      [&capture]() { ++capture.readyCount; });
+    QObject::connect(&monitor, &StudioLaunchMonitor::forwarded,
+                     [&capture]() { ++capture.forwardedCount; });
     QObject::connect(&monitor, &StudioLaunchMonitor::failed,
                      [&capture](const QString& error) {
                          ++capture.failedCount;
@@ -150,6 +153,64 @@ TEST(StudioLaunchMonitor, ProcessStartedIsNotTerminal)
     sendMessage(socket, stageFor(monitor, QStringLiteral("ready")));
     ASSERT_TRUE(spinUntil([&]() { return capture.readyCount == 1; }));
     EXPECT_EQ(capture.failedCount, 0);
+}
+
+TEST(StudioLaunchMonitor, ForwardingIsAcknowledgedAndTerminalWithoutClaimingReadiness)
+{
+    StudioLaunchMonitor monitor;
+    ASSERT_TRUE(monitor.listen());
+    monitor.setExpectedOperation(QStringLiteral("openProject"));
+    monitor.setExpectedBuildId(QStringLiteral("run1"));
+    monitor.setExpectedProcess(QCoreApplication::applicationPid(),
+                               QCoreApplication::applicationFilePath());
+    Capture capture;
+    wire(monitor, capture);
+
+    QLocalSocket socket;
+    socket.connectToServer(monitor.serverName());
+    ASSERT_TRUE(socket.waitForConnected(3000));
+    QJsonObject hello = helloFor(monitor, QStringLiteral("run1"));
+    hello[QStringLiteral("operation")] = QStringLiteral("openProject");
+    sendMessage(socket, hello);
+    sendMessage(socket, stageFor(monitor, QStringLiteral("forwarded")));
+    sendMessage(socket, stageFor(monitor, QStringLiteral("ready")));
+    sendMessage(socket, stageFor(monitor, QStringLiteral("forwarded")));
+
+    ASSERT_TRUE(spinUntil([&]() { return capture.forwardedCount == 1 && socket.canReadLine(); }));
+    const auto acknowledgement = QJsonDocument::fromJson(socket.readLine()).object();
+    EXPECT_EQ(acknowledgement.value(QStringLiteral("type")).toString(), QStringLiteral("forwardedAccepted"));
+    EXPECT_EQ(acknowledgement.value(QStringLiteral("token")).toString(), monitor.sessionToken());
+    EXPECT_EQ(capture.stages, QStringList{QStringLiteral("forwarded")});
+    EXPECT_EQ(capture.readyCount, 0);
+    EXPECT_EQ(capture.failedCount, 0);
+
+    socket.disconnectFromServer();
+    QCoreApplication::processEvents();
+    EXPECT_EQ(capture.forwardedCount, 1);
+    EXPECT_EQ(capture.failedCount, 0);
+}
+
+TEST(StudioLaunchMonitor, ForwardingRequiresAnOpenOperation)
+{
+    for (const auto& operation : {QString(), QStringLiteral("createProject")}) {
+        StudioLaunchMonitor monitor;
+        ASSERT_TRUE(monitor.listen());
+        Capture capture;
+        wire(monitor, capture);
+
+        QLocalSocket socket;
+        socket.connectToServer(monitor.serverName());
+        ASSERT_TRUE(socket.waitForConnected(3000));
+        QJsonObject hello = helloFor(monitor, QStringLiteral("run1"));
+        hello[QStringLiteral("operation")] = operation;
+        sendMessage(socket, hello);
+        sendMessage(socket, stageFor(monitor, QStringLiteral("forwarded")));
+
+        ASSERT_TRUE(spinUntil([&]() { return capture.failedCount == 1; }));
+        EXPECT_EQ(capture.forwardedCount, 0);
+        EXPECT_EQ(capture.readyCount, 0);
+        EXPECT_FALSE(socket.canReadLine());
+    }
 }
 
 TEST(StudioLaunchMonitor, ReportsStudioFailure)
@@ -342,19 +403,22 @@ TEST(StudioLaunchMonitor, RejectsHelloWithoutLaunchIntent)
 
 TEST(StudioLaunchMonitor, RejectsStageBeforeHello)
 {
-    StudioLaunchMonitor monitor;
-    ASSERT_TRUE(monitor.listen());
-    Capture capture;
-    wire(monitor, capture);
+    for (const auto& stage : {QStringLiteral("ready"), QStringLiteral("forwarded")}) {
+        StudioLaunchMonitor monitor;
+        ASSERT_TRUE(monitor.listen());
+        Capture capture;
+        wire(monitor, capture);
 
-    QLocalSocket socket;
-    socket.connectToServer(monitor.serverName());
-    ASSERT_TRUE(socket.waitForConnected(3000));
+        QLocalSocket socket;
+        socket.connectToServer(monitor.serverName());
+        ASSERT_TRUE(socket.waitForConnected(3000));
 
-    sendMessage(socket, stageFor(monitor, QStringLiteral("ready")));
+        sendMessage(socket, stageFor(monitor, stage));
 
-    ASSERT_TRUE(spinUntil([&]() { return capture.failedCount == 1; }));
-    EXPECT_EQ(capture.readyCount, 0);
+        ASSERT_TRUE(spinUntil([&]() { return capture.failedCount == 1; }));
+        EXPECT_EQ(capture.readyCount, 0);
+        EXPECT_EQ(capture.forwardedCount, 0);
+    }
 }
 
 TEST(StudioLaunchMonitor, RejectsUnknownStage)

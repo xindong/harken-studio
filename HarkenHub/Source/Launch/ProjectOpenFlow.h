@@ -19,6 +19,7 @@ struct ProjectOpenOutcome
     enum class Result
     {
         Launched,
+        Activated,
         Started,
         Unknown,
         Declined,

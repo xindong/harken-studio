@@ -34,6 +34,7 @@ public:
 signals:
     void stageChanged(const QString& stage);
     void ready();
+    void forwarded();
     void failed(const QString& error);
 
 private:
@@ -52,6 +53,7 @@ private:
     QString expectedExecutablePath_;
     qint64 expectedPid_ = 0;
     QString expectedOperation_;
+    QString reportedOperation_;
     QString expectedLaunchIntent_;
     QString lastStage_;
     QString failureCode_;
