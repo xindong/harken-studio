@@ -4409,7 +4409,6 @@ std::size_t VariableServiceV1::StorageBytes() const noexcept {
          settledRows_.capacity() + supersedeRows_.capacity()) * sizeof(WriteRow*) +
         serviceCandidates_.capacity() * sizeof(std::size_t) +
         scheduledGroups_.capacity() * sizeof(std::uint32_t) +
-        censusScratch_.capacity() * sizeof(GatheredTarget) +
         dependencyVisited_.capacity() * sizeof(VariableSliceRef);
 }
 
