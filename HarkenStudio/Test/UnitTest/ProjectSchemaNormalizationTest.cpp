@@ -52,8 +52,9 @@ const TrackNormalization* FindTrack(const NormalizedFacts& facts, StableId id) {
 
 // A refused compile must yield no model AND no facts — the "no partial output"
 // contract now covers the facts product too.
-void ExpectSingleRefusal(const ProjectInput& input, DiagnosticCode expected) {
-    const FrontEndResult result = CompileFrontEnd(input);
+void ExpectSingleRefusal(const ProjectInput& input, DiagnosticCode expected,
+                        PieceTimelineSemantics semantics = PieceTimelineSemantics::Legacy18) {
+    const FrontEndResult result = CompileFrontEnd(input, semantics);
     EXPECT_FALSE(result.ok());
     EXPECT_FALSE(result.project.has_value());
     EXPECT_FALSE(result.facts.has_value())
@@ -126,8 +127,29 @@ TEST(ProjectSchemaNormalization, EntryStartResolvesToZero) {
     EXPECT_EQ(piece->startMarkerId, 0u);
 }
 
+TEST(ProjectSchemaNormalization, LegacyEntryKeepsZeroWhenExitPrecedesContent) {
+    auto input = fixtures::EntryTimeline();
+    input.nodes[0].entryMarker.reset();
+    input.nodes[0].markers = {fixtures::MakeMarker(7, 2, MarkerKind::Exit, 50)};
+    input.nodes[1].clips[0].time = 100;
+    input.nodes[1].clips[0].duration = 100;
+    const auto result = CompileFrontEnd(input);
+    ASSERT_TRUE(result.ok()) << RenderDiagnostics(result.diagnostics);
+    ASSERT_EQ(1u, result.facts->pieces.size());
+    EXPECT_EQ(0, result.facts->pieces[0].startCoordinate);
+    EXPECT_EQ(PieceTimelineSemantics::Legacy18, result.facts->pieces[0].timelineSemantics);
+    EXPECT_EQ(PieceTimelineBounds{}, result.facts->pieces[0].bounds);
+    ExpectSingleRefusal(input, DiagnosticCode::InvalidPieceTimelineBounds,
+                        PieceTimelineSemantics::Entry19);
+    input.nodes[0].entryMarker = InputEntryMarker{G(5), 0};
+    const auto explicitEntry = CompileFrontEnd(input, PieceTimelineSemantics::Entry19);
+    ASSERT_TRUE(explicitEntry.ok()) << RenderDiagnostics(explicitEntry.diagnostics);
+    EXPECT_EQ((PieceTimelineBounds{100, 200, 0, 50}), explicitEntry.facts->pieces[0].bounds);
+    ExpectSingleRefusal(input, DiagnosticCode::EntryScheduleCapabilityUnavailable);
+}
+
 TEST(ProjectSchemaNormalization, MovableEntryPreservesAuthoredCoordinatesAndBounds) {
-    const auto result = CompileFrontEnd(fixtures::EntryTimeline());
+    const auto result = CompileFrontEnd(fixtures::EntryTimeline(), PieceTimelineSemantics::Entry19);
     ASSERT_TRUE(result.ok()) << RenderDiagnostics(result.diagnostics);
     const auto* piece = FindObject(*result.project, G(1));
     ASSERT_NE(nullptr, piece);
@@ -153,7 +175,10 @@ TEST(ProjectSchemaNormalization, ImplicitEntryUsesActualContentStart) {
         input.nodes[0].entryMarker.reset();
         input.nodes[0].markers.clear();
         input.nodes[1].clips[0].time = start;
-        const auto result = CompileFrontEnd(input);
+        const auto legacy = CompileFrontEnd(input);
+        ASSERT_TRUE(legacy.ok());
+        EXPECT_EQ(0, legacy.facts->pieces[0].startCoordinate);
+        const auto result = CompileFrontEnd(input, PieceTimelineSemantics::Entry19);
         ASSERT_TRUE(result.ok()) << RenderDiagnostics(result.diagnostics);
         const auto& piece = result.facts->pieces[0];
         EXPECT_EQ(start, piece.startCoordinate);
@@ -163,7 +188,7 @@ TEST(ProjectSchemaNormalization, ImplicitEntryUsesActualContentStart) {
     empty.nodes[0].entryMarker.reset();
     empty.nodes[0].markers.clear();
     empty.nodes[1].clips.clear();
-    const auto result = CompileFrontEnd(empty);
+    const auto result = CompileFrontEnd(empty, PieceTimelineSemantics::Entry19);
     ASSERT_TRUE(result.ok());
     EXPECT_EQ(PieceTimelineBounds{}, result.facts->pieces[0].bounds);
 }
@@ -171,17 +196,17 @@ TEST(ProjectSchemaNormalization, ImplicitEntryUsesActualContentStart) {
 TEST(ProjectSchemaNormalization, EntryIdentityAndTimelineErrorsRefusePartialOutput) {
     auto duplicate = fixtures::EntryTimeline();
     duplicate.nodes[0].entryMarker->guid = G(4);
-    ExpectSingleRefusal(duplicate, DiagnosticCode::DuplicateGuid);
+    ExpectSingleRefusal(duplicate, DiagnosticCode::DuplicateGuid, PieceTimelineSemantics::Entry19);
     auto nonPiece = fixtures::EntryTimeline();
     nonPiece.nodes[0].entryMarker.reset();
     nonPiece.nodes[2].entryMarker = InputEntryMarker{G(5), 100};
-    ExpectSingleRefusal(nonPiece, DiagnosticCode::EntryMarkerOnNonPiece);
+    ExpectSingleRefusal(nonPiece, DiagnosticCode::EntryMarkerOnNonPiece, PieceTimelineSemantics::Entry19);
     auto reversed = fixtures::EntryTimeline();
     reversed.nodes[0].entryMarker->position = 301;
-    ExpectSingleRefusal(reversed, DiagnosticCode::InvalidPieceTimelineBounds);
+    ExpectSingleRefusal(reversed, DiagnosticCode::InvalidPieceTimelineBounds, PieceTimelineSemantics::Entry19);
     auto overflow = fixtures::EntryTimeline();
     overflow.nodes[0].entryMarker->position = (std::numeric_limits<std::int64_t>::min)();
-    ExpectSingleRefusal(overflow, DiagnosticCode::InvalidPieceTimelineBounds);
+    ExpectSingleRefusal(overflow, DiagnosticCode::InvalidPieceTimelineBounds, PieceTimelineSemantics::Entry19);
 }
 
 TEST(ProjectSchemaNormalization, MusicalMapNotSingletonRefused) {

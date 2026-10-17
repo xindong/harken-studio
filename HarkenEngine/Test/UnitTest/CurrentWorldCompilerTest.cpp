@@ -185,6 +185,21 @@ struct EntryTimelineFixture {
     }
 };
 
+TEST(CurrentWorldCompiler, LegacyEntryKeepsExitBeforeFirstPlacementCompilable) {
+    EntryTimelineFixture fixture;
+    auto& piece = fixture.project.objects[0].piece;
+    piece.entryMarker.reset();
+    piece.markers[0].position = 50000000;
+    auto& clip = fixture.project.objects[1].track.clips[0];
+    clip.time = 100000000;
+    clip.duration = 100000000;
+    const auto legacy = fixture.Compile();
+    ASSERT_TRUE(legacy.ok()) << static_cast<unsigned>(legacy.status);
+    EXPECT_EQ(18u, legacy.world->View().sourceBodyVintage);
+    EXPECT_EQ(0u, legacy.world->View().pieceSchedules[0].startPointKind);
+    EXPECT_FALSE(fixture.Compile(19).ok());
+}
+
 TEST(CurrentWorldCompiler, Entry19CrossCodecRoundtripAndShippingGate) {
     EntryTimelineFixture fixture;
     const auto legacy = fixture.Compile();

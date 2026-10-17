@@ -298,6 +298,8 @@ const char* DiagnosticCodeName(DiagnosticCode code) {
             return "ClipEndOverflow";
         case DiagnosticCode::InvalidPieceTimelineBounds:
             return "InvalidPieceTimelineBounds";
+        case DiagnosticCode::EntryScheduleCapabilityUnavailable:
+            return "EntryScheduleCapabilityUnavailable";
         case DiagnosticCode::ReferenceChainDepthExceeded:
             return "ReferenceChainDepthExceeded";
         case DiagnosticCode::SendCountExceedsLayoutLimit:
@@ -515,10 +517,12 @@ std::string RenderNormalizedFacts(const NormalizedFacts& facts) {
     for (const PieceNormalization& p : facts.pieces) {
         s += "piece " + U(p.piece) +
              " start=" + std::string(StartKindName(p.startKind)) +
-             " coord=" + I(p.startCoordinate) + " markerId=" + U(p.startMarkerId) +
-             " content=[" + I(p.bounds.contentStart) + "," + I(p.bounds.contentEnd) +
-             ") nominal=[" + I(p.bounds.nominalStart) + "," + I(p.bounds.nominalEnd) + ")" +
-             " markers:";
+             " coord=" + I(p.startCoordinate) + " markerId=" + U(p.startMarkerId);
+        if (p.timelineSemantics == PieceTimelineSemantics::Entry19)
+            s += " semantics=Entry19 content=[" + I(p.bounds.contentStart) + "," +
+                 I(p.bounds.contentEnd) + ") nominal=[" + I(p.bounds.nominalStart) +
+                 "," + I(p.bounds.nominalEnd) + ")";
+        s += " markers:";
         for (const StableId id : p.markersByMarkerId) {
             s += " " + U(id);
         }
@@ -602,10 +606,12 @@ std::string RenderPieceIR(const PieceIR& ir) {
         s += "piece " + U(p.pieceId) +
              " time=" + std::string(TimeKindName(p.timeSpec.kind)) +
              " start=" + std::string(StartKindName(p.startKind)) +
-             " coord=" + I(p.startCoordinate) + " markerId=" + U(p.startMarkerId) +
-             " content=[" + I(p.bounds.contentStart) + "," + I(p.bounds.contentEnd) +
-             ") nominal=[" + I(p.bounds.nominalStart) + "," + I(p.bounds.nominalEnd) + ")" +
-             " markers:";
+             " coord=" + I(p.startCoordinate) + " markerId=" + U(p.startMarkerId);
+        if (p.timelineSemantics == PieceTimelineSemantics::Entry19)
+            s += " semantics=Entry19 content=[" + I(p.bounds.contentStart) + "," +
+                 I(p.bounds.contentEnd) + ") nominal=[" + I(p.bounds.nominalStart) +
+                 "," + I(p.bounds.nominalEnd) + ")";
+        s += " markers:";
         for (const IrMarker& c : p.markers) {
             s += " " + U(c.id) + "/" + U(c.markerId) + ":" +
                  std::string(MarkerKindName(c.kind)) + "@" + I(c.position);

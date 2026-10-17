@@ -476,6 +476,11 @@ struct EntryMarker {
     std::int64_t position = 0;
 };
 
+enum class PieceTimelineSemantics : std::uint32_t {
+    Legacy18 = 18,
+    Entry19 = 19,
+};
+
 struct PieceTimelineBounds {
     std::int64_t contentStart = 0;
     std::int64_t contentEnd = 0;

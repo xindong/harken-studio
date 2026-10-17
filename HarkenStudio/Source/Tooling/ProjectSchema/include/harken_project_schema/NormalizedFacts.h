@@ -25,6 +25,7 @@ namespace harkenprojectschema {
 // The normalized time facts of one Piece.
 struct PieceNormalization {
     StableId piece = kUnmintedStableId;
+    PieceTimelineSemantics timelineSemantics = PieceTimelineSemantics::Legacy18;
 
     StartPointKind startKind = StartPointKind::Entry;
     std::int64_t startCoordinate = 0;

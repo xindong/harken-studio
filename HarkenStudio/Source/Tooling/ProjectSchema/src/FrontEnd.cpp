@@ -1061,14 +1061,17 @@ void ValidateTimeMarker(const ProjectInput& input, std::vector<Diagnostic>* out)
 // Derives the normalization facts from the already-built, already-valid model.
 // The model's objects are in ascending stable-id order, so iterating them yields
 // the per-Piece and per-Track facts in that same order without a further sort.
-NormalizedFacts BuildNormalizedFacts(const CanonicalProject& project) {
+NormalizedFacts BuildNormalizedFacts(const CanonicalProject& project,
+                                     PieceTimelineSemantics semantics) {
     NormalizedFacts facts;
     for (const ContentObject& obj : project.objects) {
         if (obj.kind == ContentKind::Piece) {
             const PieceDef& piece = obj.piece;
             PieceNormalization pn;
             pn.piece = piece.chassis.id;
-            pn.bounds = *DerivePieceTimelineBounds(project, piece);
+            pn.timelineSemantics = semantics;
+            if (semantics == PieceTimelineSemantics::Entry19)
+                pn.bounds = *DerivePieceTimelineBounds(project, piece);
             pn.startKind = piece.startPoint.kind;
             if (piece.startPoint.kind == StartPointKind::Marker) {
                 pn.startMarkerId = piece.startPoint.markerId;
@@ -1082,7 +1085,8 @@ NormalizedFacts BuildNormalizedFacts(const CanonicalProject& project) {
                 }
             } else {
                 pn.startMarkerId = kReservedMarkerId;
-                pn.startCoordinate = pn.bounds.nominalStart;
+                pn.startCoordinate = semantics == PieceTimelineSemantics::Entry19
+                    ? pn.bounds.nominalStart : 0;
             }
 
             std::vector<const Marker*> byMarkerId;
@@ -1131,8 +1135,15 @@ NormalizedFacts BuildNormalizedFacts(const CanonicalProject& project) {
 
 FrontEndResult CompileFrontEndImpl(
     const ProjectInput& input,
-    const std::optional<std::uint32_t>& resolutionDepthCeiling) {
+    const std::optional<std::uint32_t>& resolutionDepthCeiling,
+    PieceTimelineSemantics semantics) {
     FrontEndResult result;
+    if (semantics != PieceTimelineSemantics::Legacy18 &&
+        semantics != PieceTimelineSemantics::Entry19) {
+        result.diagnostics.push_back(Make(
+            DiagnosticCode::EntryScheduleCapabilityUnavailable, {}));
+        return result;
+    }
 
     // Stage 1: parse. Runs fully; a failure here stops the pipeline, because
     // later stages assume well-shaped nodes.
@@ -1181,15 +1192,20 @@ FrontEndResult CompileFrontEndImpl(
     // partial output" means in code.
     CanonicalProject project = BuildProject(input, index);
     for (const auto& object : project.objects) {
-        if (object.kind == ContentKind::Piece &&
-            !DerivePieceTimelineBounds(project, object.piece)) {
+        if (object.kind != ContentKind::Piece) continue;
+        if (semantics == PieceTimelineSemantics::Legacy18) {
+            if (object.piece.entryMarker)
+                result.diagnostics.push_back(Make(
+                    DiagnosticCode::EntryScheduleCapabilityUnavailable,
+                    object.chassis().guid));
+        } else if (!DerivePieceTimelineBounds(project, object.piece)) {
             result.diagnostics.push_back(Make(
                 DiagnosticCode::InvalidPieceTimelineBounds,
                 object.chassis().guid));
         }
     }
     if (!result.diagnostics.empty()) return result;
-    NormalizedFacts facts = BuildNormalizedFacts(project);
+    NormalizedFacts facts = BuildNormalizedFacts(project, semantics);
     ReferenceResolutionResult resolution =
         resolutionDepthCeiling.has_value()
             ? BuildReferenceResolution(project, facts,
@@ -1303,13 +1319,15 @@ std::optional<PieceTimelineBounds> DerivePieceTimelineBounds(
     return bounds;
 }
 
-FrontEndResult CompileFrontEnd(const ProjectInput& input) {
-    return CompileFrontEndImpl(input, std::nullopt);
+FrontEndResult CompileFrontEnd(const ProjectInput& input,
+                               PieceTimelineSemantics semantics) {
+    return CompileFrontEndImpl(input, std::nullopt, semantics);
 }
 
 FrontEndResult CompileFrontEnd(const ProjectInput& input,
-                               std::uint32_t resolutionDepthCeiling) {
-    return CompileFrontEndImpl(input, resolutionDepthCeiling);
+                               std::uint32_t resolutionDepthCeiling,
+                               PieceTimelineSemantics semantics) {
+    return CompileFrontEndImpl(input, resolutionDepthCeiling, semantics);
 }
 
 }  // namespace harkenprojectschema

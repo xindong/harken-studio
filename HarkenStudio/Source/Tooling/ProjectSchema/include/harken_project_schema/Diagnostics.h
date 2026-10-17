@@ -90,6 +90,7 @@ enum class DiagnosticCode : std::uint32_t {
     NegativeClipDuration = 502,
     ClipEndOverflow = 503,
     InvalidPieceTimelineBounds = 504,
+    EntryScheduleCapabilityUnavailable = 505,
 
     // Reference-slot resolution.
     ReferenceChainDepthExceeded = 600,   // a placement/organizational chain ran past the depth ceiling

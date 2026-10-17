@@ -42,8 +42,10 @@ ResourceTable ResidentResources(const CanonicalProject& project) {
     return table;
 }
 
-std::optional<PieceProgram> BuildProgramFrom(const ProjectInput& input) {
-    const FrontEndResult front = CompileFrontEnd(input);
+std::optional<PieceProgram> BuildProgramFrom(
+    const ProjectInput& input,
+    PieceTimelineSemantics semantics = PieceTimelineSemantics::Legacy18) {
+    const FrontEndResult front = CompileFrontEnd(input, semantics);
     if (!front.ok() || !front.project.has_value() || !front.facts.has_value()) {
         return std::nullopt;
     }
@@ -71,17 +73,39 @@ TEST(ProjectSchemaProgram, AssemblesFromIr) {
 
 TEST(ProjectSchemaProgram, EntryPositionChangesSemanticsButMarkerGuidDoesNot) {
     auto input = fixtures::EntryTimeline();
-    const auto original = BuildProgramFrom(input);
+    const auto original = BuildProgramFrom(input, PieceTimelineSemantics::Entry19);
     ASSERT_TRUE(original);
     input.nodes[0].entryMarker->position = 101;
-    const auto moved = BuildProgramFrom(input);
+    const auto moved = BuildProgramFrom(input, PieceTimelineSemantics::Entry19);
     ASSERT_TRUE(moved);
     EXPECT_NE(original->programSemanticFingerprint(), moved->programSemanticFingerprint());
     input.nodes[0].entryMarker->position = 100;
     input.nodes[0].entryMarker->guid = fixtures::G(55);
-    const auto renamed = BuildProgramFrom(input);
+    const auto renamed = BuildProgramFrom(input, PieceTimelineSemantics::Entry19);
     ASSERT_TRUE(renamed);
     EXPECT_EQ(original->programSemanticFingerprint(), renamed->programSemanticFingerprint());
+}
+
+TEST(ProjectSchemaProgram, LegacyEntryAndIrSurviveExitBeforeContent) {
+    auto input = fixtures::EntryTimeline();
+    input.nodes[0].entryMarker.reset();
+    input.nodes[0].markers = {fixtures::MakeMarker(7, 2, MarkerKind::Exit, 50)};
+    input.nodes[1].clips[0].time = 100;
+    input.nodes[1].clips[0].duration = 100;
+    const auto legacy = BuildProgramFrom(input);
+    ASSERT_TRUE(legacy);
+    ASSERT_EQ(1u, legacy->ir().pieces().size());
+    EXPECT_EQ(0, legacy->ir().pieces()[0].startCoordinate);
+    EXPECT_EQ(PieceTimelineSemantics::Legacy18, legacy->ir().pieces()[0].timelineSemantics);
+    EXPECT_FALSE(BuildProgramFrom(input, PieceTimelineSemantics::Entry19));
+    input.nodes[0].markers.clear();
+    const auto oldProgram = BuildProgramFrom(input);
+    const auto newProgram = BuildProgramFrom(input, PieceTimelineSemantics::Entry19);
+    ASSERT_TRUE(oldProgram);
+    ASSERT_TRUE(newProgram);
+    EXPECT_EQ(0, oldProgram->ir().pieces()[0].startCoordinate);
+    EXPECT_EQ(100, newProgram->ir().pieces()[0].startCoordinate);
+    EXPECT_NE(oldProgram->programSemanticFingerprint(), newProgram->programSemanticFingerprint());
 }
 
 TEST(ProjectSchemaProgram, UuidReassignmentChangesProgramAndLineageIdentity) {
