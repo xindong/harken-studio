@@ -32,6 +32,7 @@ signals:
 private:
     LanguageContextService();
 
+    QString storageGroup() const;
     QString persistedLanguage() const;
     void persistLanguage(const QString& language);
     void recompute();
