@@ -197,7 +197,11 @@ TEST(MonitorObserve, DspGapPublishesWhenLogicRingIsFull) {
     EXPECT_EQ(0u, harken::monitor::LogicRingFreeSlotsForTests());
 
     VnMonitorSessionHandle second = 0;
-    ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(&desc, &second));
+    VnMonitorSessionDesc eventDesc = desc;
+    // Keep the synthetic fill traffic from overflowing this event consumer.
+    eventDesc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
+    eventDesc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+    ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(&eventDesc, &second));
     harken::monitor::DrainOnceForTests();
     harken::monitor::StartDrainForTests();
 

@@ -321,7 +321,7 @@ public:
     // finishing a slot write). The boundary record at lag == kCapacity is
     // indeterminate and conservatively dropped — the ring safely drains
     // the newest kCapacity - 1 records after an overflow.
-    bool TryPop(LogRecord& out) {
+    bool TryPop(LogRecord& out, std::uint64_t* sourceSequence = nullptr) {
         constexpr std::uint32_t kMaxInvalidatedCopies = 4;
         std::uint64_t read = m_read.load(std::memory_order_relaxed);
         std::uint64_t write = m_write.load(std::memory_order_acquire);
@@ -366,6 +366,7 @@ public:
             if (writeAfter - read < kCapacity) {
                 m_read.store(read + 1, std::memory_order_release);
                 out = candidate;
+                if (sourceSequence != nullptr) *sourceSequence = read + 1;
                 return true;
             }
             write = writeAfter;

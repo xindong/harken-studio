@@ -9,8 +9,22 @@
 namespace harken {
 
 struct Engine;
+struct MonitorExecutionFact;
 
 namespace monitor {
+
+// Declare before rollback/cleanup guards. Nested scopes publish only after the
+// outermost logical operation has fully committed or rolled back.
+class IdentityMutationScope {
+public:
+    IdentityMutationScope() noexcept;
+    ~IdentityMutationScope();
+    IdentityMutationScope(const IdentityMutationScope&) = delete;
+    IdentityMutationScope& operator=(const IdentityMutationScope&) = delete;
+private:
+    std::uint64_t engine_ = 0;
+};
+void RefreshIdentityBoundary() noexcept;
 
 VnResult OnEngineInit(Engine* engine);
 void OnEngineTeardown(Engine* engine);
@@ -28,18 +42,23 @@ VnResult OpenRemoteSession(const VnMonitorSessionDesc* desc,
 VnResult CloseSession(VnMonitorSessionHandle handle);
 VnResult OpenEventSession(const VnMonitorSessionDesc* desc,
                           VnMonitorSessionHandle* outHandle,
-                          bool remote = false, std::uint64_t principalHash = 0);
+                          bool remote = false, std::uint64_t principalHash = 0,
+                          std::uint32_t remoteGrant = VN_MONITOR_PERM_OBSERVE_EVENTS);
 VnResult SealEventSession(VnMonitorSessionHandle handle);
 VnResult GetEventSessionStatus(VnMonitorSessionHandle handle,
                                VnMonitorEventSessionStatus* outStatus);
 bool EventCatalogEnabled();
-void PublishEventDetail(const VnMonitorEventDetail& detail,
+bool ExecutionObservationEnabled() noexcept;
+std::uint64_t ExecutionEngineInstance() noexcept;
+bool PublishExecutionFact(MonitorExecutionFact fact, bool audioProducer = false) noexcept;
+bool PublishEventDetail(const VnMonitorEventDetail& detail,
                          std::uint32_t entityKind, VnObjectId stableId,
                          VnObjectId projectId,
                          std::uint64_t worldGeneration,
                          std::uint64_t instanceHandle = 0,
                          std::uint64_t instanceGeneration = 0,
-                         std::uint64_t programFingerprint = 0);
+                         std::uint64_t programFingerprint = 0,
+                         std::uint32_t logSource = 0, std::uint64_t logTicket = 0);
 void ObserveOperation(std::uint32_t operation, VnResult result,
                        std::uint32_t entityKind, VnObjectId stableId,
                        std::uint64_t handle = 0, std::uint64_t arg0 = 0,
@@ -48,7 +67,9 @@ void ObserveOperation(std::uint32_t operation, VnResult result,
 void ObserveDiagnostic(std::uint32_t level, std::uint32_t code,
                         std::uint64_t arg0, std::uint64_t arg1,
                         std::uint64_t timestampNs, VnObjectId objectId, VnObjectId projectId,
-                        const char* text);
+                        const char* text, std::uint32_t logSource = 0,
+                        std::uint64_t logTicket = 0);
+void CompleteLogTranscription(std::uint32_t source, std::uint64_t consumed);
 VnResult GetSubscriptionStatus(VnMonitorSessionHandle handle,
                                VnMonitorSubscriptionStatus* outStatus);
 VnResult Poll(VnMonitorSessionHandle handle, const VnMonitorPollDesc* desc,
@@ -110,6 +131,7 @@ bool PublishLogicPacked(const std::uint8_t* bytes, std::uint32_t size);
 std::uint64_t NextLogicSourceSequence();
 std::uint64_t CurrentExecuteFrame();
 bool LogicThreadReady();
+VnResult GateControlEntry();
 
 } // namespace monitor
 } // namespace harken

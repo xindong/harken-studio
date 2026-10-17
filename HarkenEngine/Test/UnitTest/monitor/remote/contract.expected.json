@@ -9,7 +9,7 @@
   "spkiBytes": 32,
   "messageCounterStart": 1,
   "wireOpcodeCount": 116,
-  "monitorFunctionCount": 20,
+  "monitorFunctionCount": 24,
   "statuses": {
     "disabled": "VN_OK",
     "local_acl": "VN_OK",

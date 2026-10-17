@@ -586,6 +586,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
               engine->playableScheduleRenderHandles.size());
     EXPECT_EQ(layout.memberCount, engine->playableScheduleReleaseObservers.size());
     EXPECT_EQ(layout.memberCount, engine->variableControlMemberCompletions.size());
+    EXPECT_EQ(layout.memberCount, engine->playableScheduleSelections.size());
     EXPECT_EQ(layout.memberCount, engine->playableMemberReferences.size());
     EXPECT_EQ(engine->config.maxPlayableInstances, engine->sourceTerminals.Capacity());
     EXPECT_EQ(layout.memberCount, engine->playableScheduleStartFrames.size());
@@ -619,6 +620,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
               engine->playableSuccessorRuntimePrograms.size());
     EXPECT_EQ(layout.endpointCount, engine->playableSuccessorSchedules.size());
     EXPECT_EQ(layout.endpointCount, engine->playableSuccessorArms.size());
+    EXPECT_EQ(layout.endpointCount, engine->playableSuccessorSelections.size());
     EXPECT_EQ(layout.endpointCount,
               engine->playableSuccessorRenderHandles.size());
     EXPECT_EQ(layout.endpointCount,
@@ -659,6 +661,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         sizeof(engine->playableScheduleRenderHandles[0]) +
         sizeof(engine->playableScheduleReleaseObservers[0]) +
         sizeof(engine->variableControlMemberCompletions[0]) +
+        sizeof(engine->playableScheduleSelections[0]) +
         sizeof(engine->playableMemberReferences[0]) +
         sizeof(engine->playableScheduleStartFrames[0]) +
         sizeof(engine->variableControlDynamicMembers[0]);
@@ -682,6 +685,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         sizeof(engine->playableSuccessorRuntimePrograms[0]) +
         sizeof(engine->playableSuccessorSchedules[0]) +
         sizeof(engine->playableSuccessorArms[0]) +
+        sizeof(engine->playableSuccessorSelections[0]) +
         sizeof(engine->playableSuccessorRenderHandles[0]) +
         sizeof(engine->playableSuccessorOccurrences[0]) +
         sizeof(engine->playableSuccessorCompletions[0]) +
@@ -704,13 +708,18 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         sizeof(harken::VariableWeightControlIdentity) + sizeof(harken::AuthoredStopOperationIdentity);
     const auto stopFrameBytes = sizeof(harken::AuthoredStopOperationIdentity::stopFrame);
     const auto immediateEntryBytes = sizeof(harken::ProgramView::immediateEntry);
+    const auto monitorControlBytes = sizeof(harken::MonitorControlCause);
+    const auto monitorSelectionBytes = sizeof(harken::EngineMonitorSelection);
     EXPECT_EQ(8u, stopFrameBytes);
     EXPECT_EQ(16u, immediateEntryBytes);
+    EXPECT_EQ(48u, monitorControlBytes);
+    EXPECT_LE(sizeof(harken::VoiceLedger::MonitorSelection), 24u);
+    EXPECT_LE(monitorSelectionBytes, 40u);
     // The frozen stop frame extends each event identity; each schedule owns
     // a full immediate-entry gate reference independently of its runtime view.
     EXPECT_EQ(320u + stopFrameBytes, frontierEventBytes);
-    EXPECT_EQ(428u + frontierEventBytes, pairedBytesPerSlot);
-    EXPECT_EQ(264u + frontierEventBytes, currentEventBytesPerSlot);
+    EXPECT_EQ(428u + frontierEventBytes + monitorControlBytes, pairedBytesPerSlot);
+    EXPECT_EQ(264u + frontierEventBytes + monitorControlBytes, currentEventBytesPerSlot);
     EXPECT_EQ(192u + immediateEntryBytes, initialProgramBytesPerSlot);
     const auto playbackPathBytes = sizeof(harken::PlaybackPath);
     EXPECT_EQ(1'544u, playbackPathBytes);
@@ -728,10 +737,10 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(2'636u + 2u * sizeof(float) + sizeof(harken::PcmLoopRegion) +
                   playbackPathBytes + voiceBindingStorageBytes -
                   sizeof(void*) * harken::kMaxVoiceBindingInstanceSlots +
-                  2u * immediateEntryBytes,
+                  2u * immediateEntryBytes + 2u * monitorControlBytes + monitorSelectionBytes,
               endpointBytesPerSlot);
     EXPECT_EQ(48u, weightBytesPerSlot);
-    EXPECT_EQ(541u + frontierEventBytes + immediateEntryBytes, continuousBytesPerSlot);
+    EXPECT_EQ(541u + frontierEventBytes + immediateEntryBytes + monitorControlBytes, continuousBytesPerSlot);
 
     const std::uint64_t totalBytes =
         layout.memberCount * memberBytesPerSlot +
@@ -751,6 +760,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
                   StorageBytes(engine->playableScheduleRenderHandles) +
                   StorageBytes(engine->playableScheduleReleaseObservers) +
                   StorageBytes(engine->variableControlMemberCompletions) +
+                  StorageBytes(engine->playableScheduleSelections) +
                   StorageBytes(engine->playableMemberReferences) +
                   StorageBytes(engine->playableScheduleStartFrames) +
                   StorageBytes(engine->variableControlDynamicMembers));
@@ -774,6 +784,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
                   StorageBytes(engine->playableSuccessorRuntimePrograms) +
                   StorageBytes(engine->playableSuccessorSchedules) +
                   StorageBytes(engine->playableSuccessorArms) +
+                  StorageBytes(engine->playableSuccessorSelections) +
                   StorageBytes(engine->playableSuccessorRenderHandles) +
                   StorageBytes(engine->playableSuccessorOccurrences) +
                   StorageBytes(engine->playableSuccessorCompletions) +
@@ -804,6 +815,16 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("published_empty_page_stamp_bytes",
         std::to_string(engine->timelinePool.PublishedEmptyStampStorageBytes()));
     testing::Test::RecordProperty("engine_inline_bytes", std::to_string(sizeof(harken::Engine)));
+    EXPECT_EQ(2u * (static_cast<std::size_t>(engine->timelineArms.Capacity()) + engine->ledger.Capacity()),
+        engine->ledger.MonitorSelectionCapacity());
+    testing::Test::RecordProperty("monitor_selection_handle_bytes",
+        std::to_string(sizeof(harken::VoiceLedger::MonitorSelection)));
+    testing::Test::RecordProperty("monitor_selection_pool_bytes",
+        std::to_string(engine->ledger.MonitorSelectionStorageBytes()));
+    testing::Test::RecordProperty("monitor_selection_pool_capacity",
+        std::to_string(engine->ledger.MonitorSelectionCapacity()));
+    testing::Test::RecordProperty("monitor_selection_vector_bytes",
+        std::to_string(StorageBytes(engine->playableScheduleSelections) + StorageBytes(engine->playableSuccessorSelections)));
     testing::Test::RecordProperty("source_terminal_row_bytes", std::to_string(sizeof(harken::SourceTerminalRecord)));
     testing::Test::RecordProperty("timeline_arm_row_bytes", std::to_string(sizeof(harken::TimelineArmTable::Row)));
     testing::Test::RecordProperty("authored_control_metadata_row_bytes",

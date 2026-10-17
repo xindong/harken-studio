@@ -4,6 +4,7 @@
 #include <harken/ObjectId.h>
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/MonitorLifecycleSink.h"
+#include "harken/core/MonitorRequest.h"
 #include "harken/core/PackReadinessContract.h"
 
 #include <cstdint>
@@ -113,6 +114,9 @@ struct ActionFiringStepResult {
 };
 
 struct ActionFiringSnapshot {
+    MonitorRequestContext playbackRequest{};
+    MonitorEmitterOrigin emitterOrigin{};
+    MonitorControlCause controlCause{};
     ActionFiringState state = ActionFiringState::Active;
     ActionFiringOutcome outcome = ActionFiringOutcome::Pending;
     ActionTerminalReason terminalReason = ActionTerminalReason::None;
@@ -124,6 +128,7 @@ struct ActionFiringSnapshot {
     std::uint32_t ownedDeferredCount = 0;
     std::uint64_t acceptedLogicSequence = 0;
     ActionFiringHandle parent = 0;
+    ActionFiringHandle root = 0;
     std::uint32_t directStepCount = 0;
     std::uint32_t directStepTerminalCount = 0;
     std::uint32_t childFiringCount = 0;
@@ -194,10 +199,14 @@ public:
     bool PrepareRoot(VnObjectId actionId,
                      const ActionFiringOwnerStamp& owner,
                      std::uint32_t directStepCount,
-                     PreparedActionFiring* out) noexcept;
+                     PreparedActionFiring* out,
+                     const MonitorRequestContext& request = {},
+                     const MonitorEmitterOrigin& emitterOrigin = {}) noexcept;
     bool PrepareRoot(VnObjectId actionId, std::uint64_t worldGeneration,
                      std::uint32_t directStepCount,
-                     PreparedActionFiring* out) noexcept;
+                     PreparedActionFiring* out,
+                     const MonitorRequestContext& request = {},
+                     const MonitorEmitterOrigin& emitterOrigin = {}) noexcept;
     bool PrepareChild(const PreparedActionFiring& parent,
                       VnObjectId actionId,
                       const ActionFiringOwnerStamp& owner,
@@ -260,9 +269,11 @@ public:
                     std::uint64_t acceptedLogicSequence) noexcept;
     bool Abandon(PreparedActionFiring* prepared) noexcept;
     bool MarkStopping(ActionFiringHandle handle,
-                      ActionTerminalReason reason) noexcept;
+                      ActionTerminalReason reason,
+                      const MonitorControlCause& cause = {}) noexcept;
     bool MarkTreeStopping(ActionFiringHandle member,
-                          ActionTerminalReason reason) noexcept;
+                          ActionTerminalReason reason,
+                          const MonitorControlCause& cause = {}) noexcept;
     bool MarkTerminal(
         ActionFiringHandle handle,
         ActionFiringOutcome outcome = ActionFiringOutcome::Succeeded,
@@ -271,6 +282,9 @@ public:
     bool Capture(ActionFiringHandle handle,
                  ActionFiringSnapshot* out) const noexcept;
     ActionFiringHandle ActiveRootAt(std::uint32_t slot) const noexcept;
+    // Includes child and terminal-retained rows until native reclamation.
+    ActionFiringHandle CaptureMonitorIdentityAt(std::uint32_t slot,
+        ActionFiringSnapshot* out) const noexcept;
     bool CaptureTerminalTreeOwners(
         ActionFiringHandle root, ActionFiringOwnerStamp* outOwners,
         std::uint32_t ownerCapacity,
@@ -311,6 +325,9 @@ private:
     };
 
     struct Row {
+        MonitorRequestContext playbackRequest{};
+        MonitorEmitterOrigin emitterOrigin{};
+        MonitorControlCause controlCause{};
         SlotState state = SlotState::Free;
         std::uint64_t generation = 0;
         VnObjectId actionId{};
@@ -349,7 +366,8 @@ private:
                                  std::uint32_t* committed) noexcept;
     bool AbandonPreparedSubtree(ActionFiringHandle handle) noexcept;
     bool MarkStoppingSubtree(ActionFiringHandle handle,
-                             ActionTerminalReason reason) noexcept;
+                             ActionTerminalReason reason,
+                             const MonitorControlCause& cause) noexcept;
     bool ReleaseTerminalSubtree(ActionFiringHandle handle) noexcept;
     bool PropagateTerminal(Row& row) noexcept;
     bool TryFinalizeSubtree(ActionFiringHandle handle) noexcept;

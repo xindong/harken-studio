@@ -33,7 +33,7 @@ channel-mapping, or alignment error (those show up tens of dB louder).
 Pure standard library (struct/array/math/json); no numpy (this repository has
 no Python venv precedent). Run:
 
-    python .scripts/downmix_null_reference.py [<dir>]
+    python HarkenEngine/Test/E2E/downmix_null_reference.py [<dir>]
 
 <dir> defaults to .temp/nulldrill.
 """

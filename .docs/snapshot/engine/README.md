@@ -12,9 +12,12 @@ Agent 提示词不在本目录。需要自动匹配日志时，用 gitignore 下
 
 | 篇 | 内容 |
 |---|---|
+| [engine.md](engine.md) | 引擎现状、Source / Tool / Test 目录边界与两类远程通道 |
 | [vn-result.md](vn-result.md) | `VnResult` 数值、分段、无符号打印 |
 | [preview-result.md](preview-result.md) | Preview ABI 正整数、`MapStart` / `MapControl` |
 | [studio-logs.md](studio-logs.md) | Studio 日志原句、Preview 被压成引擎码、`-301` 读法 |
+
+内部宿主和管道客户端位于 `HarkenEngine/Tool/`，验收入口位于 `HarkenEngine/Test/`；共享数值表仍以 `Source/Tooling/Remote/wire/harken_wire_table.json` 为准。Studio 与游戏的正式远程连接由 `Runtime/remote/` 实现，不使用该内部管道客户端。
 
 ## 怎么读一个数字
 

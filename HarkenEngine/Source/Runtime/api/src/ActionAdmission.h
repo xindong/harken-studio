@@ -2,6 +2,9 @@
 
 #include <harken/Harken.h>
 #include "harken/core/PackComposition.h"
+#include "harken/core/MonitorRequest.h"
+
+namespace harken::monitor { class RequestObservation; }
 
 namespace harken::detail {
 
@@ -21,6 +24,7 @@ using ActionAdmissionValidator = VnResult (*)(
 VnResult PostActionWithValidation(
     const VnPostActionDesc* desc, VnActionFiringHandle* outFiring,
     ActionAdmissionValidator validator, const void* context,
-    bool journalCall = true);
+    bool journalCall = true, const MonitorRequestContext& request = {},
+    monitor::RequestObservation* observation = nullptr);
 
 } // namespace harken::detail

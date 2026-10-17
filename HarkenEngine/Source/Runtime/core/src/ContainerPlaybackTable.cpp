@@ -502,12 +502,13 @@ bool PreparedPlayableTreeStep::ResetForReuse(bool published) noexcept {
 
 bool PreparedPlayableTreeStep::PrepareInstance(
     PlayableInstanceTable& table, PlayableKind kind,
-    PlayableInstanceHandle parent) noexcept {
+    PlayableInstanceHandle parent, const MonitorRequestContext& request,
+    const MonitorEmitterOrigin& emitterOrigin) noexcept {
     if (committed_ || CommitProofsRequired() || instances_.size() >= maxReservations_) {
         return false;
     }
     PreparedPlayableInstance prepared;
-    if (!table.PrepareAcquire(kind, parent, &prepared)) {
+    if (!table.PrepareAcquire(kind, parent, &prepared, request, emitterOrigin)) {
         return false;
     }
     instances_.push_back(prepared);

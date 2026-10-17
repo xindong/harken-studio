@@ -1,6 +1,7 @@
 #include "ProjectGenerationTransaction.h"
 
 #include "Engine.h"
+#include "MonitorCaptureHub.h"
 #include "TraceRecorder.h"
 #include "HarkenApiInternal.h"
 
@@ -1576,6 +1577,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
 
 ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
     Engine& engine, PreparedProjectGenerationV1& prepared) noexcept {
+    harken::monitor::IdentityMutationScope identityMutation;
     ProjectGenerationCommitResultV1 result{};
     if (engine.canonicalPackSetBusy) {
         result.status = ProjectGenerationCommitStatusV1::Backpressure;

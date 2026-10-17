@@ -3395,7 +3395,8 @@ bool TimelineArmTable::AcknowledgeLogicalComplete(
     return expected != 0;
 }
 
-bool TimelineArmTable::RequestCancel(TimelineArmToken token) noexcept {
+bool TimelineArmTable::RequestCancel(TimelineArmToken token, bool* newlyCancelled) noexcept {
+    if (newlyCancelled != nullptr) *newlyCancelled = false;
     Row* row = Resolve(token);
     auto* activeAudioLease = ActiveBoundAudioProofLease(row, token);
     if (activeAudioLease != nullptr &&
@@ -3411,6 +3412,7 @@ bool TimelineArmTable::RequestCancel(TimelineArmToken token) noexcept {
         if (row->state.compare_exchange_strong(
                 expected, ArmState::CancelRequested,
                 std::memory_order_acq_rel, std::memory_order_acquire)) {
+            if (newlyCancelled != nullptr) *newlyCancelled = true;
             return true;
         }
     }

@@ -4152,13 +4152,22 @@ void MainWindow::recordPackGenerationResult(const QString& packName, uint32_t ob
 }
 
 void MainWindow::generateProjectPacks(const QStringList& platforms,
-                                      const QStringList& unitNames)
+                                      const QStringList& unitNames,
+                                      bool includeUnchecked)
 {
     const auto projectLease = ProjectManager::instance().currentProjectLease();
     if (!projectLease) return;
     PropertyEditSession::finishAllActive(true);
+    ProjectData exportProject = *projectLease;
+    if (includeUnchecked) {
+        exportProject.actionPackTargeting.clear();
+        for (auto& group : exportProject.packGroups) {
+            group.allPlatforms = true;
+            group.platformIds.clear();
+        }
+    }
     QString snapshotError;
-    const auto snapshot = ProjectBuildSnapshot::capture(*projectLease, &snapshotError);
+    const auto snapshot = ProjectBuildSnapshot::capture(exportProject, &snapshotError);
     if (!snapshot) {
         LogPanel::logError(LogCategory::Pack, snapshotError);
         return;

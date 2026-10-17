@@ -24,6 +24,15 @@
 
 namespace {
 
+VnConfig TimelineConfig(std::uint32_t maxVoices = 0,
+                        std::uint32_t blockFrames = 0,
+                        std::uint32_t sampleRate = 0) {
+    auto config = harkentest::MakeNullConfig(maxVoices, blockFrames, sampleRate);
+    // Timeline execution coverage does not require the default nested Action scratch.
+    config.maxTriggerDepth = 2;
+    return config;
+}
+
 class TimelineVariableStart : public ::testing::Test {
 protected:
     struct SourceProbe {
@@ -35,7 +44,7 @@ protected:
         harken::VoicePool* cancelDuringRead = nullptr;
         bool cancellationSucceeded = false;
     } source;
-    harkentest::EngineSession session{harkentest::MakeNullConfig(2, 256, 48000)};
+    harkentest::EngineSession session{TimelineConfig(2, 256, 48000)};
     harken::Engine* engine = nullptr;
     VnVoiceHandle render = 0;
     harken::TimelineArmToken arm{};
@@ -1191,6 +1200,29 @@ TEST(TimelineArmTable, PendingImmediateBindsOnlyAfterAckAndBeforePublication) {
     EXPECT_FALSE(table.BindPendingImmediateStart(direct, 1024, 1024));
 }
 
+TEST(TimelineArmTable, CancellationObservationDistinguishesNewWinnerFromRepeatedAndStaleCalls) {
+    harken::TimelineArmTable table(1);
+    harken::TimelineArmToken arm{};
+    ASSERT_TRUE(table.ReservePendingImmediate(0, 1, 7, {}, &arm));
+    bool newlyCancelled = false;
+    ASSERT_TRUE(table.RequestCancel(arm, &newlyCancelled));
+    EXPECT_TRUE(newlyCancelled);
+    ASSERT_TRUE(table.RequestCancel(arm, &newlyCancelled));
+    EXPECT_FALSE(newlyCancelled);
+    ASSERT_TRUE(table.Tombstone(arm, 4));
+    newlyCancelled = true;
+    EXPECT_FALSE(table.RequestCancel(arm, &newlyCancelled));
+    EXPECT_FALSE(newlyCancelled);
+    ASSERT_TRUE(table.Reclaim(arm, 5));
+    harken::TimelineArmToken next{};
+    ASSERT_TRUE(table.ReservePendingImmediate(0, 2, 9, {}, &next));
+    newlyCancelled = true;
+    EXPECT_FALSE(table.RequestCancel(arm, &newlyCancelled));
+    EXPECT_FALSE(newlyCancelled);
+    ASSERT_TRUE(table.RequestCancel(next, &newlyCancelled));
+    EXPECT_TRUE(newlyCancelled);
+}
+
 TEST(TimelineArmTable, NeverPublishedCancellationRejectsAudioVisibleArms) {
     harken::TimelineArmTable table(3);
     harken::TimelineArmToken pending{};
@@ -2061,7 +2093,7 @@ TEST(TimelineArmTable, OldGenerationCannotAcknowledgeReusedRow) {
 }
 
 TEST(TimelineExecutor, DeferredBudgetDoesNotResetWithinSameQuantum) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -2107,7 +2139,7 @@ TEST(TimelineExecutor, DeferredBudgetDoesNotResetWithinSameQuantum) {
 }
 
 TEST(TimelineExecutor, TransientRefusalStopsItsDueClass) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -2178,7 +2210,7 @@ TEST(TimelineExecutor, TransientRefusalStopsItsDueClass) {
 }
 
 TEST(TimelineExecutor, SupersededRegistryWaitsForArmLeaseAndFence) {
-    VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
+    VnConfig config = TimelineConfig(2, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -2272,7 +2304,7 @@ TEST(TimelineExecutor, SupersededRegistryWaitsForArmLeaseAndFence) {
 }
 
 TEST(TimelineExecutor, ProductionFrozenPageKeepsSupersededProgramAlive) {
-    VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
+    VnConfig config = TimelineConfig(2, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -2340,7 +2372,7 @@ TEST(TimelineExecutor, ProductionFrozenPageKeepsSupersededProgramAlive) {
 }
 
 TEST(TimelineExecutor, ReplaceAfterDeferredGenerationMaxCleansProductionState) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -2454,7 +2486,7 @@ TEST(TimelineExecutor, ReplaceAfterDeferredGenerationMaxCleansProductionState) {
 
 TEST(TimelineExecutor,
      TransportResetDrainsStartedLegacyRollingProgramAndDeferredTail) {
-    VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
+    VnConfig config = TimelineConfig(2, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -2852,7 +2884,7 @@ TEST(TimelineExecutor, CallbackShapesKeepFixedQuantumCount) {
     harken::DeviceBackendTestState deviceState{};
     DeviceBackendTestGuard seam(deviceState);
     VnConfig config =
-        harkentest::MakeNullConfig(1, kBlockFrames, 48000);
+        TimelineConfig(1, kBlockFrames, 48000);
     config.deviceMode = VN_DEVICE_REAL;
     config.deviceChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
     harkentest::EngineSession session(config);
@@ -2917,7 +2949,7 @@ TEST(TimelineExecutor, CallbackShapesKeepFixedQuantumCount) {
 }
 
 TEST(TimelineExecutor, RepeatedUpdatePreparesOccurrenceExactlyOnce) {
-    VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
+    VnConfig config = TimelineConfig(2, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -2967,7 +2999,7 @@ TEST(TimelineExecutor, RepeatedUpdatePreparesOccurrenceExactlyOnce) {
 }
 
 TEST(TimelineExecutor, ProductionServiceFollowsThePerCallStateTable) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3054,7 +3086,7 @@ TEST(TimelineExecutor, ProductionServiceFollowsThePerCallStateTable) {
 }
 
 TEST(TimelineExecutor, ProgramInstallRejectsMixedValidAndMalformedAudibleRows) {
-    VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
+    VnConfig config = TimelineConfig(2, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3094,7 +3126,7 @@ TEST(TimelineExecutor, ProgramInstallRejectsMixedValidAndMalformedAudibleRows) {
 }
 
 TEST(TimelineExecutor, TwoVoiceCapacityNeverCreatesAnOrphanSecondArm) {
-    VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
+    VnConfig config = TimelineConfig(2, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3163,7 +3195,7 @@ TEST(TimelineExecutor, TwoVoiceCapacityNeverCreatesAnOrphanSecondArm) {
 }
 
 TEST(TimelineExecutor, ArmAckWinsBeforeAudioSequenceDeadline) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3213,7 +3245,7 @@ TEST(TimelineExecutor, ArmAckWinsBeforeAudioSequenceDeadline) {
 }
 
 TEST(TimelineExecutor, TombstonedDelayedBatchIsABenignProtocolNoOp) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3270,7 +3302,7 @@ TEST(TimelineExecutor, TombstonedDelayedBatchIsABenignProtocolNoOp) {
 }
 
 TEST(TimelineExecutor, CancelWinsAgainstLateAckAndTombstonesSilently) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3321,7 +3353,7 @@ TEST(TimelineExecutor, CancelWinsAgainstLateAckAndTombstonesSilently) {
 }
 
 TEST(TimelineExecutor, FreshPrepareAckAfterDeadlineSampleCannotWin) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3384,7 +3416,7 @@ TEST(TimelineExecutor, FreshPrepareAckAfterDeadlineSampleCannotWin) {
 }
 
 TEST(TimelineExecutor, FreshPrepareAtDeadlineCancelsInTheSameService) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3437,7 +3469,7 @@ TEST(TimelineExecutor, FreshPrepareAtDeadlineCancelsInTheSameService) {
 }
 
 TEST(TimelineExecutor, PendingArmAckAfterDeadlineSampleCannotWin) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3513,7 +3545,7 @@ TEST(TimelineExecutor, PendingArmAckAfterDeadlineSampleCannotWin) {
 }
 
 TEST(TimelineExecutor, AudioSequenceDeadlineCancelsUnackedArm) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3565,7 +3597,7 @@ TEST(TimelineExecutor, AudioSequenceDeadlineCancelsUnackedArm) {
 }
 
 TEST(TimelineExecutor, ReserveRetryPastDeadlineCancelsWithoutPostingAgain) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3623,7 +3655,7 @@ TEST(TimelineExecutor, ReserveRetryPastDeadlineCancelsWithoutPostingAgain) {
 }
 
 TEST(TimelineExecutor, AckClosesBlockerAndRestoresDesiredLeadInOneService) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3676,7 +3708,7 @@ TEST(TimelineExecutor, AckClosesBlockerAndRestoresDesiredLeadInOneService) {
 }
 
 TEST(TimelineExecutor, PendingArmBlocksItsPageButPublishesSafePrefix) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3722,7 +3754,7 @@ TEST(TimelineExecutor, PendingArmBlocksItsPageButPublishesSafePrefix) {
 }
 
 TEST(TimelineExecutor, BootstrapBlocksStartPageUntilArmIsFiled) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3770,7 +3802,7 @@ TEST(TimelineExecutor, BootstrapBlocksStartPageUntilArmIsFiled) {
 }
 
 TEST(TimelineExecutor, FreezeBeforeOwnerInvalidCancelsWithoutStarting) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3827,7 +3859,7 @@ TEST(TimelineExecutor, FreezeBeforeOwnerInvalidCancelsWithoutStarting) {
 }
 
 TEST(TimelineExecutor, FreezeAfterOwnerInvalidStartsThenDeclicksToTombstone) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3911,7 +3943,7 @@ TEST(TimelineExecutor, StopDeclickAt44100UsesCeilingFrames) {
 }
 
 TEST(TimelineExecutor, TimelineVoiceScratchShortfallPreservesPageAndSpanState) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     config.arenaBytes = 2560;
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
@@ -3969,7 +4001,7 @@ TEST(TimelineExecutor, TimelineVoiceScratchShortfallPreservesPageAndSpanState) {
 }
 
 TEST(TimelineExecutor, TimelineArenaAdmissionUsesCascadeEstimator) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
@@ -3980,7 +4012,7 @@ TEST(TimelineExecutor, TimelineArenaAdmissionUsesCascadeEstimator) {
 }
 
 TEST(TimelineExecutor, ArenaAdmissionIncludesLowerOrdinaryBlendAndSend) {
-    VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
+    VnConfig config = TimelineConfig(2, 256, 48000);
     config.voiceSendSlots = 1;
     config.fxSlotsPerVoice = 1;
     harkentest::EngineSession session(config);
@@ -4044,7 +4076,7 @@ TEST(TimelineExecutor, ArenaAdmissionIncludesLowerOrdinaryBlendAndSend) {
 }
 
 TEST(TimelineExecutor, MultipleTimelineVoicesReserveThroughTheLastTarget) {
-    VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
+    VnConfig config = TimelineConfig(4, 256, 48000);
     config.voiceSendSlots = 1;
     config.fxSlotsPerVoice = 1;
     harkentest::EngineSession session(config);
@@ -4106,7 +4138,7 @@ TEST(TimelineExecutor, MultipleTimelineVoicesReserveThroughTheLastTarget) {
 }
 
 TEST(TimelineExecutor, MultipleTimelinePrepareCommitsOnlyAfterFullArenaAdmission) {
-    VnConfig config = harkentest::MakeNullConfig(4, 256, 48000);
+    VnConfig config = TimelineConfig(4, 256, 48000);
     config.voiceSendSlots = 1;
     config.fxSlotsPerVoice = 1;
     harkentest::EngineSession session(config);
@@ -4239,7 +4271,7 @@ TEST(TimelineExecutor, MultipleTimelinePrepareCommitsOnlyAfterFullArenaAdmission
 }
 
 TEST(TimelineExecutor, ArenaShortfallPreservesFrontierAndPublishesCounters) {
-    VnConfig config = harkentest::MakeNullConfig(1, 256, 48000);
+    VnConfig config = TimelineConfig(1, 256, 48000);
     config.arenaBytes = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);

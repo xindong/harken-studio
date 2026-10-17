@@ -3,7 +3,7 @@
 # engine is driven exclusively through the public C API.
 #
 # The wire layer (opcodes, marshalling, layout asserts) is machine-generated
-# from wire/harken_wire_table.json into generated/ and CHECKED IN, so the
+# from Source/Tooling/Remote/wire/harken_wire_table.json into generated/ and CHECKED IN, so the
 # build never depends on Python. After editing the table, build the
 # harken_wire_regen utility target below.
 
@@ -24,6 +24,6 @@ target_link_libraries(harken_remote PUBLIC harken_core)
 # checked in and the build must stay Python-free).
 _harken_add_python_regen_target(
     harken_wire_regen
-    "${CMAKE_CURRENT_SOURCE_DIR}/wire/gen_wire.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py"
     "Regenerating remote wire layer from harken_wire_table.json"
 )

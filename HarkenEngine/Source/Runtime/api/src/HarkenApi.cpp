@@ -5,6 +5,7 @@
 #include "ActionAdmission.h"
 #include "PackVariablePublication.h"
 #include "MonitorCaptureHub.h"
+#include "MonitorRequestObservation.h"
 #include "RemoteRuntime.h"
 #include "PlayableRuntime.h"
 #include "ProjectGenerationTransaction.h"
@@ -196,7 +197,8 @@ void ObservePrivateEntryStopPreflightForTest(Engine& engine, EnginePlayableServi
 
 namespace harken {
 static PlayableControlStatus ServiceRegisteredStopCapture(
-    Engine& engine, PlayableInstanceHandle instance, std::uint32_t fadeMs) noexcept;
+    Engine& engine, PlayableInstanceHandle instance, std::uint32_t fadeMs,
+    const MonitorControlCause& cause) noexcept;
 }
 
 namespace {
@@ -265,7 +267,9 @@ bool PrepareSharedPlayablePath(
                      harken::kSelectionPathNodeCapacity>& childKinds,
     const std::array<std::uint32_t,
                      harken::kSelectionPathNodeCapacity>& loopLimits,
-    std::uint32_t containerCount) noexcept;
+    std::uint32_t containerCount,
+    const std::array<harken::MonitorContentIdentity,
+                     harken::kSelectionPathNodeCapacity>& childIdentities) noexcept;
 
 // Shared selection reservation seam used by Direct and Action adapters.  It
 // keeps authored selection state and its transaction ticket identical while
@@ -344,7 +348,8 @@ using harken::PackedMonitorEffectHandle;
 // These helpers are defined immediately below, but are also used by the
 // transactional cancellation paths to release an arm that crossed the
 // prepared boundary.
-bool AbortTimelineArm(harken::Engine& engine, harken::TimelineArmToken token);
+bool AbortTimelineArm(harken::Engine& engine, harken::TimelineArmToken token,
+    const harken::MonitorControlCause* cause = nullptr);
 bool DropTimelineArm(harken::Engine& engine, harken::TimelineArmToken token,
                      std::uint64_t observedAudioSequence) noexcept;
 bool EnsurePlayableTimelineWindowAtFrame(harken::Engine& engine,
@@ -383,7 +388,7 @@ harken::TimelineArmTable::PendingAuthoredControlInput OriginalPlainControlInput(
 bool ReturnOriginalPlainStopReference(harken::Engine&, harken::EngineAuthoredStopResource&,
     std::uint64_t) noexcept;
 bool ReturnOriginalPlainSourceReferences(harken::Engine&, harken::EnginePlayableServiceRow&,
-    std::uint64_t, std::uint8_t, std::uint32_t) noexcept;
+    std::uint64_t, std::uint8_t, std::uint32_t, const harken::MonitorControlCause&) noexcept;
 bool OriginalPlainSourceBackingHeld(const harken::Engine&, const harken::EnginePlayableServiceRow&) noexcept;
 void MarkOriginalPlainLaneRetired(harken::Engine&, harken::EngineImmediateEntryAttempt&) noexcept;
 bool ServiceOriginalPlainReceipt(harken::Engine&, harken::EngineImmediateEntryAttempt&,
@@ -472,6 +477,38 @@ bool CommitPreparedOccurrenceOwner(void* opaque,
     return true;
 }
 
+harken::MonitorContentIdentity MonitorContentFor(
+    const harken::PlayableWorldViewV1& view, const harken::PlayableRefV1& content) noexcept {
+    return harken::MakeMonitorContentIdentity(view.identity.projectId, view.generation, content);
+}
+
+harken::MonitorContentIdentity MonitorContentFor(
+    const harken::PackPlaybackView& view, const harken::PlayableRefV1& content) noexcept {
+    return harken::MakeMonitorContentIdentity(view.ProjectId(), view.CompositeGeneration(), content);
+}
+
+void ObservePreparedContent(harken::Engine& engine,
+    harken::PlayableTreeExecutor& tree, harken::PlayableInstanceHandle instance,
+    const harken::MonitorContentIdentity& identity) noexcept {
+    (void)tree.SetPreparedContentIdentity(engine.playableInstances, instance, identity);
+}
+
+void ObservePreparedContent(harken::Engine& engine,
+    const harken::PreparedPlayableInstance& instance,
+    const harken::MonitorContentIdentity& identity) noexcept {
+    (void)engine.playableInstances.SetPreparedContentIdentity(instance, identity);
+}
+
+harken::MonitorContentIdentity MonitorVariableControlContentFor(
+    const harken::Engine& engine, const harken::EnginePlayableServiceRow& row,
+    const harken::PlayableRefV1& content) noexcept {
+    if (!row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0) {
+        return MonitorContentFor(row.Invocation().packPlaybackView, content);
+    }
+    return MonitorContentFor(row.variableControlWorldUsesCurrentAuthority
+        ? engine.variables.CurrentPlayableWorld() : row.variableControlWorld, content);
+}
+
 // Runtime-owned frontier materialization for every playback adapter.  The
 // adapter supplies only its read-only authority view and authored ordinals;
 // edge resolution, canonical identity, and instance topology are shared here.
@@ -498,6 +535,7 @@ bool PrepareSharedPlayableFrontier(
                harken::kSelectionPathNodeCapacity> childKinds{};
     std::array<std::uint32_t,
                harken::kSelectionPathNodeCapacity> loopLimits{};
+    std::array<harken::MonitorContentIdentity, harken::kSelectionPathNodeCapacity> childIdentities{};
     std::uint32_t containerCount = 0;
     harken::PlayableRefV1 current = root;
     for (std::uint32_t index = 0;
@@ -521,6 +559,7 @@ bool PrepareSharedPlayableFrontier(
             return false;
         }
         containers[containerCount] = canonicalParent;
+        childIdentities[containerCount] = MonitorContentFor(view, canonicalChild);
         programs[containerCount] = program;
         childKinds[containerCount] =
             child->playable.kind == harken::PlayableKindV1::Container
@@ -539,10 +578,11 @@ bool PrepareSharedPlayableFrontier(
         current = canonicalChild;
     }
     if (outContainerCount != nullptr) *outContainerCount = containerCount;
+    ObservePreparedContent(engine, executor, rootInstance, MonitorContentFor(view, root));
     if (containerCount == 0) return true;
     return PrepareSharedPlayablePath(
         engine, executor, rootInstance, rootScheduleEpoch, containers,
-        programs, childKinds, loopLimits, containerCount);
+        programs, childKinds, loopLimits, containerCount, childIdentities);
 }
 
 enum class ContainerTraversalMode : std::uint8_t {
@@ -2630,6 +2670,90 @@ bool PrivateImmediateEntryStopPending(const harken::EnginePlayableServiceRow& ro
         row.pendingCancellationIntent == 1u;
 }
 
+bool MonitorSourceFinishedIndependently(harken::Engine& engine,
+    harken::PlayableInstanceHandle instance) noexcept {
+    const auto slot = engine.playableInstances.SourceRetirementSlot(instance);
+    const auto* source = engine.sourceTerminals.At(slot);
+    if (source == nullptr || !source->occupied || source->leaf != instance) return false;
+    harken::SourceTerminalPayload payload{};
+    if (!engine.sourceTerminals.Capture({slot, source->generation},
+            engine.mixer.BlocksRendered(), &payload)) return false;
+    return payload.kind == harken::SourceTerminalKind::Natural ||
+        payload.kind == harken::SourceTerminalKind::ProducerFailure ||
+        payload.kind == harken::SourceTerminalKind::IntegrityAbort;
+}
+
+const harken::MonitorControlCause* MonitorCauseForInstance(harken::Engine& engine,
+    harken::PlayableInstanceHandle instance, const harken::MonitorControlCause& cause) noexcept {
+    return MonitorSourceFinishedIndependently(engine, instance) ? nullptr : &cause;
+}
+
+void RecordPlayableControlTree(harken::Engine& engine,
+    harken::PlayableInstanceHandle root, const harken::MonitorControlCause& cause) noexcept {
+    engine.playableInstances.VisitPublishedSubtree(root, [&](auto instance) {
+        if (!MonitorSourceFinishedIndependently(engine, instance))
+            engine.playableInstances.RecordControlCause(instance, cause);
+    });
+}
+
+void RecordServiceControlCause(harken::Engine& engine,
+    harken::EnginePlayableServiceRow& row, const harken::MonitorControlCause& cause) noexcept {
+    RecordPlayableControlTree(engine, row.rootInstance, cause);
+    const auto savedTarget = engine.playableInstances.Classify(row.pendingControlTarget);
+    if (savedTarget.live && savedTarget.scheduleEpoch == row.pendingControlTargetEpoch)
+        RecordPlayableControlTree(engine, row.pendingControlTarget, cause);
+    if (!row.parentService.Valid() && row.InvocationValid()) {
+        const auto& invocation = row.Invocation();
+        const auto outer = engine.playableInstances.Classify(invocation.variableControlOuterRootInstance);
+        if (outer.live && outer.scheduleEpoch == invocation.variableControlOuterRootEpoch)
+            RecordPlayableControlTree(engine, invocation.variableControlOuterRootInstance, cause);
+    }
+}
+
+bool CaptureServiceControlCause(harken::Engine& engine,
+    const harken::EnginePlayableServiceRow& row, harken::MonitorControlCause* out) noexcept {
+    const auto* member = &row;
+    for (std::size_t depth = 0; member != nullptr && depth < engine.playableServices.size(); ++depth) {
+        if (member->pendingCancellationIntent != 0 || member->pendingRegisteredStopCapture) {
+            *out = member->pendingControlCause;
+            return true;
+        }
+        if (engine.playableInstances.CaptureControlCause(member->rootInstance, out)) return true;
+        member = engine.ResolvePlayableService(member->parentService);
+    }
+    return false;
+}
+
+void RecordPreparedControlCause(harken::Engine& engine,
+    harken::EngineActionPlayScratch& scratch, const harken::MonitorControlCause& cause) noexcept {
+    if (scratch.playableTreeExecutor.PublishedOwnershipTransferred()) return;
+    if (!scratch.cancellationCauseAccepted) {
+        scratch.cancellationCause = cause;
+        scratch.cancellationCauseAccepted = true;
+    }
+    const auto& executor = scratch.playableTreeExecutor;
+    for (std::size_t index = 0; index < executor.PreparedInstanceCensusCount(); ++index) {
+        const auto* token = executor.PreparedInstanceCensusToken(index);
+        if (token == nullptr || (!engine.playableInstances.OwnsPrepared(*token) &&
+            !engine.playableInstances.ValidateStamp(token->Handle(), token->ScheduleEpoch()))) continue;
+        if (!MonitorSourceFinishedIndependently(engine, token->Handle()))
+            engine.playableInstances.RecordControlCause(token->Handle(), scratch.cancellationCause);
+    }
+}
+
+void MarkObservedPlayableVoiceTerminating(harken::Engine& engine, VnVoiceHandle render,
+    const harken::MonitorControlCause& cause) noexcept {
+    bool recordCause = true;
+    for (std::uint32_t slot = 0; slot < engine.sourceTerminals.Capacity(); ++slot) {
+        const auto* source = engine.sourceTerminals.At(slot);
+        if (source->occupied && source->render == render) {
+            recordCause = !MonitorSourceFinishedIndependently(engine, source->leaf);
+            break;
+        }
+    }
+    engine.ledger.MarkTerminating(render, cause, recordCause);
+}
+
 bool ServicePrivateImmediateEntryVoiceStops(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row) noexcept {
     if (!PrivateImmediateEntryStopPending(row)) return true;
@@ -2683,7 +2807,7 @@ bool ServicePrivateImmediateEntryVoiceStops(harken::Engine& engine,
         stop.payload.stop.handle = render;
         // A withdrawn future Start has no audible tail, but still needs a real Stop.
         stop.payload.stop.fadeMs = voice->timelineGated ? 0 : row.pendingCancellationFadeMs;
-        if (engine.commands.TryPush(stop)) engine.ledger.MarkTerminating(render);
+        if (engine.commands.TryPush(stop)) MarkObservedPlayableVoiceTerminating(engine, render, row.pendingControlCause);
         else allIssued = false;
     });
     return allIssued;
@@ -5024,9 +5148,49 @@ void TeardownEngine(Engine* engine) {
 }
 } // namespace
 
+MonitorRequestContext BeginMonitorRequest(
+    MonitorRequestOrigin origin, std::uint32_t operation) noexcept {
+    return g_engine != nullptr ? g_engine->monitorRequests.Begin(origin, operation)
+                               : MonitorRequestContext{{}, origin, operation};
+}
+
 Engine* ActiveEngine() {
     return g_engine;
 }
+
+void CaptureMonitorAcceptedRequest(monitor::RequestObservation& observation,
+    std::uint32_t subject, std::uint64_t handle) noexcept {
+    if (!observation.Active() || g_engine == nullptr) return;
+    auto& engine = *g_engine;
+    observation.Subject(subject, handle);
+    MonitorEmitterOrigin origin{};
+    if (subject == VN_MONITOR_SUBJECT_ACTION) {
+        ActionFiringSnapshot snapshot{};
+        if (!engine.actionFirings.Capture(handle, &snapshot)) return;
+        observation.Content(snapshot.owner.projectId, snapshot.actionId, VN_MONITOR_CONTENT_ACTION,
+            snapshot.worldGeneration, snapshot.programSemanticFingerprint);
+        observation.Relations(snapshot.root, handle, snapshot.acceptedLogicSequence);
+        origin = snapshot.emitterOrigin;
+    } else if (subject == VN_MONITOR_SUBJECT_PLAYABLE) {
+        MonitorContentIdentity content{};
+        const auto view = engine.playableInstances.Classify(handle);
+        if (!view.live || !engine.playableInstances.CaptureContentIdentity(handle, &content)) return;
+        observation.Content(content.projectId, content.stableId, static_cast<unsigned>(view.kind),
+            content.worldGeneration, content.programSemanticFingerprint, content.contentRevision);
+        observation.Relations(handle, 0, 0);
+        engine.playableInstances.CaptureEmitterOrigin(handle, &origin);
+    } else if (subject == VN_MONITOR_SUBJECT_LOGICAL_VOICE) {
+        const auto resolved = engine.ledger.Classify(handle);
+        VoiceLedger::MonitorIdentity identity{};
+        if (resolved.kind == VoiceLedger::HandleKind::Stale ||
+            !engine.ledger.CaptureMonitorIdentity(resolved.ledgerSlot, &identity)) return;
+        origin = identity.emitterOrigin;
+    } else return;
+    const auto context = engine.emitters.Context(origin.emitter);
+    observation.Emitters(origin, engine.monitorEmitters.CaptureBinding(origin,
+        context.stateEmitter, context.spatialEmitter));
+}
+
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 ScopedTimelineCapacityOverrideForTest::ScopedTimelineCapacityOverrideForTest(
@@ -5097,6 +5261,8 @@ void ReleaseMasterClaimForTests(std::uint8_t kind) noexcept {
 namespace {
 
 struct ImmediateActionPlan {
+    harken::MonitorRequestContext playbackRequest{};
+    harken::MonitorEmitterOrigin emitterOrigin{};
     harken::Engine* engine = nullptr;
     const harken::PackComposition::PublishedView* pinnedPublished = nullptr;
     const harken::PackPartitionLease* postedActionLease = nullptr;
@@ -5281,8 +5447,9 @@ void ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
 // The optional output reports that demotion to the Action caller without
 // coupling this shared path to Action identity or logging.
 VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
-                  bool actionEmitterPlay,
-                  bool* outDemotedToTwoD = nullptr);
+                  const harken::MonitorRequestContext& request, bool actionEmitterPlay,
+                  bool* outDemotedToTwoD = nullptr,
+                  harken::monitor::RequestObservation* observation = nullptr);
 
 // The resampler's supported playback-rate span. The lower bound mirrors
 // the API-level ceiling symmetrically in cents (+/-7200), so binding
@@ -5954,7 +6121,40 @@ void PublishVoiceCommandBatch(harken::Engine& engine,
     (void)engine.commands.ConsumePreparedBatch(std::move(proof));
 }
 
+void PublishMonitorSelection(harken::Engine& engine,
+    harken::EngineMonitorSelection& selection, harken::TimelineArmToken arm,
+    VnVoiceHandle render, const harken::MonitorControlCause& cause) noexcept {
+    const auto& saved = selection.arm;
+    if (saved.slot != arm.slot || saved.generation != arm.generation ||
+        saved.renderSlot != arm.renderSlot || saved.renderGeneration != arm.renderGeneration ||
+        selection.observation.RenderActivation() != render) return;
+    engine.ledger.PublishMonitorSelection(selection.observation, &cause);
+}
+
+harken::MonitorControlCause MonitorInitialSelectionCause(
+    const harken::EnginePlayableServiceRow& row, bool initial) noexcept {
+    harken::MonitorControlCause cause{};
+    cause.parentPlayable = row.ownerInstance;
+    if (initial) {
+        cause.request = row.Invocation().playbackRequest;
+        cause.actionFiring = row.Invocation().actionFiring;
+        cause.executionOrdinal = row.Invocation().actionExecutionOrdinal;
+    }
+    return cause;
+}
+
+void PublishMonitorInitialSelections(harken::Engine& engine,
+    harken::EngineActionPlayScratch& scratch, bool initial = true) noexcept {
+    if (scratch.row == nullptr) return;
+    const auto cause = MonitorInitialSelectionCause(*scratch.row, initial);
+    for (std::uint32_t index = 0; index < scratch.voiceStartCount; ++index) {
+        auto& start = scratch.voiceStarts[index];
+        PublishMonitorSelection(engine, start.monitorSelection, start.arm, start.renderHandle, cause);
+    }
+}
+
 struct TimelineVoiceInstallResult {
+    harken::EngineMonitorSelection monitorSelection{};
     VnResult status = VN_INVALID_ARG;
     VnVoiceHandle renderHandle = 0;
     harken::SourceTerminalToken sourceTerminal{};
@@ -6244,9 +6444,13 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     harken::VoiceLedger::PreparedPlayableIdentity ledgerPreparationIdentity{};
     harken::VoiceLedger::PlayableParentRef parent{};
     parent.internalToken = parentInstance;
+    harken::MonitorRequestContext playbackRequest{};
+    (void)engine.playableInstances.CapturePlaybackRequest(parentInstance, &playbackRequest);
+    harken::MonitorEmitterOrigin emitterOrigin{};
+    (void)engine.playableInstances.CaptureEmitterOrigin(parentInstance, &emitterOrigin);
     const bool ledgerReserved = prepareOnly
-        ? engine.ledger.PreparePlayableOwned(parent, &ledgerSlot, &ledgerPreparationIdentity)
-        : engine.ledger.AcquirePlayableOwned(parent, &ledgerSlot);
+        ? engine.ledger.PreparePlayableOwned(parent, &ledgerSlot, &ledgerPreparationIdentity, playbackRequest, emitterOrigin)
+        : engine.ledger.AcquirePlayableOwned(parent, &ledgerSlot, playbackRequest, emitterOrigin);
     if (!ledgerReserved) {
         if (!prepareOnly) {
             engine.commands.CancelReservedBatch(
@@ -6337,6 +6541,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         return result;
     }
     voicePreparation.renderHandle = render;
+    (void)engine.voices.BindMonitorControl(render, engine.ledger.ArmMonitorControl(ledgerSlot, render));
     voicePreparation.routing.busIndex = bus.index;
     voicePreparation.routing.busGeneration = bus.generation;
     if (install.streamed) {
@@ -6819,6 +7024,48 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         originalVoiceProof.Release();
         for (auto& proof : originalEffectProofs) proof.Release();
     }
+    harken::VoiceLedger::MonitorContent monitorContent{};
+    harken::MonitorLifecycleFacts monitorOwner{};
+    const auto monitorInstance = playableRoot != 0 ? programGeneration : parentInstance;
+    const bool monitorOwnerKnown = engine.playableInstances.CaptureMonitorFacts(monitorInstance, &monitorOwner);
+    monitorContent.content = install.monitorContent;
+    if (monitorContent.content.stableId != VnObjectId{}) {
+        monitorContent.content.projectId = monitorOwner.projectId;
+        monitorContent.kind = VN_MONITOR_CONTENT_SOUND;
+    } else {
+        monitorContent.content.stableId = install.soundId;
+        monitorContent.kind = VN_MONITOR_CONTENT_MEDIA;
+    }
+    monitorContent.root = monitorOwnerKnown ? monitorOwner.root : playableRoot;
+    if (playableRoot != 0 && monitorOwner.contentKind == VN_MONITOR_CONTENT_SOUND &&
+        monitorOwner.contentObject == monitorContent.content.stableId)
+        monitorContent.leaf = monitorInstance;
+    monitorContent.action = monitorOwner.relatedAction;
+    monitorContent.incomplete = !monitorOwnerKnown || monitorOwner.identityObservationIncomplete;
+    if (resourceService != nullptr) {
+        monitorContent.resourceOwner = resourceService->ownerInstance;
+        monitorContent.ownerEpoch = resourceService->ownerEpoch;
+    }
+    monitorContent.occurrence = install.monitorOccurrence;
+    if (progressOccurrence != nullptr) {
+        const auto* key = engine.timelineOccurrences.KeyOf(*progressOccurrence);
+        if (key != nullptr) {
+            auto& occurrence = monitorContent.occurrence;
+            if (!occurrence.valid) {
+                // Queue completion keys may store a Sound ID in their clip field.
+                // Only authored cuts or the raw timeline carry a Clip identity.
+                if (monitorContent.kind == VN_MONITOR_CONTENT_MEDIA) occurrence.clipId = key->clipId;
+                occurrence.occurrenceOrdinal = key->occurrenceOrdinal;
+            }
+            occurrence.arrangingInstance = key->arrangingInstance;
+            occurrence.loopIteration = key->loopIteration;
+            occurrence.loopKnown = true;
+            occurrence.valid = true;
+        } else monitorContent.incomplete = true;
+    }
+    engine.ledger.RecordMonitorContent(ledgerSlot, monitorContent);
+    (void)engine.ledger.CaptureMonitorSelection(ledgerSlot, render, &result.monitorSelection.observation);
+    result.monitorSelection.arm = arm;
     engine.timelineVoiceInstallIdentities[renderSlot] = {
         render, playableRoot, install.target, releaseObserver, startFrame, arm,
         bus.index, bus.generation, timelineSends};
@@ -6836,6 +7083,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             programGeneration, install.target, parentGroup, groupMemberIndex,
             pendingImmediateStart};
         preparedOut->ledgerPreparation = {ledgerPreparationIdentity, parent, render, 128, {}};
+        preparedOut->monitorSelection = result.monitorSelection;
         preparedOut->voicePreparation = voicePreparation;
         preparedOut->effectCount = acquiredEffectCount;
         std::copy_n(acquiredEffects.begin(), acquiredEffectCount,
@@ -6890,6 +7138,7 @@ engine.runtimeRecreateRequired = true;
             {engine.playLedBatchScratch.data(), commandCount});
         if (committedOut != nullptr) {
             committedOut->ledgerSlot = ledgerSlot;
+            committedOut->monitorSelection = result.monitorSelection;
             committedOut->renderHandle = render;
             committedOut->sourceTerminal = sourceTerminal;
             committedOut->releaseObserver = releaseObserver;
@@ -7320,8 +7569,21 @@ bool RollbackCommittedTimelineVoiceStart(
     return true;
 }
 
-bool AbortTimelineArm(harken::Engine& engine, harken::TimelineArmToken token) {
-    if (engine.timelineArms.RequestCancel(token)) {
+bool AbortTimelineArm(harken::Engine& engine, harken::TimelineArmToken token,
+    const harken::MonitorControlCause* cause) {
+    bool newlyCancelled = false;
+    if (engine.timelineArms.RequestCancel(token, &newlyCancelled)) {
+        if (newlyCancelled && cause != nullptr) {
+            const auto render = (static_cast<std::uint64_t>(token.renderGeneration) << 32) | token.renderSlot;
+            engine.ledger.RecordMonitorCancellation(render, *cause);
+            for (std::uint32_t slot = 0; slot < engine.sourceTerminals.Capacity(); ++slot) {
+                const auto* source = engine.sourceTerminals.At(slot);
+                if (source == nullptr || !source->occupied || source->render != render ||
+                    engine.playableInstances.SourceRetirementEpoch(source->leaf) != source->acceptedEpoch) continue;
+                if (!MonitorSourceFinishedIndependently(engine, source->leaf))
+                    engine.playableInstances.RecordControlCause(source->leaf, *cause);
+            }
+        }
         return true;
     }
     harken::ArmState state = harken::ArmState::Free;
@@ -7929,6 +8191,7 @@ bool CancelPreparedAuthoredStop(
             return false;
         if (root.cancellation.Valid() && !engine.playableInstances.CancelDelayedCancellation(&root.cancellation)) return false;
         root.operation.reset();
+        root.controlCause = {};
     }
     prepared = {};
     return true;
@@ -8150,6 +8413,7 @@ bool PrepareAuthoredStopResource(
     payload.reserved = harken::kTimelineEventAuthoredRootStop |
         (installation != nullptr ? harken::kTimelineEventTransientControlArm : 0);
     payload.authoredStopOperation = identity;
+    payload.controlCause = root.controlCause;
     if (installation != nullptr) payload.target = installation->target;
     payload.envelopeEndFrame = identity.stopFrame;
     payload.authoredFadeOutCandidate = eventCount != 0;
@@ -8243,6 +8507,7 @@ bool PrepareAuthoredStopOperation(
     harken::ActionFiringHandle firing,
     std::uint32_t executionOrdinal, std::uint64_t fadeStart, std::uint64_t silence,
     harken::EnginePreparedAuthoredStop& prepared,
+    const harken::MonitorControlCause& cause,
     const harken::EngineActionPlayScratch* originalPlainSource = nullptr,
     const harken::EngineActionQueueReplacementScratch* nativeReplacement = nullptr) noexcept {
     if (prepared.operationSlot != UINT32_MAX || fadeStart > silence) return false;
@@ -8256,6 +8521,7 @@ bool PrepareAuthoredStopOperation(
     if (!engine.playableInstances.PrepareDelayedCancellation(
             handle, firing, executionOrdinal, &root.cancellation)) return false;
     ++root.generation;
+    root.controlCause = cause;
     root.fadeStartFrame = fadeStart;
     root.committed = false;
     root.applied = false;
@@ -9217,8 +9483,10 @@ void ServiceAuthoredStops(
         const auto applied = root.operation->AppliedAudioSequence();
         if (!root.applied && root.operation->Active(identity) &&
             observedFrame > identity.stopFrame && applied != 0 && applied <= observed &&
-            engine.playableInstances.ActivateDelayedCancellation(&root.cancellation)) {
+            engine.playableInstances.ActivateDelayedCancellation(&root.cancellation,
+                MonitorCauseForInstance(engine, identity.root, root.controlCause))) {
             root.applied = true;
+            RecordPlayableControlTree(engine, identity.root, root.controlCause);
             for (auto& row : engine.playableServices) {
                 if (AuthoredStopPublicRoot(engine, row.rootInstance) == identity.root) {
                     if (row.queueMode) {
@@ -9233,6 +9501,8 @@ void ServiceAuthoredStops(
                         row.queueNaturalEnd = true;
                         row.queueSignalOnlyNoOverlap = false;
                     }
+                    row.pendingControlCause = root.controlCause;
+                    (void)engine.playableInstances.CaptureControlCause(row.rootInstance, &row.pendingControlCause);
                     row.controlReason = harken::PlayableControlReason::StopRequested;
                     row.controlLifecycle = harken::PlayableControlLifecycle::Cancelling;
                     row.phase = harken::EnginePlayableStartPhase::Cancelling;
@@ -9321,6 +9591,7 @@ engine.runtimeRecreateRequired = true;
             (!root.cancellation.Valid() || !engine.playableInstances.Classify(identity.root).live)) {
             root.cancellation = {};
             root.operation.reset();
+            root.controlCause = {};
             root.committed = false;
         }
     }
@@ -9640,6 +9911,7 @@ void TransferFrontierLeafResource(harken::EnginePlayableServiceRow& parent,
     child.arm = std::exchange(parent.arm, {});
     child.renderHandle = std::exchange(parent.renderHandle, 0);
     child.releaseObserver = std::exchange(parent.releaseObserver, {});
+    child.monitorSelection = std::exchange(parent.monitorSelection, {});
     child.queueCurrentProgramBank = std::exchange(parent.queueCurrentProgramBank, nullptr);
     child.selectionDeltaCount = std::exchange(parent.selectionDeltaCount, 0);
     child.selectionDeltas = parent.selectionDeltas;
@@ -9859,6 +10131,7 @@ void CancelPreparedMemberStorage(
     for (std::uint32_t index = 0; index < count; ++index) {
         const auto slot = physicalSlots[index];
         engine.variableControlMemberCompletions[slot] = {};
+        engine.playableScheduleSelections[slot] = {};
         engine.playableScheduleArms[slot] = {};
         engine.playableScheduleRenderHandles[slot] = 0;
         engine.playableScheduleReleaseObservers[slot] = {};
@@ -10746,6 +11019,13 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
             return false;
         }
+        if (receipt.outcome == harken::FrontierReceiptOutcome::Applied) {
+            // The receipt owner retains values even when the resource moved to a child service.
+            auto& selection = row.queueMonitorSelection;
+            PublishMonitorSelection(engine, selection, selection.arm,
+                selection.observation.RenderActivation(), selection.observation.Cause());
+        }
+        row.queueMonitorSelection = {};
         row.frontierAcceptedSignal = {};
         if (receipt.outcome == harken::FrontierReceiptOutcome::DefinitivelyNotApplied) {
             (void)AbortTimelineArm(engine, row.arm);
@@ -11655,6 +11935,8 @@ PlayableStartResetResult ResetPlayableStartRow(
           engine.playableStorage.endpointStride);
     clear(engine.playableScheduleArms, bases.member,
           engine.playableStorage.memberStride);
+    clear(engine.playableScheduleSelections, bases.member,
+          engine.playableStorage.memberStride);
     clear(engine.playableScheduleRenderHandles, bases.member,
           engine.playableStorage.memberStride);
     clear(engine.playableScheduleReleaseObservers, bases.member,
@@ -11712,6 +11994,8 @@ PlayableStartResetResult ResetPlayableStartRow(
     clear(engine.playableSuccessorArms, bases.endpoint,
           engine.playableStorage.endpointStride);
     clear(engine.playableSuccessorRenderHandles, bases.endpoint,
+          engine.playableStorage.endpointStride);
+    clear(engine.playableSuccessorSelections, bases.endpoint,
           engine.playableStorage.endpointStride);
     clear(engine.playableSuccessorOccurrences, bases.endpoint,
           engine.playableStorage.endpointStride);
@@ -13181,7 +13465,8 @@ bool ReserveQueueDecision(
 
 void BeginQueueSuccessorAbort(
     harken::Engine& engine,
-    harken::EnginePlayableServiceRow& row) noexcept {
+    harken::EnginePlayableServiceRow& row,
+    const harken::MonitorControlCause* cause = nullptr) noexcept {
     if (row.queueSuccessorCompositeOwner.Valid()) {
         bool mirrorsCleared = true;
         const std::size_t base = row.queueSuccessorScheduleBase;
@@ -13246,13 +13531,13 @@ engine.runtimeRecreateRequired = true;
         for (std::uint32_t index = 0;
              index < row.queueSuccessorScheduleLeafCount; ++index) {
             (void)AbortTimelineArm(
-                engine, engine.playableSuccessorArms[base + index]);
+                engine, engine.playableSuccessorArms[base + index], cause);
             harken::OccurrenceToken& occurrence =
                 engine.playableSuccessorOccurrences[base + index];
             (void)TryReleaseOccurrenceAfterFence(engine, occurrence, 0);
         }
     } else if (row.queueSuccessorArm.Valid()) {
-        (void)AbortTimelineArm(engine, row.queueSuccessorArm);
+        (void)AbortTimelineArm(engine, row.queueSuccessorArm, row.queueSameProgramKey ? nullptr : cause);
     }
     if (row.queueSourceArm.Valid()) {
         if (!AbortQueueSourceArm(engine, row)) {
@@ -15167,6 +15452,8 @@ bool PrepareVariableControlRetargetSelection(
     if (out == nullptr || tree == nullptr || ticket == 0) return false;
     tree->selectionPlayCount = 0;
     harken::PlayableStartRequest request{};
+    request.playbackRequest = row.Invocation().playbackRequest;
+    request.emitterOrigin = row.Invocation().emitterOrigin;
     request.root = row.root;
     request.callerSeed = ticket;
     request.emitter = row.variableControlEmitter;
@@ -15388,6 +15675,7 @@ bool PrepareVariableControlRetargetSubtree(
     const auto prepareNested = [&](harken::PlayableInstanceHandle parent,
                                    std::uint32_t ordinal,
                                    harken::PlayableKind kind,
+                                   const harken::PlayableRefV1& content,
                                    std::uint32_t* outIndex) noexcept {
         if (outIndex == nullptr) return false;
         const std::uint32_t existing = findNested(parent, ordinal, kind);
@@ -15407,6 +15695,7 @@ bool PrepareVariableControlRetargetSubtree(
             return false;
         }
         out->nestedParents[index] = parent;
+        ObservePreparedContent(engine, out->nestedInstances[index], MonitorContentFor(world, content));
         out->nestedOrdinals[index] = ordinal;
         out->nestedKinds[index] = kind;
         ++out->nestedCount;
@@ -15623,7 +15912,7 @@ bool PrepareVariableControlRetargetSubtree(
             if (parentIndex == UINT32_MAX) continue;
             std::uint32_t nestedIndex = UINT32_MAX;
             if (!prepareNested(parentNode.instance, node.occurrenceOrdinal,
-                    harken::PlayableKind::Container, &nestedIndex)) return false;
+                    harken::PlayableKind::Container, node.authored, &nestedIndex)) return false;
             node.instance = out->nestedInstances[nestedIndex].Handle();
             node.instanceEpoch = out->nestedInstances[nestedIndex].ScheduleEpoch();
             containerIndex = findContainer(node.instance);
@@ -15716,7 +16005,7 @@ bool PrepareVariableControlRetargetSubtree(
             if (childKind != harken::PlayableKind::Sound) {
                 std::uint32_t nestedIndex = UINT32_MAX;
                 if (!prepareNested(parent, leaf.selectedOrdinals[pathIndex],
-                                   childKind, &nestedIndex)) {
+                                   childKind, child->playable, &nestedIndex)) {
                     return false;
                 }
                 childHandle = out->nestedInstances[nestedIndex].Handle();
@@ -15800,6 +16089,7 @@ bool PrepareVariableControlRetargetSubtree(
             break;
         }
         if (!leafReady) return false;
+        ObservePreparedContent(engine, leafPrepared[leafSlot], MonitorContentFor(world, leaf.leaf));
         if (leaf.frontierPolicyIndex < out->frontierPolicyCount) {
             auto& node = out->storage.frontierPolicies[leaf.frontierPolicyIndex];
             node.instance = terminalOwner;
@@ -15827,7 +16117,8 @@ bool PrepareVariableControlRetargetSubtree(
         if (status != ScheduleMaterializeStatus::ZeroWork ||
             logical.zeroWorkCompletionOffsetFrames > UINT64_MAX - onset) return false;
         std::uint32_t nestedIndex = UINT32_MAX;
-        if (!prepareNested(parent.instance, node.occurrenceOrdinal, kindOf(node.authored.kind), &nestedIndex)) return false;
+        if (!prepareNested(parent.instance, node.occurrenceOrdinal, kindOf(node.authored.kind),
+                node.authored, &nestedIndex)) return false;
         node.instance = out->nestedInstances[nestedIndex].Handle();
         node.instanceEpoch = out->nestedInstances[nestedIndex].ScheduleEpoch();
         node.parent = parent.instance;
@@ -15919,6 +16210,7 @@ bool PrepareVariableControlRetargetSubtree(
             return false;
         }
         out->queueSuccessorOwner = out->containerInstances[ownerIndex];
+        ObservePreparedContent(engine, out->queueSuccessor, MonitorContentFor(world, successor->playable));
         out->queueSuccessorOwnerEpoch = engine.playableInstances.Classify(
             out->queueSuccessorOwner).scheduleEpoch;
     }
@@ -16567,6 +16859,14 @@ harken::PlayableStartStatus BuildTimelineVoiceInstallFromCut(
     voice.bindingCount = bindingCount;
     CapturePlaybackPath(cut, voice);
     voice.soundId = cut.leaf.stableId;
+    voice.monitorContent = harken::MakeMonitorContentIdentity({}, cut.world, cut.leaf);
+    for (std::uint32_t index = 0; index < cut.pathCount; ++index) {
+        const auto& path = cut.path[index];
+        if (path.rowKind == harken::ResolvedPlayablePathRowKindV1::Occurrence &&
+            path.clipId != VnObjectId{}) {
+            voice.monitorOccurrence = {0, path.clipId, 0, path.stableOccurrenceOrdinal, true};
+        }
+    }
     voice.outputBusId =
         cut.mainOutputBusRef == VnObjectId{} ? VN_BUS_MASTER : cut.mainOutputBusRef;
     const float volume =
@@ -17402,6 +17702,11 @@ bool ReleaseCancelledFrontierServices(harken::Engine& engine,
 bool CancelDirectFrontierAttempt(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch) noexcept {
     if (!BeginCancellingFrontierAttempt(engine, scratch)) return false;
+    harken::MonitorControlCause cause{};
+    if (scratch.cancellationCauseAccepted)
+        RecordPreparedControlCause(engine, scratch, scratch.cancellationCause);
+    else if (scratch.row != nullptr && CaptureServiceControlCause(engine, *scratch.row, &cause))
+        RecordPreparedControlCause(engine, scratch, cause);
     if (!scratch.frontierOwnerLedgerComplete) {
         // Incomplete registration still owns contexts outside the ledger.
         // Clear all dependents before the ledger can release their selections.
@@ -17451,6 +17756,14 @@ bool CancelQueueFutureAttempt(
         scratch->row->partition.slot != scratch->continuationPartition.slot ||
         scratch->row->partition.generation != scratch->continuationPartition.generation ||
         !BeginCancellingFrontierAttempt(engine, *scratch)) return false;
+    const auto* parent = FindFrontierAttempt(engine, scratch->queueFutureParent);
+    harken::MonitorControlCause cause{};
+    if (scratch->cancellationCauseAccepted)
+        RecordPreparedControlCause(engine, *scratch, scratch->cancellationCause);
+    else if (parent->cancellationCauseAccepted)
+        RecordPreparedControlCause(engine, *scratch, parent->cancellationCause);
+    else if (CaptureServiceControlCause(engine, *scratch->row, &cause))
+        RecordPreparedControlCause(engine, *scratch, cause);
     if (!CancelPreparedActionResourceOwner(&scratch->actionResourceOwnerContext) ||
         !CancelPreparedQueueCompletionBindings(engine, *scratch)) return false;
     // Contexts exist before registration, so partial ledgers retain all owners.
@@ -19768,7 +20081,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     if (!engine.playableInstances.PrepareAcquire(
             harken::PlayableKind::Container,
             scratch->variableControlParentInstance,
-            &scratch->instance) ||
+            &scratch->instance, request.playbackRequest, request.emitterOrigin) ||
         (executorOwnsRoot &&
          (!scratch->playableTreeExecutor.AdoptPreparedInstance(
               engine.playableInstances, &scratch->instance) ||
@@ -19789,6 +20102,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         result.status = harken::PlayableStartStatus::Capacity;
         return result;
     }
+    ObservePreparedContent(engine, scratch->instance, MonitorContentFor(world, request.root));
     const harken::PlayableInstanceHandle instance = scratch->instance.Handle();
     if (!engine.containerPlayback.Prepare(engine.playableInstances,
             instance, scratch->instance.ScheduleEpoch(), program.containerStableId,
@@ -19862,6 +20176,8 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     RefreshVariableControlZeroWorkCompletion(row);
     row.Invocation().worldGeneration = VariableControlWorldGeneration(world, packLease);
     row.Invocation().projectId = PlayableWorldProjectId(world);
+    row.Invocation().playbackRequest = request.playbackRequest;
+    row.Invocation().emitterOrigin = request.emitterOrigin;
     row.Invocation().invocationEmitter = request.emitter;
     row.Invocation().actionFiring = rootMetadata.actionFiring;
     row.Invocation().actionExecutionOrdinal = rootMetadata.actionExecutionOrdinal;
@@ -19901,6 +20217,8 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             result.status = harken::PlayableStartStatus::Capacity;
             return result;
         }
+        ObservePreparedContent(engine, scratch->variableControlChildren[index],
+            MonitorContentFor(world, selectedChild->playable));
         scratch->variableControlChildCount = index + 1u;
     }
     // Materialized nested Container paths become real parented instances.
@@ -19965,6 +20283,8 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         }
         node.instance = scratch->variableControlChildren[tokenIndex].Handle();
         node.instanceEpoch = scratch->variableControlChildren[tokenIndex].ScheduleEpoch();
+        ObservePreparedContent(engine, scratch->variableControlChildren[tokenIndex],
+            MonitorContentFor(world, node.authored));
         if (node.authored.kind != harken::PlayableKindV1::Container) continue;
         const auto* nestedProgram = resolveNested(node.authored);
         if (nestedProgram == nullptr ||
@@ -20021,6 +20341,8 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
                 result.status = harken::PlayableStartStatus::Capacity;
                 return result;
             }
+            ObservePreparedContent(engine, scratch->variableControlLeafChildren[slot],
+                MonitorContentFor(world, leaf.leaf));
             ++scratch->variableControlLeafChildCount;
             scratch->variableControlLeafHandles[leafIndex] = scratch->variableControlLeafChildren[slot].Handle();
             scratch->variableControlLeafEpochs[leafIndex] = scratch->variableControlLeafChildren[slot].ScheduleEpoch();
@@ -20142,6 +20464,9 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
                 result.status = harken::PlayableStartStatus::Capacity;
                 return result;
             }
+            ObservePreparedContent(engine,
+                scratch->variableControlChildren[scratch->variableControlChildCount],
+                MonitorContentFor(world, nestedChild->playable));
             scratch->variableControlChildKinds[
                 scratch->variableControlChildCount] =
                 harken::PlayableKind::Container;
@@ -20212,6 +20537,9 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             result.status = harken::PlayableStartStatus::Capacity;
             return result;
         }
+        ObservePreparedContent(engine,
+            scratch->variableControlChildren[scratch->variableControlChildCount],
+            MonitorContentFor(world, finalChild->playable));
         scratch->variableControlChildKinds[
             scratch->variableControlChildCount] = finalKind;
         const auto finalInstance = scratch->variableControlChildren[
@@ -20233,6 +20561,8 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             }
             const std::uint32_t preparedLeaf =
                 scratch->variableControlLeafChildCount++;
+            ObservePreparedContent(engine, scratch->variableControlLeafChildren[preparedLeaf],
+                MonitorContentFor(world, pathLeaf.leaf));
             scratch->variableControlLeafHandles[nestedLeafBase] =
                 scratch->variableControlLeafChildren[preparedLeaf].Handle();
             scratch->variableControlLeafEpochs[nestedLeafBase] =
@@ -20277,6 +20607,10 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         }
         const std::uint32_t preparedLeaf =
             scratch->variableControlLeafChildCount++;
+        const auto& leaf = leafIndex < discreteCount ? discreteSchedule.leaves[leafIndex]
+            : continuousLeaves[leafIndex - discreteCount];
+        ObservePreparedContent(engine, scratch->variableControlLeafChildren[preparedLeaf],
+            MonitorContentFor(world, leaf.leaf));
         scratch->variableControlLeafHandles[leafIndex] =
             scratch->variableControlLeafChildren[preparedLeaf].Handle();
         scratch->variableControlLeafEpochs[leafIndex] =
@@ -20335,6 +20669,8 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         row.Invocation().variableControlOuterRootEpoch =
             scratch->variableControlOuterRoot.ScheduleEpoch();
     }
+    row.Invocation().playbackRequest = request.playbackRequest;
+    row.Invocation().emitterOrigin = request.emitterOrigin;
     row.Invocation().invocationEmitter = request.emitter;
     row.ticket = provisionalTicket;
     row.Invocation().worldGeneration = VariableControlWorldGeneration(world, packLease);
@@ -20720,6 +21056,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         engine.playableScheduleReleaseObservers[slot] = installed.releaseObserver;
         engine.variableControlMemberCompletions[slot] =
             {childInstance, row.variableControlLeafEpochs[installedCount], installed.sourceTerminal};
+        engine.variableControlMemberCompletions[slot].monitorSelection = installed.monitorSelection;
         engine.variableControlDynamicMembers[slot] = 0;
         if (controlDiscrete) {
             controlOwner->variableControlInitialDiscreteArms[memberIndex] =
@@ -22506,7 +22843,9 @@ bool PrepareNestedVariableControlOuterTree(
     const harken::PlayableStartRequest& request,
     const harken::SelectionPathNodeV1* path,
     std::uint32_t pathCount,
-    harken::EngineActionPlayScratch* scratch) noexcept {
+    harken::EngineActionPlayScratch* scratch,
+    harken::ActionFiringHandle actionFiring = 0,
+    std::uint32_t actionExecutionOrdinal = UINT32_MAX) noexcept {
     if (scratch == nullptr || path == nullptr || pathCount == 0 ||
         pathCount > harken::kSelectionPathNodeCapacity ||
         request.root.kind != harken::PlayableKindV1::Container ||
@@ -22545,9 +22884,11 @@ bool PrepareNestedVariableControlOuterTree(
         request.root.expectedProgramSemanticFingerprint;
     metadata.worldGeneration = VariableControlWorldGeneration(world, nullptr);
     metadata.invocationEmitter = request.emitter;
+    metadata.actionFiring = actionFiring;
+    metadata.actionExecutionOrdinal = actionExecutionOrdinal;
     if (!engine.playableInstances.PrepareAcquire(
             harken::PlayableKind::Container, 0,
-            &scratch->variableControlOuterRoot) ||
+            &scratch->variableControlOuterRoot, request.playbackRequest, request.emitterOrigin) ||
         !engine.playableInstances.SetPreparedRootMetadata(
             scratch->variableControlOuterRoot, metadata) ||
         !engine.containerPlayback.Prepare(
@@ -22599,6 +22940,7 @@ bool PrepareNestedVariableControlOuterTree(
         return false;
     };
 
+    ObservePreparedContent(engine, scratch->variableControlOuterRoot, MonitorContentFor(world, request.root));
     harken::PlayableInstanceHandle parent =
         scratch->variableControlOuterRoot.Handle();
     const harken::ContainerProgramViewV3* currentProgram = rootProgram;
@@ -22621,6 +22963,7 @@ bool PrepareNestedVariableControlOuterTree(
         }
         auto& childPrepared = scratch->variableControlOuterPathChildren[
             scratch->variableControlOuterPathChildCount++];
+        ObservePreparedContent(engine, childPrepared, MonitorContentFor(world, child->playable));
         const auto childHandle = childPrepared.Handle();
         const auto childEpoch = childPrepared.ScheduleEpoch();
         const auto* childProgram = resolve(child->playable);
@@ -22856,6 +23199,7 @@ harken::PlayableStartResult CommitVariableControlInitialStart(
         result.status = harken::PlayableStartStatus::RuntimeRecreateRequired;
         return result;
     }
+    PublishMonitorInitialSelections(engine, *scratch, !scratch->continuationExecution);
     result.instance = PublicPlayableInstance(*scratch->row);
     result.ticket = sequence;
     return result;
@@ -23152,7 +23496,8 @@ struct PreparedQueueContinuationTree {
     }
 
     bool Prepare(const harken::ContainerChildProgramViewV2& child,
-                 harken::PlayableInstanceHandle parent) noexcept {
+                 harken::PlayableInstanceHandle parent,
+                 const harken::MonitorContentIdentity& content) noexcept {
         if (!row.parentService.Valid() || row.variableControlNestedQueueSuccessorInstance != 0) return true;
         scratch = AcquireFrontierAttempt(engine);
         if (scratch == nullptr) return false;
@@ -23161,6 +23506,8 @@ struct PreparedQueueContinuationTree {
             child.playable.kind == harken::PlayableKindV1::Piece ? harken::PlayableKind::Piece : harken::PlayableKind::Container;
         if (!scratch->playableTreeExecutor.PrepareInstance(engine.playableInstances, kind, parent)) return false;
         row.variableControlNestedQueueSuccessorInstance = scratch->playableTreeExecutor.PreparedInstanceHandle(0);
+        ObservePreparedContent(engine, scratch->playableTreeExecutor,
+            row.variableControlNestedQueueSuccessorInstance, content);
         row.variableControlNestedQueueSuccessorEpoch = scratch->playableTreeExecutor.PreparedInstanceEpoch(0);
         row.variableControlNestedQueueSuccessorOrdinal = child.stableChildOrdinal;
         scratch->queueFutureMemberBase = engine.playableStorage.MemberBase(row.partition.slot) +
@@ -23172,7 +23519,9 @@ struct PreparedQueueContinuationTree {
         if (scratch != nullptr) starts.AttachPreparedTree(scratch->playableTreeExecutor, published);
     }
 
-    bool PrepareLeaves(std::uint32_t count) noexcept {
+    template <typename WorldView>
+    bool PrepareLeaves(const WorldView& world, const PreparedScheduleLeafStart* prepared,
+                       std::uint32_t count) noexcept {
         if (scratch == nullptr) return true;
         if (count > leaves.size()) return false;
         for (std::uint32_t index = 0; index < count; ++index) {
@@ -23180,6 +23529,8 @@ struct PreparedQueueContinuationTree {
                     harken::PlayableKind::Sound, row.variableControlNestedQueueSuccessorInstance)) return false;
             const auto slot = scratch->playableTreeExecutor.InstanceReservationCount() - 1u;
             leaves[index] = scratch->playableTreeExecutor.PreparedInstanceHandle(slot);
+            ObservePreparedContent(engine, scratch->playableTreeExecutor, leaves[index],
+                MonitorContentFor(world, prepared[index].leaf));
             epochs[index] = scratch->playableTreeExecutor.PreparedInstanceEpoch(slot);
         }
         return true;
@@ -23209,6 +23560,7 @@ struct PreparedQueueContinuationTree {
         engine.playableScheduleStartFrames[slot] = startFrame;
         engine.playableScheduleReleaseObservers[slot] = installed.releaseObserver;
         engine.variableControlMemberCompletions[slot] = {instance, epoch, installed.sourceTerminal};
+        engine.variableControlMemberCompletions[slot].monitorSelection = installed.monitorSelection;
         return true;
     }
 };
@@ -23224,7 +23576,8 @@ bool PrepareCompositeQueueContinuation(
     const MaterializedScheduleSet& materialized,
     const harken::TransitionRuleViewV1* transitionRule,
     PreparedQueueContinuationTree& preparedTree, std::uint64_t completionFrame,
-    harken::RetiredQueueSourceProof retiredSource) noexcept {
+    harken::RetiredQueueSourceProof retiredSource,
+    const harken::MonitorControlCause& selectionCause) noexcept {
     const bool pureLogical = materialized.leafCount == 0 &&
         materialized.hasZeroWorkCompletion;
     if ((materialized.leafCount == 0 && !pureLogical) ||
@@ -23248,6 +23601,7 @@ bool PrepareCompositeQueueContinuation(
     if (!preparedStorage) return false;
     auto& prepared = *preparedStorage;
     const bool sourceAlreadyRetired = retiredSource.sourceArm.Valid();
+    const bool packQueue = !row.queueWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0;
     const auto prefixCount = row.parentService.Valid() ? row.selectionCount : 1u;
     for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
         MaterializedScheduleLeaf rooted = materialized.leaves[index];
@@ -23269,9 +23623,7 @@ bool PrepareCompositeQueueContinuation(
         }
         rooted.selectedOrdinals[prefixCount - 1u] = next.currentChildOrdinal;
         rooted.selectionCount += prefixCount;
-        const bool packQueue =
-            !row.queueWorldUsesCurrentAuthority &&
-            row.Invocation().packLease.leaseToken != 0;
+
         const harken::PlayableStartStatus status =
             packQueue
                 ? BuildScheduleLeafStart(
@@ -23470,7 +23822,8 @@ bool PrepareCompositeQueueContinuation(
     }
     PreparedTimelineStarts starts(engine);
     preparedTree.Attach(starts);
-    if (!preparedTree.PrepareLeaves(materialized.leafCount)) return false;
+    if (!(packQueue ? preparedTree.PrepareLeaves(row.Invocation().packPlaybackView, prepared.data(), materialized.leafCount)
+                    : preparedTree.PrepareLeaves(world, prepared.data(), materialized.leafCount))) return false;
     if (!starts.ReserveQueuePrograms(row)) return false;
     if (successorHasContinuation &&
         !ReserveQueueDecision(
@@ -23574,6 +23927,7 @@ bool PrepareCompositeQueueContinuation(
         engine.playableSuccessorVoices[slot] = prepared[index].voice;
         engine.playableSuccessorLeaves[slot] = prepared[index].leaf;
         engine.playableSuccessorArms[slot] = installed.armToken;
+        engine.playableSuccessorSelections[slot] = installed.monitorSelection;
         engine.playableSuccessorRenderHandles[slot] =
             installed.renderHandle;
         engine.playableSuccessorStartFrames[slot] = startFrame;
@@ -23700,6 +24054,7 @@ bool PrepareCompositeQueueContinuation(
         row.queueSuccessorVoice = engine.playableSuccessorVoices[base];
         row.queueSuccessorLeaf = engine.playableSuccessorLeaves[base];
         row.queueSuccessorArm = engine.playableSuccessorArms[base];
+        row.queueMonitorSelection = engine.playableSuccessorSelections[base];
         row.queueSuccessorRenderHandle =
             engine.playableSuccessorRenderHandles[base];
         row.queueSuccessorTailFrames =
@@ -23732,7 +24087,8 @@ engine.runtimeRecreateRequired = true;
             ? sourcePhaseFrame : successorStartFrame;
         if (!engine.transitionInstances.Acquire(
                 {audibleFrame,
-                 audibleFrame / engine.config.blockFrames},
+                 audibleFrame / engine.config.blockFrames,
+                 engine.CaptureMonitorOwner(row.ownerInstance)},
                 &row.queueTransition) ||
             !engine.decisions.AttachTransitionGateBeforeCommit(
                 row.queueDecision, row.queueTransition,
@@ -23853,6 +24209,7 @@ engine.runtimeRecreateRequired = true;
                 const std::uint32_t stopIndex = sourceEventCount++;
                 auto& stop = row.queueSourcePayloads[stopIndex];
                 stop.kind = harken::TimelineEventKind::Stop;
+                stop.controlCause = selectionCause;
                 stop.reserved = harken::kTimelineEventTransientControlArm;
                 stop.target = target;
                 stop.envelopeEndFrame = sourceStopFrame;
@@ -24036,6 +24393,10 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
         return false;
     }
+    for (std::uint32_t index = 0; index < materialized.leafCount; ++index)
+        engine.playableSuccessorSelections[row.queueSuccessorScheduleBase + index].
+            observation.SetCause(selectionCause);
+    row.queueMonitorSelection.observation.SetCause(selectionCause);
     row.queueSuccessorProgramBank = starts.QueueBank();
     row.queueSuccessorHasZeroWorkCompletion =
         materialized.hasZeroWorkCompletion;
@@ -24325,8 +24686,9 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
     harken::EffectiveQueueState current{};
     harken::EffectiveQueueState next{};
     bool resetNext = false;
+    harken::MonitorQueueResetObservation resetObservation{};
     if (!engine.queueInstances.ResolveNextSelection(
-            row.queueInstance, &current, &next, &resetNext)) {
+            row.queueInstance, &current, &next, &resetNext, &resetObservation)) {
         return QueueContinuationPrepareStatus::Failed;
     }
     const auto authority = packQueue
@@ -24369,7 +24731,9 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
     }
     const bool successorHasContinuation =
         afterNextStatus == harken::QueueSequenceStepStatus::Successor;
-    if (!preparedTree.Prepare(*child, queueOwnerInstance)) return QueueContinuationPrepareStatus::Failed;
+    if (!preparedTree.Prepare(*child, queueOwnerInstance, packQueue
+            ? MonitorContentFor(row.Invocation().packPlaybackView, child->playable)
+            : MonitorContentFor(world, child->playable))) return QueueContinuationPrepareStatus::Failed;
     const auto successorVoiceInstance = nestedVariableControlQueue
         ? row.variableControlNestedQueueSuccessorInstance : queueOwnerInstance;
     auto successorView = engine.playableInstances.Classify(successorVoiceInstance);
@@ -24491,7 +24855,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
             return PrepareCompositeQueueContinuation(
                 engine, world, program, row, current, next,
                 successorHasContinuation, *selectedChild,
-                materializedSchedule, transitionRule, preparedTree, completionFrame, retiredSource)
+                materializedSchedule, transitionRule, preparedTree, completionFrame, retiredSource, resetObservation.cause)
                     ? QueueContinuationPrepareStatus::Prepared
                     : QueueContinuationPrepareStatus::Failed;
         }
@@ -24837,6 +25201,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
     row.queueSuccessorVoice = voice;
     row.queueSuccessorLeaf = cut.leaf;
     row.queueSuccessorArm = installed.armToken;
+    row.queueMonitorSelection = installed.monitorSelection;
     row.queueSuccessorRenderHandle = installed.renderHandle;
     row.queueSuccessorTailFrames = installed.postSourceTailFrames;
     if (!preparedTree.BindMember(installed, voice, cut.leaf, successorStartFrame)) {
@@ -24892,7 +25257,8 @@ engine.runtimeRecreateRequired = true;
                                        : successorStartFrame,
                  (sourceControlRequired ? sourcePhaseFrame
                                         : successorStartFrame) /
-                     engine.config.blockFrames},
+                     engine.config.blockFrames,
+                 engine.CaptureMonitorOwner(row.ownerInstance)},
                 &row.queueTransition) ||
             !engine.decisions.AttachTransitionGateBeforeCommit(
                 row.queueDecision, row.queueTransition,
@@ -25047,6 +25413,7 @@ engine.runtimeRecreateRequired = true;
                 const std::uint32_t stopIndex = sourceEventCount++;
                 auto& stop = row.queueSourcePayloads[stopIndex];
                 stop.kind = harken::TimelineEventKind::Stop;
+                stop.controlCause = resetObservation.cause;
                 stop.reserved = harken::kTimelineEventTransientControlArm;
                 stop.target = target;
                 stop.envelopeEndFrame = sourceStopFrame;
@@ -25226,6 +25593,7 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
         return QueueContinuationPrepareStatus::Failed;
     }
+    row.queueMonitorSelection.observation.SetCause(resetObservation.cause);
     row.queueSuccessorProgramBank = starts.QueueBank();
     row.queueSuccessorHasZeroWorkCompletion =
         materializedSchedule.hasZeroWorkCompletion;
@@ -25951,6 +26319,7 @@ bool PrepareFrontierContainerPath(
             node.instance = tree.PreparedInstanceHandle(instanceSlot);
             node.instanceEpoch = tree.PreparedInstanceEpoch(instanceSlot);
         }
+        ObservePreparedContent(engine, tree, node.instance, MonitorContentFor(world, node.authored));
         if (!adopted && !tree.PrepareContainer(engine.playableInstances, engine.containerPlayback,
                 node.instance, node.instanceEpoch, program->containerStableId,
                 program->programSemanticFingerprint, static_cast<std::uint8_t>(program->mode),
@@ -26290,8 +26659,9 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
     bool resetNext = false;
     std::uint64_t resetIntent = 0;
     const harken::QueueExecutionOrderV1 order{startFrame, ticket, 0};
+    harken::MonitorQueueResetObservation resetObservation{};
     if (!engine.queueInstances.ResolveNextSelection(
-            row.queueInstance, order, &current, &next, &resetIntent)) {
+            row.queueInstance, order, &current, &next, &resetIntent, &resetObservation)) {
         return QueueContinuationPrepareStatus::Failed;
     }
     resetNext = resetIntent != 0;
@@ -26387,6 +26757,9 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
         successorVoiceInstance = scratch.playableTreeExecutor.PreparedInstanceHandle(slot);
         successorView.scheduleEpoch = scratch.playableTreeExecutor.PreparedInstanceEpoch(slot);
         successorView.parent = queueOwnerInstance;
+        ObservePreparedContent(engine, scratch.playableTreeExecutor, successorVoiceInstance, packQueue
+            ? MonitorContentFor(row.Invocation().packPlaybackView, child->playable)
+            : MonitorContentFor(world, child->playable));
     }
     if (childKind == harken::PlayableKindV1::Container) {
         PreparedFrontierPath path{};
@@ -26409,6 +26782,9 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
         successorVoiceInstance = scratch.playableTreeExecutor.PreparedInstanceHandle(leafSlot);
         successorView.scheduleEpoch = scratch.playableTreeExecutor.PreparedInstanceEpoch(leafSlot);
         successorView.parent = path.terminalParent;
+        ObservePreparedContent(engine, scratch.playableTreeExecutor, successorVoiceInstance, packQueue
+            ? MonitorContentFor(row.Invocation().packPlaybackView, path.terminal)
+            : MonitorContentFor(world, path.terminal));
         childService = engine.ResolvePlayableService(path.resourceService);
         firstChildService = engine.ResolvePlayableService(path.rootService);
         if (childService == nullptr || firstChildService == nullptr) return QueueContinuationPrepareStatus::Failed;
@@ -26627,6 +27003,8 @@ engine.runtimeRecreateRequired = true;
     row.queueSuccessorVoice = voice;
     row.queueSuccessorLeaf = cut.leaf;
     row.queueSuccessorArm = installed.armToken;
+    row.queueMonitorSelection = installed.monitorSelection;
+    row.queueMonitorSelection.observation.SetCause(resetObservation.cause);
     row.queueSuccessorRenderHandle = installed.renderHandle;
     row.queueSuccessorOccurrence = successorOccurrence;
 
@@ -26686,8 +27064,11 @@ engine.runtimeRecreateRequired = true;
     PublishVoiceCommandBatch(engine, &scratch.directCommandReservation,
         {preparedVoice.commands.data(), preparedVoice.commandCount});
     scratch.directCommandsReserved = false;
-    if (!engine.timelinePool.ReleasePreparedTransactionPublication(&scratch.queueTransactions) ||
-        !TransferFrontierAttempt(engine, scratch)) {
+    if (!engine.timelinePool.ReleasePreparedTransactionPublication(&scratch.queueTransactions)) {
+        engine.runtimeRecreateRequired = true;
+        return QueueContinuationPrepareStatus::Failed;
+    }
+    if (!TransferFrontierAttempt(engine, scratch)) {
 engine.runtimeRecreateRequired = true;
         return QueueContinuationPrepareStatus::Failed;
     }
@@ -27207,6 +27588,8 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         scratch.packLease = row.Invocation().packLease;
         scratch.packPlaybackView = row.Invocation().packPlaybackView;
         harken::PlayableStartRequest request{};
+        request.playbackRequest = row.Invocation().playbackRequest;
+        request.emitterOrigin = row.Invocation().emitterOrigin;
         request.root = controlRef;
         request.emitter = emitter;
         request.callerSeed = selection.callerSeed;
@@ -27343,6 +27726,9 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         leafInstance = treeStep.PreparedInstanceHandle(
             treeStep.InstanceReservationCount() - 1u);
         selectedTreeRoot = leafInstance;
+        ObservePreparedContent(engine, treeStep, leafInstance, packAuthority
+            ? MonitorContentFor(row.Invocation().packPlaybackView, selectedLeaf->playable)
+            : MonitorContentFor(*world, selectedLeaf->playable));
         if (createdTreeRoot == 0) {
             createdTreeRoot = leafInstance;
         }
@@ -27361,6 +27747,9 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             treeStep.PreparedInstanceHandle(
                 treeStep.InstanceReservationCount() - 1u);
         selectedTreeRoot = intermediateInstance;
+        ObservePreparedContent(engine, treeStep, intermediateInstance, packAuthority
+            ? MonitorContentFor(row.Invocation().packPlaybackView, selectedLeaf->playable)
+            : MonitorContentFor(*world, selectedLeaf->playable));
         if (createdTreeRoot == 0) {
             createdTreeRoot = intermediateInstance;
         }
@@ -27439,6 +27828,9 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             scheduleLeafInstances[index] =
                 treeStep.PreparedInstanceHandle(
                     treeStep.InstanceReservationCount() - 1u);
+            ObservePreparedContent(engine, treeStep, scheduleLeafInstances[index], packAuthority
+                ? MonitorContentFor(row.Invocation().packPlaybackView, scheduleLeaf.leaf)
+                : MonitorContentFor(*world, scheduleLeaf.leaf));
             if (index == 0) leafInstance = scheduleLeafInstances[index];
         }
     }
@@ -28028,8 +28420,12 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         PublishVoiceCommandBatch(engine,
             &commandReservation, {engine.playLedBatchScratch.data(), commandCount});
         commandsReserved = false;
-        if (!engine.timelinePool.ReleasePreparedTransactionPublication(&transactionBatch) ||
-            !transferSuccessor(scheduleRow)) {
+        if (!engine.timelinePool.ReleasePreparedTransactionPublication(&transactionBatch)) {
+            engine.runtimeRecreateRequired = true;
+            return ContainerLoopSuccessorStatus::Refused;
+        }
+        PublishMonitorInitialSelections(engine, scratch, false);
+        if (!transferSuccessor(scheduleRow)) {
 engine.runtimeRecreateRequired = true;
             return ContainerLoopSuccessorStatus::Refused;
         }
@@ -28242,8 +28638,12 @@ engine.runtimeRecreateRequired = true;
     PublishVoiceCommandBatch(engine, &commandReservation,
         {preparedVoice.commands.data(), preparedVoice.commandCount});
     commandsReserved = false;
-    if (!engine.timelinePool.ReleasePreparedTransactionPublication(&transactionBatch) ||
-        !transferSuccessor(row)) {
+    if (!engine.timelinePool.ReleasePreparedTransactionPublication(&transactionBatch)) {
+        engine.runtimeRecreateRequired = true;
+        return ContainerLoopSuccessorStatus::Refused;
+    }
+    PublishMonitorInitialSelections(engine, scratch, false);
+    if (!transferSuccessor(row)) {
 engine.runtimeRecreateRequired = true;
         return ContainerLoopSuccessorStatus::Refused;
     }
@@ -29928,6 +30328,8 @@ engine.runtimeRecreateRequired = true;
         (void)engine.decisions.ReclaimCancelled(decision);
         return VariableRetargetPrepareStatus::Retry;
     }
+    ObservePreparedContent(engine, incomingChildPrepared,
+        MonitorVariableControlContentFor(engine, row, desired->playable));
     incomingChild = incomingChildPrepared.Handle();
     incomingChildEpoch = incomingChildPrepared.ScheduleEpoch();
     if (desiredKind == harken::PlayableKind::Container) {
@@ -29979,6 +30381,8 @@ engine.runtimeRecreateRequired = true;
                 (void)engine.decisions.ReclaimCancelled(decision);
                 return VariableRetargetPrepareStatus::Retry;
             }
+            ObservePreparedContent(engine, incomingLeafPrepared[index],
+                MonitorVariableControlContentFor(engine, row, targetSchedule.leaves[index].leaf));
             incomingLeaves[index] = incomingLeafPrepared[index].Handle();
             incomingLeafEpochs[index] = incomingLeafPrepared[index].ScheduleEpoch();
         } else {
@@ -30224,6 +30628,7 @@ engine.runtimeRecreateRequired = true;
         engine.playableScheduleReleaseObservers[slot] = installedTargets[index].releaseObserver;
         engine.variableControlMemberCompletions[slot] =
             {incomingLeaves[index], incomingLeafEpochs[index], installedTargets[index].sourceTerminal};
+        engine.variableControlMemberCompletions[slot].monitorSelection = installedTargets[index].monitorSelection;
         engine.playableScheduleRenderHandles[slot] =
             installedTargets[index].renderHandle;
         engine.playableScheduleStartFrames[slot] =
@@ -30832,7 +31237,8 @@ engine.runtimeRecreateRequired = true;
     };
     if (transitionRule != nullptr &&
         !engine.transitionInstances.Acquire(
-            {audibleFrame, audibleFrame / blockFrames}, &transition)) {
+            {audibleFrame, audibleFrame / blockFrames,
+             engine.CaptureMonitorOwner(row.ownerInstance)}, &transition)) {
         return VariableRetargetPrepareStatus::Retry;
     }
     if (!decision.Valid() &&
@@ -30869,6 +31275,8 @@ engine.runtimeRecreateRequired = true;
         rollbackBeforeInstall();
         return VariableRetargetPrepareStatus::Retry;
     }
+    ObservePreparedContent(engine, incomingChildPrepared,
+        MonitorVariableControlContentFor(engine, row, desired->playable));
     incomingChild = incomingChildPrepared.Handle();
     const std::uint64_t incomingChildEpoch =
         incomingChildPrepared.ScheduleEpoch();
@@ -30912,6 +31320,8 @@ engine.runtimeRecreateRequired = true;
                 rollbackBeforeInstall();
                 return VariableRetargetPrepareStatus::Retry;
             }
+            ObservePreparedContent(engine, incomingLeafPrepared[index],
+                MonitorVariableControlContentFor(engine, row, targetSchedule.leaves[index].leaf));
             incomingLeaves[index] = incomingLeafPrepared[index].Handle();
             incomingLeafEpochs[index] = incomingLeafPrepared[index].ScheduleEpoch();
         } else {
@@ -31023,6 +31433,7 @@ engine.runtimeRecreateRequired = true;
         engine.playableScheduleReleaseObservers[enteringSlot] = installed.releaseObserver;
         engine.variableControlMemberCompletions[enteringSlot] =
             {incomingLeaves[index], incomingLeafEpochs[index], installed.sourceTerminal};
+        engine.variableControlMemberCompletions[enteringSlot].monitorSelection = installed.monitorSelection;
         engine.playableScheduleRenderHandles[enteringSlot] =
             installed.renderHandle;
         engine.playableScheduleStartFrames[enteringSlot] =
@@ -32847,6 +33258,34 @@ bool ResolveImmediateInitialMemberSlots(
     return engine.ResolvePlayableMemberSlot(*logicalSlot, physicalSlot);
 }
 
+void PublishMonitorPendingInitialSelections(harken::Engine& engine,
+    harken::EngineActionPlayScratch& producer) noexcept {
+    if (producer.row == nullptr) return;
+    const auto& row = *producer.row;
+    if (!row.variableControlInstance.Valid()) {
+        PublishMonitorInitialSelections(engine, producer);
+        return;
+    }
+    const auto cause = MonitorInitialSelectionCause(row, true);
+    for (std::uint32_t leaf = 0; leaf < row.scheduleLeafCount; ++leaf) {
+        std::size_t logical = 0, physical = 0;
+        if (!ResolveImmediateInitialMemberSlots(engine, row, leaf, &logical, &physical)) continue;
+        auto& saved = engine.variableControlMemberCompletions[physical].monitorSelection;
+        PublishMonitorSelection(engine, saved, engine.playableScheduleArms[physical],
+            engine.playableScheduleRenderHandles[physical], cause);
+    }
+}
+
+void PublishMonitorPendingCensusSelections(harken::Engine& engine,
+    const harken::EngineImmediateEntryAttempt& attempt) noexcept {
+    for (std::uint32_t index = 0; index < attempt.selectionProducerCount; ++index) {
+        const auto& cell = attempt.selectionProducers[index];
+        if (cell.returned) continue;
+        auto* producer = FindFrontierAttempt(engine, cell.token);
+        if (producer != nullptr) PublishMonitorPendingInitialSelections(engine, *producer);
+    }
+}
+
 harken::EngineImmediateEntryAttempt* AcquireImmediateEntryAttempt(
     harken::Engine& engine, harken::ActionFiringHandle root) noexcept {
     for (std::uint32_t index = 0;
@@ -32890,6 +33329,7 @@ harken::EngineImmediateEntryAttempt* AcquireImmediateEntryAttempt(
         attempt.plainArmsPinned = false;
         attempt.plainPublished = false;
         attempt.plainAbortPending = false;
+        attempt.plainCancellationCause = {};
         attempt.plainCancellationIntent = 0;
         attempt.plainCancellationFadeMs = 0;
         attempt.plainReferencesReturned = false;
@@ -34575,7 +35015,15 @@ bool ServiceFullyPrivateAbortVoices(harken::Engine& engine,
         stop.payload.stop.handle = voice.render;
         stop.payload.stop.fadeMs = 0;
         if (!engine.commands.TryPush(stop)) return false;
-        engine.ledger.MarkTerminating(voice.render);
+        const auto* source = engine.sourceTerminals.Resolve(voice.source);
+        const auto* member = source == nullptr ? nullptr : engine.ResolveSourceResourceOwner(source->resourceOwner);
+        harken::MonitorControlCause cause{};
+        if (member != nullptr && source->leaf == voice.leafInstance && source->render == voice.render &&
+            source->release.slot == voice.release.slot && source->release.targetSequence == voice.release.targetSequence &&
+            CaptureServiceControlCause(engine, *member, &cause)) {
+            RecordPlayableControlTree(engine, voice.leafInstance, cause);
+            MarkObservedPlayableVoiceTerminating(engine, voice.render, cause);
+        } else engine.ledger.MarkTerminating(voice.render);
         voice.stopQueued = true;
         voice.stopQueuedAudioSequence = observedAudioSequence;
     }
@@ -35460,12 +35908,18 @@ bool ServiceAbortingVariableControlProducer(harken::Engine& engine,
     if (producer == nullptr) return false;
     if (producer->row != nullptr && producer->row->identity.slot < engine.acceptedPendingVariableGroups.size()) {
         auto& group = engine.acceptedPendingVariableGroups[producer->row->identity.slot];
+        harken::MonitorControlCause cause{};
+        const bool controlled = CaptureServiceControlCause(engine, *producer->row, &cause);
+        if (controlled) {
+            RecordServiceControlCause(engine, *producer->row, cause);
+            RecordPreparedControlCause(engine, *producer, cause);
+        }
         if (group.RepreparePending() &&
             (group.reference.token != producer->row->identity ||
              group.reference.owner != producer->row->ownerInstance ||
              group.reference.epoch != producer->row->ownerEpoch ||
              group.reference.invocationGeneration != producer->row->invocationGeneration ||
-             !engine.CancelPendingVariableGroupChildren(group))) return false;
+             !engine.CancelPendingVariableGroupChildren(group, controlled ? &cause : nullptr))) return false;
     }
     if (attempt.privateVcProducerCount != 0 && attempt.lane.Valid() &&
         (attempt.privateVcProducerCount != 1 ||
@@ -37945,6 +38399,8 @@ bool PreparePendingVariableGroupSelection(harken::Engine& engine,
         if (selected->playable.kind == harken::PlayableKindV1::Container) {
             if (factory == nullptr) return false;
             harken::PlayableStartRequest request{};
+            request.playbackRequest = row.Invocation().playbackRequest;
+            request.emitterOrigin = row.Invocation().emitterOrigin;
             request.root = row.root;
             request.emitter = row.variableControlEmitter;
             request.callerSeed = factory->storage.initialSelection.identity.callerSeed;
@@ -40527,6 +40983,8 @@ bool PublishPendingVariableControlLane(harken::Engine& engine,
     attempt.producerAbortFullyPrivate = false;
     attempt.producerAbortPartialArmPublished = false;
     if (!selection.Apply()) { engine.runtimeRecreateRequired = true; return false; }
+    PublishMonitorPendingCensusSelections(engine, attempt);
+    PublishMonitorPendingInitialSelections(engine, scratch);
     row.frontierEntry = descriptor.entry;
     row.frontierCoordinatorGroup = scratch.frontierCoordinatorGroup;
     row.immediateLane = attempt.lane;
@@ -41020,10 +41478,12 @@ bool BindPendingPrivateVcRoot(harken::Engine& engine,
     ApplyPendingPrivateVcRootPublication(attempt, publication);
     attempt.producerAbortFullyPrivate = false;
     if (!selection.Apply()) { engine.runtimeRecreateRequired = true; return false; }
+    PublishMonitorPendingCensusSelections(engine, attempt);
     // Transfer every row before releasing any original producer node.
     token = attempt.privateVcProducerHead;
     for (std::uint32_t index = 0; index < count; ++index) {
         auto& producer = *FindFrontierAttempt(engine, token);
+        PublishMonitorPendingInitialSelections(engine, producer);
         auto& transferred = *producer.row;
         transferred.frontierEntry = producer.frontierDescriptor.entry;
         transferred.frontierCoordinatorGroup = producer.frontierCoordinatorGroup;
@@ -41704,9 +42164,13 @@ bool AbortOriginalPlainEntry(harken::Engine& engine,
                     if (row->pendingCancellationIntent == 0 &&
                         row->phase != harken::EnginePlayableStartPhase::Cancelling &&
                         !row->partitionRetiring) {
+                        row->pendingControlCause = attempt.plainCancellationCause;
                         row->pendingCancellationIntent = attempt.plainCancellationIntent;
                         row->pendingCancellationFadeMs = attempt.plainCancellationFadeMs;
                     }
+                    harken::MonitorControlCause cause{};
+                    if (CaptureServiceControlCause(engine, *row, &cause))
+                        RecordServiceControlCause(engine, *row, cause);
                 } else {
                     row->phase = harken::EnginePlayableStartPhase::Cancelling;
                     row->controlLifecycle = harken::PlayableControlLifecycle::Cancelling;
@@ -41831,6 +42295,7 @@ bool PublishNativeQueueResetStops(harken::Engine& engine,
                 payload.envelopeEndFrame = identity.stopFrame;
                 payload.authoredFadeOutCandidate = envelope;
                 payload.authoredStopOperation = identity;
+                payload.controlCause = root.controlCause;
                 auto& event = control.events[i];
                 event = {};
                 event.executeFrame = fade ? std::min(identity.stopFrame, std::max(root.fadeStartFrame, onset)) : identity.stopFrame;
@@ -41938,7 +42403,8 @@ bool ReturnOriginalPlainStopReference(harken::Engine& engine,
 
 bool ReturnOriginalPlainSourceReferences(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row, std::uint64_t completed,
-    std::uint8_t requestIntent, std::uint32_t requestFadeMs) noexcept {
+    std::uint8_t requestIntent, std::uint32_t requestFadeMs,
+    const harken::MonitorControlCause& cause) noexcept {
     for (std::uint32_t slot = 0; slot < engine.immediateEntryAttemptCapacity; ++slot) {
         auto& attempt = engine.immediateEntryAttempts[slot];
         if (!attempt.active || !attempt.plainSelected) continue;
@@ -41949,6 +42415,7 @@ bool ReturnOriginalPlainSourceReferences(harken::Engine& engine,
                 continue;
             if (!attempt.plainPublished && !attempt.plainReferencesReturned) {
                 if (attempt.plainCancellationIntent == 0) {
+                    attempt.plainCancellationCause = cause;
                     attempt.plainCancellationIntent = requestIntent;
                     attempt.plainCancellationFadeMs = requestFadeMs;
                 }
@@ -42097,6 +42564,7 @@ bool MaterializeOriginalPlainCandidate(harken::Engine& engine,
                 payload.envelopeEndFrame = identity.stopFrame;
                 payload.authoredFadeOutCandidate = envelope;
                 payload.authoredStopOperation = identity;
+                payload.controlCause = root.controlCause;
                 auto& event = resource->events[item];
                 event.executeFrame = fade ? std::min(identity.stopFrame, std::max(root.fadeStartFrame, source->chosenOnset)) :
                     identity.stopFrame;
@@ -42309,6 +42777,8 @@ void ServiceOriginalPlainEntry(harken::Engine& engine,
     attempt.plainPublished = true;
     for (std::uint32_t index = 0; index < attempt.plainSourceCount; ++index)
         if (auto* row = ResolveOriginalPlainSource(engine, attempt.plainSources[index])) {
+            PublishMonitorSelection(engine, row->monitorSelection, row->arm, row->renderHandle,
+                MonitorInitialSelectionCause(*row, true));
             row->pendingImmediateEntry = false;
             row->pendingFutureCount = 0;
             row->queueInitialCohortEntryFrame = attempt.plainAnchor;
@@ -42384,7 +42854,7 @@ void ServicePendingImmediateEntries(
             for (auto& member : engine.playableServices) {
                 if (member.phase == harken::EnginePlayableStartPhase::Free ||
                     member.pendingImmediateCohortRoot != root || !member.pendingRegisteredStopCapture) continue;
-                const auto status = harken::ServiceRegisteredStopCapture(engine, member.rootInstance, member.pendingCancellationFadeMs);
+                const auto status = harken::ServiceRegisteredStopCapture(engine, member.rootInstance, member.pendingCancellationFadeMs, member.pendingControlCause);
                 stopCaptureWaiting |= status != harken::PlayableControlStatus::Ok || member.pendingRegisteredStopCapture;
             }
             if (stopCaptureWaiting) continue;
@@ -42826,6 +43296,9 @@ void ServicePendingImmediateEntries(
                                     installed->renderHandle;
                                 engine.playableScheduleReleaseObservers[slot] =
                                     installed->releaseObserver;
+                                if (engine.variableControlMemberCompletions[slot].leafInstance != 0)
+                                    engine.variableControlMemberCompletions[slot].monitorSelection = installed->monitorSelection;
+                                else engine.playableScheduleSelections[slot] = installed->monitorSelection;
                                 engine.playableScheduleEvents[
                                     bases.currentEvent + leaf].armToken =
                                     installed->arm;
@@ -42852,6 +43325,7 @@ void ServicePendingImmediateEntries(
                                 member.queueCurrentCompletion = rebound;
                                 const auto slot = member.queueCurrentScheduleBase;
                                 engine.variableControlMemberCompletions[slot].source = installed->sourceTerminal;
+                                engine.variableControlMemberCompletions[slot].monitorSelection = installed->monitorSelection;
                                 engine.playableScheduleArms[slot] = installed->arm;
                                 engine.playableScheduleRenderHandles[slot] = installed->renderHandle;
                                 engine.playableScheduleReleaseObservers[slot] = installed->releaseObserver;
@@ -42860,6 +43334,7 @@ void ServicePendingImmediateEntries(
                                 member.arm = installed->arm;
                                 member.renderHandle = installed->renderHandle;
                                 member.releaseObserver = installed->releaseObserver;
+                                member.monitorSelection = installed->monitorSelection;
                                 member.event.armToken = installed->arm;
                                 member.schedule.armToken = installed->arm;
                             }
@@ -44507,6 +44982,48 @@ void ServicePendingImmediateEntries(
             engine.runtimeRecreateRequired = true;
             filingFailed = true;
         }
+        if (!filingFailed && ordinarySelection) PublishMonitorPendingCensusSelections(engine, *attempt);
+        if (!filingFailed && !ordinarySelection) {
+            for (auto& member : engine.playableServices) {
+                if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
+                    !member.pendingImmediateEntry || member.pendingImmediateCohortRoot != root ||
+                    member.ticket != row.ticket || !member.InvocationValid() ||
+                    !engine.playablePartitions.Owns(member.partition, member.identity) ||
+                    member.variableControlIndependentFrontier) continue;
+                const auto cause = MonitorInitialSelectionCause(member, true);
+                const auto bases = StorageBasesForRow(engine, member);
+                for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
+                    const auto* program = leafProgram(member, leaf);
+                    if (program == nullptr || program->events == nullptr || program->eventCount != 1u)
+                        continue;
+                    const auto arm = program->events[0].armToken;
+                    bool wasCurrent = false;
+                    for (std::uint32_t index = 0; index < originalCurrentEventCount; ++index) {
+                        const auto& event = engine.pendingImmediateLaneEventsScratch[index].event;
+                        if (sameArm(arm, event.armToken) &&
+                            program->runtimeProgram.program == event.program.program &&
+                            program->runtimeProgram.programGeneration == event.program.programGeneration &&
+                            program->ownerInstance == event.ownerInstanceHandle &&
+                            program->ownerInstanceScheduleEpoch == event.ownerInstanceScheduleEpoch) {
+                            wasCurrent = true;
+                            break;
+                        }
+                    }
+                    if (!wasCurrent) continue;
+                    if (member.scheduleLeafCount <= 1u && !member.queueCurrentCompositeOwner.Valid()) {
+                        PublishMonitorSelection(engine, member.monitorSelection, arm, member.renderHandle, cause);
+                    } else {
+                        const auto slot = bases.member + leaf;
+                        if (slot >= engine.playableScheduleSelections.size()) continue;
+                        auto& physical = engine.variableControlMemberCompletions[slot];
+                        auto& selection = physical.leafInstance != 0 ? physical.monitorSelection :
+                            engine.playableScheduleSelections[slot];
+                        PublishMonitorSelection(engine, selection, arm,
+                            engine.playableScheduleRenderHandles[slot], cause);
+                    }
+                }
+            }
+        }
         if (filingFailed) {
             if (successorMirrorsApplied && !successorMirrorsExposed) {
                 ApplyInitialQueueSuccessorStartMirrors(engine, *attempt,
@@ -44857,11 +45374,13 @@ void ServicePlayableStarts(harken::Engine& engine,
         bool ancestorPending = false;
         bool ancestorCancelling = false;
         bool ancestorStopRequested = false;
+        harken::MonitorControlCause ancestorCause{};
         auto ancestorReason = harken::PlayableControlReason::StopRequested;
         const auto captureAncestorCancellation = [&]() {
             ancestorPending = false;
             ancestorCancelling = false;
             ancestorStopRequested = false;
+            ancestorCause = {};
             ancestorReason = harken::PlayableControlReason::StopRequested;
             auto ancestor = row.parentService;
             for (std::size_t depth = 0; ancestor.Valid() && depth < engine.playableServices.size(); ++depth) {
@@ -44876,6 +45395,8 @@ void ServicePlayableStarts(harken::Engine& engine,
                      parent->controlLifecycle == harken::PlayableControlLifecycle::Cancelling)) {
                     ancestorCancelling = true;
                     ancestorReason = parent->controlReason;
+                    ancestorCause = parent->pendingControlCause;
+                    ancestorCause.parentPlayable = parent->rootInstance;
                     ancestorStopRequested =
                         ancestorReason == harken::PlayableControlReason::StopRequested;
                 }
@@ -44948,6 +45469,8 @@ void ServicePlayableStarts(harken::Engine& engine,
                     row.pendingFutureCount = 0;
                 }
                 (void)AbortTimelineArm(engine, row.arm);
+                row.pendingControlCause = ancestorCause;
+                RecordPlayableControlTree(engine, row.rootInstance, ancestorCause);
                 row.controlReason = reason;
                 row.controlLifecycle = harken::PlayableControlLifecycle::Cancelling;
                 row.phase = harken::EnginePlayableStartPhase::Cancelling;
@@ -46166,6 +46689,21 @@ engine.runtimeRecreateRequired = true;
                                harken::AudioGroupState::Admitted ||
                            decision.audioState ==
                                harken::AudioGroupState::PostStartInvalidated) {
+                    if (!row.variableControlDiscreteRetargetApplied && row.variableControlDiscreteRetargetEntering) {
+                        const auto cause = MonitorInitialSelectionCause(row, false);
+                        for (std::uint32_t index = 0;
+                             index < row.variableControlDiscreteRetargetTargetMemberCount; ++index) {
+                            const auto logical = row.scheduleStorageBase + index +
+                                (row.variableControlDiscreteRetargetReplacement &&
+                                 !row.variableControlDiscreteRetargetSourceExited
+                                    ? row.variableControlDiscreteTransitionOffset : 0u);
+                            std::size_t physical = 0;
+                            if (!engine.ResolvePlayableMemberSlot(logical, &physical)) continue;
+                            auto& saved = engine.variableControlMemberCompletions[physical].monitorSelection;
+                            PublishMonitorSelection(engine, saved, engine.playableScheduleArms[physical],
+                                engine.playableScheduleRenderHandles[physical], cause);
+                        }
+                    }
                     row.variableControlDiscreteRetargetApplied = true;
                     if (!ObserveRetargetNestedControllerEntry(engine,
                             row.variableControlDiscreteRetargetIncomingNestedServices.data(),
@@ -47766,6 +48304,19 @@ engine.runtimeRecreateRequired = true;
                         harken::PlayableControlReason::StartRefused;
                     row.phase = harken::EnginePlayableStartPhase::Cancelling;
                     continue;
+                }
+                if (!sameProgramKey) {
+                    if (row.queueSuccessorScheduleLeafCount > 1) {
+                        for (std::uint32_t index = 0; index < row.queueSuccessorScheduleLeafCount; ++index) {
+                            const auto slot = row.queueSuccessorScheduleBase + index;
+                            auto& selection = engine.playableSuccessorSelections[slot];
+                            PublishMonitorSelection(engine, selection, engine.playableSuccessorArms[slot],
+                                engine.playableSuccessorRenderHandles[slot], selection.observation.Cause());
+                        }
+                    } else {
+                        PublishMonitorSelection(engine, row.queueMonitorSelection, row.queueSuccessorArm,
+                            row.queueSuccessorRenderHandle, row.queueMonitorSelection.observation.Cause());
+                    }
                 }
                 if (!sameProgramKey) {
                 if (engine.timelineOccurrences.StageOf(
@@ -50584,6 +51135,9 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
             if (resource == nullptr) return Result::Waiting;
         } else if (!tree.PrepareInstance(playableInstances, PlayableKind::Sound, row.rootInstance)) return Result::Waiting;
         const auto newLeaf = tree.PreparedInstanceHandle(selectionCount - 1u);
+        ObservePreparedContent(*this, tree, newLeaf, pack
+            ? MonitorContentFor(row.Invocation().packPlaybackView, actualLeaf)
+            : MonitorContentFor(*world, actualLeaf));
         const auto newLeafEpoch = tree.PreparedInstanceEpoch(selectionCount - 1u);
         if (resource != &row) resource->activeLeafInstance = newLeaf;
         OriginalPlayableServiceLifetimePin resourcePin;
@@ -50614,6 +51168,7 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
             playableScheduleReleaseObservers[slot] = start.releaseObserver;
             playableScheduleStartFrames[slot] = anchor;
             variableControlMemberCompletions[slot] = {newLeaf, newLeafEpoch, installed.sourceTerminal};
+            variableControlMemberCompletions[slot].monitorSelection = installed.monitorSelection;
             variableControlDynamicMembers[slot] = 0;
             resource->scheduleStorageBase = static_cast<std::uint32_t>(logicalSlot);
             resource->scheduleLeafCount = 1;
@@ -50652,6 +51207,7 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
         row.arm = start.arm;
         row.renderHandle = start.renderHandle;
         row.releaseObserver = start.releaseObserver;
+        row.monitorSelection = start.monitorSelection;
         row.startFrame = anchor;
         row.ordinaryFinalSourceTransferred = false;
         row.payload.target = voice.target;
@@ -52292,6 +52848,7 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
         auto& instance = child->variableControlChildren[index];
         if (!playableInstances.PrepareAcquire(kind, row.ownerInstance, &instance) ||
             !child->playableTreeExecutor.AdoptPreparedInstanceReservation(&instance)) return refuse();
+        ObservePreparedContent(*this, instance, MonitorVariableControlContentFor(*this, row, top.root));
     }
     const auto authority = !row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0
         ? PlayableExecutionAuthority::Pack(row.Invocation().packPlaybackView)
@@ -52324,6 +52881,8 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
         if (tokenIndex >= child->variableControlChildCount) return refuse();
         node.instance = child->variableControlChildren[tokenIndex].Handle();
         node.instanceEpoch = child->variableControlChildren[tokenIndex].ScheduleEpoch();
+        ObservePreparedContent(*this, child->variableControlChildren[tokenIndex],
+            MonitorVariableControlContentFor(*this, row, node.authored));
         if (node.authored.kind != PlayableKindV1::Container) continue;
         const ContainerProgramViewV3* program = nullptr;
         const bool resolved = !row.variableControlWorldUsesCurrentAuthority && row.Invocation().packLease.leaseToken != 0
@@ -52515,6 +53074,7 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
             if (!playableInstances.PrepareAcquire(PlayableKind::Sound, parent, instance) ||
                 !child->playableTreeExecutor.AdoptPreparedInstanceReservation(instance)) return refuse();
         }
+        ObservePreparedContent(*this, *instance, MonitorVariableControlContentFor(*this, row, leaf.leaf));
         child->variableControlLeafHandles[index] = instance->Handle();
         child->variableControlLeafEpochs[index] = instance->ScheduleEpoch();
         auto& start = child->voiceStarts[index];
@@ -52639,6 +53199,7 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
         playableScheduleReleaseObservers[slot] = start.releaseObserver;
         playableScheduleStartFrames[slot] = anchor + leaf.authoredOffset;
         variableControlMemberCompletions[slot] = {instance, epoch, start.sourceTerminal};
+        variableControlMemberCompletions[slot].monitorSelection = start.monitorSelection;
         variableControlDynamicMembers[slot] = 0;
         if (resource != producer.row && !resource->variableControlIndependentFrontier) {
             const auto member = resource->scheduleLeafCount;
@@ -55241,6 +55802,8 @@ bool Engine::PublishPendingVariableGroupReplacement(EngineActionPlayScratch& pro
     attempt.producerAbortFullyPrivate = false;
     attempt.producerAbortPartialArmPublished = false;
     if (!selection.Apply()) { runtimeRecreateRequired = true; return false; }
+    PublishMonitorPendingCensusSelections(*this, attempt);
+    PublishMonitorPendingInitialSelections(*this, producer);
     // Original group registrations remain in the engine until ordinary retirement.
     child.pendingVariableReplacementGroups = {};
     for (auto& side : child.pendingVariableReplacementSideLifetimes) side.Release();
@@ -55362,6 +55925,9 @@ bool Engine::PublishRegisteredPendingVariableCohortReplacement(EngineImmediateEn
     attempt.producerAbortFullyPrivate = false;
     attempt.producerAbortPartialArmPublished = false;
     if (!selection.Apply()) { runtimeRecreateRequired = true; return false; }
+    PublishMonitorPendingCensusSelections(*this, attempt);
+    for (std::uint32_t index = 0; index < count; ++index)
+        PublishMonitorPendingInitialSelections(*this, *producers[index]);
     // Head publication transfers all children. Original holders close through ordinary reclaim, head last.
     for (std::uint32_t index = 0; index < count; ++index) {
         auto& issued = groups[index]->reprepare_;
@@ -56678,7 +57244,8 @@ bool Engine::CancelPrivatePendingVariableGroupEntry(OriginalPendingVariableGroup
     return true;
 }
 
-bool Engine::CancelPendingVariableGroupChildren(OriginalPendingVariableGroupHolder& group) noexcept {
+bool Engine::CancelPendingVariableGroupChildren(OriginalPendingVariableGroupHolder& group,
+    const MonitorControlCause* cause) noexcept {
     const auto token = group.reprepare_.replacementChildren;
     if (!token.Valid()) return true;
     if (group.reprepare_.cohortHead != nullptr) {
@@ -56701,6 +57268,17 @@ bool Engine::CancelPendingVariableGroupChildren(OriginalPendingVariableGroupHold
          child->storage.phase != EngineFrontierAttemptPhase::PendingVariableChildrenSourcesCommitting &&
          child->storage.phase != EngineFrontierAttemptPhase::PendingVariableChildrenSourcesPrivateCommitted &&
          child->storage.phase != EngineFrontierAttemptPhase::PendingVariableChildrenCancelPending)) return false;
+    if (cause != nullptr) RecordPreparedControlCause(*this, *child, *cause);
+    else if (child->cancellationCauseAccepted)
+        RecordPreparedControlCause(*this, *child, child->cancellationCause);
+    if (child->cancellationCauseAccepted) {
+        for (std::uint32_t index = 0; index < child->pendingVariableReplacementTopology.nodeCount; ++index) {
+            const auto& node = child->pendingVariableReplacementTopology.nodes[index];
+            if (playableInstances.IsOriginalLifetimeCurrent(node.original) &&
+                !MonitorSourceFinishedIndependently(*this, node.original.OriginalHandle()))
+                playableInstances.RecordControlCause(node.original.OriginalHandle(), child->cancellationCause);
+        }
+    }
     child->storage.phase = EngineFrontierAttemptPhase::PendingVariableChildrenCancelPending;
     child->row = nullptr;
     if (group.reprepare_.attempt == nullptr || !OwnsImmediateEntryAttemptStorage(*group.reprepare_.attempt)) return false;
@@ -57166,7 +57744,13 @@ bool Engine::CancelRegisteredPendingVariableCohortReprepare(EngineImmediateEntry
             auto* producer = FindFrontierAttempt(*this, candidate);
             if (producer == nullptr || !MatchesRegisteredPendingVariableCohortReprepare(*producer, attempt)) return false;
             auto& group = acceptedPendingVariableGroups[producer->row->identity.slot];
-            if (!CancelPendingVariableGroupChildren(group)) return false;
+            MonitorControlCause cause{};
+            const bool controlled = CaptureServiceControlCause(*this, *producer->row, &cause);
+            if (controlled) {
+                RecordServiceControlCause(*this, *producer->row, cause);
+                RecordPreparedControlCause(*this, *producer, cause);
+            }
+            if (!CancelPendingVariableGroupChildren(group, controlled ? &cause : nullptr)) return false;
             candidate = group.reprepare_.cohortNext;
         }
         if (!ServiceRegisteredPendingVariableCohortReprepare(attempt)) return false;
@@ -58155,7 +58739,8 @@ SelectionMemoryStatusV1 ApplySelectionMemoryReset(
 QueueResetStatusV1 ApplyQueueReset(Engine& engine,
                                    const QueueResetTargetV1& target,
                                    LogicCommitSequence sequence,
-                                   bool* outIdempotent) noexcept {
+                                   bool* outIdempotent,
+                                   const MonitorControlCause& cause = {}) noexcept {
     PreparedQueueResetSetV1 preparedQueue;
     const std::uint64_t completed = engine.mixer.BlocksRendered();
     if (engine.config.blockFrames == 0 ||
@@ -58179,7 +58764,7 @@ QueueResetStatusV1 ApplyQueueReset(Engine& engine,
                          preparedCheckpoint.Idempotent();
     }
     const QueueResetStatusV1 committedQueue =
-        engine.queueInstances.CommitPreparedReset(&preparedQueue, sequence);
+        engine.queueInstances.CommitPreparedReset(&preparedQueue, sequence, UINT64_MAX, cause);
     const QueueResetStatusV1 committedCheckpoint =
         engine.queueCheckpoints.CommitPreparedReset(&preparedCheckpoint,
                                                     sequence);
@@ -58369,6 +58954,8 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPlayOrStop(
     std::uint64_t currentQuantum,
     std::uint64_t* newPageStartBlocker) noexcept {
     ImmediateActionPlan plan{};
+    plan.playbackRequest = firing.playbackRequest;
+    plan.emitterOrigin = firing.emitterOrigin;
     plan.engine = &engine;
     plan.targetPackLease = record.targetPackLease;
     plan.emitter = record.emitter;
@@ -59028,7 +59615,8 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredReset(
             MakeQueueResetTarget(world, *container, record.emitter);
         bool idempotent = false;
         const QueueResetStatusV1 status =
-            ApplyQueueReset(engine, target, sequence, &idempotent);
+            ApplyQueueReset(engine, target, sequence, &idempotent,
+                {firing.playbackRequest, record.firing, 0, record.executionOrdinal});
         if (status == QueueResetStatusV1::Backpressure) return retry();
         if (status != QueueResetStatusV1::Ok) {
             return finish(ActionStepState::Failed,
@@ -61303,12 +61891,12 @@ void AbandonPendingStart(harken::Engine& engine, std::uint32_t ledgerSlot) {
 }
 
 void CancelPendingStart(harken::Engine& engine, std::uint32_t ledgerSlot,
-                        std::uint32_t fadeMs) {
+                        std::uint32_t fadeMs, const harken::MonitorControlCause& cause = {}) {
     harken::PendingStartRecord& rec = engine.pendingStarts[ledgerSlot];
     const VnVoiceHandle publicHandle = rec.publicHandle;
     ReleasePendingStartResources(engine, rec);
     rec.Reset();
-    engine.ledger.CancelPending(ledgerSlot);
+    engine.ledger.CancelPending(ledgerSlot, cause);
     VnNotification notification{};
     notification.type = (fadeMs > 0) ? VN_NOTIFY_VOICE_STOPPED_BY_FADE
                                    : VN_NOTIFY_VOICE_ENDED;
@@ -61340,7 +61928,7 @@ void CancelPreparedParkReturn(harken::Engine& engine,
 
 void FinalizeParkedVoice(harken::Engine& engine, std::uint32_t ledgerSlot,
                          VnVoiceHandle publicHandle,
-                         std::uint32_t fadeMs) {
+                         std::uint32_t fadeMs, const harken::MonitorControlCause& cause = {}) {
     harken::ParkRecord& rec = engine.parkRecords[ledgerSlot];
     engine.meterProbes.NoteVoiceTerminal(
         engine, publicHandle, rec.parkedRenderHandle);
@@ -61368,7 +61956,7 @@ void FinalizeParkedVoice(harken::Engine& engine, std::uint32_t ledgerSlot,
     engine.bindings.CancelReservedVoiceEffectInstances(publicHandle);
     rec.streamResumeFrame = 0;
     rec.active = false;
-    engine.ledger.EndParked(ledgerSlot);
+    engine.ledger.EndParked(ledgerSlot, cause);
     VnNotification notification{};
     notification.type = (fadeMs > 0) ? VN_NOTIFY_VOICE_STOPPED_BY_FADE
                                    : VN_NOTIFY_VOICE_ENDED;
@@ -61426,7 +62014,8 @@ bool ApplyStreamParkOutcome(harken::Engine& engine,
 // and is applied first; otherwise the exact Reserved request transitions to
 // its cancellation tombstone before logic ownership is released.
 void EndParkedVoice(harken::Engine& engine, std::uint32_t ledgerSlot,
-                    VnVoiceHandle publicHandle, std::uint32_t fadeMs) {
+                    VnVoiceHandle publicHandle, std::uint32_t fadeMs,
+                    const harken::MonitorControlCause& cause = {}) {
     harken::ParkRecord& rec = engine.parkRecords[ledgerSlot];
     if (rec.state == harken::ParkRecord::State::StreamAckPending) {
         const harken::StreamParkCancelResult cancel =
@@ -61447,7 +62036,7 @@ void EndParkedVoice(harken::Engine& engine, std::uint32_t ledgerSlot,
             }
         }
     }
-    FinalizeParkedVoice(engine, ledgerSlot, publicHandle, fadeMs);
+    FinalizeParkedVoice(engine, ledgerSlot, publicHandle, fadeMs, cause);
 }
 
 void DrainStreamParkMailboxes(harken::Engine& engine) {
@@ -62162,6 +62751,7 @@ PendingStartOutcome StartDeferredVoice(
         }
     }
 
+    (void)engine.voices.BindMonitorControl(render, engine.ledger.ArmMonitorControl(ledgerSlot, render));
     AdmittedCommandWriter commands(engine, admittedCommandCount,
                                    harken::PlayLedBatchKind::DeferredStart);
     harken::CommandRecord play{};
@@ -62561,11 +63151,13 @@ bool StopTargetSetTouchesGuardedVoice(harken::Engine& engine,
 }
 
 VnResult StopAllPlayablesCore(harken::Engine& engine, std::uint32_t fadeMs,
-                            std::uint32_t directCommandCount);
+                            std::uint32_t directCommandCount, const harken::MonitorControlCause& cause);
 VnResult StopEmitterPlayablesCore(harken::Engine& engine, VnEmitterHandle emitter,
-                                std::uint32_t fadeMs, std::uint32_t directCommandCount);
+                                std::uint32_t fadeMs, std::uint32_t directCommandCount,
+                                const harken::MonitorControlCause& cause);
 
-VnResult StopAllCore(harken::Engine& engine, std::uint32_t fadeMs) {
+VnResult StopAllCore(harken::Engine& engine, std::uint32_t fadeMs,
+                     const harken::MonitorControlCause& cause) {
     if (StopTargetSetTouchesGuardedVoice(
             engine, [](VnVoiceHandle) { return true; },
             [](std::uint32_t, const harken::PendingStartRecord&) {
@@ -62585,7 +63177,7 @@ VnResult StopAllCore(harken::Engine& engine, std::uint32_t fadeMs) {
         return VN_BACKPRESSURE;
     }
 
-    const VnResult playables = StopAllPlayablesCore(engine, fadeMs, liveCount);
+    const VnResult playables = StopAllPlayablesCore(engine, fadeMs, liveCount, cause);
     if (playables != VN_OK) return playables;
 
     engine.ledger.ForEachLive(
@@ -62594,18 +63186,18 @@ VnResult StopAllCore(harken::Engine& engine, std::uint32_t fadeMs) {
             stop.opcode = harken::kOpcodeStop;
             stop.payload.stop.handle = render;
             stop.payload.stop.fadeMs = fadeMs;
-            engine.ledger.MarkTerminating(render);
+            engine.ledger.MarkTerminating(render, cause);
             (void)engine.commands.TryPush(stop);
         });
     for (std::uint32_t slot = 0; slot < engine.pendingStarts.size(); ++slot) {
         if (engine.pendingStarts[slot].active) {
-            CancelPendingStart(engine, slot, fadeMs);
+            CancelPendingStart(engine, slot, fadeMs, cause);
         }
     }
     for (std::uint32_t slot = 0; slot < engine.parkRecords.size(); ++slot) {
         if (engine.parkRecords[slot].active) {
             EndParkedVoice(engine, slot,
-                           engine.ledger.PublicHandleForSlot(slot), fadeMs);
+                           engine.ledger.PublicHandleForSlot(slot), fadeMs, cause);
         }
     }
     return VN_OK;
@@ -63873,6 +64465,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
             return false;
         }
     }
+    (void)engine.voices.BindMonitorControl(newRender, engine.ledger.ArmMonitorControl(ledgerSlot, newRender));
     AdmittedCommandWriter commands(engine, needed,
                                    harken::PlayLedBatchKind::ParkReturn);
     harken::CommandRecord play{};
@@ -66165,7 +66758,12 @@ PlayableStartResult StartPlayable(
 PlayableStartResult StartPlayable(
     Engine& engine, const PlayableWorldViewV1& world,
     const PlayableStartRequest& request) noexcept {
-    return PrepareDirectPlayableExecution(engine, world, request);
+    auto observedRequest = request;
+    if (observedRequest.emitterOrigin.kind == MonitorEmitterKind::Unknown) {
+        observedRequest.emitterOrigin = engine.monitorEmitters.CaptureOrigin(
+            request.emitter == 0 ? engine.emitters.DefaultState() : request.emitter);
+    }
+    return PrepareDirectPlayableExecution(engine, world, observedRequest);
 }
 
 // Runtime-internal Direct orchestration. The public entry above is kept as a
@@ -66698,7 +67296,7 @@ engine.runtimeRecreateRequired = true;
                     : PlayableKind::Piece;
             PreparedPlayableInstance prepared{};
             if (!engine.playableInstances.PrepareAcquire(
-                    rootKind, 0, &prepared)) {
+                    rootKind, 0, &prepared, request.playbackRequest, request.emitterOrigin)) {
                 result.status = PlayableStartStatus::Capacity;
                 return result;
             }
@@ -66716,6 +67314,7 @@ engine.runtimeRecreateRequired = true;
                 result.status = PlayableStartStatus::Capacity;
                 return result;
             }
+            ObservePreparedContent(engine, prepared, MonitorContentFor(world, current));
             const std::uint64_t cutoff =
                 engine.timelinePool.PublishCutoffFrame();
             const std::uint64_t observed = engine.mixer.BlocksRendered();
@@ -66767,6 +67366,8 @@ engine.runtimeRecreateRequired = true;
             row.rootInstance = prepared.Handle();
             row.activeLeafInstance = prepared.Handle();
             row.ticket = ticket;
+            row.Invocation().playbackRequest = request.playbackRequest;
+            row.Invocation().emitterOrigin = request.emitterOrigin;
             row.Invocation().invocationEmitter = request.emitter;
             row.Invocation().worldGeneration = world.generation;
             row.Invocation().projectId = world.identity.projectId;
@@ -67173,13 +67774,14 @@ engine.runtimeRecreateRequired = true;
         result.status = PlayableStartStatus::Backpressure;
         return result;
     }
-    if (!treeStep.PrepareInstance(engine.playableInstances, rootKind)) {
+    if (!treeStep.PrepareInstance(engine.playableInstances, rootKind, 0, request.playbackRequest, request.emitterOrigin)) {
         rollbackSelections();
         result.status = PlayableStartStatus::Capacity;
         return result;
     }
     const PlayableInstanceHandle instance =
         treeStep.PreparedInstanceHandle(0);
+    ObservePreparedContent(engine, treeStep, instance, MonitorContentFor(world, resolved.root));
     const std::uint32_t treeInstanceCapacity =
         kSelectionPathNodeCapacity + 1u +
         (directCompositeScheduleActive
@@ -67242,6 +67844,12 @@ engine.runtimeRecreateRequired = true;
             return result;
         }
     }
+    if (!directCompositeScheduleActive && queueInitialFrontier.schedule.leafCount <= 1u &&
+        current.kind == PlayableKindV1::Sound) {
+        ObservePreparedContent(engine, treeStep,
+            treeStep.PreparedInstanceHandle(treeStep.InstanceReservationCount() - 1u),
+            MonitorContentFor(world, current));
+    }
     for (std::uint32_t index = 1;
          index < treeStep.InstanceReservationCount(); ++index) {
         treeInstances[treeInstanceCount++] =
@@ -67268,6 +67876,9 @@ engine.runtimeRecreateRequired = true;
                 activeLeafInstance = child;
             }
             treeInstances[treeInstanceCount++] = child;
+            const auto& selected = directCompositeScheduleActive
+                ? directCompositeSchedule->leaves[index].leaf : queueInitialFrontier.schedule.leaves[index].leaf;
+            ObservePreparedContent(engine, treeStep, child, MonitorContentFor(world, selected));
         }
     }
     PlayableRootMetadata rootMetadata{};
@@ -67323,6 +67934,8 @@ engine.runtimeRecreateRequired = true;
     }
     row.rootInstance = instance;
     row.activeLeafInstance = activeLeafInstance;
+    row.Invocation().playbackRequest = request.playbackRequest;
+    row.Invocation().emitterOrigin = request.emitterOrigin;
     row.Invocation().invocationEmitter = request.emitter;
     row.ticket = ticket;
     row.Invocation().worldGeneration = world.generation;
@@ -67802,6 +68415,7 @@ engine.runtimeRecreateRequired = true;
                     leafInstalled.releaseObserver;
                 engine.variableControlMemberCompletions[memberSlot].source =
                     leafInstalled.sourceTerminal;
+                engine.variableControlMemberCompletions[memberSlot].monitorSelection = leafInstalled.monitorSelection;
                 engine.playableScheduleStartFrames[memberSlot] = leafStart;
                 engine.playableSchedulePostSourceTailFrames[pairedSlot] =
                     leafInstalled.postSourceTailFrames;
@@ -68255,6 +68869,7 @@ engine.runtimeRecreateRequired = true;
         result.status = PlayableStartStatus::RuntimeRecreateRequired;
         return result;
     }
+    PublishMonitorInitialSelections(engine, directScratch);
     if (row.queueMode && queueInitialHasContinuation) {
         const QueueContinuationPrepareStatus prepared =
             PrepareQueueContinuation(engine, world, *queueProgram, row);
@@ -68305,7 +68920,10 @@ static PlayableControlStatus BeginPlayableCancellation(
     bool preparedCommit = false,
     bool* outCancellationRequired = nullptr,
     bool serviceRegisteredCapture = false,
-    bool aggregatePreflight = false) noexcept {
+    bool aggregatePreflight = false,
+    const MonitorControlCause& requestCause = {}) noexcept {
+    auto cause = requestCause;
+    const auto requestedInstance = instance;
     assert(!aggregatePreflight || preflightOnly);
     if (outCommandCount != nullptr) {
         *outCommandCount = 0;
@@ -68336,12 +68954,23 @@ static PlayableControlStatus BeginPlayableCancellation(
     if (row == nullptr) {
         return PlayableControlStatus::InvalidHandle;
     }
+    const auto rememberControlTarget = [&]() noexcept {
+        if (!preflightOnly && row->pendingControlTarget == 0 && requestedInstance != row->rootInstance) {
+            row->pendingControlTarget = requestedInstance;
+            row->pendingControlTargetEpoch = owner.scheduleEpoch;
+        }
+    };
     const auto acceptCancellation = [&]() noexcept {
-        if (!preflightOnly) row->pendingRegisteredStopCapture = false;
+        if (!preflightOnly) {
+            if (row->pendingCancellationIntent != 0) rememberControlTarget();
+            row->pendingRegisteredStopCapture = false;
+        }
         return PlayableControlStatus::Ok;
     };
-    if (intent == PlayableCancellationIntent::Stop && row->pendingRegisteredStopCapture)
+    if (intent == PlayableCancellationIntent::Stop && row->pendingRegisteredStopCapture) {
         fadeMs = row->pendingCancellationFadeMs;
+        cause = row->pendingControlCause;
+    }
     if (row->pendingCancellationIntent != 0) return acceptCancellation();
     if (transportReset && !preflightOnly && !preparedCommit) {
         auto* attempt = FindImmediateEntryAttempt(engine, row->pendingImmediateCohortRoot);
@@ -68367,6 +68996,8 @@ static PlayableControlStatus BeginPlayableCancellation(
             for (auto& member : engine.playableServices) {
                 if (member.phase == EnginePlayableStartPhase::Free ||
                     member.pendingImmediateCohortRoot != attempt->root) continue;
+                if (member.pendingCancellationIntent == 0 && !member.pendingRegisteredStopCapture)
+                    member.pendingControlCause = cause;
                 member.pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
                 member.pendingCancellationFadeMs = 0;
                 member.pendingRegisteredStopCapture = false;
@@ -68415,8 +69046,12 @@ static PlayableControlStatus BeginPlayableCancellation(
                 token = member->privateInitialVcPageCohort.rootProducerNext;
             }
             if (capturable && participant && !token.Valid()) {
-                if (!row->pendingRegisteredStopCapture) row->pendingCancellationFadeMs = fadeMs;
+                if (!row->pendingRegisteredStopCapture) {
+                    row->pendingCancellationFadeMs = fadeMs;
+                    row->pendingControlCause = cause;
+                }
                 row->pendingRegisteredStopCapture = true;
+                rememberControlTarget();
                 if (installationPending || (queueFree && !serviceRegisteredCapture)) {
                     // First filing stays in Update, after the original Source commands are installed.
                     return PlayableControlStatus::Ok;
@@ -68458,6 +69093,7 @@ static PlayableControlStatus BeginPlayableCancellation(
                                 member.pendingImmediateCohortRoot != attempt->root || !member.pendingRegisteredStopCapture) continue;
                             member.pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
                             member.pendingRegisteredStopCapture = false;
+                            RecordServiceControlCause(engine, member, member.pendingControlCause);
                             (void)ServicePrivateImmediateEntryVoiceStops(engine, member);
                         }
                         return acceptCancellation();
@@ -68485,6 +69121,7 @@ static PlayableControlStatus BeginPlayableCancellation(
             if (!participant || token.Valid()) return PlayableControlStatus::Backpressure;
             if (outCancellationRequired != nullptr) *outCancellationRequired = true;
             if (!preflightOnly) {
+                row->pendingControlCause = cause;
                 row->pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
                 row->pendingCancellationFadeMs = fadeMs;
                 if (allStopping) {
@@ -68510,6 +69147,7 @@ static PlayableControlStatus BeginPlayableCancellation(
             if (outCancellationRequired != nullptr) *outCancellationRequired = true;
             if (!preflightOnly) {
                 // Return prepared child ancestry before the normal Stop bumps its parent epoch.
+                row->pendingControlCause = cause;
                 row->pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
                 row->pendingCancellationFadeMs = fadeMs;
                 attempt->producerAbortPendingVariableStop = true;
@@ -68522,6 +69160,7 @@ static PlayableControlStatus BeginPlayableCancellation(
     if (HasRetainedImmediateRetryCleanup(engine, *row)) {
         if (outCancellationRequired != nullptr) *outCancellationRequired = true;
         if (!preflightOnly) {
+            row->pendingControlCause = cause;
             row->pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
             row->pendingCancellationFadeMs = fadeMs;
         }
@@ -68543,6 +69182,7 @@ static PlayableControlStatus BeginPlayableCancellation(
              engine.immediateActionLane.OwnsNeverCommitted(original->lane, original->root)) &&
             (!MatchesPrivateImmediateVcProducerChain(engine, *original, true) ||
              !CaptureRegisteredPrivateVcAbortVoices(engine, *original))) return PlayableControlStatus::Backpressure;
+        row->pendingControlCause = cause;
         row->pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
         row->pendingCancellationFadeMs = fadeMs;
         auto& receiver = row->privateImmediateEntry;
@@ -68563,6 +69203,7 @@ static PlayableControlStatus BeginPlayableCancellation(
         if (outCancellationRequired != nullptr)
             *outCancellationRequired = true;
         if (!preflightOnly) {
+            row->pendingControlCause = cause;
             row->pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
             row->pendingCancellationFadeMs = fadeMs;
         }
@@ -68908,6 +69549,7 @@ engine.runtimeRecreateRequired = true;
         return PlayableControlStatus::Backpressure;
     }
     if (cancelGuard == QueueCancellationLeaseStatus::Deferred) {
+        row->pendingControlCause = cause;
         row->pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
         row->pendingCancellationFadeMs = fadeMs;
         engine.ledger.ForEachPlayableOwnedLive([&](VnVoiceHandle render, const VoiceLedger::PlayableParentRef& parent) {
@@ -68918,19 +69560,21 @@ engine.runtimeRecreateRequired = true;
             stop.opcode = kOpcodeStop;
             stop.payload.stop.handle = render;
             stop.payload.stop.fadeMs = fadeMs;
-            if (engine.commands.TryPush(stop)) engine.ledger.MarkTerminating(render);
+            if (engine.commands.TryPush(stop)) MarkObservedPlayableVoiceTerminating(engine, render, cause);
             else engine.runtimeRecreateRequired = true;
         });
         return acceptCancellation();
     }
     if (!ReturnOriginalPlainSourceReferences(engine, *row, engine.mixer.BlocksRendered(),
-            static_cast<std::uint8_t>(intent) + 1u, fadeMs)) {
+            static_cast<std::uint8_t>(intent) + 1u, fadeMs, cause)) {
+        row->pendingControlCause = cause;
         row->pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
         row->pendingCancellationFadeMs = fadeMs;
         return acceptCancellation();
     }
     row->pendingCancellationIntent = 0;
     if (row->immediateLane.Valid() && !engine.immediateActionLane.Cancel(row->immediateLane)) {
+        row->pendingControlCause = cause;
         row->pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
         row->pendingCancellationFadeMs = fadeMs;
         return acceptCancellation();
@@ -69050,11 +69694,15 @@ engine.runtimeRecreateRequired = true;
     if (!preflightOnly && row->ordinaryStartTransaction.Valid())
         (void)CaptureOrdinaryUnpublishedStartProof(engine, *row);
     const IssueResult epoch =
-        engine.playableInstances.BumpScheduleEpochChecked(instance);
+        engine.playableInstances.BumpScheduleEpochChecked(instance, MonitorCauseForInstance(engine, instance, cause));
     if (epoch.status != IssueStatus::Ok) {
         engine.commands.NoteBackpressure();
         return PlayableControlStatus::Backpressure;
     }
+    row->pendingControlCause = cause;
+    RecordServiceControlCause(engine, *row, cause);
+    if (requestedInstance != instance)
+        engine.playableInstances.RecordControlCause(requestedInstance, cause);
     if (!CancelTransferredQueueArrivals(engine, *row, false)) {
 engine.runtimeRecreateRequired = true;
         return PlayableControlStatus::Backpressure;
@@ -69103,6 +69751,7 @@ engine.runtimeRecreateRequired = true;
             returned = CancelAuthoredStopOperation(engine, stop, true) && returned;
         }
         if (!returned) {
+            row->pendingControlCause = cause;
             row->pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
             row->pendingCancellationFadeMs = fadeMs;
             return acceptCancellation();
@@ -69313,7 +69962,7 @@ engine.runtimeRecreateRequired = true;
                 // voice still needs an audio-thread Stop before arm reclamation.
                 stop.payload.stop.fadeMs = voice != nullptr && voice->timelineGated ? 0 : fadeMs;
                 if (!engine.ledger.IsTerminating(render)) {
-                    if (engine.commands.TryPush(stop)) engine.ledger.MarkTerminating(render);
+                    if (engine.commands.TryPush(stop)) MarkObservedPlayableVoiceTerminating(engine, render, cause);
                     else engine.runtimeRecreateRequired = true;
                 }
             });
@@ -69341,22 +69990,25 @@ bool ResumePendingPlayableCancellation(Engine& engine, EnginePlayableServiceRow&
     const auto savedIntent = row.pendingCancellationIntent;
     row.pendingCancellationIntent = 0;
     const auto result = BeginPlayableCancellation(engine, row.rootInstance, row.pendingCancellationFadeMs,
-        static_cast<PlayableCancellationIntent>(savedIntent - 1u));
+        static_cast<PlayableCancellationIntent>(savedIntent - 1u),
+        false, nullptr, false, nullptr, false, false, row.pendingControlCause);
     if (result != PlayableControlStatus::Ok) row.pendingCancellationIntent = savedIntent;
     return row.pendingCancellationIntent == 0;
 }
 
 PlayableControlStatus StopPlayable(
     Engine& engine, PlayableInstanceHandle instance,
-    std::uint32_t fadeMs) noexcept {
+    std::uint32_t fadeMs, const MonitorControlCause& cause) noexcept {
     return BeginPlayableCancellation(
-        engine, instance, fadeMs, PlayableCancellationIntent::Stop);
+        engine, instance, fadeMs, PlayableCancellationIntent::Stop,
+        false, nullptr, false, nullptr, false, false, cause);
 }
 
 static PlayableControlStatus ServiceRegisteredStopCapture(
-    Engine& engine, PlayableInstanceHandle instance, std::uint32_t fadeMs) noexcept {
+    Engine& engine, PlayableInstanceHandle instance, std::uint32_t fadeMs,
+    const MonitorControlCause& cause) noexcept {
     return BeginPlayableCancellation(engine, instance, fadeMs, PlayableCancellationIntent::Stop,
-        false, nullptr, false, nullptr, true);
+        false, nullptr, false, nullptr, true, false, cause);
 }
 
 static bool ServiceUsesQueueOrVariableControlCurrentAuthority(
@@ -69477,6 +70129,7 @@ bool CancelActionDeferredForWorldReplacement(
 
 RuntimeTransportResetStatus BeginRuntimeTransportReset(
     Engine& engine, std::uint64_t resetFrame) noexcept {
+    harken::monitor::IdentityMutationScope identityMutation;
     if (engine.runtimeTransportResetActive) {
         if (engine.runtimeTransportResetFrame != resetFrame) {
             return RuntimeTransportResetStatus::InvalidRequest;
@@ -69638,7 +70291,7 @@ PlayableStartResult StartCurrentPlayable(
 
 PlayableStartResult StartCurrentPlayableByIdentity(
     PlayableKindV1 kind, VnObjectId stableId,
-    std::uint64_t emitter) noexcept {
+    std::uint64_t emitter, const MonitorRequestContext& playbackRequest) noexcept {
     PlayableStartResult result{};
     Engine* engine = detail::ActiveEngine();
     if (engine == nullptr) {
@@ -69717,6 +70370,7 @@ PlayableStartResult StartCurrentPlayableByIdentity(
         }
     }
     PlayableStartRequest request{};
+    request.playbackRequest = playbackRequest;
     request.root.kind = kind;
     request.root.stableId = root->stableId;
     request.root.expectedProgramSemanticFingerprint =
@@ -69731,7 +70385,7 @@ PlayableStartResult StartCurrentPlayableByIdentity(
 
 PlayableResetStatus ResetCurrentPlayableByIdentity(
     PlayableKindV1 kind, VnObjectId stableId,
-    std::uint64_t emitter) noexcept {
+    std::uint64_t emitter, const MonitorControlCause& cause) noexcept {
     Engine* engine = detail::ActiveEngine();
     if (engine == nullptr) return PlayableResetStatus::NotInitialized;
     if (engine->currentWorldReplacementAdmissionClosed ||
@@ -69827,17 +70481,18 @@ PlayableResetStatus ResetCurrentPlayableByIdentity(
         LogicCommitSequence sequence = 0;
         if (!issueSequence(&sequence))
             return PlayableResetStatus::RuntimeRecreateRequired;
-        return mapQueue(ApplyQueueReset(*engine, target, sequence, nullptr));
+        return mapQueue(ApplyQueueReset(*engine, target, sequence, nullptr, cause));
     }
     return PlayableResetStatus::CapabilityUnavailable;
 }
 
 PlayableControlStatus StopCurrentPlayable(
-    PlayableInstanceHandle instance, std::uint32_t fadeMs) noexcept {
+    PlayableInstanceHandle instance, std::uint32_t fadeMs,
+    const MonitorControlCause& cause) noexcept {
     Engine* engine = detail::ActiveEngine();
     return engine == nullptr
                ? PlayableControlStatus::NotInitialized
-               : StopPlayable(*engine, instance, fadeMs);
+               : StopPlayable(*engine, instance, fadeMs, cause);
 }
 
 PlayableControlStatus QueryCurrentPlayable(
@@ -71942,7 +72597,7 @@ bool ReserveImmediateActionFirings(void* opaque,
             } else {
                 prepared = plan->engine->actionFirings.PrepareRoot(
                     row.action->actionStableId, row.owner,
-                    row.action->stepCount, &row.prepared);
+                    row.action->stepCount, &row.prepared, plan->playbackRequest, plan->emitterOrigin);
             }
         } else {
             prepared = plan->engine->actionFirings.PrepareChild(
@@ -73072,6 +73727,11 @@ bool ReleaseImmediateActionPlay(
     auto& deferredOwner = scratch->storage.ordinaryDeferredRollback;
     if (deferredOwner.active && deferredOwner.rowReleased)
         return FinishOrdinaryDeferredRollback(engine, *scratch);
+    harken::MonitorControlCause acceptedCause{};
+    if (scratch->cancellationCauseAccepted)
+        RecordPreparedControlCause(engine, *scratch, scratch->cancellationCause);
+    else if (scratch->row != nullptr && CaptureServiceControlCause(engine, *scratch->row, &acceptedCause))
+        RecordPreparedControlCause(engine, *scratch, acceptedCause);
     // The linked parent owns cancellation after successor contexts are initialized.
     if (scratch->queueFutureExecution) return false;
     if (scratch->directExecution) return CancelDirectFrontierAttempt(engine, *scratch);
@@ -74301,10 +74961,11 @@ void ServiceCancelledFrontierAttempts(harken::Engine& engine) noexcept {
 
 bool PreparePlayableExecution(
     harken::Engine& engine, harken::EngineActionPlayScratch* scratch,
-    harken::PlayableKind kind) noexcept {
+    harken::PlayableKind kind, const harken::MonitorRequestContext& playbackRequest,
+    const harken::MonitorEmitterOrigin& emitterOrigin) noexcept {
     if (scratch == nullptr ||
         !engine.playableInstances.PrepareAcquire(
-            kind, 0, &scratch->instance)) {
+            kind, 0, &scratch->instance, playbackRequest, emitterOrigin)) {
         return false;
     }
     if (!scratch->playableTreeExecutor.AdoptPreparedInstance(
@@ -74346,7 +75007,9 @@ bool PrepareSharedPlayablePath(
                      harken::kSelectionPathNodeCapacity>& childKinds,
     const std::array<std::uint32_t,
                      harken::kSelectionPathNodeCapacity>& loopLimits,
-    std::uint32_t containerCount) noexcept {
+    std::uint32_t containerCount,
+    const std::array<harken::MonitorContentIdentity,
+                     harken::kSelectionPathNodeCapacity>& childIdentities) noexcept {
     if (rootInstance == 0 || rootScheduleEpoch == 0 ||
         containerCount > containers.size()) {
         return false;
@@ -74377,6 +75040,7 @@ bool PrepareSharedPlayablePath(
         }
         parent = executor.PreparedInstanceHandle(
             executor.InstanceReservationCount() - 1u);
+        ObservePreparedContent(engine, executor, parent, childIdentities[index]);
         parentEpoch = executor.PreparedInstanceEpoch(
             executor.InstanceReservationCount() - 1u);
     }
@@ -74562,7 +75226,7 @@ bool PrepareImmediateActionSingleLeafPlay(
     }
     if (row == nullptr ||
         !PreparePlayableExecution(
-            engine, scratch, instanceKind)) {
+            engine, scratch, instanceKind, plan.playbackRequest, plan.emitterOrigin)) {
         (void)ReleaseImmediateActionPlayableLease(engine, scratch, &plan);
         plan.result = VN_NO_VOICE;
         return false;
@@ -74587,6 +75251,9 @@ bool PrepareImmediateActionSingleLeafPlay(
         plan.result = VN_DEVICE_ERROR;
         return false;
     }
+    ObservePreparedContent(engine, scratch->playableTreeExecutor, scratch->instance.Handle(),
+        scratch->packLeaseOwned ? MonitorContentFor(scratch->packPlaybackView, root)
+                                : MonitorContentFor(world, root));
 
     // A direct Sound still owns its original, empty initial-selection domain.
     if (instanceKind == harken::PlayableKind::Sound &&
@@ -74735,6 +75402,8 @@ bool PrepareImmediateActionSingleLeafPlay(
     scratch->row = row;
     row->actionPrepared = true;
     row->rootInstance = scratch->instance.Handle();
+    row->Invocation().playbackRequest = plan.playbackRequest;
+    row->Invocation().emitterOrigin = plan.emitterOrigin;
     row->Invocation().invocationEmitter = plan.emitter;
     row->Invocation().actionFiring =
         engine.actionFiringPlanScratch[planned.firingIndex].handle;
@@ -74895,6 +75564,7 @@ bool PrepareImmediateActionSingleLeafPlay(
     row->arm = installed.armToken;
     row->renderHandle = installed.renderHandle;
     row->releaseObserver = installed.releaseObserver;
+    row->monitorSelection = installed.monitorSelection;
     row->event.armToken = installed.armToken;
     row->schedule.armToken = installed.armToken;
     if (frontierChild != nullptr) {
@@ -74916,6 +75586,7 @@ bool PrepareImmediateActionSingleLeafPlay(
         engine.playableScheduleReleaseObservers[slot] = installed.releaseObserver;
         engine.playableScheduleStartFrames[slot] = startFrame;
         engine.variableControlMemberCompletions[slot] = {row->activeLeafInstance, epoch, installed.sourceTerminal};
+        engine.variableControlMemberCompletions[slot].monitorSelection = installed.monitorSelection;
         engine.variableControlDynamicMembers[slot] = 0;
         frontierChild->scheduleStorageBase = static_cast<std::uint32_t>(logicalSlot);
         frontierChild->scheduleLeafCount = 1;
@@ -75957,11 +76628,13 @@ bool PrepareQueueTransitionContinuation(
             engine.playableScheduleStartFrames[memberSlot] = startFrame;
             engine.playableScheduleReleaseObservers[memberSlot] = installed.releaseObserver;
             engine.variableControlMemberCompletions[memberSlot] = {successorInstance, successorEpoch, installed.sourceTerminal};
+            engine.variableControlMemberCompletions[memberSlot].monitorSelection = installed.monitorSelection;
         }
         const std::size_t slot = successorBase + index;
         engine.playableSuccessorVoices[slot] = leaves[index].voice;
         engine.playableSuccessorLeaves[slot] = leaves[index].leaf;
         engine.playableSuccessorArms[slot] = installed.armToken;
+        engine.playableSuccessorSelections[slot] = installed.monitorSelection;
         engine.playableSuccessorRenderHandles[slot] =
             installed.renderHandle;
         engine.playableSuccessorOccurrences[slot] =
@@ -76165,6 +76838,7 @@ bool PrepareQueueTransitionContinuation(
         engine.playableSuccessorLeaves[successorBase];
     row.queueSuccessorArm =
         engine.playableSuccessorArms[successorBase];
+    row.queueMonitorSelection = engine.playableSuccessorSelections[successorBase];
     row.queueSuccessorRenderHandle =
         engine.playableSuccessorRenderHandles[successorBase];
     row.queueSuccessorTailFrames =
@@ -76174,7 +76848,8 @@ bool PrepareQueueTransitionContinuation(
         ? sourcePhaseFrame : successorEntryFrame;
     if (!engine.transitionInstances.PrepareAcquire(
             {audibleFrame,
-             audibleFrame / engine.config.blockFrames},
+             audibleFrame / engine.config.blockFrames,
+             engine.CaptureMonitorOwner(row.ownerInstance)},
             &scratch->queueTransition)) {
         (void)entry.ReleasePrefix(scratch);
         return false;
@@ -77469,6 +78144,10 @@ bool PrepareQueueContinuation(
                 &scratch->variableControlNestedQueueSuccessor) ||
             !scratch->playableTreeExecutor.AdoptPreparedInstance(engine.playableInstances,
                 &scratch->variableControlNestedQueueSuccessor)) return false;
+        ObservePreparedContent(engine, scratch->playableTreeExecutor,
+            scratch->variableControlNestedQueueSuccessor.Handle(), packQueue
+                ? MonitorContentFor(scratch->packPlaybackView, selected->playable)
+                : MonitorContentFor(world, selected->playable));
     }
     const auto successorInstance = actualChild
         ? scratch->variableControlNestedQueueSuccessor.Handle() : row.rootInstance;
@@ -77675,12 +78354,14 @@ bool PrepareQueueContinuation(
             engine.playableScheduleStartFrames[memberSlot] = startFrame;
             engine.playableScheduleReleaseObservers[memberSlot] = installed.releaseObserver;
             engine.variableControlMemberCompletions[memberSlot] = {successorInstance, successorEpoch, installed.sourceTerminal};
+            engine.variableControlMemberCompletions[memberSlot].monitorSelection = installed.monitorSelection;
         }
         groupMembers[index] = installed.armToken;
         const std::size_t slot = successorBase + index;
         engine.playableSuccessorVoices[slot] = leaves[index].voice;
         engine.playableSuccessorLeaves[slot] = leaves[index].leaf;
         engine.playableSuccessorArms[slot] = installed.armToken;
+        engine.playableSuccessorSelections[slot] = installed.monitorSelection;
         engine.playableSuccessorRenderHandles[slot] =
             installed.renderHandle;
         engine.playableSuccessorOccurrences[slot] =
@@ -77839,6 +78520,7 @@ bool PrepareQueueContinuation(
             engine.playableSuccessorLeaves[successorBase];
         row.queueSuccessorArm =
             engine.playableSuccessorArms[successorBase];
+        row.queueMonitorSelection = engine.playableSuccessorSelections[successorBase];
         row.queueSuccessorRenderHandle =
             engine.playableSuccessorRenderHandles[successorBase];
         row.queueSuccessorTailFrames =
@@ -78745,7 +79427,7 @@ bool PrepareImmediateActionNestedQueueCompositeTree(
     harken::EngineActionPlayScratch* scratch,
     const harken::PlayableRefV1& root,
     const std::uint32_t* selectedOrdinals, std::uint32_t selectionCount,
-    std::uint32_t leafCount) noexcept {
+    const MaterializedScheduleSet& materialized) noexcept {
     if (scratch == nullptr || plan.engine == nullptr ||
         selectedOrdinals == nullptr || selectionCount == 0 ||
         selectionCount >= harken::kSelectionPathNodeCapacity) {
@@ -78761,7 +79443,7 @@ bool PrepareImmediateActionNestedQueueCompositeTree(
                                         : ReadPlayableLoopCount(world, stableId);
     };
     if (!PreparePlayableExecution(
-            engine, scratch, harken::PlayableKind::Container)) {
+            engine, scratch, harken::PlayableKind::Container, plan.playbackRequest, plan.emitterOrigin)) {
         return false;
     }
     harken::PlayableRootMetadata metadata{};
@@ -78820,12 +79502,17 @@ bool PrepareImmediateActionNestedQueueCompositeTree(
     }
     const auto parent = scratch->playableTreeExecutor.PreparedInstanceHandle(
         scratch->playableTreeExecutor.InstanceReservationCount() - 1u);
-    for (std::uint32_t index = 0; index < leafCount; ++index) {
+    for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
         if (!scratch->playableTreeExecutor.PrepareInstance(
                 engine.playableInstances, harken::PlayableKind::Sound, parent)) {
             scratch->playableTreeExecutor.Cancel(engine.playableInstances);
             return false;
         }
+        const auto instance = scratch->playableTreeExecutor.PreparedInstanceHandle(
+            scratch->playableTreeExecutor.InstanceReservationCount() - 1u);
+        ObservePreparedContent(engine, scratch->playableTreeExecutor, instance, scratch->packLeaseOwned
+            ? MonitorContentFor(scratch->packPlaybackView, materialized.leaves[index].leaf)
+            : MonitorContentFor(world, materialized.leaves[index].leaf));
     }
     return ValidatePlayableExecution(scratch);
 }
@@ -78957,7 +79644,7 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
     if (row == nullptr ||
         (!reusePreparedTree &&
          !PreparePlayableExecution(
-             engine, scratch, harken::PlayableKind::Container)) ||
+             engine, scratch, harken::PlayableKind::Container, plan.playbackRequest, plan.emitterOrigin)) ||
         (reusePreparedTree && !scratch->instance.Valid())) {
         plan.result = VN_NO_VOICE;
         return false;
@@ -78981,6 +79668,10 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
         scratch->playableTreeExecutor.Cancel(engine.playableInstances);
         plan.result = VN_DEVICE_ERROR;
         return false;
+    }
+    if (!reusePreparedTree) {
+        ObservePreparedContent(engine, scratch->playableTreeExecutor, scratch->instance.Handle(),
+            packQueue ? MonitorContentFor(scratch->packPlaybackView, root) : MonitorContentFor(world, root));
     }
     if (!reusePreparedTree) {
         const auto loopLimit = packQueue
@@ -79010,6 +79701,9 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
             scratch->playableTreeExecutor.InstanceReservationCount() - 1u;
         const harken::PlayableInstanceHandle child =
             scratch->playableTreeExecutor.PreparedInstanceHandle(childIndex);
+        ObservePreparedContent(engine, scratch->playableTreeExecutor, child, packQueue
+            ? MonitorContentFor(scratch->packPlaybackView, selected.playable)
+            : MonitorContentFor(world, selected.playable));
         for (std::uint32_t index = 0; index < materialized.leafCount;
              ++index) {
             if (!scratch->playableTreeExecutor.PrepareInstance(
@@ -79020,6 +79714,11 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
                 plan.result = VN_NO_VOICE;
                 return false;
             }
+            const auto instance = scratch->playableTreeExecutor.PreparedInstanceHandle(
+                scratch->playableTreeExecutor.InstanceReservationCount() - 1u);
+            ObservePreparedContent(engine, scratch->playableTreeExecutor, instance, packQueue
+                ? MonitorContentFor(scratch->packPlaybackView, leaves[index].leaf)
+                : MonitorContentFor(world, leaves[index].leaf));
         }
     }
 
@@ -79067,6 +79766,8 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
         ActionPlanCommitSequence(plan, currentSequence);
     row->actionPrepared = true;
     row->rootInstance = scratch->instance.Handle();
+    row->Invocation().playbackRequest = plan.playbackRequest;
+    row->Invocation().emitterOrigin = plan.emitterOrigin;
     row->Invocation().invocationEmitter = plan.emitter;
     row->Invocation().actionFiring =
         engine.actionFiringPlanScratch[planned.firingIndex].handle;
@@ -79310,6 +80011,7 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
         engine.playableScheduleStartFrames[memberSlot] = startFrame;
         engine.playableScheduleReleaseObservers[memberSlot] = installed.releaseObserver;
         engine.variableControlMemberCompletions[memberSlot].source = installed.sourceTerminal;
+        engine.variableControlMemberCompletions[memberSlot].monitorSelection = installed.monitorSelection;
         engine.playableSchedulePostSourceTailFrames[pairedSlot] =
             installed.postSourceTailFrames;
         engine.playableScheduleCompletions[pairedSlot] =
@@ -79378,6 +80080,7 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
             scratch->voiceStarts[0].postSourceTailFrames;
         row->releaseObserver =
             engine.playableScheduleReleaseObservers[memberBase];
+        row->monitorSelection = engine.variableControlMemberCompletions[memberBase].monitorSelection;
     } else {
         row->leaf = selected.playable;
         row->queueCompletionFrame = zeroWorkCompletionFrame;
@@ -79704,13 +80407,17 @@ bool PrepareImmediateActionNestedVariableControlPlay(
     };
 
     harken::PlayableStartRequest outerRequest{};
+    outerRequest.playbackRequest = plan.playbackRequest;
+    outerRequest.emitterOrigin = plan.emitterOrigin;
     if (!scratch->storage.initialSelection.SealPrefix(scratch->storage.generation, path, pathCount))
         return fail(VN_REVISION_CONFLICT);
     outerRequest.root = outerRoot;
     outerRequest.emitter = plan.emitter;
     outerRequest.callerSeed = DeriveImmediateActionPlayCallerSeed(plan, planned.executionOrdinal);
     if (!PrepareNestedVariableControlOuterTree(
-            engine, world, outerRequest, path, pathCount, scratch)) {
+            engine, world, outerRequest, path, pathCount, scratch,
+            engine.actionFiringPlanScratch[planned.firingIndex].handle,
+            planned.executionOrdinal)) {
         return fail(VN_CAPABILITY_UNAVAILABLE);
     }
 
@@ -80210,6 +80917,8 @@ bool PrepareImmediateActionContainerPlay(
         const harken::DiscreteGridSelection* selectedPtr =
             decision.discreteMatched ? &decision.discrete : nullptr;
         harken::PlayableStartRequest request{};
+        request.playbackRequest = plan.playbackRequest;
+        request.emitterOrigin = plan.emitterOrigin;
         request.root = root;
         request.emitter = plan.emitter;
         request.callerSeed = DeriveImmediateActionPlayCallerSeed(plan, planned.executionOrdinal);
@@ -80607,7 +81316,7 @@ engine.runtimeRecreateRequired = true;
                     if (!PrepareImmediateActionNestedQueueCompositeTree(
                             plan, plannedStepIndex, scratch, root,
                             treePath.data(), nestedCount,
-                            directMaterialized.leafCount)) {
+                            directMaterialized)) {
                         (void)ReleaseImmediateActionPlay(engine, scratch,
                                                          &plan);
                         return false;
@@ -80649,7 +81358,7 @@ engine.runtimeRecreateRequired = true;
                             treePath.data());
                 if (!PrepareImmediateActionNestedQueueCompositeTree(
                         plan, plannedStepIndex, scratch, root,
-                        treePath.data(), nestedCount, materialized.leafCount)) {
+                        treePath.data(), nestedCount, materialized)) {
                     (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
                     return false;
                 }
@@ -81181,7 +81890,7 @@ engine.runtimeRecreateRequired = true;
         if (!PrepareImmediateActionNestedQueueCompositeTree(
                 plan, plannedStepIndex, scratch, root,
                 selectedOrdinals.data(), selectionCount,
-                materialized.leafCount)) {
+                materialized)) {
             rollbackPrepared();
             return false;
         }
@@ -81273,7 +81982,7 @@ engine.runtimeRecreateRequired = true;
         if (!PrepareImmediateActionNestedQueueCompositeTree(
                 plan, plannedStepIndex, scratch, root,
                 selectedOrdinals.data(), selectionCount,
-                materialized.leafCount)) {
+                materialized)) {
             rollbackPrepared();
             return false;
         }
@@ -81518,7 +82227,7 @@ bool PrepareImmediateActionCompositePlay(
             : harken::PlayableKind::Piece;
     if (row == nullptr ||
         !PreparePlayableExecution(
-            engine, scratch, instanceKind)) {
+            engine, scratch, instanceKind, plan.playbackRequest, plan.emitterOrigin)) {
         (void)ReleaseImmediateActionPlayableLease(engine, scratch, &plan);
         plan.result = VN_NO_VOICE;
         return false;
@@ -81543,6 +82252,9 @@ bool PrepareImmediateActionCompositePlay(
         plan.result = VN_DEVICE_ERROR;
         return false;
     }
+    ObservePreparedContent(engine, scratch->playableTreeExecutor, scratch->instance.Handle(),
+        scratch->packLeaseOwned ? MonitorContentFor(scratch->packPlaybackView, root)
+                                : MonitorContentFor(world, root));
 
     if (!PreparePlayableServiceRow(engine, *row, scratch->instance.Handle(),
                                   scratch->instance.ScheduleEpoch(), nullptr, nullptr, &scratch->storage)) {
@@ -81590,6 +82302,8 @@ bool PrepareImmediateActionCompositePlay(
         ActionPlanCommitSequence(plan, currentSequence);
     row->actionPrepared = true;
     row->rootInstance = scratch->instance.Handle();
+    row->Invocation().playbackRequest = plan.playbackRequest;
+    row->Invocation().emitterOrigin = plan.emitterOrigin;
     row->Invocation().invocationEmitter = plan.emitter;
     row->Invocation().actionFiring =
         engine.actionFiringPlanScratch[planned.firingIndex].handle;
@@ -81661,6 +82375,7 @@ bool PrepareImmediateActionCompositePlay(
             installed.renderHandle;
         engine.playableScheduleStartFrames[memberSlot] = startFrame;
         engine.playableScheduleReleaseObservers[memberSlot] = installed.releaseObserver;
+        engine.playableScheduleSelections[memberSlot] = installed.monitorSelection;
         auto& payload = engine.playableSchedulePayloads[eventSlot];
         payload = {};
         payload.kind = harken::TimelineEventKind::Start;
@@ -81704,6 +82419,7 @@ bool PrepareImmediateActionCompositePlay(
             engine.playableScheduleRenderHandles[memberBase];
         row->releaseObserver =
             engine.playableScheduleReleaseObservers[memberBase];
+        row->monitorSelection = engine.playableScheduleSelections[memberBase];
     } else {
         row->leaf = root;
         row->activeLeafInstance = row->rootInstance;
@@ -82091,6 +82807,7 @@ bool PrepareScheduledActionStop(
     scratch.commandBase = plan.playCommandCount;
     const auto& planned = engine.actionStepPlanScratch[stepIndex];
     const auto firing = engine.actionFiringPlanScratch[planned.firingIndex].handle;
+    scratch.controlCause = {plan.playbackRequest, firing, 0, planned.executionOrdinal};
     const auto publicRoot = AuthoredStopPublicRoot(engine, row.rootInstance);
     for (std::uint32_t index = 0; index + 1 < plan.stopCaptureCount; ++index) {
         const auto& previous = engine.actionStopScratch[index];
@@ -82125,7 +82842,7 @@ bool PrepareScheduledActionStop(
     if (scratch.authoredStop.operationSlot == UINT32_MAX &&
         !PrepareAuthoredStopOperation(engine, publicRoot, firing,
             planned.executionOrdinal, fadeStart, silence, scratch.authoredStop,
-            originalPlainSource, nativeReplacement)) return false;
+            scratch.controlCause, originalPlainSource, nativeReplacement)) return false;
     for (const auto& installation : engine.timelineVoiceInstallIdentities) {
         if (installation.rootInstance != row.rootInstance || installation.renderHandle == 0 ||
             engine.voices.ReleaseObserved(installation.releaseObserver)) continue;
@@ -82504,6 +83221,7 @@ bool PrepareImmediateActionStop(
             return false;
         }
         scratch.row = &row;
+        scratch.controlCause = {plan.playbackRequest, stopFiring.handle, 0, planned.executionOrdinal};
         scratch.plannedStepIndex = plannedStepIndex;
         scratch.commandBase = commandBase;
         scratch.commandCount = commandCount;
@@ -85941,11 +86659,13 @@ engine.runtimeRecreateRequired = true;
         }
         if (!scratch.prepared || scratch.row == nullptr ||
             !engine.playableInstances.CommitPreparedCancellation(
-                &scratch.cancellation)) {
+                &scratch.cancellation, MonitorCauseForInstance(engine, scratch.row->rootInstance, scratch.controlCause))) {
             ok = false;
             continue;
         }
         harken::EnginePlayableServiceRow& row = *scratch.row;
+        row.pendingControlCause = scratch.controlCause;
+        RecordServiceControlCause(engine, row, scratch.controlCause);
         ok = CancelTransferredQueueArrivals(engine, row, false) && ok;
         row.controlReason = harken::PlayableControlReason::StopRequested;
         row.controlLifecycle = harken::PlayableControlLifecycle::Cancelling;
@@ -85974,7 +86694,7 @@ engine.runtimeRecreateRequired = true;
             const harken::CommandRecord& stop =
                 engine.actionPlayCommandScratch[
                     scratch.commandBase + commandIndex];
-            engine.ledger.MarkTerminating(stop.payload.stop.handle);
+            MarkObservedPlayableVoiceTerminating(engine, stop.payload.stop.handle, scratch.controlCause);
         }
         scratch.prepared = false;
     }
@@ -86291,11 +87011,20 @@ void CommitImmediateActionCommandHead(void* opaque, std::uint32_t count,
         }
         for (std::uint32_t index = 0; index < plan->preparedPlayCount; ++index) {
             auto* scratch = FindImmediateActionPlay(*plan, index);
+            if (scratch != nullptr) PublishMonitorInitialSelections(engine, *scratch);
             if (scratch == nullptr || !scratch->storage.initialSelectionBatch.ReturnAfterCommit()) {
                 engine.runtimeRecreateRequired = true;
                 return;
             }
             engine.actionFixedSelectionCommitInputs[index] = {};
+        }
+    }
+    if (!plan->nativeFixedSelection && ownersCommitted &&
+        (plan->playCommandCount == 0 || plan->playCommandsDisposition.PublishedFrom(engine.commands))) {
+        for (std::uint32_t index = 0; index < plan->preparedPlayCount; ++index) {
+            auto* scratch = FindImmediateActionPlay(*plan, index);
+            if (scratch != nullptr && scratch->row != nullptr && !scratch->row->pendingImmediateEntry)
+                PublishMonitorInitialSelections(engine, *scratch);
         }
     }
     plan->queueReplacementCommandCount = 0;
@@ -86871,7 +87600,8 @@ bool PrepareImmediateActionQueueReplacement(
     ImmediateActionPlan& plan, harken::EnginePlayableServiceRow& row,
     harken::EngineActionQueueReplacementScratch& scratch,
     const harken::QueueInstanceTable::PreparedCatalogResetScope* nativeScope = nullptr,
-    const harken::PreparedQueueReplacementOrder* nativeOrder = nullptr) noexcept {
+    const harken::PreparedQueueReplacementOrder* nativeOrder = nullptr,
+    const harken::MonitorControlCause& cause = {}) noexcept {
     harken::Engine& engine = *plan.engine;
     if (!row.queueContinuationPrepared ||
         !row.queueDecision.Valid() || !row.queueConditional.Valid() ||
@@ -87035,6 +87765,7 @@ bool PrepareImmediateActionQueueReplacement(
                  : engine.decisions.PrepareReservation(decisionRequest, &scratch.decision))) {
         return false;
     }
+    scratch.resetCause = cause;
     scratch.row = &row;
     scratch.next = resolution.next;
     scratch.successorHasContinuation =
@@ -87132,7 +87863,8 @@ bool PrepareImmediateActionQueueReplacement(
                   (scratch.sourceControlCount != 0
                        ? scratch.sourcePhaseFrame
                        : resolution.startFrame) /
-                      engine.config.blockFrames},
+                      engine.config.blockFrames,
+                  engine.CaptureMonitorOwner(scratch.row->ownerInstance)},
                  &scratch.transition) ||
              !engine.decisions.AttachTransitionGateBeforeCommit(
                  replacementDecision, scratch.transition, sliceCount))) {
@@ -87215,6 +87947,7 @@ bool PrepareImmediateActionQueueReplacement(
                 auto& stop = scratch.sourcePayloads[
                     scratch.sourceEventCount];
                 stop.kind = harken::TimelineEventKind::Stop;
+                stop.controlCause = scratch.resetCause;
                 stop.reserved = harken::kTimelineEventTransientControlArm;
                 stop.target = scratch.sourceTargets[sourceIndex];
                 stop.envelopeEndFrame = scratch.sourceStopFrame;
@@ -87785,7 +88518,9 @@ bool ReserveImmediateActionQueueReplacements(
                 !PrepareImmediateActionQueueReplacement(
                     *plan, row,
                     plan->engine->actionQueueReplacementScratch[
-                        plan->queueReplacementCount], &plan->nativeResetScope, &nativeOrder)) {
+                        plan->queueReplacementCount], &plan->nativeResetScope, &nativeOrder,
+                    {plan->playbackRequest, engine.actionFiringPlanScratch[planned.firingIndex].handle,
+                        0, planned.executionOrdinal})) {
                 for (std::uint32_t prior =
                          plan->queueReplacementCount;
                      prior-- > 0;) {
@@ -87934,6 +88669,9 @@ bool AcceptImmediateActionNativeQueueResets(ImmediateActionPlan& plan,
         if (!scratch.nativeReplacement.Valid()) continue;
         auto* holder = engine.OriginalQueueReplacementFor(scratch);
         assert(holder != nullptr && holder->sequence == *accepted);
+        holder->resetCause = scratch.resetCause;
+        engine.queueInstances.RecordMonitorResetSelection(holder->queue,
+            {scratch.resetExecuteFrame, *accepted, scratch.resetExecutionOrdinal}, scratch.resetCause);
         holder->phase = harken::Engine::OriginalQueueReplacementHolder::Phase::Selected;
     }
     return true;
@@ -88004,6 +88742,7 @@ bool CommitNativeImmediateActionQueueReplacement(harken::Engine& engine,
         row.queueSuccessorVoice = scratch.successorVoices[0];
         row.queueSuccessorLeaf = scratch.successorLeaves[0];
         row.queueSuccessorArm = start.arm;
+        row.queueMonitorSelection = start.monitorSelection;
         row.queueSuccessorRenderHandle = start.renderHandle;
         row.queueSuccessorTailFrames = start.postSourceTailFrames;
         row.queueTransitionGroupArms[0] = start.arm;
@@ -88017,6 +88756,9 @@ bool CommitNativeImmediateActionQueueReplacement(harken::Engine& engine,
     }
     if (scratch.successorDecision.Valid() && !engine.decisions.CancelPreparedReservation(&scratch.successorDecision))
         return false;
+    if (!scratch.sameProgramKey)
+        PublishMonitorSelection(engine, row.queueMonitorSelection, row.queueSuccessorArm,
+            row.queueSuccessorRenderHandle, scratch.resetCause);
     holder->preparation = nullptr;
     std::destroy_at(&scratch);
     std::construct_at(&scratch);
@@ -88116,7 +88858,7 @@ void CommitImmediateActionQueueReplacements(
                 : engine.decisions.Cancel(oldDecision));
         ok = oldDecisionStopped && ok;
 
-        BeginQueueSuccessorAbort(engine, row);
+        BeginQueueSuccessorAbort(engine, row, ok ? &scratch.resetCause : nullptr);
         row.queueArrivalDecision = oldDecision;
         row.queueArrivalArmGroup = oldArmGroup;
         row.queueArrivalArm = oldSameProgramKey
@@ -88197,6 +88939,7 @@ void CommitImmediateActionQueueReplacements(
                 ok = CommitPreparedTimelineVoiceStart(
                          engine, &scratch.successorStarts[leafIndex], sequence) &&
                      ok;
+                scratch.successorStarts[leafIndex].monitorSelection.observation.SetCause(scratch.resetCause);
             }
             if (scratch.successorHasContinuation &&
                 scratch.successorLeafCount > 1) {
@@ -88321,6 +89064,8 @@ void CommitImmediateActionQueueReplacements(
                             scratch.successorLeaves[leafIndex];
                         engine.playableSuccessorArms[slot] =
                             scratch.successorStarts[leafIndex].arm;
+                        engine.playableSuccessorSelections[slot] =
+                            scratch.successorStarts[leafIndex].monitorSelection;
                         engine.playableSuccessorRenderHandles[slot] =
                             scratch.successorStarts[leafIndex].renderHandle;
                         engine.playableSuccessorOccurrences[slot] =
@@ -88451,6 +89196,7 @@ void CommitImmediateActionQueueReplacements(
                 row.queueSuccessorVoice = scratch.successorVoices[0];
                 row.queueSuccessorLeaf = scratch.successorLeaves[0];
                 row.queueSuccessorArm = scratch.successorStarts[0].arm;
+                row.queueMonitorSelection = scratch.successorStarts[0].monitorSelection;
                 row.queueSuccessorRenderHandle =
                     scratch.successorStarts[0].renderHandle;
                 row.queueSuccessorTailFrames =
@@ -88658,7 +89404,7 @@ bool ServiceReplacedOriginalQueueSource(harken::Engine& engine,
                     holder.oldOccurrenceCleared = true;
                 }
             }
-            if (!AbortTimelineArm(engine, future.queueSuccessorArm)) return false;
+            if (!AbortTimelineArm(engine, future.queueSuccessorArm, &holder.resetCause)) return false;
         }
         if (future.queueArmGroup.Valid()) (void)engine.armGroups.BeginRetire(future.queueArmGroup);
         holder.oldSourceAborted = true;
@@ -88889,7 +89635,10 @@ void CommitImmediateActionQueueResets(
     for (std::uint32_t index = 0; index < plan->stepCount; ++index) {
         const harken::QueueResetStatusV1 status =
             plan->engine->queueInstances.CommitPreparedReset(
-                &plan->engine->actionQueueResetScratch[index], sequence);
+                &plan->engine->actionQueueResetScratch[index], sequence, UINT64_MAX,
+                {plan->playbackRequest,
+                    plan->engine->actionFiringPlanScratch[plan->engine->actionStepPlanScratch[index].firingIndex].handle,
+                    0, plan->engine->actionStepPlanScratch[index].executionOrdinal});
         if (status != harken::QueueResetStatusV1::Ok &&
             plan->engine->actionQueueResetScratch[index].Valid()) {
             plan->engine->runtimeRecreateRequired = true;
@@ -89034,6 +89783,8 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPostAction(
     const ActionFiringSnapshot& firing,
     std::uint64_t currentQuantum) noexcept {
     ImmediateActionPlan plan{};
+    plan.playbackRequest = firing.playbackRequest;
+    plan.emitterOrigin = firing.emitterOrigin;
     plan.engine = &engine;
     const auto cleanup = [&]() noexcept -> VnResult {
         if (plan.originalActionFiringFactoryCommitted && !plan.originalActionFiringCommitSucceeded) {
@@ -89269,11 +90020,17 @@ namespace harken::detail {
 
 VnResult PlayVoiceRaw(const VnPlayDesc* desc,
                       VnVoiceHandle* outHandle) noexcept {
+    return PlayVoiceRaw(desc, outHandle, {});
+}
+
+VnResult PlayVoiceRaw(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
+                     const MonitorRequestContext& request, monitor::RequestObservation* observation) noexcept {
+    harken::monitor::IdentityMutationScope identityMutation;
     if (CanonicalSetMutationBlocked()) {
         return VN_IN_USE;
     }
     try {
-        return PlayImpl(desc, outHandle, false);
+        return PlayImpl(desc, outHandle, request, false, nullptr, observation);
     } catch (...) {
         return VN_DEVICE_ERROR;
     }
@@ -89288,6 +90045,83 @@ void ReclaimRetiredAttenuationProfiles(Engine& engine) noexcept;
 }
 
 extern "C" {
+
+// Keep optional diagnostic exports in the same archive member as Vn_Init.
+// Apple SDK weak fallbacks must not prevent extraction of the real exports;
+// used also retains them when a player strips unreferenced native sections.
+#if defined(__APPLE__)
+#define HARKEN_OPTIONAL_HOST_EXPORT __attribute__((used, visibility("default")))
+#else
+#define HARKEN_OPTIONAL_HOST_EXPORT
+#endif
+
+HARKEN_OPTIONAL_HOST_EXPORT VnResult Vn_MonitorBeginHostSession(VnMonitorHostSessionV1* outSession) {
+    harken::monitor::IdentityMutationScope identityMutation;
+    if (outSession == nullptr || outSession->structSize != sizeof(*outSession) ||
+        outSession->reserved0 != 0) return VN_INVALID_ARG;
+    const auto gate = harken::monitor::GateControlEntry();
+    if (gate != VN_OK) return gate;
+    if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+    auto& registry = harken::detail::ActiveEngine()->monitorEmitters;
+    *outSession = {};
+    outSession->structSize = sizeof(*outSession);
+    outSession->emitterCapacity = registry.Capacity();
+    outSession->engineInstance = registry.EngineInstance();
+    outSession->sdkSession = registry.BeginSession();
+    return outSession->sdkSession != 0 ? VN_OK : VN_MONITOR_SEQUENCE_EXHAUSTED;
+}
+
+HARKEN_OPTIONAL_HOST_EXPORT VnResult Vn_MonitorEndHostSession(uint64_t engineInstance, uint64_t sdkSession) {
+    harken::monitor::IdentityMutationScope identityMutation;
+    const auto gate = harken::monitor::GateControlEntry();
+    if (gate != VN_OK) return gate;
+    if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+    auto& registry = harken::detail::ActiveEngine()->monitorEmitters;
+    return engineInstance == registry.EngineInstance() && registry.EndSession(engineInstance, sdkSession)
+        ? VN_OK : VN_MONITOR_STALE_SESSION;
+}
+
+HARKEN_OPTIONAL_HOST_EXPORT VnResult Vn_MonitorRegisterHost(const VnMonitorHostRegistrationV1* desc) {
+    harken::monitor::IdentityMutationScope identityMutation;
+    if (desc == nullptr || desc->structSize != sizeof(*desc) || desc->reserved0 != 0 ||
+        desc->localSequence == 0 || desc->registrationRevision == 0 ||
+        (desc->ownershipKind != VN_MONITOR_HOST_UNITY_EMITTER &&
+         desc->ownershipKind != VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE)) return VN_INVALID_ARG;
+    const auto gate = harken::monitor::GateControlEntry();
+    if (gate != VN_OK) return gate;
+    if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+    auto& engine = *harken::detail::ActiveEngine();
+    auto& registry = engine.monitorEmitters;
+    if (desc->engineInstance != registry.EngineInstance() || desc->sdkSession == 0 ||
+        desc->sdkSession != registry.Session()) return VN_MONITOR_STALE_SESSION;
+    if (!engine.emitters.IsPublicLive(desc->emitter)) return VN_STALE_HANDLE;
+    return registry.Register(desc->engineInstance, desc->sdkSession, desc->emitter, desc->localSequence,
+        static_cast<harken::MonitorHostOwnership>(desc->ownershipKind), desc->registrationRevision)
+        ? VN_OK : VN_INVALID_ARG;
+}
+
+HARKEN_OPTIONAL_HOST_EXPORT VnResult Vn_MonitorRegisterHostV2(const VnMonitorHostRegistrationV2* desc) {
+    harken::monitor::IdentityMutationScope identityMutation;
+    if (desc == nullptr || desc->structSize != sizeof(*desc) || desc->reserved0 != 0 ||
+        desc->localSequence == 0 || desc->registrationRevision == 0 ||
+        (desc->ownershipKind != VN_MONITOR_HOST_UNITY_EMITTER &&
+         desc->ownershipKind != VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE)) return VN_INVALID_ARG;
+    harken::MonitorHostDescription description{};
+    if (!harken::MonitorHostDescription::Capture(*desc, description)) return VN_INVALID_ARG;
+    const auto gate = harken::monitor::GateControlEntry();
+    if (gate != VN_OK) return gate;
+    if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+    auto& engine = *harken::detail::ActiveEngine();
+    auto& registry = engine.monitorEmitters;
+    if (desc->engineInstance != registry.EngineInstance() || desc->sdkSession == 0 ||
+        desc->sdkSession != registry.Session()) return VN_MONITOR_STALE_SESSION;
+    if (!engine.emitters.IsPublicLive(desc->emitter)) return VN_STALE_HANDLE;
+    return registry.Register(desc->engineInstance, desc->sdkSession, desc->emitter, desc->localSequence,
+        static_cast<harken::MonitorHostOwnership>(desc->ownershipKind), desc->registrationRevision, &description)
+        ? VN_OK : VN_INVALID_ARG;
+}
+
+#undef HARKEN_OPTIONAL_HOST_EXPORT
 
 VnResult Vn_Init(const VnConfig* config) {
     harken::ClearRealDeviceInitStage();
@@ -89555,6 +90389,7 @@ VnResult Vn_Term(void) {
     }}
 
 VnResult Vn_Update(void) {
+    harken::monitor::IdentityMutationScope identityMutation;
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     harken::Engine* engine = harken::detail::g_engine;
@@ -90105,13 +90940,14 @@ VnResult Vn_Update(void) {
      * because formatting with no reader is wasted work. */
     harken::LogRecord record;
     char text[160];
-    while (engine->logRing.TryPop(record)) {
+    std::uint64_t monitorLogTicket = 0;
+    while (engine->logRing.TryPop(record, &monitorLogTicket)) {
         if (engine->config.logCallback == nullptr && !harken::monitor::EventCatalogEnabled()) {
             continue;
         }
         FormatLogRecord(record, text, sizeof text);
         harken::monitor::ObserveDiagnostic(record.level, record.code, record.arg0,
-                                         record.arg1, record.timestampNs, record.objectId, record.projectId, text);
+                                         record.arg1, record.timestampNs, record.objectId, record.projectId, text, 3, monitorLogTicket);
         if (engine->config.logCallback == nullptr) continue;
         {
             harken::detail::CallbackScope callbackScope(*engine);
@@ -90134,6 +90970,7 @@ VnResult Vn_Update(void) {
             return VN_OK;
         }
     }
+    harken::monitor::CompleteLogTranscription(3, engine->logRing.ConsumedCount());
     /* Logic-originated records (container resolution outcomes) drain after the
      * audio records, through the same format/sink path. Same-thread producer
      * and consumer (the externally synchronized logic thread), so the ring is
@@ -90153,13 +90990,13 @@ VnResult Vn_Update(void) {
         }
     }
     engine->variables.MarkOutcomeDeliveryComplete();
-    while (engine->logicLogRing.TryPop(record)) {
+    while (engine->logicLogRing.TryPop(record, &monitorLogTicket)) {
         if (engine->config.logCallback == nullptr && !harken::monitor::EventCatalogEnabled()) {
             continue;
         }
         FormatLogRecord(record, text, sizeof text);
         harken::monitor::ObserveDiagnostic(record.level, record.code, record.arg0,
-                                         record.arg1, record.timestampNs, record.objectId, record.projectId, text);
+                                         record.arg1, record.timestampNs, record.objectId, record.projectId, text, 4, monitorLogTicket);
         if (engine->config.logCallback == nullptr) continue;
         {
             harken::detail::CallbackScope callbackScope(*engine);
@@ -90182,6 +91019,7 @@ VnResult Vn_Update(void) {
             return VN_OK;
         }
     }
+    harken::monitor::CompleteLogTranscription(4, engine->logicLogRing.ConsumedCount());
     if (engine->trace != nullptr) {
         engine->trace->UpdateEnd();
     }
@@ -91046,8 +91884,8 @@ bool CanResetActionPlayScratchForTests(EngineActionPlayScratch& scratch) noexcep
 namespace {
 
 VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
-                  bool actionEmitterPlay,
-                  bool* outDemotedToTwoD) {
+                  const harken::MonitorRequestContext& request, bool actionEmitterPlay,
+                  bool* outDemotedToTwoD, harken::monitor::RequestObservation* observation) {
     if (outDemotedToTwoD != nullptr) {
         *outDemotedToTwoD = false;
     }
@@ -91084,6 +91922,10 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
          desc->structSize != priorityVintageSize &&
          desc->structSize != loopVintageSize)) {
         return VN_INVALID_ARG;
+    }
+    if (observation) {
+        observation->TargetContent(desc->soundId, VN_MONITOR_CONTENT_MEDIA);
+        observation->Submitted();
     }
     // reserved0 is the play-flag bit field. It sits ahead of every vintage
     // boundary, so an older caller has the storage — but not the entry points
@@ -91129,6 +91971,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     if (emitterHandle != 0 && !engine->emitters.IsPublicLive(emitterHandle)) {
         return VN_STALE_HANDLE;
     }
+    const auto emitterOrigin = engine->monitorEmitters.CaptureOrigin(emitterHandle);
     // Non-finite values must be refused up front: a NaN or infinity ratio
     // reaches the resampler's read position where float-to-integer
     // conversion is undefined behavior. isfinite also rejects NaN that
@@ -91437,7 +92280,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         VnVoiceHandle pendingPublic = 0;
         std::uint32_t pendingSlot = 0;
         if (!engine->ledger.AcquirePending(
-                &pendingPublic, &pendingSlot, priority)) {
+                &pendingPublic, &pendingSlot, priority, request, emitterOrigin, desc->soundId)) {
             engine->voices.NoteNoVoiceRefusal();
             return VN_NO_VOICE;
         }
@@ -91514,7 +92357,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         VnVoiceHandle pendingPublic = 0;
         std::uint32_t pendingSlot = 0;
         if (!engine->ledger.AcquirePending(&pendingPublic, &pendingSlot,
-                                           priority)) {
+                                           priority, request, emitterOrigin, desc->soundId)) {
             engine->voices.NoteNoVoiceRefusal();
             return VN_NO_VOICE;
         }
@@ -91661,7 +92504,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         VnVoiceHandle pendingPublic = 0;
         std::uint32_t pendingSlot = 0;
         if (!engine->ledger.AcquirePending(&pendingPublic, &pendingSlot,
-                                           priority)) {
+                                           priority, request, emitterOrigin, desc->soundId)) {
             engine->voices.NoteNoVoiceRefusal();
             return VN_NO_VOICE;
         }
@@ -91816,7 +92659,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     // thereby covered by the Logical-capacity-derived store budget.
     VnVoiceHandle publicHandle = 0;
     std::uint32_t ledgerSlot = 0;
-    if (!engine->ledger.Acquire(&publicHandle, &ledgerSlot)) {
+    if (!engine->ledger.Acquire(&publicHandle, &ledgerSlot, request, emitterOrigin, desc->soundId)) {
         engine->voices.NoteNoVoiceRefusal();
         return VN_NO_VOICE;
     }
@@ -91986,6 +92829,8 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         }
     }
 
+    (void)engine->voices.BindMonitorControl(renderHandle,
+        engine->ledger.ArmMonitorControl(ledgerSlot, renderHandle));
     harken::CommandRecord command{};
     command.opcode = harken::kOpcodePlay;
     command.payload.play.handle = renderHandle;
@@ -92136,6 +92981,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
 extern "C" {
 
 VnResult Vn_CommitVoiceStart(VnVoiceHandle handle) {
+    harken::monitor::IdentityMutationScope identityMutation;
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     harken::Engine* engine = harken::detail::g_engine;
@@ -92230,7 +93076,8 @@ VnResult Vn_CommitVoiceStart(VnVoiceHandle handle) {
         return VN_DEVICE_ERROR;
     }}
 
-static VnResult StopVoiceObserved(VnVoiceHandle handle, uint32_t fadeMs) {
+static VnResult StopVoiceObserved(VnVoiceHandle handle, uint32_t fadeMs,
+                                  const harken::MonitorControlCause& cause) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     harken::Engine* engine = harken::detail::g_engine;
@@ -92249,7 +93096,7 @@ static VnResult StopVoiceObserved(VnVoiceHandle handle, uint32_t fadeMs) {
         if (guard != VN_OK) {
             return guard;
         }
-        CancelPendingStart(*engine, resolved.ledgerSlot, fadeMs);
+        CancelPendingStart(*engine, resolved.ledgerSlot, fadeMs, cause);
         return VN_OK;
     }
     // A parked voice holds no render slot: end its ledger entry directly.
@@ -92258,7 +93105,7 @@ static VnResult StopVoiceObserved(VnVoiceHandle handle, uint32_t fadeMs) {
         if (guard != VN_OK) {
             return guard;
         }
-        EndParkedVoice(*engine, resolved.ledgerSlot, handle, fadeMs);
+        EndParkedVoice(*engine, resolved.ledgerSlot, handle, fadeMs, cause);
         return VN_OK;
     }
     // Otherwise resolve to the render-slot handle (0 for a stale public handle)
@@ -92285,7 +93132,7 @@ static VnResult StopVoiceObserved(VnVoiceHandle handle, uint32_t fadeMs) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    engine->ledger.MarkTerminating(render);
+    engine->ledger.MarkTerminating(render, cause);
     (void)engine->commands.TryPush(command); // space verified above
     return VN_OK;
 
@@ -98113,6 +98960,7 @@ VnResult Vn_SetVoiceOrientation(VnVoiceHandle handle, VnVec3 forward) {
 
 static VnResult CreateEmitterObserved(VnEmitterHandle* outHandle, uint32_t flags,
                                       bool extended) {
+    harken::monitor::IdentityMutationScope identityMutation;
     if (outHandle == nullptr) return VN_INVALID_ARG;
     *outHandle = 0;
     try {
@@ -98143,6 +98991,7 @@ static VnResult CreateEmitterObserved(VnEmitterHandle* outHandle, uint32_t flags
         trace.U64(0);
         return VN_NO_EMITTER;
     }
+    engine->monitorEmitters.NoteCreated(handle);
     *outHandle = handle;
     if (engine->trace != nullptr && engine->trace->Active()) {
         engine->trace->RememberEmitterHandle(handle);
@@ -98171,6 +99020,7 @@ VnResult Vn_CreateEmitterEx(const VnEmitterCreateDescV1* desc,
 }
 
 VnResult Vn_DestroyEmitter(VnEmitterHandle handle) {
+    harken::monitor::IdentityMutationScope identityMutation;
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     harken::Engine* engine = harken::detail::g_engine;
@@ -98209,6 +99059,7 @@ VnResult Vn_DestroyEmitter(VnEmitterHandle handle) {
     // an active deferral's reservation covers the demand the next
     // evaluation realizes.
     engine->params.NoteEmitterDetached(handle);
+    engine->monitorEmitters.NoteDestroyed(handle);
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -98295,7 +99146,8 @@ VnResult Vn_SetEmitterOrientation(VnEmitterHandle handle, VnVec3 forward) {
         return VN_DEVICE_ERROR;
     }}
 
-static VnResult StopEmitterObserved(VnEmitterHandle handle, uint32_t fadeMs) {
+static VnResult StopEmitterObserved(VnEmitterHandle handle, uint32_t fadeMs,
+                                  const harken::MonitorControlCause& cause) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     harken::Engine* engine = harken::detail::g_engine;
@@ -98338,7 +99190,7 @@ static VnResult StopEmitterObserved(VnEmitterHandle handle, uint32_t fadeMs) {
             ++attachedLive;
         }
     });
-    const VnResult playables = StopEmitterPlayablesCore(*engine, handle, fadeMs, attachedLive);
+    const VnResult playables = StopEmitterPlayablesCore(*engine, handle, fadeMs, attachedLive, cause);
     if (playables != VN_OK) return playables;
     std::uint32_t stopBatchCount = 0;
     engine->ledger.ForEachLive([&](VnVoiceHandle render, std::uint32_t,
@@ -98350,7 +99202,7 @@ static VnResult StopEmitterObserved(VnEmitterHandle handle, uint32_t fadeMs) {
         stop.opcode = harken::kOpcodeStop;
         stop.payload.stop.handle = render;
         stop.payload.stop.fadeMs = fadeMs;
-        engine->ledger.MarkTerminating(render);
+        engine->ledger.MarkTerminating(render, cause);
         engine->playLedBatchScratch[stopBatchCount++] = stop;
     });
     if (stopBatchCount != 0) {
@@ -98370,7 +99222,7 @@ static VnResult StopEmitterObserved(VnEmitterHandle handle, uint32_t fadeMs) {
     for (std::uint32_t slot = 0; slot < engine->pendingStarts.size(); ++slot) {
         harken::PendingStartRecord& rec = engine->pendingStarts[slot];
         if (rec.active && rec.emitterHandle == handle) {
-            CancelPendingStart(*engine, slot, fadeMs);
+            CancelPendingStart(*engine, slot, fadeMs, cause);
         }
     }
     // Parked voices attached to this emitter hold no render slot: end them
@@ -98379,7 +99231,7 @@ static VnResult StopEmitterObserved(VnEmitterHandle handle, uint32_t fadeMs) {
         harken::ParkRecord& rec = engine->parkRecords[slot];
         if (rec.active && rec.stateEmitter == handle) {
             EndParkedVoice(*engine, slot, engine->ledger.PublicHandleForSlot(slot),
-                           fadeMs);
+                           fadeMs, cause);
         }
     }
     return VN_OK;
@@ -98491,10 +99343,12 @@ static VnResult SetEmitterValuesObserved(VnEmitterHandle emitter,
  * logic thread only; the audio thread never sees an Action. */
 
 static VnResult PostActionObserved(const VnPostActionDesc* desc,
-                       VnActionFiringHandle* outFiring) {
+                       VnActionFiringHandle* outFiring,
+                       const harken::MonitorRequestContext& request,
+                       harken::monitor::RequestObservation* observation) {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     return harken::detail::PostActionWithValidation(
-        desc, outFiring, nullptr, nullptr);
+        desc, outFiring, nullptr, nullptr, true, request, observation);
 }
 
 } // extern "C"
@@ -98511,7 +99365,7 @@ bool harken::detail::DirectWorldHasActionProgram(VnActionId actionId) noexcept {
 VnResult harken::detail::PostActionWithValidation(
     const VnPostActionDesc* desc, VnActionFiringHandle* outFiring,
     ActionAdmissionValidator validator, const void* context,
-    bool journalCall) {
+    bool journalCall, const MonitorRequestContext& request, monitor::RequestObservation* observation) {
     try {
         if (outFiring == nullptr) {
             return VN_INVALID_ARG;
@@ -98521,6 +99375,10 @@ VnResult harken::detail::PostActionWithValidation(
             desc->flags != 0 || desc->actionId == VnObjectId{} ||
             desc->reserved0 != 0) {
             return VN_INVALID_ARG;
+        }
+        if (observation) {
+            observation->TargetContent(desc->actionId, VN_MONITOR_CONTENT_ACTION);
+            observation->Submitted();
         }
         harken::Engine* engine = harken::detail::g_engine;
         if (engine == nullptr || engine->callbackFatalSticky) {
@@ -98550,9 +99408,11 @@ VnResult harken::detail::PostActionWithValidation(
         bool packLeaseHeld = false;
         bool originalDefinitionAcquired = false;
         ImmediateActionPlan plan{};
+        plan.playbackRequest = request;
         plan.engine = engine;
         plan.emitter = desc->emitter == 0 ? engine->emitters.DefaultState()
                                           : desc->emitter;
+        plan.emitterOrigin = engine->monitorEmitters.CaptureOrigin(plan.emitter);
         plan.callerSeed = desc->callerSeed;
         try {
             result = [&]() -> VnResult {
@@ -99099,14 +99959,15 @@ VnResult CheckedAdmissionValidator(
 VnResult SubmitCheckedAction(
     harken::Engine& engine, VnObjectId actionId, VnEmitterHandle emitter,
     std::uint64_t callerSeed, const CheckedSubmitContext& context,
-    VnActionFiringHandle* outFiring) {
+    VnActionFiringHandle* outFiring, const harken::MonitorRequestContext& request,
+    harken::monitor::RequestObservation* observation) {
     VnPostActionDesc numeric{};
     numeric.structSize = sizeof(numeric);
     numeric.actionId = actionId;
     numeric.emitter = emitter;
     numeric.callerSeed = callerSeed;
     return harken::detail::PostActionWithValidation(
-        &numeric, outFiring, CheckedAdmissionValidator, &context, false);
+        &numeric, outFiring, CheckedAdmissionValidator, &context, false, request, observation);
 }
 
 void FillResolved(const harken::PackComposition::PublishedView& published,
@@ -99122,7 +99983,8 @@ void FillResolved(const harken::PackComposition::PublishedView& published,
 }
 
 VnResult StopEmitterPlayablesCore(harken::Engine& engine, VnEmitterHandle emitter,
-                                std::uint32_t fadeMs, std::uint32_t directCommandCount) {
+                                std::uint32_t fadeMs, std::uint32_t directCommandCount,
+                                const harken::MonitorControlCause& cause) {
     std::uint32_t scratchCount = 0;
     std::uint32_t cancellationCount = 0;
     std::uint32_t commandCount = directCommandCount;
@@ -99155,7 +100017,7 @@ VnResult StopEmitterPlayablesCore(harken::Engine& engine, VnEmitterHandle emitte
         auto& scratch = engine.actionStopScratch[index];
         if (scratch.treeCancellationRequired &&
             harken::BeginPlayableCancellation(engine, scratch.row->rootInstance, fadeMs,
-                harken::PlayableCancellationIntent::Stop, false, nullptr, true) !=
+                harken::PlayableCancellationIntent::Stop, false, nullptr, true, nullptr, false, false, cause) !=
                 harken::PlayableControlStatus::Ok) {
             engine.runtimeRecreateRequired = true;
         }
@@ -99164,7 +100026,7 @@ VnResult StopEmitterPlayablesCore(harken::Engine& engine, VnEmitterHandle emitte
 }
 
 VnResult StopAllPlayablesCore(harken::Engine &engine, std::uint32_t fadeMs,
-                              std::uint32_t directCommandCount) {
+                              std::uint32_t directCommandCount, const harken::MonitorControlCause& cause) {
     std::uint32_t scratchCount = 0;
     std::uint32_t cancellationCount = 0;
     std::uint32_t commandCount = directCommandCount;
@@ -99232,7 +100094,7 @@ VnResult StopAllPlayablesCore(harken::Engine &engine, std::uint32_t fadeMs,
         if (scratch.treeCancellationRequired &&
             harken::BeginPlayableCancellation(engine, scratch.row->rootInstance, fadeMs,
                                              harken::PlayableCancellationIntent::Stop, false,
-                                             nullptr, true) != harken::PlayableControlStatus::Ok)
+                                             nullptr, true, nullptr, false, false, cause) != harken::PlayableControlStatus::Ok)
             invariantFailed = true;
     }
     for (std::uint32_t slot = 0; slot < engine.actionFirings.Capacity(); ++slot) {
@@ -99240,7 +100102,7 @@ VnResult StopAllPlayablesCore(harken::Engine &engine, std::uint32_t fadeMs,
         if (firing == 0)
             continue;
         if (!engine.actionFirings.MarkTreeStopping(firing,
-                                                   harken::ActionTerminalReason::StopRequested) ||
+                                                   harken::ActionTerminalReason::StopRequested, cause) ||
             !harken::CancelActionDeferredTree(engine, firing))
             invariantFailed = true;
     }
@@ -99256,7 +100118,9 @@ VnResult StopAllPlayablesCore(harken::Engine &engine, std::uint32_t fadeMs,
 extern "C" {
 
 static VnResult PostActionByNameObserved(const VnPostActionByNameDesc* desc,
-                             VnActionFiringHandle* outFiring) {
+                             VnActionFiringHandle* outFiring,
+                             const harken::MonitorRequestContext& request,
+                             harken::monitor::RequestObservation* observation) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
         if (outFiring == nullptr) {
@@ -99269,6 +100133,7 @@ static VnResult PostActionByNameObserved(const VnPostActionByNameDesc* desc,
             desc->utf8Name == nullptr) {
             return VN_INVALID_ARG;
         }
+        if (observation) observation->Submitted();
         const VnResult grammar = ValidateAuthoredActionName(desc->utf8Name);
         if (grammar != VN_OK) {
             return grammar;
@@ -99303,6 +100168,7 @@ static VnResult PostActionByNameObserved(const VnPostActionByNameDesc* desc,
             trace.U32(static_cast<std::uint32_t>(looked)).U64(0);
             return looked;
         }
+        if (observation) observation->TargetContent(row->actionStableId, VN_MONITOR_CONTENT_ACTION);
         const VnResult ready = RefuseIfOwnerNotReady(*published, *row);
         if (ready != VN_OK) {
             trace.U32(static_cast<std::uint32_t>(ready)).U64(0);
@@ -99314,7 +100180,7 @@ static VnResult PostActionByNameObserved(const VnPostActionByNameDesc* desc,
         ctx.ownerPackStableId = row->ownerPackStableId;
         const VnResult posted =
             SubmitCheckedAction(*engine, row->actionStableId, desc->emitter,
-                                desc->callerSeed, ctx, outFiring);
+                                desc->callerSeed, ctx, outFiring, request, observation);
         trace.U32(static_cast<std::uint32_t>(posted))
             .U64(posted == VN_OK ? *outFiring : 0);
         if (posted == VN_OK) {
@@ -99385,7 +100251,9 @@ VnResult Vn_ResolveActionByName(const VnPostActionByNameDesc* desc,
 }
 
 static VnResult PostActionPinnedObserved(const VnActionPinnedDesc* desc,
-                             VnActionFiringHandle* outFiring) {
+                             VnActionFiringHandle* outFiring,
+                             const harken::MonitorRequestContext& request,
+                             harken::monitor::RequestObservation* observation) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
         if (outFiring == nullptr) {
@@ -99396,6 +100264,10 @@ static VnResult PostActionPinnedObserved(const VnActionPinnedDesc* desc,
             desc->flags != 0 || desc->reserved0 != 0 ||
             desc->utf8ExpectedName == nullptr || desc->actionId == VnObjectId{}) {
             return VN_INVALID_ARG;
+        }
+        if (observation) {
+            observation->TargetContent(desc->actionId, VN_MONITOR_CONTENT_ACTION);
+            observation->Submitted();
         }
         const VnResult grammar =
             ValidateAuthoredActionName(desc->utf8ExpectedName);
@@ -99455,7 +100327,7 @@ static VnResult PostActionPinnedObserved(const VnActionPinnedDesc* desc,
         ctx.callableFingerprint = desc->callableFingerprint;
         const VnResult posted =
             SubmitCheckedAction(*engine, row->actionStableId, desc->emitter,
-                                desc->callerSeed, ctx, outFiring);
+                                desc->callerSeed, ctx, outFiring, request, observation);
         trace.U32(static_cast<std::uint32_t>(posted))
             .U64(posted == VN_OK ? *outFiring : 0);
         if (posted == VN_OK) {
@@ -99472,7 +100344,9 @@ static VnResult PostActionPinnedObserved(const VnActionPinnedDesc* desc,
 
 static VnResult PostActionResolvedObserved(const VnActionResolved* resolved,
                                VnEmitterHandle emitter, uint64_t callerSeed,
-                               VnActionFiringHandle* outFiring) {
+                               VnActionFiringHandle* outFiring,
+                             const harken::MonitorRequestContext& request,
+                             harken::monitor::RequestObservation* observation) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
         if (outFiring == nullptr) {
@@ -99483,6 +100357,10 @@ static VnResult PostActionResolvedObserved(const VnActionResolved* resolved,
             resolved->structSize != sizeof(VnActionResolved) ||
             resolved->reserved0 != 0 || resolved->actionId == VnObjectId{}) {
             return VN_INVALID_ARG;
+        }
+        if (observation) {
+            observation->TargetContent(resolved->actionId, VN_MONITOR_CONTENT_ACTION);
+            observation->Submitted();
         }
         harken::Engine* engine = harken::detail::g_engine;
         const harken::PackComposition::PublishedView* published = nullptr;
@@ -99549,7 +100427,7 @@ static VnResult PostActionResolvedObserved(const VnActionResolved* resolved,
         ctx.callableFingerprint = resolved->callableFingerprint;
         const VnResult posted =
             SubmitCheckedAction(*engine, row->actionStableId, emitter,
-                                callerSeed, ctx, outFiring);
+                                callerSeed, ctx, outFiring, request, observation);
         trace.U32(static_cast<std::uint32_t>(posted))
             .U64(posted == VN_OK ? *outFiring : 0);
         if (posted == VN_OK) {
@@ -99565,7 +100443,7 @@ static VnResult PostActionResolvedObserved(const VnActionResolved* resolved,
 }
 
 static VnResult StopActionObserved(VnActionFiringHandle firing,
-                             uint32_t fadeMs) {
+                             uint32_t fadeMs, const harken::MonitorControlCause& cause) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
         harken::Engine* engine = harken::detail::g_engine;
@@ -99720,14 +100598,14 @@ static VnResult StopActionObserved(VnActionFiringHandle firing,
                         harken::BeginPlayableCancellation(
                             *engine, scratch.row->rootInstance, fadeMs,
                             harken::PlayableCancellationIntent::Stop, false,
-                            nullptr, true);
+                            nullptr, true, nullptr, false, false, cause);
                     if (status != harken::PlayableControlStatus::Ok) {
                         invariantFailed = true;
                     }
                 }
                 if (!engine->actionFirings.MarkTreeStopping(
                         firing,
-                        harken::ActionTerminalReason::StopRequested)) {
+                        harken::ActionTerminalReason::StopRequested, cause)) {
                     invariantFailed = true;
                 }
                 if (!harken::CancelActionDeferredTree(*engine, firing)) {
@@ -99751,7 +100629,7 @@ static VnResult StopActionObserved(VnActionFiringHandle firing,
     }
 }
 
-static VnResult StopAllObserved(uint32_t fadeMs) {
+static VnResult StopAllObserved(uint32_t fadeMs, const harken::MonitorControlCause& cause) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
         harken::Engine* engine = harken::detail::g_engine;
@@ -99759,7 +100637,7 @@ static VnResult StopAllObserved(uint32_t fadeMs) {
             return VN_NOT_INITIALIZED;
         }
         TraceStateful(engine, harken::kTraceCallStopAll).U32(fadeMs);
-        return StopAllCore(*engine, fadeMs);
+        return StopAllCore(*engine, fadeMs, cause);
     } catch (const std::bad_alloc&) {
         return VN_DEVICE_ERROR;
     } catch (...) {
@@ -100277,6 +101155,7 @@ VnResult Vn_QueryActionStep(VnActionFiringHandle firing,
 }
 
 VnResult Vn_ReleaseActionFiring(VnActionFiringHandle firing) {
+    harken::monitor::IdentityMutationScope identityMutation;
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
         harken::Engine* engine = harken::detail::g_engine;
@@ -110302,31 +111181,54 @@ VnResult Vn_LoadPack(const VnPackDesc* desc, VnPackHandle* outHandle) {
 }
 
 VnResult Vn_Stop(VnVoiceHandle handle, uint32_t fadeMs) {
-    const auto result = StopVoiceObserved(handle, fadeMs);
+    const harken::MonitorControlCause cause{harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_STOP_VOICE)};
+    harken::monitor::RequestObservation observation(cause.request);
+    observation.TargetHandle(VN_MONITOR_TARGET_LOGICAL_VOICE, handle);
+    observation.Submitted();
+    const auto result = StopVoiceObserved(handle, fadeMs, cause);
     harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_STOP_VOICE, result,
         VN_MONITOR_ENTITY_VOICE, {}, handle, fadeMs);
-    return result;
+    if (result == VN_OK) observation.TargetValidated();
+    return observation.Returned(result);
 }
 
 VnResult Vn_StopActionFiring(VnActionFiringHandle firing, uint32_t fadeMs) {
-    const auto result = StopActionObserved(firing, fadeMs);
+    const harken::MonitorControlCause cause{harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_STOP_ACTION)};
+    harken::monitor::RequestObservation observation(cause.request);
+    observation.TargetHandle(VN_MONITOR_TARGET_ACTION, firing);
+    observation.Submitted();
+    const auto result = StopActionObserved(firing, fadeMs, cause);
     harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_STOP_ACTION, result,
         VN_MONITOR_ENTITY_ACTION, {}, firing, fadeMs);
-    return result;
+    if (result == VN_OK) observation.TargetValidated();
+    return observation.Returned(result);
 }
 
 VnResult Vn_StopAll(uint32_t fadeMs) {
-    const auto result = StopAllObserved(fadeMs);
+    const harken::MonitorControlCause cause{harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_STOP_ALL)};
+    harken::monitor::RequestObservation observation(cause.request);
+    observation.TargetAll();
+    observation.Submitted();
+    const auto result = StopAllObserved(fadeMs, cause);
     harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_STOP_ALL, result,
         VN_MONITOR_ENTITY_NONE, {}, 0, fadeMs);
-    return result;
+    return observation.Returned(result);
 }
 
 VnResult Vn_StopEmitter(VnEmitterHandle handle, uint32_t fadeMs) {
-    const auto result = StopEmitterObserved(handle, fadeMs);
+    const harken::MonitorControlCause cause{harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_STOP_EMITTER)};
+    harken::monitor::RequestObservation observation(cause.request);
+    observation.TargetHandle(VN_MONITOR_TARGET_EMITTER, handle);
+    observation.Submitted();
+    const auto result = StopEmitterObserved(handle, fadeMs, cause);
     harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_STOP_EMITTER, result,
         VN_MONITOR_ENTITY_NONE, {}, handle, fadeMs);
-    return result;
+    if (result == VN_OK) observation.TargetValidated();
+    return observation.Returned(result);
 }
 
 VnResult Vn_SetValue(VnVariableId variableId, float value) {
@@ -110481,45 +111383,73 @@ VnResult Vn_SetEmitterValues(VnEmitterHandle emitter, const VnVariableBatchDescV
 }
 
 VnResult Vn_PostAction(const VnPostActionDesc* desc, VnActionFiringHandle* outFiring) {
-    const auto result = PostActionObserved(desc, outFiring);
+    const auto request = harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION);
+    harken::monitor::RequestObservation observation(request);
+    const auto result = PostActionObserved(desc, outFiring, request, &observation);
     const bool readable = desc && desc->structSize == sizeof(*desc);
     harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_POST_ACTION, result,
         VN_MONITOR_ENTITY_ACTION, readable ? desc->actionId : VnObjectId{},
         result == VN_OK && outFiring ? *outFiring : 0,
         readable ? desc->emitter : 0, readable ? desc->callerSeed : 0);
-    return result;
+    if (result == VN_OK && outFiring) {
+        observation.TargetValidated();
+        harken::detail::CaptureMonitorAcceptedRequest(observation, VN_MONITOR_SUBJECT_ACTION, *outFiring);
+    }
+    return observation.Returned(result);
 }
 
 VnResult Vn_PostActionByName(const VnPostActionByNameDesc* desc, VnActionFiringHandle* outFiring) {
-    const auto result = PostActionByNameObserved(desc, outFiring);
+    const auto request = harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION_BY_NAME);
+    harken::monitor::RequestObservation observation(request);
+    const auto result = PostActionByNameObserved(desc, outFiring, request, &observation);
     const bool readable = desc && desc->structSize == sizeof(*desc);
     harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_POST_ACTION_BY_NAME, result,
         VN_MONITOR_ENTITY_ACTION, {}, result == VN_OK && outFiring ? *outFiring : 0,
         readable ? desc->emitter : 0, readable ? desc->callerSeed : 0, 0,
         readable ? desc->utf8Name : nullptr);
-    return result;
+    if (result == VN_OK && outFiring) {
+        observation.TargetValidated();
+        harken::detail::CaptureMonitorAcceptedRequest(observation, VN_MONITOR_SUBJECT_ACTION, *outFiring);
+    }
+    return observation.Returned(result);
 }
 
 VnResult Vn_PostActionPinned(const VnActionPinnedDesc* desc, VnActionFiringHandle* outFiring) {
-    const auto result = PostActionPinnedObserved(desc, outFiring);
+    const auto request = harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION_PINNED);
+    harken::monitor::RequestObservation observation(request);
+    const auto result = PostActionPinnedObserved(desc, outFiring, request, &observation);
     const bool readable = desc && desc->structSize == sizeof(*desc);
     harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_POST_ACTION_PINNED, result,
         VN_MONITOR_ENTITY_ACTION, readable ? desc->actionId : VnObjectId{},
         result == VN_OK && outFiring ? *outFiring : 0,
         readable ? desc->emitter : 0, readable ? desc->callerSeed : 0, 0,
         readable ? desc->utf8ExpectedName : nullptr);
-    return result;
+    if (result == VN_OK && outFiring) {
+        observation.TargetValidated();
+        harken::detail::CaptureMonitorAcceptedRequest(observation, VN_MONITOR_SUBJECT_ACTION, *outFiring);
+    }
+    return observation.Returned(result);
 }
 
 VnResult Vn_PostActionResolved(const VnActionResolved* resolved,
                                VnEmitterHandle emitter, uint64_t callerSeed,
                                VnActionFiringHandle* outFiring) {
-    const auto result = PostActionResolvedObserved(resolved, emitter, callerSeed, outFiring);
+    const auto request = harken::detail::BeginMonitorRequest(
+        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION_RESOLVED);
+    harken::monitor::RequestObservation observation(request);
+    const auto result = PostActionResolvedObserved(resolved, emitter, callerSeed, outFiring, request, &observation);
     harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_POST_ACTION_RESOLVED, result,
         VN_MONITOR_ENTITY_ACTION,
         resolved && resolved->structSize == sizeof(*resolved) ? resolved->actionId : VnObjectId{},
         result == VN_OK && outFiring ? *outFiring : 0, emitter, callerSeed);
-    return result;
+    if (result == VN_OK && outFiring) {
+        observation.TargetValidated();
+        harken::detail::CaptureMonitorAcceptedRequest(observation, VN_MONITOR_SUBJECT_ACTION, *outFiring);
+    }
+    return observation.Returned(result);
 }
 
 } // extern "C"

@@ -27,6 +27,8 @@ constexpr std::uint32_t kRate = 48000;
 
 VnConfig AudioConfig(std::uint32_t workers) {
     auto config = harkentest::MakeNullConfig(2, kBlock, kRate);
+    // Stop/audio coverage does not require the default nested Action scratch.
+    config.maxTriggerDepth = 2;
     config.renderWorkerCount = workers;
     return config;
 }
@@ -66,6 +68,17 @@ struct StopAudioHarness {
             EXPECT_TRUE(token.Valid());
             EXPECT_TRUE(engine->voices.BindSourceTerminal(render, engine->sourceTerminals.Resolve(token), token));
         }
+        if (captureControl) {
+            EXPECT_LT(controlCount, controls.size());
+            if (controlCount < controls.size()) {
+                auto& receipt = controls[controlCount];
+                EXPECT_TRUE(receipt.TryArm(1));
+                auto& binding = controlBindings[controlCount];
+                binding = {&receipt, 1, render, controlCount, 1};
+                EXPECT_TRUE(engine->voices.BindMonitorControl(render, binding));
+                ++controlCount;
+            }
+        }
         if (!apply) return render;
         engine->voices.ApplyPlay(render, render, 0, quantum);
         auto* context = engine->voices.Resolve(render);
@@ -93,6 +106,10 @@ struct StopAudioHarness {
 
     float Sample(std::uint32_t frame) const { return planes[0][frame]; }
 
+    std::array<harken::MonitorVoiceControlReceipt, 2> controls;
+    std::array<harken::MonitorVoiceControlBinding, 2> controlBindings{};
+    std::uint32_t controlCount = 0;
+    bool captureControl = false;
     harkentest::EngineSession session;
     std::vector<float> samples;
     harken::BlockArena arena;
@@ -808,6 +825,7 @@ struct FrontierAudioHarness {
 TEST(AuthoredStopAudio, AbandonedWorkerKeepsFrozenFrontierWhileNextQuantumFinalizes) {
     FrontierAudioHarness h(1);
     h.audio.retainSources = true;
+    h.audio.captureControl = true;
     h.Prepare(32, false, false, false, harken::VariableControlSide::Discrete,
         false, false, false, false, UINT64_MAX, true);
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
@@ -920,12 +938,18 @@ TEST(AuthoredStopAudio, AbandonedWorkerKeepsFrozenFrontierWhileNextQuantumFinali
     }
     harken::SourceTerminalPayload terminal{};
     EXPECT_FALSE(engine.sourceTerminals.Capture(gate.sourceToken, UINT64_MAX, &terminal));
+    const auto binding = std::find_if(h.audio.controlBindings.begin(), h.audio.controlBindings.end(),
+        [&](const auto& candidate) { return candidate.render == gate.source->render; });
+    ASSERT_NE(h.audio.controlBindings.end(), binding);
+    harken::MonitorVoiceControlFact control{};
+    EXPECT_FALSE(binding->receipt->TryRead(*binding, &control));
     EXPECT_TRUE(engine.playableInstances.HasSourceRetirementHold(gate.source->leaf));
     EXPECT_TRUE(engine.playableInstances.Classify(gate.source->leaf).live);
     gate.release.store(true, std::memory_order_release);
     harken::detail::VoicePoolReleaseTestAccess::JoinWorkers(engine.voices);
     EXPECT_TRUE(gate.exited.load(std::memory_order_acquire));
     EXPECT_FALSE(engine.sourceTerminals.Capture(gate.sourceToken, UINT64_MAX, &terminal));
+    EXPECT_FALSE(binding->receipt->TryRead(*binding, &control));
     EXPECT_TRUE(engine.playableInstances.HasSourceRetirementHold(gate.source->leaf));
 }
 
@@ -2774,14 +2798,22 @@ TEST(AuthoredStopAudio, GatedRootStopReleasesWithoutStartingInSerialAndWorker) {
         for (const auto laterStart : {0, 17, 31}) {
             SCOPED_TRACE(testing::Message() << "workers=" << workers << " later=" << laterStart);
             StopAudioHarness h(workers);
+            h.captureControl = true;
             const auto render = h.Play();
             const auto observer = h.lastObserver;
             h.Begin();
-            h.Append(render, StopAt(17));
+            auto stop = StopAt(17);
+            stop.controlCause.request.key = {5, 17};
+            h.Append(render, stop);
             if (laterStart) h.Append(render, StartAt(static_cast<std::uint16_t>(laterStart)));
             h.Render();
             EXPECT_TRUE(h.engine->voices.ReleaseObserved(observer));
             EXPECT_EQ(nullptr, h.engine->voices.Resolve(render));
+            harken::MonitorVoiceControlFact control{};
+            ASSERT_TRUE(h.controls[0].TryRead(h.controlBindings[0], &control));
+            EXPECT_TRUE(control.timelineControl);
+            EXPECT_EQ(stop.controlCause.request.key, control.cause.request.key);
+            EXPECT_EQ(harken::SourceTerminalKind::Stop, control.sourceKind);
             for (std::uint32_t i = 0; i < kBlock; ++i) EXPECT_EQ(0.0f, h.Sample(i));
             h.Begin();
             h.Render();
@@ -3122,14 +3154,103 @@ TEST(AuthoredStopAudio, ActualCoverageControlsSameQuantumAndLateOrMissingEnvelop
     }
 }
 
+TEST(AuthoredStopAudio, ResetTimelineStopCapturesOnlyItsActualSourceWinner) {
+    for (const auto workers : {0u, 2u}) {
+        for (const auto naturalFirst : {false, true}) {
+            SCOPED_TRACE(testing::Message() << "workers=" << workers << " natural=" << naturalFirst);
+            StopAudioHarness h(workers);
+            h.captureControl = true;
+            std::vector<float> shortPcm(8, 0.25f);
+            if (naturalFirst) {
+                const auto pcm = harkentest::MonoDesc(shortPcm, kRate);
+                ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(2), &pcm));
+            }
+            const auto render = h.Play(false, naturalFirst ? 2 : 1);
+            ASSERT_EQ(nullptr, h.engine->voices.Resolve(render)->sourceTerminal);
+            const auto observer = h.lastObserver;
+            harken::MonitorControlCause cause{};
+            cause.request.key = {11, 17};
+            cause.actionFiring = 23;
+            cause.executionOrdinal = 2;
+            for (std::uint32_t block = 0; block < 6; ++block) {
+                h.Begin();
+                if (block < 2 && h.engine->voices.Resolve(render) != nullptr) {
+                    auto stop = StopAt(block == 0 ? 17 : 0, false);
+                    stop.controlCause = cause;
+                    if (block != 0) stop.controlCause.request.key.sequence = 99;
+                    h.Append(render, stop);
+                }
+                h.Render();
+            }
+            EXPECT_TRUE(h.engine->voices.ReleaseObserved(observer));
+            harken::MonitorVoiceControlFact observed{};
+            ASSERT_TRUE(h.controls[0].TryRead(h.controlBindings[0], &observed));
+            EXPECT_EQ(naturalFirst ? harken::SourceTerminalKind::Natural : harken::SourceTerminalKind::Stop,
+                observed.sourceKind);
+            EXPECT_EQ(!naturalFirst, observed.timelineControl);
+            EXPECT_EQ(naturalFirst ? harken::MonitorRequestKey{} : cause.request.key, observed.cause.request.key);
+            if (!naturalFirst) {
+                EXPECT_EQ(cause.actionFiring, observed.cause.actionFiring);
+                EXPECT_EQ(cause.executionOrdinal, observed.cause.executionOrdinal);
+            }
+        }
+    }
+}
+
+TEST(AuthoredStopAudio, FirstAppliedControlSurvivesTimelineAndApiStopMixing) {
+    for (const auto workers : {0u, 2u}) {
+        for (const auto timelineFirst : {false, true}) {
+            for (const auto immediate : {false, true}) {
+                SCOPED_TRACE(testing::Message() << "workers=" << workers
+                    << " timelineFirst=" << timelineFirst << " immediate=" << immediate);
+                StopAudioHarness h(workers);
+                h.captureControl = true;
+                const auto render = h.Play(false);
+                const auto observer = h.lastObserver;
+                auto stop = StopAt(17, false);
+                stop.controlCause.request.key = {11, 17};
+                stop.controlCause.actionFiring = 23;
+                h.Begin();
+                if (timelineFirst) h.Append(render, stop);
+                else h.engine->voices.ApplyStop(render, immediate ? 0 : 5, 0,
+                    h.engine->notifications, h.quantum);
+                h.Render();
+                h.Begin();
+                if (timelineFirst) h.engine->voices.ApplyStop(render, immediate ? 0 : 5, 0,
+                    h.engine->notifications, h.quantum);
+                else if (h.engine->voices.Resolve(render) != nullptr) h.Append(render, stop);
+                h.Render();
+                for (std::uint32_t i = 0; i < 6; ++i) {
+                    h.Begin();
+                    h.Render();
+                }
+                EXPECT_TRUE(h.engine->voices.ReleaseObserved(observer));
+                harken::MonitorVoiceControlFact observed{};
+                ASSERT_TRUE(h.controls[0].TryRead(h.controlBindings[0], &observed));
+                EXPECT_EQ(harken::SourceTerminalKind::Stop, observed.sourceKind);
+                EXPECT_EQ(timelineFirst, observed.timelineControl);
+                EXPECT_EQ(timelineFirst ? stop.controlCause.request.key : harken::MonitorRequestKey{},
+                    observed.cause.request.key);
+            }
+        }
+    }
+}
+
 TEST(AuthoredStopAudio, RootStopDominatesLaterControlsAcrossQuanta) {
     for (const auto workers : {2u}) {
         StopAudioHarness h(workers);
+        h.captureControl = true;
         const auto render = h.Play(false);
+        ASSERT_EQ(nullptr, h.engine->voices.Resolve(render)->sourceTerminal);
         const auto observer = h.lastObserver;
         for (std::uint32_t block = 0; block < 6; ++block) {
             h.Begin();
-            if (block == 0) h.Append(render, StopAt(17));
+            if (block == 0) {
+                auto stop = StopAt(17);
+                stop.controlCause.request.key = {7, 31};
+                stop.controlCause.actionFiring = 43;
+                h.Append(render, stop);
+            }
             if (h.engine->voices.Resolve(render) != nullptr) {
                 auto weight = StartAt(31);
                 weight.kind = harken::TimelineEventKind::VariableWeight;
@@ -3147,6 +3268,12 @@ TEST(AuthoredStopAudio, RootStopDominatesLaterControlsAcrossQuanta) {
             }
         }
         EXPECT_TRUE(h.engine->voices.ReleaseObserved(observer));
+        harken::MonitorVoiceControlFact control{};
+        ASSERT_TRUE(h.controls[0].TryRead(h.controlBindings[0], &control));
+        EXPECT_TRUE(control.timelineControl);
+        EXPECT_EQ((harken::MonitorRequestKey{7, 31}), control.cause.request.key);
+        EXPECT_EQ(43u, control.cause.actionFiring);
+        EXPECT_EQ(harken::SourceTerminalKind::Stop, control.sourceKind);
     }
 }
 

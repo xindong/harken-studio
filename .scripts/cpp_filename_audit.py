@@ -17,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOTS = (
     "HarkenEngine/Source/Runtime/",
     "HarkenEngine/Source/Tooling/",
+    "HarkenEngine/Tool/",
     "HarkenEngine/Test/",
     "HarkenStudio/Test/",
     "HarkenHub/Test/",
@@ -24,6 +25,7 @@ SOURCE_ROOTS = (
 )
 INCLUDE_SCAN_ROOTS = (
     "HarkenEngine/Source/",
+    "HarkenEngine/Tool/",
     "HarkenStudio/Source/",
     "HarkenEngine/Test/",
     "HarkenStudio/Test/",

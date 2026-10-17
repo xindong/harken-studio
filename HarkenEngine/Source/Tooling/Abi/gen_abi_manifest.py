@@ -308,6 +308,7 @@ def extract_struct_fields(body: str, struct_name: str) -> list[str]:
 PRIMITIVE_SCALARS = {
     "char": "u8",
     "uint8_t": "u8",
+    "uint16_t": "u16",
     "int32_t": "i32",
     "uint32_t": "u32",
     "int64_t": "i64",
@@ -1323,14 +1324,14 @@ def generated_artifact_paths(repo_root: Path) -> list[Path]:
         "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs",
         "HarkenEngine/Source/Tooling/Binding/generated/"
         "harken_binding_abi_pin.g.h",
-        "HarkenEngine/Source/Tooling/Remote/generated/harken_wire_ids.h",
-        "HarkenEngine/Source/Tooling/Remote/generated/"
+        "HarkenEngine/Tool/Remote/generated/harken_wire_ids.h",
+        "HarkenEngine/Tool/Remote/generated/"
         "harken_wire_layout_asserts.h",
-        "HarkenEngine/Source/Tooling/Remote/generated/"
+        "HarkenEngine/Tool/Remote/generated/"
         "harken_wire_desc_meta.h",
-        "HarkenEngine/Source/Tooling/Remote/generated/"
+        "HarkenEngine/Tool/Remote/generated/"
         "harken_wire_dispatch.inl",
-        ".scripts/remote/harken_wire.py",
+        "HarkenEngine/Tool/Remote/harken_wire.py",
     ]
     return [repo_root / item for item in relative]
 

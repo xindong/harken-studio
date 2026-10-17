@@ -2,6 +2,7 @@
 
 #include "MonitorRecordPack.h"
 #include "MonitorSessionFileWrite.h"
+#include "MonitorRecordingCodec.h"
 
 #include "harken/core/Utf8Path.h"
 
@@ -69,7 +70,7 @@ bool ChunkOptional(std::uint32_t flags) {
 
 bool KnownChunkKind(std::uint32_t kind) {
     return kind >= VN_MONITOR_CHUNK_SESSION_HEADER &&
-           kind <= VN_MONITOR_CHUNK_RECOVERY_INDEX;
+           kind <= VN_MONITOR_CHUNK_EXECUTION_END;
 }
 
 bool LooksLikeTraceFile(const std::uint8_t* input, std::uint64_t inputBytes) {
@@ -139,6 +140,8 @@ SessionRecoverResult ScanSessionBytes(const std::uint8_t* input, std::uint64_t i
     std::uint64_t offset = kSessionFileHeaderPackedBytes;
     std::uint64_t lastSequence = 0;
     bool haveSequence = false;
+    bool typed = false, typedEnded = false, legacyRecords = false;
+    MonitorRecordingVerifier recording;
     while (offset < inputBytes) {
         const std::uint64_t remaining = inputBytes - offset;
         if (remaining < VN_MONITOR_SESSION_CHUNK_HEADER_BYTES) {
@@ -155,6 +158,9 @@ SessionRecoverResult ScanSessionBytes(const std::uint8_t* input, std::uint64_t i
         const std::uint64_t chunkSequence = ReadU64(chunk + 16);
         const std::uint32_t payloadCrc = ReadU32(chunk + 24);
         const std::uint32_t headerCrc32 = ReadU32(chunk + 28);
+        if (version != 1u && kind >= VN_MONITOR_CHUNK_EXECUTION_DESCRIPTOR && kind <= VN_MONITOR_CHUNK_EXECUTION_END &&
+            ChunkRequired(flags) && packedHeaderBytes == VN_MONITOR_SESSION_CHUNK_HEADER_BYTES && Crc32C(chunk, 28) == headerCrc32)
+            return Incompatible();
         if (packedHeaderBytes != VN_MONITOR_SESSION_CHUNK_HEADER_BYTES || version != 1u ||
             Crc32C(chunk, 28) != headerCrc32) {
             result.bytesConsumed = offset;
@@ -230,6 +236,38 @@ SessionRecoverResult ScanSessionBytes(const std::uint8_t* input, std::uint64_t i
             return result;
         }
 
+        bool validRecording = true;
+        if (typedEnded && kind != VN_MONITOR_CHUNK_RECOVERY_INDEX) validRecording = false;
+        else if (kind == VN_MONITOR_CHUNK_EXECUTION_DESCRIPTOR) {
+            RecordingDescriptor descriptor{};
+            validRecording = required && !typed && !legacyRecords &&
+                DecodeRecordingDescriptor(payload, payloadBytes, descriptor) &&
+                descriptor.engine == ReadU64(input + 36) && recording.Begin(descriptor);
+            typed = validRecording;
+        } else if (kind == VN_MONITOR_CHUNK_EXECUTION_RECORD) {
+            validRecording = required && typed && recording.Record(payload, payloadBytes);
+        } else if (kind == VN_MONITOR_CHUNK_EXECUTION_END) {
+            RecordingEnd end{};
+            validRecording = required && typed && DecodeRecordingEnd(payload, payloadBytes, end) && recording.End(end);
+            typedEnded = validRecording;
+        } else if (kind == VN_MONITOR_CHUNK_EVENTS) {
+            legacyRecords = true;
+            validRecording = !typed;
+            for (std::uint64_t at = 0; validRecording && at + kPackedEnvelopeBytes <= payloadBytes;) {
+                const auto recordKind = ReadU32(payload + at);
+                if (recordKind >= VN_MONITOR_RECORD_EXECUTION_FACT && recordKind <= VN_MONITOR_RECORD_HOST_OBJECT_SYMBOL)
+                    validRecording = false;
+                const auto length = ReadU64(payload + at + 16);
+                if (length < kPackedEnvelopeBytes || length > payloadBytes - at) break;
+                at += length;
+            }
+        }
+        if (!validRecording) {
+            result.status = VN_MONITOR_INCOMPATIBLE;
+            result.bytesConsumed = offset;
+            return result;
+        }
+
         RecoveredCommit commit;
         commit.chunkSequence = chunkSequence;
         commit.kind = kind;
@@ -249,6 +287,7 @@ SessionRecoverResult ScanSessionBytes(const std::uint8_t* input, std::uint64_t i
     if (result.bytesConsumed < result.fileBytes || result.commitsWritten == 0) {
         MarkRecovery(&result);
     }
+    if (typed && (!typedEnded || !recording.Complete())) MarkRecovery(&result);
     return result;
 }
 

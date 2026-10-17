@@ -59,11 +59,18 @@ void LanguageContextService::setLanguage(const QString& language)
     emit languageChanged(language_);
 }
 
+QString LanguageContextService::storageGroup() const
+{
+    const auto* project = ProjectManager::instance().currentProject();
+    return project ? QStringLiteral("LanguageContext/%1").arg(project->projectId) : QString();
+}
+
 QString LanguageContextService::persistedLanguage() const
 {
-    if (!storage_)
+    const QString group = storageGroup();
+    if (!storage_ || group.isEmpty())
         return {};
-    storage_->beginGroup(QStringLiteral("LanguageContext"));
+    storage_->beginGroup(group);
     const QString language = storage_->value(QStringLiteral("language")).toString();
     storage_->endGroup();
     return language;
@@ -71,9 +78,10 @@ QString LanguageContextService::persistedLanguage() const
 
 void LanguageContextService::persistLanguage(const QString& language)
 {
-    if (!storage_)
+    const QString group = storageGroup();
+    if (!storage_ || group.isEmpty())
         return;
-    storage_->beginGroup(QStringLiteral("LanguageContext"));
+    storage_->beginGroup(group);
     storage_->setValue(QStringLiteral("language"), language);
     storage_->endGroup();
     storage_->sync();

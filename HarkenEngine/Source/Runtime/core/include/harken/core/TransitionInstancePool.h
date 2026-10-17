@@ -26,6 +26,7 @@ struct TransitionInstanceToken {
 struct TransitionInstanceCreateRequest {
     std::uint64_t audibleFrame = 0;
     std::uint64_t lockBlock = 0;
+    MonitorLifecycleFacts monitorIdentity{};
 };
 
 enum class TransitionAudibleGateState : std::uint8_t {
@@ -141,6 +142,7 @@ private:
             TransitionAudibleGateState::Replaceable};
         std::uint64_t audibleFrame = 0;
         std::uint64_t lockBlock = 0;
+        MonitorLifecycleFacts monitorIdentity{};
         std::atomic<std::uint64_t> retiredAtAudioSequence{0};
         const ScheduledTransactionPool* frontierPool = nullptr;
         FrontierOwnerIdentity frontierOwner{};

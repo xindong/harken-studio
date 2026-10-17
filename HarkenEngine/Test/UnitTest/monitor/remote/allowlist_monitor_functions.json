@@ -22,6 +22,10 @@
     "Vn_MonitorStartRecording",
     "Vn_MonitorStopRecording",
     "Vn_MonitorGetRecordingStatus",
-    "Vn_MonitorCompareSessions"
+    "Vn_MonitorCompareSessions",
+    "Vn_MonitorBeginHostSession",
+    "Vn_MonitorEndHostSession",
+    "Vn_MonitorRegisterHost",
+    "Vn_MonitorRegisterHostV2"
   ]
 }

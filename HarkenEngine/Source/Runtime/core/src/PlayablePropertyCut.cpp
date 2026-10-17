@@ -517,7 +517,7 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
                      occurrence->parentKind,
                      occurrence->parentStableId,
                      occurrence->occurrenceSemanticFingerprint,
-                     occurrence->stableOccurrenceOrdinal})) {
+                     occurrence->stableOccurrenceOrdinal, placement->clipId})) {
                 return track == nullptr
                            ? ResolvedPlayablePropertyCutStatusV1::
                                  UnknownPlayable

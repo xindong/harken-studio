@@ -1,6 +1,7 @@
 #include <harken/Harken.h>
 
 #include "MonitorCaptureHubTestHooks.h"
+#include "MonitorIdentityCodec.h"
 #include "Common/TestUtil.h"
 #include <gtest/gtest.h>
 
@@ -12,6 +13,51 @@
 #include <thread>
 
 namespace {
+
+TEST(MonitorHubSubscription, ExecutionNegotiationIsQueryableWithoutCatalogMode) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    VnMonitorSessionDescV2 desc{};
+    desc.structSize = sizeof(desc);
+    desc.requestedExecutionFactVersion = 1;
+    desc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
+    desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE;
+    VnMonitorSessionHandle session = 0;
+    ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &session));
+    struct LegacyBuffer {
+        VnMonitorSubscriptionStatus value{};
+        std::uint64_t canary = 0xa5a512345555ffffull;
+    } old;
+    old.value.structSize = sizeof(old.value);
+    ASSERT_EQ(VN_OK, Vn_MonitorGetSubscriptionStatus(session, &old.value));
+    EXPECT_EQ(0xa5a512345555ffffull, old.canary);
+    EXPECT_EQ(sizeof(old.value), old.value.structSize);
+    VnMonitorSubscriptionStatusV2 status{};
+    status.structSize = sizeof(status);
+    ASSERT_EQ(VN_OK, Vn_MonitorGetSubscriptionStatus(session,
+        reinterpret_cast<VnMonitorSubscriptionStatus*>(&status)));
+    EXPECT_EQ(sizeof(status), status.structSize);
+    EXPECT_EQ(1u, status.acceptedExecutionFactVersion);
+    EXPECT_EQ(old.value.monitorSessionEpoch, status.monitorSessionEpoch);
+    EXPECT_EQ(old.value.acceptedPermissionMask, status.acceptedPermissionMask);
+    EXPECT_EQ(2u, status.baselineCount);
+    EXPECT_EQ(0u, status.reserved0);
+    std::array<VnMonitorStreamBaseline, 2> baseline{};
+    status.baselineCapacity = 2;
+    status.baselines = baseline.data();
+    ASSERT_EQ(VN_OK, Vn_MonitorGetSubscriptionStatus(session,
+        reinterpret_cast<VnMonitorSubscriptionStatus*>(&status)));
+    EXPECT_EQ(baseline.data(), status.baselines);
+    EXPECT_EQ(VN_MONITOR_STREAM_STATE, baseline[0].streamKind);
+    EXPECT_EQ(harken::monitor::kIdentityDeltaStream, baseline[0].streamId);
+    EXPECT_EQ(harken::monitor::kIdentityBaselineStream, baseline[1].streamId);
+    EXPECT_NE(0u, baseline[0].firstExpectedSourceSequence);
+    EXPECT_NE(0u, baseline[1].firstExpectedSourceSequence);
+    status.structSize -= 1;
+    EXPECT_EQ(VN_INVALID_ARG, Vn_MonitorGetSubscriptionStatus(session,
+        reinterpret_cast<VnMonitorSubscriptionStatus*>(&status)));
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(session));
+}
 
 VnMonitorSessionDesc MakeDesc(std::uint32_t streamMask, std::uint32_t perm,
                               std::uint64_t queueBytes = 4096) {

@@ -883,3 +883,44 @@ TEST(ActionFiringTable, DeferredOwnershipBlocksTerminalFinalizationAndRelease) {
     EXPECT_EQ(snapshot.state, harken::ActionFiringState::TerminalRetained);
     ASSERT_TRUE(table.ReleaseRoot(handle));
 }
+
+TEST(ActionFiringTable, RequestAndFirstControlCauseSurviveTerminalRetentionAndClearOnReuse) {
+    harken::ActionFiringTable table;
+    ASSERT_TRUE(table.Reset(2));
+    harken::MonitorRequestSource requests(91);
+    const auto play = requests.Begin(harken::MonitorRequestOrigin::NativeAPI, 1);
+    harken::PreparedActionFiring root, child;
+    const harken::MonitorEmitterOrigin origin{41, {91, 5, 3}, 7,
+        harken::MonitorEmitterKind::ExplicitStateOnly, harken::MonitorHostOwnership::UnityEmitter};
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 7, 1, &root, play, origin));
+    ASSERT_TRUE(table.PrepareChild(root, harkentest::ObjectId(2), 7, 1, &child));
+    harken::ActionFiringStepResult post{};
+    post.state = harken::ActionStepState::Active;
+    post.opcode = static_cast<std::uint32_t>(harken::ActionOpcodeV1::PostAction);
+    post.childFiring = child.Handle();
+    ASSERT_TRUE(table.SetPreparedStep(root, 0, post));
+    ASSERT_TRUE(table.CommitTree(&root, 99));
+    const harken::MonitorControlCause stop{requests.Begin(harken::MonitorRequestOrigin::NativeAPI, 6)};
+    ASSERT_TRUE(table.MarkTreeStopping(root.Handle(), harken::ActionTerminalReason::StopRequested, stop));
+    const harken::MonitorControlCause repeated{requests.Begin(harken::MonitorRequestOrigin::NativeAPI, 6)};
+    ASSERT_TRUE(table.MarkTreeStopping(child.Handle(), harken::ActionTerminalReason::StopRequested, repeated));
+    for (const auto handle : {root.Handle(), child.Handle()}) {
+        harken::ActionFiringSnapshot identity{};
+        ASSERT_TRUE(table.Capture(handle, &identity));
+        EXPECT_EQ(identity.playbackRequest.key, play.key);
+        EXPECT_EQ(identity.emitterOrigin.host, origin.host);
+        EXPECT_EQ(identity.emitterOrigin.kind, origin.kind);
+        EXPECT_EQ(identity.emitterOrigin.registrationRevision, origin.registrationRevision);
+        EXPECT_EQ(identity.controlCause.request.key, stop.request.key);
+        EXPECT_EQ(identity.root, root.Handle());
+    }
+    ASSERT_TRUE(table.ReleaseRoot(root.Handle()));
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 8, 1, &root));
+    ASSERT_TRUE(table.Commit(&root, 100));
+    harken::ActionFiringSnapshot reused{};
+    ASSERT_TRUE(table.Capture(root.Handle(), &reused));
+    EXPECT_FALSE(reused.playbackRequest.key.Valid());
+    EXPECT_FALSE(reused.emitterOrigin.host.Valid());
+    EXPECT_EQ(harken::MonitorEmitterKind::Unknown, reused.emitterOrigin.kind);
+    EXPECT_FALSE(reused.controlCause.request.key.Valid());
+}

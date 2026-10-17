@@ -19,6 +19,15 @@
 
 namespace {
 
+VnConfig MeasurementRegistryConfig(std::uint32_t maxVoices = 0,
+                                   std::uint32_t blockFrames = 0,
+                                   std::uint32_t sampleRate = 0) {
+    auto config = harkentest::MakeNullConfig(maxVoices, blockFrames, sampleRate);
+    // Measurement registration does not require the default nested Action scratch.
+    config.maxTriggerDepth = 2;
+    return config;
+}
+
 VnMonitorSessionDesc MakeControlDesc() {
     VnMonitorSessionDesc desc{};
     desc.structSize = sizeof(desc);
@@ -99,7 +108,7 @@ bool PollUntilAudioChunk(VnMonitorSessionHandle handle,
 } // namespace
 
 TEST(MonitorMeasure, RegistryListsFirstBatchKinds) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementRegistryConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
 
     uint32_t required = 0;
@@ -147,7 +156,7 @@ TEST(MonitorMeasure, RegistryListsFirstBatchKinds) {
 }
 
 TEST(MonitorMeasure, RegistryRejectsUnknownKindWithoutInventingRows) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementRegistryConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     uint32_t required = 0;
     uint64_t revision = 0;
@@ -156,7 +165,7 @@ TEST(MonitorMeasure, RegistryRejectsUnknownKindWithoutInventingRows) {
 }
 
 TEST(MonitorMeasure, CapturePlanAcceptsExactInstanceMasterTap) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementRegistryConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -191,7 +200,7 @@ TEST(MonitorMeasure, CapturePlanAcceptsExactInstanceMasterTap) {
 }
 
 TEST(MonitorMeasure, CapturePlanRejectsUnknownSelectorWithoutFollowSlotFallback) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementRegistryConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -214,7 +223,7 @@ TEST(MonitorMeasure, CapturePlanRejectsUnknownSelectorWithoutFollowSlotFallback)
 }
 
 TEST(MonitorMeasure, CapturePlanRejectsNonUnityDownsample) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementRegistryConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -237,7 +246,7 @@ TEST(MonitorMeasure, CapturePlanRejectsNonUnityDownsample) {
 }
 
 TEST(MonitorMeasure, CaptureOffDoesNotChangePassthrough) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -281,7 +290,7 @@ TEST(MonitorMeasure, CaptureOffDoesNotChangePassthrough) {
 }
 
 TEST(MonitorMeasure, MasterTapPublishesAudioChunk) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -341,7 +350,7 @@ TEST(MonitorMeasure, MasterTapPublishesAudioChunk) {
 }
 
 TEST(MonitorMeasure, ExactInstanceStaleDoesNotBindReplacement) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -392,7 +401,7 @@ TEST(MonitorMeasure, ExactInstanceStaleDoesNotBindReplacement) {
 }
 
 TEST(MonitorMeasure, CaptureOffStopsAudioChunks) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -458,7 +467,7 @@ TEST(MonitorMeasure, CaptureOffStopsAudioChunks) {
 }
 
 TEST(MonitorMeasure, RingOverflowDropsProducerNotFakeChunk) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -490,7 +499,7 @@ TEST(MonitorMeasure, RingOverflowDropsProducerNotFakeChunk) {
 }
 
 TEST(MonitorMeasure, FollowSlotEmitsBindingChangedOnOwnerChange) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -551,7 +560,7 @@ TEST(MonitorMeasure, FollowSlotEmitsBindingChangedOnOwnerChange) {
 }
 
 TEST(MonitorMeasure, BusPreFaderTapPublishesAudioChunk) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -593,7 +602,7 @@ TEST(MonitorMeasure, BusPreFaderTapPublishesAudioChunk) {
 }
 
 TEST(MonitorMeasure, VoicePreChainTapPublishesAudioChunk) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -632,7 +641,7 @@ TEST(MonitorMeasure, VoicePreChainTapPublishesAudioChunk) {
 }
 
 TEST(MonitorMeasure, AudioCopyPathHasNoMutexOrAlloc) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -660,7 +669,7 @@ TEST(MonitorMeasure, AudioCopyPathHasNoMutexOrAlloc) {
 }
 
 TEST(MonitorMeasure, DeviceTapPlanAcceptsAsGapWithoutProducer) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -714,7 +723,7 @@ TEST(MonitorMeasure, DeviceTapPlanAcceptsAsGapWithoutProducer) {
 }
 
 TEST(MonitorMeasure, ExactInstanceZeroGenerationIsRejected) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementRegistryConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -744,7 +753,7 @@ TEST(MonitorMeasure, ExactInstanceZeroGenerationIsRejected) {
 }
 
 TEST(MonitorMeasure, ExactInstanceZeroOwnerIsRejected) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    harkentest::EngineSession engine(MeasurementRegistryConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -772,7 +781,7 @@ TEST(MonitorMeasure, ExactInstanceZeroOwnerIsRejected) {
 }
 
 TEST(MonitorMeasure, VoicePreAndPostChunksDifferAfterGain) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -857,7 +866,7 @@ TEST(MonitorMeasure, VoicePreAndPostChunksDifferAfterGain) {
 }
 
 TEST(MonitorMeasure, StopCaptureDoesNotReplayOldChunksAsActive) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -922,7 +931,7 @@ TEST(MonitorMeasure, StopCaptureDoesNotReplayOldChunksAsActive) {
 }
 
 TEST(MonitorMeasure, ExactInstanceStaleRejectsUnknownEffect) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -952,7 +961,7 @@ TEST(MonitorMeasure, ExactInstanceStaleRejectsUnknownEffect) {
 }
 
 TEST(MonitorMeasure, ExactInstanceStaleRejectsUnknownBus) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -982,7 +991,7 @@ TEST(MonitorMeasure, ExactInstanceStaleRejectsUnknownBus) {
 }
 
 TEST(MonitorMeasure, ApplyReplacementDoesNotReplayPriorPlanChunks) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -1055,7 +1064,7 @@ TEST(MonitorMeasure, ApplyReplacementDoesNotReplayPriorPlanChunks) {
 }
 
 TEST(MonitorMeasure, VoiceExactInstancePublishesPublicHandleThenStalesOnStop) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -1129,7 +1138,7 @@ TEST(MonitorMeasure, VoiceExactInstancePublishesPublicHandleThenStalesOnStop) {
 }
 
 TEST(MonitorMeasure, VoiceExactInstanceIgnoresSiblingVoice) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();
@@ -1201,7 +1210,7 @@ TEST(MonitorMeasure, VoiceExactInstanceIgnoresSiblingVoice) {
 }
 
 TEST(MonitorMeasure, EffectExactInstanceUsesPackedHandleAndStalesOnClear) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(0, 256));
+    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnMonitorSessionHandle handle = 0;
     VnMonitorSessionDesc desc = MakeControlDesc();

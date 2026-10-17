@@ -1,6 +1,7 @@
 #include "harken/param/VariableService.h"
 
 #include "Engine.h"
+#include "MonitorCaptureHub.h"
 #include "harken/core/CommandQueue.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/VariableExecutionFingerprint.h"
@@ -57,6 +58,7 @@ private:
 WorldInstallResult InstallContainerWorldV1(
     Engine& engine, const ContainerWorldInstallViewV1& install,
     CurrentWorldTraceOwnerV1 traceOwner) noexcept {
+    harken::monitor::IdentityMutationScope identityMutation;
     try {
         const bool hasCurrentConsumers =
             HasCurrentWorldPlayableConsumers(engine);

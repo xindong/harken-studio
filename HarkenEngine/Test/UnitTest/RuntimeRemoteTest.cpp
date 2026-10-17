@@ -9,10 +9,14 @@
 
 #include "Common/TestUtil.h"
 #include "MonitorCaptureHubTestHooks.h"
+#include "MonitorCaptureHub.h"
+#include "MonitorIdentityCut.h"
 #include "harken_remote/Protocol.h"
+#include "../../Source/Runtime/remote/src/RemoteRuntime.h"
 #include <gtest/gtest.h>
 #include <harken/Harken.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <functional>
@@ -98,6 +102,71 @@ TEST(RuntimeRemoteProtocol, CatalogRejectsImpossibleRowCount) {
     Catalog catalog;
     Reader reader(writer.bytes);
     EXPECT_FALSE(Decode(reader, catalog));
+}
+
+TEST(RuntimeRemoteProtocol, ExecutionObservationHasIndependentStrictFrames) {
+    EventCaptureRequestV2 request;
+    request.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
+    request.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+    auto frame = MakeFrame(Message::EventStartV2, 1, request);
+    ASSERT_EQ(24u, frame.payload.size());
+    EventCaptureRequestV2 decoded;
+    EXPECT_TRUE(DecodePayload(frame, decoded));
+    frame.payload.push_back(0);
+    EXPECT_FALSE(DecodePayload(frame, decoded));
+    frame.payload.resize(23);
+    EXPECT_FALSE(DecodePayload(frame, decoded));
+    request.requestSymbols = 2;
+    EXPECT_FALSE(DecodePayload(MakeFrame(Message::EventStartV2, 1, request), decoded));
+
+    EventCaptureStatusV2 status;
+    status.acceptedExecutionFactVersion = 1;
+    status.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_RECORD;
+    status.acceptedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+    status.deniedPermissionMask = VN_MONITOR_PERM_RECORD;
+    status.supportedFactKinds[1] = 1ull << 48;
+    status.identityUnavailableCount = 7;
+    frame = MakeFrame(Message::EventStatusV2, 1, status);
+    ASSERT_EQ(128u, frame.payload.size());
+    EventCaptureStatusV2 result;
+    ASSERT_TRUE(DecodePayload(frame, result));
+    EXPECT_EQ(status.supportedFactKinds[1], result.supportedFactKinds[1]);
+    EXPECT_EQ(7u, result.identityUnavailableCount);
+    EventCaptureStatus legacy;
+    EXPECT_FALSE(DecodePayload(frame, legacy));
+    const auto oldFrame = MakeFrame(Message::EventStatus, 1, status.base);
+    EXPECT_EQ(56u, oldFrame.payload.size());
+    EXPECT_TRUE(DecodePayload(oldFrame, legacy));
+    EXPECT_FALSE(DecodePayload(oldFrame, result));
+    status.reserved0 = 1;
+    EXPECT_FALSE(DecodePayload(MakeFrame(Message::EventStatusV2, 1, status), result));
+    status.reserved0 = 0;
+    status.deniedPermissionMask |= VN_MONITOR_PERM_OBSERVE_EVENTS;
+    EXPECT_FALSE(DecodePayload(MakeFrame(Message::EventStatusV2, 1, status), result));
+}
+
+TEST(RuntimeRemote, RestrictedExecutionObservationGrantDoesNotTrustRequest) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    VnMonitorSessionDescV2 desc{};
+    desc.structSize = sizeof(desc);
+    desc.requestedExecutionFactVersion = 1;
+    desc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
+    desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE |
+        VN_MONITOR_PERM_RECORD | VN_MONITOR_PERM_CAPTURE_CONTROL | VN_MONITOR_PERM_RAW_AUDIO;
+    VnMonitorSessionHandle handle = 0;
+    ASSERT_EQ(VN_OK, harken::monitor::OpenEventSession(
+        reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &handle, true, 123,
+        VN_MONITOR_PERM_OBSERVE_EVENTS));
+    VnMonitorEventSessionStatusV2 status{};
+    status.structSize = sizeof(status);
+    ASSERT_EQ(VN_OK, Vn_MonitorGetEventSessionStatus(handle,
+        reinterpret_cast<VnMonitorEventSessionStatus*>(&status)));
+    EXPECT_EQ(VN_MONITOR_PERM_OBSERVE_EVENTS, status.acceptedPermissionMask);
+    EXPECT_EQ(desc.requestedPermissionMask & ~VN_MONITOR_PERM_OBSERVE_EVENTS, status.deniedPermissionMask);
+    EXPECT_EQ(VN_MONITOR_STREAM_EVENT, status.acceptedStreamKindMask);
+    EXPECT_EQ(VN_MONITOR_OBSERVATION_DENIED, status.baselineAvailability);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
 }
 
 TEST(RuntimeRemote, DefaultOffStatusAndReleaseLifecycle) {
@@ -199,6 +268,456 @@ class Client {
                DecodePayload(frame, identity);
     }
 };
+
+struct ExecutionCapture {
+    struct Symbol { VnMonitorRecordHeader header; VnMonitorHostObjectSymbolV1 value; };
+    struct IdentityRow { VnMonitorRecordHeader header; VnMonitorIdentityFactV1 value; };
+    std::uint64_t epoch = 0, nextDelivery = 1;
+    harken::monitor::MonitorIdentityCutVerifier cut;
+    std::vector<Symbol> symbols;
+    std::vector<IdentityRow> identities;
+    std::vector<VnMonitorRecordHeader> facts;
+    EventCaptureStatusV2 final;
+    bool drained = false;
+
+    void Receive(const Frame& frame) {
+        using namespace harken::monitor;
+        if (frame.type == Message::EventStatusV2) {
+            EventCaptureStatusV2 status;
+            ASSERT_TRUE(DecodePayload(frame, status));
+            EXPECT_EQ(VN_OK, status.base.result);
+            EXPECT_EQ(epoch, status.base.sessionEpoch);
+            if (status.base.state == VN_MONITOR_EVENT_SESSION_DRAINED) {
+                drained = true;
+                final = status;
+            }
+            return;
+        }
+        if (frame.type != Message::EventRecords) return;
+        EXPECT_FALSE(drained);
+        MonitorRecords records;
+        ASSERT_TRUE(DecodePayload(frame, records));
+        EXPECT_EQ(epoch, records.sessionEpoch);
+        std::uint32_t count = 0;
+        for (std::size_t offset = 0; offset < records.bytes.size(); ++count) {
+            const auto available = records.bytes.size() - offset;
+            ASSERT_GE(available, kPackedEnvelopeBytes);
+            const auto* bytes = records.bytes.data() + offset;
+            ExecutionPayloadReader length{bytes + 16};
+            std::uint64_t size = 0;
+            length(size);
+            ASSERT_GE(size, kPackedEnvelopeBytes);
+            ASSERT_LE(size, available);
+            VnMonitorRecordHeader header{};
+            ASSERT_TRUE(ReadIdentityHeader(bytes, size, header));
+            EXPECT_EQ(epoch, header.monitorSessionEpoch);
+            EXPECT_EQ(nextDelivery++, header.deliverySequence);
+            const auto* payload = bytes + kPackedEnvelopeBytes;
+            switch (header.recordKind) {
+            case VN_MONITOR_RECORD_IDENTITY_CUT_BEGIN: {
+                VnMonitorIdentityCutBeginV1 value{};
+                ASSERT_TRUE(DecodeIdentityBegin(header, payload, header.payloadBytes, value));
+                EXPECT_TRUE(cut.Begin(header, value));
+                break;
+            }
+            case VN_MONITOR_RECORD_IDENTITY_FACT: {
+                VnMonitorIdentityFactV1 value{};
+                ASSERT_TRUE(DecodeIdentityFact(header, payload, header.payloadBytes, value));
+                if (value.stateCutId != 0) EXPECT_TRUE(cut.Row(header, value));
+                identities.push_back({header, value});
+                break;
+            }
+            case VN_MONITOR_RECORD_HOST_OBJECT_SYMBOL: {
+                VnMonitorHostObjectSymbolV1 value{};
+                ASSERT_TRUE(DecodeHostSymbol(header, payload, header.payloadBytes, value));
+                if (value.stateCutId != 0) EXPECT_TRUE(cut.Row(header, value));
+                symbols.push_back({header, value});
+                break;
+            }
+            case VN_MONITOR_RECORD_IDENTITY_CUT_END: {
+                VnMonitorIdentityCutEndV1 value{};
+                ASSERT_TRUE(DecodeIdentityEnd(header, payload, header.payloadBytes, value));
+                EXPECT_TRUE(cut.End(header, value));
+                break;
+            }
+            case VN_MONITOR_RECORD_EXECUTION_FACT: {
+                VnMonitorExecutionFactV1 value{};
+                EXPECT_TRUE(DecodeExecutionFact(header, payload, header.payloadBytes, value));
+                facts.push_back(header);
+                break;
+            }
+            case VN_MONITOR_RECORD_DROP_SUMMARY:
+                ADD_FAILURE() << "Uncongested socket capture must not lose records";
+                break;
+            default: break;
+            }
+            offset += size;
+        }
+        EXPECT_EQ(records.recordCount, count);
+    }
+};
+
+VnMonitorHostRegistrationV2 RegisterRemoteHost(VnEmitterHandle emitter, const VnMonitorHostSessionV1& host) {
+    VnMonitorHostRegistrationV2 value{};
+    value.structSize = sizeof(value);
+    value.ownershipKind = VN_MONITOR_HOST_UNITY_EMITTER;
+    value.engineInstance = host.engineInstance;
+    value.sdkSession = host.sdkSession;
+    value.emitter = emitter;
+    value.localSequence = 1;
+    value.registrationRevision = 1;
+    value.nameBytes = 8;
+    std::memcpy(value.name, "Original", value.nameBytes);
+    EXPECT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&value));
+    return value;
+}
+
+TEST(RuntimeRemote, ExecutionSocketPreservesFrozenMixedCutDeltasSymbolsAndSealedTail) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    VnMonitorHostSessionV1 host{};
+    host.structSize = sizeof(host);
+    ASSERT_EQ(VN_OK, Vn_MonitorBeginHostSession(&host));
+    VnEmitterHandle original = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&original));
+    auto registration = RegisterRemoteHost(original, host);
+    const auto config = RemoteConfig();
+    ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
+    Client client;
+    ASSERT_TRUE(client.Connect(Status().tcpPort));
+    Identity identity;
+    ASSERT_TRUE(client.Welcome(identity));
+    harken::monitor::StopDrainForTests();
+    EventCaptureRequestV2 request;
+    request.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
+    request.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE | VN_MONITOR_PERM_SYMBOLS;
+    request.requestSymbols = 1;
+    ASSERT_TRUE(client.Send(MakeFrame(Message::EventStartV2, 2, request)));
+    Frame frame;
+    ASSERT_TRUE(WaitUntil([&] { return client.Read(frame) && frame.requestId == 2; }));
+    EventCaptureStatusV2 started;
+    ASSERT_TRUE(DecodePayload(frame, started));
+    ASSERT_EQ(VN_OK, started.base.result);
+    ExecutionCapture capture;
+    capture.epoch = started.base.sessionEpoch;
+    VnMonitorSessionDescV2 localDesc{};
+    localDesc.structSize = sizeof(localDesc);
+    localDesc.requestedExecutionFactVersion = 1;
+    localDesc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
+    localDesc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+    localDesc.consumerQueueBytes = 65536;
+    VnMonitorSessionHandle local = 0;
+    ASSERT_EQ(VN_OK, Vn_MonitorOpenEventSession(reinterpret_cast<const VnMonitorSessionDesc*>(&localDesc), &local));
+    harken::monitor::StopDrainForTests();
+    ++registration.registrationRevision;
+    registration.nameBytes = 7;
+    std::memset(registration.name, 0, sizeof(registration.name));
+    std::memcpy(registration.name, "Updated", registration.nameBytes);
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(original));
+    VnEmitterHandle replacement = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&replacement));
+    ASSERT_NE(original, replacement);
+    registration.emitter = replacement;
+    registration.localSequence = 2;
+    registration.registrationRevision = 1;
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    Writer seal;
+    seal.U64(capture.epoch);
+    ASSERT_TRUE(client.Send({Message::EventSeal, 3, std::move(seal.bytes)}));
+    ASSERT_TRUE(WaitUntil([&] {
+        while (client.Read(frame)) {
+            capture.Receive(frame);
+            if (frame.requestId == 3) return true;
+        }
+        return false;
+    }));
+    EXPECT_FALSE(capture.drained);
+    ASSERT_EQ(VN_OK, Vn_MonitorSealEventSession(local));
+    harken::monitor::StartDrainForTests();
+    ASSERT_TRUE(WaitUntil([&] {
+        while (client.Read(frame)) capture.Receive(frame);
+        return capture.drained;
+    }));
+    EXPECT_TRUE(capture.cut.Complete());
+    EXPECT_EQ(VN_MONITOR_OBSERVATION_AVAILABLE, capture.final.baselineAvailability);
+    EXPECT_EQ(VN_MONITOR_OBSERVATION_AVAILABLE, capture.final.symbolAvailability);
+    EXPECT_EQ(0u, capture.final.base.sourceDroppedRecords);
+    EXPECT_EQ(0u, capture.final.base.deliveryDroppedRecords);
+    EXPECT_EQ(0u, capture.final.base.transportDroppedRecords);
+    bool frozenOriginal = false, changedOriginal = false, newObject = false, baselineEmitter = false, retiredEmitter = false;
+    for (const auto& symbol : capture.symbols) {
+        const auto& value = symbol.value;
+        if (value.field != VN_MONITOR_HOST_SYMBOL_NAME) continue;
+        const std::string text(reinterpret_cast<const char*>(value.text), value.textBytes);
+        frozenOriginal |= value.stateCutId != 0 && symbol.header.instanceHandle == original &&
+            value.registrationRevision == 1 && text == "Original";
+        changedOriginal |= value.stateCutId == 0 && symbol.header.instanceHandle == original &&
+            value.registrationRevision == 2 && value.factKind == VN_MONITOR_SYMBOL_UPSERT && text == "Updated";
+        newObject |= value.stateCutId == 0 && symbol.header.instanceHandle == replacement && value.hostSequence == 2;
+    }
+    for (const auto& row : capture.identities) {
+        if (row.value.fact.subjectNamespace != VN_MONITOR_SUBJECT_EMITTER) continue;
+        baselineEmitter |= row.value.stateCutId != 0 && row.header.instanceHandle == original;
+        retiredEmitter |= row.value.stateCutId == 0 && row.header.instanceHandle == original &&
+            row.value.fact.factKind == VN_MONITOR_FACT_IDENTITY_TOMBSTONE;
+    }
+    EXPECT_TRUE(frozenOriginal);
+    EXPECT_TRUE(changedOriginal);
+    EXPECT_TRUE(newObject);
+    EXPECT_TRUE(baselineEmitter);
+    EXPECT_TRUE(retiredEmitter);
+    EXPECT_GE(capture.facts.size(), 2u);
+    std::array<std::uint8_t, 65536> localBytes{};
+    VnMonitorPollDesc poll{sizeof(poll), 0, localBytes.data(), localBytes.size()};
+    VnMonitorPollResult result{};
+    result.structSize = sizeof(result);
+    ASSERT_EQ(VN_OK, Vn_MonitorPoll(local, &poll, &result));
+    unsigned sharedFacts = 0;
+    for (std::uint64_t offset = 0; offset < result.bytesWritten;) {
+        harken::monitor::ExecutionPayloadReader read{localBytes.data() + offset + 16};
+        std::uint64_t bytes = 0;
+        read(bytes);
+        ASSERT_LE(bytes, result.bytesWritten - offset);
+        VnMonitorRecordHeader header{};
+        ASSERT_TRUE(harken::monitor::ReadIdentityHeader(localBytes.data() + offset, bytes, header));
+        if (header.recordKind == VN_MONITOR_RECORD_EXECUTION_FACT) {
+            const auto matching = std::find_if(capture.facts.begin(), capture.facts.end(), [&](const auto& remote) {
+                return remote.engineMonitorInstanceId == header.engineMonitorInstanceId &&
+                    remote.producerId == header.producerId && remote.sourceSequence == header.sourceSequence;
+            });
+            ASSERT_NE(capture.facts.end(), matching);
+            EXPECT_NE(0u, header.monitorSessionEpoch);
+            EXPECT_NE(capture.epoch, header.monitorSessionEpoch);
+            ++sharedFacts;
+        }
+        offset += bytes;
+    }
+    EXPECT_EQ(capture.facts.size(), sharedFacts);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(local));
+}
+
+TEST(RuntimeRemote, ExecutionSocketNeverSendsSymbolsWithoutBothRequestAndPermission) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    VnMonitorHostSessionV1 host{};
+    host.structSize = sizeof(host);
+    ASSERT_EQ(VN_OK, Vn_MonitorBeginHostSession(&host));
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    auto registration = RegisterRemoteHost(emitter, host);
+    const auto config = RemoteConfig();
+    ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
+    Client client;
+    ASSERT_TRUE(client.Connect(Status().tcpPort));
+    Identity identity;
+    ASSERT_TRUE(client.Welcome(identity));
+    std::uint32_t requestId = 2;
+    for (const bool requestSymbols : {false, true}) {
+        SCOPED_TRACE(requestSymbols);
+        EventCaptureRequestV2 request;
+        request.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
+        request.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE |
+            (requestSymbols ? 0 : VN_MONITOR_PERM_SYMBOLS);
+        request.requestSymbols = requestSymbols ? 1u : 0u;
+        const auto startId = requestId++;
+        ASSERT_TRUE(client.Send(MakeFrame(Message::EventStartV2, startId, request)));
+        Frame frame;
+        ASSERT_TRUE(WaitUntil([&] { return client.Read(frame) && frame.requestId == startId; }));
+        EventCaptureStatusV2 started;
+        ASSERT_TRUE(DecodePayload(frame, started));
+        ASSERT_EQ(VN_OK, started.base.result);
+        EXPECT_EQ(requestSymbols ? VN_MONITOR_OBSERVATION_DENIED : VN_MONITOR_OBSERVATION_NOT_REQUESTED,
+            started.symbolAvailability);
+        ExecutionCapture capture;
+        capture.epoch = started.base.sessionEpoch;
+        ++registration.registrationRevision;
+        ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+        Writer seal;
+        seal.U64(capture.epoch);
+        ASSERT_TRUE(client.Send({Message::EventSeal, requestId++, std::move(seal.bytes)}));
+        ASSERT_TRUE(WaitUntil([&] {
+            while (client.Read(frame)) capture.Receive(frame);
+            return capture.drained;
+        }));
+        EXPECT_TRUE(capture.cut.Complete());
+        EXPECT_TRUE(capture.symbols.empty());
+        EXPECT_FALSE(capture.identities.empty());
+        EXPECT_EQ(0u, capture.final.base.sourceDroppedRecords);
+    }
+}
+
+TEST(RuntimeRemote, ExecutionObservationUsesServerWhitelistAndFreshConnectionGrant) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto config = RemoteConfig();
+    ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
+    Client client;
+    ASSERT_TRUE(client.Connect(Status().tcpPort));
+    Identity identity;
+    ASSERT_TRUE(client.Welcome(identity));
+    ASSERT_NE(0u, identity.capabilities & kCapabilityExecutionObservation);
+    EventCaptureRequestV2 request;
+    request.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
+    request.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE |
+        VN_MONITOR_PERM_SYMBOLS | VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_CAPTURE_CONTROL |
+        VN_MONITOR_PERM_RECORD;
+    request.requestSymbols = 1;
+    ASSERT_TRUE(client.Send(MakeFrame(Message::EventStartV2, 2, request)));
+    Frame frame;
+    ASSERT_TRUE(WaitUntil([&] { return client.Read(frame) && frame.requestId == 2; }));
+    ASSERT_EQ(Message::EventStatusV2, frame.type);
+    EventCaptureStatusV2 started;
+    ASSERT_TRUE(DecodePayload(frame, started));
+    ASSERT_EQ(VN_OK, started.base.result);
+    EXPECT_EQ(1u, started.acceptedExecutionFactVersion);
+    constexpr auto forbidden = VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_CAPTURE_CONTROL |
+        VN_MONITOR_PERM_RECORD;
+    EXPECT_EQ(0u, started.acceptedPermissionMask & forbidden);
+    EXPECT_EQ(forbidden, started.deniedPermissionMask & forbidden);
+    EXPECT_EQ(VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE,
+              started.acceptedPermissionMask & ~VN_MONITOR_PERM_SYMBOLS);
+    EXPECT_EQ(request.requestedStreamKindMask, started.acceptedStreamKindMask);
+    Writer seal;
+    seal.U64(started.base.sessionEpoch);
+    ASSERT_TRUE(client.Send({Message::EventSeal, 3, std::move(seal.bytes)}));
+    EventCaptureStatusV2 stopped;
+    ASSERT_TRUE(WaitUntil([&] {
+        while (client.Read(frame)) {
+            if (frame.type == Message::EventStatusV2 && DecodePayload(frame, stopped) &&
+                stopped.base.state == VN_MONITOR_EVENT_SESSION_DRAINED) return true;
+        }
+        return false;
+    }));
+    EXPECT_EQ(started.base.sessionEpoch, stopped.base.sessionEpoch);
+
+    client.Close();
+    ASSERT_TRUE(WaitUntil([] { return Status().state == VN_REMOTE_LISTENING; }));
+    Client replacement;
+    ASSERT_TRUE(replacement.Connect(Status().tcpPort));
+    Identity replacementIdentity;
+    ASSERT_TRUE(replacement.Welcome(replacementIdentity));
+    EXPECT_NE(identity.sessionId, replacementIdentity.sessionId);
+    request.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
+    request.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+    request.requestSymbols = 0;
+    ASSERT_TRUE(replacement.Send(MakeFrame(Message::EventStartV2, 4, request)));
+    ASSERT_TRUE(WaitUntil([&] { return replacement.Read(frame) && frame.requestId == 4; }));
+    ASSERT_TRUE(DecodePayload(frame, started));
+    ASSERT_EQ(VN_OK, started.base.result);
+    EXPECT_NE(stopped.base.sessionEpoch, started.base.sessionEpoch);
+    EXPECT_EQ(VN_MONITOR_PERM_OBSERVE_EVENTS, started.acceptedPermissionMask);
+    EXPECT_EQ(VN_MONITOR_OBSERVATION_NOT_REQUESTED, started.symbolAvailability);
+    EXPECT_EQ(VN_MONITOR_OBSERVATION_NOT_REQUESTED, started.baselineAvailability);
+    EXPECT_EQ(0u, started.symbolsDecision);
+}
+
+TEST(RuntimeRemote, ExecutionObservationRequiresNegotiatedCapability) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto config = RemoteConfig();
+    ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
+    Client client;
+    ASSERT_TRUE(client.Connect(Status().tcpPort));
+    Hello hello;
+    hello.capabilities &= ~kCapabilityExecutionObservation;
+    ASSERT_TRUE(client.Send(MakeFrame(Message::Hello, 1, hello)));
+    Frame frame;
+    ASSERT_TRUE(WaitUntil([&] { return client.Read(frame); }, false));
+    Identity identity;
+    ASSERT_TRUE(DecodePayload(frame, identity));
+    EXPECT_EQ(0u, identity.capabilities & kCapabilityExecutionObservation);
+    EventCaptureRequestV2 request;
+    request.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
+    request.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+    ASSERT_TRUE(client.Send(MakeFrame(Message::EventStartV2, 2, request)));
+    ASSERT_TRUE(WaitUntil([&] { return client.Read(frame); }));
+    ASSERT_EQ(Message::EventStatusV2, frame.type);
+    EventCaptureStatusV2 status;
+    ASSERT_TRUE(DecodePayload(frame, status));
+    EXPECT_EQ(VN_MONITOR_UNSUPPORTED, status.base.result);
+    EXPECT_EQ(0u, status.base.sessionEpoch);
+    ASSERT_TRUE(client.Send({Message::EventStart, 3, {}}));
+    ASSERT_TRUE(WaitUntil([&] { return client.Read(frame); }));
+    ASSERT_EQ(Message::EventStatus, frame.type);
+    EventCaptureStatus oldStatus;
+    ASSERT_TRUE(DecodePayload(frame, oldStatus));
+    EXPECT_EQ(VN_OK, oldStatus.result);
+}
+
+TEST(RuntimeRemote, ReconnectBetweenGrantSnapshotAndDispatchKeepsNewRequestQueued) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto config = RemoteConfig();
+    ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
+    Client original;
+    ASSERT_TRUE(original.Connect(Status().tcpPort));
+    Identity identity;
+    ASSERT_TRUE(original.Welcome(identity));
+    ASSERT_NE(0u, identity.capabilities & kCapabilityExecutionObservation);
+    Client replacement;
+    struct Context { Client* original; Client* replacement; bool queued = false; } context{&original, &replacement};
+    SetBeforeCommandDispatchForTests([](void* raw) {
+        auto& ctx = *static_cast<Context*>(raw);
+        ctx.original->Close();
+        ASSERT_TRUE(WaitUntil([] { return Status().state == VN_REMOTE_LISTENING; }, false));
+        ASSERT_TRUE(ctx.replacement->Connect(Status().tcpPort));
+        Hello hello;
+        hello.capabilities &= ~kCapabilityExecutionObservation;
+        ASSERT_TRUE(ctx.replacement->Send(MakeFrame(Message::Hello, 1, hello)));
+        Frame frame;
+        ASSERT_TRUE(WaitUntil([&] { return ctx.replacement->Read(frame); }, false));
+        EventCaptureRequestV2 request;
+        request.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
+        request.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+        ASSERT_TRUE(ctx.replacement->Send(MakeFrame(Message::EventStartV2, 2, request)));
+        ctx.queued = WaitUntil([] { return PendingCommandsForTests() != 0; }, false);
+    }, &context);
+    EXPECT_EQ(VN_OK, Vn_Update());
+    ASSERT_TRUE(context.queued);
+    EXPECT_EQ(1u, PendingCommandsForTests());
+    Frame frame;
+    ASSERT_TRUE(WaitUntil([&] { return replacement.Read(frame); }));
+    ASSERT_EQ(2u, frame.requestId);
+    ASSERT_EQ(Message::EventStatusV2, frame.type);
+    EventCaptureStatusV2 result;
+    ASSERT_TRUE(DecodePayload(frame, result));
+    EXPECT_EQ(VN_MONITOR_UNSUPPORTED, result.base.result);
+    EXPECT_EQ(0u, result.base.sessionEpoch);
+}
+
+TEST(RuntimeRemote, RepeatedV2SealKeepsV2ReplyAfterImmediateDrain) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto config = RemoteConfig();
+    ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
+    Client client;
+    ASSERT_TRUE(client.Connect(Status().tcpPort));
+    Identity identity;
+    ASSERT_TRUE(client.Welcome(identity));
+    EventCaptureRequestV2 request;
+    request.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
+    request.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+    ASSERT_TRUE(client.Send(MakeFrame(Message::EventStartV2, 2, request)));
+    Frame frame;
+    ASSERT_TRUE(WaitUntil([&] { return client.Read(frame); }));
+    EventCaptureStatusV2 started;
+    ASSERT_TRUE(DecodePayload(frame, started));
+    ASSERT_EQ(VN_OK, started.base.result);
+    for (std::uint32_t id : {3u, 4u}) {
+        Writer seal;
+        seal.U64(started.base.sessionEpoch);
+        ASSERT_TRUE(client.Send({Message::EventSeal, id, std::move(seal.bytes)}));
+        ASSERT_TRUE(WaitUntil([&] { return client.Read(frame) && frame.requestId == id; }));
+        ASSERT_EQ(Message::EventStatusV2, frame.type);
+        EventCaptureStatusV2 result;
+        ASSERT_TRUE(DecodePayload(frame, result));
+        if (id == 3) {
+            EXPECT_EQ(VN_OK, result.base.result);
+            EXPECT_EQ(VN_MONITOR_EVENT_SESSION_DRAINED, result.base.state);
+        } else EXPECT_EQ(VN_MONITOR_STALE_SESSION, result.base.result);
+    }
+}
 
 TEST(RuntimeRemote, TcpHandshakeSnapshotAndCommandsUseLogicPump) {
     harkentest::EngineSession session(harkentest::MakeNullConfig());

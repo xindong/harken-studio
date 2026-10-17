@@ -70,12 +70,21 @@ bool CollectInitialQueueTimingMembersForTest(
 
 }
 
+namespace harken::monitor { class RequestObservation; }
+
 namespace harken::detail {
 
 bool CanonicalSetMutationBlocked() noexcept;
 
+MonitorRequestContext BeginMonitorRequest(
+    MonitorRequestOrigin origin, std::uint32_t operation) noexcept;
+
 VnResult PlayVoiceRaw(const VnPlayDesc* desc,
                       VnVoiceHandle* outHandle) noexcept;
+VnResult PlayVoiceRaw(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
+                     const MonitorRequestContext& request, monitor::RequestObservation* observation = nullptr) noexcept;
+void CaptureMonitorAcceptedRequest(monitor::RequestObservation& observation,
+    std::uint32_t subject, std::uint64_t handle) noexcept;
 bool DirectWorldHasActionProgram(VnActionId actionId) noexcept;
 
 }

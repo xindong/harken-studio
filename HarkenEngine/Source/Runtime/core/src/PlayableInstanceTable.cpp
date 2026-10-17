@@ -870,7 +870,8 @@ PlayableInstanceTable::Entry* PlayableInstanceTable::FindAnyMut(
 }
 
 PlayableInstanceHandle PlayableInstanceTable::Acquire(
-    PlayableKind kind, PlayableInstanceHandle parent) {
+    PlayableKind kind, PlayableInstanceHandle parent,
+    const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin) {
     // A named parent must still be live. Accepting a stale one would root the
     // new instance, quietly detaching it from a tree that has already gone.
     if (parent != 0 && (Find(parent) == nullptr || ParentLinksHeld(parent))) {
@@ -899,6 +900,13 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
         entry.nextSibling = 0;
         entry.scheduleEpoch = issue.value;
         entry.rootMetadata = {};
+        entry.contentIdentity = {};
+        entry.monitorPreparedCandidateIdentity = {};
+        entry.monitorPreparedCandidateObserved = false;
+        entry.playbackRequest = parent != 0 ? FindAny(parent)->playbackRequest : request;
+        entry.emitterOrigin = parent != 0 ? FindAny(parent)->emitterOrigin : emitterOrigin;
+        entry.controlCause = {};
+        entry.controlCauseAccepted = false;
         entry.terminalOutcome = {};
         entry.cancellationPrepared = false;
         entry.preparedObserver = {};
@@ -921,12 +929,10 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
             return 0;
         }
         MonitorLifecycleFacts facts{};
-        facts.projectId = entry.rootMetadata.projectId;
-        facts.programSemanticFingerprint =
-            entry.rootMetadata.programSemanticFingerprint;
+        FillMonitorFacts(entry, handle, facts);
         ObserveMonitorLifecycle(
             MonitorLifecyclePhase::PlayableStart, handle, entry.generation, 0,
-            entry.rootMetadata.definitionStableId, handle, 0,
+            entry.contentIdentity.stableId, handle, 0,
             0, static_cast<std::uint8_t>(entry.kind), 0, facts);
         return handle;
     }
@@ -935,7 +941,7 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
 
 bool PlayableInstanceTable::PrepareAcquire(
     PlayableKind kind, PlayableInstanceHandle parent,
-    PreparedPlayableInstance* out) noexcept {
+    PreparedPlayableInstance* out, const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin) noexcept {
     if (out == nullptr || out->Valid() ||
         (out->owner_ != nullptr && out->owner_->ParentLinksHeld(out->Handle())) ||
         (parent != 0 && (FindAnyMut(parent) == nullptr || ParentLinksHeld(parent)))) {
@@ -964,6 +970,13 @@ bool PlayableInstanceTable::PrepareAcquire(
         entry.nextSibling = 0;
         entry.scheduleEpoch = issue.value;
         entry.rootMetadata = {};
+        entry.contentIdentity = {};
+        entry.monitorPreparedCandidateIdentity = {};
+        entry.monitorPreparedCandidateObserved = false;
+        entry.playbackRequest = parent != 0 ? FindAny(parent)->playbackRequest : request;
+        entry.emitterOrigin = parent != 0 ? FindAny(parent)->emitterOrigin : emitterOrigin;
+        entry.controlCause = {};
+        entry.controlCauseAccepted = false;
         entry.terminalOutcome = {};
         entry.cancellationPrepared = false;
         entry.preparedObserver = {};
@@ -995,8 +1008,88 @@ bool PlayableInstanceTable::SetPreparedRootMetadata(
         return false;
     }
     entry->rootMetadata = metadata;
+    const auto revision = entry->contentIdentity.stableId == metadata.definitionStableId &&
+        entry->contentIdentity.worldGeneration == metadata.worldGeneration
+            ? entry->contentIdentity.contentRevision : 0;
+    entry->contentIdentity = {metadata.projectId, metadata.definitionStableId,
+        metadata.worldGeneration, metadata.programSemanticFingerprint, revision};
     if (entry->preparingCommitOwned) entry->preparationInput.metadata = metadata;
     return true;
+}
+
+bool PlayableInstanceTable::SetPreparedContentIdentity(
+    const PreparedPlayableInstance& prepared,
+    const MonitorContentIdentity& identity) noexcept {
+    Entry* entry = FindPrepared(prepared);
+    if (entry == nullptr) return false;
+    entry->contentIdentity = identity;
+    const auto& previous = entry->monitorPreparedCandidateIdentity;
+    if (entry->monitorPreparedCandidateObserved && previous.projectId == identity.projectId &&
+        previous.stableId == identity.stableId && previous.worldGeneration == identity.worldGeneration &&
+        previous.programSemanticFingerprint == identity.programSemanticFingerprint &&
+        previous.contentRevision == identity.contentRevision) return true;
+    // Root metadata can prefill content; deduplicate against the last observation.
+    entry->monitorPreparedCandidateIdentity = identity;
+    entry->monitorPreparedCandidateObserved = true;
+    MonitorLifecycleFacts facts{};
+    FillMonitorFacts(*entry, prepared.Handle(), facts);
+    facts.publishLegacy = false;
+    facts.reasonKnown = false;
+    ObserveMonitorLifecycle(MonitorLifecyclePhase::PreparedCandidate, prepared.Handle(),
+        entry->generation, identity.worldGeneration, identity.stableId, prepared.Handle(),
+        facts.relatedAction, 0, static_cast<std::uint8_t>(entry->kind), 0, facts);
+    return true;
+}
+
+bool PlayableInstanceTable::CaptureContentIdentity(
+    PlayableInstanceHandle handle, MonitorContentIdentity* out) const noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    const Entry* entry = FindAny(handle);
+    if (entry == nullptr) return false;
+    *out = entry->contentIdentity;
+    return true;
+}
+
+bool PlayableInstanceTable::CaptureEmitterOrigin(
+    PlayableInstanceHandle handle, MonitorEmitterOrigin* out) const noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    const auto* entry = FindAny(handle);
+    if (entry == nullptr) return false;
+    *out = entry->emitterOrigin;
+    return true;
+}
+
+bool PlayableInstanceTable::CapturePlaybackRequest(
+    PlayableInstanceHandle handle, MonitorRequestContext* out) const noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    const auto* entry = FindAny(handle);
+    if (entry == nullptr) return false;
+    *out = entry->playbackRequest;
+    return true;
+}
+
+bool PlayableInstanceTable::CaptureControlCause(
+    PlayableInstanceHandle handle, MonitorControlCause* out) const noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    const auto* entry = FindAny(handle);
+    if (entry == nullptr || !entry->controlCauseAccepted) return false;
+    *out = entry->controlCause;
+    return true;
+}
+
+void PlayableInstanceTable::RecordControlCause(
+    PlayableInstanceHandle handle, const MonitorControlCause& cause) noexcept {
+    const auto* original = FindAny(handle);
+    if (original == nullptr || original->controlCauseAccepted ||
+        original->terminalOutcome.kind != PlayableTerminalKind::None) return;
+    // Observation is independent of the held preparation input and its proofs.
+    auto& entry = m_entries[SlotOf(handle)];
+    entry.controlCause = cause;
+    entry.controlCauseAccepted = true;
 }
 
 PlayableInstanceTable::Entry* PlayableInstanceTable::FindPrepared(
@@ -1035,13 +1128,11 @@ void PlayableInstanceTable::ActivatePreparedEntry(Entry& actual,
     }
     const std::uint32_t generation = GenerationOf(handle);
     const PlayableKind kind = entry->kind;
-    const VnObjectId stableId = entry->rootMetadata.definitionStableId;
+    const VnObjectId stableId = entry->contentIdentity.stableId;
     MonitorLifecycleFacts facts{};
-    facts.projectId = entry->rootMetadata.projectId;
-    facts.programSemanticFingerprint =
-        entry->rootMetadata.programSemanticFingerprint;
+    FillMonitorFacts(*entry, handle, facts);
     ObserveMonitorLifecycle(MonitorLifecyclePhase::PlayableStart, handle,
-                            generation, entry->rootMetadata.worldGeneration,
+                            generation, entry->contentIdentity.worldGeneration,
                             stableId, handle, entry->rootMetadata.actionFiring, 0,
                             static_cast<std::uint8_t>(kind), 0, facts);
 }
@@ -1106,6 +1197,13 @@ bool PlayableInstanceTable::CancelPreparedImpl(
     entry->nextSibling = 0;
     entry->scheduleEpoch = 0;
     entry->rootMetadata = {};
+    entry->contentIdentity = {};
+    entry->monitorPreparedCandidateIdentity = {};
+    entry->monitorPreparedCandidateObserved = false;
+    entry->playbackRequest = {};
+    entry->emitterOrigin = {};
+    entry->controlCause = {};
+    entry->controlCauseAccepted = false;
     entry->terminalOutcome = {};
     entry->cancellationPrepared = false;
     entry->preparedObserver = {};
@@ -1187,6 +1285,61 @@ bool PlayableInstanceTable::RollbackCommitted(
     return true;
 }
 
+void PlayableInstanceTable::FillMonitorFacts(const Entry& entry,
+    PlayableInstanceHandle handle, MonitorLifecycleFacts& out) const noexcept {
+    out.playbackRequest = entry.playbackRequest;
+    out.emitterOrigin = entry.emitterOrigin;
+    out.controlCause = entry.controlCause;
+    out.projectId = entry.contentIdentity.projectId;
+    out.programSemanticFingerprint = entry.contentIdentity.programSemanticFingerprint;
+    out.contentRevision = entry.contentIdentity.contentRevision;
+    out.contentObject = entry.contentIdentity.stableId;
+    out.contentWorld = entry.contentIdentity.worldGeneration;
+    out.contentKind = static_cast<std::uint8_t>(entry.kind);
+    out.parentPlayable = entry.parent;
+    out.ownerEpoch = entry.scheduleEpoch;
+    const Entry* ancestor = &entry;
+    auto cursor = handle;
+    for (std::size_t depth = 0; depth < m_entries.size(); ++depth) {
+        if (ancestor->rootMetadata.actionFiring != 0 && out.relatedAction == 0) {
+            out.relatedAction = ancestor->rootMetadata.actionFiring;
+            out.selectionCause.actionFiring = ancestor->rootMetadata.actionFiring;
+            out.selectionCause.executionOrdinal = ancestor->rootMetadata.actionExecutionOrdinal;
+        }
+        if (ancestor->parent == 0) {
+            out.root = cursor;
+            return;
+        }
+        cursor = ancestor->parent;
+        ancestor = FindAny(cursor);
+        if (ancestor == nullptr) break;
+    }
+    out.identityObservationIncomplete = true;
+}
+
+PlayableInstanceHandle PlayableInstanceTable::CaptureMonitorIdentityAt(
+    std::uint32_t slot, MonitorLifecycleFacts* out) const noexcept {
+    if (out == nullptr) return 0;
+    *out = {};
+    if (slot >= m_entries.size()) return 0;
+    const auto& entry = m_entries[slot];
+    const auto handle = MakeHandle(slot, entry.generation);
+    if (Find(handle) == nullptr) return 0;
+    FillMonitorFacts(entry, handle, *out);
+    out->reasonKnown = false;
+    return handle;
+}
+
+bool PlayableInstanceTable::CaptureMonitorFacts(PlayableInstanceHandle handle,
+    MonitorLifecycleFacts* out) const noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    const auto* entry = FindAny(handle);
+    if (entry == nullptr) return false;
+    FillMonitorFacts(*entry, handle, *out);
+    return true;
+}
+
 bool PlayableInstanceTable::CaptureRootMetadata(
     PlayableInstanceHandle handle, PlayableRootMetadata* out) const noexcept {
     if (out == nullptr) {
@@ -1244,7 +1397,7 @@ bool PlayableInstanceTable::IsCancellationPrepared(
 }
 
 bool PlayableInstanceTable::CommitPreparedCancellation(
-    PreparedPlayableCancellation* prepared) noexcept {
+    PreparedPlayableCancellation* prepared, const MonitorControlCause* cause) noexcept {
     if (prepared == nullptr || !IsCancellationPrepared(*prepared)) {
         return false;
     }
@@ -1257,6 +1410,7 @@ bool PlayableInstanceTable::CommitPreparedCancellation(
     if (issue.status != IssueStatus::Ok) {
         return false;
     }
+    if (cause != nullptr) RecordControlCause(prepared->handle_, *cause);
     entry->scheduleEpoch = issue.value;
     entry->cancellationPrepared = false;
     entry->retirementObserver = entry->preparedObserver;
@@ -1343,19 +1497,19 @@ bool PlayableInstanceTable::CommitPreparedDelayedCancellation(
 }
 
 bool PlayableInstanceTable::ActivateDelayedCancellation(
-    DelayedPlayableCancellation* cancellation) noexcept {
+    DelayedPlayableCancellation* cancellation, const MonitorControlCause* cause) noexcept {
     if (cancellation == nullptr || !cancellation->accepted_ ||
         !OwnsDelayedCancellation(*cancellation)) return false;
     Entry* entry = FindMut(cancellation->handle_);
     if (entry == nullptr || entry->privateLinksHeld) return false;
+    if (cause != nullptr) RecordControlCause(cancellation->handle_, *cause);
     entry->scheduleEpoch = cancellation->issuedEpoch_;
     entry->delayedCancellationEpoch = 0;
     MonitorLifecycleFacts facts{};
-    facts.projectId = entry->rootMetadata.projectId;
-    facts.programSemanticFingerprint = entry->rootMetadata.programSemanticFingerprint;
+    FillMonitorFacts(*entry, cancellation->handle_, facts);
     ObserveMonitorLifecycle(
         MonitorLifecyclePhase::PlayableCancel, cancellation->handle_, entry->generation,
-        entry->rootMetadata.worldGeneration, entry->rootMetadata.definitionStableId,
+        entry->contentIdentity.worldGeneration, entry->contentIdentity.stableId,
         cancellation->handle_, entry->rootMetadata.actionFiring, 0,
         static_cast<std::uint8_t>(entry->kind), 0, facts);
     cancellation->Clear();
@@ -1575,9 +1729,7 @@ bool PlayableInstanceTable::AdvanceLifecycle(PlayableInstanceHandle handle,
     if (to == PlayableLifecycle::Retired && originalBaseline != nullptr) originalBaseline->Release();
     const PlayableKind kind = entry->kind;
     const std::uint32_t generation = entry->generation;
-    const VnObjectId stableId = entry->rootMetadata.definitionStableId;
-    const std::uint64_t programFingerprint =
-        entry->rootMetadata.programSemanticFingerprint;
+    const VnObjectId stableId = entry->contentIdentity.stableId;
     entry->lifecycle = to;
     MonitorLifecyclePhase phase = MonitorLifecyclePhase::PlayableStart;
     if (to == PlayableLifecycle::LogicalComplete) {
@@ -1588,9 +1740,8 @@ bool PlayableInstanceTable::AdvanceLifecycle(PlayableInstanceHandle handle,
         phase = MonitorLifecyclePhase::PlayableRetired;
     }
     MonitorLifecycleFacts facts{};
-    facts.projectId = entry->rootMetadata.projectId;
-    facts.programSemanticFingerprint = programFingerprint;
-    ObserveMonitorLifecycle(phase, handle, generation, entry->rootMetadata.worldGeneration,
+    FillMonitorFacts(*entry, handle, facts);
+    ObserveMonitorLifecycle(phase, handle, generation, entry->contentIdentity.worldGeneration,
                             stableId, handle, entry->rootMetadata.actionFiring, 0,
                             static_cast<std::uint8_t>(kind), 0, facts);
     if (to == PlayableLifecycle::Retired) {
@@ -1610,6 +1761,13 @@ bool PlayableInstanceTable::AdvanceLifecycle(PlayableInstanceHandle handle,
         entry->nextSibling = 0;
         entry->scheduleEpoch = 0;
         entry->rootMetadata = {};
+        entry->contentIdentity = {};
+        entry->monitorPreparedCandidateIdentity = {};
+        entry->monitorPreparedCandidateObserved = false;
+        entry->playbackRequest = {};
+        entry->emitterOrigin = {};
+        entry->controlCause = {};
+        entry->controlCauseAccepted = false;
         entry->preparingCommitOwned = false;
         entry->privateLinksHeld = false;
         entry->preparationInput = {};
@@ -1636,7 +1794,7 @@ std::uint32_t PlayableInstanceTable::FreeCount() const {
 }
 
 IssueResult PlayableInstanceTable::BumpScheduleEpochChecked(
-    PlayableInstanceHandle handle) {
+    PlayableInstanceHandle handle, const MonitorControlCause* cause) {
     Entry* entry = FindMut(handle);
     if (entry == nullptr || entry->privateLinksHeld) {
         return {};
@@ -1646,14 +1804,13 @@ IssueResult PlayableInstanceTable::BumpScheduleEpochChecked(
     if (issue.status != IssueStatus::Ok) {
         return issue;
     }
+    if (cause != nullptr) RecordControlCause(handle, *cause);
     entry->scheduleEpoch = issue.value;
     MonitorLifecycleFacts facts{};
-    facts.projectId = entry->rootMetadata.projectId;
-    facts.programSemanticFingerprint =
-        entry->rootMetadata.programSemanticFingerprint;
+    FillMonitorFacts(*entry, handle, facts);
     ObserveMonitorLifecycle(
         MonitorLifecyclePhase::PlayableCancel, handle, entry->generation,
-        entry->rootMetadata.worldGeneration, entry->rootMetadata.definitionStableId,
+        entry->contentIdentity.worldGeneration, entry->contentIdentity.stableId,
         handle, entry->rootMetadata.actionFiring, 0,
         static_cast<std::uint8_t>(entry->kind), 0, facts);
     return issue;

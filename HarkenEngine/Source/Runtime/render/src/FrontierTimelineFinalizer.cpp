@@ -3209,6 +3209,7 @@ bool FrontierTimelineFinalizer::CollectEvent(const ConsumedEvent& source,
     event.voice.envelopeCurve = payload->envelopeCurve;
     event.voice.order = event.order;
     event.voice.authoredStopOperation = payload->authoredStopOperation;
+    event.voice.controlCause = payload->controlCause;
     return true;
 }
 

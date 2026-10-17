@@ -226,6 +226,7 @@ bool TransitionInstancePool::AcquireInternal(
         SlotState expected = SlotState::Free;
         row.audibleFrame = request.audibleFrame;
         row.lockBlock = request.lockBlock;
+        row.monitorIdentity = request.monitorIdentity;
         row.gateState.store(TransitionAudibleGateState::Replaceable,
                             std::memory_order_relaxed);
         row.retiredAtAudioSequence.store(0, std::memory_order_relaxed);
@@ -244,7 +245,7 @@ bool TransitionInstancePool::AcquireInternal(
                     outToken->slot;
                 ObserveMonitorLifecycle(MonitorLifecyclePhase::TransitionStart,
                                         handle, outToken->generation, 0, {}, 0,
-                                        0, 0, 0);
+                                        0, 0, 0, 0, row.monitorIdentity);
             }
             return true;
         }
@@ -282,7 +283,7 @@ bool TransitionInstancePool::CommitPreparedAcquire(
         const std::uint64_t handle =
             (static_cast<std::uint64_t>(token.generation) << 32) | token.slot;
         ObserveMonitorLifecycle(MonitorLifecyclePhase::TransitionStart, handle,
-                                token.generation, 0, {}, 0, 0, 0, 0);
+                                token.generation, 0, {}, 0, 0, 0, 0, 0, row->monitorIdentity);
     }
     return ok;
 }
@@ -297,6 +298,7 @@ bool TransitionInstancePool::RecyclePrepared(Row& row) noexcept {
     ++row.generation;
     row.audibleFrame = 0;
     row.lockBlock = 0;
+    row.monitorIdentity = {};
     row.retiredAtAudioSequence.store(0, std::memory_order_relaxed);
     row.gateState.store(TransitionAudibleGateState::Replaceable,
                         std::memory_order_relaxed);
@@ -344,6 +346,7 @@ bool TransitionInstancePool::CancelBeforePublication(
                              std::memory_order_release);
         return false;
     }
+    const auto monitorIdentity = row->monitorIdentity;
     row->identity.store(0, std::memory_order_release);
     if (row->generation == kMaxTransitionInstanceGeneration) {
         row->slotState.store(SlotState::Quarantined,
@@ -353,6 +356,7 @@ bool TransitionInstancePool::CancelBeforePublication(
     ++row->generation;
     row->audibleFrame = 0;
     row->lockBlock = 0;
+    row->monitorIdentity = {};
     row->retiredAtAudioSequence.store(0, std::memory_order_relaxed);
     row->gateState.store(TransitionAudibleGateState::Replaceable,
                          std::memory_order_relaxed);
@@ -360,7 +364,7 @@ bool TransitionInstancePool::CancelBeforePublication(
     const std::uint64_t handle =
         (static_cast<std::uint64_t>(token.generation) << 32) | token.slot;
     ObserveMonitorLifecycle(MonitorLifecyclePhase::TransitionReject, handle,
-                            token.generation, 0, {}, 0, 0, 0, 0);
+                            token.generation, 0, {}, 0, 0, 0, 0, 0, monitorIdentity);
     return true;
 }
 
@@ -451,7 +455,7 @@ bool TransitionInstancePool::BeginRetire(
                 (static_cast<std::uint64_t>(token.generation) << 32) |
                 token.slot;
             ObserveMonitorLifecycle(MonitorLifecyclePhase::TransitionStop,
-                                    handle, token.generation, 0, {}, 0, 0, 0, 0);
+                                    handle, token.generation, 0, {}, 0, 0, 0, 0, 0, row->monitorIdentity);
             return true;
         }
     }

@@ -1810,11 +1810,11 @@ struct FutureQueueResetFixture {
         target.programSemanticFingerprint = create.programSemanticFingerprint;
     }
 
-    void AcceptReset128() {
+    void AcceptReset128(const harken::MonitorControlCause& cause = {}) {
         harken::PreparedQueueResetSetV1 reset;
         ASSERT_EQ(harken::QueueResetStatusV1::Ok, table.PrepareReset(target, &reset, 128));
         ASSERT_EQ(harken::QueueResetStatusV1::Ok,
-                  table.CommitPreparedReset(&reset, 31, 128));
+                  table.CommitPreparedReset(&reset, 31, 128, cause));
     }
 };
 
@@ -1875,7 +1875,15 @@ TEST(QueueRuntime, CancelLaterResetPreparationPreservesAcceptedFutureIntent) {
 TEST(QueueRuntime, PreparedSignalKeepsMirrorAndResetUntilExactAcceptedOutcome) {
     FutureQueueResetFixture fixture;
     fixture.table.ApplyDue(64);
-    fixture.AcceptReset128();
+    harken::MonitorControlCause resetCause{};
+    resetCause.request.key = {7, 13};
+    resetCause.actionFiring = 23;
+    resetCause.executionOrdinal = 2;
+    fixture.AcceptReset128(resetCause);
+    harken::MonitorQueueResetObservation observation{};
+    ASSERT_TRUE(fixture.table.CaptureMonitorReset(fixture.queue, &observation));
+    EXPECT_EQ(harken::MonitorQueueResetObservation::Stage::Intent, observation.stage);
+    EXPECT_EQ(resetCause.request.key, observation.cause.request.key);
     ASSERT_FALSE(HasFatalFailure());
     const auto before = harken::QueueInstanceTableTestAccess::MirrorAndReset(
         fixture.table, fixture.queue);
@@ -1903,6 +1911,8 @@ TEST(QueueRuntime, PreparedSignalKeepsMirrorAndResetUntilExactAcceptedOutcome) {
     EXPECT_EQ(before, harken::QueueInstanceTableTestAccess::MirrorAndReset(fixture.table, fixture.queue));
     fixture.table.ApplyDue(128);
     ASSERT_TRUE(fixture.table.SettleSignalAdvance(accepted, harken::QueueSignalOutcomeV1::InFlight));
+    ASSERT_TRUE(fixture.table.CaptureMonitorReset(fixture.queue, &observation));
+    EXPECT_EQ(harken::MonitorQueueResetObservation::Stage::Intent, observation.stage);
     harken::EffectiveQueueState effective{};
     ASSERT_TRUE(fixture.table.ResolveEffective(fixture.queue, &effective));
     EXPECT_EQ(current.version, effective.version);
@@ -1918,7 +1928,39 @@ TEST(QueueRuntime, PreparedSignalKeepsMirrorAndResetUntilExactAcceptedOutcome) {
     ASSERT_TRUE(fixture.table.Capture(fixture.queue, &snapshot));
     EXPECT_FALSE(snapshot.resetPending);
     EXPECT_EQ(0u, snapshot.pendingVersion);
+    ASSERT_TRUE(fixture.table.CaptureMonitorReset(fixture.queue, &observation));
+    EXPECT_EQ(harken::MonitorQueueResetObservation::Stage::Applied, observation.stage);
+    EXPECT_EQ(resetCause.request.key, observation.cause.request.key);
+    EXPECT_EQ(resetCause.actionFiring, observation.cause.actionFiring);
+    EXPECT_EQ(resetCause.executionOrdinal, observation.cause.executionOrdinal);
+    EXPECT_EQ(current.version, observation.previousVersion);
+    EXPECT_EQ(next.version, observation.nextVersion);
+    EXPECT_EQ(resetIntent, observation.resetIntent);
     EXPECT_TRUE(fixture.table.Release(fixture.queue));
+    EXPECT_FALSE(fixture.table.CaptureMonitorReset(fixture.queue, &observation));
+}
+
+TEST(QueueRuntime, DuplicateDueResetAndStaleSelectionCannotReplaceOriginalCause) {
+    FutureQueueResetFixture fixture;
+    harken::MonitorControlCause original{}, later{};
+    original.request.key = {9, 17};
+    later.request.key = {9, 21};
+    fixture.AcceptReset128(original);
+    fixture.table.ApplyDue(128);
+    harken::MonitorQueueResetObservation before{}, after{};
+    ASSERT_TRUE(fixture.table.CaptureMonitorReset(fixture.queue, &before));
+    harken::PreparedQueueResetSetV1 duplicate;
+    ASSERT_EQ(harken::QueueResetStatusV1::Ok, fixture.table.PrepareReset(fixture.target, &duplicate, 128));
+    ASSERT_EQ(harken::QueueResetStatusV1::Ok, fixture.table.CommitPreparedReset(&duplicate, 37, 128, later));
+    fixture.table.RecordMonitorResetSelection(fixture.queue, {128, 37, 0}, later);
+    auto stale = fixture.queue;
+    ++stale.generation;
+    fixture.table.RecordMonitorResetSelection(stale, {128, 31, 0}, later);
+    ASSERT_TRUE(fixture.table.CaptureMonitorReset(fixture.queue, &after));
+    EXPECT_EQ(before.resetIntent, after.resetIntent);
+    EXPECT_EQ(original.request.key, after.cause.request.key);
+    EXPECT_EQ(harken::MonitorQueueResetObservation::Stage::Intent, after.stage);
+    EXPECT_FALSE(fixture.table.CaptureMonitorReset(stale, &after));
 }
 
 TEST(QueueRuntime, CancelPreparedAndNegativeAcceptedSignalPreserveOriginalResetIdentity) {
