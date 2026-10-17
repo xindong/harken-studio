@@ -1,5 +1,6 @@
 #include "Core/ProjectOpenApproval.h"
 #include "Core/ProjectInstance.h"
+#include "Core/FileWatcher.h"
 #include "Core/MigrationManager.h"
 #include "Core/ProjectOpenProtocol.h"
 #include "Core/ProjectTransaction.h"
@@ -138,6 +139,7 @@ struct ModalResponder
     QString details;
     QString failureTitle;
     QString failureText;
+    QString failureDetails;
 
     explicit ModalResponder(bool accept) : acceptUpgrade(accept)
     {
@@ -154,6 +156,7 @@ struct ModalResponder
                     ++failures;
                     failureTitle = box->windowTitle();
                     failureText = box->text();
+                    failureDetails = box->detailedText();
                     box->done(QMessageBox::Ok);
                 }
             } else if (auto* picker = qobject_cast<QFileDialog*>(modal)) {
@@ -495,6 +498,48 @@ TEST(StudioProjectOpen, DisconnectedHubOpensCurrentGeneration)
     expectCurrent(path);
 }
 
+TEST(StudioProjectOpen, DisconnectedHubCannotConfirmForwardedStartup)
+{
+    VNX::TestSupport::ensureApp();
+    if (runInChild()) return;
+    QTemporaryDir directory{QStringLiteral(HARKEN_TEMP_DIR "/forwarded-startup-XXXXXX")};
+    ASSERT_TRUE(directory.isValid());
+    const QString path = writeProject(directory);
+    const auto before = treeBytes(directory.path());
+    QProcess owner;
+    const auto stopOwner = qScopeGuard([&]() {
+        if (owner.state() != QProcess::NotRunning) {
+            owner.kill();
+            owner.waitForFinished(5000);
+        }
+    });
+    owner.start(QString::fromUtf8(HARKEN_PROJECT_INSTANCE_PROCESS_PATH), {path});
+    ASSERT_TRUE(owner.waitForStarted(5000));
+    QByteArray output;
+    ASSERT_TRUE(VNX::TestSupport::spinUntil([&]() {
+        output.append(owner.readAllStandardOutput());
+        return output.contains('\n');
+    }, 5000));
+    ASSERT_EQ(output.trimmed(), QByteArrayLiteral("acquired"));
+    VNX::HubClient::Arguments arguments;
+    arguments.present = true;
+    arguments.serverName = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    arguments.sessionToken = QStringLiteral("disconnected");
+    arguments.launchIntent = QStringLiteral("DirectOpenOnly");
+    ModalResponder response(false);
+    EXPECT_FALSE(startProject(path, arguments, response));
+    EXPECT_EQ(response.confirmations, 0);
+    EXPECT_EQ(response.failures, 1);
+    EXPECT_EQ(response.failureDetails, QStringLiteral("PROJECT_FORWARD_UNCONFIRMED"));
+    EXPECT_TRUE(VNX::TestSupport::spinUntil([&]() {
+        output.append(owner.readAllStandardOutput());
+        return output.contains("activated");
+    }, 5000));
+    EXPECT_NE(owner.state(), QProcess::NotRunning);
+    EXPECT_EQ(VNX::ProjectManager::instance().currentProject(), nullptr);
+    EXPECT_EQ(treeBytes(directory.path()), before);
+}
+
 TEST(StudioProjectOpen, InvalidHubApprovalShowsFailureWithoutMigration)
 {
     VNX::TestSupport::ensureApp();
@@ -799,6 +844,93 @@ TEST(StudioProjectOpen, RetiredGenerationKeepsTheOpenProjectAndOriginalFiles)
     EXPECT_EQ(VNX::ProjectManager::instance().currentProject()->projectPath, existing);
     EXPECT_EQ(readBytes(path), original);
     EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(path));
+}
+
+TEST(StudioProjectOpen, FailedSaveAsPreservesOriginalProjectSession)
+{
+    VNX::TestSupport::ensureApp();
+    if (runInChild()) return;
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    QTemporaryDir directory{QStringLiteral(HARKEN_TEMP_DIR "/save-as-failure-XXXXXX")};
+    ASSERT_TRUE(directory.isValid());
+    const QString path = writeProject(directory);
+    VNX::MainWindow window;
+    ASSERT_TRUE(window.loadProject(path));
+    auto& projects = VNX::ProjectManager::instance();
+    auto* project = projects.currentProject();
+    ASSERT_NE(project, nullptr);
+    const QString originalName = project->name;
+    const QString sourcePath = directory.filePath(QStringLiteral("Legacy/AudioSources/original.wav"));
+    ASSERT_TRUE(QDir().mkpath(QFileInfo(sourcePath).absolutePath()));
+    QFile source(sourcePath);
+    ASSERT_TRUE(source.open(QIODevice::WriteOnly));
+    source.close();
+    projects.startWatchingCurrentProject();
+    ASSERT_EQ(projects.fileWatcher()->sourceFiles(), QStringList{sourcePath});
+    auto* pending = projects.createItem(nullptr, QStringLiteral("PendingAction"),
+                                        VNX::ProjectItem::Type::Action);
+    ASSERT_NE(pending, nullptr);
+    const auto originalFiles = treeBytes(QFileInfo(path).absolutePath());
+    auto& undo = VNX::UndoRedoManager::instance();
+    ASSERT_FALSE(undo.isClean());
+    const int undoCount = undo.undoStack()->count();
+    const QString title = window.windowTitle();
+    std::weak_ptr<VNX::ProjectInstance> originalInstance;
+    {
+        auto acquisition = VNX::ProjectInstance::acquire(path);
+        ASSERT_EQ(acquisition.status, VNX::ProjectInstance::Status::Acquired);
+        originalInstance = acquisition.instance;
+    }
+    const QString destination = directory.filePath(QStringLiteral("Destination/Copy.hsp"));
+    const QString obstruction = directory.filePath(QStringLiteral("Destination/Actions"));
+    ASSERT_TRUE(QDir().mkpath(QFileInfo(destination).absolutePath()));
+    QFile blocker(obstruction);
+    ASSERT_TRUE(blocker.open(QIODevice::WriteOnly));
+    ASSERT_EQ(blocker.write("keep"), 4);
+    blocker.close();
+    std::weak_ptr<VNX::ProjectInstance> targetInstance;
+    QStringList failures;
+    QObject::connect(&projects, &VNX::ProjectManager::errorOccurred, &window,
+                     [&](const QString& error) {
+        failures.append(error);
+        EXPECT_FALSE(projects.fileWatcher()->isWatching());
+        auto acquisition = VNX::ProjectInstance::acquire(destination);
+        EXPECT_EQ(acquisition.status, VNX::ProjectInstance::Status::Acquired);
+        targetInstance = acquisition.instance;
+    });
+    QTimer responder;
+    int filePickers = 0;
+    QObject::connect(&responder, &QTimer::timeout, [&] {
+        if (auto* picker = qobject_cast<QFileDialog*>(QApplication::activeModalWidget())) {
+            ++filePickers;
+            picker->selectFile(destination);
+            QMetaObject::invokeMethod(picker, "accept", Qt::DirectConnection);
+        } else if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            box->done(QMessageBox::Ok);
+        }
+    });
+    responder.start(5);
+    ASSERT_TRUE(QMetaObject::invokeMethod(&window, "onSaveProjectAs", Qt::DirectConnection));
+    responder.stop();
+    EXPECT_EQ(filePickers, 1);
+    ASSERT_EQ(failures.size(), 1);
+    EXPECT_TRUE(failures.first().startsWith(QStringLiteral("Cannot create project directory:")))
+        << failures.first().toStdString();
+    EXPECT_EQ(projects.currentProject(), project);
+    EXPECT_EQ(project->projectPath, path);
+    EXPECT_EQ(project->name, originalName);
+    EXPECT_EQ(projects.findItemByGuid(pending->guid), pending);
+    EXPECT_FALSE(undo.isClean());
+    EXPECT_EQ(undo.undoStack()->count(), undoCount);
+    EXPECT_EQ(window.windowTitle(), title);
+    EXPECT_TRUE(projects.fileWatcher()->isWatching());
+    EXPECT_EQ(projects.fileWatcher()->sourceFiles(), QStringList{sourcePath});
+    EXPECT_FALSE(originalInstance.expired());
+    EXPECT_TRUE(targetInstance.expired());
+    EXPECT_EQ(treeBytes(QFileInfo(path).absolutePath()), originalFiles);
+    EXPECT_FALSE(QFileInfo::exists(destination));
+    EXPECT_EQ(readBytes(obstruction), QByteArray("keep"));
+    EXPECT_FALSE(VNX::ProjectTransaction::recoveryRequired(destination));
 }
 
 TEST(StudioProjectOpen, FileMenusUseHubPanels)

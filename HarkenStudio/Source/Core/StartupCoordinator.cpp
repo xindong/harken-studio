@@ -86,7 +86,7 @@ void StartupCoordinator::startAfterHubConnection()
                  3, QStringLiteral("PROJECT_ALREADY_OPEN"));
             return;
         }
-        if (hubClient_ && hubClient_->isConnected()) {
+        if (hubClient_) {
             connect(hubClient_.get(), &HubClient::forwardedCompleted,
                     this, [this](bool acknowledged) {
                 if (!acknowledged) {

@@ -4096,12 +4096,15 @@ void MainWindow::onSaveProjectAs()
     }
 
     auto& manager = ProjectManager::instance();
+    const bool wasWatching = manager.fileWatcher()->isWatching();
     if (!manager.saveProject()) {
         currentProjectPath_ = previousPath;
         if (pmProject) {
             pmProject->projectPath = previousProjectPath;
             pmProject->name = previousName;
         }
+        if (wasWatching)
+            manager.startWatchingCurrentProject();
         LogPanel::logError(LogCategory::File, tr("Failed to save project"));
         return;
     }
