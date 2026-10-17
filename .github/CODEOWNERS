@@ -3,7 +3,7 @@
 /.github/ @Probus-XD
 /.docs/design/ @Probus-XD
 /.docs/quality/ @liuxin2-sys
-/.scripts/ @liuxin2-sys
+/.scripts/ @liuxin2-sys @Probus-XD
 /HarkenEngine/ @zqm-web
 /HarkenHub/ @liuxin2-sys
 /HarkenSDK/ @zqm-web
