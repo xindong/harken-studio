@@ -211,6 +211,7 @@ public:
         const MeterProbeAttachment& attachment,
         VnResult expectedStatus) noexcept;
     void RecordVariableOutcome(const VariableOutcomeRecord& outcome) noexcept;
+    void RecordSessionTerminate() noexcept;
     void RecordPreviewPlayPlayable(
         bool argsReadable, std::uint32_t structSize, std::uint32_t kind,
         VnObjectId stableId, std::uint64_t emitter, std::uint32_t flags,

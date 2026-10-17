@@ -259,6 +259,13 @@ VnResult TraceRecorder::Start(const char* utf8Path) {
     return VN_OK;
 }
 
+void TraceRecorder::RecordSessionTerminate() noexcept {
+    if (!m_active) return;
+    SyncBlocks();
+    const std::size_t start = BeginRecord(kTraceRecordSessionTerminate);
+    CommitRecord(start);
+}
+
 void TraceRecorder::Stop() noexcept {
     if (!m_active) {
         return;

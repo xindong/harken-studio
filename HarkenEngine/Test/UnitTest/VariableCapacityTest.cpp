@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <limits>
@@ -129,10 +130,58 @@ TEST(VariableCapacity, SaturatedRevisionsAllowNetZeroReplacementAndPreserveFaile
     harken::VariableReadCutRef cut{};
     ASSERT_TRUE(engine->variables.CaptureReadCut(0, observation.requestedEffectiveFrame,
         replacement.ticket.sequence, UINT32_MAX, &cut));
+    float observedValue = 0.0f;
+    ASSERT_TRUE(engine->variables.ReadCutValue(cut, harkentest::ObjectId(1), &observedValue));
+    EXPECT_FLOAT_EQ(0.75f, observedValue);
     EXPECT_EQ(VN_VARIABLE_TRANSACTION_EXHAUSTED, engine->variables.AcceptGlobal(
         harkentest::ObjectId(1), 0.5f, observation, engine->params, engine->bindings, engine->busTargets).result);
     EXPECT_EQ(issued + 1, engine->logicCommits.IssuedCount());
     EXPECT_TRUE(engine->variables.ReleaseReadCut(cut));
+}
+
+TEST(VariableCapacity, SaturatedEightMemberReplacementUsesNetCreditsAtomically) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    const auto definitions = SmoothBank(8);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        InstallDefinitionsWorld(engine, definitions.data(),
+            static_cast<std::uint32_t>(definitions.size())).status);
+    const auto capacity = engine->variables.PendingCapacity();
+    auto observation = harken::ObserveVariableCallAt(engine->variables.CurrentWorldGeneration(),
+        engine->variables.CurrentTransportEpoch(), 256, 0, 0);
+    for (std::uint32_t i = 0; i < capacity - 8; ++i) {
+        observation.requestedEffectiveFrame = static_cast<std::uint64_t>(i + 1) * 256;
+        ASSERT_EQ(VN_OK, engine->variables.AcceptGlobal(harkentest::ObjectId(1), 0.25f,
+            observation, engine->params, engine->bindings, engine->busTargets).result);
+    }
+    observation.requestedEffectiveFrame = static_cast<std::uint64_t>(capacity + 1) * 256;
+    std::array<VnVariableWriteV1, 8> writes{};
+    for (std::uint32_t i = 0; i < writes.size(); ++i) {
+        writes[i] = {harkentest::ObjectId(i + 1), 0.75f, 0};
+        ASSERT_EQ(VN_OK, engine->variables.AcceptGlobal(writes[i].variableId, 0.25f,
+            observation, engine->params, engine->bindings, engine->busTargets).result);
+    }
+    ASSERT_EQ(capacity, engine->variables.PendingCount());
+    const auto issued = engine->logicCommits.IssuedCount();
+    harkentest::VariableOutcomeCapture outcomes(*engine);
+    const auto replacement = engine->variables.AcceptGlobalBatch(writes.data(),
+        static_cast<std::uint32_t>(writes.size()), observation,
+        engine->params, engine->bindings, engine->busTargets);
+    ASSERT_EQ(VN_OK, replacement.result);
+    EXPECT_EQ(issued + 1, replacement.ticket.sequence);
+    EXPECT_EQ(capacity, engine->variables.PendingCount());
+    engine->CompleteVariableOperation();
+    EXPECT_EQ(8u, outcomes.Count());
+    for (std::uint32_t i = 0; i < writes.size(); ++i) {
+        harken::VariableOutcomeRecord outcome{};
+        ASSERT_TRUE(outcomes.Pop(&outcome));
+        EXPECT_EQ(harken::VariableOutcomeKind::Superseded, outcome.outcome);
+        EXPECT_EQ(issued - 7 + i, outcome.acceptedTicket.sequence);
+        EXPECT_EQ(replacement.ticket.sequence, outcome.relatedTicket.sequence);
+        EXPECT_FLOAT_EQ(0.0f, ReadValue(engine, writes[i].variableId));
+    }
+    EXPECT_FALSE(outcomes.Overflowed());
 }
 
 void RunReplacementSeries(bool traced) {
@@ -142,6 +191,7 @@ void RunReplacementSeries(bool traced) {
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
         harkentest::InstallSmoothDefinitions(engine, {harkentest::ObjectId(1)}).status);
     const std::string tracePath = std::string(HARKEN_TEMP_DIR) + "/variable_replacement_capacity.vtrc";
+    std::filesystem::create_directories(HARKEN_TEMP_DIR);
     if (traced) ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.c_str()));
     harkentest::VariableOutcomeCapture outcomes(*engine, 10000);
     const auto first = engine->logicCommits.IssuedCount() + 1;
@@ -203,6 +253,7 @@ void RunCallbackReplacementSeries(bool traced) {
     VnVoiceHandle voice = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
     const std::string tracePath = std::string(HARKEN_TEMP_DIR) + "/variable_callback_capacity.vtrc";
+    std::filesystem::create_directories(HARKEN_TEMP_DIR);
     if (traced) ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.c_str()));
     for (unsigned quantum = 0; quantum < 16; ++quantum) {
         engine->nullBackend.Pump(1);

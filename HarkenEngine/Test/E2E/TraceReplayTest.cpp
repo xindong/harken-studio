@@ -2069,6 +2069,82 @@ TEST(TraceReplayE2E, VariableOperationOutcomesRequireExactCountAndOrder) {
     EXPECT_NE(std::string::npos, eofResult.output.find("missing variable outcome at end"));
 }
 
+TEST(TraceReplayE2E, SessionTerminationRequiresEveryOutcomeWithoutTrustingOutcomeRecords) {
+    const auto tracePath = TempPath("variable_session_termination.vtrc");
+    {
+        EngineSession session(MakeNullConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.c_str()));
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            harkentest::InstallSmoothDefinitions(session.Engine(),
+                {harkentest::ObjectId(42), harkentest::ObjectId(43)}).status);
+        ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(42), 0.25f));
+        ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(43), 0.5f));
+    }
+    const auto bytes = ReadFileBytes(tracePath);
+    const auto valid = RunHost("trace-replay " + tracePath);
+    ASSERT_EQ(0, valid.exitCode) << valid.output;
+    RecordLocation termination{}, first{}, second{}, end{}, call{};
+    ASSERT_TRUE(FindRecord(bytes, harken::kTraceRecordSessionTerminate, 0, &termination));
+    ASSERT_TRUE(FindRecord(bytes, harken::kTraceRecordVariableOutcome, 0, &first));
+    ASSERT_TRUE(FindRecord(bytes, harken::kTraceRecordVariableOutcome, 1, &second));
+    ASSERT_TRUE(FindRecord(bytes, harken::kTraceRecordEnd, 0, &end));
+    ASSERT_TRUE(FindRecord(bytes, harken::kTraceRecordApiCall, 0, &call));
+    auto missing = bytes;
+    ASSERT_TRUE(EraseRecord(&missing, second));
+    const auto oneMissing = RunMutatedTrace(missing, "variable_session_one_outcome_missing.vtrc");
+    EXPECT_EQ(1, oneMissing.exitCode) << oneMissing.output;
+    ASSERT_TRUE(EraseRecord(&missing, first));
+    const auto missingResult = RunMutatedTrace(missing, "variable_session_all_outcomes_missing.vtrc");
+    EXPECT_EQ(1, missingResult.exitCode) << missingResult.output;
+    auto absentOperation = bytes;
+    ASSERT_TRUE(EraseRecord(&absentOperation, termination));
+    EXPECT_EQ(1, RunMutatedTrace(absentOperation, "variable_session_operation_missing.vtrc").exitCode);
+    std::uint64_t endOrdinal = 0;
+    std::memcpy(&endOrdinal, bytes.data() + end.recordAt + 8, sizeof(endOrdinal));
+    for (const auto& appended : {termination, call}) {
+        std::vector<std::uint8_t> extraRecord(bytes.begin() + appended.recordAt,
+            bytes.begin() + appended.payloadAt + appended.payloadBytes);
+        std::memcpy(extraRecord.data() + 8, &endOrdinal, sizeof(endOrdinal));
+        auto afterTermination = bytes;
+        afterTermination.insert(afterTermination.begin() + end.recordAt,
+            extraRecord.begin(), extraRecord.end());
+        RecordLocation shiftedEnd{};
+        ASSERT_TRUE(FindRecord(afterTermination, harken::kTraceRecordEnd, 0, &shiftedEnd));
+        ASSERT_TRUE(PatchRecordOrdinal(&afterTermination, shiftedEnd, endOrdinal + 1));
+        const auto refused = RunMutatedTrace(afterTermination,
+            appended.recordAt == termination.recordAt ? "variable_session_duplicate.vtrc" :
+                                                       "variable_session_late_call.vtrc");
+        EXPECT_EQ(1, refused.exitCode) << refused.output;
+    }
+    const std::vector<std::uint8_t> unfinished(bytes.begin(), bytes.begin() + first.recordAt);
+    EXPECT_EQ(1, RunMutatedTrace(unfinished, "variable_session_missing_at_eof.vtrc").exitCode);
+}
+
+TEST(TraceReplayE2E, TraceStopAndZeroOutcomeTerminationKeepDistinctOperations) {
+    for (bool terminate : {false, true}) {
+        const auto tracePath = TempPath(terminate ? "variable_empty_term.vtrc" :
+                                                    "variable_pending_trace_stop.vtrc");
+        {
+            EngineSession session(MakeNullConfig());
+            ASSERT_EQ(VN_OK, session.InitResult());
+            ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.c_str()));
+            ASSERT_EQ(harken::WorldInstallStatus::Ok,
+                harkentest::InstallSmoothDefinitions(session.Engine(), {harkentest::ObjectId(42)}).status);
+            if (!terminate) {
+                ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(42), 0.25f));
+                ASSERT_EQ(VN_OK, Vn_TraceStop());
+            }
+        }
+        const auto bytes = ReadFileBytes(tracePath);
+        RecordLocation record{};
+        EXPECT_EQ(terminate, FindRecord(bytes, harken::kTraceRecordSessionTerminate, 0, &record));
+        EXPECT_FALSE(FindRecord(bytes, harken::kTraceRecordVariableOutcome, 0, &record));
+        const auto replay = RunHost("trace-replay " + tracePath);
+        EXPECT_EQ(0, replay.exitCode) << replay.output;
+    }
+}
+
 TEST(TraceReplayE2E, TenThousandVariableReplacementsReplayWithoutUpdateBetweenWrites) {
     const auto tracePath = TempPath("variable_ten_thousand.vtrc");
     {

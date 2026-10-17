@@ -95,6 +95,7 @@ inline constexpr std::uint16_t kTraceRecordMeterProbeBindingDetach = 12;
 inline constexpr std::uint16_t kTraceRecordVariableOutcome = 13;
 inline constexpr std::uint16_t kTraceRecordProjectGenerationInstallAck = 14;
 inline constexpr std::uint16_t kTraceRecordPreparedTopologyPlan = 15;
+inline constexpr std::uint16_t kTraceRecordSessionTerminate = 16; // empty payload
 inline constexpr std::uint32_t kTracePreparedTopologyPlanVintage = 1;
 // Token U64×4 + publishedBusFingerprint + compileTargetProfileFingerprint +
 // U32 (publicationVintage or admission). The arithmetic is 52, not 60.

@@ -5130,6 +5130,7 @@ void TeardownEngine(Engine* engine) {
     engine->actionSeeks.CancelAllAfterAudioJoin(VN_NOT_INITIALIZED);
     harken::monitor::OnEngineTeardown(engine);
     engine->voices.DiscardAllStreamParkMailboxes();
+    if (engine->trace != nullptr) engine->trace->RecordSessionTerminate();
     engine->variables.TerminateSession();
     engine->CompleteVariableOperation();
     if (engine->trace != nullptr) {

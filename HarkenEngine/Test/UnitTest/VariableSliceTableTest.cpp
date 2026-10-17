@@ -101,8 +101,8 @@ TEST(VariableSliceTable, ResetAllowsDisabledTargetsAndRejectsHardLimits) {
                             harken::kVariableSliceTargetPoolHardLimit));
 }
 
-TEST(VariableSliceTable, SourcesAndStableProofSlotsCrossOld256Boundary) {
-    constexpr std::uint32_t capacity = 600;
+TEST(VariableSliceTable, SourcesAndStableProofSlotsCrossFormerFixedLimits) {
+    constexpr std::uint32_t capacity = 5600;
     harken::VariableSliceTable table;
     ASSERT_TRUE(table.Reset(capacity, 0, 0));
     std::vector<harken::VariableSliceRef> rows(capacity);

@@ -3446,6 +3446,7 @@ int RunTraceReplay(int argc, char** argv) {
     // mistake diagnostic coverage for ordinary deterministic replay.
     bool limitedCallbackContext = false;
     bool limitedHistoricalCurrentWorld = false;
+    bool sessionTerminated = false;
     int exitCode = 0;
 
     while (!r.failed && r.offset < r.size && exitCode == 0) {
@@ -3493,6 +3494,7 @@ int RunTraceReplay(int argc, char** argv) {
             recordType == harken::kTraceRecordUpdateEnd ||
             recordType == harken::kTraceRecordCurrentWorldInstall ||
             recordType == harken::kTraceRecordPreparedTopologyPlan ||
+            recordType == harken::kTraceRecordSessionTerminate ||
             recordType == harken::kTraceRecordEnd ||
             (recordType >= harken::kTraceRecordMeterProbeInstall &&
              recordType <= harken::kTraceRecordMeterProbeBindingDetach);
@@ -3500,6 +3502,12 @@ int RunTraceReplay(int argc, char** argv) {
             !limitedCallbackContext &&
             (flags & harken::kTraceFlagCallbackContext) == 0) {
             std::fprintf(stderr, "error: missing variable outcome before the next operation\n");
+            exitCode = 1;
+            break;
+        }
+        if (sessionTerminated && recordType != harken::kTraceRecordVariableOutcome &&
+            recordType != harken::kTraceRecordBlockBarrier && recordType != harken::kTraceRecordEnd) {
+            std::fprintf(stderr, "error: operation follows session termination\n");
             exitCode = 1;
             break;
         }
@@ -4075,14 +4083,7 @@ int RunTraceReplay(int argc, char** argv) {
             const std::uint32_t scope = rec.U32();
             const std::uint32_t emitterGeneration = rec.U32();
             harken::VariableOutcomeRecord replayed{};
-            bool haveReplayed = variableOutcomes.Pop(&replayed);
-            if (!haveReplayed &&
-                outcome == static_cast<std::uint32_t>(
-                               harken::VariableOutcomeKind::Session)) {
-                engine->variables.TerminateSession();
-                engine->CompleteVariableOperation();
-                haveReplayed = variableOutcomes.Pop(&replayed);
-            }
+            const bool haveReplayed = variableOutcomes.Pop(&replayed);
             if (rec.failed || rec.Remaining() != 0 || outcome < 1 ||
                 outcome > VN_VARIABLE_OUTCOME_REJECTED_TARGET || scope > 1 ||
                 !haveReplayed ||
@@ -4248,6 +4249,15 @@ int RunTraceReplay(int argc, char** argv) {
             (void)harken::DrainProjectGenerationInstallAcksV1(*engine);
             break;
         }
+        case harken::kTraceRecordSessionTerminate:
+            if (payloadBytes != 0 || flags != 0) {
+                std::fprintf(stderr, "error: invalid session termination record\n");
+                exitCode = 1;
+                break;
+            }
+            sessionTerminated = true;
+            engine->variables.TerminateSession();
+            break;
         case harken::kTraceRecordEnd:
             if (recordedPreparedTopology.valid) {
                 std::fprintf(
