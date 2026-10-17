@@ -18,8 +18,9 @@
 #include "harken/param/ParamTargets.h"
 
 #include <array>
+#include <algorithm>
 #include <atomic>
-#include <bitset>
+#include <bit>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -281,7 +282,8 @@ public:
                       VariableSliceTable& slices,
                       ScheduledTransactionPool& timeline,
                       std::uint64_t readCutCapacity,
-                      std::uint32_t timelineReadUseCapacity);
+                      std::uint32_t timelineReadUseCapacity,
+                      std::uint32_t meterProbeCapacity = 0);
 
     WorldInstallResult Install(const ContainerWorldInstallViewV1& install);
     WorldInstallResult InstallWithReplacementAdmission(
@@ -675,6 +677,12 @@ public:
     std::uint32_t ReadCutCapacity() const noexcept { return readCutCapacity_; }
     std::uint32_t TimelineReadUseCapacity() const noexcept { return timelineReadUseCapacity_; }
     std::size_t ReadCutStorageBytes() const noexcept;
+    std::size_t StorageBytes() const noexcept;
+    std::uint32_t RevisionCapacity() const noexcept { return revisionCapacity_; }
+    std::uint32_t RevisionStorageCapacity() const noexcept { return static_cast<std::uint32_t>(history_.size()); }
+    std::uint32_t CompletionCapacity() const noexcept { return completionCapacity_; }
+    std::uint32_t ApplyPayloadCapacity() const noexcept { return applyPayloadCapacity_; }
+    bool HasStagedOutcomes() const noexcept { return !outcomes_.empty(); }
     bool CaptureCurrentBank(VnEmitterHandle emitter,
                             const VnVariableId* variableIds,
                             std::uint32_t variableCount,
@@ -769,10 +777,10 @@ public:
     std::uint64_t HistoryHighWater() const noexcept { return historyHighWater_; }
     std::uint64_t RefusalCount() const noexcept { return refusalCount_; }
     std::uint32_t HistoryCapacity() const noexcept {
-        return kVariableHistoryCapacity;
+        return queryHistoryCapacity_;
     }
     std::uint32_t PendingCapacity() const noexcept {
-        return kPendingVariableWriteCapacity;
+        return revisionCapacity_;
     }
     std::uint64_t ExecutionCatalogFingerprint() const noexcept;
     VnResult ResolveLabel(VnVariableId variable, VnObjectId label, float* value) const noexcept;
@@ -1096,6 +1104,8 @@ private:
         std::uint64_t outcomeGeneration = 0;
         std::uint64_t batchId = 0;
         bool batchLeader = true;
+        std::uint32_t batchHead = UINT32_MAX;
+        std::uint32_t batchNext = UINT32_MAX;
         std::uint32_t observers = 0;
         bool historySlicePin = false;
         std::uint64_t consumedFence = 0;
@@ -1120,6 +1130,19 @@ private:
     };
     enum class ReadCutState : std::uint8_t { Free, Capturing, Published, Quarantined };
     enum class EntryReadUseState : std::uint8_t { None, Prepared, Published };
+    struct CandidatePins {
+        std::span<std::uint64_t> words;
+        void reset() noexcept { std::fill(words.begin(), words.end(), 0); }
+        void set(std::size_t index) noexcept { words[index / 64] |= std::uint64_t{1} << (index % 64); }
+        bool test(std::size_t index) const noexcept {
+            return (words[index / 64] & (std::uint64_t{1} << (index % 64))) != 0;
+        }
+        std::size_t count() const noexcept {
+            std::size_t result = 0;
+            for (auto word : words) result += std::popcount(word);
+            return result;
+        }
+    };
     struct ReadCutRow {
         std::atomic<std::uint32_t> generation{1};
         std::atomic<ReadCutState> state{ReadCutState::Free};
@@ -1135,7 +1158,7 @@ private:
         bool actionOrderConsumed = false;
         std::array<float, kVariableDefinitionCapacity> baselineValues{};
         // Each set bit owns an observer, so the slot cannot recycle while retained.
-        std::bitset<kVariableHistoryCapacity> candidatePins{};
+        CandidatePins candidatePins{};
         bool candidateAdmissionFailed = false;
         std::uint32_t valueCount = 0;
         std::uint32_t sourceCount = 0;
@@ -1271,7 +1294,8 @@ private:
                                 WorldGeneration world,
                                 TransportEpoch transport) noexcept;
     void RememberFinalizedTicket(LogicCommitSequence sequence,
-                                 VariableOutcomeKind outcome) noexcept;
+                                 VariableOutcomeKind outcome,
+                                 WorldGeneration world, TransportEpoch transport) noexcept;
     const TicketQueryRecord* FindTicketQuery(
         LogicCommitSequence sequence, WorldGeneration world,
         TransportEpoch transport) const noexcept;
@@ -1288,10 +1312,12 @@ private:
         const VariableCallObservation& observed,
         std::uint32_t executionOrdinal,
         PreparedVariableWriteToken* out,
-        VariableWriterIdentityV1 writer = VariableWriterIdentityV1::Game) noexcept;
+        VariableWriterIdentityV1 writer = VariableWriterIdentityV1::Game,
+        bool staging = false) noexcept;
     void CommitPreparedWriteImpl(PreparedVariableWriteToken* prepared, LogicCommitSequence sequence,
         const LogicCommitCoordinator::ConsumedIssue* consumed,
-        const ActionFiringTable::ChildActivationReceipt* activated = nullptr) noexcept;
+        const ActionFiringTable::ChildActivationReceipt* activated = nullptr,
+        bool supersede = true) noexcept;
     bool CanTerminateForWorldReplacement(const WriteRow& row) const noexcept;
     void FinalizeRow(WriteRow& row, VariableOutcomeKind outcome,
                      LogicCommitTicket related, std::uint64_t actualFrame) noexcept;
@@ -1375,13 +1401,22 @@ private:
     std::vector<HeldCurrentSliceToken> preparedWritePlacements_;
     std::vector<std::uint32_t> historyGenerations_;
     std::vector<std::uint32_t> freeSlots_;
+    std::uint32_t revisionCapacity_ = 0;
+    std::uint32_t queryHistoryCapacity_ = 0;
+    std::uint32_t completionCapacity_ = 0;
+    std::uint32_t applyPayloadCapacity_ = 0;
+    std::uint32_t occupiedRevisions_ = 0;
+    std::vector<WriteRow*> sealRows_, commitRows_, prefixRows_, readCutRows_, actionReadCutRows_;
+    std::vector<WriteRow*> preparationRows_, settledRows_, supersedeRows_;
+    std::vector<std::size_t> serviceCandidates_, preparationOrder_;
+    std::vector<HeldCurrentSliceToken> preparationHeld_;
+    mutable std::vector<VariableSliceRef> dependencyVisited_;
     std::uint32_t readCutCapacity_ = 0;
     std::unique_ptr<ReadCutRow[]> readCuts_;
+    std::vector<std::uint64_t> candidatePinStorage_;
     std::uint32_t timelineReadUseCapacity_ = 0;
     std::unique_ptr<TimelineReadUseRow[]> timelineReadUses_;
-    // Per-update outcome staging: filled by FinalizeRow, drained whole by
-    // the update epilogue (transcribed to an active trace, else dropped),
-    // never carried across updates.
+    // Terminal records are delivered after each completed logic operation.
     std::vector<VariableOutcomeRecord> outcomes_;
     std::vector<TicketQueryRecord> ticketQueryRecords_;
     std::uint32_t ticketQueryBegin_ = 0;

@@ -5035,6 +5035,7 @@ std::atomic<std::uint64_t> g_testTimelineCapacityNextGeneration{1};
 // can tell it is running inside a callback frame.
 struct CallbackScope {
     explicit CallbackScope(Engine& engine) : m_engine(engine) {
+        engine.CompleteVariableOperation();
         ++g_callbackDepth;
         ++m_engine.callbackDispatchDepth;
     }
@@ -5130,12 +5131,8 @@ void TeardownEngine(Engine* engine) {
     harken::monitor::OnEngineTeardown(engine);
     engine->voices.DiscardAllStreamParkMailboxes();
     engine->variables.TerminateSession();
+    engine->CompleteVariableOperation();
     if (engine->trace != nullptr) {
-        VariableOutcomeRecord outcome{};
-        while (engine->variables.PopOutcome(&outcome)) {
-            engine->trace->RecordVariableOutcome(outcome);
-        }
-        engine->variables.MarkOutcomeDeliveryComplete();
         engine->trace->Stop();
         engine->trace.reset();
     }
@@ -70129,6 +70126,7 @@ bool CancelActionDeferredForWorldReplacement(
 
 RuntimeTransportResetStatus BeginRuntimeTransportReset(
     Engine& engine, std::uint64_t resetFrame) noexcept {
+    VariableOperationScope variableOperation(&engine);
     harken::monitor::IdentityMutationScope identityMutation;
     if (engine.runtimeTransportResetActive) {
         if (engine.runtimeTransportResetFrame != resetFrame) {
@@ -70658,6 +70656,7 @@ void RecordPreviewPlayPlayable(
     std::uint32_t returnedKind, std::uint64_t handle) noexcept {
     Engine* engine = detail::ActiveEngine();
     if (engine == nullptr) return;
+    VariableOperationScope variableOperation(engine);
     monitor::ObserveOperation(VN_MONITOR_OPERATION_PLAY_PREVIEW, result,
         VN_MONITOR_ENTITY_PLAYABLE, stableId, handle, emitter, kind);
     engine->statefulCallSeen = true;
@@ -70675,6 +70674,7 @@ void RecordPreviewResetPlayable(
     std::uint32_t reserved, std::int32_t result) noexcept {
     Engine* engine = detail::ActiveEngine();
     if (engine == nullptr) return;
+    VariableOperationScope variableOperation(engine);
     engine->statefulCallSeen = true;
     engine->traceOriginWorldProbeOnly = false;
     if (engine->trace != nullptr && engine->trace->Active()) {
@@ -70689,6 +70689,7 @@ void RecordPreviewStopPlayable(std::uint64_t handle,
                                std::int32_t result) noexcept {
     Engine* engine = detail::ActiveEngine();
     if (engine == nullptr) return;
+    VariableOperationScope variableOperation(engine);
     monitor::ObserveOperation(VN_MONITOR_OPERATION_STOP_PREVIEW, result,
         VN_MONITOR_ENTITY_PLAYABLE, {}, handle, fadeMs);
     engine->statefulCallSeen = true;
@@ -90030,6 +90031,7 @@ VnResult PlayVoiceRaw(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         return VN_IN_USE;
     }
     try {
+        VariableOperationScope variableOperation(detail::ActiveEngine());
         return PlayImpl(desc, outHandle, request, false, nullptr, observation);
     } catch (...) {
         return VN_DEVICE_ERROR;
@@ -90041,6 +90043,26 @@ VnResult PlayVoiceRaw(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
 namespace harken {
 namespace {
 void ReclaimRetiredAttenuationProfiles(Engine& engine) noexcept;
+}
+
+void Engine::CompleteVariableOperation() noexcept {
+    if (variableOperationDepth != 0 || !variables.HasStagedOutcomes()) return;
+    VariableOutcomeRecord outcome{};
+    while (variables.PopOutcome(&outcome)) {
+        if (trace != nullptr) trace->RecordVariableOutcome(outcome);
+        if (variableOutcomeSink != nullptr) variableOutcomeSink(variableOutcomeSinkContext, outcome);
+    }
+    variables.MarkOutcomeDeliveryComplete();
+    variables.FinishOutcomeDelivery();
+}
+
+VariableOperationScope::~VariableOperationScope() noexcept {
+    if (engine_ == nullptr || (activeEngine_ && detail::ActiveEngine() != engine_)) return;
+    if (hold_) {
+        assert(engine_->variableOperationDepth != 0);
+        --engine_->variableOperationDepth;
+    }
+    engine_->CompleteVariableOperation();
 }
 }
 
@@ -90406,6 +90428,7 @@ VnResult Vn_Update(void) {
         return VN_OK;
     }
     harken::detail::g_callbackExceptionPending = false;
+    harken::VariableOperationScope variableOperation(engine, false);
     try {
     /* A streaming thread that has died stops being able to reclaim the slots
      * the audio thread retires, so the logic thread takes that over; and it
@@ -90468,12 +90491,7 @@ VnResult Vn_Update(void) {
         [engine](harken::BindingId id) {
             engine->params.NoteDefinitionReplaced(id);
         });
-    /* The prior update's outcome window closes here: every staged record
-     * has been offered to its consumers (trace transcription at that
-     * update's epilogue, replay comparison between updates), so delivered
-     * Terminal rows recycle their history slots before new writes
-     * dispatch. */
-    engine->variables.FinishOutcomeDelivery();
+    engine->CompleteVariableOperation();
     engine->variables.BeginService(*engine, engine->mixer.BlocksRendered(),
                                    engine->config.blockFrames);
     const std::uint64_t dueFrame =
@@ -90979,17 +90997,7 @@ VnResult Vn_Update(void) {
     engine->meterProbes.EndService(*engine);
     engine->variables.EndService(*engine);
     engine->variables.AcknowledgeFinishedNativeReadCuts();
-    /* Outcome transcription while a trace is active. The delivery window
-     * itself closes at the NEXT update's variable service (an external
-     * consumer — the replay comparator — reads the buffer between
-     * updates), so undelivered records never accumulate past one tick. */
-    if (engine->trace != nullptr) {
-        harken::VariableOutcomeRecord outcome{};
-        while (engine->variables.PopOutcome(&outcome)) {
-            engine->trace->RecordVariableOutcome(outcome);
-        }
-    }
-    engine->variables.MarkOutcomeDeliveryComplete();
+    engine->CompleteVariableOperation();
     while (engine->logicLogRing.TryPop(record, &monitorLogTicket)) {
         if (engine->config.logCallback == nullptr && !harken::monitor::EventCatalogEnabled()) {
             continue;
@@ -91141,6 +91149,7 @@ VnResult Vn_LoadCurrentWorld(const VnCurrentWorldLoadDesc* desc,
             return refuse(VN_CURRENT_WORLD_LOAD_NOT_INITIALIZED,
                           VN_NOT_INITIALIZED);
         }
+        harken::VariableOperationScope variableOperation(engine);
         if (engine->packComposition.Authority() ==
             harken::PackAuthorityMode::Pack) {
             return refuse(VN_CURRENT_WORLD_LOAD_SEMANTIC_INVALID,
@@ -91569,6 +91578,7 @@ static VnResult LoadPackObserved(const VnPackDesc* desc,
     if (engine->callbackFatalSticky) {
         return VN_NOT_INITIALIZED;
     }
+    harken::VariableOperationScope variableOperation(engine);
     if (desc != nullptr && desc->structSize == sizeof(VnPackLoadDesc)) {
         const auto* load = reinterpret_cast<const VnPackLoadDesc*>(desc);
         harken::TraceCallScribe trace =
@@ -91662,6 +91672,7 @@ static VnResult UnloadPackWithFlags(VnPackHandle handle,
     if (engine->callbackFatalSticky) {
         return VN_NOT_INITIALIZED;
     }
+    harken::VariableOperationScope variableOperation(engine);
     harken::TraceCallScribe unloadTrace =
         TraceStateful(engine, traceCallId);
     unloadTrace.U64(handle);
@@ -92991,6 +93002,7 @@ VnResult Vn_CommitVoiceStart(VnVoiceHandle handle) {
     if (engine->callbackFatalSticky) {
         return VN_NOT_INITIALIZED;
     }
+    harken::VariableOperationScope variableOperation(engine);
     TraceStateful(engine, harken::kTraceCallCommitVoiceStart).U64(handle);
     // The commit performs a Render admission, so drain first for the reason a
     // direct play does: a slot freed by a published park outcome must not carry
@@ -93087,6 +93099,7 @@ static VnResult StopVoiceObserved(VnVoiceHandle handle, uint32_t fadeMs,
     if (engine->callbackFatalSticky) {
         return VN_NOT_INITIALIZED;
     }
+    harken::VariableOperationScope variableOperation(engine);
     TraceStateful(engine, harken::kTraceCallStop).U64(handle).U32(fadeMs);
     // A pending-start voice (deferred by a steal) owns no render slot: stopping
     // it cancels the deferred start entirely rather than issuing an audio stop.
@@ -97964,6 +97977,7 @@ static VnResult SetValueObserved(VnVariableId variableId, float value) {
     if (engine->runtimeTransportResetActive) {
         return VN_BACKPRESSURE;
     }
+    harken::VariableOperationScope variableOperation(engine);
     harken::TraceCallScribe trace =
         TraceStateful(engine, harken::kTraceCallSetValue);
     trace.ObjectId(variableId).F32(value);
@@ -98002,6 +98016,7 @@ static VnResult SetValuesObserved(const VnVariableBatchDescV1* desc,
     if (engine->runtimeTransportResetActive) {
         return VN_BACKPRESSURE;
     }
+    harken::VariableOperationScope variableOperation(engine);
     harken::TraceCallScribe trace =
         TraceStateful(engine, harken::kTraceCallSetValues);
     TraceVariableBatch(trace, desc);
@@ -98041,6 +98056,7 @@ VnResult Vn_ResetValues(const VnVariableBatchDescV1* desc,
     if (engine->runtimeTransportResetActive) {
         return VN_BACKPRESSURE;
     }
+    harken::VariableOperationScope variableOperation(engine);
     harken::TraceCallScribe trace =
         TraceStateful(engine, harken::kTraceCallResetValues);
     TraceVariableBatch(trace, desc);
@@ -99030,6 +99046,7 @@ VnResult Vn_DestroyEmitter(VnEmitterHandle handle) {
     if (engine->callbackFatalSticky) {
         return VN_NOT_INITIALIZED;
     }
+    harken::VariableOperationScope variableOperation(engine);
     TraceStateful(engine, harken::kTraceCallDestroyEmitter).U64(engine->trace != nullptr && engine->trace->Active()
                   ? engine->trace->RecordedEmitterHandle(handle)
                   : handle);
@@ -99157,6 +99174,7 @@ static VnResult StopEmitterObserved(VnEmitterHandle handle, uint32_t fadeMs,
     if (engine->callbackFatalSticky) {
         return VN_NOT_INITIALIZED;
     }
+    harken::VariableOperationScope variableOperation(engine);
     TraceStateful(engine, harken::kTraceCallStopEmitter)
         .U64(engine->trace != nullptr && engine->trace->Active()
                   ? engine->trace->RecordedEmitterHandle(handle)
@@ -99256,6 +99274,7 @@ static VnResult SetEmitterValueObserved(VnEmitterHandle handle, VnVariableId var
     if (engine->runtimeTransportResetActive) {
         return VN_BACKPRESSURE;
     }
+    harken::VariableOperationScope variableOperation(engine);
     harken::TraceCallScribe trace =
         TraceStateful(engine, harken::kTraceCallSetEmitterValue);
     trace.U64(engine->trace != nullptr && engine->trace->Active()
@@ -99305,6 +99324,7 @@ static VnResult SetEmitterValuesObserved(VnEmitterHandle emitter,
     if (engine->runtimeTransportResetActive) {
         return VN_BACKPRESSURE;
     }
+    harken::VariableOperationScope variableOperation(engine);
     harken::TraceCallScribe trace =
         TraceStateful(engine, harken::kTraceCallSetEmitterValues);
     trace.U64(engine->trace != nullptr && engine->trace->Active()
@@ -99387,6 +99407,7 @@ VnResult harken::detail::PostActionWithValidation(
         if (engine->runtimeRecreateRequired) {
             return VN_RUNTIME_RECREATE_REQUIRED;
         }
+        harken::VariableOperationScope variableOperation(engine);
         harken::TraceCallScribe trace =
             journalCall
                 ? TraceStateful(engine, harken::kTraceCallPostAction)
@@ -100144,6 +100165,7 @@ static VnResult PostActionByNameObserved(const VnPostActionByNameDesc* desc,
         if (engine == nullptr || engine->callbackFatalSticky) {
             return bound;
         }
+        harken::VariableOperationScope variableOperation(engine);
         harken::TraceCallScribe trace =
             TraceStateful(engine, harken::kTraceCallPostActionByName);
         trace.U32(2)
@@ -100280,6 +100302,7 @@ static VnResult PostActionPinnedObserved(const VnActionPinnedDesc* desc,
         if (engine == nullptr || engine->callbackFatalSticky) {
             return bound;
         }
+        harken::VariableOperationScope variableOperation(engine);
         harken::TraceCallScribe trace =
             TraceStateful(engine, harken::kTraceCallPostActionPinned);
         trace.U32(2)
@@ -100368,6 +100391,7 @@ static VnResult PostActionResolvedObserved(const VnActionResolved* resolved,
         if (engine == nullptr || engine->callbackFatalSticky) {
             return bound;
         }
+        harken::VariableOperationScope variableOperation(engine);
         harken::TraceCallScribe trace =
             TraceStateful(engine, harken::kTraceCallPostActionResolved);
         trace.U32(2)
@@ -100450,6 +100474,7 @@ static VnResult StopActionObserved(VnActionFiringHandle firing,
         if (engine == nullptr || engine->callbackFatalSticky) {
             return VN_NOT_INITIALIZED;
         }
+        harken::VariableOperationScope variableOperation(engine);
         harken::TraceCallScribe trace =
             TraceStateful(engine, harken::kTraceCallStopActionFiring);
         trace.U32(1).U64(firing).U32(fadeMs);
@@ -100636,6 +100661,7 @@ static VnResult StopAllObserved(uint32_t fadeMs, const harken::MonitorControlCau
         if (engine == nullptr || engine->callbackFatalSticky) {
             return VN_NOT_INITIALIZED;
         }
+        harken::VariableOperationScope variableOperation(engine);
         TraceStateful(engine, harken::kTraceCallStopAll).U32(fadeMs);
         return StopAllCore(*engine, fadeMs, cause);
     } catch (const std::bad_alloc&) {
@@ -100734,6 +100760,7 @@ VnResult Vn_SeekActionFiring(const VnActionSeekDescV1* desc,
         if (engine == nullptr || engine->callbackFatalSticky) {
             return VN_NOT_INITIALIZED;
         }
+        harken::VariableOperationScope variableOperation(engine);
         harken::TraceCallScribe trace =
             TraceStateful(engine, harken::kTraceCallSeekActionFiring);
         trace.U32(1)
@@ -101162,6 +101189,7 @@ VnResult Vn_ReleaseActionFiring(VnActionFiringHandle firing) {
         if (engine == nullptr || engine->callbackFatalSticky) {
             return VN_NOT_INITIALIZED;
         }
+        harken::VariableOperationScope variableOperation(engine);
         harken::TraceCallScribe trace =
             TraceStateful(engine, harken::kTraceCallReleaseActionFiring);
         trace.U32(1).U64(firing);
@@ -101316,6 +101344,7 @@ VnResult Vn_ReplacePack(VnPackHandle handle, const VnPackDesc* desc) {
     if (engine->callbackFatalSticky) {
         return VN_NOT_INITIALIZED;
     }
+    harken::VariableOperationScope variableOperation(engine);
     harken::TraceCallScribe replaceTrace =
         TraceStateful(engine, harken::kTraceCallReplacePack);
     replaceTrace.U64(handle);
@@ -101501,11 +101530,7 @@ VnResult Vn_TraceStop(void) {
     // mid-session failure just drops the inert recorder.
     if (engine->trace != nullptr) {
         if (engine->traceSessionEpoch != UINT64_MAX) ++engine->traceSessionEpoch;
-        harken::VariableOutcomeRecord outcome{};
-        while (engine->variables.PopOutcome(&outcome)) {
-            engine->trace->RecordVariableOutcome(outcome);
-        }
-        engine->variables.MarkOutcomeDeliveryComplete();
+        engine->CompleteVariableOperation();
         engine->trace->Stop();
         engine->trace.reset();
     }
@@ -109991,6 +110016,7 @@ void JournalSuccessfulCanonicalPackSetActivation(
 VnResult ActivateCanonicalPackSetV1(
     Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,
     VnCanonicalPackSetActivationReportV1* outReport) {
+    VariableOperationScope variableOperation(&engine);
     if (descriptor == nullptr || outReport == nullptr ||
         descriptor->structSize != sizeof(VnCanonicalPackSetActivationDescV1) ||
         outReport->structSize != sizeof(VnCanonicalPackSetActivationReportV1) ||
@@ -110155,6 +110181,7 @@ VnResult ActivateCanonicalPackSetV1(
 
 VnResult UnloadCanonicalPackSetV1(Engine& engine,
                                   const VnCanonicalPackSetUnloadDescV1* desc) {
+    VariableOperationScope variableOperation(&engine);
     if (desc == nullptr || desc->structSize != sizeof(VnCanonicalPackSetUnloadDescV1) ||
         desc->flags != 0 || desc->reserved0 != 0) {
         return VN_INVALID_ARG;

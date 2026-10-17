@@ -58,6 +58,8 @@ private:
 WorldInstallResult InstallContainerWorldV1(
     Engine& engine, const ContainerWorldInstallViewV1& install,
     CurrentWorldTraceOwnerV1 traceOwner) noexcept {
+    VariableOperationScope variableOperation(
+        traceOwner == CurrentWorldTraceOwnerV1::Internal ? &engine : nullptr);
     harken::monitor::IdentityMutationScope identityMutation;
     try {
         const bool hasCurrentConsumers =
@@ -117,6 +119,10 @@ WorldInstallResult InstallContainerWorldV1(
         WorldInstallResult result{};
         result.status = WorldInstallStatus::Capacity;
         result.priorGeneration = engine.variables.CurrentWorldGeneration();
+        if (traceOwner == CurrentWorldTraceOwnerV1::Internal &&
+            engine.trace != nullptr && engine.trace->Active()) {
+            engine.trace->RecordCurrentWorldInstall(install, result, 1);
+        }
         return result;
     }
 }
@@ -174,7 +180,8 @@ VariableServiceV1::VariableServiceV1(
     std::uint32_t maxActionDefinitions,
     LogicCommitCoordinator& commits, TransportEpochOwner& transport,
     VariableSliceTable& slices, ScheduledTransactionPool& timeline,
-    std::uint64_t readCutCapacity, std::uint32_t timelineReadUseCapacity)
+    std::uint64_t readCutCapacity, std::uint32_t timelineReadUseCapacity,
+    std::uint32_t meterProbeCapacity)
     : maxEmitters_(maxEmitters),
       overridesPerEmitter_(overridesPerEmitter),
       maxActionDefinitions_(maxActionDefinitions),
@@ -190,21 +197,51 @@ VariableServiceV1::VariableServiceV1(
     for (EmitterBank& bank : emitterBanks_) {
         bank.overrides.resize(overridesPerEmitter_);
     }
-    history_.resize(kVariableHistoryCapacity);
-    preparedWritePlacements_.resize(kVariableHistoryCapacity);
-    historyGenerations_.resize(kVariableHistoryCapacity, 1);
+    const auto cells = std::uint64_t{kVariableDefinitionCapacity} +
+        std::uint64_t{maxEmitters_} * overridesPerEmitter_;
+    if (cells > UINT32_MAX) throw std::length_error("variable cell capacity overflow");
+    queryHistoryCapacity_ = static_cast<std::uint32_t>(std::max<std::uint64_t>(kVariableHistoryCapacity, cells));
+    const auto revisions = cells + queryHistoryCapacity_;
+    const auto storage = revisions + kVariableBatchWriteCapacity;
+    const auto proofs = storage + 2ull * meterProbeCapacity;
+    if (proofs > UINT32_MAX) throw std::length_error("variable revision capacity overflow");
+    revisionCapacity_ = static_cast<std::uint32_t>(revisions);
+    completionCapacity_ = static_cast<std::uint32_t>(proofs);
+    applyPayloadCapacity_ = static_cast<std::uint32_t>(revisions + 2ull * meterProbeCapacity);
+    history_.resize(static_cast<std::size_t>(storage));
+    preparedWritePlacements_.resize(history_.size());
+    historyGenerations_.resize(history_.size(), 1);
+    sealRows_.resize(history_.size());
+    commitRows_.resize(history_.size());
+    prefixRows_.resize(history_.size());
+    readCutRows_.resize(history_.size());
+    actionReadCutRows_.resize(history_.size());
+    preparationRows_.resize(history_.size());
+    settledRows_.resize(history_.size());
+    supersedeRows_.resize(history_.size());
+    serviceCandidates_.resize(kVariableWritesPerService);
+    preparationOrder_.resize(history_.size());
+    preparationHeld_.resize(history_.size());
+    dependencyVisited_.resize(completionCapacity_);
     if (readCutCapacity > UINT32_MAX) throw std::length_error("variable read cut capacity overflow");
     readCutCapacity_ = static_cast<std::uint32_t>(readCutCapacity);
     readCuts_ = std::make_unique<ReadCutRow[]>(readCutCapacity_);
+    const auto candidateWords = (storage + 63u) / 64u;
+    if (candidateWords * readCutCapacity_ > SIZE_MAX / sizeof(std::uint64_t))
+        throw std::length_error("variable candidate storage overflow");
+    candidatePinStorage_.resize(static_cast<std::size_t>(candidateWords * readCutCapacity_));
+    for (std::uint32_t index = 0; index < readCutCapacity_; ++index)
+        readCuts_[index].candidatePins.words = std::span(candidatePinStorage_).subspan(
+            static_cast<std::size_t>(index * candidateWords), static_cast<std::size_t>(candidateWords));
     timelineReadUseCapacity_ = timelineReadUseCapacity;
     timelineReadUses_ = std::make_unique<TimelineReadUseRow[]>(timelineReadUseCapacity_);
-    freeSlots_.reserve(kVariableHistoryCapacity);
-    for (std::uint32_t slot = kVariableHistoryCapacity; slot > 0; --slot) {
+    freeSlots_.reserve(history_.size());
+    for (std::uint32_t slot = static_cast<std::uint32_t>(history_.size()); slot > 0; --slot) {
         freeSlots_.push_back(slot - 1);
     }
-    outcomes_.reserve(kVariableHistoryCapacity);
-    ticketQueryRecords_.assign(kVariableHistoryCapacity, TicketQueryRecord{});
-    expiredTicketRecords_.assign(kVariableHistoryCapacity, VnVariableTicketV1{});
+    outcomes_.reserve(history_.size());
+    ticketQueryRecords_.assign(queryHistoryCapacity_, TicketQueryRecord{});
+    expiredTicketRecords_.assign(queryHistoryCapacity_, VnVariableTicketV1{});
 }
 
 TransportEpoch VariableServiceV1::CurrentTransportEpoch() const noexcept {
@@ -1347,7 +1384,7 @@ VariableAcceptResult VariableServiceV1::Prepare(
     WriteOperation operation, const VariableScopeKey& scope, VnVariableId id,
     float value, const VariableCallObservation& observed,
     std::uint32_t executionOrdinal, PreparedVariableWriteToken* out,
-    VariableWriterIdentityV1 writer) noexcept {
+    VariableWriterIdentityV1 writer, bool staging) noexcept {
     VariableAcceptResult result{};
     result.observation = observed;
     result.observation.world = worldGeneration_;
@@ -1433,8 +1470,7 @@ VariableAcceptResult VariableServiceV1::Prepare(
         ++refusalCount_;
         return result;
     }
-    if (freeSlots_.empty() ||
-        pendingRows_ + preparedRows_ >= kPendingVariableWriteCapacity) {
+    if (freeSlots_.empty() || (!staging && occupiedRevisions_ >= revisionCapacity_)) {
         result.result = VN_VARIABLE_TRANSACTION_EXHAUSTED;
         ++refusalCount_;
         return result;
@@ -1518,6 +1554,7 @@ VariableAcceptResult VariableServiceV1::Prepare(
     const std::uint32_t slot = freeSlots_.back();
     freeSlots_.pop_back();
     history_[slot] = row;
+    ++occupiedRevisions_;
     ++preparedRows_;
     out->owner_ = this;
     out->slot_ = slot;
@@ -1600,7 +1637,7 @@ void VariableServiceV1::CommitPreparedActionWrite(PreparedVariableWriteToken* pr
 
 void VariableServiceV1::CommitPreparedWriteImpl(PreparedVariableWriteToken* prepared,
     LogicCommitSequence sequence, const LogicCommitCoordinator::ConsumedIssue* consumed,
-    const ActionFiringTable::ChildActivationReceipt* activated) noexcept {
+    const ActionFiringTable::ChildActivationReceipt* activated, bool supersede) noexcept {
     if (prepared == nullptr || prepared->owner_ != this ||
         !prepared->prepared_ || prepared->slot_ >= history_.size() ||
         sequence == 0) {
@@ -1621,7 +1658,7 @@ void VariableServiceV1::CommitPreparedWriteImpl(PreparedVariableWriteToken* prep
     row.ticket = ticket;
     if (row.bankOrdinal == 0) row.bankOrdinal = nextBankOrdinal_++;
     RegisterCommittedPendingReadCutCandidate(prepared->slot_);
-    for (WriteRow& prior : history_) {
+    if (supersede) for (WriteRow& prior : history_) {
         if (&prior != &row && prior.used &&
             prior.state == RowState::Pending && RowKeyEqual(prior, row) &&
             CanSupersede(prior, row, sequence)) {
@@ -1641,9 +1678,8 @@ void VariableServiceV1::CommitPreparedWriteImpl(PreparedVariableWriteToken* prep
     --preparedRows_;
     ++pendingRows_;
     historyHighWater_ = std::max<std::uint64_t>(
-        historyHighWater_, kVariableHistoryCapacity - freeSlots_.size());
+        historyHighWater_, occupiedRevisions_);
     ++acceptedCount_;
-    RememberAcceptedTicket(sequence, row.world, row.transport);
     prepared->owner_ = nullptr;
     prepared->slot_ = UINT32_MAX;
     prepared->prepared_ = false;
@@ -1662,7 +1698,7 @@ bool VariableServiceV1::SealPreparedActionSources(Engine& engine,
 
 bool VariableServiceV1::SealPreparedActionSourcesImpl(const ActionOrderIdentity& identity) noexcept {
     if (!IsPreparedActionOrderActive(identity)) return false;
-    std::array<WriteRow*, kPendingVariableWriteCapacity> rows{};
+    auto& rows = sealRows_;
     std::size_t count = 0;
     for (auto& row : history_) {
         if (row.preparedEngine == nullptr || !row.preparedIssue.SameReservation(identity)) continue;
@@ -1706,7 +1742,7 @@ void VariableServiceV1::CommitPreparedActionSourcesImpl(const LogicCommitCoordin
             cut.pendingPlacement && MatchesConsumedActionOrder(cut.preparedIssue, consumed, activated))
             cut.actionOrderConsumed = true;
     }
-    std::array<WriteRow*, kPendingVariableWriteCapacity> rows{};
+    auto& rows = commitRows_;
     std::size_t count = 0;
     for (auto& row : history_) {
         if (row.preparedEngine == nullptr || !MatchesConsumedActionOrder(row.preparedIssue, consumed, activated)) continue;
@@ -1842,7 +1878,8 @@ bool VariableServiceV1::CanSupersede(
     }
     const auto members = BatchRows(prior);
     for (const WriteRow* member : members) {
-        if (member != nullptr && member->observers != 0) return false;
+        if (member != nullptr && (member->observers != 0 || member->slice.Valid() ||
+            member->placementHeld || member->state != RowState::Pending)) return false;
     }
     for (const WriteRow& other : history_) {
         if (other.used && other.state != RowState::Terminal &&
@@ -1949,7 +1986,7 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
     for (std::uint32_t i = 0; i < writeCount; ++i) {
         VariableAcceptResult row = Prepare(
             operation, scope, writes[i].variableId, writes[i].value, observed,
-            0, &batch.rows_[i], writer);
+            0, &batch.rows_[i], writer, true);
         if (row.result != VN_OK) {
             batch.count_ = i;
             result.result = row.result;
@@ -1958,22 +1995,61 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
         }
         batch.count_ = i + 1;
     }
-    LogicCommitSequence sequence = 0;
-    if (commits_.TryIssue(&sequence) !=
+    LogicCommitCoordinator::PreparedIssue issue;
+    if (commits_.PrepareIssue(&issue) !=
         LogicCommitCoordinator::IssueStatus::Issued) {
         result.result = VN_BACKPRESSURE;
         ++refusalCount_;
         return result;
     }
-    for (std::uint32_t i = 0; i < batch.count_; ++i) {
-        history_[batch.rows_[i].slot_].batchId = batch.count_ > 1 ? sequence : 0;
-        history_[batch.rows_[i].slot_].batchLeader = i == 0;
+    const auto sequence = issue.Sequence();
+    std::size_t victimCount = 0;
+    std::size_t reusable = 0;
+    for (auto& prior : history_) {
+        if (!prior.used || !prior.batchLeader || prior.state != RowState::Pending) continue;
+        const auto members = BatchRows(prior);
+        bool hit = false;
+        for (auto* member : members) {
+            if (member == nullptr) continue;
+            for (std::uint32_t index = 0; index < batch.count_; ++index) {
+                const auto& next = history_[batch.rows_[index].slot_];
+                if ((wholeBatchSupersede ? BatchSupersedeKeyIntersect(*member, next) : RowKeyEqual(*member, next)) &&
+                    CanSupersede(*member, next, sequence)) hit = true;
+            }
+        }
+        if (!hit) continue;
+        for (auto* member : members) {
+            if (member == nullptr) continue;
+            supersedeRows_[victimCount++] = member;
+            const auto slot = static_cast<std::size_t>(member - history_.data());
+            if (historyGenerations_[slot] != UINT32_MAX) ++reusable;
+        }
     }
-    if (wholeBatchSupersede) {
-        SupersedeIntersectingPendingBatches(batch, sequence);
+    if (occupiedRevisions_ - reusable > revisionCapacity_ ||
+        victimCount > outcomes_.capacity() - outcomes_.size()) {
+        result.result = VN_VARIABLE_TRANSACTION_EXHAUSTED;
+        ++refusalCount_;
+        return result;
+    }
+    const auto consumed = commits_.ConsumePreparedIssue(std::move(issue));
+    assert(consumed.Sequence() == sequence);
+    for (std::uint32_t i = 0; i < batch.count_; ++i) {
+        auto& member = history_[batch.rows_[i].slot_];
+        member.batchId = batch.count_ > 1 ? sequence : 0;
+        member.batchLeader = i == 0;
+        member.batchHead = batch.rows_[0].slot_;
+        member.batchNext = i + 1 < batch.count_ ? batch.rows_[i + 1].slot_ : UINT32_MAX;
+    }
+    for (std::size_t index = 0; index < victimCount; ++index) {
+        auto& victim = *supersedeRows_[index];
+        FinalizeRow(victim, VariableOutcomeKind::Superseded, {sequence}, 0);
+        const auto slot = static_cast<std::uint32_t>(&victim - history_.data());
+        const bool recycled = RecycleHistoryRow(slot);
+        assert(recycled);
+        (void)recycled;
     }
     for (std::uint32_t i = 0; i < batch.count_; ++i) {
-        CommitPreparedWrite(&batch.rows_[i], sequence);
+        CommitPreparedWriteImpl(&batch.rows_[i], sequence, nullptr, nullptr, false);
     }
     batch.committed_ = true;
     batch.owner_ = nullptr;
@@ -2170,11 +2246,14 @@ VariableServiceV1::BatchRows(WriteRow& row) noexcept {
         return rows;
     }
     std::size_t count = 0;
-    for (WriteRow& member : history_) {
+    auto slot = row.batchHead;
+    while (slot != UINT32_MAX && count < rows.size()) {
+        auto& member = history_[slot];
         if (member.used && member.state != RowState::Terminal &&
             member.batchId == row.batchId) {
             rows[count++] = &member;
         }
+        slot = member.batchNext;
     }
     return rows;
 }
@@ -2212,7 +2291,7 @@ void VariableServiceV1::FinalizeRow(WriteRow& row,
     }
     // Each used history slot finalizes once and is recycled only after delivery.
     // Queued outcomes plus unfinalized slots therefore fit the reserved storage.
-    assert(outcomes_.size() < kVariableHistoryCapacity);
+    assert(outcomes_.size() < history_.size());
     assert(outcomes_.size() < outcomes_.capacity());
     ReleaseEmitterOverrideReservation(row);
     row.state = RowState::Terminal;
@@ -2234,7 +2313,7 @@ void VariableServiceV1::FinalizeRow(WriteRow& row,
     record.scope = row.scope.scope;
     record.emitterGeneration = row.scope.emitterGeneration;
     outcomes_.push_back(record);
-    RememberFinalizedTicket(row.ticket.sequence, outcome);
+    RememberFinalizedTicket(row.ticket.sequence, outcome, row.world, row.transport);
     if (outcome == VariableOutcomeKind::Applied) {
         ++appliedCount_;
     } else if (outcome == VariableOutcomeKind::Superseded) {
@@ -2719,7 +2798,7 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row) {
     if (!projection.Valid()) {
         return CandidateCaptureResult::Retry;
     }
-    std::array<WriteRow*, kPendingVariableWriteCapacity> prefix{};
+    auto& prefix = prefixRows_;
     std::size_t prefixCount = 0;
     for (WriteRow& prior : history_) {
         const bool privatePrefix = prior.reserved && row.reserved &&
@@ -2903,6 +2982,7 @@ void VariableServiceV1::RejectPreparedRow(Engine& engine,
                                           WriteRow& row) noexcept {
     const auto members = BatchRows(row);
     if (row.slice.Valid()) {
+        assert(slices_.SourceObserverCount(row.slice) == (row.historySlicePin ? 1u : 0u));
         ReleaseSliceClaims(engine, row, ClaimReleaseReason::RejectCandidate);
         if (row.historySlicePin) {
             VariableSliceSource source{};
@@ -2920,6 +3000,7 @@ void VariableServiceV1::RejectPreparedRow(Engine& engine,
 void VariableServiceV1::ResetPreparedRow(Engine& engine,
                                          WriteRow& row) noexcept {
     if (row.slice.Valid()) {
+        assert(slices_.SourceObserverCount(row.slice) == (row.historySlicePin ? 1u : 0u));
         ReleaseSliceClaims(engine, row);
         if (row.historySlicePin) {
             VariableSliceSource source{};
@@ -2938,7 +3019,9 @@ void VariableServiceV1::ResetPreparedRow(Engine& engine,
 
 bool VariableServiceV1::PrepareCurrentSlice(Engine& engine, WriteRow& row) {
     std::uint32_t count = 0;
-    if (!GatherTargets(engine, row, &count)) {
+    if (!GatherTargets(engine, row, &count) ||
+        count > slices_.MaxTargetsPerSlice() || count > slices_.TargetPoolCapacity()) {
+        if (row.used) FinalizeBatch(row, VariableOutcomeKind::TargetRejected, {}, 0);
         return false;
     }
     if (!slices_.Reserve(row.world, row.transport, row.ticket.sequence,
@@ -3141,7 +3224,7 @@ void VariableServiceV1::BeginService(Engine& engine,
         blockFrames == 0 || blocksRendered > UINT64_MAX / blockFrames
             ? (blockFrames == 0 ? blocksRendered : UINT64_MAX)
             : blocksRendered * blockFrames;
-    std::array<std::size_t, kVariableWritesPerService> candidates{};
+    auto& candidates = serviceCandidates_;
     std::size_t candidateCount = 0;
     std::size_t candidateRows = 0;
     const std::size_t historySize = history_.size();
@@ -3200,7 +3283,7 @@ std::uint64_t VariableServiceV1::EarliestReadCutFrame(const Engine& engine) cons
 bool VariableServiceV1::PrepareReadCutSources(Engine& engine, VariableReadCutRef ref) {
     auto* cut = ResolveReadCut(ref);
     if (cut == nullptr || cut->state.load(std::memory_order_acquire) != ReadCutState::Capturing) return false;
-    std::array<WriteRow*, kPendingVariableWriteCapacity> candidates{};
+    auto& candidates = readCutRows_;
     std::size_t count = 0;
     for (auto& row : history_) {
         if (!row.used || !row.batchLeader || row.state != RowState::Pending ||
@@ -3238,7 +3321,7 @@ bool VariableServiceV1::PrepareActionReadCutSourcesImpl(Engine& engine, Variable
     if (cut == nullptr || cut->state.load(std::memory_order_acquire) != ReadCutState::Capturing ||
         &engine.variables != this || &engine.logicCommits != &commits_ || !IsPreparedActionOrderActive(identity) ||
         !cut->preparedIssue.SameReservation(identity)) return false;
-    std::array<WriteRow*, kPendingVariableWriteCapacity> candidates{};
+    auto& candidates = actionReadCutRows_;
     std::size_t count = 0;
     for (auto& row : history_) {
         const bool privateRow = row.reserved && row.preparedIssue.SameReservation(identity);
@@ -3280,7 +3363,7 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine,
         if (row.state == RowState::PageCommitted || row.placementHeld) return row.committedFrame;
         return std::max(row.requestedFrame, nextOpenFrame);
     };
-    std::array<WriteRow*, kPendingVariableWriteCapacity> rows{};
+    auto& rows = preparationRows_;
     std::size_t rowCount = 0;
     for (WriteRow& row : history_) {
         const bool privateRow = row.reserved && privateIssue != nullptr &&
@@ -3299,8 +3382,8 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine,
             if (a->ticket.sequence != b->ticket.sequence) return a->ticket.sequence < b->ticket.sequence;
             return a->executionOrdinal < b->executionOrdinal;
         });
-    std::array<HeldCurrentSliceToken, kPendingVariableWriteCapacity> held{};
-    std::array<std::size_t, kPendingVariableWriteCapacity> order{};
+    auto& held = preparationHeld_;
+    auto& order = preparationOrder_;
     std::size_t placedCount = 0;
     std::uint64_t publishThrough = 0;
     // Reserve every private placement before constructing any physical tuple.
@@ -3440,7 +3523,7 @@ void VariableServiceV1::PublishPreparedPlaybackPages(std::uint64_t requestedPubl
 
 void VariableServiceV1::EndService(Engine& engine) {
     const std::uint64_t blocksRendered = engine.mixer.BlocksRendered();
-    std::array<WriteRow*, kPendingVariableWriteCapacity> rows{};
+    auto& rows = settledRows_;
     std::size_t rowCount = 0;
     for (WriteRow& row : history_) {
         if (!row.used || !row.batchLeader) {
@@ -4027,7 +4110,7 @@ VariableServiceV1::WriteRow* VariableServiceV1::ResolveHistory(HistoryRef ref) n
 
 bool VariableServiceV1::PreparedSourceDependsOn(VariableSliceRef source,
     VariableSliceRef cancelled) const noexcept {
-    std::array<VariableSliceRef, kPendingVariableWriteCapacity> visited{};
+    auto& visited = dependencyVisited_;
     std::size_t count = 0;
     if (!source.Valid()) return false;
     VariableSliceSource cancelledIdentity{};
@@ -4043,7 +4126,7 @@ bool VariableServiceV1::PreparedSourceDependsOn(VariableSliceRef source,
                 [&](const auto prior) { return prior.slot == next->slice.slot &&
                     prior.generation == next->slice.generation; });
             if (seen) continue;
-            // The pending-write admission ceiling bounds the private dependency graph.
+            // The completion pool bounds the private dependency graph.
             if (count == visited.size()) return true;
             visited[count++] = next->slice;
         }
@@ -4062,6 +4145,7 @@ bool VariableServiceV1::PinHistorySlice(WriteRow& row) noexcept {
 bool VariableServiceV1::RecycleHistoryRow(std::uint32_t slot) noexcept {
     auto& row = history_[slot];
     if (row.observers != 0) return false;
+    if (row.historySlicePin && slices_.SourceObserverCount(row.slice) > 1) return false;
     if (row.historySlicePin) {
         VariableSliceSource source{};
         if (!slices_.CaptureSource(row.slice, &source) || !slices_.ReleaseSource(source)) return false;
@@ -4069,6 +4153,8 @@ bool VariableServiceV1::RecycleHistoryRow(std::uint32_t slot) noexcept {
     }
     if (row.cancelledBeforePublication && row.slice.Valid() && !slices_.AbandonPrepared(row.slice)) return false;
     row = WriteRow{};
+    assert(occupiedRevisions_ != 0);
+    --occupiedRevisions_;
     if (historyGenerations_[slot] != UINT32_MAX) {
         ++historyGenerations_[slot];
         freeSlots_.push_back(slot);
@@ -4077,9 +4163,11 @@ bool VariableServiceV1::RecycleHistoryRow(std::uint32_t slot) noexcept {
 }
 
 void VariableServiceV1::ReclaimHistoryRows() noexcept {
+    slices_.ReclaimSettled(observedBlock_);
     for (std::uint32_t slot = 0; slot < history_.size(); ++slot) {
         auto& row = history_[slot];
         if (row.state != RowState::Terminal || row.observers != 0) continue;
+        if (row.historySlicePin && slices_.SourceObserverCount(row.slice) > 1) continue;
         if (row.slice.Valid()) {
             if (row.cancelledBeforePublication) {
                 (void)RecycleHistoryRow(slot);
@@ -4098,13 +4186,29 @@ void VariableServiceV1::ReclaimHistoryRows() noexcept {
         }
         if (row.outcomeDelivered) (void)RecycleHistoryRow(slot);
     }
+    slices_.ReclaimSettled(observedBlock_);
 }
 
 std::size_t VariableServiceV1::ReadCutStorageBytes() const noexcept {
     return static_cast<std::size_t>(readCutCapacity_) * sizeof(ReadCutRow) +
         static_cast<std::size_t>(timelineReadUseCapacity_) * sizeof(TimelineReadUseRow) +
+        candidatePinStorage_.capacity() * sizeof(std::uint64_t) +
         historyGenerations_.capacity() * sizeof(std::uint32_t) +
         preparedWritePlacements_.capacity() * sizeof(HeldCurrentSliceToken);
+}
+
+std::size_t VariableServiceV1::StorageBytes() const noexcept {
+    return ReadCutStorageBytes() + slices_.StorageBytes() +
+        history_.capacity() * sizeof(WriteRow) + freeSlots_.capacity() * sizeof(std::uint32_t) +
+        outcomes_.capacity() * sizeof(VariableOutcomeRecord) +
+        ticketQueryRecords_.capacity() * sizeof(TicketQueryRecord) +
+        expiredTicketRecords_.capacity() * sizeof(VnVariableTicketV1) +
+        (sealRows_.capacity() + commitRows_.capacity() + prefixRows_.capacity() +
+         readCutRows_.capacity() + actionReadCutRows_.capacity() + preparationRows_.capacity() +
+         settledRows_.capacity() + supersedeRows_.capacity()) * sizeof(WriteRow*) +
+        (serviceCandidates_.capacity() + preparationOrder_.capacity()) * sizeof(std::size_t) +
+        preparationHeld_.capacity() * sizeof(HeldCurrentSliceToken) +
+        dependencyVisited_.capacity() * sizeof(VariableSliceRef);
 }
 
 bool VariableServiceV1::CaptureReadCut(
@@ -6105,13 +6209,13 @@ void VariableServiceV1::PushExpiredTicket(
     if (record.sequence == 0) {
         return;
     }
-    if (expiredTicketCount_ == kVariableHistoryCapacity) {
+    if (expiredTicketCount_ == queryHistoryCapacity_) {
         expiredTicketBegin_ =
-            (expiredTicketBegin_ + 1u) % kVariableHistoryCapacity;
+            (expiredTicketBegin_ + 1u) % queryHistoryCapacity_;
         --expiredTicketCount_;
     }
     const std::uint32_t index =
-        (expiredTicketBegin_ + expiredTicketCount_) % kVariableHistoryCapacity;
+        (expiredTicketBegin_ + expiredTicketCount_) % queryHistoryCapacity_;
     expiredTicketRecords_[index] = {record.sequence, record.world, record.transport};
     ++expiredTicketCount_;
 }
@@ -6120,7 +6224,7 @@ bool VariableServiceV1::TicketExpired(
     const VnVariableTicketV1& ticket) const noexcept {
     for (std::uint32_t i = 0; i < expiredTicketCount_; ++i) {
         const std::uint32_t index =
-            (expiredTicketBegin_ + i) % kVariableHistoryCapacity;
+            (expiredTicketBegin_ + i) % queryHistoryCapacity_;
         const auto& record = expiredTicketRecords_[index];
         if (record.sequence == ticket.sequence &&
             record.worldGeneration == ticket.worldGeneration &&
@@ -6137,7 +6241,7 @@ VariableServiceV1::FindTicketQuery(LogicCommitSequence sequence,
                                    TransportEpoch transport) const noexcept {
     for (std::uint32_t i = 0; i < ticketQueryCount_; ++i) {
         const std::uint32_t index =
-            (ticketQueryBegin_ + i) % kVariableHistoryCapacity;
+            (ticketQueryBegin_ + i) % queryHistoryCapacity_;
         const TicketQueryRecord& row = ticketQueryRecords_[index];
         if (row.sequence == sequence && row.world == world &&
             row.transport == transport) {
@@ -6156,16 +6260,16 @@ void VariableServiceV1::RememberAcceptedTicket(
     if (FindTicketQuery(sequence, world, transport) != nullptr) {
         return;
     }
-    if (ticketQueryCount_ == kVariableHistoryCapacity) {
+    if (ticketQueryCount_ == queryHistoryCapacity_) {
         const TicketQueryRecord& old =
             ticketQueryRecords_[ticketQueryBegin_];
         PushExpiredTicket(old);
         ticketQueryBegin_ =
-            (ticketQueryBegin_ + 1u) % kVariableHistoryCapacity;
+            (ticketQueryBegin_ + 1u) % queryHistoryCapacity_;
         --ticketQueryCount_;
     }
     const std::uint32_t index =
-        (ticketQueryBegin_ + ticketQueryCount_) % kVariableHistoryCapacity;
+        (ticketQueryBegin_ + ticketQueryCount_) % queryHistoryCapacity_;
     TicketQueryRecord& row = ticketQueryRecords_[index];
     row.sequence = sequence;
     row.world = world;
@@ -6176,22 +6280,25 @@ void VariableServiceV1::RememberAcceptedTicket(
 }
 
 void VariableServiceV1::RememberFinalizedTicket(
-    LogicCommitSequence sequence, VariableOutcomeKind outcome) noexcept {
+    LogicCommitSequence sequence, VariableOutcomeKind outcome,
+    WorldGeneration world, TransportEpoch transport) noexcept {
     if (sequence == 0) {
         return;
     }
     for (std::uint32_t i = 0; i < ticketQueryCount_; ++i) {
         const std::uint32_t index =
-            (ticketQueryBegin_ + i) % kVariableHistoryCapacity;
+            (ticketQueryBegin_ + i) % queryHistoryCapacity_;
         TicketQueryRecord& row = ticketQueryRecords_[index];
-        if (row.sequence == sequence) {
+        if (row.sequence == sequence && row.world == world && row.transport == transport) {
             row.pending = false;
             row.outcome = outcome;
             return;
         }
     }
-    RememberAcceptedTicket(sequence, worldGeneration_, transport_.Current());
-    RememberFinalizedTicket(sequence, outcome);
+    RememberAcceptedTicket(sequence, world, transport);
+    const auto index = (ticketQueryBegin_ + ticketQueryCount_ - 1u) % queryHistoryCapacity_;
+    ticketQueryRecords_[index].pending = false;
+    ticketQueryRecords_[index].outcome = outcome;
 }
 
 void VariableServiceV1::QueryVariableTicket(

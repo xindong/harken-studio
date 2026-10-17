@@ -2019,6 +2019,74 @@ bool EraseRecord(std::vector<std::uint8_t>* bytes,
 }
 
 
+TEST(TraceReplayE2E, VariableOperationOutcomesRequireExactCountAndOrder) {
+    const auto tracePath = TempPath("variable_operation_outcomes.vtrc");
+    {
+        EngineSession session(MakeNullConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.c_str()));
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            harkentest::InstallSmoothDefinitions(session.Engine(), {harkentest::ObjectId(42)}).status);
+        ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(42), 0.25f));
+        ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(42), 0.5f));
+        ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(42), 0.75f));
+        ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
+        ASSERT_EQ(VN_OK, Vn_TraceStop());
+    }
+    const auto bytes = ReadFileBytes(tracePath);
+    const auto replay = RunHost("trace-replay " + tracePath);
+    ASSERT_EQ(0, replay.exitCode) << replay.output;
+    RecordLocation first{}, second{}, end{};
+    ASSERT_TRUE(FindRecord(bytes, harken::kTraceRecordVariableOutcome, 0, &first));
+    ASSERT_TRUE(FindRecord(bytes, harken::kTraceRecordVariableOutcome, 1, &second));
+    ASSERT_TRUE(FindRecord(bytes, harken::kTraceRecordEnd, 0, &end));
+    auto missing = bytes;
+    ASSERT_TRUE(EraseRecord(&missing, first));
+    const auto missingResult = RunMutatedTrace(missing, "variable_outcome_missing.vtrc");
+    EXPECT_EQ(1, missingResult.exitCode) << missingResult.output;
+    auto reordered = bytes;
+    ASSERT_EQ(first.payloadBytes, second.payloadBytes);
+    std::swap_ranges(reordered.begin() + first.payloadAt,
+        reordered.begin() + first.payloadAt + first.payloadBytes,
+        reordered.begin() + second.payloadAt);
+    const auto reorderedResult = RunMutatedTrace(reordered, "variable_outcome_reordered.vtrc");
+    EXPECT_EQ(1, reorderedResult.exitCode) << reorderedResult.output;
+    std::vector<std::uint8_t> duplicate(bytes.begin() + first.recordAt,
+        bytes.begin() + first.payloadAt + first.payloadBytes);
+    std::uint64_t endOrdinal = 0;
+    std::memcpy(&endOrdinal, bytes.data() + end.recordAt + 8, sizeof(endOrdinal));
+    std::memcpy(duplicate.data() + 8, &endOrdinal, sizeof(endOrdinal));
+    auto extra = bytes;
+    extra.insert(extra.begin() + end.recordAt, duplicate.begin(), duplicate.end());
+    RecordLocation shiftedEnd{};
+    ASSERT_TRUE(FindRecord(extra, harken::kTraceRecordEnd, 0, &shiftedEnd));
+    ASSERT_TRUE(PatchRecordOrdinal(&extra, shiftedEnd, endOrdinal + 1));
+    const auto extraResult = RunMutatedTrace(extra, "variable_outcome_extra.vtrc");
+    EXPECT_EQ(1, extraResult.exitCode) << extraResult.output;
+    const std::vector<std::uint8_t> unfinished(bytes.begin(), bytes.begin() + first.recordAt);
+    const auto eofResult = RunMutatedTrace(unfinished, "variable_outcome_missing_at_eof.vtrc");
+    EXPECT_EQ(1, eofResult.exitCode) << eofResult.output;
+    EXPECT_NE(std::string::npos, eofResult.output.find("missing variable outcome at end"));
+}
+
+TEST(TraceReplayE2E, TenThousandVariableReplacementsReplayWithoutUpdateBetweenWrites) {
+    const auto tracePath = TempPath("variable_ten_thousand.vtrc");
+    {
+        EngineSession session(MakeNullConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        ASSERT_EQ(VN_OK, Vn_TraceStart(tracePath.c_str()));
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            harkentest::InstallSmoothDefinitions(session.Engine(), {harkentest::ObjectId(42)}).status);
+        for (unsigned i = 0; i < 10000; ++i)
+            ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(42), i % 2 ? 0.25f : 0.75f));
+        ASSERT_EQ(1u, session.Engine()->variables.PendingCount());
+        ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
+        ASSERT_EQ(VN_OK, Vn_TraceStop());
+    }
+    const auto replay = RunHost("trace-replay " + tracePath);
+    EXPECT_EQ(0, replay.exitCode) << replay.output;
+}
+
 bool ReadV3Config(const std::vector<std::uint8_t>& bytes,
                   VnConfig* out, std::uint32_t* vintage) {
     if (bytes.size() < harken::kTraceFixedHeaderBytes +

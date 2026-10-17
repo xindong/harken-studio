@@ -30,11 +30,11 @@
 namespace harken {
 
 inline constexpr char kTraceMagic[4] = {'V', 'T', 'R', 'C'};
-// Current writer vintage. The replayer also retains the historical v2 decoder.
+// The replayer accepts only the current writer vintage.
 inline constexpr std::uint32_t kTraceFormatVersionV2 = 2;
 inline constexpr std::uint32_t kTraceFormatVersionV3 = 3;
 inline constexpr std::uint32_t kTraceFormatVersionV4 = 4;
-inline constexpr std::uint32_t kTraceFormatVersion = 6;
+inline constexpr std::uint32_t kTraceFormatVersion = 7;
 
 // Fixed-size header fields ahead of the config image. Serialized field by
 // field (never as a struct overlay — the container-format discipline).
