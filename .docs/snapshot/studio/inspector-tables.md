@@ -56,6 +56,8 @@ Inputs、Receives 明确声明为展示表，不含 `#`、配置行移动或增�
 
 ## 数据归属与持久化
 
+工作区当前语言与平台均在本机按项目 ID 保存，关闭项目保留记录，重新打开恢复有效选择。语言无记录或原选择已移除时使用项目首个语言，旧的全局语言记录不再参与恢复。
+
 `VSound`、`VSelection`、`VTrack`、`VPiece`、`VAttenuation` 等类型是挂载在 `ProjectItem` 上的业务组件。表格字段的存储、派生方式和编辑行为由业务模型决定，section 只组织其 Inspector 展示。
 
 Container 的四种模式共享唯一的 `selections` 数据，并统一在 Selection Editor 编辑。Random/Sequence 使用简单条目表，支持重复 Child、增删和排序；Weight 列仅在 Random 显示，Single + Draw 时为频率权重，Shuffle 或 Queue 时为顺序权重。Match 使用条件矩阵，Blend 使用混合曲线表。所有视图读写当前平台 selections，切换模式保留已有数据。双击 Container 或在 Inspector 切换模式会打开或复用 Selection Editor，固定窗口及嵌套 Container 的返回路径沿用同一规则。

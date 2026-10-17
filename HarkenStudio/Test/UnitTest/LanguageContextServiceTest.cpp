@@ -118,7 +118,7 @@ TEST(LanguageContextService, ProjectLanguageCommandsNormalizeAndRefreshContext)
     pm.closeProject();
 }
 
-TEST(LanguageContextService, LegacyPersistedSfxIsReplacedByFirstProjectLanguage)
+TEST(LanguageContextService, InvalidSavedLanguageIsReplacedByFirstProjectLanguage)
 {
     auto& pm = VNX::ProjectManager::instance();
     if (pm.isProjectOpen())
@@ -126,27 +126,28 @@ TEST(LanguageContextService, LegacyPersistedSfxIsReplacedByFirstProjectLanguage)
     QTemporaryDir tempDir;
     ASSERT_TRUE(tempDir.isValid());
     VNX::ProjectConfig config;
-    config.name = QStringLiteral("LanguageContextLegacySetting");
+    config.name = QStringLiteral("LanguageContextInvalidSetting");
     config.location = tempDir.path();
     ASSERT_TRUE(pm.createProject(config));
     pm.setProjectLanguagesInternal(names({"Japanese", "English"}));
 
     auto storage = std::make_unique<VNX::MemorySettingsStorage>();
-    storage->beginGroup(QStringLiteral("LanguageContext"));
+    const QString group = QStringLiteral("LanguageContext/%1").arg(pm.currentProject()->projectId);
+    storage->beginGroup(group);
     storage->setValue(QStringLiteral("language"), QStringLiteral("SFX"));
     storage->endGroup();
     VNX::MemorySettingsStorage* raw = storage.get();
     VNX::LanguageContextService service(std::move(storage));
     EXPECT_EQ(service.language(), QStringLiteral("Japanese"));
     EXPECT_EQ(service.availableLanguages(), names({"Japanese", "English"}));
-    raw->beginGroup(QStringLiteral("LanguageContext"));
+    raw->beginGroup(group);
     EXPECT_EQ(raw->value(QStringLiteral("language")).toString(), QStringLiteral("Japanese"));
     raw->endGroup();
 
     pm.closeProject();
 }
 
-TEST(LanguageContextService, PersistenceRoundTripThroughInjectedStorage)
+TEST(LanguageContextService, ProjectSelectionsSurviveClosingSwitchingAndServiceRecreation)
 {
     auto& pm = VNX::ProjectManager::instance();
     if (pm.isProjectOpen())
@@ -157,24 +158,58 @@ TEST(LanguageContextService, PersistenceRoundTripThroughInjectedStorage)
     config.name = QStringLiteral("LanguageContextPersist");
     config.location = tempDir.path();
     ASSERT_TRUE(pm.createProject(config));
-    pm.setProjectLanguagesInternal(names({"Japanese", "English"}));
+    pm.setProjectLanguagesInternal(names({"English", "Japanese"}));
+    ASSERT_TRUE(pm.saveProject());
+    const QString firstPath = pm.currentProject()->projectPath;
+    const QString firstId = pm.currentProject()->projectId;
 
     auto storage = std::make_unique<VNX::MemorySettingsStorage>();
+    storage->setValue(QStringLiteral("LanguageContext/language"), QStringLiteral("Japanese"));
     VNX::MemorySettingsStorage* raw = storage.get();
-    {
-        VNX::LanguageContextService first(std::move(storage));
-        EXPECT_EQ(first.language(), QStringLiteral("Japanese"));
-        first.setLanguage(QStringLiteral("English"));
-        raw->beginGroup(QStringLiteral("LanguageContext"));
-        EXPECT_EQ(raw->value(QStringLiteral("language")).toString(), QStringLiteral("English"));
-        raw->endGroup();
-    }
     auto restored = std::make_unique<VNX::MemorySettingsStorage>();
-    restored->beginGroup(QStringLiteral("LanguageContext"));
-    restored->setValue(QStringLiteral("language"), QStringLiteral("English"));
-    restored->endGroup();
-    VNX::LanguageContextService second(std::move(restored));
-    EXPECT_EQ(second.language(), QStringLiteral("English"));
+    QString secondPath;
+    {
+        VNX::LanguageContextService service(std::move(storage));
+        EXPECT_EQ(service.language(), QStringLiteral("English"));
+        service.setLanguage(QStringLiteral("Japanese"));
+        ASSERT_TRUE(pm.closeProject());
+        EXPECT_TRUE(service.language().isEmpty());
+        EXPECT_TRUE(service.availableLanguages().isEmpty());
+        service.setLanguage(QStringLiteral("English"));
+        EXPECT_TRUE(service.language().isEmpty());
+
+        config.location = tempDir.filePath(QStringLiteral("Second"));
+        ASSERT_TRUE(pm.createProject(config));
+        ASSERT_NE(pm.currentProject()->projectId, firstId);
+        pm.setProjectLanguagesInternal(names({"English", "Japanese"}));
+        ASSERT_TRUE(pm.saveProject());
+        secondPath = pm.currentProject()->projectPath;
+        EXPECT_EQ(service.language(), QStringLiteral("English"));
+
+        ASSERT_TRUE(pm.loadProject(firstPath));
+        EXPECT_EQ(pm.currentProject()->projectId, firstId);
+        EXPECT_EQ(service.language(), QStringLiteral("Japanese"));
+        ASSERT_TRUE(pm.loadProject(secondPath));
+        EXPECT_EQ(service.language(), QStringLiteral("English"));
+        ASSERT_TRUE(pm.closeProject());
+        EXPECT_TRUE(service.language().isEmpty());
+
+        for (const auto& key : raw->allKeys())
+            restored->setValue(key, raw->value(key));
+    }
+    VNX::LanguageContextService reopened(std::move(restored));
+    EXPECT_TRUE(reopened.language().isEmpty());
+    ASSERT_TRUE(pm.loadProject(firstPath));
+    EXPECT_EQ(reopened.language(), QStringLiteral("Japanese"));
+    ASSERT_TRUE(pm.removeProjectLanguage(QStringLiteral("Japanese")));
+    EXPECT_EQ(reopened.language(), QStringLiteral("English"));
+    ASSERT_TRUE(pm.saveProject());
+    ASSERT_TRUE(pm.closeProject());
+    EXPECT_TRUE(reopened.language().isEmpty());
+    ASSERT_TRUE(pm.loadProject(firstPath));
+    EXPECT_EQ(reopened.language(), QStringLiteral("English"));
+    ASSERT_TRUE(pm.loadProject(secondPath));
+    EXPECT_EQ(reopened.language(), QStringLiteral("English"));
 
     pm.closeProject();
 }
