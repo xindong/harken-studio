@@ -1,6 +1,7 @@
 #include "StartupCoordinator.h"
 
 #include "Core/ProjectTemplateLoader.h"
+#include "Core/ProjectInstance.h"
 #include "Core/ProjectOpenApproval.h"
 #include "Core/ProjectUpgradeManager.h"
 #include "Core/ProjectUpgradeMessages.h"
@@ -8,6 +9,7 @@
 #include "MainWindow.h"
 
 #include <QApplication>
+#include <QDir>
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QPointer>
@@ -67,8 +69,47 @@ void StartupCoordinator::start()
 
 void StartupCoordinator::startAfterHubConnection()
 {
+    ProjectInstance::setActivationWindow(&loading_);
+    const QString instancePath = hubArguments_.createProject
+        ? QDir(QDir(hubArguments_.projectLocation.trimmed())
+                   .filePath(hubArguments_.projectName.trimmed()))
+              .filePath(hubArguments_.projectName.trimmed() + QStringLiteral(".hsp"))
+        : projectFile_;
+    auto acquisition = ProjectInstance::acquire(instancePath);
+    if (acquisition.status == ProjectInstance::Status::Failed) {
+        fail(acquisition.error, 3, QStringLiteral("PROJECT_INSTANCE_UNAVAILABLE"));
+        return;
+    }
+    if (acquisition.status == ProjectInstance::Status::Forwarded) {
+        if (hubArguments_.createProject) {
+            fail(tr("This project is already open in another Studio window."),
+                 3, QStringLiteral("PROJECT_ALREADY_OPEN"));
+            return;
+        }
+        if (hubClient_ && hubClient_->isConnected()) {
+            connect(hubClient_.get(), &HubClient::forwardedCompleted,
+                    this, [this](bool acknowledged) {
+                if (!acknowledged) {
+                    fail(tr("The project window was activated, but Harken Hub did not confirm the request."),
+                         3, QStringLiteral("PROJECT_FORWARD_UNCONFIRMED"));
+                    return;
+                }
+                terminal_ = true;
+                loading_.close();
+                application_.exit(0);
+            });
+            hubClient_->reportForwarded();
+        } else {
+            terminal_ = true;
+            loading_.close();
+            application_.exit(0);
+        }
+        return;
+    }
+    projectInstance_ = std::move(acquisition.instance);
     startProjectPreparation();
-    startMainWindowInitialization();
+    if (!terminal_)
+        startMainWindowInitialization();
 }
 
 void StartupCoordinator::startProjectPreparation()
@@ -219,6 +260,7 @@ void StartupCoordinator::tryCommit()
 
     loading_.setPhase(StartupPhase::LoadingProjectContent);
     ProjectManager& manager = ProjectManager::instance();
+    prepared_->instance = std::move(projectInstance_);
     if (!manager.commitPreparedProject(std::move(*prepared_))) {
         fail(tr("Harken Studio could not open the project"));
         return;
@@ -255,6 +297,7 @@ void StartupCoordinator::finish()
     terminal_ = true;
     loading_.setPhase(StartupPhase::ShowingEditor);
     mainWindow_->show();
+    ProjectInstance::setActivationWindow(mainWindow_.get());
     QTimer::singleShot(0, this, [this]() {
         loading_.setPhase(StartupPhase::Ready);
         loading_.close();

@@ -1,4 +1,5 @@
 #include "Core/ProjectOpenApproval.h"
+#include "Core/ProjectInstance.h"
 #include "Core/MigrationManager.h"
 #include "Core/ProjectOpenProtocol.h"
 #include "Core/ProjectTransaction.h"
@@ -6,6 +7,7 @@
 #include "Core/StartupCoordinator.h"
 #include "Core/AudioEngine.h"
 #include "Core/RuntimeSyncCoordinator.h"
+#include "Core/UndoCommands.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 #include "Dialogs/StartupLoadingWindow.h"
 #include "MainWindow.h"
@@ -525,6 +527,43 @@ TEST(StudioProjectOpen, EditorOpensCurrentGenerationWithoutConfirmation)
     expectCurrent(path);
 }
 
+TEST(StudioProjectOpen, ReopeningCurrentProjectAliasesPreservesUnsavedState)
+{
+    VNX::TestSupport::ensureApp();
+    if (runInChild()) return;
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const QString path = writeProject(directory);
+    VNX::MainWindow window;
+    ModalResponder response(false);
+    ASSERT_TRUE(window.loadProject(path));
+    auto& projects = VNX::ProjectManager::instance();
+    auto* project = projects.currentProject();
+    ASSERT_NE(project, nullptr);
+    ASSERT_NE(projects.createItem(nullptr, QStringLiteral("UnsavedLayer"),
+                                 VNX::ProjectItem::Type::Layer), nullptr);
+    auto& undo = VNX::UndoRedoManager::instance();
+    ASSERT_FALSE(undo.isClean());
+    const int undoCount = undo.undoStack()->count();
+    const QString title = window.windowTitle();
+    const auto savedBytes = treeBytes(QFileInfo(path).absolutePath());
+    const QStringList aliases{
+        path,
+        QDir(QFileInfo(path).absolutePath()).filePath(QStringLiteral("./Legacy.hsp")),
+        QFileInfo(path).absolutePath()
+    };
+    for (const QString& alias : aliases) {
+        EXPECT_TRUE(window.loadProject(alias));
+        EXPECT_EQ(projects.currentProject(), project);
+        EXPECT_FALSE(undo.isClean());
+        EXPECT_EQ(undo.undoStack()->count(), undoCount);
+        EXPECT_EQ(window.windowTitle(), title);
+        EXPECT_EQ(projects.currentProject()->layers.size(), 1u);
+    }
+    EXPECT_EQ(response.failures, 0);
+    EXPECT_EQ(treeBytes(QFileInfo(path).absolutePath()), savedBytes);
+}
+
 enum class PendingOpenOutcome { Completed, Canceled, TimedOut, Reentered, ReenteredCreate };
 
 void checkPendingProjectOpen(PendingOpenOutcome outcome)
@@ -562,6 +601,13 @@ void checkPendingProjectOpen(PendingOpenOutcome outcome)
     config.name = QStringLiteral("Bootstrap");
     ASSERT_TRUE(projects.createProject(config));
     ASSERT_NE(projects.currentProject(), nullptr);
+    std::weak_ptr<VNX::ProjectInstance> previousInstance;
+    {
+        auto acquisition = VNX::ProjectInstance::acquire(projects.currentProject()->projectPath);
+        ASSERT_EQ(acquisition.status, VNX::ProjectInstance::Status::Acquired);
+        previousInstance = acquisition.instance;
+    }
+    ASSERT_FALSE(previousInstance.expired());
     ASSERT_TRUE(window.loadProject(projects.currentProject()->projectPath));
     ASSERT_TRUE(projects.saveProject());
     ASSERT_TRUE(VNX::TestSupport::spinUntil([&]() {
@@ -579,6 +625,8 @@ void checkPendingProjectOpen(PendingOpenOutcome outcome)
     bool released = false;
     bool canceled = false;
     bool reentered = false;
+    bool observedPendingInstance = false;
+    std::weak_ptr<VNX::ProjectInstance> pendingInstance;
     QJsonObject nestedResult;
     VNX::IPCServer server(nullptr);
     server.setProjectManager(&projects);
@@ -586,6 +634,16 @@ void checkPendingProjectOpen(PendingOpenOutcome outcome)
     QTimer release;
     QObject::connect(&release, &QTimer::timeout, [&]() {
         if (!projects.isClosing()) return;
+        if (!observedPendingInstance) {
+            {
+                auto acquisition = VNX::ProjectInstance::acquire(savedPath);
+                ASSERT_EQ(acquisition.status, VNX::ProjectInstance::Status::Acquired);
+                pendingInstance = acquisition.instance;
+            }
+            EXPECT_FALSE(previousInstance.expired());
+            EXPECT_FALSE(pendingInstance.expired());
+            observedPendingInstance = true;
+        }
         if (outcome == PendingOpenOutcome::Completed
             || outcome == PendingOpenOutcome::Reentered
             || outcome == PendingOpenOutcome::ReenteredCreate) {
@@ -623,8 +681,7 @@ void checkPendingProjectOpen(PendingOpenOutcome outcome)
             }
         }
     });
-    if (outcome != PendingOpenOutcome::TimedOut)
-        release.start(5);
+    release.start(5);
     int opened = 0;
     QObject::connect(&projects, &VNX::ProjectManager::projectOpened, &window,
                      [&](VNX::ProjectData*) { ++opened; });
@@ -635,6 +692,7 @@ void checkPendingProjectOpen(PendingOpenOutcome outcome)
         {QStringLiteral("path"), savedPath},
     });
     release.stop();
+    EXPECT_TRUE(observedPendingInstance);
     EXPECT_EQ(readBytes(savedPath), savedBytes);
     if (outcome == PendingOpenOutcome::Canceled
         || outcome == PendingOpenOutcome::TimedOut) {
@@ -647,6 +705,8 @@ void checkPendingProjectOpen(PendingOpenOutcome outcome)
         EXPECT_EQ(projects.currentProject(), nullptr);
         EXPECT_TRUE(projects.isClosing());
         EXPECT_TRUE(projects.hasPendingDestruction());
+        EXPECT_FALSE(previousInstance.expired());
+        EXPECT_TRUE(pendingInstance.expired());
         EXPECT_EQ(response.failures, outcome == PendingOpenOutcome::TimedOut ? 1 : 0);
         HarkenEditor::Bridge::setCurrentWorldInstallBackendForTesting(nullptr);
         ASSERT_TRUE(VNX::TestSupport::spinUntil([&]() {
@@ -654,6 +714,7 @@ void checkPendingProjectOpen(PendingOpenOutcome outcome)
             return !projects.isClosing();
         }, 5000));
         EXPECT_FALSE(projects.hasPendingDestruction());
+        EXPECT_TRUE(previousInstance.expired());
         EXPECT_EQ(projects.currentProject(), nullptr);
         EXPECT_EQ(opened, 0);
         const auto retry = server.dispatchCommand(QStringLiteral("open_project"), {
@@ -667,6 +728,8 @@ void checkPendingProjectOpen(PendingOpenOutcome outcome)
         return;
     }
     EXPECT_TRUE(released);
+    EXPECT_TRUE(previousInstance.expired());
+    EXPECT_FALSE(pendingInstance.expired());
     if (outcome == PendingOpenOutcome::Reentered
         || outcome == PendingOpenOutcome::ReenteredCreate) {
         EXPECT_TRUE(reentered);

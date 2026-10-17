@@ -105,6 +105,7 @@ add_executable(harken_editor_tests
     UnitTest/ProjectLanguagesCommandTest.cpp
     UnitTest/HubClientArgumentsTest.cpp
     UnitTest/HubLauncherTest.cpp
+    UnitTest/ProjectInstanceTest.cpp
     UnitTest/MigrationVersionGateTest.cpp
     UnitTest/ProjectUpgradeManagerTest.cpp
     UnitTest/ProjectOpenProtocolTest.cpp
@@ -402,6 +403,24 @@ target_compile_definitions(harken_editor_tests PRIVATE
     HARKEN_MONITOR_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/HarkenEngine/Test/UnitTest/monitor"
     HARKEN_MONITOR_EDITOR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/Monitor/fixtures")
 add_dependencies(harken_editor_tests harken_packc harken_host)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+add_executable(harken_project_instance_process
+    UnitTest/ProjectInstanceProcess.cpp
+    ../Source/Core/ProjectInstance.cpp
+    ../Source/Core/ProjectInstance.h)
+set_target_properties(harken_project_instance_process PROPERTIES AUTOMOC ON)
+target_include_directories(harken_project_instance_process PRIVATE
+    ${CMAKE_SOURCE_DIR}/HarkenStudio/Source)
+target_link_libraries(harken_project_instance_process PRIVATE Qt6::Widgets Qt6::Network)
+if(WIN32)
+    target_compile_definitions(harken_project_instance_process PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_link_libraries(harken_project_instance_process PRIVATE user32 advapi32)
+elseif(APPLE)
+    target_link_libraries(harken_project_instance_process PRIVATE "-framework CoreFoundation")
+endif()
+target_compile_definitions(harken_editor_tests PRIVATE
+    HARKEN_PROJECT_INSTANCE_PROCESS_PATH="$<TARGET_FILE:harken_project_instance_process>")
+add_dependencies(harken_editor_tests harken_project_instance_process)
 if(TARGET harken_core_shared)
     find_package(Qt6 REQUIRED COMPONENTS Core Network)
     add_executable(harken_remote_test_game UnitTest/RemoteGame.cpp)

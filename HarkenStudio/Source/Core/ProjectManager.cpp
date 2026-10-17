@@ -4,6 +4,7 @@
 #include "FieldGroupDerivedView.h"
 
 #include "ProjectManager.h"
+#include "ProjectInstance.h"
 #include "AssetPipeline/SourceFileSystem.h"
 #include "AuthoringPolicy.h"
 #include "ProjectLanguageSemantics.h"
@@ -1573,7 +1574,8 @@ bool validateLoadedProjectIdentities(const ProjectData& project, QString* error)
 PreparedProject::PreparedProject() = default;
 
 PreparedProject::PreparedProject(PreparedProject&& other) noexcept
-    : project(std::move(other.project)),
+    : instance(std::move(other.instance)),
+      project(std::move(other.project)),
       folderSaveState(std::move(other.folderSaveState)),
       index(std::move(other.index)),
       integrityScanner(std::move(other.integrityScanner)),
@@ -1607,6 +1609,7 @@ PreparedProject& PreparedProject::operator=(PreparedProject&& other) noexcept
     upgrade = std::move(other.upgrade);
     upgradePending = other.upgradePending;
     other.upgradePending = false;
+    instance = std::move(other.instance);
     return *this;
 }
 
@@ -2250,6 +2253,14 @@ bool ProjectManager::createProject(const ProjectConfig& config)
 
     QDir dir(config.location);
     QString projectRoot = dir.filePath(config.name);
+    auto acquisition = ProjectInstance::acquire(
+        QDir(projectRoot).filePath(config.name + QStringLiteral(".hsp")));
+    if (acquisition.status != ProjectInstance::Status::Acquired) {
+        emit errorOccurred(acquisition.status == ProjectInstance::Status::Forwarded
+                               ? tr("This project is already open in another Studio window.")
+                               : acquisition.error);
+        return false;
+    }
 
     if (!createDirectoryStructure(projectRoot))
     {
@@ -2396,6 +2407,7 @@ void ProjectManager::clearRuntimeCloseState()
     audio.resetListenerTransformCache();
     m_runtimeCloseRevision.reset();
     m_pendingDestruction.reset();
+    m_projectInstance.reset();
     m_closing = false;
 }
 
@@ -2787,6 +2799,7 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
         prepared.releaseUpgradeRecovery();
     }
     m_currentProject = std::move(prepared.project);
+    m_projectInstance = std::move(prepared.instance);
     m_folderSaveState = std::move(prepared.folderSaveState);
     m_itemSaveState = std::move(itemSaveState);
     m_projectIndex = std::move(prepared.index);
@@ -2825,13 +2838,24 @@ void ProjectManager::startWatchingCurrentProject()
 }
 
 bool ProjectManager::loadProject(const QString& filePath, bool allowUpgrade,
-                                 QString* error)
+                                 QString* error, bool* forwarded)
 {
     if (error)
         error->clear();
+    if (forwarded)
+        *forwarded = false;
+    auto acquisition = ProjectInstance::acquire(filePath);
+    if (acquisition.status != ProjectInstance::Status::Acquired) {
+        if (forwarded)
+            *forwarded = acquisition.status == ProjectInstance::Status::Forwarded;
+        if (error)
+            *error = acquisition.error;
+        return false;
+    }
     if (m_startupProgressCallback)
         m_startupProgressCallback(StartupPhase::ReadingProject);
     PreparedProject prepared = prepareProject(filePath, allowUpgrade);
+    prepared.instance = std::move(acquisition.instance);
     if (!prepared.project) {
         if (error)
             *error = prepared.error;
@@ -3204,6 +3228,7 @@ bool ProjectManager::closeProject()
             audio.clearRuntimeMedia();
             audio.resetListenerTransformCache();
             m_pendingDestruction.reset();
+            m_projectInstance.reset();
             m_closing = false;
             return true;
         }
@@ -3216,6 +3241,7 @@ bool ProjectManager::closeProject()
             audio.clearRuntimeMedia();
             audio.resetListenerTransformCache();
             m_pendingDestruction.reset();
+            m_projectInstance.reset();
             m_closing = false;
             return true;
         }

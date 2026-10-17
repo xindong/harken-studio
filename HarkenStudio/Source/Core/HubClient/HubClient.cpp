@@ -69,6 +69,10 @@ HubClient::HubClient(const Arguments& arguments, QObject* parent)
 {
     connectionTimer_ = new QTimer(this);
     connectionTimer_->setSingleShot(true);
+    forwardingTimer_ = new QTimer(this);
+    forwardingTimer_->setSingleShot(true);
+    connect(forwardingTimer_, &QTimer::timeout, this,
+            [this]() { completeForwarding(false); });
     connect(connectionTimer_, &QTimer::timeout, this, [this]() {
         if (!connectionPending_)
             return;
@@ -86,11 +90,19 @@ HubClient::HubClient(const Arguments& arguments, QObject* parent)
     });
     connect(&socket_, &QLocalSocket::errorOccurred, this,
             [this](QLocalSocket::LocalSocketError) {
-        if (!connectionPending_)
-            return;
-        connectionPending_ = false;
-        connectionTimer_->stop();
-        emit helloCompleted(false);
+        if (connectionPending_) {
+            connectionPending_ = false;
+            connectionTimer_->stop();
+            emit helloCompleted(false);
+        }
+        readForwardingResponse();
+        completeForwarding(false);
+    });
+    connect(&socket_, &QLocalSocket::readyRead, this,
+            &HubClient::readForwardingResponse);
+    connect(&socket_, &QLocalSocket::disconnected, this, [this]() {
+        readForwardingResponse();
+        completeForwarding(false);
     });
 }
 
@@ -154,6 +166,53 @@ void HubClient::reportFailed(const QString& errorCode, const QString& error)
     message[QStringLiteral("errorCode")] = errorCode;
     message[QStringLiteral("error")] = error;
     send(message);
+}
+
+void HubClient::reportForwarded(int timeoutMs)
+{
+    if (forwardingPending_)
+        return;
+    forwardingPending_ = true;
+    if (!helloSent_ || !isConnected() || arguments_.createProject) {
+        QTimer::singleShot(0, this, [this]() { completeForwarding(false); });
+        return;
+    }
+    responseBuffer_.clear();
+    forwardingTimer_->start(qMax(1, timeoutMs));
+    reportStage(QStringLiteral("forwarded"));
+}
+
+void HubClient::readForwardingResponse()
+{
+    if (socket_.bytesAvailable() == 0)
+        return;
+    responseBuffer_ += socket_.readAll();
+    if (!forwardingPending_ || responseBuffer_.size() > 64 * 1024) {
+        responseBuffer_.clear();
+        if (forwardingPending_)
+            completeForwarding(false);
+        return;
+    }
+    int newline;
+    while ((newline = responseBuffer_.indexOf('\n')) >= 0) {
+        const auto message = QJsonDocument::fromJson(responseBuffer_.left(newline)).object();
+        responseBuffer_.remove(0, newline + 1);
+        if (message.value(QStringLiteral("type")).toString() == QStringLiteral("forwardedAccepted")
+            && message.value(QStringLiteral("token")).toString() == arguments_.sessionToken) {
+            completeForwarding(true);
+            return;
+        }
+    }
+}
+
+void HubClient::completeForwarding(bool acknowledged)
+{
+    if (!forwardingPending_)
+        return;
+    forwardingPending_ = false;
+    forwardingTimer_->stop();
+    responseBuffer_.clear();
+    emit forwardedCompleted(acknowledged);
 }
 
 void HubClient::send(const QJsonObject& message)

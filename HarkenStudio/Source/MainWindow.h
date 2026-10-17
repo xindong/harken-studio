@@ -165,7 +165,8 @@ public:
     bool loadProject(
         const QString& path,
         std::function<void(StartupPhase)> startupProgress = {},
-        QString* error = nullptr);
+        QString* error = nullptr,
+        bool* forwarded = nullptr);
     bool isProjectOpening() const { return projectOpenInProgress_; }
 
     bool createProjectFromConfig(

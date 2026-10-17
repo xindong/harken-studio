@@ -40,19 +40,26 @@ public:
     bool isConnected() const;
     void reportStage(const QString& stage);
     void reportFailed(const QString& errorCode, const QString& error);
+    void reportForwarded(int timeoutMs = 5000);
 
 signals:
     void helloCompleted(bool connected);
+    void forwardedCompleted(bool acknowledged);
 
 private:
     void sendHello();
     void send(const QJsonObject& message);
+    void readForwardingResponse();
+    void completeForwarding(bool acknowledged);
 
     QLocalSocket socket_;
     QTimer* connectionTimer_ = nullptr;
+    QTimer* forwardingTimer_ = nullptr;
     Arguments arguments_;
+    QByteArray responseBuffer_;
     bool helloSent_ = false;
     bool connectionPending_ = false;
+    bool forwardingPending_ = false;
 };
 
 }

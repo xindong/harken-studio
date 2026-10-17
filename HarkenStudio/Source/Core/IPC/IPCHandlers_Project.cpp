@@ -315,9 +315,15 @@ QJsonObject IPCServer::handleOpenProject(const QJsonObject& args)
                 ProjectUpgradeMessages::userMessage(ProjectIssue::ProjectUpgradeSelectionRequired));
     }
     QString openError;
+    bool forwarded = false;
     const bool success = mainWindow_
-        ? mainWindow_->loadProject(path, {}, &openError)
-        : projectManager_->loadProject(path, false, &openError);
+        ? mainWindow_->loadProject(path, {}, &openError, &forwarded)
+        : projectManager_->loadProject(path, false, &openError, &forwarded);
+    if (forwarded)
+        return successResponse(QJsonObject{
+            {QStringLiteral("forwarded"), true},
+            {QStringLiteral("path"), path}
+        });
     
     if (!success)
     {

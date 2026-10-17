@@ -39,6 +39,7 @@ struct CurrentWorldSoundPreparation;
 namespace VNX {
 
 class ProjectIndex;
+class ProjectInstance;
 class FolderSaveState;
 class ProjectItemSaveState;
 class IntegrityScanner;
@@ -74,6 +75,7 @@ struct PreparedProject
     void releaseUpgradeRecovery() { upgradePending = false; }
     void rollbackUpgrade();
 
+    std::shared_ptr<ProjectInstance> instance;
     std::unique_ptr<ProjectData> project;
     std::unique_ptr<FolderSaveState> folderSaveState;
     std::unique_ptr<ProjectIndex> index;
@@ -182,7 +184,7 @@ public:
 
     bool createProject(const ProjectConfig& config);
     bool loadProject(const QString& filePath, bool allowUpgrade = false,
-                     QString* error = nullptr);
+                     QString* error = nullptr, bool* forwarded = nullptr);
     static PreparedProject prepareProject(const QString& filePath,
                                           bool allowUpgrade = false,
                                           ProjectUpgradeProgressCallback upgradeProgress = {},
@@ -612,6 +614,7 @@ private:
     void recordDeletedNameHistory(ProjectItem* item);
     void recordCreatedNameHistory(ProjectItem* item);
 
+    std::shared_ptr<ProjectInstance> m_projectInstance;
     std::shared_ptr<ProjectData> m_currentProject;
     std::unique_ptr<FolderSaveState> m_folderSaveState;
     std::unique_ptr<ProjectItemSaveState> m_itemSaveState;
