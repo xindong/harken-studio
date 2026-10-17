@@ -5627,9 +5627,10 @@ public:
                 compositeCompletionOwners) ||
             !timelineSink.AttachVariableControlAuthority(
                 variableControlInstances) ||
-            !variableSlices.Reset(kPendingVariableWriteCapacity,
+            !variableSlices.Reset(kVariableHistoryCapacity,
                                   resolved.maxPropertiesPerCurrentSlice,
-                                  resolved.maxVariableSliceTargetsTotal)) {
+                                  resolved.maxVariableSliceTargetsTotal,
+                                  kPendingVariableWriteCapacity)) {
             throw std::bad_alloc{};
         }
         mixer.InitializeVariableSliceConsumptionStorage();

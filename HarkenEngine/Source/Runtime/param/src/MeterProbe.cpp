@@ -1095,6 +1095,10 @@ void MeterProbeSystem::EndService(Engine& engine) {
         } else {
             ReleaseSliceClaims(engine, probe->withdrawalSlice);
         }
+        const bool acknowledged =
+            engine.variableSlices.Acknowledge(probe->withdrawalSlice);
+        assert(acknowledged);
+        (void)acknowledged;
         probe->withdrawalAudioFenceBlock = std::max(
             probe->withdrawalAudioFenceBlock,
             AddFence(appliedBlock,

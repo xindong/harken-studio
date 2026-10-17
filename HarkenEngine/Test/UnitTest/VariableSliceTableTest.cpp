@@ -286,7 +286,7 @@ TEST(VariableSliceTable, QuarantinedDependentReleasesSourceAfterItsConsumptionFe
     EXPECT_EQ(harken::VariableSliceState::Quarantined, table.State(dependent));
     EXPECT_EQ(0u, table.SourceObserverCount(source));
     EXPECT_TRUE(table.Reclaim(source, 4));
-    EXPECT_EQ(0u, table.FreeTargetCapacity());
+    EXPECT_EQ(1u, table.FreeTargetCapacity());
     EXPECT_FALSE(table.HasUnreclaimedWorldRows(1));
     EXPECT_FALSE(table.HasUnreclaimedTransportRows(1));
 }
@@ -554,7 +554,7 @@ TEST(VariableSliceTable, StaleReferenceCannotReachAReusedSpan) {
     EXPECT_NE(nullptr, immutable.Target(current, 0));
 }
 
-TEST(VariableSliceTable, MaximumGenerationQuarantinesAndPinsItsSpan) {
+TEST(VariableSliceTable, MaximumGenerationQuarantinesProofAndReleasesItsPayload) {
     harken::VariableSliceTable table;
     ASSERT_TRUE(table.Reset(2, 2, 2));
     ASSERT_TRUE(table.SetFreeRowGenerationForTest(0, UINT32_MAX));
@@ -565,16 +565,115 @@ TEST(VariableSliceTable, MaximumGenerationQuarantinesAndPinsItsSpan) {
     PublishAndApply(table, pinned, 7);
     EXPECT_FALSE(table.Reclaim(pinned, 8));
     EXPECT_EQ(harken::VariableSliceState::Quarantined, table.State(pinned));
-    EXPECT_EQ(1u, table.FreeTargetCapacity());
+    EXPECT_EQ(2u, table.FreeTargetCapacity());
     EXPECT_EQ(1u, table.FreeRowCount());
 
     harken::VariableSliceRef tooWide{};
-    EXPECT_FALSE(ReserveTargets(table, 2, 2, &tooWide));
+    ASSERT_TRUE(ReserveTargets(table, 2, 2, &tooWide));
+    ASSERT_TRUE(table.AbandonPrepared(tooWide));
     harken::VariableSliceRef remaining{};
     ASSERT_TRUE(ReserveTargets(table, 1, 3, &remaining));
     EXPECT_TRUE(table.AbandonPrepared(remaining));
-    EXPECT_EQ(1u, table.FreeTargetCapacity());
+    EXPECT_EQ(2u, table.FreeTargetCapacity());
     EXPECT_EQ(harken::VariableSliceState::Quarantined, table.State(pinned));
+}
+
+TEST(VariableSliceTable, AcknowledgementAndStrictFenceReleasePayloadWhileProofRemainsObserved) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(3, 1, 1, 1));
+    harken::VariableSliceRef source{}, next{};
+    ASSERT_TRUE(ReserveTargets(table, 1, 1, &source));
+    FillTargets(table, source, 1);
+    const auto* originalTarget = static_cast<const harken::VariableSliceTable&>(table).Target(source, 0);
+    harken::VariableSliceSource proof{};
+    ASSERT_TRUE(table.CaptureSource(source, &proof));
+    ASSERT_TRUE(table.RetainSource(proof));
+    PublishAndApply(table, source, 1);
+    table.ReclaimSettled(2);
+    EXPECT_EQ(0u, table.FreePayloadCount());
+    EXPECT_EQ(1u, table.TargetCount(source));
+    EXPECT_FALSE(ReserveTargets(table, 1, 2, &next));
+    ASSERT_TRUE(table.Acknowledge(source));
+    table.ReclaimSettled(1);
+    EXPECT_EQ(0u, table.FreeTargetCapacity());
+    table.ReclaimSettled(2);
+    EXPECT_EQ(1u, table.FreePayloadCount());
+    EXPECT_EQ(1u, table.FreeTargetCapacity());
+    EXPECT_EQ(0u, table.TargetCount(source));
+    ASSERT_TRUE(table.SourceApplied(proof));
+    ASSERT_TRUE(ReserveTargets(table, 1, 2, &next));
+    ASSERT_TRUE(table.AddTarget(next, MakeTarget(99)));
+    EXPECT_EQ(originalTarget, static_cast<const harken::VariableSliceTable&>(table).Target(next, 0));
+    EXPECT_NE(source.slot, next.slot);
+    ASSERT_TRUE(table.AddSource(next, proof));
+    PublishAndApply(table, next, 3);
+    ASSERT_TRUE(table.Acknowledge(next));
+    table.ReclaimSettled(4);
+    EXPECT_EQ(1u, table.SourceObserverCount(source));
+    EXPECT_TRUE(table.SourceApplied(proof));
+    EXPECT_EQ(1u, table.FreePayloadCount());
+    ASSERT_TRUE(table.ReleaseSource(proof));
+    table.ReclaimSettled(5);
+    EXPECT_FALSE(table.SourceApplied(proof));
+    EXPECT_EQ(3u, table.FreeRowCount());
+    harken::VariableSliceRef reused{};
+    ASSERT_TRUE(ReserveTargets(table, 1, 3, &reused));
+    EXPECT_EQ(source.slot, reused.slot);
+    EXPECT_NE(source.generation, reused.generation);
+    EXPECT_FALSE(table.RetainSource(proof));
+}
+
+TEST(VariableSliceTable, DependencyAloneRetainsProofAfterAcknowledgedPayloadIsReused) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(3, 1, 1, 2));
+    harken::VariableSliceRef source{}, dependent{}, replacement{};
+    ASSERT_TRUE(ReserveTargets(table, 1, 1, &source));
+    FillTargets(table, source, 1);
+    ASSERT_TRUE(ReserveTargets(table, 0, 2, &dependent));
+    harken::VariableSliceSource proof{};
+    ASSERT_TRUE(table.CaptureSource(source, &proof));
+    ASSERT_TRUE(table.AddSource(dependent, proof));
+    ASSERT_TRUE(table.Publish(dependent) == false);
+    PublishAndApply(table, source, 1);
+    ASSERT_TRUE(table.Publish(dependent));
+    ASSERT_TRUE(table.Acknowledge(source));
+    table.ReclaimSettled(2);
+    ASSERT_TRUE(table.SourceApplied(proof));
+    EXPECT_EQ(1u, table.SourceObserverCount(source));
+    ASSERT_TRUE(ReserveTargets(table, 1, 3, &replacement));
+    FillTargets(table, replacement, 1);
+    ApplyProbe probe{};
+    ASSERT_TRUE(table.Apply(dependent, 3, &probe, ValidateTarget, ApplyCommand));
+    ASSERT_TRUE(table.Acknowledge(dependent));
+    table.ReclaimSettled(4);
+    table.ReclaimSettled(5);
+    EXPECT_FALSE(table.SourceApplied(proof));
+    EXPECT_TRUE(table.AbandonPrepared(replacement));
+    EXPECT_EQ(3u, table.FreeRowCount());
+    EXPECT_EQ(2u, table.FreePayloadCount());
+    EXPECT_EQ(1u, table.FreeTargetCapacity());
+}
+
+TEST(VariableSliceTable, InvalidatedPayloadStillWaitsForActualConsumptionAndFenceAfterAcknowledgement) {
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(2, 1, 1, 1));
+    harken::VariableSliceRef source{}, next{};
+    ASSERT_TRUE(ReserveTargets(table, 1, 1, &source));
+    FillTargets(table, source, 1);
+    ASSERT_TRUE(table.Publish(source));
+    ASSERT_EQ(harken::VariableSliceInvalidationResult::InvalidatedBeforeClaim, table.Invalidate(source, 1u));
+    ASSERT_TRUE(table.Acknowledge(source));
+    table.ReclaimSettled(100);
+    EXPECT_FALSE(ReserveTargets(table, 1, 2, &next));
+    EXPECT_EQ(0u, table.FreePayloadCount());
+    ApplyProbe probe{};
+    EXPECT_FALSE(table.Apply(source, 101, &probe, ValidateTarget, ApplyCommand));
+    table.ReclaimSettled(101);
+    EXPECT_EQ(0u, table.FreePayloadCount());
+    table.ReclaimSettled(102);
+    EXPECT_EQ(1u, table.FreePayloadCount());
+    EXPECT_EQ(1u, table.FreeTargetCapacity());
+    EXPECT_EQ(2u, table.FreeRowCount());
 }
 
 TEST(VariableSliceTable, AudioApplyDoesNotMutatePoolOrFreeRangeState) {

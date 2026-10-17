@@ -6572,6 +6572,65 @@ TEST(VariableCurrentSlice, ReadCutAndOutcomeReleaseOrdersBothRespectTheAudioFenc
     }
 }
 
+TEST(VariableCurrentSlice, PublishedReadCutKeepsProofWhileAppliedPayloadAndTargetsAreReused) {
+    EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& e = *session.Engine();
+    ASSERT_TRUE(e.variableSlices.Reset(4, 1, 1, 1));
+    InstallVariable(&e);
+    RegisterBusVolumeBinding(harkentest::ObjectId(1), VN_BUS_MASTER);
+    auto observed = harken::ObserveVariableCallAt(e.variables.CurrentWorldGeneration(),
+        e.variables.CurrentTransportEpoch(), kBlockFrames, 0, 0);
+    const auto first = e.variables.AcceptGlobal(kVariable, 0.25f, observed,
+        e.params, e.bindings, e.busTargets);
+    ASSERT_EQ(VN_OK, first.result);
+    harken::VariableReadCutRef cut{};
+    ASSERT_TRUE(e.variables.CaptureReadCut(0, 4 * kBlockFrames,
+        first.ticket.sequence + 1, 0, &cut));
+    float value = 0;
+    ASSERT_TRUE(e.variables.ReadCutValue(cut, kVariable, &value));
+    e.variables.BeginService(e, 0, kBlockFrames);
+    e.variables.PrepareClaimedSlices(e);
+    const auto proof = e.variables.SliceForTicketForTests(first.ticket.sequence);
+    ASSERT_TRUE(proof.Valid());
+    ASSERT_EQ(1u, e.variableSlices.TargetCount(proof));
+    ASSERT_EQ(harken::VariableReadCutStatus::Waiting,
+        e.variables.PublishReadCut(cut, 4 * kBlockFrames));
+    for (int step = 0; step < 12 &&
+         e.variables.ReadCutSourcesStatus(cut) == harken::VariableReadCutStatus::Waiting; ++step)
+        e.nullBackend.Pump(1);
+    ASSERT_EQ(harken::VariableReadCutStatus::Applied, e.variables.ReadCutSourcesStatus(cut));
+    e.variables.EndService(e);
+    e.variables.MarkOutcomeDeliveryComplete();
+    e.variables.FinishOutcomeDelivery();
+    EXPECT_EQ(0u, e.variableSlices.FreePayloadCount());
+    e.nullBackend.Pump(1);
+    e.variables.EndService(e);
+    ASSERT_EQ(1u, e.variableSlices.FreePayloadCount());
+    ASSERT_EQ(1u, e.variableSlices.FreeTargetCapacity());
+    EXPECT_EQ(0u, e.variableSlices.TargetCount(proof));
+    EXPECT_EQ(harken::VariableSliceState::SliceApplied, e.variableSlices.State(proof));
+
+    observed.requestedEffectiveFrame = (e.mixer.BlocksRendered() + 4) * kBlockFrames;
+    const auto next = e.variables.AcceptGlobal(kVariable, 1.0f, observed,
+        e.params, e.bindings, e.busTargets);
+    ASSERT_EQ(VN_OK, next.result);
+    for (int step = 0; step < 12; ++step) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        e.nullBackend.Pump(1);
+    }
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_FLOAT_EQ(-12.0f, e.busTargets.LastCommitted(0, harken::kBusTargetBusVolume));
+    EXPECT_EQ(harken::VariableReadCutStatus::Applied, e.variables.ReadCutSourcesStatus(cut));
+    ASSERT_TRUE(e.variables.ReadCutValue(cut, kVariable, &value));
+    EXPECT_FLOAT_EQ(0.25f, value);
+    EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(4u, e.variableSlices.FreeRowCount());
+    EXPECT_EQ(1u, e.variableSlices.FreePayloadCount());
+    EXPECT_EQ(1u, e.variableSlices.FreeTargetCapacity());
+}
+
 TEST(VariableCurrentSlice, ReadCutCapacityRefusalAndCanceledPreparationReleaseEveryObserver) {
     using Access = harken::detail::VariableServiceTestAccess;
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
