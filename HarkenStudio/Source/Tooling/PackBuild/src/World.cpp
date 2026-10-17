@@ -3048,6 +3048,19 @@ WorldInstallStatus ValidateCurrentWorldV1(const ContainerWorldInstallViewV1 &wor
     }
 }
 
+WorldInstallStatus detail::ValidateCurrentWorldReadableV1(
+    const ContainerWorldInstallViewV1 &world) noexcept {
+    try {
+        if (!IsReadableCurrentWorldBodyVintage(world.sourceBodyVintage))
+            return WorldInstallStatus::InvalidFormat;
+        if (!ValidateCurrentWorldSectionGroupsV1(world))
+            return WorldInstallStatus::InvalidWorld;
+        return ValidateCurrentWorldImpl(world, ValidationScope::ExactWorld, true);
+    } catch (...) {
+        return WorldInstallStatus::Capacity;
+    }
+}
+
 WorldInstallStatus detail::ValidateCurrentWorldPartitionLocalV1(
     const ContainerWorldInstallViewV1 &world) noexcept {
     try {

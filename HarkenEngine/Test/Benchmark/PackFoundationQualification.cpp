@@ -247,7 +247,7 @@ int main(int argc, char* argv[]) {
         for (std::uint32_t i = 0; i < kLookupIterations; ++i) {
             lookupSink = lookupSink ^ reinterpret_cast<std::uintptr_t>(
                 engine->packComposition.FindAction(
-                    harkentest::ObjectId(kActionBase + (i % residentCount))));
+                    harkentest::ObjectId(kActionBase + (i % residentCount))).programView);
         }
     });
     const double unloadedLookupTotalUs = MeasureUs([&] {

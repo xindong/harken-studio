@@ -1701,7 +1701,9 @@ CompileResultV1 CompileCurrentWorldV1(
         entryScheduling ? harkenstudiobuild::ComputeCurrentWorldFingerprintV6(world->view_)
                         : harkenstudiobuild::ComputeCurrentWorldFingerprintV5(world->view_);
     const harkenstudiobuild::WorldInstallStatus validation =
-        harkenstudiobuild::ValidateCurrentWorldV1(world->view_);
+        entryScheduling
+            ? harkenstudiobuild::detail::ValidateCurrentWorldReadableV1(world->view_)
+            : harkenstudiobuild::ValidateCurrentWorldV1(world->view_);
     if (validation == harkenstudiobuild::WorldInstallStatus::Capacity) {
         result.status = CompileStatusV1::Capacity;
         return result;

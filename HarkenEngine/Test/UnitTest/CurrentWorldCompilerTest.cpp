@@ -2277,32 +2277,94 @@ TEST(CurrentWorldCompiler, BasicTransitionIsDeepOwnedAndAdvancedIsRefused) {
     rule.targetFade.curveLocalId = 2;
     transition.rules.push_back(rule);
 
-    auto result = harkencurrentworldcompiler::CompileCurrentWorldV1(
-        Project(), {}, Materializations(), {authored}, {}, {transition});
-    ASSERT_TRUE(result.ok()) << static_cast<std::uint32_t>(result.status);
-    ASSERT_NE(nullptr, result.world);
-    const auto& world = result.world->View();
-    ASSERT_EQ(1u, world.transitionCount);
-    ASSERT_NE(nullptr, world.transitions);
-    ASSERT_EQ(1u, world.transitions[0].ruleCount);
-    EXPECT_EQ(48u, world.transitions[0].rules[0].sourceFade.durationFrames);
-    EXPECT_EQ(harkenstudiobuild::TransitionProgramClassV1::Basic,
-              harkenstudiobuild::ClassifyTransitionProgramV1(world.transitions[0]));
-    EXPECT_NE(0u,
-              world.identity.capabilityMask &
-                  harken::kWorldCapabilityTransition);
+    for (const std::uint32_t vintage : {18u, 19u}) {
+        SCOPED_TRACE(vintage);
+        transition.rules[0] = rule;
+        auto result = harkencurrentworldcompiler::CompileCurrentWorldV1(
+            Project(), {}, Materializations(), {authored}, {}, {transition}, {}, nullptr, vintage);
+        ASSERT_TRUE(result.ok()) << static_cast<std::uint32_t>(result.status);
+        ASSERT_NE(nullptr, result.world);
+        const auto& world = result.world->View();
+        ASSERT_EQ(1u, world.transitionCount);
+        ASSERT_NE(nullptr, world.transitions);
+        ASSERT_EQ(1u, world.transitions[0].ruleCount);
+        EXPECT_EQ(48u, world.transitions[0].rules[0].sourceFade.durationFrames);
+        EXPECT_EQ(harkenstudiobuild::TransitionProgramClassV1::Basic,
+                  harkenstudiobuild::ClassifyTransitionProgramV1(world.transitions[0]));
+        EXPECT_NE(0u, world.identity.capabilityMask & harken::kWorldCapabilityTransition);
 
-    transition.rules[0].sourceFade.durationFrames = 999;
-    EXPECT_EQ(48u, world.transitions[0].rules[0].sourceFade.durationFrames);
+        if (vintage == 19) {
+            EXPECT_NE(0u, world.identity.capabilityMask &
+                              harkenstudiobuild::kWorldCapabilityEntryScheduling);
+            EXPECT_EQ(harkenstudiobuild::ComputeCurrentWorldFingerprintV6(world),
+                      world.identity.runtimeSemanticFingerprint);
+            EXPECT_EQ(harkenstudiobuild::WorldInstallStatus::CapabilityUnavailable,
+                      harkenstudiobuild::ValidateCurrentWorldV1(world));
+            std::vector<std::uint8_t> bytes;
+            ASSERT_TRUE(harkenstudiobuild::EncodeCurrentWorldBodyV19(world, bytes));
+            harken::CurrentWorldBodyImage decoded;
+            ASSERT_TRUE(decoded.Decode(bytes.data(), bytes.size(), vintage,
+                                       harken::CurrentWorldDecodeMode::StrictArtifact));
+            ASSERT_EQ(1u, decoded.ProductionView()->transitionCount);
+            EXPECT_EQ(world.identity.capabilityMask, decoded.ProductionView()->identity.capabilityMask);
+            EXPECT_EQ(world.identity.runtimeSemanticFingerprint,
+                      harken::ComputeCurrentWorldFingerprintV6(*decoded.ProductionView()));
+            EXPECT_EQ(harken::WorldInstallStatus::CapabilityUnavailable,
+                      harken::ValidateCurrentWorldV1(*decoded.ProductionView()));
+            EXPECT_FALSE(harkenstudiobuild::EncodeCurrentWorldShippingBody(world, bytes));
+        } else {
+            EXPECT_EQ(harken::WorldInstallStatus::Ok,
+                      harkentest::ValidateCompilerWorld(world));
+        }
 
-    transition.rules[0].sourceExit = harkenstudiobuild::TransitionSourceExitV1::NextBeat;
-    transition.rules[0].requiredClockFingerprint = 123;
-    result = harkencurrentworldcompiler::CompileCurrentWorldV1(
-        Project(), {}, Materializations(), {authored}, {}, {transition});
-    EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::
-                  TransitionCapabilityUnavailable,
-              result.status);
-    EXPECT_EQ(nullptr, result.world);
+        transition.rules[0].sourceFade.durationFrames = 999;
+        EXPECT_EQ(48u, world.transitions[0].rules[0].sourceFade.durationFrames);
+
+        transition.rules[0].sourceExit = harkenstudiobuild::TransitionSourceExitV1::NextBeat;
+        transition.rules[0].requiredClockFingerprint = 123;
+        result = harkencurrentworldcompiler::CompileCurrentWorldV1(
+            Project(), {}, Materializations(), {authored}, {}, {transition}, {}, nullptr, vintage);
+        EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::TransitionCapabilityUnavailable,
+                  result.status);
+        EXPECT_EQ(nullptr, result.world);
+    }
+}
+
+TEST(CurrentWorldCompiler,
+     BasicTransitionWithContainerEndpointRemainsUnavailable) {
+    harkenprojectschema::CanonicalProject project{};
+    auto parent = Container(2, 4);
+    parent.container.children[0].childPlayableRef.kind =
+        harkenprojectschema::ContentKind::Container;
+    project.objects = {parent, Sound(3), Container(4, 3)};
+    project.roots = {harkentest::StudioObjectId(2)};
+    auto parentAuthoring = Authored(harkenstudiobuild::ContainerModeV1::SequenceQueue,
+                                    harkenstudiobuild::RandomDisciplineV1::Draw);
+    parentAuthoring.transitionProgramIndex = 0;
+    auto childAuthoring = Authored(harkenstudiobuild::ContainerModeV1::Random,
+                                   harkenstudiobuild::RandomDisciplineV1::Draw);
+    childAuthoring.containerStableId = harkentest::StudioObjectId(4);
+    auto materializations = Materializations();
+    materializations.push_back(
+        {harkenplayableproperties::ContentPropertyKindV1::Container,
+         harkentest::StudioObjectId(4), 44, harkentest::StudioObjectId(0), 400});
+    harkencurrentworldcompiler::TransitionProgramAuthoringV1 transition{};
+    transition.ownerContainerStableId = parentAuthoring.containerStableId;
+    harkenstudiobuild::TransitionRuleViewV1 rule{};
+    rule.sourceAny = 1;
+    rule.targetAny = 1;
+    transition.rules.push_back(rule);
+
+    for (const std::uint32_t vintage : {18u, 19u}) {
+        SCOPED_TRACE(vintage);
+        const auto result = harkencurrentworldcompiler::CompileCurrentWorldV1(
+            project, {}, materializations, {parentAuthoring, childAuthoring}, {},
+            {transition}, {}, nullptr, vintage);
+        EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::TransitionCapabilityUnavailable,
+                  result.status);
+        EXPECT_EQ(harkentest::StudioObjectId(2), result.relatedStableId);
+        EXPECT_EQ(nullptr, result.world);
+    }
 }
 
 TEST(CurrentWorldCompiler,
@@ -2397,12 +2459,14 @@ TEST(CurrentWorldCompiler,
     rule.targetFade.curveLocalId = 2;
     transition.rules.push_back(rule);
 
-    const auto result = harkencurrentworldcompiler::CompileCurrentWorldV1(
-        Project(), {}, Materializations(), {authored}, {}, {transition});
-    EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::
-                  InvalidCanonicalWorld,
-              result.status);
-    EXPECT_EQ(nullptr, result.world);
+    for (const std::uint32_t vintage : {18u, 19u}) {
+        SCOPED_TRACE(vintage);
+        const auto result = harkencurrentworldcompiler::CompileCurrentWorldV1(
+            Project(), {}, Materializations(), {authored}, {}, {transition}, {}, nullptr, vintage);
+        EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::InvalidCanonicalWorld,
+                  result.status);
+        EXPECT_EQ(nullptr, result.world);
+    }
 }
 
 TEST(CurrentWorldCompiler,
@@ -2546,11 +2610,14 @@ TEST(CurrentWorldCompiler,
     foreign.authoredStableOrder = 1;
     transition.rules = {fallback, foreign};
 
-    const auto result = harkencurrentworldcompiler::CompileCurrentWorldV1(
-        project, {}, materializations, {first, second}, {}, {transition});
-    EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::InvalidCanonicalWorld,
-              result.status);
-    EXPECT_EQ(nullptr, result.world);
+    for (const std::uint32_t vintage : {18u, 19u}) {
+        SCOPED_TRACE(vintage);
+        const auto result = harkencurrentworldcompiler::CompileCurrentWorldV1(
+            project, {}, materializations, {first, second}, {}, {transition}, {}, nullptr, vintage);
+        EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::InvalidCanonicalWorld,
+                  result.status);
+        EXPECT_EQ(nullptr, result.world);
+    }
 }
 
 TEST(CurrentWorldCompiler, TransitionProgramsCannotBeOrphaned) {
@@ -2820,14 +2887,17 @@ TEST(CurrentWorldCompiler, MusicalPieceAndSemanticClipOrderCompileExactly) {
 TEST(CurrentWorldCompiler, CapacityPlusOneRefusesWithoutOutput) {
     harkenstudiobuild::WorldCapacitySummaryV1 capacity{};
     capacity.maxPlayablePropertyPrograms = 2;
-    const auto result = harkencurrentworldcompiler::CompileCurrentWorldV1(
-        Project(), {}, Materializations(),
-        {Authored(harkenstudiobuild::ContainerModeV1::Random,
-                  harkenstudiobuild::RandomDisciplineV1::Draw)},
-        capacity);
-    EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::Capacity,
-              result.status);
-    EXPECT_EQ(nullptr, result.world);
+    for (const std::uint32_t vintage : {18u, 19u}) {
+        SCOPED_TRACE(vintage);
+        const auto result = harkencurrentworldcompiler::CompileCurrentWorldV1(
+            Project(), {}, Materializations(),
+            {Authored(harkenstudiobuild::ContainerModeV1::Random,
+                      harkenstudiobuild::RandomDisciplineV1::Draw)},
+            capacity, {}, {}, nullptr, vintage);
+        EXPECT_EQ(harkencurrentworldcompiler::CompileStatusV1::Capacity,
+                  result.status);
+        EXPECT_EQ(nullptr, result.world);
+    }
 }
 
 TEST(CurrentWorldCompiler, PropertyCapacityZeroHundredAndPlusOne) {

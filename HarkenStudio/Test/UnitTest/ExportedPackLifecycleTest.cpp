@@ -3712,7 +3712,7 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
         LoadedExportedPack loaded;
         ASSERT_NO_FATAL_FAILURE(
             loadExportedPackSession(outputDir, test.name, &loaded));
-        const harken::ActionProgramViewV1* packed =
+        const auto packed =
             loaded.session.Engine()->packComposition.FindAction(
                 harkentest::ToRuntime(actionId));
         ASSERT_NE(nullptr, packed);
@@ -3808,7 +3808,7 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
 
         const auto actionId =
             harkentest::StudioObjectId(test.objectId + kStableIdBias);
-        const harken::ActionProgramViewV1* packed =
+        const auto packed =
             loaded.session.Engine()->packComposition.FindAction(
                 harkentest::ToRuntime(actionId));
         ASSERT_NE(nullptr, packed);
@@ -3895,7 +3895,7 @@ TEST_F(AuthoredPackLifecycle, QuantizedActionsMatchPreviewAndExecuteFromReloaded
 
     const auto stopActionId = harkentest::StudioObjectId(
         kQuantizedStopActionObjectId + kStableIdBias);
-    const harken::ActionProgramViewV1* packedStop =
+    const auto packedStop =
         loaded.session.Engine()->packComposition.FindAction(
             harkentest::ToRuntime(stopActionId));
     ASSERT_NE(nullptr, packedStop);
