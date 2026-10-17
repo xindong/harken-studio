@@ -11,7 +11,7 @@ real packc tool, and never touches audio hardware (the server runs
 protocol fault fails the run with a nonzero exit code.
 
 Usage:
-  py -3 .scripts/remote/remote_acceptance_drive.py \
+  py -3 HarkenEngine/Test/E2E/remote_acceptance_drive.py \
       --host <harken_host.exe> --packc <packc.exe> [--pipe <name>]
       [--keep-server] [--trace <journal.vtrc>]
 
@@ -38,12 +38,12 @@ import threading
 import time
 import wave
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+REPO_ROOT = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+sys.path.insert(0, os.path.join(REPO_ROOT, "HarkenEngine", "Tool", "Remote"))
 import remote_client
 import harken_wire as wire
 
-REPO_ROOT = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 WORK_DIR = os.path.join(REPO_ROOT, ".temp", "remote_drive")
 
 SOUND_ID = 101
