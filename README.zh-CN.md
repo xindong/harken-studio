@@ -172,11 +172,6 @@ harken/
 ├── (build*/)                             # 构建产出内容，编译输出
 ├── cmake/                                # 项目构建身份注入
 ├── HarkenEngine/                         # harken_core — 声音引擎运行核心
-│   ├── Source/                          # 运行时、产品库与共享代码生成
-│   ├── Tool/                            # 内部开发宿主、探针与客户端
-│   ├── Test/                            # 测试、验收驱动、夹具与测试辅助代码
-│   ├── ThirdParty/                      # 随仓第三方依赖
-│   └── Examples/                        # 引擎集成示例
 ├── HarkenHub/                            # HarkenHub — 独立启动器程序
 ├── HarkenSchema/                         # Editor 与 Pack 各自独立的 JSON 合同
 ├── HarkenSDK/                            # HarkenSDK — 共享引擎 SDK 总目录（Unity/Harken + Unreal/Harken）
@@ -188,5 +183,3 @@ harken/
 ├── USER_TERMS*.md                        # 隐私政策和许可协议
 └── README*.md | LICENSE | VERSION | NOTICE
 ```
-
-`HarkenEngine/Tool/` 收纳内部使用的 Host、Qualification 和命名管道 Remote 工具，对应检测归入 `HarkenEngine/Test/`。Preview 等产品库与共享 API/代码生成输入保留在 `Source/Tooling/`。Studio 连接游戏的正式通道位于 `Source/Runtime/remote/`，与内部管道工具分开；全仓工作流脚本仍放在 `.scripts/`。
