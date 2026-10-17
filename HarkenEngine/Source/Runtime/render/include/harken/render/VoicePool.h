@@ -21,6 +21,7 @@
 #include "harken/core/CommandQueue.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/core/NotificationQueue.h"
+#include "harken/core/MonitorVoiceControl.h"
 #include "harken/core/PcmView.h"
 #include "harken/core/SnapshotBuffer.h"
 #include "harken/core/SourceCursorMirror.h"
@@ -250,6 +251,7 @@ public:
     bool CaptureReleaseObserver(VnVoiceHandle handle,
                                 VoiceReleaseObserver* out) const noexcept;
     bool ReleaseObserved(const VoiceReleaseObserver& observer) const noexcept;
+    bool BindMonitorControl(VnVoiceHandle handle, const MonitorVoiceControlBinding& binding) noexcept;
     bool BindSourceTerminal(VnVoiceHandle handle, SourceTerminalRecord* record,
                             SourceTerminalToken token) noexcept;
     std::uint32_t Capacity() const {
@@ -886,6 +888,8 @@ private:
         OriginalSourceInstallationLoan pendingOriginalSource;
         OriginalSourceInstallationLoan installedOriginalSource;
         std::atomic<VnVoiceHandle> monitorPublicHandle{0};
+        MonitorVoiceControlBinding monitorControl{};
+        bool monitorSourceTerminalPublished = false;
         std::atomic<std::uint64_t> streamRingToken{0};
         mutable std::atomic<std::uint64_t> renderedState{0};
         VoiceRenderContext render;

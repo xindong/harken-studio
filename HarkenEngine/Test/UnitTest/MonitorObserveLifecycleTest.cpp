@@ -7,6 +7,8 @@
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "Common/TestUtil.h"
 #include "harken/core/ActionFiringTable.h"
+#include "harken/core/MonitorExecutionFact.h"
+#include "MonitorRecordPack.h"
 #include "harken/core/PlayableInstanceTable.h"
 #include "harken/core/QueueRuntime.h"
 #include "harken/core/TransitionInstancePool.h"
@@ -23,6 +25,10 @@
 #include <string>
 #include <tuple>
 #include <vector>
+
+static_assert(sizeof(VnMonitorExecutionFactV1) == 432);
+static_assert(harken::monitor::PackedRecordBytes(sizeof(VnMonitorExecutionFactV1)) == 752);
+static_assert(harken::monitor::PackedRecordBytes(512) == 832);
 
 #ifndef HARKEN_MONITOR_FIXTURE_DIR
 #define HARKEN_MONITOR_FIXTURE_DIR "."
@@ -68,6 +74,7 @@ std::uint64_t ReadU64(const unsigned char* p) {
 }
 
 struct PackedRecord {
+    VnObjectId stableId{};
     std::uint32_t recordKind = 0;
     std::uint32_t streamKind = 0;
     std::uint32_t entityKind = 0;
@@ -98,6 +105,8 @@ std::vector<PackedRecord> ParseRecords(const PollArgs& poll) {
         rec.worldGeneration = ReadU64(bytes + offset + 72);
         rec.executeFrame = ReadU64(bytes + offset + 128);
         rec.entityKind = ReadU32(bytes + offset + 156);
+        rec.stableId = harken::ObjectIdFromBytes(
+            std::span<const std::uint8_t, 16>(bytes + offset + 184, 16));
         rec.instanceHandle = ReadU64(bytes + offset + 200);
         rec.instanceGeneration = ReadU64(bytes + offset + 208);
         rec.actionInstanceHandle = ReadU64(bytes + offset + 216);
@@ -228,6 +237,73 @@ TEST(MonitorObserve, LifecyclePlayableContainerEventsReachPoll) {
     EXPECT_TRUE(tombstoneOk);
     EXPECT_TRUE(completeOk);
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+}
+
+TEST(MonitorObserve, ChildContentSurvivesRetirementAndSlotReuseInCapturedRecords) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    harken::monitor::ResetLifecycleDedupeForTests();
+    // This local table belongs to the synthetic world used by its metadata.
+    harken::monitor::SetCurrentWorldGenerationForTests(7);
+    VnMonitorSessionHandle session = 0;
+    auto desc = MakeLifecycleDesc();
+    ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(&desc, &session));
+    harken::monitor::StopDrainForTests();
+
+    harken::PlayableInstanceTable table(2);
+    harken::PreparedPlayableInstance parent;
+    ASSERT_TRUE(table.PrepareAcquire(harken::PlayableKind::Container, 0, &parent));
+    harken::PlayableRootMetadata owner{};
+    owner.projectId = harkentest::ObjectId(42);
+    owner.definitionKind = harken::PlayableKind::Container;
+    owner.definitionStableId = harkentest::ObjectId(100);
+    owner.worldGeneration = 7;
+    owner.actionFiring = 99;
+    ASSERT_TRUE(table.SetPreparedRootMetadata(parent, owner));
+    ASSERT_TRUE(table.CommitPrepared(&parent));
+    harken::monitor::DrainOnceForTests();
+
+    std::array<std::uint64_t, 2> handles{};
+    for (std::uint32_t index = 0; index < handles.size(); ++index) {
+        harken::PreparedPlayableInstance child;
+        ASSERT_TRUE(table.PrepareAcquire(harken::PlayableKind::Sound, parent.Handle(), &child));
+        handles[index] = child.Handle();
+        const harken::MonitorContentIdentity content{
+            owner.projectId, harkentest::ObjectId(200 + index), 7, 300 + index, 400 + index};
+        ASSERT_TRUE(table.SetPreparedContentIdentity(child, content));
+        ASSERT_TRUE(table.CommitPrepared(&child));
+        EXPECT_FALSE(table.SetPreparedContentIdentity(child, {}));
+        harken::PlayableRootMetadata childOwner{};
+        ASSERT_TRUE(table.CaptureRootMetadata(child.Handle(), &childOwner));
+        EXPECT_EQ(0u, childOwner.actionFiring);
+        harken::monitor::DrainOnceForTests();
+        ASSERT_TRUE(table.AdvanceLifecycle(child.Handle(), harken::PlayableLifecycle::Retired));
+        harken::MonitorContentIdentity retired{};
+        EXPECT_FALSE(table.CaptureContentIdentity(child.Handle(), &retired));
+        harken::monitor::DrainOnceForTests();
+    }
+    EXPECT_EQ(static_cast<std::uint32_t>(handles[0]), static_cast<std::uint32_t>(handles[1]));
+    EXPECT_NE(handles[0], handles[1]);
+    harken::monitor::StartDrainForTests();
+    PollArgs poll;
+    ASSERT_EQ(VN_OK, Vn_MonitorPoll(session, &poll.desc, &poll.result));
+    const auto records = ParseRecords(poll);
+    for (std::uint32_t index = 0; index < handles.size(); ++index) {
+        bool start = false;
+        bool retired = false;
+        for (const auto& record : records) {
+            if (record.instanceHandle != handles[index]) continue;
+            EXPECT_EQ(harkentest::ObjectId(200 + index), record.stableId);
+            EXPECT_EQ(7u, record.worldGeneration);
+            EXPECT_EQ(handles[index] >> 32, record.instanceGeneration);
+            start |= record.recordKind == VN_MONITOR_RECORD_EVENT &&
+                record.eventClass == VN_MONITOR_EVENT_START;
+            retired |= record.recordKind == VN_MONITOR_RECORD_STATE_TOMBSTONE;
+        }
+        EXPECT_TRUE(start);
+        EXPECT_TRUE(retired);
+    }
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(session));
 }
 
 TEST(MonitorObserve, EventSessionSealsOperationsAndOriginalDiagnostics) {
@@ -1202,4 +1278,118 @@ TEST(MonitorObserve, LifecycleLegalEventRegistryLocksKindReasonSet) {
         {VN_MONITOR_ENTITY_TRANSITION, VN_MONITOR_EVENT_REJECT, 0},
     };
     EXPECT_EQ(expected, got);
+}
+
+TEST(MonitorObserve, EventSessionV2NegotiatesWithoutWritingPastLegacyStatus) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    VnMonitorSessionDescV2 desc{};
+    desc.structSize = sizeof(desc);
+    desc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
+    desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+    desc.requestedExecutionFactVersion = 1;
+    VnMonitorSessionHandle handle = 0;
+    ASSERT_EQ(VN_OK, Vn_MonitorOpenEventSession(
+        reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &handle));
+    struct GuardedStatus {
+        VnMonitorEventSessionStatus value{};
+        std::uint64_t guard = 0x1234567887654321ull;
+    } legacy;
+    legacy.value.structSize = sizeof(legacy.value);
+    ASSERT_EQ(VN_OK, Vn_MonitorGetEventSessionStatus(handle, &legacy.value));
+    EXPECT_EQ(0x1234567887654321ull, legacy.guard);
+    EXPECT_EQ(sizeof(legacy.value), legacy.value.structSize);
+    VnMonitorEventSessionStatusV2 status{};
+    status.structSize = sizeof(status);
+    ASSERT_EQ(VN_OK, Vn_MonitorGetEventSessionStatus(handle,
+        reinterpret_cast<VnMonitorEventSessionStatus*>(&status)));
+    EXPECT_EQ(1u, status.acceptedExecutionFactVersion);
+    EXPECT_EQ(legacy.value.monitorSessionEpoch, status.monitorSessionEpoch);
+    EXPECT_EQ(VN_MONITOR_PERM_OBSERVE_EVENTS, status.acceptedPermissionMask);
+    EXPECT_EQ(VN_MONITOR_OBSERVATION_NOT_REQUESTED, status.baselineAvailability);
+    EXPECT_EQ(VN_MONITOR_OBSERVATION_NOT_REQUESTED, status.symbolAvailability);
+    EXPECT_EQ(0u, status.reserved0);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+
+    desc.requestedExecutionFactVersion = 0;
+    ASSERT_EQ(VN_OK, Vn_MonitorOpenEventSession(
+        reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &handle));
+    ASSERT_EQ(VN_OK, Vn_MonitorGetEventSessionStatus(handle,
+        reinterpret_cast<VnMonitorEventSessionStatus*>(&status)));
+    EXPECT_EQ(0u, status.acceptedExecutionFactVersion);
+    EXPECT_EQ(0u, status.supportedFactKinds[0]);
+    EXPECT_EQ(0u, status.supportedFactKinds[1]);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+}
+
+TEST(MonitorObserve, EventSessionV2RejectsBadVintagesAndPreservesLegacyConstraints) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    VnMonitorSessionDescV2 desc{};
+    desc.structSize = sizeof(desc);
+    desc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
+    desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+    desc.requestedExecutionFactVersion = 1;
+    VnMonitorSessionHandle handle = 123;
+    const auto open = [&]() { return Vn_MonitorOpenEventSession(
+        reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &handle); };
+    for (auto size : {0u, 31u, 33u, 39u, 41u, 48u}) {
+        desc.structSize = size;
+        EXPECT_EQ(VN_INVALID_ARG, open());
+        EXPECT_EQ(123u, handle);
+    }
+    desc.structSize = sizeof(desc);
+    desc.reserved0 = 1;
+    EXPECT_EQ(VN_INVALID_ARG, open());
+    desc.reserved0 = 0;
+    desc.reserved1 = 1;
+    EXPECT_EQ(VN_INVALID_ARG, open());
+    desc.reserved1 = 0;
+    desc.requestedExecutionFactVersion = 2;
+    EXPECT_EQ(VN_MONITOR_UNSUPPORTED, open());
+    EXPECT_EQ(123u, handle);
+    desc.requestedExecutionFactVersion = 0;
+    desc.requestSymbols = 1;
+    EXPECT_EQ(VN_INVALID_ARG, open());
+    desc.requestSymbols = 0;
+    desc.requestedStreamKindMask |= VN_MONITOR_STREAM_STATE;
+    EXPECT_EQ(VN_INVALID_ARG, open());
+    desc.structSize = sizeof(VnMonitorSessionDesc);
+    desc.requestedExecutionFactVersion = 1;
+    EXPECT_EQ(VN_INVALID_ARG, open());
+}
+
+TEST(MonitorObserve, EventSessionV2RequiresExplicitStateAndMandatoryEventGrant) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    VnMonitorSessionDescV2 desc{};
+    desc.structSize = sizeof(desc);
+    desc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
+    desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+    desc.requestedExecutionFactVersion = 1;
+    VnMonitorSessionHandle handle = 0;
+    ASSERT_EQ(VN_OK, Vn_MonitorOpenEventSession(
+        reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &handle));
+    VnMonitorEventSessionStatusV2 status{};
+    status.structSize = sizeof(status);
+    ASSERT_EQ(VN_OK, Vn_MonitorGetEventSessionStatus(handle,
+        reinterpret_cast<VnMonitorEventSessionStatus*>(&status)));
+    EXPECT_EQ(VN_MONITOR_STREAM_EVENT, status.acceptedStreamKindMask);
+    EXPECT_EQ(VN_MONITOR_OBSERVATION_DENIED, status.baselineAvailability);
+    EXPECT_EQ(0u, status.acceptedPermissionMask & VN_MONITOR_PERM_OBSERVE_STATE);
+    VnMonitorStateCutDesc cut{};
+    cut.structSize = sizeof(cut);
+    std::uint64_t cutId = 123;
+    EXPECT_EQ(VN_MONITOR_PERMISSION_DENIED, Vn_MonitorRequestStateCut(handle, &cut, &cutId));
+    EXPECT_EQ(123u, cutId);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
+
+    desc.requestedPermissionMask |= VN_MONITOR_PERM_OBSERVE_STATE;
+    harken::monitor::SetHostPrincipalForTests(true, VN_MONITOR_STREAM_STATE);
+    EXPECT_EQ(VN_MONITOR_PERMISSION_DENIED, Vn_MonitorOpenEventSession(
+        reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &handle));
+    harken::monitor::ClearHostPrincipalForTests();
+    desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_STATE;
+    EXPECT_EQ(VN_INVALID_ARG, Vn_MonitorOpenEventSession(
+        reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &handle));
 }

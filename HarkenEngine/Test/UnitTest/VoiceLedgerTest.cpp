@@ -1498,3 +1498,191 @@ TEST(VoiceLedger, PreparedCompositeFactoryInputKeepsGenuineHeldCommitAndNativeEn
         fixture.ReleaseAll();
     }
 }
+
+
+namespace harken::detail {
+struct MonitorVoiceControlTestAccess {
+    static bool BeginWrite(const MonitorVoiceControlBinding& binding) {
+        auto expected = MonitorVoiceControlReceipt::State(binding.ticket, MonitorVoiceControlReceipt::Phase::Armed);
+        return binding.receipt->control_.compare_exchange_strong(expected,
+            MonitorVoiceControlReceipt::State(binding.ticket, MonitorVoiceControlReceipt::Phase::Writing),
+            std::memory_order_acq_rel, std::memory_order_acquire);
+    }
+    static void CompleteWrite(const MonitorVoiceControlBinding& binding, const MonitorControlCause& cause) {
+        binding.receipt->payload_ = {cause, binding.render, 19, binding.ledgerSlot,
+            binding.ledgerGeneration, SourceTerminalKind::Stop, true};
+        binding.receipt->control_.store(
+            MonitorVoiceControlReceipt::State(binding.ticket, MonitorVoiceControlReceipt::Phase::Complete),
+            std::memory_order_release);
+    }
+};
+}
+
+TEST(MonitorVoiceControl, RebindingRejectsLateWritersInvalidationAndTicketReuse) {
+    harken::MonitorVoiceControlReceipt receipt;
+    const harken::MonitorVoiceControlBinding old{&receipt, 1, MakeRenderHandle(0, 1), 0, 1};
+    ASSERT_TRUE(receipt.TryArm(old.ticket));
+    const harken::MonitorVoiceControlBinding next{&receipt, 2, MakeRenderHandle(0, 2), 0, 1};
+    ASSERT_TRUE(receipt.TryArm(next.ticket));
+    EXPECT_FALSE(receipt.TryPublish(old, harken::SourceTerminalKind::Stop, 10, {}, true));
+    receipt.Invalidate(old.ticket);
+    harken::MonitorControlCause cause{};
+    cause.request.key = {3, 17};
+    ASSERT_TRUE(receipt.TryPublish(next, harken::SourceTerminalKind::Stop, 23, cause, true));
+    EXPECT_FALSE(receipt.TryPublish(next, harken::SourceTerminalKind::Natural, 24, {}, false));
+    harken::MonitorVoiceControlFact fact{};
+    EXPECT_FALSE(receipt.TryRead(old, &fact));
+    ASSERT_TRUE(receipt.TryRead(next, &fact));
+    EXPECT_EQ(cause.request.key, fact.cause.request.key);
+    EXPECT_EQ(next.render, fact.render);
+    EXPECT_EQ(23u, fact.frame);
+    EXPECT_FALSE(receipt.TryArm(next.ticket));
+    EXPECT_FALSE(receipt.TryArm(0));
+    EXPECT_TRUE(receipt.TryArm(harken::MonitorVoiceControlReceipt::kMaxTicket));
+    EXPECT_FALSE(receipt.TryArm(harken::MonitorVoiceControlReceipt::kMaxTicket + 1u));
+}
+
+TEST(VoiceLedger, ObservationWritingCannotBlockParkEndOrReuseAndCannotCrossGenerations) {
+    harken::VoiceLedger ledger(1);
+    VnVoiceHandle publicHandle = 0;
+    std::uint32_t slot = 0;
+    ASSERT_TRUE(ledger.Acquire(&publicHandle, &slot));
+    const auto oldRender = MakeRenderHandle(0, 1);
+    const auto old = ledger.ArmMonitorControl(slot, oldRender);
+    ASSERT_TRUE(old.Valid());
+    ledger.BindRender(slot, oldRender, 128);
+    ASSERT_TRUE(harken::detail::MonitorVoiceControlTestAccess::BeginWrite(old));
+    ASSERT_TRUE(ledger.Park(oldRender, &slot));
+    ledger.EndParked(slot);
+    const auto oldPublic = publicHandle;
+    ASSERT_TRUE(ledger.Acquire(&publicHandle, &slot));
+    EXPECT_NE(oldPublic, publicHandle);
+    const auto nextRender = MakeRenderHandle(0, 2);
+    EXPECT_FALSE(ledger.ArmMonitorControl(slot, nextRender).Valid());
+    ledger.BindRender(slot, nextRender, 128);
+    EXPECT_EQ(nextRender, ledger.ToRender(publicHandle));
+    EXPECT_EQ(1u, ledger.MonitorControlUnavailableCount());
+    harken::MonitorControlCause oldCause{};
+    oldCause.request.key = {9, 13};
+    harken::detail::MonitorVoiceControlTestAccess::CompleteWrite(old, oldCause);
+    harken::VoiceLedger::MonitorIdentity identity{};
+    ASSERT_TRUE(ledger.CaptureMonitorIdentity(slot, &identity));
+    EXPECT_TRUE(identity.controlObservationIncomplete);
+    EXPECT_FALSE(identity.controlCause.request.key.Valid());
+    ledger.Reap(nextRender);
+    ASSERT_TRUE(ledger.Acquire(&publicHandle, &slot));
+    const auto thirdRender = MakeRenderHandle(0, 3);
+    const auto third = ledger.ArmMonitorControl(slot, thirdRender);
+    ASSERT_TRUE(third.Valid());
+    ledger.BindRender(slot, thirdRender, 128);
+    harken::MonitorControlCause thirdCause{};
+    thirdCause.request.key = {9, 27};
+    ASSERT_TRUE(third.receipt->TryPublish(third, harken::SourceTerminalKind::Stop, 43, thirdCause, true));
+    ASSERT_TRUE(ledger.CaptureMonitorIdentity(slot, &identity));
+    EXPECT_FALSE(identity.controlObservationIncomplete);
+    EXPECT_EQ(thirdCause.request.key, identity.controlCause.request.key);
+}
+
+TEST(VoiceLedger, ObservationReturnParkUsesDistinctActivationWithinSameLogicalGeneration) {
+    harken::VoiceLedger ledger(1);
+    VnVoiceHandle publicHandle = 0;
+    std::uint32_t slot = 0;
+    ASSERT_TRUE(ledger.Acquire(&publicHandle, &slot));
+    const auto oldRender = MakeRenderHandle(0, 1);
+    const auto old = ledger.ArmMonitorControl(slot, oldRender);
+    ASSERT_TRUE(old.Valid());
+    ledger.BindRender(slot, oldRender, 128);
+    ASSERT_TRUE(ledger.Park(oldRender, &slot));
+    const auto nextRender = MakeRenderHandle(0, 2);
+    const auto next = ledger.ArmMonitorControl(slot, nextRender);
+    ASSERT_TRUE(next.Valid());
+    EXPECT_EQ(old.ledgerGeneration, next.ledgerGeneration);
+    EXPECT_NE(old.ticket, next.ticket);
+    ledger.ReturnPark(slot, nextRender);
+    EXPECT_FALSE(old.receipt->TryPublish(old, harken::SourceTerminalKind::Stop, 20, {}, true));
+    old.receipt->Invalidate(old.ticket);
+    harken::MonitorControlCause cause{};
+    cause.request.key = {7, 31};
+    ASSERT_TRUE(next.receipt->TryPublish(next, harken::SourceTerminalKind::Stop, 35, cause, true));
+    harken::VoiceLedger::MonitorIdentity identity{};
+    ASSERT_TRUE(ledger.CaptureMonitorIdentity(slot, &identity));
+    EXPECT_EQ(publicHandle, identity.logicalHandle);
+    EXPECT_EQ(nextRender, identity.renderHandle);
+    EXPECT_EQ(cause.request.key, identity.controlCause.request.key);
+    ledger.SweepEnded([](VnVoiceHandle) { return false; });
+    ASSERT_TRUE(ledger.Acquire(&publicHandle, &slot));
+    ASSERT_TRUE(ledger.CaptureMonitorIdentity(slot, &identity));
+    EXPECT_FALSE(identity.controlCause.request.key.Valid());
+}
+
+TEST(VoiceLedger, ObservedSourceWinnerOverridesLaterAcceptedControlWithoutChangingTermination) {
+    for (const auto kind : {harken::SourceTerminalKind::Natural, harken::SourceTerminalKind::ProducerFailure,
+                           harken::SourceTerminalKind::IntegrityAbort, harken::SourceTerminalKind::Stop}) {
+        harken::VoiceLedger ledger(1);
+        VnVoiceHandle publicHandle = 0;
+        std::uint32_t slot = 0;
+        ASSERT_TRUE(ledger.Acquire(&publicHandle, &slot));
+        const auto render = MakeRenderHandle(0, 5);
+        const auto binding = ledger.ArmMonitorControl(slot, render);
+        ASSERT_TRUE(binding.Valid());
+        ledger.BindRender(slot, render, 128);
+        harken::MonitorControlCause sourceCause{}, laterCause{};
+        sourceCause.request.key = {5, 7};
+        sourceCause.actionFiring = 11;
+        laterCause.request.key = {5, 19};
+        ASSERT_TRUE(binding.receipt->TryPublish(binding, kind, 29, sourceCause,
+            kind == harken::SourceTerminalKind::Stop));
+        ledger.MarkTerminating(render, laterCause);
+        EXPECT_TRUE(ledger.IsTerminating(render));
+        harken::VoiceLedger::MonitorIdentity identity{};
+        ASSERT_TRUE(ledger.CaptureMonitorIdentity(slot, &identity));
+        EXPECT_FALSE(identity.controlObservationIncomplete);
+        EXPECT_EQ(kind == harken::SourceTerminalKind::Stop ? sourceCause.request.key : harken::MonitorRequestKey{},
+            identity.controlCause.request.key);
+    }
+}
+
+TEST(VoiceLedger, ResetSelectionAndCancellationKeepPlaybackIdentityAndDoNotChangeOwnership) {
+    harken::VoiceLedger ledger(1);
+    harken::MonitorRequestContext playback{};
+    playback.key = {9, 3};
+    VnVoiceHandle handle = 0;
+    std::uint32_t slot = 0;
+    ASSERT_TRUE(ledger.Acquire(&handle, &slot, playback));
+    const auto render = MakeRenderHandle(0, 6);
+    const auto binding = ledger.ArmMonitorControl(slot, render);
+    ledger.BindRender(slot, render, 128);
+    harken::MonitorControlCause selection{}, cancellation{}, later{};
+    selection.request.key = {9, 4};
+    selection.actionFiring = 13;
+    selection.executionOrdinal = 2;
+    cancellation.request.key = {9, 5};
+    later.request.key = {9, 6};
+    ledger.RecordMonitorSelection(render, selection);
+    ledger.RecordMonitorSelection(render, later);
+    ledger.RecordMonitorCancellation(MakeRenderHandle(0, 5), later);
+    harken::VoiceLedger::MonitorIdentity identity{};
+    ASSERT_TRUE(ledger.CaptureMonitorIdentity(slot, &identity));
+    EXPECT_EQ(playback.key, identity.playbackRequest.key);
+    EXPECT_EQ(selection.request.key, identity.selectionCause.request.key);
+    EXPECT_EQ(13u, identity.selectionCause.actionFiring);
+    EXPECT_EQ(2u, identity.selectionCause.executionOrdinal);
+    EXPECT_FALSE(identity.controlCause.request.key.Valid());
+    ledger.RecordMonitorCancellation(render, cancellation);
+    ledger.RecordMonitorCancellation(render, later);
+    EXPECT_FALSE(ledger.IsTerminating(render));
+    EXPECT_FALSE(ledger.IsStolen(render));
+    ASSERT_TRUE(binding.receipt->TryPublish(binding, harken::SourceTerminalKind::Cancelled, 37, {}, false));
+    ledger.MarkTerminating(render, later);
+    ASSERT_TRUE(ledger.CaptureMonitorIdentity(slot, &identity));
+    EXPECT_EQ(cancellation.request.key, identity.controlCause.request.key);
+    EXPECT_EQ(selection.request.key, identity.selectionCause.request.key);
+    ledger.SweepEnded([](VnVoiceHandle) { return false; });
+    ASSERT_TRUE(ledger.Acquire(&handle, &slot));
+    ledger.BindRender(slot, MakeRenderHandle(0, 7), 128);
+    ledger.RecordMonitorCancellation(render, cancellation);
+    ledger.RecordMonitorSelection(render, selection);
+    ASSERT_TRUE(ledger.CaptureMonitorIdentity(slot, &identity));
+    EXPECT_FALSE(identity.controlCause.request.key.Valid());
+    EXPECT_FALSE(identity.selectionCause.request.key.Valid());
+}

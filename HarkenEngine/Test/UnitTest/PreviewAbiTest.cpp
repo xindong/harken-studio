@@ -3,6 +3,7 @@
 
 #include "Engine.h"
 #include "MonitorCaptureHubTestHooks.h"
+#include "Common/MonitorExecutionTestSupport.h"
 #include "SharedFrontierTrace.h"
 #include "harken/core/CurrentWorld.h"
 #include "harken_preview/PreviewAbi.h"
@@ -533,19 +534,64 @@ void ExpectPublicPreviewAudible(
 }
 
 void ExpectPublicSchedulePreviewAudible(std::uint32_t kind,
-                                        VnObjectId stableId) {
+                                        VnObjectId stableId,
+                                        bool repeatSameClip = false) {
     PreviewSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
     const harken::PCMView media = engine->registry.Lookup(kSound);
     PreviewScheduleWorldImage image(media.contentRevision);
+    std::array<harken::ScheduleClipPlacementV1, 2> placements{image.placement, image.placement};
+    std::array<harken::PlayableOccurrencePropertyViewV1, 2> occurrences{image.occurrence, image.occurrence};
+    placements[1].stablePlacementOrdinal = 1;
+    placements[1].stableOccurrenceOrdinal = 8;
+    placements[1].clipId = harkentest::ObjectId(93);
+    placements[1].clipGuidLow = 94;
+    occurrences[1].stableOccurrenceOrdinal = 8;
+    occurrences[1].occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(occurrences[1]);
+    image.track.placements = placements.data();
+    image.track.placementCount = repeatSameClip ? 1u : placements.size();
+    image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
+    image.trackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
+    image.piece.scheduleSemanticFingerprint = harken::ComputePieceScheduleFingerprintV1(image.piece);
+    image.world.playableOccurrences = occurrences.data();
+    image.world.playableOccurrenceCount = image.track.placementCount;
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
     ASSERT_EQ(harken::InstallContainerWorldV1(*engine, image.world).status,
               harken::WorldInstallStatus::Ok);
+    const auto capture = harkentest::monitor::OpenIdentityEvents();
     VnPreviewPlayPlayableDescV2 desc = Desc(kind, stableId);
     VnPreviewPlayableHandle handle = 0;
     ASSERT_EQ(VnPreview_PlayPlayable(&desc, &handle), VN_PREVIEW_OK);
     EXPECT_NE(handle, 0u);
+    if (repeatSameClip) {
+        VnPreviewPlayableHandle second = 0;
+        ASSERT_EQ(VnPreview_PlayPlayable(&desc, &second), VN_PREVIEW_OK);
+        EXPECT_NE(handle, second);
+    }
     EXPECT_TRUE(PumpUntilNonSilent(*engine));
+    const auto rows = harkentest::monitor::ReadIdentityEvents(capture);
+    std::vector<std::uint64_t> voices;
+    std::vector<std::uint32_t> ordinals;
+    for (const auto& row : rows) {
+        if (row.fact.factKind != VN_MONITOR_FACT_VOICE_LIVE) continue;
+        EXPECT_EQ(VN_MONITOR_CONTENT_SOUND, row.fact.contentKind);
+        EXPECT_EQ(kSound, row.header.stableId);
+        EXPECT_EQ(media.contentRevision, row.fact.contentRevision);
+        EXPECT_EQ(image.properties[0].programSemanticFingerprint, row.header.programSemanticFingerprint);
+        EXPECT_TRUE(harken::monitor::FactHas(row.fact, VN_MONITOR_FACT_FIELD_CLIP));
+        EXPECT_TRUE(harken::monitor::FactHas(row.fact, VN_MONITOR_FACT_FIELD_OCCURRENCE));
+        EXPECT_EQ(row.header.telemetry.occurrenceOrdinal == 7 ? placements[0].clipId : placements[1].clipId,
+            row.header.telemetry.clipId);
+        voices.push_back(row.fact.logicalVoice);
+        ordinals.push_back(row.header.telemetry.occurrenceOrdinal);
+    }
+    ASSERT_EQ(2u, voices.size());
+    EXPECT_NE(voices[0], voices[1]);
+    std::sort(ordinals.begin(), ordinals.end());
+    EXPECT_EQ((repeatSameClip ? std::vector<std::uint32_t>{7, 7} :
+        std::vector<std::uint32_t>{7, 8}), ordinals);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
 }
 
 TEST(PreviewAbi, LayoutAndPinnedVocabularyMatchTheTypedV2Contract) {
@@ -1041,6 +1087,11 @@ TEST(PreviewAbi, TrackAndPieceRunThroughPublicPreviewAndProduceAudio) {
                                        kTrack);
     ExpectPublicSchedulePreviewAudible(VN_PREVIEW_PLAYABLE_KIND_PIECE,
                                        kPiece);
+}
+
+TEST(PreviewAbi, RepeatedScheduleClipKeepsDistinctVoiceInstances) {
+    ExpectPublicSchedulePreviewAudible(VN_PREVIEW_PLAYABLE_KIND_TRACK, kTrack, true);
+    ExpectPublicSchedulePreviewAudible(VN_PREVIEW_PLAYABLE_KIND_PIECE, kPiece, true);
 }
 
 TEST(PreviewAbi, VariableControlRunsThroughFirstPublicPreviewAndProducesAudio) {

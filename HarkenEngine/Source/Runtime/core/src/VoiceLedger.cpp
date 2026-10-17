@@ -1,16 +1,160 @@
 #include "harken/core/VoiceLedger.h"
 
 #include <cassert>
+#include <stdexcept>
 #include <utility>
 
 namespace harken {
 
+struct VoiceLedger::MonitorSelectionStorage {
+    struct Slot {
+        MonitorLifecycleFacts facts{};
+        std::size_t references = 0;
+        std::uint32_t next = UINT32_MAX;
+        std::uint32_t generation = 1;
+        std::uint32_t ledgerSlot = UINT32_MAX;
+        std::uint32_t ledgerGeneration = 0;
+    };
+    static std::size_t CheckedCapacity(std::size_t capacity) {
+        if (capacity > UINT32_MAX) throw std::length_error("monitor selection capacity overflow");
+        return capacity;
+    }
+    explicit MonitorSelectionStorage(std::size_t capacity) : slots(CheckedCapacity(capacity)) {
+        for (std::size_t i = 0; i < slots.size(); ++i)
+            slots[i].next = i + 1 < slots.size() ? static_cast<std::uint32_t>(i + 1) : UINT32_MAX;
+        free = slots.empty() ? UINT32_MAX : 0;
+    }
+    Slot* Resolve(std::uint32_t slot, std::uint32_t generation) noexcept {
+        if (slot >= slots.size()) return nullptr;
+        auto& value = slots[slot];
+        return value.references != 0 && value.generation == generation ? &value : nullptr;
+    }
+    void Release(std::uint32_t index) noexcept {
+        auto& slot = slots[index];
+        slot.references = 0;
+        // Exhausted diagnostic tokens are quarantined, never wrapped or reused.
+        if (slot.generation == UINT32_MAX) return;
+        ++slot.generation;
+        slot.next = free;
+        free = index;
+    }
+    std::vector<Slot> slots;
+    std::uint32_t free = UINT32_MAX;
+};
+
+VoiceLedger::MonitorSelection::~MonitorSelection() { Reset(); }
+
+VoiceLedger::MonitorSelection::MonitorSelection(const MonitorSelection& other) noexcept {
+    *this = other;
+}
+
+VoiceLedger::MonitorSelection& VoiceLedger::MonitorSelection::operator=(const MonitorSelection& other) noexcept {
+    if (this == &other) return *this;
+    Reset();
+    if (other.storage_ != nullptr) {
+        if (auto* slot = other.storage_->Resolve(other.slot_, other.generation_)) {
+            assert(slot->references != SIZE_MAX);
+            if (slot->references != SIZE_MAX) {
+                ++slot->references;
+                storage_ = other.storage_;
+                slot_ = other.slot_;
+                generation_ = other.generation_;
+            }
+        }
+    }
+    return *this;
+}
+
+VoiceLedger::MonitorSelection::MonitorSelection(MonitorSelection&& other) noexcept {
+    *this = std::move(other);
+}
+
+VoiceLedger::MonitorSelection& VoiceLedger::MonitorSelection::operator=(MonitorSelection&& other) noexcept {
+    if (this == &other) return *this;
+    Reset();
+    storage_ = std::move(other.storage_);
+    slot_ = std::exchange(other.slot_, UINT32_MAX);
+    generation_ = std::exchange(other.generation_, 0);
+    return *this;
+}
+
+void VoiceLedger::MonitorSelection::Reset() noexcept {
+    if (storage_ != nullptr) {
+        if (auto* slot = storage_->Resolve(slot_, generation_)) {
+            if (--slot->references == 0) storage_->Release(slot_);
+        }
+    }
+    storage_.reset();
+    slot_ = UINT32_MAX;
+    generation_ = 0;
+}
+
+VnVoiceHandle VoiceLedger::MonitorSelection::RenderActivation() const noexcept {
+    const auto* slot = storage_ == nullptr ? nullptr : storage_->Resolve(slot_, generation_);
+    return slot == nullptr ? 0 : slot->facts.renderActivation;
+}
+
+void VoiceLedger::MonitorSelection::SetCause(const MonitorControlCause& cause) noexcept {
+    auto* slot = storage_ == nullptr ? nullptr : storage_->Resolve(slot_, generation_);
+    if (slot == nullptr) return;
+    const auto& previous = slot->facts.selectionCause;
+    if (previous.request.key == cause.request.key && previous.request.origin == cause.request.origin &&
+        previous.request.operation == cause.request.operation && previous.actionFiring == cause.actionFiring &&
+        previous.parentPlayable == cause.parentPlayable && previous.executionOrdinal == cause.executionOrdinal) return;
+    // Diverging private candidates must not rewrite another owner's saved cause.
+    if (slot->references > 1) {
+        if (storage_->free == UINT32_MAX) {
+            ObserveMonitorSelectionUnavailable();
+            Reset();
+            return;
+        }
+        const auto index = storage_->free;
+        auto& replacement = storage_->slots[index];
+        storage_->free = replacement.next;
+        replacement.facts = slot->facts;
+        replacement.ledgerSlot = slot->ledgerSlot;
+        replacement.ledgerGeneration = slot->ledgerGeneration;
+        replacement.references = 1;
+        --slot->references;
+        slot_ = index;
+        generation_ = replacement.generation;
+        slot = &replacement;
+    }
+    slot->facts.selectionCause = cause;
+}
+
+MonitorControlCause VoiceLedger::MonitorSelection::Cause() const noexcept {
+    const auto* slot = storage_ == nullptr ? nullptr : storage_->Resolve(slot_, generation_);
+    return slot == nullptr ? MonitorControlCause{} : slot->facts.selectionCause;
+}
+
+bool VoiceLedger::MonitorSelection::CaptureFacts(MonitorLifecycleFacts* out,
+    std::uint32_t* generation) const noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    if (generation != nullptr) *generation = 0;
+    const auto* slot = storage_ == nullptr ? nullptr : storage_->Resolve(slot_, generation_);
+    if (slot == nullptr) return false;
+    *out = slot->facts;
+    if (generation != nullptr) *generation = slot->ledgerGeneration;
+    return true;
+}
+
+std::size_t VoiceLedger::MonitorSelectionCapacity() const noexcept { return m_monitorSelections->slots.size(); }
+std::size_t VoiceLedger::MonitorSelectionStorageBytes() const noexcept {
+    return m_monitorSelections->slots.size() * sizeof(MonitorSelectionStorage::Slot);
+}
+
 VoiceLedger::VoiceLedger(std::uint32_t capacity,
-                         std::uint32_t renderCapacity)
+                         std::uint32_t renderCapacity,
+                         std::size_t monitorSelectionCapacity)
     : m_entries(capacity == 0 ? 1 : capacity),
+      m_monitorControlReceipts(m_entries.size()),
       m_renderOwners(renderCapacity == 0
                          ? (capacity == 0 ? 1 : capacity)
-                         : renderCapacity) {}
+                         : renderCapacity),
+      m_monitorSelections(std::make_shared<MonitorSelectionStorage>(monitorSelectionCapacity == 0
+          ? 2 * m_entries.size() : monitorSelectionCapacity)) {}
 
 
 VoiceLedger::~VoiceLedger() {
@@ -190,7 +334,8 @@ void VoiceLedger::ConsumeOriginalCompletionAssociation(Entry& entry, VnVoiceHand
 }
 
 bool VoiceLedger::Acquire(VnVoiceHandle* outPublicHandle,
-                          std::uint32_t* outLedgerSlot) {
+                          std::uint32_t* outLedgerSlot,
+                          const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin, VnObjectId media) {
     for (std::uint32_t i = 0; i < m_entries.size(); ++i) {
         Entry& entry = m_entries[i];
         if (!ReusableEntry(entry)) {
@@ -201,6 +346,15 @@ bool VoiceLedger::Acquire(VnVoiceHandle* outPublicHandle,
         // acquisition. Steal metadata from a prior tenant is cleared so a
         // reused entry never inherits a stale victim flag.
         entry.state = EntryState::Live;
+        entry.playbackRequest = request;
+        entry.emitterOrigin = emitterOrigin;
+        entry.monitorContent = {};
+        entry.monitorContent.content.stableId = media;
+        entry.monitorContent.kind = media == VnObjectId{} ? VN_MONITOR_CONTENT_UNKNOWN : VN_MONITOR_CONTENT_MEDIA;
+        entry.controlCause = {};
+        entry.selectionCause = {};
+        entry.monitorSelectionAccepted = false;
+        entry.monitorCancellationAccepted = false;
         entry.stolen = false;
         entry.terminating = false;
         entry.preparedReservation = false;
@@ -217,6 +371,189 @@ bool VoiceLedger::Acquire(VnVoiceHandle* outPublicHandle,
     return false; // every entry is live: a defined degradation (see header)
 }
 
+bool VoiceLedger::CaptureMonitorIdentity(std::uint32_t ledgerSlot, MonitorIdentity* out) const noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    if (ledgerSlot >= m_entries.size()) return false;
+    const auto& entry = m_entries[ledgerSlot];
+    if (entry.state != EntryState::Live && entry.state != EntryState::PendingStart &&
+        entry.state != EntryState::Parked && entry.state != EntryState::PreparedCommitHeld) return false;
+    out->ledgerSlot = ledgerSlot;
+    out->generation = entry.generation;
+    out->logicalHandle = entry.publicHandle;
+    out->renderHandle = entry.renderHandle;
+    out->parent = entry.parent;
+    out->content = entry.monitorContent;
+    out->playbackRequest = entry.playbackRequest;
+    out->emitterOrigin = entry.emitterOrigin;
+    MonitorLifecycleFacts facts{};
+    CaptureMonitorFacts(entry, facts);
+    out->controlCause = facts.controlCause;
+    out->selectionCause = entry.selectionCause;
+    out->controlObservationIncomplete = facts.controlObservationIncomplete;
+    out->prepared = entry.preparedReservation;
+    return true;
+}
+
+VnVoiceHandle VoiceLedger::CaptureMonitorIdentityAt(std::uint32_t ledgerSlot,
+    MonitorLifecycleFacts* out) const noexcept {
+    if (out == nullptr) return 0;
+    *out = {};
+    if (ledgerSlot >= m_entries.size()) return 0;
+    const auto& entry = m_entries[ledgerSlot];
+    if (entry.preparedReservation || (entry.state != EntryState::Live &&
+        entry.state != EntryState::PendingStart && entry.state != EntryState::Parked &&
+        entry.state != EntryState::PreparedCommitHeld)) return 0;
+    CaptureMonitorFacts(entry, *out, false, false);
+    out->reasonKnown = false;
+    return entry.publicHandle;
+}
+
+void VoiceLedger::RecordMonitorContent(std::uint32_t ledgerSlot, const MonitorContent& content) noexcept {
+    if (ledgerSlot >= m_entries.size()) return;
+    auto& entry = m_entries[ledgerSlot];
+    if (entry.state != EntryState::Live && entry.state != EntryState::PendingStart &&
+        entry.state != EntryState::PreparedCommitHeld) return;
+    entry.monitorContent = content;
+}
+
+void VoiceLedger::RecordMonitorSelection(VnVoiceHandle render, const MonitorControlCause& cause) noexcept {
+    const auto owner = OwnerForRender(render);
+    if (!owner.live) return;
+    MonitorSelection selection{};
+    if (!CaptureMonitorSelection(owner.ledgerSlot, render, &selection)) return;
+    PublishMonitorSelection(selection, &cause);
+}
+
+bool VoiceLedger::CaptureMonitorSelection(std::uint32_t ledgerSlot, VnVoiceHandle render,
+    MonitorSelection* out) const noexcept {
+    if (out == nullptr) return false;
+    *out = {};
+    if (ledgerSlot >= m_entries.size() || render == 0) return false;
+    const auto& entry = m_entries[ledgerSlot];
+    if (entry.state != EntryState::Live && entry.state != EntryState::PendingStart &&
+        entry.state != EntryState::PreparedCommitHeld) return false;
+    if (entry.renderHandle != 0 && entry.renderHandle != render) return false;
+    if (entry.monitorSelectionAccepted) return true;
+    auto& storage = *m_monitorSelections;
+    if (storage.free == UINT32_MAX) {
+        ObserveMonitorSelectionUnavailable();
+        return false;
+    }
+    const auto index = storage.free;
+    auto& slot = storage.slots[index];
+    storage.free = slot.next;
+    slot.references = 1;
+    slot.ledgerSlot = ledgerSlot;
+    slot.ledgerGeneration = entry.generation;
+    slot.facts = {};
+    CaptureMonitorFacts(entry, slot.facts);
+    slot.facts.renderActivation = render;
+    slot.facts.reasonKnown = false;
+    out->storage_ = m_monitorSelections;
+    out->slot_ = index;
+    out->generation_ = slot.generation;
+    return true;
+}
+
+void VoiceLedger::PublishMonitorSelection(MonitorSelection& selection,
+    const MonitorControlCause* cause) noexcept {
+    if (selection.storage_ != m_monitorSelections) return;
+    auto* slot = m_monitorSelections->Resolve(selection.slot_, selection.generation_);
+    if (slot == nullptr) return;
+    auto facts = slot->facts;
+    if (cause != nullptr) facts.selectionCause = *cause;
+    const auto ledgerSlot = slot->ledgerSlot;
+    const auto generation = slot->ledgerGeneration;
+    // Publishing retires every alias; stale aliases cannot publish after slot reuse.
+    m_monitorSelections->Release(selection.slot_);
+    if (facts.logicalVoice == 0 || generation == 0) return;
+    if (ledgerSlot < m_entries.size()) {
+        auto& entry = m_entries[ledgerSlot];
+        if (entry.generation == generation && entry.publicHandle == facts.logicalVoice &&
+            entry.renderHandle == facts.renderActivation) {
+            if (entry.monitorSelectionAccepted) return;
+            entry.selectionCause = facts.selectionCause;
+            entry.monitorSelectionAccepted = true;
+        }
+    }
+    ObserveMonitorLifecycle(MonitorLifecyclePhase::SelectionCommitted, facts.logicalVoice,
+        generation, facts.contentWorld, facts.contentObject, facts.parentPlayable,
+        facts.relatedAction, 0, facts.contentKind, 0, facts);
+}
+
+void VoiceLedger::RecordMonitorCancellation(VnVoiceHandle render, const MonitorControlCause& cause) noexcept {
+    const auto owner = OwnerForRender(render);
+    if (!owner.live) return;
+    auto& entry = m_entries[owner.ledgerSlot];
+    if (entry.monitorCancellationAccepted || entry.stolen || entry.terminating) return;
+    entry.controlCause = cause;
+    entry.monitorCancellationAccepted = true;
+}
+
+MonitorVoiceControlBinding VoiceLedger::ArmMonitorControl(std::uint32_t ledgerSlot,
+    VnVoiceHandle render) noexcept {
+    if (ledgerSlot >= m_entries.size() || render == 0) return {};
+    auto& entry = m_entries[ledgerSlot];
+    if (entry.state != EntryState::Live && entry.state != EntryState::PreparedCommitHeld &&
+        entry.state != EntryState::PendingStart && entry.state != EntryState::Parked) return {};
+    InvalidateMonitorControl(entry);
+    entry.monitorControlAttempted = true;
+    if (m_monitorControlTicket == MonitorVoiceControlReceipt::kMaxTicket ||
+        !m_monitorControlReceipts[ledgerSlot].TryArm(++m_monitorControlTicket)) {
+        ++m_monitorControlUnavailable;
+        return {};
+    }
+    entry.monitorControl = {&m_monitorControlReceipts[ledgerSlot], m_monitorControlTicket,
+        render, ledgerSlot, entry.generation};
+    return entry.monitorControl;
+}
+
+void VoiceLedger::InvalidateMonitorControl(Entry& entry) noexcept {
+    if (entry.monitorControl.Valid()) entry.monitorControl.receipt->Invalidate(entry.monitorControl.ticket);
+    entry.monitorControl = {};
+    entry.monitorControlAttempted = false;
+}
+
+void VoiceLedger::CaptureMonitorFacts(const Entry& entry, MonitorLifecycleFacts& facts,
+    bool terminal, bool readAudioReceipt) const noexcept {
+    const auto& content = entry.monitorContent;
+    facts.publishLegacy = entry.visibility == PublicVisibility::DirectVoice;
+    facts.logicalVoice = entry.publicHandle;
+    facts.renderActivation = entry.renderHandle;
+    facts.parentPlayable = entry.parent.internalToken;
+    facts.root = content.root;
+    facts.relatedAction = content.action;
+    facts.serviceLeaf = content.leaf;
+    facts.resourceOwner = content.resourceOwner;
+    facts.ownerEpoch = content.ownerEpoch;
+    facts.logicCommitSequence = content.logicCommit;
+    facts.occurrenceIdentity = content.occurrence;
+    facts.projectId = content.content.projectId;
+    facts.contentObject = content.content.stableId;
+    facts.contentWorld = content.content.worldGeneration;
+    facts.contentRevision = content.content.contentRevision;
+    facts.programSemanticFingerprint = content.content.programSemanticFingerprint;
+    facts.contentKind = content.kind;
+    facts.identityObservationIncomplete = content.incomplete;
+    facts.playbackRequest = entry.playbackRequest;
+    facts.emitterOrigin = entry.emitterOrigin;
+    facts.selectionCause = entry.selectionCause;
+    facts.controlCause = entry.controlCause;
+    facts.controlObservationIncomplete = entry.monitorControlAttempted && !entry.monitorControl.Valid();
+    if (!readAudioReceipt) return;
+    MonitorVoiceControlFact observed{};
+    const auto& binding = entry.monitorControl;
+    if (!binding.Valid() || binding.ledgerGeneration != entry.generation ||
+        binding.render != entry.renderHandle || !binding.receipt->TryRead(binding, &observed)) {
+        if (terminal) facts.controlObservationIncomplete = true;
+        return;
+    }
+    if (observed.sourceKind == SourceTerminalKind::Stop) {
+        if (observed.timelineControl) facts.controlCause = observed.cause;
+    } else if (observed.sourceKind != SourceTerminalKind::Cancelled) facts.controlCause = {};
+}
+
 void VoiceLedger::ObserveVoice(MonitorLifecyclePhase phase,
                                std::uint32_t ledgerSlot, std::uint32_t reason,
                                const MonitorLifecycleFacts& facts) noexcept {
@@ -225,8 +562,7 @@ void VoiceLedger::ObserveVoice(MonitorLifecyclePhase phase,
     }
     Entry& entry = m_entries[ledgerSlot];
     if (entry.state == EntryState::PreparedCommitHeld ||
-        entry.visibility != PublicVisibility::DirectVoice ||
-        entry.publicHandle == 0) {
+        entry.preparedReservation || entry.publicHandle == 0) {
         return;
     }
     const std::uint64_t generation = entry.generation;
@@ -234,12 +570,15 @@ void VoiceLedger::ObserveVoice(MonitorLifecyclePhase phase,
         return;
     }
     ++entry.monitorObserveCount;
+    auto observation = facts;
+    CaptureMonitorFacts(entry, observation);
     ObserveMonitorLifecycle(phase, entry.publicHandle, generation, 0, {}, 0, 0,
-                            reason, 0, entry.monitorObserveCount, facts);
+                            reason, 0, entry.monitorObserveCount, observation);
 }
 
 bool VoiceLedger::AcquirePlayableOwned(const PlayableParentRef& parent,
-                                       std::uint32_t* outLedgerSlot) {
+                                       std::uint32_t* outLedgerSlot,
+                                       const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin) {
     if (parent.internalToken == 0 || outLedgerSlot == nullptr) {
         return false;
     }
@@ -249,6 +588,13 @@ bool VoiceLedger::AcquirePlayableOwned(const PlayableParentRef& parent,
             continue;
         }
         entry.state = EntryState::Live;
+        entry.playbackRequest = request;
+        entry.emitterOrigin = emitterOrigin;
+        entry.controlCause = {};
+        entry.selectionCause = {};
+        entry.monitorContent = {};
+        entry.monitorSelectionAccepted = false;
+        entry.monitorCancellationAccepted = false;
         entry.stolen = false;
         entry.terminating = false;
         entry.priority = 128;
@@ -268,7 +614,8 @@ bool VoiceLedger::AcquirePlayableOwned(const PlayableParentRef& parent,
 
 bool VoiceLedger::PreparePlayableOwned(const PlayableParentRef& parent,
                                        std::uint32_t* outLedgerSlot,
-                                       PreparedPlayableIdentity* outIdentity) {
+                                       PreparedPlayableIdentity* outIdentity,
+                                       const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin) {
     if (parent.internalToken == 0 || outLedgerSlot == nullptr) {
         return false;
     }
@@ -278,6 +625,13 @@ bool VoiceLedger::PreparePlayableOwned(const PlayableParentRef& parent,
             continue;
         }
         entry.state = EntryState::Live;
+        entry.playbackRequest = request;
+        entry.emitterOrigin = emitterOrigin;
+        entry.controlCause = {};
+        entry.selectionCause = {};
+        entry.monitorContent = {};
+        entry.monitorSelectionAccepted = false;
+        entry.monitorCancellationAccepted = false;
         entry.stolen = false;
         entry.terminating = false;
         entry.preparedReservation = true;
@@ -512,6 +866,8 @@ void VoiceLedger::ConsumePreparedPlayableCommit(PreparedCommitProof&& proof) noe
     proof.reverse_->renderGeneration = static_cast<std::uint32_t>(proof.renderHandle_ >> 32);
     proof.reverse_->heldLedgerSlot = UINT32_MAX;
     entry.state = EntryState::Live;
+    proof.table_->ObserveVoice(MonitorLifecyclePhase::VoiceLive, proof.slot_,
+        VN_ACTION_TERMINAL_CAPABILITY_UNAVAILABLE);
     proof.entry_ = nullptr;
     proof.reverse_ = nullptr;
     proof.table_ = nullptr;
@@ -561,13 +917,23 @@ void VoiceLedger::BindRender(std::uint32_t ledgerSlot,
 
 bool VoiceLedger::AcquirePending(VnVoiceHandle* outPublicHandle,
                                  std::uint32_t* outLedgerSlot,
-                                 std::uint32_t priority) {
+                                 std::uint32_t priority,
+                                 const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin, VnObjectId media) {
     for (std::uint32_t i = 0; i < m_entries.size(); ++i) {
         Entry& entry = m_entries[i];
         if (!ReusableEntry(entry)) {
             continue;
         }
         entry.state = EntryState::PendingStart;
+        entry.playbackRequest = request;
+        entry.emitterOrigin = emitterOrigin;
+        entry.monitorContent = {};
+        entry.monitorContent.content.stableId = media;
+        entry.monitorContent.kind = media == VnObjectId{} ? VN_MONITOR_CONTENT_UNKNOWN : VN_MONITOR_CONTENT_MEDIA;
+        entry.controlCause = {};
+        entry.selectionCause = {};
+        entry.monitorSelectionAccepted = false;
+        entry.monitorCancellationAccepted = false;
         entry.stolen = false;
         entry.terminating = false;
         entry.preparedReservation = false;
@@ -624,7 +990,7 @@ void VoiceLedger::ParkPending(std::uint32_t ledgerSlot) {
     entry.preparedReservation = false;
 }
 
-void VoiceLedger::CancelPending(std::uint32_t ledgerSlot) {
+void VoiceLedger::CancelPending(std::uint32_t ledgerSlot, const MonitorControlCause& cause) {
     if (ledgerSlot >= m_entries.size()) {
         return;
     }
@@ -632,6 +998,9 @@ void VoiceLedger::CancelPending(std::uint32_t ledgerSlot) {
     if (entry.state != EntryState::PendingStart) {
         return;
     }
+    MonitorLifecycleFacts facts{};
+    CaptureMonitorFacts(entry, facts);
+    facts.controlCause = cause;
     entry.renderHandle = 0;
     entry.stolen = false;
     entry.terminating = false;
@@ -639,23 +1008,23 @@ void VoiceLedger::CancelPending(std::uint32_t ledgerSlot) {
     entry.completionMutation = {};
     const std::uint64_t endedHandle = entry.publicHandle;
     const std::uint64_t endedGeneration = entry.generation;
-    const bool publish = entry.visibility == PublicVisibility::DirectVoice &&
-                         endedHandle != 0;
+    const bool publish = endedHandle != 0;
     AdvanceGeneration(entry, EntryState::Ended);
     if (publish) {
         ObserveMonitorLifecycle(MonitorLifecyclePhase::VoiceEnd, endedHandle,
                                 endedGeneration, 0, {}, 0, 0,
-                                VN_ACTION_TERMINAL_STOP_REQUESTED, 0, 0, {});
+                                VN_ACTION_TERMINAL_STOP_REQUESTED, 0, 0, facts);
     }
 }
 
-void VoiceLedger::MarkStolen(VnVoiceHandle renderHandle) {
+void VoiceLedger::MarkStolen(VnVoiceHandle renderHandle, const MonitorControlCause& cause) {
     if (renderHandle == 0) {
         return;
     }
     for (Entry& entry : m_entries) {
         if (entry.state == EntryState::Live &&
             entry.renderHandle == renderHandle) {
+            if (!entry.stolen && !entry.terminating && !entry.monitorCancellationAccepted) entry.controlCause = cause;
             entry.stolen = true;
             return;
         }
@@ -675,13 +1044,15 @@ bool VoiceLedger::IsStolen(VnVoiceHandle renderHandle) const {
     return false;
 }
 
-void VoiceLedger::MarkTerminating(VnVoiceHandle renderHandle) {
+void VoiceLedger::MarkTerminating(VnVoiceHandle renderHandle, const MonitorControlCause& cause,
+                                  bool recordControlCause) {
     if (renderHandle == 0) {
         return;
     }
     for (Entry& entry : m_entries) {
         if (entry.state == EntryState::Live &&
             entry.renderHandle == renderHandle) {
+            if (recordControlCause && !entry.stolen && !entry.terminating && !entry.monitorCancellationAccepted) entry.controlCause = cause;
             entry.terminating = true;
             return;
         }
@@ -876,6 +1247,10 @@ bool VoiceLedger::Park(VnVoiceHandle renderHandle,
         static_cast<std::uint32_t>(entry - m_entries.data());
     ClearReverse(ledgerSlot, renderHandle);
     RevokeOriginalCompletionAssociation(*entry);
+    MonitorLifecycleFacts facts{};
+    CaptureMonitorFacts(*entry, facts);
+    entry->controlCause = facts.controlCause;
+    InvalidateMonitorControl(*entry);
     entry->state = EntryState::Parked;
     entry->renderHandle = 0;
     entry->stolen = false;
@@ -904,7 +1279,7 @@ void VoiceLedger::ReturnPark(std::uint32_t ledgerSlot,
                  VN_ACTION_TERMINAL_CAPABILITY_UNAVAILABLE, facts);
 }
 
-void VoiceLedger::EndParked(std::uint32_t ledgerSlot) {
+void VoiceLedger::EndParked(std::uint32_t ledgerSlot, const MonitorControlCause& cause) {
     if (ledgerSlot >= m_entries.size()) {
         return;
     }
@@ -912,17 +1287,18 @@ void VoiceLedger::EndParked(std::uint32_t ledgerSlot) {
     if (entry.state != EntryState::Parked) {
         return;
     }
+    MonitorLifecycleFacts facts{};
+    CaptureMonitorFacts(entry, facts);
+    facts.controlCause = cause;
     entry.renderHandle = 0;
     entry.terminating = false;
     entry.parent = {};
     entry.completionMutation = {};
     const std::uint64_t endedHandle = entry.publicHandle;
     const std::uint64_t endedGeneration = entry.generation;
-    const bool publish = entry.visibility == PublicVisibility::DirectVoice &&
-                         endedHandle != 0;
+    const bool publish = endedHandle != 0;
     AdvanceGeneration(entry, EntryState::Ended);
     if (publish) {
-        MonitorLifecycleFacts facts{};
         facts.notifyType = VN_NOTIFY_VOICE_ENDED;
         ObserveMonitorLifecycle(MonitorLifecyclePhase::VoiceEnd, endedHandle,
                                 endedGeneration, 0, {}, 0, 0,
@@ -956,6 +1332,14 @@ void VoiceLedger::Release(std::uint32_t ledgerSlot) {
     }
     Entry& entry = m_entries[ledgerSlot];
     if (entry.state == EntryState::PreparedCommitHeld) return;
+    if (!entry.preparedReservation && entry.state == EntryState::Live && entry.renderHandle != 0) {
+        MonitorLifecycleFacts facts{};
+        CaptureMonitorFacts(entry, facts);
+        facts.publishLegacy = false;
+        facts.reasonKnown = false;
+        ObserveMonitorLifecycle(MonitorLifecyclePhase::VoiceEnd, entry.publicHandle,
+            entry.generation, 0, {}, entry.parent.internalToken, 0, 0, 0, 0, facts);
+    }
     if (entry.renderHandle != 0) {
         ClearReverse(ledgerSlot, entry.renderHandle);
     }
@@ -1014,8 +1398,9 @@ void VoiceLedger::Reap(VnVoiceHandle renderHandle) {
     const bool stolen = entry->stolen;
     const std::uint64_t endedHandle = entry->publicHandle;
     const std::uint64_t endedGeneration = entry->generation;
-    const bool publish = entry->visibility == PublicVisibility::DirectVoice &&
-                         endedHandle != 0;
+    const bool publish = endedHandle != 0;
+    MonitorLifecycleFacts facts{};
+    CaptureMonitorFacts(*entry, facts, true);
     entry->renderHandle = 0;
     entry->stolen = false;
     entry->terminating = false;
@@ -1023,7 +1408,6 @@ void VoiceLedger::Reap(VnVoiceHandle renderHandle) {
     entry->completionMutation = {};
     AdvanceGeneration(*entry, EntryState::Ended);
     if (publish) {
-        MonitorLifecycleFacts facts{};
         facts.notifyType =
             stolen ? VN_NOTIFY_VOICE_STOLEN : VN_NOTIFY_VOICE_ENDED;
         ObserveMonitorLifecycle(
@@ -1120,7 +1504,15 @@ void VoiceLedger::ClearReverse(std::uint32_t ledgerSlot,
 
 void VoiceLedger::AdvanceGeneration(Entry& entry,
                                     EntryState reusableState) noexcept {
+    InvalidateMonitorControl(entry);
     EndOriginalCompletionEpisode(entry);
+    entry.playbackRequest = {};
+    entry.emitterOrigin = {};
+    entry.controlCause = {};
+    entry.selectionCause = {};
+    entry.monitorSelectionAccepted = false;
+    entry.monitorContent = {};
+    entry.monitorCancellationAccepted = false;
     entry.parent = {};
     entry.completionMutation = {};
     entry.preparedReservation = false;

@@ -615,6 +615,7 @@ public:
                 stored.authoredRootStop = payload.kind == TimelineEventKind::Stop &&
                     (payload.reserved & kTimelineEventAuthoredRootStop) != 0;
                 stored.authoredStopOperation = payload.authoredStopOperation;
+                stored.controlCause = payload.controlCause;
                 stored.offset = static_cast<std::uint16_t>(events[i].effectiveOffset);
                 stored.envelopeDirection = payload.envelopeDirection;
                 stored.authoredFadeOutCandidate = events[i].authoredFadeOutCandidate;
@@ -657,6 +658,7 @@ public:
             event.variableWeightOwner = payload.variableWeightOwner;
             event.order = events[i].order;
             event.authoredStopOperation = payload.authoredStopOperation;
+            event.controlCause = payload.controlCause;
             if (!voices_.AppendTimelineEvent(renderSlot, renderGeneration,
                                              quantumIndex, event)) {
                 return false;

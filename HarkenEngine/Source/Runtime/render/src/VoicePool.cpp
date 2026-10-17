@@ -225,6 +225,8 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.stagedCompletionUpdate = {};
     slot.completionProgressStaged = false;
     slot.completionProgressTerminal = false;
+    slot.monitorControl = {};
+    slot.monitorSourceTerminalPublished = false;
     slot.render = VoiceRenderContext{};
     ClearFirstOutput(slot);
     slot.render.biquadTrig = m_biquadTrig;
@@ -377,6 +379,8 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     slot.state.store(prepared ? SlotState::Prepared : SlotState::Claimed,
                      std::memory_order_relaxed);
     slot.streamRingToken.store(0, std::memory_order_relaxed);
+    slot.monitorControl = {};
+    slot.monitorSourceTerminalPublished = false;
     slot.render = VoiceRenderContext{};
     ClearFirstOutput(slot);
     slot.render.biquadTrig = m_biquadTrig;
@@ -2434,6 +2438,16 @@ bool VoicePool::CancelOriginalPreparedVoice(const OriginalVoiceOwner& owner) noe
     return true;
 }
 
+bool VoicePool::BindMonitorControl(VnVoiceHandle handle,
+    const MonitorVoiceControlBinding& binding) noexcept {
+    Slot* slot = SlotFor(handle);
+    if (slot == nullptr || !binding.Valid() || binding.render != handle) return false;
+    const auto state = slot->state.load(std::memory_order_acquire);
+    if (state != SlotState::Claimed && state != SlotState::Prepared) return false;
+    slot->monitorControl = binding;
+    return true;
+}
+
 bool VoicePool::BindSourceTerminal(VnVoiceHandle handle,
     SourceTerminalRecord* record, SourceTerminalToken token) noexcept {
     Slot* slot = SlotFor(handle);
@@ -2452,6 +2466,21 @@ bool VoicePool::BindSourceTerminal(VnVoiceHandle handle,
 
 void VoicePool::PublishSourceTerminal(Slot& slot, std::uint64_t blockIndex) noexcept {
     auto& render = slot.render;
+    const auto observedKind = render.monitorStoppedBeforeCascade
+        ? SourceTerminalKind::Stop : render.stagedSourceTerminal;
+    const auto observedOffset = render.monitorStoppedBeforeCascade ? 0u : render.stagedSourceTerminalOffset;
+    if (observedKind == SourceTerminalKind::None || blockIndex == UINT64_MAX ||
+        blockIndex > (UINT64_MAX - m_blockFrames) / m_blockFrames) return;
+    if (!slot.monitorSourceTerminalPublished) {
+        slot.monitorSourceTerminalPublished = true;
+        if (slot.monitorControl.Valid()) {
+            const bool timelineControl = observedKind == SourceTerminalKind::Stop &&
+                render.monitorTimelineControlAdopted;
+            (void)slot.monitorControl.receipt->TryPublish(slot.monitorControl,
+                observedKind, blockIndex * m_blockFrames + observedOffset,
+                timelineControl ? render.monitorAdoptedControlCause : MonitorControlCause{}, timelineControl);
+        }
+    }
     auto* record = render.sourceTerminal;
     if (record == nullptr || render.stagedSourceTerminal == SourceTerminalKind::None ||
         blockIndex == UINT64_MAX || blockIndex > (UINT64_MAX - m_blockFrames) / m_blockFrames ||
@@ -2804,6 +2833,8 @@ void VoicePool::ApplyStop(VnVoiceHandle handle, std::uint32_t fadeMs,
         frames = std::min<std::uint64_t>(frames, UINT32_MAX);
     }
     if (frames == 0) {
+        // An API stop cannot replace a previously adopted timeline cause.
+        slot->render.monitorControlAdopted = true;
         slot->render.stagedSourceTerminal = SourceTerminalKind::Stop;
         slot->render.stagedSourceTerminalOffset = 0;
         PublishSourceTerminal(*slot, blockIndex);
@@ -2838,6 +2869,8 @@ void VoicePool::ApplyStop(VnVoiceHandle handle, std::uint32_t fadeMs,
         return;
     }
     if (!slot->render.fading) {
+        // An API stop cannot replace a previously adopted timeline cause.
+        slot->render.monitorControlAdopted = true;
         slot->render.fading = true;
         slot->render.fadeTotalFrames =
             static_cast<std::uint32_t>(frames > 0 ? frames : 1);

@@ -54,6 +54,7 @@ struct ResolvedPlayablePathRowV1 {
     VnObjectId stableId{};
     std::uint64_t programSemanticFingerprint = 0;
     std::uint32_t stableOccurrenceOrdinal = UINT32_MAX;
+    VnObjectId clipId{};
 };
 
 struct ResolvedPlayableSpatialV1 {

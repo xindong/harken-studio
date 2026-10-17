@@ -73,12 +73,20 @@
 namespace {
 
 using harkentest::EngineSession;
-using harkentest::MakeNullConfig;
 using harkentest::MakePlayDesc;
 using harkentest::MonoDesc;
 
 constexpr std::uint32_t kBlock = 256;
 constexpr std::uint32_t kRate = 48000;
+
+VnConfig PackLogicConfig(std::uint32_t maxVoices = 0,
+                         std::uint32_t blockFrames = 0,
+                         std::uint32_t sampleRate = 0) {
+    auto config = harkentest::MakeNullConfig(maxVoices, blockFrames, sampleRate);
+    // Pack lifecycle coverage does not require the default nested Action scratch.
+    config.maxTriggerDepth = 2;
+    return config;
+}
 
 std::string TempPath(const std::string& name) {
     return std::string(HARKEN_TEMP_DIR "/") + name;
@@ -994,7 +1002,7 @@ TEST(PackLogicLoad, LegacyContainerRowsRefuseBeforeLoadOrReplaceMutation) {
         "pll_legacy_container_load",
         contentManifest(rejectedLoadPath, harkentest::ObjectId(7001), true)));
 
-    EngineSession session(MakeNullConfig());
+    EngineSession session(PackLogicConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     const std::uint32_t loadedBefore = engine->packs.LoadedCount();
@@ -1026,7 +1034,7 @@ TEST(PackLogicLoad, LegacyContainerRowsRefuseBeforeLoadOrReplaceMutation) {
 }
 
 TEST(PackLogicLoad, ResidentPackLoadsInfrastructure) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     const harken::VariableDefinitionV1 definitions[] = {
@@ -1097,7 +1105,7 @@ TEST(PackLogicLoad, ResidentPackLoadsInfrastructure) {
 }
 
 TEST(PackLogicLoad, BusAndSendOwnershipCookiesTrackLiveSlots) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -1138,7 +1146,7 @@ TEST(PackLogicLoad, BusAndSendOwnershipCookiesTrackLiveSlots) {
 }
 
 TEST(PackLogicLoad, BusMixFieldsApplyAtSeparateGainStages) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -1209,7 +1217,7 @@ TEST(PackLogicLoad, BusMixFieldsApplyAtSeparateGainStages) {
 }
 
 TEST(PackLogicLoad, VintageTwoBusPayloadAppliesAsZeroMix) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -1251,7 +1259,7 @@ TEST(PackLogicLoad, VintageTwoBusPayloadAppliesAsZeroMix) {
 }
 
 TEST(PackLogicReplace, BusMixRelevelPreservesOutputGain) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -1328,7 +1336,7 @@ TEST(PackLogicReplace, BusMixRelevelPreservesOutputGain) {
 }
 
 TEST(PackLogicLoad, BusMixAuthoredSlotLeavesApiDirectUntouched) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -1397,7 +1405,7 @@ TEST(PackLogicLoad, BusMixAuthoredSlotLeavesApiDirectUntouched) {
 }
 
 TEST(PackLogicReplace, BusMixKeepsApiDirectAndVariableOnRetainedBus) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -1488,7 +1496,7 @@ TEST(PackLogicReplace, BusMixKeepsApiDirectAndVariableOnRetainedBus) {
 }
 
 TEST(PackLogicLoad, NonFiniteBusMixSumRefusesWithoutMutation) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -1506,7 +1514,7 @@ TEST(PackLogicLoad, NonFiniteBusMixSumRefusesWithoutMutation) {
 }
 
 TEST(PackLogicLoad, FiniteOverflowingBusMixRefusesWithoutMutation) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -1524,7 +1532,7 @@ TEST(PackLogicLoad, FiniteOverflowingBusMixRefusesWithoutMutation) {
 }
 
 TEST(PackLogicReplace, NonFiniteBusMixSumLeavesLoadedRevisionIntact) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -1575,7 +1583,7 @@ TEST(PackLogicReplace, NonFiniteBusMixSumLeavesLoadedRevisionIntact) {
 }
 
 TEST(PackLogicReplace, FiniteOverflowingBusMixLeavesLoadedRevisionIntact) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -1626,7 +1634,7 @@ TEST(PackLogicReplace, FiniteOverflowingBusMixLeavesLoadedRevisionIntact) {
 TEST(PackLogicReplace, SingleStageOverflowLeavesLoadedRevisionIntact) {
     for (const bool outputOnly : {false, true}) {
         SCOPED_TRACE(outputOnly);
-        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        EngineSession session(PackLogicConfig(4, kBlock, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
         const float oldVolume = outputOnly ? 600.0f : 0.0f;
@@ -1667,7 +1675,7 @@ TEST(PackLogicReplace, SingleStageOverflowLeavesLoadedRevisionIntact) {
 }
 
 TEST(PackLogicReplace, ConvertibleReducedMixPublishesAuthoredContribution) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     V2Builder first(harken::kPackKindResident);
@@ -1701,7 +1709,7 @@ TEST(PackLogicReplace, ConvertibleReducedMixPublishesAuthoredContribution) {
 }
 
 TEST(PackLogicLoad, FiniteAuthoredMixPlusApiDirectOverflowRefusesSetter) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -1739,7 +1747,7 @@ TEST(PackLogicLoad, FiniteAuthoredMixPlusApiDirectOverflowRefusesSetter) {
 }
 
 TEST(PackLogicReplace, FiniteAuthoredMixPlusApiDirectOverflowLeavesLoadedRevisionIntact) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -1799,7 +1807,7 @@ TEST(PackLogicReplace, FiniteAuthoredMixPlusApiDirectOverflowLeavesLoadedRevisio
 }
 
 TEST(PackLogicLoad, FiniteAuthoredMixPlusVariableOverflowLeavesAuthoredIntact) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -1854,7 +1862,7 @@ TEST(PackLogicLoad, FiniteAuthoredMixPlusVariableOverflowLeavesAuthoredIntact) {
 }
 
 TEST(PackLogicLoad, FiniteAuthoredMixPlusMeterProbeOverflowLeavesAuthoredIntact) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -1921,7 +1929,7 @@ TEST(PackLogicLoad, AuthoredToneRecipeShapesTheFirstRenderedBlock) {
     // commands (priming retires the demand but the commands never reach
     // the batch) drags the first AND the settled block to the default
     // tone together, which a ratio oracle cannot see.
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 4;
     EngineSession session(config);
@@ -1979,7 +1987,7 @@ TEST(PackLogicLoad, AuthoredToneRecipeShapesTheFirstRenderedBlock) {
 
 TEST(PackLogicLoad,
      VoiceEffectBindingRecipeShapesFirstBlockAndUnloadsAfterDrain) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 4;
     EngineSession session(config);
@@ -2049,7 +2057,7 @@ TEST(PackLogicLoad,
 
 
 TEST(PackLogicLoad, InvalidVoiceEffectRecipeLocatorsRefuseWithoutResidue) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerVoice = 2;
     config.gainEffectPoolCapacity = 4;
     config.delayEffectPoolCapacity = 4;
@@ -2136,7 +2144,7 @@ TEST(PackLogicLoad, InvalidVoiceEffectRecipeLocatorsRefuseWithoutResidue) {
 
 
 TEST(PackLogicLoad, BindingTransitionRangeRefusesBeforeEngineStateChanges) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
     for (std::uint32_t ms : {60000u, 60001u, UINT32_MAX}) {
@@ -2169,7 +2177,7 @@ TEST(PackLogicLoad, BindingTransitionRangeRefusesBeforeEngineStateChanges) {
 }
 
 TEST(PackLogicUnload, ParkedScope2RecipeRefusesWithoutPartialUnload) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 4;
     config.maxParkedVoices = 1;
@@ -2241,7 +2249,7 @@ TEST(PackLogicUnload, ParkedScope2RecipeRefusesWithoutPartialUnload) {
 
 TEST(PackLogicLoad,
      GenericDelayAndToneEffectsAreFullyInstalledForTheFirstRenderedBlock) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerVoice = 2;
     config.delayEffectPoolCapacity = 2;
     config.toneEffectPoolCapacity = 2;
@@ -2313,7 +2321,7 @@ TEST(PackLogicLoad,
 // so a recipe that carries one outranks the descriptor's loopCount — here the
 // full-vintage default of a single pass.
 TEST(PackLogicLoad, RecipePlaybackLoopCountOverridesThePlayDescriptor) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -2388,7 +2396,7 @@ float MasterProbeLevel(harken::Engine* engine) {
 }
 
 TEST(PackLogicLoad, BusEffectScope3LoadAppliesAndUnloadsAtomically) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 1;
     config.gainEffectPoolCapacity = 4;
     EngineSession session(config);
@@ -2440,7 +2448,7 @@ TEST(PackLogicLoad, BusEffectScope3LoadAppliesAndUnloadsAtomically) {
 }
 
 TEST(PackLogicLoad, BusEffectScope3LoadRefusesStaleTargetsWithoutResidue) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 1;
     config.gainEffectPoolCapacity = 4;
     EngineSession session(config);
@@ -2508,7 +2516,7 @@ TEST(PackLogicLoad, BusEffectScope3LoadRefusesStaleTargetsWithoutResidue) {
 }
 
 TEST(PackLogicLoad, BusEffectScope3AttachmentUsesResolvedDenseBusIndex) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 1;
     config.gainEffectPoolCapacity = 4;
     EngineSession session(config);
@@ -2563,7 +2571,7 @@ TEST(PackLogicLoad, BusEffectScope3AttachmentUsesResolvedDenseBusIndex) {
 }
 
 TEST(PackLogicLoad, BusEffectScope3ActivationGapDiscardsRevisionWhole) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 1;
     config.gainEffectPoolCapacity = 4;
     config.limiterEffectPoolCapacity = 4;
@@ -2632,7 +2640,7 @@ TEST(PackLogicLoad, BusEffectScope3ActivationGapDiscardsRevisionWhole) {
 }
 
 TEST(PackLogicLoad, BusEffectScope3ReplaceAddsAttachmentToResolvedBus) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 1;
     config.gainEffectPoolCapacity = 4;
     EngineSession session(config);
@@ -2704,7 +2712,7 @@ TEST(PackLogicLoad, BusEffectScope3ReplaceAddsAttachmentToResolvedBus) {
 // --- load: cross-pack closure ---
 
 TEST(PackLogicLoad, ResidentOnlyKindRefusedAtLoad) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -2871,7 +2879,7 @@ TEST(PackLogicLoad, CompilerOutputByteIdenticalAcrossRuns) {
 // --- load: corruption ---
 
 TEST(PackLogicLoad, CorruptedPackLeavesEngineUntouched) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -2916,7 +2924,7 @@ TEST(PackLogicLoad, CorruptedPackLeavesEngineUntouched) {
 }
 
 TEST(PackLogicLoad, LegacyVariableEntryKindsRefuseWithZeroSideEffects) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -2950,7 +2958,7 @@ TEST(PackLogicLoad, LegacyVariableEntryKindsRefuseWithZeroSideEffects) {
 
 
 TEST(PackLogicStaging, BusPoolExhaustionRefusesWholeLoad) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBuses = 3; // master + 2: three pack buses cannot fit
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -2974,7 +2982,7 @@ TEST(PackLogicStaging, BusPoolExhaustionRefusesWholeLoad) {
 }
 
 TEST(PackLogicStaging, BindingPoolExhaustionRefusesWholeLoad) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBindings = 1;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -3010,7 +3018,7 @@ TEST(PackLogicStaging, BindingPoolExhaustionRefusesWholeLoad) {
 }
 
 TEST(PackLogicStaging, CommandQueuePressureRefusesThenAdmits) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.commandQueueDepth = 2; // rounds to 2; easy to fill
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -3049,7 +3057,7 @@ TEST(PackLogicStaging, CommandQueuePressureRefusesThenAdmits) {
 // one block or none of it, because half a topology transaction is worse than
 // the whole one arriving a block later.
 TEST(PackLogicStaging, IndivisibleActivationBatchWaitsForABlockThatTakesItWhole) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 1;
     config.gainEffectPoolCapacity = 2;
     EngineSession session(config);
@@ -3102,7 +3110,7 @@ TEST(PackLogicStaging, IndivisibleActivationBatchWaitsForABlockThatTakesItWhole)
 // capacities, so it is refused as one -- reporting backpressure would send the
 // caller round a retry loop that cannot terminate.
 TEST(PackLogicStaging, ActivationBatchWiderThanTheQueueRefusesAsAConfigMismatch) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.commandQueueDepth = 2; // rounds to 2
     config.fxSlotsPerBus = 1;
     config.gainEffectPoolCapacity = 4;
@@ -3151,7 +3159,7 @@ TEST(PackLogicStaging, ActivationBatchWiderThanTheQueueRefusesAsAConfigMismatch)
 // tightening that ceiling tightens admission with it -- without which this batch
 // would be accepted and then deferred for ever, since the drain may not split it.
 TEST(PackLogicStaging, ActivationBatchWiderThanOneBlockRefusesAsAConfigMismatch) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.commandQueueDepth = 1024; // the queue is not the constraint here
     config.fxSlotsPerBus = 1;
     config.gainEffectPoolCapacity = 4;
@@ -3201,7 +3209,7 @@ TEST(PackLogicStaging, PublicCommandCeilingControlsLiveBatchAdmissionAndDrain) {
     ASSERT_TRUE(BuildWideBatchPack("pll_public_command_ceiling", packPath,
                                    harkentest::ObjectId(855), kBatch, kSlotsPerBus));
 
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.commandQueueDepth = 1024;
     config.fxSlotsPerBus = kSlotsPerBus;
     config.gainEffectPoolCapacity = 4;
@@ -3249,7 +3257,7 @@ TEST(PackLogicStaging, TheDefaultCeilingAdmitsAMaximalBatchAndOneBlockTakesIt) {
     constexpr std::uint32_t kBatch = 256; // the shipped default ceiling
     constexpr std::uint32_t kSlotsPerBus = 8;
     constexpr std::uint32_t kDeadlineUs = 1000000u * kBlock / kRate;
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     // Enough buses for 255 effects at eight slots each, plus master, and a gain
     // pool that can actually hand out 255 instances. Neither is the subject
     // here: they only have to stop being the binding constraint before the
@@ -3315,7 +3323,7 @@ TEST(PackLogicReplace,
     constexpr std::uint32_t kSlotsPerBus = 8;
     constexpr VnBusId kFirstBusId = harkentest::ObjectId(8800);
 
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.commandQueueDepth = 512;
     config.maxBuses = 64;
     config.fxSlotsPerBus = kSlotsPerBus;
@@ -3422,7 +3430,7 @@ TEST(PackLogicStaging, TheBatchHeaderOpcodeCostIsBoundedWithBusesAndVoicesLive) 
     constexpr std::uint32_t kBuses = 32;
     constexpr std::uint32_t kVoices = 16;
     constexpr std::uint32_t kDeadlineUs = 1000000u * kBlock / kRate;
-    VnConfig config = MakeNullConfig(kVoices, kBlock, kRate);
+    VnConfig config = PackLogicConfig(kVoices, kBlock, kRate);
     config.maxBuses = 64;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -3469,7 +3477,7 @@ TEST(PackLogicStaging, TheBatchHeaderOpcodeCostIsBoundedWithBusesAndVoicesLive) 
 }
 
 TEST(PackLogicStaging, InjectedFaultsLeaveZeroFootprintAndReleaseReservations) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     // One live plan slot plus one free: a leaked plan reservation would
     // make the final clean load impossible.
     config.topologyPlanPoolCapacity = 2;
@@ -3533,7 +3541,7 @@ TEST(PackLogicStaging, InjectedFaultsLeaveZeroFootprintAndReleaseReservations) {
 
 TEST(PackLogicInitialAtomicity,
      CommandScratchBadAllocLeavesMediaAndPackSlotUntouched) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -3569,7 +3577,7 @@ TEST(PackLogicInitialAtomicity,
 
 TEST(PackLogicInitialAtomicity,
      ZeroCommandContentSkipsQueueReservationAndCommit) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -3596,7 +3604,7 @@ TEST(PackLogicInitialAtomicity,
 
 TEST(PackLogicInitialAtomicity,
      PreparedPlansBeforeTicketFailureLeavesTopologyUntouched) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 1;
     config.compressorEffectPoolCapacity = 1;
     config.dynamicRouteCapacity = 1;
@@ -3663,7 +3671,7 @@ TEST(PackLogicInitialAtomicity,
 
 TEST(PackLogicInitialAtomicity,
      QueueReservationFailureLeavesTopologyAndReservationsUntouched) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 1;
     config.compressorEffectPoolCapacity = 1;
     config.dynamicRouteCapacity = 1;
@@ -3729,7 +3737,7 @@ TEST(PackLogicInitialAtomicity,
 
 TEST(PackLogicInitialAtomicity,
      MediaThrowWithLiveTicketLeavesTopologyAndReservationsUntouched) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 1;
     config.compressorEffectPoolCapacity = 1;
     config.dynamicRouteCapacity = 1;
@@ -3795,7 +3803,7 @@ TEST(PackLogicInitialAtomicity,
 
 TEST(PackLogicInitialSuccess,
      NewBusCompressorRawRouteReadsSourceInFirstPublishedBlock) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 4;
     config.compressorEffectPoolCapacity = 1;
     config.dynamicRouteCapacity = 1;
@@ -3916,7 +3924,7 @@ TEST(PackLogicInitialSuccess,
 }
 
 TEST(PackLogicStaging, PublicMediaAllocationFailureReturnsDeviceError) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -3948,7 +3956,7 @@ TEST(PackLogicStaging, PublicMediaAllocationFailureReturnsDeviceError) {
 // pack (non-mutating probes only).
 
 TEST(PackLogicAggregateCapacity, BindingDefinitionSumRefusesWholeLoad) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBindings = 2; // one taken below: one free slot, pack needs two
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -3983,7 +3991,7 @@ TEST(PackLogicAggregateCapacity, BindingDefinitionSumRefusesWholeLoad) {
 }
 
 TEST(PackLogicAggregateCapacity, BindingAttachmentSumRefusesWholeLoad) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBindingAttachments = 2; // one taken below; pack carries two
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -4037,7 +4045,7 @@ TEST(PackLogicAggregateCapacity, BindingAttachmentSumRefusesWholeLoad) {
 }
 
 TEST(PackLogicAggregateCapacity, AttenuationSumRefusesWholeLoad) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -4074,7 +4082,7 @@ TEST(PackLogicAggregateCapacity, AttenuationSumRefusesWholeLoad) {
 
 
 TEST(PackLogicAggregateCapacity, SendSlotBudgetSumRefusesWholeLoad) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -4114,7 +4122,7 @@ TEST(PackLogicAggregateCapacity, SendSlotBudgetSumRefusesWholeLoad) {
 
 TEST(PackLogicUnload,
      ReversibleResidentBusSendEffectAndRouteUnloadAsOneBatch) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 2;
     config.compressorEffectPoolCapacity = 1;
     config.dynamicRouteCapacity = 2;
@@ -4168,7 +4176,7 @@ TEST(PackLogicUnload,
 
 TEST(PackLogicUnload,
      ReversibleResidentClearsOwnedStateOnCallerBusesOnly) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 1;
     config.compressorEffectPoolCapacity = 1;
     config.dynamicRouteCapacity = 1;
@@ -4238,7 +4246,7 @@ TEST(PackLogicUnload,
 }
 
 TEST(PackLogicUnload, ThreeLevelResidentBusTreeLeavesNoLiveDescendant) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     const std::string path = TempPath("plu_three_level.pack");
@@ -4275,7 +4283,7 @@ TEST(PackLogicUnload, ThreeLevelResidentBusTreeLeavesNoLiveDescendant) {
 
 TEST(PackLogicUnload,
      ReversibleResidentOldHandleStaysStaleAfterPackSlotReuse) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxPacks = 1;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -4320,7 +4328,7 @@ TEST(PackLogicUnload,
 
 TEST(PackLogicUnload,
      ForeignEffectInAnotherPackBusSlotRefusesWithoutMutation) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 2;
     config.compressorEffectPoolCapacity = 1;
     config.gainEffectPoolCapacity = 1;
@@ -4376,7 +4384,7 @@ TEST(PackLogicUnload,
 
 TEST(PackLogicUnload,
      ForeignEffectParamBindingProtectsPackOwnedEffectOnCallerBus) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 1;
     config.compressorEffectPoolCapacity = 1;
     EngineSession session(config);
@@ -4429,7 +4437,7 @@ TEST(PackLogicUnload,
 
 TEST(PackLogicUnload,
      ForeignRouteTargetProtectsPackOwnedEffectOnCallerBus) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 1;
     config.compressorEffectPoolCapacity = 1;
     config.dynamicRouteCapacity = 1;
@@ -4491,7 +4499,7 @@ TEST(PackLogicUnload,
      ForeignChildSendRouteBindingAndVoiceReferencesRefuseWhole) {
     {
         SCOPED_TRACE("foreign child bus");
-        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        EngineSession session(PackLogicConfig(4, kBlock, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
         const VnPackHandle pack =
@@ -4509,7 +4517,7 @@ TEST(PackLogicUnload,
     }
     {
         SCOPED_TRACE("foreign bus send");
-        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        EngineSession session(PackLogicConfig(4, kBlock, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
         ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(13032), VN_BUS_MASTER));
@@ -4529,7 +4537,7 @@ TEST(PackLogicUnload,
     }
     {
         SCOPED_TRACE("foreign dynamic route");
-        VnConfig config = MakeNullConfig(4, kBlock, kRate);
+        VnConfig config = PackLogicConfig(4, kBlock, kRate);
         config.fxSlotsPerBus = 1;
         config.compressorEffectPoolCapacity = 1;
         config.dynamicRouteCapacity = 1;
@@ -4579,7 +4587,7 @@ TEST(PackLogicUnload,
     }
     {
         SCOPED_TRACE("foreign binding");
-        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        EngineSession session(PackLogicConfig(4, kBlock, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
         const VnPackHandle pack =
@@ -4601,7 +4609,7 @@ TEST(PackLogicUnload,
     }
     {
         SCOPED_TRACE("foreign routed voice");
-        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        EngineSession session(PackLogicConfig(4, kBlock, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
         const VnPackHandle pack =
@@ -4631,7 +4639,7 @@ TEST(PackLogicUnload,
      VoiceDryAndSendReferencesCoverLivePendingParkedAndEndedStates) {
     for (bool voiceSend : {false, true}) {
         SCOPED_TRACE(voiceSend ? "live voice send" : "live dry route");
-        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        EngineSession session(PackLogicConfig(4, kBlock, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
         const VnPackHandle pack = LoadResidentBusOnly(
@@ -4667,7 +4675,7 @@ TEST(PackLogicUnload,
     for (bool voiceSend : {false, true}) {
         SCOPED_TRACE(voiceSend ? "pending voice send" :
                                 "pending dry route");
-        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        EngineSession session(PackLogicConfig(4, kBlock, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
         const VnBusId packBus = harkentest::ObjectId(voiceSend ? 13185 : 13186);
@@ -4697,7 +4705,7 @@ TEST(PackLogicUnload,
     for (bool voiceSend : {false, true}) {
         SCOPED_TRACE(voiceSend ? "parked voice send" :
                                 "parked dry route");
-        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        EngineSession session(PackLogicConfig(4, kBlock, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
         const VnBusId packBus = harkentest::ObjectId(voiceSend ? 13187 : 13188);
@@ -4727,7 +4735,7 @@ TEST(PackLogicUnload,
     for (bool voiceSend : {false, true}) {
         SCOPED_TRACE(voiceSend ? "ended voice send" :
                                 "ended dry route");
-        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        EngineSession session(PackLogicConfig(4, kBlock, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
         const VnBusId packBus = harkentest::ObjectId(voiceSend ? 13189 : 13190);
@@ -4767,7 +4775,7 @@ TEST(PackLogicUnload,
      OwnershipPreventsDirectDriftBeforeAtomicUnload) {
     {
         SCOPED_TRACE("parent drift");
-        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        EngineSession session(PackLogicConfig(4, kBlock, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
         ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(13072), VN_BUS_MASTER));
@@ -4786,7 +4794,7 @@ TEST(PackLogicUnload,
     }
     {
         SCOPED_TRACE("owner-cookie drift");
-        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        EngineSession session(PackLogicConfig(4, kBlock, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
         const VnPackHandle pack =
@@ -4802,7 +4810,7 @@ TEST(PackLogicUnload,
     }
     {
         SCOPED_TRACE("disconnect-reconnect send drift");
-        EngineSession session(MakeNullConfig(4, kBlock, kRate));
+        EngineSession session(PackLogicConfig(4, kBlock, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         harken::Engine* engine = session.Engine();
         const std::string path = TempPath("plu_send_drift.pack");
@@ -4836,7 +4844,7 @@ TEST(PackLogicUnload,
 
 TEST(PackLogicUnload,
      OneSlotShortCommandAdmissionKeepsResidentGraphAndLedgerWhole) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.commandQueueDepth = 8;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -4884,7 +4892,7 @@ TEST(PackLogicUnload,
 
 TEST(PackLogicUnload,
      TopologyPlanExhaustionKeepsResidentGraphAndLedgerWhole) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBuses = 8;
     config.topologyPlanPoolCapacity = 2;
     EngineSession session(config);
@@ -4925,7 +4933,7 @@ TEST(PackLogicUnload,
 
 TEST(PackLogicUnload,
      MixedGraphOneSlotShortKeepsEveryOwnedIdentityAndPlanRevision) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBuses = 8;
     config.fxSlotsPerBus = 1;
     config.busSendSlotsPerBus = 1;
@@ -4961,7 +4969,7 @@ TEST(PackLogicUnload,
 
 TEST(PackLogicUnload,
      MixedGraphTopologyPlanExhaustionKeepsEveryOwnedIdentityAndRevision) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBuses = 8;
     config.fxSlotsPerBus = 1;
     config.busSendSlotsPerBus = 1;
@@ -4992,7 +5000,7 @@ TEST(PackLogicUnload,
 
 TEST(PackLogicUnload,
      MixedGraphDynamicPlanExhaustionKeepsEveryOwnedIdentityAndRevision) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBuses = 8;
     config.fxSlotsPerBus = 1;
     config.busSendSlotsPerBus = 1;
@@ -5025,7 +5033,7 @@ TEST(PackLogicUnload,
 
 TEST(PackLogicUnload,
      SoloedResidentBusUnloadRestoresSurvivingBusAudibility) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(13122), VN_BUS_MASTER));
@@ -5084,7 +5092,7 @@ TEST(PackLogicUnload,
 
 
 TEST(PackLogicUnload, BindingProviderRefusedWhileConsumerLoaded) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -5153,7 +5161,7 @@ TEST(PackLogicUnload, BindingProviderRefusedWhileConsumerLoaded) {
 }
 
 TEST(PackLogicUnload, ForeignRecipeProtectsBindingProvider) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 4;
     EngineSession session(config);
@@ -5211,7 +5219,7 @@ TEST(PackLogicUnload, ForeignRecipeProtectsBindingProvider) {
 
 TEST(PackLogicUnload,
      BusEffectAttachmentCapturesBusAndBindingDefinitionProviders) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 1;
     config.gainEffectPoolCapacity = 4;
     EngineSession session(config);
@@ -5299,7 +5307,7 @@ TEST(PackLogicUnload,
 }
 
 TEST(PackLogicUnload, CallerRecycledBindingYieldsProviderEdge) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -5401,7 +5409,7 @@ TEST(PackLogicUnload, CallerRecycledBindingYieldsProviderEdge) {
 
 
 TEST(PackLogicUnload, RefusedWholeWhileVoicePlaysPackMedia) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -5440,7 +5448,7 @@ TEST(PackLogicUnload, RefusedWholeWhileVoicePlaysPackMedia) {
 
 TEST(PackLogicUnload,
      RecipePackStaysOwnedAcrossPendingAndLiveVoiceThenUnloadsAfterDrain) {
-    VnConfig config = MakeNullConfig(1, kBlock, kRate);
+    VnConfig config = PackLogicConfig(1, kBlock, kRate);
     config.voiceStealPolicy = 2;
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 2;
@@ -5504,7 +5512,7 @@ TEST(PackLogicUnload,
 }
 
 TEST(PackLogicUnload, DetachSwapOnSameDefinitionRefusesUnload) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -5572,7 +5580,7 @@ TEST(PackLogicUnload, DetachSwapOnSameDefinitionRefusesUnload) {
 }
 
 TEST(PackLogicUnload, IdenticalReattachAfterDetachStaysCallerOwned) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -5634,7 +5642,7 @@ TEST(PackLogicUnload, IdenticalReattachAfterDetachStaysCallerOwned) {
 // --- replace: staged revision, activation at the update tick ---
 
 TEST(PackLogicReplace, ReplaceStagesAndActivatesAtUpdate) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -5692,7 +5700,7 @@ TEST(PackLogicReplace, ReplaceStagesAndActivatesAtUpdate) {
 
 TEST(PackLogicReplace,
      ZeroCommandContentRevisionPublishesMediaAndLedgerExactlyOnce) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -5791,7 +5799,7 @@ TEST(PackLogicReplace,
 }
 
 TEST(PackLogicReplace, BusSendRelevelRetainsOwnerCookie) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -5842,7 +5850,7 @@ TEST(PackLogicReplace, BusSendRelevelRetainsOwnerCookie) {
 }
 
 TEST(PackLogicReplace, BusSendRemoveAndAddUpdateOwnerCookies) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -5903,7 +5911,7 @@ TEST(PackLogicReplace, BusSendRemoveAndAddUpdateOwnerCookies) {
 }
 
 TEST(PackLogicLoad, DirectMutationCannotTakeOverPackOwnedBus) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -5927,7 +5935,7 @@ TEST(PackLogicLoad, DirectMutationCannotTakeOverPackOwnedBus) {
 }
 
 TEST(PackLogicLoad, DirectMutationCannotTakeOverPackOwnedSend) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -5967,7 +5975,7 @@ TEST(PackLogicLoad, DirectMutationCannotTakeOverPackOwnedSend) {
 }
 
 TEST(PackLogicReplace, DirectParentDriftIsBlockedByOwnership) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -5997,7 +6005,7 @@ TEST(PackLogicReplace, DirectParentDriftIsBlockedByOwnership) {
 
 TEST(PackLogicReplace,
      CompleteBusSnapshotRemovesAddsAndReparentsAtFullCapacity) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.maxBuses = 3;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -6048,7 +6056,7 @@ TEST(PackLogicReplace,
 }
 
 TEST(PackLogicReplace, DirectSendOwnershipDriftIsBlocked) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -6089,7 +6097,7 @@ TEST(PackLogicReplace, DirectSendOwnershipDriftIsBlocked) {
 }
 
 TEST(CanonicalPackSetActivate, ReplacementAndUnloadPreserveForeignPackSendSlot) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
     const auto source = harkentest::ObjectId(12801);
@@ -6181,7 +6189,7 @@ TEST(CanonicalPackSetActivate, ReplacementAndUnloadPreserveForeignPackSendSlot) 
 
 TEST(PackLogicReplace,
      Scope2IdentityChangeActivatesAndGapReferenceKeepsOldRevisionWhole) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 4;
     EngineSession session(config);
@@ -6260,7 +6268,7 @@ TEST(PackLogicReplace,
 
 
 TEST(PackLogicLoad, BusCompressorAndDynamicRouteInstallAsPackOwnedBatch) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 4;
     config.compressorEffectPoolCapacity = 2;
     config.dynamicRouteCapacity = 4;
@@ -6369,7 +6377,7 @@ TEST(PackLogicLoad, BusCompressorAndDynamicRouteInstallAsPackOwnedBatch) {
 
 TEST(PackLogicReplace,
      SameTypeBusEffectRevisionKeepsInstanceAndRouteIdentity) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 4;
     config.compressorEffectPoolCapacity = 2;
     config.dynamicRouteCapacity = 4;
@@ -6462,7 +6470,7 @@ TEST(PackLogicReplace,
 
 TEST(PackLogicReplace,
      BusEffectTypeSwapReplacesInstanceAndClearsDynamicRoute) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 4;
     config.compressorEffectPoolCapacity = 2;
     config.gainEffectPoolCapacity = 2;
@@ -6522,7 +6530,7 @@ TEST(PackLogicReplace,
 
 TEST(PackLogicReplace,
      EffectParamSeedFailureKeepsPublishedRevisionWholeAndRetryable) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 4;
     config.compressorEffectPoolCapacity = 2;
     config.gainEffectPoolCapacity = 2;
@@ -6635,7 +6643,7 @@ TEST(PackLogicReplace,
 
 TEST(PackLogicReplace,
      BusEffectActivationPressureKeepsOldLedgerAndLiveStateUntilRetry) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.commandQueueDepth = 32;
     config.fxSlotsPerBus = 4;
     config.compressorEffectPoolCapacity = 2;
@@ -6737,7 +6745,7 @@ TEST(PackLogicReplace,
 
 TEST(PackLogicReplace,
      ProspectiveTopologyFailureKeepsAddedBusAndGraphHiddenUntilRetry) {
-    VnConfig config = MakeNullConfig(6, kBlock, kRate);
+    VnConfig config = PackLogicConfig(6, kBlock, kRate);
     config.fxSlotsPerBus = 4;
     config.compressorEffectPoolCapacity = 2;
     config.dynamicRouteCapacity = 4;
@@ -6842,7 +6850,7 @@ TEST(PackLogicReplace,
 
 TEST(PackLogicReplace,
      TopologyPlanPressureCannotLeaveEffectSeedBoundToStaleBusIndex) {
-    VnConfig config = MakeNullConfig(6, kBlock, kRate);
+    VnConfig config = PackLogicConfig(6, kBlock, kRate);
     config.maxBuses = 8;
     config.fxSlotsPerBus = 4;
     config.topologyPlanPoolCapacity = 2;
@@ -6941,7 +6949,7 @@ TEST(PackLogicReplace,
 
 TEST(PackLogicReplace,
      MultiEffectMidSeedFailureCancelsEveryReservationBeforeRetry) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 4;
     config.compressorEffectPoolCapacity = 2;
     EngineSession session(config);
@@ -7020,7 +7028,7 @@ TEST(PackLogicReplace,
 
 TEST(PackLogicReplace,
      QueueReservationFailureKeepsPublishedRouteWholeBeforeRetry) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 4;
     config.compressorEffectPoolCapacity = 2;
     config.dynamicRouteCapacity = 4;
@@ -7099,7 +7107,7 @@ TEST(PackLogicReplace,
 
 TEST(PackLogicReplace,
      NewRouteQueueFailureReusesPlanAndTapIdentityOnRetry) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 4;
     config.compressorEffectPoolCapacity = 2;
     config.dynamicRouteCapacity = 4;
@@ -7223,7 +7231,7 @@ TEST(PackLogicReplace,
 
 TEST(PackLogicReplace,
      MediaPreparationFailureCancelsQueueTicketBeforeRetry) {
-    EngineSession session(MakeNullConfig(4, kBlock, kRate));
+    EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
 
@@ -7287,7 +7295,7 @@ TEST(PackLogicReplace,
 
 TEST(PackLogicReplace,
      MediaPreparationFailureReusesDynamicRouteIdentityExactlyOnce) {
-    VnConfig config = MakeNullConfig(4, kBlock, kRate);
+    VnConfig config = PackLogicConfig(4, kBlock, kRate);
     config.fxSlotsPerBus = 4;
     config.compressorEffectPoolCapacity = 2;
     config.dynamicRouteCapacity = 4;

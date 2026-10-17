@@ -543,6 +543,7 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 voice.authoredFadeOutCandidate = payload->authoredFadeOutCandidate;
                 voice.authoredRootStop = (payload->reserved & kTimelineEventAuthoredRootStop) != 0;
                 voice.authoredStopOperation = payload->authoredStopOperation;
+                voice.controlCause = payload->controlCause;
             }
             voice.offset = outputOffset;
             voice.order = {event.executeFrame, event.logicCommitSequence,

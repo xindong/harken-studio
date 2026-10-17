@@ -4,6 +4,8 @@
 #include <harken/ObjectId.h>
 #include "harken/core/ProgramGenerationRegistry.h"
 #include "harken/core/AuthoredStopOperationIdentity.h"
+#include "harken/core/MonitorRequest.h"
+#include "harken/core/MonitorIdentity.h"
 #include "harken/core/PcmView.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/core/PlaybackPath.h"
@@ -67,6 +69,7 @@ struct TimelineEventPayload {
     WeightSegmentV1 variableWeight{};
     VariableWeightControlIdentity variableWeightOwner{};
     AuthoredStopOperationIdentity authoredStopOperation{};
+    MonitorControlCause controlCause{};
 };
 
 struct LogicalOnlyOccurrence {
@@ -155,6 +158,8 @@ struct TimelineVoiceBindingInstall {
 };
 
 struct TimelineVoiceInstallDesc {
+    MonitorContentIdentity monitorContent{};
+    MonitorOccurrenceIdentity monitorOccurrence{};
     PCMView capturedMedia{};
     bool streamed = false;
     std::uint32_t streamFileIndex = 0;

@@ -29,10 +29,13 @@
 
 #include "harken/core/CompletionMutationBinding.h"
 #include "harken/core/MonitorLifecycleSink.h"
+#include "harken/core/MonitorVoiceControl.h"
 #include "harken/core/PlayableInstanceTable.h"
 
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -45,6 +48,7 @@ namespace detail { struct VoiceLedgerOriginalCompletionTestAccess; struct Prepar
 class VoiceLedger {
     struct Entry;
     struct ReverseRenderEntry;
+    struct MonitorSelectionStorage;
 public:
     static constexpr std::uint32_t kMaxGeneration = 0x7fffffffu;
 
@@ -207,7 +211,8 @@ public:
     // PendingStart, and Parked all consume one entry; ended-but-unreaped Live
     // entries temporarily retain theirs. Allocated once here.
     explicit VoiceLedger(std::uint32_t capacity,
-                         std::uint32_t renderCapacity = 0);
+                         std::uint32_t renderCapacity = 0,
+                         std::size_t monitorSelectionCapacity = 0);
     ~VoiceLedger();
     VoiceLedger(const VoiceLedger&) = delete;
     VoiceLedger& operator=(const VoiceLedger&) = delete;
@@ -221,15 +226,21 @@ public:
     // Live but not yet bound to a Render Voice; call BindRender once the Render
     // Voice slot is claimed, or Release if the start then fails so a refused
     // raw voice start stays side-effect-free.
-    bool Acquire(VnVoiceHandle* outPublicHandle, std::uint32_t* outLedgerSlot);
+    bool Acquire(VnVoiceHandle* outPublicHandle, std::uint32_t* outLedgerSlot,
+                 const MonitorRequestContext& request = {},
+                     const MonitorEmitterOrigin& emitterOrigin = {}, VnObjectId media = {});
     void ObserveVoice(MonitorLifecyclePhase phase, std::uint32_t ledgerSlot,
                       std::uint32_t reason = 0,
                       const MonitorLifecycleFacts& facts = {}) noexcept;
     bool AcquirePlayableOwned(const PlayableParentRef& parent,
-                              std::uint32_t* outLedgerSlot);
+                              std::uint32_t* outLedgerSlot,
+                              const MonitorRequestContext& request = {},
+                     const MonitorEmitterOrigin& emitterOrigin = {});
     bool PreparePlayableOwned(const PlayableParentRef& parent,
                               std::uint32_t* outLedgerSlot,
-                              PreparedPlayableIdentity* outIdentity = nullptr);
+                              PreparedPlayableIdentity* outIdentity = nullptr,
+                              const MonitorRequestContext& request = {},
+                     const MonitorEmitterOrigin& emitterOrigin = {});
     bool BindPreparedCompositeCompletionMutation(PreparedCommitInput* original,
         const CompletionMutationBinding& binding) noexcept;
     bool MatchesPreparedPlayableCommit(const PreparedCommitProof& proof,
@@ -262,6 +273,71 @@ public:
     Resolved Classify(VnVoiceHandle publicHandle) const;
     RenderOwner OwnerForRender(VnVoiceHandle renderHandle) const;
 
+    struct MonitorContent {
+        MonitorContentIdentity content{};
+        MonitorOccurrenceIdentity occurrence{};
+        std::uint64_t root = 0;
+        std::uint64_t action = 0;
+        std::uint64_t leaf = 0;
+        std::uint64_t resourceOwner = 0;
+        std::uint64_t ownerEpoch = 0;
+        std::uint64_t logicCommit = 0;
+        std::uint8_t kind = 0;
+        bool incomplete = false;
+    };
+    void RecordMonitorContent(std::uint32_t ledgerSlot, const MonitorContent& content) noexcept;
+
+    struct MonitorIdentity {
+        std::uint32_t ledgerSlot = UINT32_MAX;
+        std::uint32_t generation = 0;
+        VnVoiceHandle logicalHandle = 0;
+        VnVoiceHandle renderHandle = 0;
+        PlayableParentRef parent{};
+        MonitorContent content{};
+        MonitorRequestContext playbackRequest{};
+        MonitorEmitterOrigin emitterOrigin{};
+        MonitorControlCause controlCause{};
+        MonitorControlCause selectionCause{};
+        bool controlObservationIncomplete = false;
+        bool prepared = false;
+    };
+    bool CaptureMonitorIdentity(std::uint32_t ledgerSlot, MonitorIdentity* out) const noexcept;
+    // State snapshots contain logic-owned values, never newly arriving audio receipts.
+    VnVoiceHandle CaptureMonitorIdentityAt(std::uint32_t ledgerSlot,
+        MonitorLifecycleFacts* out) const noexcept;
+    // Logic-thread diagnostic aliases retain frozen values, never playback resources.
+    // The shared storage can outlive the Ledger during Engine member destruction.
+    class MonitorSelection {
+    public:
+        MonitorSelection() noexcept = default;
+        ~MonitorSelection();
+        MonitorSelection(const MonitorSelection& other) noexcept;
+        MonitorSelection& operator=(const MonitorSelection& other) noexcept;
+        MonitorSelection(MonitorSelection&& other) noexcept;
+        MonitorSelection& operator=(MonitorSelection&& other) noexcept;
+        VnVoiceHandle RenderActivation() const noexcept;
+        MonitorControlCause Cause() const noexcept;
+        void SetCause(const MonitorControlCause& cause) noexcept;
+        bool CaptureFacts(MonitorLifecycleFacts* out, std::uint32_t* generation = nullptr) const noexcept;
+    private:
+        friend class VoiceLedger;
+        void Reset() noexcept;
+        std::shared_ptr<MonitorSelectionStorage> storage_;
+        std::uint32_t slot_ = UINT32_MAX;
+        std::uint32_t generation_ = 0;
+    };
+    bool CaptureMonitorSelection(std::uint32_t ledgerSlot, VnVoiceHandle render,
+        MonitorSelection* out) const noexcept;
+    void PublishMonitorSelection(MonitorSelection& selection,
+        const MonitorControlCause* cause = nullptr) noexcept;
+    void RecordMonitorSelection(VnVoiceHandle render, const MonitorControlCause& cause) noexcept;
+    std::size_t MonitorSelectionCapacity() const noexcept;
+    std::size_t MonitorSelectionStorageBytes() const noexcept;
+    void RecordMonitorCancellation(VnVoiceHandle render, const MonitorControlCause& cause) noexcept;
+    MonitorVoiceControlBinding ArmMonitorControl(std::uint32_t ledgerSlot,
+        VnVoiceHandle render) noexcept;
+    std::uint64_t MonitorControlUnavailableCount() const noexcept { return m_monitorControlUnavailable; }
+
     bool BindCompletionMutation(
         std::uint32_t ledgerSlot,
         const CompletionMutationBinding& binding) noexcept;
@@ -287,7 +363,9 @@ public:
     // owns no Render Voice until StartPending binds one. Returns false when
     // every entry is occupied. priority drives later steal decisions.
     bool AcquirePending(VnVoiceHandle* outPublicHandle,
-                        std::uint32_t* outLedgerSlot, std::uint32_t priority);
+                        std::uint32_t* outLedgerSlot, std::uint32_t priority,
+                        const MonitorRequestContext& request = {},
+                     const MonitorEmitterOrigin& emitterOrigin = {}, VnObjectId media = {});
 
     // Transitions a PendingStart entry to Live on the given render slot,
     // assigning its start order. No-op if the slot is not PendingStart.
@@ -304,12 +382,12 @@ public:
     // Ends a PendingStart entry without ever having claimed a render slot
     // (a cancelled deferred start): the entry advances to Ended so its public
     // handle is now stale and the slot is reusable.
-    void CancelPending(std::uint32_t ledgerSlot);
+    void CancelPending(std::uint32_t ledgerSlot, const MonitorControlCause& cause = {});
 
     // Marks the Live entry on this render slot as a steal victim, so its
     // terminal notification is translated to VN_NOTIFY_VOICE_STOLEN. No-op if
     // no Live entry owns the render handle.
-    void MarkStolen(VnVoiceHandle renderHandle);
+    void MarkStolen(VnVoiceHandle renderHandle, const MonitorControlCause& cause = {});
 
     // Whether the Live entry on this render handle was marked a steal victim.
     bool IsStolen(VnVoiceHandle renderHandle) const;
@@ -318,7 +396,8 @@ public:
     // Terminating voices remain Live until the audio side releases them, but
     // are protected from steal selection so their terminal reason cannot be
     // relabeled STOLEN. Logic thread only.
-    void MarkTerminating(VnVoiceHandle renderHandle);
+    void MarkTerminating(VnVoiceHandle renderHandle, const MonitorControlCause& cause = {},
+                         bool recordControlCause = true);
     bool IsTerminating(VnVoiceHandle renderHandle) const;
 
     // Current number of PendingStart entries (a live gauge, like the parked
@@ -345,7 +424,7 @@ public:
     // end/one-shot completion): it advances to Ended and bumps its generation,
     // so the public handle is now stale and the slot reusable. No render
     // involvement — a parked voice holds no render slot.
-    void EndParked(std::uint32_t ledgerSlot);
+    void EndParked(std::uint32_t ledgerSlot, const MonitorControlCause& cause = {});
 
     // Current number of Parked entries (a live gauge).
     std::uint32_t ParkedCount() const;
@@ -458,8 +537,9 @@ public:
             const bool stolen = entry.stolen;
             const std::uint64_t endedHandle = entry.publicHandle;
             const std::uint64_t endedGeneration = entry.generation;
-            const bool publish = entry.visibility == PublicVisibility::DirectVoice &&
-                                 endedHandle != 0;
+            const bool publish = endedHandle != 0;
+            MonitorLifecycleFacts facts{};
+            CaptureMonitorFacts(entry, facts, true);
             entry.renderHandle = 0;
             entry.stolen = false;
             entry.terminating = false;
@@ -472,7 +552,7 @@ public:
                     0, {}, 0, 0,
                     stolen ? VN_ACTION_TERMINAL_CAPACITY
                            : VN_ACTION_TERMINAL_NATURAL,
-                    0, 0, {});
+                    0, 0, facts);
             }
         }
     }
@@ -547,6 +627,15 @@ private:
     };
 
     struct Entry {
+        MonitorRequestContext playbackRequest{};
+        MonitorEmitterOrigin emitterOrigin{};
+        MonitorControlCause controlCause{};
+        MonitorControlCause selectionCause{};
+        MonitorContent monitorContent{};
+        bool monitorSelectionAccepted = false;
+        bool monitorCancellationAccepted = false;
+        MonitorVoiceControlBinding monitorControl{};
+        bool monitorControlAttempted = false;
         OriginalCompletionEpisode originalCompletion{};
         std::uint32_t generation = 1;
         EntryState state = EntryState::Free;
@@ -602,9 +691,16 @@ private:
     void ClearReverse(std::uint32_t ledgerSlot,
                       VnVoiceHandle renderHandle) noexcept;
     void AdvanceGeneration(Entry& entry, EntryState reusableState) noexcept;
+    void CaptureMonitorFacts(const Entry& entry, MonitorLifecycleFacts& facts,
+        bool terminal = false, bool readAudioReceipt = true) const noexcept;
+    static void InvalidateMonitorControl(Entry& entry) noexcept;
 
     std::vector<Entry> m_entries;
+    std::vector<MonitorVoiceControlReceipt> m_monitorControlReceipts;
+    std::uint64_t m_monitorControlTicket = 0;
+    std::uint64_t m_monitorControlUnavailable = 0;
     std::vector<ReverseRenderEntry> m_renderOwners;
+    std::shared_ptr<MonitorSelectionStorage> m_monitorSelections;
     std::uint64_t m_lastOriginalCompletionMarker = 0;
     std::uint64_t m_nextStartOrder = 1; // monotonic; 0 means "never started"
     std::uint32_t m_quarantinedCount = 0;

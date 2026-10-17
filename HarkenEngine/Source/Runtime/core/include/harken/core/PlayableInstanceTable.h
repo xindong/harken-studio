@@ -40,6 +40,8 @@
 #define HARKEN_CORE_PLAYABLE_INSTANCE_TABLE_H
 
 #include "harken/core/CheckedIssuer.h"
+#include "harken/core/MonitorIdentity.h"
+#include "harken/core/MonitorRequest.h"
 #include "harken/core/MonitorLifecycleSink.h"
 
 #include <cstdint>
@@ -373,12 +375,51 @@ public:
     // stale is refused rather than silently rooted, because an instance
     // orphaned that way would outlive the tree it belonged to.
     PlayableInstanceHandle Acquire(PlayableKind kind,
-                                   PlayableInstanceHandle parent);
+                                   PlayableInstanceHandle parent,
+                                   const MonitorRequestContext& request = {},
+                     const MonitorEmitterOrigin& emitterOrigin = {});
     bool PrepareAcquire(PlayableKind kind, PlayableInstanceHandle parent,
-                        PreparedPlayableInstance* out) noexcept;
+                        PreparedPlayableInstance* out,
+                        const MonitorRequestContext& request = {},
+                     const MonitorEmitterOrigin& emitterOrigin = {}) noexcept;
     bool SetPreparedRootMetadata(
         const PreparedPlayableInstance& prepared,
         const PlayableRootMetadata& metadata) noexcept;
+    bool SetPreparedContentIdentity(const PreparedPlayableInstance& prepared,
+                                    const MonitorContentIdentity& identity) noexcept;
+    bool CaptureContentIdentity(PlayableInstanceHandle handle,
+                                MonitorContentIdentity* out) const noexcept;
+    bool CaptureEmitterOrigin(PlayableInstanceHandle handle,
+                              MonitorEmitterOrigin* out) const noexcept;
+    bool CapturePlaybackRequest(PlayableInstanceHandle handle,
+                                MonitorRequestContext* out) const noexcept;
+    bool CaptureControlCause(PlayableInstanceHandle handle,
+                             MonitorControlCause* out) const noexcept;
+    void RecordControlCause(PlayableInstanceHandle handle,
+                            const MonitorControlCause& cause) noexcept;
+    template <typename Visitor>
+    void VisitPublishedSubtree(PlayableInstanceHandle root, Visitor&& visitor) const noexcept {
+        auto current = root;
+        for (std::size_t visited = 0; current != 0 && visited < m_entries.size(); ++visited) {
+            const auto* entry = FindAny(current);
+            if (entry == nullptr) return;
+            visitor(current);
+            if (entry->firstChild != 0) {
+                current = entry->firstChild;
+                continue;
+            }
+            for (std::size_t depth = 0; depth < m_entries.size(); ++depth) {
+                if (current == root) return;
+                entry = FindAny(current);
+                if (entry == nullptr) return;
+                if (entry->nextSibling != 0) {
+                    current = entry->nextSibling;
+                    break;
+                }
+                current = entry->parent;
+            }
+        }
+    }
     bool CommitPrepared(PreparedPlayableInstance* prepared,
                         bool publishParentLink = true) noexcept;
     bool PublishPreparedLink(PlayableInstanceHandle handle) noexcept;
@@ -393,6 +434,11 @@ public:
     bool HasSourceRetirementHold(PlayableInstanceHandle handle) const noexcept;
     std::uint64_t SourceRetirementEpoch(PlayableInstanceHandle handle) const noexcept;
     std::uint32_t SourceRetirementSlot(PlayableInstanceHandle handle) const noexcept;
+    // Copy only committed identity values; prepared and retired slots are absent.
+    PlayableInstanceHandle CaptureMonitorIdentityAt(std::uint32_t slot,
+        MonitorLifecycleFacts* out) const noexcept;
+    bool CaptureMonitorFacts(PlayableInstanceHandle handle,
+                             MonitorLifecycleFacts* out) const noexcept;
     bool CaptureRootMetadata(PlayableInstanceHandle handle,
                              PlayableRootMetadata* out) const noexcept;
 
@@ -401,7 +447,7 @@ public:
                              std::uint32_t observerExecutionOrdinal,
                              PreparedPlayableCancellation* out) noexcept;
     bool CommitPreparedCancellation(
-        PreparedPlayableCancellation* prepared) noexcept;
+        PreparedPlayableCancellation* prepared, const MonitorControlCause* cause = nullptr) noexcept;
     bool CancelPreparedCancellation(
         PreparedPlayableCancellation* prepared) noexcept;
     bool PrepareDelayedCancellation(
@@ -411,7 +457,7 @@ public:
     bool CommitPreparedDelayedCancellation(
         DelayedPlayableCancellation* cancellation) noexcept;
     bool ActivateDelayedCancellation(
-        DelayedPlayableCancellation* cancellation) noexcept;
+        DelayedPlayableCancellation* cancellation, const MonitorControlCause* cause = nullptr) noexcept;
     bool CancelDelayedCancellation(
         DelayedPlayableCancellation* cancellation) noexcept;
     bool HasCancellationClaim(PlayableInstanceHandle handle) const noexcept;
@@ -452,7 +498,7 @@ public:
     // a stale handle. Every transaction stamped with the previous epoch now
     // fails validation, which is how a whole-instance cancel takes effect
     // without visiting the outstanding records one by one.
-    IssueResult BumpScheduleEpochChecked(PlayableInstanceHandle handle);
+    IssueResult BumpScheduleEpochChecked(PlayableInstanceHandle handle, const MonitorControlCause* cause = nullptr);
     bool CanBumpScheduleEpoch(PlayableInstanceHandle handle) const;
     bool CanBumpScheduleEpochs(std::uint32_t count) const;
     std::uint64_t BumpScheduleEpoch(PlayableInstanceHandle handle) {
@@ -521,6 +567,13 @@ private:
         PlayableInstanceHandle nextSibling = 0;
         std::uint64_t scheduleEpoch = 0;
         PlayableRootMetadata rootMetadata{};
+        MonitorContentIdentity contentIdentity{};
+        MonitorContentIdentity monitorPreparedCandidateIdentity{};
+        bool monitorPreparedCandidateObserved = false;
+        MonitorRequestContext playbackRequest{};
+        MonitorEmitterOrigin emitterOrigin{};
+        MonitorControlCause controlCause{};
+        bool controlCauseAccepted = false;
         PlayableTerminalOutcome terminalOutcome{};
         bool cancellationPrepared = false;
         PlayableRetirementObserver preparedObserver{};
@@ -528,6 +581,8 @@ private:
         std::uint64_t delayedCancellationEpoch = 0;
     };
 
+    void FillMonitorFacts(const Entry& entry, PlayableInstanceHandle handle,
+                          MonitorLifecycleFacts& out) const noexcept;
     static PlayableInstanceHandle MakeHandle(std::uint32_t slot,
                                              std::uint32_t generation) {
         return (static_cast<std::uint64_t>(generation) << 32) | slot;

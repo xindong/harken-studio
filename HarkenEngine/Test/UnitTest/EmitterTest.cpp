@@ -12,6 +12,7 @@
 
 #include "harken/param/Curve.h"
 #include "harken/param/ParamTargets.h"
+#include "MonitorEmitterRegistry.h"
 
 #include <cmath>
 #include <cstdint>
@@ -19,6 +20,179 @@
 #include <vector>
 
 namespace {
+
+TEST(MonitorEmitterIdentity, CaptureOffPreservesOriginAcrossDestroyAndSlotReuse) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& registry = engine.monitorEmitters;
+    EXPECT_EQ(engine.config.maxEmitters, registry.Capacity());
+    const auto sdk = registry.BeginSession();
+    ASSERT_NE(0u, sdk);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    ASSERT_TRUE(registry.Register(registry.EngineInstance(), sdk, emitter, 1,
+        harken::MonitorHostOwnership::UnityEmitter, 1));
+    const auto origin = registry.CaptureOrigin(emitter);
+    ASSERT_TRUE(origin.host.Valid());
+    EXPECT_EQ(engine.monitorRequests.EngineInstance(), origin.host.engineInstance);
+    EXPECT_EQ(harken::MonitorEmitterKind::ExplicitSpatial, origin.kind);
+    EXPECT_EQ(harken::MonitorBindingState::Bound,
+        registry.CaptureBinding(origin, emitter, emitter).spatial);
+
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    // Even a spatial mirror which has not seen Update is no longer bound.
+    const auto detached = registry.CaptureBinding(origin, 0, emitter);
+    EXPECT_EQ(harken::MonitorBindingState::Detached, detached.state);
+    EXPECT_EQ(harken::MonitorBindingState::Detached, detached.spatial);
+    EXPECT_EQ(0u, detached.spatialEmitter);
+    EXPECT_EQ(1u, origin.host.localSequence);
+    EXPECT_FALSE(registry.CaptureOrigin(emitter).host.Valid());
+
+    VnEmitterHandle reused = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&reused));
+    ASSERT_EQ(static_cast<std::uint32_t>(emitter), static_cast<std::uint32_t>(reused));
+    ASSERT_NE(emitter, reused);
+    EXPECT_FALSE(registry.CaptureOrigin(reused).host.Valid());
+    EXPECT_FALSE(registry.Register(registry.EngineInstance(), sdk, reused, 1,
+        harken::MonitorHostOwnership::UnityEmitter, 1));
+    ASSERT_TRUE(registry.Register(registry.EngineInstance(), sdk, reused, 2,
+        harken::MonitorHostOwnership::UnityEmitter, 1));
+    registry.NoteDestroyed(emitter);
+    EXPECT_FALSE(registry.Unregister(registry.EngineInstance(), sdk, emitter, 1));
+    EXPECT_EQ(2u, registry.CaptureOrigin(reused).host.localSequence);
+    EXPECT_EQ(1u, origin.host.localSequence);
+}
+
+TEST(MonitorEmitterIdentity, NoneDefaultStateOnlyAndUnknownHostRemainDistinct) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& registry = engine.monitorEmitters;
+    const auto none = registry.CaptureOrigin(0);
+    const auto fallback = registry.CaptureOrigin(engine.emitters.DefaultState());
+    EXPECT_EQ(harken::MonitorEmitterKind::None, none.kind);
+    EXPECT_EQ(harken::MonitorEmitterKind::DefaultState, fallback.kind);
+    EXPECT_EQ(harken::MonitorBindingState::None, registry.CaptureBinding(none, 0, 0).state);
+    EXPECT_EQ(harken::MonitorBindingState::Bound,
+        registry.CaptureBinding(fallback, fallback.emitter, 0).state);
+    EXPECT_EQ(harken::MonitorBindingState::None,
+        registry.CaptureBinding(fallback, fallback.emitter, 0).spatial);
+    VnEmitterCreateDescV1 desc{sizeof(VnEmitterCreateDescV1), VN_EMITTER_CREATE_STATE_ONLY, 0};
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitterEx(&desc, &emitter));
+    const auto stateOnly = registry.CaptureOrigin(emitter);
+    EXPECT_EQ(harken::MonitorEmitterKind::ExplicitStateOnly, stateOnly.kind);
+    EXPECT_FALSE(stateOnly.host.Valid());
+    const auto bound = registry.CaptureBinding(stateOnly, emitter, 0);
+    EXPECT_EQ(harken::MonitorBindingState::Bound, bound.state);
+    EXPECT_EQ(harken::MonitorBindingState::None, bound.spatial);
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    const auto detached = registry.CaptureBinding(stateOnly, emitter, 0);
+    EXPECT_EQ(harken::MonitorBindingState::Detached, detached.state);
+    EXPECT_EQ(harken::MonitorBindingState::None, detached.spatial);
+}
+
+TEST(MonitorEmitterIdentity, ReconnectRejectsOldSessionWithoutChangingEmitterLifetime) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& registry = engine.monitorEmitters;
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    const auto first = registry.BeginSession();
+    ASSERT_TRUE(registry.Register(registry.EngineInstance(), first, emitter, 7,
+        harken::MonitorHostOwnership::UnitySpatialSource, 3));
+    const auto original = registry.CaptureOrigin(emitter);
+    ASSERT_TRUE(registry.Register(registry.EngineInstance(), first, emitter, 7,
+        harken::MonitorHostOwnership::UnitySpatialSource, 3));
+    EXPECT_FALSE(registry.Register(registry.EngineInstance(), first, emitter, 7,
+        harken::MonitorHostOwnership::UnitySpatialSource, 2));
+    const auto second = registry.BeginSession();
+    ASSERT_GT(second, first);
+    EXPECT_FALSE(registry.CaptureOrigin(emitter).host.Valid());
+    ASSERT_TRUE(registry.Register(registry.EngineInstance(), second, emitter, 1,
+        harken::MonitorHostOwnership::UnitySpatialSource, 1));
+    EXPECT_FALSE(registry.EndSession(registry.EngineInstance(), first));
+    EXPECT_FALSE(registry.Unregister(registry.EngineInstance(), first, emitter, 7));
+    EXPECT_FALSE(registry.Register(registry.EngineInstance(), first, emitter, 9,
+        harken::MonitorHostOwnership::UnityEmitter, 4));
+    EXPECT_EQ(second, registry.CaptureOrigin(emitter).host.sdkSession);
+    EXPECT_EQ(first, original.host.sdkSession);
+    EXPECT_EQ(3u, original.registrationRevision);
+    EXPECT_TRUE(registry.EndSession(registry.EngineInstance(), second));
+    EXPECT_TRUE(engine.emitters.IsPublicLive(emitter));
+    EXPECT_FALSE(registry.CaptureOrigin(emitter).host.Valid());
+}
+
+TEST(MonitorEmitterIdentity, ExhaustedDiagnosticSessionDoesNotStopNativeEmitterCreation) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    harken::MonitorEmitterRegistry exhausted(engine.emitters, engine.config.maxEmitters,
+        engine.monitorRequests.EngineInstance(), UINT64_MAX);
+    EXPECT_EQ(0u, exhausted.BeginSession());
+    EXPECT_EQ(0u, exhausted.BeginSession());
+    EXPECT_EQ(2u, exhausted.UnavailableCount());
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    exhausted.NoteCreated(emitter);
+    EXPECT_EQ(harken::MonitorEmitterKind::ExplicitSpatial, exhausted.CaptureOrigin(emitter).kind);
+    EXPECT_FALSE(exhausted.Register(exhausted.EngineInstance(), UINT64_MAX, emitter, 1,
+        harken::MonitorHostOwnership::UnityEmitter, 1));
+    EXPECT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+}
+
+TEST(MonitorEmitterIdentity, OldEngineCallbacksCannotChangeSameNumericSessionAndEmitter) {
+    harken::EngineConfig config{};
+    config.maxEmitters = 1;
+    harken::EmitterTable firstTable(config), secondTable(config);
+    harken::MonitorEmitterRegistry first(firstTable, 1, 71), second(secondTable, 1, 72);
+    const auto firstSession = first.BeginSession();
+    const auto secondSession = second.BeginSession();
+    ASSERT_EQ(firstSession, secondSession);
+    VnEmitterHandle a = 0, b = 0;
+    ASSERT_TRUE(firstTable.Create(&a));
+    ASSERT_TRUE(secondTable.Create(&b));
+    ASSERT_EQ(a, b);
+    first.NoteCreated(a);
+    second.NoteCreated(b);
+    ASSERT_TRUE(first.Register(71, firstSession, a, 1, harken::MonitorHostOwnership::UnityEmitter, 1));
+    ASSERT_TRUE(second.Register(72, secondSession, b, 1, harken::MonitorHostOwnership::UnityEmitter, 1));
+    EXPECT_FALSE(second.Register(71, firstSession, a, 1, harken::MonitorHostOwnership::UnityEmitter, 2));
+    EXPECT_FALSE(second.Unregister(71, firstSession, a, 1));
+    EXPECT_FALSE(second.EndSession(71, firstSession));
+    const auto current = second.CaptureOrigin(b);
+    EXPECT_EQ(72u, current.host.engineInstance);
+    EXPECT_EQ(1u, current.registrationRevision);
+    EXPECT_TRUE(current.host.Valid());
+}
+
+TEST(MonitorEmitterIdentity, OptionalAbiRejectsMalformedAndStaleRegistrationWithoutMutation) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    VnMonitorHostSessionV1 info{};
+    EXPECT_EQ(VN_INVALID_ARG, Vn_MonitorBeginHostSession(&info));
+    info.structSize = sizeof(info);
+    ASSERT_EQ(VN_OK, Vn_MonitorBeginHostSession(&info));
+    EXPECT_EQ(engine.config.maxEmitters, info.emitterCapacity);
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    VnMonitorHostRegistrationV1 desc{sizeof(desc), VN_MONITOR_HOST_UNITY_EMITTER,
+        info.engineInstance, info.sdkSession, emitter, 1, 1, 0};
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHost(&desc));
+    desc.reserved0 = 1;
+    EXPECT_EQ(VN_INVALID_ARG, Vn_MonitorRegisterHost(&desc));
+    desc.reserved0 = 0;
+    ++desc.engineInstance;
+    EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorRegisterHost(&desc));
+    EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorEndHostSession(desc.engineInstance, desc.sdkSession));
+    EXPECT_TRUE(engine.monitorEmitters.CaptureOrigin(emitter).host.Valid());
+    EXPECT_EQ(VN_OK, Vn_MonitorEndHostSession(info.engineInstance, info.sdkSession));
+    EXPECT_TRUE(engine.emitters.IsPublicLive(emitter));
+    EXPECT_FALSE(engine.monitorEmitters.CaptureOrigin(emitter).host.Valid());
+}
 
 using harkentest::EngineSession;
 using harkentest::InterleavedDesc;
@@ -1205,6 +1379,53 @@ TEST(Emitter, CreateExRejectsInvalidDescriptorsWithoutAllocating) {
     desc.reserved0 = 0;
     ASSERT_EQ(VN_OK, Vn_CreateEmitterEx(&desc, &handle));
     EXPECT_EQ(VN_OK, Vn_SetEmitterPosition(handle, Vec3(2, 0, 0)));
+}
+
+TEST(MonitorEmitterIdentity, RawVoiceRetainsAcceptedOriginAcrossEmitterReuse) {
+    EngineSession session(EmitterConfig(4, 1));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& hosts = engine.monitorEmitters;
+    const auto sdk = hosts.BeginSession();
+    VnEmitterHandle first = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&first));
+    ASSERT_TRUE(hosts.Register(hosts.EngineInstance(), sdk, first, 1,
+        harken::MonitorHostOwnership::UnityEmitter, 2));
+    const auto samples = MakeDC(kRate, 0.25f);
+    const auto pcm = MonoDesc(samples, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+    auto play = AttachedPlay(harkentest::ObjectId(1), first);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    const auto owner = engine.ledger.Classify(voice);
+    harken::VoiceLedger::MonitorIdentity accepted{};
+    ASSERT_TRUE(engine.ledger.CaptureMonitorIdentity(owner.ledgerSlot, &accepted));
+    ASSERT_EQ(first, accepted.emitterOrigin.emitter);
+    ASSERT_EQ(1u, accepted.emitterOrigin.host.localSequence);
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(first));
+    VnEmitterHandle next = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&next));
+    ASSERT_NE(first, next);
+    ASSERT_EQ(static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(next));
+    ASSERT_TRUE(hosts.Register(hosts.EngineInstance(), sdk, next, 2,
+        harken::MonitorHostOwnership::UnitySpatialSource, 1));
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    harken::VoiceLedger::MonitorIdentity retained{};
+    ASSERT_TRUE(engine.ledger.CaptureMonitorIdentity(owner.ledgerSlot, &retained));
+    EXPECT_EQ(accepted.logicalHandle, retained.logicalHandle);
+    EXPECT_EQ(accepted.emitterOrigin.host, retained.emitterOrigin.host);
+    EXPECT_EQ(first, retained.emitterOrigin.emitter);
+    EXPECT_EQ(2u, retained.emitterOrigin.registrationRevision);
+    play.emitterHandle = 0;
+    VnVoiceHandle unbound = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &unbound));
+    const auto unboundOwner = engine.ledger.Classify(unbound);
+    harken::VoiceLedger::MonitorIdentity unboundIdentity{};
+    ASSERT_TRUE(engine.ledger.CaptureMonitorIdentity(unboundOwner.ledgerSlot, &unboundIdentity));
+    EXPECT_EQ(harken::MonitorEmitterKind::None, unboundIdentity.emitterOrigin.kind);
+    EXPECT_EQ(0u, unboundIdentity.emitterOrigin.emitter);
+    EXPECT_FALSE(unboundIdentity.emitterOrigin.host.Valid());
 }
 
 } // namespace

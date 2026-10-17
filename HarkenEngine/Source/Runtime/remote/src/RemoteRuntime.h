@@ -4,6 +4,8 @@
 namespace harken::remote {
 void Pump();
 void Shutdown(bool engineTerminating = false);
+void SetBeforeCommandDispatchForTests(void (*hook)(void*), void* context);
+unsigned PendingCommandsForTests();
 }
 
 #endif

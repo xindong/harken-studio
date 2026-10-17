@@ -2,6 +2,9 @@
 #define HARKEN_CORE_MONITOR_LIFECYCLE_SINK_H
 
 #include <harken/ObjectId.h>
+#include "harken/core/MonitorRequest.h"
+#include "harken/core/MonitorEmitterIdentity.h"
+#include "harken/core/MonitorIdentity.h"
 #include <cstdint>
 
 namespace harken {
@@ -28,16 +31,40 @@ enum class MonitorLifecyclePhase : std::uint8_t {
     VoicePark = 17,
     VoiceEnd = 18,
     EffectInstalled = 19,
-    EffectReleased = 20
+    EffectReleased = 20,
+    SelectionCommitted = 21,
+    PreparedCandidate = 22
 };
 
-// Called after a real table commit succeeds. No-op when Monitor is absent,
+// Called after the reported Runtime decision succeeds. No-op when Monitor is absent,
 // the Hub is down, or the caller is not the logic thread. Never writes
 // Runtime tables and never invents a VariableControl entity.
 //
 // Facts already present on the committing table row. Missing values stay 0
 // and must not be invented by the Hub mapper.
 struct MonitorLifecycleFacts {
+    MonitorRequestContext playbackRequest{};
+    MonitorEmitterOrigin emitterOrigin{};
+    MonitorControlCause controlCause{};
+    MonitorControlCause selectionCause{};
+    bool controlObservationIncomplete = false;
+    bool identityObservationIncomplete = false;
+    bool publishLegacy = true;
+    bool reasonKnown = true;
+    MonitorOccurrenceIdentity occurrenceIdentity{};
+    VnObjectId contentObject{};
+    std::uint64_t contentWorld = 0;
+    std::uint8_t contentKind = 0;
+    std::uint64_t contentRevision = 0;
+    std::uint64_t parentPlayable = 0;
+    std::uint64_t parentAction = 0;
+    std::uint64_t root = 0;
+    std::uint64_t relatedAction = 0;
+    std::uint64_t serviceLeaf = 0;
+    std::uint64_t resourceOwner = 0;
+    std::uint64_t ownerEpoch = 0;
+    std::uint64_t logicalVoice = 0;
+    std::uint64_t renderActivation = 0;
     VnObjectId projectId{};
     std::uint64_t programSemanticFingerprint = 0;
     std::uint64_t runtimeLineageFingerprint = 0;
@@ -92,6 +119,7 @@ void ObserveMonitorEffectRelease(std::uint64_t instanceHandle,
                                  std::uint32_t reason) noexcept;
 
 void ObserveMonitorDspGap() noexcept;
+void ObserveMonitorSelectionUnavailable() noexcept;
 
 } // namespace harken
 
