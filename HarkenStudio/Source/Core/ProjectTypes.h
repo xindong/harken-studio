@@ -659,6 +659,7 @@ struct ActionPackTargeting
     harkenstudio::ObjectId stableId{};
     bool allPlatforms = true;
     QStringList platformIds;
+    std::optional<QString> language = std::nullopt;
 
     bool includesPlatform(const QString& platform) const {
         return allPlatforms || platformIds.contains(platform);
@@ -667,7 +668,8 @@ struct ActionPackTargeting
     bool operator==(const ActionPackTargeting& other) const {
         return stableId == other.stableId
             && allPlatforms == other.allPlatforms
-            && platformIds == other.platformIds;
+            && platformIds == other.platformIds
+            && language == other.language;
     }
     bool operator!=(const ActionPackTargeting& other) const { return !(*this == other); }
 
@@ -678,6 +680,7 @@ struct ActionPackTargeting
         QJsonArray platformArray;
         for (const auto& p : platformIds) platformArray.append(p);
         obj["platformIds"] = platformArray;
+        if (language) obj["language"] = *language;
         return obj;
     }
 
@@ -689,6 +692,7 @@ struct ActionPackTargeting
             rawPlatforms.append(v.toString());
         targeting.platformIds = rawPlatforms;
         targeting.allPlatforms = obj["allPlatforms"].toBool();
+        if (obj.contains("language")) targeting.language = obj["language"].toString();
         return targeting;
     }
 };
@@ -957,6 +961,33 @@ struct ProjectData
 
     std::vector<ActionPackTargeting> actionPackTargeting;
     std::vector<ActionPublishedNameHistoryRow> actionPublishedNameHistory;
+
+    bool includesActionPack(harkenstudio::ObjectId id, const QString& platform,
+                            const QString& language) const {
+        const ActionPackTargeting* inherited = nullptr;
+        for (const auto& entry : actionPackTargeting) {
+            if (entry.stableId != id) continue;
+            if (entry.language == language) return entry.includesPlatform(platform);
+            if (!entry.language) inherited = &entry;
+        }
+        return !inherited || inherited->includesPlatform(platform);
+    }
+
+    void dissolvePackGroups() {
+        std::set<harkenstudio::ObjectId> migrated;
+        for (const auto& group : packGroups) {
+            for (const auto id : group.actionIds) {
+                if (!migrated.insert(id).second) continue;
+                actionPackTargeting.erase(std::remove_if(actionPackTargeting.begin(),
+                    actionPackTargeting.end(), [id](const auto& entry) {
+                        return entry.stableId == id;
+                    }), actionPackTargeting.end());
+                if (!group.allPlatforms)
+                    actionPackTargeting.push_back({id, false, group.platformIds});
+            }
+        }
+        packGroups.clear();
+    }
 
     QVector<ProjectPlatform> platforms;
 

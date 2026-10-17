@@ -32,7 +32,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 | 表体高度 | 默认按内容展开；独立编辑面可使用宿主可用高度 | 默认撑满可用空间，也可按内容展开 |
 | footer | 不需要就不创建、不占位；按需声明操作 | 同左 |
 | 左下刷新 | 不提供手动刷新入口 | 有真实刷新动作时按需提供；自动更新不强制增加刷新 |
-| 分组 | 保留 Sources 语言等业务分组 | 支持 Pack System/Content、快捷键分类等 |
+| 分组 | 保留 Sources 语言等业务分组 | 支持 Pack General/语言、快捷键分类等 |
 
 “可用”不等于“自动启用”。模板不取代业务配置。高度策略统一为 `Content` 与 `Expanding`：`Content` 无高度上限，容纳全部可见行和展开详情，列宽适配视口，内部永远不显示水平或垂直滚动条，由外层页面负责滚动；表体收到的滚轮事件继续向外层传递，不能因内部滚动条禁用而吞掉事件。`Expanding` 使用宿主可用高度，纵向滚动槽常驻，仅内容溢出时显示滑块。`Expanding` 声明 `Scrollable` 列策略时横向槽也常驻，按溢出显示滑块；`Content` 始终按 `Fit` 布局，切回 `Expanding` 后恢复声明的列策略及原生表格各列独立宽度，不因临时压缩覆盖用户列宽。
 
@@ -70,7 +70,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 - 列宽比例转像素时按累计边界取整，保证总宽度守恒且整数宽度可往返恢复。连续拖动只调整目标列和用于补偿的相邻可见列；相邻列达到最小宽度前，其他列的宽度与边界必须不变。不得逐列向下截断并在下一次拖动中重新计入舍入误差；多列表格会因此出现持续左移和抖动。验收需要连续多次鼠标移动、反向拖回、隐藏列及列换位，不能只测试一次 resizeSection。
 - 首次打开和自动获得焦点不默认选择第一行。刷新保留未选中状态；主动删除通过公共 `removeSelectedRow` 选择原位置的下一行，删除末行则选择上一行，空表取消选择。控件行通过 `registerRow` 声明稳定 `groupId` 时，删除后的选择限定在同组；该组为空时取消选择，分组和行重建或换序不改变此约束。多选删除保留仍存活的选择，取消选择或切换模型后不恢复旧选择。新增、用户点选或显式定位可以建立选择。平台草稿尚未分配 ID 时使用唯一名称恢复，落盘后使用 ID。
 - 表体和 footer 空白、表格内 Esc 支持取消选择；原生单选表也支持 Ctrl 点选已选行取消。取消同时清除当前行与选择，删除等动作必须据此禁用。单元格编辑和 footer 按钮不被当作空白；编辑器先处理自己的 Esc，移动中的 Esc 先取消移动。外部详情或曲线区交互是否取消选择由业务决定。
-- 配置表与展示表使用统一分组标题：Sources 语言组、快捷键分类、Pack 的 System/Content 均由公共 `TableGroupHeader` 绘制，居中加粗、使用主题表头背景和弱化文字、保留下分隔线，无选中态或强调色竖条。控件行通过 `TableWidget::createGroupHeader` 创建标题；原生树形表通过 `ProportionalTreeWidget::createGroup` 声明分组，使用同一绘制及主题高度，跨整行显示，不受列换位影响。业务只提供组名和数据，不拼装标题或维护局部样式。分组表尾按需启用，与下一组标题之间保留主题分隔线，末组使用表格外框收尾；空组标题与表尾的相邻边框合为一条，避免叠线。
+- 配置表与展示表使用统一分组标题：Sources 语言组、快捷键分类、Pack 的 General/语言分区均由公共 `TableGroupHeader` 绘制，居中加粗、使用主题表头背景和弱化文字、保留下分隔线，无选中态或强调色竖条。控件行通过 `TableWidget::createGroupHeader` 创建标题；原生树形表通过 `ProportionalTreeWidget::createGroup` 声明分组，使用同一绘制及主题高度，跨整行显示，不受列换位影响。业务只提供组名和数据，不拼装标题或维护局部样式。分组表尾按需启用，与下一组标题之间保留主题分隔线，末组使用表格外框收尾；空组标题与表尾的相邻边框合为一条，避免叠线。
 
 ## 全量清单
 
@@ -106,9 +106,11 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 
 Inputs/Receives 是路由反向查询，不再适用“所有 Inspector 表都带 #”的旧约定。Shortcuts 枚举命令目录；Layout 枚举已有布局资源，重命名与删除不改变其展示表职责。
 
-Pack 的 Content 分区中，未分组的 Action 各自产生一个包，同组 Action 合并为以组名命名的一个包。Action 行或组行显示实际产物的文件、大小及构建状态；组内成员行只显示归属。语言变体由完整打包计划决定，发布状态按清单中的实际成员核验，无步骤的 Action 不计入包成员。
+Pack 的 Init 独立显示且始终必选；General 包含不区分语言的 Action，工程中的每种语言各自形成分区，同时显示全部语言，不受 toolbar 当前语言筛选。每个 Action 按平台和语言独立出包，取消自定义合包、成员行、组名编辑及合包拖放。旧工程的合包平台选择迁移到成员 Action。语言变体由完整打包计划决定，即使取消所有平台也保留对应行。每行仅显示当前观察平台下一个包的文件、大小及构建状态，缺失值留空，不再聚合语言或显示横线；发布状态按清单中的 Action 归属核验。
 
-Pack 表格的产物信息跟随主 toolbar 的当前平台。平台归属勾选遵守全局单平台／ALL 编辑语境，ALL 下归属不一致时显示半勾选；表格不提供独立的平台观察切换。顶部 Export Platforms 多选仅指定导出目标，不限制表格的观察或编辑范围，未选择导出目标时仍可查看和编辑当前平台。
+Action targeting 可携带 language：省略时保留整 Action 的平台选择语义，空字符串指定 General，非空字符串指定对应语言。各语言平台设置独立保存，批量勾选通过同一命令提交并支持撤销。正常导出读取各目标平台保存的全部语言选择；选中行导出精确匹配语言与 Action，并按相同语言展开 PostAction 依赖，被取消的依赖必须报告错误。各语言只编译所选 Action 和公共包的定义，Init 汇总所有已选语言需要的 Layer；若工程默认语言没有被导出，产物以工程语言顺序中的首个已导出语言作为默认入口，工程默认语言不变。Export All 清除快照中的筛选，不修改工程勾选。
+
+Pack 表格的产物信息跟随主 toolbar 的当前平台。平台归属使用公共勾选框皮肤，遵守全局单平台／ALL 编辑语境，ALL 下归属不一致时显示半勾选；保留点击、空格和拖动连续勾选，沿用原有平台命令与撤销语义。表格不提供独立的平台观察切换。顶部 Export Platforms 多选仅指定导出目标，不限制表格的观察或编辑范围，未选择导出目标时仍可查看和编辑当前平台。
 
 Sources 仅在同语言组内移动；Binding 仅编辑本地贡献；Clips 移动保持 occurrence 身份和时间语义；Labels 的 # 显示真实索引，身份与名称随普通行移动进入原有索引位置，范围外记录不参与。Transition 按匹配具体程度排序，默认规则最后；Resample Policies 按阈值排序且保留 Infinite 行。共享表格仅扩展自定义编号显示，保留原有拖动逻辑。
 
@@ -193,8 +195,10 @@ Hierarchy、Explorer、Sources、Selector 及 Template Chooser 预览属于导�
 | `createCustomView(name, factory)` | 特殊视图的显式工厂入口；工厂接收宿主 QWidget 和当前 ThemeManager，返回视图后公共层完成接入，保留具体返回类型 |
 | `TableItemDelegate::updateEditorGeometry` | 原生编辑器及 index/item widget 的统一 X/Y 留白与垂直居中入口；业务直接插入编辑器，不再套控件行的 `TableCell` |
 | `setModel(model)` | 替换外部模型表体的数据模型，重绑布局监听并更新尺寸；不替换条目控件自身的内部模型 |
-| `createGroupHeader(text)` / `ProportionalTreeWidget::createGroup(text)` | 分别创建控件分组标题和原生树形分组；共用 `TableGroupHeader` 的绘制与主题高度，标题不可选中，业务不维护样式 |
+| `createGroupHeader(text, options)` / `ProportionalTreeWidget::createGroup(text, options)` | 分别创建控件分组标题和原生树形分组；共用 `TableGroupHeader` 的绘制与主题高度，标题不可选中，业务不维护样式；`TableGroupOptions` 中 `checkable`、`collapsible` 独立启用，默认均关闭 |
+| `TableGroupHeader::setCheckState` / `ProportionalTreeWidget::setGroupCheckState` | 业务回填全选、未选或半选状态；可单独禁用勾选而保留折叠。勾选通过 `checkStateRequested` / `groupCheckStateRequested` 请求业务批量提交，公共层不推断业务平台、命令或可操作范围 |
 | `TableGroupRole` | 原生分组语义，由公共创建入口设置；公共视图按整行绘制，不依赖列的视觉位置 |
+| `ProportionalTreeWidget::setHierarchyIndentation` / `cellContentsRect` | 设置业务子条目的缩进宽度并提供内容区域；创建公共分组后，分组祖先不计入缩进，业务层级仅缩进内容，单元格边框和选择背景仍铺满整行；领域 delegate 和命中区域共用该几何规则 |
 | `setSelectionClearHandler(handler)` / `clearSelection()` | 控件行接入业务取消选择函数；原生表体由公共层清除当前索引和选择；空白、Esc 等交互共用此入口 |
 | `bodyMessage()` | 按需创建公共表体消息标签；字体、边距与最小高度由共享层处理，业务设置文本和可见性 |
 | `createRowNumber` / `setRowNumberColumn` / `setRowMoveHandler(handler, guard)` | 控件行和原生表体显式声明序号列并启用移动，共用光标、插入线、拖动取消、右键上下移与 Alt＋方向键；调用业务命令，guard 保留继承、分组等移动约束 |
@@ -236,7 +240,7 @@ auto* items = table->createItemView(QStringLiteral("Platforms"),
     {tr("Name"), tr("Base Platform")}, {600, 400});
 ```
 
-特殊视图保留领域交互，例如 Pack 的拖放与连续勾选：
+特殊视图保留领域交互，例如 Pack 的连续勾选：
 
 ```cpp
 auto* table = new TableWidget(TableOptions::display(), parent);
@@ -247,6 +251,12 @@ auto* view = table->createCustomView(QStringLiteral("Packs"),
 ```
 
 配置表的 `#`、行增删和详情入口同样需要业务显式接入，不因选择 config 模板就自动生成。宿主决定 Table 所在区域的伸缩、边距和页面滚动；表体高度策略只管理 Table 内部空间。
+
+分组可分别启用 `TableGroupOptions{true, false}`（勾选）、`{false, true}`（折叠）或 `{true, true}`（两者）。勾选框固定在整行最左侧，chevron 固定在最右侧，标题两边保留对称空间，始终按整行居中；列换位、隐藏或滚动不改变控件位置。半选点击转为全选，两项操作互不触发，也不改变已有行选择。原生分组以子条目表达归属，由树管理展开；控件分组通过 `expandedChanged` 让业务控制对应内容容器的显隐。
+
+公共分组不增加子条目的视觉缩进：Init、General 和语言分区中的直接条目，以及 Shortcuts 分类下的命令，仍从对应列的正常留白起排。真正的业务父子层级保留内容缩进，绘制、编辑器和点击命中使用同一内容区域；分隔线和选择背景不随内容缩进。未创建公共分组的普通树继续使用原生层级布局。
+
+Pack Exporter 的 General 和语言分区使用实际父子关系，并按语言 ID 恢复折叠状态；Action 行选择同时包含 Action ID 和语言。Init 独立显示并在每次导出时重建；各分区同时启用勾选和折叠，聚合当前编辑平台上的可操作包状态。批量操作包含搜索过滤隐藏的包，沿用平台 targeting 命令并合为一步撤销；不改变导出平台选择。没有可操作包或编辑平台时，勾选框禁用，折叠仍可使用。
 
 控件行通过 `registerRow(row, cells, details)` 将同属 `rowsWidget()` 的主行和展开容器登记为一条逻辑行，`details` 可省略。字段先放入 `createCell` 创建的共享单元格，再登记单元格；不把裸字段控件作为补边距的容器。展开容器提供自己的内容布局；公共表格负责同步选中状态、行号列宽度、内容缩进及主行与详情之间的分隔线，删除主行时一并清理详情。业务用 `rowForWidget(widget)` 将展开区及其子控件的交互归属到主行，不再复制详情的行号或选中状态。
 

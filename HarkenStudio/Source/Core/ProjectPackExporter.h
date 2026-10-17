@@ -45,10 +45,8 @@ namespace ProjectPackExporterInternal {
 
         ConversionFailurePolicy conversionFailurePolicy = ConversionFailurePolicy::AbortBuild;
 
-        // Empty = build every unit. Otherwise only group/action units whose
-        // name is listed are built; Init, Shared and the manifest are still
-        // refreshed so a subset export stays consistent with a full one.
         QSet<QString> onlyUnits;
+        QSet<QString> onlyPackPaths;
         std::set<harkenstudio::ObjectId> onlyActionStableIds;
 
         // Polled between units; returning true aborts the export with

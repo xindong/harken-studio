@@ -98,6 +98,7 @@ std::shared_ptr<const ProjectBuildSnapshot> ProjectBuildSnapshot::capture(
     if (!ProjectPlatformSemantics::validatePlatforms(source.platforms, error)) return {};
     auto snapshot = std::make_shared<ProjectBuildSnapshot>();
     snapshot->project = source;
+    snapshot->project.dissolvePackGroups();
     QHash<const ProjectItem*, std::shared_ptr<ProjectItem>> copies;
     snapshot->project.root = copyItem(source.root, copies);
     for (auto* binding : snapshot->project.allFileBindings())

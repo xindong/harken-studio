@@ -402,7 +402,7 @@ TEST(ThemeMetricsMigration, TableGeometryUpdatesInPlaceAcrossWidgetAndNativeBodi
         {QStringLiteral("Name"), QStringLiteral("Name"), 500},
         {QStringLiteral("Value"), QStringLiteral("Value"), 500}
     });
-    auto* widgetGroup = table.createGroupHeader(QStringLiteral("Parameters"));
+    auto* widgetGroup = table.createGroupHeader(QStringLiteral("Parameters"), {true, true});
     auto* row = new QWidget(table.rowsWidget());
     row->setProperty("selected", true);
     auto* layout = new QHBoxLayout(row);
@@ -424,7 +424,7 @@ TEST(ThemeMetricsMigration, TableGeometryUpdatesInPlaceAcrossWidgetAndNativeBodi
     auto* footer = table.footer();
     VNX::ProportionalTreeWidget native({500, 500}, nullptr, manager.get());
     native.setHeaderLabels({"Name", "Value"});
-    auto* nativeGroup = native.createGroup(QStringLiteral("Parameters"));
+    auto* nativeGroup = native.createGroup(QStringLiteral("Parameters"), {true, true});
     auto* item = new QTreeWidgetItem(&native, {"Parameter", "value"});
     native.setCurrentItem(item);
     VNX::TableWidget listTable(nullptr, manager.get());

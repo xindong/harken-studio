@@ -8,12 +8,12 @@
 #include "../../Core/BaseDialog.h"
 #include "../../Core/Components/VAction.h"
 #include "../../Core/PackBuildPlan.h"
+#include "../../Core/ProjectLanguageSemantics.h"
 #include "../../Core/PlatformContextService.h"
 #include "../../Core/ProjectPackExporter.h"
 #include "../../Core/ProjectManager.h"
 #include "../../Core/ProjectTypes.h"
 #include "../../Core/ThemeManager.h"
-#include "../../Core/ThemeAssetCatalog.h"
 #include "../../Core/ToastManager.h"
 #include "../../Core/UndoCommands.h"
 #include "../Common/LayoutDebugTint.h"
@@ -24,7 +24,6 @@
 #include "../Common/SearchField.h"
 #include "../Common/SegmentedControl.h"
 #include "../Common/SplitButton.h"
-#include "../Common/SwitchIndicator.h"
 #include "../LogPanel/LogPanel.h"
 
 #include <QVBoxLayout>
@@ -50,23 +49,19 @@
 #include <QUndoStack>
 #include <QStyledItemDelegate>
 #include <QMenu>
-#include <QMessageBox>
 #include <QProcess>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QScopedValueRollback>
 #include <QTimer>
 #include <QToolButton>
 #include <QUrl>
 #include <algorithm>
-#include <cstring>
 #include <functional>
 
 namespace VNX {
 
 namespace {
-
-const char kHarkenProjectItemMime[]  = "application/x-harken-project-item";
-const char kHarkenProjectItemsMime[] = "application/x-harken-project-items";
 
 enum PackTreeColumn {
     kColName     = 0,
@@ -84,9 +79,7 @@ enum PackTreeColumn {
 enum class NodeKind {
     None,
     Section,
-    Group,
-    Member,
-    UnassignedAction,
+    Action,
     SystemPack
 };
 
@@ -95,6 +88,7 @@ constexpr int kGroupNameRole = Qt::UserRole + 2;
 constexpr int kStableIdRole  = Qt::UserRole + 3;
 constexpr int kObjectIdRole  = Qt::UserRole + 4;
 constexpr int kPackPathRole  = Qt::UserRole + 5;
+constexpr int kLanguageRole = Qt::UserRole + 6;
 
 QString resultKey(const QString& platform, const QString& language,
                   const QString& unitKey)
@@ -107,8 +101,6 @@ QString unitKeyForResult(const QString& source, const QString& packName,
 {
     if (source == QLatin1String("Action"))
         return QStringLiteral("a:") + QString::number(objectID);
-    if (source == QLatin1String("Group"))
-        return QStringLiteral("g:") + packName;
     return packName;
 }
 
@@ -121,12 +113,12 @@ NodeKind nodeKind(const QTreeWidgetItem* item)
 QString treeItemStateKey(const QTreeWidgetItem* item)
 {
     switch (nodeKind(item)) {
-        case NodeKind::Group:
-            return QStringLiteral("g:") + item->data(0, kGroupNameRole).toString();
-        case NodeKind::Member:
-        case NodeKind::UnassignedAction:
+        case NodeKind::Section:
+            return QStringLiteral("section:") + item->data(0, kGroupNameRole).toString();
+        case NodeKind::Action:
             return QStringLiteral("s:")
-                + objectIdString(item->data(0, kStableIdRole).value<harkenstudio::ObjectId>());
+                + objectIdString(item->data(0, kStableIdRole).value<harkenstudio::ObjectId>())
+                + QLatin1Char('|') + item->data(0, kLanguageRole).toString();
         default:
             break;
     }
@@ -138,108 +130,18 @@ class PackTreeDelegate : public TableItemDelegate
 public:
     using TableItemDelegate::TableItemDelegate;
 
-    static constexpr int kSwitchWidth   = SwitchIndicator::Width;
-    static constexpr int kSwitchHeight  = SwitchIndicator::Height;
-    static constexpr int kSwitchTextGap = 6;
-
-    static int switchLeft()
+    QRect checkBoxRect(const QStyleOptionViewItem& option, const QModelIndex& index) const
     {
-        return ThemeManager::instance().metrics().table.cellPaddingX;
-    }
-
-    static int textIndent()
-    {
-        return switchLeft() + kSwitchWidth + kSwitchTextGap;
-    }
-
-    static QRect switchRect(const QRect& cell)
-    {
-        return QRect(cell.left() + switchLeft(),
-                     cell.top() + (cell.height() - kSwitchHeight) / 2,
-                     kSwitchWidth, kSwitchHeight);
-    }
-
-    QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem& option,
-                          const QModelIndex& index) const override
-    {
-        if (index.column() != kColName)
-            return nullptr;
-        QWidget* editor = TableItemDelegate::createEditor(parent, option, index);
-        if (editor)
-            editor->setObjectName(QStringLiteral("packManagerNameEditor"));
-        return editor;
-    }
-
-    void updateEditorGeometry(QWidget* editor, const QStyleOptionViewItem& option,
-                              const QModelIndex& index) const override
-    {
-        TableItemDelegate::updateEditorGeometry(editor, option, index);
-        if (!index.data(Qt::CheckStateRole).isValid())
-            return;
-        QRect geom = editor->geometry();
-        const int textLeft = switchRect(option.rect).right() + kSwitchTextGap;
-        if (geom.left() < textLeft) {
-            geom.setLeft(textLeft);
-            editor->setGeometry(geom);
-        }
-    }
-
-    void paintContents(QPainter* painter, const QStyleOptionViewItem& option,
-               const QModelIndex& index) const override
-    {
-        QStyleOptionViewItem opt = option;
-        initStyleOption(&opt, index);
-        const QWidget* widget = option.widget;
-        QStyle* style = widget ? widget->style() : QApplication::style();
-
-        if (!(opt.features & QStyleOptionViewItem::HasCheckIndicator)) {
-            style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, widget);
-            drawExpandArrow(painter, option, index);
-            return;
-        }
-
-        opt.features &= ~QStyleOptionViewItem::HasCheckIndicator;
-
-        QStyleOptionViewItem bgOpt = opt;
-        bgOpt.text.clear();
-        style->drawControl(QStyle::CE_ItemViewItem, &bgOpt, painter, widget);
-
-        const QRect sw = switchRect(opt.rect);
-        SwitchIndicator::draw(painter, sw, opt.checkState,
-                              opt.state.testFlag(QStyle::State_MouseOver));
-
-        QStyleOptionViewItem textOpt = opt;
-        textOpt.rect.setLeft(sw.right() + kSwitchTextGap);
-        textOpt.state &= ~QStyle::State_HasFocus;
-        style->drawControl(QStyle::CE_ItemViewItem, &textOpt, painter, widget);
-        drawExpandArrow(painter, option, index);
+        QStyleOptionViewItem styled = option;
+        initStyleOption(&styled, index);
+        return option.widget->style()->subElementRect(QStyle::SE_ItemViewItemCheckIndicator,
+            &styled, option.widget);
     }
 
     bool editorEvent(QEvent* event, QAbstractItemModel* model,
                      const QStyleOptionViewItem& option,
                      const QModelIndex& index) override
     {
-        switch (event->type()) {
-        case QEvent::MouseButtonPress:
-        case QEvent::MouseButtonRelease:
-        case QEvent::MouseButtonDblClick: {
-            const auto* me = static_cast<QMouseEvent*>(event);
-            const QRect arrow = expandArrowRect(option, index);
-            if (me->button() == Qt::LeftButton && arrow.isValid()
-                && arrow.contains(me->pos())) {
-                if (event->type() == QEvent::MouseButtonRelease) {
-                    if (auto* view = qobject_cast<QTreeView*>(
-                            const_cast<QWidget*>(option.widget)))
-                        view->setExpanded(index, !view->isExpanded(index));
-                }
-                return true;
-            }
-            break;
-        }
-        default:
-            break;
-        }
-
         const QVariant value = index.data(Qt::CheckStateRole);
         const Qt::ItemFlags flags = model->flags(index);
         const bool checkable = value.isValid()
@@ -258,55 +160,6 @@ public:
         }
     }
 
-private:
-    static constexpr int kArrowTextGap = 4;
-
-    QRect expandArrowRect(const QStyleOptionViewItem& option,
-                          const QModelIndex& index) const
-    {
-        if (index.column() != kColName || !index.model()->hasChildren(index))
-            return QRect();
-
-        QStyleOptionViewItem opt = option;
-        initStyleOption(&opt, index);
-        if (opt.features & QStyleOptionViewItem::HasCheckIndicator) {
-            opt.features &= ~QStyleOptionViewItem::HasCheckIndicator;
-            opt.rect.setLeft(switchRect(option.rect).right() + kSwitchTextGap);
-        }
-        const QWidget* widget = option.widget;
-        QStyle* style = widget ? widget->style() : QApplication::style();
-        const QRect textRect =
-            style->subElementRect(QStyle::SE_ItemViewItemText, &opt, widget);
-        const int textMargin =
-            style->pixelMetric(QStyle::PM_FocusFrameHMargin, nullptr, widget) + 1;
-        const int chevronExtent = ThemeManager::instance().metrics().navigationChevronExtent;
-        const int x = qMin(
-            textRect.left() + textMargin
-                + opt.fontMetrics.horizontalAdvance(opt.text) + kArrowTextGap,
-            option.rect.right() - chevronExtent);
-        return QRect(x,
-                     option.rect.top() + (option.rect.height() - chevronExtent) / 2,
-                     chevronExtent, chevronExtent);
-    }
-
-    void drawExpandArrow(QPainter* p, const QStyleOptionViewItem& option,
-                         const QModelIndex& index) const
-    {
-        const QRect box = expandArrowRect(option, index);
-        if (!box.isValid())
-            return;
-        const auto* view = qobject_cast<const QTreeView*>(option.widget);
-        const bool open = view && view->isExpanded(index);
-        const ThemeColors& c = ThemeManager::instance().colors();
-
-        const QColor tint = option.state.testFlag(QStyle::State_MouseOver)
-            ? c.textSecondary : c.textMuted;
-        ThemeManager::instance().resolveIcon(
-            QString::fromLatin1(open ? ThemeAssetIds::NavigationChevronDown
-                                    : ThemeAssetIds::NavigationChevronRight),
-            ThemeAssetVariant{QSize(), 1.0, 0, tint}).icon.paint(p, box);
-    }
-
 };
 
 class PackManagerTree : public ProportionalTreeWidget
@@ -315,44 +168,24 @@ public:
     using ProportionalTreeWidget::ProportionalTreeWidget;
 
 protected:
-    QStringList mimeTypes() const override
-    {
-        return {QLatin1String(kHarkenProjectItemsMime)};
-    }
-
-    QMimeData* mimeData(const QList<QTreeWidgetItem*>& items) const override
-    {
-        QByteArray payload;
-        for (const QTreeWidgetItem* it : items) {
-            const uint32_t objectID = it ? it->data(0, kObjectIdRole).toUInt() : 0u;
-            if (objectID != 0)
-                payload.append(reinterpret_cast<const char*>(&objectID), sizeof(uint32_t));
-        }
-        if (payload.isEmpty())
-            return nullptr;
-        auto* mime = new QMimeData();
-        mime->setData(QLatin1String(kHarkenProjectItemsMime), payload);
-        return mime;
-    }
-
     void mousePressEvent(QMouseEvent* event) override
     {
-        if (beginSwitchDrag(event))
+        if (beginCheckDrag(event))
             return;
         ProportionalTreeWidget::mousePressEvent(event);
     }
 
     void mouseDoubleClickEvent(QMouseEvent* event) override
     {
-        if (beginSwitchDrag(event))
+        if (beginCheckDrag(event))
             return;
         ProportionalTreeWidget::mouseDoubleClickEvent(event);
     }
 
     void mouseMoveEvent(QMouseEvent* event) override
     {
-        if (switchDragActive_) {
-            sweepSwitchDrag(event->pos().y());
+        if (checkDragActive_) {
+            sweepCheckDrag(event->pos().y());
             event->accept();
             return;
         }
@@ -361,8 +194,8 @@ protected:
 
     void mouseReleaseEvent(QMouseEvent* event) override
     {
-        if (switchDragActive_ && event->button() == Qt::LeftButton) {
-            switchDragActive_ = false;
+        if (checkDragActive_ && event->button() == Qt::LeftButton) {
+            checkDragActive_ = false;
             event->accept();
             return;
         }
@@ -370,57 +203,61 @@ protected:
     }
 
 private:
-    QTreeWidgetItem* switchableItemAt(const QPoint& pos) const
+    QTreeWidgetItem* checkableItemAt(const QPoint& pos) const
     {
         QTreeWidgetItem* item = itemAt(pos);
-        if (!item || !item->data(kColName, Qt::CheckStateRole).isValid())
+        if (!item || item->data(0, TableGroupRole).toBool()
+            || !item->data(kColName, Qt::CheckStateRole).isValid())
             return nullptr;
         const Qt::ItemFlags flags = item->flags();
         return flags.testFlag(Qt::ItemIsUserCheckable)
                 && flags.testFlag(Qt::ItemIsEnabled) ? item : nullptr;
     }
 
-    bool beginSwitchDrag(QMouseEvent* event)
+    bool beginCheckDrag(QMouseEvent* event)
     {
         if (event->button() != Qt::LeftButton)
             return false;
         const QPoint pos = event->pos();
-        QTreeWidgetItem* item = switchableItemAt(pos);
+        QTreeWidgetItem* item = checkableItemAt(pos);
         if (!item)
             return false;
-        const QRect cell = visualRect(indexFromItem(item, kColName));
-        if (!PackTreeDelegate::switchRect(cell).contains(pos))
+        const auto index = indexFromItem(item, kColName);
+        QStyleOptionViewItem option;
+        initViewItemOption(&option);
+        option.rect = visualRect(index);
+        const auto* delegate = static_cast<const PackTreeDelegate*>(itemDelegateForIndex(index));
+        if (!delegate->checkBoxRect(option, index).contains(pos))
             return false;
-        switchDragActive_ = true;
-        switchDragState_ = item->checkState(kColName) == Qt::Checked
+        checkDragActive_ = true;
+        checkDragState_ = item->checkState(kColName) == Qt::Checked
             ? Qt::Unchecked : Qt::Checked;
-        switchDragY_ = pos.y();
-        item->setCheckState(kColName, switchDragState_);
+        checkDragY_ = pos.y();
+        item->setCheckState(kColName, checkDragState_);
         event->accept();
         return true;
     }
 
-    void sweepSwitchDrag(int targetY)
+    void sweepCheckDrag(int targetY)
     {
         const int x = header()->sectionViewportPosition(kColName)
-            + PackTreeDelegate::switchLeft()
-            + PackTreeDelegate::kSwitchWidth / 2;
+            + header()->sectionSize(kColName) / 2;
         const int step = qMax(1, sizeHintForRow(0) / 2);
-        int y = switchDragY_;
+        int y = checkDragY_;
         for (;;) {
-            if (QTreeWidgetItem* item = switchableItemAt(QPoint(x, y)))
-                if (item->checkState(kColName) != switchDragState_)
-                    item->setCheckState(kColName, switchDragState_);
+            if (QTreeWidgetItem* item = checkableItemAt(QPoint(x, y)))
+                if (item->checkState(kColName) != checkDragState_)
+                    item->setCheckState(kColName, checkDragState_);
             if (y == targetY)
                 break;
             y = y < targetY ? qMin(y + step, targetY) : qMax(y - step, targetY);
         }
-        switchDragY_ = targetY;
+        checkDragY_ = targetY;
     }
 
-    bool switchDragActive_ = false;
-    Qt::CheckState switchDragState_ = Qt::Unchecked;
-    int switchDragY_ = 0;
+    bool checkDragActive_ = false;
+    Qt::CheckState checkDragState_ = Qt::Unchecked;
+    int checkDragY_ = 0;
 };
 
 class PanelChildDialog : public BaseDialog
@@ -431,38 +268,17 @@ public:
     using BaseDialog::buttonBox;
 };
 
-QHash<uint32_t, harkenstudio::ObjectId> buildObjectIdToStableId(const ProjectData& project)
-{
-    QHash<uint32_t, harkenstudio::ObjectId> map;
-    for (const auto& unit : ProjectPackExporter::CollectActionPackUnits(project))
-        if (unit.objectID != 0)
-            map.insert(unit.objectID, unit.stableId);
-    return map;
-}
-
-QSet<uint32_t> actionObjectIds(const ProjectData& project)
-{
-    QSet<uint32_t> out;
-    for (const auto& unit : ProjectPackExporter::CollectActionPackUnits(project))
-        if (unit.objectID != 0)
-            out.insert(unit.objectID);
-    return out;
-}
-
 }
 
 PackManagerPanel::PackManagerPanel(QWidget* parent)
     : QWidget(parent)
 {
     setObjectName("PackManagerPanel");
-    setAcceptDrops(true);
     setupUI();
 
     auto& pm = ProjectManager::instance();
     connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
             this, [this](const PlatformContext&) { populateProjectPackTable(); });
-    connect(&pm, &ProjectManager::packGroupsChanged, this,
-            [this]() { populateProjectPackTable(); });
     connect(&pm, &ProjectManager::actionPackTargetingChanged, this,
             [this]() { populateProjectPackTable(); });
     connect(&pm, &ProjectManager::projectLanguagesChanged, this,
@@ -564,20 +380,22 @@ void PackManagerPanel::setupUI()
         {tr("Name"), tr("Built"), tr("Size"), tr("Modified"),
          tr("Result"), tr("Duration"), tr("File"), tr("Version"), tr("CRC32")});
     packTree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    packTree_->setEditTriggers(QAbstractItemView::DoubleClicked
-                                   | QAbstractItemView::EditKeyPressed);
+    packTree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     packTree_->setItemDelegate(new PackTreeDelegate(packTree_));
-    packTree_->setIndentation(PackTreeDelegate::textIndent());
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, packTree_, [this] {
-        packTree_->setIndentation(PackTreeDelegate::textIndent());
-    });
-    packTree_->setDragEnabled(true);
-    packTree_->setDragDropMode(QAbstractItemView::DragOnly);
     packTree_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(packTree_, &QTreeWidget::customContextMenuRequested,
             this, &PackManagerPanel::onPackTreeContextMenu);
     connect(packTree_, &QTreeWidget::itemChanged,
             this, &PackManagerPanel::onPackItemChanged);
+    connect(packTree_, &ProportionalTreeWidget::groupCheckStateRequested, this,
+        [this](QTreeWidgetItem* group, Qt::CheckState state) {
+            QList<QTreeWidgetItem*> items;
+            for (int i = 0; i < group->childCount(); ++i) {
+                auto* item = group->child(i);
+                if (item->flags().testFlag(Qt::ItemIsUserCheckable)) items.append(item);
+            }
+            toggleUnitPlatforms(items, state == Qt::Checked);
+        });
     contentLayout->addWidget(table, 1);
     contentLayout->addWidget(createToolbar());
 
@@ -764,22 +582,8 @@ void PackManagerPanel::applyNameFilter()
         item->setHidden(!visible);
         return visible;
     };
-    const bool filtering = !needle.isEmpty();
-    QTreeWidgetItem* section = nullptr;
-    bool sectionHasVisibleRows = false;
-    for (int i = 0; i < packTree_->topLevelItemCount(); ++i) {
-        QTreeWidgetItem* item = packTree_->topLevelItem(i);
-        if (nodeKind(item) == NodeKind::Section) {
-            if (section)
-                section->setHidden(filtering && !sectionHasVisibleRows);
-            section = item;
-            sectionHasVisibleRows = false;
-            continue;
-        }
-        sectionHasVisibleRows = filterItem(item, false) || sectionHasVisibleRows;
-    }
-    if (section)
-        section->setHidden(filtering && !sectionHasVisibleRows);
+    for (int i = 0; i < packTree_->topLevelItemCount(); ++i)
+        filterItem(packTree_->topLevelItem(i), false);
 }
 
 void PackManagerPanel::commitSelectedPlatforms(const QStringList& platforms)
@@ -840,7 +644,7 @@ QString PackManagerPanel::platformOutputDirFor(const QString& platform) const
 
 void PackManagerPanel::populateProjectPackTable()
 {
-    if (!packTree_)
+    if (!packTree_ || packTreeUpdating_)
         return;
 
     QSet<QString> collapsedKeys;
@@ -849,7 +653,8 @@ void PackManagerPanel::populateProjectPackTable()
         const QString key = treeItemStateKey(*it);
         if (key.isEmpty())
             continue;
-        if ((*it)->childCount() > 0 && !(*it)->isExpanded())
+        if (((*it)->childCount() > 0 || (*it)->data(0, TableGroupCollapsibleRole).toBool())
+            && !(*it)->isExpanded())
             collapsedKeys.insert(key);
         if ((*it)->isSelected())
             selectedKeys.insert(key);
@@ -857,7 +662,6 @@ void PackManagerPanel::populateProjectPackTable()
 
     packTreeUpdating_ = true;
     packTree_->clear();
-    dropHoverItem_ = nullptr;
 
     auto& pm = ProjectManager::instance();
     auto* project = pm.currentProject();
@@ -881,26 +685,14 @@ void PackManagerPanel::populateProjectPackTable()
     QHash<QString, QString> outputDirs;
     for (const QString& platform : viewPlatforms)
         outputDirs.insert(platform, platformOutputDirFor(platform));
-    const QString dash = tr("—");
 
     const std::vector<ProjectPackExporter::ActionPackUnit> units =
         ProjectPackExporter::CollectActionPackUnits(*project);
-    QHash<harkenstudio::ObjectId, QString> nameByStableId;
-    QHash<harkenstudio::ObjectId, uint32_t> objectIdByStableId;
-    QSet<harkenstudio::ObjectId> packableActionIds;
-    for (const auto& unit : units) {
-        nameByStableId.insert(unit.stableId, unit.name);
-        objectIdByStableId.insert(unit.stableId, unit.objectID);
-        const auto* item = pm.findItemByObjectID(unit.objectID);
-        const auto* action = item ? item->comp<VAction>() : nullptr;
-        if (action && !action->steps.empty())
-            packableActionIds.insert(unit.stableId);
-    }
-    const auto buildPlan = PackBuildPlanning::build(*project);
-    QHash<QString, QStringList> languagesByUnit;
-    for (const auto& unit : buildPlan.units)
-        if (!languagesByUnit[unit.artifactKey].contains(unit.variant.language))
-            languagesByUnit[unit.artifactKey].append(unit.variant.language);
+    const auto buildPlan = PackBuildPlanning::build(*project, viewPlatforms, {}, true);
+    QHash<harkenstudio::ObjectId, QStringList> languagesByAction;
+    for (const auto& variant : buildPlan.variants)
+        if (!languagesByAction[variant.actionStableId].contains(variant.variant.language))
+            languagesByAction[variant.actionStableId].append(variant.variant.language);
 
     const bool devMode = AppSettings::instance().developerMode();
     QHash<QString, QHash<QString, QString>> publishedActionPaths;
@@ -922,8 +714,6 @@ void PackManagerPanel::populateProjectPackTable()
                         const QString& unitKey,
                         const std::vector<harkenstudio::ObjectId>& actionStableIds) -> DiskCell {
         DiskCell cell;
-        cell.version = dash;
-        cell.crc = dash;
 
         const auto it = lastResults_.constFind(
             resultKey(platform, language, unitKey));
@@ -944,22 +734,15 @@ void PackManagerPanel::populateProjectPackTable()
 
         if (!included) {
             cell.built = tr("No");
-            cell.size = dash;
-            cell.date = dash;
             return cell;
         }
         const QString dir = outputDirs.value(platform);
         if (dir.isEmpty()) {
-            cell.built = dash;
-            cell.size = dash;
-            cell.date = dash;
             return cell;
         }
         const QFileInfo fi(QDir(dir).filePath(relativeBase + ext));
         if (!fi.exists()) {
             cell.built = tr("No");
-            cell.size = dash;
-            cell.date = dash;
             return cell;
         }
         if (!actionStableIds.empty()) {
@@ -994,8 +777,6 @@ void PackManagerPanel::populateProjectPackTable()
                         return paths->value(objectIdString(actionStableId)) != relativeBase + ext;
                     })) {
                 cell.built = tr("No");
-                cell.size = dash;
-                cell.date = dash;
                 cell.result = tr("Pack membership changed");
                 cell.failed = true;
                 cell.resultTip = tr("The published manifest does not match the Actions assigned to this pack.");
@@ -1022,170 +803,51 @@ void PackManagerPanel::populateProjectPackTable()
         return cell;
     };
 
-    auto applyDisk = [&](QTreeWidgetItem* item,
-                         const std::function<QString(const QString&, const QString&)>& baseName,
-                         const QStringList& languages, const QString& unitKey,
-                         const std::function<bool(const QString&)>& included,
-                         const QString& nameError = QString(),
-                         const std::vector<harkenstudio::ObjectId>& actionStableIds = {}) {
-        if (nameError.isEmpty() && languages.isEmpty()
-            && std::none_of(viewPlatforms.begin(), viewPlatforms.end(), included)) {
-            item->setText(kColBuilt, viewPlatforms.isEmpty() ? dash : tr("No"));
-            for (int column : {kColSize, kColDate, kColFile, kColVersion, kColCrc})
-                item->setText(column, dash);
-            return;
-        }
-        if (!nameError.isEmpty() || languages.isEmpty()) {
-            const QString reason = nameError.isEmpty()
-                ? tr("Configure a target language or turn off Language for the referenced Sounds.")
-                : nameError;
+    auto applyDisk = [&](QTreeWidgetItem* item, const QString& language,
+                         const QString& name, const QString& unitKey, bool included,
+                         const std::vector<harkenstudio::ObjectId>& actionIds = {}) {
+        const QString nameError = PackBuildPlanning::packNameError(name);
+        if (!actionIds.empty() && !nameError.isEmpty()) {
             item->setText(kColBuilt, tr("No"));
-            item->setText(kColResult, nameError.isEmpty()
-                ? tr("No target languages") : tr("Invalid pack name"));
+            item->setText(kColResult, tr("Invalid pack name"));
             item->setData(kColResult, TableTextRole, static_cast<int>(TableTextState::Error));
-            item->setToolTip(kColResult, reason);
-            item->setToolTip(kColBuilt, reason);
-            for (int column : {kColSize, kColDate, kColFile, kColVersion, kColCrc})
-                item->setText(column, dash);
+            item->setToolTip(kColResult, nameError);
             return;
         }
-        const int variantCount = viewPlatforms.size() * languages.size();
-        if (devMode) {
-            if (variantCount == 1) {
-                item->setText(kColFile,
-                    baseName(viewPlatforms.front(), languages.front()) + ext);
-            } else {
-                item->setText(kColFile, dash);
-                QStringList files;
-                for (const QString& platform : viewPlatforms)
-                    for (const QString& language : languages)
-                        files << QStringLiteral("%1 / %2: %3")
-                            .arg(platformName(platform), language,
-                                 baseName(platform, language) + ext);
-                item->setToolTip(kColFile, files.join(QLatin1Char('\n')));
-            }
-        }
-        if (viewPlatforms.isEmpty()) {
-            item->setText(kColBuilt, dash);
-            item->setText(kColSize, dash);
-            item->setText(kColDate, dash);
-            if (devMode) {
-                item->setText(kColVersion, dash);
-                item->setText(kColCrc, dash);
-            }
-            return;
-        }
-        QList<DiskCell> cells;
-        QStringList variantLabels;
-        for (const QString& platform : viewPlatforms) {
-            for (const QString& language : languages) {
-                cells << diskCell(platform, language, baseName(platform, language),
-                                  included(platform), unitKey, actionStableIds);
-                variantLabels << (language.isEmpty()
-                    ? platformName(platform) : QStringLiteral("%1 / %2").arg(platformName(platform), language));
-            }
-        }
-
-        auto merge = [&](int column, QString DiskCell::* field) {
-            bool same = true;
-            for (const DiskCell& cell : cells)
-                if (cell.*field != cells.first().*field) {
-                    same = false;
-                    break;
-                }
-            if (same) {
-                item->setText(column, cells.first().*field);
-                item->setToolTip(column, QString());
-                return;
-            }
-            item->setText(column, dash);
-            QStringList lines;
-            for (int i = 0; i < cells.size(); ++i)
-                lines << QStringLiteral("%1: %2")
-                    .arg(variantLabels.at(i), cells.at(i).*field);
-            item->setToolTip(column, lines.join(QLatin1Char('\n')));
-        };
-        merge(kColBuilt, &DiskCell::built);
-        merge(kColSize, &DiskCell::size);
-        merge(kColDate, &DiskCell::date);
-        merge(kColResult, &DiskCell::result);
-        merge(kColDuration, &DiskCell::duration);
-        if (devMode) {
-            merge(kColVersion, &DiskCell::version);
-            merge(kColCrc, &DiskCell::crc);
-        }
-
-        bool sameResult = true;
-        for (const DiskCell& cell : cells)
-            if (cell.result != cells.first().result) {
-                sameResult = false;
-                break;
-            }
-        if (sameResult && !cells.first().result.isEmpty())
-            item->setData(kColResult, TableTextRole,
-                static_cast<int>(cells.first().failed ? TableTextState::Error : TableTextState::Success));
-        else
-            item->setData(kColResult, TableTextRole, static_cast<int>(TableTextState::Normal));
-
-        QStringList resultTip;
-        if (cells.size() > 1) {
-            for (int i = 0; i < cells.size(); ++i) {
-                const DiskCell& cell = cells.at(i);
-                if (cell.result.isEmpty() && cell.resultTip.isEmpty())
-                    continue;
-                QString line = QStringLiteral("%1: %2").arg(variantLabels.at(i),
-                    cell.result.isEmpty() ? tr("not exported") : cell.result);
-                if (!cell.resultTip.isEmpty())
-                    line += QStringLiteral(" — ") + cell.resultTip;
-                resultTip << line;
-            }
-        } else if (!cells.first().resultTip.isEmpty()) {
-            resultTip << cells.first().resultTip;
-        }
-        item->setToolTip(kColResult, resultTip.join(QLatin1Char('\n')));
-
-        QStringList builtTip;
-        QString packPath;
-        for (int i = 0; i < cells.size(); ++i) {
-            const DiskCell& cell = cells.at(i);
-            builtTip << QStringLiteral("%1: %2").arg(variantLabels.at(i),
-                cell.path.isEmpty() ? tr("not built")
-                                    : QDir::toNativeSeparators(cell.path));
-            if (packPath.isEmpty())
-                packPath = cell.path;
-        }
-        item->setToolTip(kColBuilt, builtTip.join(QLatin1Char('\n')));
-        item->setData(0, kPackPathRole, packPath);
+        if (viewPlatforms.isEmpty()) return;
+        const QString relativeBase = PackBuildPlanning::packFileName(language, name, {});
+        if (devMode) item->setText(kColFile, relativeBase + ext);
+        const DiskCell cell = diskCell(viewPlatforms.front(), language, relativeBase, included, unitKey, actionIds);
+        item->setText(kColBuilt, cell.built);
+        item->setText(kColSize, cell.size);
+        item->setText(kColDate, cell.date);
+        item->setText(kColResult, cell.result);
+        item->setText(kColDuration, cell.duration);
+        item->setText(kColVersion, cell.version);
+        item->setText(kColCrc, cell.crc);
+        item->setData(kColResult, TableTextRole, static_cast<int>(cell.result.isEmpty()
+            ? TableTextState::Normal : cell.failed ? TableTextState::Error : TableTextState::Success));
+        item->setToolTip(kColResult, cell.resultTip);
+        item->setToolTip(kColBuilt, cell.path.isEmpty() ? tr("Not built") : QDir::toNativeSeparators(cell.path));
+        item->setData(0, kPackPathRole, cell.path);
     };
 
-    auto* systemSection = packTree_->createGroup(tr("System"));
-    systemSection->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Section));
+    auto* init = new QTreeWidgetItem(packTree_);
+    init->setText(kColName, tr("Init"));
+    init->setData(0, kNodeKindRole, static_cast<int>(NodeKind::SystemPack));
+    init->setFlags(Qt::ItemIsEnabled);
+    init->setToolTip(kColName, tr("Buses, sends and attenuations. Rebuilt on every export."));
+    applyDisk(init, {}, QStringLiteral("Init"), QStringLiteral("Init"), true);
 
-    auto addSystemPack = [&](const QString& label, const QString& baseName,
-                             const QString& tooltip) {
-        auto* item = new QTreeWidgetItem(packTree_);
-        item->setText(kColName, label);
-        item->setData(0, kNodeKindRole, static_cast<int>(NodeKind::SystemPack));
-        item->setFlags(Qt::ItemIsEnabled);
-        item->setToolTip(kColName, tooltip);
-        const QString language;
-        applyDisk(item,
-            [baseName](const QString&, const QString&) { return baseName; },
-            {language}, baseName, [](const QString&) { return true; });
-    };
-    addSystemPack(tr("Init"), QStringLiteral("Init"),
-        tr("Buses, sends and attenuations. Rebuilt on every export."));
-
-    auto* contentSection = packTree_->createGroup(tr("Content"));
-    contentSection->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Section));
-
-    const std::vector<ActionPackTargeting> targeting = pm.getActionPackTargeting();
-    auto actionIncludes = [&targeting](harkenstudio::ObjectId stableId, const QString& platform) {
-        for (const ActionPackTargeting& entry : targeting)
-            if (entry.stableId == stableId)
-                return entry.includesPlatform(platform);
-        return true;
-    };
+    QHash<QString, QTreeWidgetItem*> sections;
+    QStringList sectionLanguages = ProjectLanguageSemantics::buildLanguages(*project);
+    sectionLanguages.prepend(QString());
+    for (const auto& language : sectionLanguages) {
+        auto* section = packTree_->createGroup(language.isEmpty() ? tr("General") : language, {true, true});
+        section->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Section));
+        section->setData(0, kGroupNameRole, language);
+        sections.insert(language, section);
+    }
 
     auto editCheckState = [&editPlatforms](
             const std::function<bool(const QString&)>& included) {
@@ -1209,121 +871,60 @@ void PackManagerPanel::populateProjectPackTable()
             .arg(inc.join(QStringLiteral(", ")), exc.join(QStringLiteral(", ")));
     };
 
-    const std::vector<PackGroup> groups = pm.getPackGroups();
-
-    QSet<harkenstudio::ObjectId> groupedIds;
-    for (const PackGroup& g : groups)
-        for (harkenstudio::ObjectId id : g.actionIds)
-            groupedIds.insert(id);
-
     const bool matrixEditable = !editPlatforms.isEmpty();
-
-    for (const PackGroup& g : groups) {
-        std::vector<harkenstudio::ObjectId> members;
-        for (harkenstudio::ObjectId memberId : g.actionIds)
-            if (packableActionIds.contains(memberId))
-                members.push_back(memberId);
-        const bool exportable = !members.empty();
-
-        auto* groupItem = new QTreeWidgetItem(packTree_);
-        groupItem->setText(kColName, g.name);
-        groupItem->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Group));
-        groupItem->setData(0, kGroupNameRole, g.name);
-        Qt::ItemFlags groupFlags =
-            Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsEditable;
-        if (exportable && matrixEditable)
-            groupFlags |= Qt::ItemIsUserCheckable;
-        groupItem->setFlags(groupFlags);
-        const auto groupIncludes = [&g](const QString& platform) {
-            return g.includesPlatform(platform);
-        };
-        const Qt::CheckState checkState = matrixEditable
-            ? editCheckState(groupIncludes) : Qt::Unchecked;
-        const bool excluded = exportable && !viewPlatforms.isEmpty()
-            && !groupIncludes(viewPlatforms.front());
-        if (exportable && matrixEditable) {
-            groupItem->setCheckState(kColName, checkState);
-            if (checkState == Qt::PartiallyChecked)
-                groupItem->setToolTip(kColName, partialTooltip(groupIncludes));
-        }
-        applyDisk(groupItem,
-            [&g](const QString&, const QString& language) {
-                return PackBuildPlanning::packFileName(language, g.name, {});
-            }, languagesByUnit.value(QStringLiteral("group_") + g.name),
-            QStringLiteral("g:") + g.name,
-            [&g, exportable](const QString& platform) {
-                return exportable && g.includesPlatform(platform);
-            }, PackBuildPlanning::packNameError(g.name, true), members);
-        groupItem->setExpanded(true);
-        if (excluded)
-            for (int c = 0; c < kPackTreeColumnCount; ++c)
-                groupItem->setData(c, TableTextRole, static_cast<int>(TableTextState::Disabled));
-
-        if (!exportable) {
-            groupItem->setData(kColName, TableTextRole, static_cast<int>(TableTextState::Muted));
-            groupItem->setToolTip(kColName,
-                tr("No Actions with steps — nothing to export"));
-        }
-
-        for (harkenstudio::ObjectId memberId : g.actionIds) {
-            auto* memberItem = new QTreeWidgetItem(groupItem);
-            memberItem->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Member));
-            memberItem->setData(0, kGroupNameRole, g.name);
-            memberItem->setData(0, kStableIdRole, QVariant::fromValue(memberId));
-            auto nameIt = nameByStableId.find(memberId);
-            if (nameIt != nameByStableId.end()) {
-                memberItem->setText(kColName, nameIt.value());
-                memberItem->setData(0, kObjectIdRole, objectIdByStableId.value(memberId, 0u));
-                memberItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable
-                                     | Qt::ItemIsDragEnabled);
-                memberItem->setToolTip(kColName, packableActionIds.contains(memberId)
-                    ? tr("Included in pack '%1'").arg(g.name)
-                    : tr("Action has no steps; not included in the pack"));
-                for (int column = kColBuilt; column < kPackTreeColumnCount; ++column)
-                    memberItem->setText(column, dash);
-                if (excluded)
-                    memberItem->setData(kColName, TableTextRole, static_cast<int>(TableTextState::Disabled));
-            } else {
-                memberItem->setText(kColName, tr("missing action (id %1)").arg(objectIdString(memberId)));
-                memberItem->setData(kColName, TableTextRole, static_cast<int>(TableTextState::Error));
-                memberItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    for (const auto& unit : units) {
+        QStringList languages = languagesByAction.value(unit.stableId);
+        const bool missingLanguages = languages.isEmpty();
+        if (missingLanguages) languages.append(QString());
+        for (const auto& language : languages) {
+            auto* item = new QTreeWidgetItem(sections.value(language));
+            item->setText(kColName, unit.name);
+            item->setData(0, kNodeKindRole, static_cast<int>(NodeKind::Action));
+            item->setData(0, kStableIdRole, QVariant::fromValue(unit.stableId));
+            item->setData(0, kObjectIdRole, unit.objectID);
+            item->setData(0, kLanguageRole, language);
+            Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+            if (matrixEditable) flags |= Qt::ItemIsUserCheckable;
+            item->setFlags(flags);
+            const auto included = [&](const QString& platform) {
+                return project->includesActionPack(unit.stableId, platform, language);
+            };
+            if (matrixEditable) {
+                const auto state = editCheckState(included);
+                item->setCheckState(kColName, state);
+                if (state == Qt::PartiallyChecked) item->setToolTip(kColName, partialTooltip(included));
             }
+            const bool excluded = !viewPlatforms.isEmpty() && !included(viewPlatforms.front());
+            if (missingLanguages) {
+                item->setText(kColBuilt, tr("No"));
+                item->setText(kColResult, tr("No target languages"));
+                item->setData(kColResult, TableTextRole, static_cast<int>(TableTextState::Error));
+                item->setToolTip(kColResult, tr("Configure a target language or turn off Language for the referenced Sounds."));
+            } else {
+                applyDisk(item, language, unit.name, QStringLiteral("a:") + QString::number(unit.objectID),
+                    !excluded, {unit.stableId});
+            }
+            if (excluded)
+                for (int c = 0; c < kPackTreeColumnCount; ++c)
+                    item->setData(c, TableTextRole, static_cast<int>(TableTextState::Disabled));
         }
     }
 
-    for (const auto& unit : units) {
-        if (groupedIds.contains(unit.stableId))
-            continue;
-        auto* item = new QTreeWidgetItem(packTree_);
-        item->setText(kColName, unit.name);
-        item->setData(0, kNodeKindRole, static_cast<int>(NodeKind::UnassignedAction));
-        item->setData(0, kStableIdRole, QVariant::fromValue(unit.stableId));
-        item->setData(0, kObjectIdRole, unit.objectID);
-        Qt::ItemFlags itemFlags = Qt::ItemIsEnabled | Qt::ItemIsSelectable
-                                  | Qt::ItemIsDragEnabled;
-        if (matrixEditable)
-            itemFlags |= Qt::ItemIsUserCheckable;
-        item->setFlags(itemFlags);
-        const auto unitIncludes = [&actionIncludes, &unit](const QString& platform) {
-            return actionIncludes(unit.stableId, platform);
-        };
-        const Qt::CheckState checkState = matrixEditable
-            ? editCheckState(unitIncludes) : Qt::Unchecked;
-        const bool excluded = !viewPlatforms.isEmpty() && !unitIncludes(viewPlatforms.front());
-        if (matrixEditable) {
-            item->setCheckState(kColName, checkState);
-            if (checkState == Qt::PartiallyChecked)
-                item->setToolTip(kColName, partialTooltip(unitIncludes));
+    for (auto* section : sections) {
+        int checkableCount = 0;
+        int checkedCount = 0;
+        int uncheckedCount = 0;
+        for (int i = 0; i < section->childCount(); ++i) {
+            const auto* item = section->child(i);
+            if (!item->flags().testFlag(Qt::ItemIsUserCheckable)) continue;
+            ++checkableCount;
+            checkedCount += item->checkState(kColName) == Qt::Checked;
+            uncheckedCount += item->checkState(kColName) == Qt::Unchecked;
         }
-        applyDisk(item,
-            [&unit](const QString&, const QString& language) {
-                return PackBuildPlanning::packFileName(language, unit.name, {});
-            }, languagesByUnit.value(PackBuildPlanning::stableArtifactKey(unit.stableId)),
-            QStringLiteral("a:") + QString::number(unit.objectID), unitIncludes,
-            PackBuildPlanning::packNameError(unit.name), {unit.stableId});
-        if (excluded)
-            for (int c = 0; c < kPackTreeColumnCount; ++c)
-                item->setData(c, TableTextRole, static_cast<int>(TableTextState::Disabled));
+        packTree_->setGroupCheckState(section,
+            uncheckedCount == checkableCount ? Qt::Unchecked
+                : checkedCount == checkableCount ? Qt::Checked : Qt::PartiallyChecked,
+            checkableCount > 0);
     }
 
     for (QTreeWidgetItemIterator it(packTree_); *it; ++it) {
@@ -1365,123 +966,6 @@ QString PackManagerPanel::humanBytes(qint64 bytes)
     return neg ? (QLatin1Char('-') + out) : out;
 }
 
-QList<uint32_t> PackManagerPanel::objectIDsFromMime(const QMimeData* mime)
-{
-    QList<uint32_t> ids;
-    if (!mime) return ids;
-
-    QByteArray payload;
-    if (mime->hasFormat(QLatin1String(kHarkenProjectItemsMime)))
-        payload = mime->data(QLatin1String(kHarkenProjectItemsMime));
-    else if (mime->hasFormat(QLatin1String(kHarkenProjectItemMime)))
-        payload = mime->data(QLatin1String(kHarkenProjectItemMime));
-
-    const int n = payload.size() / static_cast<int>(sizeof(uint32_t));
-    ids.reserve(n);
-    for (int i = 0; i < n; ++i) {
-        uint32_t id = 0;
-        std::memcpy(&id, payload.constData() + i * sizeof(uint32_t), sizeof(uint32_t));
-        if (id != 0) ids.append(id);
-    }
-    return ids;
-}
-
-void PackManagerPanel::applyActionObjectsToGroup(const QList<uint32_t>& actionObjectIDs,
-                                                 const QString& groupName)
-{
-    auto* project = ProjectManager::instance().currentProject();
-    if (!project || groupName.isEmpty() || actionObjectIDs.isEmpty())
-        return;
-
-    const QHash<uint32_t, harkenstudio::ObjectId> idMap = buildObjectIdToStableId(*project);
-    QJsonArray ids;
-    for (uint32_t objectID : actionObjectIDs) {
-        auto it = idMap.constFind(objectID);
-        if (it != idMap.constEnd())
-            ids.append(objectIdString(it.value()));
-    }
-    if (ids.isEmpty())
-        return;
-
-    ActionManager::instance().execute(
-        QStringLiteral("add_actions_to_pack_group"),
-        QJsonObject{{QStringLiteral("groupName"), groupName},
-                    {QStringLiteral("actionIds"), ids}},
-        ActionSource::GUI);
-}
-
-void PackManagerPanel::detachActionObjects(const QList<uint32_t>& actionObjectIDs)
-{
-    auto* project = ProjectManager::instance().currentProject();
-    if (!project || actionObjectIDs.isEmpty())
-        return;
-
-    const QHash<uint32_t, harkenstudio::ObjectId> idMap = buildObjectIdToStableId(*project);
-    QHash<harkenstudio::ObjectId, QString> groupByStableId;
-    for (const PackGroup& g : project->packGroups)
-        for (harkenstudio::ObjectId id : g.actionIds)
-            groupByStableId.insert(id, g.name);
-
-    QList<QPair<QString, harkenstudio::ObjectId>> members;
-    for (uint32_t objectID : actionObjectIDs) {
-        auto it = idMap.constFind(objectID);
-        if (it == idMap.constEnd())
-            continue;
-        auto owner = groupByStableId.constFind(it.value());
-        if (owner != groupByStableId.constEnd())
-            members.append({owner.value(), it.value()});
-    }
-    removeMembersFromGroups(members);
-}
-
-void PackManagerPanel::removeMembersFromGroups(const QList<QPair<QString, harkenstudio::ObjectId>>& members)
-{
-    if (members.isEmpty())
-        return;
-
-    QHash<QString, QJsonArray> idsByGroup;
-    for (const auto& member : members)
-        idsByGroup[member.first].append(objectIdString(member.second));
-
-    QModelIndex removedIndex;
-    for (QTreeWidgetItemIterator it(packTree_); *it; ++it) {
-        const auto* item = *it;
-        if (nodeKind(item) != NodeKind::Member || item->isHidden()
-            || item->parent()->isHidden() || !item->parent()->isExpanded())
-            continue;
-        if (members.contains({item->data(0, kGroupNameRole).toString(),
-                              item->data(0, kStableIdRole).value<harkenstudio::ObjectId>()})) {
-            removedIndex = packTree_->indexFromItem(item);
-            break;
-        }
-    }
-
-    const auto remove = [&idsByGroup, &members] {
-        QUndoStack* stack = UndoRedoManager::instance().undoStack();
-        const bool macro = idsByGroup.size() > 1 && stack;
-        if (macro)
-            stack->beginMacro(tr("Remove %1 Action(s) from Pack Groups").arg(members.size()));
-
-        bool changed = false;
-        for (auto it = idsByGroup.constBegin(); it != idsByGroup.constEnd(); ++it) {
-            const auto result = ActionManager::instance().execute(
-                QStringLiteral("remove_actions_from_pack_group"),
-                QJsonObject{{QStringLiteral("groupName"), it.key()},
-                            {QStringLiteral("actionIds"), it.value()}},
-                ActionSource::GUI);
-            changed = changed || result.success;
-        }
-
-        if (macro)
-            stack->endMacro();
-        return changed;
-    };
-    if (removedIndex.isValid())
-        static_cast<TableWidget*>(packTree_->parentWidget())->removeSelectedRow(remove, removedIndex);
-    else
-        remove();
-}
-
 void PackManagerPanel::addGenerationResult(const PackGenerationResult& result)
 {
     PackGenerationRecordStore::instance().add(result);
@@ -1521,7 +1005,7 @@ void PackManagerPanel::onExportClicked()
     requestExport({});
 }
 
-void PackManagerPanel::requestExport(const QStringList& unitNames, bool includeUnchecked)
+void PackManagerPanel::requestExport(const QStringList& packPaths, bool includeUnchecked)
 {
     const auto* project = ProjectManager::instance().currentProject();
     if (!project)
@@ -1533,29 +1017,19 @@ void PackManagerPanel::requestExport(const QStringList& unitNames, bool includeU
             tr("Select at least one platform to export"), 2000, ToastType::Info);
         return;
     }
-    emit exportRequested(platforms, unitNames, includeUnchecked);
+    emit exportRequested(platforms, packPaths, includeUnchecked);
 }
 
-QStringList PackManagerPanel::selectedUnitNames() const
+QStringList PackManagerPanel::selectedPackPaths() const
 {
     QStringList out;
     if (!packTree_)
         return out;
     for (QTreeWidgetItem* sel : packTree_->selectedItems()) {
-        QString name;
-        switch (nodeKind(sel)) {
-            case NodeKind::Group:
-            case NodeKind::Member:
-                name = sel->data(0, kGroupNameRole).toString();
-                break;
-            case NodeKind::UnassignedAction:
-                name = sel->text(kColName);
-                break;
-            default:
-                break;
-        }
-        if (!name.isEmpty() && !out.contains(name))
-            out << name;
+        if (nodeKind(sel) != NodeKind::Action) continue;
+        const QString path = PackBuildPlanning::packFileName(
+            sel->data(0, kLanguageRole).toString(), sel->text(kColName), {});
+        if (!out.contains(path)) out.append(path);
     }
     return out;
 }
@@ -1569,23 +1043,15 @@ void PackManagerPanel::updateExportButton()
     const QStringList selectedPlatforms = effectiveSelectedPlatforms(project);
     bool partial = selectedPlatforms.size() != platforms.size();
     if (project && !partial) {
-        const auto actionIds = ProjectPackExporter::CollectActionStableIds(*project);
-        const auto excludesPlatforms = [&platforms](const auto& targeting) {
-            return std::any_of(platforms.cbegin(), platforms.cend(),
-                [&targeting](const QString& platform) {
-                    return !targeting.includesPlatform(platform);
-                });
-        };
-        partial = std::any_of(project->actionPackTargeting.cbegin(),
-                             project->actionPackTargeting.cend(),
-            [&](const ActionPackTargeting& targeting) {
-                return actionIds.count(targeting.stableId) != 0 && excludesPlatforms(targeting);
-            }) || std::any_of(project->packGroups.cbegin(), project->packGroups.cend(),
-            [&](const PackGroup& group) {
-                return excludesPlatforms(group)
-                    && std::any_of(group.actionIds.cbegin(), group.actionIds.cend(),
-                        [&actionIds](harkenstudio::ObjectId id) { return actionIds.count(id) != 0; });
+        for (QTreeWidgetItemIterator it(packTree_); *it && !partial; ++it) {
+            const auto* item = *it;
+            if (nodeKind(item) != NodeKind::Action) continue;
+            const auto id = item->data(0, kStableIdRole).value<harkenstudio::ObjectId>();
+            const auto language = item->data(0, kLanguageRole).toString();
+            partial = std::any_of(platforms.begin(), platforms.end(), [&](const auto& platform) {
+                return !project->includesActionPack(id, platform, language);
             });
+        }
     }
     exportBtn_->primaryButton()->setText(partial ? tr("Export Checked") : tr("Export All"));
     exportBtn_->setEnabled(project && !platforms.isEmpty());
@@ -1598,49 +1064,13 @@ void PackManagerPanel::onPackItemChanged(QTreeWidgetItem* item, int column)
     if (packTreeUpdating_ || !item || column != kColName)
         return;
 
-    const NodeKind kind = nodeKind(item);
-    if (kind != NodeKind::Group && kind != NodeKind::UnassignedAction)
-        return;
-
+    if (nodeKind(item) != NodeKind::Action) return;
     const QVariant checkData = item->data(kColName, Qt::CheckStateRole);
     if (checkData.isValid())
-        toggleUnitPlatform(item, checkData.toInt() == Qt::Checked);
-
-    if (kind != NodeKind::Group)
-        return;
-
-    const QString oldName = item->data(0, kGroupNameRole).toString();
-    const QString newName = item->text(kColName).trimmed();
-    if (newName == oldName) {
-        if (item->text(kColName) != oldName) {
-            packTreeUpdating_ = true;
-            item->setText(kColName, oldName);
-            packTreeUpdating_ = false;
-        }
-        return;
-    }
-    if (newName.isEmpty()) {
-        populateProjectPackTable();
-        return;
-    }
-
-    QTimer::singleShot(0, this, [this, oldName, newName]() {
-        const ActionResult result = ActionManager::instance().execute(
-            QStringLiteral("rename_pack_group"),
-            QJsonObject{{QStringLiteral("oldName"), oldName},
-                        {QStringLiteral("newName"), newName}},
-            ActionSource::GUI);
-        if (!result.success) {
-            ToastManager::instance().showToast(
-                result.errorMessage.isEmpty()
-                    ? tr("Could not rename pack group") : result.errorMessage,
-                3000, ToastType::Warning);
-            populateProjectPackTable();
-        }
-    });
+        toggleUnitPlatforms({item}, checkData.toInt() == Qt::Checked);
 }
 
-void PackManagerPanel::toggleUnitPlatform(QTreeWidgetItem* item, bool include)
+void PackManagerPanel::toggleUnitPlatforms(const QList<QTreeWidgetItem*>& items, bool include)
 {
     auto* project = ProjectManager::instance().currentProject();
     const auto& editPlatforms = PlatformContextService::instance().context().selected;
@@ -1648,78 +1078,54 @@ void PackManagerPanel::toggleUnitPlatform(QTreeWidgetItem* item, bool include)
         return;
 
     const QStringList allPlatforms = effectivePlatforms(project);
-    const NodeKind kind = nodeKind(item);
+    QList<QPair<QString, QJsonObject>> commands;
+    for (const auto* item : items) {
+        if (nodeKind(item) != NodeKind::Action) continue;
+        const auto stableId = item->data(0, kStableIdRole).value<harkenstudio::ObjectId>();
+        const QString language = item->data(0, kLanguageRole).toString();
+        QStringList current;
+        for (const auto& platform : allPlatforms)
+            if (project->includesActionPack(stableId, platform, language)) current.append(platform);
+        const QString actionId = QStringLiteral("set_action_pack_targeting");
+        QJsonObject payload{{QStringLiteral("stableId"), objectIdString(stableId)},
+                            {QStringLiteral("language"), language}};
 
-    QStringList current;
-    QString groupName;
-    harkenstudio::ObjectId stableId = {};
-    if (kind == NodeKind::Group) {
-        groupName = item->data(0, kGroupNameRole).toString();
-        const PackGroup* group = nullptr;
-        for (const PackGroup& g : project->packGroups)
-            if (g.name == groupName) { group = &g; break; }
-        if (!group)
-            return;
-        current = group->allPlatforms ? allPlatforms : group->platformIds;
-    } else if (kind == NodeKind::UnassignedAction) {
-        stableId = item->data(0, kStableIdRole).value<harkenstudio::ObjectId>();
-        current = allPlatforms;
-        for (const ActionPackTargeting& entry : project->actionPackTargeting) {
-            if (entry.stableId != stableId)
-                continue;
-            current = entry.allPlatforms ? allPlatforms : entry.platformIds;
-            break;
+        const QSet<QString> currentSet(current.cbegin(), current.cend());
+        QSet<QString> next = currentSet;
+        for (const auto& platform : editPlatforms) {
+            const QString id = ProjectPlatformSemantics::idString(platform);
+            if (include) next.insert(id);
+            else next.remove(id);
         }
-    } else {
-        return;
+        if (next == currentSet) continue;
+        QJsonArray platforms;
+        for (const QString& platform : allPlatforms)
+            if (next.contains(platform)) platforms.append(platform);
+        const bool all = platforms.size() == allPlatforms.size();
+        payload.insert(QStringLiteral("allPlatforms"), all);
+        payload.insert(QStringLiteral("platform_ids"), all ? QJsonArray() : platforms);
+        commands.append({actionId, payload});
     }
+    if (commands.isEmpty()) return;
 
-    const QSet<QString> currentSet(current.cbegin(), current.cend());
-    QSet<QString> next = currentSet;
-    for (const auto& platform : editPlatforms) {
-        const QString id = ProjectPlatformSemantics::idString(platform);
-        if (include)
-            next.insert(id);
-        else
-            next.remove(id);
-    }
-    if (next == currentSet)
-        return;
-    QJsonArray platformArr;
-    int count = 0;
-    for (const QString& p : allPlatforms) {
-        if (!next.contains(p))
-            continue;
-        platformArr.append(p);
-        ++count;
-    }
-    const bool nextAll = count == allPlatforms.size();
-    if (nextAll)
-        platformArr = QJsonArray();
-
-    QTimer::singleShot(0, this, [this, kind, groupName, stableId,
-                                 nextAll, platformArr]() {
-        QJsonObject payload{{QStringLiteral("allPlatforms"), nextAll},
-                            {QStringLiteral("platform_ids"), platformArr}};
-        QString actionId;
-        if (kind == NodeKind::Group) {
-            actionId = QStringLiteral("set_pack_group_platforms");
-            payload.insert(QStringLiteral("groupName"), groupName);
-        } else {
-            actionId = QStringLiteral("set_action_pack_targeting");
-            payload.insert(QStringLiteral("stableId"),
-                           objectIdString(stableId));
+    QTimer::singleShot(0, this, [this, commands] {
+        {
+            const QScopedValueRollback guard(packTreeUpdating_, true);
+            auto* stack = UndoRedoManager::instance().undoStack();
+            const bool macro = stack && commands.size() > 1;
+            if (macro) stack->beginMacro(tr("Set Pack Targeting"));
+            for (const auto& command : commands) {
+                const auto result = ActionManager::instance().execute(command.first, command.second, ActionSource::GUI);
+                if (!result.success) {
+                    ToastManager::instance().showToast(result.errorMessage.isEmpty()
+                        ? tr("Could not update pack platform targeting") : result.errorMessage,
+                        3000, ToastType::Warning);
+                    break;
+                }
+            }
+            if (macro) stack->endMacro();
         }
-        const ActionResult result =
-            ActionManager::instance().execute(actionId, payload, ActionSource::GUI);
-        if (!result.success) {
-            ToastManager::instance().showToast(
-                result.errorMessage.isEmpty()
-                    ? tr("Could not update pack platform targeting")
-                    : result.errorMessage,
-                3000, ToastType::Warning);
-            populateProjectPackTable();
-        }
+        populateProjectPackTable();
     });
 }
 
@@ -1727,65 +1133,6 @@ void PackManagerPanel::clearGenerationResults()
 {
     lastResults_.clear();
     PackGenerationRecordStore::instance().clear();
-}
-
-PackManagerPanel::DropTarget
-PackManagerPanel::dropTargetAtPanelPos(const QPoint& panelPos) const
-{
-    DropTarget target;
-    if (!packTree_ || !packTree_->isVisible())
-        return target;
-    QWidget* vp = packTree_->viewport();
-    const QPoint p = vp->mapFrom(this, panelPos);
-    if (!vp->rect().contains(p))
-        return target;
-    QTreeWidgetItem* item = packTree_->itemAt(p);
-    if (!item) {
-        target.kind = DropKind::Root;
-        return target;
-    }
-    switch (nodeKind(item)) {
-        case NodeKind::Group:
-        case NodeKind::Member:
-            target.kind = DropKind::Group;
-            target.groupName = item->data(0, kGroupNameRole).toString();
-            break;
-        case NodeKind::UnassignedAction:
-            target.kind = DropKind::Action;
-            target.actionObjectId = item->data(0, kObjectIdRole).toUInt();
-            break;
-        default:
-            break;
-    }
-    return target;
-}
-
-void PackManagerPanel::setDropHoverItem(QTreeWidgetItem* item)
-{
-    QTreeWidgetItem* target = nullptr;
-    if (item) {
-        switch (nodeKind(item)) {
-            case NodeKind::Group:
-            case NodeKind::UnassignedAction:
-                target = item;
-                break;
-            case NodeKind::Member:
-                target = item->parent();
-                break;
-            default:
-                break;
-        }
-    }
-    if (target == dropHoverItem_)
-        return;
-    QSignalBlocker blocker(packTree_);
-    auto paint = [](QTreeWidgetItem* it, bool on) {
-        if (!it) return;
-        it->setData(0, TableDropTargetRole, on);
-    };
-    paint(dropHoverItem_, false);
-    paint(target, true);
-    dropHoverItem_ = target;
 }
 
 void PackManagerPanel::onOpenSettingsDialog()
@@ -1820,80 +1167,6 @@ void PackManagerPanel::showFileInExplorer(const QString& path)
 #endif
 }
 
-void PackManagerPanel::dragEnterEvent(QDragEnterEvent* event)
-{
-    dragActionIds_.clear();
-    const QMimeData* m = event->mimeData();
-    if (!m->hasFormat(QLatin1String(kHarkenProjectItemsMime)) &&
-        !m->hasFormat(QLatin1String(kHarkenProjectItemMime)))
-        return;
-    auto* project = ProjectManager::instance().currentProject();
-    if (!project)
-        return;
-    const QSet<uint32_t> actions = actionObjectIds(*project);
-    for (uint32_t id : objectIDsFromMime(m))
-        if (actions.contains(id))
-            dragActionIds_.append(id);
-    if (dragActionIds_.isEmpty())
-        return;
-    event->acceptProposedAction();
-}
-
-void PackManagerPanel::dragMoveEvent(QDragMoveEvent* event)
-{
-    const DropTarget target = dropTargetAtPanelPos(event->position().toPoint());
-    if (target.kind == DropKind::None || dragActionIds_.isEmpty()) {
-        event->ignore();
-        setDropHoverItem(nullptr);
-        return;
-    }
-    event->acceptProposedAction();
-    QTreeWidgetItem* hover = nullptr;
-    if (packTree_ && packTree_->isVisible()) {
-        QWidget* vp = packTree_->viewport();
-        const QPoint p = vp->mapFrom(this, event->position().toPoint());
-        if (vp->rect().contains(p))
-            hover = packTree_->itemAt(p);
-    }
-    setDropHoverItem(hover);
-}
-
-void PackManagerPanel::dragLeaveEvent(QDragLeaveEvent* )
-{
-    setDropHoverItem(nullptr);
-    dragActionIds_.clear();
-}
-
-void PackManagerPanel::dropEvent(QDropEvent* event)
-{
-    setDropHoverItem(nullptr);
-
-    if (dragActionIds_.isEmpty())
-        return;
-
-    const DropTarget target = dropTargetAtPanelPos(event->position().toPoint());
-    if (target.kind == DropKind::Group)
-        applyActionObjectsToGroup(dragActionIds_, target.groupName);
-    else if (target.kind == DropKind::Action) {
-        QList<uint32_t> ids = dragActionIds_;
-        if (target.actionObjectId != 0 && !ids.contains(target.actionObjectId))
-            ids.append(target.actionObjectId);
-        if (ids.size() < 2) {
-            dragActionIds_.clear();
-            return;
-        }
-        groupActionObjects(ids);
-    }
-    else if (target.kind == DropKind::Root)
-        detachActionObjects(dragActionIds_);
-    else {
-        dragActionIds_.clear();
-        return;
-    }
-    event->acceptProposedAction();
-    dragActionIds_.clear();
-}
-
 void PackManagerPanel::onPackTreeContextMenu(const QPoint& pos)
 {
     if (!packTree_)
@@ -1904,7 +1177,7 @@ void PackManagerPanel::onPackTreeContextMenu(const QPoint& pos)
     QMenu menu(this);
 
     const QStringList units = kind == NodeKind::SystemPack
-        ? QStringList() : selectedUnitNames();
+        ? QStringList() : selectedPackPaths();
     if (!units.isEmpty()) {
         const QString label = units.size() == 1
             ? tr("Export \"%1\"").arg(units.first())
@@ -1912,114 +1185,20 @@ void PackManagerPanel::onPackTreeContextMenu(const QPoint& pos)
         menu.addAction(label, this, [this, units]() { requestExport(units); });
     }
 
-    if (kind == NodeKind::SystemPack) {
+    const uint32_t objectID = item ? item->data(0, kObjectIdRole).toUInt() : 0u;
+    if (kind == NodeKind::Action && objectID != 0)
+        menu.addAction(tr("Select in Explorer"), this,
+            [this, objectID]() { emit revealActionRequested(objectID); });
+    if (kind == NodeKind::SystemPack || kind == NodeKind::Action) {
         const QString packPath = item->data(0, kPackPathRole).toString();
         QAction* show = menu.addAction(tr("Show Pack in Explorer"), this,
             [this, packPath]() { showFileInExplorer(packPath); });
         show->setEnabled(!packPath.isEmpty());
         if (AppSettings::instance().developerMode()) {
-            QAction* preview = menu.addAction(tr("Preview Pack Structure..."),
-                this, [this, packPath]() {
+            QAction* preview = menu.addAction(tr("Preview Pack Structure..."), this, [this, packPath]() {
                 (new PackStructureDialog(packPath, this))->show();
             });
             preview->setEnabled(!packPath.isEmpty() && QFileInfo::exists(packPath));
-        }
-    }
-
-    QList<uint32_t> selectedActionIds;
-    if (kind != NodeKind::SystemPack) {
-        for (QTreeWidgetItem* sel : packTree_->selectedItems()) {
-            const NodeKind selKind = nodeKind(sel);
-            if (selKind != NodeKind::Member && selKind != NodeKind::UnassignedAction)
-                continue;
-            const uint32_t id = sel->data(0, kObjectIdRole).toUInt();
-            if (id != 0 && !selectedActionIds.contains(id))
-                selectedActionIds.append(id);
-        }
-    }
-    if (selectedActionIds.size() >= 2) {
-        menu.addAction(tr("Group %1 Actions").arg(selectedActionIds.size()),
-                       this, [this, selectedActionIds]() {
-            groupActionObjects(selectedActionIds);
-        });
-    }
-
-    const uint32_t objectID = item ? item->data(0, kObjectIdRole).toUInt() : 0u;
-    if ((kind == NodeKind::Member || kind == NodeKind::UnassignedAction)
-        && objectID != 0) {
-        menu.addAction(tr("Select in Explorer"), this,
-            [this, objectID]() { emit revealActionRequested(objectID); });
-    }
-    if (kind == NodeKind::Group || kind == NodeKind::UnassignedAction) {
-        const QString packPath = item->data(0, kPackPathRole).toString();
-        QAction* show = menu.addAction(tr("Show Pack in Explorer"), this,
-            [this, packPath]() { showFileInExplorer(packPath); });
-        show->setEnabled(!packPath.isEmpty());
-        if (AppSettings::instance().developerMode()) {
-            QAction* preview = menu.addAction(tr("Preview Pack Structure..."),
-                this, [this, packPath]() {
-                (new PackStructureDialog(packPath, this))->show();
-            });
-            preview->setEnabled(!packPath.isEmpty()
-                                && QFileInfo::exists(packPath));
-        }
-    }
-
-    if (kind == NodeKind::Group) {
-        const QString groupName = item->data(0, kGroupNameRole).toString();
-        menu.addSeparator();
-        menu.addAction(tr("Rename Group"), this,
-                       [this, item]() { packTree_->editItem(item, kColName); });
-        menu.addAction(tr("Delete Group"), this, [this, groupName]() {
-            if (QMessageBox::question(
-                    this, tr("Delete Pack Group"),
-                    tr("Delete pack group \"%1\"? Its Actions return to individual Action packs.")
-                        .arg(groupName)) != QMessageBox::Yes)
-                return;
-            QModelIndex removedIndex;
-            for (int i = 0; i < packTree_->topLevelItemCount(); ++i) {
-                const auto* group = packTree_->topLevelItem(i);
-                if (nodeKind(group) == NodeKind::Group
-                    && group->data(0, kGroupNameRole).toString() == groupName) {
-                    removedIndex = packTree_->indexFromItem(group);
-                    break;
-                }
-            }
-            if (!removedIndex.isValid()) return;
-            static_cast<TableWidget*>(packTree_->parentWidget())->removeSelectedRow([groupName] {
-                return ActionManager::instance().execute(
-                    QStringLiteral("delete_pack_group"),
-                    QJsonObject{{QStringLiteral("name"), groupName}},
-                    ActionSource::GUI).success;
-            }, removedIndex);
-        });
-    } else if (kind == NodeKind::Member) {
-        menu.addSeparator();
-        menu.addAction(tr("Remove from Group"), this, [this]() {
-            QList<QPair<QString, harkenstudio::ObjectId>> members;
-            for (QTreeWidgetItem* sel : packTree_->selectedItems()) {
-                if (nodeKind(sel) != NodeKind::Member)
-                    continue;
-                members.append({sel->data(0, kGroupNameRole).toString(),
-                                sel->data(0, kStableIdRole).value<harkenstudio::ObjectId>()});
-            }
-            removeMembersFromGroups(members);
-        });
-    } else if (kind == NodeKind::UnassignedAction) {
-        const std::vector<PackGroup> groups = ProjectManager::instance().getPackGroups();
-        if (!groups.empty()) {
-            menu.addSeparator();
-            QMenu* addMenu = menu.addMenu(tr("Add to Group"));
-            for (const PackGroup& g : groups) {
-                const QString groupName = g.name;
-                addMenu->addAction(groupName, this, [this, groupName]() {
-                    QList<uint32_t> ids;
-                    for (QTreeWidgetItem* sel : packTree_->selectedItems())
-                        if (nodeKind(sel) == NodeKind::UnassignedAction)
-                            ids.append(sel->data(0, kObjectIdRole).toUInt());
-                    applyActionObjectsToGroup(ids, groupName);
-                });
-            }
         }
     }
 
@@ -2028,42 +1207,6 @@ void PackManagerPanel::onPackTreeContextMenu(const QPoint& pos)
                    &PackManagerPanel::onOpenSettingsDialog);
 
     menu.exec(packTree_->viewport()->mapToGlobal(pos));
-}
-
-QString PackManagerPanel::nextAutoGroupName() const
-{
-    QSet<QString> names;
-    for (const PackGroup& g : ProjectManager::instance().getPackGroups())
-        names.insert(g.name);
-    int index = 1;
-    while (names.contains(QStringLiteral("Group %1").arg(index)))
-        ++index;
-    return QStringLiteral("Group %1").arg(index);
-}
-
-void PackManagerPanel::groupActionObjects(const QList<uint32_t>& actionObjectIDs)
-{
-    auto* project = ProjectManager::instance().currentProject();
-    if (!project || actionObjectIDs.isEmpty())
-        return;
-
-    const QString name = nextAutoGroupName();
-    QUndoStack* stack = UndoRedoManager::instance().undoStack();
-    if (stack)
-        stack->beginMacro(tr("Group %1 Action(s)").arg(actionObjectIDs.size()));
-    const ActionResult created = ActionManager::instance().execute(
-        QStringLiteral("create_pack_group"),
-        QJsonObject{{QStringLiteral("name"), name}},
-        ActionSource::GUI);
-    if (created.success)
-        applyActionObjectsToGroup(actionObjectIDs, name);
-    if (stack)
-        stack->endMacro();
-    if (!created.success)
-        ToastManager::instance().showToast(
-            created.errorMessage.isEmpty()
-                ? tr("Could not create pack group") : created.errorMessage,
-            3000, ToastType::Warning);
 }
 
 }

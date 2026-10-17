@@ -274,9 +274,6 @@ QString variantPackPath(const VNX::ProjectData& project, const QString& outputDi
                         const QString& /*platform*/,
                         const QString& language = QString())
 {
-    for (const auto& group : project.packGroups)
-        if (std::find(group.actionIds.begin(), group.actionIds.end(), stableId) != group.actionIds.end())
-            return QDir(outputDir).filePath(VNX::PackBuildPlanning::packFileName(language, group.name, QStringLiteral(".bytes")));
     for (const auto& unit : VNX::ProjectPackExporter::CollectActionPackUnits(project))
         if (unit.stableId == stableId)
             return QDir(outputDir).filePath(VNX::PackBuildPlanning::packFileName(
@@ -498,7 +495,7 @@ TEST(PackBuildScenario, BuildPlanCarriesVariantSelectionAndCompleteActionClosure
 
     const VNX::PackBuildPlan plan = VNX::PackBuildPlanning::build(project);
     ASSERT_EQ(plan.variants.size(), 3u);
-    ASSERT_EQ(plan.groupMetadata.value(QStringLiteral("groups")).toArray().size(), 1);
+    EXPECT_TRUE(plan.groupMetadata.value(QStringLiteral("groups")).toArray().isEmpty());
 
     const auto rootVariant = [&](const QString& platform,
                                  const QString& language) {
@@ -702,10 +699,10 @@ TEST(PackBuildScenario, ExportManifestAndRuntimeHonorGroupOwnershipAndPlatformSe
     const auto grouped = VNX::PackBuildPlanning::build(project);
     ASSERT_EQ(grouped.units.size(), 5u);
     const auto groupedUnit = std::find_if(grouped.units.begin(), grouped.units.end(), [](const auto& unit) {
-        return unit.grouped;
+        return unit.actionStableIds == std::vector<harkenstudio::ObjectId>{harkentest::StudioObjectId(21 + kStableIdBias)};
     });
     ASSERT_NE(groupedUnit, grouped.units.end());
-    EXPECT_EQ(groupedUnit->name, QStringLiteral("WindowsBundle"));
+    EXPECT_EQ(groupedUnit->name, QStringLiteral("Head"));
     EXPECT_EQ(groupedUnit->variant.platform, HarkenTest::platformIdString(QStringLiteral("Windows")));
     EXPECT_EQ(groupedUnit->actionStableIds,
               (std::vector<harkenstudio::ObjectId>{harkentest::StudioObjectId(21 + kStableIdBias)}));

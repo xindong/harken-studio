@@ -18,6 +18,9 @@
         "allPlatforms": {
           "type": "boolean"
         },
+        "language": {
+          "type": "string"
+        },
         "platformIds": {
           "$ref": "#/$defs/projectPlatformIds"
         },

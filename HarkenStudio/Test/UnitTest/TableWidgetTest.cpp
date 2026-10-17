@@ -22,6 +22,7 @@
 #include <QApplication>
 #include <QAction>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QContextMenuEvent>
 #include <QDoubleSpinBox>
 #include <QDragEnterEvent>
@@ -207,6 +208,177 @@ protected:
 
     QString style_;
 };
+
+TEST_F(TableWidgetTest, GroupControlsAreIndependentAndPreserveSelectionAcrossBodyTypes)
+{
+    auto* theme = &VNX::ThemeManager::instance();
+    for (bool checkable : {false, true}) {
+        for (bool collapsible : {false, true}) {
+            const VNX::TableGroupOptions options{checkable, collapsible};
+            VNX::TableWidget widgets;
+            widgets.setColumns("GroupControls", {{"name", "Name"}});
+            auto* header = widgets.createGroupHeader("Group", options);
+            header->setCheckState(Qt::PartiallyChecked);
+            int widgetChecks = 0;
+            int widgetExpansions = 0;
+            QObject::connect(header, &VNX::TableGroupHeader::checkStateRequested, &widgets,
+                [&](Qt::CheckState state) { ++widgetChecks; EXPECT_EQ(state, Qt::Checked); });
+            QObject::connect(header, &VNX::TableGroupHeader::expandedChanged, &widgets,
+                [&](bool expanded) { ++widgetExpansions; EXPECT_FALSE(expanded); });
+            widgets.resize(400, 180);
+            widgets.show();
+            settle(widgets);
+            auto* check = header->findChild<QCheckBox*>();
+            auto* arrow = header->findChild<QToolButton*>();
+            EXPECT_EQ(check != nullptr, checkable);
+            EXPECT_EQ(arrow != nullptr, collapsible);
+            if (check) {
+                EXPECT_EQ(header->checkState(), Qt::PartiallyChecked);
+                header->setCheckEnabled(false);
+                click(check, check->rect().center());
+                EXPECT_EQ(widgetChecks, 0);
+                header->setCheckEnabled(true);
+                click(check, check->rect().center());
+                EXPECT_EQ(widgetChecks, 1);
+                EXPECT_EQ(header->checkState(), Qt::Checked);
+                EXPECT_TRUE(header->isExpanded());
+            }
+            if (arrow) {
+                click(arrow, arrow->rect().center());
+                EXPECT_EQ(widgetExpansions, 1);
+                EXPECT_FALSE(header->isExpanded());
+            }
+            EXPECT_EQ(widgetChecks, checkable ? 1 : 0);
+
+            VNX::TableWidget native;
+            auto* tree = native.createItemView("GroupControls", {"Name", "Value"}, {1, 1});
+            auto* group = tree->createGroup("Group", options);
+            auto* child = new QTreeWidgetItem(group, {"Child", "Value"});
+            if (checkable) tree->setGroupCheckState(group, Qt::PartiallyChecked);
+            int nativeChecks = 0;
+            QObject::connect(tree, &VNX::ProportionalTreeWidget::groupCheckStateRequested, &native,
+                [&](QTreeWidgetItem* requested, Qt::CheckState state) {
+                    ++nativeChecks;
+                    EXPECT_EQ(requested, group);
+                    EXPECT_EQ(state, Qt::Checked);
+                });
+            native.resize(400, 180);
+            native.show();
+            settle(native);
+            tree->setCurrentItem(child);
+            child->setSelected(true);
+            tree->header()->moveSection(0, 1);
+            tree->setColumnHidden(0, true);
+            settle(native);
+            QRect rect = tree->visualRect(tree->indexFromItem(group, 1));
+            rect.setLeft(0);
+            rect.setWidth(tree->viewport()->width());
+            const QPoint checkPoint = VNX::TableGroupHeader::checkBoxRect(rect, theme, tree).center();
+            const QPoint arrowPoint = VNX::TableGroupHeader::chevronRect(rect, theme).center();
+            if (checkable) {
+                tree->setGroupCheckState(group, Qt::PartiallyChecked, false);
+                click(tree->viewport(), checkPoint);
+                EXPECT_EQ(nativeChecks, 0);
+                tree->setGroupCheckState(group, Qt::PartiallyChecked);
+            }
+            click(tree->viewport(), checkPoint);
+            EXPECT_EQ(nativeChecks, checkable ? 1 : 0);
+            if (checkable) EXPECT_EQ(group->checkState(0), Qt::Checked);
+            EXPECT_TRUE(group->isExpanded());
+            click(tree->viewport(), arrowPoint);
+            EXPECT_EQ(group->isExpanded(), !collapsible);
+            EXPECT_EQ(nativeChecks, checkable ? 1 : 0);
+            EXPECT_TRUE(child->isSelected());
+            EXPECT_FALSE(group->isSelected());
+            if (collapsible) EXPECT_TRUE(tree->visualRect(tree->indexFromItem(child, 1)).isEmpty());
+        }
+    }
+}
+
+TEST_F(TableWidgetTest, GroupingPreservesRowContentsBordersAndHierarchyInteractions)
+{
+    VNX::TableWidget table(VNX::TableOptions::display());
+    auto* tree = table.createItemView("GroupRowGeometry", {"Name", "Value"}, {1, 1});
+    tree->setHierarchyIndentation(24);
+    const auto append = [&](QTreeWidgetItem* owner) {
+        auto* row = new QTreeWidgetItem(owner, {"Entry", "Value"});
+        auto* child = new QTreeWidgetItem(row, {"Entry", "Value"});
+        for (auto* item : {row, child}) {
+            item->setFlags(item->flags() | Qt::ItemIsEditable);
+            item->setCheckState(0, Qt::Unchecked);
+        }
+        row->setExpanded(true);
+        return row;
+    };
+    auto* reference = append(tree->invisibleRootItem());
+    table.resize(600, 420);
+    table.show();
+    settle(table);
+    EXPECT_GT(tree->visualRect(tree->indexFromItem(reference->child(0))).left(),
+        tree->visualRect(tree->indexFromItem(reference)).left());
+
+    QList<QTreeWidgetItem*> rows{reference};
+    for (const VNX::TableGroupOptions options : {VNX::TableGroupOptions{}, {true, true}})
+        rows.append(append(tree->createGroup("Group", options)));
+    for (int width : {480, 720}) {
+        SCOPED_TRACE(width);
+        table.resize(width, 420);
+        table.moveColumn(0, width == 480 ? 0 : 1);
+        settle(table);
+        table.clearSelection();
+        const QImage image = tree->viewport()->grab().toImage();
+        for (auto* row : rows) {
+            for (auto* item : {row, row->child(0)}) {
+                const auto* expected = item == row ? reference : reference->child(0);
+                for (int column : {0, 1}) {
+                    const QRect rect = tree->visualRect(tree->indexFromItem(item, column));
+                    const QRect referenceRect = tree->visualRect(tree->indexFromItem(expected, column));
+                    EXPECT_EQ(rect.left(), tree->header()->sectionViewportPosition(column));
+                    EXPECT_EQ(rect.width(), tree->header()->sectionSize(column));
+                    EXPECT_EQ(image.copy(rect), image.copy(referenceRect));
+                }
+                const QRect rect = tree->visualRect(tree->indexFromItem(item));
+                QImage border(image.width(), 1, image.format());
+                border.fill(VNX::ThemeManager::instance().colors().borderPrimary);
+                EXPECT_EQ(image.copy(0, rect.bottom(), image.width(), 1), border);
+            }
+        }
+
+        auto* child = rows.back()->child(0);
+        const QRect cell = tree->visualRect(tree->indexFromItem(child));
+        child->setCheckState(0, Qt::Checked);
+        const QImage checked = tree->viewport()->grab().toImage();
+        QRect changed;
+        for (int y = cell.top(); y <= cell.bottom(); ++y)
+            for (int x = cell.left(); x <= cell.right(); ++x)
+                if (image.pixel(x, y) != checked.pixel(x, y)) changed |= QRect(x, y, 1, 1);
+        ASSERT_FALSE(changed.isEmpty());
+        click(tree->viewport(), changed.center());
+        EXPECT_EQ(child->checkState(0), Qt::Unchecked);
+        EXPECT_TRUE(child->parent()->isExpanded());
+        tree->setCurrentItem(child);
+        const QImage selected = tree->viewport()->grab().toImage();
+        EXPECT_EQ(selected.pixelColor(cell.left() + 3, cell.top() + 2),
+            VNX::ThemeManager::instance().colors().bgSelected);
+        table.clearSelection();
+
+        for (auto* row : rows)
+            for (auto* item : {row, row->child(0)}) tree->openPersistentEditor(item, 0);
+        settle(table);
+        for (auto* row : rows)
+            for (auto* item : {row, row->child(0)}) ASSERT_NE(tree->itemWidget(item, 0), nullptr);
+        const QRect parentEditor = tree->itemWidget(reference, 0)->geometry();
+        const QRect childEditor = tree->itemWidget(reference->child(0), 0)->geometry();
+        EXPECT_GT(childEditor.left(), parentEditor.left());
+        EXPECT_EQ(childEditor.right(), parentEditor.right());
+        for (auto* row : rows) {
+            EXPECT_EQ(tree->itemWidget(row, 0)->x(), parentEditor.x());
+            EXPECT_EQ(tree->itemWidget(row->child(0), 0)->x(), childEditor.x());
+            for (auto* item : {row, row->child(0)}) tree->closePersistentEditor(item, 0);
+        }
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+}
 
 TEST_F(TableWidgetTest, ExternalDropsAreOptInAndRevalidatedAcrossBodyTypes)
 {

@@ -328,7 +328,7 @@ private:
     void syncWindowToOpenedProject(const QString& path);
     
     void generateProjectPacks(const QStringList& platforms = {},
-                              const QStringList& unitNames = {},
+                              const QStringList& packPaths = {},
                               bool includeUnchecked = false);
     void recordPackGenerationResult(const QString& packName, uint32_t objectID,
                                     bool success, const QString& outputPath,

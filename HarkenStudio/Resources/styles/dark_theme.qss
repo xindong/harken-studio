@@ -234,6 +234,11 @@ QToolButton {
     padding: 4px;
 }
 
+QToolButton[tableGroupChevron="true"] {
+    border: none;
+    padding: 0px;
+}
+
 QToolButton:hover {
     background-color: @bgHover@;
     border-color: @borderSecondary@;

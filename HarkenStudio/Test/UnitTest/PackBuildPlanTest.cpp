@@ -81,7 +81,7 @@ TEST(PackBuildPlanTest, PostActionDependenciesAreOrderedBeforeRoot)
     EXPECT_EQ(variant->dependencyOrder, (std::vector<harkenstudio::ObjectId>{harkentest::StudioObjectId(11), harkentest::StudioObjectId(12)}));
 }
 
-TEST(PackBuildPlanTest, GroupMembersShareOneBuildUnitAndKeepActionIdentities)
+TEST(PackBuildPlanTest, LegacyGroupMembersBecomeIndependentBuildUnits)
 {
     auto project = HarkenTest::projectWithPlatforms();
     auto action = item(ProjectItem::Type::Action, 1, harkentest::StudioObjectId(11));
@@ -99,21 +99,17 @@ TEST(PackBuildPlanTest, GroupMembersShareOneBuildUnitAndKeepActionIdentities)
     const auto grouped = PackBuildPlanning::build(project);
     ASSERT_EQ(first.units.size(), 1u);
     EXPECT_FALSE(first.units.front().grouped);
-    ASSERT_EQ(grouped.units.size(), 1u);
-    EXPECT_TRUE(grouped.units.front().grouped);
-    EXPECT_EQ(grouped.units.front().name, QStringLiteral("Bundle"));
-    EXPECT_EQ(grouped.units.front().actionStableIds,
-              (std::vector<harkenstudio::ObjectId>{action->runtimeId(), secondAction->runtimeId()}));
+    ASSERT_EQ(grouped.units.size(), 2u);
     ASSERT_EQ(grouped.variants.size(), 2u);
-    for (const auto& variant : grouped.variants) {
-        EXPECT_EQ(variant.artifactName, QStringLiteral("Bundle"));
-        EXPECT_EQ(variant.relativePackPath, QStringLiteral("Windows/Bundle"));
-        EXPECT_TRUE(variant.actionStableId == action->runtimeId()
-                    || variant.actionStableId == secondAction->runtimeId());
+    for (const auto& unit : grouped.units) {
+        EXPECT_FALSE(unit.grouped);
+        ASSERT_EQ(unit.actionStableIds.size(), 1u);
+        EXPECT_EQ(unit.artifactKey, PackBuildPlanning::stableArtifactKey(unit.actionStableIds.front()));
     }
+
 }
 
-TEST(PackBuildPlanTest, GroupBuildUnitUsesItsPlatformSelection)
+TEST(PackBuildPlanTest, LegacyGroupPlatformSelectionTransfersToMembers)
 {
     auto project = HarkenTest::projectWithPlatforms();
     auto action = item(ProjectItem::Type::Action, 1, harkentest::StudioObjectId(11));
@@ -129,14 +125,12 @@ TEST(PackBuildPlanTest, GroupBuildUnitUsesItsPlatformSelection)
     project.packGroups.push_back(group);
 
     const auto plan = PackBuildPlanning::build(project);
-    ASSERT_TRUE(plan.groupMetadata.contains(QStringLiteral("groups")));
-    const auto groups = plan.groupMetadata.value(QStringLiteral("groups")).toArray();
-    ASSERT_EQ(groups.size(), 1);
-    EXPECT_EQ(groups.at(0).toObject().value(QStringLiteral("name")).toString(), QStringLiteral("Bundle"));
+    EXPECT_TRUE(plan.groupMetadata.value(QStringLiteral("groups")).toArray().isEmpty());
     EXPECT_EQ(plan.variants.size(), 1u);
     ASSERT_EQ(plan.units.size(), 1u);
-    EXPECT_EQ(plan.units.front().name, group.name);
+    EXPECT_EQ(plan.units.front().name, action->name);
     EXPECT_EQ(plan.units.front().variant.platform, HarkenTest::platformIdString("Windows"));
+
 }
 
 TEST(PackBuildPlanTest, UnlocalizedActionStaysOnPlatformAxisEvenWithProjectLanguages)
@@ -254,26 +248,23 @@ TEST(PackBuildPlanTest, LocalizedActionFansOutLanguageDirectoriesWithSharedFilen
     group.actionIds = {action->runtimeId(), commonAction->runtimeId()};
     project.packGroups.push_back(group);
     const auto grouped = PackBuildPlanning::build(project);
-    ASSERT_EQ(grouped.units.size(), 2u);
-    ASSERT_EQ(grouped.variants.size(), 4u);
+    ASSERT_EQ(grouped.units.size(), 3u);
+    ASSERT_EQ(grouped.variants.size(), 3u);
     for (const auto& unit : grouped.units) {
-        EXPECT_TRUE(unit.grouped);
-        EXPECT_EQ(unit.name, group.name);
-        EXPECT_EQ(unit.actionStableIds, group.actionIds);
-        EXPECT_TRUE(project.projectLanguages.contains(unit.variant.language));
+        EXPECT_FALSE(unit.grouped);
+        ASSERT_EQ(unit.actionStableIds.size(), 1u);
+        EXPECT_EQ(unit.variant.language.isEmpty(), unit.actionStableIds.front() == commonAction->runtimeId());
     }
-    for (const auto& variant : grouped.variants) {
-        EXPECT_EQ(variant.artifactName, group.name);
-        EXPECT_FALSE(variant.variant.language.isEmpty());
-        if (variant.actionStableId == commonAction->runtimeId()) {
-            ASSERT_EQ(variant.closure.media.size(), 1u);
-            EXPECT_EQ(variant.closure.media.front().authoringSourceId, english.sourceId);
-        }
-    }
-    const auto selectedGroup = PackBuildPlanning::build(project, {}, {QStringLiteral("Japanese")});
-    ASSERT_EQ(selectedGroup.units.size(), 1u);
-    EXPECT_EQ(selectedGroup.units.front().actionStableIds, group.actionIds);
-    EXPECT_EQ(selectedGroup.variants.size(), 2u);
+    const auto selectedUnits = PackBuildPlanning::build(project, {}, {QStringLiteral("Japanese")});
+    ASSERT_EQ(selectedUnits.units.size(), 2u);
+    project.actionPackTargeting.push_back({action->runtimeId(), false, {}, QStringLiteral("English")});
+    project.packGroups.clear();
+    const auto targeted = PackBuildPlanning::build(project);
+    ASSERT_EQ(targeted.units.size(), 2u);
+    for (const auto& unit : targeted.units) EXPECT_NE(unit.variant.language, QStringLiteral("English"));
+    const auto visible = PackBuildPlanning::build(project, {}, {}, true);
+    EXPECT_EQ(visible.units.size(), 3u);
+
 }
 
 TEST(PackBuildPlanTest, NamedPostActionAndExternalOccurrenceUseTheSameLocalizedClosure)
@@ -369,6 +360,12 @@ TEST(PackBuildPlanTest, LocalizedActionWithoutProjectLanguagesEmitsError)
     EXPECT_EQ(requested.diagnostics.front().code,
               ActionClosureDiagnosticCode::InvalidBuildLanguage);
     EXPECT_FALSE(requested.ready());
+
+    project.actionPackTargeting.push_back({action->runtimeId(), false, {}});
+    const auto excluded = PackBuildPlanning::build(project);
+    EXPECT_TRUE(excluded.variants.empty());
+    EXPECT_TRUE(excluded.ready());
+    EXPECT_FALSE(PackBuildPlanning::build(project, {}, {}, true).ready());
 }
 
 TEST(PackBuildPlanTest, MixedClosureCopiesUnlocalizedMediaIntoEveryLanguagePack)
