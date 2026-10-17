@@ -53,6 +53,7 @@
 #include <QtCore/qtestsupport_core.h>
 #include <QtTest/qtestspontaneevent.h>
 
+#include <algorithm>
 #include <memory>
 #include <numeric>
 
@@ -141,7 +142,7 @@ protected:
         VNX::columnShareStore().clear();
     }
 
-    static QList<QWidget*> appendRow(VNX::TableWidget& table, int count)
+    static QList<QWidget*> appendRow(VNX::TableWidget& table, int count, const QString& groupId = {})
     {
         auto* row = new QWidget(table.rowsWidget());
         auto* layout = new QHBoxLayout(row);
@@ -153,7 +154,7 @@ protected:
             layout->addWidget(cell);
             cells.append(cell);
         }
-        table.registerRow(row, cells);
+        table.registerRow(row, cells, nullptr, groupId);
         table.rowsLayout()->addWidget(row);
         return cells;
     }
@@ -943,8 +944,8 @@ TEST_F(TableWidgetTest, WidgetSelectionClearsOnBlankSpaceAndEscapeButSurvivesCel
     layout->addWidget(cell);
     table.registerRow(row, {cell});
     table.rowsLayout()->addWidget(row);
-    auto* footer = table.footer();
-    footer->removeButton()->setEnabled(true);
+    const QList<VNX::ListFooter*> footers{
+        table.createGroupFooter(), table.createGroupFooter(), table.footer()};
     int cleared = 0;
     table.setSelectionClearHandler([&] {
         ++cleared;
@@ -956,19 +957,27 @@ TEST_F(TableWidgetTest, WidgetSelectionClearsOnBlankSpaceAndEscapeButSurvivesCel
     row->setProperty("selected", true);
     click(editor, editor->rect().center());
     click(row, QPoint(0, row->height() / 2));
-    click(footer->removeButton(), footer->removeButton()->rect().center());
-    EXPECT_EQ(cleared, 0);
-    EXPECT_TRUE(row->property("selected").toBool());
-    click(footer, footer->rect().center());
-    EXPECT_EQ(cleared, 1);
-    EXPECT_FALSE(row->property("selected").toBool());
+    for (int i = 0; i < footers.size(); ++i) {
+        auto* footer = footers[i];
+        EXPECT_EQ(footer->height(), footers.back()->height());
+        EXPECT_EQ(table.rowForWidget(footer->addButton()), nullptr);
+        EXPECT_TRUE(footer->rect().contains(footer->removeButton()->geometry()));
+        footer->removeButton()->setEnabled(true);
+        row->setProperty("selected", true);
+        click(footer->removeButton(), footer->removeButton()->rect().center());
+        EXPECT_EQ(cleared, i);
+        EXPECT_TRUE(row->property("selected").toBool());
+        click(footer, footer->rect().center());
+        EXPECT_EQ(cleared, i + 1);
+        EXPECT_FALSE(row->property("selected").toBool());
+    }
     row->setProperty("selected", true);
     click(table.rowsWidget(), QPoint(20, table.rowsWidget()->height() - 8));
-    EXPECT_EQ(cleared, 2);
+    EXPECT_EQ(cleared, 4);
     row->setProperty("selected", true);
     QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
     QApplication::sendEvent(editor, &escape);
-    EXPECT_EQ(cleared, 3);
+    EXPECT_EQ(cleared, 5);
     EXPECT_FALSE(row->property("selected").toBool());
 }
 
@@ -1103,6 +1112,66 @@ TEST_F(TableWidgetTest, WidgetDeletionRestoresBusinessSelectionAfterRebuildingAl
         table.clearSelection();
         settle(table);
         EXPECT_TRUE(selected.isEmpty());
+        ASSERT_EQ(rows.size(), 1);
+        EXPECT_FALSE(rows.front()->property("selected").toBool());
+    }
+}
+
+TEST_F(TableWidgetTest, GroupedDeletionKeepsSelectionWithinTheSameGroupAcrossRebuilds)
+{
+    for (bool queuedReload : {false, true}) {
+        SCOPED_TRACE(queuedReload);
+        VNX::TableWidget table;
+        table.setColumns("GroupedDeletion", {{"value", "Value", 1}});
+        QMap<QString, QStringList> values{
+            {"Other", {"Untouched"}}, {"Target", {"First", "Middle", "Last"}}};
+        QStringList groups{"Other", "Target"};
+        QList<QWidget*> rows;
+        QString selected;
+        const auto select = [&](QWidget* row) {
+            for (auto* candidate : rows) candidate->setProperty("selected", candidate == row);
+            selected = row ? row->property("value").toString() : QString();
+        };
+        table.setRowSelectionHandler(select);
+        table.setSelectionClearHandler([&] { select(nullptr); });
+        const auto rebuild = [&] {
+            while (auto* item = table.rowsLayout()->takeAt(0)) {
+                delete item->widget();
+                delete item;
+            }
+            rows.clear();
+            selected.clear();
+            std::reverse(groups.begin(), groups.end());
+            for (const auto& group : groups) {
+                table.createGroupHeader(group);
+                for (const auto& value : values[group]) {
+                    auto* cell = static_cast<QLabel*>(appendRow(table, 1, group).front());
+                    cell->setText(value);
+                    auto* row = cell->parentWidget();
+                    row->setProperty("value", value);
+                    rows.append(row);
+                }
+                table.createGroupFooter();
+            }
+        };
+        rebuild();
+        table.resize(420, 240);
+        table.show();
+        settle(table);
+        for (auto* row : rows)
+            if (row->property("value").toString() == "Middle") select(row);
+        ASSERT_EQ(selected, "Middle");
+        for (const auto& expected : QStringList{"Last", "First", ""}) {
+            ASSERT_TRUE(table.removeSelectedRow([&] {
+                if (!values["Target"].removeOne(selected)) return false;
+                if (queuedReload) QTimer::singleShot(0, &table, rebuild);
+                else rebuild();
+                return true;
+            }));
+            settle(table);
+            EXPECT_EQ(selected, expected);
+            EXPECT_EQ(values["Other"], QStringList{"Untouched"});
+        }
         ASSERT_EQ(rows.size(), 1);
         EXPECT_FALSE(rows.front()->property("selected").toBool());
     }

@@ -12,11 +12,13 @@
 #include "SoundSourceSemantics.h"
 #include "UndoCommands.h"
 #include "Widgets/Common/CollapsibleSection.h"
+#include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Inspector/InspectorCustomizationBootstrap.h"
 #include "Widgets/Inspector/InspectorCustomizationRegistry.h"
 #include "Widgets/Common/SourceRangeThumb.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
+#include "Widgets/Selector/SelectorWindow.h"
 #include "Widgets/SourceEditor/SourceRangeEditor.h"
 #include "Widgets/SourceEditor/SourceEditorWaveformView.h"
 #include "Widgets/ExternalEditor/ExternalEditorPanel.h"
@@ -31,18 +33,25 @@
 #include <QDialog>
 #include <QDir>
 #include <QDoubleSpinBox>
+#include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFile>
+#include <QFileDialog>
 #include <QJsonObject>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLayout>
 #include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QScopeGuard>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QToolButton>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWheelEvent>
@@ -157,6 +166,7 @@ protected:
 
     void TearDown() override
     {
+        VNX::SelectorWindow::dismiss();
         widget_.reset();
         VNX::UndoRedoManager::instance().clear();
         VNX::ProjectManager::instance().closeProject();
@@ -274,6 +284,32 @@ protected:
                 headers.push_back(header);
         }
         return headers;
+    }
+
+    VNX::ListFooter* footerForLanguage(const QString& language) const
+    {
+        for (auto* footer : widget_->findChildren<VNX::ListFooter*>())
+            if (!footer->isHidden() && footer->property("groupLanguage").toString() == language)
+                return footer;
+        return nullptr;
+    }
+
+    void triggerMissingLanguageAction(const QString& name)
+    {
+        auto* message = widget_->findChild<QWidget*>("sourceMissingLanguages");
+        ASSERT_NE(message, nullptr);
+        ASSERT_FALSE(message->isHidden());
+        QTimer::singleShot(0, widget_.get(), [this, name] {
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            ASSERT_NE(menu, nullptr);
+            auto* action = rowAction(menu, name);
+            menu->close();
+            ASSERT_NE(action, nullptr);
+            action->trigger();
+        });
+        QMetaObject::invokeMethod(message, "customContextMenuRequested", Qt::DirectConnection,
+                                  Q_ARG(QPoint, QPoint()));
+        QCoreApplication::processEvents();
     }
 
     bool setDistinguishLanguage(bool enabled)
@@ -1131,13 +1167,10 @@ TEST_F(SourcesSectionProviderTest, ToggleStartsEmptyAndRestoresPlainSourcesWithU
     const auto second = makeRow(8102);
     ASSERT_TRUE(applySources({first, second}, {{HarkenTest::platformIdString("Windows"), {second.entryId}}}));
     const auto before = sound_->comp<VNX::VSound>()->sources;
-    VNX::ProjectManager::instance().setProjectLanguagesInternal({});
     bindSection();
     auto* toggle = widget_->findChild<QCheckBox*>("sourceDistinguishLanguage");
     ASSERT_NE(toggle, nullptr);
-    toggle->click();
-    EXPECT_FALSE(sound_->comp<VNX::VSound>()->distinguishLanguage);
-    VNX::ProjectManager::instance().setProjectLanguagesInternal({"English"});
+    EXPECT_TRUE(toggle->isEnabled());
     toggle->click();
     QCoreApplication::processEvents();
     EXPECT_TRUE(sound_->comp<VNX::VSound>()->distinguishLanguage);
@@ -1148,14 +1181,13 @@ TEST_F(SourcesSectionProviderTest, ToggleStartsEmptyAndRestoresPlainSourcesWithU
     VNX::UndoRedoManager::instance().redo();
     QCoreApplication::processEvents();
     EXPECT_TRUE(sound_->comp<VNX::VSound>()->distinguishLanguage);
-    VNX::ProjectManager::instance().setProjectLanguagesInternal({});
     toggle->click();
     QCoreApplication::processEvents();
     EXPECT_FALSE(sound_->comp<VNX::VSound>()->distinguishLanguage);
     EXPECT_EQ(sound_->comp<VNX::VSound>()->sources, before);
     toggle->click();
     QCoreApplication::processEvents();
-    EXPECT_FALSE(sound_->comp<VNX::VSound>()->distinguishLanguage);
+    EXPECT_TRUE(sound_->comp<VNX::VSound>()->distinguishLanguage);
     EXPECT_EQ(sound_->comp<VNX::VSound>()->sources, before);
 }
 
@@ -1176,11 +1208,21 @@ TEST_F(SourcesSectionProviderTest, BothBanksRestoreTheirRowsActiveAndRanges)
     for (bool enabled : {true, false, true, false}) {
         ASSERT_TRUE(setDistinguishLanguage(enabled));
         QCoreApplication::processEvents();
-        EXPECT_EQ(sound_->comp<VNX::VSound>()->sources, before);
+        const int undoCount = VNX::UndoRedoManager::instance().undoStack()->count();
+        for (const auto& language : {QStringLiteral("English"), QStringLiteral("Japanese")}) {
+            VNX::LanguageContextService::instance().setLanguage(language);
+            QCoreApplication::processEvents();
+            ASSERT_EQ(visibleRows().size(), 1);
+            EXPECT_EQ(QUuid(visibleRows().front()->property("entryId").toString()),
+                      enabled ? before.localized[language].entries.front().entryId : plain.entryId);
+            EXPECT_TRUE(visibleRows().front()->findChild<QCheckBox*>("sourceActive")->isChecked());
+            EXPECT_EQ(sound_->comp<VNX::VSound>()->sources, before);
+            EXPECT_EQ(VNX::UndoRedoManager::instance().undoStack()->count(), undoCount);
+        }
     }
 }
 
-TEST_F(SourcesSectionProviderTest, AppendUsesSelectedLanguageAndPreservesDormantCandidates)
+TEST_F(SourcesSectionProviderTest, AppendUsesContextLanguageAndPreservesOtherBanks)
 {
     VNX::ProjectManager::instance().setProjectLanguagesInternal({"English", "Japanese"});
     VNX::LanguageContextService::instance().setLanguage("Japanese");
@@ -1193,34 +1235,181 @@ TEST_F(SourcesSectionProviderTest, AppendUsesSelectedLanguageAndPreservesDormant
     ASSERT_TRUE(setDistinguishLanguage(true));
     bindSection();
     auto* list = widget_->findChild<QWidget*>("sourcesListWidget");
-    list->setProperty("selectedRow", 0);
+    EXPECT_TRUE(visibleRows().isEmpty());
+    ASSERT_NE(footerForLanguage("Japanese"), nullptr);
+    EXPECT_TRUE(footerForLanguage("Japanese")->addButton()->isEnabled());
     makeRow(8103);
     list->setProperty("appendSourceId", 8103);
     QCoreApplication::processEvents();
     const auto* sound = sound_->comp<VNX::VSound>();
     EXPECT_EQ(sound->sources.plain.entries[0].entryId, plain.entryId);
     EXPECT_EQ(sound->sources.plain.active, plain.entryId);
-    ASSERT_EQ(sound->sources.localized["English"].entries.size(), 2u);
+    ASSERT_EQ(sound->sources.localized["English"].entries.size(), 1u);
     EXPECT_TRUE(sound->sources.localized["English"].active.isNull());
-    EXPECT_FALSE(sound->sources.localized.contains("Japanese"));
+    ASSERT_EQ(sound->sources.localized["Japanese"].entries.size(), 1u);
+    EXPECT_EQ(sound->sources.localized["Japanese"].entries.front().sourceId, 8103u);
+    ASSERT_EQ(visibleRows().size(), 1);
+    EXPECT_EQ(visibleRows().front()->findChild<QLabel*>("tableRowNumber")->text(), "1");
     VNX::UndoRedoManager::instance().undo();
     QCoreApplication::processEvents();
     EXPECT_EQ(sound->sources.localized["English"].entries.size(), 1u);
+    EXPECT_FALSE(sound->sources.localized.contains("Japanese"));
 }
 
-TEST_F(SourcesSectionProviderTest, EmptyGroupSelectionRoutesAppendToItsLanguage)
+TEST_F(SourcesSectionProviderTest, GroupClicksPreserveContextAndAppendDestination)
 {
     VNX::ProjectManager::instance().setProjectLanguagesInternal({"English", "Japanese"});
     ASSERT_TRUE(setDistinguishLanguage(true));
     bindSection();
     auto* list = widget_->findChild<QWidget*>("sourcesListWidget");
-    for (auto* header : groupHeaders())
-        if (header->property("groupLanguage").toString() == "Japanese") clickWidget(header);
+    ASSERT_EQ(groupHeaders().size(), 1);
+    EXPECT_EQ(groupHeaders().front()->property("groupLanguage").toString(), "English");
+    clickWidget(groupHeaders().front());
+    EXPECT_EQ(VNX::LanguageContextService::instance().language(), "English");
+    VNX::LanguageContextService::instance().setLanguage("Japanese");
+    QCoreApplication::processEvents();
+    ASSERT_EQ(groupHeaders().size(), 1);
+    EXPECT_EQ(groupHeaders().front()->property("groupLanguage").toString(), "Japanese");
+    clickWidget(groupHeaders().front());
     EXPECT_EQ(VNX::LanguageContextService::instance().language(), "Japanese");
     makeRow(8101);
     list->setProperty("appendSourceId", 8101);
     QCoreApplication::processEvents();
     ASSERT_EQ(sound_->comp<VNX::VSound>()->sources.localized["Japanese"].entries.size(), 1u);
+    EXPECT_FALSE(sound_->comp<VNX::VSound>()->sources.localized.contains("English"));
+}
+
+TEST_F(SourcesSectionProviderTest, GroupActionsKeepTheirDestinationAcrossContextChangesAndUndo)
+{
+    using namespace VNX;
+    const bool nativeDialogsDisabled = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    const auto restoreDialogs = qScopeGuard([=] {
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, nativeDialogsDisabled);
+    });
+    ProjectManager::instance().setProjectLanguagesInternal({"English", "Japanese"});
+    SoundSources initial;
+    initial.plain.entries = {makeRow(8101)};
+    initial.localized["Japanese"].entries = {makeRow(8102)};
+    const auto existing = makeAsset(8103, "Existing.wav");
+    writeWav(existing.absolutePath, 0.25f);
+    const QString input = temp_.filePath("Imported.wav");
+    writeWav(input, 0.25f);
+    ASSERT_TRUE(setDistinguishLanguage(true));
+
+    for (bool fromFile : {false, true}) {
+        SCOPED_TRACE(fromFile);
+        ASSERT_TRUE(applySourceState(initial));
+        const auto before = sound_->comp<VSound>()->sources;
+        LanguageContextService::instance().setLanguage("English");
+        bindSection();
+        widget_->show();
+        QCoreApplication::processEvents();
+        auto* english = footerForLanguage("English");
+        ASSERT_NE(english, nullptr);
+        EXPECT_EQ(footerForLanguage("Japanese"), nullptr);
+        EXPECT_EQ(footerForLanguage({}), nullptr);
+        ASSERT_TRUE(english->addButton()->isEnabled());
+        EXPECT_FALSE(english->removeButton()->isEnabled());
+        const int undoCount = UndoRedoManager::instance().undoStack()->count();
+        QTimer::singleShot(0, widget_.get(), [&] {
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            ASSERT_NE(menu, nullptr);
+            auto* action = menu->actions().at(fromFile ? 0 : 1);
+            menu->close();
+            if (fromFile) {
+                QTimer::singleShot(0, widget_.get(), [&] {
+                    auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+                    ASSERT_NE(dialog, nullptr);
+                    LanguageContextService::instance().setLanguage("Japanese");
+                    dialog->selectFile(input);
+                    QMetaObject::invokeMethod(dialog, "accept", Qt::DirectConnection);
+                });
+            }
+            action->trigger();
+        });
+        english->addButton()->click();
+        if (!fromFile) {
+            SelectorWindow* selector = nullptr;
+            for (auto* window : QApplication::topLevelWidgets())
+                if (auto* candidate = qobject_cast<SelectorWindow*>(window); candidate && candidate->isVisible())
+                    selector = candidate;
+            ASSERT_NE(selector, nullptr);
+            auto* tree = selector->findChild<QTreeWidget*>();
+            ASSERT_NE(tree, nullptr);
+            LanguageContextService::instance().setLanguage("Japanese");
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+            EXPECT_TRUE(selector->isVisible());
+            for (QTreeWidgetItemIterator it(tree); *it; ++it)
+                if ((*it)->data(0, kRoleObjectID).toUInt() == 8103u)
+                    tree->setCurrentItem(*it);
+            ASSERT_NE(tree->currentItem(), nullptr);
+            ASSERT_EQ(tree->currentItem()->data(0, kRoleObjectID).toUInt(), 8103u);
+            selector->accept();
+        }
+        QCoreApplication::processEvents();
+        ASSERT_TRUE(QTest::qWaitFor([&] { return footerForLanguage("Japanese") != nullptr; }));
+        const auto* sound = sound_->comp<VSound>();
+        ASSERT_EQ(sound->sources.localized["English"].entries.size(), 1u);
+        EXPECT_EQ(sound->sources.localized["Japanese"], before.localized["Japanese"]);
+        EXPECT_EQ(sound->sources.plain, before.plain);
+        EXPECT_EQ(LanguageContextService::instance().language(), "Japanese");
+        EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), undoCount + 1);
+        ASSERT_EQ(visibleRows().size(), 1);
+        EXPECT_EQ(QUuid(visibleRows().front()->property("entryId").toString()),
+                  before.localized["Japanese"].entries.front().entryId);
+        EXPECT_EQ(footerForLanguage("English"), nullptr);
+        LanguageContextService::instance().setLanguage("English");
+        ASSERT_TRUE(QTest::qWaitFor([&] { return footerForLanguage("English") != nullptr; }));
+        const auto entryId = sound->sources.localized["English"].entries.front().entryId;
+        for (auto* row : visibleRows())
+            if (QUuid(row->property("entryId").toString()) == entryId) {
+                auto* number = row->findChild<QWidget*>("tableRowNumber");
+                ASSERT_NE(number, nullptr);
+                clickWidget(number);
+            }
+        EXPECT_EQ(LanguageContextService::instance().language(), "English");
+        ASSERT_TRUE(QTest::qWaitFor([&] { return footerForLanguage("English") != nullptr; }));
+        english = footerForLanguage("English");
+        ASSERT_NE(english, nullptr);
+        EXPECT_TRUE(english->removeButton()->isEnabled());
+        LanguageContextService::instance().setLanguage("Japanese");
+        ASSERT_TRUE(QTest::qWaitFor([&] { return footerForLanguage("Japanese") != nullptr; }));
+        auto* japanese = footerForLanguage("Japanese");
+        ASSERT_NE(japanese, nullptr);
+        EXPECT_FALSE(japanese->removeButton()->isEnabled());
+        japanese->removeButton()->click();
+        EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), undoCount + 1);
+        LanguageContextService::instance().setLanguage("English");
+        ASSERT_TRUE(QTest::qWaitFor([&] { return footerForLanguage("English") != nullptr; }));
+        english = footerForLanguage("English");
+        ASSERT_NE(english, nullptr);
+        EXPECT_FALSE(english->removeButton()->isEnabled());
+        ASSERT_EQ(visibleRows().size(), 1);
+        EXPECT_FALSE(visibleRows().front()->property("selected").toBool());
+        clickWidget(visibleRows().front()->findChild<QWidget*>("tableRowNumber"));
+        ASSERT_TRUE(QTest::qWaitFor([&] { return footerForLanguage("English") != nullptr; }));
+        english = footerForLanguage("English");
+        english->removeButton()->click();
+        QCoreApplication::processEvents();
+        ASSERT_TRUE(QTest::qWaitFor([&] { return footerForLanguage("English") != nullptr; }));
+        EXPECT_FALSE(sound->sources.localized.contains("English"));
+        EXPECT_EQ(sound->sources.localized["Japanese"], before.localized["Japanese"]);
+        EXPECT_TRUE(visibleRows().isEmpty());
+        ASSERT_NE(footerForLanguage("English"), nullptr);
+        EXPECT_TRUE(footerForLanguage("English")->addButton()->isEnabled());
+        ASSERT_TRUE(UndoRedoManager::instance().undo());
+        ASSERT_TRUE(UndoRedoManager::instance().undo());
+        QCoreApplication::processEvents();
+        EXPECT_EQ(sound->sources, before);
+        ASSERT_TRUE(setDistinguishLanguage(false));
+        QCoreApplication::processEvents();
+        EXPECT_NE(footerForLanguage({}), nullptr);
+        EXPECT_EQ(footerForLanguage("English"), nullptr);
+        ASSERT_TRUE(setDistinguishLanguage(true));
+        QCoreApplication::processEvents();
+        ASSERT_TRUE(QTest::qWaitFor([&] { return footerForLanguage("English") != nullptr; }));
+    }
 }
 
 TEST_F(SourcesSectionProviderTest, ActiveWritesOnlyTheChosenLanguageAndPlatform)
@@ -1243,7 +1432,10 @@ TEST_F(SourcesSectionProviderTest, ActiveWritesOnlyTheChosenLanguageAndPlatform)
               english.entryId);
     EXPECT_TRUE(sound->sources.localized["Japanese"].platforms.isEmpty());
     VNX::PlatformContextService::instance().setAll(true);
-    visibleRows()[1]->findChild<QCheckBox*>("sourceActive")->click();
+    VNX::LanguageContextService::instance().setLanguage("Japanese");
+    QCoreApplication::processEvents();
+    ASSERT_EQ(visibleRows().size(), 1);
+    visibleRows().front()->findChild<QCheckBox*>("sourceActive")->click();
     QCoreApplication::processEvents();
     EXPECT_EQ(sound->sources.localized["Japanese"].active, japanese.entryId);
     EXPECT_TRUE(sound->sources.localized["Japanese"].platforms.isEmpty());
@@ -1271,47 +1463,59 @@ TEST_F(SourcesSectionProviderTest, MovingBetweenLanguagesPreservesActiveAndCanBe
     EXPECT_FALSE(sound->sources.localized.contains("English"));
     EXPECT_EQ(sound->sources.localized["Japanese"], before.localized["English"]);
     EXPECT_EQ(sound->sources.plain, before.plain);
+    EXPECT_TRUE(visibleRows().isEmpty());
+    VNX::LanguageContextService::instance().setLanguage("Japanese");
+    QCoreApplication::processEvents();
+    ASSERT_EQ(visibleRows().size(), 1);
+    EXPECT_EQ(QUuid(visibleRows().front()->property("entryId").toString()), english.entryId);
+    EXPECT_FALSE(visibleRows().front()->property("selected").toBool());
     VNX::UndoRedoManager::instance().undo();
     QCoreApplication::processEvents();
     EXPECT_EQ(sound->sources, before);
+    EXPECT_TRUE(visibleRows().isEmpty());
 }
 
 TEST_F(SourcesSectionProviderTest, ReorderingStaysInsideItsLanguageAndRetainsSelection)
 {
     VNX::ProjectManager::instance().setProjectLanguagesInternal({"English", "Japanese"});
+    VNX::LanguageContextService::instance().setLanguage("Japanese");
     VNX::SoundSources sources;
     const auto first = makeRow(8101);
     const auto second = makeRow(8102);
-    const auto japanese = makeRow(8103);
-    sources.localized["English"] = {{first, second}, first.entryId, {}};
-    sources.localized["Japanese"] = {{japanese}, japanese.entryId, {}};
+    const auto english = makeRow(8103);
+    sources.localized["English"] = {{english}, english.entryId, {}};
+    sources.localized["Japanese"] = {{first, second}, first.entryId, {}};
     ASSERT_TRUE(applySourceState(sources));
     ASSERT_TRUE(setDistinguishLanguage(true));
-    const auto beforeJapanese = sound_->comp<VNX::VSound>()->sources.localized["Japanese"];
+    const auto beforeEnglish = sound_->comp<VNX::VSound>()->sources.localized["English"];
     bindSection();
     auto* list = widget_->findChild<QWidget*>("sourcesListWidget");
-    list->setProperty("selectedRow", 0);
+    ASSERT_EQ(visibleRows().size(), 2);
+    EXPECT_EQ(visibleRows().front()->findChild<QLabel*>("tableRowNumber")->text(), "1");
+    EXPECT_EQ(visibleRows().back()->findChild<QLabel*>("tableRowNumber")->text(), "2");
+    list->setProperty("selectedRow", visibleRows().front()->property("rowIndex"));
     auto* move = rowAction(visibleRows()[0], "sourceMoveDown");
     ASSERT_NE(move, nullptr);
     move->trigger();
     QCoreApplication::processEvents();
     const auto* sound = sound_->comp<VNX::VSound>();
-    EXPECT_EQ(sound->sources.localized["English"].entries[0].entryId, second.entryId);
-    EXPECT_EQ(sound->sources.localized["English"].entries[1].entryId, first.entryId);
-    EXPECT_EQ(sound->sources.localized["English"].active, first.entryId);
-    EXPECT_EQ(sound->sources.localized["Japanese"], beforeJapanese);
+    EXPECT_EQ(sound->sources.localized["Japanese"].entries[0].entryId, second.entryId);
+    EXPECT_EQ(sound->sources.localized["Japanese"].entries[1].entryId, first.entryId);
+    EXPECT_EQ(sound->sources.localized["Japanese"].active, first.entryId);
+    EXPECT_EQ(sound->sources.localized["English"], beforeEnglish);
     EXPECT_TRUE(visibleRows()[1]->property("selected").toBool());
     auto* table = list->findChild<VNX::TableWidget*>();
     ASSERT_NE(table, nullptr);
-    table->moveRow(1, 2);
-    EXPECT_EQ(sound->sources.localized["Japanese"], beforeJapanese);
-    table->moveRow(1, 0);
+    table->moveRow(2, 0);
+    EXPECT_EQ(sound->sources.localized["English"], beforeEnglish);
+    table->moveRow(2, 1);
     QCoreApplication::processEvents();
-    EXPECT_EQ(sound->sources.localized["English"].entries[0].entryId, first.entryId);
-    EXPECT_EQ(sound->sources.localized["English"].active, first.entryId);
+    EXPECT_EQ(sound->sources.localized["Japanese"].entries[0].entryId, first.entryId);
+    EXPECT_EQ(sound->sources.localized["Japanese"].active, first.entryId);
     VNX::UndoRedoManager::instance().undo();
     QCoreApplication::processEvents();
-    EXPECT_EQ(sound->sources.localized["English"].entries[0].entryId, second.entryId);
+    EXPECT_EQ(sound->sources.localized["Japanese"].entries[0].entryId, second.entryId);
+    EXPECT_EQ(sound->sources.localized["English"], beforeEnglish);
 }
 
 TEST_F(SourcesSectionProviderTest, MissingLanguageSourcesCanMergeWithoutDataLoss)
@@ -1329,15 +1533,15 @@ TEST_F(SourcesSectionProviderTest, MissingLanguageSourcesCanMergeWithoutDataLoss
     const auto before = sound_->comp<VNX::VSound>()->sources;
     VNX::ProjectManager::instance().setProjectLanguagesInternal({"English"});
     bindSection();
-    ASSERT_EQ(visibleRows().size(), 3);
-    auto* move = rowAction(visibleRows().back(), "sourceMoveAllMissingLanguagesTo_English");
-    ASSERT_NE(move, nullptr);
-    move->trigger();
-    QCoreApplication::processEvents();
+    ASSERT_EQ(visibleRows().size(), 1);
+    EXPECT_FALSE(footerForLanguage("English")->addButton()->isEnabled());
+    triggerMissingLanguageAction("sourceMoveAllMissingLanguagesTo_English");
     const auto* sound = sound_->comp<VNX::VSound>();
     ASSERT_EQ(sound->sources.localized.size(), 1);
     EXPECT_EQ(sound->sources.localized["English"].entries.size(), 3u);
     EXPECT_EQ(sound->sources.localized["English"].active, english.entryId);
+    EXPECT_EQ(visibleRows().size(), 3);
+    EXPECT_TRUE(widget_->findChild<QWidget*>("sourceMissingLanguages")->isHidden());
     VNX::UndoRedoManager::instance().undo();
     QCoreApplication::processEvents();
     EXPECT_EQ(sound->sources, before);
@@ -1349,30 +1553,28 @@ TEST_F(SourcesSectionProviderTest, RemovingMissingLanguagesKeepsDormantBankAndIs
     VNX::SoundSources sources;
     const auto plain = makeRow(8101);
     sources.plain = {{plain}, plain.entryId, {}};
-    const auto english = makeRow(8102);
     const auto japanese = makeRow(8103);
-    const auto japaneseOther = makeRow(8104);
-    sources.localized["English"] = {{english}, english.entryId, {}};
-    sources.localized["Japanese"] = {{japanese, japaneseOther}, japanese.entryId, {}};
+    sources.localized["Japanese"] = {{japanese}, japanese.entryId, {}};
     ASSERT_TRUE(applySourceState(sources));
     ASSERT_TRUE(setDistinguishLanguage(true));
     const auto before = sound_->comp<VNX::VSound>()->sources;
     VNX::ProjectManager::instance().setProjectLanguagesInternal({"English"});
     bindSection();
-    auto* remove = rowAction(visibleRows().back(), "sourceRemoveAllMissingLanguages");
-    ASSERT_NE(remove, nullptr);
-    remove->trigger();
-    QCoreApplication::processEvents();
+    EXPECT_TRUE(visibleRows().isEmpty());
+    triggerMissingLanguageAction("sourceRemoveAllMissingLanguages");
     const auto* sound = sound_->comp<VNX::VSound>();
     EXPECT_EQ(sound->sources.plain, before.plain);
     EXPECT_EQ(sound->sources.localized["English"], before.localized["English"]);
     EXPECT_FALSE(sound->sources.localized.contains("Japanese"));
+    EXPECT_TRUE(footerForLanguage("English")->addButton()->isEnabled());
+    EXPECT_TRUE(widget_->findChild<QWidget*>("sourceMissingLanguages")->isHidden());
     VNX::UndoRedoManager::instance().undo();
     QCoreApplication::processEvents();
     EXPECT_EQ(sound->sources, before);
+    EXPECT_FALSE(widget_->findChild<QWidget*>("sourceMissingLanguages")->isHidden());
 }
 
-TEST_F(SourcesSectionProviderTest, MissingSourceDropUsesActualRowLanguageAndPreservesAuthoring)
+TEST_F(SourcesSectionProviderTest, MissingSourceRowDropDisambiguatesNamesWithinCurrentLanguageAndPreservesAuthoring)
 {
     using namespace VNX;
     auto& manager = ProjectManager::instance();
@@ -1384,52 +1586,81 @@ TEST_F(SourcesSectionProviderTest, MissingSourceDropUsesActualRowLanguageAndPres
     writeWav(input, 0.25f);
     SoundSources sources;
     QList<AssetInfo> assets;
-    for (const auto& language : {QStringLiteral("English"), QStringLiteral("Japanese")}) {
-        ASSERT_TRUE(QDir().mkdir(SourceFileSystem::absolutePath(language)));
-        auto* command = ImportAssetsCommand::pushImportSources({input}, language);
+    const QStringList folders = {QStringLiteral("English/First"),
+                                 QStringLiteral("English/Second"), QStringLiteral("Japanese")};
+    for (int i = 0; i < folders.size(); ++i) {
+        ASSERT_TRUE(QDir().mkpath(SourceFileSystem::absolutePath(folders[i])));
+        auto* command = ImportAssetsCommand::pushImportSources({input}, folders[i]);
         ASSERT_EQ(command->successCount(), 1);
         assets.append(*registry.getAsset(command->importedIDs().first()));
         SoundSourceDef source;
         source.entryId = QUuid::createUuid();
         source.sourceId = assets.back().sourceID;
-        source.trimStartFrame = 12;
-        source.trimEndFrame = 240;
-        sources.localized[language].entries = {source};
-        sources.localized[language].active = source.entryId;
+        source.trimStartFrame = 12 + i;
+        source.trimEndFrame = 240 + i;
+        auto& set = sources.localized[i < 2 ? QStringLiteral("English") : QStringLiteral("Japanese")];
+        set.entries.push_back(source);
+        set.active = source.entryId;
     }
+    auto& english = sources.localized[QStringLiteral("English")];
+    SoundSourceSemantics::assignActive(english, english.entries.front().entryId,
+                                     HarkenTest::platformIdString("Windows"));
     ASSERT_TRUE(applySourceState(sources));
     const auto authored = sound_->comp<VSound>()->sources;
     ASSERT_TRUE(manager.saveProject());
     for (const auto& asset : assets)
         ASSERT_TRUE(QFile::remove(asset.absolutePath));
     bindSection();
+    widget_->resize(900, 300);
+    widget_->show();
+    QCoreApplication::processEvents();
     auto* list = widget_->findChild<QWidget*>(QStringLiteral("sourcesListWidget"));
     ASSERT_NE(list, nullptr);
     list->setProperty("selectedRow", 0);
-    ObjectRefWidget* target = nullptr;
-    for (auto* row : visibleRows())
-        if (QUuid(row->property("entryId").toString()) == sources.localized["Japanese"].entries.front().entryId)
-            target = row->findChild<ObjectRefWidget*>(QStringLiteral("sourceRef"));
-    ASSERT_NE(target, nullptr);
+    ASSERT_EQ(visibleRows().size(), 2);
     writeWav(input, 0.75f);
     QMimeData mime;
     mime.setUrls({QUrl::fromLocalFile(input)});
-    QDropEvent drop(QPointF(5, 5), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
-    ASSERT_TRUE(list->eventFilter(target, &drop));
+    const int undoCount = UndoRedoManager::instance().undoStack()->count();
+    QDragEnterEvent ambiguousEnter(QPoint(5, 5), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(list, &ambiguousEnter);
+    ASSERT_TRUE(ambiguousEnter.isAccepted());
+    QDropEvent ambiguousDrop(QPoint(5, 5), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(list, &ambiguousDrop);
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), undoCount);
+    for (const auto& asset : assets)
+        EXPECT_FALSE(registry.sourceFileExists(asset.sourceID));
+    EXPECT_EQ(sound_->comp<VSound>()->sources, authored);
+
+    ObjectRefWidget* target = nullptr;
+    for (auto* row : visibleRows())
+        if (QUuid(row->property("entryId").toString()) == english.entries.back().entryId)
+            target = row->findChild<ObjectRefWidget*>(QStringLiteral("sourceRef"));
+    ASSERT_NE(target, nullptr);
+    QDragEnterEvent enter(target->rect().center(), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &enter);
+    ASSERT_TRUE(enter.isAccepted());
+    QDropEvent drop(target->rect().center(), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(target, &drop);
     ASSERT_TRUE(drop.isAccepted());
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), undoCount + 1);
     EXPECT_EQ(sound_->comp<VSound>()->sources, authored);
     EXPECT_FALSE(registry.sourceFileExists(assets.front().sourceID));
-    EXPECT_TRUE(registry.sourceFileExists(assets.back().sourceID));
-    EXPECT_EQ(registry.count(), 2);
-    ASSERT_TRUE(UndoRedoManager::instance().undo());
+    EXPECT_TRUE(registry.sourceFileExists(assets[1].sourceID));
     EXPECT_FALSE(registry.sourceFileExists(assets.back().sourceID));
+    EXPECT_EQ(registry.count(), 3);
+    ASSERT_TRUE(UndoRedoManager::instance().undo());
+    for (const auto& asset : assets)
+        EXPECT_FALSE(registry.sourceFileExists(asset.sourceID));
     EXPECT_EQ(sound_->comp<VSound>()->sources, authored);
     ASSERT_TRUE(UndoRedoManager::instance().redo());
-    EXPECT_TRUE(registry.sourceFileExists(assets.back().sourceID));
+    EXPECT_FALSE(registry.sourceFileExists(assets.front().sourceID));
+    EXPECT_TRUE(registry.sourceFileExists(assets[1].sourceID));
+    EXPECT_FALSE(registry.sourceFileExists(assets.back().sourceID));
     EXPECT_EQ(sound_->comp<VSound>()->sources, authored);
 }
 
-TEST_F(SourcesSectionProviderTest, ExternalDropsUseTheSelectedRowOrCurrentBarAndOneUndo)
+TEST_F(SourcesSectionProviderTest, ExternalDropsUseCurrentContextRegardlessOfSelectionAndOneUndo)
 {
     VNX::ProjectManager::instance().setProjectLanguagesInternal(
         {QStringLiteral("English"), QStringLiteral("Japanese")});
@@ -1444,54 +1675,71 @@ TEST_F(SourcesSectionProviderTest, ExternalDropsUseTheSelectedRowOrCurrentBarAnd
     writeWav(first, 0.25f);
     QMimeData firstMime;
     firstMime.setUrls({QUrl::fromLocalFile(first)});
+    QDragEnterEvent firstEnter(QPoint(5, 5), Qt::CopyAction, &firstMime,
+                              Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(list, &firstEnter);
+    ASSERT_TRUE(firstEnter.isAccepted());
     QDropEvent firstDrop(QPointF(5, 5), Qt::CopyAction, &firstMime,
                         Qt::LeftButton, Qt::NoModifier);
-    EXPECT_TRUE(list->eventFilter(list, &firstDrop));
+    QApplication::sendEvent(list, &firstDrop);
     EXPECT_TRUE(firstDrop.isAccepted());
     QCoreApplication::processEvents();
     auto* sound = sound_->comp<VNX::VSound>();
     ASSERT_EQ(sound->sources.localized["Japanese"].entries.size(), 1u);
     EXPECT_EQ(VNX::UndoRedoManager::instance().undoStack()->count(), initialUndoCount + 1);
 
+    ASSERT_EQ(visibleRows().size(), 1);
+    clickWidget(visibleRows().front()->findChild<QWidget*>("tableRowNumber"));
     VNX::LanguageContextService::instance().setLanguage(QStringLiteral("English"));
-    list->setProperty("selectedRow", 0);
-    const QString second = QDir(temp_.path()).filePath(QStringLiteral("japanese-second.wav"));
+    QCoreApplication::processEvents();
+    EXPECT_TRUE(visibleRows().isEmpty());
+    EXPECT_FALSE(footerForLanguage("English")->removeButton()->isEnabled());
+    const QString second = QDir(temp_.path()).filePath(QStringLiteral("english-first.wav"));
     writeWav(second, 0.5f);
-    auto* ref = visibleRows().front()->findChild<VNX::ObjectRefWidget*>(QStringLiteral("sourceRef"));
-    ASSERT_NE(ref, nullptr);
     QMimeData secondMime;
     secondMime.setUrls({QUrl::fromLocalFile(second)});
+    QDragEnterEvent secondEnter(QPoint(5, 5), Qt::CopyAction, &secondMime,
+                               Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(list, &secondEnter);
+    ASSERT_TRUE(secondEnter.isAccepted());
     QDropEvent secondDrop(QPointF(5, 5), Qt::CopyAction, &secondMime,
                          Qt::LeftButton, Qt::NoModifier);
-    EXPECT_TRUE(list->eventFilter(ref, &secondDrop));
+    QApplication::sendEvent(list, &secondDrop);
     EXPECT_TRUE(secondDrop.isAccepted());
     QCoreApplication::processEvents();
-    ASSERT_EQ(sound->sources.localized["Japanese"].entries.size(), 2u);
+    ASSERT_EQ(sound->sources.localized["Japanese"].entries.size(), 1u);
+    ASSERT_EQ(sound->sources.localized["English"].entries.size(), 1u);
     EXPECT_EQ(VNX::UndoRedoManager::instance().undoStack()->count(), initialUndoCount + 2);
-    const uint32_t importedId = sound->sources.localized["Japanese"].entries.back().sourceId;
+    const uint32_t importedId = sound->sources.localized["English"].entries.back().sourceId;
     VNX::UndoRedoManager::instance().undoStack()->undo();
     QCoreApplication::processEvents();
     ASSERT_EQ(sound->sources.localized["Japanese"].entries.size(), 1u);
+    EXPECT_FALSE(sound->sources.localized.contains("English"));
     EXPECT_FALSE(VNX::AssetRegistry::instance().contains(importedId));
     VNX::UndoRedoManager::instance().undoStack()->redo();
     QCoreApplication::processEvents();
-    ASSERT_EQ(sound->sources.localized["Japanese"].entries.size(), 2u);
-    EXPECT_EQ(sound->sources.localized["Japanese"].entries.back().sourceId, importedId);
+    ASSERT_EQ(sound->sources.localized["English"].entries.size(), 1u);
+    EXPECT_EQ(sound->sources.localized["English"].entries.back().sourceId, importedId);
 
     list->setProperty("selectedRow", -1);
-    auto* footer = widget_->findChild<QWidget*>(QStringLiteral("listFoot"));
+    auto* footer = footerForLanguage("English");
     ASSERT_NE(footer, nullptr);
     const QString third = QDir(temp_.path()).filePath(QStringLiteral("english.wav"));
     writeWav(third, 0.75f);
     QMimeData thirdMime;
     thirdMime.setUrls({QUrl::fromLocalFile(third)});
-    QDropEvent thirdDrop(QPointF(5, 5), Qt::CopyAction, &thirdMime,
+    const QPoint position = footer->mapTo(list, QPoint(5, 5));
+    QDragEnterEvent thirdEnter(position, Qt::CopyAction, &thirdMime,
+                              Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(list, &thirdEnter);
+    ASSERT_TRUE(thirdEnter.isAccepted());
+    QDropEvent thirdDrop(position, Qt::CopyAction, &thirdMime,
                         Qt::LeftButton, Qt::NoModifier);
-    EXPECT_TRUE(list->eventFilter(footer, &thirdDrop));
+    QApplication::sendEvent(list, &thirdDrop);
     EXPECT_TRUE(thirdDrop.isAccepted());
     QCoreApplication::processEvents();
-    ASSERT_EQ(sound->sources.localized["English"].entries.size(), 1u);
-    EXPECT_EQ(sound->sources.localized["Japanese"].entries.size(), 2u);
+    ASSERT_EQ(sound->sources.localized["English"].entries.size(), 2u);
+    EXPECT_EQ(sound->sources.localized["Japanese"].entries.size(), 1u);
     EXPECT_FALSE(sound->sources.localized["English"].active.isNull());
     EXPECT_EQ(VNX::UndoRedoManager::instance().undoStack()->count(), initialUndoCount + 3);
 }

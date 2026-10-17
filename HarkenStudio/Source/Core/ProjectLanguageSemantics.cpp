@@ -66,6 +66,8 @@ Normalization normalize(const QStringList& requested)
         }
         out.value.append(name);
     }
+    if (out.value.isEmpty())
+        return {{}, QStringLiteral("At least one project language is required")};
     return out;
 }
 

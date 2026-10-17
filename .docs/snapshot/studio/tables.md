@@ -1,6 +1,6 @@
 # Studio 公共表格规范与治理清单
 
-最近核对：2026-10-15。本文记录已确认的方案、业务边界及实施状态，供后续表格开发长期借鉴。Inspector 字段细节见 [inspector-tables.md](inspector-tables.md)。
+最近核对：2026-10-17。本文记录已确认的方案、业务边界及实施状态，供后续表格开发长期借鉴。Inspector 字段细节见 [inspector-tables.md](inspector-tables.md)。
 
 ## 职责边界
 
@@ -59,7 +59,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 - 主行排列各列的 layout 保持零边距、零间距，列宽包含单元格留白。业务不得通过修改字段控件自身或内部 layout 的 margin 补偿表格间距，也不得递归改写 ObjectRef 等复合控件内部布局；展开详情保留其自身布局。
 - slider 与数值编辑器是共享 `ParameterBinding` 的独立编辑入口，不由复合控件锁定二者的布局。试听 Variables 的 Value 单元格放入仅含 slider 的 host、独立 `ParameterValueEditor` 和 Scope 下拉框，三个兄弟控件分别以 `stretch=1` 等分宽度并使用统一间距。`ParameterValueEditor` 随 Smooth/Step 显示数值输入框或选择框；常规 parameter presenter 可以组合 slider 与 value 的布局。
 - 深色行背景、方角、连续分隔线、表头、footer、空表和分组行由公共样式提供，不在业务页面重画。
-- 常驻滚动槽以 Settings / Layout 为布局基准：纵向槽从表格内框顶部延伸到表体底部，表头止于槽左缘，footer 位于滚动区之外。控件行将表头托管在滚动区的视口上边距内，与原生视图保持相同结构；横纵槽同时存在时使用透明交角。槽位沿用 Explorer 的透明背景和滑块样式，保留槽与表体之间的分隔线，表格外框及交角边线保持连续。普通控件行与原生表体使用相同的表面底色；复合画布保留其自身表面，槽位仍透明。
+- 常驻滚动槽以 Settings / Layout 为布局基准：纵向槽从表格内框顶部延伸到表体底部，表头止于槽左缘，整表 footer 位于滚动区之外。控件行可按需创建分组 footer，放在组内行之后并随表体滚动；与整表 footer 复用 ListFooter 的主题、尺寸及动作入口，空组也可提供添加动作，分组 footer 不参与行选择或排序。控件行将表头托管在滚动区的视口上边距内，与原生视图保持相同结构；横纵槽同时存在时使用透明交角。槽位沿用 Explorer 的透明背景和滑块样式，保留槽与表体之间的分隔线，表格外框及交角边线保持连续。普通控件行与原生表体使用相同的表面底色；复合画布保留其自身表面，槽位仍透明。
 - 普通行可选择，无悬停底色。焦点、编辑器边界悬停、有效拖放目标反馈各自独立。ObjectRef 悬停仅边界高亮，禁用态无悬停。
 - 带 `#` 的配置表将选中底色与强调色竖线限制在 `#` 列，并贯穿主行及其展开内容的完整高度；其他列保持普通行背景。行号及 `#` 表头居中。
 - 业务表达 selected、disabled、error、modified、group、dropTarget 等语义，皮肤决定其视觉。领域波形、曲线等内容不属于应删除的局部表格皮肤。
@@ -68,9 +68,9 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 - 控件行保留复杂字段编辑能力；大数据展示保持 model/view，不要求每个单元格创建 QWidget。
 - 刷新后按稳定行身份恢复选择；视觉列换位后按稳定列身份处理编辑、复制和动作。模型字段顺序不能随用户换位改变。
 - 列宽比例转像素时按累计边界取整，保证总宽度守恒且整数宽度可往返恢复。连续拖动只调整目标列和用于补偿的相邻可见列；相邻列达到最小宽度前，其他列的宽度与边界必须不变。不得逐列向下截断并在下一次拖动中重新计入舍入误差；多列表格会因此出现持续左移和抖动。验收需要连续多次鼠标移动、反向拖回、隐藏列及列换位，不能只测试一次 resizeSection。
-- 首次打开和自动获得焦点不默认选择第一行。刷新保留未选中状态；主动删除通过公共 `removeSelectedRow` 选择原位置的下一行，删除末行则选择上一行，空表取消选择。多选删除保留仍存活的选择，取消选择或切换模型后不恢复旧选择。新增、用户点选或显式定位可以建立选择。平台草稿尚未分配 ID 时使用唯一名称恢复，落盘后使用 ID。
+- 首次打开和自动获得焦点不默认选择第一行。刷新保留未选中状态；主动删除通过公共 `removeSelectedRow` 选择原位置的下一行，删除末行则选择上一行，空表取消选择。控件行通过 `registerRow` 声明稳定 `groupId` 时，删除后的选择限定在同组；该组为空时取消选择，分组和行重建或换序不改变此约束。多选删除保留仍存活的选择，取消选择或切换模型后不恢复旧选择。新增、用户点选或显式定位可以建立选择。平台草稿尚未分配 ID 时使用唯一名称恢复，落盘后使用 ID。
 - 表体和 footer 空白、表格内 Esc 支持取消选择；原生单选表也支持 Ctrl 点选已选行取消。取消同时清除当前行与选择，删除等动作必须据此禁用。单元格编辑和 footer 按钮不被当作空白；编辑器先处理自己的 Esc，移动中的 Esc 先取消移动。外部详情或曲线区交互是否取消选择由业务决定。
-- 普通分组与强调分区是不同语义。Sources 语言组、快捷键分类使用 group；Pack 的 System/Content 使用 section，保留粗体主文字、强调色竖条、提亮背景及上下分隔线，跨整行绘制。业务仅声明语义，不维护局部颜色和字体。
+- 配置表与展示表使用统一分组标题：Sources 语言组、快捷键分类、Pack 的 System/Content 均由公共 `TableGroupHeader` 绘制，居中加粗、使用主题表头背景和弱化文字、保留下分隔线，无选中态或强调色竖条。控件行通过 `TableWidget::createGroupHeader` 创建标题；原生树形表通过 `ProportionalTreeWidget::createGroup` 声明分组，使用同一绘制及主题高度，跨整行显示，不受列换位影响。业务只提供组名和数据，不拼装标题或维护局部样式。分组表尾按需启用，与下一组标题之间保留主题分隔线，末组使用表格外框收尾；空组标题与表尾的相邻边框合为一条，避免叠线。
 
 ## 全量清单
 
@@ -162,7 +162,7 @@ Hierarchy、Explorer、Sources、Selector 及 Template Chooser 预览属于导�
 
 本轮使用 `windows-ninja-clang-dev` 对应的 `build-nc`、`RelWithDebInfo` 构建 `harken_editor` 和 `harken_editor_tests`。回归以 `QT_QPA_PLATFORM=offscreen` 运行，覆盖公共表格、主题、ObjectRef、Inspector、Sources、Binding、Audition、Transition、项目设置、Pack、Remote 和 Monitor；没有启动 Studio 做人工观感验收。构建产物为 `build-nc/bin/RelWithDebInfo/HarkenStudio.exe`。
 
-选择与分区回归补充：默认编辑器及测试目标构建通过，350 项相关回归分批全部通过，包含 8 项新增用例；共享表格和项目设置最后复验 46 项通过。覆盖首次打开与自动设焦、未选中刷新、取消后动作禁用、主动新增与定位、删除后不转选其他行、单元格 Esc 优先取消编辑、footer 操作保留选择，以及 Pack System/Content 的强调条、背景、上下分隔线在窗口缩放和列换位后保持。既有语言删除测试改为显式鼠标点选，保留保存与撤销断言。
+选择与分区回归补充：默认编辑器及测试目标构建通过，350 项相关回归分批全部通过，包含 8 项新增用例；共享表格和项目设置最后复验 46 项通过。覆盖首次打开与自动设焦、未选中刷新、取消后动作禁用、主动新增与定位、删除后不转选其他行、单元格 Esc 优先取消编辑、footer 操作保留选择，以及 Pack 分区跨整行显示在窗口缩放和列换位后保持。既有语言删除测试改为显式鼠标点选，保留保存与撤销断言。分组样式统一后，Pack 的渲染断言改为与公共控件标题逐像素比较，主题切换用例同步核对控件与原生分组的高度，避免固化业务面板的特殊样式。
 
 列宽回归补充：纯布局、独立原生表格及真实 Pack 的连续拖动均复现了公共像素取整误差，修复位于 TableColumnLayout。新增 3 项回归，覆盖反复拖动时无关列的位置、最小宽度补偿、隐藏列和列换位。默认编辑器及测试目标构建通过，353 项相关离屏回归全部通过。
 
@@ -193,12 +193,14 @@ Hierarchy、Explorer、Sources、Selector 及 Template Chooser 预览属于导�
 | `createCustomView(name, factory)` | 特殊视图的显式工厂入口；工厂接收宿主 QWidget 和当前 ThemeManager，返回视图后公共层完成接入，保留具体返回类型 |
 | `TableItemDelegate::updateEditorGeometry` | 原生编辑器及 index/item widget 的统一 X/Y 留白与垂直居中入口；业务直接插入编辑器，不再套控件行的 `TableCell` |
 | `setModel(model)` | 替换外部模型表体的数据模型，重绑布局监听并更新尺寸；不替换条目控件自身的内部模型 |
-| `registerGroupRow(row)` / `TableGroupRole` | 分别用于控件分组行和原生分组行 |
-| `TableSectionRole` | 原生分区行的强调标题；由公共绘制覆盖全宽，不依赖列的视觉位置 |
+| `createGroupHeader(text)` / `ProportionalTreeWidget::createGroup(text)` | 分别创建控件分组标题和原生树形分组；共用 `TableGroupHeader` 的绘制与主题高度，标题不可选中，业务不维护样式 |
+| `TableGroupRole` | 原生分组语义，由公共创建入口设置；公共视图按整行绘制，不依赖列的视觉位置 |
 | `setSelectionClearHandler(handler)` / `clearSelection()` | 控件行接入业务取消选择函数；原生表体由公共层清除当前索引和选择；空白、Esc 等交互共用此入口 |
 | `bodyMessage()` | 按需创建公共表体消息标签；字体、边距与最小高度由共享层处理，业务设置文本和可见性 |
 | `createRowNumber` / `setRowNumberColumn` / `setRowMoveHandler(handler, guard)` | 控件行和原生表体显式声明序号列并启用移动，共用光标、插入线、拖动取消、右键上下移与 Alt＋方向键；调用业务命令，guard 保留继承、分组等移动约束 |
 | `footer(standardButtons)` | 按需创建，未调用就没有 footer；是否显示标准增删按钮在首次创建时决定 |
+| `createGroupFooter(standardButtons)` | 为控件行创建一个新的 ListFooter 并追加到表体布局；调用方在组内行之后调用，绑定所属组的业务动作；空白取消选择、按钮保留选择的规则与整表 footer 一致 |
+| `registerRow(row, cells, details, groupId)` | 可选的稳定分组 ID，用于删除后在同组恢复选择；默认无分组，分组名与业务含义由调用方管理 |
 | `ListFooter::setRefreshAction` | 绑定左侧刷新动作 |
 | `ListFooter::addActionButton` / `addStatusWidget` | 提供左、右动作和状态位置，业务不重排 footer 内部 layout |
 | `TableTextRole` / `TableDropTargetRole` | 原生单元格提交 muted、disabled、error、modified、custom、success 等状态及拖放目标语义 |

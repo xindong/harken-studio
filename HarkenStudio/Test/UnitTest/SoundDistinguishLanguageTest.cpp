@@ -129,7 +129,7 @@ TEST(SoundDistinguishLanguageJson, NonBoolIsRejected)
         {QStringLiteral("distinguishLanguage"), QStringLiteral("yes")}}));
 }
 
-TEST_F(SoundDistinguishLanguageTest, FirstLanguageModeStartsEmptyEvenWithoutProjectLanguages)
+TEST_F(SoundDistinguishLanguageTest, FirstLanguageModeStartsEmptyAndPreservesPlainSources)
 {
     auto* sound = sound_->comp<VSound>();
     SoundSources sources;
@@ -138,7 +138,6 @@ TEST_F(SoundDistinguishLanguageTest, FirstLanguageModeStartsEmptyEvenWithoutProj
     sources.plain.platforms[HarkenTest::platformIdString("macOS")].active = sources.plain.entries[1].entryId;
     ASSERT_TRUE(setProperty(sound_, "sources", SoundSourceSemantics::toJson(sources)).success);
     const auto before = sound->sources;
-    ProjectManager::instance().setProjectLanguagesInternal({});
     ASSERT_TRUE(setProperty(sound_, "distinguishLanguage", true).success);
     EXPECT_TRUE(sound->sources.localized.isEmpty());
     EXPECT_EQ(sound->sources, before);

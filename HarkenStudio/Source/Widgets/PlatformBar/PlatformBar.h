@@ -2,7 +2,6 @@
 
 #include "../../Core/PlatformContext.h"
 
-#include <QStringList>
 #include <QToolBar>
 
 class QToolButton;
@@ -13,7 +12,6 @@ class QWidget;
 namespace VNX {
 
 class PlatformContextService;
-class SegmentedControl;
 
 class PlatformBar : public QToolBar
 {
@@ -32,7 +30,7 @@ private:
     void applyLanguage(const QString& language);
     void onAllToggled(bool on);
     void onPlatformChanged(int index);
-    void onLanguageToggled(const QString& language, bool on);
+    void onLanguageChanged(int index);
 
     PlatformContextService* service_ = nullptr;
     QWidget* host_ = nullptr;
@@ -40,8 +38,7 @@ private:
     QWidget* center_ = nullptr;
     QToolButton* allButton_ = nullptr;
     QComboBox* platformCombo_ = nullptr;
-    SegmentedControl* languageControl_ = nullptr;
-    QStringList languages_;
+    QComboBox* languageCombo_ = nullptr;
     bool updating_ = false;
 };
 

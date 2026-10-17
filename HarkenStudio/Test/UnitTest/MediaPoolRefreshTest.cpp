@@ -286,18 +286,18 @@ TEST(MediaPoolRefreshTest, ExternalFileLifecyclePreservesAuthoredReferencesAcros
         return !explorer.sourcesTree()->findItems(QStringLiteral("external.wav"),
             Qt::MatchExactly | Qt::MatchRecursive).isEmpty();
     };
-    const auto sourceReference = [&]() -> ObjectRefWidget* {
+    const auto sourceReference = [&](uint32_t id) -> ObjectRefWidget* {
         for (auto* ref : sources->findChildren<ObjectRefWidget*>())
-            if (ref->currentObjectID() == sourceID && ref->isVisibleTo(sources.get()))
+            if (ref->currentObjectID() == id && ref->isVisibleTo(sources.get()))
                 return ref;
         return nullptr;
     };
     const auto referenceInvalid = [&] {
-        const auto* ref = sourceReference();
+        const auto* ref = sourceReference(sourceID);
         return ref && ref->property("inputInvalid").toBool();
     };
     const auto clickWave = [&](bool enabled) {
-        auto* ref = sourceReference();
+        auto* ref = sourceReference(sourceID);
         ASSERT_NE(ref, nullptr);
         QWidget* row = ref->parentWidget();
         while (row && row->objectName() != QStringLiteral("listRow"))
@@ -353,8 +353,8 @@ TEST(MediaPoolRefreshTest, ExternalFileLifecyclePreservesAuthoredReferencesAcros
         }
         return false;
     };
-    const auto expectIcons = [&](bool missing, bool active) {
-        auto* ref = sourceReference();
+    const auto expectIcons = [&](uint32_t id, bool missing, bool active) {
+        auto* ref = sourceReference(id);
         ASSERT_NE(ref, nullptr);
         bool foundIcon = false;
         for (auto* label : ref->findChildren<QLabel*>()) {
@@ -410,7 +410,7 @@ TEST(MediaPoolRefreshTest, ExternalFileLifecyclePreservesAuthoredReferencesAcros
     }};
     clickWave(true);
     EXPECT_EQ(editorRequests, 1);
-    expectIcons(false, false);
+    expectIcons(sourceID, false, false);
     ASSERT_TRUE(manager.saveProject());
     ASSERT_TRUE(QFile::remove(path));
     clickWave(true);
@@ -426,7 +426,7 @@ TEST(MediaPoolRefreshTest, ExternalFileLifecyclePreservesAuthoredReferencesAcros
     EXPECT_FALSE(blueprintError(other->name));
     clickWave(false);
     EXPECT_EQ(editorRequests, 1);
-    expectIcons(true, true);
+    expectIcons(sourceID, true, true);
     ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(true); }, 5000));
     for (const auto& [canvas, size] : waveformViews) {
         EXPECT_EQ(soundNode(*canvas)->shape().boundingRect().size(), size);
@@ -440,17 +440,18 @@ TEST(MediaPoolRefreshTest, ExternalFileLifecyclePreservesAuthoredReferencesAcros
     languages.setLanguage(QStringLiteral("Japanese"));
     ASSERT_TRUE(QTest::qWaitFor([&] { return !treeError(sound->name) && !blueprintError(sound->name); }, 5000));
     EXPECT_TRUE(selectionWaveform.isEnabled());
-    expectIcons(true, false);
+    EXPECT_EQ(sourceReference(sourceID), nullptr);
+    expectIcons(otherID, false, false);
     ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(false); }, 5000));
     languages.setLanguage(QStringLiteral("English"));
     ASSERT_TRUE(QTest::qWaitFor([&] { return treeError(sound->name) && blueprintError(sound->name); }, 5000));
     EXPECT_FALSE(selectionWaveform.isEnabled());
-    expectIcons(true, true);
+    expectIcons(sourceID, true, true);
     ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(true); }, 5000));
     platforms.setSelected({android}, android, false);
     ASSERT_TRUE(QTest::qWaitFor([&] { return !treeError(sound->name) && !blueprintError(sound->name); }, 5000));
     EXPECT_TRUE(selectionWaveform.isEnabled());
-    expectIcons(true, false);
+    expectIcons(sourceID, true, false);
     ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(false); }, 5000));
     platforms.setSelected({windows}, windows, false);
     ASSERT_TRUE(QTest::qWaitFor([&] { return treeError(sound->name) && blueprintError(sound->name); }, 5000));
@@ -459,7 +460,7 @@ TEST(MediaPoolRefreshTest, ExternalFileLifecyclePreservesAuthoredReferencesAcros
     EXPECT_FALSE(selectionWaveform.isEnabled());
     EXPECT_FALSE(selectionWaveform.toolTip().isEmpty());
     platforms.setSelected({windows}, windows, false);
-    expectIcons(true, true);
+    expectIcons(sourceID, true, true);
     ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(true); }, 5000));
     EXPECT_EQ(SoundSourceSemantics::toJson(sound->comp<VSound>()->sources), authored);
     EXPECT_EQ(registry.findAssetByPath(path)->sourceID, sourceID);
@@ -475,7 +476,7 @@ TEST(MediaPoolRefreshTest, ExternalFileLifecyclePreservesAuthoredReferencesAcros
     }, 5000));
     clickWave(true);
     EXPECT_EQ(editorRequests, 2);
-    expectIcons(false, false);
+    expectIcons(sourceID, false, false);
     ASSERT_TRUE(QTest::qWaitFor([&] { return waveformsMatch(false); }, 5000));
     for (const auto& [canvas, size] : waveformViews)
         EXPECT_EQ(soundNode(*canvas)->shape().boundingRect().size(), size);

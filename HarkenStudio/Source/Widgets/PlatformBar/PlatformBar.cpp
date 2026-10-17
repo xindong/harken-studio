@@ -4,7 +4,6 @@
 #include "../../Core/PlatformContextService.h"
 #include "../../Core/ProjectManager.h"
 #include "../../Core/QtControlSkin.h"
-#include "../Common/SegmentedControl.h"
 
 #include <QAction>
 #include <QComboBox>
@@ -78,11 +77,14 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     trailingLayout->setSpacing(layout->spacing());
     layout->addWidget(trailing, 0, 2, Qt::AlignRight | Qt::AlignVCenter);
 
-    languageControl_ = new SegmentedControl(trailing);
-    languageControl_->setObjectName(QStringLiteral("platformBarLanguages"));
-    languageControl_->setAdaptiveSizing(true);
-    languageControl_->layout()->setSpacing(layout->spacing());
-    trailingLayout->addWidget(languageControl_);
+    languageCombo_ = new QComboBox(trailing);
+    languageCombo_->setObjectName(QStringLiteral("platformBarLanguages"));
+    languageCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    languageCombo_->setMinimumContentsLength(12);
+    languageCombo_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+    languageCombo_->setAccessibleName(tr("Edit and Audition Language"));
+    languageCombo_->setToolTip(tr("Edit and Audition Language"));
+    trailingLayout->addWidget(languageCombo_);
 
     platformCombo_ = new QComboBox(trailing);
     platformCombo_->setObjectName(QStringLiteral("platformBarSelector"));
@@ -107,6 +109,7 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     addWidget(host_);
 
     connect(platformCombo_, &QComboBox::currentIndexChanged, this, &PlatformBar::onPlatformChanged);
+    connect(languageCombo_, &QComboBox::currentIndexChanged, this, &PlatformBar::onLanguageChanged);
     connect(allButton_, &QToolButton::toggled, this, &PlatformBar::onAllToggled);
 
     auto& pm = ProjectManager::instance();
@@ -172,37 +175,20 @@ void PlatformBar::rebuild()
 void PlatformBar::rebuildLanguages()
 {
     updating_ = true;
-    languages_.clear();
-    QList<QPair<QString, QVariant>> options;
+    languageCombo_->clear();
     if (ProjectManager::instance().isProjectOpen()) {
-        languages_ = LanguageContextService::instance().availableLanguages();
-        for (const QString& name : languages_)
-            options.append({name, name});
-    }
-    languageControl_->setOptions(options, true);
-    for (int i = 0; i < languages_.size(); ++i) {
-        QToolButton* button = languageControl_->button(i);
-        if (!button)
-            continue;
-        const QString language = languages_.at(i);
-        button->setFocusPolicy(Qt::NoFocus);
-        connect(button, &QToolButton::toggled, this,
-                [this, language](bool on) { onLanguageToggled(language, on); });
+        for (const QString& name : LanguageContextService::instance().availableLanguages())
+            languageCombo_->addItem(name, name);
     }
     updating_ = false;
     applyLanguage(LanguageContextService::instance().language());
-    languageControl_->setVisible(!languages_.isEmpty());
+    languageCombo_->setVisible(languageCombo_->count() > 0);
 }
 
 void PlatformBar::applyLanguage(const QString& language)
 {
     updating_ = true;
-    for (int i = 0; i < languages_.size(); ++i) {
-        QToolButton* button = languageControl_->button(i);
-        if (!button)
-            continue;
-        button->setChecked(languages_.at(i) == language);
-    }
+    languageCombo_->setCurrentIndex(languageCombo_->findData(language));
     updating_ = false;
 }
 
@@ -242,13 +228,11 @@ void PlatformBar::onPlatformChanged(int index)
     service_->setSelected({platform}, platform, service_->context().all);
 }
 
-void PlatformBar::onLanguageToggled(const QString& language, bool on)
+void PlatformBar::onLanguageChanged(int index)
 {
-    if (updating_)
+    if (updating_ || index < 0)
         return;
-    if (!on)
-        return;
-    LanguageContextService::instance().setLanguage(language);
+    LanguageContextService::instance().setLanguage(languageCombo_->itemData(index).toString());
 }
 
 }

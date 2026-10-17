@@ -1523,13 +1523,13 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     emit progressChanged(70, tr("Loading project metadata..."));
 
 
-    if (root.contains("projectLanguages")) {
-        QStringList loaded;
-        for (const auto& v : root["projectLanguages"].toArray())
-            loaded.append(v.toString());
-        project.projectLanguages = ProjectLanguageSemantics::dropSfxNames(loaded);
-        project.defaultLanguage = root["defaultLanguage"].toString("English");
-    }
+    QStringList loadedLanguages;
+    for (const auto& v : root["projectLanguages"].toArray())
+        loadedLanguages.append(v.toString());
+    project.projectLanguages = ProjectLanguageSemantics::dropSfxNames(loadedLanguages);
+    if (project.projectLanguages.isEmpty())
+        project.projectLanguages = {QStringLiteral("English")};
+    project.defaultLanguage = root["defaultLanguage"].toString("English");
 
     project.packBuildOutputDir = PathUtils::normalizePackBuildOutputDir(
         root["packBuildOutputDir"].toString());

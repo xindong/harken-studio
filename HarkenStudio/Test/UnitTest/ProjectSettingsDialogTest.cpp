@@ -314,12 +314,12 @@ TEST_F(ProjectSettingsDialogTest, LanguageListHasNoLockedSfxRow)
     ASSERT_NE(add, nullptr);
     ASSERT_NE(remove, nullptr);
     EXPECT_EQ(dialog.findChild<QWidget*>(QStringLiteral("targetLanguageLockedRow")), nullptr);
-    EXPECT_TRUE(targetLanguageEdits(dialog).isEmpty());
+    EXPECT_EQ(targetLanguageValues(dialog), QStringList{QStringLiteral("English")});
     EXPECT_FALSE(remove->isEnabled());
 
     add->click();
     QApplication::processEvents();
-    auto* edit = targetLanguageEdit(dialog, 0);
+    auto* edit = targetLanguageEdit(dialog, 1);
     ASSERT_NE(edit, nullptr);
     EXPECT_TRUE(edit->hasFocus());
 }
@@ -355,15 +355,15 @@ TEST_F(ProjectSettingsDialogTest, AddingLanguageOnlyDirtiesUntilApply)
     ASSERT_NE(apply, nullptr);
 
     add->click();
-    auto* edit = targetLanguageEdit(dialog, 0);
+    auto* edit = targetLanguageEdit(dialog, 1);
     ASSERT_NE(edit, nullptr);
-    edit->setText(QStringLiteral("English"));
+    edit->setText(QStringLiteral("Japanese"));
     EXPECT_TRUE(apply->isEnabled());
-    EXPECT_TRUE(ProjectManager::instance().getProjectLanguages().isEmpty());
+    EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList{QStringLiteral("English")});
 
     apply->click();
     EXPECT_EQ(ProjectManager::instance().getProjectLanguages(),
-              QStringList{QStringLiteral("English")});
+              QStringList({QStringLiteral("English"), QStringLiteral("Japanese")}));
     EXPECT_FALSE(dialog.isVisible());
     EXPECT_EQ(dialog.result(), QDialog::Accepted);
 }
@@ -377,7 +377,6 @@ TEST_F(ProjectSettingsDialogTest, ApplyPersistsLanguagesAndClearsDirty)
     ASSERT_NE(add, nullptr);
     ASSERT_NE(apply, nullptr);
 
-    add->click();
     auto* first = targetLanguageEdit(dialog, 0);
     ASSERT_NE(first, nullptr);
     first->setText(QStringLiteral("English"));
@@ -451,7 +450,7 @@ TEST_F(ProjectSettingsDialogTest, RemoveSelectedLanguageApplies)
     EXPECT_FALSE(dialog.isVisible());
 }
 
-TEST_F(ProjectSettingsDialogTest, RemovingLastLanguageClearsContextAndCanBeUndone)
+TEST_F(ProjectSettingsDialogTest, LastLanguageCannotBeDeletedFromTheDraft)
 {
     const QStringList languages{QStringLiteral("Japanese")};
     seedProjectLanguages(languages);
@@ -468,31 +467,22 @@ TEST_F(ProjectSettingsDialogTest, RemovingLastLanguageClearsContextAndCanBeUndon
     ASSERT_NE(edit, nullptr);
 
     clickLanguageEditor(edit);
-    ASSERT_TRUE(remove->isEnabled());
-    remove->click();
-    EXPECT_TRUE(targetLanguageEdits(dialog).isEmpty());
     EXPECT_FALSE(remove->isEnabled());
-    EXPECT_TRUE(apply->isEnabled());
-    EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), languages);
-
-    apply->click();
-    EXPECT_FALSE(dialog.isVisible());
-    EXPECT_TRUE(ProjectManager::instance().getProjectLanguages().isEmpty());
-    EXPECT_TRUE(service.availableLanguages().isEmpty());
-    EXPECT_TRUE(service.language().isEmpty());
-
-    auto* undo = UndoRedoManager::instance().undoStack();
-    ASSERT_EQ(undo->count(), 1);
-    undo->undo();
+    remove->click();
+    EXPECT_EQ(targetLanguageValues(dialog), languages);
+    EXPECT_FALSE(remove->isEnabled());
+    EXPECT_FALSE(apply->isEnabled());
     EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), languages);
     EXPECT_EQ(service.language(), QStringLiteral("Japanese"));
-    undo->redo();
-    EXPECT_TRUE(ProjectManager::instance().getProjectLanguages().isEmpty());
-    EXPECT_TRUE(service.language().isEmpty());
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
 
-    ProjectSettingsDialog reopen;
-    EXPECT_TRUE(targetLanguageEdits(reopen).isEmpty());
-    EXPECT_EQ(reopen.findChild<QWidget*>(QStringLiteral("targetLanguageLockedRow")), nullptr);
+    edit->clear();
+    acceptNextModalDialog();
+    apply->click();
+    EXPECT_TRUE(dialog.isVisible());
+    EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), languages);
+    EXPECT_EQ(service.language(), QStringLiteral("Japanese"));
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
 }
 
 TEST_F(ProjectSettingsDialogTest, IllegalLanguageCharactersCannotBeTyped)
@@ -503,7 +493,7 @@ TEST_F(ProjectSettingsDialogTest, IllegalLanguageCharactersCannotBeTyped)
     ASSERT_NE(add, nullptr);
 
     add->click();
-    auto* edit = targetLanguageEdit(dialog, 0);
+    auto* edit = targetLanguageEdit(dialog, 1);
     ASSERT_NE(edit, nullptr);
     edit->insert(QStringLiteral("English"));
     EXPECT_EQ(edit->text(), QStringLiteral("English"));
@@ -524,7 +514,6 @@ TEST_F(ProjectSettingsDialogTest, DuplicateLanguageRejectedOnApply)
     ASSERT_NE(add, nullptr);
     ASSERT_NE(apply, nullptr);
 
-    add->click();
     auto* first = targetLanguageEdit(dialog, 0);
     ASSERT_NE(first, nullptr);
     first->setText(QStringLiteral("English"));
@@ -536,7 +525,7 @@ TEST_F(ProjectSettingsDialogTest, DuplicateLanguageRejectedOnApply)
     apply->click();
 
     EXPECT_TRUE(dialog.isVisible());
-    EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList());
+    EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList{QStringLiteral("English")});
     EXPECT_EQ(targetLanguageValues(dialog),
               QStringList({QStringLiteral("English"), QStringLiteral("english")}));
     EXPECT_TRUE(apply->isEnabled());
@@ -554,7 +543,7 @@ TEST_F(ProjectSettingsDialogTest, InvalidLanguagesRejectApplyBeforeAnyPlatformCh
     ASSERT_NE(list, nullptr);
 
     add->click();
-    auto* edit = targetLanguageEdit(dialog, 0);
+    auto* edit = targetLanguageEdit(dialog, 1);
     ASSERT_NE(edit, nullptr);
     edit->setText(QStringLiteral("SFX"));
     list->setCurrentItem(list->topLevelItem(1));
@@ -563,7 +552,7 @@ TEST_F(ProjectSettingsDialogTest, InvalidLanguagesRejectApplyBeforeAnyPlatformCh
     apply->click();
 
     EXPECT_TRUE(dialog.isVisible());
-    EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList());
+    EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList{QStringLiteral("English")});
     EXPECT_EQ(ProjectManager::instance().getTargetPlatforms(),
               HarkenTest::platformIdStrings({"Windows", "macOS"}));
 }
@@ -853,7 +842,7 @@ TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditRejectsApplyBeforeOtherS
     dialog.show();
     enterPlatform(dialog, "Draft", "Android");
     addLanguageButton(dialog)->click();
-    targetLanguageEdit(dialog, 0)->setText("English");
+    targetLanguageEdit(dialog, 1)->setText("Japanese");
     const auto id = ProjectManager::instance().currentProject()->platforms.first().id;
     ASSERT_TRUE(ActionManager::instance().execute("rename_project_platform",
         {{"platform_id", ProjectPlatformSemantics::idString(id)}, {"name", "External"}}, ActionSource::IPC).success);
@@ -867,10 +856,10 @@ TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditRejectsApplyBeforeOtherS
     EXPECT_TRUE(dialog.isVisible());
     EXPECT_EQ(ProjectManager::instance().currentProject()->platforms.size(), 2);
     EXPECT_EQ(ProjectManager::instance().currentProject()->platforms.first().name, QStringLiteral("External"));
-    EXPECT_TRUE(ProjectManager::instance().getProjectLanguages().isEmpty());
+    EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList{"English"});
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
     EXPECT_EQ(dialog.findChild<QTreeWidget*>("projectPlatformList")->topLevelItemCount(), 3);
-    EXPECT_EQ(targetLanguageValues(dialog), QStringList{"English"});
+    EXPECT_EQ(targetLanguageValues(dialog), (QStringList{"English", "Japanese"}));
     EXPECT_TRUE(applyButton(dialog)->isEnabled());
 }
 
@@ -881,7 +870,7 @@ TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditCanReloadAllBuildDraftsW
     EXPECT_EQ(dialog.findChild<QAbstractButton*>("projectPlatformsReload"), nullptr);
     enterPlatform(dialog, "Draft", "Android");
     addLanguageButton(dialog)->click();
-    targetLanguageEdit(dialog, 0)->setText("English");
+    targetLanguageEdit(dialog, 1)->setText("Japanese");
     dialog.findChild<QLineEdit*>("packBuildOutputDirEdit")->setText("DraftPacks");
     auto& manager = ProjectManager::instance();
     const auto id = manager.currentProject()->platforms.first().id;
@@ -904,9 +893,9 @@ TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditCanReloadAllBuildDraftsW
     auto* list = dialog.findChild<QTreeWidget*>("projectPlatformList");
     ASSERT_EQ(list->topLevelItemCount(), 2);
     EXPECT_EQ(list->topLevelItem(0)->text(0), QStringLiteral("External"));
-    EXPECT_TRUE(targetLanguageValues(dialog).isEmpty());
+    EXPECT_EQ(targetLanguageValues(dialog), QStringList{"English"});
     EXPECT_TRUE(dialog.findChild<QLineEdit*>("packBuildOutputDirEdit")->text().isEmpty());
-    EXPECT_TRUE(manager.getProjectLanguages().isEmpty());
+    EXPECT_EQ(manager.getProjectLanguages(), QStringList{"English"});
     EXPECT_TRUE(manager.packBuildOutputDir().isEmpty());
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
     list->setCurrentItem(list->topLevelItem(0));

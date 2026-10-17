@@ -88,11 +88,13 @@ TEST(ProjectLanguageSemanticsTest, BuildNamesAreTrimmed)
     EXPECT_EQ(buildLanguages(project), QStringList{QStringLiteral("English")});
 }
 
-TEST(ProjectLanguageSemanticsTest, NormalizeAcceptsEmptyList)
+TEST(ProjectLanguageSemanticsTest, NormalizeRejectsEmptyList)
 {
-    const auto result = normalize({});
-    ASSERT_TRUE(result.ok());
-    EXPECT_TRUE(result.value.isEmpty());
+    for (const QStringList& names : {QStringList{}, QStringList{QStringLiteral("  "), QString()}}) {
+        const auto result = normalize(names);
+        EXPECT_FALSE(result.ok());
+        EXPECT_TRUE(result.value.isEmpty());
+    }
 }
 
 TEST(ProjectLanguageSemanticsTest, NormalizeTrimsSurroundingWhitespace)

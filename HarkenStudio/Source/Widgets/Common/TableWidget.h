@@ -96,6 +96,8 @@ public:
     QVBoxLayout* rowsLayout();
     QLabel* bodyMessage();
     ListFooter* footer(bool standardButtons = true);
+    QLabel* createGroupHeader(const QString& text);
+    ListFooter* createGroupFooter(bool standardButtons = true);
     QTableView* createModelView(const QString& name, QAbstractItemModel* model);
     ProportionalTreeWidget* createItemView(const QString& name, const QStringList& headers,
                                          const QList<int>& columnWeights);
@@ -113,9 +115,9 @@ public:
     void setViewColumns(const QString& key, const QList<TableColumn>& columns);
     void setRowNumberColumn(int column);
     TableCell* createCell(QWidget* parent);
-    void registerRow(QWidget* row, const QList<QWidget*>& cells, QWidget* details = nullptr);
+    void registerRow(QWidget* row, const QList<QWidget*>& cells, QWidget* details = nullptr,
+                     const QString& groupId = {});
     QWidget* rowForWidget(QWidget* widget) const;
-    void registerGroupRow(QWidget* row);
     QLabel* createRowNumber(QWidget* row, int index, std::optional<int> displayNumber = {});
     void setRowMoveHandler(std::function<void(int, int)> handler,
                            std::function<bool(int, int)> guard = {});
@@ -152,6 +154,7 @@ private:
         QPointer<QWidget> details;
         QPointer<QFrame> detailsNumber;
         int detailsIndent = 0;
+        QString groupId;
     };
 
     void ensureRows();
@@ -173,7 +176,7 @@ private:
     void refreshRowDetails(const Row& row);
     QList<QWidget*> movableRows() const;
     QModelIndexList movableViewRows() const;
-    QList<QWidget*> selectableWidgetRows() const;
+    QList<QWidget*> selectableWidgetRows(const std::optional<QString>& groupId = {}) const;
     QModelIndexList selectableViewRows() const;
     int rowMoveTarget(const QPoint& globalPosition, int* indicatorY = nullptr) const;
     void cancelRowMove();
@@ -194,7 +197,6 @@ private:
     QList<QLabel*> labels_;
     QList<bool> hiddenColumns_;
     QList<Row> rowBindings_;
-    QList<QPointer<QWidget>> groups_;
     TableColumnLayout columnLayout_;
     QString viewColumnLayoutKey_;
     QList<TableColumn> viewColumns_;

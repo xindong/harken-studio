@@ -331,10 +331,6 @@ TEST_F(ImportSoundSourcesCommandTest, LocalizedImportRejectsInvalidGroupsBeforeI
         EXPECT_EQ(command->failCount(), 1);
         EXPECT_TRUE(command->importedIDs().isEmpty());
     }
-    ProjectManager::instance().setProjectLanguagesInternal({});
-    auto* command = ImportSoundSourcesCommand::pushImport({path}, binding_, sound_);
-    EXPECT_EQ(command->successCount(), 0);
-    EXPECT_EQ(command->failCount(), 1);
     EXPECT_EQ(AssetRegistry::instance().count(), assetCount);
     EXPECT_TRUE(sound->sources.plain.entries.empty());
     EXPECT_FALSE(UndoRedoManager::instance().canUndo());

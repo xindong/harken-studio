@@ -20,7 +20,7 @@ QStringList names(std::initializer_list<const char*> raw)
     return out;
 }
 
-TEST(LanguageContextService, DefaultsEmptyAndRejectsUnknownLanguages)
+TEST(LanguageContextService, DefaultsToEnglishAndRejectsUnknownLanguages)
 {
     auto& pm = VNX::ProjectManager::instance();
     if (pm.isProjectOpen())
@@ -33,15 +33,15 @@ TEST(LanguageContextService, DefaultsEmptyAndRejectsUnknownLanguages)
     ASSERT_TRUE(pm.createProject(config));
 
     VNX::LanguageContextService service(std::make_unique<VNX::MemorySettingsStorage>());
-    EXPECT_TRUE(service.availableLanguages().isEmpty());
-    EXPECT_TRUE(service.language().isEmpty());
+    EXPECT_EQ(service.availableLanguages(), names({"English"}));
+    EXPECT_EQ(service.language(), QStringLiteral("English"));
 
     service.setLanguage(QStringLiteral("English"));
-    EXPECT_TRUE(service.language().isEmpty());
+    EXPECT_EQ(service.language(), QStringLiteral("English"));
 
     pm.setProjectLanguagesInternal(names({"Japanese", "English"}));
     EXPECT_EQ(service.availableLanguages(), names({"Japanese", "English"}));
-    EXPECT_EQ(service.language(), QStringLiteral("Japanese"));
+    EXPECT_EQ(service.language(), QStringLiteral("English"));
     service.setLanguage(QStringLiteral("Unknown"));
     EXPECT_EQ(service.language(), QStringLiteral("Japanese"));
     service.setLanguage(QStringLiteral("english"));
@@ -77,8 +77,8 @@ TEST(LanguageContextService, ProjectLanguageChangesKeepOnlyExactIntersection)
     EXPECT_EQ(service.language(), QStringLiteral("Korean"));
 
     pm.setProjectLanguagesInternal({});
-    EXPECT_TRUE(service.availableLanguages().isEmpty());
-    EXPECT_TRUE(service.language().isEmpty());
+    EXPECT_EQ(service.availableLanguages(), names({"Korean", "japanese", "English"}));
+    EXPECT_EQ(service.language(), QStringLiteral("Korean"));
 
     pm.setProjectLanguagesInternal(names({"Japanese", "English"}));
     EXPECT_EQ(service.language(), QStringLiteral("Japanese"));
@@ -100,21 +100,21 @@ TEST(LanguageContextService, ProjectLanguageCommandsNormalizeAndRefreshContext)
     VNX::LanguageContextService service(std::make_unique<VNX::MemorySettingsStorage>());
 
     EXPECT_TRUE(pm.addProjectLanguage(QStringLiteral(" Japanese ")));
-    EXPECT_EQ(service.availableLanguages(), names({"Japanese"}));
-    EXPECT_EQ(service.language(), QStringLiteral("Japanese"));
+    EXPECT_EQ(service.availableLanguages(), names({"English", "Japanese"}));
+    EXPECT_EQ(service.language(), QStringLiteral("English"));
     EXPECT_TRUE(pm.addProjectLanguage(QStringLiteral("Japanese")));
     EXPECT_FALSE(pm.addProjectLanguage(QStringLiteral("japanese")));
     EXPECT_FALSE(pm.addProjectLanguage(QStringLiteral("SFX")));
     EXPECT_FALSE(pm.addProjectLanguage(QStringLiteral(" ")));
-    EXPECT_EQ(pm.getProjectLanguages(), names({"Japanese"}));
+    EXPECT_EQ(pm.getProjectLanguages(), names({"English", "Japanese"}));
 
     EXPECT_TRUE(pm.addProjectLanguage(QStringLiteral("English")));
     service.setLanguage(QStringLiteral("English"));
     EXPECT_TRUE(pm.removeProjectLanguage(QStringLiteral("English")));
     EXPECT_EQ(service.language(), QStringLiteral("Japanese"));
-    EXPECT_TRUE(pm.removeProjectLanguage(QStringLiteral("Japanese")));
-    EXPECT_TRUE(service.availableLanguages().isEmpty());
-    EXPECT_TRUE(service.language().isEmpty());
+    EXPECT_FALSE(pm.removeProjectLanguage(QStringLiteral("Japanese")));
+    EXPECT_EQ(service.availableLanguages(), names({"Japanese"}));
+    EXPECT_EQ(service.language(), QStringLiteral("Japanese"));
     pm.closeProject();
 }
 

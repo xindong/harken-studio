@@ -4,6 +4,7 @@
 #include "Core/FontManager.h"
 #include "Core/ThemeManager.h"
 #include "ReorderHeaderView.h"
+#include "TableGroupHeader.h"
 #include "TableItemDelegate.h"
 
 #include <QEvent>
@@ -58,15 +59,23 @@ void ProportionalTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewIt
                                      const QModelIndex& index) const
 {
     const auto first = index.siblingAtColumn(0);
-    const bool section = first.data(TableSectionRole).toBool();
-    if (!section && !first.data(TableGroupRole).toBool()) {
+    if (!first.data(TableGroupRole).toBool()) {
         QTreeWidget::drawRow(painter, option, index);
         return;
     }
     QRect rect = option.rect;
     rect.setLeft(0);
     rect.setRight(viewport()->width() - 1);
-    TableItemDelegate::paintGroup(painter, rect, first.data().toString(), option.font, themeManager_, section);
+    TableGroupHeader::paint(*painter, rect, first.data().toString(), themeManager_);
+}
+
+QTreeWidgetItem* ProportionalTreeWidget::createGroup(const QString& text)
+{
+    setUniformRowHeights(false);
+    auto* group = new QTreeWidgetItem(this, {text});
+    group->setFlags(Qt::ItemIsEnabled);
+    group->setData(0, TableGroupRole, true);
+    return group;
 }
 
 void ProportionalTreeWidget::setColumnLayoutKey(const QString& key)
