@@ -92,6 +92,8 @@ struct RuntimeState {
     int blockFrames = 256;
     VnSnapshot snapshot{};
     bool snapshotValid = false;
+    VnPreviewChannelPeaksV1 meterPeaks{};
+    bool meterPeaksValid = false;
     std::function<void(int level, const QString& msg)> logHandler;
     std::unordered_map<harkenstudio::ObjectId, SoundBinding> soundsById;
     std::unordered_map<harkenstudio::ObjectId, QString> soundNameByObjectId;
@@ -466,6 +468,12 @@ bool ensureRuntimeStarted()
         return false;
     }
 
+    if (VnPreview_EnableChannelPeakMetering() != VN_OK)
+    {
+        Vn_Term();
+        return false;
+    }
+
     g_runtime.initialized = true;
     g_runtime.outputRunning = false;
     g_runtime.sampleRate = static_cast<int>(c.sampleRate);
@@ -473,6 +481,8 @@ bool ensureRuntimeStarted()
     g_runtime.snapshot = VnSnapshot{};
     g_runtime.snapshot.structSize = sizeof(VnSnapshot);
     g_runtime.snapshotValid = false;
+    g_runtime.meterPeaks = {};
+    g_runtime.meterPeaksValid = false;
     g_runtime.liveVoices.clear();
     g_runtime.voiceNameByHandle.clear();
     g_runtime.playbacks.clear();
@@ -709,6 +719,8 @@ void runtimeTerm()
     g_runtime.initialized = false;
     g_runtime.outputRunning = false;
     g_runtime.snapshotValid = false;
+    g_runtime.meterPeaks = {};
+    g_runtime.meterPeaksValid = false;
     g_runtime.registeredSounds.clear();
     g_runtime.registeredSoundRevisions.clear();
     g_runtime.preparedSounds.clear();
@@ -832,12 +844,35 @@ void runtimeInvalidateNotificationsForTest()
     g_runtime.pendingNotifications.clear();
 }
 
+void runtimePublishMeterPeaks()
+{
+    VnPreviewChannelPeaksV1 peaks{};
+    peaks.structSize = sizeof(peaks);
+    g_runtime.meterPeaksValid = g_runtime.initialized
+        && VnPreview_TakeChannelPeaks(&peaks) == VN_OK;
+    g_runtime.meterPeaks = peaks;
+}
+
+bool runtimeBusMeterPeak(harkenstudio::ObjectId busId, float& l, float& r)
+{
+    l = r = 0.0f;
+    if (!g_runtime.meterPeaksValid || harkenstudio::IsNull(busId))
+        return false;
+    const auto& peaks = g_runtime.meterPeaks;
+    for (uint32_t bus = 0; bus < peaks.busCount; ++bus)
+    {
+        if (peaks.busIds[bus] != toNative(busId))
+            continue;
+        l = peaks.channelPeaks[bus * VN_MAX_CHANNELS];
+        r = peaks.channelPeaks[bus * VN_MAX_CHANNELS + (peaks.mixChannelCount == 1 ? 0 : 1)];
+        return true;
+    }
+    return false;
+}
+
 void runtimeMasterMeterPeak(float& l, float& r)
 {
-    const auto& snapshot = g_runtime.snapshot;
-    const bool available = g_runtime.snapshotValid && snapshot.busCount > 0;
-    l = available ? snapshot.busChannelPeaks[0] : 0.0f;
-    r = available ? snapshot.busChannelPeaks[snapshot.mixChannelCount == 1 ? 0 : 1] : 0.0f;
+    runtimeBusMeterPeak(kEngineMasterBusId, l, r);
 }
 
 float runtimeAudioCpuPercent()

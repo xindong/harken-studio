@@ -131,6 +131,49 @@ protected:
 };
 
 #if HARKEN_TEST_PREVIEW_ENABLED
+TEST_F(StudioRuntimeApi, ChannelPeaksRetainTransientAndResetAcrossTermInit) {
+    VnPreviewChannelPeaksV1 peaks{};
+    peaks.structSize = sizeof(peaks);
+    EXPECT_EQ(VN_NOT_INITIALIZED, VnPreview_TakeChannelPeaks(&peaks));
+    ASSERT_EQ(VN_OK, VnPreview_EnableChannelPeakMetering());
+    EXPECT_EQ(VN_INVALID_ARG, VnPreview_TakeChannelPeaks(nullptr));
+    --peaks.structSize;
+    EXPECT_EQ(VN_INVALID_ARG, VnPreview_TakeChannelPeaks(&peaks));
+    peaks.structSize = sizeof(peaks);
+    std::vector<float> samples(128 * 4 * 2, 0.05f);
+    for (std::size_t frame = 0; frame < 128; ++frame) {
+        samples[2 * frame] = 0.8f;
+        samples[2 * frame + 1] = 0.2f;
+    }
+    const auto pcm = harkentest::InterleavedDesc(samples, 2, 48000);
+    const auto soundId = harkentest::ObjectId(90);
+    std::uint64_t revision = 0;
+    ASSERT_EQ(VN_OK, VnPreview_RegisterPcm(soundId, &pcm, 0, 0, &revision));
+    auto play = harkentest::MakePlayDesc(soundId);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, VnPreview_PlayVoiceRaw(&play, &voice));
+    VnPreview_PumpNullMixer(2);
+    ASSERT_EQ(VN_OK, VnPreview_TakeChannelPeaks(&peaks));
+    EXPECT_EQ(2u, peaks.mixChannelCount);
+    EXPECT_EQ(VN_BUS_MASTER, peaks.busIds[0]);
+    EXPECT_NEAR(0.8f, peaks.channelPeaks[0], 1e-5f);
+    EXPECT_NEAR(0.2f, peaks.channelPeaks[1], 1e-5f);
+    const auto firstSerial = peaks.consumeSerial;
+    ASSERT_EQ(VN_OK, VnPreview_TakeChannelPeaks(&peaks));
+    EXPECT_GT(peaks.consumeSerial, firstSerial);
+    EXPECT_FLOAT_EQ(0.0f, peaks.channelPeaks[0]);
+    VnPreview_PumpNullMixer(1);
+    ASSERT_EQ(VN_OK, Vn_Term());
+    EXPECT_EQ(VN_NOT_INITIALIZED, VnPreview_TakeChannelPeaks(&peaks));
+    EXPECT_EQ(0u, peaks.consumeSerial);
+    EXPECT_FLOAT_EQ(0.0f, peaks.channelPeaks[0]);
+    ASSERT_EQ(VN_OK, Vn_Init(&config));
+    ASSERT_EQ(VN_OK, VnPreview_EnableChannelPeakMetering());
+    ASSERT_EQ(VN_OK, VnPreview_TakeChannelPeaks(&peaks));
+    EXPECT_EQ(1u, peaks.consumeSerial);
+    for (const float peak : peaks.channelPeaks) EXPECT_FLOAT_EQ(0.0f, peak);
+}
+
 TEST_F(StudioRuntimeApi, PreparedTransactionOwnsInputAndCommitsOnlyOnce) {
     ASSERT_EQ(VN_PREVIEW_PREPARE_OK, VnPreview_PrepareProject(&desc, &handle));
     ASSERT_NE(0u, handle);
@@ -508,6 +551,13 @@ TEST_F(StudioRuntimeApi, DisabledGateRefusesBeforeReadingDescriptor) {
     std::uint64_t generation = 99;
     EXPECT_EQ(VN_PREVIEW_COMMIT_UNAVAILABLE, VnPreview_CommitProject(99, &generation));
     EXPECT_EQ(0u, generation);
+    EXPECT_EQ(VN_NOT_INITIALIZED, VnPreview_EnableChannelPeakMetering());
+    VnPreviewChannelPeaksV1 peaks{};
+    peaks.structSize = sizeof(peaks);
+    peaks.channelPeaks[0] = 0.9f;
+    EXPECT_EQ(VN_NOT_INITIALIZED, VnPreview_TakeChannelPeaks(&peaks));
+    EXPECT_EQ(0u, peaks.consumeSerial);
+    EXPECT_FLOAT_EQ(0.0f, peaks.channelPeaks[0]);
 }
 #endif
 

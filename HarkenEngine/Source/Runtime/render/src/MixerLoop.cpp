@@ -1984,6 +1984,32 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
 #endif
 }
 
+void MixerLoop::EnableChannelPeakMetering() {
+    if (m_channelPeakStorage)
+        return;
+    m_channelPeakStorage = std::make_unique<ChannelPeakAccumulator>();
+    m_channelPeaks.store(m_channelPeakStorage.get(), std::memory_order_release);
+}
+
+bool MixerLoop::TakeChannelPeaks(ChannelPeakBatch& batch) {
+    batch = {};
+    if (!m_channelPeakStorage)
+        return false;
+    if (++m_channelPeakConsumeSerial == 0)
+        ++m_channelPeakConsumeSerial;
+    batch.consumeSerial = m_channelPeakConsumeSerial;
+    batch.mixChannelCount = m_mixChannels;
+    batch.busCount = std::min<std::uint32_t>(m_buses.BusCount(), VN_SNAPSHOT_MAX_BUSES);
+    for (std::uint32_t bus = 0; bus < VN_SNAPSHOT_MAX_BUSES; ++bus) {
+        batch.busIds[bus] = m_buses.IdAt(bus);
+        const auto generation = IsNull(batch.busIds[bus]) ? 0 : m_buses.GenerationAt(bus);
+        for (std::uint32_t channel = 0; channel < VN_MAX_CHANNELS; ++channel)
+            batch.channelPeaks[bus * VN_MAX_CHANNELS + channel] =
+                m_channelPeakStorage->Take(bus, generation, channel);
+    }
+    return true;
+}
+
 void MixerLoop::PublishSnapshot(std::uint64_t blockIndex, bool blockRendered,
                                 const BlockTiming& timing) {
     // Runs at the end of every rendered block, on the audio thread, under
@@ -2011,6 +2037,13 @@ void MixerLoop::PublishSnapshot(std::uint64_t blockIndex, bool blockRendered,
         for (std::uint32_t channel = 0; channel < VN_MAX_CHANNELS; ++channel)
             payload.busChannelPeaks[i * VN_MAX_CHANNELS + channel] =
                 blockRendered ? m_buses.OutputChannelPeak(i, channel) : 0.0f;
+    }
+    if (auto* channelMeters = m_channelPeaks.load(std::memory_order_acquire)) {
+        const auto count = std::min<std::uint32_t>(busCount, VN_SNAPSHOT_MAX_BUSES);
+        for (std::uint32_t bus = 0; bus < count; ++bus)
+            for (std::uint32_t channel = 0; channel < m_mixChannels; ++channel)
+                channelMeters->Publish(bus, m_buses.AudioGenerationAt(bus), channel,
+                    payload.busChannelPeaks[bus * VN_MAX_CHANNELS + channel]);
     }
     if (!blockRendered) {
         // Same honesty for the per-voice taps: nothing rendered, so the

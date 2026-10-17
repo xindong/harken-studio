@@ -212,6 +212,9 @@ public:
 
     // -- monitor pump (UI thread) --
     void update();
+    // Call once immediately before publishing meterLevelsUpdated. Auxiliary
+    // updates must leave the pending peak window intact.
+    void publishMeterPeaks();
     int  activeVoiceCount() const;
     void masterMeterPeak(float& l, float& r) const;
     float audioCpuPercent() const;
