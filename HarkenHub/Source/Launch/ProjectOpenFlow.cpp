@@ -70,6 +70,10 @@ QString analysisFailureText(const QString& code)
         return hubText("This project has an unfinished upgrade that must be recovered before it can open.");
     if (code == QStringLiteral("PROJECT_IN_USE"))
         return hubText("This project is currently in use by another process.");
+    if (code == QStringLiteral("PROJECT_INSTANCE_UNAVAILABLE"))
+        return hubText("Harken Studio could not contact or prepare the project window. Try opening the project again.");
+    if (code == QStringLiteral("PROJECT_FORWARD_UNCONFIRMED"))
+        return hubText("The existing project window was activated, but the launch request was not confirmed.");
     if (code == QStringLiteral("PROJECT_FILE_DAMAGED")
         || code == QStringLiteral("PROJECT_HAS_NO_FORMAL_BASELINE"))
         return hubText("The project data is incomplete or damaged and cannot be opened safely.");
@@ -142,6 +146,10 @@ public:
         });
         connect(&monitor_, &StudioLaunchMonitor::ready, this, [this]() { opened(); }, Qt::QueuedConnection);
         connect(&monitor_, &StudioLaunchMonitor::ready, &liveness_, &QTimer::stop);
+        connect(&monitor_, &StudioLaunchMonitor::forwarded, this, [this]() {
+            finish(ProjectOpenOutcome::Result::Activated);
+        }, Qt::QueuedConnection);
+        connect(&monitor_, &StudioLaunchMonitor::forwarded, &liveness_, &QTimer::stop);
         connect(&monitor_, &StudioLaunchMonitor::failed, &liveness_, &QTimer::stop);
         connect(&monitor_, &StudioLaunchMonitor::failed, this, [this](const QString& error) {
             if (finished_)

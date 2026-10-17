@@ -113,7 +113,10 @@ int main(int argc, char* argv[])
                 stage(QStringLiteral("failed"), QStringLiteral("PROJECT_OPEN_CANCELLED"));
             else if (mode == QStringLiteral("failed"))
                 stage(QStringLiteral("failed"), QStringLiteral("PROJECT_REQUIRES_NEWER_STUDIO"));
-            else {
+            else if (mode == QStringLiteral("forwarded")) {
+                stage(QStringLiteral("forwarded"));
+                return;
+            } else {
                 if (create && !config.value(QStringLiteral("missingProjectFile")).toBool()) {
                     QFile project(projectPath);
                     if (!project.open(QIODevice::WriteOnly))
@@ -131,6 +134,14 @@ int main(int argc, char* argv[])
                 app.quit();
             }
         });
+    });
+    QObject::connect(&socket, &QLocalSocket::readyRead, &app, [&]() {
+        while (socket.canReadLine()) {
+            const auto message = QJsonDocument::fromJson(socket.readLine()).object();
+            if (message.value(QStringLiteral("type")).toString() == QStringLiteral("forwardedAccepted")
+                && message.value(QStringLiteral("token")).toString() == argument(QStringLiteral("--hub-token")))
+                app.quit();
+        }
     });
     QTimer::singleShot(config.value(QStringLiteral("helloDelayMs")).toInt(), &socket, [&]() {
         socket.connectToServer(argument(QStringLiteral("--hub-session")));
