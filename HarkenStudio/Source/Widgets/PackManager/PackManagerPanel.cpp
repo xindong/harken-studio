@@ -264,10 +264,14 @@ PackManagerPanel::PackManagerPanel(QWidget* parent)
     connect(&PackArtifactCache::instance(), &PackArtifactCache::changed,
             this, &PackManagerPanel::requestPackTableRefresh);
     auto& pm = ProjectManager::instance();
+    openedProject_ = pm.currentProject();
     connect(&ProjectPlatformActivity::instance(), &ProjectPlatformActivity::busyChanged,
             this, [this] { updateExportButton(); });
     connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
-            this, [this](const PlatformContext&) { requestPackTableRefresh(); });
+            this, [this](const PlatformContext&) {
+        if (openedProject_ && openedProject_ == ProjectManager::instance().currentProject())
+            requestPackTableRefresh();
+    });
     connect(&pm, &ProjectManager::actionPackTargetingChanged, this,
             [this]() { requestPackTableRefresh(); });
     connect(&pm, &ProjectManager::projectLanguagesChanged, this,
@@ -307,13 +311,15 @@ PackManagerPanel::PackManagerPanel(QWidget* parent)
         requestPackTableRefresh();
     });
 
-    connect(&pm, &ProjectManager::projectOpened, this, [this](ProjectData*) {
+    connect(&pm, &ProjectManager::projectOpened, this, [this](ProjectData* project) {
+        openedProject_ = project;
         static_cast<TableWidget*>(packTree_->parentWidget())->clearSelection();
         populatePlatformControls();
         requestPackTableRefresh();
         populateSettings();
     });
     connect(&pm, &ProjectManager::projectClosed, this, [this]() {
+        openedProject_ = nullptr;
         static_cast<TableWidget*>(packTree_->parentWidget())->clearSelection();
         searchEdit_->clear();
         populatePlatformControls();
@@ -703,7 +709,7 @@ void PackManagerPanel::populateProjectPackTable()
 
     const std::vector<ProjectPackExporter::ActionPackUnit> units =
         ProjectPackExporter::CollectActionPackUnits(*project);
-    const auto languagesByAction = PackBuildPlanning::actionLanguages(*project);
+    const auto languagesByAction = PackBuildPlanning::artifactLanguages(*project, viewPlatforms);
     const auto selection = pm.packExportSelection();
 
     auto applyCached = [&](QTreeWidgetItem* item, const QString& language,

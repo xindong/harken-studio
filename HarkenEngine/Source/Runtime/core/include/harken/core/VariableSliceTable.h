@@ -119,6 +119,9 @@ struct VariableSliceTarget {
 
 class VariableSliceTable {
 public:
+    enum class ReservationStatus : std::uint8_t {
+        Ready, TargetLimit, ProofCapacity, PayloadCapacity, TargetSpan
+    };
     using AfterAudioClaimHookForTest =
         void (*)(void*, VariableSliceRef) noexcept;
 
@@ -132,6 +135,7 @@ public:
                  std::uint64_t bankOrdinal, std::uint32_t exactTargetCount,
                  VariableSliceRef* out) noexcept;
     bool AddTarget(VariableSliceRef ref, const VariableSliceTarget& target) noexcept;
+    ReservationStatus ReservationAvailability(std::uint32_t exactTargetCount) const noexcept;
     bool CaptureSource(VariableSliceRef ref, VariableSliceSource* out) const noexcept;
     bool RetainSource(const VariableSliceSource& source) noexcept;
     bool ReleaseSource(const VariableSliceSource& source) noexcept;

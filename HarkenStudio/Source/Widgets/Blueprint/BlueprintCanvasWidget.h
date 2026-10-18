@@ -215,6 +215,13 @@ private:
     std::vector<ConnectionPath*> edges_;
     std::vector<NodeItem*> gainNodes_;
     std::vector<ConnectionPath*> gainOutputEdges_;
+    struct PathSceneState {
+        QString projectId;
+        SignalPathGraph graph;
+        CanvasFlowDirection flowDirection;
+        NodeContentFields contentFields;
+    };
+    std::optional<PathSceneState> pathSceneState_;
     bool projectView_ = true;
     std::vector<SignalPathNodeKey> selectedPathKeys_;
     std::vector<PathEdgeKey> selectedPathEdgeKeys_;
@@ -275,6 +282,7 @@ private:
 
     void refreshTransitionWatch_();
     void materializeFromSource_();
+    bool updatePathScene_();
 
     void populateNodeContextMenu_(QMenu& menu, NodeItem* node);
     PathEdgeKey signalPathEdgeKey_(size_t index) const;

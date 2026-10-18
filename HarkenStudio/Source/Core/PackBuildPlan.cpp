@@ -102,15 +102,15 @@ bool localizedClosure(const ActionClosurePlan& closure, const ItemIndex& index)
     return localized(closure.objects) || localized(closure.controlObjects);
 }
 
-std::map<harkenstudio::ObjectId, bool> localizedActions(
+std::map<harkenstudio::ObjectId, bool> localizedActionsFor(
     const ProjectData& project, const std::vector<const ProjectItem*>& actionItems,
     const ItemIndex& index)
 {
     std::map<harkenstudio::ObjectId, ActionClosurePlan> closures;
-    std::map<harkenstudio::ObjectId, bool> result;
+    std::map<harkenstudio::ObjectId, bool> localizedActions;
     for (const auto* action : actionItems) {
-        auto closure = ActionClosureSemantics::build(project, action->runtimeId());
-        result.emplace(action->runtimeId(), localizedClosure(closure, index));
+        auto closure = ActionClosureSemantics::contentReferences(project, action->runtimeId());
+        localizedActions.emplace(action->runtimeId(), localizedClosure(closure, index));
         closures.emplace(action->runtimeId(), std::move(closure));
     }
     bool changed;
@@ -118,21 +118,21 @@ std::map<harkenstudio::ObjectId, bool> localizedActions(
         changed = false;
         for (const auto* action : actionItems) {
             const auto id = action->runtimeId();
-            if (result.at(id))
+            if (localizedActions.at(id))
                 continue;
             const bool dependencyLocalized = std::any_of(
                 closures.at(id).actions.begin(), closures.at(id).actions.end(),
                 [&](const auto& member) {
-                    const auto found = result.find(member.stableId);
-                    return found != result.end() && found->second;
+                    const auto found = localizedActions.find(member.stableId);
+                    return found != localizedActions.end() && found->second;
                 });
             if (dependencyLocalized) {
-                result.at(id) = true;
+                localizedActions.at(id) = true;
                 changed = true;
             }
         }
     } while (changed);
-    return result;
+    return localizedActions;
 }
 
 PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actionStableId,
@@ -156,7 +156,7 @@ PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actio
         requestedOrProjectLanguages(project, requestedLanguages, &languageError);
     const ItemIndex index = makeItemIndex(project);
     const auto actionItems = actions(project, actionStableId);
-    const auto localization = localizedActions(project, actionItems, index);
+    const auto localization = localizedActionsFor(project, actionItems, index);
     for (const auto* action : actionItems) {
         const QString artifactName = singleActionArtifactName.isEmpty()
             ? action->name : singleActionArtifactName;
@@ -300,6 +300,19 @@ bool localizedAction(const ProjectData& project, harkenstudio::ObjectId actionSt
 
 }
 
+QHash<harkenstudio::ObjectId, QStringList> artifactLanguages(
+    const ProjectData& project, const QStringList& requestedPlatforms)
+{
+    QHash<harkenstudio::ObjectId, QStringList> result;
+    const QStringList platforms = requestedPlatforms.isEmpty()
+        ? project.platformIds() : requestedPlatforms;
+    if (!ProjectPlatformSemantics::validatePlatforms(project.platforms)
+        || !ProjectPlatformSemantics::validateIds(platforms, project.platforms))
+        return result;
+
+    return actionLanguages(project);
+}
+
 QString stableArtifactKey(harkenstudio::ObjectId actionStableId)
 {
     return QStringLiteral("action_%1").arg(objectIdString(actionStableId));
@@ -344,7 +357,7 @@ bool actionIsLocalized(const ProjectData& project, harkenstudio::ObjectId action
 QHash<harkenstudio::ObjectId, QStringList> actionLanguages(const ProjectData& project)
 {
     const auto actionItems = actions(project, {});
-    const auto localization = localizedActions(project, actionItems, makeItemIndex(project));
+    const auto localization = localizedActionsFor(project, actionItems, makeItemIndex(project));
     const auto languages = ProjectLanguageSemantics::buildLanguages(project);
     QHash<harkenstudio::ObjectId, QStringList> result;
     for (const auto* action : actionItems)

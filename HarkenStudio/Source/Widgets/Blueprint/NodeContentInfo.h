@@ -30,6 +30,8 @@ struct NodeContentInfo {
     std::optional<uint32_t> loopCount;
     std::optional<float> sendVolume;
 
+    bool operator==(const NodeContentInfo&) const = default;
+
     NodeContentFields fields() const
     {
         NodeContentFields result;

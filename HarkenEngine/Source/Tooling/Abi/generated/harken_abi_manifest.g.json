@@ -22126,8 +22126,8 @@
       "size": 218942
     },
     "HarkenEngine/Tool/Remote/harken_wire.py": {
-      "sha256": "c58354ba3cd7f67285dcb0fa1ee9469e914c231cad91e44e60638deead195409",
-      "size": 235690
+      "sha256": "3d9bd52be0c79406c693020372577d80d89b5a2794239752f1da1abd5c2e1931",
+      "size": 236066
     },
     "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
       "sha256": "1def4763a3c25b8f7a60b8e3c6a34a21e8b0561a33885e383679b825425c5794",

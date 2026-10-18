@@ -271,6 +271,10 @@ public:
     void ReleaseClaim(Scope scope, std::uint64_t objectId, std::uint32_t slot,
                       std::uint32_t paramIndex,
                       TargetClaimOwner owner) noexcept;
+    bool CanClaim(Scope scope, std::uint64_t objectId,
+                  std::uint32_t objectGeneration, std::uint32_t slot,
+                  std::uint32_t paramIndex, TargetClaimOwner owner,
+                  std::uint32_t expectedRevision) const noexcept;
     void ReleaseClaim(Scope scope, std::uint64_t objectId,
                       std::uint32_t objectGeneration, std::uint32_t slot,
                       std::uint32_t paramIndex,

@@ -497,20 +497,11 @@ bool BusTargetStore::TryClaim(std::uint32_t busIndex,
                               std::uint32_t targetId,
                               TargetClaimOwner owner,
                               std::uint32_t expectedRevision) noexcept {
-    if (busIndex >= m_maxBuses || targetId >= kBusTargetCount ||
-        !owner.Valid() || m_activeGenerations[busIndex] != busGeneration) {
-        return false;
-    }
+    if (!CanClaim(busIndex, busGeneration, targetId, owner, expectedRevision)) return false;
     PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
-    if (state.revision != expectedRevision) return false;
     if (state.preparedOwner.Valid()) {
-        if (!owner.Shared() || state.preparedOwner != owner ||
-            state.publicationRefCount == UINT32_MAX) return false;
         ++state.publicationRefCount;
         return true;
-    }
-    if (state.publicationRefCount != 0) {
-        return false;
     }
     state.preparedOwner = owner;
     state.publicationRefCount = owner.Shared() ? 1u : 0u;
@@ -522,6 +513,17 @@ bool BusTargetStore::TryClaim(std::uint32_t busIndex,
     state.preCandidateApiRampTick = 0;
     state.candidateBaselineValid = false;
     return true;
+}
+
+bool BusTargetStore::CanClaim(std::uint32_t busIndex, std::uint32_t busGeneration,
+    std::uint32_t targetId, TargetClaimOwner owner, std::uint32_t expectedRevision) const noexcept {
+    if (busIndex >= m_maxBuses || targetId >= kBusTargetCount || !owner.Valid() ||
+        m_activeGenerations[busIndex] != busGeneration) return false;
+    const auto& state = m_publish[PubIndexOf(busIndex, targetId)];
+    if (state.revision != expectedRevision) return false;
+    return state.preparedOwner.Valid()
+        ? owner.Shared() && state.preparedOwner == owner && state.publicationRefCount != UINT32_MAX
+        : state.publicationRefCount == 0;
 }
 
 bool BusTargetStore::CaptureCandidateBaseline(

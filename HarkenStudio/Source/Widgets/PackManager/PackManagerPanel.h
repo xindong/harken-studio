@@ -90,6 +90,7 @@ private:
     void showFileInExplorer(const QString& path);
 
     QDialog*    settingsDialog_ = nullptr;
+    ProjectData* openedProject_ = nullptr;
 
     ProportionalTreeWidget* packTree_ = nullptr;
     QLabel*       objectSendWarningLabel_ = nullptr;
