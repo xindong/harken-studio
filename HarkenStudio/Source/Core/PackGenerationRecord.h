@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QJsonObject>
+#include <QObject>
 #include <QString>
 #include <QVector>
 #include <cstdint>
@@ -25,23 +26,31 @@ struct PackGenerationRecord
     QString platformName;
     BasePlatform basePlatform = BasePlatform::Windows;
     QJsonObject platformDefinition;
+    QString unitKey;
 
     QJsonObject toJson() const;
+    QString resolvedUnitKey() const;
 };
 
-class PackGenerationRecordStore
+class PackGenerationRecordStore : public QObject
 {
+    Q_OBJECT
+
 public:
     static PackGenerationRecordStore& instance();
 
     void add(const PackGenerationRecord& record);
     void replace(const QVector<PackGenerationRecord>& records);
     void clear();
-    void invalidatePlatform(const QString& platformId);
-    void reconcilePlatforms(const QVector<ProjectPlatform>& platforms);
     QVector<PackGenerationRecord> records() const;
+    const PackGenerationRecord* find(const QString& platform, const QString& language,
+                                     const QString& unitKey) const;
+
+signals:
+    void changed();
 
 private:
+    PackGenerationRecordStore() = default;
     QVector<PackGenerationRecord> records_;
 };
 

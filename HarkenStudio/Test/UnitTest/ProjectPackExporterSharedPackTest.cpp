@@ -1,3 +1,4 @@
+#include "../../Source/Tooling/PackC/GameplayPublication.h"
 #include "UnitTest/StudioWorldTestSupport.h"
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "Support/FieldGroupTestUtils.h"
@@ -1618,7 +1619,7 @@ TEST(EditorProjectPackExporterSharedPack, LegacyGroupedActionsKeepIndependentPac
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(EditorProjectPackExporterSharedPack, GroupPlatformSelectionSkipsWithoutFallback)
+TEST(EditorProjectPackExporterSharedPack, LegacyGroupSelectionDoesNotRestrictActions)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
 
@@ -1656,7 +1657,7 @@ TEST(EditorProjectPackExporterSharedPack, GroupPlatformSelectionSkipsWithoutFall
 
     EXPECT_FALSE(QFileInfo::exists(
         QDir(dir.path()).filePath(QStringLiteral("AndroidOnly.bytes"))));
-    EXPECT_FALSE(QFileInfo::exists(
+    EXPECT_TRUE(QFileInfo::exists(
         variantPackPath(project, dir.path(), harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias))));
     for (const auto& record : records)
         EXPECT_NE(record.packName, QStringLiteral("AndroidOnly"));
@@ -1688,11 +1689,10 @@ TEST(EditorProjectPackExporterSharedPack, ActionTargetingSkipsUntargetedPlatform
         {{QStringLiteral("ActionOne"), kActionOneObjectId, kSharedSoundObjectId},
          {QStringLiteral("ActionTwo"), kActionTwoObjectId, kSoloSoundObjectId}}));
 
-    project.actionPackTargeting.push_back(
-        {harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias), false, {QStringLiteral("Android")}});
-
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
+    opts.selection.actionTargeting.push_back(
+        {harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias), false, {HarkenTest::platformIdString("Android")}});
     opts.platform = HarkenTest::platformIdString("Windows");
 
     std::vector<VNX::ProjectPackExporter::PackBuildRecord> records;
@@ -1731,11 +1731,10 @@ TEST(EditorProjectPackExporterSharedPack, SharedOwnershipIgnoresUnitsNotBuiltFor
         {{QStringLiteral("ActionOne"), kActionOneObjectId, kSharedSoundObjectId},
          {QStringLiteral("ActionTwo"), kActionTwoObjectId, kSharedSoundObjectId}}));
 
-    project.actionPackTargeting.push_back(
-        {harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias), false, {QStringLiteral("Android")}});
-
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
+    opts.selection.actionTargeting.push_back(
+        {harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias), false, {HarkenTest::platformIdString("Android")}});
     opts.platform = HarkenTest::platformIdString("Windows");
 
     std::vector<VNX::ProjectPackExporter::PackBuildRecord> records;
@@ -1759,7 +1758,7 @@ TEST(EditorProjectPackExporterSharedPack, SharedOwnershipIgnoresUnitsNotBuiltFor
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(EditorProjectPackExporterSharedPack, GroupTargetedNowhereBuildsOnNoPlatform)
+TEST(EditorProjectPackExporterSharedPack, CachedSelectionCanExcludeLegacyGroupMembers)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
 
@@ -1788,6 +1787,8 @@ TEST(EditorProjectPackExporterSharedPack, GroupTargetedNowhereBuildsOnNoPlatform
 
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
+    opts.selection.actionTargeting.push_back(
+        {harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias), false, {}});
     opts.platform = HarkenTest::platformIdString("Windows");
 
     std::vector<VNX::ProjectPackExporter::PackBuildRecord> records;
@@ -1865,10 +1866,22 @@ TEST(EditorProjectPackExporterSharedPack, InitEmitsKind26AndContentEmitsKind27)
                          static_cast<uint64_t>(initImage.bytes.size()),
                          &initCanonical));
     EXPECT_TRUE(initCanonical.hasVariablePolicyOverlay);
-    ASSERT_TRUE(initCanonical.hasGameplayCatalog);
-    ASSERT_EQ(1u, initCanonical.gameplayCatalog.active.size());
-    EXPECT_EQ(actionItem->runtimeId(),
-              initCanonical.gameplayCatalog.active.front().actionStableId);
+    EXPECT_FALSE(initCanonical.hasGameplayCatalog);
+    QFile manifestFile(QDir(dir.path()).filePath(
+        HarkenEditor::Bridge::packManifestFileName()));
+    ASSERT_TRUE(manifestFile.open(QIODevice::ReadOnly));
+    const QByteArray manifestBytes = manifestFile.readAll();
+    const QJsonObject manifest =
+        QJsonDocument::fromJson(manifestBytes).object();
+    harkenstudiojson::JsonValue directoryJson;
+    std::string directoryError;
+    std::vector<std::uint8_t> directoryBytes;
+    ASSERT_TRUE(harkenstudiojson::ParseJson(manifestBytes.toStdString(), &directoryJson, &directoryError, true));
+    ASSERT_TRUE(harkenstudiobuild::tooling::EncodeGameplayPublication(directoryJson, &directoryBytes));
+    harken::GameplayCatalogImage gameplay;
+    ASSERT_EQ(VN_OK, harken::ParseGameplayCatalog(directoryBytes.data(), directoryBytes.size(), &gameplay));
+    ASSERT_EQ(1u, gameplay.active.size());
+    EXPECT_EQ(actionItem->runtimeId(), gameplay.active.front().actionStableId);
     ASSERT_EQ(1u, initCanonical.variablePolicyOverlays.size());
     EXPECT_EQ(variable->runtimeId(),
               initCanonical.variablePolicyOverlays[0].variableId);
@@ -1887,7 +1900,7 @@ TEST(EditorProjectPackExporterSharedPack, InitEmitsKind26AndContentEmitsKind27)
                          &contentCanonical));
     EXPECT_TRUE(contentCanonical.hasVariableRequirements);
     EXPECT_EQ(contentCanonical.packStableId,
-              initCanonical.gameplayCatalog.active.front().ownerPackStableId);
+              gameplay.active.front().ownerPackStableId);
     ASSERT_EQ(1u, contentCanonical.variableRequirements.size());
     EXPECT_EQ(1u, contentCanonical.variableRequirements[0].identityClass);
     EXPECT_EQ(variable->runtimeId(),
@@ -1895,12 +1908,6 @@ TEST(EditorProjectPackExporterSharedPack, InitEmitsKind26AndContentEmitsKind27)
     EXPECT_EQ(initCanonical.variablePolicyOverlays[0].executionFingerprint,
               contentCanonical.variableRequirements[0].expectedExecutionFingerprint);
 
-    QFile manifestFile(QDir(dir.path()).filePath(
-        HarkenEditor::Bridge::packManifestFileName()));
-    ASSERT_TRUE(manifestFile.open(QIODevice::ReadOnly));
-    const QByteArray manifestBytes = manifestFile.readAll();
-    const QJsonObject manifest =
-        QJsonDocument::fromJson(manifestBytes).object();
     const QJsonObject catalog =
         manifest.value(QStringLiteral("variableCatalog")).toObject();
     const QJsonArray catalogVariables =
@@ -1927,12 +1934,17 @@ TEST(EditorProjectPackExporterSharedPack, InitEmitsKind26AndContentEmitsKind27)
     const VnPackHandle contentHandle = loaded.rows[1].handle;
     ASSERT_NE(0u, initHandle);
     ASSERT_NE(0u, contentHandle);
+    VnPackByteSpan directorySpan{};
+    directorySpan.structSize = sizeof(directorySpan);
+    directorySpan.bytes = directoryBytes.data();
+    directorySpan.byteCount = directoryBytes.size();
+    ASSERT_EQ(VN_OK, Vn_SetGameplayCatalog(initHandle, &directorySpan));
     const auto* published = session.Engine()->packComposition.Published();
     ASSERT_NE(published, nullptr);
     EXPECT_TRUE(published->hasGameplayCatalog);
     ASSERT_EQ(2u, published->owners.size());
     const auto keep = harken::PackComposition::Keep(published->owners.front());
-    EXPECT_TRUE(keep.hasGameplayCatalog);
+    EXPECT_FALSE(keep.hasGameplayCatalog);
     EXPECT_TRUE(keep.hasVariablePolicyOverlay);
     EXPECT_EQ(1u, keep.variablePolicyOverlays.size());
 

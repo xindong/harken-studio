@@ -4,6 +4,7 @@
 #include "Core/Components/VAction.h"
 #include "Core/Components/VSound.h"
 #include "Core/PackBuildPlan.h"
+#include "Core/PackArtifactCache.h"
 #include "Core/LanguageContextService.h"
 #include "Core/PlatformContextService.h"
 #include "Core/PlayablePropertyAuthoringV1.h"
@@ -13,7 +14,7 @@
 #include "Core/ThemeManager.h"
 #include "Core/UndoCommands.h"
 #include "RuntimeBridge/PackagingBridge.h"
-#include "Widgets/Common/SegmentedControl.h"
+#include "Widgets/Common/MultiSelectComboBox.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
 #include "Widgets/Common/TableGroupHeader.h"
 #include "Widgets/Common/TableItemDelegate.h"
@@ -35,7 +36,6 @@
 #include <QScopeGuard>
 #include <QAbstractButton>
 #include <QTemporaryDir>
-#include <QToolButton>
 #include <QTreeWidgetItemIterator>
 #include <QUndoStack>
 
@@ -73,6 +73,8 @@ protected:
         VNX::AppSettings::instance().setDeveloperMode(true);
         ASSERT_TRUE(pm.setPackBuildOutputDir(QStringLiteral("../Generated")));
         panel_ = std::make_unique<VNX::PackManagerPanel>();
+        panel_->show();
+        QApplication::processEvents();
     }
 
     void TearDown() override
@@ -85,6 +87,7 @@ protected:
     QTreeWidgetItem* actionRow(const VNX::ProjectItem* action = nullptr,
                                const std::optional<QString>& language = std::nullopt) const
     {
+        QApplication::processEvents();
         if (!action) action = action_;
         auto* tree = panel_->findChild<QTreeWidget*>();
         if (!tree) return nullptr;
@@ -110,24 +113,19 @@ protected:
         ASSERT_TRUE(file.open(QIODevice::WriteOnly));
         ASSERT_EQ(file.write("pack"), 4);
         file.close();
-        const QString path = VNX::PackBuildPlanning::packFileName(
-            language, artifactName, QStringLiteral(".bytes"));
-        QJsonArray actions;
-        for (const auto member : members.empty()
-                ? std::vector<harkenstudio::ObjectId>{action_->runtimeId()} : members)
-            actions.append(QJsonObject{
-                {QStringLiteral("actionStableId"), VNX::objectIdString(member)},
-                {QStringLiteral("ownerPackStableId"), QStringLiteral("1")}});
-        const QJsonObject manifest{
-            {QStringLiteral("packs"), QJsonArray{QJsonObject{
-                {QStringLiteral("packStableId"), QStringLiteral("1")},
-                {QStringLiteral("path"), path}}}},
-            {QStringLiteral("gameplayCatalog"), QJsonObject{
-                {QStringLiteral("actions"), actions}}}};
-        QFile manifestFile(temp_.filePath(relative + HarkenEditor::Bridge::packManifestFileName()));
-        ASSERT_TRUE(manifestFile.open(QIODevice::WriteOnly));
-        const auto bytes = QJsonDocument(manifest).toJson();
-        ASSERT_EQ(manifestFile.write(bytes), bytes.size());
+        VNX::PackArtifactMetadata metadata;
+        metadata.unitKey = artifactName.compare(QStringLiteral("Init"), Qt::CaseInsensitive) == 0
+            ? QStringLiteral("Init") : QStringLiteral("a:") + VNX::objectIdString(
+                members.empty() ? action_->runtimeId() : members.front());
+        metadata.platform = HarkenTest::platformIdString("Windows");
+        metadata.language = language;
+        metadata.packName = artifactName;
+        metadata.outputPath = file.fileName();
+        metadata.bytes = 4;
+        metadata.modified = QDateTime::currentDateTimeUtc();
+        metadata.version = 2;
+        cachedArtifacts_.append(metadata);
+        VNX::PackArtifactCache::instance().publish(metadata.platform, cachedArtifacts_);
     }
 
     void setLocalized(bool enabled)
@@ -147,23 +145,7 @@ protected:
         EXPECT_EQ(panel_->width(), width);
     }
 
-    void expectNaturalWidth(VNX::SegmentedControl* control)
-    {
-        SCOPED_TRACE(control->objectName().toStdString());
-        EXPECT_TRUE(VNX::TestSupport::spinUntil([control]() {
-            for (int i = 0; auto* button = control->button(i); ++i)
-                if (!button->isVisible() || button->width() < button->sizeHint().width()) return false;
-            return true;
-        }));
-        int width = 0;
-        for (int i = 0; auto* button = control->button(i); ++i) {
-            EXPECT_TRUE(button->isVisible());
-            EXPECT_GE(button->width(), button->sizeHint().width()) << button->text().toStdString();
-            width += button->sizeHint().width();
-        }
-        EXPECT_NEAR(control->width(), width, 1);
-    }
-
+    QVector<VNX::PackArtifactMetadata> cachedArtifacts_;
     QTemporaryDir temp_;
     VNX::ProjectItem* sound_ = nullptr;
     VNX::ProjectItem* action_ = nullptr;
@@ -218,7 +200,7 @@ TEST_F(PackManagerLanguageTest, GroupCaptionsMatchSharedHeadersAcrossResizeAndCo
     }
 }
 
-TEST_F(PackManagerLanguageTest, SectionSelectionKeepsPlatformScopeAndUndoAcrossFilteringAndRebuilds)
+TEST_F(PackManagerLanguageTest, SectionSelectionKeepsPlatformScopeWithoutChangingProjectUndo)
 {
     auto& pm = VNX::ProjectManager::instance();
     auto& actions = VNX::ActionManager::instance();
@@ -247,12 +229,13 @@ TEST_F(PackManagerLanguageTest, SectionSelectionKeepsPlatformScopeAndUndoAcrossF
     ASSERT_NE(stack, nullptr);
     const int undoIndex = stack->index();
     emit tree->groupCheckStateRequested(content, Qt::Unchecked);
-    ASSERT_TRUE(VNX::TestSupport::spinUntil([&] { return stack->index() == undoIndex + 1; }));
+    ASSERT_TRUE(VNX::TestSupport::spinUntil([&] { return actionRow(other)->checkState(0) == Qt::Unchecked; }));
+    EXPECT_EQ(stack->index(), undoIndex);
     const QString windows = HarkenTest::platformIdString("Windows");
     const QString linuxId = HarkenTest::platformIdString("Linux");
-    EXPECT_FALSE(pm.currentProject()->includesActionPack(action_->runtimeId(), windows, "English"));
-    EXPECT_TRUE(pm.currentProject()->includesActionPack(action_->runtimeId(), linuxId, "English"));
-    EXPECT_TRUE(pm.currentProject()->includesActionPack(action_->runtimeId(), windows, "Japanese"));
+    EXPECT_FALSE(pm.packExportSelection().includesActionPack(action_->runtimeId(), windows, "English"));
+    EXPECT_TRUE(pm.packExportSelection().includesActionPack(action_->runtimeId(), linuxId, "English"));
+    EXPECT_TRUE(pm.packExportSelection().includesActionPack(action_->runtimeId(), windows, "Japanese"));
     EXPECT_EQ(actionRow(nullptr, QStringLiteral("Japanese"))->checkState(0), Qt::Checked);
     const auto targeting = pm.getActionPackTargeting();
     const auto target = std::find_if(targeting.cbegin(), targeting.cend(),
@@ -267,7 +250,9 @@ TEST_F(PackManagerLanguageTest, SectionSelectionKeepsPlatformScopeAndUndoAcrossF
         {HarkenTest::PlatformIds::Windows, HarkenTest::PlatformIds::Linux},
         HarkenTest::PlatformIds::Windows, true);
     EXPECT_EQ(actionRow(other)->parent()->checkState(0), Qt::PartiallyChecked);
-    stack->undo();
+    emit tree->groupCheckStateRequested(actionRow(other)->parent(), Qt::Checked);
+    QApplication::processEvents();
+    EXPECT_EQ(stack->index(), undoIndex);
     content = actionRow(other)->parent();
     EXPECT_FALSE(content->isExpanded());
     EXPECT_EQ(content->checkState(0), Qt::Checked);
@@ -279,7 +264,7 @@ TEST_F(PackManagerLanguageTest, SectionSelectionKeepsPlatformScopeAndUndoAcrossF
     EXPECT_FALSE(init->data(0, Qt::CheckStateRole).isValid());
 }
 
-TEST_F(PackManagerLanguageTest, CheckGesturesPreservePlatformScopeAndUndoAcrossRebuilds)
+TEST_F(PackManagerLanguageTest, CheckGesturesPreservePlatformScopeWithoutChangingProjectUndo)
 {
     auto& pm = VNX::ProjectManager::instance();
     auto& actions = VNX::ActionManager::instance();
@@ -339,7 +324,10 @@ TEST_F(PackManagerLanguageTest, CheckGesturesPreservePlatformScopeAndUndoAcrossR
     clickCheck(actionRow(other));
     EXPECT_TRUE(included(windows));
     EXPECT_TRUE(included(linuxId));
-    stack->undo();
+    EXPECT_EQ(stack->index(), undoIndex);
+    context.setSelected({HarkenTest::PlatformIds::Windows}, HarkenTest::PlatformIds::Windows, false);
+    clickCheck(actionRow(other));
+    context.setAll(true);
     EXPECT_EQ(actionRow(other)->checkState(0), Qt::PartiallyChecked);
     tree->setCurrentItem(actionRow(other));
     QKeyEvent space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
@@ -347,7 +335,7 @@ TEST_F(PackManagerLanguageTest, CheckGesturesPreservePlatformScopeAndUndoAcrossR
     QApplication::processEvents();
     EXPECT_TRUE(included(windows));
     EXPECT_TRUE(included(linuxId));
-    while (stack->index() > undoIndex) stack->undo();
+    EXPECT_EQ(stack->index(), undoIndex);
 
     context.setSelected({HarkenTest::PlatformIds::Windows}, HarkenTest::PlatformIds::Windows, false);
     const QPoint start = checkPoint(actionRow());
@@ -358,17 +346,17 @@ TEST_F(PackManagerLanguageTest, CheckGesturesPreservePlatformScopeAndUndoAcrossR
     mouse(QEvent::MouseMove, end, Qt::LeftButton);
     mouse(QEvent::MouseButtonRelease, section, Qt::NoButton);
     QApplication::processEvents();
-    EXPECT_FALSE(pm.currentProject()->includesActionPack(action_->runtimeId(), windows, "English"));
-    EXPECT_TRUE(pm.currentProject()->includesActionPack(action_->runtimeId(), linuxId, "English"));
+    EXPECT_FALSE(pm.packExportSelection().includesActionPack(action_->runtimeId(), windows, "English"));
+    EXPECT_TRUE(pm.packExportSelection().includesActionPack(action_->runtimeId(), linuxId, "English"));
     EXPECT_FALSE(included(windows));
     EXPECT_TRUE(included(linuxId));
     EXPECT_TRUE(actionRow()->data(0, Qt::CheckStateRole).isValid());
-    while (stack->index() > undoIndex) stack->undo();
+    EXPECT_EQ(stack->index(), undoIndex);
     mouse(QEvent::MouseMove, end, Qt::NoButton);
     QApplication::processEvents();
     EXPECT_EQ(stack->index(), undoIndex);
-    EXPECT_TRUE(pm.currentProject()->includesActionPack(action_->runtimeId(), windows, "English"));
-    EXPECT_TRUE(included(windows));
+    EXPECT_FALSE(pm.packExportSelection().includesActionPack(action_->runtimeId(), windows, "English"));
+    EXPECT_FALSE(included(windows));
     EXPECT_EQ(panel_->generationPlatforms(), exportPlatforms);
     EXPECT_FALSE(tree->topLevelItem(0)->data(0, Qt::CheckStateRole).isValid());
 }
@@ -424,7 +412,7 @@ TEST_F(PackManagerLanguageTest, ContinuousColumnResizeIsStableWithDeveloperColum
     }
 }
 
-TEST_F(PackManagerLanguageTest, ExportPlatformSelectorKeepsContentWidthsAcrossResizeAndRefresh)
+TEST_F(PackManagerLanguageTest, ExportPlatformSelectorKeepsNamesAcrossResizeAndRefresh)
 {
     panel_->setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
     auto& manager = VNX::ProjectManager::instance();
@@ -441,9 +429,12 @@ TEST_F(PackManagerLanguageTest, ExportPlatformSelectorKeepsContentWidthsAcrossRe
         for (const int width : {1000, 1800, 700}) {
             SCOPED_TRACE(width);
             resizePanel(width);
-            auto* selector = panel_->findChild<VNX::SegmentedControl*>("packPlatformChips");
+            auto* selector = panel_->findChild<VNX::MultiSelectComboBox*>("packPlatformCombo");
             ASSERT_NE(selector, nullptr);
-            expectNaturalWidth(selector);
+            QStringList names;
+            for (const auto& platform : platforms) names.append(platform.name);
+            EXPECT_EQ(selector->selectedText(), names.join(QStringLiteral(", ")));
+            EXPECT_EQ(selector->toolTip(), selector->selectedText());
             auto* exportButton = panel_->findChild<QAbstractButton*>("projectPackGenerateAllBtn");
             ASSERT_NE(exportButton, nullptr);
             EXPECT_LT(selector->mapTo(panel_.get(), QPoint(selector->width(), 0)).x(),
@@ -465,25 +456,102 @@ TEST_F(PackManagerLanguageTest, ExportPlatformSelectorCompressesAndRecoversWitho
     for (const int width : {2800, 420, 2800, 420, 2800}) {
         SCOPED_TRACE(width);
         resizePanel(width);
-        auto* control = panel_->findChild<VNX::SegmentedControl*>("packPlatformChips");
+        auto* control = panel_->findChild<VNX::MultiSelectComboBox*>("packPlatformCombo");
         ASSERT_NE(control, nullptr);
         EXPECT_TRUE(panel_->rect().contains(QRect(control->mapTo(panel_.get(), QPoint()), control->size())));
-        if (width > 420) {
-            expectNaturalWidth(control);
-        } else {
-            ASSERT_LT(control->width(), control->sizeHint().width());
-            for (int i = 0; i < selected.size(); ++i) {
-                auto* button = control->button(i);
-                ASSERT_NE(button, nullptr);
-                EXPECT_TRUE(button->isVisible());
-                EXPECT_TRUE(button->isChecked());
-                EXPECT_EQ(button->property("segmentValue").toString(), selected[i]);
-                EXPECT_TRUE(control->rect().contains(button->geometry()));
-                EXPECT_NEAR(button->width(), double(control->width()) * button->sizeHint().width() / control->sizeHint().width(), 1);
-            }
-        }
+        EXPECT_GT(control->width(), 0);
+        QStringList chosen;
+        for (const auto& value : control->selectedData()) chosen.append(value.toString());
+        EXPECT_EQ(chosen, selected);
+        EXPECT_EQ(control->count(), selected.size());
         EXPECT_EQ(panel_->generationPlatforms(), selected);
     }
+}
+
+TEST_F(PackManagerLanguageTest, CachedArtifactsAndSessionResultsHaveIndependentLifetimes)
+{
+    auto& pm = VNX::ProjectManager::instance();
+    ASSERT_TRUE(pm.saveProject());
+    const QString projectPath = pm.currentProject()->projectPath;
+    const auto actionId = action_->runtimeId();
+    const QString platform = pm.currentProject()->platformIds().first();
+    writeArtifact(QStringLiteral("English"));
+    VNX::PackGenerationRecord record;
+    record.unitKey = QStringLiteral("a:") + VNX::objectIdString(actionId);
+    record.packName = action_->name;
+    record.platform = platform;
+    record.language = QStringLiteral("English");
+    record.status = QStringLiteral("Failed");
+    record.elapsedMs = 12;
+    panel_->addGenerationResult(record);
+    pm.setPackExportSelectedPlatformsInternal({});
+    pm.setActionPackTargetingInternal({{actionId, false, {}, QStringLiteral("English")}});
+
+    const QString outputPath = cachedArtifacts_.first().outputPath;
+    ASSERT_TRUE(QFile::remove(outputPath));
+    panel_->refreshPackList();
+    ASSERT_NE(actionRow(), nullptr);
+    EXPECT_EQ(actionRow()->text(1), QStringLiteral("Yes"));
+    EXPECT_EQ(actionRow()->text(4), QStringLiteral("Failed"));
+    EXPECT_EQ(actionRow()->text(5), QStringLiteral("12 ms"));
+    const QString cacheRoot = QDir(QFileInfo(projectPath).absolutePath()).filePath(".cache");
+    QFile metadataFile(QDir(cacheRoot).filePath("pack-artifacts.json"));
+    ASSERT_TRUE(metadataFile.open(QIODevice::ReadOnly));
+    const auto saved = QJsonDocument::fromJson(metadataFile.readAll()).object();
+    metadataFile.close();
+    for (const auto& value : saved.value("artifacts").toArray()) {
+        const auto artifact = value.toObject();
+        EXPECT_FALSE(artifact.contains("status"));
+        EXPECT_FALSE(artifact.contains("elapsedMs"));
+        EXPECT_FALSE(artifact.contains("result"));
+    }
+
+    ASSERT_TRUE(pm.closeProject());
+    EXPECT_TRUE(VNX::PackGenerationRecordStore::instance().records().isEmpty());
+    ASSERT_TRUE(pm.loadProject(projectPath));
+    action_ = pm.findItemByRuntimeStableId(actionId);
+    ASSERT_NE(action_, nullptr);
+    panel_->refreshPackList();
+    EXPECT_EQ(actionRow()->text(1), QStringLiteral("Yes"));
+    EXPECT_TRUE(actionRow()->text(4).isEmpty());
+    EXPECT_TRUE(actionRow()->text(5).isEmpty());
+    EXPECT_EQ(actionRow()->checkState(0), Qt::Unchecked);
+    EXPECT_TRUE(panel_->generationPlatforms().isEmpty());
+
+    QFile output(outputPath);
+    ASSERT_TRUE(output.open(QIODevice::WriteOnly));
+    ASSERT_EQ(output.write("external"), 8);
+    output.close();
+    ASSERT_TRUE(pm.closeProject());
+    ASSERT_TRUE(QDir(cacheRoot).removeRecursively());
+    ASSERT_TRUE(pm.loadProject(projectPath));
+    action_ = pm.findItemByRuntimeStableId(actionId);
+    ASSERT_NE(action_, nullptr);
+    panel_->refreshPackList();
+    EXPECT_EQ(actionRow()->checkState(0), Qt::Checked);
+    EXPECT_EQ(panel_->generationPlatforms(), pm.currentProject()->platformIds());
+    for (int column = 1; column < panel_->findChild<QTreeWidget*>()->columnCount(); ++column)
+        EXPECT_TRUE(actionRow()->text(column).isEmpty());
+}
+
+TEST_F(PackManagerLanguageTest, KnownOutputCleanupRemovesOnlyArtifactsInThatOutputRoot)
+{
+    auto& cache = VNX::PackArtifactCache::instance();
+    const QString windows = HarkenTest::platformIdString("Windows");
+    const QString linuxId = HarkenTest::platformIdString("Linux");
+    writeArtifact(QStringLiteral("English"));
+    auto linuxArtifact = cachedArtifacts_.first();
+    linuxArtifact.platform = linuxId;
+    linuxArtifact.outputPath = temp_.filePath("Generated/Linux/English/PlayVoice.bytes");
+    auto otherArtifact = linuxArtifact;
+    otherArtifact.language = QStringLiteral("Japanese");
+    otherArtifact.outputPath = temp_.filePath("Other/Linux/Japanese/PlayVoice.bytes");
+    cache.publish(linuxId, {linuxArtifact, otherArtifact});
+    cache.removeUnselectedPlatforms(temp_.filePath("Generated"), {windows});
+    EXPECT_EQ(cache.find(linuxId, linuxArtifact.language, linuxArtifact.unitKey, linuxArtifact.outputPath), nullptr);
+    EXPECT_NE(cache.find(linuxId, otherArtifact.language, otherArtifact.unitKey, otherArtifact.outputPath), nullptr);
+    EXPECT_NE(cache.find(windows, cachedArtifacts_.first().language,
+        cachedArtifacts_.first().unitKey, cachedArtifacts_.first().outputPath), nullptr);
 }
 
 TEST_F(PackManagerLanguageTest, LanguageChangesRefreshActualVariantPaths)
@@ -493,7 +561,7 @@ TEST_F(PackManagerLanguageTest, LanguageChangesRefreshActualVariantPaths)
     ASSERT_NE(actionRow(nullptr, QStringLiteral("English")), nullptr);
     ASSERT_NE(actionRow(nullptr, QStringLiteral("Japanese")), nullptr);
     EXPECT_EQ(actionRow(nullptr, QStringLiteral("English"))->text(1), QStringLiteral("Yes"));
-    EXPECT_EQ(actionRow(nullptr, QStringLiteral("Japanese"))->text(1), QStringLiteral("No"));
+    EXPECT_TRUE(actionRow(nullptr, QStringLiteral("Japanese"))->text(1).isEmpty());
     EXPECT_TRUE(actionRow(nullptr, QStringLiteral("Japanese"))->text(2).isEmpty());
     EXPECT_TRUE(actionRow(nullptr, QStringLiteral("Japanese"))->text(3).isEmpty());
     auto& context = VNX::LanguageContextService::instance();
@@ -507,7 +575,7 @@ TEST_F(PackManagerLanguageTest, LanguageChangesRefreshActualVariantPaths)
     EXPECT_EQ(actionRow()->text(6), QStringLiteral("English/") + baseName() + QStringLiteral(".bytes"));
     pm.setProjectLanguagesInternal({QStringLiteral("Japanese"), QStringLiteral("English")});
     EXPECT_EQ(actionRow(nullptr, QStringLiteral("English"))->text(1), QStringLiteral("Yes"));
-    EXPECT_EQ(actionRow(nullptr, QStringLiteral("Japanese"))->text(1), QStringLiteral("No"));
+    EXPECT_TRUE(actionRow(nullptr, QStringLiteral("Japanese"))->text(1).isEmpty());
 }
 
 TEST_F(PackManagerLanguageTest, ToggleRefreshesBetweenFlatAndLocalizedArtifacts)
@@ -516,15 +584,15 @@ TEST_F(PackManagerLanguageTest, ToggleRefreshesBetweenFlatAndLocalizedArtifacts)
     writeArtifact({});
     panel_->refreshPackList();
     ASSERT_NE(actionRow(), nullptr);
-    EXPECT_EQ(actionRow()->text(1), QStringLiteral("No"));
+    EXPECT_TRUE(actionRow()->text(1).isEmpty());
 
     setLocalized(false);
     EXPECT_EQ(actionRow()->text(1), QStringLiteral("Yes"));
     EXPECT_EQ(actionRow()->text(6), baseName() + QStringLiteral(".bytes"));
 
     setLocalized(true);
-    EXPECT_EQ(actionRow()->text(1), QStringLiteral("No"));
-    EXPECT_EQ(actionRow()->text(6), QStringLiteral("English/") + baseName() + QStringLiteral(".bytes"));
+    EXPECT_TRUE(actionRow()->text(1).isEmpty());
+    EXPECT_TRUE(actionRow()->text(6).isEmpty());
 }
 
 TEST_F(PackManagerLanguageTest, ReservedActionNameCannotReuseSystemPack)
@@ -535,18 +603,19 @@ TEST_F(PackManagerLanguageTest, ReservedActionNameCannotReuseSystemPack)
     writeArtifact({});
     panel_->refreshPackList();
     ASSERT_NE(actionRow(), nullptr);
-    EXPECT_EQ(actionRow()->text(1), QStringLiteral("No"));
-    EXPECT_TRUE(actionRow()->toolTip(4).contains(QStringLiteral("reserved")));
+    EXPECT_TRUE(actionRow()->text(1).isEmpty());
+    EXPECT_TRUE(actionRow()->toolTip(0).contains(QStringLiteral("reserved")));
+    EXPECT_TRUE(actionRow()->text(4).isEmpty());
     EXPECT_TRUE(actionRow()->data(0, Qt::UserRole + 5).toString().isEmpty());
 
     ASSERT_TRUE(pm.renameItem(action_, QStringLiteral("init")));
     panel_->refreshPackList();
     ASSERT_NE(actionRow(), nullptr);
-    EXPECT_EQ(actionRow()->text(1), QStringLiteral("No"));
+    EXPECT_TRUE(actionRow()->text(1).isEmpty());
     EXPECT_TRUE(actionRow()->data(0, Qt::UserRole + 5).toString().isEmpty());
 }
 
-TEST_F(PackManagerLanguageTest, PackFilesRequirePublishedActionOwnership)
+TEST_F(PackManagerLanguageTest, CachedArtifactsRequireStableActionIdentity)
 {
     auto& pm = VNX::ProjectManager::instance();
     setLocalized(false);
@@ -565,14 +634,14 @@ TEST_F(PackManagerLanguageTest, PackFilesRequirePublishedActionOwnership)
     ASSERT_NE(actionRow(), nullptr);
     EXPECT_EQ(actionRow()->text(1), QStringLiteral("Yes"));
     ASSERT_NE(actionRow(other), nullptr);
-    EXPECT_EQ(actionRow(other)->text(1), QStringLiteral("No"));
+    EXPECT_TRUE(actionRow(other)->text(1).isEmpty());
     EXPECT_TRUE(actionRow(other)->data(0, Qt::UserRole + 5).toString().isEmpty());
 
     ASSERT_TRUE(pm.deleteItem(action_));
     ASSERT_TRUE(pm.renameItem(other, originalName));
     panel_->refreshPackList();
     ASSERT_NE(actionRow(other), nullptr);
-    EXPECT_EQ(actionRow(other)->text(1), QStringLiteral("No"));
+    EXPECT_TRUE(actionRow(other)->text(1).isEmpty());
     EXPECT_TRUE(actionRow(other)->data(0, Qt::UserRole + 5).toString().isEmpty());
 }
 
@@ -595,14 +664,14 @@ TEST_F(PackManagerLanguageTest, ActionTargetsAndDependenciesRefreshTheirLanguage
     writeArtifact({});
     panel_->refreshPackList();
     ASSERT_NE(actionRow(), nullptr);
-    EXPECT_EQ(actionRow()->text(1), QStringLiteral("No"));
+    EXPECT_TRUE(actionRow()->text(1).isEmpty());
 
     auto* effect = pm.createItem(nullptr, QStringLiteral("Effect"), VNX::ProjectItem::Type::Sound);
     ASSERT_NE(effect, nullptr);
     action_->comp<VNX::VAction>()->steps.front().targetObjectID = effect->objectID;
     emit pm.itemPropertyChanged(action_, QStringLiteral("steps"), nullptr);
     EXPECT_EQ(actionRow()->text(1), QStringLiteral("Yes"));
-    EXPECT_EQ(actionRow()->text(6), baseName() + QStringLiteral(".bytes"));
+    EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QString());
 
     auto* voice = pm.createItem(nullptr, QStringLiteral("LocalizedVoice"), VNX::ProjectItem::Type::Action);
     auto* trigger = pm.createItem(nullptr, QStringLiteral("Trigger"), VNX::ProjectItem::Type::Action);
@@ -620,16 +689,16 @@ TEST_F(PackManagerLanguageTest, ActionTargetsAndDependenciesRefreshTheirLanguage
     writeArtifact(QStringLiteral("English"), trigger->name, {trigger->runtimeId()});
     panel_->refreshPackList();
     ASSERT_NE(actionRow()->parent(), nullptr);
-    EXPECT_EQ(actionRow()->text(6), baseName() + QStringLiteral(".bytes"));
-    EXPECT_EQ(actionRow(voice)->text(6), QStringLiteral("English/LocalizedVoice.bytes"));
+    EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QString());
+    EXPECT_EQ(actionRow(voice)->data(0, Qt::UserRole + 6).toString(), QStringLiteral("English"));
     ASSERT_NE(actionRow(trigger), nullptr);
-    EXPECT_EQ(actionRow(trigger)->text(6), QStringLiteral("English/Trigger.bytes"));
+    EXPECT_EQ(actionRow(trigger)->data(0, Qt::UserRole + 6).toString(), QStringLiteral("English"));
     EXPECT_EQ(actionRow(trigger)->text(1), QStringLiteral("Yes"));
 
     setLocalized(false);
-    EXPECT_EQ(actionRow(voice)->text(6), QStringLiteral("LocalizedVoice.bytes"));
-    EXPECT_EQ(actionRow(trigger)->text(6), QStringLiteral("Trigger.bytes"));
-    EXPECT_EQ(actionRow(trigger)->text(1), QStringLiteral("No"));
+    EXPECT_EQ(actionRow(voice)->data(0, Qt::UserRole + 6).toString(), QString());
+    EXPECT_EQ(actionRow(trigger)->data(0, Qt::UserRole + 6).toString(), QString());
+    EXPECT_TRUE(actionRow(trigger)->text(1).isEmpty());
 }
 
 TEST_F(PackManagerLanguageTest, MovingLocalizedSourcesRefreshesTheActionClosure)
@@ -642,20 +711,20 @@ TEST_F(PackManagerLanguageTest, MovingLocalizedSourcesRefreshesTheActionClosure)
     action_->comp<VNX::VAction>()->steps.front().targetObjectID = container->objectID;
     emit pm.itemPropertyChanged(action_, QStringLiteral("steps"), nullptr);
     ASSERT_NE(actionRow(), nullptr);
-    EXPECT_EQ(actionRow()->text(6), baseName() + QStringLiteral(".bytes"));
+    EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QString());
 
     ASSERT_TRUE(pm.moveItem(sound_, container));
-    EXPECT_EQ(actionRow()->text(6), QStringLiteral("English/") + baseName() + QStringLiteral(".bytes"));
+    EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QStringLiteral("English"));
 
     auto* outside = pm.createItem(nullptr, QStringLiteral("Outside"), VNX::ProjectItem::Type::Layer);
     ASSERT_NE(outside, nullptr);
     ASSERT_TRUE(pm.moveItem(sound_, outside));
-    EXPECT_EQ(actionRow()->text(6), baseName() + QStringLiteral(".bytes"));
+    EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QString());
 
     ASSERT_TRUE(pm.moveItem(sound_, container));
     ASSERT_TRUE(pm.deleteItem(sound_));
     QCoreApplication::processEvents();
-    EXPECT_EQ(actionRow()->text(6), baseName() + QStringLiteral(".bytes"));
+    EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QString());
 }
 
 TEST_F(PackManagerLanguageTest, RenamingContentResolvesNameOnlyTargetsAndRefreshesVariants)
@@ -667,10 +736,10 @@ TEST_F(PackManagerLanguageTest, RenamingContentResolvesNameOnlyTargetsAndRefresh
     step.targetName = QStringLiteral("RenamedVoice");
     emit pm.itemPropertyChanged(action_, QStringLiteral("steps"), nullptr);
     ASSERT_NE(actionRow(), nullptr);
-    EXPECT_EQ(actionRow()->text(6), baseName() + QStringLiteral(".bytes"));
+    EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QString());
 
     ASSERT_TRUE(pm.renameItem(sound_, QStringLiteral("RenamedVoice")));
-    EXPECT_EQ(actionRow()->text(6), QStringLiteral("English/") + baseName() + QStringLiteral(".bytes"));
+    EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QStringLiteral("English"));
 }
 
 TEST_F(PackManagerLanguageTest, ExternalTransitionBridgesRefreshTheLanguageDimension)
@@ -682,22 +751,22 @@ TEST_F(PackManagerLanguageTest, ExternalTransitionBridgesRefreshTheLanguageDimen
     action_->comp<VNX::VAction>()->steps.front().targetObjectID = container->objectID;
     emit pm.itemPropertyChanged(action_, QStringLiteral("steps"), nullptr);
     ASSERT_NE(actionRow(), nullptr);
-    EXPECT_EQ(actionRow()->text(6), baseName() + QStringLiteral(".bytes"));
+    EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QString());
 
     auto* selection = container->comp<VNX::VSelection>();
     ASSERT_NE(selection, nullptr);
     selection->transitions = VNX::AuthoringPolicy::defaultTransitionTable();
     selection->transitions.rules.front().bridge = sound_->guid;
     emit pm.itemPropertyChanged(container, QStringLiteral("transitions"), nullptr);
-    EXPECT_EQ(actionRow()->text(6), baseName() + QStringLiteral(".bytes"));
+    EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QString());
 
     selection->playType = VNX::SelectionPlayType::Queue;
     emit pm.itemPropertyChanged(container, QStringLiteral("playType"), nullptr);
-    EXPECT_EQ(actionRow()->text(6), QStringLiteral("English/") + baseName() + QStringLiteral(".bytes"));
+    EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QStringLiteral("English"));
 
     selection->transitions.rules.front().bridge.reset();
     emit pm.itemPropertyChanged(container, QStringLiteral("transitions"), nullptr);
-    EXPECT_EQ(actionRow()->text(6), baseName() + QStringLiteral(".bytes"));
+    EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QString());
 }
 
 }

@@ -330,7 +330,8 @@ private:
     
     void generateProjectPacks(const QStringList& platforms = {},
                               const QStringList& packPaths = {},
-                              bool includeUnchecked = false);
+                               bool includeUnchecked = false,
+                               bool forceReexport = false, bool selfCleaning = false);
     void recordPackGenerationResult(const QString& packName, uint32_t objectID,
                                     bool success, const QString& outputPath,
                                     const QString& error, qint64 bytes,
@@ -339,7 +340,8 @@ private:
                                     const QString& warnings = QString(),
                                     const QString& statusOverride = QString(),
                                     const QString& language = QString(),
-                                    const QJsonObject* platformDefinition = nullptr);
+                                    const QJsonObject* platformDefinition = nullptr,
+                                    const QString& unitKey = QString());
 
 protected:
     void closeEvent(QCloseEvent* event) override;

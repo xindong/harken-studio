@@ -1,3 +1,4 @@
+#include "../../Source/Tooling/PackC/GameplayPublication.h"
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "Engine.h"
 #include "UnitTest/TestUtil.h"
@@ -37,6 +38,7 @@
 
 #include <QByteArray>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -382,6 +384,19 @@ void readCanonicalWorld(const QString& path, QByteArray& bytes,
     ASSERT_NE(world.ProductionView(), nullptr);
 }
 
+void bindPublishedCatalog(const QJsonObject& manifest, VnPackHandle init) {
+    harkenstudiojson::JsonValue json;
+    std::string error;
+    std::vector<std::uint8_t> bytes;
+    ASSERT_TRUE(harkenstudiojson::ParseJson(QJsonDocument(manifest).toJson(QJsonDocument::Compact).toStdString(), &json, &error, true));
+    ASSERT_TRUE(harkenstudiobuild::tooling::EncodeGameplayPublication(json, &bytes));
+    VnPackByteSpan span{};
+    span.structSize = sizeof(span);
+    span.bytes = bytes.data();
+    span.byteCount = bytes.size();
+    ASSERT_EQ(VN_OK, Vn_SetGameplayCatalog(init, &span));
+}
+
 void activateExportedNames(const QString& outputDir, const QStringList& names,
                           const QString& language = {},
                           std::map<QString, VnPackHandle>* handles = nullptr)
@@ -418,6 +433,7 @@ void activateExportedNames(const QString& outputDir, const QStringList& names,
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(
         members.data(), static_cast<uint32_t>(members.size()), rows.data(), report));
+    ASSERT_NO_FATAL_FAILURE(bindPublishedCatalog(readManifest(manifestDir), report.initHandle));
     if (handles)
         for (size_t i = 0; i < rows.size(); ++i)
             handles->emplace(memberNames[i], rows[i].handle);
@@ -1182,7 +1198,7 @@ TEST(EditorProjectPackExporterManifest, InitHasNoRoutingCatalogAndEveryPackHasKi
                   static_cast<std::uint64_t>(initBytes.size()), &initImage));
     EXPECT_TRUE(initImage.hasPartition);
     EXPECT_FALSE(initImage.hasCatalog);
-    EXPECT_TRUE(initImage.hasGameplayCatalog);
+    EXPECT_FALSE(initImage.hasGameplayCatalog);
     EXPECT_TRUE(initImage.catalogRows.empty());
     bool sawCatalogEntry = false;
     harken::PackV2Header initHeader;
@@ -1203,11 +1219,7 @@ TEST(EditorProjectPackExporterManifest, InitHasNoRoutingCatalogAndEveryPackHasKi
     const QJsonObject gameplayCatalog =
         manifest.value(QStringLiteral("gameplayCatalog")).toObject();
     EXPECT_EQ(gameplayCatalog.value(QStringLiteral("schema")).toInt(), 2);
-    EXPECT_EQ(QString::number(initImage.gameplayCatalog.header.digest),
-              gameplayCatalog.value(QStringLiteral("digest")).toString());
-    EXPECT_EQ(initImage.gameplayCatalog.active.size(),
-              static_cast<std::size_t>(
-                  gameplayCatalog.value(QStringLiteral("actions")).toArray().size()));
+    EXPECT_EQ(gameplayCatalog.value(QStringLiteral("actions")).toArray().size(), 3);
     const QJsonArray packs = manifest.value(QStringLiteral("packs")).toArray();
     EXPECT_FALSE(findByName(packs, QStringLiteral("GroupedOne")).isEmpty());
     EXPECT_FALSE(findByName(packs, QStringLiteral("LooseOne")).isEmpty());
@@ -1246,40 +1258,42 @@ TEST(EditorProjectPackExporterManifest, RenameKeepsManifestMappingSelfConsistent
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
     opts.platform = HarkenTest::platformIdString("Windows");
+    opts.selfCleaning = true;
 
-    auto firstResult = exporter.ExportAllPacks(project, dir.path(), opts);
+    const QDir output(dir.filePath("exports"));
+    auto firstResult = exporter.ExportAllPacks(project, output.path(), opts);
     ASSERT_TRUE(firstResult.success) << firstResult.error.toStdString();
 
     const QString beforeFileName = variantFileName(project, harkentest::StudioObjectId(21 + kStableIdBias));
     EXPECT_EQ(beforeFileName, QStringLiteral("BeforeName.bytes"));
     const QJsonObject beforeEntry = findByName(
-        readManifest(dir.path()).value(QStringLiteral("packs")).toArray(),
+        readManifest(output.path()).value(QStringLiteral("packs")).toArray(),
         QStringLiteral("BeforeName"));
     const QString legacyName = QStringLiteral("action_3da91a64-b947-4560-0000-0000000186b5.bytes");
-    ASSERT_TRUE(QFile::copy(QDir(dir.path()).filePath(beforeFileName),
-                           QDir(dir.path()).filePath(legacyName)));
+    ASSERT_TRUE(QFile::copy(output.filePath(beforeFileName),
+                           output.filePath(legacyName)));
     {
-        const QJsonObject manifest = readManifest(dir.path());
+        const QJsonObject manifest = readManifest(output.path());
         const QJsonObject packEntry = findByName(
             manifest.value(QStringLiteral("packs")).toArray(),
             QStringLiteral("BeforeName"));
         EXPECT_TRUE(packEntry.value(QStringLiteral("path")).toString().endsWith(
             beforeFileName));
-        EXPECT_TRUE(QFileInfo::exists(QDir(dir.path()).filePath(beforeFileName)));
+        EXPECT_TRUE(QFileInfo::exists(output.filePath(beforeFileName)));
     }
 
     project.actions.front().rootItem->children.front()->name =
         QStringLiteral("AfterName");
 
-    auto secondResult = exporter.ExportAllPacks(project, dir.path(), opts);
+    auto secondResult = exporter.ExportAllPacks(project, output.path(), opts);
     ASSERT_TRUE(secondResult.success) << secondResult.error.toStdString();
 
     const QString afterFileName = variantFileName(project, harkentest::StudioObjectId(21 + kStableIdBias));
     EXPECT_EQ(afterFileName, QStringLiteral("AfterName.bytes"));
-    EXPECT_FALSE(QFileInfo::exists(QDir(dir.path()).filePath(beforeFileName)));
-    EXPECT_TRUE(QFileInfo::exists(QDir(dir.path()).filePath(legacyName)));
+    EXPECT_FALSE(QFileInfo::exists(output.filePath(beforeFileName)));
+    EXPECT_FALSE(QFileInfo::exists(output.filePath(legacyName)));
 
-    const QJsonObject manifest = readManifest(dir.path());
+    const QJsonObject manifest = readManifest(output.path());
     const QJsonArray packs = manifest.value(QStringLiteral("packs")).toArray();
     EXPECT_TRUE(findByName(packs, QStringLiteral("BeforeName")).isEmpty());
     const QJsonObject renamedEntry = findByName(packs, QStringLiteral("AfterName"));
@@ -1289,16 +1303,16 @@ TEST(EditorProjectPackExporterManifest, RenameKeepsManifestMappingSelfConsistent
               beforeEntry.value(QStringLiteral("dependencies")));
     EXPECT_TRUE(renamedEntry.value(QStringLiteral("path")).toString().endsWith(
         afterFileName));
-    EXPECT_TRUE(QFileInfo::exists(QDir(dir.path()).filePath(afterFileName)));
+    EXPECT_TRUE(QFileInfo::exists(output.filePath(afterFileName)));
 
     project.actions.front().rootItem->children.front()->name = QStringLiteral("afterName");
-    const auto caseOnly = exporter.ExportAllPacks(project, dir.path(), opts);
+    const auto caseOnly = exporter.ExportAllPacks(project, output.path(), opts);
     ASSERT_TRUE(caseOnly.success) << caseOnly.error.toStdString();
-    const auto caseEntry = findByName(readManifest(dir.path()).value(QStringLiteral("packs")).toArray(),
+    const auto caseEntry = findByName(readManifest(output.path()).value(QStringLiteral("packs")).toArray(),
                                       QStringLiteral("afterName"));
     EXPECT_EQ(caseEntry.value(QStringLiteral("packStableId")), beforeEntry.value(QStringLiteral("packStableId")));
     EXPECT_EQ(caseEntry.value(QStringLiteral("path")).toString(), QStringLiteral("afterName.bytes"));
-    EXPECT_TRUE(QFileInfo::exists(QDir(dir.path()).filePath(QStringLiteral("afterName.bytes"))));
+    EXPECT_TRUE(QFileInfo::exists(output.filePath(QStringLiteral("afterName.bytes"))));
 
     VNX::AssetRegistry::instance().clear();
 }
@@ -1405,11 +1419,10 @@ TEST(EditorProjectPackExporterManifest, UntargetedUnitsStayOutOfPlatformManifest
     group.platformIds = {HarkenTest::platformIdString("Android")};
     project.packGroups.push_back(group);
 
-    project.actionPackTargeting.push_back(
-        {harkentest::StudioObjectId(23 + kStableIdBias), false, {QStringLiteral("Android")}});
-
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
+    opts.selection.actionTargeting.push_back(
+        {harkentest::StudioObjectId(23 + kStableIdBias), false, {HarkenTest::platformIdString("Android")}});
     opts.platform = HarkenTest::platformIdString("Windows");
 
     auto result = exporter.ExportAllPacks(project, dir.path(), opts);
@@ -2370,7 +2383,7 @@ TEST(EditorProjectPackExporterManifest, LaterExportPreservesUnownedFiles)
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(EditorProjectPackExporterManifest, LegacyMigrationRetiresOnlyOwnedFilesAndRejectsTargetConflicts)
+TEST(EditorProjectPackExporterManifest, LegacyMigrationReplacesOutputsAndCleansUnusedFiles)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
     QTemporaryDir dir;
@@ -2384,32 +2397,24 @@ TEST(EditorProjectPackExporterManifest, LegacyMigrationRetiresOnlyOwnedFilesAndR
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
     opts.platform = HarkenTest::platformIdString("Windows");
+    opts.selfCleaning = true;
     for (bool wrapped : {false, true}) {
         const QDir live(QDir(dir.path()).filePath(wrapped ? "wrapped" : "plain"));
         ASSERT_TRUE(exporter.ExportAllPacks(project, live.path(), opts).success);
         const QJsonObject native = readManifest(live.path());
         ASSERT_NO_FATAL_FAILURE(renamePublicationToLegacy(live, wrapped));
         const QString oldInit = wrapped ? QStringLiteral("Init.pack.bytes") : QStringLiteral("Init.pack");
-        const QByteArray oldManifest = readFileBytes(live.filePath(HarkenEditor::Bridge::packManifestFileName()));
-        const QByteArray oldInitBytes = readFileBytes(live.filePath(oldInit));
         writeFileBytes(live.filePath("unrelated.bytes"), "other");
         writeFileBytes(live.filePath("arbitrary.pack"), "other-pack");
         writeFileBytes(live.filePath(oldInit + ".meta"), "guid");
         writeFileBytes(live.filePath("Init.bytes"), "conflict");
-        const auto conflict = exporter.ExportAllPacks(project, live.path(), opts);
-        EXPECT_FALSE(conflict.success);
-        EXPECT_TRUE(conflict.error.contains(QStringLiteral("unowned"))) << conflict.error.toStdString();
-        EXPECT_EQ(readFileBytes(live.filePath(HarkenEditor::Bridge::packManifestFileName())), oldManifest);
-        EXPECT_EQ(readFileBytes(live.filePath(oldInit)), oldInitBytes);
-        EXPECT_EQ(readFileBytes(live.filePath("Init.bytes")), "conflict");
-        ASSERT_TRUE(QFile::remove(live.filePath("Init.bytes")));
         const auto migrated = exporter.ExportAllPacks(project, live.path(), opts);
         ASSERT_TRUE(migrated.success) << migrated.error.toStdString();
         EXPECT_EQ(readManifest(live.path()), native);
         EXPECT_FALSE(QFile::exists(live.filePath(oldInit)));
-        EXPECT_EQ(readFileBytes(live.filePath("unrelated.bytes")), "other");
-        EXPECT_EQ(readFileBytes(live.filePath("arbitrary.pack")), "other-pack");
-        EXPECT_EQ(readFileBytes(live.filePath(oldInit + ".meta")), "guid");
+        EXPECT_FALSE(QFile::exists(live.filePath("unrelated.bytes")));
+        EXPECT_FALSE(QFile::exists(live.filePath("arbitrary.pack")));
+        EXPECT_FALSE(QFile::exists(live.filePath(oldInit + ".meta")));
     }
     registry.clear();
 }
@@ -2428,6 +2433,7 @@ TEST(EditorProjectPackExporterManifest, DotPrefixedLegacyPackIsRetiredAfterActio
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
     opts.platform = HarkenTest::platformIdString("Windows");
+    opts.selfCleaning = true;
     for (bool wrapped : {false, true}) {
         const QDir live(QDir(dir.path()).filePath(wrapped ? "wrapped" : "plain"));
         const auto initial = exporter.ExportAllPacks(project, live.path(), opts);
@@ -2651,8 +2657,10 @@ TEST(EditorProjectPackExporterManifest, LanguageVariantsKeepDistinctPackIdentiti
     const std::uint64_t englishId = fnvUtf8(HarkenTest::platformIdString("Windows") + QStringLiteral("/English/action_3da91a64-b947-4560-0000-0000000186b5"));
     const std::uint64_t jaId = fnvUtf8(HarkenTest::platformIdString("Windows") + QStringLiteral("/ja/action_3da91a64-b947-4560-0000-0000000186b5"));
     EXPECT_NE(englishId, jaId);
-    ASSERT_EQ(initImage.gameplayCatalog.active.size(), 1u);
-    EXPECT_EQ(initImage.gameplayCatalog.active.front().ownerPackStableId, englishId);
+    EXPECT_FALSE(initImage.hasGameplayCatalog);
+    EXPECT_EQ(readManifest(dir.path()).value(QStringLiteral("gameplayCatalog")).toObject()
+        .value(QStringLiteral("actions")).toArray().first().toObject()
+        .value(QStringLiteral("ownerPackStableId")).toString(), QString::number(englishId));
     EXPECT_EQ(readManifest(dir.path()).value(QStringLiteral("language")).toString(), project.defaultLanguage);
 
     const QJsonArray packs = readManifest(dir.path()).value(QStringLiteral("packs")).toArray();
@@ -2692,7 +2700,7 @@ TEST(EditorProjectPackExporterManifest, LanguageVariantsKeepDistinctPackIdentiti
         ASSERT_EQ(selectedPacks.size(), 2);
         const QJsonObject selectedInit = findByName(selectedPacks, QStringLiteral("Init"));
         EXPECT_EQ(selectedInit.value(QStringLiteral("path")).toString(),
-                  language + QStringLiteral("/Init.bytes"));
+                  QStringLiteral("Init.bytes"));
         expectInitHasVolumeOnlyKind24(
             QDir(dir.path()).filePath(selectedInit.value(QStringLiteral("path")).toString()));
         const QJsonObject gameplay = selected.value(QStringLiteral("gameplayCatalog")).toObject();
@@ -2724,6 +2732,7 @@ TEST(EditorProjectPackExporterManifest, LanguageVariantsKeepDistinctPackIdentiti
         VnCanonicalPackSetActivationReportV1 initial{};
         ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 1, &initRow, initial));
         ASSERT_NE(0u, initRow.handle);
+        ASSERT_NO_FATAL_FAILURE(bindPublishedCatalog(selected, initRow.handle));
         const auto* before = session.Engine()->packComposition.Published();
         ASSERT_NE(before, nullptr);
         EXPECT_EQ(before->gameplayCatalog.header.digest, digest);
@@ -2763,7 +2772,7 @@ TEST(EditorProjectPackExporterManifest, LanguageVariantsKeepDistinctPackIdentiti
 
     std::map<QString, QByteArray> publication;
     for (const QString& language : project.projectLanguages) {
-        for (const QString& name : {QStringLiteral("Init.bytes"), HarkenEditor::Bridge::packManifestFileName(),
+        for (const QString& name : {HarkenEditor::Bridge::packManifestFileName(),
                                    QFileInfo(englishName).fileName(), QStringLiteral("HarkenEditorWaveforms.json")}) {
             const QString relative = language + QLatin1Char('/') + name;
             publication.emplace(relative, readFileBytes(QDir(dir.path()).filePath(relative)));
@@ -2810,10 +2819,10 @@ TEST(EditorProjectPackExporterManifest, LanguageTargetingPublishesIndependentPla
     const auto second = harkentest::StudioObjectId(23 + kStableIdBias);
     const QString windows = HarkenTest::platformIdString("Windows");
     const QString mac = HarkenTest::platformIdString("macOS");
-    project.actionPackTargeting = {{first, false, {mac}, QStringLiteral("ja")},
-                                   {second, false, {mac}, QStringLiteral("English")}};
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions opts;
+    opts.selection.actionTargeting = {{first, false, {mac}, QStringLiteral("ja")},
+                                     {second, false, {mac}, QStringLiteral("English")}};
     opts.platform = windows;
     const QString output = dir.filePath(QStringLiteral("Output"));
     const auto result = exporter.ExportAllPacks(project, output, opts);
@@ -2835,13 +2844,16 @@ TEST(EditorProjectPackExporterManifest, LanguageTargetingPublishesIndependentPla
         EXPECT_EQ(VN_OK, Vn_Update());
     }
     const QString macOutput = dir.filePath(QStringLiteral("MacOutput"));
-    const auto macResult = exporter.ExportAllPacks(project, macOutput, {.platform = mac});
+    auto macOpts = opts;
+    macOpts.platform = mac;
+    const auto macResult = exporter.ExportAllPacks(project, macOutput, macOpts);
     ASSERT_TRUE(macResult.success) << macResult.error.toStdString();
     for (const auto& language : project.projectLanguages)
         EXPECT_EQ(readManifest(QDir(macOutput).filePath(language))
             .value("gameplayCatalog").toObject().value("actions").toArray().size(), 3);
-    project.actionPackTargeting.push_back({first, false, {mac}, QStringLiteral("English")});
+    opts.selection.actionTargeting.push_back({first, false, {mac}, QStringLiteral("English")});
     opts.currentWorldOutputPath = dir.filePath(QStringLiteral("Selected.world"));
+    opts.selfCleaning = true;
     const auto fallback = exporter.ExportAllPacks(project, output, opts);
     ASSERT_TRUE(fallback.success) << fallback.error.toStdString();
     EXPECT_EQ(project.defaultLanguage, QStringLiteral("English"));
@@ -2850,7 +2862,7 @@ TEST(EditorProjectPackExporterManifest, LanguageTargetingPublishesIndependentPla
     EXPECT_TRUE(QFile::exists(opts.currentWorldOutputPath));
     EXPECT_NE(fallback.currentWorldSemanticFingerprint, 0u);
 
-    project.actionPackTargeting.clear();
+    opts.selection.actionTargeting.clear();
     opts.onlyPackPaths = {QStringLiteral("ja/SecondVoice")};
     const auto selected = exporter.ExportAllPacks(project, output, opts);
     ASSERT_TRUE(selected.success) << selected.error.toStdString();
@@ -2878,7 +2890,7 @@ TEST(EditorProjectPackExporterManifest, LanguageTargetingPublishesIndependentPla
         ASSERT_NO_FATAL_FAILURE(activateExportedNames(output, {"FirstVoice", "SecondVoice"}, "ja"));
         EXPECT_EQ(VN_OK, Vn_Update());
     }
-    project.actionPackTargeting.push_back({second, false, {mac}, QStringLiteral("ja")});
+    opts.selection.actionTargeting.push_back({second, false, {mac}, QStringLiteral("ja")});
     const auto excludedDependency = exporter.ExportAllPacks(project, output, opts);
     EXPECT_FALSE(excludedDependency.success);
     EXPECT_TRUE(excludedDependency.error.contains(QStringLiteral("excluded")))
@@ -3658,10 +3670,37 @@ TEST(EditorProjectPackExporterManifest, InterruptedPublishRestoresOwnedFilesAndP
             ASSERT_TRUE(retry.success) << retry.error.toStdString();
         }
     }
+    const QDir root(dir.filePath("root-recovery"));
+    const QString previousName = QStringLiteral(".harken-pack-previous-interrupted");
+    const QString nextName = QStringLiteral(".harken-pack-next-interrupted");
+    const QDir previous(root.filePath(previousName));
+    const QDir next(root.filePath(nextName));
+    const QStringList previousNames{HarkenEditor::Bridge::packIndexFileName(),
+        QStringLiteral("OldPlatform/pack.archive"), QStringLiteral("OldPlatform/pack.archive.meta")};
+    for (const auto& name : previousNames)
+        writeFileBytes(previous.filePath(name), "previous");
+    writeFileBytes(root.filePath("SelectedPlatform/current.bytes"), "unchanged");
+    const QStringList nextNames{HarkenEditor::Bridge::packIndexFileName()};
+    for (const auto& name : nextNames) {
+        writeFileBytes(root.filePath(name), "partial");
+        writeFileBytes(next.filePath(name), "next");
+    }
+    const auto marker = root.filePath(".harken-pack-publishing");
+    writeFileBytes(marker, QJsonDocument(QJsonObject{{"version", 1}, {"previous", previousName},
+        {"next", nextName}, {"previousFiles", QJsonArray::fromStringList(previousNames)},
+        {"nextFiles", QJsonArray::fromStringList(nextNames)}}).toJson());
+    QString recoveryError;
+    const auto outputLock = VNX::ProjectPackExporter::LockPackOutputRoot(root.path(), &recoveryError);
+    ASSERT_NE(outputLock, nullptr) << recoveryError.toStdString();
+    for (const auto& name : previousNames) EXPECT_EQ(readFileBytes(root.filePath(name)), "previous");
+    EXPECT_EQ(readFileBytes(root.filePath("SelectedPlatform/current.bytes")), "unchanged");
+    EXPECT_FALSE(QFileInfo::exists(marker));
+    EXPECT_FALSE(previous.exists());
+    EXPECT_FALSE(next.exists());
     registry.clear();
 }
 
-TEST(EditorProjectPackExporterManifest, CompletedPublicationCopiesRetireOnlyManifestOwnedFiles)
+TEST(EditorProjectPackExporterManifest, CompletedPublicationCopiesAreRemovedWithoutInventories)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
     QTemporaryDir dir;
@@ -3689,18 +3728,15 @@ TEST(EditorProjectPackExporterManifest, CompletedPublicationCopiesRetireOnlyMani
     }
     const QDir unknown(live.filePath(".harken-pack-next-unknown"));
     writeFileBytes(unknown.filePath("unowned.bytes"), "unknown");
+    const QDir delta(live.filePath(".harken-pack-previous-delta"));
+    writeFileBytes(delta.filePath("One.bytes"), readFileBytes(live.filePath("One.bytes")));
+    writeFileBytes(delta.filePath("unrelated.bytes"), "neighbor");
+    writeFileBytes(delta.filePath("Init.bytes.meta"), "guid");
     opts.cancelCheck = [] { return true; };
     const auto canceled = exporter.ExportAllPacks(project, live.path(), opts);
     EXPECT_EQ(canceled.error, QStringLiteral("Export canceled"));
     EXPECT_EQ(readFileBytes(live.filePath(HarkenEditor::Bridge::packManifestFileName())), manifest);
-    for (const QFileInfo& info : live.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden)) {
-        const QDir copy(info.absoluteFilePath());
-        if (copy == unknown) continue;
-        EXPECT_EQ(copy.entryList(QDir::Files), (QStringList{"Init.bytes.meta", "unrelated.bytes"}));
-        EXPECT_EQ(readFileBytes(copy.filePath("unrelated.bytes")), "neighbor");
-        EXPECT_EQ(readFileBytes(copy.filePath("Init.bytes.meta")), "guid");
-    }
-    EXPECT_EQ(readFileBytes(unknown.filePath("unowned.bytes")), "unknown");
+    EXPECT_TRUE(live.entryList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden).isEmpty());
     registry.clear();
 }
 
@@ -3754,6 +3790,448 @@ TEST(EditorProjectPackExporterManifest, FailedInterruptedRecoveryKeepsSnapshotAn
     VNX::AssetRegistry::instance().clear();
 }
 
+TEST(EditorProjectPackExporterManifest, IncrementalPublicationPreservesUnchangedFilesAndRepairsInvalidPacks)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = VNX::AssetRegistry::instance();
+    registry.clear();
+    registry.setProjectRoot(dir.path());
+    const auto tone = registerToneAsset(dir.path(), QStringLiteral("tone.wav"), 0.2f);
+    auto project = HarkenTest::projectWithPlatforms({"Windows"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), tone, tone,
+        {{QStringLiteral("One"), 21, kSharedSoundObjectId},
+         {QStringLiteral("Two"), 22, kSoloSoundObjectId}}));
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions opts;
+    opts.platform = HarkenTest::platformIdString("Windows");
+    const QDir live(dir.filePath("exports"));
+    const auto initial = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(initial.success) << initial.error.toStdString();
+    EXPECT_EQ(initial.builtPackCount, 3);
+    const auto timestamp = QDateTime::fromSecsSinceEpoch(1500000000);
+    for (const auto& name : {"Init.bytes", "One.bytes", "Two.bytes"}) {
+        QFile file(live.filePath(name));
+        ASSERT_TRUE(file.open(QIODevice::ReadWrite));
+        ASSERT_TRUE(file.setFileTime(timestamp, QFileDevice::FileModificationTime));
+    }
+    std::vector<VNX::ProjectPackExporter::PackBuildRecord> records;
+    const auto unchanged = exporter.ExportAllPacks(project, live.path(), opts, &records);
+    ASSERT_TRUE(unchanged.success) << unchanged.error.toStdString();
+    EXPECT_EQ(unchanged.builtPackCount, 0);
+    EXPECT_EQ(unchanged.skippedPackCount, 3);
+    ASSERT_EQ(records.size(), 3u);
+    for (const auto& record : records) {
+        EXPECT_TRUE(record.skipped);
+        EXPECT_EQ(QFileInfo(record.outputPath).lastModified(), timestamp);
+    }
+    opts.selection.actionTargeting = {{harkentest::StudioObjectId(22 + kStableIdBias), false, {}}};
+    const auto deselected = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(deselected.success) << deselected.error.toStdString();
+    EXPECT_TRUE(findByName(readManifest(live.path()).value("packs").toArray(), "Two").isEmpty());
+    EXPECT_EQ(QFileInfo(live.filePath("Two.bytes")).lastModified(), timestamp);
+    ASSERT_TRUE(QDir(dir.filePath(".cache/pack-inputs")).removeRecursively());
+    opts.selection.actionTargeting.clear();
+    const auto reselected = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(reselected.success) << reselected.error.toStdString();
+    EXPECT_EQ(reselected.builtPackCount, 0);
+    EXPECT_EQ(reselected.skippedPackCount, 3);
+    EXPECT_EQ(QFileInfo(live.filePath("Two.bytes")).lastModified(), timestamp);
+    const auto oldOne = readFileBytes(live.filePath("One.bytes"));
+    project.actions.front().rootItem->children.front()->comp<VNX::VAction>()->steps.front().delay = 0.1f;
+    const auto changed = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(changed.success) << changed.error.toStdString();
+    EXPECT_EQ(changed.builtPackCount, 1);
+    EXPECT_EQ(changed.skippedPackCount, 2);
+    EXPECT_NE(readFileBytes(live.filePath("One.bytes")), oldOne);
+    EXPECT_EQ(QFileInfo(live.filePath("Two.bytes")).lastModified(), timestamp);
+    const auto validTwo = readFileBytes(live.filePath("Two.bytes"));
+    writeFileBytes(live.filePath("Two.bytes"), "invalid");
+    ASSERT_TRUE(QFile::remove(live.filePath("One.bytes")));
+    const auto repaired = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(repaired.success) << repaired.error.toStdString();
+    EXPECT_EQ(repaired.builtPackCount, 2);
+    EXPECT_EQ(readFileBytes(live.filePath("Two.bytes")), validTwo);
+    const auto replacement = registerToneAsset(dir.path(), QStringLiteral("replacement.wav"), 0.7f);
+    VNX::AudioSourceData source;
+    source.sourceID = replacement;
+    source.relativePath = QStringLiteral("replacement.wav");
+    project.audioSources.push_back(source);
+    HarkenTest::setSharedSoundSource(*project.layers.front().rootItem->children.front(), replacement);
+    const auto beforeMediaChange = readFileBytes(live.filePath("One.bytes"));
+    const auto mediaChanged = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(mediaChanged.success) << mediaChanged.error.toStdString();
+    EXPECT_EQ(mediaChanged.builtPackCount, 1);
+    EXPECT_EQ(mediaChanged.skippedPackCount, 2);
+    EXPECT_NE(readFileBytes(live.filePath("One.bytes")), beforeMediaChange);
+    EXPECT_EQ(readFileBytes(live.filePath("Two.bytes")), validTwo);
+    opts.forceReexport = true;
+    const auto forced = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(forced.success) << forced.error.toStdString();
+    EXPECT_EQ(forced.builtPackCount, 3);
+    EXPECT_EQ(forced.skippedPackCount, 0);
+    EXPECT_NE(QFileInfo(live.filePath("Init.bytes")).lastModified(), timestamp);
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+    ASSERT_EQ(session.InitResult(), VN_OK);
+    ASSERT_NO_FATAL_FAILURE(activateExportedNames(live.path(), {QStringLiteral("One"), QStringLiteral("Two")}));
+    registry.clear();
+}
+
+TEST(EditorProjectPackExporterManifest, PublicationSelectionReconcilesTheWholeOutputDirectory)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = VNX::AssetRegistry::instance();
+    registry.clear();
+    registry.setProjectRoot(dir.path());
+    const auto tone = registerToneAsset(dir.path(), QStringLiteral("tone.wav"), 0.2f);
+    auto project = HarkenTest::projectWithPlatforms({"Windows", "Android"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), tone, tone,
+        {{QStringLiteral("Remove"), 21, kSharedSoundObjectId},
+         {QStringLiteral("Keep"), 22, kSharedSoundObjectId}}));
+    project.packBuildOutputDir = dir.filePath("exports");
+    VNX::ProjectPackExporter exporter;
+    const auto platform = HarkenTest::platformIdString("Windows");
+    for (const auto& id : {platform, HarkenTest::platformIdString("Android")}) {
+        const auto result = exporter.ExportAllPacks(project, {}, {.platform = id});
+        ASSERT_TRUE(result.success) << result.error.toStdString();
+    }
+    ASSERT_TRUE(VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
+        project.platforms, {platform, HarkenTest::platformIdString("Android")}, false).success);
+    const QDir live(QDir(project.packBuildOutputDir).filePath("Windows"));
+    const QDir other(QDir(project.packBuildOutputDir).filePath("Android"));
+    const auto otherManifest = readFileBytes(other.filePath(HarkenEditor::Bridge::packManifestFileName()));
+    const auto keptBytes = readFileBytes(live.filePath("Keep.bytes"));
+    writeFileBytes(live.filePath("Remove.bytes.meta"), "guid");
+    writeFileBytes(live.filePath("unrelated.bytes"), "neighbor");
+    writeFileBytes(QDir(project.packBuildOutputDir).filePath("DeletedPlatform/old.no-extension"), "old");
+    writeFileBytes(QDir(project.packBuildOutputDir).filePath("DeletedPlatform/.harken-pack-staging-stale/report.txt"), "old");
+    writeFileBytes(QDir(project.packBuildOutputDir).filePath("notes.txt"), "unused");
+    ASSERT_TRUE(QDir().mkpath(QDir(project.packBuildOutputDir).filePath("empty/nested")));
+    VNX::ProjectPackExporter::ExportOptions opts;
+    opts.selection.actionTargeting = {{harkentest::StudioObjectId(21 + kStableIdBias), false, {}}};
+    opts.platform = platform;
+    const auto selected = exporter.ExportAllPacks(project, {}, opts);
+    ASSERT_TRUE(selected.success) << selected.error.toStdString();
+    EXPECT_TRUE(QFileInfo::exists(live.filePath("Remove.bytes")));
+    EXPECT_TRUE(findByName(readManifest(live.path()).value("packs").toArray(), "Remove").isEmpty());
+    const auto retained = VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
+        project.platforms, {platform}, false);
+    ASSERT_TRUE(retained.success) << retained.error.toStdString();
+    const auto indexPath = QDir(project.packBuildOutputDir).filePath(HarkenEditor::Bridge::packIndexFileName());
+    const auto index = readFileBytes(indexPath);
+    const auto selectedPlatforms = QJsonDocument::fromJson(index).object().value("platforms").toArray();
+    ASSERT_EQ(selectedPlatforms.size(), 1);
+    EXPECT_EQ(selectedPlatforms.first().toObject().value("id").toString(), platform);
+    EXPECT_EQ(readFileBytes(other.filePath(HarkenEditor::Bridge::packManifestFileName())), otherManifest);
+    EXPECT_TRUE(QFileInfo::exists(QDir(project.packBuildOutputDir).filePath("notes.txt")));
+    const auto manifest = readFileBytes(live.filePath(HarkenEditor::Bridge::packManifestFileName()));
+    opts.cancelCheck = [] { return true; };
+    const auto canceled = exporter.ExportAllPacks(project, {}, opts);
+    EXPECT_TRUE(canceled.canceled);
+    EXPECT_TRUE(QFileInfo::exists(live.filePath("Remove.bytes")));
+    EXPECT_EQ(readFileBytes(live.filePath(HarkenEditor::Bridge::packManifestFileName())), manifest);
+    opts.cancelCheck = {};
+    const auto keepPath = live.filePath("Keep.bytes");
+    ASSERT_TRUE(QFile::remove(keepPath));
+    const auto invalid = VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
+        project.platforms, {platform}, true);
+    EXPECT_FALSE(invalid.success);
+    EXPECT_EQ(readFileBytes(indexPath), index);
+    EXPECT_TRUE(QFileInfo::exists(live.filePath("Remove.bytes")));
+    EXPECT_EQ(readFileBytes(other.filePath(HarkenEditor::Bridge::packManifestFileName())), otherManifest);
+    writeFileBytes(keepPath, keptBytes);
+    const auto cleaned = VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
+        project.platforms, {platform}, true);
+    ASSERT_TRUE(cleaned.success) << cleaned.error.toStdString();
+    EXPECT_EQ(cleaned.removedPackCount, 4);
+    EXPECT_FALSE(QFileInfo::exists(live.filePath("Remove.bytes")));
+    EXPECT_EQ(readFileBytes(live.filePath("Keep.bytes")), keptBytes);
+    EXPECT_FALSE(QFileInfo::exists(live.filePath("Remove.bytes.meta")));
+    EXPECT_FALSE(QFileInfo::exists(live.filePath("unrelated.bytes")));
+    EXPECT_FALSE(other.exists());
+    for (const auto& name : {"DeletedPlatform", "notes.txt", "empty"})
+        EXPECT_FALSE(QFileInfo::exists(QDir(project.packBuildOutputDir).filePath(name)));
+    {
+        harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+        ASSERT_EQ(session.InitResult(), VN_OK);
+        ASSERT_NO_FATAL_FAILURE(activateExportedNames(live.path(), {QStringLiteral("Keep")}));
+        EXPECT_EQ(session.Engine()->packComposition.Published()->gameplayCatalog.active.size(), 1u);
+    }
+    const auto platformDefinition = std::find_if(project.platforms.begin(), project.platforms.end(),
+        [&](const auto& value) { return value.id == QUuid(platform); });
+    ASSERT_NE(platformDefinition, project.platforms.end());
+    platformDefinition->name = QStringLiteral("Desktop");
+    ASSERT_TRUE(exporter.ExportAllPacks(project, {}, opts).success);
+    const auto renamed = VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
+        project.platforms, {platform}, true);
+    ASSERT_TRUE(renamed.success) << renamed.error.toStdString();
+    EXPECT_FALSE(live.exists());
+    const QDir renamedLive(QDir(project.packBuildOutputDir).filePath("Desktop"));
+    EXPECT_TRUE(QFileInfo::exists(renamedLive.filePath("Keep.bytes")));
+    opts.selection.actionTargeting.push_back({harkentest::StudioObjectId(22 + kStableIdBias), false, {}});
+    ASSERT_TRUE(exporter.ExportAllPacks(project, {}, opts).success);
+    const auto empty = VNX::ProjectPackExporter::FinalizePackExport(project.packBuildOutputDir,
+        project.platforms, {platform}, true);
+    ASSERT_TRUE(empty.success) << empty.error.toStdString();
+    EXPECT_EQ(empty.removedPackCount, 1);
+    EXPECT_EQ(readManifest(renamedLive.path()).value("packs").toArray().size(), 1);
+    EXPECT_TRUE(QFileInfo::exists(renamedLive.filePath("Init.bytes")));
+    EXPECT_TRUE(readManifest(renamedLive.path()).value("gameplayCatalog").toObject().value("actions").toArray().isEmpty());
+    registry.clear();
+}
+
+TEST(EditorProjectPackExporterManifest, LanguageCleanupKeepsSharedInitAndValidSelectedManifests)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = VNX::AssetRegistry::instance();
+    registry.clear();
+    registry.setProjectRoot(dir.path());
+    const auto tone = registerToneAsset(dir.path(), QStringLiteral("tone.wav"), 0.2f);
+    auto project = HarkenTest::projectWithPlatforms({"Windows"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), tone, tone,
+        {{QStringLiteral("Spoken"), 21, kSoloSoundObjectId}, {QStringLiteral("Common"), 22, kSharedSoundObjectId}}));
+    ASSERT_NO_FATAL_FAILURE(localizeSoloSound(project, tone));
+    const QDir live(dir.filePath("exports"));
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions opts;
+    opts.platform = HarkenTest::platformIdString("Windows");
+    const auto exported = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(exported.success) << exported.error.toStdString();
+    const auto init = readFileBytes(live.filePath("Init.bytes"));
+    const auto spoken = harkentest::StudioObjectId(21 + kStableIdBias);
+    opts.selection.actionTargeting = {{spoken, false, {}, QStringLiteral("English")}};
+    opts.selfCleaning = true;
+    const auto cleaned = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(cleaned.success) << cleaned.error.toStdString();
+    EXPECT_EQ(cleaned.removedPackCount, 1);
+    EXPECT_EQ(readFileBytes(live.filePath("Init.bytes")), init);
+    EXPECT_EQ(readManifest(live.path()).value("language").toString(), "ja");
+    EXPECT_FALSE(QFileInfo::exists(live.filePath(QStringLiteral("English/") + HarkenEditor::Bridge::packManifestFileName())));
+    {
+        harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+        ASSERT_EQ(session.InitResult(), VN_OK);
+        ASSERT_NO_FATAL_FAILURE(activateExportedNames(live.path(), {QStringLiteral("Spoken"), QStringLiteral("Common")}, QStringLiteral("ja")));
+    }
+    opts.selection.actionTargeting.push_back({spoken, false, {}, QStringLiteral("ja")});
+    const auto finalLanguage = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(finalLanguage.success) << finalLanguage.error.toStdString();
+    EXPECT_EQ(finalLanguage.removedPackCount, 1);
+    EXPECT_TRUE(readManifest(live.path()).value("language").toString().isEmpty());
+    EXPECT_EQ(readFileBytes(live.filePath("Init.bytes")), init);
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+    ASSERT_EQ(session.InitResult(), VN_OK);
+    ASSERT_NO_FATAL_FAILURE(activateExportedNames(live.path(), {QStringLiteral("Common")}));
+    registry.clear();
+}
+
+TEST(EditorProjectPackExporterManifest, PartialPublicationRetainsOtherPacksAndCatalogRecords)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = VNX::AssetRegistry::instance();
+    registry.clear();
+    registry.setProjectRoot(dir.path());
+    const auto tone = registerToneAsset(dir.path(), QStringLiteral("tone.wav"), 0.2f);
+    const auto privateTone = registerToneAsset(dir.path(), QStringLiteral("private.wav"), 0.4f);
+    auto project = HarkenTest::projectWithPlatforms({"Windows"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), tone, privateTone,
+        {{QStringLiteral("One"), 21, kSharedSoundObjectId}, {QStringLiteral("Two"), 22, kSharedSoundObjectId}}));
+    auto privateLayer = makeItem(QStringLiteral("PrivateLayer"), VNX::ProjectItem::Type::Layer, 60);
+    privateLayer->fieldGroups = project.layers.front().rootItem->fieldGroups;
+    auto privateSound = project.layers.front().rootItem->children.back();
+    project.layers.front().rootItem->children.pop_back();
+    addChild(privateLayer, privateSound);
+    project.layers.push_back({privateLayer, QStringLiteral("Layers")});
+    auto& actions = project.actions.front().rootItem->children;
+    auto privatePlay = actions.back()->comp<VNX::VAction>()->steps.front();
+    privatePlay.targetObjectID = kSoloSoundObjectId;
+    actions.back()->comp<VNX::VAction>()->steps.push_back(privatePlay);
+    auto variable = makeItem(QStringLiteral("Drive"), VNX::ProjectItem::Type::Variable, 50);
+    auto* definition = variable->comp<VNX::VVariable>();
+    definition->kind = VNX::VariableKind::Smooth;
+    definition->rangeMin = 0.0f;
+    definition->rangeMax = 1.0f;
+    definition->defaultValue = 0.0f;
+    project.variables.push_back({variable, QStringLiteral("Variables")});
+    VNX::ParameterBindingDef binding;
+    binding.guid = VNX::authoringUuid(harkentest::StudioObjectId(500));
+    binding.variable = variable->guid;
+    binding.address = VNX::BindingSemantics::volumeAddress();
+    binding.curve = {{0.0f, -6.0f}, {1.0f, 0.0f}};
+    binding.outputMin = -12.0f;
+    binding.outputMax = 0.0f;
+    auto* mix = project.layers.front().rootItem->comp<VNX::VMixNode>();
+    ASSERT_TRUE(mix->bindings.upsert(binding));
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions opts;
+    opts.platform = HarkenTest::platformIdString("Windows");
+    const QDir live(dir.filePath("exports"));
+    std::vector<VNX::ProjectPackExporter::PackBuildRecord> initialRecords;
+    const auto initial = exporter.ExportAllPacks(project, live.path(), opts, &initialRecords);
+    ASSERT_TRUE(initial.success) << initial.error.toStdString();
+    const auto old = readManifest(live.path());
+    QSet<QString> initialKeys;
+    for (const auto& artifact : initial.artifacts) initialKeys.insert(artifact.unitKey);
+    EXPECT_EQ(initialKeys.size(), old.value("packs").toArray().size());
+    ASSERT_FALSE(initialRecords.empty());
+    for (const auto& record : initialRecords) EXPECT_GE(record.elapsedMs, 0);
+    const auto oldTwo = readFileBytes(live.filePath("Two.bytes"));
+    const auto oldTime = QFileInfo(live.filePath("Two.bytes")).lastModified();
+    const auto oldInit = readFileBytes(live.filePath("Init.bytes"));
+    const auto oldInitTime = QFileInfo(live.filePath("Init.bytes")).lastModified();
+    actions.front()->comp<VNX::VAction>()->steps.front().delay = 0.1f;
+    actions.back()->comp<VNX::VAction>()->steps.front().delay = 0.3f;
+    actions.back()->name = QStringLiteral("EditedTwo");
+    opts.selection.actionTargeting = {{actions.back()->runtimeId(), false, {}}};
+    opts.updateSelectedOnly = true;
+    opts.onlyPackPaths = {QStringLiteral("One")};
+    opts.selfCleaning = true;
+    for (const bool force : {false, true}) {
+        opts.forceReexport = force;
+        std::vector<VNX::ProjectPackExporter::PackBuildRecord> records;
+        const auto partial = exporter.ExportAllPacks(project, live.path(), opts, &records);
+        ASSERT_TRUE(partial.success) << partial.error.toStdString();
+        for (const auto& warning : partial.warnings)
+            EXPECT_TRUE(initial.warnings.contains(warning)) << warning.toStdString();
+        EXPECT_EQ(partial.builtPackCount, 1);
+        EXPECT_EQ(partial.removedPackCount, 0);
+        EXPECT_EQ(readFileBytes(live.filePath("Two.bytes")), oldTwo);
+        EXPECT_EQ(QFileInfo(live.filePath("Two.bytes")).lastModified(), oldTime);
+        EXPECT_EQ(readFileBytes(live.filePath("Init.bytes")), oldInit);
+        const auto manifest = readManifest(live.path());
+        QSet<QString> publishedPaths;
+        for (const auto& value : manifest.value("packs").toArray())
+            publishedPaths.insert(live.filePath(value.toObject().value("path").toString()));
+        QSet<QString> artifactPaths;
+        QSet<QString> artifactKeys;
+        for (const auto& artifact : partial.artifacts) {
+            artifactPaths.insert(artifact.outputPath);
+            artifactKeys.insert(artifact.unitKey);
+            EXPECT_EQ(artifact.modified, QFileInfo(artifact.outputPath).lastModified());
+            EXPECT_EQ(artifact.bytes, QFileInfo(artifact.outputPath).size());
+        }
+        EXPECT_EQ(artifactPaths, publishedPaths);
+        EXPECT_EQ(artifactKeys, initialKeys);
+        ASSERT_FALSE(records.empty());
+        EXPECT_LT(records.size(), static_cast<std::size_t>(partial.artifacts.size()));
+        for (const auto& record : records) EXPECT_GE(record.elapsedMs, 0);
+        EXPECT_EQ(findByName(manifest.value("packs").toArray(), "Two"), findByName(old.value("packs").toArray(), "Two"));
+        EXPECT_EQ(findByName(manifest.value("gameplayCatalog").toObject().value("actions").toArray(), "Two"),
+            findByName(old.value("gameplayCatalog").toObject().value("actions").toArray(), "Two"));
+        harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+        ASSERT_EQ(session.InitResult(), VN_OK);
+        ASSERT_NO_FATAL_FAILURE(activateExportedNames(live.path(), {QStringLiteral("One"), QStringLiteral("Two")}));
+    }
+    const auto one = readFileBytes(live.filePath("One.bytes"));
+    binding.curve.front().value = -12.0f;
+    ASSERT_TRUE(mix->bindings.upsert(binding));
+    auto* master = project.busses.front().rootItem.get();
+    master->comp<VNX::VMixNode>()->volume = -6.0f;
+    master->playablePropertyPresence.Set(harkenplayableproperties::PlayablePropertyIdV1::Volume);
+    const auto sharedChange = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(sharedChange.success) << sharedChange.error.toStdString();
+    for (const auto& warning : sharedChange.warnings)
+        EXPECT_TRUE(initial.warnings.contains(warning)) << warning.toStdString();
+    EXPECT_EQ(sharedChange.builtPackCount, 1);
+    EXPECT_EQ(sharedChange.removedPackCount, 0);
+    EXPECT_NE(readFileBytes(live.filePath("One.bytes")), one);
+    EXPECT_EQ(readFileBytes(live.filePath("Two.bytes")), oldTwo);
+    EXPECT_EQ(QFileInfo(live.filePath("Two.bytes")).lastModified(), oldTime);
+    EXPECT_EQ(readFileBytes(live.filePath("Init.bytes")), oldInit);
+    EXPECT_EQ(QFileInfo(live.filePath("Init.bytes")).lastModified(), oldInitTime);
+    const auto manifest = readManifest(live.path());
+    for (const auto& name : {"Two", "Init"})
+        EXPECT_EQ(findByName(manifest.value("packs").toArray(), name),
+            findByName(old.value("packs").toArray(), name));
+    EXPECT_EQ(findByName(manifest.value("gameplayCatalog").toObject().value("actions").toArray(), "Two"),
+        findByName(old.value("gameplayCatalog").toObject().value("actions").toArray(), "Two"));
+    actions.back()->comp<VNX::VAction>()->steps.front().targetObjectID = kSoloSoundObjectId;
+    ASSERT_TRUE(QFile::remove(registry.getAsset(privateTone)->absolutePath));
+    const auto unfinishedDraft = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(unfinishedDraft.success) << unfinishedDraft.error.toStdString();
+    for (const auto& warning : unfinishedDraft.warnings)
+        EXPECT_TRUE(initial.warnings.contains(warning)) << warning.toStdString();
+    EXPECT_EQ(unfinishedDraft.builtPackCount, 1);
+    EXPECT_EQ(readFileBytes(live.filePath("Two.bytes")), oldTwo);
+    EXPECT_EQ(QFileInfo(live.filePath("Two.bytes")).lastModified(), oldTime);
+    EXPECT_EQ(readFileBytes(live.filePath("Init.bytes")), oldInit);
+    registry.clear();
+}
+
+TEST(EditorProjectPackExporterManifest, PartialPublicationKeepsUnselectedDependencies)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    auto& registry = VNX::AssetRegistry::instance();
+    registry.clear();
+    registry.setProjectRoot(dir.path());
+    const auto tone = registerToneAsset(dir.path(), QStringLiteral("tone.wav"), 0.2f);
+    auto project = HarkenTest::projectWithPlatforms({"Windows"});
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), tone, tone,
+        {{QStringLiteral("Provider"), 21, kSharedSoundObjectId}, {QStringLiteral("Consumer"), 22, kSharedSoundObjectId}}));
+    VNX::VActionStep post;
+    post.type = VNX::VActionStep::Type::PostAction;
+    post.targetObjectID = 21;
+    auto& actions = project.actions.front().rootItem->children;
+    actions.back()->comp<VNX::VAction>()->steps = {post};
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions opts;
+    opts.platform = HarkenTest::platformIdString("Windows");
+    const QDir live(dir.filePath("exports"));
+    const auto initial = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(initial.success) << initial.error.toStdString();
+    const auto manifest = readManifest(live.path());
+    const auto provider = readFileBytes(live.filePath("Provider.bytes"));
+    const auto providerTime = QFileInfo(live.filePath("Provider.bytes")).lastModified();
+    const auto consumer = readFileBytes(live.filePath("Consumer.bytes"));
+    const auto init = readFileBytes(live.filePath("Init.bytes"));
+    actions.front()->comp<VNX::VAction>()->steps.front().delay = 0.1f;
+    opts.onlyPackPaths = {QStringLiteral("Consumer")};
+    opts.updateSelectedOnly = true;
+    const auto partial = exporter.ExportAllPacks(project, live.path(), opts);
+    ASSERT_TRUE(partial.success) << partial.error.toStdString();
+    for (const auto& warning : partial.warnings)
+        EXPECT_TRUE(initial.warnings.contains(warning)) << warning.toStdString();
+    EXPECT_EQ(partial.builtPackCount, 1);
+    EXPECT_EQ(readFileBytes(live.filePath("Provider.bytes")), provider);
+    EXPECT_EQ(QFileInfo(live.filePath("Provider.bytes")).lastModified(), providerTime);
+    EXPECT_NE(readFileBytes(live.filePath("Consumer.bytes")), consumer);
+    EXPECT_EQ(readFileBytes(live.filePath("Init.bytes")), init);
+    EXPECT_EQ(findByName(readManifest(live.path()).value("packs").toArray(), "Provider"),
+        findByName(manifest.value("packs").toArray(), "Provider"));
+    actions.front()->comp<VNX::VAction>()->steps.front().delay = 0.0f;
+    actions.back()->comp<VNX::VAction>()->steps = actions.front()->comp<VNX::VAction>()->steps;
+    opts.selection.actionTargeting = {{actions.front()->runtimeId(), false, {}}};
+    opts.updateSelectedOnly = false;
+    opts.onlyPackPaths.clear();
+    const QDir selectedLive(dir.filePath("selected-exports"));
+    const auto selected = exporter.ExportAllPacks(project, selectedLive.path(), opts);
+    ASSERT_TRUE(selected.success) << selected.error.toStdString();
+    const auto selectedConsumer = readFileBytes(selectedLive.filePath("Consumer.bytes"));
+    const auto selectedInit = readFileBytes(selectedLive.filePath("Init.bytes"));
+    ASSERT_FALSE(QFileInfo::exists(selectedLive.filePath("Provider.bytes")));
+    actions.back()->comp<VNX::VAction>()->steps = {post};
+    opts.updateSelectedOnly = true;
+    opts.onlyPackPaths = {QStringLiteral("Consumer")};
+    const auto unpublished = exporter.ExportAllPacks(project, selectedLive.path(), opts);
+    ASSERT_TRUE(unpublished.success) << unpublished.error.toStdString();
+    for (const auto& warning : unpublished.warnings)
+        EXPECT_TRUE(selected.warnings.contains(warning)) << warning.toStdString();
+    EXPECT_EQ(unpublished.builtPackCount, 1);
+    EXPECT_NE(readFileBytes(selectedLive.filePath("Consumer.bytes")), selectedConsumer);
+    EXPECT_EQ(readFileBytes(selectedLive.filePath("Init.bytes")), selectedInit);
+    EXPECT_FALSE(QFileInfo::exists(selectedLive.filePath("Provider.bytes")));
+    EXPECT_TRUE(findByName(readManifest(selectedLive.path()).value("packs").toArray(), "Provider").isEmpty());
+    registry.clear();
+}
+
 TEST(EditorProjectPackExporterManifest, CancelAfterMediaPreparationKeepsPreviousSet)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
@@ -3779,8 +4257,6 @@ TEST(EditorProjectPackExporterManifest, CancelAfterMediaPreparationKeepsPrevious
     std::map<QString, QByteArray> previous;
     const QStringList names = {
         QStringLiteral("Init.bytes"),
-        QStringLiteral("English/Init.bytes"),
-        QStringLiteral("ja/Init.bytes"),
         QStringLiteral("English/") + HarkenEditor::Bridge::packManifestFileName(),
         QStringLiteral("ja/") + HarkenEditor::Bridge::packManifestFileName(),
         variantFileName(project, harkentest::StudioObjectId(21 + kStableIdBias), QStringLiteral("English")),
@@ -3842,7 +4318,7 @@ TEST(EditorProjectPackExporterManifest, FailedPublishLeavesPreviousSet)
     ASSERT_TRUE(exporter.ExportAllPacks(project, outputDir, opts).success);
     std::map<QString, QByteArray> previousPublications;
     for (const QString& language : project.projectLanguages) {
-        for (const QString& name : {QStringLiteral("Init.bytes"), HarkenEditor::Bridge::packManifestFileName(),
+        for (const QString& name : {HarkenEditor::Bridge::packManifestFileName(),
                                    QStringLiteral("HarkenEditorWaveforms.json")}) {
             const QString path = QDir(outputDir).filePath(language + QLatin1Char('/') + name);
             previousPublications.emplace(path, readFileBytes(path));
@@ -3866,7 +4342,9 @@ TEST(EditorProjectPackExporterManifest, FailedPublishLeavesPreviousSet)
         HarkenEditor::Bridge::packManifestFileName());
     ASSERT_TRUE(QFile::remove(blocker));
     ASSERT_TRUE(QDir().mkpath(blocker));
-    EXPECT_FALSE(exporter.ExportAllPacks(project, outputDir, opts).success);
+    const auto failed = exporter.ExportAllPacks(project, outputDir, opts);
+    EXPECT_FALSE(failed.success);
+    EXPECT_TRUE(failed.artifacts.isEmpty());
     for (const auto& [path, bytes] : previousPublications)
         EXPECT_EQ(readFileBytes(path), bytes) << path.toStdString();
     QFile current(QDir(outputDir).filePath(QStringLiteral("Init.bytes")));

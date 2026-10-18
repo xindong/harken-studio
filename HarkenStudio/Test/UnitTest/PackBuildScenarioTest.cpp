@@ -7,6 +7,7 @@
 #include "Components/VSound.h"
 #include "Components/VTrack.h"
 #include "PackBuildPlan.h"
+#include "PackExportSelection.h"
 #include "ProjectPackExporter.h"
 #include "ProjectTypes.h"
 #include "FieldGroupProjectAdapter.h"
@@ -381,12 +382,6 @@ VNX::ProjectData executableProject(const QString& root, uint32_t sharedSourceId)
     attach(actions, peer);
     addBinding(project.actions, actions);
 
-    VNX::PackGroup group;
-    group.name = QStringLiteral("WindowsBundle");
-    group.actionIds = {head->runtimeId()};
-    group.allPlatforms = false;
-    group.platformIds = {HarkenTest::platformIdString(QStringLiteral("Windows"))};
-    project.packGroups.push_back(group);
     return project;
 }
 
@@ -486,14 +481,12 @@ TEST(PackBuildScenario, BuildPlanCarriesVariantSelectionAndCompleteActionClosure
     addBinding(project.actions, tail);
     addBinding(project.actions, root);
 
-    VNX::PackGroup group;
-    group.name = QStringLiteral("RootBundle");
-    group.actionIds = {root->runtimeId()};
-    group.allPlatforms = false;
-    group.platformIds = {HarkenTest::platformIdString(QStringLiteral("Windows"))};
-    project.packGroups.push_back(group);
+    VNX::PackExportSelection exportSelection;
+    exportSelection.actionTargeting = {{root->runtimeId(), false,
+        {HarkenTest::platformIdString(QStringLiteral("Windows"))}}};
 
-    const VNX::PackBuildPlan plan = VNX::PackBuildPlanning::build(project);
+    const VNX::PackBuildPlan plan = VNX::PackBuildPlanning::build(
+        project, {}, {}, false, exportSelection);
     ASSERT_EQ(plan.variants.size(), 3u);
     EXPECT_TRUE(plan.groupMetadata.value(QStringLiteral("groups")).toArray().isEmpty());
 
@@ -683,7 +676,7 @@ TEST(PackBuildScenario, PhysicalLocalizedVariantsUseSelectedAndCommonMedia)
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(PackBuildScenario, ExportManifestAndRuntimeHonorGroupOwnershipAndPlatformSelection)
+TEST(PackBuildScenario, ExportManifestAndRuntimeHonorActionOwnershipAndPlatformSelection)
 {
     PackRuntimeGuard guard;
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
@@ -696,20 +689,24 @@ TEST(PackBuildScenario, ExportManifestAndRuntimeHonorGroupOwnershipAndPlatformSe
         registerTone(dir.path(), QStringLiteral("shared.wav"), 1.0f);
     VNX::ProjectData project = executableProject(dir.path(), sourceId);
 
-    const auto grouped = VNX::PackBuildPlanning::build(project);
-    ASSERT_EQ(grouped.units.size(), 5u);
-    const auto groupedUnit = std::find_if(grouped.units.begin(), grouped.units.end(), [](const auto& unit) {
+    VNX::PackExportSelection exportSelection;
+    exportSelection.actionTargeting = {{harkentest::StudioObjectId(21 + kStableIdBias), false,
+        {HarkenTest::platformIdString(QStringLiteral("Windows"))}}};
+    const auto plan = VNX::PackBuildPlanning::build(project, {}, {}, false, exportSelection);
+    ASSERT_EQ(plan.units.size(), 5u);
+    const auto headUnit = std::find_if(plan.units.begin(), plan.units.end(), [](const auto& unit) {
         return unit.actionStableIds == std::vector<harkenstudio::ObjectId>{harkentest::StudioObjectId(21 + kStableIdBias)};
     });
-    ASSERT_NE(groupedUnit, grouped.units.end());
-    EXPECT_EQ(groupedUnit->name, QStringLiteral("Head"));
-    EXPECT_EQ(groupedUnit->variant.platform, HarkenTest::platformIdString(QStringLiteral("Windows")));
-    EXPECT_EQ(groupedUnit->actionStableIds,
+    ASSERT_NE(headUnit, plan.units.end());
+    EXPECT_EQ(headUnit->name, QStringLiteral("Head"));
+    EXPECT_EQ(headUnit->variant.platform, HarkenTest::platformIdString(QStringLiteral("Windows")));
+    EXPECT_EQ(headUnit->actionStableIds,
               (std::vector<harkenstudio::ObjectId>{harkentest::StudioObjectId(21 + kStableIdBias)}));
 
     const QString windowsDir = QDir(dir.path()).filePath(QStringLiteral("windows"));
     VNX::ProjectPackExporter exporter;
     VNX::ProjectPackExporter::ExportOptions options;
+    options.selection = exportSelection;
     options.platform = HarkenTest::platformIdString(QStringLiteral("Windows"));
     const auto windowsResult = exporter.ExportAllPacks(project, windowsDir, options);
     ASSERT_TRUE(windowsResult.success) << windowsResult.error.toStdString();
@@ -771,6 +768,5 @@ TEST(PackBuildScenario, ExportManifestAndRuntimeHonorGroupOwnershipAndPlatformSe
                           QStringLiteral("Head")).isEmpty());
     EXPECT_FALSE(findNamed(linuxManifest.value(QStringLiteral("packs")).toArray(),
                            QStringLiteral("Tail")).isEmpty());
-    EXPECT_TRUE(findNamed(linuxManifest.value(QStringLiteral("groups")).toArray(),
-                          QStringLiteral("WindowsBundle")).isEmpty());
+    EXPECT_TRUE(linuxManifest.value(QStringLiteral("groups")).toArray().isEmpty());
 }

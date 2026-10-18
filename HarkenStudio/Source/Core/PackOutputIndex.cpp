@@ -1,4 +1,5 @@
 #include "ProjectPackExporter.h"
+#include "CanonicalPackSetExport.h"
 
 #include "PackSchemaGenerated.h"
 #include "ProjectSchemaValidator.h"
@@ -162,22 +163,31 @@ std::shared_ptr<QLockFile> ProjectPackExporter::LockPackOutputRoot(const QString
         if (error) *error = QStringLiteral("Pack output is being built by another request: %1").arg(baseDir);
         return {};
     }
+    if (!RecoverPackOutput(baseDir, error)) return {};
     return lock;
+}
+
+QJsonObject ProjectPackExporter::BuildPackIndex(const QString& baseDir,
+                                               const QVector<ProjectPlatform>& platforms, QString* error)
+{
+    if (baseDir.isEmpty() || !ProjectPlatformSemantics::validatePlatforms(platforms, error)) return {};
+    QJsonArray entries;
+    for (const auto& platform : platforms) {
+        if (!validOutput(baseDir, platform) || !preserveDirectorySpelling(baseDir, platform)) {
+            if (error) *error = QStringLiteral("Pack output is incomplete or belongs to another platform: %1").arg(platform.name);
+            return {};
+        }
+        entries.append(indexEntry(platform));
+    }
+    return {{QStringLiteral("schema_version"), PackSchema::kPackManifestSchemaVersion},
+            {QStringLiteral("platforms"), entries}};
 }
 
 bool ProjectPackExporter::WritePackIndex(const QString& baseDir,
                                         const QVector<ProjectPlatform>& platforms, QString* error)
 {
-    if (baseDir.isEmpty() || !ProjectPlatformSemantics::validatePlatforms(platforms, error)) return false;
-    QJsonArray entries;
-    for (const auto& platform : platforms) {
-        if (!validOutput(baseDir, platform) || !preserveDirectorySpelling(baseDir, platform)) {
-            if (error) *error = QStringLiteral("Pack output is incomplete or belongs to another platform: %1").arg(platform.name);
-            return false;
-        }
-        entries.append(indexEntry(platform));
-    }
-    return writeIndex(baseDir, entries, error);
+    const auto index = BuildPackIndex(baseDir, platforms, error);
+    return !index.isEmpty() && writeIndex(baseDir, index.value(QStringLiteral("platforms")).toArray(), error);
 }
 
 bool ProjectPackExporter::PublishPackIndex(const QString& baseDir,

@@ -8,7 +8,6 @@ namespace Harken
     internal static class GameplayCatalogPairing
     {
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
-        private static readonly byte[] Zeros = new byte[8];
 
         internal static VnResult Validate(GameplayPublication publication, byte[] bytes, out string error)
         {
@@ -32,103 +31,38 @@ namespace Harken
                     ulong directorySize = (ulong)count * 56;
                     Check(directory >= 44 && Range(directory, directorySize, bytes.Length), "Invalid Pack directory bounds.");
                     Check(Hash(bytes, (int)directory, (int)directorySize) == directoryHash, "Pack directory checksum mismatch.");
-                    int payload = -1, payloadSize = 0;
+                    bool requirement = false, identity = false;
                     for (uint i = 0; i < count; ++i)
                     {
                         reader.BaseStream.Position = (long)(directory + i * 56UL);
-                        uint kind = reader.ReadUInt32(), vintage = reader.ReadUInt32();
-                        VnObjectId id = VnObjectId.Parse(ReadGuid(reader));
+                        uint kind = reader.ReadUInt32();
+                        reader.ReadUInt32();
+                        reader.ReadBytes(16);
                         ulong offset = reader.ReadUInt64(), size = reader.ReadUInt64();
                         ulong checksum = reader.ReadUInt64();
-                        ulong ordinal = reader.ReadUInt64();
                         Check(offset >= directory + directorySize && (offset & 7) == 0 &&
                             Range(offset, size, bytes.Length), "Invalid Pack payload bounds.");
-                        if (kind != 25) continue;
-                        Check(payload == -1 && id.IsNull && ordinal == 0, "Gameplay catalog must occur exactly once with ID zero.");
-                        if (vintage != 1)
-                            return Fail(VnResult.VN_PACK_INCOMPATIBLE, "Unsupported gameplay catalog vintage.", out error);
-                        if (size > 1048576)
-                            return Fail(VnResult.VN_PACK_CATALOG_CAPACITY, "Gameplay catalog exceeds its byte limit.", out error);
-                        payload = (int)offset; payloadSize = (int)size;
-                        Check(size >= 96 && Hash(bytes, payload, payloadSize) == checksum, "Gameplay payload checksum mismatch.");
+                        Check(Hash(bytes, (int)offset, (int)size) == checksum, "Pack payload checksum mismatch.");
+                        if (kind == 22)
+                        {
+                            Check(!requirement && size >= 112, "Invalid Init requirement block.");
+                            requirement = true;
+                            reader.BaseStream.Position = (long)offset + 8;
+                            if (reader.ReadUInt64() != publication.InitPackStableId ||
+                                reader.ReadUInt64() != publication.InitContentRevision)
+                                return Fail(VnResult.VN_PACK_STALE_REVISION, "Init and JSON base identities differ.", out error);
+                        }
+                        if (kind == 28 || (kind == 25 && !identity))
+                        {
+                            Check(size >= 64, "Invalid Init project identity.");
+                            reader.BaseStream.Position = (long)offset + 8;
+                            if (ReadGuid(reader) != publication.ProjectId)
+                                return Fail(VnResult.VN_GAMEPLAY_WRONG_PROJECT, "Init and JSON belong to different projects.", out error);
+                            identity = true;
+                        }
                     }
-                    if (payload < 0)
-                        return Fail(VnResult.VN_CAPABILITY_UNAVAILABLE, "Init does not contain kind25 gameplay metadata.", out error);
-                    reader.BaseStream.Position = payload;
-                    if (reader.ReadUInt32() != 1 || reader.ReadUInt32() != 1)
-                        return Fail(VnResult.VN_PACK_INCOMPATIBLE, "Unsupported gameplay catalog schema.", out error);
-                    string project = ReadGuid(reader);
-                    ulong digest = reader.ReadUInt64();
-                    uint active = reader.ReadUInt32(), retired = reader.ReadUInt32(), poolBytes = reader.ReadUInt32();
-                    Check(reader.ReadUInt32() == 0, "Gameplay header reserved field is nonzero.");
-                    reader.ReadUInt64();
-                    ulong pairing = reader.ReadUInt64(), initId = reader.ReadUInt64(), revision = reader.ReadUInt64();
-                    uint flags = reader.ReadUInt32();
-                    Check(reader.ReadUInt32() == 0 && reader.ReadUInt64() == Hash(bytes, payload, 88),
-                        "Gameplay header checksum mismatch.");
-                    if (active > 4096 || retired > 4096)
-                        return Fail(VnResult.VN_PACK_CATALOG_CAPACITY, "Gameplay catalog exceeds its row limit.", out error);
-                    Check(96UL + active * 72UL + retired * 40UL + poolBytes == (ulong)payloadSize &&
-                        (poolBytes & 7) == 0 && flags == (retired == 0 ? 0U : 1U), "Invalid gameplay catalog layout.");
-                    ulong actualDigest = Hash(bytes, payload, 24);
-                    actualDigest = PackManifest.HashBytes(Zeros, actualDigest);
-                    actualDigest = Hash(bytes, payload + 32, 24, actualDigest);
-                    actualDigest = PackManifest.HashBytes(Zeros, actualDigest);
-                    actualDigest = Hash(bytes, payload + 64, 24, actualDigest);
-                    actualDigest = PackManifest.HashBytes(Zeros, actualDigest);
-                    actualDigest = Hash(bytes, payload + 96, payloadSize - 96, actualDigest);
-                    ulong actualPairing = Hash(bytes, payload + 8, 16);
-                    actualPairing = Hash(bytes, payload + 64, 16, actualPairing);
-                    actualPairing = Hash(bytes, payload + 24, 8, actualPairing);
-                    Check(digest == actualDigest && pairing == actualPairing, "Gameplay digest or pairing checksum mismatch.");
-                    if (project != publication.ProjectId)
-                        return Fail(VnResult.VN_GAMEPLAY_WRONG_PROJECT, "Init and JSON belong to different projects.", out error);
-                    if (digest != publication.Digest || initId != publication.InitPackStableId ||
-                        revision != publication.InitContentRevision || active != publication.Actions.Count ||
-                        retired != publication.RetiredActions.Count)
-                        return Fail(VnResult.VN_PACK_STALE_REVISION, "Init and JSON publication identities differ.", out error);
-                    int pool = payload + 96 + (int)active * 72 + (int)retired * 40;
-                    uint cursor = 0;
-                    var names = new HashSet<string>(StringComparer.Ordinal);
-                    var ids = new HashSet<VnObjectId>();
-                    for (int i = 0; i < active; ++i)
-                    {
-                        int start = payload + 96 + i * 72;
-                        reader.BaseStream.Position = start;
-                        VnObjectId id = VnObjectId.Parse(ReadGuid(reader));
-                        ulong binding = reader.ReadUInt64(), callable = reader.ReadUInt64();
-                        ulong owner = reader.ReadUInt64(), closure = reader.ReadUInt64();
-                        uint offset = reader.ReadUInt32();
-                        ushort length = reader.ReadUInt16(), rowFlags = reader.ReadUInt16();
-                        Check(!id.IsNull && ids.Add(id) && owner != 0 && binding != 0 && rowFlags == 0 &&
-                            reader.ReadUInt64() == 0 && reader.ReadUInt64() == Hash(bytes, start, 64), "Invalid gameplay action row.");
-                        string name = ReadName(bytes, pool, poolBytes, offset, length, ref cursor);
-                        Check(names.Add(name), "Duplicate gameplay name.");
-                        if (!publication.TryFindAction(name, out GameplayAction row) || row.ActionStableId != id ||
-                            row.NameBindingRevision != binding || row.CallableFingerprint != callable ||
-                            row.OwnerPackStableId != owner || row.ProviderClosureFingerprint != closure)
-                            return Fail(VnResult.VN_PACK_STALE_REVISION, "Init and JSON action metadata differ for '" + name + "'.", out error);
-                    }
-                    for (int i = 0; i < retired; ++i)
-                    {
-                        reader.BaseStream.Position = payload + 96 + (int)active * 72 + i * 40;
-                        VnObjectId id = VnObjectId.Parse(ReadGuid(reader));
-                        ulong binding = reader.ReadUInt64();
-                        uint reason = reader.ReadUInt32();
-                        ushort length = reader.ReadUInt16();
-                        Check(!id.IsNull && reader.ReadUInt16() == 0, "Invalid retired gameplay row.");
-                        uint offset = reader.ReadUInt32();
-                        Check(reader.ReadUInt32() == 0 && reason >= 1 && reason <= 3, "Invalid retirement reason or reserved field.");
-                        string name = ReadName(bytes, pool, poolBytes, offset, length, ref cursor);
-                        Check(names.Add(name), "Duplicate gameplay name.");
-                        if (!publication.TryFindRetired(name, out RetiredGameplayAction row) || row.LastActionStableId != id ||
-                            row.LastNameBindingRevision != binding || row.Reason != reason)
-                            return Fail(VnResult.VN_PACK_STALE_REVISION, "Init and JSON retired metadata differ for '" + name + "'.", out error);
-                    }
-                    Check(((cursor + 7U) & ~7U) == poolBytes, "Invalid gameplay name pool size.");
-                    for (uint i = cursor; i < poolBytes; ++i)
-                        Check(bytes[pool + i] == 0, "Nonzero gameplay name padding.");
-                    return VnResult.VN_OK;
+                    Check(requirement && identity, "Init base identity is missing.");
+                    return Encode(publication, out _, out error);
                 }
             }
             catch (InvalidDataException exception) { return Fail(VnResult.VN_BAD_PACK, exception.Message, out error); }
@@ -136,14 +70,80 @@ namespace Harken
             catch (ArgumentException exception) { return Fail(VnResult.VN_BAD_PACK, exception.Message, out error); }
         }
 
-        private static string ReadName(byte[] bytes, int pool, uint poolSize, uint offset, ushort length, ref uint cursor)
+        internal static VnResult Encode(GameplayPublication publication, out byte[] payload, out string error)
         {
-            Check(offset == cursor && offset <= poolSize && length > 0 && length <= 128 && length <= poolSize - offset,
-                "Invalid gameplay name bounds.");
-            string name = Utf8.GetString(bytes, pool + (int)offset, length);
-            Check(name.IndexOf('\0') < 0, "Gameplay name contains NUL.");
-            cursor += length;
-            return name;
+            payload = null;
+            error = null;
+            var active = new List<GameplayAction>(publication.Actions);
+            var retired = new List<RetiredGameplayAction>(publication.RetiredActions);
+            active.Sort((a, b) => CompareNames(a.Name, b.Name));
+            retired.Sort((a, b) => CompareNames(a.Name, b.Name));
+            int poolSize = 0;
+            foreach (var row in active) poolSize += Utf8.GetByteCount(row.Name);
+            foreach (var row in retired) poolSize += Utf8.GetByteCount(row.Name);
+            int pool = 96 + active.Count * 72 + retired.Count * 40;
+            byte[] bytes = new byte[pool + ((poolSize + 7) & ~7)];
+            if (bytes.Length > 1048576)
+                return Fail(VnResult.VN_PACK_CATALOG_CAPACITY, "Gameplay catalog exceeds its byte limit.", out error);
+            using (var writer = new BinaryWriter(new MemoryStream(bytes, true), Utf8))
+            {
+                writer.Write(1U); writer.Write(1U); writer.Write(GuidBytes(publication.ProjectId));
+                writer.Write(0UL);
+                writer.Write((uint)active.Count); writer.Write((uint)retired.Count);
+                writer.Write((uint)(bytes.Length - pool)); writer.Write(0U);
+                writer.Write(0UL); writer.Write(0UL);
+                writer.Write(publication.InitPackStableId); writer.Write(publication.InitContentRevision);
+                writer.Write(retired.Count == 0 ? 0U : 1U); writer.Write(0U); writer.Write(0UL);
+                uint cursor = 0;
+                foreach (var row in active)
+                {
+                    int start = (int)writer.BaseStream.Position;
+                    byte[] name = Utf8.GetBytes(row.Name);
+                    writer.Write(GuidBytes(row.ActionStableId.ToString()));
+                    writer.Write(row.NameBindingRevision); writer.Write(row.CallableFingerprint);
+                    writer.Write(row.OwnerPackStableId); writer.Write(row.ProviderClosureFingerprint);
+                    writer.Write(cursor); writer.Write((ushort)name.Length); writer.Write((ushort)0);
+                    writer.Write(0UL); writer.Write(Hash(bytes, start, 64));
+                    Buffer.BlockCopy(name, 0, bytes, pool + (int)cursor, name.Length);
+                    cursor += (uint)name.Length;
+                }
+                foreach (var row in retired)
+                {
+                    byte[] name = Utf8.GetBytes(row.Name);
+                    writer.Write(GuidBytes(row.LastActionStableId.ToString()));
+                    writer.Write(row.LastNameBindingRevision); writer.Write(row.Reason);
+                    writer.Write((ushort)name.Length); writer.Write((ushort)0);
+                    writer.Write(cursor); writer.Write(0U);
+                    Buffer.BlockCopy(name, 0, bytes, pool + (int)cursor, name.Length);
+                    cursor += (uint)name.Length;
+                }
+                ulong digest = Hash(bytes, 0, bytes.Length);
+                if (digest != publication.Digest)
+                    return Fail(VnResult.VN_PACK_STALE_REVISION, "JSON gameplay catalog digest mismatch.", out error);
+                writer.BaseStream.Position = 24; writer.Write(digest);
+                ulong pairing = Hash(bytes, 8, 16);
+                pairing = Hash(bytes, 64, 16, pairing);
+                pairing = Hash(bytes, 24, 8, pairing);
+                writer.BaseStream.Position = 56; writer.Write(pairing);
+                writer.BaseStream.Position = 88; writer.Write(Hash(bytes, 0, 88));
+            }
+            payload = bytes;
+            return VnResult.VN_OK;
+        }
+
+        private static int CompareNames(string a, string b)
+        {
+            byte[] left = Utf8.GetBytes(a), right = Utf8.GetBytes(b);
+            for (int i = 0; i < Math.Min(left.Length, right.Length); ++i)
+                if (left[i] != right[i]) return left[i].CompareTo(right[i]);
+            return left.Length.CompareTo(right.Length);
+        }
+
+        private static byte[] GuidBytes(string id)
+        {
+            byte[] bytes = Guid.Parse(id).ToByteArray();
+            Array.Reverse(bytes, 0, 4); Array.Reverse(bytes, 4, 2); Array.Reverse(bytes, 6, 2);
+            return bytes;
         }
 
         private static string ReadGuid(BinaryReader reader)

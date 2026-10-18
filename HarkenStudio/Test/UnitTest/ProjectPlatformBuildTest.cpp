@@ -566,9 +566,8 @@ TEST_F(ProjectPlatformBuild, BaseChangeSeparatesConversionsAndPreservesCapturedB
         record.status = "Built";
         store.add(record);
     }
-    store.reconcilePlatforms(project().platforms);
     for (const auto& record : store.records()) {
-        EXPECT_EQ(record.status, QStringLiteral("Needs rebuild"));
+        EXPECT_EQ(record.status, QStringLiteral("Built"));
         EXPECT_EQ(record.basePlatform, BasePlatform::Android);
     }
     EXPECT_EQ(AssetRegistry::instance().getAsset(source.sourceID)->platformCaches.value(low).cachePath, after.cachePath);
@@ -729,15 +728,11 @@ TEST_F(ProjectPlatformBuild, CapturedBuildSurvivesRenameProfileAndSourceSelectio
     EXPECT_EQ(plan.variants.front().platformDefinition.name, QStringLiteral("Android_Low"));
 }
 
-TEST_F(ProjectPlatformBuild, GroupAndDependencyFiltersDistinguishSiblingInstances)
+TEST_F(ProjectPlatformBuild, SelectionAndDependencyFiltersDistinguishSiblingInstances)
 {
-    PackGroup group;
-    group.name = "LowOnly";
-    group.allPlatforms = false;
-    group.platformIds = {Platforms::idString(low)};
-    group.actionIds = {action->runtimeId()};
-    project().packGroups = {group};
-    const auto plan = PackBuildPlanning::build(project());
+    PackExportSelection selection;
+    selection.actionTargeting = {{action->runtimeId(), false, {Platforms::idString(low)}}};
+    const auto plan = PackBuildPlanning::build(project(), {}, {}, false, selection);
     ASSERT_TRUE(plan.ready());
     ASSERT_EQ(plan.variants.size(), 1u);
     EXPECT_EQ(plan.variants.front().variant.platform, Platforms::idString(low));
@@ -746,7 +741,7 @@ TEST_F(ProjectPlatformBuild, GroupAndDependencyFiltersDistinguishSiblingInstance
     post.type = VActionStep::Type::PostAction;
     post.targetObjectID = action->objectID;
     dependent->comp<VAction>()->steps.push_back(post);
-    const auto conflict = PackBuildPlanning::build(project(), {Platforms::idString(high)});
+    const auto conflict = PackBuildPlanning::build(project(), {Platforms::idString(high)}, {}, false, selection);
     EXPECT_FALSE(conflict.ready());
     EXPECT_TRUE(std::any_of(conflict.diagnostics.begin(), conflict.diagnostics.end(), [](const auto& issue) {
         return issue.code == ActionClosureDiagnosticCode::ExcludedDependency;
@@ -1050,9 +1045,8 @@ TEST_F(ProjectPlatformBuild, ExplicitExportsIgnorePrimaryAndKeepSnapshotRecordNa
         store.add(record);
     }
     ASSERT_TRUE(run("rename_project_platform", {{"platform_id", Platforms::idString(high)}, {"name", "MobileHigh"}}).success);
-    store.reconcilePlatforms(project().platforms);
     for (const auto& record : store.records()) {
-        EXPECT_EQ(record.status, QStringLiteral("Needs rebuild"));
+        EXPECT_EQ(record.status, QStringLiteral("Built"));
         EXPECT_EQ(record.platformName, QStringLiteral("Android_High"));
         EXPECT_TRUE(record.outputPath.contains("PrimaryLow"));
     }
@@ -1215,7 +1209,7 @@ TEST_F(ProjectPlatformBuild, IpcBuildPublishesSnapshotRecordsAfterPlatformChange
     for (const auto& record : records) {
         EXPECT_TRUE(record.success) << record.errors.toStdString();
         EXPECT_EQ(record.platformName, QStringLiteral("Android_Low"));
-        EXPECT_EQ(record.status, QStringLiteral("Needs rebuild"));
+        EXPECT_EQ(record.status, QStringLiteral("Built"));
         EXPECT_TRUE(record.outputPath.contains("Android_Low"));
         if (record.objectID == action->objectID)
             EXPECT_EQ(mediaEntries(record.outputPath).front().sampleRate, 22050u);
@@ -1464,7 +1458,7 @@ TEST_F(ProjectPlatformBuild, IpcBuildRejectsPublicationAfterItsPlatformIsDeleted
     EXPECT_TRUE(QFileInfo::exists(QDir(root).filePath("Android_Low/Init.bytes")));
     const auto& records = PackGenerationRecordStore::instance().records();
     ASSERT_FALSE(records.empty());
-    for (const auto& record : records) EXPECT_EQ(record.status, QStringLiteral("Needs rebuild"));
+    for (const auto& record : records) EXPECT_EQ(record.status, QStringLiteral("Built"));
     PackGenerationRecordStore::instance().clear();
 }
 
@@ -1723,7 +1717,7 @@ TEST_F(ProjectPlatformBuild, IpcPartialFailurePublishesTheSuccessfulSiblingOnly)
     authored->sources.plain.active = QUuid{};
     authored->sources.plain.platforms.clear();
     authored->sources.plain.platforms[Platforms::idString(low)].active = authored->sources.plain.entries.front().entryId;
-    project().packExportSelectedPlatformIds = {Platforms::idString(high), Platforms::idString(low)};
+    ProjectManager::instance().setPackExportSelectedPlatformsInternal({Platforms::idString(high), Platforms::idString(low)});
     IPCServer server(nullptr);
     server.setProjectManager(&manager());
     server.setAppState(IPCServer::AppState::Ready);

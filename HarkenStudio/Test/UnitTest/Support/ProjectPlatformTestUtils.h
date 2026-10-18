@@ -41,8 +41,6 @@ inline VNX::ProjectData projectWithPlatforms(const QStringList& names = {QString
 {
     VNX::ProjectData project;
     project.platforms = platforms(names);
-    project.packExportSelectedPlatformIds = project.platformIds();
-    project.packExportCurrentPlatformId = project.platformIds().first();
     return project;
 }
 

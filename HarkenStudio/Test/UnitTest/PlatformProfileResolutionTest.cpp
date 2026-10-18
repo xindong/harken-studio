@@ -168,41 +168,43 @@ TEST(PlatformProfileResolution, AssetInfoFromJsonDropsUnknownCachePlatforms)
 TEST(PlatformProfileResolution, ResolveExportPlatformsContract)
 {
     VNX::ProjectData project;
+    VNX::PackExportSelection selection;
     project.platforms = HarkenTest::platforms({QStringLiteral("Windows"), QStringLiteral("Android"),
                                QStringLiteral("iOS")});
-    project.packExportSelectedPlatformIds = {HarkenTest::platformIdString("Android"), HarkenTest::platformIdString("iOS")};
+    selection.selectedPlatformIds = {HarkenTest::platformIdString("Android"), HarkenTest::platformIdString("iOS")};
 
     QString error;
-    EXPECT_EQ(VNX::ProjectPackExporter::resolveExportPlatforms(project, QString(), &error),
-              project.packExportSelectedPlatformIds);
+    EXPECT_EQ(VNX::ProjectPackExporter::resolveExportPlatforms(project, QString(), selection, &error),
+              selection.selectedPlatformIds);
     EXPECT_TRUE(error.isEmpty());
 
     EXPECT_EQ(VNX::ProjectPackExporter::resolveExportPlatforms(
-                  project, HarkenTest::platformIdString("Windows"), &error),
+                  project, HarkenTest::platformIdString("Windows"), selection, &error),
               QStringList{HarkenTest::platformIdString("Windows")});
     EXPECT_TRUE(error.isEmpty());
 
     EXPECT_TRUE(VNX::ProjectPackExporter::resolveExportPlatforms(
-                    project, QStringLiteral("PS5"), &error)
+                    project, QStringLiteral("PS5"), selection, &error)
                     .isEmpty());
     EXPECT_TRUE(error.contains(QStringLiteral("PS5")));
 
     error.clear();
-    project.packExportSelectedPlatformIds.clear();
+    selection.selectedPlatformIds.clear();
     EXPECT_TRUE(
-        VNX::ProjectPackExporter::resolveExportPlatforms(project, QString(), &error).isEmpty());
+        VNX::ProjectPackExporter::resolveExportPlatforms(project, QString(), selection, &error).isEmpty());
     EXPECT_FALSE(error.isEmpty());
 }
 
 TEST(PlatformProfileResolution, ResolveIntersectsSelectedWithTargetPlatforms)
 {
     VNX::ProjectData project;
+    VNX::PackExportSelection selection;
     project.platforms = HarkenTest::platforms({QStringLiteral("macOS"), QStringLiteral("Windows")});
-    project.packExportSelectedPlatformIds = {
+    selection.selectedPlatformIds = {
         HarkenTest::platformIdString("Windows"), HarkenTest::platformIdString("Android"), HarkenTest::platformIdString("macOS")};
 
     QString error;
-    EXPECT_EQ(VNX::ProjectPackExporter::resolveExportPlatforms(project, QString(), &error),
+    EXPECT_EQ(VNX::ProjectPackExporter::resolveExportPlatforms(project, QString(), selection, &error),
               (QStringList{HarkenTest::platformIdString("Windows"), HarkenTest::platformIdString("macOS")}));
     EXPECT_TRUE(error.isEmpty());
 }
@@ -210,19 +212,20 @@ TEST(PlatformProfileResolution, ResolveIntersectsSelectedWithTargetPlatforms)
 TEST(PlatformProfileResolution, ResolveRejectsExplicitNonTargetPlatform)
 {
     VNX::ProjectData project;
+    VNX::PackExportSelection selection;
     project.platforms = HarkenTest::platforms({QStringLiteral("Android"), QStringLiteral("iOS")});
-    project.packExportSelectedPlatformIds = project.platformIds();
+    selection.selectedPlatformIds = project.platformIds();
 
     QString error;
     EXPECT_TRUE(VNX::ProjectPackExporter::resolveExportPlatforms(
-                    project, HarkenTest::platformIdString("Windows"), &error)
+                    project, HarkenTest::platformIdString("Windows"), selection, &error)
                     .isEmpty());
     EXPECT_TRUE(error.contains(HarkenTest::platformIdString("Windows")));
     EXPECT_TRUE(error.contains(QStringLiteral("Unknown project platform ID")));
 
     error.clear();
     EXPECT_EQ(VNX::ProjectPackExporter::resolveExportPlatforms(
-                  project, HarkenTest::platformIdString("iOS"), &error),
+                  project, HarkenTest::platformIdString("iOS"), selection, &error),
               QStringList{HarkenTest::platformIdString("iOS")});
     EXPECT_TRUE(error.isEmpty());
 }
@@ -230,11 +233,12 @@ TEST(PlatformProfileResolution, ResolveRejectsExplicitNonTargetPlatform)
 TEST(PlatformProfileResolution, ResolveFailsWhenTargetPlatformsEmpty)
 {
     VNX::ProjectData project;
-    project.packExportSelectedPlatformIds = {HarkenTest::platformIdString("Windows")};
+    VNX::PackExportSelection selection;
+    selection.selectedPlatformIds = {HarkenTest::platformIdString("Windows")};
 
     QString error;
     EXPECT_TRUE(
-        VNX::ProjectPackExporter::resolveExportPlatforms(project, QString(), &error).isEmpty());
+        VNX::ProjectPackExporter::resolveExportPlatforms(project, QString(), selection, &error).isEmpty());
     EXPECT_FALSE(error.isEmpty());
 }
 

@@ -57,10 +57,14 @@ add_library(harken_editor_foundation STATIC
     ActionStepEditing.h
     ActionClosureSemantics.cpp
     ActionClosureSemantics.h
+    PackExportSelection.cpp
+    PackExportSelection.h
     PackBuildPlan.cpp
     PackBuildPlan.h
     PackGenerationRecord.cpp
     PackGenerationRecord.h
+    PackArtifactCache.cpp
+    PackArtifactCache.h
     EffectChainSemantics.cpp
     EffectChainSemantics.h
     RuntimeU64Json.cpp

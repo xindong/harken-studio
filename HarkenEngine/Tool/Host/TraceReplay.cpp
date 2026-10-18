@@ -1749,6 +1749,23 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
         }
         break;
     }
+    case harken::kTraceCallSetGameplayCatalog: {
+        const VnPackHandle recorded = r.U64();
+        const std::uint64_t count = r.U64();
+        if (r.failed || count > 1048576) return 1;
+        const auto* bytes = r.Bytes(static_cast<std::size_t>(count));
+        if (r.failed || r.Remaining() != 0) return 1;
+        const auto found = std::find_if(packHandles.begin(), packHandles.end(),
+            [recorded](const auto& entry) { return entry.first == recorded; });
+        if (found == packHandles.end()) return 1;
+        VnPackByteSpan catalog{};
+        catalog.structSize = sizeof(catalog);
+        catalog.bytes = bytes;
+        catalog.byteCount = count;
+        result = Vn_SetGameplayCatalog(found->second, &catalog);
+        if (result != VN_OK) return 1;
+        break;
+    }
     case harken::kTraceCallActivateCanonicalPackSet: {
         const std::uint32_t vintage = r.U32();
         const std::uint32_t descStructSize = r.U32();

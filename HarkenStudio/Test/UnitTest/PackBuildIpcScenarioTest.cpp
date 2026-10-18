@@ -257,7 +257,9 @@ TEST_F(PackBuildIpcScenarioTest,
          {QStringLiteral("platform_id"), platformId()}});
     ASSERT_EQ(startedBuild.value(QStringLiteral("status")).toString(),
               QStringLiteral("ok"));
-    EXPECT_TRUE(PackGenerationRecordStore::instance().records().isEmpty());
+    ASSERT_EQ(PackGenerationRecordStore::instance().records().size(), 1);
+    EXPECT_EQ(PackGenerationRecordStore::instance().records().front().packName,
+              QStringLiteral("PreviousProject"));
     QJsonObject buildStatus;
     ASSERT_TRUE(TestSupport::spinUntil([&] {
         buildStatus = call(QStringLiteral("get_pack_build_status"));
@@ -285,7 +287,7 @@ TEST_F(PackBuildIpcScenarioTest,
     EXPECT_TRUE(failure->toObject().value(QStringLiteral("errors")).toString()
                     .contains(QStringLiteral(
                         "Entry Marker requires an updated Engine marker scheduling contract")));
-    EXPECT_TRUE(std::none_of(records.begin(), records.end(), [](const QJsonValue& value) {
+    EXPECT_TRUE(std::any_of(records.begin(), records.end(), [](const QJsonValue& value) {
         return value.toObject().value(QStringLiteral("packName")).toString()
             == QStringLiteral("PreviousProject");
     }));
@@ -422,7 +424,7 @@ TEST_F(PackBuildIpcScenarioTest, OmittedOutputPathUsesTheProjectBuildDirectory)
     }
 }
 
-TEST_F(PackBuildIpcScenarioTest, CanceledBuildCannotCompleteOrPublishOverItsSuccessor)
+TEST_F(PackBuildIpcScenarioTest, CanceledBuildRetainsCompletedRecordsWithoutOverwritingItsSuccessor)
 {
     create(QStringLiteral("CanceledAction"), QStringLiteral("Action"));
     create(QStringLiteral("SuccessorAction"), QStringLiteral("Action"));
@@ -453,7 +455,12 @@ TEST_F(PackBuildIpcScenarioTest, CanceledBuildCannotCompleteOrPublishOverItsSucc
     ASSERT_EQ(status.value(QStringLiteral("status")).toString(), QStringLiteral("ok"));
     EXPECT_FALSE(status.value(QStringLiteral("result")).toObject()
                      .value(QStringLiteral("in_progress")).toBool(true));
-    EXPECT_TRUE(PackGenerationRecordStore::instance().records().isEmpty());
+    const auto completedRecords = PackGenerationRecordStore::instance().records();
+    const auto completed = std::find_if(completedRecords.begin(), completedRecords.end(), [](const auto& record) {
+        return record.packName == QStringLiteral("CanceledAction");
+    });
+    ASSERT_NE(completed, completedRecords.end());
+    const QJsonObject completedRecord = completed->toJson();
 
     const QJsonObject second = server_.dispatchCommand(
         QStringLiteral("export_pack"),
@@ -471,9 +478,11 @@ TEST_F(PackBuildIpcScenarioTest, CanceledBuildCannotCompleteOrPublishOverItsSucc
     EXPECT_TRUE(std::any_of(records.begin(), records.end(), [](const auto& record) {
         return record.packName == QStringLiteral("SuccessorAction") && !record.success;
     }));
-    EXPECT_TRUE(std::none_of(records.begin(), records.end(), [](const auto& record) {
+    const auto retained = std::find_if(records.begin(), records.end(), [](const auto& record) {
         return record.packName == QStringLiteral("CanceledAction");
-    }));
+    });
+    ASSERT_NE(retained, records.end());
+    EXPECT_EQ(retained->toJson(), completedRecord);
 }
 
 TEST_F(PackBuildIpcScenarioTest, PackFilePathsAndAmbiguousActionRequestsAreRejectedBeforeStarting)

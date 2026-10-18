@@ -763,7 +763,10 @@ TEST_F(ProjectSettingsDialogTest, TwoAndroidDraftsApplyTogetherAndPersistTheirPr
     EXPECT_EQ(platforms->itemData(1).toUuid(), low.id);
     EXPECT_EQ(platforms->itemData(2).toUuid(), high.id);
     EXPECT_EQ(packs.generationPlatforms(), project->platformIds());
-    EXPECT_EQ(packs.findChild<QToolButton*>("packExportPlatform_" + ProjectPlatformSemantics::idString(high.id))->text(), high.name);
+    auto* exportPlatforms = packs.findChild<QComboBox*>("packPlatformCombo");
+    ASSERT_NE(exportPlatforms, nullptr);
+    EXPECT_EQ(exportPlatforms->itemText(exportPlatforms->findData(
+        ProjectPlatformSemantics::idString(high.id))), high.name);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
     const auto expected = ProjectPlatformSemantics::platformsToJson(project->platforms);
     ASSERT_TRUE(UndoRedoManager::instance().undo());

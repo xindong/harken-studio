@@ -24,7 +24,7 @@ class QAction;
 namespace VNX {
 
 struct ProjectData;
-class SegmentedControl;
+class MultiSelectComboBox;
 class SplitButton;
 class ProportionalTreeWidget;
 
@@ -40,7 +40,8 @@ public:
 
     static QStringList effectivePlatforms(const ProjectData* project);
 
-    static QStringList effectiveSelectedPlatforms(const ProjectData* project);
+    static QStringList effectiveSelectedPlatforms(const ProjectData* project,
+                                                  const QStringList& selectedPlatforms);
 
     QStringList generationPlatforms() const;
 
@@ -53,8 +54,11 @@ public:
 
 signals:
     void exportRequested(const QStringList& platforms, const QStringList& packPaths,
-                         bool includeUnchecked);
+                         bool includeUnchecked, bool forceReexport, bool selfCleaning);
     void revealActionRequested(uint32_t objectID);
+
+protected:
+    void showEvent(QShowEvent* event) override;
 
 private slots:
     void onExportClicked();
@@ -67,6 +71,7 @@ private:
     QWidget* createToolbar();
     void createSettingsDialog();
     void populateProjectPackTable();
+    void requestPackTableRefresh();
     void populateSettings();
     void populatePlatformControls();
     void applyNameFilter();
@@ -76,7 +81,8 @@ private:
     void commitSelectedPlatforms(const QStringList& platforms);
 
     QStringList selectedPackPaths() const;
-    void requestExport(const QStringList& packPaths, bool includeUnchecked = false);
+    void requestExport(const QStringList& packPaths, bool includeUnchecked = false,
+                       bool forceReexport = false, bool selfCleaning = false);
     void toggleUnitPlatforms(const QList<QTreeWidgetItem*>& items, bool include);
 
     static QString platformName(const QString& id);
@@ -90,12 +96,14 @@ private:
     QLabel*       objectSendWarningLabel_ = nullptr;
     bool          packTreeUpdating_ = false;
 
-    QHash<QString, PackGenerationResult> lastResults_;
+    bool packTableDirty_ = true;
+    bool packTableRefreshQueued_ = false;
 
     SplitButton*  exportBtn_ = nullptr;
     QAction*      exportAllAction_ = nullptr;
-    SegmentedControl* platformChipsRow_ = nullptr;
-    bool          platformUpdating_ = false;
+    QCheckBox*    forceReexportBox_ = nullptr;
+    QCheckBox*    selfCleaningBox_ = nullptr;
+    MultiSelectComboBox* platformCombo_ = nullptr;
     QLineEdit*    searchEdit_ = nullptr;
 
     QLineEdit* buildOutputDirEdit_ = nullptr;
