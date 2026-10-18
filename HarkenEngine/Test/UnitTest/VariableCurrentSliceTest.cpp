@@ -178,8 +178,10 @@ constexpr VnVariableId kVariable = harkentest::ObjectId(7001);
 VnConfig CurrentSliceConfig(std::uint32_t maxVoices, std::uint32_t blockFrames,
                            std::uint32_t sampleRate) {
     auto config = harkentest::MakeNullConfig(maxVoices, blockFrames, sampleRate);
-    // Slice timing coverage does not require the default nested Action scratch.
-    config.maxTriggerDepth = 2;
+    // Direct firing-table proofs do not dispatch nested Action programs.
+    config.maxTriggerDepth = 1;
+    // Leave room for the root, child and sibling without default-sized attempts.
+    config.maxActionFirings = 8;
     return config;
 }
 
