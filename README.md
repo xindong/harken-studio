@@ -156,15 +156,6 @@ Single daily channel:
     cmake --build build-nc --config RelWithDebInfo [--target <harken_core|harken_editor|harken_hub>]
     ```
 
-## Legal Documents
-
-- Installation and Use License Agreement and Privacy Policy: [English](USER_TERMS.md) | [Simplified Chinese](USER_TERMS.zh-CN.md)
-- Harken Studio Open-Source Release Notice: [English](OPEN_SOURCE_RELEASE_NOTICE.txt) | [Simplified Chinese](OPEN_SOURCE_RELEASE_NOTICE.zh-CN.txt)
-
-These root files are the maintained sources for Hub and Studio releases. Hub and
-its installers generate their display formats from the user terms. [LICENSE](LICENSE)
-and [NOTICE](NOTICE) retain the open-source license and third-party attributions.
-
 ## Project Layout
 
 ```
@@ -181,11 +172,6 @@ harken/
 ├── (build*/)                             # Build output, compiled artifacts
 ├── cmake/                                # Build identity injection
 ├── HarkenEngine/                         # harken_core — the sound engine runtime core
-│   ├── Source/                          # Runtime, product libraries, and shared code generation
-│   ├── Tool/                            # Internal development hosts, probes, and clients
-│   ├── Test/                            # Tests, acceptance drivers, fixtures, and test helpers
-│   ├── ThirdParty/                      # Bundled third-party dependencies
-│   └── Examples/                        # Engine integration examples
 ├── HarkenHub/                            # HarkenHub — the standalone launcher
 ├── HarkenSchema/                         # Independent Editor and Pack JSON contracts
 ├── HarkenSDK/                            # HarkenSDK — shared engine SDK root (Unity/Harken + Unreal/Harken)
@@ -197,10 +183,3 @@ harken/
 ├── USER_TERMS*.md                        # Privacy policy and license agreement
 └── README*.md | LICENSE | VERSION | NOTICE
 ```
-
-`HarkenEngine/Tool/` contains the internal Host, Qualification, and named-pipe
-Remote tools. Their checks belong in `HarkenEngine/Test/`. Product libraries
-such as Preview and shared API/code-generation inputs remain in `Source/Tooling/`.
-The Studio-to-game connection is implemented in `Source/Runtime/remote/` and is
-separate from the internal pipe tools. Repository-wide workflow scripts remain
-in `.scripts/`.

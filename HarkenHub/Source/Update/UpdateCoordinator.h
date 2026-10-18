@@ -47,7 +47,9 @@ signals:
     void stateChanged(const VNH::UpdateStateRecord& record);
 
 private:
-    void persist(UpdateStateRecord record, const QDateTime& now);
+    bool persist(UpdateStateRecord record, const QDateTime& now);
+    void restoreState(const UpdateStateRecord& record,
+                      const UpdateStateRecord& pending);
     void beginDownload(const ReleaseManifest& manifest, const QDateTime& now);
     void handleDownloadFinished(const DownloadResult& result);
     void verifyDownloaded(const QString& packagePath,

@@ -1,6 +1,7 @@
 #include "Update/UpdateCoordinator.h"
 
 #include "Packaging/PackageVerifier.h"
+#include "Platform/AtomicFile.h"
 #include "Platform/PlatformPaths.h"
 #include "Transactions/HandoffArea.h"
 #include "Transactions/InstallIndex.h"
@@ -16,7 +17,6 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
-#include <QSaveFile>
 #include <QStorageInfo>
 
 namespace VNH {
@@ -147,12 +147,16 @@ bool UpdateCoordinator::isBuildInstalled(const QString& buildId) const
     return false;
 }
 
-void UpdateCoordinator::persist(UpdateStateRecord record, const QDateTime& now)
+bool UpdateCoordinator::persist(UpdateStateRecord record, const QDateTime& now)
 {
     if (record.state == QStringLiteral("DownloadFailed"))
         checker_.invalidateCache();
     record.product = kProduct;
-    UpdateStateStore::save(record, now);
+    if (!UpdateStateStore::save(record, now)) {
+        checker_.invalidateCache();
+        qWarning().noquote() << kProduct << "cannot persist state" << record.state;
+        return false;
+    }
     record.found = true;
     if (record.failureCode.isEmpty())
         qInfo().noquote() << kProduct << record.version << "state ->"
@@ -161,6 +165,23 @@ void UpdateCoordinator::persist(UpdateStateRecord record, const QDateTime& now)
         qWarning().noquote() << kProduct << record.version << "state ->"
                              << record.state << "(" + record.failureCode + ")";
     emit stateChanged(record);
+    return true;
+}
+
+void UpdateCoordinator::restoreState(const UpdateStateRecord& record,
+                                     const UpdateStateRecord& pending)
+{
+    const auto current = currentState();
+    if (!current.found || current.state != pending.state ||
+        current.buildId != pending.buildId ||
+        current.transactionId != pending.transactionId ||
+        current.updatedAt != pending.updatedAt)
+        return;
+    if (!persist(record, QDateTime::currentDateTimeUtc())) {
+        QTimer::singleShot(1000, this, [this, record, pending]() {
+            restoreState(record, pending);
+        });
+    }
 }
 
 void UpdateCoordinator::handleCheckResult(const UpdateCheckResult& result,
@@ -253,10 +274,7 @@ void UpdateCoordinator::handleCheckResult(const UpdateCheckResult& result,
     const QString envelopePath = options_.downloadDir + QStringLiteral("/") +
                                  manifest.buildId +
                                  QStringLiteral(".manifest");
-    QSaveFile envelopeFile(envelopePath);
-    if (!envelopeFile.open(QIODevice::WriteOnly) ||
-        envelopeFile.write(result.envelope) != result.envelope.size() ||
-        !envelopeFile.commit()) {
+    if (!writeAtomicFile(envelopePath, result.envelope)) {
         UpdateStateRecord record;
         record.state = QStringLiteral("DownloadFailed");
         record.version = manifest.version;
@@ -275,7 +293,8 @@ void UpdateCoordinator::handleCheckResult(const UpdateCheckResult& result,
     record.expectedSha256 = manifest.sha256Hex.toLower();
     record.packageSize = manifest.packageSize;
     record.releaseSequence = manifest.releaseSequence;
-    persist(record, now);
+    if (!persist(record, now))
+        return;
 
     if (!options_.automaticDownloadEnabled)
         return;
@@ -318,19 +337,19 @@ void UpdateCoordinator::beginDownload(const ReleaseManifest& manifest,
     request.targetPath = targetPath;
     request.expectedSizeBytes = manifest.packageSize;
     activeManifest_ = manifest;
+    UpdateStateRecord record = UpdateStateStore::load(kProduct);
+    record.state = QStringLiteral("Downloading");
+    record.downloadPath = targetPath;
+    if (!persist(record, QDateTime::currentDateTimeUtc()))
+        return;
+    downloading_ = true;
     if (!downloader_.start(request)) {
-        UpdateStateRecord record = UpdateStateStore::load(kProduct);
+        downloading_ = false;
         record.state = QStringLiteral("DownloadFailed");
         record.failureCode = QStringLiteral("DownloadStartRejected");
         persist(record, now);
         return;
     }
-    downloading_ = true;
-
-    UpdateStateRecord record = UpdateStateStore::load(kProduct);
-    record.state = QStringLiteral("Downloading");
-    record.downloadPath = targetPath;
-    persist(record, QDateTime::currentDateTimeUtc());
 }
 
 void UpdateCoordinator::handleDownloadFinished(const DownloadResult& result)
@@ -344,7 +363,8 @@ void UpdateCoordinator::handleDownloadFinished(const DownloadResult& result)
         record.downloadPath.clear();
         record.downloadedBytes = -1;
         record.failureCode.clear();
-        persist(record, now);
+        if (!persist(record, now))
+            return;
         if (options_.automaticDownloadEnabled && started_)
             checkNow();
         return;
@@ -360,7 +380,8 @@ void UpdateCoordinator::handleDownloadFinished(const DownloadResult& result)
     UpdateStateRecord record = UpdateStateStore::load(kProduct);
     record.state = QStringLiteral("Downloaded");
     record.downloadPath = result.filePath;
-    persist(record, now);
+    if (!persist(record, now))
+        return;
 
     verifyDownloaded(result.filePath, activeManifest_, now);
 }
@@ -371,7 +392,8 @@ void UpdateCoordinator::verifyDownloaded(const QString& packagePath,
 {
     UpdateStateRecord record = UpdateStateStore::load(kProduct);
     record.state = QStringLiteral("Verifying");
-    persist(record, now);
+    if (!persist(record, now))
+        return;
 
     ExpectedPackage expected;
     expected.buildId = manifest.buildId;
@@ -399,7 +421,8 @@ void UpdateCoordinator::verifyDownloaded(const QString& packagePath,
     record = UpdateStateStore::load(kProduct);
     record.state = QStringLiteral("Verified");
     record.downloadPath = packagePath;
-    persist(record, QDateTime::currentDateTimeUtc());
+    if (!persist(record, QDateTime::currentDateTimeUtc()))
+        return;
 
     beginAutoInstall(QDateTime::currentDateTimeUtc());
 }
@@ -448,21 +471,28 @@ void UpdateCoordinator::beginAutoInstall(const QDateTime& now)
         return;
     }
 
+    record.state = QStringLiteral("AwaitingBridge");
+    record.transactionId = preparation.transactionId;
+    record.failureCode.clear();
+    record.updatedAt = now.toUTC().toString(Qt::ISODateWithMs);
+    if (!persist(record, now)) {
+        HandoffArea::discard(preparation.transactionId);
+        return;
+    }
+
     QString dispatchError;
     if (!BridgeDispatcher::dispatch(&dispatchError)) {
         qWarning().noquote()
             << kProduct << "bridge dispatch failed:" << dispatchError;
         HandoffArea::discard(preparation.transactionId);
+        const auto pending = record;
         record.state = QStringLiteral("AwaitingUserInstall");
+        record.transactionId.clear();
         record.failureCode = QStringLiteral("BridgeDispatchFailed");
-        persist(record, now);
+        restoreState(record, pending);
         return;
     }
 
-    record.state = QStringLiteral("AwaitingBridge");
-    record.transactionId = preparation.transactionId;
-    record.failureCode.clear();
-    persist(record, now);
     startBridgePoll();
 }
 

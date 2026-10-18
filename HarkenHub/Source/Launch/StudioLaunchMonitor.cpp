@@ -189,9 +189,9 @@ void StudioLaunchMonitor::processMessage(const QByteArray& line)
                              .arg(reportedBuildId, expectedBuildId_));
             return;
         }
+        const QString reportedOperation =
+            message[QStringLiteral("operation")].toString();
         if (!expectedOperation_.isEmpty()) {
-            const QString reportedOperation =
-                message[QStringLiteral("operation")].toString();
             if (reportedOperation != expectedOperation_) {
                 rejectClient(expectedOperation_ ==
                                      QStringLiteral("createProject")
@@ -231,6 +231,7 @@ void StudioLaunchMonitor::processMessage(const QByteArray& line)
                 return;
             }
         }
+        reportedOperation_ = reportedOperation;
         helloAccepted_ = true;
         return;
     }
@@ -247,6 +248,22 @@ void StudioLaunchMonitor::processMessage(const QByteArray& line)
         lastStage_ = stage;
         emit stageChanged(stage);
         emit ready();
+        return;
+    }
+    if (stage == QStringLiteral("forwarded")) {
+        if (reportedOperation_ != QStringLiteral("openProject")) {
+            rejectClient(hubText("HarkenStudio reported an unexpected launch operation"));
+            return;
+        }
+        finished_ = true;
+        lastStage_ = stage;
+        client_->write(QJsonDocument(QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("forwardedAccepted")},
+            {QStringLiteral("token"), sessionToken_},
+        }).toJson(QJsonDocument::Compact) + '\n');
+        client_->flush();
+        emit stageChanged(stage);
+        emit forwarded();
         return;
     }
     if (stage == QStringLiteral("failed")) {

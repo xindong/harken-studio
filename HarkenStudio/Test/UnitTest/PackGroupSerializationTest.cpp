@@ -32,7 +32,7 @@ VNX::ProjectData projectWithMaster()
 
 }
 
-TEST(PackGroupSerialization, SaveLoadRoundTripPreservesGroups)
+TEST(PackGroupSerialization, LegacyGroupsDissolveWithoutChangingMemberTargeting)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -65,24 +65,20 @@ TEST(PackGroupSerialization, SaveLoadRoundTripPreservesGroups)
     VNX::ProjectData loaded;
     ASSERT_TRUE(serializer.loadProject(path, loaded)) << serializer.lastError().toStdString();
 
-    ASSERT_EQ(loaded.packGroups.size(), 3u);
+    EXPECT_TRUE(loaded.packGroups.empty());
+    ASSERT_EQ(loaded.actionPackTargeting.size(), combat.actionIds.size());
+    for (const auto id : combat.actionIds) {
+        EXPECT_TRUE(loaded.includesActionPack(id, HarkenTest::platformIdString("Windows"), "English"));
+        EXPECT_TRUE(loaded.includesActionPack(id, HarkenTest::platformIdString("Android"), "Japanese"));
+        EXPECT_FALSE(loaded.includesActionPack(id, HarkenTest::platformIdString("iOS"), "English"));
+    }
+    EXPECT_TRUE(loaded.includesActionPack(ambience.actionIds.front(), HarkenTest::platformIdString("iOS"), "English"));
+    loaded.busses = project.busses;
+    ASSERT_TRUE(serializer.saveProject(path, loaded)) << serializer.lastError().toStdString();
+    QFile saved(path);
+    ASSERT_TRUE(saved.open(QIODevice::ReadOnly));
+    EXPECT_FALSE(QJsonDocument::fromJson(saved.readAll()).object().value("content").toObject().contains("packGroups"));
 
-    EXPECT_EQ(loaded.packGroups[0].name, QStringLiteral("Combat"));
-    EXPECT_EQ(loaded.packGroups[0].actionIds, (std::vector<harkenstudio::ObjectId>{harkentest::StudioObjectId(9001u), harkentest::StudioObjectId(9002u), harkentest::StudioObjectId(9003u)}));
-    EXPECT_FALSE(loaded.packGroups[0].allPlatforms);
-    EXPECT_EQ(loaded.packGroups[0].platformIds,
-              (QStringList{HarkenTest::platformIdString(QStringLiteral("Windows")), HarkenTest::platformIdString(QStringLiteral("Android"))}));
-
-    EXPECT_EQ(loaded.packGroups[1].name, QStringLiteral("Ambience"));
-    EXPECT_EQ(loaded.packGroups[1].actionIds, std::vector<harkenstudio::ObjectId>{harkentest::StudioObjectId(42u)});
-    EXPECT_TRUE(loaded.packGroups[1].allPlatforms);
-    EXPECT_TRUE(loaded.packGroups[1].platformIds.isEmpty());
-
-    EXPECT_EQ(loaded.packGroups[2].name, QStringLiteral("Nowhere"));
-    EXPECT_TRUE(loaded.packGroups[2].actionIds.empty());
-    EXPECT_FALSE(loaded.packGroups[2].allPlatforms);
-    EXPECT_TRUE(loaded.packGroups[2].platformIds.isEmpty());
-    EXPECT_FALSE(loaded.packGroups[2].includesPlatform(HarkenTest::platformIdString(QStringLiteral("Windows"))));
 }
 
 TEST(PackGroupSerialization, ExplicitEmptyFilterDoesNotBecomeAllPlatforms)
@@ -108,6 +104,9 @@ TEST(PackGroupSerialization, ActionPackTargetingRoundTripPreservesExplicitFilter
         {harkentest::StudioObjectId(7001u), false, {HarkenTest::platformIdString(QStringLiteral("Windows")), HarkenTest::platformIdString(QStringLiteral("iOS"))}});
     project.actionPackTargeting.push_back({harkentest::StudioObjectId(7002u), true, {}});
     project.actionPackTargeting.push_back({harkentest::StudioObjectId(7003u), false, {}});
+    project.actionPackTargeting.push_back({harkentest::StudioObjectId(7001u), false,
+        {HarkenTest::platformIdString("Android")}, QStringLiteral("English")});
+    project.actionPackTargeting.push_back({harkentest::StudioObjectId(7003u), true, {}, QStringLiteral("Japanese")});
 
     VNX::ProjectSerializer serializer;
     const QString path = dir.filePath(QStringLiteral("targeting.hsp"));
@@ -119,12 +118,17 @@ TEST(PackGroupSerialization, ActionPackTargetingRoundTripPreservesExplicitFilter
     const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
     file.close();
     const QJsonObject content = root.value(QStringLiteral("content")).toObject();
-    EXPECT_EQ(content.value(QStringLiteral("actionPackTargeting")).toArray().size(), 3);
+    EXPECT_EQ(content.value(QStringLiteral("actionPackTargeting")).toArray().size(), 5);
 
     VNX::ProjectData loaded;
     ASSERT_TRUE(serializer.loadProject(path, loaded)) << serializer.lastError().toStdString();
 
-    ASSERT_EQ(loaded.actionPackTargeting.size(), 3u);
+    ASSERT_EQ(loaded.actionPackTargeting.size(), 5u);
+    EXPECT_EQ(loaded.actionPackTargeting, project.actionPackTargeting);
+    EXPECT_FALSE(loaded.includesActionPack(harkentest::StudioObjectId(7001u), HarkenTest::platformIdString("Windows"), "English"));
+    EXPECT_TRUE(loaded.includesActionPack(harkentest::StudioObjectId(7001u), HarkenTest::platformIdString("Windows"), "Japanese"));
+    EXPECT_TRUE(loaded.includesActionPack(harkentest::StudioObjectId(7003u), HarkenTest::platformIdString("Windows"), "Japanese"));
+    EXPECT_FALSE(loaded.includesActionPack(harkentest::StudioObjectId(7003u), HarkenTest::platformIdString("Windows"), "English"));
     EXPECT_EQ(loaded.actionPackTargeting[0].stableId, harkentest::StudioObjectId(7001u));
     EXPECT_FALSE(loaded.actionPackTargeting[0].allPlatforms);
     EXPECT_EQ(loaded.actionPackTargeting[0].platformIds,

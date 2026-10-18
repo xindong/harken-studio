@@ -170,7 +170,7 @@ std::vector<ManifestPack> ParseManifestPacks(const std::string& json) {
         pack.name = JsonStringField(object, "name");
         pack.path = JsonStringField(object, "path");
         pack.packStableId = ParseStableId(JsonStringField(object, "packStableId"));
-        if (!pack.name.empty() && pack.packStableId != 0) {
+        if (!pack.name.empty() && !pack.path.empty() && pack.packStableId != 0) {
             packs.push_back(pack);
         }
         cursor = objectEnd + 1;
@@ -193,10 +193,7 @@ const ManifestPack* FindPack(const std::vector<ManifestPack>& packs,
 
 std::filesystem::path PackFilePath(const std::filesystem::path& root,
                                    const ManifestPack& pack) {
-    if (pack.path.empty()) {
-        return root / (pack.name + ".pack");
-    }
-    return root / std::filesystem::path(pack.path).filename();
+    return root / std::filesystem::path(pack.path);
 }
 
 VnResult ActivateExportedSet(const std::string& initPath,
@@ -601,7 +598,6 @@ int main(int argc, char* argv[]) {
     }
 
     const std::string root = exportedPackRoot.generic_string();
-    const std::string initPath = (exportedPackRoot / "Init.pack").generic_string();
     const std::string manifest = ReadText(exportedPackRoot / kManifestName);
     const auto packs = ParseManifestPacks(manifest);
     const ManifestPack* init = FindPack(packs, "Init");
@@ -610,6 +606,8 @@ int main(int argc, char* argv[]) {
         std::fprintf(stderr, "exported pack manifest missing Init or content pack\n");
         return 1;
     }
+    const std::filesystem::path initFile = PackFilePath(exportedPackRoot, *init);
+    const std::string initPath = initFile.generic_string();
     const std::filesystem::path contentPath = PackFilePath(exportedPackRoot, *content);
     const std::filesystem::path runnerPath = ExecutablePath();
 
@@ -726,12 +724,7 @@ int main(int argc, char* argv[]) {
         if (nextContent == nullptr) {
             std::fprintf(stderr, "successor manifest missing content pack\n");
         } else {
-            std::filesystem::path nextFile = nextRoot / (contentName + ".pack");
-            if (!nextContent->path.empty()) {
-                const std::filesystem::path recorded(nextContent->path);
-                nextFile = nextRoot / recorded.filename();
-            }
-            const std::string nextPath = nextFile.generic_string();
+            const std::string nextPath = PackFilePath(nextRoot, *nextContent).generic_string();
             replaceUs = MeasureUs([&] {
                 replaceResult = ReplaceCatalogRoot(
                     contentHandle, nextContent->packStableId, nextRootText,
@@ -830,7 +823,7 @@ int main(int argc, char* argv[]) {
         static_cast<unsigned long long>(FileFnv(runnerPath)),
         static_cast<unsigned long long>(FileFnv(runnerPath)),
         HARKEN_QUALIFICATION_CONFIGURATION,
-        static_cast<unsigned long long>(FileFnv(exportedPackRoot / "Init.pack")),
+        static_cast<unsigned long long>(FileFnv(initFile)),
         static_cast<unsigned long long>(FileFnv(contentPath)),
         inspectUs, loadInitUs, coldLoadUs, warmLoadUs, replaceUs, unloadUs,
         postUs, static_cast<unsigned long long>(leaseCapacity),

@@ -48,6 +48,7 @@ private:
     StartupLoadingWindow& loading_;
     HubClient::Arguments hubArguments_;
     QString projectFile_;
+    std::shared_ptr<ProjectInstance> projectInstance_;
     std::unique_ptr<HubClient> hubClient_;
     std::unique_ptr<MainWindow> mainWindow_;
     QFutureWatcher<ProjectUpgradeAnalysis> analysisWatcher_;

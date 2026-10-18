@@ -157,6 +157,29 @@ TEST_F(ProjectOpenFlowTest, CurrentProjectLaunchesWithoutUpgradeApproval)
     EXPECT_TRUE(store.listProjects().front().preferredStudioBuildId.isEmpty());
 }
 
+TEST_F(ProjectOpenFlowTest, ForwardingCompletesWithoutChangingSuccessfulOpenHistory)
+{
+    const auto registered = store.listProjects().front();
+    ASSERT_TRUE(store.recordSuccessfulOpen(projectPath, registered.projectId, registered.displayName,
+        registered.detectedSchema, "previous-build", "2026-09-07T00:00:00Z"));
+    ASSERT_TRUE(store.setPreferredBuild(projectPath, versions.front().buildId));
+    const auto before = store.listProjects().front();
+
+    open({{"launch", "forwarded"}});
+    ASSERT_TRUE(spinUntil([this]() { return completed; }));
+    const auto pid = launchLog().value("pid").toInteger();
+    ASSERT_GT(pid, 0);
+    ASSERT_TRUE(spinUntil([pid]() { return VNH::executablePathForPid(pid).isEmpty(); }));
+    EXPECT_EQ(outcome, VNH::ProjectOpenOutcome::Result::Activated);
+    EXPECT_EQ(completionCount, 1);
+    EXPECT_EQ(notifications, 0);
+    const auto after = store.listProjects().front();
+    EXPECT_EQ(after.lastKnownGoodStudioBuildId, before.lastKnownGoodStudioBuildId);
+    EXPECT_EQ(after.lastOpenedAt, before.lastOpenedAt);
+    EXPECT_EQ(after.detectedSchema, before.detectedSchema);
+    EXPECT_EQ(after.preferredStudioBuildId, before.preferredStudioBuildId);
+}
+
 TEST_F(ProjectOpenFlowTest, HistoricalStudioOpensWithoutCallingTheNewAnalyzer)
 {
     versions.front().capabilitiesVersion = 1;
@@ -320,6 +343,38 @@ TEST_F(ProjectOpenFlowTest, HashMismatchSchedulesAnActualBackgroundSelfTest)
     EXPECT_EQ(VNH::LaunchPreflight::evaluate(project, versions, {}).verdict,
               VNH::LaunchVerdict::Ready);
 }
+
+#if defined(Q_OS_WIN)
+TEST_F(ProjectOpenFlowTest, BackgroundRefreshRecoversAfterRegistryStorageIsReleased)
+{
+    auto records = VNH::LocalBuildRegistry::load();
+    ASSERT_EQ(records.size(), 1u);
+    const auto verifiedFingerprint = records.front().executableFingerprint;
+    records.front().executableFingerprint.clear();
+    QString error;
+    ASSERT_TRUE(VNH::LocalBuildRegistry::upsert(records.front(), &error));
+
+    QFile reader(VNH::LocalBuildRegistry::filePath());
+    ASSERT_TRUE(reader.open(QIODevice::ReadOnly));
+    const auto original = reader.readAll();
+    VNH::LocalBuildRefreshCoordinator coordinator;
+    bool refreshStarted = false;
+    QObject::connect(&coordinator, &VNH::LocalBuildRefreshCoordinator::buildsChanged,
+                     &coordinator, [&]() { refreshStarted = true; });
+    coordinator.start();
+    ASSERT_TRUE(spinUntil([&]() { return refreshStarted; }));
+    ASSERT_TRUE(QThreadPool::globalInstance()->waitForDone(10000));
+    ASSERT_TRUE(reader.seek(0));
+    EXPECT_EQ(reader.readAll(), original);
+    reader.close();
+
+    ASSERT_TRUE(spinUntil([&]() {
+        const auto refreshed = VNH::LocalBuildRegistry::load();
+        return refreshed.size() == 1 && refreshed.front().lastProbeError.isEmpty()
+            && refreshed.front().executableFingerprint == verifiedFingerprint;
+    }));
+}
+#endif
 
 TEST_F(ProjectOpenFlowTest, AnalyzerTimeoutNeverProducesApproval)
 {

@@ -12,6 +12,7 @@
 #include "Core/CurrentWorldProjectAdapter.h"
 #include "Core/ProjectSerializer.h"
 #include "Core/ProjectManager.h"
+#include "Core/ProjectInstance.h"
 #include "Core/ProjectPlatform.h"
 #include "Core/ProjectUpgradeManager.h"
 #include "Core/ProjectOpenApproval.h"
@@ -4075,6 +4076,17 @@ void MainWindow::onSaveProjectAs()
     if (fileName.isEmpty())
         return;
 
+    auto acquisition = ProjectInstance::acquire(fileName);
+    if (acquisition.status == ProjectInstance::Status::Forwarded)
+        return;
+    if (acquisition.status == ProjectInstance::Status::Failed) {
+        QMessageBox::warning(this, tr("Save Project"), acquisition.error);
+        return;
+    }
+
+    const QString previousPath = currentProjectPath_;
+    const QString previousProjectPath = pmProject ? pmProject->projectPath : QString();
+    const QString previousName = pmProject ? pmProject->name : QString();
     currentProjectPath_ = fileName;
 
     if (pmProject)
@@ -4083,7 +4095,23 @@ void MainWindow::onSaveProjectAs()
         pmProject->name = QFileInfo(fileName).baseName();
     }
 
-    onSaveProject();
+    auto& manager = ProjectManager::instance();
+    const bool wasWatching = manager.fileWatcher()->isWatching();
+    if (!manager.saveProject()) {
+        currentProjectPath_ = previousPath;
+        if (pmProject) {
+            pmProject->projectPath = previousProjectPath;
+            pmProject->name = previousName;
+        }
+        if (wasWatching)
+            manager.startWatchingCurrentProject();
+        LogPanel::logError(LogCategory::File, tr("Failed to save project"));
+        return;
+    }
+    manager.m_projectInstance = std::move(acquisition.instance);
+    setProjectModified(false);
+    saveProjectLayout();
+    statusLabel_->setText(tr("Saved: %1").arg(currentProjectPath_));
     updateWindowTitle();
 }
 
@@ -4152,7 +4180,7 @@ void MainWindow::recordPackGenerationResult(const QString& packName, uint32_t ob
 }
 
 void MainWindow::generateProjectPacks(const QStringList& platforms,
-                                      const QStringList& unitNames,
+                                      const QStringList& packPaths,
                                       bool includeUnchecked)
 {
     const auto projectLease = ProjectManager::instance().currentProjectLease();
@@ -4241,11 +4269,11 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
     }
 
     LogPanel::logInfo(LogCategory::Pack,
-        unitNames.isEmpty()
+        packPaths.isEmpty()
             ? tr("Export started — all packs (%1)")
                   .arg(genPlatforms.join(QStringLiteral(", ")))
             : tr("Export started — %1 selected pack(s) (%2)")
-                  .arg(unitNames.size())
+                  .arg(packPaths.size())
                   .arg(genPlatforms.join(QStringLiteral(", "))));
 
     QProgressDialog progress(tr("Exporting packs..."), tr("Cancel"),
@@ -4284,8 +4312,8 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         opts.platform = platform;
         opts.snapshot = snapshot;
         opts.debugStrings = true;
-        for (const QString& unit : unitNames)
-            opts.onlyUnits.insert(unit);
+        for (const QString& unit : packPaths)
+            opts.onlyPackPaths.insert(unit);
         opts.cancelCheck = [&progress]() { return progress.wasCanceled(); };
 
         std::vector<ProjectPackExporter::PackBuildRecord> records;
@@ -4823,10 +4851,13 @@ void MainWindow::finishPreparedProject(
 bool MainWindow::loadProject(
     const QString& path,
     std::function<void(StartupPhase)> startupProgress,
-    QString* error)
+    QString* error,
+    bool* forwarded)
 {
     if (error)
         error->clear();
+    if (forwarded)
+        *forwarded = false;
     if (projectOpenInProgress_) {
         if (error)
             *error = tr("Another project is already being opened. Please try again when it finishes.");
@@ -4834,10 +4865,23 @@ bool MainWindow::loadProject(
     }
     // Nested event loops must not let another open replace this request's result.
     QScopedValueRollback<bool> openGuard(projectOpenInProgress_, true);
+    auto acquisition = ProjectInstance::acquire(path);
+    if (acquisition.status != ProjectInstance::Status::Acquired) {
+        if (forwarded)
+            *forwarded = acquisition.status == ProjectInstance::Status::Forwarded;
+        if (error)
+            *error = acquisition.error;
+        if (acquisition.status == ProjectInstance::Status::Failed)
+            QMessageBox::warning(this, tr("Open Project"), acquisition.error);
+        return false;
+    }
     ProjectData* existingProject = ProjectManager::instance().currentProject();
-    if (existingProject && existingProject->projectPath == path) {
-        qDebug() << "[MainWindow] Project already loaded, syncing UI state only:" << path;
-        syncWindowToOpenedProject(path);
+    if (existingProject
+        && ProjectInstance::identityForProject(existingProject->projectPath)
+            == ProjectInstance::identityForProject(path)) {
+        if (currentProjectPath_ != existingProject->projectPath)
+            syncWindowToOpenedProject(existingProject->projectPath);
+        ProjectInstance::activateWindow();
         return true;
     }
 
@@ -4958,6 +5002,8 @@ bool MainWindow::loadProject(
     projectProgress.show();
     preparationLoop.exec();
     std::shared_ptr<PreparedProject> prepared = preparationWatcher.result();
+    if (prepared)
+        prepared->instance = std::move(acquisition.instance);
     auto& projectManager = ProjectManager::instance();
     QEventLoop commitLoop;
     connect(&AudioEngine::instance().runtimeSyncCoordinator(),

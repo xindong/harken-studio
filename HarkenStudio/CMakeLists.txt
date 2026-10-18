@@ -168,6 +168,8 @@ set(HARKEN_EDITOR_LIB_SOURCES
     Source/Core/HubLauncher.h
     Source/Core/StartupCoordinator.cpp
     Source/Core/StartupCoordinator.h
+    Source/Core/ProjectInstance.cpp
+    Source/Core/ProjectInstance.h
     Source/Core/ProjectFormatVersion.h
     Source/Core/ProjectPreflight/ProjectPreflight.cpp
     Source/Core/ProjectPreflight/ProjectPreflight.h
@@ -486,7 +488,7 @@ if(_harken_macos_agl_framework_missing)
 endif()
 
 if(WIN32)
-    target_link_libraries(harken_editor_lib PUBLIC user32)
+    target_link_libraries(harken_editor_lib PUBLIC user32 advapi32)
     target_link_libraries(harken_editor PRIVATE opengl32 ole32 shell32)
 endif()
 

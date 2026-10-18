@@ -559,9 +559,9 @@ QLabel* TableWidget::createRowNumber(QWidget* row, int index, std::optional<int>
     return number;
 }
 
-QLabel* TableWidget::createGroupHeader(const QString& text)
+TableGroupHeader* TableWidget::createGroupHeader(const QString& text, const TableGroupOptions& options)
 {
-    auto* header = new TableGroupHeader(text, rowsWidget(), themeManager_);
+    auto* header = new TableGroupHeader(text, rowsWidget(), themeManager_, options);
     rowsLayout()->addWidget(header);
     scheduleLayout();
     return header;

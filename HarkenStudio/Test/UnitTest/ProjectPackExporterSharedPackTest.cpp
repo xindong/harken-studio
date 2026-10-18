@@ -203,9 +203,6 @@ QString variantPackPath(const VNX::ProjectData& project, const QString& dir, har
                         const QString& language = QString())
 {
     (void)platform;
-    for (const auto& group : project.packGroups)
-        if (std::find(group.actionIds.begin(), group.actionIds.end(), stableId) != group.actionIds.end())
-            return QDir(dir).filePath(VNX::PackBuildPlanning::packFileName(language, group.name, QStringLiteral(".bytes")));
     for (const auto& unit : VNX::ProjectPackExporter::CollectActionPackUnits(project))
         if (unit.stableId == stableId)
             return QDir(dir).filePath(VNX::PackBuildPlanning::packFileName(
@@ -1553,7 +1550,7 @@ TEST(EditorProjectPackExporterSharedPack, SingleOwnerMediaProducesNoSharedPack)
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(EditorProjectPackExporterSharedPack, GroupedActionsShareOnePackAndMediaOwner)
+TEST(EditorProjectPackExporterSharedPack, LegacyGroupedActionsKeepIndependentPackAndMediaOwners)
 {
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
 
@@ -1591,39 +1588,22 @@ TEST(EditorProjectPackExporterSharedPack, GroupedActionsShareOnePackAndMediaOwne
 
     EXPECT_FALSE(QFileInfo::exists(
         QDir(dir.path()).filePath(QStringLiteral("Shared.bytes"))));
-    const auto groupRecord = std::find_if(records.begin(), records.end(), [](const auto& record) {
-        return record.source == VNX::ProjectPackExporter::PackBuildRecord::Source::Group;
-    });
-    ASSERT_NE(groupRecord, records.end());
-    EXPECT_EQ(groupRecord->packName, QStringLiteral("Grouped"));
-    EXPECT_TRUE(groupRecord->success);
-    EXPECT_EQ(QDir(dir.path()).entryList({QStringLiteral("*.bytes")}, QDir::Files).size(), 3);
-    const QString groupPath = QDir(dir.path()).filePath(QStringLiteral("Grouped.bytes"));
-    PackImage groupImage;
-    ASSERT_NO_FATAL_FAILURE(readPack(groupPath, groupImage));
-    EXPECT_EQ(groupImage.countKind(harken::kPackEntryKindAction), 0);
-    EXPECT_EQ(groupImage.countKind(harken::kPackEntryKindMedia), 1);
-    EXPECT_EQ(groupImage.header.packKind, harken::kPackKindCanonicalContent);
-    harken::PackCanonicalImage canonical;
-    ASSERT_EQ(VN_OK, harken::ParsePackCanonicalImage(groupImage.data(), groupImage.bytes.size(), &canonical));
-    harken::CurrentWorldBodyImage body;
-    ASSERT_TRUE(body.Decode(canonical.partitionBody.data(), canonical.partitionBody.size(),
-                           canonical.partitionHeader.bodyVintage, harken::CurrentWorldDecodeMode::StrictArtifact));
-    ASSERT_NE(body.ProductionView(), nullptr);
-    ASSERT_EQ(body.ProductionView()->actionCount, 2u);
-    std::set<harkenstudio::ObjectId> actionIds;
-    for (uint32_t index = 0; index < body.ProductionView()->actionCount; ++index)
-        actionIds.insert(harkentest::ToStudio(body.ProductionView()->actions[index].actionStableId));
-    EXPECT_EQ(actionIds, (std::set<harkenstudio::ObjectId>{
-        harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias),
-        harkentest::StudioObjectId(kActionTwoObjectId + kStableIdBias)}));
-    for (harkenstudio::ObjectId stableId : {harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias),
-                              harkentest::StudioObjectId(kActionTwoObjectId + kStableIdBias)}) {
-        const QString actionPath = variantPackPath(project, dir.path(), stableId);
-        EXPECT_EQ(actionPath, groupPath);
+    EXPECT_EQ(QDir(dir.path()).entryList({QStringLiteral("*.bytes")}, QDir::Files).size(), 4);
+    EXPECT_FALSE(QFileInfo::exists(QDir(dir.path()).filePath(QStringLiteral("Grouped.bytes"))));
+    for (const auto id : {harkentest::StudioObjectId(kActionOneObjectId + kStableIdBias),
+                          harkentest::StudioObjectId(kActionTwoObjectId + kStableIdBias)}) {
+        PackImage image;
+        ASSERT_NO_FATAL_FAILURE(readPack(variantPackPath(project, dir.path(), id), image));
+        EXPECT_EQ(image.countKind(harken::kPackEntryKindMedia), 1);
+        harken::PackCanonicalImage canonical;
+        ASSERT_EQ(VN_OK, harken::ParsePackCanonicalImage(image.data(), image.bytes.size(), &canonical));
+        harken::CurrentWorldBodyImage body;
+        ASSERT_TRUE(body.Decode(canonical.partitionBody.data(), canonical.partitionBody.size(),
+                               canonical.partitionHeader.bodyVintage, harken::CurrentWorldDecodeMode::StrictArtifact));
+        ASSERT_NE(body.ProductionView(), nullptr);
+        ASSERT_EQ(body.ProductionView()->actionCount, 1u);
+        EXPECT_EQ(harkentest::ToStudio(body.ProductionView()->actions[0].actionStableId), id);
     }
-    EXPECT_FALSE(QFileInfo::exists(QDir(dir.path()).filePath(QStringLiteral("ActionOne.bytes"))));
-    EXPECT_FALSE(QFileInfo::exists(QDir(dir.path()).filePath(QStringLiteral("ActionTwo.bytes"))));
 
     const QString soloPath =
         variantPackPath(project, dir.path(), harkentest::StudioObjectId(kActionThreeObjectId + kStableIdBias));

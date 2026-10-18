@@ -15,7 +15,6 @@
 #include "../PlatformContext.h"
 #include "../PlatformContextService.h"
 #include "../PropertyEditSession.h"
-#include "../PackGroupEditing.h"
 #include "../ActionStepEditing.h"
 #include "../ActionStepUtils.h"
 #include "RuntimeBridge/PackagingBridge.h"
@@ -2887,264 +2886,12 @@ void registerProjectActions(ActionManager& mgr,
 
     {
         ActionDef def;
-        def.id = "create_pack_group";
-        def.displayName = "Create Pack Group";
-        def.category = "project";
-        def.undoable = true;
-        def.paramSchema = QJsonObject{{"name", "string"}};
-        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
-            if (!projectManager || !projectManager->isProjectOpen())
-                return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
-
-            const QString name = args.value("name").toString();
-
-            std::vector<PackGroup> before = projectManager->getPackGroups();
-            std::vector<PackGroup> working = before;
-            const auto edit = PackGroupEditing::createGroup(working, name);
-            if (!edit.ok)
-                return {false, {}, edit.errorCode, edit.errorMessage};
-
-            ActionResult r;
-            r.success = true;
-            r.data = QJsonObject{{"name", name}};
-
-            std::vector<PackGroup> after = working;
-            projectManager->setPackGroupsInternal(std::move(working));
-            r.undoFn = [before]() { ProjectManager::instance().setPackGroupsInternal(before); };
-            r.redoFn = [after]() { ProjectManager::instance().setPackGroupsInternal(after); };
-            r.undoText = QStringLiteral("Create Pack Group");
-            return r;
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "delete_pack_group";
-        def.displayName = "Delete Pack Group";
-        def.category = "project";
-        def.undoable = true;
-        def.paramSchema = QJsonObject{{"name", "string"}};
-        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
-            if (!projectManager || !projectManager->isProjectOpen())
-                return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
-
-            const QString name = args.value("name").toString();
-
-            std::vector<PackGroup> before = projectManager->getPackGroups();
-            std::vector<PackGroup> working = before;
-            const auto edit = PackGroupEditing::deleteGroup(working, name);
-            if (!edit.ok)
-                return {false, {}, edit.errorCode, edit.errorMessage};
-
-            ActionResult r;
-            r.success = true;
-            r.data = QJsonObject{{"name", name}};
-
-            std::vector<PackGroup> after = working;
-            projectManager->setPackGroupsInternal(std::move(working));
-            r.undoFn = [before]() { ProjectManager::instance().setPackGroupsInternal(before); };
-            r.redoFn = [after]() { ProjectManager::instance().setPackGroupsInternal(after); };
-            r.undoText = QStringLiteral("Delete Pack Group");
-            return r;
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "rename_pack_group";
-        def.displayName = "Rename Pack Group";
-        def.category = "project";
-        def.undoable = true;
-        def.paramSchema = QJsonObject{{"oldName", "string"}, {"newName", "string"}};
-        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
-            if (!projectManager || !projectManager->isProjectOpen())
-                return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
-
-            const QString oldName = args.value("oldName").toString();
-            const QString newName = args.value("newName").toString();
-
-            std::vector<PackGroup> before = projectManager->getPackGroups();
-            std::vector<PackGroup> working = before;
-            const auto edit = PackGroupEditing::renameGroup(working, oldName, newName);
-            if (!edit.ok)
-                return {false, {}, edit.errorCode, edit.errorMessage};
-
-            ActionResult r;
-            r.success = true;
-            r.data = QJsonObject{{"oldName", oldName}, {"newName", newName}};
-
-            if (working == before)
-                return r;
-
-            std::vector<PackGroup> after = working;
-            projectManager->setPackGroupsInternal(std::move(working));
-            r.undoFn = [before]() { ProjectManager::instance().setPackGroupsInternal(before); };
-            r.redoFn = [after]() { ProjectManager::instance().setPackGroupsInternal(after); };
-            r.undoText = QStringLiteral("Rename Pack Group");
-            return r;
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "add_actions_to_pack_group";
-        def.displayName = "Add Actions To Pack Group";
-        def.category = "project";
-        def.undoable = true;
-        def.paramSchema = QJsonObject{{"groupName", "string"}, {"actionIds", "array"}};
-        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
-            if (!projectManager || !projectManager->isProjectOpen())
-                return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
-
-            const QString groupName = args.value("groupName").toString();
-            if (!args.value("actionIds").isArray())
-                return {false, {}, "INVALID_ARGS", "'actionIds' array argument is required"};
-
-            std::vector<harkenstudio::ObjectId> actionIds;
-            for (const auto& v : args.value("actionIds").toArray()) {
-                harkenstudio::ObjectId id{};
-                if (!parseObjectIdJson(v, &id) || harkenstudio::IsNull(id))
-                    return {false, {}, "INVALID_ARGS", "actionIds must contain object UUIDs"};
-                actionIds.push_back(id);
-            }
-
-            const std::set<harkenstudio::ObjectId> validIds =
-                ProjectPackExporter::CollectActionStableIds(*projectManager->currentProject());
-
-            std::vector<PackGroup> before = projectManager->getPackGroups();
-            std::vector<PackGroup> working = before;
-            const auto edit = PackGroupEditing::addActions(working, groupName, actionIds, validIds);
-            if (!edit.ok)
-                return {false, {}, edit.errorCode, edit.errorMessage};
-
-            ActionResult r;
-            r.success = true;
-            r.data = QJsonObject{{"groupName", groupName}};
-
-            if (working == before)
-                return r;
-
-            std::vector<PackGroup> after = working;
-            projectManager->setPackGroupsInternal(std::move(working));
-            r.undoFn = [before]() { ProjectManager::instance().setPackGroupsInternal(before); };
-            r.redoFn = [after]() { ProjectManager::instance().setPackGroupsInternal(after); };
-            r.undoText = QStringLiteral("Add Actions To Pack Group");
-            return r;
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "remove_actions_from_pack_group";
-        def.displayName = "Remove Actions From Pack Group";
-        def.category = "project";
-        def.undoable = true;
-        def.paramSchema = QJsonObject{{"groupName", "string"}, {"actionIds", "array"}};
-        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
-            if (!projectManager || !projectManager->isProjectOpen())
-                return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
-
-            const QString groupName = args.value("groupName").toString();
-            if (!args.value("actionIds").isArray())
-                return {false, {}, "INVALID_ARGS", "'actionIds' array argument is required"};
-
-            std::vector<harkenstudio::ObjectId> actionIds;
-            for (const auto& v : args.value("actionIds").toArray()) {
-                harkenstudio::ObjectId id{};
-                if (!parseObjectIdJson(v, &id) || harkenstudio::IsNull(id))
-                    return {false, {}, "INVALID_ARGS", "actionIds must contain object UUIDs"};
-                actionIds.push_back(id);
-            }
-
-            std::vector<PackGroup> before = projectManager->getPackGroups();
-            std::vector<PackGroup> working = before;
-            const auto edit = PackGroupEditing::removeActions(working, groupName, actionIds);
-            if (!edit.ok)
-                return {false, {}, edit.errorCode, edit.errorMessage};
-
-            ActionResult r;
-            r.success = true;
-            r.data = QJsonObject{{"groupName", groupName}};
-
-            if (working == before)
-                return r;
-
-            std::vector<PackGroup> after = working;
-            projectManager->setPackGroupsInternal(std::move(working));
-            r.undoFn = [before]() { ProjectManager::instance().setPackGroupsInternal(before); };
-            r.redoFn = [after]() { ProjectManager::instance().setPackGroupsInternal(after); };
-            r.undoText = QStringLiteral("Remove Actions From Pack Group");
-            return r;
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "set_pack_group_platforms";
-        def.displayName = "Set Pack Group Platforms";
-        def.category = "project";
-        def.undoable = true;
-        def.paramSchema = QJsonObject{{"groupName", "string"}, {"platform_ids", "array"},
-                                      {"allPlatforms", "bool?"}};
-        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
-            if (!projectManager || !projectManager->isProjectOpen())
-                return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
-
-            const QString groupName = args.value("groupName").toString();
-            if (args.contains("platforms") || !args.value("platform_ids").isArray())
-                return {false, {}, "INVALID_ARGS", "Use the 'platform_ids' array argument"};
-
-            QStringList platforms;
-            for (const auto& v : args.value("platform_ids").toArray())
-                platforms.append(v.toString());
-            QString platformError;
-            if (!ProjectPlatformSemantics::validateIds(platforms, projectManager->currentProject()->platforms, &platformError))
-                return {false, {}, "INVALID_ARGS", platformError};
-
-            const bool allPlatforms = args.contains("allPlatforms")
-                ? args.value("allPlatforms").toBool()
-                : platforms.isEmpty();
-
-            std::vector<PackGroup> before = projectManager->getPackGroups();
-            std::vector<PackGroup> working = before;
-            const auto edit = PackGroupEditing::setPlatforms(working, groupName,
-                                                             allPlatforms, platforms);
-            if (!edit.ok)
-                return {false, {}, edit.errorCode, edit.errorMessage};
-
-            ActionResult r;
-            r.success = true;
-            QJsonArray echo;
-            for (const auto& p : platforms) echo.append(p);
-            r.data = QJsonObject{{"groupName", groupName}, {"platform_ids", echo},
-                                 {"allPlatforms", allPlatforms}};
-
-            if (working == before)
-                return r;
-
-            std::vector<PackGroup> after = working;
-            projectManager->setPackGroupsInternal(std::move(working));
-            r.undoFn = [before]() { ProjectManager::instance().setPackGroupsInternal(before); };
-            r.redoFn = [after]() { ProjectManager::instance().setPackGroupsInternal(after); };
-            r.undoText = QStringLiteral("Set Pack Group Platforms");
-            return r;
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
         def.id = "set_action_pack_targeting";
         def.displayName = "Set Action Pack Targeting";
         def.category = "project";
         def.undoable = true;
         def.paramSchema = QJsonObject{{"stableId", "string"}, {"allPlatforms", "bool?"},
-                                      {"platform_ids", "array?"}};
+                                      {"platform_ids", "array?"}, {"language", "string?"}};
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
@@ -3175,22 +2922,30 @@ void registerProjectActions(ActionManager& mgr,
                 ? args.value("allPlatforms").toBool()
                 : platforms.isEmpty();
 
-            std::vector<ActionPackTargeting> before =
-                projectManager->getActionPackTargeting();
-            std::vector<ActionPackTargeting> working = before;
+            std::optional<QString> language;
+            if (args.contains("language")) {
+                if (!args.value("language").isString())
+                    return {false, {}, "INVALID_ARGS", "'language' must be a string"};
+                language = args.value("language").toString();
+                if (!language->isEmpty() && !ProjectLanguageSemantics::buildLanguages(
+                        *projectManager->currentProject()).contains(*language))
+                    return {false, {}, "INVALID_ARGS", "Unknown project language"};
+            }
 
-            auto it = std::find_if(working.begin(), working.end(),
-                                   [stableId](const ActionPackTargeting& entry) {
-                                       return entry.stableId == stableId;
-                                   });
-            if (allPlatforms) {
-                if (it != working.end())
-                    working.erase(it);
-            } else if (it != working.end()) {
-                it->allPlatforms = false;
-                it->platformIds = platforms;
+            std::vector<ActionPackTargeting> before = projectManager->getActionPackTargeting();
+            std::vector<ActionPackTargeting> working = before;
+            const ActionPackTargeting updated{stableId, allPlatforms,
+                allPlatforms ? QStringList{} : platforms, language};
+            if (language) {
+                auto entry = std::find_if(working.begin(), working.end(), [&](const auto& value) {
+                    return value.stableId == stableId && value.language == language;
+                });
+                if (entry == working.end()) working.push_back(updated);
+                else *entry = updated;
             } else {
-                working.push_back({stableId, false, platforms});
+                working.erase(std::remove_if(working.begin(), working.end(),
+                    [&](const auto& entry) { return entry.stableId == stableId; }), working.end());
+                if (!allPlatforms) working.push_back(updated);
             }
 
             ActionResult r;
@@ -3200,6 +2955,8 @@ void registerProjectActions(ActionManager& mgr,
             r.data = QJsonObject{{"stableId", objectIdString(stableId)},
                                  {"allPlatforms", allPlatforms},
                                  {"platform_ids", echo}};
+
+            if (language) r.data.insert("language", *language);
 
             if (working == before)
                 return r;
