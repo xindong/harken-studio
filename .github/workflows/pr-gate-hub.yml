@@ -21,7 +21,7 @@ jobs:
       - name: Checkout production fix
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: 43a55f6e0e8d4d6d171d2409c119d62931027f8e
+          ref: 89006fa659ff59d8f4e499e1800dece000dd4eb3
           fetch-depth: 0
           clean: false
       - name: Setup MSVC environment
@@ -57,8 +57,10 @@ jobs:
                   code, output = 124, error.stdout or b''
               (evidence / f'{index:04d}.log').write_bytes(output)
               records.append({'iteration': index, 'exit_code': code, 'seconds': time.monotonic() - started,
-                              'commit_retries': output.count(b'Retrying update state commit:'),
-                              'commit_failures': output.count(b'Cannot commit update state:')})
+                              'commit_retries': output.count(b'Retrying update file commit:'),
+                              'state_retries': sum(b'Retrying update file commit:' in line and b'update-state.json' in line for line in output.splitlines()),
+                              'manifest_retries': sum(b'Retrying update file commit:' in line and b'.manifest ' in line for line in output.splitlines()),
+                              'commit_failures': output.count(b'Cannot commit update file:')})
               if code:
                   print(output.decode('utf-8', errors='replace'), flush=True)
                   break
