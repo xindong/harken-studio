@@ -320,6 +320,63 @@ TEST_F(HubSelfUpdateTest, ApproveViaBridgeRollsBackWhenDispatchFails)
     EXPECT_TRUE(UpdateQueue::pendingEntries().empty());
 }
 
+TEST_F(HubSelfUpdateTest, FailedBridgeLaunchDoesNotReenterAutomaticApproval)
+{
+    qputenv("HARKEN_HUB_BRIDGE_COMMAND", " ");
+    const auto ready = readyBridgeRecord(QByteArrayLiteral("installer"));
+    ASSERT_TRUE(UpdateStateStore::save(ready, kNow));
+    HubSelfUpdate update;
+    int attempts = 0;
+    const auto approveWhenReady = [&](const UpdateStateRecord& record) {
+        if (record.state != QStringLiteral("AwaitingRestart"))
+            return;
+        ++attempts;
+        if (attempts > 1)
+            return;
+        QString error;
+        EXPECT_FALSE(update.approveViaBridge("background", &error, kNow));
+    };
+    QObject::connect(&update, &HubSelfUpdate::stateChanged, &update, approveWhenReady);
+    approveWhenReady(ready);
+    EXPECT_EQ(attempts, 1);
+    EXPECT_EQ(update.currentState().state, ready.state);
+    EXPECT_TRUE(UpdateQueue::pendingEntries().empty());
+    qputenv("HARKEN_HUB_BRIDGE_COMMAND", "noop");
+    QString error;
+    EXPECT_TRUE(update.approveViaBridge("background", &error, kNow.addSecs(1)));
+    EXPECT_EQ(update.currentState().state, QStringLiteral("AwaitingBridge"));
+    EXPECT_EQ(attempts, 1);
+}
+
+#if defined(Q_OS_WIN)
+TEST_F(HubSelfUpdateTest, FailedLaunchRollbackOutlivesTheApprovalRequest)
+{
+    qputenv("HARKEN_HUB_BRIDGE_COMMAND", " ");
+    const auto ready = readyBridgeRecord(QByteArrayLiteral("installer"));
+    ASSERT_TRUE(UpdateStateStore::save(ready, kNow));
+    QFile reader(UpdateStateStore::filePath());
+    {
+        HubSelfUpdate update;
+        QObject::connect(&update, &HubSelfUpdate::stateChanged, &update,
+                         [&](const UpdateStateRecord& record) {
+            if (record.state == QStringLiteral("AwaitingBridge"))
+                EXPECT_TRUE(reader.open(QIODevice::ReadOnly));
+        });
+        QString error;
+        EXPECT_FALSE(update.approveViaBridge("gui", &error, kNow));
+        ASSERT_TRUE(reader.isOpen());
+        EXPECT_EQ(update.currentState().state, QStringLiteral("AwaitingBridge"));
+    }
+    reader.close();
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (UpdateStateStore::load(ready.product).state != ready.state && elapsed.elapsed() < 10000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    EXPECT_EQ(UpdateStateStore::load(ready.product).state, ready.state);
+    EXPECT_TRUE(UpdateStateStore::load(ready.product).transactionId.isEmpty());
+}
+#endif
+
 TEST_F(HubSelfUpdateTest, ApproveViaBridgeRequiresBridgeAvailability)
 {
     qputenv("HARKEN_HUB_BRIDGE_DISABLE", "1");
