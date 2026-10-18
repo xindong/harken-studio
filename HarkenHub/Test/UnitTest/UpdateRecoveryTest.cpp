@@ -8,6 +8,8 @@
 #include <gtest/gtest.h>
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDebug>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QTemporaryDir>
@@ -90,10 +92,29 @@ protected:
         checkerOptions.product = isHub ? "hub" : "harken";
         checkerOptions.channel = channel;
         checkerOptions.manifestPublicKey = keys.publicKey;
+        QObject::connect(&update, &Updater::stateChanged, checker,
+                         [this](const VNH::UpdateStateRecord& announced) {
+            const auto stored = update.currentState();
+            EXPECT_TRUE(stored.found);
+            EXPECT_EQ(stored.state, announced.state);
+            EXPECT_EQ(stored.buildId, announced.buildId);
+        });
     }
 
     void TearDown() override
     {
+        if (HasFailure()) {
+            const auto state = update.currentState();
+            qWarning() << "Update recovery failure: state=" << state.state
+                       << "failure=" << state.failureCode
+                       << "checking=" << (checker && checker->isChecking())
+                       << "feedRequests=" << feed.requestCount()
+                       << "packageRequests=" << download.requestCount()
+                       << "packageExists=" << QFile::exists(state.downloadPath)
+                       << "manifestExists=" << QFile::exists(state.manifestEnvelopePath);
+            if constexpr (!isHub)
+                qWarning() << "downloading=" << update.isDownloading();
+        }
         update.stop();
         qunsetenv("HARKEN_HUB_USER_ROOT");
         qunsetenv("HARKEN_HUB_MACHINE_ROOT");
@@ -117,6 +138,29 @@ protected:
 
 using Updaters = ::testing::Types<VNH::UpdateCoordinator, VNH::HubSelfUpdate>;
 TYPED_TEST_SUITE(UpdateRecoveryTest, Updaters);
+
+TYPED_TEST(UpdateRecoveryTest, RequiresDurableStateBeforeDownload)
+{
+    const QString path = VNH::UpdateStateStore::filePath();
+    ASSERT_TRUE(QDir().mkpath(path));
+    QStringList announced;
+    QObject observer;
+    const auto connection = QObject::connect(
+        &this->update, &TypeParam::stateChanged, &observer,
+        [&announced](const VNH::UpdateStateRecord& record) {
+            announced.append(record.state);
+        });
+    ASSERT_TRUE(this->checker->start(this->checkerOptions));
+    ASSERT_TRUE(spinUntil([this]() { return !this->checker->isChecking(); }));
+    EXPECT_TRUE(announced.isEmpty());
+    EXPECT_EQ(this->download.requestCount(), 0);
+    EXPECT_FALSE(this->update.currentState().found);
+    QObject::disconnect(connection);
+
+    ASSERT_TRUE(QDir().rmdir(path));
+    ASSERT_TRUE(this->checker->checkNow());
+    ASSERT_TRUE(spinUntil([this]() { return this->ready(); }));
+}
 
 TYPED_TEST(UpdateRecoveryTest, RetriesFailedDownloadWhenReleaseHasNotChanged)
 {

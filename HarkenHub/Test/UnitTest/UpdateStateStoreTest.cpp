@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <QDateTime>
+#include <QFile>
 #include <QTemporaryDir>
 
 using VNH::UpdateStateRecord;
@@ -83,5 +84,35 @@ TEST_F(UpdateStateStoreTest, RejectsIncompleteRecords)
     record.state = QStringLiteral("Verified");
     EXPECT_FALSE(UpdateStateStore::save(record, kNow));
 }
+
+#if defined(Q_OS_WIN)
+TEST_F(UpdateStateStoreTest, FailedReplacementPreservesAllRecords)
+{
+    UpdateStateRecord studio;
+    studio.product = QStringLiteral("HarkenStudio");
+    studio.state = QStringLiteral("Downloaded");
+    ASSERT_TRUE(UpdateStateStore::save(studio, kNow));
+    UpdateStateRecord hub;
+    hub.product = QStringLiteral("HarkenHub");
+    hub.state = QStringLiteral("AwaitingUserApproval");
+    ASSERT_TRUE(UpdateStateStore::save(hub, kNow));
+
+    QFile reader(UpdateStateStore::filePath());
+    ASSERT_TRUE(reader.open(QIODevice::ReadOnly));
+    const QByteArray original = reader.readAll();
+    studio.state = QStringLiteral("Verified");
+    EXPECT_FALSE(UpdateStateStore::save(studio, kNow));
+    EXPECT_FALSE(UpdateStateStore::clear(hub.product));
+    ASSERT_TRUE(reader.seek(0));
+    EXPECT_EQ(reader.readAll(), original);
+    EXPECT_EQ(UpdateStateStore::load(studio.product).state, "Downloaded");
+    EXPECT_EQ(UpdateStateStore::load(hub.product).state, hub.state);
+
+    reader.close();
+    ASSERT_TRUE(UpdateStateStore::save(studio, kNow));
+    EXPECT_EQ(UpdateStateStore::load(studio.product).state, studio.state);
+    EXPECT_EQ(UpdateStateStore::load(hub.product).state, hub.state);
+}
+#endif
 
 }

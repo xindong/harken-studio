@@ -60,7 +60,7 @@ signals:
     void stateChanged(const VNH::UpdateStateRecord& record);
 
 private:
-    void persist(UpdateStateRecord record, const QDateTime& now);
+    bool persist(UpdateStateRecord record, const QDateTime& now);
     void handleDownloadFinished(const DownloadResult& result);
 
     UpdateChecker checker_;

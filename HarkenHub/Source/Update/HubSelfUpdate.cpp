@@ -134,12 +134,16 @@ QString HubSelfUpdate::backupRootDir()
     return userDataDir() + QStringLiteral("/backup");
 }
 
-void HubSelfUpdate::persist(UpdateStateRecord record, const QDateTime& now)
+bool HubSelfUpdate::persist(UpdateStateRecord record, const QDateTime& now)
 {
     if (record.state == QStringLiteral("DownloadFailed"))
         checker_.invalidateCache();
     record.product = kProduct;
-    UpdateStateStore::save(record, now);
+    if (!UpdateStateStore::save(record, now)) {
+        checker_.invalidateCache();
+        qWarning().noquote() << kProduct << "cannot persist state" << record.state;
+        return false;
+    }
     record.found = true;
     if (record.failureCode.isEmpty())
         qInfo().noquote() << kProduct << record.version << "state ->"
@@ -148,6 +152,7 @@ void HubSelfUpdate::persist(UpdateStateRecord record, const QDateTime& now)
         qWarning().noquote() << kProduct << record.version << "state ->"
                              << record.state << "(" + record.failureCode + ")";
     emit stateChanged(record);
+    return true;
 }
 
 void HubSelfUpdate::handleCheckResult(const UpdateCheckResult& result,
@@ -268,18 +273,6 @@ void HubSelfUpdate::handleCheckResult(const UpdateCheckResult& result,
     request.targetPath = targetPath;
     request.expectedSizeBytes = manifest.packageSize;
     activeManifest_ = manifest;
-    if (!downloader_.start(request)) {
-        UpdateStateRecord record;
-        record.state = QStringLiteral("DownloadFailed");
-        record.version = manifest.version;
-        record.buildId = manifest.buildId;
-        record.releaseSequence = manifest.releaseSequence;
-        record.failureCode = QStringLiteral("DownloadStartRejected");
-        persist(record, now);
-        return;
-    }
-    downloading_ = true;
-
     UpdateStateRecord record;
     record.state = QStringLiteral("Downloading");
     record.version = manifest.version;
@@ -289,7 +282,15 @@ void HubSelfUpdate::handleCheckResult(const UpdateCheckResult& result,
     record.expectedSha256 = manifest.sha256Hex.toLower();
     record.packageSize = manifest.packageSize;
     record.releaseSequence = manifest.releaseSequence;
-    persist(record, now);
+    if (!persist(record, now))
+        return;
+    downloading_ = true;
+    if (!downloader_.start(request)) {
+        downloading_ = false;
+        record.state = QStringLiteral("DownloadFailed");
+        record.failureCode = QStringLiteral("DownloadStartRejected");
+        persist(record, now);
+    }
 }
 
 void HubSelfUpdate::handleDownloadFinished(const DownloadResult& result)
@@ -415,14 +416,20 @@ bool HubSelfUpdate::approve(QString* error, const QDateTime& now)
     QString program;
     QStringList arguments;
     installerLaunchCommand(record.downloadPath, &program, &arguments);
-    if (!startInstallerDetached(program, arguments, error))
+    record.state = QStringLiteral("AwaitingElevation");
+    if (!persist(record, now)) {
+        *error = QStringLiteral("Cannot save hub update state");
         return false;
+    }
+    if (!startInstallerDetached(program, arguments, error)) {
+        record.state = QStringLiteral("AwaitingUserApproval");
+        persist(record, now);
+        return false;
+    }
 
     SingleInstanceGuard::sendTo(SingleInstanceGuard::backgroundServerName(),
                                 {QStringLiteral("--quit")});
 
-    record.state = QStringLiteral("AwaitingElevation");
-    persist(record, now);
     return true;
 }
 
@@ -496,7 +503,11 @@ bool HubSelfUpdate::approveViaBridge(const QString& restartMode,
     record.state = QStringLiteral("AwaitingBridge");
     record.transactionId = placement.transactionId;
     record.failureCode.clear();
-    persist(record, now);
+    if (!persist(record, now)) {
+        HandoffArea::discard(placement.transactionId);
+        *error = QStringLiteral("Cannot save hub update state");
+        return false;
+    }
 
     QString dispatchError;
     if (!BridgeDispatcher::dispatch(&dispatchError)) {
@@ -571,8 +582,7 @@ bool HubSelfUpdate::recoverStaleElevation(const QString& currentVersion,
                        : QStringLiteral("AwaitingUserApproval");
     record.transactionId.clear();
     record.failureCode.clear();
-    UpdateStateStore::save(record, now);
-    return true;
+    return UpdateStateStore::save(record, now);
 }
 
 bool HubSelfUpdate::reconcileLandingStateAtStartup(const QDateTime& now)
@@ -584,15 +594,13 @@ bool HubSelfUpdate::reconcileLandingStateAtStartup(const QDateTime& now)
         selfUpdateEnabled() && BridgeDispatcher::available();
     if (record.state == QStringLiteral("AwaitingRestart") && !bridgeLanding) {
         record.state = QStringLiteral("AwaitingUserApproval");
-        UpdateStateStore::save(record, now);
-        return true;
+        return UpdateStateStore::save(record, now);
     }
     if (record.state == QStringLiteral("AwaitingUserApproval") &&
         bridgeLanding && isBridgeInstallerFile(record.downloadPath) &&
         QFileInfo::exists(record.manifestEnvelopePath)) {
         record.state = QStringLiteral("AwaitingRestart");
-        UpdateStateStore::save(record, now);
-        return true;
+        return UpdateStateStore::save(record, now);
     }
     return false;
 }
@@ -611,8 +619,7 @@ bool HubSelfUpdate::finalizeAfterRestart(const QString& currentVersion)
         QFile::remove(record.downloadPath);
     if (!record.manifestEnvelopePath.isEmpty())
         QFile::remove(record.manifestEnvelopePath);
-    UpdateStateStore::clear(kProduct);
-    return true;
+    return UpdateStateStore::clear(kProduct);
 }
 
 }
