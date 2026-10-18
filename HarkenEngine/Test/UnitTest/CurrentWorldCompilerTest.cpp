@@ -986,7 +986,7 @@ TEST(CurrentWorldCompiler, ArtifactEnvelopeRefusesRetiredBodyVintage) {
     for (const auto vintage : {harken::kCurrentWorldBodyVintageV6,
                                 harken::kCurrentWorldBodyVintageV7,
                                 harken::kCurrentWorldBodyVintageV8,
-                                harken::kCurrentWorldShippingBodyVintage + 1}) {
+                                harken::kCurrentWorldBodyVintageV19 + 1}) {
         auto hostile = artifact;
         WriteU32(hostile, 20, vintage);
         EXPECT_EQ(harken::CurrentWorldLoadStatusV1::UnsupportedBody,
@@ -995,6 +995,19 @@ TEST(CurrentWorldCompiler, ArtifactEnvelopeRefusesRetiredBodyVintage) {
             << vintage;
         EXPECT_EQ(0u, header.bodyBytes);
     }
+
+    auto mismatched = artifact;
+    WriteU32(mismatched, 20, harken::kCurrentWorldBodyVintageV19);
+    ASSERT_EQ(harken::CurrentWorldLoadStatusV1::Ok,
+              harken::InspectCurrentWorldArtifactHeaderV1(
+                  mismatched.data(), mismatched.size(), observedBytes, header));
+    EXPECT_EQ(harken::kCurrentWorldBodyVintageV19, header.bodyVintage);
+    harken::CurrentWorldBodyImage image;
+    EXPECT_EQ(harken::CurrentWorldLoadStatusV1::DecodeFailed,
+              harken::DecodeCurrentWorldArtifactBodyV1(
+                  header, mismatched.data() + harken::kCurrentWorldArtifactHeaderBytes,
+                  mismatched.size() - harken::kCurrentWorldArtifactHeaderBytes,
+                  image));
 }
 
 TEST(CurrentWorldCompiler, VintageEightRetainsV7WireAndCannotBecomeProduction) {
