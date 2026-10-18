@@ -8,12 +8,12 @@
 #include <gtest/gtest.h>
 #include <QCoreApplication>
 #include <QCryptographicHash>
-#include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QTemporaryDir>
 #include <functional>
+#include <iostream>
 #include <type_traits>
 
 namespace {
@@ -105,15 +105,16 @@ protected:
     {
         if (HasFailure()) {
             const auto state = update.currentState();
-            qWarning() << "Update recovery failure: state=" << state.state
-                       << "failure=" << state.failureCode
-                       << "checking=" << (checker && checker->isChecking())
-                       << "feedRequests=" << feed.requestCount()
-                       << "packageRequests=" << download.requestCount()
-                       << "packageExists=" << QFile::exists(state.downloadPath)
-                       << "manifestExists=" << QFile::exists(state.manifestEnvelopePath);
+            std::cerr << "Update recovery failure: state=" << state.state.toStdString()
+                      << " failure=" << state.failureCode.toStdString()
+                      << " checking=" << (checker && checker->isChecking())
+                      << " feedRequests=" << feed.requestCount()
+                      << " packageRequests=" << download.requestCount()
+                      << " packageExists=" << QFile::exists(state.downloadPath)
+                      << " manifestExists=" << QFile::exists(state.manifestEnvelopePath)
+                      << '\n';
             if constexpr (!isHub)
-                qWarning() << "downloading=" << update.isDownloading();
+                std::cerr << "downloading=" << update.isDownloading() << '\n';
         }
         update.stop();
         qunsetenv("HARKEN_HUB_USER_ROOT");
