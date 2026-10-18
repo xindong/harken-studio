@@ -161,15 +161,8 @@ cmake --preset macos-dev    # Ninja + Apple Clang → build-nc/(单一日常通�
 ```
 harken/
 ├── .docs/                                # 项目全局文档、设计说明
-│   ├── philosophy/                       # 设计图谱、产品意识形态（人为管理）
-│   ├── quality/                          # 全仓质量规范（人为管理）
-│   └── snapshot/                         # 各系统表单快照、梳理归纳（及时更新）
 ├── .github/                              # GitHub 工程伴随工作流配置
 ├── .scripts/                             # 开发所需自动化脚本，非源代码
-├── (.local/)                             # 本地文件，不入仓
-├── (.temp/)                              # 临时文件、缓存内容
-├── (.venv/)                              # Python 虚拟环境
-├── (build*/)                             # 构建产出内容，编译输出
 ├── cmake/                                # 项目构建身份注入
 ├── HarkenEngine/                         # harken_core — 声音引擎运行核心
 ├── HarkenHub/                            # HarkenHub — 独立启动器程序

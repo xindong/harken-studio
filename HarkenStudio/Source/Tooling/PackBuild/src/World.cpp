@@ -1214,7 +1214,7 @@ PlayablePropertyPayloadViewV1 MakeStructuralAncestorPayloadV1(
 }
 
 bool ValidateCurrentWorldSectionGroupsV1(const ContainerWorldInstallViewV1 &world) noexcept {
-    if (!IsReadableCurrentWorldBodyVintage(world.sourceBodyVintage) ||
+    if (world.sourceBodyVintage != kCurrentWorldShippingBodyVintage ||
         !PointerMatches(world.playablePropertyCount, world.playableProperties) ||
         !PointerMatches(world.playableOccurrenceCount, world.playableOccurrences) ||
         world.playablePropertyCount > kHardPlayablePropertyProgramCapacity ||
@@ -1371,64 +1371,6 @@ std::uint64_t ComputePieceScheduleFingerprintV1(const PieceScheduleProgramViewV1
     Fnv64 hash("HARKEN-PIECE-SCHEDULE-V1");
     HashPieceSchedule(hash, row, true);
     return hash.Finish();
-}
-
-void HashPieceTimeline(Fnv64& hash,
-                       const PieceScheduleProgramViewV1& row) noexcept {
-    hash.ObjectId(row.entryMarker.stableMarkerId);
-    hash.I64(row.entryMarker.position);
-    hash.I64(row.bounds.contentStart);
-    hash.I64(row.bounds.contentEnd);
-    hash.I64(row.bounds.nominalStart);
-    hash.I64(row.bounds.nominalEnd);
-}
-
-std::uint64_t ComputePieceScheduleFingerprintV2(
-    const PieceScheduleProgramViewV1& row) noexcept {
-    Fnv64 hash("HARKEN-PIECE-SCHEDULE-V2");
-    HashPieceSchedule(hash, row, true);
-    HashPieceTimeline(hash, row);
-    return hash.Finish();
-}
-
-std::uint64_t ComputePieceScheduleFingerprintV1(
-    const PieceScheduleProgramViewV1& row, std::uint32_t bodyVintage) noexcept {
-    if (bodyVintage == kCurrentWorldBodyVintageV19)
-        return ComputePieceScheduleFingerprintV2(row);
-    return ComputePieceScheduleFingerprintV1(row);
-}
-
-bool ValidPieceTimeline(const PieceScheduleProgramViewV1& row,
-                        bool entryScheduling) noexcept {
-    const auto& b = row.bounds;
-    if (!entryScheduling) {
-        return row.entryMarker.stableMarkerId == harkenstudio::ObjectId{} &&
-            row.entryMarker.position == 0 && b.contentStart == 0 &&
-            b.contentEnd == 0 && b.nominalStart == 0 && b.nominalEnd == 0;
-    }
-    const auto validSpan = [](std::int64_t low, std::int64_t high) {
-        return high >= low &&
-            !(low < 0 && high > (std::numeric_limits<std::int64_t>::max)() + low);
-    };
-    const bool hasEntry = row.entryMarker.stableMarkerId != harkenstudio::ObjectId{};
-    if ((!hasEntry && row.entryMarker.position != 0) ||
-        b.nominalStart != (hasEntry ? row.entryMarker.position : b.contentStart) ||
-        !validSpan(b.contentStart, b.contentEnd) ||
-        !validSpan(b.nominalStart, b.nominalEnd) ||
-        (b.nominalStart > b.contentStart && !validSpan(b.contentStart, b.nominalStart)) ||
-        (b.contentEnd > b.nominalEnd && !validSpan(b.nominalEnd, b.contentEnd)))
-        return false;
-    bool hasExit = false;
-    std::int64_t nominalEnd = b.contentEnd;
-    for (std::uint32_t i = 0; i < row.markerCount; ++i) {
-        if (hasEntry && row.markers[i].stableMarkerId == row.entryMarker.stableMarkerId)
-            return false;
-        if (row.markers[i].markerKind != 1) continue;
-        if (hasExit) return false;
-        hasExit = true;
-        nominalEnd = row.markers[i].position;
-    }
-    return b.nominalEnd == nominalEnd;
 }
 
 void HashInlineSoundTimingHint(Fnv64 &hash, const InlineSoundTimingHintV2 &hint) noexcept {
@@ -1800,22 +1742,8 @@ std::uint64_t ComputeCurrentWorldFingerprintV5(const ContainerWorldInstallViewV1
     return hash.Finish();
 }
 
-std::uint64_t ComputeCurrentWorldFingerprintV6(
-    const ContainerWorldInstallViewV1& world) noexcept {
-    const auto legacy = ComputeCurrentWorldFingerprintV5(world);
-    if (legacy == 0) return 0;
-    Fnv64 hash("HARKEN-WORLD-V6");
-    hash.U32(world.sourceBodyVintage);
-    hash.U64(legacy);
-    for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i)
-        HashPieceTimeline(hash, world.pieceSchedules[i]);
-    return hash.Finish();
-}
-
 WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &world,
-                                            ValidationScope scope,
-                                            bool readableOnly = false) {
-    const bool entryScheduling = world.sourceBodyVintage == kCurrentWorldBodyVintageV19;
+                                            ValidationScope scope) {
     if (!ExactFormat(world.identity.format) ||
         (world.identity.capabilityMask & ~kWorldCapabilityKnownMask) != 0) {
         return WorldInstallStatus::InvalidFormat;
@@ -2169,8 +2097,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &w
         if (row.rootDefinition.kind != PlayableKindV1::Piece ||
             !ValidPlayableRef(row.rootDefinition) || row.reserved != 0 ||
             row.scheduleSemanticFingerprint == 0 ||
-            row.scheduleSemanticFingerprint !=
-                ComputePieceScheduleFingerprintV1(row, world.sourceBodyVintage) ||
+            row.scheduleSemanticFingerprint != ComputePieceScheduleFingerprintV1(row) ||
             timeKind > static_cast<std::uint32_t>(ScheduleTimeKindV1::MusicalTicks) ||
             row.startPointKind > 1 || !PointerMatches(row.trackRefCount, row.trackRefs) ||
             !PointerMatches(row.markerCount, row.markers) ||
@@ -2178,8 +2105,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &w
              world.pieceSchedules[i - 1].rootDefinition.stableId >= row.rootDefinition.stableId)) {
             return WorldInstallStatus::InvalidWorld;
         }
-        if (!ValidPieceTimeline(row, entryScheduling) ||
-            (row.startPointKind == 0 && row.startMarkerId != 0) ||
+        if ((row.startPointKind == 0 && row.startMarkerId != 0) ||
             (row.startPointKind == 1 && row.startMarkerId == 0) ||
             (row.timeKind == ScheduleTimeKindV1::AbsoluteNanoseconds &&
              (row.microsPerQuarter != 0 || row.meterNumerator != 0 || row.meterDenominator != 0)) ||
@@ -2201,10 +2127,6 @@ WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &w
             definition->compatibilityFingerprint != row.rootDefinition.compatibilityFingerprint) {
             return WorldInstallStatus::InvalidWorld;
         }
-        bool hasContent = false;
-        bool completeContent = true;
-        std::int64_t contentStart = 0;
-        std::int64_t contentEnd = 0;
         for (std::uint32_t t = 0; t < row.trackRefCount; ++t) {
             const auto &ref = row.trackRefs[t];
             if (ref.reserved != 0 || ref.stableTrackOrdinal != t ||
@@ -2223,7 +2145,6 @@ WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &w
             if (track == world.trackSchedules + world.trackScheduleCount ||
                 track->rootDefinition.stableId != ref.trackDefinition.stableId) {
                 if (IsPartitionLocal(scope)) {
-                    completeContent = false;
                     pieceOwnedTrackIds.push_back(ref.trackDefinition.stableId);
                     continue;
                 }
@@ -2234,25 +2155,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &w
                 return WorldInstallStatus::InvalidWorld;
             }
             pieceOwnedTrackIds.push_back(ref.trackDefinition.stableId);
-            if (entryScheduling) {
-                for (std::uint32_t p = 0; p < track->placementCount; ++p) {
-                    const auto& placement = track->placements[p];
-                    if (placement.authoredDuration < 0 ||
-                        placement.authoredStart > INT64_MAX - placement.authoredDuration)
-                        return WorldInstallStatus::InvalidWorld;
-                    const auto end = placement.authoredStart + placement.authoredDuration;
-                    contentStart = hasContent ? std::min(contentStart, placement.authoredStart)
-                                              : placement.authoredStart;
-                    contentEnd = hasContent ? std::max(contentEnd, end) : end;
-                    hasContent = true;
-                }
-            }
         }
-        if (entryScheduling && completeContent &&
-            (row.bounds.contentStart != contentStart || row.bounds.contentEnd != contentEnd))
-            return WorldInstallStatus::InvalidWorld;
-        if (row.entryMarker.stableMarkerId != harkenstudio::ObjectId{})
-            scheduleMarkerStableIds.push_back(row.entryMarker.stableMarkerId);
         for (std::uint32_t c = 0; c < row.markerCount; ++c) {
             const auto &marker = row.markers[c];
             if (marker.stableMarkerId == harkenstudio::ObjectId{} || marker.markerId == 0 || marker.markerKind > 1 ||
@@ -2698,8 +2601,8 @@ WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &w
                     step.scope != ActionScopeV1::Global || step.valueBits != 0 ||
                     !validActionTime(step.delay) || !validActionTime(step.fade) ||
                     !validActionTime(step.cooldown) || (!stop && !zeroActionTime(step.fade)) ||
-                    !ActionQuantizeTimingReadableV1(
-                        step.opcode, step.quantizeTiming, world.sourceBodyVintage) ||
+                    !ActionQuantizeTimingSupportedV1(
+                        step.opcode, step.quantizeTiming) ||
                     (step.cooldown.numerator == 0 &&
                      step.cooldownScope != ActionCooldownScopeV1::Global) ||
                     (step.cooldownScope != ActionCooldownScopeV1::Global &&
@@ -2730,15 +2633,11 @@ WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &w
                         return WorldInstallStatus::InvalidWorld;
                     }
                 } else if (step.quantizeReference.stableId == harkenstudio::ObjectId{}) {
-                    if (!stop ||
-                        step.quantizeTiming == ActionQuantizeTimingV1::ReferenceExitMarker ||
-                        step.quantizeReference.kind != ActionTargetKindV1::Sound ||
+                    if (!stop || step.quantizeReference.kind != ActionTargetKindV1::Sound ||
                         step.quantizeReference.expectedProgramSemanticFingerprint != 0) {
                         return WorldInstallStatus::InvalidWorld;
                     }
                 } else {
-                    if (step.quantizeTiming == ActionQuantizeTimingV1::TargetNextMarker)
-                        return WorldInstallStatus::InvalidWorld;
                     if (step.quantizeReference.expectedProgramSemanticFingerprint == 0
                         || static_cast<std::uint32_t>(step.quantizeReference.kind) >
                         static_cast<std::uint32_t>(ActionTargetKindV1::Piece)) {
@@ -2778,8 +2677,8 @@ WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &w
                     step.target.expectedProgramSemanticFingerprint == 0 ||
                     !validActionTime(step.delay) || !zeroActionTime(step.fade) ||
                     !validActionTime(step.cooldown) ||
-                    !ActionQuantizeTimingReadableV1(
-                        step.opcode, step.quantizeTiming, world.sourceBodyVintage) ||
+                    !ActionQuantizeTimingSupportedV1(
+                        step.opcode, step.quantizeTiming) ||
                     (step.cooldown.numerator == 0 &&
                      step.cooldownScope != ActionCooldownScopeV1::Global) ||
                     (step.cooldownScope != ActionCooldownScopeV1::Global &&
@@ -2973,8 +2872,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &w
     if (world.identity.capabilityMask != requiredMask) {
         return WorldInstallStatus::InvalidFormat;
     }
-    const auto expectedFingerprint = entryScheduling ? ComputeCurrentWorldFingerprintV6(world)
-                                                      : ComputeCurrentWorldFingerprintV5(world);
+    const auto expectedFingerprint = ComputeCurrentWorldFingerprintV5(world);
     if (world.identity.runtimeSemanticFingerprint == 0 ||
         world.identity.runtimeSemanticFingerprint != expectedFingerprint) {
         return WorldInstallStatus::InvalidWorld;
@@ -2982,8 +2880,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(const ContainerWorldInstallViewV1 &w
     if (advancedTransitionRequested || transitionConsumerUnavailable) {
         return WorldInstallStatus::CapabilityUnavailable;
     }
-    const auto supportedMask = kWorldCapabilityUnit1ActionMask |
-        (readableOnly ? kWorldCapabilityEntryScheduling : 0);
+    constexpr auto supportedMask = kWorldCapabilityUnit1ActionMask;
     if ((requiredMask & ~supportedMask) != 0) {
         return WorldInstallStatus::CapabilityUnavailable;
     }
@@ -3026,8 +2923,6 @@ std::uint64_t ComputeCurrentWorldLocalCapabilityMaskImpl(const WorldView &world)
     if (world.actionCount != 0) {
         mask |= kWorldCapabilityActionDefinitions;
     }
-    if (world.sourceBodyVintage == kCurrentWorldBodyVintageV19)
-        mask |= kWorldCapabilityEntryScheduling;
     return mask;
 }
 
@@ -3038,7 +2933,7 @@ std::uint64_t detail::ComputeCurrentWorldLocalCapabilityMaskV1(
 
 WorldInstallStatus ValidateCurrentWorldV1(const ContainerWorldInstallViewV1 &world) noexcept {
     try {
-        if (!IsReadableCurrentWorldBodyVintage(world.sourceBodyVintage))
+        if (world.sourceBodyVintage != kCurrentWorldShippingBodyVintage)
             return WorldInstallStatus::InvalidFormat;
         if (!ValidateCurrentWorldSectionGroupsV1(world))
             return WorldInstallStatus::InvalidWorld;
@@ -3048,27 +2943,14 @@ WorldInstallStatus ValidateCurrentWorldV1(const ContainerWorldInstallViewV1 &wor
     }
 }
 
-WorldInstallStatus detail::ValidateCurrentWorldReadableV1(
-    const ContainerWorldInstallViewV1 &world) noexcept {
-    try {
-        if (!IsReadableCurrentWorldBodyVintage(world.sourceBodyVintage))
-            return WorldInstallStatus::InvalidFormat;
-        if (!ValidateCurrentWorldSectionGroupsV1(world))
-            return WorldInstallStatus::InvalidWorld;
-        return ValidateCurrentWorldImpl(world, ValidationScope::ExactWorld, true);
-    } catch (...) {
-        return WorldInstallStatus::Capacity;
-    }
-}
-
 WorldInstallStatus detail::ValidateCurrentWorldPartitionLocalV1(
     const ContainerWorldInstallViewV1 &world) noexcept {
     try {
-        if (!IsReadableCurrentWorldBodyVintage(world.sourceBodyVintage))
+        if (world.sourceBodyVintage != kCurrentWorldShippingBodyVintage)
             return WorldInstallStatus::InvalidFormat;
         if (!ValidateCurrentWorldSectionGroupsV1(world))
             return WorldInstallStatus::InvalidWorld;
-        return ValidateCurrentWorldImpl(world, ValidationScope::PartitionLocal, true);
+        return ValidateCurrentWorldImpl(world, ValidationScope::PartitionLocal);
     } catch (...) {
         return WorldInstallStatus::Capacity;
     }

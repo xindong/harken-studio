@@ -186,6 +186,36 @@ TEST(VariableTicket, OutcomeExpiredVsUnknownTicket) {
     EXPECT_EQ(VN_VARIABLE_TICKET_UNKNOWN, QueryTicket(first).status);
 }
 
+TEST(VariableTicket, ActiveTicketSurvivesTerminalHistoryRolloverWithoutUpdate) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        InstallSmoothDefinitions(engine, {harkentest::ObjectId(7), harkentest::ObjectId(8)}).status);
+    auto observation = harken::ObserveVariableCallAt(engine->variables.CurrentWorldGeneration(),
+        engine->variables.CurrentTransportEpoch(), 256, 0, 0);
+    observation.requestedEffectiveFrame = 1000000;
+    const auto accepted = engine->variables.AcceptGlobal(harkentest::ObjectId(8), 0.5f,
+        observation, engine->params, engine->bindings, engine->busTargets);
+    ASSERT_EQ(VN_OK, accepted.result);
+    VnVariableTicketV1 active{};
+    active.sequence = accepted.ticket.sequence;
+    active.worldGeneration = engine->variables.CurrentWorldGeneration();
+    active.transportGeneration = engine->variables.CurrentTransportEpoch();
+    const VnVariableWriteV1 write{harkentest::ObjectId(7), 0.25f, 0};
+    const auto desc = MakeBatch(&write, 1);
+    VnVariableTicketV1 firstTerminal{};
+    ASSERT_EQ(VN_OK, Vn_SetValues(&desc, &firstTerminal));
+    for (std::uint32_t i = 0; i <= engine->variables.HistoryCapacity(); ++i) {
+        ASSERT_EQ(VN_OK, Vn_SetValues(&desc, nullptr));
+    }
+    const auto result = QueryTicket(active);
+    EXPECT_EQ(VN_VARIABLE_TICKET_FOUND, result.status);
+    EXPECT_EQ(VN_VARIABLE_OUTCOME_PENDING, result.outcome);
+    EXPECT_EQ(VN_VARIABLE_TICKET_OUTCOME_EXPIRED, QueryTicket(firstTerminal).status);
+    EXPECT_EQ(2u, engine->variables.PendingCount());
+}
+
 TEST(VariableQuery, GlobalCurrentMatchesAppliedBank) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());

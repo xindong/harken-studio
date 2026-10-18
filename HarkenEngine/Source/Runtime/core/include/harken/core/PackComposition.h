@@ -350,7 +350,8 @@ public:
     VnObjectId ProjectIdAtLease(const PackPartitionLease& lease) const noexcept;
     ActionProgramHandleV1 FindActionIn(
         const PublishedView& view, VnObjectId actionId) const noexcept;
-    ActionProgramHandleV1 FindAction(VnObjectId actionId) const noexcept;
+    ActionProgramHandleV1 ResolveAction(VnObjectId actionId) const noexcept;
+    const ActionProgramViewV1* FindAction(VnObjectId actionId) const noexcept;
     const ContainerProgramViewV3* FindContainer(
         VnObjectId containerStableId) const noexcept;
     bool RequiredConsumerExists(std::uint64_t providerStableId,

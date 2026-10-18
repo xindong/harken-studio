@@ -715,8 +715,7 @@ bool DecodePayloadBody(Reader &reader, OwnedPayload &payload, bool) {
 } // namespace
 
 bool EncodeCurrentWorldBodyImpl(const ContainerWorldInstallViewV1 &world,
-                                std::vector<std::uint8_t> &out,
-                                bool includeEntryTimeline = false) noexcept {
+                                std::vector<std::uint8_t> &out) noexcept {
     try {
         out.clear();
         if (!CountPointer(world.variableCount, world.variables, kHardVariableDefinitionCapacity) ||
@@ -772,11 +771,6 @@ bool EncodeCurrentWorldBodyImpl(const ContainerWorldInstallViewV1 &world,
         }
         for (std::uint32_t i = 0; i < world.pieceScheduleCount; ++i) {
             const auto &row = world.pieceSchedules[i];
-            if (!includeEntryTimeline &&
-                (row.entryMarker.stableMarkerId != harkenstudio::ObjectId{} ||
-                 row.entryMarker.position != 0 || row.bounds.contentStart != 0 ||
-                 row.bounds.contentEnd != 0 || row.bounds.nominalStart != 0 ||
-                 row.bounds.nominalEnd != 0)) return false;
             if (!CountPointer(row.trackRefCount, row.trackRefs, kHardScheduleTrackRefCapacity) ||
                 !CountPointer(row.markerCount, row.markers, kHardScheduleMarkerCapacity) ||
                 !AddCount(row.trackRefCount, kHardScheduleTrackRefCapacity, trackRefTotal) ||
@@ -903,14 +897,6 @@ bool EncodeCurrentWorldBodyImpl(const ContainerWorldInstallViewV1 &world,
             AppendU32(out, row.meterDenominator);
             AppendU32(out, row.trackRefCount);
             AppendU32(out, row.markerCount);
-            if (includeEntryTimeline) {
-                AppendObjectId(out, row.entryMarker.stableMarkerId);
-                AppendU64(out, std::bit_cast<std::uint64_t>(row.entryMarker.position));
-                AppendU64(out, std::bit_cast<std::uint64_t>(row.bounds.contentStart));
-                AppendU64(out, std::bit_cast<std::uint64_t>(row.bounds.contentEnd));
-                AppendU64(out, std::bit_cast<std::uint64_t>(row.bounds.nominalStart));
-                AppendU64(out, std::bit_cast<std::uint64_t>(row.bounds.nominalEnd));
-            }
             for (std::uint32_t t = 0; t < row.trackRefCount; ++t) {
                 const auto &ref = row.trackRefs[t];
                 EncodePlayableRef(ref.trackDefinition, out);
@@ -1114,13 +1100,6 @@ bool EncodeCurrentWorldBodyImpl(const ContainerWorldInstallViewV1 &world,
             AppendU32(out, action.expandedFiringCount);
             for (std::uint32_t s = 0; s < action.stepCount; ++s) {
                 const auto &step = action.steps[s];
-                if (!includeEntryTimeline &&
-                    (step.quantizeTiming == ActionQuantizeTimingV1::EntryMarker ||
-                     step.quantizeTiming == ActionQuantizeTimingV1::ReferenceExitMarker ||
-                     step.quantizeTiming == ActionQuantizeTimingV1::TargetNextMarker)) {
-                    out.clear();
-                    return false;
-                }
                 AppendU32(out, static_cast<std::uint32_t>(step.opcode));
                 AppendU32(out, step.authoredEventIndex);
                 EncodeActionRef(step.target, out);
@@ -1144,23 +1123,11 @@ bool EncodeCurrentWorldBodyImpl(const ContainerWorldInstallViewV1 &world,
 }
 bool EncodeCurrentWorldShippingBody(const ContainerWorldInstallViewV1 &world,
                                     std::vector<std::uint8_t> &out) noexcept {
-    if (world.sourceBodyVintage != kCurrentWorldShippingBodyVintage ||
-        !ValidateCurrentWorldSectionGroupsV1(world)) {
+    if (!ValidateCurrentWorldSectionGroupsV1(world)) {
         out.clear();
         return false;
     }
     return EncodeCurrentWorldBodyImpl(world, out);
-}
-
-bool EncodeCurrentWorldBodyV19(
-    const ContainerWorldInstallViewV1& world,
-    std::vector<std::uint8_t>& out) noexcept {
-    if (world.sourceBodyVintage != kCurrentWorldBodyVintageV19 ||
-        !ValidateCurrentWorldSectionGroupsV1(world)) {
-        out.clear();
-        return false;
-    }
-    return EncodeCurrentWorldBodyImpl(world, out, true);
 }
 
 CurrentWorldBodyImage::CurrentWorldBodyImage() noexcept = default;
@@ -1169,7 +1136,7 @@ CurrentWorldBodyImage::~CurrentWorldBodyImage() = default;
 
 CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
     const std::uint8_t *bytes, std::size_t byteCount, std::uint32_t worldTraceVintage) noexcept {
-    if (!IsReadableCurrentWorldBodyVintage(worldTraceVintage))
+    if (worldTraceVintage != kCurrentWorldShippingBodyVintage)
         return CurrentWorldBodyDecodeResult::Invalid;
     constexpr bool allowRawInvalid = false;
     if (bytes == nullptr && byteCount != 0) {
@@ -1432,14 +1399,6 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             row.meterDenominator = reader.U32();
             const std::uint32_t trackRefCount = reader.U32();
             const std::uint32_t markerCount = reader.U32();
-            if (worldTraceVintage == kCurrentWorldBodyVintageV19) {
-                row.entryMarker.stableMarkerId = reader.ObjectId();
-                row.entryMarker.position = std::bit_cast<std::int64_t>(reader.U64());
-                row.bounds.contentStart = std::bit_cast<std::int64_t>(reader.U64());
-                row.bounds.contentEnd = std::bit_cast<std::int64_t>(reader.U64());
-                row.bounds.nominalStart = std::bit_cast<std::int64_t>(reader.U64());
-                row.bounds.nominalEnd = std::bit_cast<std::int64_t>(reader.U64());
-            }
             if (!AddCount(trackRefCount, kHardScheduleTrackRefCapacity, actualTrackRefTotal) ||
                 !AddCount(markerCount, kHardScheduleMarkerCapacity, actualMarkerTotal)) {
                 return CurrentWorldBodyDecodeResult::Invalid;

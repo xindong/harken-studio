@@ -3,6 +3,8 @@ using System.Reflection;
 using System.Text;
 using System.Globalization;
 using System.IO;
+using System.Diagnostics;
+using System.Threading;
 using Harken;
 using Harken.Generated;
 
@@ -158,32 +160,11 @@ namespace Harken.Test
         {
             VnConfig config = HarkenEngine.DefaultConfig();
             config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+            config.maxEmitters = 384;
             Require(HarkenEngine.Init(config));
             try
             {
-                byte[] utf8 = Encoding.UTF8.GetBytes(Path.GetFullPath(path) + "\0");
-                fixed (byte* p = utf8)
-                {
-                    VnCanonicalPackSetMemberV1 member = default;
-                    member.structSize = (uint)sizeof(VnCanonicalPackSetMemberV1);
-                    member.packStableId = 11;
-                    member.packKind = VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT;
-                    member.utf8Path = (IntPtr)p;
-                    VnCanonicalPackSetMemberResultV1 row = default;
-                    row.structSize = (uint)sizeof(VnCanonicalPackSetMemberResultV1);
-                    VnCanonicalPackSetActivationDescV1 desc = default;
-                    desc.structSize = (uint)sizeof(VnCanonicalPackSetActivationDescV1);
-                    desc.setRevision = 1;
-                    desc.memberCount = 1;
-                    desc.memberStructSize = member.structSize;
-                    desc.members = (IntPtr)(&member);
-                    desc.outputMemberCapacity = 1;
-                    desc.outputMemberStructSize = row.structSize;
-                    desc.outputMembers = (IntPtr)(&row);
-                    VnCanonicalPackSetActivationReportV1 report = default;
-                    report.structSize = (uint)sizeof(VnCanonicalPackSetActivationReportV1);
-                    Require(HarkenNative.Vn_ActivateCanonicalPackSetV1(in desc, ref report));
-                }
+                ActivateInit(path);
                 Require(Emitter.Create(out Emitter a));
                 Require(Emitter.Create(out Emitter b));
                 Check(Values.SetValue(variable, new VnObjectId(0, 721)) == VnResult.VN_NO_VARIABLE_LABEL,
@@ -226,17 +207,114 @@ namespace Harken.Test
                     VnResult.VN_GAMEPLAY_WRONG_PROJECT, "project-qualified writes use the loaded Pack identity");
                 Check(Values.SetValue("VehicleRPM", "00000000-0000-0000-0000-000000000001", "Missing") ==
                     VnResult.VN_NO_VARIABLE_LABEL, "name-based label writes resolve the current Variable");
+                var emitters = new Emitter[320];
+                for (int index = 0; index < emitters.Length; ++index)
+                    Require(Emitter.Create(out emitters[index]));
+                before = GC.GetAllocatedBytesForCurrentThread();
+                for (int index = 0; index < emitters.Length; ++index)
+                    Require(Values.SetValue(variable, 0.75f, emitters[index]));
+                allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                Check(allocated == 0, "320 scoped native writes allocate no managed memory");
+                foreach (Emitter emitter in emitters)
+                {
+                    Require(emitter.QueryVariable(variable, out query));
+                    Check(query.pendingCount > 0, "all 320 scoped writes are accepted before Update");
+                }
+                Require(emitters[0].QueryVariable(variable, out query));
+                uint pendingBefore = query.pendingCount;
+                before = GC.GetAllocatedBytesForCurrentThread();
+                for (int index = 0; index < 10000; ++index)
+                    Require(Values.SetValue(variable, (index & 1) == 0 ? 0.25f : 0.75f, emitters[0]));
+                allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                Check(allocated == 0, "10000 replacements allocate no managed memory");
+                Require(emitters[0].QueryVariable(variable, out query));
+                Check(query.pendingCount == pendingBefore,
+                    "10000 unobserved replacements do not accumulate active writes");
+                foreach (Emitter emitter in emitters) Require(emitter.Destroy());
                 Require(a.Destroy());
                 Check(Values.SetValue(variable, 0, a) == VnResult.VN_STALE_HANDLE,
                     "stale concrete emitter cannot fall back to global");
                 Check(Values.SetValue("VehicleRPM", 0, a) == VnResult.VN_STALE_HANDLE,
                     "named stale concrete emitter cannot fall back to global");
-                Console.WriteLine("[Variable SDK native] typed/raw/deprecated acceptance, order, invalid emitter and zero-GC PASS");
+                Console.WriteLine("[Variable SDK native] scoped320/replacements10000, order, invalid emitter and zero-GC PASS");
+            }
+            finally { HarkenEngine.Term(); }
+            if (Environment.GetEnvironmentVariable("HARKEN_VARIABLE_REALTIME") == "1")
+                RunAppliedCapacity(path, variable);
+        }
+
+        private static void RunAppliedCapacity(string path, HarkenVariableId variable)
+        {
+            VnConfig config = HarkenEngine.DefaultConfig();
+            config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_REAL;
+            config.maxEmitters = 384;
+            Require(HarkenEngine.Init(config));
+            try
+            {
+                ActivateInit(path);
+                var emitters = new Emitter[320];
+                for (int index = 0; index < emitters.Length; ++index)
+                    Require(Emitter.Create(out emitters[index]));
+                for (int index = 0; index < emitters.Length; ++index)
+                    Require(Values.SetValue(variable, 0.25f * (1 + index % 3), emitters[index]));
+                foreach (Emitter emitter in emitters)
+                {
+                    Require(emitter.QueryVariable(variable, out VnVariableQueryResultV1 query));
+                    Check(query.pendingCount != 0, "all 320 scoped writes remain pending before Update");
+                }
+                var deadline = Stopwatch.StartNew();
+                bool settled;
+                do
+                {
+                    Require(HarkenEngine.Update());
+                    settled = true;
+                    for (int index = 0; index < emitters.Length; ++index)
+                    {
+                        Require(emitters[index].QueryVariable(variable, out VnVariableQueryResultV1 query));
+                        if (query.pendingCount != 0) settled = false;
+                        else Check(query.currentValue == 0.25f * (1 + index % 3) && query.hasEmitterOverride != 0,
+                            "applied scoped values retain their emitter identity");
+                    }
+                    if (!settled) Thread.Sleep(1);
+                } while (!settled && deadline.ElapsedMilliseconds < 5000);
+                Check(settled, "all 320 scoped writes apply through normal device callbacks and Update");
+                foreach (Emitter emitter in emitters) Require(emitter.Destroy());
+                Console.WriteLine("[Variable SDK native] device callbacks applied scoped320 with distinct values PASS");
             }
             finally { HarkenEngine.Term(); }
         }
 
-        private static void Require(VnResult result) => Check(result == VnResult.VN_OK, result.ToString());
+        private static unsafe void ActivateInit(string path)
+        {
+            byte[] utf8 = Encoding.UTF8.GetBytes(Path.GetFullPath(path) + "\0");
+            fixed (byte* p = utf8)
+            {
+                VnCanonicalPackSetMemberV1 member = default;
+                member.structSize = (uint)sizeof(VnCanonicalPackSetMemberV1);
+                member.packStableId = 11;
+                member.packKind = VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT;
+                member.utf8Path = (IntPtr)p;
+                VnCanonicalPackSetMemberResultV1 row = default;
+                row.structSize = (uint)sizeof(VnCanonicalPackSetMemberResultV1);
+                VnCanonicalPackSetActivationDescV1 desc = default;
+                desc.structSize = (uint)sizeof(VnCanonicalPackSetActivationDescV1);
+                desc.setRevision = 1;
+                desc.memberCount = 1;
+                desc.memberStructSize = member.structSize;
+                desc.members = (IntPtr)(&member);
+                desc.outputMemberCapacity = 1;
+                desc.outputMemberStructSize = row.structSize;
+                desc.outputMembers = (IntPtr)(&row);
+                VnCanonicalPackSetActivationReportV1 report = default;
+                report.structSize = (uint)sizeof(VnCanonicalPackSetActivationReportV1);
+                Require(HarkenNative.Vn_ActivateCanonicalPackSetV1(in desc, ref report));
+            }
+        }
+
+        private static void Require(VnResult result)
+        {
+            if (result != VnResult.VN_OK) throw new InvalidOperationException(result.ToString());
+        }
         private static void Check(bool condition, string message)
         {
             if (!condition) throw new InvalidOperationException(message);

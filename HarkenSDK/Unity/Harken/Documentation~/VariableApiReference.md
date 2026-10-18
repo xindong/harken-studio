@@ -49,6 +49,26 @@ and the named Labels exist on `Surface`. Check each result. A project-qualified
 name call additionally verifies the publication's project identity; use the
 nonempty project GUID in `D` format.
 
+## Admission and ordered playback
+
+Variable writes do not share a fixed 256-request pending limit. Capacity follows
+the configured emitter/local-value storage and the value versions still needed
+by ordered playback. The default 128-emitter, eight-local-value profile supports
+writing all 1,024 emitter/Variable pairs before the next normal Update. The
+256-Variable definition limit is separate from the number of writes.
+
+Repeated writes to one pair may replace an unobserved pending value. A value
+needed by an earlier Play remains available to that Play; `SetValue(1)`, Play A,
+`SetValue(2)`, Play B retain their respective initial values. Later playback
+continues to follow live parameters. `VN_OK` means the write was accepted, not
+that audio has already applied it. Query the applied value or native ticket when
+that distinction matters.
+
+Storage remains bounded. Different requested times, retained playback reads,
+and genuinely exhausted local-value slots can prevent replacement or admission.
+A refused write preserves already accepted work. Keep checking the exact
+`VnResult`; no extra Update, SDK retry queue, or audio-thread call is required.
+
 ## `Harken.Values` signatures
 
 Each write below returns `VnResult`. The optional `Emitter? emitter = null`

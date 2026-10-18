@@ -4525,7 +4525,7 @@ void ObserveOperation(std::uint32_t operation, VnResult result,
             generation = handle >> 32;
         } else if (stableId != VnObjectId{} && operation != VN_MONITOR_OPERATION_STOP_ACTION) {
             if (packed) {
-                if (const auto action = engine.packComposition.FindAction(stableId))
+                if (const auto* action = engine.packComposition.FindAction(stableId))
                     programFingerprint = action->programSemanticFingerprint;
             } else {
                 for (std::uint32_t i = 0; i < engine.variables.ActionProgramCount(); ++i) {

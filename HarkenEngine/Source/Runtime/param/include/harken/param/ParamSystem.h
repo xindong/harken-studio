@@ -648,6 +648,8 @@ public:
                                 std::uint32_t targetId) const;
     bool TryClaim(VnVoiceHandle handle, std::uint32_t targetId,
                   TargetClaimOwner owner, std::uint32_t expectedRevision) noexcept;
+    bool CanClaim(VnVoiceHandle handle, std::uint32_t targetId,
+                  TargetClaimOwner owner, std::uint32_t expectedRevision) const noexcept;
     bool BeginVariableProjection() noexcept;
     void RestoreVariableProjection() noexcept;
     std::uint64_t VariableProjectionStorageBytes() const noexcept;

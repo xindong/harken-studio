@@ -12,10 +12,9 @@
 
 namespace harken {
 
-inline constexpr std::uint32_t kVariableSliceRowHardLimit = 65536;
+inline constexpr std::uint32_t kVariableSliceRowHardLimit = UINT32_MAX;
 inline constexpr std::uint32_t kVariableSliceTargetHardLimit = 4096;
 inline constexpr std::uint32_t kVariableSliceTargetPoolHardLimit = 65536;
-inline constexpr std::uint32_t kVariableSliceSourceHardLimit = 256;
 inline constexpr std::uint32_t kVariableSliceSourceRejected = 1u << 30;
 inline constexpr std::uint32_t kVariableSliceTargetRejected = 1u << 29;
 
@@ -120,6 +119,9 @@ struct VariableSliceTarget {
 
 class VariableSliceTable {
 public:
+    enum class ReservationStatus : std::uint8_t {
+        Ready, TargetLimit, ProofCapacity, PayloadCapacity, TargetSpan
+    };
     using AfterAudioClaimHookForTest =
         void (*)(void*, VariableSliceRef) noexcept;
 
@@ -133,6 +135,7 @@ public:
                  std::uint64_t bankOrdinal, std::uint32_t exactTargetCount,
                  VariableSliceRef* out) noexcept;
     bool AddTarget(VariableSliceRef ref, const VariableSliceTarget& target) noexcept;
+    ReservationStatus ReservationAvailability(std::uint32_t exactTargetCount) const noexcept;
     bool CaptureSource(VariableSliceRef ref, VariableSliceSource* out) const noexcept;
     bool RetainSource(const VariableSliceSource& source) noexcept;
     bool ReleaseSource(const VariableSliceSource& source) noexcept;

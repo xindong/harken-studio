@@ -3596,12 +3596,17 @@ ActionProgramHandleV1 PackComposition::FindActionIn(
              0, owner.view.sourceBodyVintage}, 0, &action};
 }
 
-ActionProgramHandleV1 PackComposition::FindAction(
+ActionProgramHandleV1 PackComposition::ResolveAction(
     VnObjectId actionId) const noexcept {
     if (published_ == nullptr) {
         return {};
     }
     return FindActionIn(*published_, actionId);
+}
+
+const ActionProgramViewV1* PackComposition::FindAction(
+    VnObjectId actionId) const noexcept {
+    return ResolveAction(actionId).programView;
 }
 
 const ContainerProgramViewV3* PackComposition::FindContainer(

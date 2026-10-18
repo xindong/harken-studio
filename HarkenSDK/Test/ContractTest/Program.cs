@@ -24,6 +24,16 @@ namespace Harken.Test
         private static int Main(string[] args)
         {
             if (args.Length == 1 && args[0] == "--waveform-only") return EditorWaveformContract.Run() ? 0 : 1;
+            if (args.Length == 1 && args[0] == "--variables-only")
+            {
+                InstallNativeResolver(true);
+                if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HARKEN_VARIABLE_INIT")))
+                {
+                    Console.Error.WriteLine("--variables-only requires HARKEN_VARIABLE_INIT.");
+                    return 2;
+                }
+                return RunAbiFidelity() && VariableSdkContract.Run() ? 0 : 1;
+            }
             if (args.Length == 1 && args[0] == "--state-only-unavailable")
             {
                 InstallNativeResolver(true);

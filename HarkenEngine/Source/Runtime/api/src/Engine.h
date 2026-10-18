@@ -5289,7 +5289,7 @@ public:
                      static_cast<std::uint64_t>(resolved.maxPlayableInstances) +
                          resolved.voiceCapacity.Logical() +
                          resolved.maxDeferredIntents,
-                     voices.Capacity()),
+                     voices.Capacity(), resolved.maxBuses),
           actionFiringPlanScratch(ActionPlanScratchCapacity(resolved)),
           actionFiringOwnerReleaseScratch(resolved.maxActionFirings),
           originalActionFiringPackHolders(resolved.maxActionFirings),
@@ -5592,8 +5592,7 @@ public:
         timelinePoolConfig.maxTransactionEvents =
             resolved.maxTransactionEvents;
         timelinePoolConfig.maxCurrentSlicesPerQuantum =
-            std::min<std::uint32_t>(kPendingVariableWriteCapacity,
-                                    resolved.maxEventsPerQuantum);
+            resolved.maxEventsPerQuantum;
         timelinePoolConfig.maxNativeStartCalendarsPerQuantum = variables.ReadCutCapacity();
         timelinePoolConfig.maxPlan03GroupHeadersPerPage =
             resolved.maxPlan03GroupHeadersPerPage;
@@ -5634,10 +5633,10 @@ public:
                 compositeCompletionOwners) ||
             !timelineSink.AttachVariableControlAuthority(
                 variableControlInstances) ||
-            !variableSlices.Reset(kVariableHistoryCapacity,
+            !variableSlices.Reset(variables.CompletionCapacity(),
                                   resolved.maxPropertiesPerCurrentSlice,
                                   resolved.maxVariableSliceTargetsTotal,
-                                  kPendingVariableWriteCapacity)) {
+                                  variables.ApplyPayloadCapacity())) {
             throw std::bad_alloc{};
         }
         mixer.InitializeVariableSliceConsumptionStorage();
@@ -12079,6 +12078,10 @@ public:
     // caller vocabulary and the resolved device format as semantic values;
     // process-local callback pointers are nulled before it is stored.
     std::unique_ptr<TraceRecorder> trace;
+    void CompleteVariableOperation() noexcept;
+    void* variableOutcomeSinkContext = nullptr;
+    void (*variableOutcomeSink)(void*, const VariableOutcomeRecord&) noexcept = nullptr;
+    std::uint32_t variableOperationDepth = 0;
     std::uint64_t traceSessionEpoch = 0;
     bool statefulCallSeen = false;
     bool traceOriginWorldProbeOnly = true;
@@ -12355,6 +12358,21 @@ bool CancelPreparedOccurrenceOwnerForTests(
     EngineActionPlayScratch::PreparedOccurrenceOwnerContext* context) noexcept;
 
 } // namespace detail
+
+class VariableOperationScope {
+public:
+    explicit VariableOperationScope(Engine* engine, bool hold = true) noexcept
+        : engine_(engine), activeEngine_(engine != nullptr && detail::ActiveEngine() == engine), hold_(hold) {
+        if (engine_ != nullptr && hold_) ++engine_->variableOperationDepth;
+    }
+    ~VariableOperationScope() noexcept;
+    VariableOperationScope(const VariableOperationScope&) = delete;
+    VariableOperationScope& operator=(const VariableOperationScope&) = delete;
+private:
+    Engine* engine_;
+    bool activeEngine_;
+    bool hold_;
+};
 
 } // namespace harken
 

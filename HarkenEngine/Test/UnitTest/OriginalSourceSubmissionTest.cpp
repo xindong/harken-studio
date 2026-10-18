@@ -29,8 +29,10 @@ using Registry = harken::OriginalSourceSubmissionRegistry;
 
 VnConfig SourceBodyConfig() {
     auto config = harkentest::MakeNullConfig(4, kFrames, kRate);
-    // Source lifetime coverage does not require the default nested Action scratch.
-    config.maxTriggerDepth = 2;
+    // Direct firing-table proofs do not dispatch nested Action programs.
+    config.maxTriggerDepth = 1;
+    // The firing cases retain only a parent and child in each engine.
+    config.maxActionFirings = 8;
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 2;
     return config;

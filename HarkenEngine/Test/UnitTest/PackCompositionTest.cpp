@@ -1,6 +1,7 @@
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "Common/VariableOutcomeCapture.h"
 #include "Common/PackFoundationFixture.h"
 #include "UnitTest/PlayableStorageTestSupport.h"
 #include "UnitTest/OriginalServiceStorageTestAccess.h"
@@ -31,7 +32,6 @@
 #include "SharedQueueTrace.h"
 #include "SharedFrontierTrace.h"
 #include "TimelineVoiceInstallTestSupport.h"
-#include "harken_studio_build/PackImage.h"
 
 #include <gtest/gtest.h>
 
@@ -1948,11 +1948,12 @@ TEST(PackComposition, FirstInitPublicationTerminatesProvisionalContentWritesOnly
     EXPECT_EQ(world, e.variables.CurrentWorldGeneration());
     EXPECT_EQ(1u, e.variables.PendingCount());
     EXPECT_EQ(0u, e.variables.TerminationCount());
+    harkentest::VariableOutcomeCapture outcomes(e);
     ASSERT_EQ(VN_OK, activateInit(&init));
     EXPECT_EQ(world + 1, e.variables.CurrentWorldGeneration());
     EXPECT_EQ(0u, e.variables.PendingCount());
     VariableOutcomeRecord record{};
-    ASSERT_TRUE(e.variables.PopOutcome(&record));
+    ASSERT_TRUE(outcomes.Pop(&record));
     EXPECT_EQ(ticket, record.acceptedTicket.sequence);
     EXPECT_EQ(VariableOutcomeKind::WorldReplacement, record.outcome);
     EXPECT_EQ(world, record.world);
@@ -1966,7 +1967,7 @@ TEST(PackComposition, FirstInitPublicationTerminatesProvisionalContentWritesOnly
     ASSERT_EQ(VN_OK, Vn_QueryVariableTicket(&query, &result));
     EXPECT_EQ(VN_VARIABLE_TICKET_FOUND, result.status);
     EXPECT_EQ(VN_VARIABLE_OUTCOME_TERMINATED_WORLD, result.outcome);
-    EXPECT_FALSE(e.variables.PopOutcome(&record));
+    EXPECT_FALSE(outcomes.Pop(&record));
     EXPECT_EQ(world + 1, e.variables.CurrentWorldGeneration());
     EXPECT_EQ(1u, e.variables.TerminationCount());
     ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(&e));
@@ -2273,12 +2274,13 @@ TEST_F(NativeSlicePack, FailedPublicationPreservesAppliedBanksAndPendingTicket) 
         EXPECT_FLOAT_EQ(-0.25f, value);
         EXPECT_FALSE(e.variables.CurrentValue(harkentest::ObjectId(9), &value));
     }
+    harkentest::VariableOutcomeCapture outcomes(e);
     std::uint32_t applied = 0;
     for (std::uint32_t block = 0; block < 32 && e.variables.PendingCount() != 0; ++block) {
         e.nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
         VariableOutcomeRecord outcome{};
-        while (e.variables.PopOutcome(&outcome)) {
+        while (outcomes.Pop(&outcome)) {
             if (outcome.acceptedTicket.sequence == ticket) {
                 EXPECT_EQ(VariableOutcomeKind::Applied, outcome.outcome);
                 ++applied;
@@ -3340,7 +3342,7 @@ TEST(PackComposition, CanonicalUnloadExRefusesAnchorWithoutMutation) {
     EXPECT_EQ(compositeGeneration,
               session.Engine()->packComposition.CompositeGeneration());
     EXPECT_EQ(anchor.action,
-              session.Engine()->packComposition.FindAction(harkentest::ObjectId(2002)).programView);
+              session.Engine()->packComposition.FindAction(harkentest::ObjectId(2002)));
     PackRevisionKey afterKey{};
     PackResourceRevisionToken afterToken = 0;
     ASSERT_TRUE(session.Engine()->packs.ActiveRevisionIdentity(
@@ -23713,6 +23715,53 @@ bool LoadInitPack(const std::vector<std::uint8_t>& bytes, const char* name,
                                                  handle) == VN_OK;
 }
 
+TEST(PackComposition, VariableSdkSetValuePreservesWriteScopeAndPublishesInitFixture) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto variable = harken::generated::kVariable_VehicleRPM;
+    std::uint64_t fingerprint = 0;
+    ASSERT_TRUE(ComputeVariableExecutionFingerprintV1(variable, 1, 1, 3,
+        0, 1, 0, nullptr, 0, &fingerprint));
+    PackVariableNameCatalog names;
+    names.projectGuid[15] = 1;
+    names.initPackStableId = 11;
+    names.initContentRevision = 1;
+    names.rows.push_back({variable, "VehicleRPM"});
+    const auto bytes = BuildInitWithVariableOverlay(variable, fingerprint,
+        0, 1, 0, true, false, 3, VariableScopeV1::Global, &names);
+    VnPackHandle init = 0;
+    ASSERT_TRUE(LoadInitPack(bytes, "variable-sdk-init.pack", &init));
+    ASSERT_EQ(VN_OK, harken::GuardTypedVariableCatalog(
+        harken::generated::kVariableExecutionCatalogFingerprint));
+    VnEmitterHandle a = 0, b = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&a));
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&b));
+    const auto expect = [&](float valueA, float valueB, std::uint32_t localA) {
+        for (const auto emitter : {a, b}) {
+            VnVariableQueryDescV1 query{};
+            query.structSize = sizeof(query);
+            query.variableId = variable;
+            query.emitter = emitter;
+            VnVariableQueryResultV1 result{};
+            result.structSize = sizeof(result);
+            ASSERT_EQ(VN_OK, Vn_QueryVariable(&query, &result));
+            EXPECT_FLOAT_EQ(emitter == a ? valueA : valueB, result.currentValue);
+            EXPECT_EQ(emitter == a ? localA : 0u, result.hasEmitterOverride);
+            EXPECT_EQ(0u, result.pendingCount);
+        }
+    };
+    ASSERT_EQ(VN_OK, Vn_SetValue(variable, 0.25f));
+    harkentest::AdvanceVariableWrite(&engine);
+    expect(0.25f, 0.25f, 0);
+    ASSERT_EQ(VN_OK, Vn_SetEmitterValue(a, variable, 0.5f));
+    harkentest::AdvanceVariableWrite(&engine);
+    expect(0.5f, 0.25f, 1);
+    ASSERT_EQ(VN_OK, Vn_SetValue(variable, 0.75f));
+    harkentest::AdvanceVariableWrite(&engine);
+    expect(0.75f, 0.75f, 0);
+}
+
 TEST(PackComposition, VariableNameCodecRejectsCorruptionAndAmbiguousIdentity) {
     PackVariableNameCatalog names;
     names.projectGuid[15] = 1;
@@ -24510,10 +24559,6 @@ TEST(PackComposition, V19PartitionReaderAndFallbackKeepVintageButActivationStays
     PackCanonicalImage image;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
     EXPECT_EQ(19u, image.partitionHeader.bodyVintage);
-    harkenstudiobuild::PackCanonicalImage studioImage;
-    ASSERT_EQ(harkenstudiobuild::kPackOk,
-              harkenstudiobuild::ParsePackCanonicalImage(bytes.data(), bytes.size(), &studioImage));
-    EXPECT_EQ(19u, studioImage.partitionHeader.bodyVintage);
     PackComposition composition(4, 8, 4);
     PackComposition::CandidateOwner candidate;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(image, 1, &candidate));

@@ -71,17 +71,13 @@ struct FrontEndResult {
 
 // Compiles an authored input through the four front-end stages. The high-water
 // mark for minting is taken from input.mintHighWaterMark. The result is
-// deterministic in the input and explicitly selected timeline semantics.
-// Production callers retain Legacy18 until Entry19 playback is enabled.
-FrontEndResult CompileFrontEnd(
-    const ProjectInput& input,
-    PieceTimelineSemantics semantics = PieceTimelineSemantics::Legacy18);
+// deterministic in the input alone.
+FrontEndResult CompileFrontEnd(const ProjectInput& input);
 
 // The explicit-ceiling overload exposes the resolution refusal path to tests;
 // production callers use the deterministic one-argument form above.
 FrontEndResult CompileFrontEnd(const ProjectInput& input,
-                               std::uint32_t resolutionDepthCeiling,
-                               PieceTimelineSemantics semantics = PieceTimelineSemantics::Legacy18);
+                               std::uint32_t resolutionDepthCeiling);
 
 }  // namespace harkenprojectschema
 

@@ -1,7 +1,6 @@
 #include "harken_current_world_compiler/CurrentWorldCompiler.h"
 #include "harken_studio_build/BindingMaterialization.h"
 #include "harken_studio_build/EffectEncoding.h"
-#include "harken_project_schema/NormalizedFacts.h"
 
 #include <harken_studio_build/WorldValidation.h>
 
@@ -285,11 +284,8 @@ CompileResultV1 CompileCurrentWorldV1(
     const harkenstudiobuild::WorldCapacitySummaryV1& capacity,
     const std::vector<TransitionProgramAuthoringV1>& authoredTransitions,
     const std::vector<ActionProgramAuthoringV1>& authoredActions,
-    const harkenbuscompiler::CompiledBusIdSetV1* busIds,
-    std::uint32_t bodyVintage) {
+    const harkenbuscompiler::CompiledBusIdSetV1* busIds) {
     CompileResultV1 result{};
-    if (!harkenstudiobuild::IsReadableCurrentWorldBodyVintage(bodyVintage)) return result;
-    const bool entryScheduling = bodyVintage == harkenstudiobuild::kCurrentWorldBodyVintageV19;
     if (busIds != nullptr
         && (busIds->ids.empty()
             || harkenstudio::IsNull(busIds->ids.front())
@@ -300,7 +296,6 @@ CompileResultV1 CompileCurrentWorldV1(
         return result;
     }
     auto world = std::make_unique<OwningCurrentWorldV1>();
-    world->view_.sourceBodyVintage = bodyVintage;
     world->view_.identity.projectId = project.projectId;
     world->view_.capacity = capacity;
     world->variables_ = variables;
@@ -779,25 +774,6 @@ CompileResultV1 CompileCurrentWorldV1(
             return result;
         }
         OwningCurrentWorldV1::OwnedPieceSchedule row{};
-        if (object.piece.entryMarker && !entryScheduling) {
-            result.status = CompileStatusV1::EntryScheduleCapabilityUnavailable;
-            result.relatedStableId = object.chassis().id;
-            return result;
-        }
-        if (entryScheduling) {
-            const auto bounds = harkenprojectschema::DerivePieceTimelineBounds(
-                project, object.piece);
-            if (!bounds) {
-                result.relatedStableId = object.chassis().id;
-                return result;
-            }
-            row.view.bounds = {bounds->contentStart, bounds->contentEnd,
-                               bounds->nominalStart, bounds->nominalEnd};
-            if (object.piece.entryMarker) {
-                row.view.entryMarker = {object.piece.entryMarker->id,
-                                        object.piece.entryMarker->position};
-            }
-        }
         row.view.rootDefinition = MakeRef(*root);
         row.view.startPointKind =
             static_cast<std::uint32_t>(object.piece.startPoint.kind);
@@ -848,7 +824,7 @@ CompileResultV1 CompileCurrentWorldV1(
         }
         row.Refresh();
         row.view.scheduleSemanticFingerprint =
-            harkenstudiobuild::ComputePieceScheduleFingerprintV1(row.view, bodyVintage);
+            harkenstudiobuild::ComputePieceScheduleFingerprintV1(row.view);
         world->pieceSchedules_.push_back(std::move(row));
     }
     std::sort(world->pieceSchedules_.begin(), world->pieceSchedules_.end(),
@@ -1266,26 +1242,8 @@ CompileResultV1 CompileCurrentWorldV1(
         row.steps.reserve(authored.steps.size());
         for (std::size_t index = 0; index < authored.steps.size(); ++index) {
             const auto& source = authored.steps[index];
-            result.relatedEventIndex = static_cast<std::uint32_t>(index);
-            if (!entryScheduling &&
-                (source.quantizeTiming == harkenstudiobuild::ActionQuantizeTimingV1::EntryMarker ||
-                 source.quantizeTiming == harkenstudiobuild::ActionQuantizeTimingV1::ReferenceExitMarker ||
-                 source.quantizeTiming == harkenstudiobuild::ActionQuantizeTimingV1::TargetNextMarker)) {
-                result.status = CompileStatusV1::EntryScheduleCapabilityUnavailable;
-                result.relatedStableId = authored.actionStableId;
-                return result;
-            }
             if (source.authoredEventIndex != index ||
                 source.target.stableId == harkenstudio::ObjectId{}) {
-                result.status = CompileStatusV1::InvalidActionAuthoring;
-                result.relatedStableId = authored.actionStableId;
-                return result;
-            }
-            if (source.opcode == harkenstudiobuild::ActionOpcodeV1::Stop &&
-                ((source.quantizeTiming == harkenstudiobuild::ActionQuantizeTimingV1::ReferenceExitMarker &&
-                  source.quantizeReference.stableId == harkenstudio::ObjectId{}) ||
-                 (source.quantizeTiming == harkenstudiobuild::ActionQuantizeTimingV1::TargetNextMarker &&
-                  source.quantizeReference.stableId != harkenstudio::ObjectId{}))) {
                 result.status = CompileStatusV1::InvalidActionAuthoring;
                 result.relatedStableId = authored.actionStableId;
                 return result;
@@ -1322,7 +1280,7 @@ CompileResultV1 CompileCurrentWorldV1(
                         !CanonicalActionTime(source.cooldownSeconds, 60.0f,
                                              1000000000.0, &step.cooldown) ||
                         !harkenstudiobuild::ActionQuantizeTimingSupportedV1(
-                            source.opcode, source.quantizeTiming, bodyVintage)) {
+                            source.opcode, source.quantizeTiming)) {
                         result.status = CompileStatusV1::InvalidActionAuthoring;
                         result.relatedStableId = authored.actionStableId;
                         return result;
@@ -1386,7 +1344,7 @@ CompileResultV1 CompileCurrentWorldV1(
                         !CanonicalActionTime(source.cooldownSeconds, 60.0f,
                                              1000000000.0, &step.cooldown) ||
                         !harkenstudiobuild::ActionQuantizeTimingSupportedV1(
-                            source.opcode, source.quantizeTiming, bodyVintage)) {
+                            source.opcode, source.quantizeTiming)) {
                         result.status = CompileStatusV1::InvalidActionAuthoring;
                         result.relatedStableId = authored.actionStableId;
                         return result;
@@ -1458,7 +1416,7 @@ CompileResultV1 CompileCurrentWorldV1(
                     !CanonicalActionTime(source.cooldownSeconds, 60.0f,
                                          1000000000.0, &step.cooldown) ||
                     !harkenstudiobuild::ActionQuantizeTimingSupportedV1(
-                        source.opcode, source.quantizeTiming, bodyVintage)) {
+                        source.opcode, source.quantizeTiming)) {
                     result.status = CompileStatusV1::InvalidActionAuthoring;
                     result.relatedStableId = authored.actionStableId;
                     return result;
@@ -1698,12 +1656,9 @@ CompileResultV1 CompileCurrentWorldV1(
     world->view_.identity.capabilityMask =
         harkenstudiobuild::detail::ComputeCurrentWorldLocalCapabilityMaskV1(world->view_);
     world->view_.identity.runtimeSemanticFingerprint =
-        entryScheduling ? harkenstudiobuild::ComputeCurrentWorldFingerprintV6(world->view_)
-                        : harkenstudiobuild::ComputeCurrentWorldFingerprintV5(world->view_);
+        harkenstudiobuild::ComputeCurrentWorldFingerprintV5(world->view_);
     const harkenstudiobuild::WorldInstallStatus validation =
-        entryScheduling
-            ? harkenstudiobuild::detail::ValidateCurrentWorldReadableV1(world->view_)
-            : harkenstudiobuild::ValidateCurrentWorldV1(world->view_);
+        harkenstudiobuild::ValidateCurrentWorldV1(world->view_);
     if (validation == harkenstudiobuild::WorldInstallStatus::Capacity) {
         result.status = CompileStatusV1::Capacity;
         return result;
@@ -1722,7 +1677,6 @@ CompileResultV1 CompileCurrentWorldV1(
         return result;
     }
     result.status = CompileStatusV1::Ok;
-    result.relatedEventIndex = UINT32_MAX;
     result.world = std::move(world);
     return result;
 }

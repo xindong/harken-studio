@@ -193,12 +193,9 @@ struct IrPiece {
     StableId pieceId = kUnmintedStableId;
     AuthoringGuid guid{};
     PieceTimeSpec timeSpec;
-    PieceTimelineSemantics timelineSemantics = PieceTimelineSemantics::Legacy18;
     StartPointKind startKind = StartPointKind::Entry;
     std::int64_t startCoordinate = 0;
     MarkerId startMarkerId = kReservedMarkerId;
-    std::optional<EntryMarker> entryMarker;
-    PieceTimelineBounds bounds{};
     std::vector<IrMarker> markers;
     std::vector<StableId> tracks;
 };

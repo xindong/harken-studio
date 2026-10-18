@@ -159,15 +159,6 @@ std::uint64_t ComputeProgramSemanticFingerprint(const PieceIR& ir) {
         h.U64(static_cast<std::uint32_t>(piece.startKind));
         h.I64(piece.startCoordinate);
         h.U64(piece.startMarkerId);
-        if (piece.timelineSemantics == PieceTimelineSemantics::Entry19) {
-            h.U64(UINT64_C(0x454e5452593139));
-            h.U64(piece.entryMarker ? 1u : 0u);
-            if (piece.entryMarker) h.I64(piece.entryMarker->position);
-            h.I64(piece.bounds.contentStart);
-            h.I64(piece.bounds.contentEnd);
-            h.I64(piece.bounds.nominalStart);
-            h.I64(piece.bounds.nominalEnd);
-        }
         h.U64(piece.markers.size());
         for (const IrMarker& marker : piece.markers) {
             h.Guid(marker.guid);

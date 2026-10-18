@@ -41,6 +41,34 @@ namespace harkenhost {
 
 namespace {
 
+class VariableOutcomeQueue {
+public:
+    explicit VariableOutcomeQueue(std::size_t capacity) : records_(capacity) {}
+    static void Capture(void* context, const harken::VariableOutcomeRecord& record) noexcept {
+        auto& queue = *static_cast<VariableOutcomeQueue*>(context);
+        if (queue.count_ == queue.records_.size()) {
+            queue.overflowed_ = true;
+            return;
+        }
+        queue.records_[(queue.begin_ + queue.count_) % queue.records_.size()] = record;
+        ++queue.count_;
+    }
+    bool Pop(harken::VariableOutcomeRecord* record) noexcept {
+        if (count_ == 0) return false;
+        *record = records_[begin_];
+        begin_ = (begin_ + 1u) % records_.size();
+        --count_;
+        return true;
+    }
+    bool Empty() const noexcept { return count_ == 0; }
+    bool Overflowed() const noexcept { return overflowed_; }
+private:
+    std::vector<harken::VariableOutcomeRecord> records_;
+    std::size_t begin_ = 0;
+    std::size_t count_ = 0;
+    bool overflowed_ = false;
+};
+
 // Bounds-checked little-endian cursor over the loaded journal bytes. Any
 // out-of-bounds read latches `failed`; callers check it once per record.
 struct ByteReader {
@@ -3403,6 +3431,9 @@ int RunTraceReplay(int argc, char** argv) {
     };
     RecordedPreparedTopology recordedPreparedTopology;
     LogicTicketMap logicTickets;
+    VariableOutcomeQueue variableOutcomes(engine->variables.RevisionStorageCapacity());
+    engine->variableOutcomeSinkContext = &variableOutcomes;
+    engine->variableOutcomeSink = &VariableOutcomeQueue::Capture;
     bool cleanEnd = false;
     bool warnedCallbackContext = false;
     bool haveOrdinal = false;
@@ -3415,6 +3446,7 @@ int RunTraceReplay(int argc, char** argv) {
     // mistake diagnostic coverage for ordinary deterministic replay.
     bool limitedCallbackContext = false;
     bool limitedHistoricalCurrentWorld = false;
+    bool sessionTerminated = false;
     int exitCode = 0;
 
     while (!r.failed && r.offset < r.size && exitCode == 0) {
@@ -3453,6 +3485,29 @@ int RunTraceReplay(int argc, char** argv) {
                 stderr,
                 "error: prepared topology plan was not immediately followed by "
                 "its paired CurrentWorld install\n");
+            exitCode = 1;
+            break;
+        }
+        const bool variableBoundary =
+            recordType == harken::kTraceRecordApiCall ||
+            recordType == harken::kTraceRecordUpdateBegin ||
+            recordType == harken::kTraceRecordUpdateEnd ||
+            recordType == harken::kTraceRecordCurrentWorldInstall ||
+            recordType == harken::kTraceRecordPreparedTopologyPlan ||
+            recordType == harken::kTraceRecordSessionTerminate ||
+            recordType == harken::kTraceRecordEnd ||
+            (recordType >= harken::kTraceRecordMeterProbeInstall &&
+             recordType <= harken::kTraceRecordMeterProbeBindingDetach);
+        if (variableBoundary && !variableOutcomes.Empty() &&
+            !limitedCallbackContext &&
+            (flags & harken::kTraceFlagCallbackContext) == 0) {
+            std::fprintf(stderr, "error: missing variable outcome before the next operation\n");
+            exitCode = 1;
+            break;
+        }
+        if (sessionTerminated && recordType != harken::kTraceRecordVariableOutcome &&
+            recordType != harken::kTraceRecordBlockBarrier && recordType != harken::kTraceRecordEnd) {
+            std::fprintf(stderr, "error: operation follows session termination\n");
             exitCode = 1;
             break;
         }
@@ -4028,13 +4083,7 @@ int RunTraceReplay(int argc, char** argv) {
             const std::uint32_t scope = rec.U32();
             const std::uint32_t emitterGeneration = rec.U32();
             harken::VariableOutcomeRecord replayed{};
-            bool haveReplayed = engine->variables.PopOutcome(&replayed);
-            if (!haveReplayed &&
-                outcome == static_cast<std::uint32_t>(
-                               harken::VariableOutcomeKind::Session)) {
-                engine->variables.TerminateSession();
-                haveReplayed = engine->variables.PopOutcome(&replayed);
-            }
+            const bool haveReplayed = variableOutcomes.Pop(&replayed);
             if (rec.failed || rec.Remaining() != 0 || outcome < 1 ||
                 outcome > VN_VARIABLE_OUTCOME_REJECTED_TARGET || scope > 1 ||
                 !haveReplayed ||
@@ -4200,6 +4249,15 @@ int RunTraceReplay(int argc, char** argv) {
             (void)harken::DrainProjectGenerationInstallAcksV1(*engine);
             break;
         }
+        case harken::kTraceRecordSessionTerminate:
+            if (payloadBytes != 0 || flags != 0) {
+                std::fprintf(stderr, "error: invalid session termination record\n");
+                exitCode = 1;
+                break;
+            }
+            sessionTerminated = true;
+            engine->variables.TerminateSession();
+            break;
         case harken::kTraceRecordEnd:
             if (recordedPreparedTopology.valid) {
                 std::fprintf(
@@ -4231,6 +4289,11 @@ int RunTraceReplay(int argc, char** argv) {
             exitCode = 1;
             break;
         }
+        engine->CompleteVariableOperation();
+        if (variableOutcomes.Overflowed()) {
+            std::fprintf(stderr, "error: variable outcome operation exceeded its bounded capacity\n");
+            exitCode = 1;
+        }
         if (exitCode != 0) {
             std::fprintf(stderr, "error: replay failed at record type %u, offset %zu\n",
                          static_cast<unsigned>(recordType), r.offset);
@@ -4245,6 +4308,11 @@ int RunTraceReplay(int argc, char** argv) {
             }
             break;
         }
+    }
+
+    if (exitCode == 0 && !variableOutcomes.Empty() && !limitedCallbackContext) {
+        std::fprintf(stderr, "error: missing variable outcome at end of journal\n");
+        exitCode = 1;
     }
 
     const char* completion = "complete";
@@ -4268,6 +4336,8 @@ int RunTraceReplay(int argc, char** argv) {
 
     const std::uint64_t replayCaptureTruncationCount =
         engine->captureTruncationCount;
+    engine->variableOutcomeSink = nullptr;
+    engine->variableOutcomeSinkContext = nullptr;
     Vn_Term();
 
     if (capture.toFile) {

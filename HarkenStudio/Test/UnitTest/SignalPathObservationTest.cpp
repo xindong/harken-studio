@@ -423,6 +423,22 @@ TEST_F(SignalPathObservationTest, EditingSharedObjectNodeCommitsOneUndoForAllUse
     auto* editor = editorFor(canvas, s1);
     ASSERT_NE(editor, nullptr);
     ASSERT_EQ(count(canvas.activeSignalPathSource()->graph(), s1), 1u);
+    auto* label = editor->findChild<QLabel*>(QStringLiteral("nodeValue_volume"));
+    ASSERT_NE(label, nullptr);
+    const auto originalText = label->text();
+    const auto expectVolume = [&](double expected, const QString& text) {
+        auto* current = editorFor(canvas, s1);
+        ASSERT_NE(current, nullptr);
+        auto* currentBinding = current->binding(NodeContentField::Volume);
+        ASSERT_NE(currentBinding, nullptr);
+        EXPECT_DOUBLE_EQ(currentBinding->value(), expected);
+        EXPECT_FALSE(currentBinding->isEditing());
+        auto* currentLabel = current->findChild<QLabel*>(QStringLiteral("nodeValue_volume"));
+        ASSERT_NE(currentLabel, nullptr);
+        EXPECT_EQ(currentLabel->text(), text);
+        EXPECT_DOUBLE_EQ(value(s1, "volume"), expected);
+        EXPECT_DOUBLE_EQ(value(s1, "volume", HarkenTest::PlatformIds::Android), 0.0);
+    };
     auto* binding = editor->binding(NodeContentField::Volume);
     binding->beginEdit();
     binding->previewEdit(-6.5);
@@ -432,22 +448,33 @@ TEST_F(SignalPathObservationTest, EditingSharedObjectNodeCommitsOneUndoForAllUse
     EXPECT_DOUBLE_EQ(value(s1, "volume"), -6.5);
     EXPECT_DOUBLE_EQ(value(s1, "volume", HarkenTest::PlatformIds::Android), 0.0);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
+    const auto committedText = label->text();
+    EXPECT_NE(committedText, originalText);
     binding->commitEdit();
     drainEvents();
+    expectVolume(-6.5, committedText);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
     ASSERT_TRUE(UndoRedoManager::instance().undo());
     drainEvents();
-    EXPECT_DOUBLE_EQ(value(s1, "volume"), 0.0);
+    expectVolume(0.0, originalText);
     ASSERT_TRUE(UndoRedoManager::instance().redo());
     drainEvents();
+    expectVolume(-6.5, committedText);
     binding = editorFor(canvas, s1)->binding(NodeContentField::Volume);
     binding->beginEdit();
     binding->previewEdit(-12.0);
+    drainEvents();
+    EXPECT_TRUE(binding->isEditing());
+    EXPECT_DOUBLE_EQ(value(s1, "volume"), -12.0);
+    EXPECT_DOUBLE_EQ(editorFor(canvas, s1)->binding(NodeContentField::Volume)->value(), -12.0);
+    auto* previewLabel = editorFor(canvas, s1)->findChild<QLabel*>(QStringLiteral("nodeValue_volume"));
+    ASSERT_NE(previewLabel, nullptr);
+    EXPECT_NE(previewLabel->text(), committedText);
     binding->cancelEdit();
     drainEvents();
-    EXPECT_DOUBLE_EQ(value(s1, "volume"), -6.5);
-    EXPECT_DOUBLE_EQ(editorFor(canvas, s1)->binding(NodeContentField::Volume)->value(), -6.5);
+    expectVolume(-6.5, committedText);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->index(), 1);
 }
 
 TEST_F(SignalPathObservationTest, PitchIsIntegralAndOffsetPreviewsCommitAndUndo)

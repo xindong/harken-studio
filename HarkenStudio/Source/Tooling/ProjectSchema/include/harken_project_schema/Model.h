@@ -22,7 +22,6 @@
 #include <bit>
 #include <cstdint>
 #include <limits>
-#include <optional>
 #include <vector>
 
 namespace harkenprojectschema {
@@ -470,33 +469,15 @@ struct TrackDef {
     std::vector<Clip> clips;
 };
 
-struct EntryMarker {
-    StableId id = kUnmintedStableId;
-    AuthoringGuid guid{};
-    std::int64_t position = 0;
-};
-
-enum class PieceTimelineSemantics : std::uint32_t {
-    Legacy18 = 18,
-    Entry19 = 19,
-};
-
-struct PieceTimelineBounds {
-    std::int64_t contentStart = 0;
-    std::int64_t contentEnd = 0;
-    std::int64_t nominalStart = 0;
-    std::int64_t nominalEnd = 0;
-
-    bool operator==(const PieceTimelineBounds&) const = default;
-};
-
+// A Piece: owns Tracks only, and defines the shared time coordinate its Tracks
+// live in. It carries its time spec, its start point (entry sentinel or a
+// non-zero marker), its marker table (custom and exit markers only) and its track table.
 struct PieceDef {
     Chassis chassis;
     std::vector<StableId> tracks;  // owned Tracks; the structural children of a Piece
     PieceTimeSpec timeSpec;
     StartPoint startPoint;
     std::vector<Marker> markers;
-    std::optional<EntryMarker> entryMarker;
 };
 
 // A resolved content object, tagged by kind. Consumers switch on kind and read

@@ -3176,12 +3176,19 @@ TEST(AudioEnginePreview,
     ASSERT_NE(runtime, nullptr);
     const harkenstudio::ObjectId variableId = fixture.step->runtimeId();
     ASSERT_NE(variableId, harkentest::StudioObjectId(0u));
-    std::uint32_t accepted = 0;
-    for (; accepted < runtime->variables.HistoryCapacity(); ++accepted) {
-        const float value = (accepted & 1u) == 0 ? 1.0f : 2.0f;
-        ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ToRuntime(variableId), value));
+    const auto observation = harken::ObserveVariableCallAt(
+        runtime->variables.CurrentWorldGeneration(),
+        runtime->variables.CurrentTransportEpoch(), runtime->config.blockFrames,
+        runtime->timelinePool.WindowStartFrame(),
+        runtime->timelinePool.PublishCutoffFrame());
+    std::vector<harken::PreparedVariableWriteToken> pendingWrites(
+        runtime->variables.PendingCapacity());
+    for (auto& write : pendingWrites) {
+        ASSERT_EQ(VN_OK, runtime->variables.PrepareGlobalWrite(
+            harkentest::ToRuntime(variableId), 1.0f, observation, 0, &write).result);
     }
-    EXPECT_EQ(VN_VARIABLE_TRANSACTION_EXHAUSTED, Vn_SetValue(harkentest::ToRuntime(variableId), 1.0f));
+    ASSERT_EQ(VN_VARIABLE_TRANSACTION_EXHAUSTED,
+              Vn_SetValue(harkentest::ToRuntime(variableId), 1.0f));
 
     ASSERT_TRUE(projects.variableRehearsal().setOverride(
         fixture.step->guid, 2.0f));
@@ -3191,6 +3198,8 @@ TEST(AudioEnginePreview,
     EXPECT_FALSE(audition.getAudition(playingId).revisionPending);
     EXPECT_NE(audition.lastPlayReason(), QStringLiteral("rehearsal"));
     EXPECT_NE(audition.lastPlayReason(), QStringLiteral("occupancy"));
+    for (auto& write : pendingWrites)
+        runtime->variables.CancelPreparedWrite(&write);
     for (int attempt = 0;
          attempt < 16
          && audition.getAudition(playingId).playbackHandle == 0; ++attempt) {
@@ -5787,12 +5796,19 @@ TEST(AudioEnginePreview, RehearsalFailureIsNotOccupancyAndAppearsInIpcError)
     ASSERT_NE(runtime, nullptr);
     const harkenstudio::ObjectId variableId = fixture.step->runtimeId();
     ASSERT_NE(variableId, harkentest::StudioObjectId(0u));
-    std::uint32_t accepted = 0;
-    for (; accepted < runtime->variables.HistoryCapacity(); ++accepted) {
-        const float value = (accepted & 1u) == 0 ? 1.0f : 2.0f;
-        ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ToRuntime(variableId), value));
+    const auto observation = harken::ObserveVariableCallAt(
+        runtime->variables.CurrentWorldGeneration(),
+        runtime->variables.CurrentTransportEpoch(), runtime->config.blockFrames,
+        runtime->timelinePool.WindowStartFrame(),
+        runtime->timelinePool.PublishCutoffFrame());
+    std::vector<harken::PreparedVariableWriteToken> pendingWrites(
+        runtime->variables.PendingCapacity());
+    for (auto& write : pendingWrites) {
+        ASSERT_EQ(VN_OK, runtime->variables.PrepareGlobalWrite(
+            harkentest::ToRuntime(variableId), 1.0f, observation, 0, &write).result);
     }
-    EXPECT_EQ(VN_VARIABLE_TRANSACTION_EXHAUSTED, Vn_SetValue(harkentest::ToRuntime(variableId), 1.0f));
+    ASSERT_EQ(VN_VARIABLE_TRANSACTION_EXHAUSTED,
+              Vn_SetValue(harkentest::ToRuntime(variableId), 1.0f));
     ASSERT_TRUE(projects.variableRehearsal().setOverride(
         fixture.step->guid, 2.0f));
 
@@ -5812,6 +5828,8 @@ TEST(AudioEnginePreview, RehearsalFailureIsNotOccupancyAndAppearsInIpcError)
     const uint32_t ipcPlayingId =
         static_cast<uint32_t>(played.data.value(QStringLiteral("auditionID")).toInt());
     ASSERT_NE(ipcPlayingId, 0u);
+    for (auto& write : pendingWrites)
+        runtime->variables.CancelPreparedWrite(&write);
     for (int attempt = 0;
          attempt < 16
          && audition.getAudition(ipcPlayingId).playbackHandle == 0; ++attempt) {

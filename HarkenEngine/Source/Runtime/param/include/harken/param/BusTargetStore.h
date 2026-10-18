@@ -198,6 +198,9 @@ public:
                                   std::uint32_t busGeneration,
                                   std::uint32_t targetId,
                                   TargetClaimOwner owner) noexcept;
+    bool CanClaim(std::uint32_t busIndex, std::uint32_t busGeneration,
+                  std::uint32_t targetId, TargetClaimOwner owner,
+                  std::uint32_t expectedRevision) const noexcept;
     void ClearCandidateBaseline(std::uint32_t busIndex,
                                 std::uint32_t busGeneration,
                                 std::uint32_t targetId,

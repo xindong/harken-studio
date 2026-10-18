@@ -27,8 +27,10 @@ constexpr std::uint32_t kRate = 48000;
 
 VnConfig AudioConfig(std::uint32_t workers) {
     auto config = harkentest::MakeNullConfig(2, kBlock, kRate);
-    // Stop/audio coverage does not require the default nested Action scratch.
-    config.maxTriggerDepth = 2;
+    // These tests use stop/audio primitives without nested Action dispatch.
+    config.maxTriggerDepth = 1;
+    // Keep each engine isolated without reserving 256 unused Action attempts.
+    config.maxActionFirings = 8;
     config.renderWorkerCount = workers;
     return config;
 }

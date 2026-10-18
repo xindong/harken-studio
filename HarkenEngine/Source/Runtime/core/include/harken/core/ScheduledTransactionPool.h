@@ -1509,6 +1509,8 @@ public:
         std::uint64_t publicationFrontier,
         HeldCurrentSliceToken* out);
     bool CanReleaseHeldCurrentSlice(const HeldCurrentSliceToken& token) const noexcept;
+    ReserveResult PreflightHeldCurrentSlice(const ScheduledCurrentSliceInput& input,
+        PrePublishLatePolicy latePolicy, std::uint64_t publicationFrontier) const noexcept;
     bool ReleaseHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept;
     bool CancelHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept;
     Plan03GroupReserveStatus PreflightPlan03GroupSlices(
@@ -2211,6 +2213,9 @@ private:
     ReserveResult ReserveCurrentSliceImpl(
         const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
         std::uint64_t publicationFrontier, HeldCurrentSliceToken* held);
+    ReserveResult PlanCurrentSlicePlacement(const ScheduledCurrentSliceInput& input,
+        PrePublishLatePolicy latePolicy, std::uint64_t publicationFrontier,
+        bool publicationHeld) const noexcept;
     bool LocateHeldCurrentSlice(const HeldCurrentSliceToken& token,
         std::uint32_t* ring, std::uint32_t* index) const noexcept;
     bool HasHeldCurrentSlices() const noexcept;

@@ -14,9 +14,6 @@ namespace harkenstudiobuild::detail {
 HARKEN_STUDIO_BUILD_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldPartitionLocalV1(
     const ContainerWorldInstallViewV1& world) noexcept;
 
-HARKEN_STUDIO_BUILD_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldReadableV1(
-    const ContainerWorldInstallViewV1& world) noexcept;
-
 HARKEN_STUDIO_BUILD_DETAIL_HIDDEN std::uint64_t ComputeCurrentWorldLocalCapabilityMaskV1(
     const ContainerWorldInstallViewV1& world) noexcept;
 

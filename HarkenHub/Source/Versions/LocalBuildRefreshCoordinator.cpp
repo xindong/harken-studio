@@ -5,6 +5,7 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QPointer>
@@ -164,7 +165,7 @@ void LocalBuildRefreshCoordinator::checkForChanges()
     emit buildsChanged();
     const QPointer<LocalBuildRefreshCoordinator> self(this);
     QThreadPool::globalInstance()->start([self, requests]() {
-        QStringList refreshedPaths;
+        QStringList resetPaths;
         bool changed = false;
         for (const auto& request : requests) {
             if (LocalBuildRegistry::fileFingerprint(
@@ -177,25 +178,35 @@ void LocalBuildRefreshCoordinator::checkForChanges()
                 auto failed = request.record;
                 failed.lastProbeError = error;
                 if (failed.lastProbeError != request.record.lastProbeError
-                    && LocalBuildRegistry::fileFingerprint(failed.executablePath) == request.fingerprint)
-                    changed = LocalBuildRegistry::updateExisting(failed, &error) || changed;
+                    && LocalBuildRegistry::fileFingerprint(failed.executablePath) == request.fingerprint) {
+                    if (LocalBuildRegistry::updateExisting(failed, &error)) {
+                        changed = true;
+                    } else {
+                        qWarning().noquote() << "Cannot save local build self-test failure:"
+                                            << failed.executablePath << error;
+                        resetPaths.append(failed.executablePath);
+                    }
+                }
                 continue;
             }
             if (LocalBuildRegistry::fileFingerprint(
                     request.record.executablePath) != request.fingerprint)
                 continue;
             if (LocalBuildRegistry::updateExisting(refreshed, &error)) {
-                refreshedPaths.append(request.record.executablePath);
                 changed = true;
+            } else {
+                qWarning().noquote() << "Cannot save refreshed local build:"
+                                    << refreshed.executablePath << error;
             }
+            resetPaths.append(request.record.executablePath);
         }
         QMetaObject::invokeMethod(
             QCoreApplication::instance(),
-            [self, refreshedPaths, changed]() {
+            [self, resetPaths, changed]() {
                 if (!self)
                     return;
                 self->refreshing_ = false;
-                for (const QString& path : refreshedPaths) {
+                for (const QString& path : resetPaths) {
                     self->attemptedFingerprints_.remove(path);
                     self->lastAttemptMs_.remove(path);
                 }

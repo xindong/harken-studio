@@ -847,23 +847,28 @@ bool EffectParamTargetStore::TryClaim(
     Scope scope, std::uint64_t objectId, std::uint32_t objectGeneration,
     std::uint32_t slot, std::uint32_t paramIndex, TargetClaimOwner owner,
     std::uint32_t expectedRevision) noexcept {
+    if (!CanClaim(scope, objectId, objectGeneration, slot, paramIndex, owner, expectedRevision)) return false;
     Record* record = FindExact(scope, objectId, objectGeneration, slot,
                                paramIndex, false);
-    if (record == nullptr || !owner.Valid() ||
-        record->revision != expectedRevision ||
-        SlotReserved(scope, objectId, objectGeneration, slot)) {
-        return false;
-    }
     if (record->preparedOwner.Valid()) {
-        if (!owner.Shared() || record->preparedOwner != owner ||
-            record->publicationRefCount == UINT32_MAX) return false;
         ++record->publicationRefCount;
         return true;
     }
-    if (record->publicationRefCount != 0) return false;
     record->preparedOwner = owner;
     record->publicationRefCount = owner.Shared() ? 1u : 0u;
     return true;
+}
+
+bool EffectParamTargetStore::CanClaim(
+    Scope scope, std::uint64_t objectId, std::uint32_t objectGeneration,
+    std::uint32_t slot, std::uint32_t paramIndex, TargetClaimOwner owner,
+    std::uint32_t expectedRevision) const noexcept {
+    const auto* record = FindExact(scope, objectId, objectGeneration, slot, paramIndex, false);
+    if (record == nullptr || !owner.Valid() || record->revision != expectedRevision ||
+        SlotReserved(scope, objectId, objectGeneration, slot)) return false;
+    return record->preparedOwner.Valid()
+        ? owner.Shared() && record->preparedOwner == owner && record->publicationRefCount != UINT32_MAX
+        : record->publicationRefCount == 0;
 }
 
 void EffectParamTargetStore::ReleaseClaim(

@@ -3,6 +3,7 @@
 #include "ActionClosureSemantics.h"
 
 #include <QJsonObject>
+#include <QHash>
 #include <QString>
 #include <vector>
 #include <set>
@@ -47,6 +48,8 @@ struct PackBuildPlan
 
 namespace PackBuildPlanning {
 
+QHash<harkenstudio::ObjectId, QStringList> artifactLanguages(
+    const ProjectData& project, const QStringList& platforms = {});
 PackBuildPlan build(const ProjectData& project,
                     const QStringList& platforms = {},
                     const QStringList& languages = {},

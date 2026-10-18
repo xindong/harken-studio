@@ -1,7 +1,8 @@
 #include "Versions/LocalBuildRegistry.h"
 
-#include "Platform/PlatformPaths.h"
 #include "Packaging/PackageReader.h"
+#include "Platform/AtomicFile.h"
+#include "Platform/PlatformPaths.h"
 #include "Versions/SelfTestRunner.h"
 #include "Versions/StudioCapabilities.h"
 
@@ -14,7 +15,6 @@
 #include <QJsonObject>
 #include <QMutex>
 #include <QMutexLocker>
-#include <QSaveFile>
 
 #include <algorithm>
 
@@ -22,7 +22,7 @@ namespace VNH {
 
 namespace {
 
-QMutex registryMutationMutex;
+QMutex registryMutex;
 
 QString normalizedPath(const QString& path)
 {
@@ -121,11 +121,11 @@ bool LocalBuildRegistry::contains(const QString& executablePath,
         });
 }
 
-std::vector<LocalBuildRecord> LocalBuildRegistry::load(QString* error)
+static std::vector<LocalBuildRecord> loadRecords(QString* error)
 {
     if (error)
         error->clear();
-    QFile file(filePath());
+    QFile file(LocalBuildRegistry::filePath());
     if (!file.exists())
         return {};
     if (!file.open(QIODevice::ReadOnly)) {
@@ -158,16 +158,15 @@ std::vector<LocalBuildRecord> LocalBuildRegistry::load(QString* error)
     return records;
 }
 
+std::vector<LocalBuildRecord> LocalBuildRegistry::load(QString* error)
+{
+    const QMutexLocker lock(&registryMutex);
+    return loadRecords(error);
+}
+
 static bool saveRecords(const std::vector<LocalBuildRecord>& records,
                         QString* error)
 {
-    const QFileInfo target(LocalBuildRegistry::filePath());
-    if (!QDir().mkpath(target.absolutePath())) {
-        if (error)
-            *error = QStringLiteral("Cannot create the Hub data directory");
-        return false;
-    }
-
     QJsonArray entries;
     for (const auto& record : records)
         entries.append(toJson(record));
@@ -175,19 +174,8 @@ static bool saveRecords(const std::vector<LocalBuildRecord>& records,
     root[QStringLiteral("schemaVersion")] = 1;
     root[QStringLiteral("localBuilds")] = entries;
 
-    QSaveFile file(target.absoluteFilePath());
-    if (!file.open(QIODevice::WriteOnly)) {
-        if (error)
-            *error = file.errorString();
-        return false;
-    }
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    if (!file.commit()) {
-        if (error)
-            *error = file.errorString();
-        return false;
-    }
-    return true;
+    return writeAtomicFile(LocalBuildRegistry::filePath(),
+                           QJsonDocument(root).toJson(QJsonDocument::Indented), error);
 }
 
 bool LocalBuildRegistry::probe(const QString& executablePath,
@@ -234,9 +222,9 @@ bool LocalBuildRegistry::probe(const QString& executablePath,
 
 bool LocalBuildRegistry::upsert(const LocalBuildRecord& record, QString* error)
 {
-    const QMutexLocker lock(&registryMutationMutex);
+    const QMutexLocker lock(&registryMutex);
     QString loadError;
-    std::vector<LocalBuildRecord> records = load(&loadError);
+    std::vector<LocalBuildRecord> records = loadRecords(&loadError);
     if (!loadError.isEmpty()) {
         if (error)
             *error = loadError;
@@ -257,9 +245,9 @@ bool LocalBuildRegistry::upsert(const LocalBuildRecord& record, QString* error)
 bool LocalBuildRegistry::updateExisting(const LocalBuildRecord& record,
                                         QString* error)
 {
-    const QMutexLocker lock(&registryMutationMutex);
+    const QMutexLocker lock(&registryMutex);
     QString loadError;
-    std::vector<LocalBuildRecord> records = load(&loadError);
+    std::vector<LocalBuildRecord> records = loadRecords(&loadError);
     if (!loadError.isEmpty()) {
         if (error)
             *error = loadError;
@@ -283,9 +271,9 @@ bool LocalBuildRegistry::requestRecheck(const QString& executablePath,
                                        const QString& expectedFingerprint,
                                        QString* error)
 {
-    const QMutexLocker lock(&registryMutationMutex);
+    const QMutexLocker lock(&registryMutex);
     QString loadError;
-    auto records = load(&loadError);
+    auto records = loadRecords(&loadError);
     if (!loadError.isEmpty()) {
         if (error)
             *error = loadError;
@@ -308,9 +296,9 @@ bool LocalBuildRegistry::requestRecheck(const QString& executablePath,
 
 bool LocalBuildRegistry::remove(const QString& executablePath, QString* error)
 {
-    const QMutexLocker lock(&registryMutationMutex);
+    const QMutexLocker lock(&registryMutex);
     QString loadError;
-    std::vector<LocalBuildRecord> records = load(&loadError);
+    std::vector<LocalBuildRecord> records = loadRecords(&loadError);
     if (!loadError.isEmpty()) {
         if (error)
             *error = loadError;
