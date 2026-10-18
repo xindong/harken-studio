@@ -106,6 +106,7 @@ set(HARKEN_HUB_SOURCES
     Source/Update/ServerEndpoints.cpp
     Source/Update/ServerVersionCatalog.cpp
     Source/Update/UpdateChecker.cpp
+    Source/Update/UpdateFile.cpp
     Source/Update/UpdateStateStore.cpp
     Source/Update/UpdateCoordinator.cpp
     Source/Update/UpdateNotifier.cpp

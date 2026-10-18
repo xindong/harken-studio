@@ -8,6 +8,7 @@
 #include "Transactions/TransactionJournal.h"
 #include "Update/BridgeDispatcher.h"
 #include "Update/ServerEndpoints.h"
+#include "Update/UpdateFile.h"
 #include "Update/UpdateQueue.h"
 
 #include <QDateTime>
@@ -16,7 +17,6 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
-#include <QSaveFile>
 #include <QStorageInfo>
 
 namespace VNH {
@@ -258,10 +258,7 @@ void UpdateCoordinator::handleCheckResult(const UpdateCheckResult& result,
     const QString envelopePath = options_.downloadDir + QStringLiteral("/") +
                                  manifest.buildId +
                                  QStringLiteral(".manifest");
-    QSaveFile envelopeFile(envelopePath);
-    if (!envelopeFile.open(QIODevice::WriteOnly) ||
-        envelopeFile.write(result.envelope) != result.envelope.size() ||
-        !envelopeFile.commit()) {
+    if (!writeUpdateFile(envelopePath, result.envelope)) {
         UpdateStateRecord record;
         record.state = QStringLiteral("DownloadFailed");
         record.version = manifest.version;

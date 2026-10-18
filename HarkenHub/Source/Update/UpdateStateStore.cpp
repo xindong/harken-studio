@@ -1,15 +1,12 @@
 #include "Update/UpdateStateStore.h"
 
 #include "Platform/PlatformPaths.h"
+#include "Update/UpdateFile.h"
 
-#include <QDir>
-#include <QDebug>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QSaveFile>
-#include <QThread>
 
 namespace VNH {
 
@@ -26,33 +23,8 @@ QJsonObject loadRoot()
 
 bool saveRoot(const QJsonObject& root)
 {
-    const QString path = UpdateStateStore::filePath();
-    if (!QDir().mkpath(QFileInfo(path).dir().path())) {
-        qWarning().noquote() << "Cannot create update state directory:" << path;
-        return false;
-    }
-    const QByteArray json = QJsonDocument(root).toJson(QJsonDocument::Indented);
-    for (int attempt = 0; ; ++attempt) {
-        QSaveFile file(path);
-        if (!file.open(QIODevice::WriteOnly) || file.write(json) != json.size()) {
-            qWarning().noquote() << "Cannot write update state:" << path
-                                << file.error() << file.errorString();
-            return false;
-        }
-        if (file.commit())
-            return true;
-#if defined(Q_OS_WIN)
-        if (file.error() == QFileDevice::RenameError && attempt < 4) {
-            qWarning().noquote() << "Retrying update state commit:" << path
-                                << file.error() << file.errorString();
-            QThread::msleep(10u << attempt);
-            continue;
-        }
-#endif
-        qWarning().noquote() << "Cannot commit update state:" << path
-                            << file.error() << file.errorString();
-        return false;
-    }
+    return writeUpdateFile(UpdateStateStore::filePath(),
+                           QJsonDocument(root).toJson(QJsonDocument::Indented));
 }
 
 }
