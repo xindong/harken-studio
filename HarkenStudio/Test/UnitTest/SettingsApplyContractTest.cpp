@@ -12,6 +12,8 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
+#include <QHeaderView>
+#include <QImage>
 #include <QKeySequenceEdit>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -139,6 +141,13 @@ TEST_F(SettingsApplyContractTest, ShortcutsCaptureSurvivesResizeAndSearchCancels
     ASSERT_NE(item, nullptr);
     tree->scrollToItem(item);
     QApplication::processEvents();
+    const QRect command = tree->visualRect(tree->indexFromItem(item));
+    EXPECT_EQ(command.left(), tree->header()->sectionViewportPosition(0));
+    EXPECT_EQ(command.width(), tree->header()->sectionSize(0));
+    const QImage image = tree->viewport()->grab().toImage();
+    QImage border(image.width(), 1, image.format());
+    border.fill(ThemeManager::instance().colors().borderPrimary);
+    EXPECT_EQ(image.copy(0, command.bottom(), image.width(), 1), border);
     const auto openCapture = [&] {
         const QPoint point = tree->visualRect(tree->indexFromItem(item, 1)).center();
         for (const auto type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease,

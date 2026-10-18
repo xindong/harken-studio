@@ -49,7 +49,8 @@ namespace PackBuildPlanning {
 
 PackBuildPlan build(const ProjectData& project,
                     const QStringList& platforms = {},
-                    const QStringList& languages = {});
+                    const QStringList& languages = {},
+                    bool includeUnchecked = false);
 PackBuildPlan buildForAction(const ProjectData& project,
                             harkenstudio::ObjectId actionStableId,
                             const QStringList& platforms = {},

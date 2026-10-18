@@ -12,10 +12,9 @@
 
 namespace harken {
 
-inline constexpr std::uint32_t kVariableSliceRowHardLimit = 65536;
+inline constexpr std::uint32_t kVariableSliceRowHardLimit = UINT32_MAX;
 inline constexpr std::uint32_t kVariableSliceTargetHardLimit = 4096;
 inline constexpr std::uint32_t kVariableSliceTargetPoolHardLimit = 65536;
-inline constexpr std::uint32_t kVariableSliceSourceHardLimit = 256;
 inline constexpr std::uint32_t kVariableSliceSourceRejected = 1u << 30;
 inline constexpr std::uint32_t kVariableSliceTargetRejected = 1u << 29;
 
@@ -126,7 +125,8 @@ public:
     VariableSliceTable() = default;
 
     bool Reset(std::uint32_t capacity, std::uint32_t maxTargetsPerSlice,
-               std::uint32_t targetPoolCapacity);
+               std::uint32_t targetPoolCapacity,
+               std::uint32_t payloadCapacity = 0);
     bool Reserve(std::uint64_t world, std::uint64_t transport,
                  std::uint64_t ticket, std::uint64_t effectiveFrame,
                  std::uint64_t bankOrdinal, std::uint32_t exactTargetCount,
@@ -138,6 +138,7 @@ public:
     bool SourceApplied(const VariableSliceSource& source) const noexcept;
     bool AddSource(VariableSliceRef ref, const VariableSliceSource& source) noexcept;
     const VariableSliceSource* Source(VariableSliceRef ref, std::uint32_t index) const noexcept;
+    const VariableSliceSource* NextSource(VariableSliceRef ref, std::uint32_t* cursor) const noexcept;
     bool ClearPreparedSources(VariableSliceRef ref) noexcept;
     bool SetPreparedEffectiveFrame(VariableSliceRef ref, std::uint64_t frame) noexcept;
     bool SetPreparedCommandFrontier(VariableSliceRef ref, std::uint64_t frontier) noexcept;
@@ -165,6 +166,7 @@ public:
                                       std::uint32_t index) const noexcept;
     bool Reclaim(VariableSliceRef ref,
                  std::uint64_t observedBlockSequence) noexcept;
+    bool Acknowledge(VariableSliceRef ref) noexcept;
     bool AbandonPrepared(VariableSliceRef ref) noexcept;
     void ReclaimSettled(std::uint64_t observedBlockSequence) noexcept;
     bool HasUnreclaimedWorldRows(std::uint64_t world) const noexcept;
@@ -178,6 +180,10 @@ public:
     }
     std::uint32_t FreeTargetCapacity() const noexcept;
     std::uint32_t FreeRowCount() const noexcept;
+    std::uint32_t PayloadCapacity() const noexcept { return payloadCapacity_; }
+    std::uint32_t FreePayloadCount() const noexcept {
+        return static_cast<std::uint32_t>(freePayloads_.size());
+    }
     std::size_t FreeRangeCount() const noexcept { return freeRanges_.size(); }
     bool SetFreeRowGenerationForTest(std::uint32_t slot,
                                      std::uint32_t generation) noexcept;
@@ -192,19 +198,21 @@ private:
     struct Row {
         std::atomic<VariableSliceState> state{VariableSliceState::Free};
         std::atomic<std::uint64_t> identity{0};
-        std::uint64_t world = 0;
-        std::uint64_t transport = 0;
-        std::uint64_t ticket = 0;
+        VariableSliceSource source{};
         std::uint64_t effectiveFrame = 0;
-        std::uint64_t bankOrdinal = 0;
         std::uint64_t requiredCommandFrontier = 0;
+        std::uint32_t payload = UINT32_MAX;
+        std::uint32_t sourceObservers = 0;
+        bool logicAcknowledged = false;
+        std::atomic<std::uint64_t> appliedBlockSequence{0};
+        std::atomic<std::uint32_t> pendingInvalidationReasons{0};
+    };
+
+    struct Payload {
         std::uint32_t targetSpanOffset = 0;
         std::uint32_t targetSpanCapacity = 0;
         std::uint32_t targetCount = 0;
         std::uint32_t sourceCount = 0;
-        std::uint32_t sourceObservers = 0;
-        std::atomic<std::uint64_t> appliedBlockSequence{0};
-        std::atomic<std::uint32_t> pendingInvalidationReasons{0};
     };
 
     struct FreeRange {
@@ -216,15 +224,22 @@ private:
     const Row* Resolve(VariableSliceRef ref) const noexcept;
     bool ReleaseSpan(std::uint32_t offset, std::uint32_t count) noexcept;
     bool RecycleRow(Row& row, VariableSliceRef ref) noexcept;
+    bool ReleasePayload(Row& row, VariableSliceRef ref) noexcept;
+    Payload* ResolvePayload(Row* row) noexcept;
+    const Payload* ResolvePayload(const Row* row) const noexcept;
     bool SourceIdentityMatches(const Row& row, const VariableSliceSource& source) const noexcept;
 
     std::uint32_t capacity_ = 0;
     std::uint32_t maxTargetsPerSlice_ = 0;
     std::uint32_t targetPoolCapacity_ = 0;
     std::unique_ptr<Row[]> rows_;
+    std::vector<Payload> payloads_;
+    std::vector<std::uint32_t> freeRows_;
+    std::vector<std::uint32_t> freePayloads_;
     std::vector<VariableSliceTarget> targets_;
-    std::vector<VariableSliceSource> sources_;
-    std::uint32_t maxSourcesPerSlice_ = 0;
+    std::vector<std::uint64_t> sourceBits_;
+    std::uint32_t sourceWords_ = 0;
+    std::uint32_t payloadCapacity_ = 0;
     std::vector<FreeRange> freeRanges_;
     std::atomic<AfterAudioClaimHookForTest> afterAudioClaimHookForTest_{
         nullptr};

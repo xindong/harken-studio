@@ -137,7 +137,7 @@ TEST_F(AIUnrestrictedModeTest, UnrestrictedTurnOffersGenericToolsAndCommandVocab
     EXPECT_FALSE(prompt.contains(QStringLiteral("a VCA is")));
     EXPECT_TRUE(prompt.contains(QStringLiteral("COMMAND MAP")));
     EXPECT_TRUE(prompt.contains(QStringLiteral(
-        "pack metadata: create_pack_group")));
+        "pack metadata: set_action_pack_targeting")));
     EXPECT_TRUE(prompt.contains(QStringLiteral(
         "container (content selection and children")));
     EXPECT_TRUE(prompt.contains(QStringLiteral(

@@ -8,6 +8,7 @@
 #include "FieldGroupProjectAdapter.h"
 #include "ItemTypeCatalog.h"
 #include "ProjectTypes.h"
+#include "ProjectLanguageSemantics.h"
 #include "PackBuildPlan.h"
 #include "SoundSourceDerivative.h"
 #include "SoundSourceEditing.h"
@@ -189,17 +190,6 @@ static QString actionClosureExportError(const ActionClosurePlan& closure,
                     && candidate.code == ActionClosureDiagnosticCode::ExcludedDependency);
         });
     return issue == closure.diagnostics.end() ? QString() : issue->message;
-}
-
-// Persistent publish targeting for ungrouped Actions: no entry means the
-// Action ships to every platform.
-static bool actionTargetsPlatform(const ProjectData& project,
-                                  harkenstudio::ObjectId stableId, const QString& platform)
-{
-    for (const ActionPackTargeting& entry : project.actionPackTargeting)
-        if (entry.stableId == stableId)
-            return entry.includesPlatform(platform);
-    return true;
 }
 
 namespace {
@@ -440,104 +430,72 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
     for (const ProjectItem* evt : allActions)
         actionsByStableId.emplace(actionIdentity(evt), evt);
 
-    std::unordered_map<harkenstudio::ObjectId, const PackGroup*> groupByAction;
-    for (const PackGroup& group : project.packGroups)
-    {
-        for (harkenstudio::ObjectId memberId : group.actionIds)
-        {
-            auto it = actionsByStableId.find(memberId);
-            if (it == actionsByStableId.end())
-            {
-                result.warnings.append(
-                    QStringLiteral("Pack group '%1' member %2 does not resolve to an "
-                                   "Action; skipped.")
-                        .arg(group.name)
-                        .arg(VNX::objectIdString(memberId)));
-                continue;
-            }
-            groupByAction.emplace(memberId, &group);
-        }
-    }
-
-    for (const auto& [stableId, group] : groupByAction) {
-        const auto targeting = std::find_if(
-            project.actionPackTargeting.begin(), project.actionPackTargeting.end(),
-            [stableId](const ActionPackTargeting& entry) {
-                return entry.stableId == stableId;
-            });
-        if (targeting != project.actionPackTargeting.end()
-            && targeting->includesPlatform(effectiveOpts.platform)
-                != group->includesPlatform(effectiveOpts.platform)) {
-            result.error = QStringLiteral(
-                "Pack selection conflict for Action %1 on %2: group '%3' and "
-                "Action targeting disagree")
-                               .arg(VNX::objectIdString(stableId))
-                               .arg(effectiveOpts.platform, group->name);
-            return result;
-        }
-    }
-
     QStringList languages;
     if (!effectiveOpts.language.trimmed().isEmpty())
         languages.append(effectiveOpts.language.trimmed());
 
-    const PackBuildPlan buildPlan =
-        PackBuildPlanning::build(project, {effectiveOpts.platform}, languages);
-
-    auto platformSelected = [&](harkenstudio::ObjectId stableId) {
-        const auto group = groupByAction.find(stableId);
-        return actionTargetsPlatform(project, stableId, effectiveOpts.platform)
-            && (group == groupByAction.end()
-                    || group->second->includesPlatform(effectiveOpts.platform));
-    };
-    auto explicitlySelected = [&](const ProjectItem& action) {
-        const harkenstudio::ObjectId stableId = actionIdentity(&action);
-        if (!platformSelected(stableId))
-            return false;
+    PackBuildPlan buildPlan = PackBuildPlanning::build(project, {effectiveOpts.platform}, languages);
+    const auto actionRequested = [&](harkenstudio::ObjectId id, const QString& name) {
         if (!effectiveOpts.onlyActionStableIds.empty())
-            return effectiveOpts.onlyActionStableIds.count(stableId) != 0;
-        if (effectiveOpts.onlyUnits.isEmpty())
-            return true;
-        if (effectiveOpts.onlyUnits.contains(action.name))
-            return true;
-        const auto group = groupByAction.find(stableId);
-        return group != groupByAction.end()
-            && effectiveOpts.onlyUnits.contains(group->second->name);
-    };
-
-    std::set<harkenstudio::ObjectId> buildActionIds;
-    for (const ProjectItem* action : allActions)
-        if (action && explicitlySelected(*action))
-            buildActionIds.insert(actionIdentity(action));
-
-    std::size_t previousActionCount;
-    do {
-        previousActionCount = buildActionIds.size();
-        for (const PackGroup& group : project.packGroups) {
-            if (!std::any_of(group.actionIds.begin(), group.actionIds.end(),
-                             [&](const auto id) { return buildActionIds.count(id) != 0; }))
-                continue;
-            for (const auto id : group.actionIds)
-                if (actionsByStableId.count(id) != 0)
-                    buildActionIds.insert(id);
+            return effectiveOpts.onlyActionStableIds.count(id) != 0;
+        if (!effectiveOpts.onlyUnits.isEmpty())
+            return effectiveOpts.onlyUnits.contains(name);
+        if (!effectiveOpts.onlyPackPaths.isEmpty()) {
+            if (effectiveOpts.onlyPackPaths.contains(name)) return true;
+            for (const auto& language : ProjectLanguageSemantics::buildLanguages(project))
+                if (effectiveOpts.onlyPackPaths.contains(PackBuildPlanning::packFileName(language, name, {})))
+                    return true;
+            return false;
         }
-        for (const PackBuildVariant& variant : buildPlan.variants)
-            if (buildActionIds.count(variant.actionStableId) != 0)
-                buildActionIds.insert(variant.dependencyOrder.begin(), variant.dependencyOrder.end());
-    } while (previousActionCount != buildActionIds.size());
-
-    const auto languageError = std::find_if(
-        buildPlan.diagnostics.begin(), buildPlan.diagnostics.end(),
-        [&](const ActionClosureDiagnostic& diagnostic) {
-            return (diagnostic.code
-                        == ActionClosureDiagnosticCode::LocalizedWithoutLanguages
-                    || diagnostic.code == ActionClosureDiagnosticCode::InvalidBuildLanguage)
-                && buildActionIds.count(diagnostic.actionStableId) != 0;
-        });
-    if (languageError != buildPlan.diagnostics.end()) {
-        result.error = languageError->message;
-        return result;
+        return true;
+    };
+    for (const auto& diagnostic : buildPlan.diagnostics) {
+        if (diagnostic.code != ActionClosureDiagnosticCode::LocalizedWithoutLanguages
+            && diagnostic.code != ActionClosureDiagnosticCode::InvalidBuildLanguage
+            && diagnostic.code != ActionClosureDiagnosticCode::InvalidPackName)
+            continue;
+        const auto action = actionsByStableId.find(diagnostic.actionStableId);
+        if (action != actionsByStableId.end() && actionRequested(action->first, action->second->name)) {
+            result.error = diagnostic.message;
+            return result;
+        }
     }
+
+    using VariantKey = std::pair<harkenstudio::ObjectId, QString>;
+    std::set<VariantKey> selectedVariants;
+    for (const auto& variant : buildPlan.variants) {
+        if (actionRequested(variant.actionStableId, variant.artifactName)
+            && (effectiveOpts.onlyPackPaths.isEmpty() || effectiveOpts.onlyPackPaths.contains(
+                PackBuildPlanning::packFileName(variant.variant.language, variant.artifactName, {}))))
+            selectedVariants.emplace(variant.actionStableId, variant.variant.language);
+    }
+    std::size_t previousCount;
+    do {
+        previousCount = selectedVariants.size();
+        for (const auto& variant : buildPlan.variants) {
+            if (!selectedVariants.count({variant.actionStableId, variant.variant.language})) continue;
+            for (const auto id : variant.dependencyOrder) {
+                const auto dependency = std::find_if(buildPlan.variants.begin(), buildPlan.variants.end(),
+                    [&](const auto& candidate) {
+                        return candidate.actionStableId == id
+                            && (candidate.variant.language.isEmpty()
+                                || candidate.variant.language == variant.variant.language);
+                    });
+                if (dependency != buildPlan.variants.end())
+                    selectedVariants.emplace(id, dependency->variant.language);
+            }
+        }
+    } while (previousCount != selectedVariants.size());
+    buildPlan.variants.erase(std::remove_if(buildPlan.variants.begin(), buildPlan.variants.end(),
+        [&](const auto& variant) {
+            return !selectedVariants.count({variant.actionStableId, variant.variant.language});
+        }), buildPlan.variants.end());
+    buildPlan.units.erase(std::remove_if(buildPlan.units.begin(), buildPlan.units.end(),
+        [&](const auto& unit) {
+            return !selectedVariants.count({unit.actionStableIds.front(), unit.variant.language});
+        }), buildPlan.units.end());
+    std::set<harkenstudio::ObjectId> buildActionIds;
+    for (const auto& variant : buildPlan.variants) buildActionIds.insert(variant.actionStableId);
 
     for (const PackBuildVariant& variant : buildPlan.variants) {
         const auto action = actionsByStableId.find(variant.actionStableId);
@@ -554,7 +512,7 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
                                .arg(action->second->name, cycle->message);
             return result;
         }
-        if (const QString sourceError = actionClosureExportError(variant.closure, false);
+        if (const QString sourceError = actionClosureExportError(variant.closure, true);
             !sourceError.isEmpty()) {
             result.error = QStringLiteral("Action '%1' cannot be exported: %2")
                                .arg(action->second->name, sourceError);
@@ -575,13 +533,6 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
                     "PostAction dependency '%1' for '%2' has no steps")
                                    .arg(dependency->second->name,
                                         action->second->name);
-                return result;
-            }
-            if (!platformSelected(dependencyId)) {
-                result.error = QStringLiteral(
-                    "PostAction dependency '%1' for '%2' is not selected for %3")
-                                   .arg(dependency->second->name, action->second->name,
-                                        effectiveOpts.platform);
                 return result;
             }
             buildActionIds.insert(dependencyId);

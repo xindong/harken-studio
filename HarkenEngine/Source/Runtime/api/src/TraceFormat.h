@@ -30,11 +30,11 @@
 namespace harken {
 
 inline constexpr char kTraceMagic[4] = {'V', 'T', 'R', 'C'};
-// Current writer vintage. The replayer also retains the historical v2 decoder.
+// The replayer accepts only the current writer vintage.
 inline constexpr std::uint32_t kTraceFormatVersionV2 = 2;
 inline constexpr std::uint32_t kTraceFormatVersionV3 = 3;
 inline constexpr std::uint32_t kTraceFormatVersionV4 = 4;
-inline constexpr std::uint32_t kTraceFormatVersion = 6;
+inline constexpr std::uint32_t kTraceFormatVersion = 7;
 
 // Fixed-size header fields ahead of the config image. Serialized field by
 // field (never as a struct overlay — the container-format discipline).
@@ -95,6 +95,7 @@ inline constexpr std::uint16_t kTraceRecordMeterProbeBindingDetach = 12;
 inline constexpr std::uint16_t kTraceRecordVariableOutcome = 13;
 inline constexpr std::uint16_t kTraceRecordProjectGenerationInstallAck = 14;
 inline constexpr std::uint16_t kTraceRecordPreparedTopologyPlan = 15;
+inline constexpr std::uint16_t kTraceRecordSessionTerminate = 16; // empty payload
 inline constexpr std::uint32_t kTracePreparedTopologyPlanVintage = 1;
 // Token U64×4 + publishedBusFingerprint + compileTargetProfileFingerprint +
 // U32 (publicationVintage or admission). The arithmetic is 52, not 60.

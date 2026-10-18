@@ -26,16 +26,25 @@ InstallIndexSnapshot loadIndex()
     }
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        data.error =
-            QStringLiteral("Cannot read the install index: %1").arg(path);
+        data.error = QStringLiteral("Cannot open the install index for reading: %1 (Qt error %2: %3)")
+                         .arg(path).arg(file.error()).arg(file.errorString());
+        return data;
+    }
+    const QByteArray json = file.readAll();
+    if (file.error() != QFileDevice::NoError) {
+        data.error = QStringLiteral("Cannot read the install index: %1 (Qt error %2: %3)")
+                         .arg(path).arg(file.error()).arg(file.errorString());
         return data;
     }
     QJsonParseError parseError;
     const QJsonDocument doc =
-        QJsonDocument::fromJson(file.readAll(), &parseError);
+        QJsonDocument::fromJson(json, &parseError);
     if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        data.error = QStringLiteral("Install index is corrupt: %1")
-                         .arg(parseError.errorString());
+        data.error = QStringLiteral("Install index is corrupt: %1 (offset %2: %3)")
+                         .arg(path).arg(parseError.offset)
+                         .arg(parseError.error != QJsonParseError::NoError
+                                  ? parseError.errorString()
+                                  : QStringLiteral("Expected a JSON object"));
         return data;
     }
     const QJsonObject root = doc.object();
@@ -87,17 +96,25 @@ bool saveIndex(const InstallIndexSnapshot& data, QString* error)
 
     const QString path = InstallIndex::filePath();
     if (!QDir().mkpath(QFileInfo(path).dir().path())) {
-        *error = QStringLiteral("Cannot create the install index directory");
+        *error = QStringLiteral("Cannot create the install index directory: %1")
+                     .arg(QFileInfo(path).dir().path());
         return false;
     }
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
-        *error = QStringLiteral("Cannot open the install index for writing");
+        *error = QStringLiteral("Cannot open the install index for writing: %1 (Qt error %2: %3)")
+                     .arg(path).arg(file.error()).arg(file.errorString());
         return false;
     }
     const QByteArray json = QJsonDocument(root).toJson(QJsonDocument::Indented);
-    if (file.write(json) != json.size() || !file.commit()) {
-        *error = QStringLiteral("Cannot commit the install index");
+    if (file.write(json) != json.size()) {
+        *error = QStringLiteral("Cannot write the install index: %1 (Qt error %2: %3)")
+                     .arg(path).arg(file.error()).arg(file.errorString());
+        return false;
+    }
+    if (!file.commit()) {
+        *error = QStringLiteral("Cannot commit the install index: %1 (Qt error %2: %3)")
+                     .arg(path).arg(file.error()).arg(file.errorString());
         return false;
     }
     return true;

@@ -1,13 +1,12 @@
 #include "Update/UpdateStateStore.h"
 
+#include "Platform/AtomicFile.h"
 #include "Platform/PlatformPaths.h"
 
-#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QSaveFile>
 
 namespace VNH {
 
@@ -24,14 +23,8 @@ QJsonObject loadRoot()
 
 bool saveRoot(const QJsonObject& root)
 {
-    const QString path = UpdateStateStore::filePath();
-    if (!QDir().mkpath(QFileInfo(path).dir().path()))
-        return false;
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly))
-        return false;
-    const QByteArray json = QJsonDocument(root).toJson(QJsonDocument::Indented);
-    return file.write(json) == json.size() && file.commit();
+    return writeAtomicFile(UpdateStateStore::filePath(),
+                           QJsonDocument(root).toJson(QJsonDocument::Indented));
 }
 
 }

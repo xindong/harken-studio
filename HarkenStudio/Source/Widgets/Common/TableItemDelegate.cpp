@@ -1,5 +1,6 @@
 #include "TableItemDelegate.h"
 #include "TableGroupHeader.h"
+#include "ProportionalTreeWidget.h"
 
 #include "Core/ThemeManager.h"
 #include "Core/QtControlSkin.h"
@@ -26,15 +27,16 @@ QWidget* TableItemDelegate::createEditor(QWidget* parent, const QStyleOptionView
 }
 
 void TableItemDelegate::updateEditorGeometry(QWidget* editor, const QStyleOptionViewItem& option,
-                                             const QModelIndex&) const
+                                             const QModelIndex& index) const
 {
     if (option.widget && option.widget->property("compositeTable").toBool()) {
         editor->setGeometry(option.rect);
         return;
     }
     const auto& metrics = themeManager_->metrics().table;
-    QRect rect = option.rect.adjusted(metrics.cellPaddingX, metrics.cellPaddingY,
-                                     -metrics.cellPaddingX, -metrics.cellPaddingY);
+    const auto* tree = qobject_cast<const ProportionalTreeWidget*>(option.widget);
+    QRect rect = tree ? tree->cellContentsRect(option.rect, index) : option.rect;
+    rect.adjust(metrics.cellPaddingX, metrics.cellPaddingY, -metrics.cellPaddingX, -metrics.cellPaddingY);
     rect.setWidth(std::max(0, rect.width()));
     rect.setHeight(std::max(0, rect.height()));
     const int height = std::min(rect.height(), QtControlSkin(themeManager_->snapshot()).fieldHeight());
@@ -60,6 +62,8 @@ QSize TableItemDelegate::sizeHint(const QStyleOptionViewItem& option, const QMod
 void TableItemDelegate::initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const
 {
     QStyledItemDelegate::initStyleOption(option, index);
+    if (const auto* tree = qobject_cast<const ProportionalTreeWidget*>(option->widget))
+        option->rect = tree->cellContentsRect(option->rect, index);
     option->state &= ~QStyle::State_MouseOver;
     const auto& colors = themeManager_->colors();
     QColor text = colors.textPrimary;
@@ -92,6 +96,13 @@ void TableItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
             ? QBrush(themeManager_->colors().bgPrimary) : background);
     }
     if (plain) styled.state &= ~(QStyle::State_Selected | QStyle::State_HasFocus);
+    if (const auto* tree = qobject_cast<const ProportionalTreeWidget*>(option.widget);
+        tree && tree->cellContentsRect(option.rect, index) != option.rect) {
+        QStyleOptionViewItem background = styled;
+        initStyleOption(&background, index);
+        background.rect = option.rect;
+        tree->style()->drawPrimitive(QStyle::PE_PanelItemViewItem, &background, painter, tree);
+    }
     paintContents(painter, styled, index);
     const auto& colors = themeManager_->colors();
     painter->save();

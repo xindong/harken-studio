@@ -1,4 +1,5 @@
 #include "CanonicalPackSetExport.h"
+#include "ProjectLanguageSemantics.h"
 
 #include "ProjectBuildSnapshot.h"
 #include "Components/VAction.h"
@@ -2058,7 +2059,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 return fail(QStringLiteral("Duplicate packStableId %1")
                                 .arg(pack.packStableId));
             if (!seenLocators.insert(pack.fileName.toCaseFolded()).second)
-                return fail(QStringLiteral("Pack file name collision at '%1' (case-insensitive); rename the conflicting Actions or groups.")
+                return fail(QStringLiteral("Pack file name collision at '%1' (case-insensitive); rename the conflicting Actions.")
                                 .arg(pack.fileName));
         }
     }
@@ -2083,7 +2084,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         };
         for (const PackMeta& pack : packs)
             if (!visit(pack.packStableId))
-                return fail(QStringLiteral("Pack dependency cycle involving '%1'; revise the Action groups")
+                return fail(QStringLiteral("Pack dependency cycle involving '%1'; revise the Action dependencies")
                                 .arg(pack.name));
     }
 
@@ -2210,40 +2211,51 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     }
 
     QString compileError;
-    std::set<harkenstudio::ObjectId> packedActionIds;
-    std::set<harkenstudio::ObjectId> packedDefinitionIds;
+    std::set<harkenstudio::ObjectId> requiredDefinitions;
+    for (const auto& variant : request.plan->variants)
+        for (const auto* members : {&variant.closure.objects, &variant.closure.controlObjects})
+            for (const auto& member : *members) requiredDefinitions.insert(member.stableId);
+    std::set<harkenstudio::ObjectId> sharedLayerIds;
+    std::function<bool(const ProjectItem*)> collectLayers = [&](const ProjectItem* item) {
+        if (!item) return false;
+        bool required = requiredDefinitions.count(item->runtimeId()) != 0;
+        for (const auto& child : item->children)
+            required = collectLayers(child.get()) || required;
+        if (required && item->type == ProjectItem::Type::Layer)
+            sharedLayerIds.insert(item->runtimeId());
+        return required;
+    };
+    for (const auto* binding : project.allFileBindings()) collectLayers(binding->rootItem.get());
     QStringList languages;
-    for (const PackMeta& pack : packs) {
-        packedActionIds.insert(pack.actionStableIds.begin(), pack.actionStableIds.end());
-        if (!pack.language.isEmpty() && !languages.contains(pack.language))
-            languages.append(pack.language);
-    }
-    if (languages.isEmpty())
-        languages.append(QString());
+    for (const auto& language : ProjectLanguageSemantics::buildLanguages(project))
+        if (std::any_of(packs.begin(), packs.end(), [&](const auto& pack) { return pack.language == language; }))
+            languages.append(language);
+    if (languages.isEmpty()) languages.append(QString());
     const bool localized = languages != QStringList{QString()};
-    const QString selectedLanguage = localized
-        ? (stagingOpts.language.trimmed().isEmpty() ? project.defaultLanguage
-                                                   : stagingOpts.language.trimmed())
-        : QString();
-    if (localized && !languages.contains(selectedLanguage))
-        return fail(QStringLiteral("Selected language has no exported Pack variant: %1")
-                        .arg(selectedLanguage));
-    for (const PackBuildVariant& variant : request.plan->variants) {
-        if (packedActionIds.count(variant.actionStableId) == 0)
-            continue;
-        for (const ActionClosureMember& member : variant.closure.objects)
-            packedDefinitionIds.insert(member.stableId);
-        for (const ActionClosureMember& member : variant.closure.controlObjects)
-            packedDefinitionIds.insert(member.stableId);
-    }
+    const QString preferredLanguage = stagingOpts.language.trimmed().isEmpty()
+        ? project.defaultLanguage : stagingOpts.language.trimmed();
+    const QString selectedLanguage = languages.contains(preferredLanguage)
+        ? preferredLanguage : languages.front();
     harkenprojectschema::VariableContractArtifactV1 variableContract;
-    variableContract.schemaVersion =
-        harkenprojectschema::kVariableContractSchemaVersionV1;
-    CurrentWorldBuildOptions buildOptions;
-    buildOptions.includedActionIds = &packedActionIds;
-    buildOptions.includedDefinitionIds = &packedDefinitionIds;
-    buildOptions.skipEmptyActionSteps = true;
+    variableContract.schemaVersion = harkenprojectschema::kVariableContractSchemaVersionV1;
     for (const QString& language : languages) {
+        std::set<harkenstudio::ObjectId> packedActionIds;
+        std::set<harkenstudio::ObjectId> packedDefinitionIds = sharedLayerIds;
+        for (const PackMeta& pack : packs) {
+            if (!pack.language.isEmpty() && pack.language != language) continue;
+            packedActionIds.insert(pack.actionStableIds.begin(), pack.actionStableIds.end());
+        }
+        for (const auto& variant : request.plan->variants) {
+            if ((!variant.variant.language.isEmpty() && variant.variant.language != language)
+                || packedActionIds.count(variant.actionStableId) == 0)
+                continue;
+            for (const auto& member : variant.closure.objects) packedDefinitionIds.insert(member.stableId);
+            for (const auto& member : variant.closure.controlObjects) packedDefinitionIds.insert(member.stableId);
+        }
+        CurrentWorldBuildOptions buildOptions;
+        buildOptions.includedActionIds = &packedActionIds;
+        buildOptions.includedDefinitionIds = &packedDefinitionIds;
+        buildOptions.skipEmptyActionSteps = true;
         buildOptions.language = language;
         auto worldRequest = buildCurrentWorldSyncRequest(
             project, QUuid::fromString(request.options.platform),
@@ -2275,7 +2287,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
         const harkenstudiobuild::ContainerWorldInstallViewV1& world = compiled.world->View();
         if (!request.options.currentWorldOutputPath.isEmpty()
-            && (language.isEmpty() || language == project.defaultLanguage)) {
+            && language == selectedLanguage) {
             if (!WriteCurrentWorldArtifactV1(request.options.currentWorldOutputPath, world, &compileError))
                 return fail(compileError);
             result.currentWorldSemanticFingerprint = world.identity.runtimeSemanticFingerprint;
@@ -2847,26 +2859,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         packArray.append(row);
     }
     wrapper.insert(QStringLiteral("packs"), packArray);
-    QJsonArray groups;
-    for (const PackGroup& group : project.packGroups) {
-        if (!group.includesPlatform(request.options.platform))
-            continue;
-        QJsonArray actions;
-        for (harkenstudio::ObjectId actionId : group.actionIds) {
-            if (request.includedActionIds.count(actionId) == 0)
-                continue;
-            const ProjectItem* action = findAction(project, actionId);
-            if (action)
-                actions.append(action->name);
-        }
-        if (actions.isEmpty())
-            continue;
-        QJsonObject row;
-        row.insert(QStringLiteral("name"), group.name);
-        row.insert(QStringLiteral("actions"), actions);
-        groups.append(row);
-    }
-    wrapper.insert(QStringLiteral("groups"), groups);
+    wrapper.insert(QStringLiteral("groups"), QJsonArray{});
     wrapper.insert(QStringLiteral("gameplayCatalog"), packs.front().gameplayCatalog);
     QJsonObject variableCatalog;
     std::string variableCatalogJson;

@@ -4180,7 +4180,7 @@ void MainWindow::recordPackGenerationResult(const QString& packName, uint32_t ob
 }
 
 void MainWindow::generateProjectPacks(const QStringList& platforms,
-                                      const QStringList& unitNames,
+                                      const QStringList& packPaths,
                                       bool includeUnchecked)
 {
     const auto projectLease = ProjectManager::instance().currentProjectLease();
@@ -4269,11 +4269,11 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
     }
 
     LogPanel::logInfo(LogCategory::Pack,
-        unitNames.isEmpty()
+        packPaths.isEmpty()
             ? tr("Export started — all packs (%1)")
                   .arg(genPlatforms.join(QStringLiteral(", ")))
             : tr("Export started — %1 selected pack(s) (%2)")
-                  .arg(unitNames.size())
+                  .arg(packPaths.size())
                   .arg(genPlatforms.join(QStringLiteral(", "))));
 
     QProgressDialog progress(tr("Exporting packs..."), tr("Cancel"),
@@ -4312,8 +4312,8 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         opts.platform = platform;
         opts.snapshot = snapshot;
         opts.debugStrings = true;
-        for (const QString& unit : unitNames)
-            opts.onlyUnits.insert(unit);
+        for (const QString& unit : packPaths)
+            opts.onlyPackPaths.insert(unit);
         opts.cancelCheck = [&progress]() { return progress.wasCanceled(); };
 
         std::vector<ProjectPackExporter::PackBuildRecord> records;

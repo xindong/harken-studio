@@ -160,6 +160,49 @@ TEST_F(TargetPlatformsCommandTest, InvalidActionTargetingDoesNotResetExistingFil
     }
 }
 
+TEST_F(TargetPlatformsCommandTest, LanguageTargetingPreservesOtherVariantsAcrossUndoAndPlatformRemoval)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    manager.setProjectLanguagesInternal({"English", "Japanese"});
+    auto* action = manager.createItem(nullptr, "Voice", VNX::ProjectItem::Type::Action);
+    ASSERT_NE(action, nullptr);
+    const auto id = action->runtimeId();
+    const auto windows = HarkenTest::platformIdString("Windows");
+    const auto mac = HarkenTest::platformIdString("macOS");
+    const auto android = HarkenTest::platformIdString("Android");
+    stack()->clear();
+    const QJsonObject args{{"stableId", VNX::objectIdString(id)}, {"language", "English"},
+                           {"allPlatforms", false}, {"platform_ids", QJsonArray{mac, android}}};
+    auto& actions = VNX::ActionManager::instance();
+    ASSERT_TRUE(actions.execute("set_action_pack_targeting", args).success);
+    EXPECT_FALSE(manager.currentProject()->includesActionPack(id, windows, "English"));
+    EXPECT_TRUE(manager.currentProject()->includesActionPack(id, mac, "English"));
+    EXPECT_TRUE(manager.currentProject()->includesActionPack(id, windows, "Japanese"));
+    const auto selected = manager.getActionPackTargeting();
+    EXPECT_EQ(stack()->count(), 1);
+    ASSERT_TRUE(actions.execute("set_action_pack_targeting", args).success);
+    EXPECT_EQ(stack()->count(), 1);
+    auto invalid = args;
+    invalid["language"] = "Unknown";
+    EXPECT_FALSE(actions.execute("set_action_pack_targeting", invalid).success);
+    EXPECT_EQ(manager.getActionPackTargeting(), selected);
+    stack()->undo();
+    EXPECT_TRUE(manager.getActionPackTargeting().empty());
+    stack()->redo();
+    EXPECT_EQ(manager.getActionPackTargeting(), selected);
+    ASSERT_TRUE(actions.execute("delete_project_platform", {{"platform_id", mac}}).success);
+    EXPECT_FALSE(manager.getActionPackTargeting().front().platformIds.contains(mac));
+    stack()->undo();
+    EXPECT_EQ(manager.getActionPackTargeting(), selected);
+    ASSERT_TRUE(manager.saveProject());
+    const auto path = manager.currentProject()->projectPath;
+    manager.closeProject();
+    auto reopened = VNX::ProjectManager::prepareProject(path);
+    ASSERT_NE(reopened.project, nullptr) << reopened.error.toStdString();
+    ASSERT_TRUE(manager.commitPreparedProject(std::move(reopened)));
+    EXPECT_EQ(manager.getActionPackTargeting(), selected);
+}
+
 TEST_F(TargetPlatformsCommandTest, UnknownSoundPlatformIsRejectedBeforeMutation)
 {
     auto* item = VNX::ProjectManager::instance().createItem(

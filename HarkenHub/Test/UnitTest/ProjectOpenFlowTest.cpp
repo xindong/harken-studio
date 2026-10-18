@@ -344,6 +344,38 @@ TEST_F(ProjectOpenFlowTest, HashMismatchSchedulesAnActualBackgroundSelfTest)
               VNH::LaunchVerdict::Ready);
 }
 
+#if defined(Q_OS_WIN)
+TEST_F(ProjectOpenFlowTest, BackgroundRefreshRecoversAfterRegistryStorageIsReleased)
+{
+    auto records = VNH::LocalBuildRegistry::load();
+    ASSERT_EQ(records.size(), 1u);
+    const auto verifiedFingerprint = records.front().executableFingerprint;
+    records.front().executableFingerprint.clear();
+    QString error;
+    ASSERT_TRUE(VNH::LocalBuildRegistry::upsert(records.front(), &error));
+
+    QFile reader(VNH::LocalBuildRegistry::filePath());
+    ASSERT_TRUE(reader.open(QIODevice::ReadOnly));
+    const auto original = reader.readAll();
+    VNH::LocalBuildRefreshCoordinator coordinator;
+    bool refreshStarted = false;
+    QObject::connect(&coordinator, &VNH::LocalBuildRefreshCoordinator::buildsChanged,
+                     &coordinator, [&]() { refreshStarted = true; });
+    coordinator.start();
+    ASSERT_TRUE(spinUntil([&]() { return refreshStarted; }));
+    ASSERT_TRUE(QThreadPool::globalInstance()->waitForDone(10000));
+    ASSERT_TRUE(reader.seek(0));
+    EXPECT_EQ(reader.readAll(), original);
+    reader.close();
+
+    ASSERT_TRUE(spinUntil([&]() {
+        const auto refreshed = VNH::LocalBuildRegistry::load();
+        return refreshed.size() == 1 && refreshed.front().lastProbeError.isEmpty()
+            && refreshed.front().executableFingerprint == verifiedFingerprint;
+    }));
+}
+#endif
+
 TEST_F(ProjectOpenFlowTest, AnalyzerTimeoutNeverProducesApproval)
 {
     writeJson(projectPath + ".scenario.json", {{"analysisDelayMs", 3000}, {"upgrade", true}});

@@ -10,10 +10,6 @@
 #include <QCheckBox>
 #include <QLineEdit>
 #include <QComboBox>
-#include <QDragEnterEvent>
-#include <QDragLeaveEvent>
-#include <QDropEvent>
-#include <QMimeData>
 #include <QStringList>
 #include <QList>
 #include <QPair>
@@ -48,8 +44,6 @@ public:
 
     QStringList generationPlatforms() const;
 
-    static QList<uint32_t> objectIDsFromMime(const QMimeData* mime);
-
     using PackGenerationResult = PackGenerationRecord;
 
     void addGenerationResult(const PackGenerationResult& result);
@@ -58,15 +52,9 @@ public:
     static QString humanBytes(qint64 bytes);
 
 signals:
-    void exportRequested(const QStringList& platforms, const QStringList& unitNames,
+    void exportRequested(const QStringList& platforms, const QStringList& packPaths,
                          bool includeUnchecked);
     void revealActionRequested(uint32_t objectID);
-
-protected:
-    void dragEnterEvent(QDragEnterEvent* event) override;
-    void dragMoveEvent(QDragMoveEvent* event) override;
-    void dragLeaveEvent(QDragLeaveEvent* event) override;
-    void dropEvent(QDropEvent* event) override;
 
 private slots:
     void onExportClicked();
@@ -87,38 +75,19 @@ private:
 
     void commitSelectedPlatforms(const QStringList& platforms);
 
-    QStringList selectedUnitNames() const;
-    void requestExport(const QStringList& unitNames, bool includeUnchecked = false);
-    void toggleUnitPlatform(QTreeWidgetItem* item, bool include);
+    QStringList selectedPackPaths() const;
+    void requestExport(const QStringList& packPaths, bool includeUnchecked = false);
+    void toggleUnitPlatforms(const QList<QTreeWidgetItem*>& items, bool include);
 
     static QString platformName(const QString& id);
     QString platformOutputDirFor(const QString& platform) const;
     void showFileInExplorer(const QString& path);
 
-    QString nextAutoGroupName() const;
-    void groupActionObjects(const QList<uint32_t>& actionObjectIDs);
-    void removeMembersFromGroups(const QList<QPair<QString, harkenstudio::ObjectId>>& members);
-    void applyActionObjectsToGroup(const QList<uint32_t>& actionObjectIDs,
-                                   const QString& groupName);
-    void detachActionObjects(const QList<uint32_t>& actionObjectIDs);
-
-    enum class DropKind { None, Group, Action, Root };
-    struct DropTarget {
-        DropKind kind = DropKind::None;
-        QString groupName;
-        uint32_t actionObjectId = 0;
-    };
-    DropTarget dropTargetAtPanelPos(const QPoint& panelPos) const;
-
-    void setDropHoverItem(QTreeWidgetItem* item);
-
     QDialog*    settingsDialog_ = nullptr;
 
     ProportionalTreeWidget* packTree_ = nullptr;
     QLabel*       objectSendWarningLabel_ = nullptr;
-    QTreeWidgetItem* dropHoverItem_ = nullptr;
     bool          packTreeUpdating_ = false;
-    QList<uint32_t> dragActionIds_;
 
     QHash<QString, PackGenerationResult> lastResults_;
 
