@@ -2962,7 +2962,10 @@ TEST(VariableCurrentSlice, PublishAfterStageWaitsForTheRecoveryBlock) {
 }
 
 TEST(VariableCurrentSlice, MixerConsumesProofBeyondRevisionStorageAndReclaimsAfterFence) {
-    EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
+    auto config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
+    // Meter-probe headroom must leave apply payloads beyond revision storage.
+    config.maxBuses = 8;
+    EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
     engine->nullBackend.Pump(1);
