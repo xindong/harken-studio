@@ -182,6 +182,9 @@ VnConfig CurrentSliceConfig(std::uint32_t maxVoices, std::uint32_t blockFrames,
     config.maxTriggerDepth = 1;
     // Leave room for the root, child and sibling without default-sized attempts.
     config.maxActionFirings = 8;
+    // The binding scenarios use at most two buses and one delay instance.
+    config.maxBuses = 4;
+    config.delayEffectPoolCapacity = 1;
     return config;
 }
 

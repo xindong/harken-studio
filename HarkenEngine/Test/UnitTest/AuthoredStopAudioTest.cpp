@@ -31,6 +31,9 @@ VnConfig AudioConfig(std::uint32_t workers) {
     config.maxTriggerDepth = 1;
     // Keep each engine isolated without reserving 256 unused Action attempts.
     config.maxActionFirings = 8;
+    // Stop/control proofs need only the master bus and no concurrent delays.
+    config.maxBuses = 4;
+    config.delayEffectPoolCapacity = 1;
     config.renderWorkerCount = workers;
     return config;
 }
@@ -7559,11 +7562,13 @@ TEST(AuthoredStopAudio, OriginalControlHeaderFactoryKeepsTypedLifetimeSeparateFr
 }
 
 TEST(AuthoredStopAudio, OriginalControlHeaderFrozenFactoryRejectsForeignHeaderAndAbortsRealUnpublishedRange) {
+    OriginalControlHeaderHarness h;
+    ASSERT_TRUE(h.InstallSource());
+    ASSERT_TRUE(h.Prepare());
+    auto& queue = h.audio.engine->commands;
+    const auto head = queue.PublishedHead();
     for (unsigned field = 0; field < 9; ++field) {
         SCOPED_TRACE(field);
-        OriginalControlHeaderHarness h;
-        ASSERT_TRUE(h.InstallSource());
-        ASSERT_TRUE(h.Prepare());
         auto wrong = h.header;
         switch (field) {
         case 0: wrong.flags = 1; break;
@@ -7576,30 +7581,29 @@ TEST(AuthoredStopAudio, OriginalControlHeaderFrozenFactoryRejectsForeignHeaderAn
         case 7: ++wrong.payload.play.batch.reserved; break;
         case 8: ++wrong.payload.play.batch.batchVersion; break;
         }
-        auto& queue = h.audio.engine->commands;
-        const auto head = queue.PublishedHead();
         ASSERT_TRUE(h.Freeze(wrong));
         EXPECT_FALSE(h.Attach());
         EXPECT_TRUE(h.original.Valid());
         EXPECT_EQ(harken::CommandQueue::OriginalRangeState::Empty, h.Range().State());
         h.queueCommit.Release();
-        ASSERT_TRUE(h.Freeze(h.header));
-        harken::CommandQueue foreign(2);
-        EXPECT_FALSE(foreign.IssueOriginalControlHeaderRange(h.queueCommit, 0,
-            std::move(h.original), &h, &h.Range()));
-        ASSERT_TRUE(h.Attach());
-        EXPECT_FALSE(h.original.Valid());
-        EXPECT_FALSE(h.Range().ResetAfterDisposition());
-        h.queueCommit.Release();
         EXPECT_EQ(head, queue.PublishedHead());
-        EXPECT_EQ(harken::CommandQueue::OriginalRangeState::UnpublishedCancelled, h.Range().State());
-        h.coreCommit.Release();
-        EXPECT_FALSE(h.audio.engine->timelineArms.CancelPrepared(h.control.record.token));
-        ASSERT_TRUE(h.Range().ResetAfterDisposition());
-        ASSERT_TRUE(h.audio.engine->timelineArms.CancelPrepared(h.control.record.token));
-        h.control.record.token = {};
-        h.Dispose();
     }
+    ASSERT_TRUE(h.Freeze(h.header));
+    harken::CommandQueue foreign(2);
+    EXPECT_FALSE(foreign.IssueOriginalControlHeaderRange(h.queueCommit, 0,
+        std::move(h.original), &h, &h.Range()));
+    ASSERT_TRUE(h.Attach());
+    EXPECT_FALSE(h.original.Valid());
+    EXPECT_FALSE(h.Range().ResetAfterDisposition());
+    h.queueCommit.Release();
+    EXPECT_EQ(head, queue.PublishedHead());
+    EXPECT_EQ(harken::CommandQueue::OriginalRangeState::UnpublishedCancelled, h.Range().State());
+    h.coreCommit.Release();
+    EXPECT_FALSE(h.audio.engine->timelineArms.CancelPrepared(h.control.record.token));
+    ASSERT_TRUE(h.Range().ResetAfterDisposition());
+    ASSERT_TRUE(h.audio.engine->timelineArms.CancelPrepared(h.control.record.token));
+    h.control.record.token = {};
+    h.Dispose();
 }
 
 TEST(AuthoredStopAudio, OriginalControlHeaderConsumedCommitUnpublishedAbortRetainsTrueReclaimFence) {

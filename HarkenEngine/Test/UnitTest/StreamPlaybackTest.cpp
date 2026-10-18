@@ -66,8 +66,11 @@ VnConfig MakeStreamConfig(NotificationLog* log, std::uint32_t maxVoices = 0,
                           std::uint32_t prebufferMs = 0,
                           std::uint32_t starvationCooldownBlocks = 0) {
     VnConfig config = MakeNullConfig(maxVoices, kBlockFrames, kRate);
-    // Stream progress coverage does not require the default nested Action scratch.
-    config.maxTriggerDepth = 2;
+    // Stream drills use direct Play on the master bus, not nested Actions.
+    config.maxTriggerDepth = 1;
+    config.maxActionFirings = 8;
+    config.maxBuses = 4;
+    config.delayEffectPoolCapacity = 1;
     config.onNotification = log != nullptr ? &RecordNotification : nullptr;
     config.notificationUserData = log;
     config.streamRingFrames = streamRingFrames;

@@ -33,6 +33,9 @@ VnConfig SourceBodyConfig() {
     config.maxTriggerDepth = 1;
     // The firing cases retain only a parent and child in each engine.
     config.maxActionFirings = 8;
+    // Source ownership proofs use the master bus and Gain, not delay pools.
+    config.maxBuses = 4;
+    config.delayEffectPoolCapacity = 1;
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 2;
     return config;
@@ -8179,16 +8182,17 @@ TEST(OriginalSourceSubmission, NativeUnpublishedDispositionAcceptsTrueNeverBound
 }
 
 TEST(OriginalSourceSubmission, UnpublishedStorageWaitsForBothLoansAcrossPreparationAndCommit) {
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
+    const auto free = engine.timelineArms.FreeCount();
     for (const bool bound : {false, true}) {
         for (const bool committed : {false, true}) {
             for (const bool bodyFirst : {false, true}) {
                 SCOPED_TRACE(testing::Message() << "bound=" << bound << " committed=" << committed
                     << " bodyFirst=" << bodyFirst);
-                harkentest::EngineSession session(SourceBodyConfig());
-                ASSERT_EQ(VN_OK, session.InitResult());
-                auto& engine = *session.Engine();
-                ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
-                const auto free = engine.timelineArms.FreeCount();
+                ASSERT_EQ(free, engine.timelineArms.FreeCount());
                 NativeUnpublishedDispositionSource source;
                 ASSERT_NO_FATAL_FAILURE(source.Prepare(engine, bound, committed, true, true, {}, true));
                 Registry::OriginalSourceLifetimePin sourceLoan;
