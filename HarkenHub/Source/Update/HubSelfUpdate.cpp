@@ -19,6 +19,7 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QStorageInfo>
+#include <QTimer>
 
 namespace VNH {
 
@@ -153,6 +154,22 @@ bool HubSelfUpdate::persist(UpdateStateRecord record, const QDateTime& now)
                              << record.state << "(" + record.failureCode + ")";
     emit stateChanged(record);
     return true;
+}
+
+void HubSelfUpdate::restoreState(const UpdateStateRecord& record,
+                                const UpdateStateRecord& pending)
+{
+    const auto current = currentState();
+    if (!current.found || current.state != pending.state ||
+        current.buildId != pending.buildId ||
+        current.transactionId != pending.transactionId ||
+        current.updatedAt != pending.updatedAt)
+        return;
+    if (!persist(record, QDateTime::currentDateTimeUtc())) {
+        QTimer::singleShot(1000, this, [this, record, pending]() {
+            restoreState(record, pending);
+        });
+    }
 }
 
 void HubSelfUpdate::handleCheckResult(const UpdateCheckResult& result,
@@ -414,13 +431,15 @@ bool HubSelfUpdate::approve(QString* error, const QDateTime& now)
     QStringList arguments;
     installerLaunchCommand(record.downloadPath, &program, &arguments);
     record.state = QStringLiteral("AwaitingElevation");
+    record.updatedAt = now.toUTC().toString(Qt::ISODateWithMs);
     if (!persist(record, now)) {
         *error = QStringLiteral("Cannot save hub update state");
         return false;
     }
     if (!startInstallerDetached(program, arguments, error)) {
+        const auto pending = record;
         record.state = QStringLiteral("AwaitingUserApproval");
-        persist(record, now);
+        restoreState(record, pending);
         return false;
     }
 
@@ -500,6 +519,7 @@ bool HubSelfUpdate::approveViaBridge(const QString& restartMode,
     record.state = QStringLiteral("AwaitingBridge");
     record.transactionId = placement.transactionId;
     record.failureCode.clear();
+    record.updatedAt = now.toUTC().toString(Qt::ISODateWithMs);
     if (!persist(record, now)) {
         HandoffArea::discard(placement.transactionId);
         *error = QStringLiteral("Cannot save hub update state");
@@ -509,9 +529,10 @@ bool HubSelfUpdate::approveViaBridge(const QString& restartMode,
     QString dispatchError;
     if (!BridgeDispatcher::dispatch(&dispatchError)) {
         HandoffArea::discard(placement.transactionId);
+        const auto pending = record;
         record.state = previousState;
         record.transactionId.clear();
-        UpdateStateStore::save(record, now);
+        restoreState(record, pending);
         *error = dispatchError;
         return false;
     }

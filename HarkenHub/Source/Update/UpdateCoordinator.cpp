@@ -168,6 +168,22 @@ bool UpdateCoordinator::persist(UpdateStateRecord record, const QDateTime& now)
     return true;
 }
 
+void UpdateCoordinator::restoreState(const UpdateStateRecord& record,
+                                     const UpdateStateRecord& pending)
+{
+    const auto current = currentState();
+    if (!current.found || current.state != pending.state ||
+        current.buildId != pending.buildId ||
+        current.transactionId != pending.transactionId ||
+        current.updatedAt != pending.updatedAt)
+        return;
+    if (!persist(record, QDateTime::currentDateTimeUtc())) {
+        QTimer::singleShot(1000, this, [this, record, pending]() {
+            restoreState(record, pending);
+        });
+    }
+}
+
 void UpdateCoordinator::handleCheckResult(const UpdateCheckResult& result,
                                           const QDateTime& now)
 {
@@ -458,6 +474,7 @@ void UpdateCoordinator::beginAutoInstall(const QDateTime& now)
     record.state = QStringLiteral("AwaitingBridge");
     record.transactionId = preparation.transactionId;
     record.failureCode.clear();
+    record.updatedAt = now.toUTC().toString(Qt::ISODateWithMs);
     if (!persist(record, now)) {
         HandoffArea::discard(preparation.transactionId);
         return;
@@ -468,10 +485,11 @@ void UpdateCoordinator::beginAutoInstall(const QDateTime& now)
         qWarning().noquote()
             << kProduct << "bridge dispatch failed:" << dispatchError;
         HandoffArea::discard(preparation.transactionId);
+        const auto pending = record;
         record.state = QStringLiteral("AwaitingUserInstall");
         record.transactionId.clear();
         record.failureCode = QStringLiteral("BridgeDispatchFailed");
-        persist(record, now);
+        restoreState(record, pending);
         return;
     }
 

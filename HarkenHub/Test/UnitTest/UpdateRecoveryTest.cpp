@@ -1,5 +1,6 @@
 #include "Update/HubSelfUpdate.h"
 #include "Update/UpdateCoordinator.h"
+#include "Update/UpdateQueue.h"
 #include "Platform/PlatformPaths.h"
 #include "Support/ManifestTestUtils.h"
 #include "Support/RangeHttpServer.h"
@@ -120,6 +121,34 @@ protected:
         qunsetenv("HARKEN_HUB_USER_ROOT");
         qunsetenv("HARKEN_HUB_MACHINE_ROOT");
         qunsetenv("HARKEN_HUB_BRIDGE_DISABLE");
+        qunsetenv("HARKEN_HUB_BRIDGE_COMMAND");
+    }
+
+    void failBridgeLaunchWithBlockedRollback(QFile& reader)
+    {
+        qunsetenv("HARKEN_HUB_BRIDGE_DISABLE");
+        qputenv("HARKEN_HUB_BRIDGE_COMMAND", " ");
+        reader.setFileName(VNH::UpdateStateStore::filePath());
+        QObject observer;
+        QObject::connect(&update, &Updater::stateChanged, &observer,
+                         [&](const VNH::UpdateStateRecord& record) {
+            if (record.state == QStringLiteral("AwaitingBridge"))
+                EXPECT_TRUE(reader.open(QIODevice::ReadOnly));
+        });
+        ASSERT_TRUE(checker->start(checkerOptions));
+        if constexpr (isHub) {
+            ASSERT_TRUE(spinUntil([&]() {
+                return update.currentState().state == QStringLiteral("AwaitingRestart");
+            }));
+            QString error;
+            EXPECT_FALSE(update.approveViaBridge("gui", &error, QDateTime::currentDateTimeUtc()));
+            EXPECT_FALSE(error.isEmpty());
+        } else {
+            ASSERT_TRUE(spinUntil([&]() { return reader.isOpen(); }));
+        }
+        ASSERT_TRUE(reader.isOpen());
+        EXPECT_EQ(update.currentState().state, QStringLiteral("AwaitingBridge"));
+        EXPECT_TRUE(VNH::UpdateQueue::pendingEntries().empty());
     }
 
     bool ready() const
@@ -139,6 +168,39 @@ protected:
 
 using Updaters = ::testing::Types<VNH::UpdateCoordinator, VNH::HubSelfUpdate>;
 TYPED_TEST_SUITE(UpdateRecoveryTest, Updaters);
+
+#if defined(Q_OS_WIN)
+TYPED_TEST(UpdateRecoveryTest, FailedLaunchRollbackRecoversWhenStorageIsReleased)
+{
+    QFile reader;
+    ASSERT_NO_FATAL_FAILURE(this->failBridgeLaunchWithBlockedRollback(reader));
+    const int downloads = this->download.requestCount();
+    reader.close();
+    ASSERT_TRUE(spinUntil([&]() {
+        return this->update.currentState().state ==
+            (this->isHub ? QStringLiteral("AwaitingRestart") : QStringLiteral("AwaitingUserInstall"));
+    }));
+    EXPECT_TRUE(this->update.currentState().transactionId.isEmpty());
+    EXPECT_EQ(this->download.requestCount(), downloads);
+}
+
+TYPED_TEST(UpdateRecoveryTest, FailedLaunchRollbackCannotOverwriteANewerTransaction)
+{
+    QFile reader;
+    ASSERT_NO_FATAL_FAILURE(this->failBridgeLaunchWithBlockedRollback(reader));
+    reader.close();
+    auto newer = this->update.currentState();
+    newer.transactionId = QStringLiteral("newer-transaction");
+    const auto now = QDateTime::currentDateTimeUtc();
+    ASSERT_TRUE(VNH::UpdateStateStore::save(newer, now));
+    QElapsedTimer elapsed;
+    elapsed.start();
+    ASSERT_TRUE(spinUntil([&]() { return elapsed.elapsed() > 1500; }));
+    EXPECT_EQ(this->update.currentState().transactionId, newer.transactionId);
+    EXPECT_EQ(this->update.currentState().state, newer.state);
+    EXPECT_EQ(this->update.currentState().updatedAt, now.toUTC().toString(Qt::ISODateWithMs));
+}
+#endif
 
 TYPED_TEST(UpdateRecoveryTest, RequiresDurableStateBeforeDownload)
 {
