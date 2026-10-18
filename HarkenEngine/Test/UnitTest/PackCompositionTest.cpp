@@ -2443,7 +2443,7 @@ TEST(PackComposition,
             childSnapshot.owner.pack, harkentest::ObjectId(3003));
     ASSERT_NE(nullptr, activeChild);
     ASSERT_NE(nullptr, anchoredChild);
-    EXPECT_NE(activeChild, anchoredChild);
+    EXPECT_NE(activeChild, anchoredChild.programView);
     EXPECT_EQ(childFingerprint, anchoredChild->programSemanticFingerprint);
     PCMView exact{};
     ASSERT_EQ(VN_OK, session.Engine()->packs.LookupExactClosure(
