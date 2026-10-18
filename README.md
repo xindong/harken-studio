@@ -161,15 +161,8 @@ Single daily channel:
 ```
 harken/
 ├── .docs/                                # Global project docs and design notes
-│   ├── philosophy/                       # Design maps, product ideology (human-managed)
-│   ├── quality/                          # Repo-wide quality standards (human-managed)
-│   └── snapshot/                         # Per-system form snapshots and summaries (keep current)
 ├── .github/                              # GitHub workflow configuration
 ├── .scripts/                             # Development automation scripts (not source code)
-├── (.local/)                             # Local files, not committed
-├── (.temp/)                              # Temporary files and caches
-├── (.venv/)                              # Python virtual environment
-├── (build*/)                             # Build output, compiled artifacts
 ├── cmake/                                # Build identity injection
 ├── HarkenEngine/                         # harken_core — the sound engine runtime core
 ├── HarkenHub/                            # HarkenHub — the standalone launcher
