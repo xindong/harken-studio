@@ -106,7 +106,6 @@ set(HARKEN_HUB_SOURCES
     Source/Update/ServerEndpoints.cpp
     Source/Update/ServerVersionCatalog.cpp
     Source/Update/UpdateChecker.cpp
-    Source/Update/UpdateFile.cpp
     Source/Update/UpdateStateStore.cpp
     Source/Update/UpdateCoordinator.cpp
     Source/Update/UpdateNotifier.cpp
@@ -148,6 +147,7 @@ set(HARKEN_HUB_SOURCES
     Source/Maintenance/CacheManager.cpp
     Source/Maintenance/LogExporter.cpp
     Source/Maintenance/LogTailer.cpp
+    Source/Platform/AtomicFile.cpp
     Source/Platform/ElevationCommands.cpp
     Source/Transactions/HandoffArea.cpp
     Source/UI/BoundedHeaderView.cpp

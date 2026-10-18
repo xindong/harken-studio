@@ -1,6 +1,7 @@
 #include "Update/UpdateCoordinator.h"
 
 #include "Packaging/PackageVerifier.h"
+#include "Platform/AtomicFile.h"
 #include "Platform/PlatformPaths.h"
 #include "Transactions/HandoffArea.h"
 #include "Transactions/InstallIndex.h"
@@ -8,7 +9,6 @@
 #include "Transactions/TransactionJournal.h"
 #include "Update/BridgeDispatcher.h"
 #include "Update/ServerEndpoints.h"
-#include "Update/UpdateFile.h"
 #include "Update/UpdateQueue.h"
 
 #include <QDateTime>
@@ -258,7 +258,7 @@ void UpdateCoordinator::handleCheckResult(const UpdateCheckResult& result,
     const QString envelopePath = options_.downloadDir + QStringLiteral("/") +
                                  manifest.buildId +
                                  QStringLiteral(".manifest");
-    if (!writeUpdateFile(envelopePath, result.envelope)) {
+    if (!writeAtomicFile(envelopePath, result.envelope)) {
         UpdateStateRecord record;
         record.state = QStringLiteral("DownloadFailed");
         record.version = manifest.version;

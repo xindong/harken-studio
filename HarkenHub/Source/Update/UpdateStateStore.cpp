@@ -1,7 +1,7 @@
 #include "Update/UpdateStateStore.h"
 
+#include "Platform/AtomicFile.h"
 #include "Platform/PlatformPaths.h"
-#include "Update/UpdateFile.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -23,7 +23,7 @@ QJsonObject loadRoot()
 
 bool saveRoot(const QJsonObject& root)
 {
-    return writeUpdateFile(UpdateStateStore::filePath(),
+    return writeAtomicFile(UpdateStateStore::filePath(),
                            QJsonDocument(root).toJson(QJsonDocument::Indented));
 }
 

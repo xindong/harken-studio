@@ -98,6 +98,32 @@ TEST(InstallIndex, SetHealthStateUpdatesOnlyKnownBuilds)
                                               &error));
 }
 
+#if defined(Q_OS_WIN)
+TEST(InstallIndex, FailedReplacementPreservesIndexAndReportsStorageError)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    MachineRootGuard guard(dir.path());
+    QString error;
+    ASSERT_TRUE(InstallIndex::commitInstallation(makeRecord("original"), 7, &error));
+    QFile reader(InstallIndex::filePath());
+    ASSERT_TRUE(reader.open(QIODevice::ReadOnly));
+    const auto original = reader.readAll();
+    EXPECT_FALSE(InstallIndex::commitInstallation(makeRecord("replacement"), 8, &error));
+    EXPECT_TRUE(error.contains(InstallIndex::filePath())) << error.toStdString();
+    EXPECT_TRUE(error.contains("commit")) << error.toStdString();
+    EXPECT_TRUE(error.contains("Qt error 10:")) << error.toStdString();
+    ASSERT_TRUE(reader.seek(0));
+    EXPECT_EQ(reader.readAll(), original);
+    reader.close();
+    const auto snapshot = InstallIndex::snapshot();
+    ASSERT_TRUE(snapshot.ok);
+    ASSERT_EQ(snapshot.records.size(), 1u);
+    EXPECT_EQ(snapshot.records.front().buildId, QStringLiteral("original"));
+    EXPECT_EQ(snapshot.lastReleaseSequence, 7);
+}
+#endif
+
 TEST(InstallIndex, CorruptIndexFileFailsClosed)
 {
     QTemporaryDir dir;

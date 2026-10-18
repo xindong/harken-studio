@@ -7,6 +7,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
+#include <atomic>
+#include <thread>
 
 using VNH::LocalBuildRecord;
 using VNH::LocalBuildRegistry;
@@ -75,6 +77,40 @@ TEST_F(LocalBuildRegistryTest, SavesUpdatesAndRemovesLocalBuild)
     ASSERT_TRUE(LocalBuildRegistry::remove(executable, &error))
         << error.toStdString();
     EXPECT_TRUE(LocalBuildRegistry::load(&error).empty());
+}
+
+TEST_F(LocalBuildRegistryTest, ConcurrentReadsAndMutationsPreserveAllRecords)
+{
+    const auto first = record(dir.filePath("FirstStudio.exe"));
+    const auto second = record(dir.filePath("SecondStudio.exe"));
+    QString error;
+    ASSERT_TRUE(LocalBuildRegistry::upsert(first, &error)) << error.toStdString();
+    ASSERT_TRUE(LocalBuildRegistry::upsert(second, &error)) << error.toStdString();
+    std::atomic<bool> reading{false};
+    std::atomic<bool> done{false};
+    std::thread reader([&]() {
+        do {
+            QString readError;
+            const auto records = LocalBuildRegistry::load(&readError);
+            EXPECT_TRUE(readError.isEmpty()) << readError.toStdString();
+            EXPECT_EQ(records.size(), 2u);
+            reading = true;
+        } while (!done);
+    });
+    while (!reading)
+        std::this_thread::yield();
+    for (int i = 0; i < 100; ++i) {
+        auto updated = first;
+        updated.reportedBuildId = QString::number(i);
+        EXPECT_TRUE(LocalBuildRegistry::updateExisting(updated, &error))
+            << error.toStdString();
+    }
+    done = true;
+    reader.join();
+    const auto records = LocalBuildRegistry::load(&error);
+    ASSERT_EQ(records.size(), 2u);
+    EXPECT_EQ(records.front().reportedBuildId, QStringLiteral("99"));
+    EXPECT_EQ(records.back().reportedBuildId, second.reportedBuildId);
 }
 
 TEST_F(LocalBuildRegistryTest, StableIdDependsOnNormalizedPath)
