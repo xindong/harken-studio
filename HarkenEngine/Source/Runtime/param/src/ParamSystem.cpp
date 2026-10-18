@@ -1224,23 +1224,26 @@ bool ParamSystem::TryPeekResolvedVolume(VnVoiceHandle handle,
     return true;
 }
 
+bool ParamSystem::CanClaim(VnVoiceHandle handle, std::uint32_t targetId,
+                           TargetClaimOwner owner, std::uint32_t expectedRevision) const noexcept {
+    const auto* state = StateFor(handle);
+    if (state == nullptr || targetId >= kBuiltinTargetCount || !owner.Valid()) return false;
+    const auto& target = state->targets[targetId];
+    if (target.revision != expectedRevision) return false;
+    return target.preparedOwner.Valid()
+        ? owner.Shared() && target.preparedOwner == owner && target.publicationRefCount != UINT32_MAX
+        : target.publicationRefCount == 0;
+}
+
 bool ParamSystem::TryClaim(VnVoiceHandle handle, std::uint32_t targetId,
                            TargetClaimOwner owner,
                            std::uint32_t expectedRevision) noexcept {
+    if (!CanClaim(handle, targetId, owner, expectedRevision)) return false;
     VoiceState* state = StateFor(handle);
-    if (state == nullptr || targetId >= kBuiltinTargetCount || !owner.Valid()) {
-        return false;
-    }
     TargetState& target = state->targets[targetId];
-    if (target.revision != expectedRevision) return false;
     if (target.preparedOwner.Valid()) {
-        if (!owner.Shared() || target.preparedOwner != owner ||
-            target.publicationRefCount == UINT32_MAX) return false;
         ++target.publicationRefCount;
         return true;
-    }
-    if (target.publicationRefCount != 0) {
-        return false;
     }
     target.preparedOwner = owner;
     target.publicationRefCount = owner.Shared() ? 1u : 0u;

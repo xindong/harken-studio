@@ -23685,6 +23685,53 @@ bool LoadInitPack(const std::vector<std::uint8_t>& bytes, const char* name,
                                                  handle) == VN_OK;
 }
 
+TEST(PackComposition, VariableSdkSetValuePreservesWriteScopeAndPublishesInitFixture) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto variable = harken::generated::kVariable_VehicleRPM;
+    std::uint64_t fingerprint = 0;
+    ASSERT_TRUE(ComputeVariableExecutionFingerprintV1(variable, 1, 1, 3,
+        0, 1, 0, nullptr, 0, &fingerprint));
+    PackVariableNameCatalog names;
+    names.projectGuid[15] = 1;
+    names.initPackStableId = 11;
+    names.initContentRevision = 1;
+    names.rows.push_back({variable, "VehicleRPM"});
+    const auto bytes = BuildInitWithVariableOverlay(variable, fingerprint,
+        0, 1, 0, true, false, 3, VariableScopeV1::Global, &names);
+    VnPackHandle init = 0;
+    ASSERT_TRUE(LoadInitPack(bytes, "variable-sdk-init.pack", &init));
+    ASSERT_EQ(VN_OK, harken::GuardTypedVariableCatalog(
+        harken::generated::kVariableExecutionCatalogFingerprint));
+    VnEmitterHandle a = 0, b = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&a));
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&b));
+    const auto expect = [&](float valueA, float valueB, std::uint32_t localA) {
+        for (const auto emitter : {a, b}) {
+            VnVariableQueryDescV1 query{};
+            query.structSize = sizeof(query);
+            query.variableId = variable;
+            query.emitter = emitter;
+            VnVariableQueryResultV1 result{};
+            result.structSize = sizeof(result);
+            ASSERT_EQ(VN_OK, Vn_QueryVariable(&query, &result));
+            EXPECT_FLOAT_EQ(emitter == a ? valueA : valueB, result.currentValue);
+            EXPECT_EQ(emitter == a ? localA : 0u, result.hasEmitterOverride);
+            EXPECT_EQ(0u, result.pendingCount);
+        }
+    };
+    ASSERT_EQ(VN_OK, Vn_SetValue(variable, 0.25f));
+    harkentest::AdvanceVariableWrite(&engine);
+    expect(0.25f, 0.25f, 0);
+    ASSERT_EQ(VN_OK, Vn_SetEmitterValue(a, variable, 0.5f));
+    harkentest::AdvanceVariableWrite(&engine);
+    expect(0.5f, 0.25f, 1);
+    ASSERT_EQ(VN_OK, Vn_SetValue(variable, 0.75f));
+    harkentest::AdvanceVariableWrite(&engine);
+    expect(0.75f, 0.75f, 0);
+}
+
 TEST(PackComposition, VariableNameCodecRejectsCorruptionAndAmbiguousIdentity) {
     PackVariableNameCatalog names;
     names.projectGuid[15] = 1;

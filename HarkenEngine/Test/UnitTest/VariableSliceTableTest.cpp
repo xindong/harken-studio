@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -74,6 +75,33 @@ void PublishAndApply(harken::VariableSliceTable& table,
     ApplyProbe probe{};
     ASSERT_TRUE(table.Apply(ref, blockSequence, &probe, ValidateTarget,
                             ApplyCommand));
+}
+
+TEST(VariableSliceTable, ReservationProbeSeparatesProofPayloadAndFragmentedSpan) {
+    using Status = harken::VariableSliceTable::ReservationStatus;
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(8, 4, 8, 8));
+    std::array<harken::VariableSliceRef, 4> refs{};
+    for (std::uint32_t i = 0; i < refs.size(); ++i) ASSERT_TRUE(ReserveTargets(table, 2, i + 1, &refs[i]));
+    ASSERT_TRUE(table.AbandonPrepared(refs[0]));
+    ASSERT_TRUE(table.AbandonPrepared(refs[2]));
+    EXPECT_EQ(4u, table.FreeTargetCapacity());
+    EXPECT_EQ(Status::TargetSpan, table.ReservationAvailability(4));
+    EXPECT_EQ(Status::Ready, table.ReservationAvailability(2));
+    EXPECT_EQ(Status::TargetLimit, table.ReservationAvailability(5));
+    const auto freeProofs = table.FreeRowCount();
+    const auto freePayloads = table.FreePayloadCount();
+    for (unsigned i = 0; i < 10; ++i) EXPECT_EQ(Status::TargetSpan, table.ReservationAvailability(4));
+    EXPECT_EQ(freeProofs, table.FreeRowCount());
+    EXPECT_EQ(freePayloads, table.FreePayloadCount());
+    ASSERT_TRUE(table.AbandonPrepared(refs[1]));
+    EXPECT_EQ(Status::Ready, table.ReservationAvailability(4));
+    ASSERT_TRUE(table.Reset(2, 0, 0, 1));
+    ASSERT_TRUE(ReserveTargets(table, 0, 1, &refs[0]));
+    EXPECT_EQ(Status::PayloadCapacity, table.ReservationAvailability(0));
+    ASSERT_TRUE(table.Reset(1, 0, 0, 1));
+    ASSERT_TRUE(ReserveTargets(table, 0, 1, &refs[0]));
+    EXPECT_EQ(Status::ProofCapacity, table.ReservationAvailability(0));
 }
 
 TEST(VariableSliceTable, ResetAllowsDisabledTargetsAndRejectsHardLimits) {

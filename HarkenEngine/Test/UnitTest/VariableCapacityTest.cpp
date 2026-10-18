@@ -67,11 +67,13 @@ TEST(VariableCapacity, All1024EmitterKeysAreAcceptedBeforeUpdate) {
     EXPECT_EQ(1024u, engine->variables.PendingCount());
     EXPECT_EQ(0u, engine->variables.RefusalCount());
     EXPECT_FLOAT_EQ(0.0f, ReadValue(engine, harkentest::ObjectId(1)));
-    for (unsigned quantum = 0; quantum < 128 && engine->variables.PendingCount() != 0; ++quantum) {
+    unsigned drainQuanta = 0;
+    for (; drainQuanta < 16 && engine->variables.PendingCount() != 0; ++drainQuanta) {
         engine->nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
     }
     ASSERT_EQ(0u, engine->variables.PendingCount());
+    EXPECT_LE(drainQuanta, 16u);
     EXPECT_EQ(1024u, engine->variables.AppliedCount());
     for (auto emitter : emitters) {
         for (std::uint32_t variable = 1; variable <= 8; ++variable) {

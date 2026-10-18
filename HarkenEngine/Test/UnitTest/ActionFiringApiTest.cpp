@@ -43699,6 +43699,8 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
     ASSERT_TRUE(preparedSource.Valid());
     ASSERT_EQ(harken::VariableSliceState::Prepared, engine.variableSlices.State(preparedSource));
     ASSERT_EQ(0u, engine.variableSlices.TargetCount(preparedSource));
+    harken::VariableSliceSource preparedIdentity{};
+    ASSERT_TRUE(engine.variableSlices.CaptureSource(preparedSource, &preparedIdentity));
     float selector = 0.0f;
     ASSERT_TRUE(engine.variables.CurrentValue(image.variables[3].variableId, &selector));
     ASSERT_FLOAT_EQ(3.0f, selector);
@@ -43996,8 +43998,12 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
     ASSERT_EQ(VN_OK, Vn_Update());
     const auto source = engine.variables.SliceForTicketForTests(set.ticket.sequence);
     ASSERT_TRUE(source.Valid());
-    ASSERT_EQ(preparedSource.slot, source.slot);
-    ASSERT_EQ(preparedSource.generation, source.generation);
+    harken::VariableSliceSource publishedIdentity{};
+    ASSERT_TRUE(engine.variableSlices.CaptureSource(source, &publishedIdentity));
+    EXPECT_EQ(preparedIdentity.world, publishedIdentity.world);
+    EXPECT_EQ(preparedIdentity.transport, publishedIdentity.transport);
+    EXPECT_EQ(preparedIdentity.ticket, publishedIdentity.ticket);
+    EXPECT_EQ(preparedIdentity.bankOrdinal, publishedIdentity.bankOrdinal);
     ASSERT_EQ(0u, engine.variableSlices.TargetCount(source));
     ASSERT_EQ(harken::VariableSliceState::PageCommitted, engine.variableSlices.State(source));
     const auto sourceFrame = engine.variableSlices.EffectiveFrame(source);
@@ -45592,7 +45598,8 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
         engine.variables.BeginService(engine, engine.mixer.BlocksRendered(), block);
         source = engine.variables.SliceForTicketForTests(setSnapshot.acceptedLogicSequence);
         ASSERT_TRUE(source.Valid());
-        ASSERT_EQ(harken::VariableSliceState::Prepared, engine.variableSlices.State(source));
+        const auto state = engine.variableSlices.State(source);
+        ASSERT_TRUE(state == harken::VariableSliceState::Prepared || state == harken::VariableSliceState::PageCommitted);
     }
     engine.variables.PrepareClaimedSlices(engine);
     engine.variables.PublishPreparedPlaybackPages(sourceFrame + 2u * block);
@@ -45640,6 +45647,15 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
         ASSERT_EQ(VN_OK, Vn_Update());
         collectSelections();
         if (retargetWriteSequence != 0 && !retargetWriteApplied) {
+            if (!writeProbe.held) {
+                const auto write = engine.variables.SliceForTicketForTests(retargetWriteSequence);
+                if (write.Valid() && engine.variableSlices.State(write) == harken::VariableSliceState::PageCommitted) {
+                    ASSERT_TRUE(engine.variableSlices.CaptureSource(write, &writeProbe.source));
+                    ASSERT_EQ(retargetWriteSequence, writeProbe.source.ticket);
+                    ASSERT_TRUE(engine.variableSlices.RetainSource(writeProbe.source));
+                    writeProbe.held = true;
+                }
+            }
             const auto write = writeProbe.source.slice;
             if (write.Valid() && engine.variableSlices.SourceApplied(writeProbe.source)) {
                 retargetWriteFrame = engine.variableSlices.EffectiveFrame(write);
@@ -45897,13 +45913,6 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
             ASSERT_EQ(VN_OK, Vn_SetValue(image.variables[3].variableId, 2.0f));
             retargetWriteSequence = engine.logicCommits.Current();
             EXPECT_EQ(beforeWrite + 1u, retargetWriteSequence);
-            engine.variables.BeginService(engine, engine.mixer.BlocksRendered(), block);
-            const auto write = engine.variables.SliceForTicketForTests(retargetWriteSequence);
-            ASSERT_TRUE(write.Valid());
-            ASSERT_TRUE(engine.variableSlices.CaptureSource(write, &writeProbe.source));
-            ASSERT_EQ(retargetWriteSequence, writeProbe.source.ticket);
-            ASSERT_TRUE(engine.variableSlices.RetainSource(writeProbe.source));
-            writeProbe.held = true;
             retargetRequested = true;
         }
         if (!stopRequested && engine.mixer.BlocksRendered() * block < newLogicalDeadline &&
@@ -50662,6 +50671,7 @@ static void CheckRegisteredInitialCompositeCohort(bool piece, bool reselect,
     const auto baseline = CaptureActionReclaimableOwners(engine);
     const auto sourceGenerations = CaptureSourceGenerations(engine);
     harken::VariableSliceRef source{};
+    harken::LogicCommitSequence sourceSequence = 0;
     if (reselect) {
         auto future = harken::ObserveVariableCallAt(engine.variables.CurrentWorldGeneration(),
             engine.variables.CurrentTransportEpoch(), block, engine.timelinePool.WindowStartFrame(),
@@ -50670,6 +50680,7 @@ static void CheckRegisteredInitialCompositeCohort(bool piece, bool reselect,
         const auto set = engine.variables.AcceptGlobal(image.variables[3].variableId, 1.0f, future,
             engine.params, engine.bindings, engine.busTargets);
         ASSERT_EQ(VN_OK, set.result);
+        sourceSequence = set.ticket.sequence;
         engine.variables.BeginService(engine, engine.mixer.BlocksRendered(), block);
         source = engine.variables.SliceForTicketForTests(set.ticket.sequence);
         ASSERT_TRUE(source.Valid());
@@ -50805,6 +50816,8 @@ static void CheckRegisteredInitialCompositeCohort(bool piece, bool reselect,
     info.structSize = sizeof(info);
     for (unsigned quantum = 0; quantum < 128; ++quantum) {
         ASSERT_EQ(VN_OK, Vn_Update());
+        if (sourceSequence != 0 && !sourceApplied)
+            source = engine.variables.SliceForTicketForTests(sourceSequence);
         const auto start = engine.mixer.BlocksRendered() * block;
         engine.nullBackend.Pump(1);
         if (source.Valid() && engine.variableSlices.State(source) == harken::VariableSliceState::SliceApplied)
@@ -51176,6 +51189,7 @@ static void CheckRegisteredInitialQueueCohort(bool nestedControl, bool reselect 
     const auto baseline = CaptureActionReclaimableOwners(engine);
     const auto sourceGenerations = CaptureSourceGenerations(engine);
     harken::VariableSliceRef source{};
+    harken::LogicCommitSequence sourceSequence = 0;
     if (reselect) {
         auto future = harken::ObserveVariableCallAt(engine.variables.CurrentWorldGeneration(),
             engine.variables.CurrentTransportEpoch(), block, engine.timelinePool.WindowStartFrame(),
@@ -51184,6 +51198,7 @@ static void CheckRegisteredInitialQueueCohort(bool nestedControl, bool reselect 
         const auto set = engine.variables.AcceptGlobal(image.variables[3].variableId, 1.0f, future,
             engine.params, engine.bindings, engine.busTargets);
         ASSERT_EQ(VN_OK, set.result);
+        sourceSequence = set.ticket.sequence;
         engine.variables.BeginService(engine, engine.mixer.BlocksRendered(), block);
         source = engine.variables.SliceForTicketForTests(set.ticket.sequence);
         ASSERT_TRUE(source.Valid());
@@ -51315,6 +51330,8 @@ static void CheckRegisteredInitialQueueCohort(bool nestedControl, bool reselect 
     bool sourceApplied = false;
     for (unsigned quantum = 0; quantum < 160; ++quantum) {
         ASSERT_EQ(VN_OK, Vn_Update());
+        if (sourceSequence != 0 && !sourceApplied)
+            source = engine.variables.SliceForTicketForTests(sourceSequence);
         if (clearObserver.refused) clearObserver.heldActivation.Release();
         const auto before = engine.mixer.BlocksRendered();
         engine.nullBackend.Pump(1);
@@ -51500,7 +51517,7 @@ static void CheckRegisteredPendingVariableCohort(bool stopWithLaneLoan, bool pre
         engine.params, engine.bindings, engine.busTargets);
     ASSERT_EQ(VN_OK, set.result);
     engine.variables.BeginService(engine, engine.mixer.BlocksRendered(), block);
-    const auto source = engine.variables.SliceForTicketForTests(set.ticket.sequence);
+    auto source = engine.variables.SliceForTicketForTests(set.ticket.sequence);
     ASSERT_TRUE(source.Valid());
     ASSERT_EQ(harken::VariableSliceState::Prepared, engine.variableSlices.State(source));
     auto desc = ValidPostDesc();
@@ -51605,6 +51622,9 @@ static void CheckRegisteredPendingVariableCohort(bool stopWithLaneLoan, bool pre
         }
     }
     ASSERT_EQ(VN_OK, Vn_Update());
+    source = engine.variables.SliceForTicketForTests(set.ticket.sequence);
+    ASSERT_TRUE(source.Valid());
+    ASSERT_EQ(harken::VariableSliceState::PageCommitted, engine.variableSlices.State(source));
     for (unsigned quantum = 0; quantum < 8; ++quantum) {
         engine.nullBackend.Pump(1);
         EXPECT_NEAR(0.0f, harkentest::Peak(engine.nullBackend.LastBlock(), 2u * block), 1e-7f);

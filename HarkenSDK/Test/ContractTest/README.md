@@ -87,6 +87,13 @@ dotnet run --project HarkenSDK/Test/ContractTest --configuration Release -- --re
 ```
 
 The fixture uses the generated Variable catalog and canonical Init activation.
+For the focused native Variable and ABI gate, use `--variables-only` with the
+same two environment variables. It requires the fixture and native library.
+The managed gate submits 320 distinct Emitter writes and 10000 same-key
+replacements through the shipped `Values.SetValue` implementation without an
+intervening Update, verifies synchronous pending state and zero managed
+allocations, and destroys the scoped owners. Native Runtime tests separately
+verify audio application, bounded drain and terminal outcomes.
 The managed gate calls typed, raw and deprecated setters through the real native
 library, checks immediate acceptance and pending write order, rejects stale
 Emitters, and measures successful SetValue calls for zero managed allocations.
