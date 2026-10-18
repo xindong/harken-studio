@@ -21,7 +21,7 @@ jobs:
       - name: Checkout production fix
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: 00fe11363a5b47bed3c5e3a229551aabdec6610b
+          ref: 43a55f6e0e8d4d6d171d2409c119d62931027f8e
           fetch-depth: 0
           clean: false
       - name: Setup MSVC environment
@@ -44,6 +44,7 @@ jobs:
           env = os.environ.copy()
           env['PATH'] = str(pathlib.Path(env['VENUS_QT_DIR']) / 'bin') + os.pathsep + env['PATH']
           env['QT_QPA_PLATFORM'] = 'offscreen'
+          env['QT_FORCE_STDERR_LOGGING'] = '1'
           binary = str(root / 'build-hub/bin/Release/harken_hub_tests.exe')
           records = []
           for index in range(200):
