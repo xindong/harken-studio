@@ -6,6 +6,7 @@
 // in the render context at the block boundary.
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "PlayableStorageTestSupport.h"
 
 #include "harken/core/CommandQueue.h"
 #include "harken/dsp/GainRamp.h"
@@ -21,7 +22,6 @@
 namespace {
 
 using harkentest::EngineSession;
-using harkentest::MakeNullConfig;
 using harkentest::MakePlayDesc;
 using harkentest::MonoDesc;
 
@@ -29,6 +29,18 @@ constexpr std::uint32_t kBlockFrames = 256;
 constexpr std::uint32_t kSampleRate = 48000;
 constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
 constexpr float kInf = std::numeric_limits<float>::infinity();
+
+VnConfig SetterConfig(std::uint32_t maxVoices, std::uint32_t blockFrames,
+                      std::uint32_t sampleRate) {
+    auto config = harkentest::MakeNullConfig(maxVoices, blockFrames, sampleRate);
+    config.maxTriggerDepth = 1;
+    config.maxActionFirings = 8;
+    return config;
+}
+
+class VoiceFilter : public testing::Test {
+    harkentest::PlayableCapacityScope playableCapacity_{8, 1};
+};
 
 VnResult RegisterConstVoiceVolumeBinding(harken::Engine* engine,
                                          harken::BindingId id,
@@ -51,8 +63,11 @@ void ExpectPitchSnapAfterBlock(const harken::VoiceRenderContext& context,
 
 class VoiceSetter : public ::testing::Test {
 protected:
+    // This scope must outlive the session, including SetUp and reinitialization.
+    harkentest::PlayableCapacityScope playableCapacity_{8, 1};
+
     void SetUp() override {
-        VnConfig config = MakeNullConfig(4, kBlockFrames, kSampleRate);
+        VnConfig config = SetterConfig(4, kBlockFrames, kSampleRate);
         session = std::make_unique<EngineSession>(config);
         ASSERT_EQ(VN_OK, session->InitResult());
         ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -204,7 +219,7 @@ TEST_F(VoiceSetter, BackpressureRefusalHasZeroSideEffects) {
     // A dedicated tiny queue: depth 4, with the play command already
     // drained so exactly four pushes fill it.
     session.reset();
-    VnConfig config = MakeNullConfig(4, kBlockFrames, 48000);
+    VnConfig config = SetterConfig(4, kBlockFrames, 48000);
     config.commandQueueDepth = 4;
     session = std::make_unique<EngineSession>(config);
     ASSERT_EQ(VN_OK, session->InitResult());
@@ -292,7 +307,7 @@ TEST_F(VoiceSetter, BackpressureAlsoRefusesPitchAndPositionSideEffectFree) {
     // Same tiny-queue arrangement as the volume case, extended to the
     // other two setters.
     session.reset();
-    VnConfig config = MakeNullConfig(4, kBlockFrames, 48000);
+    VnConfig config = SetterConfig(4, kBlockFrames, 48000);
     config.commandQueueDepth = 4;
     session = std::make_unique<EngineSession>(config);
     ASSERT_EQ(VN_OK, session->InitResult());
@@ -591,7 +606,7 @@ TEST_F(VoiceSetter, OverflowingVolumeTargetsAreRefusedWithZeroSideEffects) {
 
 TEST_F(VoiceSetter, CombinedFiniteVolumeContributionsThatOverflowAreRefused) {
     session.reset();
-    VnConfig config = MakeNullConfig(4, kBlockFrames, kSampleRate);
+    VnConfig config = SetterConfig(4, kBlockFrames, kSampleRate);
     session = std::make_unique<EngineSession>(config);
     ASSERT_EQ(VN_OK, session->InitResult());
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
@@ -610,7 +625,7 @@ TEST_F(VoiceSetter, CombinedFiniteVolumeContributionsThatOverflowAreRefused) {
 
 TEST_F(VoiceSetter, PendingAndParkedOverflowingVolumeDoesNotWriteRecords) {
     session.reset();
-    VnConfig config = MakeNullConfig(4, kBlockFrames, kSampleRate);
+    VnConfig config = SetterConfig(4, kBlockFrames, kSampleRate);
     session = std::make_unique<EngineSession>(config);
     ASSERT_EQ(VN_OK, session->InitResult());
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
@@ -635,7 +650,7 @@ TEST_F(VoiceSetter, PendingAndParkedOverflowingVolumeDoesNotWriteRecords) {
     EXPECT_FLOAT_EQ(0.0f, pendingRec.volumeDb);
 
     session.reset();
-    VnConfig parkConfig = MakeNullConfig(1, kBlockFrames, kSampleRate);
+    VnConfig parkConfig = SetterConfig(1, kBlockFrames, kSampleRate);
     parkConfig.maxParkedVoices = 1;
     parkConfig.audibilityParkEnabled = 1;
     parkConfig.parkThresholdDb = -40.0f;
@@ -664,7 +679,7 @@ TEST_F(VoiceSetter, PendingAndParkedOverflowingVolumeDoesNotWriteRecords) {
 
 TEST_F(VoiceSetter, InitialOverflowingVolumeRefusesStart) {
     session.reset();
-    VnConfig config = MakeNullConfig(4, kBlockFrames, kSampleRate);
+    VnConfig config = SetterConfig(4, kBlockFrames, kSampleRate);
     session = std::make_unique<EngineSession>(config);
     ASSERT_EQ(VN_OK, session->InitResult());
     harken::Engine* engine = session->Engine();
@@ -711,7 +726,7 @@ TEST_F(VoiceSetter, InitialOverflowingVolumeRefusesStart) {
 
 TEST_F(VoiceSetter, LegalInitialVolumeStillStarts) {
     session.reset();
-    VnConfig config = MakeNullConfig(4, kBlockFrames, kSampleRate);
+    VnConfig config = SetterConfig(4, kBlockFrames, kSampleRate);
     session = std::make_unique<EngineSession>(config);
     ASSERT_EQ(VN_OK, session->InitResult());
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
@@ -768,7 +783,7 @@ TEST_F(VoiceSetter, OverflowingStartDoesNotAffectLiveVoice) {
 
 TEST_F(VoiceSetter, ParkReturnOverflowingVolumeDoesNotBecomeAudible) {
     session.reset();
-    VnConfig parkConfig = MakeNullConfig(1, kBlockFrames, kSampleRate);
+    VnConfig parkConfig = SetterConfig(1, kBlockFrames, kSampleRate);
     parkConfig.maxParkedVoices = 1;
     parkConfig.audibilityParkEnabled = 1;
     parkConfig.parkThresholdDb = -40.0f;
@@ -820,7 +835,7 @@ TEST_F(VoiceSetter, RejectedBindingParkReturnRetainsRecipeAndDiscardsTemporaryRe
     for (const bool definitionBacked : {false, true}) {
         SCOPED_TRACE(definitionBacked);
         session.reset();
-        VnConfig config = MakeNullConfig(1, kBlockFrames, kSampleRate);
+        VnConfig config = SetterConfig(1, kBlockFrames, kSampleRate);
         config.maxParkedVoices = 1;
         config.audibilityParkEnabled = 1;
         config.parkThresholdDb = -40.0f;
@@ -940,9 +955,9 @@ TEST_F(VoiceSetter, PitchCommandRetunesTheResamplerInPlace) {
     EXPECT_EQ(0u, ctx->resampler.RampFramesRemaining());
 }
 
-TEST(VoiceFilter, EnableChangesDirectAndVoiceSend) {
+TEST_F(VoiceFilter, EnableChangesDirectAndVoiceSend) {
     constexpr std::uint32_t kBlock = 256;
-    VnConfig config = MakeNullConfig(2, kBlock, 48000);
+    VnConfig config = SetterConfig(2, kBlock, 48000);
     config.maxBuses = 4;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -979,9 +994,9 @@ TEST(VoiceFilter, EnableChangesDirectAndVoiceSend) {
     EXPECT_LT(std::fabs(filteredSend.left.back()), 0.05f);
 }
 
-TEST(VoiceFilter, DoesNotAffectOtherVoices) {
+TEST_F(VoiceFilter, DoesNotAffectOtherVoices) {
     constexpr std::uint32_t kBlock = 256;
-    VnConfig config = MakeNullConfig(4, kBlock, 48000);
+    VnConfig config = SetterConfig(4, kBlock, 48000);
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = harkentest::MakeDC(48000, 0.5f);
@@ -1010,9 +1025,9 @@ TEST(VoiceFilter, DoesNotAffectOtherVoices) {
     ASSERT_NEAR(0.5f, otherOnly.left.back(), 1e-4f);
 }
 
-TEST(VoiceFilter, ApiDirectComposesWithVariableCutoff) {
+TEST_F(VoiceFilter, ApiDirectComposesWithVariableCutoff) {
     constexpr std::uint32_t kBlock = 256;
-    VnConfig config = MakeNullConfig(2, kBlock, 48000);
+    VnConfig config = SetterConfig(2, kBlock, 48000);
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();

@@ -1,6 +1,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/RawVoiceTestSupport.h"
 #include "Common/TestUtil.h"
+#include "PlayableStorageTestSupport.h"
 
 #include "Engine.h"
 #include "PlayableRuntime.h"
@@ -33,6 +34,11 @@ namespace {
 constexpr VnObjectId kSound = harkentest::ObjectId(9101);
 constexpr VnObjectId kContainer = harkentest::ObjectId(9102);
 constexpr VnObjectId kAction = harkentest::ObjectId(91);
+
+class BusAdmissionStart : public testing::Test {
+    // Current-world, Preview and Action entries retain at most four Playables.
+    harkentest::PlayableCapacityScope playableCapacity_{8, 1};
+};
 
 harken::PlayablePropertyPayloadViewV1 CanonicalPayload() {
     harken::PlayablePropertyPayloadViewV1 payload{};
@@ -265,7 +271,7 @@ harken::ProjectGenerationInstallViewV1 MakeInstallView(
     return view;
 }
 
-TEST(BusAdmissionStart, PreparedPoolRecyclesExactlyOnceAfterRetirement) {
+TEST_F(BusAdmissionStart, PreparedPoolRecyclesExactlyOnceAfterRetirement) {
     harken::TopologyPlanPool pool(2, 4, 2);
     static_assert(noexcept(pool.Recycle(0)));
     static_assert(noexcept(std::declval<harken::ParamSystem&>().SetInstalledValue(harkentest::ObjectId(1), 0.0f)));
@@ -293,7 +299,7 @@ TEST(BusAdmissionStart, PreparedPoolRecyclesExactlyOnceAfterRetirement) {
     EXPECT_EQ(0u, pool.InUse());
 }
 
-TEST(BusAdmissionStart, PreparedLifetimeMoveAndDestructorReleaseExactReservations) {
+TEST_F(BusAdmissionStart, PreparedLifetimeMoveAndDestructorReleaseExactReservations) {
     AdmissionSession fixture;
     auto& engine = *fixture.session.Engine();
     auto firstView = MakeInstallView(fixture.image);
@@ -321,7 +327,7 @@ TEST(BusAdmissionStart, PreparedLifetimeMoveAndDestructorReleaseExactReservation
     for (const auto& claim : engine.preparedOwnerClaims) EXPECT_EQ(0u, claim.inUse);
 }
 
-TEST(BusAdmissionStart, WrongEngineCancelLeavesTokenArmedUntilOwnDomainRelease) {
+TEST_F(BusAdmissionStart, WrongEngineCancelLeavesTokenArmedUntilOwnDomainRelease) {
     AdmissionSession fixture;
     auto& engine = *fixture.session.Engine();
     auto other = std::make_unique<harken::Engine>(engine.config);
@@ -337,7 +343,7 @@ TEST(BusAdmissionStart, WrongEngineCancelLeavesTokenArmedUntilOwnDomainRelease) 
     EXPECT_EQ(0u, engine.preparedTopologyPlans.InUse());
 }
 
-TEST(BusAdmissionStart, PreparedTokenOutlivesTermWithoutReleasingNewSession) {
+TEST_F(BusAdmissionStart, PreparedTokenOutlivesTermWithoutReleasingNewSession) {
     harken::PreparedProjectGenerationV1 old;
     std::weak_ptr<harken::ProjectGenerationReservationDomainV1> oldDomain;
     {
@@ -365,7 +371,7 @@ TEST(BusAdmissionStart, PreparedTokenOutlivesTermWithoutReleasingNewSession) {
     EXPECT_EQ(0u, engine.preparedTopologyPlans.InUse());
 }
 
-TEST(BusAdmissionStart, CommandWaistStaysFrozen) {
+TEST_F(BusAdmissionStart, CommandWaistStaysFrozen) {
     EXPECT_EQ(sizeof(harken::CommandRecord), 64u);
     EXPECT_LE(sizeof(harken::CommandRecord::Payload::SetBusTopologyPlan), 56u);
     EXPECT_EQ(harken::kOpcodeSetBusTopologyPlan, 15u);
@@ -376,7 +382,7 @@ TEST(BusAdmissionStart, CommandWaistStaysFrozen) {
     EXPECT_EQ(sizeof(harken::ProjectGenerationInstallAckV1), 40u);
 }
 
-TEST(BusAdmissionStart, PrepareFillsPreparedPlanAndCommitBackpressuresOnConsumers) {
+TEST_F(BusAdmissionStart, PrepareFillsPreparedPlanAndCommitBackpressuresOnConsumers) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -424,7 +430,7 @@ TEST(BusAdmissionStart, PrepareFillsPreparedPlanAndCommitBackpressuresOnConsumer
               harken::PlayableStartStatus::Accepted);
 }
 
-TEST(BusAdmissionStart, PublishedMasterHolderBlocksPropertyWritesButNotForeignBus) {
+TEST_F(BusAdmissionStart, PublishedMasterHolderBlocksPropertyWritesButNotForeignBus) {
     AdmissionSession fixture;
     auto* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -497,7 +503,7 @@ TEST(BusAdmissionStart, PublishedMasterHolderBlocksPropertyWritesButNotForeignBu
     EXPECT_EQ(VN_OK, Vn_SetBusEffectBypass(foreign, 0, 1));
 }
 
-TEST(BusAdmissionStart, EmptySuccessorDropsOnlyExactHolderAndRetryDoesNotResetMaster) {
+TEST_F(BusAdmissionStart, EmptySuccessorDropsOnlyExactHolderAndRetryDoesNotResetMaster) {
     AdmissionSession fixture;
     auto* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -542,7 +548,7 @@ TEST(BusAdmissionStart, EmptySuccessorDropsOnlyExactHolderAndRetryDoesNotResetMa
     ASSERT_EQ(VN_OK, Vn_Update());
 }
 
-TEST(BusAdmissionStart, DirectOwnerDoesNotTakeReservedPreviewDestination) {
+TEST_F(BusAdmissionStart, DirectOwnerDoesNotTakeReservedPreviewDestination) {
     AdmissionSession fixture;
     auto* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -568,7 +574,7 @@ TEST(BusAdmissionStart, DirectOwnerDoesNotTakeReservedPreviewDestination) {
         [&](const auto& row) { return row.live && row.ownerId == direct.ownerId; }));
 }
 
-TEST(BusAdmissionStart, PrepareThenCommitWithoutConsumersInstallsPendingClaim) {
+TEST_F(BusAdmissionStart, PrepareThenCommitWithoutConsumersInstallsPendingClaim) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -630,7 +636,7 @@ TEST(BusAdmissionStart, PrepareThenCommitWithoutConsumersInstallsPendingClaim) {
               harken::PlayableStartStatus::Accepted);
 }
 
-TEST(BusAdmissionStart, PrepareWithLiveConsumersReturnsBackpressure) {
+TEST_F(BusAdmissionStart, PrepareWithLiveConsumersReturnsBackpressure) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -657,7 +663,7 @@ TEST(BusAdmissionStart, PrepareWithLiveConsumersReturnsBackpressure) {
     EXPECT_EQ(engine->currentWorldReplacementAdmissionClosed, false);
 }
 
-TEST(BusAdmissionStart, NeutralProjectionMixNeDeviceMatchesHeaderTables) {
+TEST_F(BusAdmissionStart, NeutralProjectionMixNeDeviceMatchesHeaderTables) {
     AdmissionSession fixture(VN_CHANNEL_LAYOUT_5_1, VN_CHANNEL_LAYOUT_STEREO);
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -718,7 +724,7 @@ TEST(BusAdmissionStart, NeutralProjectionMixNeDeviceMatchesHeaderTables) {
     harken::CancelPreparedProjectGenerationV1(*engine, std::move(prepared));
 }
 
-TEST(BusAdmissionStart, CancelAfterPrepareInvalidatesCommit) {
+TEST_F(BusAdmissionStart, CancelAfterPrepareInvalidatesCommit) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -738,7 +744,7 @@ TEST(BusAdmissionStart, CancelAfterPrepareInvalidatesCommit) {
     EXPECT_EQ(engine->topologyPlans.InUse(), liveBefore);
 }
 
-TEST(BusAdmissionStart, IdempotentCommitDoesNotIncrementGeneration) {
+TEST_F(BusAdmissionStart, IdempotentCommitDoesNotIncrementGeneration) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -757,7 +763,7 @@ TEST(BusAdmissionStart, IdempotentCommitDoesNotIncrementGeneration) {
     EXPECT_EQ(engine->variables.CurrentWorldGeneration(), generationBefore);
 }
 
-TEST(BusAdmissionStart, PreparedPoolAcquireDoesNotChangeLiveInUse) {
+TEST_F(BusAdmissionStart, PreparedPoolAcquireDoesNotChangeLiveInUse) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -776,7 +782,7 @@ TEST(BusAdmissionStart, PreparedPoolAcquireDoesNotChangeLiveInUse) {
               engine->topologyPlans.Capacity());
 }
 
-TEST(BusAdmissionStart, UnpairedCurrentWorldStillStarts) {
+TEST_F(BusAdmissionStart, UnpairedCurrentWorldStillStarts) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -805,7 +811,7 @@ TEST(BusAdmissionStart, UnpairedCurrentWorldStillStarts) {
     EXPECT_EQ(Vn_PostAction(&action, &firing), VN_OK);
 }
 
-TEST(BusAdmissionStart, ArmedMissingClaimRefusesAllThreeStarts) {
+TEST_F(BusAdmissionStart, ArmedMissingClaimRefusesAllThreeStarts) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -842,7 +848,7 @@ TEST(BusAdmissionStart, ArmedMissingClaimRefusesAllThreeStarts) {
     EXPECT_EQ(firing, 0u);
 }
 
-TEST(BusAdmissionStart, OpenMatchingClaimAdmitsAndPendingBackpressures) {
+TEST_F(BusAdmissionStart, OpenMatchingClaimAdmitsAndPendingBackpressures) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -928,7 +934,7 @@ struct StagedTraceFixture {
     }
 };
 
-TEST(BusAdmissionStart, StagedTracePublishesExactlyTwoExistingGrammarRecords) {
+TEST_F(BusAdmissionStart, StagedTracePublishesExactlyTwoExistingGrammarRecords) {
     StagedTraceFixture fixture;
     auto& engine = *fixture.session.Engine();
     ASSERT_NE(nullptr, engine.trace);
@@ -982,7 +988,7 @@ TEST(BusAdmissionStart, StagedTracePublishesExactlyTwoExistingGrammarRecords) {
     EXPECT_EQ(1, std::count(types.begin(), types.end(), harken::kTraceRecordCurrentWorldInstall));
 }
 
-TEST(BusAdmissionStart, StagedTracePreparationFaultsLeaveRecorderUnchanged) {
+TEST_F(BusAdmissionStart, StagedTracePreparationFaultsLeaveRecorderUnchanged) {
     StagedTraceFixture fixture;
     auto& engine = *fixture.session.Engine();
     ASSERT_NE(nullptr, engine.trace);
@@ -1006,7 +1012,7 @@ TEST(BusAdmissionStart, StagedTracePreparationFaultsLeaveRecorderUnchanged) {
     EXPECT_FALSE(harken::TraceRecorder::CanCommitProjectGenerationTraceV1(staged));
 }
 
-TEST(BusAdmissionStart, FailedNonnullTraceAllowsEmptyStageButInvalidatesActiveToken) {
+TEST_F(BusAdmissionStart, FailedNonnullTraceAllowsEmptyStageButInvalidatesActiveToken) {
     for (bool writeFailure : {false, true}) {
         StagedTraceFixture fixture;
         auto& engine = *fixture.session.Engine();
@@ -1051,7 +1057,7 @@ TEST(BusAdmissionStart, FailedNonnullTraceAllowsEmptyStageButInvalidatesActiveTo
     }
 }
 
-TEST(BusAdmissionStart, TraceEpochCoversNullStopFailedAttemptRestartAndSaturation) {
+TEST_F(BusAdmissionStart, TraceEpochCoversNullStopFailedAttemptRestartAndSaturation) {
     StagedTraceFixture fixture;
     auto& engine = *fixture.session.Engine();
     ASSERT_EQ(VN_OK, Vn_TraceStop());
@@ -1081,7 +1087,7 @@ TEST(BusAdmissionStart, TraceEpochCoversNullStopFailedAttemptRestartAndSaturatio
     EXPECT_EQ(nullptr, engine.trace);
 }
 
-TEST(BusAdmissionStart, PairedCommitWritesCurrentWorldInstallWithBoundTail) {
+TEST_F(BusAdmissionStart, PairedCommitWritesCurrentWorldInstallWithBoundTail) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -1160,7 +1166,7 @@ std::uint32_t ValidAckCount(const harken::Engine& engine) {
     return count;
 }
 
-TEST(BusAdmissionStart, CommitBackpressuresWhenLivePoolIsExhausted) {
+TEST_F(BusAdmissionStart, CommitBackpressuresWhenLivePoolIsExhausted) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -1205,7 +1211,7 @@ TEST(BusAdmissionStart, CommitBackpressuresWhenLivePoolIsExhausted) {
     EXPECT_FALSE(prepared.Valid());
 }
 
-TEST(BusAdmissionStart, CommitBackpressuresWhenCommandQueueIsFull) {
+TEST_F(BusAdmissionStart, CommitBackpressuresWhenCommandQueueIsFull) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -1257,7 +1263,7 @@ std::uint32_t OccupiedAdmissionCount(const harken::Engine& engine) {
     return count;
 }
 
-TEST(BusAdmissionStart, PairedCommitRecyclesStaleCurrentWorldAdmissionRows) {
+TEST_F(BusAdmissionStart, PairedCommitRecyclesStaleCurrentWorldAdmissionRows) {
     VnConfig config = AdmissionConfig();
     config.maxBusTopologyOwners = 2;
     harkentest::EngineSession session(config);
@@ -1309,7 +1315,7 @@ TEST(BusAdmissionStart, PairedCommitRecyclesStaleCurrentWorldAdmissionRows) {
               harken::PlayableStartStatus::Accepted);
 }
 
-TEST(BusAdmissionStart, WorldEditsReclaimSelectionMemoryForTheSameEmitter) {
+TEST_F(BusAdmissionStart, WorldEditsReclaimSelectionMemoryForTheSameEmitter) {
     for (const bool paired : {true, false}) {
         SCOPED_TRACE(paired);
         AdmissionSession fixture;
@@ -1365,7 +1371,7 @@ TEST(BusAdmissionStart, WorldEditsReclaimSelectionMemoryForTheSameEmitter) {
     }
 }
 
-TEST(BusAdmissionStart, OldSelectionMemoryWaitsForLiveSoundAndPreservesIdempotentOrRejectedInstalls) {
+TEST_F(BusAdmissionStart, OldSelectionMemoryWaitsForLiveSoundAndPreservesIdempotentOrRejectedInstalls) {
     AdmissionSession fixture;
     auto* engine = fixture.session.Engine();
     auto& image = fixture.image;
@@ -1404,7 +1410,7 @@ TEST(BusAdmissionStart, OldSelectionMemoryWaitsForLiveSoundAndPreservesIdempoten
     EXPECT_EQ(0u, engine->selectionMemory.RowCount());
 }
 
-TEST(BusAdmissionStart, CurrentWorldReclamationDoesNotRetirePackAuthoritySelectionMemory) {
+TEST_F(BusAdmissionStart, CurrentWorldReclamationDoesNotRetirePackAuthoritySelectionMemory) {
     AdmissionSession fixture;
     auto* engine = fixture.session.Engine();
     auto& image = fixture.image;
@@ -1430,7 +1436,7 @@ TEST(BusAdmissionStart, CurrentWorldReclamationDoesNotRetirePackAuthoritySelecti
     EXPECT_EQ(1u, engine->selectionMemory.Snapshot(request.key).selectionOrdinal);
 }
 
-TEST(BusAdmissionStart, VolumeV2RendersParentAndChildOnceInFreshFirstBlock) {
+TEST_F(BusAdmissionStart, VolumeV2RendersParentAndChildOnceInFreshFirstBlock) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -1493,7 +1499,7 @@ TEST(BusAdmissionStart, VolumeV2RendersParentAndChildOnceInFreshFirstBlock) {
     EXPECT_NEAR(expected, output[1], 1e-5f);
 }
 
-TEST(BusAdmissionStart, VolumeV2SecondOwnerPreservesForeignMasterAndBusTargets) {
+TEST_F(BusAdmissionStart, VolumeV2SecondOwnerPreservesForeignMasterAndBusTargets) {
     AdmissionSession fixture;
     auto* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -1569,7 +1575,7 @@ TEST(BusAdmissionStart, VolumeV2SecondOwnerPreservesForeignMasterAndBusTargets) 
         harken::kBusTargetBusVolume, harken::BusTargetStore::kSlotAuthoredIndex));
 }
 
-TEST(BusAdmissionStart, VolumeV2KeepsMasterSiblingAndPlayableGainIndependent) {
+TEST_F(BusAdmissionStart, VolumeV2KeepsMasterSiblingAndPlayableGainIndependent) {
     AdmissionSession fixture;
     auto* engine = fixture.session.Engine();
     ASSERT_NE(nullptr, engine);
@@ -1640,7 +1646,7 @@ TEST(BusAdmissionStart, VolumeV2KeepsMasterSiblingAndPlayableGainIndependent) {
     playAndCapture(siblingId, -9.0f);
 }
 
-TEST(BusAdmissionStart, VolumeV2RetainsApiAndBindingAcrossAuthoredUpdateAndRejectsDrift) {
+TEST_F(BusAdmissionStart, VolumeV2RetainsApiAndBindingAcrossAuthoredUpdateAndRejectsDrift) {
     AdmissionSession fixture;
     auto* engine = fixture.session.Engine();
     ASSERT_NE(nullptr, engine);
@@ -1851,7 +1857,7 @@ TEST(BusAdmissionStart, VolumeV2RetainsApiAndBindingAcrossAuthoredUpdateAndRejec
     captureFresh(-12.0f);
 }
 
-TEST(BusAdmissionStart, PairedCommitInstallsLogicMasterAndChildBuses) {
+TEST_F(BusAdmissionStart, PairedCommitInstallsLogicMasterAndChildBuses) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -1943,7 +1949,7 @@ TEST(BusAdmissionStart, PairedCommitInstallsLogicMasterAndChildBuses) {
     EXPECT_FALSE(projectionIndexKeepsLevel);
 }
 
-TEST(BusAdmissionStart, PrepareRejectsDuplicateAuthoredBusIds) {
+TEST_F(BusAdmissionStart, PrepareRejectsDuplicateAuthoredBusIds) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -1977,7 +1983,7 @@ TEST(BusAdmissionStart, PrepareRejectsDuplicateAuthoredBusIds) {
     EXPECT_FALSE(prepared.Valid());
 }
 
-TEST(BusAdmissionStart, PrepareRejectsOutOfRangeParentIndex) {
+TEST_F(BusAdmissionStart, PrepareRejectsOutOfRangeParentIndex) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -2011,7 +2017,7 @@ TEST(BusAdmissionStart, PrepareRejectsOutOfRangeParentIndex) {
     EXPECT_FALSE(prepared.Valid());
 }
 
-TEST(BusAdmissionStart, PrepareRejectsUnsetNonMasterParent) {
+TEST_F(BusAdmissionStart, PrepareRejectsUnsetNonMasterParent) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -2045,7 +2051,7 @@ TEST(BusAdmissionStart, PrepareRejectsUnsetNonMasterParent) {
     EXPECT_FALSE(prepared.Valid());
 }
 
-TEST(BusAdmissionStart, PrepareRejectsParentCycle) {
+TEST_F(BusAdmissionStart, PrepareRejectsParentCycle) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -2087,7 +2093,7 @@ TEST(BusAdmissionStart, PrepareRejectsParentCycle) {
     harken::CancelPreparedProjectGenerationV1(*engine, std::move(reuse));
 }
 
-TEST(BusAdmissionStart, PrepareRejectsSendCycle) {
+TEST_F(BusAdmissionStart, PrepareRejectsSendCycle) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -2124,7 +2130,7 @@ TEST(BusAdmissionStart, PrepareRejectsSendCycle) {
     EXPECT_FALSE(prepared.Valid());
 }
 
-TEST(BusAdmissionStart, PairedCommitAcceptsMasterOnlyProspective) {
+TEST_F(BusAdmissionStart, PairedCommitAcceptsMasterOnlyProspective) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -2160,7 +2166,7 @@ TEST(BusAdmissionStart, PairedCommitAcceptsMasterOnlyProspective) {
     EXPECT_EQ(engine->buses.ParentOf(0), 0u);
 }
 
-TEST(BusAdmissionStart, PairedCommitReparentsRetainedChildUnderNewParentSlot) {
+TEST_F(BusAdmissionStart, PairedCommitReparentsRetainedChildUnderNewParentSlot) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -2239,7 +2245,7 @@ TEST(BusAdmissionStart, PairedCommitReparentsRetainedChildUnderNewParentSlot) {
     EXPECT_EQ(engine->buses.ParentOf(childSlot), parentSlot);
 }
 
-TEST(BusAdmissionStart, PairedCommitReusesDistinctDeadSlotsForNewBuses) {
+TEST_F(BusAdmissionStart, PairedCommitReusesDistinctDeadSlotsForNewBuses) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -2292,7 +2298,7 @@ TEST(BusAdmissionStart, PairedCommitReusesDistinctDeadSlotsForNewBuses) {
     EXPECT_NE(b, c);
 }
 
-TEST(BusAdmissionStart, PreviewRemovalRejectsCallerBindingOnDeadSlot) {
+TEST_F(BusAdmissionStart, PreviewRemovalRejectsCallerBindingOnDeadSlot) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -2387,7 +2393,7 @@ TEST(BusAdmissionStart, PreviewRemovalRejectsCallerBindingOnDeadSlot) {
     EXPECT_EQ(engine->buses.FindIndex(kChild), childSlot);
 }
 
-TEST(BusAdmissionStart, PreviewRemovalMigratesDeadSlotsToRetainedAncestor) {
+TEST_F(BusAdmissionStart, PreviewRemovalMigratesDeadSlotsToRetainedAncestor) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -2468,7 +2474,7 @@ TEST(BusAdmissionStart, PreviewRemovalMigratesDeadSlotsToRetainedAncestor) {
     harken::CancelPreparedProjectGenerationV1(*engine, std::move(secondPrepared));
 }
 
-TEST(BusAdmissionStart, PreviewCommitMigratesPublishedIdentityAndFactsOffDeadSlots) {
+TEST_F(BusAdmissionStart, PreviewCommitMigratesPublishedIdentityAndFactsOffDeadSlots) {
     AdmissionSession fixture;
     harken::Engine* engine = fixture.session.Engine();
     ASSERT_NE(engine, nullptr);
@@ -2663,7 +2669,7 @@ void StartLiveBusConsumer(harken::Engine& engine, const AdmissionWorldImage& ima
     EXPECT_NEAR(expected, engine.nullBackend.LastBlock()[0], 1e-5f);
 }
 
-TEST(BusAdmissionStart, LiveBusV3AndV4RetainActualConsumerAndValidatedWorld) {
+TEST_F(BusAdmissionStart, LiveBusV3AndV4RetainActualConsumerAndValidatedWorld) {
     for (const auto vintage : {3u, 4u}) {
         SCOPED_TRACE(vintage);
         AdmissionSession fixture;
@@ -2690,7 +2696,7 @@ TEST(BusAdmissionStart, LiveBusV3AndV4RetainActualConsumerAndValidatedWorld) {
     }
 }
 
-TEST(BusAdmissionStart, LiveConsumerStillRejectsChangedWorldAndLegacyButValidatesInvalidWorld) {
+TEST_F(BusAdmissionStart, LiveConsumerStillRejectsChangedWorldAndLegacyButValidatesInvalidWorld) {
     for (const auto vintage : {1u, 3u, 4u}) {
         SCOPED_TRACE(vintage);
         AdmissionSession fixture;
@@ -2728,7 +2734,7 @@ TEST(BusAdmissionStart, LiveConsumerStillRejectsChangedWorldAndLegacyButValidate
     }
 }
 
-TEST(BusAdmissionStart, V3AndV4StillAllowValidatedReplacementWithoutConsumers) {
+TEST_F(BusAdmissionStart, V3AndV4StillAllowValidatedReplacementWithoutConsumers) {
     for (const auto vintage : {3u, 4u}) {
         AdmissionSession fixture;
         auto& engine = *fixture.session.Engine();
@@ -2782,7 +2788,7 @@ void IntroduceLiveBusProtection(harken::Engine& engine,
     }
 }
 
-TEST(BusAdmissionStart, LiveBusProtectedStatesRejectPrepareAndConditionsAddedAfterPrepare) {
+TEST_F(BusAdmissionStart, LiveBusProtectedStatesRejectPrepareAndConditionsAddedAfterPrepare) {
     for (const auto vintage : {3u, 4u}) {
         for (const auto protection : {LiveBusProtection::Slice, LiveBusProtection::TransportDrain,
                  LiveBusProtection::WorldDrain, LiveBusProtection::DirectAction}) {
@@ -2836,7 +2842,7 @@ TEST(BusAdmissionStart, LiveBusProtectedStatesRejectPrepareAndConditionsAddedAft
     }
 }
 
-TEST(BusAdmissionStart, ChangedWorldConsumerIntroducedAfterPrepareStillBlocksCommit) {
+TEST_F(BusAdmissionStart, ChangedWorldConsumerIntroducedAfterPrepareStillBlocksCommit) {
     AdmissionSession fixture;
     auto& engine = *fixture.session.Engine();
     auto changed = ChangedAdmissionWorld(fixture.image);
@@ -2854,7 +2860,7 @@ TEST(BusAdmissionStart, ChangedWorldConsumerIntroducedAfterPrepareStillBlocksCom
     EXPECT_TRUE(prepared.Valid());
 }
 
-TEST(BusAdmissionStart, RecycledValidAckSurvivesFinalPreflightRefusalAndRetryPublishesOnce) {
+TEST_F(BusAdmissionStart, RecycledValidAckSurvivesFinalPreflightRefusalAndRetryPublishesOnce) {
     AdmissionSession fixture;
     auto& engine = *fixture.session.Engine();
     LiveBusPublication publication(engine, fixture.image, 4);

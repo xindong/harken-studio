@@ -2,6 +2,7 @@
 #include <harken/Harken.h>
 
 #include "Common/TestUtil.h"
+#include "PlayableStorageTestSupport.h"
 #include "Common/VariableOutcomeCapture.h"
 #include "Common/StreamBuilder.h"
 #include "harken/param/EffectParamLocator.h"
@@ -174,6 +175,11 @@ using CurrentSliceHookPhase =
 constexpr std::uint32_t kBlockFrames = 64;
 constexpr std::uint32_t kSampleRate = 48000;
 constexpr VnVariableId kVariable = harkentest::ObjectId(7001);
+
+class VariableCurrentSlice : public testing::Test {
+    // Raw Voice census capacities are independent of unused Playable storage.
+    harkentest::PlayableCapacityScope playableCapacity_{8, 1};
+};
 
 VnConfig CurrentSliceConfig(std::uint32_t maxVoices, std::uint32_t blockFrames,
                            std::uint32_t sampleRate) {
@@ -605,7 +611,7 @@ void PublishCurrentPageAfterStage(
     publish.published = true;
 }
 
-TEST(VariableCurrentSlice, SuccessfulWriteThenDirectPlayUsesNewValueWithoutUpdateWait) {
+TEST_F(VariableCurrentSlice, SuccessfulWriteThenDirectPlayUsesNewValueWithoutUpdateWait) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxBindings = 4;
     config.maxBindingAttachments = 4;
@@ -641,7 +647,7 @@ TEST(VariableCurrentSlice, SuccessfulWriteThenDirectPlayUsesNewValueWithoutUpdat
     EXPECT_TRUE(heard);
 }
 
-TEST(VariableCurrentSlice, ConsecutiveDirectPlaysKeepOwnFirstPcmThenFollowLatestValue) {
+TEST_F(VariableCurrentSlice, ConsecutiveDirectPlaysKeepOwnFirstPcmThenFollowLatestValue) {
     for (const bool stallFifo : {false, true}) {
         SCOPED_TRACE(stallFifo);
         EngineSession session(CurrentSliceConfig(4, kBlockFrames, kSampleRate));
@@ -706,7 +712,7 @@ TEST(VariableCurrentSlice, ConsecutiveDirectPlaysKeepOwnFirstPcmThenFollowLatest
     }
 }
 
-TEST(VariableCurrentSlice, DirectVolumePreflightUsesCapturedValueAndRefusalReleasesCut) {
+TEST_F(VariableCurrentSlice, DirectVolumePreflightUsesCapturedValueAndRefusalReleasesCut) {
     for (const bool newValueOverflows : {false, true}) {
         SCOPED_TRACE(newValueOverflows);
         EngineSession session(CurrentSliceConfig(4, kBlockFrames, kSampleRate));
@@ -743,7 +749,7 @@ TEST(VariableCurrentSlice, DirectVolumePreflightUsesCapturedValueAndRefusalRelea
     }
 }
 
-TEST(VariableCurrentSlice, SourceFreeDirectPlayRendersWithoutUpdate) {
+TEST_F(VariableCurrentSlice, SourceFreeDirectPlayRendersWithoutUpdate) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -768,7 +774,7 @@ TEST(VariableCurrentSlice, SourceFreeDirectPlayRendersWithoutUpdate) {
     EXPECT_FALSE(e.variables.HasNativePublicationHold(harkentest::RenderHandle(&e, handle)));
 }
 
-TEST(VariableCurrentSlice, DirectSourceFailureAndStopReleaseWaitingVoiceAndAllowRetry) {
+TEST_F(VariableCurrentSlice, DirectSourceFailureAndStopReleaseWaitingVoiceAndAllowRetry) {
     for (const bool stop : {false, true}) {
         SCOPED_TRACE(stop);
         EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
@@ -814,7 +820,7 @@ TEST(VariableCurrentSlice, DirectSourceFailureAndStopReleaseWaitingVoiceAndAllow
     }
 }
 
-TEST(VariableCurrentSlice, DirectQueueRefusalReleasesCapturedResourcesAndPreservesWrite) {
+TEST_F(VariableCurrentSlice, DirectQueueRefusalReleasesCapturedResourcesAndPreservesWrite) {
     auto config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.commandQueueDepth = 64;
     EngineSession session(config);
@@ -858,7 +864,7 @@ TEST(VariableCurrentSlice, DirectQueueRefusalReleasesCapturedResourcesAndPreserv
             e.nullBackend.LastBlock()[2 * i], 1e-6f);
 }
 
-TEST(VariableCurrentSlice, DirectStreamStarvationKeepsFirstValueThroughUpdateAndNativeAck) {
+TEST_F(VariableCurrentSlice, DirectStreamStarvationKeepsFirstValueThroughUpdateAndNativeAck) {
     for (const std::uint32_t workers : {0u, 2u}) {
         SCOPED_TRACE(workers);
         auto config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
@@ -916,7 +922,7 @@ TEST(VariableCurrentSlice, DirectStreamStarvationKeepsFirstValueThroughUpdateAnd
     }
 }
 
-TEST(VariableCurrentSlice, DirectSettersSupersedeAcknowledgedVariableWhileStreamStarves) {
+TEST_F(VariableCurrentSlice, DirectSettersSupersedeAcknowledgedVariableWhileStreamStarves) {
     for (const std::uint32_t workers : {0u, 2u}) {
         SCOPED_TRACE(workers);
         auto config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
@@ -992,7 +998,7 @@ TEST(VariableCurrentSlice, DirectSettersSupersedeAcknowledgedVariableWhileStream
     }
 }
 
-TEST(VariableCurrentSlice, StagedStartsCaptureApplicableWritesAtCommitAndKeepOwnFirstPcm) {
+TEST_F(VariableCurrentSlice, StagedStartsCaptureApplicableWritesAtCommitAndKeepOwnFirstPcm) {
     for (const bool writeBeforeStaging : {false, true}) {
         SCOPED_TRACE(writeBeforeStaging);
         EngineSession session(CurrentSliceConfig(4, kBlockFrames, kSampleRate));
@@ -1037,7 +1043,7 @@ TEST(VariableCurrentSlice, StagedStartsCaptureApplicableWritesAtCommitAndKeepOwn
     }
 }
 
-TEST(VariableCurrentSlice, StagedInvalidCapturedVolumePreservesReservationForRetry) {
+TEST_F(VariableCurrentSlice, StagedInvalidCapturedVolumePreservesReservationForRetry) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -1077,7 +1083,7 @@ TEST(VariableCurrentSlice, StagedInvalidCapturedVolumePreservesReservationForRet
     EXPECT_EQ(0u, e.ledger.PendingStartCount());
 }
 
-TEST(VariableCurrentSlice, StagedSourceFailureOrStopReleasesNativeReceiptAndAllowsRetry) {
+TEST_F(VariableCurrentSlice, StagedSourceFailureOrStopReleasesNativeReceiptAndAllowsRetry) {
     for (const bool stop : {false, true}) {
         SCOPED_TRACE(stop);
         EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
@@ -1125,7 +1131,7 @@ TEST(VariableCurrentSlice, StagedSourceFailureOrStopReleasesNativeReceiptAndAllo
     }
 }
 
-TEST(VariableCurrentSlice, LatePendingStartPublishesSourcesAndCalendarInSameUpdate) {
+TEST_F(VariableCurrentSlice, LatePendingStartPublishesSourcesAndCalendarInSameUpdate) {
     for (const bool stream : {false, true}) {
         SCOPED_TRACE(stream);
         auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
@@ -1186,7 +1192,7 @@ TEST(VariableCurrentSlice, LatePendingStartPublishesSourcesAndCalendarInSameUpda
     }
 }
 
-TEST(VariableCurrentSlice, FreshStealAcceptsWriteAndRecapturesAtActualMaterialization) {
+TEST_F(VariableCurrentSlice, FreshStealAcceptsWriteAndRecapturesAtActualMaterialization) {
     auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
     config.voiceStealPolicy = 1;
     EngineSession session(config);
@@ -1224,7 +1230,7 @@ TEST(VariableCurrentSlice, FreshStealAcceptsWriteAndRecapturesAtActualMaterializ
     ASSERT_TRUE(heard);
 }
 
-TEST(VariableCurrentSlice, FreshVirtualDecisionUsesApplicableValueWithoutRenderClaim) {
+TEST_F(VariableCurrentSlice, FreshVirtualDecisionUsesApplicableValueWithoutRenderClaim) {
     auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
     config.maxParkedVoices = 1;
     config.audibilityParkEnabled = 1;
@@ -1262,7 +1268,7 @@ TEST(VariableCurrentSlice, FreshVirtualDecisionUsesApplicableValueWithoutRenderC
     EXPECT_FLOAT_EQ(1, value);
 }
 
-TEST(VariableCurrentSlice, StagedVirtualDecisionUsesValueAtCommit) {
+TEST_F(VariableCurrentSlice, StagedVirtualDecisionUsesValueAtCommit) {
     auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
     config.maxParkedVoices = 1;
     config.audibilityParkEnabled = 1;
@@ -1290,7 +1296,7 @@ TEST(VariableCurrentSlice, StagedVirtualDecisionUsesValueAtCommit) {
     EXPECT_EQ(0u, e.voices.ActiveCount());
 }
 
-TEST(VariableCurrentSlice, ParkedReturnUsesNewValueWithoutWaitingForBankAck) {
+TEST_F(VariableCurrentSlice, ParkedReturnUsesNewValueWithoutWaitingForBankAck) {
     auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
     config.maxParkedVoices = 1;
     config.audibilityParkEnabled = 1;
@@ -1351,7 +1357,7 @@ TEST(VariableCurrentSlice, ParkedReturnUsesNewValueWithoutWaitingForBankAck) {
             e.nullBackend.LastBlock()[2 * i], 1e-6f);
 }
 
-TEST(VariableCurrentSlice, ParkedFailedReadKeepsElapsedTimeForNextSuccessfulAdvance) {
+TEST_F(VariableCurrentSlice, ParkedFailedReadKeepsElapsedTimeForNextSuccessfulAdvance) {
     auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
     config.maxParkedVoices = 1;
     config.audibilityParkEnabled = 1;
@@ -1400,7 +1406,7 @@ TEST(VariableCurrentSlice, ParkedFailedReadKeepsElapsedTimeForNextSuccessfulAdva
     EXPECT_DOUBLE_EQ(cursor + static_cast<double>(e.serviceFrameClock - lastFrame), rec.virtualCursor);
 }
 
-TEST(VariableCurrentSlice, ParkedRawBindingPartialRefusalRollsBackAndRetriesWithoutDuplication) {
+TEST_F(VariableCurrentSlice, ParkedRawBindingPartialRefusalRollsBackAndRetriesWithoutDuplication) {
     auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
     config.maxParkedVoices = 1;
     config.audibilityParkEnabled = 1;
@@ -1464,7 +1470,7 @@ TEST(VariableCurrentSlice, ParkedRawBindingPartialRefusalRollsBackAndRetriesWith
         EXPECT_NEAR(0.05f * DbToLinear(-3), e.nullBackend.LastBlock()[2 * i], 1e-6f);
 }
 
-TEST(VariableCurrentSlice, ParkedNonRecipeEffectsReduceEveryBindingFromReturnCut) {
+TEST_F(VariableCurrentSlice, ParkedNonRecipeEffectsReduceEveryBindingFromReturnCut) {
     auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
     config.maxParkedVoices = 1;
     config.audibilityParkEnabled = 1;
@@ -1517,7 +1523,7 @@ TEST(VariableCurrentSlice, ParkedNonRecipeEffectsReduceEveryBindingFromReturnCut
             e.nullBackend.LastBlock()[2 * i], 1e-6f);
 }
 
-TEST(VariableCurrentSlice, StreamPressureReturnKeepsCapturedFirstPcmThroughArenaRefusal) {
+TEST_F(VariableCurrentSlice, StreamPressureReturnKeepsCapturedFirstPcmThroughArenaRefusal) {
     for (const auto workers : {0u, 2u}) {
         SCOPED_TRACE(workers);
         auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
@@ -1603,7 +1609,7 @@ TEST(VariableCurrentSlice, StreamPressureReturnKeepsCapturedFirstPcmThroughArena
     }
 }
 
-TEST(VariableCurrentSlice, VoiceAndBusTargetsApplyInOneAudioSlice) {
+TEST_F(VariableCurrentSlice, VoiceAndBusTargetsApplyInOneAudioSlice) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxBuses = 4;
     config.maxBindings = 4;
@@ -1652,7 +1658,7 @@ TEST(VariableCurrentSlice, VoiceAndBusTargetsApplyInOneAudioSlice) {
     EXPECT_FLOAT_EQ(DbToLinear(-12.0f), busState->gain.target);
 }
 
-TEST(VariableCurrentSlice, SharedPublicationSealsGlobalAndEmitterWritesTogetherAndCancelsOnlyOne) {
+TEST_F(VariableCurrentSlice, SharedPublicationSealsGlobalAndEmitterWritesTogetherAndCancelsOnlyOne) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxEmitters = 1;
     EngineSession session(config);
@@ -1707,7 +1713,7 @@ TEST(VariableCurrentSlice, SharedPublicationSealsGlobalAndEmitterWritesTogetherA
     EXPECT_FALSE(engine->params.ForeignClaim(render, harken::kTargetVoiceVolume));
 }
 
-TEST(VariableCurrentSlice, LaterVariableSnapshotCombinesTheAcceptedPrefixOnOnePhysicalTarget) {
+TEST_F(VariableCurrentSlice, LaterVariableSnapshotCombinesTheAcceptedPrefixOnOnePhysicalTarget) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
@@ -1750,7 +1756,7 @@ TEST(VariableCurrentSlice, LaterVariableSnapshotCombinesTheAcceptedPrefixOnOnePh
     EXPECT_FLOAT_EQ(0.0f, engine->params.ResolvedValue(render, harken::kTargetVoiceVolume));
 }
 
-TEST(VariableCurrentSlice, NonalignedBlockedPrefixKeepsSharedPhysicalTargetPrivate) {
+TEST_F(VariableCurrentSlice, NonalignedBlockedPrefixKeepsSharedPhysicalTargetPrivate) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -1808,7 +1814,7 @@ TEST(VariableCurrentSlice, NonalignedBlockedPrefixKeepsSharedPhysicalTargetPriva
     EXPECT_FLOAT_EQ(0, e.params.ResolvedValue(render, harken::kTargetVoiceVolume));
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      TargetPoolShortageKeepsCandidateInvisibleAndRetriesTheSameOrdinal) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxBindings = 2;
@@ -1871,7 +1877,7 @@ TEST(VariableCurrentSlice,
     EXPECT_EQ(1u, outcome.bankVersionStableOrdinal);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      PermanentCensusOverflowTerminatesAndLetsOtherWritesProgress) {
     constexpr std::uint32_t kVoiceCount = 32;
     constexpr std::uint32_t kTargetsPerVoice = 8;
@@ -1953,7 +1959,7 @@ TEST(VariableCurrentSlice,
     EXPECT_FLOAT_EQ(-6.0f, engine->busTargets.LastCommitted(0, harken::kBusTargetBusVolume));
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      UnpreparedPriorBlocksCompletePhysicalTupleButNotIndependentBus) {
     struct Pair {
         std::uint32_t effect;
@@ -2094,7 +2100,7 @@ TEST(VariableCurrentSlice,
     }
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      CapturedTupleRejectsFailedSourceButIndependentWriteStillApplies) {
     const VnVariableId cutoff = harkentest::OffsetObjectId(kVariable, 1);
     const VnVariableId independent = harkentest::OffsetObjectId(kVariable, 2);
@@ -2163,7 +2169,7 @@ TEST(VariableCurrentSlice,
     EXPECT_EQ(0u, engine->variables.PendingCount());
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      OverwrittenInputIsNotPinnedAndItsFailureDoesNotPoisonLatestCandidate) {
     const VnVariableId combined = harkentest::OffsetObjectId(kVariable, 1);
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
@@ -2221,7 +2227,7 @@ TEST(VariableCurrentSlice,
     EXPECT_NEAR(-18, engine->params.LastCommitted(render, harken::kTargetVoiceVolume), 1.0e-5f);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      ExactCensusOverflowRejectsWholeWriteWithoutChangingAnyTarget) {
     constexpr std::uint32_t kVoiceCount = 32;
     constexpr std::uint32_t kTargetsPerVoice = 8;
@@ -2386,7 +2392,7 @@ TEST(VariableCurrentSlice,
     EXPECT_EQ(freeTargets, engine->variableSlices.FreeTargetCapacity());
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      ClaimFailureReleasesOwnedPrefixAndRetriesTheSameDurableWrite) {
     constexpr VnBusId kSecondBus = harkentest::ObjectId(9);
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
@@ -2529,7 +2535,7 @@ TEST(VariableCurrentSlice,
         secondBus, harken::kBusTargetBusVolume));
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      BlockedAttachHasNoMutationAndUnrelatedVariableStillAdmits) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxBindings = 4;
@@ -2569,7 +2575,7 @@ TEST(VariableCurrentSlice,
     EXPECT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(1), &attach));
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      ExactRecensusMismatchReleasesTheClaimedSpanBeforeCandidateProjection) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxBindings = 2;
@@ -2615,7 +2621,7 @@ TEST(VariableCurrentSlice,
     EXPECT_FLOAT_EQ(0.0f, current);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      FrozenVoiceTargetRampsSurviveEveryTransitionCapableOpcodeLane) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxBindings = 8;
@@ -2674,7 +2680,7 @@ TEST(VariableCurrentSlice,
     }
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      FrozenRampIsNotReplayedByCandidateRestoreOrAppliedBankSync) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxBindings = 1;
@@ -2751,7 +2757,7 @@ TEST(VariableCurrentSlice,
         render, harken::kTargetVoiceVolume));
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      PendingBindingRevisionWaitsForItsVariableBankToBecomeTerminal) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxBindings = 2;
@@ -2798,7 +2804,7 @@ TEST(VariableCurrentSlice,
     EXPECT_EQ(17u, installed->transitionMs);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      ScratchShortfallAdvancesOnlyTheCompletePrefixAndKeepsTargetPagePending) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxBindings = 2;
@@ -2871,7 +2877,7 @@ TEST(VariableCurrentSlice,
     EXPECT_EQ(engine->variableSlices.FreeRowCount(), freeRowsBefore);
 }
 
-TEST(VariableCurrentSlice, ArenaShortfallDefersThenAppliesTheOverdueSlice) {
+TEST_F(VariableCurrentSlice, ArenaShortfallDefersThenAppliesTheOverdueSlice) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxBindings = 2;
     config.maxBindingAttachments = 2;
@@ -2908,7 +2914,7 @@ TEST(VariableCurrentSlice, ArenaShortfallDefersThenAppliesTheOverdueSlice) {
     EXPECT_FLOAT_EQ(DbToLinear(-12.0f), busState->gain.target);
 }
 
-TEST(VariableCurrentSlice, PublishAfterStageWaitsForTheRecoveryBlock) {
+TEST_F(VariableCurrentSlice, PublishAfterStageWaitsForTheRecoveryBlock) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -2961,7 +2967,7 @@ TEST(VariableCurrentSlice, PublishAfterStageWaitsForTheRecoveryBlock) {
     EXPECT_EQ(engine->variableSlices.AppliedBlockSequence(ref), appliedFence);
 }
 
-TEST(VariableCurrentSlice, MixerConsumesProofBeyondRevisionStorageAndReclaimsAfterFence) {
+TEST_F(VariableCurrentSlice, MixerConsumesProofBeyondRevisionStorageAndReclaimsAfterFence) {
     auto config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     // Meter-probe headroom must leave apply payloads beyond revision storage.
     config.maxBuses = 8;
@@ -3000,7 +3006,7 @@ TEST(VariableCurrentSlice, MixerConsumesProofBeyondRevisionStorageAndReclaimsAft
     EXPECT_EQ(engine->variableSlices.TargetPoolCapacity(), engine->variableSlices.FreeTargetCapacity());
 }
 
-TEST(VariableCurrentSlice, PublishedEmptyPageAdvancesTheFixedPrefix) {
+TEST_F(VariableCurrentSlice, PublishedEmptyPageAdvancesTheFixedPrefix) {
     EngineSession session(CurrentSliceConfig(1, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -3018,7 +3024,7 @@ TEST(VariableCurrentSlice, PublishedEmptyPageAdvancesTheFixedPrefix) {
     EXPECT_EQ(engine->timelinePool.ConsumerFrontier().load(), 1u);
 }
 
-TEST(VariableCurrentSlice, TwoPagePrefixAppliesSlicesInPageOrder) {
+TEST_F(VariableCurrentSlice, TwoPagePrefixAppliesSlicesInPageOrder) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -3066,11 +3072,13 @@ TEST(VariableCurrentSlice, TwoPagePrefixAppliesSlicesInPageOrder) {
     EXPECT_FLOAT_EQ(DbToLinear(-12.0f), busState->gain.target);
 }
 
-TEST(VariableCurrentSlice, EffectiveCapacityCoversTwoFullLegalPages) {
+TEST_F(VariableCurrentSlice, EffectiveCapacityCoversTwoFullLegalPages) {
     const auto publicConfig = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     for (const bool shortCapacity : {false, true}) {
         harken::EngineConfig resolved{};
         ASSERT_EQ(VN_OK, harken::ResolveConfig(&publicConfig, &resolved));
+        resolved.maxPlayableInstances = 8;
+        resolved.maxContainerInstances = 1;
         resolved.maxEventsPerQuantum = 4;
         resolved.maxFrameBatchesPerQuantum = 4;
         auto engine = std::make_unique<harken::Engine>(resolved);
@@ -3120,7 +3128,7 @@ TEST(VariableCurrentSlice, EffectiveCapacityCoversTwoFullLegalPages) {
     }
 }
 
-TEST(VariableCurrentSlice, ScratchShortfallConsumesOnlyTheCompleteFirstPage) {
+TEST_F(VariableCurrentSlice, ScratchShortfallConsumesOnlyTheCompleteFirstPage) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -3177,7 +3185,7 @@ TEST(VariableCurrentSlice, ScratchShortfallConsumesOnlyTheCompleteFirstPage) {
     EXPECT_FLOAT_EQ(DbToLinear(-12.0f), busState->gain.target);
 }
 
-TEST(VariableCurrentSlice, GlobalSliceDeadVoiceStillAppliesLiveBusMember) {
+TEST_F(VariableCurrentSlice, GlobalSliceDeadVoiceStillAppliesLiveBusMember) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -3212,7 +3220,7 @@ TEST(VariableCurrentSlice, GlobalSliceDeadVoiceStillAppliesLiveBusMember) {
     EXPECT_FLOAT_EQ(DbToLinear(-9.0f), busState->gain.target);
 }
 
-TEST(VariableCurrentSlice, EffectAndBusWaitForTheSameSlicePage) {
+TEST_F(VariableCurrentSlice, EffectAndBusWaitForTheSameSlicePage) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.commandQueueDepth = 4;
     config.maxBindings = 4;
@@ -3268,7 +3276,7 @@ TEST(VariableCurrentSlice, EffectAndBusWaitForTheSameSlicePage) {
                               0, harken::kBusTargetBusVolume));
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      StaleEffectAttachmentCannotCreatePhantomSliceTargets) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxBindings = 2;
@@ -3448,7 +3456,7 @@ TEST(VariableCurrentSlice,
     EXPECT_EQ(freeTargets, engine->variableSlices.FreeTargetCapacity());
 }
 
-TEST(VariableCurrentSlice, NoConsumerRequiresPublishedSliceAndConsumptionFence) {
+TEST_F(VariableCurrentSlice, NoConsumerRequiresPublishedSliceAndConsumptionFence) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -3479,7 +3487,7 @@ TEST(VariableCurrentSlice, NoConsumerRequiresPublishedSliceAndConsumptionFence) 
     EXPECT_EQ(1u, engine->variables.AppliedCount());
 }
 
-TEST(VariableCurrentSlice, LaterUnrelatedCommandsDoNotRaiseCapturedFrontier) {
+TEST_F(VariableCurrentSlice, LaterUnrelatedCommandsDoNotRaiseCapturedFrontier) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxBuses = 4;
     config.maxBindings = 2;
@@ -3509,7 +3517,7 @@ TEST(VariableCurrentSlice, LaterUnrelatedCommandsDoNotRaiseCapturedFrontier) {
     EXPECT_EQ(0u, engine->variables.PendingCount());
 }
 
-TEST(VariableCurrentSlice, NewPhysicalTargetWaitsForInstallationAfterBankOnlyPreparation) {
+TEST_F(VariableCurrentSlice, NewPhysicalTargetWaitsForInstallationAfterBankOnlyPreparation) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
@@ -3557,7 +3565,7 @@ TEST(VariableCurrentSlice, NewPhysicalTargetWaitsForInstallationAfterBankOnlyPre
     EXPECT_FLOAT_EQ(-12.0f, engine->params.ResolvedValue(render, harken::kTargetVoiceVolume));
 }
 
-TEST(VariableCurrentSlice, EmitterLifecycleResolvesAroundAudioClaim) {
+TEST_F(VariableCurrentSlice, EmitterLifecycleResolvesAroundAudioClaim) {
     {
         VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
         config.maxEmitters = 2;
@@ -3623,7 +3631,7 @@ TEST(VariableCurrentSlice, EmitterLifecycleResolvesAroundAudioClaim) {
     }
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      PendingPublicationRemainsScopedAcrossLogicOnlyUpdates) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxEmitters = 3;
@@ -3694,7 +3702,7 @@ TEST(VariableCurrentSlice,
                                 harken::kTargetVoiceVolume), 1.0e-5f);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      EqualGlobalWritePublishesOverriddenVoiceAndReleasesSliceOwnership) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxEmitters = 2;
@@ -3756,7 +3764,7 @@ TEST(VariableCurrentSlice,
     EXPECT_EQ(freeTargets, engine->variableSlices.FreeTargetCapacity());
 }
 
-TEST(VariableCurrentSlice, RejectedEmitterSetDoesNotActivateItsScopeBank) {
+TEST_F(VariableCurrentSlice, RejectedEmitterSetDoesNotActivateItsScopeBank) {
     VnConfig config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
     config.maxEmitters = 2;
     EngineSession session(config);
@@ -3794,7 +3802,7 @@ TEST(VariableCurrentSlice, RejectedEmitterSetDoesNotActivateItsScopeBank) {
     EXPECT_TRUE(engine->variables.EmitterBankActiveForTests(emitter));
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      LaterGlobalWriteReevaluatesAfterItsPendingEmitterPredecessor) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxEmitters = 2;
@@ -3892,7 +3900,7 @@ TEST(VariableCurrentSlice,
     EXPECT_FLOAT_EQ(1.0f, engine->voices.Resolve(render)->gain.target);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      EmitterDestroyWhileSliceIsPreparedReleasesTheWholeClaimImmediately) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxEmitters = 2;
@@ -3964,7 +3972,7 @@ TEST(VariableCurrentSlice,
                     engine->voices.Resolve(secondRender)->gain.target);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      EmitterDestroyBeforeAudioClaimWaitsForTheStrictTombstoneFence) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxEmitters = 2;
@@ -4043,7 +4051,7 @@ TEST(VariableCurrentSlice,
                     engine->voices.Resolve(secondRender)->gain.target);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      EmitterDestroyBeforeAudioClaimReportsTheFirstTombstoneBlock) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxEmitters = 2;
@@ -4100,7 +4108,7 @@ TEST(VariableCurrentSlice,
               engine->mixer.BlocksRendered() * kBlockFrames);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      EmitterDestroyAtAudioClaimAppliesWholeThenFallsBackToGlobal) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxEmitters = 2;
@@ -4285,7 +4293,7 @@ TEST(VariableCurrentSlice,
     EXPECT_FLOAT_EQ(1.0f, gainState->targetGainLinear);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      EmitterDestroyAfterSliceAppliedKeepsAppliedOutcomeWithoutBankRevival) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxEmitters = 2;
@@ -4378,7 +4386,7 @@ TEST(VariableCurrentSlice,
                     engine->voices.Resolve(secondRender)->gain.target);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      EmitterDetachGathersBuiltinsAndVoiceEffectIntoTheNextGlobalSlice) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxEmitters = 2;
@@ -4493,7 +4501,7 @@ TEST(VariableCurrentSlice,
     EXPECT_FLOAT_EQ(0.5f, current);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      NaturalVoiceEndRetiresBuiltinAndEffectOwnersUntilExactRelease) {
     VnConfig config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
     config.fxSlotsPerVoice = 1;
@@ -4608,7 +4616,7 @@ TEST(VariableCurrentSlice,
         harken::kDelayParamWet, owner, &resolved, &revision, &effectType));
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      RetiringVoiceOwnerSurvivesDirectDeferredAndParkReturnReuse) {
     {
         EngineSession session(CurrentSliceConfig(1, kBlockFrames, kSampleRate));
@@ -4719,7 +4727,7 @@ TEST(VariableCurrentSlice,
     }
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      AppliedOldVoiceSliceReleasesAfterDeferredRenderSlotReuse) {
     VnConfig config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
     config.voiceStealPolicy = 2;
@@ -4809,7 +4817,7 @@ TEST(VariableCurrentSlice,
     EXPECT_EQ(freeTargets, engine->variableSlices.FreeTargetCapacity());
 }
 
-TEST(VariableCurrentSlice, PlayInBankAckGapUsesCapturedValueForFirstPcm) {
+TEST_F(VariableCurrentSlice, PlayInBankAckGapUsesCapturedValueForFirstPcm) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxBindings = 4;
     config.maxBindingAttachments = 4;
@@ -4850,7 +4858,7 @@ TEST(VariableCurrentSlice, PlayInBankAckGapUsesCapturedValueForFirstPcm) {
     EXPECT_TRUE(heard);
 }
 
-TEST(VariableCurrentSlice, OverdueBankOnlyWritesPublishTogetherAndSettleInFrameOrder) {
+TEST_F(VariableCurrentSlice, OverdueBankOnlyWritesPublishTogetherAndSettleInFrameOrder) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -4905,7 +4913,7 @@ TEST(VariableCurrentSlice, OverdueBankOnlyWritesPublishTogetherAndSettleInFrameO
     EXPECT_LE(firstActualFrame, outcome.actualFrame);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      GlobalAndEmitterSetHonorTicketOrderAfterServiceCursorRotation) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxEmitters = 2;
@@ -4980,7 +4988,7 @@ TEST(VariableCurrentSlice,
     EXPECT_NEAR(globalGain, engine->voices.Resolve(render)->gain.target, 1.0e-6f);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      GlobalAndEmitterWritesSerializeByFrameAndTicketInBothOrders) {
     const auto runOrder = [](bool globalFirst, VnSoundId firstSound) {
         const float localGain = 0.75f + 0.25f * DbToLinear(-24.0f);
@@ -5120,7 +5128,7 @@ TEST(VariableCurrentSlice,
     runOrder(false, harkentest::ObjectId(8201));
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      OrderedServiceReachesIndependentBankOnlyKeyUnderTargetPressure) {
     constexpr std::uint32_t kTargetKeys = 32;
     constexpr std::uint32_t kKeyCount = kTargetKeys + 1;
@@ -5213,7 +5221,7 @@ TEST(VariableCurrentSlice,
     }
 }
 
-TEST(VariableCurrentSlice, PublicationRefusesPhysicalAndUnreclaimedSlicesWithoutDraining) {
+TEST_F(VariableCurrentSlice, PublicationRefusesPhysicalAndUnreclaimedSlicesWithoutDraining) {
     EngineSession session(CurrentSliceConfig(4, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
@@ -5261,7 +5269,7 @@ TEST(VariableCurrentSlice, PublicationRefusesPhysicalAndUnreclaimedSlicesWithout
     EXPECT_EQ(world + 1, engine->variables.CurrentWorldGeneration());
 }
 
-TEST(VariableCurrentSlice, PublicationWaitsForBankOnlySliceAndResetsBankGenerations) {
+TEST_F(VariableCurrentSlice, PublicationWaitsForBankOnlySliceAndResetsBankGenerations) {
     EngineSession session(CurrentSliceConfig(4, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -5331,7 +5339,7 @@ TEST(VariableCurrentSlice, PublicationWaitsForBankOnlySliceAndResetsBankGenerati
     ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 0.25f));
 }
 
-TEST(VariableCurrentSlice, PublicationRefusesPreparedRowsInvalidHistoryAndExhaustedWorld) {
+TEST_F(VariableCurrentSlice, PublicationRefusesPreparedRowsInvalidHistoryAndExhaustedWorld) {
     EngineSession session(CurrentSliceConfig(4, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -5366,7 +5374,7 @@ TEST(VariableCurrentSlice, PublicationRefusesPreparedRowsInvalidHistoryAndExhaus
     EXPECT_EQ(1u, e.variables.PendingCount());
 }
 
-TEST(VariableCurrentSlice, PublicationTerminatesFullRevisionBudgetWithBoundedOutcomeStorage) {
+TEST_F(VariableCurrentSlice, PublicationTerminatesFullRevisionBudgetWithBoundedOutcomeStorage) {
     using Access = harken::detail::VariableServiceTestAccess;
     EngineSession session(CurrentSliceConfig(4, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -5416,7 +5424,7 @@ TEST(VariableCurrentSlice, PublicationTerminatesFullRevisionBudgetWithBoundedOut
     EXPECT_EQ(storage, Access::OutcomeStorage(e.variables));
 }
 
-TEST(VariableCurrentSlice, WorldReplacementDrainsPhysicalCutAndClosesPlay) {
+TEST_F(VariableCurrentSlice, WorldReplacementDrainsPhysicalCutAndClosesPlay) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -5492,7 +5500,7 @@ TEST(VariableCurrentSlice, WorldReplacementDrainsPhysicalCutAndClosesPlay) {
     EXPECT_NE(0u, afterDrain);
 }
 
-TEST(VariableCurrentSlice, ResetUsesEngineEpochAndPreservesAppliedBankBase) {
+TEST_F(VariableCurrentSlice, ResetUsesEngineEpochAndPreservesAppliedBankBase) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxEmitters = 2;
     EngineSession session(config);
@@ -5562,7 +5570,7 @@ TEST(VariableCurrentSlice, ResetUsesEngineEpochAndPreservesAppliedBankBase) {
     EXPECT_FLOAT_EQ(-12.0f, global);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      ResetGeometryFailureDoesNotRaiseTheTransportEpoch) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     EngineSession session(config);
@@ -5584,7 +5592,7 @@ TEST(VariableCurrentSlice,
     EXPECT_EQ(windowBefore, engine->timelinePool.WindowStartFrame());
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      TransportResetWaitsStrictlyPastThePhysicalSliceFence) {
     VnConfig config = CurrentSliceConfig(3, kBlockFrames, kSampleRate);
     config.maxBindings = 2;
@@ -5684,7 +5692,7 @@ TEST(VariableCurrentSlice,
     harkentest::AdvanceVariableWrite(engine);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      VariableServiceDrainClosesEveryCurrentPlayableStartBeforeMutation) {
     VnConfig config = CurrentSliceConfig(3, kBlockFrames, kSampleRate);
     config.maxBindings = 2;
@@ -5779,7 +5787,7 @@ TEST(VariableCurrentSlice,
     ASSERT_TRUE(engine->variables.ResetTransport(resetFrame));
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      TransportResetEmitterBankGenerationExhaustionHasZeroPartialUpdate) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxEmitters = 2;
@@ -5835,7 +5843,7 @@ TEST(VariableCurrentSlice,
     EXPECT_EQ(emitterBefore.generation, emitterAfter.generation);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      GlobalSetBankGenerationExhaustionHasZeroPartialUpdate) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     EngineSession session(config);
@@ -5869,7 +5877,7 @@ TEST(VariableCurrentSlice,
     EXPECT_FLOAT_EQ(valueBefore, values[0]);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      EmitterSetBankGenerationExhaustionHasZeroPartialUpdate) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxEmitters = 2;
@@ -5912,7 +5920,7 @@ TEST(VariableCurrentSlice,
     EXPECT_FLOAT_EQ(valueBefore, values[0]);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      GlobalSetRejectsBeforeAnyLiveEmitterBankGenerationCanWrap) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxEmitters = 3;
@@ -5977,7 +5985,7 @@ TEST(VariableCurrentSlice,
     EXPECT_FLOAT_EQ(secondValueBefore, values[0]);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      RetiringVoiceTargetsRemainOwnedAcrossRenderSlotGenerationReuse) {
     harken::EngineConfig config{};
     config.maxVariableSliceTargetsTotal = 2;
@@ -6063,7 +6071,7 @@ float QueryCurrentValue(VnVariableId variable) {
     return out.currentValue;
 }
 
-TEST(VariableCurrentSlice, FiniteOverflowWriteRowIsTargetRejected) {
+TEST_F(VariableCurrentSlice, FiniteOverflowWriteRowIsTargetRejected) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxBuses = 4;
     config.maxBindings = 4;
@@ -6121,7 +6129,7 @@ TEST(VariableCurrentSlice, FiniteOverflowWriteRowIsTargetRejected) {
     EXPECT_EQ(1u, engine->paramDropCount);
 }
 
-TEST(VariableCurrentSlice, RejectedVolumeCandidatesCountEachPhysicalTargetOnce) {
+TEST_F(VariableCurrentSlice, RejectedVolumeCandidatesCountEachPhysicalTargetOnce) {
     EngineSession session(CurrentSliceConfig(4, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
@@ -6155,7 +6163,7 @@ TEST(VariableCurrentSlice, RejectedVolumeCandidatesCountEachPhysicalTargetOnce) 
     EXPECT_EQ(dropsBefore + 2, engine->paramDropCount);
 }
 
-TEST(VariableCurrentSlice, RejectedGlobalBatchRestoresAllEmitterOverridesAndProjections) {
+TEST_F(VariableCurrentSlice, RejectedGlobalBatchRestoresAllEmitterOverridesAndProjections) {
     EngineSession session(CurrentSliceConfig(4, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
@@ -6227,7 +6235,7 @@ TEST(VariableCurrentSlice, RejectedGlobalBatchRestoresAllEmitterOverridesAndProj
         harken::detail::VariableServiceTestAccess::OutcomeCapacity(engine->variables)[2]);
 }
 
-TEST(VariableCurrentSlice, FiniteOverflowBusWriteRowIsTargetRejected) {
+TEST_F(VariableCurrentSlice, FiniteOverflowBusWriteRowIsTargetRejected) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxBuses = 4;
     config.maxBindings = 4;
@@ -6280,7 +6288,7 @@ std::uint32_t VoiceLastPublishedRampMs(harken::Engine* engine,
     return rampMs;
 }
 
-TEST(VariableCurrentSlice, RejectedCandidateDoesNotPolluteLegalRampMs) {
+TEST_F(VariableCurrentSlice, RejectedCandidateDoesNotPolluteLegalRampMs) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxBuses = 4;
     config.maxBindings = 4;
@@ -6317,7 +6325,7 @@ TEST(VariableCurrentSlice, RejectedCandidateDoesNotPolluteLegalRampMs) {
     EXPECT_EQ(VN_VARIABLE_OUTCOME_APPLIED, QueryTicket(legalTicket).outcome);
 }
 
-TEST(VariableCurrentSlice, RejectedCandidateKeepsZeroPendingRampMs) {
+TEST_F(VariableCurrentSlice, RejectedCandidateKeepsZeroPendingRampMs) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxBindings = 4;
     config.maxBindingAttachments = 4;
@@ -6344,7 +6352,7 @@ TEST(VariableCurrentSlice, RejectedCandidateKeepsZeroPendingRampMs) {
                                                harken::kTargetVoiceVolume));
 }
 
-TEST(VariableCurrentSlice, RejectedCandidateDoesNotPollutePitchRampMs) {
+TEST_F(VariableCurrentSlice, RejectedCandidateDoesNotPollutePitchRampMs) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxBindings = 8;
     config.maxBindingAttachments = 8;
@@ -6372,7 +6380,7 @@ TEST(VariableCurrentSlice, RejectedCandidateDoesNotPollutePitchRampMs) {
                                            harken::kTargetVoiceVolume));
 }
 
-TEST(VariableCurrentSlice, RejectedBusCandidateDoesNotPolluteLegalRampMs) {
+TEST_F(VariableCurrentSlice, RejectedBusCandidateDoesNotPolluteLegalRampMs) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxBuses = 4;
     config.maxBindings = 4;
@@ -6406,7 +6414,7 @@ TEST(VariableCurrentSlice, RejectedBusCandidateDoesNotPolluteLegalRampMs) {
     EXPECT_EQ(VN_VARIABLE_OUTCOME_APPLIED, QueryTicket(legalTicket).outcome);
 }
 
-TEST(VariableCurrentSlice,
+TEST_F(VariableCurrentSlice,
      WaitingFrontierLegalRequestSurvivesRejectedCandidate) {
     VnConfig config = CurrentSliceConfig(4, kBlockFrames, kSampleRate);
     config.maxBindings = 4;
@@ -6445,7 +6453,7 @@ TEST(VariableCurrentSlice,
                                              harken::kTargetVoiceVolume));
 }
 
-TEST(VariableCurrentSlice, ReadCutPreparationLeavesSixtyThreeUnrelatedVariablesPending) {
+TEST_F(VariableCurrentSlice, ReadCutPreparationLeavesSixtyThreeUnrelatedVariablesPending) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -6484,7 +6492,7 @@ TEST(VariableCurrentSlice, ReadCutPreparationLeavesSixtyThreeUnrelatedVariablesP
     EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
 }
 
-TEST(VariableCurrentSlice, ReadCutPreparationClosesOverPhysicalFilterPredecessorOnly) {
+TEST_F(VariableCurrentSlice, ReadCutPreparationClosesOverPhysicalFilterPredecessorOnly) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -6529,7 +6537,7 @@ TEST(VariableCurrentSlice, ReadCutPreparationClosesOverPhysicalFilterPredecessor
     EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
 }
 
-TEST(VariableCurrentSlice, OrdinaryTargetDebtProtectsRecoveredSpanFromRepeatedReadCuts) {
+TEST_F(VariableCurrentSlice, OrdinaryTargetDebtProtectsRecoveredSpanFromRepeatedReadCuts) {
     for (unsigned variant = 0; variant < 6; ++variant) {
         SCOPED_TRACE(variant);
         EngineSession session(CurrentSliceConfig(8, kBlockFrames, kSampleRate));
@@ -6648,7 +6656,7 @@ TEST(VariableCurrentSlice, OrdinaryTargetDebtProtectsRecoveredSpanFromRepeatedRe
     }
 }
 
-TEST(VariableCurrentSlice, BankOnlyPrivateSourceCannotGrantTargetDebtBypass) {
+TEST_F(VariableCurrentSlice, BankOnlyPrivateSourceCannotGrantTargetDebtBypass) {
   for (bool existingTargets : {false, true}) {
     SCOPED_TRACE(existingTargets);
     EngineSession session(CurrentSliceConfig(4, kBlockFrames, kSampleRate));
@@ -6751,7 +6759,7 @@ TEST(VariableCurrentSlice, BankOnlyPrivateSourceCannotGrantTargetDebtBypass) {
   }
 }
 
-TEST(VariableCurrentSlice, SustainedDirectPlayDoesNotStarveOrdinaryScopedWrites) {
+TEST_F(VariableCurrentSlice, SustainedDirectPlayDoesNotStarveOrdinaryScopedWrites) {
     constexpr std::uint32_t blockFrames = 256;
     EngineSession session(CurrentSliceConfig(32, blockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -6799,7 +6807,7 @@ TEST(VariableCurrentSlice, SustainedDirectPlayDoesNotStarveOrdinaryScopedWrites)
     EXPECT_EQ(0u, e.variables.SupersededCount());
 }
 
-TEST(VariableCurrentSlice, SustainedUnrelatedPlayDoesNotStarveClaimedPhysicalTarget) {
+TEST_F(VariableCurrentSlice, SustainedUnrelatedPlayDoesNotStarveClaimedPhysicalTarget) {
     EngineSession session(CurrentSliceConfig(8, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -6829,7 +6837,7 @@ TEST(VariableCurrentSlice, SustainedUnrelatedPlayDoesNotStarveClaimedPhysicalTar
     EXPECT_FALSE(e.params.ForeignClaim(render, harken::kTargetVoiceVolume));
 }
 
-TEST(VariableCurrentSlice, RelocatedOrdinarySlicesPreserveSharedFilterPrefix) {
+TEST_F(VariableCurrentSlice, RelocatedOrdinarySlicesPreserveSharedFilterPrefix) {
     EngineSession session(CurrentSliceConfig(8, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -6882,7 +6890,7 @@ TEST(VariableCurrentSlice, RelocatedOrdinarySlicesPreserveSharedFilterPrefix) {
     EXPECT_FLOAT_EQ(harken::kToneDefaultQ * 2, e.params.ResolvedValue(render, harken::kTargetVoiceLowpassQ));
 }
 
-TEST(VariableCurrentSlice, OrdinaryReservationsEndWithinUpdateAcrossCallbackExits) {
+TEST_F(VariableCurrentSlice, OrdinaryReservationsEndWithinUpdateAcrossCallbackExits) {
     struct State { harken::Engine* engine = nullptr; VnEmitterHandle emitter = 0;
         unsigned mode = 0; bool sawHold = false; unsigned calls = 0; };
     for (unsigned mode = 0; mode < 4; ++mode) {
@@ -6927,7 +6935,7 @@ TEST(VariableCurrentSlice, OrdinaryReservationsEndWithinUpdateAcrossCallbackExit
     }
 }
 
-TEST(VariableCurrentSlice, LatePlacementUsesActualOrderWithinOnePageAndAcrossServiceRounds) {
+TEST_F(VariableCurrentSlice, LatePlacementUsesActualOrderWithinOnePageAndAcrossServiceRounds) {
     const auto cutoff = harkentest::OffsetObjectId(kVariable, 1);
     for (bool separateRounds : {false, true}) {
         SCOPED_TRACE(separateRounds);
@@ -7004,7 +7012,7 @@ TEST(VariableCurrentSlice, LatePlacementUsesActualOrderWithinOnePageAndAcrossSer
     }
 }
 
-TEST(VariableCurrentSlice, ReadCutsCaptureAllVariablesAndPinOnlyReadBatchSources) {
+TEST_F(VariableCurrentSlice, ReadCutsCaptureAllVariablesAndPinOnlyReadBatchSources) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -7054,7 +7062,7 @@ TEST(VariableCurrentSlice, ReadCutsCaptureAllVariablesAndPinOnlyReadBatchSources
     EXPECT_EQ(harken::VariableReadCutStatus::Failed, e.variables.ReadCutSourcesStatus(cut));
 }
 
-TEST(VariableCurrentSlice, ReadCutUsesFrameSequenceOrdinalAndFailsOnlyForObservedCanceledSource) {
+TEST_F(VariableCurrentSlice, ReadCutUsesFrameSequenceOrdinalAndFailsOnlyForObservedCanceledSource) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxEmitters = 1;
     EngineSession session(config);
@@ -7100,7 +7108,7 @@ TEST(VariableCurrentSlice, ReadCutUsesFrameSequenceOrdinalAndFailsOnlyForObserve
     EXPECT_TRUE(e.variables.ReleaseReadCut(independent));
 }
 
-TEST(VariableCurrentSlice, ReadCutMustRebuildWhenFinalPlacementChangesTheWinningWrite) {
+TEST_F(VariableCurrentSlice, ReadCutMustRebuildWhenFinalPlacementChangesTheWinningWrite) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -7137,7 +7145,7 @@ TEST(VariableCurrentSlice, ReadCutMustRebuildWhenFinalPlacementChangesTheWinning
     ASSERT_TRUE(e.variables.ReleaseReadCut(rebuilt));
 }
 
-TEST(VariableCurrentSlice, ReadCutAndOutcomeReleaseOrdersBothRespectTheAudioFence) {
+TEST_F(VariableCurrentSlice, ReadCutAndOutcomeReleaseOrdersBothRespectTheAudioFence) {
     using Access = harken::detail::VariableServiceTestAccess;
     for (bool releaseCutFirst : {false, true}) {
         SCOPED_TRACE(releaseCutFirst);
@@ -7177,7 +7185,7 @@ TEST(VariableCurrentSlice, ReadCutAndOutcomeReleaseOrdersBothRespectTheAudioFenc
     }
 }
 
-TEST(VariableCurrentSlice, PublishedReadCutKeepsProofWhileAppliedPayloadAndTargetsAreReused) {
+TEST_F(VariableCurrentSlice, PublishedReadCutKeepsProofWhileAppliedPayloadAndTargetsAreReused) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -7236,7 +7244,7 @@ TEST(VariableCurrentSlice, PublishedReadCutKeepsProofWhileAppliedPayloadAndTarge
     EXPECT_EQ(1u, e.variableSlices.FreeTargetCapacity());
 }
 
-TEST(VariableCurrentSlice, ReadCutCapacityRefusalAndCanceledPreparationReleaseEveryObserver) {
+TEST_F(VariableCurrentSlice, ReadCutCapacityRefusalAndCanceledPreparationReleaseEveryObserver) {
     using Access = harken::detail::VariableServiceTestAccess;
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -7277,7 +7285,7 @@ TEST(VariableCurrentSlice, ReadCutCapacityRefusalAndCanceledPreparationReleaseEv
     EXPECT_TRUE(e.variables.ReleaseReadCut(reused));
 }
 
-TEST(VariableCurrentSlice, ActionReadCutRequiresTheOriginalReservedWriteAndIssuer) {
+TEST_F(VariableCurrentSlice, ActionReadCutRequiresTheOriginalReservedWriteAndIssuer) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -7320,7 +7328,7 @@ TEST(VariableCurrentSlice, ActionReadCutRequiresTheOriginalReservedWriteAndIssue
     EXPECT_TRUE(e.variables.ReleaseReadCut(next));
 }
 
-TEST(VariableCurrentSlice, ActionPreparedSourceCannotApplyBeforeWholeActionCommit) {
+TEST_F(VariableCurrentSlice, ActionPreparedSourceCannotApplyBeforeWholeActionCommit) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -7358,7 +7366,7 @@ TEST(VariableCurrentSlice, ActionPreparedSourceCannotApplyBeforeWholeActionCommi
     EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
 }
 
-TEST(VariableCurrentSlice, DeferredChildReadCutPublishesOnlyAfterActualActivationWithInheritedOrder) {
+TEST_F(VariableCurrentSlice, DeferredChildReadCutPublishesOnlyAfterActualActivationWithInheritedOrder) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -7414,7 +7422,7 @@ TEST(VariableCurrentSlice, DeferredChildReadCutPublishesOnlyAfterActualActivatio
     EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
 }
 
-TEST(VariableCurrentSlice, PendingCutIncludesLaterMaterializedEarlierChildAndFiltersForeignOrder) {
+TEST_F(VariableCurrentSlice, PendingCutIncludesLaterMaterializedEarlierChildAndFiltersForeignOrder) {
     using Access = harken::detail::VariableServiceTestAccess;
     for (unsigned variant = 0; variant < 6; ++variant) {
         SCOPED_TRACE(variant);
@@ -7508,7 +7516,7 @@ TEST(VariableCurrentSlice, PendingCutIncludesLaterMaterializedEarlierChildAndFil
     }
 }
 
-TEST(VariableCurrentSlice, PendingCutPinsAndReleasesCandidatesBeyond4096IncludingLateInheritedWrite) {
+TEST_F(VariableCurrentSlice, PendingCutPinsAndReleasesCandidatesBeyond4096IncludingLateInheritedWrite) {
     using Access = harken::detail::VariableServiceTestAccess;
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -7569,7 +7577,7 @@ TEST(VariableCurrentSlice, PendingCutPinsAndReleasesCandidatesBeyond4096Includin
     EXPECT_EQ(freeBefore, Access::OutcomeCapacity(e.variables)[2]);
 }
 
-TEST(VariableCurrentSlice, PendingCutFailedCandidateAffectsOnlyActualReadScopeAndFrame) {
+TEST_F(VariableCurrentSlice, PendingCutFailedCandidateAffectsOnlyActualReadScopeAndFrame) {
     using Access = harken::detail::VariableServiceTestAccess;
     for (unsigned variant = 0; variant < 3; ++variant) {
         SCOPED_TRACE(variant);
@@ -7616,7 +7624,7 @@ TEST(VariableCurrentSlice, PendingCutFailedCandidateAffectsOnlyActualReadScopeAn
     }
 }
 
-TEST(VariableCurrentSlice, PendingCutBatchNonleaderReadsRetainActualLeaderThroughAppliedAndRelease) {
+TEST_F(VariableCurrentSlice, PendingCutBatchNonleaderReadsRetainActualLeaderThroughAppliedAndRelease) {
     using Access = harken::detail::VariableServiceTestAccess;
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -7654,7 +7662,7 @@ TEST(VariableCurrentSlice, PendingCutBatchNonleaderReadsRetainActualLeaderThroug
     EXPECT_EQ(0u, Access::ObserversForVariable(e.variables, accepted.ticket.sequence, other));
 }
 
-TEST(VariableCurrentSlice, PendingCutLateObserverOverflowRemainsFailedAcrossRebuild) {
+TEST_F(VariableCurrentSlice, PendingCutLateObserverOverflowRemainsFailedAcrossRebuild) {
     using Access = harken::detail::VariableServiceTestAccess;
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -7694,7 +7702,7 @@ TEST(VariableCurrentSlice, PendingCutLateObserverOverflowRemainsFailedAcrossRebu
     EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
 }
 
-TEST(VariableCurrentSlice, DeferredSiblingWithSameOrderCannotCommitAnotherChildsSources) {
+TEST_F(VariableCurrentSlice, DeferredSiblingWithSameOrderCannotCommitAnotherChildsSources) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -7737,7 +7745,7 @@ TEST(VariableCurrentSlice, DeferredSiblingWithSameOrderCannotCommitAnotherChilds
     EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
 }
 
-TEST(VariableCurrentSlice, DeferredPrivateSourcesRejectForeignTableAndCancelledOriginalChild) {
+TEST_F(VariableCurrentSlice, DeferredPrivateSourcesRejectForeignTableAndCancelledOriginalChild) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -7786,7 +7794,7 @@ TEST(VariableCurrentSlice, DeferredPrivateSourcesRejectForeignTableAndCancelledO
     EXPECT_EQ(0u, e.variables.AcceptedCount());
 }
 
-TEST(VariableCurrentSlice, DeferredActivatedThenCancelledReceiptCannotPublishPrivateWrite) {
+TEST_F(VariableCurrentSlice, DeferredActivatedThenCancelledReceiptCannotPublishPrivateWrite) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -7813,7 +7821,7 @@ TEST(VariableCurrentSlice, DeferredActivatedThenCancelledReceiptCannotPublishPri
     EXPECT_FALSE(write.Valid());
 }
 
-TEST(VariableCurrentSlice, ActionReadCutIgnoresUnrelatedPendingBusClaimButKeepsRequiredSourcesBlocked) {
+TEST_F(VariableCurrentSlice, ActionReadCutIgnoresUnrelatedPendingBusClaimButKeepsRequiredSourcesBlocked) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -7948,15 +7956,15 @@ void CheckActionPreparedPhysicalPrefix(bool cancel, bool reverseOrdinal) {
     }
 }
 
-TEST(VariableCurrentSlice, ActionPreparedSourceCombinesItsWholePrivatePhysicalPrefix) {
+TEST_F(VariableCurrentSlice, ActionPreparedSourceCombinesItsWholePrivatePhysicalPrefix) {
     CheckActionPreparedPhysicalPrefix(false, false);
 }
 
-TEST(VariableCurrentSlice, ActionPreparedSourcesPublishByActualFrameRatherThanOrdinal) {
+TEST_F(VariableCurrentSlice, ActionPreparedSourcesPublishByActualFrameRatherThanOrdinal) {
     CheckActionPreparedPhysicalPrefix(false, true);
 }
 
-TEST(VariableCurrentSlice, ActionPreparedIndirectSourceCancellationFailsCutAndReclaimsPrivateStorage) {
+TEST_F(VariableCurrentSlice, ActionPreparedIndirectSourceCancellationFailsCutAndReclaimsPrivateStorage) {
     CheckActionPreparedPhysicalPrefix(true, false);
 }
 
@@ -8056,15 +8064,15 @@ void CheckPrivatePreparationBeyond256(bool cancel) {
     EXPECT_FALSE(outcomes.Overflowed());
 }
 
-TEST(VariableCurrentSlice, PrivatePreparationBeyond256SealsCommitsAndAppliesEveryMember) {
+TEST_F(VariableCurrentSlice, PrivatePreparationBeyond256SealsCommitsAndAppliesEveryMember) {
     CheckPrivatePreparationBeyond256(false);
 }
 
-TEST(VariableCurrentSlice, PrivatePreparationBeyond256CancellationReturnsEveryPrivateResource) {
+TEST_F(VariableCurrentSlice, PrivatePreparationBeyond256CancellationReturnsEveryPrivateResource) {
     CheckPrivatePreparationBeyond256(true);
 }
 
-TEST(VariableCurrentSlice, HighSlotPrivateDependencyAloneRetainsAndReturnsItsRevisionCredit) {
+TEST_F(VariableCurrentSlice, HighSlotPrivateDependencyAloneRetainsAndReturnsItsRevisionCredit) {
     using Access = harken::detail::VariableServiceTestAccess;
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -8199,7 +8207,7 @@ TEST(VariableCurrentSlice, HighSlotPrivateDependencyAloneRetainsAndReturnsItsRev
     EXPECT_FALSE(outcomes.Overflowed());
 }
 
-TEST(VariableCurrentSlice, ActionPreparedCommitRequiresConsumedOriginalIssuerEvenWhenSequenceIsReused) {
+TEST_F(VariableCurrentSlice, ActionPreparedCommitRequiresConsumedOriginalIssuerEvenWhenSequenceIsReused) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -8255,7 +8263,7 @@ TEST(VariableCurrentSlice, ActionPreparedCommitRequiresConsumedOriginalIssuerEve
     EXPECT_TRUE(e.variables.ReleaseReadCut(newCut));
 }
 
-TEST(VariableCurrentSlice, ReadCutRejectsChangedWinnerAfterThatWinnerHistoryWasReclaimed) {
+TEST_F(VariableCurrentSlice, ReadCutRejectsChangedWinnerAfterThatWinnerHistoryWasReclaimed) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -8289,7 +8297,7 @@ TEST(VariableCurrentSlice, ReadCutRejectsChangedWinnerAfterThatWinnerHistoryWasR
     EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
 }
 
-TEST(VariableCurrentSlice, CanceledObservedEmitterPreparationDoesNotReserveItsOldOverrideSlot) {
+TEST_F(VariableCurrentSlice, CanceledObservedEmitterPreparationDoesNotReserveItsOldOverrideSlot) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.emitterVariableSlots = 1;
     EngineSession session(config);
@@ -8325,7 +8333,7 @@ TEST(VariableCurrentSlice, CanceledObservedEmitterPreparationDoesNotReserveItsOl
     EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
 }
 
-TEST(VariableCurrentSlice, ReadCutRejectsDestroyedEmitterEvenWithoutAnOverrideSource) {
+TEST_F(VariableCurrentSlice, ReadCutRejectsDestroyedEmitterEvenWithoutAnOverrideSource) {
     VnConfig config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
     config.maxEmitters = 1;
     EngineSession session(config);
@@ -8359,7 +8367,7 @@ TEST(VariableCurrentSlice, ReadCutRejectsDestroyedEmitterEvenWithoutAnOverrideSo
     EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
 }
 
-TEST(VariableCurrentSlice, CapturedReaderPrimesCompleteBuiltinInputsAndPreservesLiveUpdates) {
+TEST_F(VariableCurrentSlice, CapturedReaderPrimesCompleteBuiltinInputsAndPreservesLiveUpdates) {
     EngineSession session(CurrentSliceConfig(4, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -8428,7 +8436,7 @@ TEST(VariableCurrentSlice, CapturedReaderPrimesCompleteBuiltinInputsAndPreserves
     EXPECT_TRUE(e.variables.ReleaseReadCut(secondCut));
 }
 
-TEST(VariableCurrentSlice, CapturedReaderFailureDoesNotFallBackOrPartiallyPrimeTargets) {
+TEST_F(VariableCurrentSlice, CapturedReaderFailureDoesNotFallBackOrPartiallyPrimeTargets) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -8472,7 +8480,7 @@ TEST(VariableCurrentSlice, CapturedReaderFailureDoesNotFallBackOrPartiallyPrimeT
     EXPECT_EQ(harken::VariableReadCutValueStatus::Failed, reader.Read(kVariable, &input));
 }
 
-TEST(VariableCurrentSlice, CapturedReaderRejectsInvalidatedPublishedSourceBeforeServiceFinalizesIt) {
+TEST_F(VariableCurrentSlice, CapturedReaderRejectsInvalidatedPublishedSourceBeforeServiceFinalizesIt) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -8508,7 +8516,7 @@ TEST(VariableCurrentSlice, CapturedReaderRejectsInvalidatedPublishedSourceBefore
     EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
 }
 
-TEST(VariableCurrentSlice, NativeReadCutCalendarRequiresExactConsumedIdentityInEitherReceiptOrder) {
+TEST_F(VariableCurrentSlice, NativeReadCutCalendarRequiresExactConsumedIdentityInEitherReceiptOrder) {
     for (const bool failedFirst : {false, true}) {
         SCOPED_TRACE(failedFirst);
         EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
@@ -8557,7 +8565,7 @@ TEST(VariableCurrentSlice, NativeReadCutCalendarRequiresExactConsumedIdentityInE
     }
 }
 
-TEST(VariableCurrentSlice, MixerConsumesNativeCalendarsOnlyAfterTheActualPagePrefix) {
+TEST_F(VariableCurrentSlice, MixerConsumesNativeCalendarsOnlyAfterTheActualPagePrefix) {
     for (const bool partial : {false, true}) {
         SCOPED_TRACE(partial);
         EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
@@ -8615,7 +8623,7 @@ TEST(VariableCurrentSlice, MixerConsumesNativeCalendarsOnlyAfterTheActualPagePre
     }
 }
 
-TEST(VariableCurrentSlice, NativeReadCutCalendarWithdrawalRequiresOwnHeldToken) {
+TEST_F(VariableCurrentSlice, NativeReadCutCalendarWithdrawalRequiresOwnHeldToken) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -8637,7 +8645,7 @@ TEST(VariableCurrentSlice, NativeReadCutCalendarWithdrawalRequiresOwnHeldToken) 
     EXPECT_FALSE(e.variables.HasNativeReadCutsForTransport(e.variables.CurrentTransportEpoch()));
 }
 
-TEST(VariableCurrentSlice, NativeVoiceWaitsForFullFifoInstallationAndCalendarInEitherOrder) {
+TEST_F(VariableCurrentSlice, NativeVoiceWaitsForFullFifoInstallationAndCalendarInEitherOrder) {
     for (const bool calendarFirst : {false, true}) {
         SCOPED_TRACE(calendarFirst);
         EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
@@ -8722,7 +8730,7 @@ TEST(VariableCurrentSlice, NativeVoiceWaitsForFullFifoInstallationAndCalendarInE
     }
 }
 
-TEST(VariableCurrentSlice, NativeVoiceSourceFailureAndStopReleaseOnlyAfterCalendarConsumption) {
+TEST_F(VariableCurrentSlice, NativeVoiceSourceFailureAndStopReleaseOnlyAfterCalendarConsumption) {
     for (const int failure : {0, 1, 2, 3, 4, 5}) {
         SCOPED_TRACE(failure);
         EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
@@ -8805,7 +8813,7 @@ TEST(VariableCurrentSlice, NativeVoiceSourceFailureAndStopReleaseOnlyAfterCalend
     }
 }
 
-TEST(VariableCurrentSlice, ConsumedSlicesWaitForFifoWithoutLosingDependencyOrder) {
+TEST_F(VariableCurrentSlice, ConsumedSlicesWaitForFifoWithoutLosingDependencyOrder) {
     for (const bool cancelSource : {false, true}) {
         SCOPED_TRACE(cancelSource);
         EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
@@ -8885,7 +8893,7 @@ TEST(VariableCurrentSlice, ConsumedSlicesWaitForFifoWithoutLosingDependencyOrder
     }
 }
 
-TEST(VariableCurrentSlice, InlineSourcesPublishWithoutNewCandidatesAndTerminalSweepWaitsForCalendar) {
+TEST_F(VariableCurrentSlice, InlineSourcesPublishWithoutNewCandidatesAndTerminalSweepWaitsForCalendar) {
     for (const bool failBeforeConsumption : {false, true}) {
         SCOPED_TRACE(failBeforeConsumption);
         EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
@@ -8929,7 +8937,7 @@ TEST(VariableCurrentSlice, InlineSourcesPublishWithoutNewCandidatesAndTerminalSw
     }
 }
 
-TEST(VariableCurrentSlice, NativeVoicesPreserveOwnFirstOutputThenUseLatestVariableEndpoint) {
+TEST_F(VariableCurrentSlice, NativeVoicesPreserveOwnFirstOutputThenUseLatestVariableEndpoint) {
     for (const std::uint32_t workers : {0u, 2u}) {
         SCOPED_TRACE(workers);
         auto config = CurrentSliceConfig(3, kBlockFrames, kSampleRate);
@@ -9017,7 +9025,7 @@ TEST(VariableCurrentSlice, NativeVoicesPreserveOwnFirstOutputThenUseLatestVariab
     }
 }
 
-TEST(VariableCurrentSlice, FirstOutputOwnedWeightsKeepInitialMixAndAbsoluteSegmentTime) {
+TEST_F(VariableCurrentSlice, FirstOutputOwnedWeightsKeepInitialMixAndAbsoluteSegmentTime) {
     for (const std::uint32_t workers : {0u, 2u}) {
         for (const bool timeline : {false, true}) {
             SCOPED_TRACE(::testing::Message() << workers << ':' << timeline);
@@ -9093,7 +9101,7 @@ TEST(VariableCurrentSlice, FirstOutputOwnedWeightsKeepInitialMixAndAbsoluteSegme
     }
 }
 
-TEST(VariableCurrentSlice, FirstOutputOwnedWeightRemovalDoesNotResurrectCancelledOwner) {
+TEST_F(VariableCurrentSlice, FirstOutputOwnedWeightRemovalDoesNotResurrectCancelledOwner) {
     EngineSession session(CurrentSliceConfig(1, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -9133,7 +9141,7 @@ TEST(VariableCurrentSlice, FirstOutputOwnedWeightRemovalDoesNotResurrectCancelle
     EXPECT_EQ(2u, e.voices.Resolve(voice)->variableWeightControls[0].segment.segmentGeneration);
 }
 
-TEST(VariableCurrentSlice, FirstOutputSurvivesStreamStarvationUntilRealPcm) {
+TEST_F(VariableCurrentSlice, FirstOutputSurvivesStreamStarvationUntilRealPcm) {
     for (const std::uint32_t workers : {0u, 2u}) {
         SCOPED_TRACE(workers);
         constexpr auto capacity = 8 * kBlockFrames;
@@ -9178,7 +9186,7 @@ TEST(VariableCurrentSlice, FirstOutputSurvivesStreamStarvationUntilRealPcm) {
     }
 }
 
-TEST(VariableCurrentSlice, FirstOutputOldEffectAndStoppedGenerationCannotChangeReplacementPcm) {
+TEST_F(VariableCurrentSlice, FirstOutputOldEffectAndStoppedGenerationCannotChangeReplacementPcm) {
     for (const bool stopAndReuse : {false, true}) {
         SCOPED_TRACE(stopAndReuse);
         auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
@@ -9236,7 +9244,7 @@ TEST(VariableCurrentSlice, FirstOutputOldEffectAndStoppedGenerationCannotChangeR
     }
 }
 
-TEST(VariableCurrentSlice, FirstOutputToneUpdatesKeepEveryScalarAndTail) {
+TEST_F(VariableCurrentSlice, FirstOutputToneUpdatesKeepEveryScalarAndTail) {
     for (const auto band : {0u, 1u, 2u}) {
         for (const bool reverse : {false, true}) {
             SCOPED_TRACE(::testing::Message() << band << ':' << reverse);
@@ -9310,7 +9318,7 @@ TEST(VariableCurrentSlice, FirstOutputToneUpdatesKeepEveryScalarAndTail) {
     }
 }
 
-TEST(VariableCurrentSlice, NativeReadCutCalendarRejectsDifferentHeldReservationWithIdenticalMetadata) {
+TEST_F(VariableCurrentSlice, NativeReadCutCalendarRejectsDifferentHeldReservationWithIdenticalMetadata) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -9337,7 +9345,7 @@ TEST(VariableCurrentSlice, NativeReadCutCalendarRejectsDifferentHeldReservationW
     EXPECT_TRUE(e.variables.ReleaseReadCut(cut));
 }
 
-TEST(VariableCurrentSlice, NativeReadCutCalendarRejectsDifferentConsumedReservationWithIdenticalMetadata) {
+TEST_F(VariableCurrentSlice, NativeReadCutCalendarRejectsDifferentConsumedReservationWithIdenticalMetadata) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -9373,7 +9381,7 @@ TEST(VariableCurrentSlice, NativeReadCutCalendarRejectsDifferentConsumedReservat
     EXPECT_TRUE(e.variables.AcknowledgeNativeReadCut(identity));
 }
 
-TEST(VariableCurrentSlice, NativeReadCutCalendarWithoutSourcesBlocksResetUntilDrainedAndAcknowledged) {
+TEST_F(VariableCurrentSlice, NativeReadCutCalendarWithoutSourcesBlocksResetUntilDrainedAndAcknowledged) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -9401,7 +9409,7 @@ TEST(VariableCurrentSlice, NativeReadCutCalendarWithoutSourcesBlocksResetUntilDr
     EXPECT_GT(e.variables.CurrentTransportEpoch(), identity.transport);
 }
 
-TEST(VariableCurrentSlice, NativeReadCutReceiptSurvivesOutcomeDeliveryAndReleasesPinsOnlyAfterAcknowledgment) {
+TEST_F(VariableCurrentSlice, NativeReadCutReceiptSurvivesOutcomeDeliveryAndReleasesPinsOnlyAfterAcknowledgment) {
     using Access = harken::detail::VariableServiceTestAccess;
     for (const bool outcomeFirst : {false, true}) {
         SCOPED_TRACE(outcomeFirst);
@@ -9461,7 +9469,7 @@ TEST(VariableCurrentSlice, NativeReadCutReceiptSurvivesOutcomeDeliveryAndRelease
     }
 }
 
-TEST(VariableCurrentSlice, NativeReadCutReceiptRejectsEveryMismatchedIdentityAndStaleGeneration) {
+TEST_F(VariableCurrentSlice, NativeReadCutReceiptRejectsEveryMismatchedIdentityAndStaleGeneration) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -9507,7 +9515,7 @@ TEST(VariableCurrentSlice, NativeReadCutReceiptRejectsEveryMismatchedIdentityAnd
     ASSERT_TRUE(e.variables.AcknowledgeNativeReadCut(replacement));
 }
 
-TEST(VariableCurrentSlice, NativeReadCutFailedSourceCannotPublishActivatedReceipt) {
+TEST_F(VariableCurrentSlice, NativeReadCutFailedSourceCannotPublishActivatedReceipt) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -9538,7 +9546,7 @@ TEST(VariableCurrentSlice, NativeReadCutFailedSourceCannotPublishActivatedReceip
     ASSERT_TRUE(e.variables.AcknowledgeNativeReadCut(identity));
 }
 
-TEST(VariableCurrentSlice, NativeReadCutShutdownAfterQuiescenceReleasesUnconfirmedHolders) {
+TEST_F(VariableCurrentSlice, NativeReadCutShutdownAfterQuiescenceReleasesUnconfirmedHolders) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -9559,7 +9567,7 @@ TEST(VariableCurrentSlice, NativeReadCutShutdownAfterQuiescenceReleasesUnconfirm
     EXPECT_TRUE(e.variables.ReleaseReadCut(next));
 }
 
-TEST(VariableCurrentSlice, NativeReadCutShutdownReleasesRealSourcePinsWithoutFabricatingActivation) {
+TEST_F(VariableCurrentSlice, NativeReadCutShutdownReleasesRealSourcePinsWithoutFabricatingActivation) {
     using Access = harken::detail::VariableServiceTestAccess;
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -9607,7 +9615,7 @@ TEST(VariableCurrentSlice, NativeReadCutShutdownReleasesRealSourcePinsWithoutFab
     EXPECT_FALSE(e.variables.AcknowledgeNativeReadCut(identity));
 }
 
-TEST(VariableCurrentSlice, TimelineReadUsesShareCutUntilEveryLeafPassesItsOwnAudioFence) {
+TEST_F(VariableCurrentSlice, TimelineReadUsesShareCutUntilEveryLeafPassesItsOwnAudioFence) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -9668,7 +9676,7 @@ TEST(VariableCurrentSlice, TimelineReadUsesShareCutUntilEveryLeafPassesItsOwnAud
     EXPECT_TRUE(e.variables.ReleaseReadCut(replacement));
 }
 
-TEST(VariableCurrentSlice, TimelineReadUsePrivateRollbackDoesNotWaitForAnAudioReceipt) {
+TEST_F(VariableCurrentSlice, TimelineReadUsePrivateRollbackDoesNotWaitForAnAudioReceipt) {
     for (const bool consumed : {false, true}) {
         EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -9704,7 +9712,7 @@ TEST(VariableCurrentSlice, TimelineReadUsePrivateRollbackDoesNotWaitForAnAudioRe
     }
 }
 
-TEST(VariableCurrentSlice, TimelineReadUseCapacityRefusalReturnsPinsAndAllowsFreshGenerations) {
+TEST_F(VariableCurrentSlice, TimelineReadUseCapacityRefusalReturnsPinsAndAllowsFreshGenerations) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -9740,7 +9748,7 @@ TEST(VariableCurrentSlice, TimelineReadUseCapacityRefusalReturnsPinsAndAllowsFre
     ASSERT_TRUE(e.variables.ReleaseReadCut(cut));
 }
 
-TEST(VariableCurrentSlice, TimelineReadUsesRetainRealSourceAcrossEveryLeafAndOutcomeDeliveryOrder) {
+TEST_F(VariableCurrentSlice, TimelineReadUsesRetainRealSourceAcrossEveryLeafAndOutcomeDeliveryOrder) {
     using Access = harken::detail::VariableServiceTestAccess;
     for (const int variant : {0, 1, 2}) {
         EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
@@ -9837,7 +9845,7 @@ TEST(VariableCurrentSlice, TimelineReadUsesRetainRealSourceAcrossEveryLeafAndOut
     }
 }
 
-TEST(VariableCurrentSlice, TimelineReadUseRejectsForeignProofWrongNativeAndOnsetBeforeDecision) {
+TEST_F(VariableCurrentSlice, TimelineReadUseRejectsForeignProofWrongNativeAndOnsetBeforeDecision) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -9864,7 +9872,7 @@ TEST(VariableCurrentSlice, TimelineReadUseRejectsForeignProofWrongNativeAndOnset
     ASSERT_TRUE(e.variables.ReleaseReadCut(cut));
 }
 
-TEST(VariableCurrentSlice, TimelineReadUseStartAuthorityChecksFinalBoundFrameAfterInstallationAck) {
+TEST_F(VariableCurrentSlice, TimelineReadUseStartAuthorityChecksFinalBoundFrameAfterInstallationAck) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -9914,7 +9922,7 @@ TEST(VariableCurrentSlice, TimelineReadUseStartAuthorityChecksFinalBoundFrameAft
     }
 }
 
-TEST(VariableCurrentSlice, SharedTimelineReadCutAcceptsEachLeafsActualLaterOnset) {
+TEST_F(VariableCurrentSlice, SharedTimelineReadCutAcceptsEachLeafsActualLaterOnset) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
@@ -9953,7 +9961,7 @@ TEST(VariableCurrentSlice, SharedTimelineReadCutAcceptsEachLeafsActualLaterOnset
     for (const auto arm : arms) ASSERT_TRUE(e.timelineArms.Reclaim(arm, 4));
 }
 
-TEST(VariableCurrentSlice, OperationInitializerRefusalPreservesStartAndAllowsExactRetry) {
+TEST_F(VariableCurrentSlice, OperationInitializerRefusalPreservesStartAndAllowsExactRetry) {
     EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();

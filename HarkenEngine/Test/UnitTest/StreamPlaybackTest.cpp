@@ -9,6 +9,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"
+#include "PlayableStorageTestSupport.h"
 
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/media/StreamFormat.h"
@@ -37,6 +38,11 @@ using harkentest::WriteFileBytes;
 
 constexpr std::uint32_t kBlockFrames = 256;
 constexpr std::uint32_t kRate = 48000;
+
+class StreamPlayback : public testing::Test {
+    // Raw Voice/stream drills do not consume Playable or container rows.
+    harkentest::PlayableCapacityScope playableCapacity_{8, 1};
+};
 
 std::string TempPath(const std::string& name) {
     return std::string(HARKEN_TEMP_DIR "/") + name;
@@ -239,7 +245,7 @@ void ExpectStreamLoopMatchesExplicitConcat(
     }
 }
 
-TEST(StreamPlayback, PreparingHoldsSilentUntilPrebufferThreshold) {
+TEST_F(StreamPlayback, PreparingHoldsSilentUntilPrebufferThreshold) {
     NotificationLog log;
     // Ring 1024 frames; the default 100 ms prebuffer target (4800 frames)
     // clamps to the ring capacity, so the gate needs a full ring.
@@ -287,7 +293,7 @@ TEST(StreamPlayback, PreparingHoldsSilentUntilPrebufferThreshold) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(StreamPlayback, PlaysToEndReleasesSlotAndRecycles) {
+TEST_F(StreamPlayback, PlaysToEndReleasesSlotAndRecycles) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -323,7 +329,7 @@ TEST(StreamPlayback, PlaysToEndReleasesSlotAndRecycles) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(StreamPlayback, NoStreamRefusalIsSideEffectFreeAndOrdered) {
+TEST_F(StreamPlayback, NoStreamRefusalIsSideEffectFreeAndOrdered) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log, /*maxVoices=*/4,
                                            /*streamRingFrames=*/0,
@@ -377,7 +383,7 @@ TEST(StreamPlayback, NoStreamRefusalIsSideEffectFreeAndOrdered) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(StreamPlayback, StarvationSurvivesWithExactCooldownAndRecovers) {
+TEST_F(StreamPlayback, StarvationSurvivesWithExactCooldownAndRecovers) {
     NotificationLog log;
     // Small ring (two blocks), minimal prebuffer, cooldown 4: the drill
     // renders two sounding blocks from the initial fill, then the
@@ -456,7 +462,7 @@ TEST(StreamPlayback, StarvationSurvivesWithExactCooldownAndRecovers) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(StreamPlayback, CorruptChunkEndsVoiceAfterVerifiedMaterial) {
+TEST_F(StreamPlayback, CorruptChunkEndsVoiceAfterVerifiedMaterial) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -506,7 +512,7 @@ TEST(StreamPlayback, CorruptChunkEndsVoiceAfterVerifiedMaterial) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(StreamPlayback, CorruptOutroChunkIsReachedOnlyOnFinalLoopPass) {
+TEST_F(StreamPlayback, CorruptOutroChunkIsReachedOnlyOnFinalLoopPass) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -553,7 +559,7 @@ TEST(StreamPlayback, CorruptOutroChunkIsReachedOnlyOnFinalLoopPass) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(StreamPlayback, UnregisterRefusedWhilePlaying) {
+TEST_F(StreamPlayback, UnregisterRefusedWhilePlaying) {
     EngineSession session(MakeNullConfig(0, kBlockFrames, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -575,7 +581,7 @@ TEST(StreamPlayback, UnregisterRefusedWhilePlaying) {
     EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(harkentest::ObjectId(7107)));
 }
 
-TEST(StreamPlayback, StreamingThreadRunsOutsideAudioGuard) {
+TEST_F(StreamPlayback, StreamingThreadRunsOutsideAudioGuard) {
     // The streaming thread's whole job is what the audio thread must
     // never do: file reads and staging allocations. A full streamed
     // playback with concurrent pumping proves those never count against
@@ -610,21 +616,21 @@ TEST(StreamPlayback, StreamingThreadRunsOutsideAudioGuard) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(StreamPlayback, LoopCountOneStreamMatchesSinglePass) {
+TEST_F(StreamPlayback, LoopCountOneStreamMatchesSinglePass) {
     const std::vector<float> source = MakeDistinctSignal(333);
     ExpectStreamLoopMatchesExplicitConcat(
         "count_one", source, /*chunkFrames=*/64, /*loopable=*/true,
         /*loopStart=*/70, /*loopEnd=*/190, /*loopCount=*/1);
 }
 
-TEST(StreamPlayback, StreamWholeFileLoopSeamIsExactAtChunkBoundary) {
+TEST_F(StreamPlayback, StreamWholeFileLoopSeamIsExactAtChunkBoundary) {
     const std::vector<float> source = MakeDistinctSignal(128);
     ExpectStreamLoopMatchesExplicitConcat(
         "whole_boundary", source, /*chunkFrames=*/64, /*loopable=*/true,
         /*loopStart=*/0, /*loopEnd=*/0, /*loopCount=*/3);
 }
 
-TEST(StreamPlayback, StreamSubregionLoopSeamIsExactInsideChunk) {
+TEST_F(StreamPlayback, StreamSubregionLoopSeamIsExactInsideChunk) {
     const std::vector<float> source = MakeDistinctSignal(300);
     ExpectStreamLoopMatchesExplicitConcat(
         "subregion_middle", source, /*chunkFrames=*/64, /*loopable=*/true,
@@ -632,7 +638,7 @@ TEST(StreamPlayback, StreamSubregionLoopSeamIsExactInsideChunk) {
         /*maxServeFrames=*/320);
 }
 
-TEST(StreamPlayback, StreamSubregionLoopSeamIsExactAtChunkBoundary) {
+TEST_F(StreamPlayback, StreamSubregionLoopSeamIsExactAtChunkBoundary) {
     const std::vector<float> source = MakeDistinctSignal(260);
     ExpectStreamLoopMatchesExplicitConcat(
         "subregion_boundary", source, /*chunkFrames=*/64,
@@ -640,7 +646,7 @@ TEST(StreamPlayback, StreamSubregionLoopSeamIsExactAtChunkBoundary) {
         /*loopCount=*/2);
 }
 
-TEST(StreamPlayback, NonLoopableStreamLoopCountRepeatsWholeFile) {
+TEST_F(StreamPlayback, NonLoopableStreamLoopCountRepeatsWholeFile) {
     const std::vector<float> source = MakeDistinctSignal(150);
     ExpectStreamLoopMatchesExplicitConcat(
         "nonloopable_whole", source, /*chunkFrames=*/64,
@@ -648,7 +654,7 @@ TEST(StreamPlayback, NonLoopableStreamLoopCountRepeatsWholeFile) {
         /*loopCount=*/4);
 }
 
-TEST(StreamPlayback, InfiniteStreamLoopSoakStaysAliveAndFed) {
+TEST_F(StreamPlayback, InfiniteStreamLoopSoakStaysAliveAndFed) {
     NotificationLog log;
     constexpr std::uint32_t kRequestedRingFrames = 300;
     constexpr std::uint32_t kBlocks = 320;
@@ -700,7 +706,7 @@ TEST(StreamPlayback, InfiniteStreamLoopSoakStaysAliveAndFed) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(StreamPlayback, HealthyStreamLoopsDoNotStarveOrReprepare) {
+TEST_F(StreamPlayback, HealthyStreamLoopsDoNotStarveOrReprepare) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log, /*maxVoices=*/0,
                                            /*streamRingFrames=*/384,
@@ -752,7 +758,7 @@ TEST(StreamPlayback, HealthyStreamLoopsDoNotStarveOrReprepare) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(StreamPlayback, InfiniteStreamLoopImmediateStopDoesNotResurrect) {
+TEST_F(StreamPlayback, InfiniteStreamLoopImmediateStopDoesNotResurrect) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log, /*maxVoices=*/0,
                                            /*streamRingFrames=*/384,
@@ -787,7 +793,7 @@ TEST(StreamPlayback, InfiniteStreamLoopImmediateStopDoesNotResurrect) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(StreamPlayback, InfiniteStreamLoopFadeStopDoesNotResurrect) {
+TEST_F(StreamPlayback, InfiniteStreamLoopFadeStopDoesNotResurrect) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log, /*maxVoices=*/0,
                                            /*streamRingFrames=*/512,
@@ -823,7 +829,7 @@ TEST(StreamPlayback, InfiniteStreamLoopFadeStopDoesNotResurrect) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(StreamPlayback, FiniteStreamLoopImmediateStopDoesNotFinishLater) {
+TEST_F(StreamPlayback, FiniteStreamLoopImmediateStopDoesNotFinishLater) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log, /*maxVoices=*/0,
                                            /*streamRingFrames=*/384,
@@ -859,7 +865,7 @@ TEST(StreamPlayback, FiniteStreamLoopImmediateStopDoesNotFinishLater) {
 
 // --- stream voice stealing (a stream incoming needs a stream slot) ---
 
-TEST(StreamPlayback, StreamStealRefusedWhenVictimIsNotStream) {
+TEST_F(StreamPlayback, StreamStealRefusedWhenVictimIsNotStream) {
     // A stream incoming needs a stream slot at start, not just a voice slot.
     // With every stream slot taken and the policy-chosen victim a PCM voice
     // (whose release frees no stream slot), the steal is refused VN_NO_STREAM
@@ -897,7 +903,7 @@ TEST(StreamPlayback, StreamStealRefusedWhenVictimIsNotStream) {
                            harkentest::RenderHandle(engine, streamVoice)));
 }
 
-TEST(StreamPlayback, StreamStealSucceedsWhenVictimIsStream) {
+TEST_F(StreamPlayback, StreamStealSucceedsWhenVictimIsStream) {
     // The chosen victim is itself a stream voice, so its release provably frees
     // a stream slot: the steal is admitted and the deferred start lands within
     // a bounded number of updates.
@@ -938,7 +944,7 @@ TEST(StreamPlayback, StreamStealSucceedsWhenVictimIsStream) {
     EXPECT_EQ(0u, engine->ledger.PendingStartCount());
 }
 
-TEST(StreamPlayback, PendingStreamStealPinsItsRegistration) {
+TEST_F(StreamPlayback, PendingStreamStealPinsItsRegistration) {
     // A pending stream steal holds no stream slot, so it pins its registration:
     // the source cannot be unregistered (dropping the start) nor re-registered
     // to a different asset under the same id (swapping the source) while
@@ -979,7 +985,7 @@ TEST(StreamPlayback, PendingStreamStealPinsItsRegistration) {
     EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(harkentest::ObjectId(9202)));
 }
 
-TEST(StreamPlayback, StreamStealReservationPreventsOverbooking) {
+TEST_F(StreamPlayback, StreamStealReservationPreventsOverbooking) {
     // The overbooking scenario: one free stream slot, two PCM victims, two
     // stream steals before any pump. The first reserves the slot; the second
     // finds only reserved capacity and a PCM victim (whose release frees no
@@ -1018,7 +1024,7 @@ TEST(StreamPlayback, StreamStealReservationPreventsOverbooking) {
               engine->voices.Resolve(harkentest::RenderHandle(engine, p2)));
 }
 
-TEST(StreamPlayback, TwoStreamVictimsBothStealsAdmittedAndStart) {
+TEST_F(StreamPlayback, TwoStreamVictimsBothStealsAdmittedAndStart) {
     // Two stream steals whose victims are both stream voices: each victim's
     // slot is reserved for its stealer (each victim stolen at most once), both
     // steals are admitted, and both deferred starts land within bound.
@@ -1063,7 +1069,7 @@ TEST(StreamPlayback, TwoStreamVictimsBothStealsAdmittedAndStart) {
     EXPECT_EQ(0u, engine->ledger.PendingStartCount());
 }
 
-TEST(StreamPlayback, ReservedStreamSlotIsNotConsumedByNormalPlay) {
+TEST_F(StreamPlayback, ReservedStreamSlotIsNotConsumedByNormalPlay) {
     // A pending stream steal reserves a free stream slot; a normal stream play
     // arriving while the reservation stands is refused (only reserved capacity
     // remains) even though a stream slot is physically free — so the pending
@@ -1159,7 +1165,7 @@ Capture RenderStreamAtStart(const std::string& name, VnSoundId soundId,
     return capture;
 }
 
-TEST(StreamPlayback, StreamStartFrameSeeksIntoSource) {
+TEST_F(StreamPlayback, StreamStartFrameSeeksIntoSource) {
     const std::vector<float> source = MakeDistinctSignal(1200);
     constexpr std::uint32_t kChunkFrames = 64;
     constexpr std::uint64_t kOffset = kChunkFrames * 2; // 128, chunk-aligned
@@ -1275,7 +1281,7 @@ ParkCheckpoint CaptureFiniteParkCheckpoint(std::uint32_t renderedBlocks) {
     return {rec.streamResumeFrame, rec.loopsRemaining};
 }
 
-TEST(StreamPlayback, PressureWaitKeepsHandleAndReturnsAtAcknowledgedFrame) {
+TEST_F(StreamPlayback, PressureWaitKeepsHandleAndReturnsAtAcknowledgedFrame) {
     NotificationLog log;
     EngineSession session(MakeStreamWaitConfig(&log));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1357,7 +1363,7 @@ TEST(StreamPlayback, PressureWaitKeepsHandleAndReturnsAtAcknowledgedFrame) {
     EXPECT_GT(PumpBlockPeak(engine), harkentest::kSilenceFloor);
 }
 
-TEST(StreamPlayback,
+TEST_F(StreamPlayback,
      CompletionOwnedStreamVictimIsProtectedBeforePressurePark) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1424,7 +1430,7 @@ TEST(StreamPlayback,
     EXPECT_EQ(backpressure, engine->commands.BackpressureCount());
 }
 
-TEST(StreamPlayback,
+TEST_F(StreamPlayback,
      ParkTokenKeepsFiniteLoopAudibleAndFeedFrontiersOrdered) {
     VnConfig config = MakeStreamWaitConfig(nullptr);
     config.streamRingFrames = 1024;
@@ -1587,7 +1593,7 @@ TEST(StreamPlayback,
     EXPECT_GT(secondFeedAdvance, feedAdvance);
 }
 
-TEST(StreamPlayback, StopDuringAckPendingCannotResurrect) {
+TEST_F(StreamPlayback, StopDuringAckPendingCannotResurrect) {
     NotificationLog log;
     EngineSession session(MakeStreamWaitConfig(&log));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1623,7 +1629,7 @@ TEST(StreamPlayback, StopDuringAckPendingCannotResurrect) {
               engine->ledger.Classify(claimant).kind);
 }
 
-TEST(StreamPlayback,
+TEST_F(StreamPlayback,
      CancelledParkTokenStaysReservedUntilPublishedOutcomeIsConsumed) {
     EngineSession session(MakeStreamWaitConfig(
         nullptr, /*maxVoices=*/2, /*maxStreams=*/2,
@@ -1683,7 +1689,7 @@ TEST(StreamPlayback,
         secondLive.renderHandle, second, kSecondSequence);
 }
 
-TEST(StreamPlayback, PreparingVictimAcknowledgesActivationOrigin) {
+TEST_F(StreamPlayback, PreparingVictimAcknowledgesActivationOrigin) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1713,7 +1719,7 @@ TEST(StreamPlayback, PreparingVictimAcknowledgesActivationOrigin) {
               engine->parkRecords[parked.ledgerSlot].virtualCursor);
 }
 
-TEST(StreamPlayback, StreamResumeFrameAboveDoublePrecisionStaysExact) {
+TEST_F(StreamPlayback, StreamResumeFrameAboveDoublePrecisionStaysExact) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1768,7 +1774,7 @@ TEST(StreamPlayback, StreamResumeFrameAboveDoublePrecisionStaysExact) {
               returnedContext->streamActivationStartFrame);
 }
 
-TEST(StreamPlayback, StreamConsumedOffsetAboveDoublePrecisionStaysExact) {
+TEST_F(StreamPlayback, StreamConsumedOffsetAboveDoublePrecisionStaysExact) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -1835,7 +1841,7 @@ TEST(StreamPlayback, StreamConsumedOffsetAboveDoublePrecisionStaysExact) {
     EXPECT_DOUBLE_EQ(0.75, restored->resampler.SourceFraction());
 }
 
-TEST(StreamPlayback, OneVirtualSeatRefusesSecondSameTickPressureAdmission) {
+TEST_F(StreamPlayback, OneVirtualSeatRefusesSecondSameTickPressureAdmission) {
     VnConfig config = MakeStreamWaitConfig(
         nullptr, /*maxVoices=*/2, /*maxStreams=*/2,
         /*maxParked=*/1);
@@ -1879,7 +1885,7 @@ TEST(StreamPlayback, OneVirtualSeatRefusesSecondSameTickPressureAdmission) {
                            : 0u));
 }
 
-TEST(StreamPlayback, VirtualAndLogicalFullKeepsLegacyRefusal) {
+TEST_F(StreamPlayback, VirtualAndLogicalFullKeepsLegacyRefusal) {
     NotificationLog log;
     EngineSession session(MakeStreamWaitConfig(&log));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1914,7 +1920,7 @@ TEST(StreamPlayback, VirtualAndLogicalFullKeepsLegacyRefusal) {
     EXPECT_EQ(0u, engine->voiceStolenCount);
 }
 
-TEST(StreamPlayback, DisabledWaitingKeepsLegacyTerminalSteal) {
+TEST_F(StreamPlayback, DisabledWaitingKeepsLegacyTerminalSteal) {
     NotificationLog log;
     VnConfig config = MakeStreamWaitConfig(&log);
     config.audibilityParkEnabled = 0;
@@ -1947,7 +1953,7 @@ TEST(StreamPlayback, DisabledWaitingKeepsLegacyTerminalSteal) {
 }
 
 
-TEST(StreamPlayback, MaxStreamsOneClaimantCancellationBalancesReservation) {
+TEST_F(StreamPlayback, MaxStreamsOneClaimantCancellationBalancesReservation) {
     NotificationLog log;
     EngineSession session(MakeStreamWaitConfig(
         &log, /*maxVoices=*/1, /*maxStreams=*/1,
@@ -1987,7 +1993,7 @@ TEST(StreamPlayback, MaxStreamsOneClaimantCancellationBalancesReservation) {
     EXPECT_EQ(0u, engine->voiceStolenCount);
 }
 
-TEST(StreamPlayback, ParkedPcmReturnUsesStreamWaitTransaction) {
+TEST_F(StreamPlayback, ParkedPcmReturnUsesStreamWaitTransaction) {
     VnConfig config = MakeStreamWaitConfig(
         nullptr, /*maxVoices=*/1, /*maxStreams=*/1,
         /*maxParked=*/2);
@@ -2016,7 +2022,7 @@ TEST(StreamPlayback, ParkedPcmReturnUsesStreamWaitTransaction) {
     EXPECT_EQ(0u, engine->voiceStolenCount);
 }
 
-TEST(StreamPlayback, AckPendingControlsMutateWaiterWithoutRenderCommands) {
+TEST_F(StreamPlayback, AckPendingControlsMutateWaiterWithoutRenderCommands) {
     VnConfig config = MakeStreamWaitConfig(nullptr);
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 2;
@@ -2092,7 +2098,7 @@ TEST(StreamPlayback, AckPendingControlsMutateWaiterWithoutRenderCommands) {
     EXPECT_EQ(commandRoom, engine->commands.FreeSlots());
 }
 
-TEST(StreamPlayback, StopAfterPublishedAckDrainsWinnerBeforeEnding) {
+TEST_F(StreamPlayback, StopAfterPublishedAckDrainsWinnerBeforeEnding) {
     NotificationLog log;
     EngineSession session(MakeStreamWaitConfig(
         &log, /*maxVoices=*/1, /*maxStreams=*/1, /*maxParked=*/2));
@@ -2140,7 +2146,7 @@ TEST(StreamPlayback, StopAfterPublishedAckDrainsWinnerBeforeEnding) {
     EXPECT_EQ(1u, log.OfType(VN_NOTIFY_VOICE_ENDED).size());
 }
 
-TEST(StreamPlayback, PublishedNaturalEndWinsOverLaterFadedStop) {
+TEST_F(StreamPlayback, PublishedNaturalEndWinsOverLaterFadedStop) {
     NotificationLog log;
     EngineSession session(MakeStreamWaitConfig(&log));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -2171,7 +2177,7 @@ TEST(StreamPlayback, PublishedNaturalEndWinsOverLaterFadedStop) {
     EXPECT_TRUE(log.OfType(VN_NOTIFY_VOICE_PARKED).empty());
 }
 
-TEST(StreamPlayback, LateAckCannotMutateReusedLogicalSlot) {
+TEST_F(StreamPlayback, LateAckCannotMutateReusedLogicalSlot) {
     VnConfig config = MakeStreamWaitConfig(
         nullptr, /*maxVoices=*/1, /*maxStreams=*/1,
         /*maxParked=*/1);
@@ -2219,7 +2225,7 @@ TEST(StreamPlayback, LateAckCannotMutateReusedLogicalSlot) {
               engine->ledger.Classify(stream).kind);
 }
 
-TEST(StreamPlayback, FiniteCheckpointCoversIntroSeamFinalAndOutro) {
+TEST_F(StreamPlayback, FiniteCheckpointCoversIntroSeamFinalAndOutro) {
     const ParkCheckpoint intro = CaptureFiniteParkCheckpoint(0);
     const ParkCheckpoint seam = CaptureFiniteParkCheckpoint(2);
     const ParkCheckpoint finalTraversal =
@@ -2236,7 +2242,7 @@ TEST(StreamPlayback, FiniteCheckpointCoversIntroSeamFinalAndOutro) {
     EXPECT_GE(outro.frame, 1024u);
 }
 
-TEST(StreamPlayback, FiniteLoopCheckpointKeepsRemainingPasses) {
+TEST_F(StreamPlayback, FiniteLoopCheckpointKeepsRemainingPasses) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -2280,7 +2286,7 @@ TEST(StreamPlayback, FiniteLoopCheckpointKeepsRemainingPasses) {
     EXPECT_LT(rec.streamResumeFrame, 4096u);
 }
 
-TEST(StreamPlayback, InfiniteLoopCheckpointRemainsInfinite) {
+TEST_F(StreamPlayback, InfiniteLoopCheckpointRemainsInfinite) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -2321,7 +2327,7 @@ TEST(StreamPlayback, InfiniteLoopCheckpointRemainsInfinite) {
     EXPECT_LT(rec.streamResumeFrame, 768u);
 }
 
-TEST(StreamPlayback, StarvationAndArenaSilenceBoundParkWithoutAdvancing) {
+TEST_F(StreamPlayback, StarvationAndArenaSilenceBoundParkWithoutAdvancing) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -2353,7 +2359,7 @@ TEST(StreamPlayback, StarvationAndArenaSilenceBoundParkWithoutAdvancing) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(StreamPlayback, DrainingArenaSilenceStillReleasesWithinParkDeadline) {
+TEST_F(StreamPlayback, DrainingArenaSilenceStillReleasesWithinParkDeadline) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -2394,7 +2400,7 @@ TEST(StreamPlayback, DrainingArenaSilenceStillReleasesWithinParkDeadline) {
               engine->ledger.Classify(claimant).kind);
 }
 
-TEST(StreamPlayback, NaturalEndRacingParkHasOneTerminalWinner) {
+TEST_F(StreamPlayback, NaturalEndRacingParkHasOneTerminalWinner) {
     NotificationLog log;
     EngineSession session(MakeStreamWaitConfig(&log));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -2426,7 +2432,7 @@ TEST(StreamPlayback, NaturalEndRacingParkHasOneTerminalWinner) {
     EXPECT_EQ(1u, log.OfType(VN_NOTIFY_VOICE_ENDED).size());
 }
 
-TEST(StreamPlayback, IntegrityAbortRacingParkHasOneTerminalWinner) {
+TEST_F(StreamPlayback, IntegrityAbortRacingParkHasOneTerminalWinner) {
     NotificationLog log;
     EngineSession session(MakeStreamWaitConfig(&log));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -2469,7 +2475,7 @@ TEST(StreamPlayback, IntegrityAbortRacingParkHasOneTerminalWinner) {
     EXPECT_EQ(1u, log.OfType(VN_NOTIFY_VOICE_ENDED).size());
 }
 
-TEST(StreamPlayback, PublishedAckDrainsWhileSuspendedAndReturnsAfterResume) {
+TEST_F(StreamPlayback, PublishedAckDrainsWhileSuspendedAndReturnsAfterResume) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -2504,7 +2510,7 @@ TEST(StreamPlayback, PublishedAckDrainsWhileSuspendedAndReturnsAfterResume) {
               engine->ledger.Classify(stream).kind);
 }
 
-TEST(StreamPlayback, HotReplacementKeepsParkedGenerationFacts) {
+TEST_F(StreamPlayback, HotReplacementKeepsParkedGenerationFacts) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -2542,7 +2548,7 @@ TEST(StreamPlayback, HotReplacementKeepsParkedGenerationFacts) {
 }
 
 
-TEST(StreamPlayback, StreamParkCommandBackpressureIsAtomic) {
+TEST_F(StreamPlayback, StreamParkCommandBackpressureIsAtomic) {
     VnConfig config = MakeStreamWaitConfig(nullptr);
     config.commandQueueDepth = 1;
     EngineSession session(config);
@@ -2568,7 +2574,7 @@ TEST(StreamPlayback, StreamParkCommandBackpressureIsAtomic) {
     EXPECT_EQ(0u, engine->voiceStolenCount);
 }
 
-TEST(StreamPlayback, StreamParkFilePinRefusalIsAtomic) {
+TEST_F(StreamPlayback, StreamParkFilePinRefusalIsAtomic) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -2603,7 +2609,7 @@ TEST(StreamPlayback, StreamParkFilePinRefusalIsAtomic) {
     EXPECT_EQ(0u, engine->voiceStolenCount);
 }
 
-TEST(StreamPlayback, ParkCaptureAllocationFailureIsAtomic) {
+TEST_F(StreamPlayback, ParkCaptureAllocationFailureIsAtomic) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -2634,7 +2640,7 @@ TEST(StreamPlayback, ParkCaptureAllocationFailureIsAtomic) {
     EXPECT_EQ(0u, engine->voiceStolenCount);
 }
 
-TEST(StreamPlayback, ReturnSeedFailureLeavesWaiterAndExactPinIntact) {
+TEST_F(StreamPlayback, ReturnSeedFailureLeavesWaiterAndExactPinIntact) {
     VnConfig config = MakeStreamWaitConfig(nullptr);
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 2;
@@ -2690,7 +2696,7 @@ TEST(StreamPlayback, ReturnSeedFailureLeavesWaiterAndExactPinIntact) {
               engine->voices.ResolveParkOwnedToken(heldToken));
 }
 
-TEST(StreamPlayback, NotificationOverflowDoesNotOwnAckEligibility) {
+TEST_F(StreamPlayback, NotificationOverflowDoesNotOwnAckEligibility) {
     VnConfig config = MakeStreamWaitConfig(
         nullptr, /*maxVoices=*/3, /*maxStreams=*/1,
         /*maxParked=*/1);
@@ -2731,7 +2737,7 @@ TEST(StreamPlayback, NotificationOverflowDoesNotOwnAckEligibility) {
     EXPECT_GT(Snap().notificationDropCount, 0u);
 }
 
-TEST(StreamPlayback, SerialAndWorkerParkPublishSameCheckpoint) {
+TEST_F(StreamPlayback, SerialAndWorkerParkPublishSameCheckpoint) {
     const auto run = [](std::uint32_t workerCount) {
         VnConfig config = MakeStreamWaitConfig(nullptr);
         config.renderWorkerCount = workerCount;
@@ -2767,7 +2773,7 @@ TEST(StreamPlayback, SerialAndWorkerParkPublishSameCheckpoint) {
     EXPECT_EQ(run(0), run(2));
 }
 
-TEST(StreamPlayback, TermWithReservedAndPublishedAcksAllowsCleanReinit) {
+TEST_F(StreamPlayback, TermWithReservedAndPublishedAcksAllowsCleanReinit) {
     {
         EngineSession session(MakeStreamWaitConfig(nullptr));
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -2790,7 +2796,7 @@ TEST(StreamPlayback, TermWithReservedAndPublishedAcksAllowsCleanReinit) {
     EXPECT_EQ(VN_OK, reinitialized.InitResult());
 }
 
-TEST(StreamPlayback, IntegrityDiscoveredDuringParkFadeWinsBeforeAck) {
+TEST_F(StreamPlayback, IntegrityDiscoveredDuringParkFadeWinsBeforeAck) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -2832,7 +2838,7 @@ TEST(StreamPlayback, IntegrityDiscoveredDuringParkFadeWinsBeforeAck) {
     EXPECT_EQ(nullptr, engine->voices.Resolve(live.renderHandle));
 }
 
-TEST(StreamPlayback, DirectPlayDrainsPublishedMailboxBeforeNextAdmission) {
+TEST_F(StreamPlayback, DirectPlayDrainsPublishedMailboxBeforeNextAdmission) {
     EngineSession session(MakeStreamWaitConfig(
         nullptr, /*maxVoices=*/1, /*maxStreams=*/2, /*maxParked=*/2));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -2874,7 +2880,7 @@ TEST(StreamPlayback, DirectPlayDrainsPublishedMailboxBeforeNextAdmission) {
     EXPECT_EQ(0u, engine->voiceStolenCount);
 }
 
-TEST(StreamPlayback, StreamTerminalReasonDoesNotCrossGeneration) {
+TEST_F(StreamPlayback, StreamTerminalReasonDoesNotCrossGeneration) {
     harken::StreamRing ring;
     float storage[harken::kMaxChannels][16] = {};
     float* planes[harken::kMaxChannels] = {};
@@ -2897,7 +2903,7 @@ TEST(StreamPlayback, StreamTerminalReasonDoesNotCrossGeneration) {
               ring.TerminalReason());
 }
 
-TEST(StreamPlayback, StreamParkAndProducerTerminalHaveOneAtomicWinner) {
+TEST_F(StreamPlayback, StreamParkAndProducerTerminalHaveOneAtomicWinner) {
     harken::StreamRing ring;
     float storage[harken::kMaxChannels][16] = {};
     float* planes[harken::kMaxChannels] = {};

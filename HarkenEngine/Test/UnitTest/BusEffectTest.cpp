@@ -15,6 +15,7 @@
 // uses and compare at a tight tolerance.
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "PlayableStorageTestSupport.h"
 
 #include "harken/render/BuiltinEffects.h"
 
@@ -26,6 +27,10 @@
 #include <vector>
 
 namespace {
+
+class BusEffect : public testing::Test {
+    harkentest::PlayableCapacityScope playableCapacity_{8, 1};
+};
 
 using harkentest::Capture;
 using harkentest::EngineSession;
@@ -78,6 +83,8 @@ void CaptureInputProcess(void* state, float* const* channels,
 
 VnConfig BusFxConfig(std::uint32_t slots) {
     VnConfig config = MakeNullConfig(0, kBlock, kRate);
+    config.maxTriggerDepth = 1;
+    config.maxActionFirings = 8;
     config.fxSlotsPerBus = slots;
     return config;
 }
@@ -108,7 +115,7 @@ std::vector<float> RegisterDc(float value, std::size_t frames = 2000) {
 // non-commuting add/multiply pair on the SAME bus differ exactly as computed
 // (the default all-pre-fader split with unity BusVolume leaves the fold at
 // unity, so only the chain arithmetic shows).
-TEST(BusEffect, SlotsProcessInAscendingOrder) {
+TEST_F(BusEffect, SlotsProcessInAscendingOrder) {
     float addC = 0.125f;
     float mulM = 2.0f;
 
@@ -151,7 +158,7 @@ TEST(BusEffect, SlotsProcessInAscendingOrder) {
 // A bus slot's bypass toggle is a click-free one-block wet/dry crossfade, and
 // settles to the dry (bypassed) signal — the identical discipline the voice
 // chain uses.
-TEST(BusEffect, PerSlotBypassIsClickFree) {
+TEST_F(BusEffect, PerSlotBypassIsClickFree) {
     EngineSession session(BusFxConfig(1));
     ASSERT_EQ(VN_OK, session.InitResult());
 
@@ -194,7 +201,7 @@ TEST(BusEffect, PerSlotBypassIsClickFree) {
 // after the gain differs exactly as computed. An affine effect (add a constant)
 // does not commute with a scalar gain, so pre-fader (x + c) * g differs from
 // post-fader x * g + c.
-TEST(BusEffect, PreFaderVsPostFaderSplitDiffersAsComputed) {
+TEST_F(BusEffect, PreFaderVsPostFaderSplitDiffersAsComputed) {
     constexpr float kV = 0.5f;
     constexpr float kC = 0.25f;
     const float gainDb = -6.0206f; // ~0.5 linear
@@ -232,7 +239,7 @@ TEST(BusEffect, PreFaderVsPostFaderSplitDiffersAsComputed) {
         << "the fader split must change the gain staging";
 }
 
-TEST(BusEffect, InternalMeterTapsFollowBusSignalBoundaries) {
+TEST_F(BusEffect, InternalMeterTapsFollowBusSignalBoundaries) {
     constexpr float kInput = 0.25f;
     constexpr float kPreAdd = 0.125f;
     constexpr float kPostAdd = 0.0625f;
@@ -296,7 +303,7 @@ TEST(BusEffect, InternalMeterTapsFollowBusSignalBoundaries) {
     EXPECT_NEAR(legacyPeaks[busIndex], expectedEffects, 1e-5f);
 }
 
-TEST(BusEffect, MeterProbesSelectAllThreeSignalTaps) {
+TEST_F(BusEffect, MeterProbesSelectAllThreeSignalTaps) {
     constexpr float kInput = 0.25f;
     constexpr float kPreAdd = 0.125f;
     constexpr float kPostAdd = 0.0625f;
@@ -350,7 +357,7 @@ TEST(BusEffect, MeterProbesSelectAllThreeSignalTaps) {
 // A post-fader effect on the master bus observes the post-fader (gained) signal:
 // with a known BusVolume change, a capture in a post-fader slot reads v*g, while
 // the same capture pre-fader reads v.
-TEST(BusEffect, MasterPostFaderObservesPostFaderSignal) {
+TEST_F(BusEffect, MasterPostFaderObservesPostFaderSignal) {
     constexpr float kV = 0.5f;
     const float gainDb = -6.0206f; // ~0.5 linear
     const float g = std::pow(10.0f, gainDb / 20.0f);
@@ -390,7 +397,7 @@ TEST(BusEffect, MasterPostFaderObservesPostFaderSignal) {
 // the move under a non-unity gain can step at the boundary; a true output
 // crossfade would require processing the stateful chain twice per block — see
 // the report's self-flag.)
-TEST(BusEffect, FaderMoveAppliesAtBlockBoundaryWithoutClick) {
+TEST_F(BusEffect, FaderMoveAppliesAtBlockBoundaryWithoutClick) {
     EngineSession session(BusFxConfig(1));
     ASSERT_EQ(VN_OK, session.InitResult());
 
@@ -436,7 +443,7 @@ TEST(BusEffect, FaderMoveAppliesAtBlockBoundaryWithoutClick) {
 // A slot bypassed while empty stays bypassed when an effect is later installed
 // into it (the per-slot bypass persists independent of the install) — the same
 // empty-slot bypass discipline the voice slots use, applied to a bus slot.
-TEST(BusEffect, EmptySlotBypassPersistsAcrossInstall) {
+TEST_F(BusEffect, EmptySlotBypassPersistsAcrossInstall) {
     EngineSession session(BusFxConfig(1));
     ASSERT_EQ(VN_OK, session.InitResult());
 
@@ -475,7 +482,7 @@ TEST(BusEffect, EmptySlotBypassPersistsAcrossInstall) {
 // exactly like the prior gain-only path — a DC voice through a created bus
 // reaches the master unchanged. (The whole prior suite passing on the
 // fx-capable bus path is the broader evidence; this pins one explicit value.)
-TEST(BusEffect, NoEffectsNoFaderIsBitIdenticalPassthrough) {
+TEST_F(BusEffect, NoEffectsNoFaderIsBitIdenticalPassthrough) {
     EngineSession session(BusFxConfig(0)); // 0 -> default fxSlotsPerBus (8)
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = RegisterDc(0.5f);
@@ -500,7 +507,7 @@ TEST(BusEffect, NoEffectsNoFaderIsBitIdenticalPassthrough) {
 // Vn_SetBusEffectParam change, an in-place replace with a different type
 // (retiring the old instance — verified via pool occupancy so nothing leaks),
 // and Vn_ClearBusEffect resuming passthrough immediately (tail cut, no drain).
-TEST(BusEffect, PublicPooledEffectLifecycle) {
+TEST_F(BusEffect, PublicPooledEffectLifecycle) {
     EngineSession session(BusFxConfig(1));
     ASSERT_EQ(VN_OK, session.InitResult());
     constexpr float kV = 0.5f;
@@ -620,7 +627,7 @@ void InstallNeutralTestGain(VnBusId bus, std::uint32_t slot = 0) {
         reinterpret_cast<const VnEffectDesc*>(&gain)));
 }
 
-TEST(BusEffect, NeutralPlanClearsSelectedPooledStateAndPreservesForeignBus) {
+TEST_F(BusEffect, NeutralPlanClearsSelectedPooledStateAndPreservesForeignBus) {
     for (const VnBusId selectedId : {kBusA, VN_BUS_MASTER}) {
         EngineSession session(BusFxConfig(2));
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -686,7 +693,7 @@ TEST(BusEffect, NeutralPlanClearsSelectedPooledStateAndPreservesForeignBus) {
     }
 }
 
-TEST(BusEffect, NeutralPlanIdentityAndGainMaskDifferential) {
+TEST_F(BusEffect, NeutralPlanIdentityAndGainMaskDifferential) {
     for (int mode = 0; mode < 5; ++mode) {
         SCOPED_TRACE(mode);
         EngineSession session(BusFxConfig(1));
@@ -732,7 +739,7 @@ TEST(BusEffect, NeutralPlanIdentityAndGainMaskDifferential) {
     }
 }
 
-TEST(BusEffect, NeutralPlanDeadRowMatchesOrdinaryTombstone) {
+TEST_F(BusEffect, NeutralPlanDeadRowMatchesOrdinaryTombstone) {
     for (const bool neutral : {false, true}) {
         EngineSession session(BusFxConfig(1));
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -762,7 +769,7 @@ TEST(BusEffect, NeutralPlanDeadRowMatchesOrdinaryTombstone) {
     }
 }
 
-TEST(BusEffect, NeutralPlanGenerationTransitionAndRepeatedSwapsRetireOnce) {
+TEST_F(BusEffect, NeutralPlanGenerationTransitionAndRepeatedSwapsRetireOnce) {
     VnConfig config = BusFxConfig(1);
     config.gainEffectPoolCapacity = 2;
     EngineSession session(config);
@@ -800,7 +807,7 @@ TEST(BusEffect, NeutralPlanGenerationTransitionAndRepeatedSwapsRetireOnce) {
     engine.effectBank.Recycle(second);
 }
 
-TEST(BusEffect, NeutralPlanSharesRetirementCapacityWithUndrainedVoiceEffects) {
+TEST_F(BusEffect, NeutralPlanSharesRetirementCapacityWithUndrainedVoiceEffects) {
     VnConfig config = BusFxConfig(2);
     config.gainEffectPoolCapacity = 8;
     config.delayEffectPoolCapacity = 1;
@@ -883,7 +890,7 @@ TEST(BusEffect, NeutralPlanSharesRetirementCapacityWithUndrainedVoiceEffects) {
     for (const auto& acquired : reacquired) engine.effectBank.Recycle(acquired);
 }
 
-TEST(BusEffect, VariableOwnerBlocksBusReplaceAndClearWithoutMutation) {
+TEST_F(BusEffect, VariableOwnerBlocksBusReplaceAndClearWithoutMutation) {
     EngineSession session(BusFxConfig(1));
     ASSERT_EQ(VN_OK, session.InitResult());
     ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
@@ -1087,7 +1094,7 @@ TEST(BusEffect, VariableOwnerBlocksBusReplaceAndClearWithoutMutation) {
 // republish nothing" bullet's fader half; the level half is pinned in the
 // bus-send tests). The publish counter stays static across the move and the
 // following pump.
-TEST(BusEffect, FaderMoveRepublishesNothing) {
+TEST_F(BusEffect, FaderMoveRepublishesNothing) {
     EngineSession session(BusFxConfig(1));
     ASSERT_EQ(VN_OK, session.InitResult());
     ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
@@ -1111,7 +1118,7 @@ TEST(BusEffect, FaderMoveRepublishesNothing) {
     EXPECT_EQ(before, planCount()) << "a fader-point move must republish nothing";
 }
 
-TEST(BusEffect, PreparedToneUpdatePreservesStateAndOtherSections) {
+TEST_F(BusEffect, PreparedToneUpdatePreservesStateAndOtherSections) {
     VnConfig config = BusFxConfig(1);
     config.toneEffectPoolCapacity = 1;
     EngineSession session(config);

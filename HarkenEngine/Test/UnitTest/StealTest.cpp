@@ -9,6 +9,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/RecipePackTestUtil.h"
 #include "Common/TestUtil.h"
+#include "PlayableStorageTestSupport.h"
 
 #include "harken/param/EffectParamLocator.h"
 #include "harken/render/BuiltinEffects.h"
@@ -21,6 +22,10 @@
 
 namespace {
 
+class Steal : public testing::Test {
+    harkentest::PlayableCapacityScope playableCapacity_{8, 1};
+};
+
 using harkentest::Capture;
 using harkentest::EngineSession;
 using harkentest::MakeNullConfig;
@@ -32,6 +37,8 @@ constexpr std::uint32_t kRate = 48000;
 
 VnConfig StealConfig(std::uint32_t maxVoices, std::uint32_t policy) {
     VnConfig config = MakeNullConfig(maxVoices, kBlock, kRate);
+    config.maxTriggerDepth = 1;
+    config.maxActionFirings = 8;
     config.voiceStealPolicy = policy;
     return config;
 }
@@ -86,7 +93,7 @@ VnThreeBandToneDesc FullParamTone() {
     return tone;
 }
 
-TEST(Steal, RefusePolicyFullPoolReturnsNoVoice) {
+TEST_F(Steal, RefusePolicyFullPoolReturnsNoVoice) {
     EngineSession session(StealConfig(2, 0));
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = LongDc(0.5f);
@@ -105,7 +112,7 @@ TEST(Steal, RefusePolicyFullPoolReturnsNoVoice) {
     EXPECT_EQ(0u, session.Engine()->ledger.PendingStartCount());
 }
 
-TEST(Steal, QuietestPicksLowestAudibilityWithSlotTieBreak) {
+TEST_F(Steal, QuietestPicksLowestAudibilityWithSlotTieBreak) {
     NotificationLog log;
     VnConfig config = StealConfig(2, 1); // steal-quietest
     config.onNotification = &RecordNotification;
@@ -143,7 +150,7 @@ TEST(Steal, QuietestPicksLowestAudibilityWithSlotTieBreak) {
               engine->voices.Resolve(harkentest::RenderHandle(engine, loud)));
 }
 
-TEST(Steal, OldestPicksLowestStartOrder) {
+TEST_F(Steal, OldestPicksLowestStartOrder) {
     NotificationLog log;
     VnConfig config = StealConfig(2, 2); // steal-oldest
     config.onNotification = &RecordNotification;
@@ -172,7 +179,7 @@ TEST(Steal, OldestPicksLowestStartOrder) {
               engine->voices.Resolve(harkentest::RenderHandle(engine, newer)));
 }
 
-TEST(Steal, NeverStealsHigherPriorityAndEqualIsEligible) {
+TEST_F(Steal, NeverStealsHigherPriorityAndEqualIsEligible) {
     const std::vector<float> dc = LongDc(0.5f);
     const VnPCMDesc desc = MonoDesc(dc, kRate);
 
@@ -204,7 +211,7 @@ TEST(Steal, NeverStealsHigherPriorityAndEqualIsEligible) {
     }
 }
 
-TEST(Steal, UserStopInFlightIsNotRelabeledOrSelectedForSteal) {
+TEST_F(Steal, UserStopInFlightIsNotRelabeledOrSelectedForSteal) {
     NotificationLog log;
     VnConfig config = StealConfig(1, 2);
     config.onNotification = &RecordNotification;
@@ -230,7 +237,7 @@ TEST(Steal, UserStopInFlightIsNotRelabeledOrSelectedForSteal) {
     EXPECT_EQ(0u, log.CountOfType(VN_NOTIFY_VOICE_STOLEN));
 }
 
-TEST(Steal, ExactClaimBlocksUnrelatedFreshPlayAfterVictimRelease) {
+TEST_F(Steal, ExactClaimBlocksUnrelatedFreshPlayAfterVictimRelease) {
     EngineSession session(StealConfig(1, 2));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -253,7 +260,7 @@ TEST(Steal, ExactClaimBlocksUnrelatedFreshPlayAfterVictimRelease) {
               engine->ledger.Classify(claimant).kind);
 }
 
-TEST(Steal, StaleLedgerEntryCannotDonateReusedRenderGeneration) {
+TEST_F(Steal, StaleLedgerEntryCannotDonateReusedRenderGeneration) {
     NotificationLog log;
     VnConfig config = StealConfig(1, 2);
     config.maxParkedVoices = 2;
@@ -292,7 +299,7 @@ TEST(Steal, StaleLedgerEntryCannotDonateReusedRenderGeneration) {
     EXPECT_EQ(0u, engine->ledger.ToRender(reused));
 }
 
-TEST(Steal, DeclickIsBoundedAndCompletesWithinOneBlock) {
+TEST_F(Steal, DeclickIsBoundedAndCompletesWithinOneBlock) {
     EngineSession session(StealConfig(1, 2));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -327,7 +334,7 @@ TEST(Steal, DeclickIsBoundedAndCompletesWithinOneBlock) {
     EXPECT_LT(std::fabs(declick.left.back()), harkentest::kSilenceFloor);
 }
 
-TEST(Steal, DeferredStartLandsWithinTwoBlocks) {
+TEST_F(Steal, DeferredStartLandsWithinTwoBlocks) {
     EngineSession session(StealConfig(1, 2));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -362,7 +369,7 @@ TEST(Steal, DeferredStartLandsWithinTwoBlocks) {
               after.voices[row].state);
 }
 
-TEST(Steal, PendingStartCancelledByStop) {
+TEST_F(Steal, PendingStartCancelledByStop) {
     NotificationLog log;
     VnConfig config = StealConfig(1, 2);
     config.onNotification = &RecordNotification;
@@ -391,7 +398,7 @@ TEST(Steal, PendingStartCancelledByStop) {
     EXPECT_EQ(VN_STALE_HANDLE, Vn_SetVoiceVolume(incoming, -3.0f, 0));
 }
 
-TEST(Steal, StagedVolumeIsAppliedAtDeferredStart) {
+TEST_F(Steal, StagedVolumeIsAppliedAtDeferredStart) {
     EngineSession session(StealConfig(1, 2));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -421,7 +428,7 @@ TEST(Steal, StagedVolumeIsAppliedAtDeferredStart) {
                         harken::kTargetVoiceVolume));
 }
 
-TEST(Steal, StagedEffectInstalledAtStartAndReleasedOnCancel) {
+TEST_F(Steal, StagedEffectInstalledAtStartAndReleasedOnCancel) {
     VnConfig config = StealConfig(1, 2);
     config.fxSlotsPerVoice = 1;
     EngineSession session(config);
@@ -480,7 +487,7 @@ TEST(Steal, StagedEffectInstalledAtStartAndReleasedOnCancel) {
     }
 }
 
-TEST(Steal, FreshFreeRecipeSeedFailureIsAtomicAndRetryable) {
+TEST_F(Steal, FreshFreeRecipeSeedFailureIsAtomicAndRetryable) {
     VnConfig config = StealConfig(1, 2);
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 1;
@@ -562,7 +569,7 @@ TEST(Steal, FreshFreeRecipeSeedFailureIsAtomicAndRetryable) {
     EXPECT_EQ(1u, activeBindingInstances);
 }
 
-TEST(Steal, FreshRecipeStealSeedFailureLeavesIncumbentUntouched) {
+TEST_F(Steal, FreshRecipeStealSeedFailureLeavesIncumbentUntouched) {
     VnConfig config = StealConfig(1, 2);
     config.fxSlotsPerVoice = 1;
     config.gainEffectPoolCapacity = 2;
@@ -600,7 +607,7 @@ TEST(Steal, FreshRecipeStealSeedFailureLeavesIncumbentUntouched) {
     EXPECT_EQ(1u, engine->effectBank.InUseOf(VN_EFFECT_GAIN));
 }
 
-TEST(Steal, ExactClaimSeedsPastFullyInstalledBaseBudget) {
+TEST_F(Steal, ExactClaimSeedsPastFullyInstalledBaseBudget) {
     VnConfig config = StealConfig(1, 2);
     config.maxBuses = 1;
     config.fxSlotsPerVoice = 1;
@@ -675,7 +682,7 @@ TEST(Steal, ExactClaimSeedsPastFullyInstalledBaseBudget) {
     EXPECT_EQ(2u, engine->effectBank.ToneInUse());
 }
 
-TEST(Steal, FreshFreeThirdGenerationUsesLogicalRecordBudget) {
+TEST_F(Steal, FreshFreeThirdGenerationUsesLogicalRecordBudget) {
     VnConfig config = StealConfig(1, 2);
     config.maxParkedVoices = 2;
     config.maxBuses = 1;
@@ -784,7 +791,7 @@ TEST(Steal, FreshFreeThirdGenerationUsesLogicalRecordBudget) {
     EXPECT_EQ(0u, Snap().voiceStolenCount);
 }
 
-TEST(Steal, ExactClaimThirdGenerationUsesLogicalRecordBudget) {
+TEST_F(Steal, ExactClaimThirdGenerationUsesLogicalRecordBudget) {
     VnConfig config = StealConfig(1, 2);
     config.maxParkedVoices = 2;
     config.maxBuses = 1;
@@ -887,7 +894,7 @@ TEST(Steal, ExactClaimThirdGenerationUsesLogicalRecordBudget) {
 }
 
 
-TEST(Steal, OldPlayDescVintageDefaultsPriorityTo128) {
+TEST_F(Steal, OldPlayDescVintageDefaultsPriorityTo128) {
     EngineSession session(StealConfig(1, 1)); // steal-quietest
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = LongDc(0.5f);
@@ -908,13 +915,15 @@ TEST(Steal, OldPlayDescVintageDefaultsPriorityTo128) {
     EXPECT_EQ(VN_NO_VOICE, harkentest::PlayRaw(&lowPlay, &incoming));
 }
 
-TEST(Steal, DeclickCompletesWithinOneBlockOnSmallBlocks) {
+TEST_F(Steal, DeclickCompletesWithinOneBlockOnSmallBlocks) {
     // A sub-millisecond block: 32 frames at 48 kHz is 0.667 ms. A declick
     // rounded through milliseconds (a 1 ms floor rounds to 48 frames) would
     // run longer than one 32-frame block; the frames-direct declick must
     // complete inside this single block, so the victim is silent by block end.
     constexpr std::uint32_t kSmallBlock = 32;
     VnConfig config = MakeNullConfig(1, kSmallBlock, kRate);
+    config.maxTriggerDepth = 1;
+    config.maxActionFirings = 8;
     config.voiceStealPolicy = 2; // steal-oldest
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -941,7 +950,7 @@ TEST(Steal, DeclickCompletesWithinOneBlockOnSmallBlocks) {
     EXPECT_LT(std::fabs(declick.left.back()), harkentest::kSilenceFloor);
 }
 
-TEST(Steal, FullCommandQueueRefusesStealWithoutSideEffects) {
+TEST_F(Steal, FullCommandQueueRefusesStealWithoutSideEffects) {
     // The victim-stop command is admitted before the steal commits any side
     // effect, so a full command queue refuses cleanly: no victim marked, no
     // pending entry, no counter movement — nothing half-commits.
@@ -967,7 +976,7 @@ TEST(Steal, FullCommandQueueRefusesStealWithoutSideEffects) {
               engine->voices.Resolve(harkentest::RenderHandle(engine, a)));
 }
 
-TEST(Steal, DroppedStolenNotificationStillCountsExactly) {
+TEST_F(Steal, DroppedStolenNotificationStillCountsExactly) {
     // voiceStolenCount is committed at the steal, not at notification
     // delivery, so a dropped VN_NOTIFY_VOICE_STOLEN never desynchronizes it.
     // Two voices are stolen in one block; their STOLEN terminals collide in
@@ -1011,7 +1020,7 @@ TEST(Steal, DroppedStolenNotificationStillCountsExactly) {
     EXPECT_EQ(1u, log.CountOfType(VN_NOTIFY_VOICE_STOLEN)); // one survived
 }
 
-TEST(Steal, PendingStartStagesEveryPerVoiceOp) {
+TEST_F(Steal, PendingStartStagesEveryPerVoiceOp) {
     // Every per-voice API staged on a pending voice lands in the ledger's
     // staging record and is replayed at the deferred start.
     VnConfig config = StealConfig(1, 2); // steal-oldest
@@ -1110,7 +1119,7 @@ TEST(Steal, PendingStartStagesEveryPerVoiceOp) {
     EXPECT_NE(nullptr, ctx->fxSlots[0].process);
 }
 
-TEST(Steal, PendingSetVoiceEffectRefusesOnPoolExhaustion) {
+TEST_F(Steal, PendingSetVoiceEffectRefusesOnPoolExhaustion) {
     // Effect staging keeps the live-voice contract on a pending voice: an
     // exhausted instance pool refuses VN_NO_EFFECT.
     VnConfig config = StealConfig(2, 2); // steal-oldest
@@ -1157,7 +1166,7 @@ TEST(Steal, PendingSetVoiceEffectRefusesOnPoolExhaustion) {
                                 reinterpret_cast<const VnEffectDesc*>(&tone)));
 }
 
-TEST(Steal, PendingBypassPersistsAcrossClearAndInstall) {
+TEST_F(Steal, PendingBypassPersistsAcrossClearAndInstall) {
     // A pending voice's per-slot bypass is independent of the staged effect: it
     // survives a staged clear and applies at the deferred start — bypass before
     // install, so the deferred voice's FIRST rendered block is dry with no wet

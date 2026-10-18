@@ -1,6 +1,7 @@
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "PlayableStorageTestSupport.h"
 
 #include "Engine.h"
 #include "PackLogicStore.h"
@@ -40,11 +41,13 @@ VnConfig CanonicalActivationConfig(std::uint32_t maxVoices = 0,
                                    std::uint32_t sampleRate = 0) {
     auto config = harkentest::MakeNullConfig(maxVoices, blockFrames, sampleRate);
     // Pack activation coverage does not require the default nested Action scratch.
-    config.maxTriggerDepth = 2;
+    config.maxTriggerDepth = 1;
+    config.maxActionFirings = 8;
     return config;
 }
 
 TEST(CanonicalPackSetActivate, PathInitOnlyActivateRetryUnload) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-activate";
     EngineSession session(CanonicalActivationConfig());
@@ -88,6 +91,7 @@ TEST(CanonicalPackSetActivate, PathInitOnlyActivateRetryUnload) {
 }
 
 TEST(CanonicalPackSetActivate, CommandQueueRefusalReturnsPreparedTopologyPlan) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     VnConfig config = CanonicalActivationConfig();
     config.commandQueueDepth = 16;
     EngineSession session(config);
@@ -125,6 +129,7 @@ TEST(CanonicalPackSetActivate, CommandQueueRefusalReturnsPreparedTopologyPlan) {
 }
 
 TEST(CanonicalPackSetActivate, PreviewDifferentFingerprintBlocksPack) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) /
         "canonical-pack-set-activate-preview";
@@ -143,6 +148,7 @@ TEST(CanonicalPackSetActivate, PreviewDifferentFingerprintBlocksPack) {
 }
 
 TEST(CanonicalPackSetActivate, MasterBus2WritesPackCookieAndUnloads) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) /
         "canonical-pack-set-activate-bus2";
@@ -171,6 +177,7 @@ TEST(CanonicalPackSetActivate, MasterBus2WritesPackCookieAndUnloads) {
 }
 
 TEST(CanonicalPackSetActivate, LaterMissingMemberPreservesEmptyState) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "late-member";
@@ -197,6 +204,7 @@ TEST(CanonicalPackSetActivate, LaterMissingMemberPreservesEmptyState) {
 }
 
 TEST(CanonicalPackSetActivate, MasterClashPreservesEmptyPackState) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     ASSERT_FALSE(session.Engine()->previewMasterHolders.empty());
@@ -215,6 +223,7 @@ TEST(CanonicalPackSetActivate, MasterClashPreservesEmptyPackState) {
 }
 
 TEST(CanonicalPackSetActivate, InitReplaceKeepsHandleAndSingleSlot) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto first = harkentest::ActivateInitPathV1(
@@ -236,6 +245,7 @@ TEST(CanonicalPackSetActivate, InitReplaceKeepsHandleAndSingleSlot) {
 }
 
 TEST(CanonicalPackSetActivate, UnloadWithForeignChildPreservesGraph) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto first = harkentest::ActivateInitPathWithBus2V1(
@@ -258,6 +268,7 @@ TEST(CanonicalPackSetActivate, UnloadWithForeignChildPreservesGraph) {
 }
 
 TEST(CanonicalPackSetActivate, UnloadRetryIncludesBaseRevision) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto first = harkentest::ActivateInitPathV1(
@@ -337,6 +348,7 @@ struct ReentrantSetProvider {
 };
 
 TEST(CanonicalPackSetActivate, ProviderAcquireAndReleaseRejectAllMutationFamilies) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     for (int mode = 0; mode != 3; ++mode) {
         SCOPED_TRACE(mode);
         EngineSession session(CanonicalActivationConfig());
@@ -382,6 +394,7 @@ TEST(CanonicalPackSetActivate, ProviderAcquireAndReleaseRejectAllMutationFamilie
 }
 
 TEST(CanonicalPackSetActivate, SameRevisionWrongExpectedHandleIsNotExactRetry) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto first = ActivateInitPathV1(
@@ -407,6 +420,7 @@ TEST(CanonicalPackSetActivate, SameRevisionWrongExpectedHandleIsNotExactRetry) {
 }
 
 TEST(CanonicalPackSetActivate, LoadPackRefusesCurrentVintageInit) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-loadpack-init";
     EngineSession session(CanonicalActivationConfig());
@@ -438,6 +452,7 @@ TEST(CanonicalPackSetActivate, LoadPackRefusesCurrentVintageInit) {
 }
 
 TEST(CanonicalPackSetActivate, LoadPackRefusesInitWithoutKind24Snapshot) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     using namespace harkentest::packfoundation;
@@ -468,6 +483,7 @@ TEST(CanonicalPackSetActivate, LoadPackRefusesInitWithoutKind24Snapshot) {
 }
 
 TEST(CanonicalPackSetActivate, ProductionV1LoadsAndInspectsButCannotActivate) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     using namespace harkentest::packfoundation;
@@ -504,6 +520,7 @@ TEST(CanonicalPackSetActivate, ProductionV1LoadsAndInspectsButCannotActivate) {
 }
 
 TEST(CanonicalPackSetActivate, InspectInitWithoutKind24SnapshotIsBadPack) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     using namespace harkentest::packfoundation;
     ImageBuilder builder(harken::kPackKindInit);
     std::uint64_t bodyBytes = 0;
@@ -532,6 +549,7 @@ TEST(CanonicalPackSetActivate, InspectInitWithoutKind24SnapshotIsBadPack) {
 }
 
 TEST(CanonicalPackSetActivate, ActivateInitWithoutKind24SnapshotIsBadPack) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     using namespace harkentest::packfoundation;
@@ -551,6 +569,7 @@ TEST(CanonicalPackSetActivate, ActivateInitWithoutKind24SnapshotIsBadPack) {
 }
 
 TEST(CanonicalPackSetActivate, LoadPackRefusesLiveActivatedInit) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) /
         "canonical-pack-set-loadpack-live-init";
@@ -570,6 +589,7 @@ TEST(CanonicalPackSetActivate, LoadPackRefusesLiveActivatedInit) {
 }
 
 TEST(CanonicalPackSetActivate, PendingVoiceRecipePinsPackAttenuationGeneration) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     constexpr std::uint32_t kBlock = 256;
     constexpr std::uint32_t kRate = 48000;
     VnConfig config = CanonicalActivationConfig(1, kBlock, kRate);
@@ -651,6 +671,7 @@ TEST(CanonicalPackSetActivate, PendingVoiceRecipePinsPackAttenuationGeneration) 
 }
 
 TEST(CanonicalPackSetActivate, ContentWrongInitTripleIsStaleRevision) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -691,6 +712,7 @@ TEST(CanonicalPackSetActivate, ContentWrongInitTripleIsStaleRevision) {
 }
 
 TEST(CanonicalPackSetActivate, SnapshotSendInstallsProspectiveEdge) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     constexpr float kLevelDb = -6.0f;
@@ -731,6 +753,7 @@ TEST(CanonicalPackSetActivate, SnapshotSendInstallsProspectiveEdge) {
 }
 
 TEST(CanonicalPackSetActivate, SnapshotSendPreservesForeignLiveSend) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto foreignSource = VN_OBJECT_ID(0, 80);
@@ -787,6 +810,7 @@ TEST(CanonicalPackSetActivate, SnapshotSendPreservesForeignLiveSend) {
 }
 
 TEST(CanonicalPackSetActivate, ForeignSendCycleRefusesReplacementAndAllowsRetry) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) /
@@ -849,6 +873,7 @@ TEST(CanonicalPackSetActivate, ForeignSendCycleRefusesReplacementAndAllowsRetry)
 }
 
 TEST(CanonicalPackSetActivate, ForeignSendConsumesPackSourceCapacityWithoutMutation) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     auto config = CanonicalActivationConfig();
     config.busSendSlotsPerBus = 1;
     harkentest::EngineSession session(config);
@@ -900,6 +925,7 @@ TEST(CanonicalPackSetActivate, ForeignSendConsumesPackSourceCapacityWithoutMutat
 }
 
 TEST(CanonicalPackSetActivate, DuplicateSnapshotSendIsBadPack) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto first = harkentest::ActivateInitBytesV1(
@@ -914,6 +940,7 @@ TEST(CanonicalPackSetActivate, DuplicateSnapshotSendIsBadPack) {
 }
 
 TEST(CanonicalPackSetActivate, ExactRetryIncludesProviderIdentity) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     harkentest::EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     struct Provider {
@@ -1115,6 +1142,7 @@ bool FindActivate135Tail(const std::vector<std::uint8_t>& bytes, std::uint64_t* 
 }
 
 TEST(CanonicalPackSetActivate, TraceActiveActivateNoLongerReturnsCapabilityUnavailable) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) /
         "canonical-pack-set-trace-active";
@@ -1138,6 +1166,7 @@ TEST(CanonicalPackSetActivate, TraceActiveActivateNoLongerReturnsCapabilityUnava
 }
 
 TEST(CanonicalPackSetActivate, TraceStartActivateWritesCall135) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-activate-journal";
     EngineSession session(CanonicalActivationConfig());
@@ -1171,6 +1200,7 @@ TEST(CanonicalPackSetActivate, TraceStartActivateWritesCall135) {
 }
 
 TEST(CanonicalPackSetActivate, HostReplaysSuccessfulActivateCall135) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) /
         "canonical-pack-set-activate-host-replay";
@@ -1209,6 +1239,7 @@ TEST(CanonicalPackSetActivate, HostReplaysSuccessfulActivateCall135) {
 }
 
 TEST(CanonicalPackSetActivate, HostKeepsPublishedAfterBadPackActivate) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-att03-keep";
     std::uint64_t bodyBytes = 0;
@@ -1256,6 +1287,7 @@ TEST(CanonicalPackSetActivate, HostKeepsPublishedAfterBadPackActivate) {
 }
 
 TEST(CanonicalPackSetActivate, TraceActiveBadStructSizeWritesNoActivateJournal) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::filesystem::path tracePath =
@@ -1278,6 +1310,7 @@ TEST(CanonicalPackSetActivate, TraceActiveBadStructSizeWritesNoActivateJournal) 
 
 
 TEST(CanonicalPackSetActivate, JournalsFailedCanonicalLoadWithoutPublish) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -1404,6 +1437,7 @@ VnResult UnloadSet(VnPackHandle initHandle, std::uint64_t baseRevision) {
 }
 
 TEST(CanonicalPackSetActivate, InitMasterBusBindingInstallsAndUnloads) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -1441,6 +1475,7 @@ TEST(CanonicalPackSetActivate, InitMasterBusBindingInstallsAndUnloads) {
 }
 
 TEST(CanonicalPackSetActivate, InitBus2BindingUsesLiveIndex) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -1471,6 +1506,7 @@ TEST(CanonicalPackSetActivate, InitBus2BindingUsesLiveIndex) {
 }
 
 TEST(CanonicalPackSetActivate, AfterAllPreparedBeforeCommitRollsBackBindings) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -1521,6 +1557,7 @@ TEST(CanonicalPackSetActivate, AfterAllPreparedBeforeCommitRollsBackBindings) {
 }
 
 TEST(CanonicalPackSetActivate, SameHandleReplaceDiffsBindings) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -1597,6 +1634,7 @@ TEST(CanonicalPackSetActivate, SameHandleReplaceDiffsBindings) {
 }
 
 TEST(CanonicalPackSetActivate, CallerTakenCookieIsSkippedOnUnload) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -1629,6 +1667,7 @@ TEST(CanonicalPackSetActivate, CallerTakenCookieIsSkippedOnUnload) {
 }
 
 TEST(CanonicalPackSetActivate, InitAndContentVoiceBindingsStayOnOwnCookies) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = harkentest::MakeDC(48000, 0.5f);
@@ -1683,6 +1722,7 @@ TEST(CanonicalPackSetActivate, InitAndContentVoiceBindingsStayOnOwnCookies) {
 }
 
 TEST(CanonicalPackSetActivate, ContentBusBindingDoesNotEnterTable) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = harkentest::MakeDC(48000, 0.5f);
@@ -1723,6 +1763,7 @@ TEST(CanonicalPackSetActivate, ContentBusBindingDoesNotEnterTable) {
 }
 
 TEST(CanonicalPackSetActivate, InitVoiceBindingIsRefused) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -1744,6 +1785,7 @@ TEST(CanonicalPackSetActivate, InitVoiceBindingIsRefused) {
 }
 
 TEST(CanonicalPackSetActivate, InitBusEffectParamIsNotKindRefused) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -1775,6 +1817,7 @@ TEST(CanonicalPackSetActivate, InitBusEffectParamIsNotKindRefused) {
 }
 
 TEST(CanonicalPackSetActivate, VoiceEffectParamDoesNotEnterTable) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = harkentest::MakeDC(48000, 0.5f);
@@ -1822,6 +1865,7 @@ TEST(CanonicalPackSetActivate, VoiceEffectParamDoesNotEnterTable) {
 }
 
 TEST(CanonicalPackSetActivate, BindingCapacityRefusalsLeaveEmptyState) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     {
         VnConfig config = CanonicalActivationConfig();
         config.maxBindings = 1;
@@ -1882,6 +1926,7 @@ TEST(CanonicalPackSetActivate, BindingCapacityRefusalsLeaveEmptyState) {
 }
 
 TEST(CanonicalPackSetActivate, ReplaceCanonicalPackSwapsContentBindings) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = harkentest::MakeDC(48000, 0.5f);
@@ -1932,6 +1977,7 @@ TEST(CanonicalPackSetActivate, ReplaceCanonicalPackSwapsContentBindings) {
 }
 
 TEST(CanonicalPackSetActivate, UnloadPackOnInitLeavesCanonicalBindings) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -1948,6 +1994,7 @@ TEST(CanonicalPackSetActivate, UnloadPackOnInitLeavesCanonicalBindings) {
 }
 
 TEST(CanonicalPackSetActivate, ReplaceDroppingBus2DetachesBeforeRetire) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -1978,6 +2025,7 @@ TEST(CanonicalPackSetActivate, ReplaceDroppingBus2DetachesBeforeRetire) {
 }
 
 TEST(CanonicalPackSetActivate, ReplaceKeepsBindingWhenBus2Retires) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -2020,6 +2068,7 @@ TEST(CanonicalPackSetActivate, ReplaceKeepsBindingWhenBus2Retires) {
 }
 
 TEST(CanonicalPackSetActivate, IdentityChangeRebindsSameTriple) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -2067,6 +2116,7 @@ TEST(CanonicalPackSetActivate, IdentityChangeRebindsSameTriple) {
 }
 
 TEST(CanonicalPackSetActivate, CallerTakenCookieIsSkippedOnReplace) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto directory =
@@ -2113,6 +2163,7 @@ TEST(CanonicalPackSetActivate, CallerTakenCookieIsSkippedOnReplace) {
 }
 
 TEST(CanonicalPackSetActivate, KeepContentManifestUnloadsAfterInitReplace) {
+    harkentest::PlayableCapacityScope playableCapacity(8, 1);
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::vector<float> dc = harkentest::MakeDC(48000, 0.5f);

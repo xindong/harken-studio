@@ -1,5 +1,6 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "PlayableStorageTestSupport.h"
 #include "Engine.h"
 #include "CommandQueueSubmissionTestAccess.h"
 #include "VoicePoolReleaseTestAccess.h"
@@ -26,6 +27,11 @@ constexpr std::uint32_t kFrames = 64;
 constexpr std::uint32_t kRate = 48000;
 constexpr auto kSound = harkentest::ObjectId(21);
 using Registry = harken::OriginalSourceSubmissionRegistry;
+
+class OriginalSourceSubmission : public testing::Test {
+    // Two retained Queue trees need four Playables and two container modes.
+    harkentest::PlayableCapacityScope playableCapacity_{8, 2};
+};
 
 VnConfig SourceBodyConfig() {
     auto config = harkentest::MakeNullConfig(4, kFrames, kRate);
@@ -258,7 +264,7 @@ void RetireIndependent(harken::Engine& engine, const SourceBody& body) {
 }
 }
 
-TEST(OriginalSourceSubmission, ApplyPreservesLegalIndependentTargetSetterAndFreshPcm) {
+TEST_F(OriginalSourceSubmission, ApplyPreservesLegalIndependentTargetSetterAndFreshPcm) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -271,7 +277,7 @@ TEST(OriginalSourceSubmission, ApplyPreservesLegalIndependentTargetSetterAndFres
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, CancelPreservesLegalIndependentTargetSetterAndFreshPcm) {
+TEST_F(OriginalSourceSubmission, CancelPreservesLegalIndependentTargetSetterAndFreshPcm) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -285,7 +291,7 @@ TEST(OriginalSourceSubmission, CancelPreservesLegalIndependentTargetSetterAndFre
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, FinalSourcePublishesOnlyAfterCompleteInstallation) {
+TEST_F(OriginalSourceSubmission, FinalSourcePublishesOnlyAfterCompleteInstallation) {
     for (const bool finalSource : {false, true}) {
         SCOPED_TRACE(finalSource);
         harkentest::EngineSession session(SourceBodyConfig());
@@ -315,7 +321,7 @@ TEST(OriginalSourceSubmission, FinalSourcePublishesOnlyAfterCompleteInstallation
     }
 }
 
-TEST(OriginalSourceSubmission, FinalSourceCancelAndCorruptionNeverPublish) {
+TEST_F(OriginalSourceSubmission, FinalSourceCancelAndCorruptionNeverPublish) {
     for (const bool invalid : {false, true}) {
         SCOPED_TRACE(invalid);
         harkentest::EngineSession session(SourceBodyConfig());
@@ -342,7 +348,7 @@ TEST(OriginalSourceSubmission, FinalSourceCancelAndCorruptionNeverPublish) {
     }
 }
 
-TEST(OriginalSourceSubmission, FinalSourceBudgetDeferralKeepsWholeInstallationPending) {
+TEST_F(OriginalSourceSubmission, FinalSourceBudgetDeferralKeepsWholeInstallationPending) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -370,7 +376,7 @@ TEST(OriginalSourceSubmission, FinalSourceBudgetDeferralKeepsWholeInstallationPe
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, FinalSourcePhysicalReleaseDeferralNeverPublishesOrAcknowledges) {
+TEST_F(OriginalSourceSubmission, FinalSourcePhysicalReleaseDeferralNeverPublishesOrAcknowledges) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -409,7 +415,7 @@ TEST(OriginalSourceSubmission, FinalSourcePhysicalReleaseDeferralNeverPublishesO
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, FinalSourceReuseIssuesOnlyForTheNewActualArmGeneration) {
+TEST_F(OriginalSourceSubmission, FinalSourceReuseIssuesOnlyForTheNewActualArmGeneration) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -438,7 +444,7 @@ TEST(OriginalSourceSubmission, FinalSourceReuseIssuesOnlyForTheNewActualArmGener
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, FinalSourcePartialMetadataWaitsForEffectRetirementBeforePublishing) {
+TEST_F(OriginalSourceSubmission, FinalSourcePartialMetadataWaitsForEffectRetirementBeforePublishing) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -501,7 +507,7 @@ TEST(OriginalSourceSubmission, FinalSourcePartialMetadataWaitsForEffectRetiremen
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, MalformedBodyAppliesNoPrefixAndRetiresExactIncomingEffectOnce) {
+TEST_F(OriginalSourceSubmission, MalformedBodyAppliesNoPrefixAndRetiresExactIncomingEffectOnce) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -521,7 +527,7 @@ TEST(OriginalSourceSubmission, MalformedBodyAppliesNoPrefixAndRetiresExactIncomi
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, CancelTransfersCrossTargetEffectUntilActualTargetRelease) {
+TEST_F(OriginalSourceSubmission, CancelTransfersCrossTargetEffectUntilActualTargetRelease) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -548,7 +554,7 @@ TEST(OriginalSourceSubmission, CancelTransfersCrossTargetEffectUntilActualTarget
 }
 
 
-TEST(OriginalSourceSubmission, NativeOriginalLoanRetainsInstalledBodyWhilePhysicalVoiceEndsAndReuses) {
+TEST_F(OriginalSourceSubmission, NativeOriginalLoanRetainsInstalledBodyWhilePhysicalVoiceEndsAndReuses) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -631,7 +637,7 @@ TEST(OriginalSourceSubmission, NativeOriginalLoanRetainsInstalledBodyWhilePhysic
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, NativeOriginalMoveOverwriteAndBothDispositionOrdersReturnActualOwners) {
+TEST_F(OriginalSourceSubmission, NativeOriginalMoveOverwriteAndBothDispositionOrdersReturnActualOwners) {
     for (const bool returnBeforeDisposition : {false, true}) {
         SCOPED_TRACE(returnBeforeDisposition);
         harkentest::EngineSession session(SourceBodyConfig());
@@ -687,7 +693,7 @@ TEST(OriginalSourceSubmission, NativeOriginalMoveOverwriteAndBothDispositionOrde
     }
 }
 
-TEST(OriginalSourceSubmission, NativeOriginalCancellationAndInvalidBodyRetainOriginWithoutGrantingInstall) {
+TEST_F(OriginalSourceSubmission, NativeOriginalCancellationAndInvalidBodyRetainOriginWithoutGrantingInstall) {
     for (const bool invalid : {false, true}) {
         SCOPED_TRACE(invalid);
         harkentest::EngineSession session(SourceBodyConfig());
@@ -727,7 +733,7 @@ TEST(OriginalSourceSubmission, NativeOriginalCancellationAndInvalidBodyRetainOri
 }
 
 
-TEST(OriginalSourceSubmission, NativeOriginalQuarantineStalesInstallationWithoutForgingRelease) {
+TEST_F(OriginalSourceSubmission, NativeOriginalQuarantineStalesInstallationWithoutForgingRelease) {
     // This invokes the real native fault exit, not a worker-timeout reproduction.
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
@@ -962,7 +968,7 @@ void PumpOriginalBodyInstall(harken::Engine& engine, const SourceBody& body) {
 }
 } // namespace
 
-TEST(OriginalSourceSubmission, GenuineBodyFactoryInstallsThenEndsWhileForeignRetainsSameSlotEpisode) {
+TEST_F(OriginalSourceSubmission, GenuineBodyFactoryInstallsThenEndsWhileForeignRetainsSameSlotEpisode) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -1029,7 +1035,7 @@ TEST(OriginalSourceSubmission, GenuineBodyFactoryInstallsThenEndsWhileForeignRet
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, GenuineBodyAllExternalReturnsKeepActualPendingAndInstalledSelfLoanUntilEnd) {
+TEST_F(OriginalSourceSubmission, GenuineBodyAllExternalReturnsKeepActualPendingAndInstalledSelfLoanUntilEnd) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -1051,7 +1057,7 @@ TEST(OriginalSourceSubmission, GenuineBodyAllExternalReturnsKeepActualPendingAnd
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, GenuineBodyEarlySourceAThenFrozenSourceBRefusesBeforeBeginAndRetires) {
+TEST_F(OriginalSourceSubmission, GenuineBodyEarlySourceAThenFrozenSourceBRefusesBeforeBeginAndRetires) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -1095,7 +1101,7 @@ TEST(OriginalSourceSubmission, GenuineBodyEarlySourceAThenFrozenSourceBRefusesBe
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, GenuineBodyOccupiedOutputPreflightAndMoveOverwriteRetainExactFamilies) {
+TEST_F(OriginalSourceSubmission, GenuineBodyOccupiedOutputPreflightAndMoveOverwriteRetainExactFamilies) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -1142,7 +1148,7 @@ TEST(OriginalSourceSubmission, GenuineBodyOccupiedOutputPreflightAndMoveOverwrit
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, first));
 }
 
-TEST(OriginalSourceSubmission, GenuineBodyNativeCancellationAndInvalidWireHaveNoInstallAndStrictDispositionTail) {
+TEST_F(OriginalSourceSubmission, GenuineBodyNativeCancellationAndInvalidWireHaveNoInstallAndStrictDispositionTail) {
     for (const bool cancel : {false, true}) {
         SCOPED_TRACE(cancel);
         harkentest::EngineSession session(SourceBodyConfig());
@@ -1186,7 +1192,7 @@ TEST(OriginalSourceSubmission, GenuineBodyNativeCancellationAndInvalidWireHaveNo
     }
 }
 
-TEST(OriginalSourceSubmission, GenuineBodyQuarantineRetainsSelfLoanUntilActualJoinedDrainWithoutFakeRelease) {
+TEST_F(OriginalSourceSubmission, GenuineBodyQuarantineRetainsSelfLoanUntilActualJoinedDrainWithoutFakeRelease) {
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1232,7 +1238,7 @@ TEST(OriginalSourceSubmission, GenuineBodyQuarantineRetainsSelfLoanUntilActualJo
 }
 
 
-TEST(OriginalSourceSubmission, GenuineBodyNeverBoundPreparationUsesBothRealCancelPathsAndReturnsPendingLoan) {
+TEST_F(OriginalSourceSubmission, GenuineBodyNeverBoundPreparationUsesBothRealCancelPathsAndReturnsPendingLoan) {
     for (const bool originalCancel : {false, true}) {
         SCOPED_TRACE(originalCancel);
         harkentest::EngineSession session(SourceBodyConfig());
@@ -1553,7 +1559,7 @@ void ExpectUnpublishedEpisodeOriginalTail(harken::Engine& engine, GenuinePrepare
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, episode.source));
 }
 
-TEST(OriginalSourceSubmission, PreparedSingleBundleUsesAllGenuineFactoriesBeforeHeadWithoutRequiringAckOrStart) {
+TEST_F(OriginalSourceSubmission, PreparedSingleBundleUsesAllGenuineFactoriesBeforeHeadWithoutRequiringAckOrStart) {
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1597,7 +1603,7 @@ TEST(OriginalSourceSubmission, PreparedSingleBundleUsesAllGenuineFactoriesBefore
     ASSERT_NO_FATAL_FAILURE(ExpectUnpublishedEpisodeOriginalTail(engine, episode));
 }
 
-TEST(OriginalSourceSubmission, PreparedSingleBundleObservesFreshActualInstallAckWhileRealStartRemainsAbsent) {
+TEST_F(OriginalSourceSubmission, PreparedSingleBundleObservesFreshActualInstallAckWhileRealStartRemainsAbsent) {
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1682,7 +1688,7 @@ TEST(OriginalSourceSubmission, PreparedSingleBundleObservesFreshActualInstallAck
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, episode.source));
 }
 
-TEST(OriginalSourceSubmission, PreparedSingleBundleRejectsNativeForeignReceiverAndFullScopeRetargetWithoutLosingOwners) {
+TEST_F(OriginalSourceSubmission, PreparedSingleBundleRejectsNativeForeignReceiverAndFullScopeRetargetWithoutLosingOwners) {
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1738,7 +1744,7 @@ TEST(OriginalSourceSubmission, PreparedSingleBundleRejectsNativeForeignReceiverA
     ASSERT_NO_FATAL_FAILURE(ExpectUnpublishedEpisodeOriginalTail(engine, episode));
 }
 
-TEST(OriginalSourceSubmission, PreparedSingleBundleRejectsTwoGenuineButUnrelatedNativeRootScopes) {
+TEST_F(OriginalSourceSubmission, PreparedSingleBundleRejectsTwoGenuineButUnrelatedNativeRootScopes) {
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1775,7 +1781,7 @@ TEST(OriginalSourceSubmission, PreparedSingleBundleRejectsTwoGenuineButUnrelated
     ASSERT_NO_FATAL_FAILURE(ExpectUnpublishedEpisodeOriginalTail(engine, episode));
 }
 
-TEST(OriginalSourceSubmission, PreparedSingleBundleRejectsActualEarlySourceIdentityVersusLaterNativeFrozenIdentity) {
+TEST_F(OriginalSourceSubmission, PreparedSingleBundleRejectsActualEarlySourceIdentityVersusLaterNativeFrozenIdentity) {
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1799,7 +1805,7 @@ TEST(OriginalSourceSubmission, PreparedSingleBundleRejectsActualEarlySourceIdent
 }
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
-TEST(OriginalSourceSubmission, PreparedSingleBundleLastNativeBorrowRefusalReturnsEveryEarlierGenuinePrefix) {
+TEST_F(OriginalSourceSubmission, PreparedSingleBundleLastNativeBorrowRefusalReturnsEveryEarlierGenuinePrefix) {
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1928,7 +1934,7 @@ harken::Engine::OriginalSingleCurrentHolder& CurrentHolder(harken::Engine& engin
     return engine.originalSingleCurrentHolders[static_cast<std::uint32_t>(episode.arranging)];
 }
 
-TEST(OriginalSourceSubmission, EngineOriginalPlayableTreeForeignCancelRetainsTheRealPrivateAndAdoptedPrefix) {
+TEST_F(OriginalSourceSubmission, EngineOriginalPlayableTreeForeignCancelRetainsTheRealPrivateAndAdoptedPrefix) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -1982,7 +1988,7 @@ TEST(OriginalSourceSubmission, EngineOriginalPlayableTreeForeignCancelRetainsThe
     EXPECT_EQ(engine.playableInstances.Capacity(), engine.playableInstances.FreeCount());
 }
 
-TEST(OriginalSourceSubmission, EngineOriginalPlayableRollbackForeignBusyPreservesTheActualCommittedClosingOwner) {
+TEST_F(OriginalSourceSubmission, EngineOriginalPlayableRollbackForeignBusyPreservesTheActualCommittedClosingOwner) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -2013,7 +2019,7 @@ TEST(OriginalSourceSubmission, EngineOriginalPlayableRollbackForeignBusyPreserve
     EXPECT_EQ(engine.playableInstances.Capacity(), engine.playableInstances.FreeCount());
 }
 
-TEST(OriginalSourceSubmission, EngineOriginalPlayableFailedHeldCommitKeepsActualUnpublishedTokensForRetry) {
+TEST_F(OriginalSourceSubmission, EngineOriginalPlayableFailedHeldCommitKeepsActualUnpublishedTokensForRetry) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -2047,7 +2053,7 @@ TEST(OriginalSourceSubmission, EngineOriginalPlayableFailedHeldCommitKeepsActual
     EXPECT_EQ(engine.playableInstances.Capacity(), engine.playableInstances.FreeCount());
 }
 
-TEST(OriginalSourceSubmission, EngineOriginalPlayableMoveOverwriteRefusesToDiscardTheForeignHeldDestination) {
+TEST_F(OriginalSourceSubmission, EngineOriginalPlayableMoveOverwriteRefusesToDiscardTheForeignHeldDestination) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -2074,7 +2080,7 @@ TEST(OriginalSourceSubmission, EngineOriginalPlayableMoveOverwriteRefusesToDisca
     EXPECT_EQ(engine.playableInstances.Capacity(), engine.playableInstances.FreeCount());
 }
 
-TEST(OriginalSourceSubmission, EngineOriginalSingleCurrentBeforeHeadOwnAndForeignLoansCloseMonotonically) {
+TEST_F(OriginalSourceSubmission, EngineOriginalSingleCurrentBeforeHeadOwnAndForeignLoansCloseMonotonically) {
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -2167,7 +2173,7 @@ TEST(OriginalSourceSubmission, EngineOriginalSingleCurrentBeforeHeadOwnAndForeig
     EXPECT_EQ(harken::Engine::OriginalSingleCurrentHolder::State::Empty, holder.state);
 }
 
-TEST(OriginalSourceSubmission, EngineOriginalSingleRootDeduplicatesTheOneActualNativePlayableLoan) {
+TEST_F(OriginalSourceSubmission, EngineOriginalSingleRootDeduplicatesTheOneActualNativePlayableLoan) {
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -2199,7 +2205,7 @@ TEST(OriginalSourceSubmission, EngineOriginalSingleRootDeduplicatesTheOneActualN
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, episode.source));
 }
 
-TEST(OriginalSourceSubmission, EngineOriginalSingleCurrentForeignReceiverCannotCloseAnotherEnginesNativeFamily) {
+TEST_F(OriginalSourceSubmission, EngineOriginalSingleCurrentForeignReceiverCannotCloseAnotherEnginesNativeFamily) {
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -2246,7 +2252,7 @@ TEST(OriginalSourceSubmission, EngineOriginalSingleCurrentForeignReceiverCannotC
 
 
 namespace {
-TEST(OriginalSourceSubmission, EngineOriginalSingleCurrentEndPreservesActualSourceHoldTopologyAndStrictPhysicalFences) {
+TEST_F(OriginalSourceSubmission, EngineOriginalSingleCurrentEndPreservesActualSourceHoldTopologyAndStrictPhysicalFences) {
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -2344,7 +2350,7 @@ TEST(OriginalSourceSubmission, EngineOriginalSingleCurrentEndPreservesActualSour
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, episode.source));
 }
 
-TEST(OriginalSourceSubmission, EngineOriginalSingleCurrentActualTermJoinsBeforeReturningOwnAssociationAndBaselines) {
+TEST_F(OriginalSourceSubmission, EngineOriginalSingleCurrentActualTermJoinsBeforeReturningOwnAssociationAndBaselines) {
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -2730,6 +2736,9 @@ harken::EngineConfig InitialSingleClockConfig() {
     harken::EngineConfig result{};
     const auto config = SourceBodyConfig();
     EXPECT_EQ(VN_OK, harken::ResolveConfig(&config, &result));
+    // Direct Engine construction bypasses the Null Init capacity scope.
+    result.maxPlayableInstances = 8;
+    result.maxContainerInstances = 2;
     return result;
 }
 
@@ -2739,7 +2748,7 @@ void RegisterInitialClockPcm(harken::Engine& engine, std::uint32_t frames = kFra
     ASSERT_EQ(VN_OK, engine.registry.RegisterPCM(kSound, &pcm));
 }
 
-TEST(OriginalSourceSubmission, InitialSingleClockUsesGenuineUnboundBeforeHeadAndFreshAckForExactFirstS) {
+TEST_F(OriginalSourceSubmission, InitialSingleClockUsesGenuineUnboundBeforeHeadAndFreshAckForExactFirstS) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     ASSERT_NO_FATAL_FAILURE(RegisterInitialClockPcm(engine));
@@ -2776,7 +2785,7 @@ TEST(OriginalSourceSubmission, InitialSingleClockUsesGenuineUnboundBeforeHeadAnd
     ASSERT_NO_FATAL_FAILURE(state.ReturnAllAndReclaim());
 }
 
-TEST(OriginalSourceSubmission, InitialSingleClockRejectsSameNumericScopesFromAnotherActualEngine) {
+TEST_F(OriginalSourceSubmission, InitialSingleClockRejectsSameNumericScopesFromAnotherActualEngine) {
     const auto config = InitialSingleClockConfig();
     auto firstOwner = std::make_unique<harken::Engine>(config, 0, 2);
     auto secondOwner = std::make_unique<harken::Engine>(config, 0, 2);
@@ -2818,7 +2827,7 @@ TEST(OriginalSourceSubmission, InitialSingleClockRejectsSameNumericScopesFromAno
     ASSERT_NO_FATAL_FAILURE(b.ReturnAllAndReclaim());
 }
 
-TEST(OriginalSourceSubmission, InitialSingleClockRejectsActualOriginalCompletionGeometryWithoutMutatingOutput) {
+TEST_F(OriginalSourceSubmission, InitialSingleClockRejectsActualOriginalCompletionGeometryWithoutMutatingOutput) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     ASSERT_NO_FATAL_FAILURE(RegisterInitialClockPcm(engine));
@@ -2843,7 +2852,7 @@ TEST(OriginalSourceSubmission, InitialSingleClockRejectsActualOriginalCompletion
     ASSERT_NO_FATAL_FAILURE(state.ReturnAllAndReclaim());
 }
 
-TEST(OriginalSourceSubmission, InitialSingleClockRequiresActualC0ExclusiveQueueParticipant) {
+TEST_F(OriginalSourceSubmission, InitialSingleClockRequiresActualC0ExclusiveQueueParticipant) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     ASSERT_NO_FATAL_FAILURE(RegisterInitialClockPcm(engine));
@@ -2861,7 +2870,7 @@ TEST(OriginalSourceSubmission, InitialSingleClockRequiresActualC0ExclusiveQueueP
     ASSERT_NO_FATAL_FAILURE(state.ReturnAllAndReclaim());
 }
 
-TEST(OriginalSourceSubmission, InitialSingleClockStructuralProofCannotReplaceAnInvalidatedNativeOwnerGate) {
+TEST_F(OriginalSourceSubmission, InitialSingleClockStructuralProofCannotReplaceAnInvalidatedNativeOwnerGate) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     ASSERT_NO_FATAL_FAILURE(RegisterInitialClockPcm(engine));
@@ -2884,7 +2893,7 @@ TEST(OriginalSourceSubmission, InitialSingleClockStructuralProofCannotReplaceAnI
     ASSERT_NO_FATAL_FAILURE(state.ReturnAllAndReclaim());
 }
 
-TEST(OriginalSourceSubmission, InitialSingleClockMoveBorrowAndRetiredHistoricalBindingKeepActualGroupLoansUntilReturn) {
+TEST_F(OriginalSourceSubmission, InitialSingleClockMoveBorrowAndRetiredHistoricalBindingKeepActualGroupLoansUntilReturn) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     ASSERT_NO_FATAL_FAILURE(RegisterInitialClockPcm(engine));
@@ -2922,7 +2931,7 @@ TEST(OriginalSourceSubmission, InitialSingleClockMoveBorrowAndRetiredHistoricalB
 
 
 namespace {
-TEST(OriginalSourceSubmission, InitialSingleClockRejectsNativeBindingOrderDifferentFromActualDecisionTicket) {
+TEST_F(OriginalSourceSubmission, InitialSingleClockRejectsNativeBindingOrderDifferentFromActualDecisionTicket) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     ASSERT_NO_FATAL_FAILURE(RegisterInitialClockPcm(engine));
@@ -2950,7 +2959,7 @@ TEST(OriginalSourceSubmission, InitialSingleClockRejectsNativeBindingOrderDiffer
 
 
 namespace {
-TEST(OriginalSourceSubmission, InitialSingleClockQuiescentEngineReturnsNativeConditionalGroupsBeforePoolDestruction) {
+TEST_F(OriginalSourceSubmission, InitialSingleClockQuiescentEngineReturnsNativeConditionalGroupsBeforePoolDestruction) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     // This genuine logical-boundary fixture tests only owner destruction order.
@@ -3177,7 +3186,7 @@ void ReturnActualOriginTail(harken::Engine& engine, const SourceBody& body,
 }
 } // namespace
 
-TEST(OriginalSourceSubmission, NormalOriginActualFactoryAndRangeFirstWriteInstallThenPhysicalEndClose) {
+TEST_F(OriginalSourceSubmission, NormalOriginActualFactoryAndRangeFirstWriteInstallThenPhysicalEndClose) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -3216,7 +3225,7 @@ TEST(OriginalSourceSubmission, NormalOriginActualFactoryAndRangeFirstWriteInstal
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, NormalOriginGenuineDeferredTwoCallbacksPreservesActorAndReturnsAfterFreshAck) {
+TEST_F(OriginalSourceSubmission, NormalOriginGenuineDeferredTwoCallbacksPreservesActorAndReturnsAfterFreshAck) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -3259,7 +3268,7 @@ TEST(OriginalSourceSubmission, NormalOriginGenuineDeferredTwoCallbacksPreservesA
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, NormalOriginGenuineCancelAndInvalidWireHaveNoInstallAndRetainActorUntilReturn) {
+TEST_F(OriginalSourceSubmission, NormalOriginGenuineCancelAndInvalidWireHaveNoInstallAndRetainActorUntilReturn) {
     for (const bool cancel : {false, true}) {
         SCOPED_TRACE(cancel);
         harkentest::EngineSession session(SourceBodyConfig());
@@ -3307,7 +3316,7 @@ TEST(OriginalSourceSubmission, NormalOriginGenuineCancelAndInvalidWireHaveNoInst
     }
 }
 
-TEST(OriginalSourceSubmission, NormalOriginAllExternalReturnsBeforeInstallDoNotHoldOldNativeProgressOrOwners) {
+TEST_F(OriginalSourceSubmission, NormalOriginAllExternalReturnsBeforeInstallDoNotHoldOldNativeProgressOrOwners) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -3331,7 +3340,7 @@ TEST(OriginalSourceSubmission, NormalOriginAllExternalReturnsBeforeInstallDoNotH
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, NormalOriginRealActorMoveOverwriteForeignReceiverAndOccupiedOutReturnExactScopes) {
+TEST_F(OriginalSourceSubmission, NormalOriginRealActorMoveOverwriteForeignReceiverAndOccupiedOutReturnExactScopes) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -3384,7 +3393,7 @@ TEST(OriginalSourceSubmission, NormalOriginRealActorMoveOverwriteForeignReceiver
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, first));
 }
 
-TEST(OriginalSourceSubmission, NormalOriginGenuineBoundedBorrowExhaustionPreservesOldInstallAndEveryRealReturn) {
+TEST_F(OriginalSourceSubmission, NormalOriginGenuineBoundedBorrowExhaustionPreservesOldInstallAndEveryRealReturn) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -3417,7 +3426,7 @@ TEST(OriginalSourceSubmission, NormalOriginGenuineBoundedBorrowExhaustionPreserv
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, NormalOriginTrueActorEpochMaxAndLastSourceBorrowRefusalPreserveAcceptedOld) {
+TEST_F(OriginalSourceSubmission, NormalOriginTrueActorEpochMaxAndLastSourceBorrowRefusalPreserveAcceptedOld) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -3456,7 +3465,7 @@ TEST(OriginalSourceSubmission, NormalOriginTrueActorEpochMaxAndLastSourceBorrowR
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, NormalOriginActualQuiescentTermReturnsDeferredRangeActorBeforeRegistryDestruction) {
+TEST_F(OriginalSourceSubmission, NormalOriginActualQuiescentTermReturnsDeferredRangeActorBeforeRegistryDestruction) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -3560,7 +3569,7 @@ void CloseManualNativeStopAndReclaim(harken::Engine& engine, const SourceBody& b
 }
 } // namespace
 
-TEST(OriginalSourceSubmission, NativeCallbackTrueFinishHandoffAndRenderingProgressReturnBeforeFreshWatermark) {
+TEST_F(OriginalSourceSubmission, NativeCallbackTrueFinishHandoffAndRenderingProgressReturnBeforeFreshWatermark) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -3603,7 +3612,7 @@ TEST(OriginalSourceSubmission, NativeCallbackTrueFinishHandoffAndRenderingProgre
     ASSERT_NO_FATAL_FAILURE(RetireCallbackSingleEpisode(engine, episode));
 }
 
-TEST(OriginalSourceSubmission, NativeCallbackRenderingHeldRefusesLogicCancelAndTrueAudioStopBlocksSameBlockReuse) {
+TEST_F(OriginalSourceSubmission, NativeCallbackRenderingHeldRefusesLogicCancelAndTrueAudioStopBlocksSameBlockReuse) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -3665,7 +3674,7 @@ TEST(OriginalSourceSubmission, NativeCallbackRenderingHeldRefusesLogicCancelAndT
     ASSERT_NO_FATAL_FAILURE(CloseManualNativeStopAndReclaim(engine, body, source, original));
 }
 
-TEST(OriginalSourceSubmission, NativeTimelineCancelUsesActualCallbackHoldAndReturnsStorageAfterLastUse) {
+TEST_F(OriginalSourceSubmission, NativeTimelineCancelUsesActualCallbackHoldAndReturnsStorageAfterLastUse) {
     for (const bool returnForeignInCallback : {false, true}) {
         SCOPED_TRACE(returnForeignInCallback);
         harkentest::EngineSession session(SourceBodyConfig());
@@ -3751,7 +3760,7 @@ TEST(OriginalSourceSubmission, NativeTimelineCancelUsesActualCallbackHoldAndRetu
     }
 }
 
-TEST(OriginalSourceSubmission, NativeCallbackLastForeignBodyReturnAndNativeEndReturnExactSelfLoanOnce) {
+TEST_F(OriginalSourceSubmission, NativeCallbackLastForeignBodyReturnAndNativeEndReturnExactSelfLoanOnce) {
     // Three real orders: before physical End, after physical End, and racing
     // native callback last use. No scalar flag or capability is manufactured.
     for (const unsigned order : {0u, 1u, 2u}) {
@@ -3822,7 +3831,7 @@ TEST(OriginalSourceSubmission, NativeCallbackLastForeignBodyReturnAndNativeEndRe
     }
 }
 
-TEST(OriginalSourceSubmission, NativeCallbackActualActorChildrenMoveAndReturnKeepOriginalSourceScope) {
+TEST_F(OriginalSourceSubmission, NativeCallbackActualActorChildrenMoveAndReturnKeepOriginalSourceScope) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -3865,7 +3874,7 @@ TEST(OriginalSourceSubmission, NativeCallbackActualActorChildrenMoveAndReturnKee
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, NativeCallbackRealChildCountExhaustionStillAllowsLaterOldRenderingAndStop) {
+TEST_F(OriginalSourceSubmission, NativeCallbackRealChildCountExhaustionStillAllowsLaterOldRenderingAndStop) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -3906,7 +3915,7 @@ TEST(OriginalSourceSubmission, NativeCallbackRealChildCountExhaustionStillAllows
 
 
 namespace {
-TEST(OriginalSourceSubmission, EngineOriginalSingleEarlyEndUsesActualReleaseAndNativeHoldUntilTheRealFinalTail) {
+TEST_F(OriginalSourceSubmission, EngineOriginalSingleEarlyEndUsesActualReleaseAndNativeHoldUntilTheRealFinalTail) {
     const std::vector<float> samples(kRate, 0.25f);
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -4617,15 +4626,15 @@ void CheckHiddenFutureRetainedCurrent(bool afterOriginalPublication) {
     ASSERT_NO_FATAL_FAILURE(future.Cleanup());
 }
 
-TEST(OriginalSourceSubmission, HiddenFutureRetainedCurrentUsesOriginalClockAndCompletionWithoutNewSource) {
+TEST_F(OriginalSourceSubmission, HiddenFutureRetainedCurrentUsesOriginalClockAndCompletionWithoutNewSource) {
     ASSERT_NO_FATAL_FAILURE(CheckHiddenFutureRetainedCurrent(false));
 }
 
-TEST(OriginalSourceSubmission, HiddenFuturePreparedAfterPublicationUsesRetainedOriginalClockAndCompletion) {
+TEST_F(OriginalSourceSubmission, HiddenFuturePreparedAfterPublicationUsesRetainedOriginalClockAndCompletion) {
     ASSERT_NO_FATAL_FAILURE(CheckHiddenFutureRetainedCurrent(true));
 }
 
-TEST(OriginalSourceSubmission, HiddenFutureNativeFirstSReadyRequiresActualScratchAdmission) {
+TEST_F(OriginalSourceSubmission, HiddenFutureNativeFirstSReadyRequiresActualScratchAdmission) {
     static_assert(!std::is_copy_constructible_v<harken::NativeTimelineQuantumAdmissionProof>);
     static_assert(!std::is_constructible_v<harken::NativeTimelineQuantumAdmissionProof, bool>);
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
@@ -4722,7 +4731,7 @@ TEST(OriginalSourceSubmission, HiddenFutureNativeFirstSReadyRequiresActualScratc
     ASSERT_NO_FATAL_FAILURE(future.Cleanup());
 }
 
-TEST(OriginalSourceSubmission, NativeScratchAdmissionMoveBorrowAndCaptureExitNeverForgeNewQuantum) {
+TEST_F(OriginalSourceSubmission, NativeScratchAdmissionMoveBorrowAndCaptureExitNeverForgeNewQuantum) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     ASSERT_NO_FATAL_FAILURE(RegisterInitialClockPcm(engine));
@@ -4873,7 +4882,7 @@ struct EngineOriginalConditionalHolderHarness {
     }
 };
 
-TEST(OriginalSourceSubmission, EngineConditionalHolderPreparedEndReturnsOnlyOwnCapsAndForeignBlocksNativeCancel) {
+TEST_F(OriginalSourceSubmission, EngineConditionalHolderPreparedEndReturnsOnlyOwnCapsAndForeignBlocksNativeCancel) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     EngineOriginalConditionalHolderHarness state(engine);
@@ -4910,7 +4919,7 @@ TEST(OriginalSourceSubmission, EngineConditionalHolderPreparedEndReturnsOnlyOwnC
     ASSERT_NO_FATAL_FAILURE(state.Cleanup());
 }
 
-TEST(OriginalSourceSubmission, EngineConditionalHolderActualSettleEndsAssociationBeforeLastForeignClockReturn) {
+TEST_F(OriginalSourceSubmission, EngineConditionalHolderActualSettleEndsAssociationBeforeLastForeignClockReturn) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     EngineOriginalConditionalHolderHarness state(engine);
@@ -4941,7 +4950,7 @@ TEST(OriginalSourceSubmission, EngineConditionalHolderActualSettleEndsAssociatio
     ASSERT_NO_FATAL_FAILURE(state.Cleanup());
 }
 
-TEST(OriginalSourceSubmission, EngineConditionalHolderInitializingRollbackUsesExactOriginalFamilyAndReissues) {
+TEST_F(OriginalSourceSubmission, EngineConditionalHolderInitializingRollbackUsesExactOriginalFamilyAndReissues) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     EngineOriginalConditionalHolderHarness state(engine);
@@ -4969,7 +4978,7 @@ TEST(OriginalSourceSubmission, EngineConditionalHolderInitializingRollbackUsesEx
     ASSERT_NO_FATAL_FAILURE(state.Cleanup());
 }
 
-TEST(OriginalSourceSubmission, EngineConditionalHolderForeignParentAndGroupReceiverRefuseWithoutClearingOwnCaps) {
+TEST_F(OriginalSourceSubmission, EngineConditionalHolderForeignParentAndGroupReceiverRefuseWithoutClearingOwnCaps) {
     auto firstOwned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto secondOwned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& first = *firstOwned;
@@ -5009,7 +5018,7 @@ TEST(OriginalSourceSubmission, EngineConditionalHolderForeignParentAndGroupRecei
     ASSERT_NO_FATAL_FAILURE(b.Cleanup());
 }
 
-TEST(OriginalSourceSubmission, EngineConditionalHolderDefaultDisabledKeepsActualLegacyPrepareAndEnd) {
+TEST_F(OriginalSourceSubmission, EngineConditionalHolderDefaultDisabledKeepsActualLegacyPrepareAndEnd) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig());
     auto& engine = *owned;
     EngineOriginalConditionalHolderHarness state(engine);
@@ -5036,7 +5045,7 @@ TEST(OriginalSourceSubmission, EngineConditionalHolderDefaultDisabledKeepsActual
     EXPECT_EQ(0u, engine.timelineOccurrences.OccupiedCount());
 }
 
-TEST(OriginalSourceSubmission, EngineConditionalHolderJoinedTermEndsOwnClockBeforePoolAndQueueParentDestruction) {
+TEST_F(OriginalSourceSubmission, EngineConditionalHolderJoinedTermEndsOwnClockBeforePoolAndQueueParentDestruction) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     EngineOriginalConditionalHolderHarness state(*owned);
     ASSERT_NO_FATAL_FAILURE(state.Acquire());
@@ -5055,7 +5064,7 @@ TEST(OriginalSourceSubmission, EngineConditionalHolderJoinedTermEndsOwnClockBefo
 }
 } // namespace
 
-TEST(OriginalSourceSubmission, EngineSingleNativeDecisionBaselineForeignBusyKeepsRealPreparedAndCommittedAliases) {
+TEST_F(OriginalSourceSubmission, EngineSingleNativeDecisionBaselineForeignBusyKeepsRealPreparedAndCommittedAliases) {
     (void)Vn_Term();
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -5109,7 +5118,7 @@ TEST(OriginalSourceSubmission, EngineSingleNativeDecisionBaselineForeignBusyKeep
     EXPECT_EQ(baseline, engine.decisions.LiveCount());
 }
 
-TEST(OriginalSourceSubmission, EngineSingleNativeOccurrenceResolverConsumesOnlyTrueHeldProofAndForeignKeepsStorage) {
+TEST_F(OriginalSourceSubmission, EngineSingleNativeOccurrenceResolverConsumesOnlyTrueHeldProofAndForeignKeepsStorage) {
     (void)Vn_Term();
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -5646,15 +5655,15 @@ void CheckRegisteredSourceTermJoinsActualClaim() {
 }
 } // namespace
 
-TEST(OriginalSourceSubmission, RegisteredVariableSourceActualWorkerDeadlineRetainsCallbackUntilJoinedStop) {
+TEST_F(OriginalSourceSubmission, RegisteredVariableSourceActualWorkerDeadlineRetainsCallbackUntilJoinedStop) {
     CheckRegisteredQuarantineUntilJoin(false);
 }
 
-TEST(OriginalSourceSubmission, RegisteredVariableSourceActualWorkerDeadlineForeignBodyReturnsOnlyAfterJoinedStop) {
+TEST_F(OriginalSourceSubmission, RegisteredVariableSourceActualWorkerDeadlineForeignBodyReturnsOnlyAfterJoinedStop) {
     CheckRegisteredQuarantineUntilJoin(true);
 }
 
-TEST(OriginalSourceSubmission, RegisteredVariableSourceActualWorkerDeadlineTermWaitsForRealClaimAndReturnsNativeLoans) {
+TEST_F(OriginalSourceSubmission, RegisteredVariableSourceActualWorkerDeadlineTermWaitsForRealClaimAndReturnsNativeLoans) {
     CheckRegisteredSourceTermJoinsActualClaim();
 }
 #endif
@@ -5699,7 +5708,7 @@ struct InitialConditionalFactoryOutputHarness : EngineOriginalConditionalHolderH
 };
 }
 
-TEST(OriginalSourceSubmission, InitialConditionalSameCallOriginalOutputsBeforeAckReturnOwnClockBeforeGroupCancel) {
+TEST_F(OriginalSourceSubmission, InitialConditionalSameCallOriginalOutputsBeforeAckReturnOwnClockBeforeGroupCancel) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     InitialConditionalFactoryOutputHarness state(engine);
@@ -5726,7 +5735,7 @@ TEST(OriginalSourceSubmission, InitialConditionalSameCallOriginalOutputsBeforeAc
     ASSERT_NO_FATAL_FAILURE(state.Cleanup());
 }
 
-TEST(OriginalSourceSubmission, InitialConditionalWrongIssuedVersionAbortPreservesActualPreparedPrefix) {
+TEST_F(OriginalSourceSubmission, InitialConditionalWrongIssuedVersionAbortPreservesActualPreparedPrefix) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     InitialConditionalFactoryOutputHarness state(engine);
@@ -5745,7 +5754,7 @@ TEST(OriginalSourceSubmission, InitialConditionalWrongIssuedVersionAbortPreserve
     ASSERT_NO_FATAL_FAILURE(state.Cleanup());
 }
 
-TEST(OriginalSourceSubmission, InitialConditionalGenuineForeignGroupClockRefusesWithoutReturningOriginalPrefix) {
+TEST_F(OriginalSourceSubmission, InitialConditionalGenuineForeignGroupClockRefusesWithoutReturningOriginalPrefix) {
     auto firstOwner = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto secondOwner = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& first = *firstOwner;
@@ -5771,7 +5780,7 @@ TEST(OriginalSourceSubmission, InitialConditionalGenuineForeignGroupClockRefuses
     ASSERT_NO_FATAL_FAILURE(b.Cleanup());
 }
 
-TEST(OriginalSourceSubmission, InitialConditionalCommittedInitializingAbortUsesNativeRollbackBeforeGroupReturn) {
+TEST_F(OriginalSourceSubmission, InitialConditionalCommittedInitializingAbortUsesNativeRollbackBeforeGroupReturn) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     InitialConditionalFactoryOutputHarness state(engine);
@@ -5786,7 +5795,7 @@ TEST(OriginalSourceSubmission, InitialConditionalCommittedInitializingAbortUsesN
     ASSERT_NO_FATAL_FAILURE(state.Cleanup());
 }
 
-TEST(OriginalSourceSubmission, InitialConditionalOriginalOutputNormalSettlePreservesFreshMirrorAndForeignLifetime) {
+TEST_F(OriginalSourceSubmission, InitialConditionalOriginalOutputNormalSettlePreservesFreshMirrorAndForeignLifetime) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto& engine = *owned;
     InitialConditionalFactoryOutputHarness state(engine);
@@ -5814,7 +5823,7 @@ TEST(OriginalSourceSubmission, InitialConditionalOriginalOutputNormalSettlePrese
     ASSERT_NO_FATAL_FAILURE(state.Cleanup());
 }
 
-TEST(OriginalSourceSubmission, InitialConditionalSameCallOutputsJoinedTermKeepsNativeReceiversUntilEnd) {
+TEST_F(OriginalSourceSubmission, InitialConditionalSameCallOutputsJoinedTermKeepsNativeReceiversUntilEnd) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     InitialConditionalFactoryOutputHarness state(*owned);
     ASSERT_NO_FATAL_FAILURE(state.Acquire(true));
@@ -6158,28 +6167,28 @@ void CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase mode)
     }
 }
 
-TEST(OriginalSourceSubmission, ReplacementBatchAcceptsBeforeAckWithoutMutatingCurrent) {
+TEST_F(OriginalSourceSubmission, ReplacementBatchAcceptsBeforeAckWithoutMutatingCurrent) {
     ASSERT_NO_FATAL_FAILURE(CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase::BeforeAck));
 }
-TEST(OriginalSourceSubmission, ReplacementBatchWaitsForActualReadOnlyCaptureToEnd) {
+TEST_F(OriginalSourceSubmission, ReplacementBatchWaitsForActualReadOnlyCaptureToEnd) {
     ASSERT_NO_FATAL_FAILURE(CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase::ReadOnlyCapture));
 }
-TEST(OriginalSourceSubmission, ReplacementBatchActualOldNativeWritePermanentlyWins) {
+TEST_F(OriginalSourceSubmission, ReplacementBatchActualOldNativeWritePermanentlyWins) {
     ASSERT_NO_FATAL_FAILURE(CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase::NativeWrite));
 }
-TEST(OriginalSourceSubmission, ReplacementBatchRefusesAttachmentAfterActualOldNativeWrite) {
+TEST_F(OriginalSourceSubmission, ReplacementBatchRefusesAttachmentAfterActualOldNativeWrite) {
     ASSERT_NO_FATAL_FAILURE(CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase::LateAttach));
 }
-TEST(OriginalSourceSubmission, ReplacementBatchActualMissedDeadlinePermanentlyWins) {
+TEST_F(OriginalSourceSubmission, ReplacementBatchActualMissedDeadlinePermanentlyWins) {
     ASSERT_NO_FATAL_FAILURE(CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase::MissedDeadline));
 }
-TEST(OriginalSourceSubmission, ReplacementBatchUsesActualDeferredParentOrderWithoutIssuingAgain) {
+TEST_F(OriginalSourceSubmission, ReplacementBatchUsesActualDeferredParentOrderWithoutIssuingAgain) {
     ASSERT_NO_FATAL_FAILURE(CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase::Deferred));
 }
-TEST(OriginalSourceSubmission, ReplacementBatchRefusesDeferredParentCancelledAfterPreparation) {
+TEST_F(OriginalSourceSubmission, ReplacementBatchRefusesDeferredParentCancelledAfterPreparation) {
     ASSERT_NO_FATAL_FAILURE(CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase::DeferredCancelled));
 }
-TEST(OriginalSourceSubmission, BoundC1PublicationHoldPreservesActualReplacementAndWithdrawalRetries) {
+TEST_F(OriginalSourceSubmission, BoundC1PublicationHoldPreservesActualReplacementAndWithdrawalRetries) {
     ASSERT_NO_FATAL_FAILURE(CheckOriginalConditionalReplacementAdmission(ReplacementAdmissionCase::PublicationHeld));
 }
 
@@ -6731,28 +6740,28 @@ void CheckAcceptedQueueSelectionKeepsOriginalClock(bool bindBeforeSelection, boo
     ASSERT_NO_FATAL_FAILURE(state.Cleanup(false));
 }
 
-TEST(OriginalSourceSubmission, AcceptedQueueSelectionBeforeAckKeepsOriginalFirstClockAndCurrent) {
+TEST_F(OriginalSourceSubmission, AcceptedQueueSelectionBeforeAckKeepsOriginalFirstClockAndCurrent) {
     ASSERT_NO_FATAL_FAILURE(CheckAcceptedQueueSelectionKeepsOriginalClock(false));
 }
-TEST(OriginalSourceSubmission, AcceptedQueueSelectionAfterPublicationKeepsOriginalFirstClockAndCurrent) {
+TEST_F(OriginalSourceSubmission, AcceptedQueueSelectionAfterPublicationKeepsOriginalFirstClockAndCurrent) {
     ASSERT_NO_FATAL_FAILURE(CheckAcceptedQueueSelectionKeepsOriginalClock(true));
 }
-TEST(OriginalSourceSubmission, AcceptedQueueSelectionBeforeAckRunsNewNativeC1AndSettlesReset) {
+TEST_F(OriginalSourceSubmission, AcceptedQueueSelectionBeforeAckRunsNewNativeC1AndSettlesReset) {
     ASSERT_NO_FATAL_FAILURE(CheckAcceptedQueueSelectionKeepsOriginalClock(false, true));
 }
-TEST(OriginalSourceSubmission, AcceptedQueueSelectionAfterPublicationRunsNewNativeC1AndSettlesReset) {
+TEST_F(OriginalSourceSubmission, AcceptedQueueSelectionAfterPublicationRunsNewNativeC1AndSettlesReset) {
     ASSERT_NO_FATAL_FAILURE(CheckAcceptedQueueSelectionKeepsOriginalClock(true, true));
 }
-TEST(OriginalSourceSubmission, AcceptedQueueSelectionStartsActualNewSourceWithItsOwnCompletionDecision) {
+TEST_F(OriginalSourceSubmission, AcceptedQueueSelectionStartsActualNewSourceWithItsOwnCompletionDecision) {
     ASSERT_NO_FATAL_FAILURE(CheckAcceptedQueueSelectionKeepsOriginalClock(true, true, true));
 }
-TEST(OriginalSourceSubmission, AcceptedQueueSelectionAndPlainStopShareActualSourceHeadAndStopAtTheAuthoredSample) {
+TEST_F(OriginalSourceSubmission, AcceptedQueueSelectionAndPlainStopShareActualSourceHeadAndStopAtTheAuthoredSample) {
     ASSERT_NO_FATAL_FAILURE(CheckAcceptedQueueSelectionKeepsOriginalClock(true, true, true, true));
 }
-TEST(OriginalSourceSubmission, MixedResetRemainderRequiresActualNativeSelectionBeforeSharedOrderCommit) {
+TEST_F(OriginalSourceSubmission, MixedResetRemainderRequiresActualNativeSelectionBeforeSharedOrderCommit) {
     ASSERT_NO_FATAL_FAILURE(CheckAcceptedQueueSelectionKeepsOriginalClock(true, true, false, false, true));
 }
-TEST(OriginalSourceSubmission, MixedResetRemainderPreservesOriginalCurrentBeforeSourceAck) {
+TEST_F(OriginalSourceSubmission, MixedResetRemainderPreservesOriginalCurrentBeforeSourceAck) {
     ASSERT_NO_FATAL_FAILURE(CheckAcceptedQueueSelectionKeepsOriginalClock(false, true, false, false, true));
 }
 
@@ -6874,13 +6883,13 @@ void CheckMatchedConditionalReplacement(MatchedReplacementCase mode) {
     ASSERT_EQ(VN_OK, engine.registry.UnregisterPCM(kSound));
 }
 
-TEST(OriginalSourceSubmission, ReplacementBatchSelectsEveryActualMatchedQueueWithOneWinner) {
+TEST_F(OriginalSourceSubmission, ReplacementBatchSelectsEveryActualMatchedQueueWithOneWinner) {
     ASSERT_NO_FATAL_FAILURE(CheckMatchedConditionalReplacement(MatchedReplacementCase::Accepted));
 }
-TEST(OriginalSourceSubmission, ReplacementBatchIncompleteMatchingLeavesBothActualFuturesLive) {
+TEST_F(OriginalSourceSubmission, ReplacementBatchIncompleteMatchingLeavesBothActualFuturesLive) {
     ASSERT_NO_FATAL_FAILURE(CheckMatchedConditionalReplacement(MatchedReplacementCase::IncompleteAttachment));
 }
-TEST(OriginalSourceSubmission, ReplacementBatchOneActualOldWriteRefusesTheEntireMatchedSet) {
+TEST_F(OriginalSourceSubmission, ReplacementBatchOneActualOldWriteRefusesTheEntireMatchedSet) {
     ASSERT_NO_FATAL_FAILURE(CheckMatchedConditionalReplacement(MatchedReplacementCase::OneOldWrite));
 }
 
@@ -6927,22 +6936,22 @@ void CheckBoundC1RequestPreservesActualCurrent(std::uint32_t frames, bool prepar
     ASSERT_NO_FATAL_FAILURE(state.Cleanup(false));
 }
 
-TEST(OriginalSourceSubmission, BoundC1WithdrawalPreservesCrossBucketOriginalCurrentAndStrictFence) {
+TEST_F(OriginalSourceSubmission, BoundC1WithdrawalPreservesCrossBucketOriginalCurrentAndStrictFence) {
     ASSERT_NO_FATAL_FAILURE(CheckBoundC1RequestPreservesActualCurrent(kFrames));
 }
-TEST(OriginalSourceSubmission, BoundC1WithdrawalPreservesSameBucketC0SourceAndActualCompletion) {
+TEST_F(OriginalSourceSubmission, BoundC1WithdrawalPreservesSameBucketC0SourceAndActualCompletion) {
     ASSERT_NO_FATAL_FAILURE(CheckBoundC1RequestPreservesActualCurrent(17));
 }
-TEST(OriginalSourceSubmission, UnboundC1WithdrawalBindsOnlyAfterOriginalClockAndPreservesCurrent) {
+TEST_F(OriginalSourceSubmission, UnboundC1WithdrawalBindsOnlyAfterOriginalClockAndPreservesCurrent) {
     ASSERT_NO_FATAL_FAILURE(CheckBoundC1RequestPreservesActualCurrent(kFrames, true));
 }
-TEST(OriginalSourceSubmission, UnboundC1WithdrawalPreservesSameBucketOriginalSource) {
+TEST_F(OriginalSourceSubmission, UnboundC1WithdrawalPreservesSameBucketOriginalSource) {
     ASSERT_NO_FATAL_FAILURE(CheckBoundC1RequestPreservesActualCurrent(17, true));
 }
-TEST(OriginalSourceSubmission, UnplacedC1WithdrawalBeforeSourceAckPreservesOriginalCurrent) {
+TEST_F(OriginalSourceSubmission, UnplacedC1WithdrawalBeforeSourceAckPreservesOriginalCurrent) {
     ASSERT_NO_FATAL_FAILURE(CheckBoundC1RequestPreservesActualCurrent(kFrames, true, true));
 }
-TEST(OriginalSourceSubmission, UnplacedC1WithdrawalBeforeSourceAckPreservesSameBucketCurrent) {
+TEST_F(OriginalSourceSubmission, UnplacedC1WithdrawalBeforeSourceAckPreservesSameBucketCurrent) {
     ASSERT_NO_FATAL_FAILURE(CheckBoundC1RequestPreservesActualCurrent(17, true, true));
 }
 void CheckAbandonedUnboundC1Withdrawal(bool beforePlacement) {
@@ -6975,13 +6984,13 @@ void CheckAbandonedUnboundC1Withdrawal(bool beforePlacement) {
     owned->nullBackend.Pump(1);
     ASSERT_NO_FATAL_FAILURE(state.Cleanup(true));
 }
-TEST(OriginalSourceSubmission, AbandonedUnboundC1WithdrawalRestoresOriginalPublication) {
+TEST_F(OriginalSourceSubmission, AbandonedUnboundC1WithdrawalRestoresOriginalPublication) {
     ASSERT_NO_FATAL_FAILURE(CheckAbandonedUnboundC1Withdrawal(false));
 }
-TEST(OriginalSourceSubmission, AbandonedUnplacedC1WithdrawalRestoresOriginalPublication) {
+TEST_F(OriginalSourceSubmission, AbandonedUnplacedC1WithdrawalRestoresOriginalPublication) {
     ASSERT_NO_FATAL_FAILURE(CheckAbandonedUnboundC1Withdrawal(true));
 }
-TEST(OriginalSourceSubmission, AppliedC1ReturnsOnlyOwnProjectionAfterLaterCompletedCallback) {
+TEST_F(OriginalSourceSubmission, AppliedC1ReturnsOnlyOwnProjectionAfterLaterCompletedCallback) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     GenuineBoundC1ProjectionHarness state(*owned);
     ASSERT_NO_FATAL_FAILURE(state.Prepare());
@@ -7006,7 +7015,7 @@ TEST(OriginalSourceSubmission, AppliedC1ReturnsOnlyOwnProjectionAfterLaterComple
     foreign.Return();
     ASSERT_NO_FATAL_FAILURE(state.Cleanup(true));
 }
-TEST(OriginalSourceSubmission, BoundC1ActualCaptureWinsLateRequestWithoutCancelledOrForgedEnd) {
+TEST_F(OriginalSourceSubmission, BoundC1ActualCaptureWinsLateRequestWithoutCancelledOrForgedEnd) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     GenuineBoundC1ProjectionHarness state(*owned);
     ASSERT_NO_FATAL_FAILURE(state.Prepare());
@@ -7026,7 +7035,7 @@ TEST(OriginalSourceSubmission, BoundC1ActualCaptureWinsLateRequestWithoutCancell
     EXPECT_EQ(harken::FrontierReceiptOutcome::Applied, receipt.outcome);
     ASSERT_NO_FATAL_FAILURE(state.Cleanup(true));
 }
-TEST(OriginalSourceSubmission, BoundC1FactoryRejectsGenuineForeignLaneAndCurrentPrimaryWithoutMinting) {
+TEST_F(OriginalSourceSubmission, BoundC1FactoryRejectsGenuineForeignLaneAndCurrentPrimaryWithoutMinting) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto foreign = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     GenuineBoundC1ProjectionHarness state(*owned);
@@ -7060,7 +7069,7 @@ TEST(OriginalSourceSubmission, BoundC1FactoryRejectsGenuineForeignLaneAndCurrent
     ASSERT_NO_FATAL_FAILURE(state.Cleanup(false));
 }
 
-TEST(OriginalSourceSubmission, BoundC1ForeignProjectionLoanPreservesNativeAttemptUntilActualReturn) {
+TEST_F(OriginalSourceSubmission, BoundC1ForeignProjectionLoanPreservesNativeAttemptUntilActualReturn) {
     static_assert(!std::is_copy_constructible_v<harken::OriginalImmediateLaneConditionalProjection>);
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     GenuineBoundC1ProjectionHarness state(*owned);
@@ -7298,7 +7307,7 @@ void ExpectScopedC0SentinelUnchanged(const std::array<std::uint64_t, 3>& frames,
 }
 } // namespace
 
-TEST(OriginalSourceSubmission, OriginalC0ScopedGeometryUsesFreshNativeAckAndHonestExclusiveShortProof) {
+TEST_F(OriginalSourceSubmission, OriginalC0ScopedGeometryUsesFreshNativeAckAndHonestExclusiveShortProof) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     GenuineScopedC0SourceFixture state(*owned);
     ASSERT_NO_FATAL_FAILURE(PrepareGenuineScopedC0Source(state));
@@ -7360,7 +7369,7 @@ TEST(OriginalSourceSubmission, OriginalC0ScopedGeometryUsesFreshNativeAckAndHone
     ASSERT_NO_FATAL_FAILURE(state.Finish());
 }
 
-TEST(OriginalSourceSubmission, OriginalC0ScopedGeometrySurvivesC1CoordinatorInvalidationWithoutEndingOriginalConditional) {
+TEST_F(OriginalSourceSubmission, OriginalC0ScopedGeometrySurvivesC1CoordinatorInvalidationWithoutEndingOriginalConditional) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     GenuineScopedC0SourceFixture state(*owned);
     ASSERT_NO_FATAL_FAILURE(PrepareGenuineScopedC0Source(state));
@@ -7421,7 +7430,7 @@ TEST(OriginalSourceSubmission, OriginalC0ScopedGeometrySurvivesC1CoordinatorInva
     ASSERT_NO_FATAL_FAILURE(state.Finish());
 }
 
-TEST(OriginalSourceSubmission, OriginalC0ScopedGeometryKeepsActualSourceOnsetDistinctFromEntryAnchor) {
+TEST_F(OriginalSourceSubmission, OriginalC0ScopedGeometryKeepsActualSourceOnsetDistinctFromEntryAnchor) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     GenuineScopedC0SourceFixture state(*owned);
     constexpr std::uint64_t delay = 17;
@@ -7441,7 +7450,7 @@ TEST(OriginalSourceSubmission, OriginalC0ScopedGeometryKeepsActualSourceOnsetDis
     ASSERT_NO_FATAL_FAILURE(state.Finish());
 }
 
-TEST(OriginalSourceSubmission, OriginalC0ScopedGeometryPreservesTwoActualRootOwnersAndPhysicalSourceOwner) {
+TEST_F(OriginalSourceSubmission, OriginalC0ScopedGeometryPreservesTwoActualRootOwnersAndPhysicalSourceOwner) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     GenuineScopedC0SourceFixture state(*owned);
     ASSERT_NO_FATAL_FAILURE(PrepareGenuineScopedC0Source(state, 0, true));
@@ -7478,7 +7487,7 @@ TEST(OriginalSourceSubmission, OriginalC0ScopedGeometryPreservesTwoActualRootOwn
     ASSERT_NO_FATAL_FAILURE(state.Finish());
 }
 
-TEST(OriginalSourceSubmission, OriginalC0ScopedGeometryRefusesOtherRealReceiverAndEveryStaleSourceGenerationWithoutWritingOutputs) {
+TEST_F(OriginalSourceSubmission, OriginalC0ScopedGeometryRefusesOtherRealReceiverAndEveryStaleSourceGenerationWithoutWritingOutputs) {
     auto firstOwner = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto secondOwner = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     GenuineScopedC0SourceFixture a(*firstOwner), b(*secondOwner);
@@ -7515,7 +7524,7 @@ TEST(OriginalSourceSubmission, OriginalC0ScopedGeometryRefusesOtherRealReceiverA
     ASSERT_NO_FATAL_FAILURE(b.Finish());
 }
 
-TEST(OriginalSourceSubmission, OriginalC0ScopedGeometryRefusesRealCancelledC0WhileOriginalStructuralLoansRemain) {
+TEST_F(OriginalSourceSubmission, OriginalC0ScopedGeometryRefusesRealCancelledC0WhileOriginalStructuralLoansRemain) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     GenuineScopedC0SourceFixture state(*owned);
     ASSERT_NO_FATAL_FAILURE(PrepareGenuineScopedC0Source(state));
@@ -7534,7 +7543,7 @@ TEST(OriginalSourceSubmission, OriginalC0ScopedGeometryRefusesRealCancelledC0Whi
 }
 
 
-TEST(OriginalSourceSubmission, OriginalC0ScopedGeometryRefusesWholeConditionalRetirementWhileCurrentSourceRemainsInstalled) {
+TEST_F(OriginalSourceSubmission, OriginalC0ScopedGeometryRefusesWholeConditionalRetirementWhileCurrentSourceRemainsInstalled) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     GenuineScopedC0SourceFixture state(*owned);
     ASSERT_NO_FATAL_FAILURE(PrepareGenuineScopedC0Source(state));
@@ -7605,7 +7614,7 @@ void FinishEngineOriginalLaneAttempt(harken::Engine& engine,
 }
 } // namespace
 
-TEST(OriginalSourceSubmission, EngineOriginalLaneSameReserveForeignBusyKeepsExactOwnerUntilRealReturnAndReuse) {
+TEST_F(OriginalSourceSubmission, EngineOriginalLaneSameReserveForeignBusyKeepsExactOwnerUntilRealReturnAndReuse) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig());
     auto& engine = *owned;
     ASSERT_GT(engine.immediateEntryAttemptCapacity, 0u);
@@ -7652,7 +7661,7 @@ TEST(OriginalSourceSubmission, EngineOriginalLaneSameReserveForeignBusyKeepsExac
     ASSERT_NO_FATAL_FAILURE(FinishEngineOriginalLaneAttempt(engine, attempt));
 }
 
-TEST(OriginalSourceSubmission, EngineOriginalLaneRejectsForeignReceiverAndChangedOriginalRootOrFullAttemptGeneration) {
+TEST_F(OriginalSourceSubmission, EngineOriginalLaneRejectsForeignReceiverAndChangedOriginalRootOrFullAttemptGeneration) {
     const auto config = InitialSingleClockConfig();
     auto firstOwner = std::make_unique<harken::Engine>(config);
     auto secondOwner = std::make_unique<harken::Engine>(config);
@@ -7695,7 +7704,7 @@ TEST(OriginalSourceSubmission, EngineOriginalLaneRejectsForeignReceiverAndChange
     ASSERT_NO_FATAL_FAILURE(FinishEngineOriginalLaneAttempt(second, b));
 }
 
-TEST(OriginalSourceSubmission, EngineOriginalLaneDefaultNoOutputRetainsLegacyNativeCancelAndRetire) {
+TEST_F(OriginalSourceSubmission, EngineOriginalLaneDefaultNoOutputRetainsLegacyNativeCancelAndRetire) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig());
     auto& engine = *owned;
     auto& attempt = engine.immediateEntryAttempts[0];
@@ -7711,7 +7720,7 @@ TEST(OriginalSourceSubmission, EngineOriginalLaneDefaultNoOutputRetainsLegacyNat
     ASSERT_NO_FATAL_FAILURE(FinishEngineOriginalLaneAttempt(engine, attempt));
 }
 
-TEST(OriginalSourceSubmission, EngineOriginalLaneJoinedTermReturnsOnlyOwnActualFactoryBaseline) {
+TEST_F(OriginalSourceSubmission, EngineOriginalLaneJoinedTermReturnsOnlyOwnActualFactoryBaseline) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig());
     auto& engine = *owned;
     auto& attempt = engine.immediateEntryAttempts[0];
@@ -7840,7 +7849,7 @@ struct GenuineSameBucketLateWithdrawalNegative {
             engine.timelinePool, engine.decisions, self.state.actual.old.groups[0], member));
     }
 };
-TEST(OriginalSourceSubmission, BoundC1SameBucketRealCapturedAudioRefusesLateWithdrawalExceptionAndReturnsNativeTail) {
+TEST_F(OriginalSourceSubmission, BoundC1SameBucketRealCapturedAudioRefusesLateWithdrawalExceptionAndReturnsNativeTail) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     auto foreign = std::make_unique<harken::Engine>(InitialSingleClockConfig(), 0, 2);
     GenuineSameBucketLateWithdrawalNegative actual(*owned, *foreign);
@@ -8044,7 +8053,7 @@ void RegisterNativeDispositionPcm() {
 }
 }
 
-TEST(OriginalSourceSubmission, FinalSourceUnpublishedAbortReturnsOriginalOwnersWithoutPublication) {
+TEST_F(OriginalSourceSubmission, FinalSourceUnpublishedAbortReturnsOriginalOwnersWithoutPublication) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -8064,7 +8073,7 @@ TEST(OriginalSourceSubmission, FinalSourceUnpublishedAbortReturnsOriginalOwnersW
     EXPECT_EQ(0u, engine.mixer.BlocksRendered());
 }
 
-TEST(OriginalSourceSubmission, FinalSourceFactoryRefusesUnboundPendingFrameBeforeTakingOwners) {
+TEST_F(OriginalSourceSubmission, FinalSourceFactoryRefusesUnboundPendingFrameBeforeTakingOwners) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -8083,7 +8092,7 @@ TEST(OriginalSourceSubmission, FinalSourceFactoryRefusesUnboundPendingFrameBefor
     EXPECT_EQ(0u, engine.commands.PublishedHead());
 }
 
-TEST(OriginalSourceSubmission, FinalSourceFactoryRefusesGroupedArmBeforeTakingOwners) {
+TEST_F(OriginalSourceSubmission, FinalSourceFactoryRefusesGroupedArmBeforeTakingOwners) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -8113,7 +8122,7 @@ TEST(OriginalSourceSubmission, FinalSourceFactoryRefusesGroupedArmBeforeTakingOw
     EXPECT_EQ(0u, engine.commands.PublishedHead());
 }
 
-TEST(OriginalSourceSubmission, FinalSourceFactoryRefusesForeignArmTableBeforeTakingOwners) {
+TEST_F(OriginalSourceSubmission, FinalSourceFactoryRefusesForeignArmTableBeforeTakingOwners) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -8132,7 +8141,7 @@ TEST(OriginalSourceSubmission, FinalSourceFactoryRefusesForeignArmTableBeforeTak
     EXPECT_EQ(0u, engine.commands.PublishedHead());
 }
 
-TEST(OriginalSourceSubmission, NativeUnpublishedDispositionRequiresTrueBatchCancelAndPhysicalRelease) {
+TEST_F(OriginalSourceSubmission, NativeUnpublishedDispositionRequiresTrueBatchCancelAndPhysicalRelease) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -8164,7 +8173,7 @@ TEST(OriginalSourceSubmission, NativeUnpublishedDispositionRequiresTrueBatchCanc
     EXPECT_EQ(0u, engine.timelineArms.RowAt(source.arm.slot)->tombstoneAudioSequence.load());
 }
 
-TEST(OriginalSourceSubmission, NativeUnpublishedDispositionAcceptsTrueNeverBoundPreparationWithoutFreeingArm) {
+TEST_F(OriginalSourceSubmission, NativeUnpublishedDispositionAcceptsTrueNeverBoundPreparationWithoutFreeingArm) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
@@ -8181,7 +8190,7 @@ TEST(OriginalSourceSubmission, NativeUnpublishedDispositionAcceptsTrueNeverBound
     EXPECT_EQ(0u, engine.mixer.BlocksRendered()); EXPECT_EQ(0u, engine.commands.PublishedHead());
 }
 
-TEST(OriginalSourceSubmission, UnpublishedStorageWaitsForBothLoansAcrossPreparationAndCommit) {
+TEST_F(OriginalSourceSubmission, UnpublishedStorageWaitsForBothLoansAcrossPreparationAndCommit) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -8231,7 +8240,7 @@ TEST(OriginalSourceSubmission, UnpublishedStorageWaitsForBothLoansAcrossPreparat
     }
 }
 
-TEST(OriginalSourceSubmission, PublishedPairReturnRequiresRealRangeAndExactPhysicalRelease) {
+TEST_F(OriginalSourceSubmission, PublishedPairReturnRequiresRealRangeAndExactPhysicalRelease) {
     for (const bool cancelledBeforeInstall : {false, true}) {
         SCOPED_TRACE(cancelledBeforeInstall);
         harkentest::EngineSession session(SourceBodyConfig());
@@ -8287,7 +8296,7 @@ TEST(OriginalSourceSubmission, PublishedPairReturnRequiresRealRangeAndExactPhysi
     }
 }
 
-TEST(OriginalSourceSubmission, PendingInstalledRetirementRunsOnActualCallbackAndPreservesForeignStorage) {
+TEST_F(OriginalSourceSubmission, PendingInstalledRetirementRunsOnActualCallbackAndPreservesForeignStorage) {
     using Result = Registry::InstalledSourceRetirementRequest;
     for (const bool returnDuringCallback : {false, true}) {
         SCOPED_TRACE(returnDuringCallback);
@@ -8362,7 +8371,7 @@ TEST(OriginalSourceSubmission, PendingInstalledRetirementRunsOnActualCallbackAnd
     }
 }
 
-TEST(OriginalSourceSubmission, PendingInstalledRetirementUsesFreshMixerCallbackAndExactRelease) {
+TEST_F(OriginalSourceSubmission, PendingInstalledRetirementUsesFreshMixerCallbackAndExactRelease) {
     using Result = Registry::InstalledSourceRetirementRequest;
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -8400,7 +8409,7 @@ TEST(OriginalSourceSubmission, PendingInstalledRetirementUsesFreshMixerCallbackA
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, body));
 }
 
-TEST(OriginalSourceSubmission, PendingInstalledRetirementSealsFreshTerminalBeforeReturningReusableStorage) {
+TEST_F(OriginalSourceSubmission, PendingInstalledRetirementSealsFreshTerminalBeforeReturningReusableStorage) {
     using Result = Registry::InstalledSourceRetirementRequest;
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -8474,7 +8483,7 @@ TEST(OriginalSourceSubmission, PendingInstalledRetirementSealsFreshTerminalBefor
     EXPECT_FALSE(SourceOriginAccess::RetirementSettled(engine.originalSourceSubmissions, moved, body.arm));
 }
 
-TEST(OriginalSourceSubmission, PendingInstalledRetirementRejectsForeignPairAndBoundStart) {
+TEST_F(OriginalSourceSubmission, PendingInstalledRetirementRejectsForeignPairAndBoundStart) {
     using Result = Registry::InstalledSourceRetirementRequest;
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -8513,7 +8522,7 @@ TEST(OriginalSourceSubmission, PendingInstalledRetirementRejectsForeignPairAndBo
     ASSERT_NO_FATAL_FAILURE(RetireIndependent(engine, first));
 }
 
-TEST(OriginalSourceSubmission, NativeUnpublishedDispositionRetainsRealForeignSourceLoanAfterPhysicalExit) {
+TEST_F(OriginalSourceSubmission, NativeUnpublishedDispositionRetainsRealForeignSourceLoanAfterPhysicalExit) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
@@ -8533,7 +8542,7 @@ TEST(OriginalSourceSubmission, NativeUnpublishedDispositionRetainsRealForeignSou
     EXPECT_EQ(0u, engine.mixer.BlocksRendered());
 }
 
-TEST(OriginalSourceSubmission, NativeUnpublishedDispositionRejectsPublishedSourceWithoutChangingStrictFence) {
+TEST_F(OriginalSourceSubmission, NativeUnpublishedDispositionRejectsPublishedSourceWithoutChangingStrictFence) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
@@ -8558,7 +8567,7 @@ TEST(OriginalSourceSubmission, NativeUnpublishedDispositionRejectsPublishedSourc
     ASSERT_TRUE(engine.timelineArms.Reclaim(source.arm, engine.mixer.BlocksRendered()));
 }
 
-TEST(OriginalSourceSubmission, NativeUnpublishedDispositionDoesNotPromoteMissingOrLegacyZeroIdentity) {
+TEST_F(OriginalSourceSubmission, NativeUnpublishedDispositionDoesNotPromoteMissingOrLegacyZeroIdentity) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
     const harken::TimelineArmToken absent{0, 77, 0, 99};
@@ -8572,7 +8581,7 @@ TEST(OriginalSourceSubmission, NativeUnpublishedDispositionDoesNotPromoteMissing
     ASSERT_TRUE(engine.timelineArms.CancelPrepared(source.arm));
 }
 
-TEST(OriginalSourceSubmission, NativeUnpublishedDispositionNewFactoryReplacesActualRecordWithNewEpisode) {
+TEST_F(OriginalSourceSubmission, NativeUnpublishedDispositionNewFactoryReplacesActualRecordWithNewEpisode) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
@@ -8596,7 +8605,7 @@ TEST(OriginalSourceSubmission, NativeUnpublishedDispositionNewFactoryReplacesAct
 }
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
-TEST(OriginalSourceSubmission, NativeUnpublishedDispositionLastEpisodeIssuesOnceThenRefusesBeforeOwnershipMutation) {
+TEST_F(OriginalSourceSubmission, NativeUnpublishedDispositionLastEpisodeIssuesOnceThenRefusesBeforeOwnershipMutation) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
     ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
@@ -8706,7 +8715,7 @@ harken::ScheduledTransactionPool::Config NativeJointForeignConfig() {
 }
 }
 
-TEST(OriginalSourceSubmission, NativeJointCancellationConsumesTwoRealSlicesAndOneArmWithoutAudioFence) {
+TEST_F(OriginalSourceSubmission, NativeJointCancellationConsumesTwoRealSlicesAndOneArmWithoutAudioFence) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
     const auto free = engine.timelineArms.FreeCount();
@@ -8733,7 +8742,7 @@ TEST(OriginalSourceSubmission, NativeJointCancellationConsumesTwoRealSlicesAndOn
     ASSERT_TRUE(engine.decisions.Cancel(actual.decision));
 }
 
-TEST(OriginalSourceSubmission, NativeJointCancellationBusyRetainsTruePublicationProtectionAcrossUpdateAndBothLoans) {
+TEST_F(OriginalSourceSubmission, NativeJointCancellationBusyRetainsTruePublicationProtectionAcrossUpdateAndBothLoans) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
     NativeJointCancellation actual;
@@ -8770,7 +8779,7 @@ TEST(OriginalSourceSubmission, NativeJointCancellationBusyRetainsTruePublication
     ASSERT_TRUE(engine.decisions.Cancel(actual.decision));
 }
 
-TEST(OriginalSourceSubmission, NativeJointCancellationRequiresEveryActualMemberAndReturnsAllFailedPrefixGates) {
+TEST_F(OriginalSourceSubmission, NativeJointCancellationRequiresEveryActualMemberAndReturnsAllFailedPrefixGates) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
     NativeJointCancellation actual;
@@ -8808,7 +8817,7 @@ TEST(OriginalSourceSubmission, NativeJointCancellationRequiresEveryActualMemberA
     ASSERT_TRUE(engine.decisions.Cancel(actual.decision));
 }
 
-TEST(OriginalSourceSubmission, NativeJointCancellationForeignPoolObligationPreventsPartialFastExit) {
+TEST_F(OriginalSourceSubmission, NativeJointCancellationForeignPoolObligationPreventsPartialFastExit) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
     NativeJointCancellation actual;
@@ -8831,7 +8840,7 @@ TEST(OriginalSourceSubmission, NativeJointCancellationForeignPoolObligationPreve
     ASSERT_TRUE(engine.decisions.Cancel(actual.decision));
 }
 
-TEST(OriginalSourceSubmission, NativeJointCancellationRequiresAuthenticSourceReceiptAndKeepsNeverBoundBranch) {
+TEST_F(OriginalSourceSubmission, NativeJointCancellationRequiresAuthenticSourceReceiptAndKeepsNeverBoundBranch) {
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
     NativeJointCancellation actual;
@@ -8850,7 +8859,7 @@ TEST(OriginalSourceSubmission, NativeJointCancellationRequiresAuthenticSourceRec
     ASSERT_TRUE(engine.decisions.Cancel(actual.decision));
 }
 
-TEST(OriginalSourceSubmission, NativeJointCancellationBothRealReceiverDestructionOrdersReleaseOnlyTemporaryProof) {
+TEST_F(OriginalSourceSubmission, NativeJointCancellationBothRealReceiverDestructionOrdersReleaseOnlyTemporaryProof) {
     for (bool poolFirst : {true, false}) {
         auto session = std::make_unique<harkentest::EngineSession>(SourceBodyConfig());
         ASSERT_EQ(VN_OK, session->InitResult()); auto& engine = *session->Engine();
@@ -8876,7 +8885,7 @@ TEST(OriginalSourceSubmission, NativeJointCancellationBothRealReceiverDestructio
     }
 }
 
-TEST(OriginalSourceSubmission, NativeUnparentedExitAcceptsActualPreparedFactoriesAndBothRangeOriginsOnce) {
+TEST_F(OriginalSourceSubmission, NativeUnparentedExitAcceptsActualPreparedFactoriesAndBothRangeOriginsOnce) {
     using Status = harken::TimelineArmTable::UnparentedUnpublishedSourceRetirement;
     for (const bool pending : {false, true}) for (const bool bind : {false, true}) {
         SCOPED_TRACE(pending);
@@ -8920,7 +8929,7 @@ TEST(OriginalSourceSubmission, NativeUnparentedExitAcceptsActualPreparedFactorie
     }
 }
 
-TEST(OriginalSourceSubmission, NativeUnparentedExitRequiresBothRealLoansAfterPhysicalExitAcrossUpdate) {
+TEST_F(OriginalSourceSubmission, NativeUnparentedExitRequiresBothRealLoansAfterPhysicalExitAcrossUpdate) {
     using Status = harken::TimelineArmTable::UnparentedUnpublishedSourceRetirement;
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
@@ -8950,7 +8959,7 @@ TEST(OriginalSourceSubmission, NativeUnparentedExitRequiresBothRealLoansAfterPhy
     EXPECT_EQ(0u, engine.mixer.BlocksRendered()); EXPECT_EQ(0u, engine.commands.PublishedHead());
 }
 
-TEST(OriginalSourceSubmission, NativeUnparentedExitNeverPromotesGroupedFactoryAfterAllActualGroupsReturn) {
+TEST_F(OriginalSourceSubmission, NativeUnparentedExitNeverPromotesGroupedFactoryAfterAllActualGroupsReturn) {
     using Status = harken::TimelineArmTable::UnparentedUnpublishedSourceRetirement;
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
@@ -8977,7 +8986,7 @@ TEST(OriginalSourceSubmission, NativeUnparentedExitNeverPromotesGroupedFactoryAf
 }
 
 
-TEST(OriginalSourceSubmission, NativeUnparentedExitWaitsForGenuineFrontierReaderReturnWithoutAudioProgress) {
+TEST_F(OriginalSourceSubmission, NativeUnparentedExitWaitsForGenuineFrontierReaderReturnWithoutAudioProgress) {
     using Status = harken::TimelineArmTable::UnparentedUnpublishedSourceRetirement;
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
@@ -9005,7 +9014,7 @@ TEST(OriginalSourceSubmission, NativeUnparentedExitWaitsForGenuineFrontierReader
     EXPECT_EQ(0u, engine.mixer.BlocksRendered()); EXPECT_EQ(0u, engine.commands.PublishedHead());
 }
 
-TEST(OriginalSourceSubmission, NativeUnparentedExitQuarantinesActualLastGenerationAndNextFactoryUsesAnotherRow) {
+TEST_F(OriginalSourceSubmission, NativeUnparentedExitQuarantinesActualLastGenerationAndNextFactoryUsesAnotherRow) {
     using Status = harken::TimelineArmTable::UnparentedUnpublishedSourceRetirement;
     harkentest::EngineSession session(SourceBodyConfig());
     ASSERT_EQ(VN_OK, session.InitResult()); auto& engine = *session.Engine();
