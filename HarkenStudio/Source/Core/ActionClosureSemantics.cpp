@@ -92,6 +92,7 @@ struct Builder
 {
     const ProjectData& project;
     BuildVariant variant;
+    bool contentReferencesOnly;
     Index index;
     std::shared_ptr<const FieldGroupEffectiveSnapshot> effectiveGroups;
     EditorUtils::ActionTargetLookup targetLookup;
@@ -104,12 +105,16 @@ struct Builder
                         std::vector<harkenstudio::ObjectId>>> edgeKeys;
     std::set<std::tuple<RuntimeCapabilityFeature, harkenstudio::ObjectId, QString>> capabilityKeys;
 
-    Builder(const ProjectData& projectValue, BuildVariant variantValue)
-        : project(projectValue), variant(std::move(variantValue)), index(buildIndex(projectValue)),
+    Builder(const ProjectData& projectValue, BuildVariant variantValue,
+            bool contentReferencesOnlyValue = false)
+        : project(projectValue), variant(std::move(variantValue)),
+          contentReferencesOnly(contentReferencesOnlyValue), index(buildIndex(projectValue)),
           targetLookup(EditorUtils::makeProjectTargetLookup(projectValue))
     {
         plan.variant = variant;
         plan.diagnostics = index.diagnostics;
+        if (contentReferencesOnly)
+            return;
         FieldGroupScope scope;
         if (!variant.platform.isEmpty()) {
             const auto parsed = ProjectPlatformSemantics::parseId(variant.platform);
@@ -150,6 +155,8 @@ struct Builder
     void capability(RuntimeCapabilityFeature feature, RuntimeCapabilityState state,
                     harkenstudio::ObjectId objectId, const QString& field)
     {
+        if (contentReferencesOnly)
+            return;
         if (!capabilityKeys.emplace(feature, objectId, field).second)
             return;
         QString reason;
@@ -223,6 +230,8 @@ struct Builder
 
     void addDependencies(const ProjectItem& item, const std::vector<harkenstudio::ObjectId>& path)
     {
+        if (contentReferencesOnly)
+            return;
         const auto scope = ReferenceSlotResolution::buildResolutionScope(&item, effectiveGroups);
         const auto output = ReferenceSlotResolution::resolveOutputBusSlot(scope);
         if (output.target && !harkenstudio::IsNull(output.target->runtimeId()))
@@ -269,6 +278,8 @@ struct Builder
 
     void addSoundMedia(const ProjectItem& item, bool control)
     {
+        if (contentReferencesOnly)
+            return;
         const auto* sound = item.comp<VSound>();
         if (!sound) {
             diagnostic(ActionClosureDiagnosticCode::SchemaMismatch,
@@ -587,6 +598,32 @@ struct Builder
         actionActive.erase(action.runtimeId());
     }
 
+    ActionClosurePlan build(harkenstudio::ObjectId actionStableId)
+    {
+        plan.rootActionStableId = actionStableId;
+        if (!variant.platform.isEmpty()) {
+            const auto id = ProjectPlatformSemantics::parseId(variant.platform);
+            if (!id || !ProjectPlatformSemantics::find(project.platforms, *id)) {
+                diagnostic(ActionClosureDiagnosticCode::InvalidBuildPlatform,
+                    QStringLiteral("Unknown project platform ID: '%1'").arg(variant.platform),
+                    actionStableId, -1, {}, QStringLiteral("platformId"), {});
+                return finish();
+            }
+        }
+        const auto it = index.stable.find(actionStableId);
+        if (harkenstudio::IsNull(actionStableId) || it == index.stable.end()
+            || !it->second || it->second->type != ProjectItem::Type::Action) {
+            diagnostic(ActionClosureDiagnosticCode::MissingRootAction,
+                       QStringLiteral("Action stable identity %1 does not resolve")
+                           .arg(objectIdString(actionStableId)),
+                       actionStableId, -1, actionStableId,
+                       QStringLiteral("rootActionStableId"), {});
+            return finish();
+        }
+        visitAction(*it->second, {});
+        return finish();
+    }
+
     ActionClosurePlan finish()
     {
         const auto memberLess = [](const ActionClosureMember& a,
@@ -746,29 +783,13 @@ QString diagnosticCodeName(ActionClosureDiagnosticCode code)
 ActionClosurePlan build(const ProjectData& project, harkenstudio::ObjectId actionStableId,
                         const BuildVariant& variant)
 {
-    Builder builder(project, variant);
-    builder.plan.rootActionStableId = actionStableId;
-    if (!variant.platform.isEmpty()) {
-        const auto id = ProjectPlatformSemantics::parseId(variant.platform);
-        if (!id || !ProjectPlatformSemantics::find(project.platforms, *id)) {
-            builder.diagnostic(ActionClosureDiagnosticCode::InvalidBuildPlatform,
-                QStringLiteral("Unknown project platform ID: '%1'").arg(variant.platform),
-                actionStableId, -1, {}, QStringLiteral("platformId"), {});
-            return builder.finish();
-        }
-    }
-    const auto it = builder.index.stable.find(actionStableId);
-    if (harkenstudio::IsNull(actionStableId) || it == builder.index.stable.end()
-        || !it->second || it->second->type != ProjectItem::Type::Action) {
-        builder.diagnostic(ActionClosureDiagnosticCode::MissingRootAction,
-                           QStringLiteral("Action stable identity %1 does not resolve")
-                               .arg(objectIdString(actionStableId)),
-                           actionStableId, -1, actionStableId,
-                           QStringLiteral("rootActionStableId"), {});
-        return builder.finish();
-    }
-    builder.visitAction(*it->second, {});
-    return builder.finish();
+    return Builder(project, variant).build(actionStableId);
+}
+
+ActionClosurePlan contentReferences(const ProjectData& project,
+                                    harkenstudio::ObjectId actionStableId)
+{
+    return Builder(project, {}, true).build(actionStableId);
 }
 
 }

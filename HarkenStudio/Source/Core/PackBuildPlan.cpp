@@ -102,30 +102,14 @@ bool localizedClosure(const ActionClosurePlan& closure, const ItemIndex& index)
     return localized(closure.objects) || localized(closure.controlObjects);
 }
 
-PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actionStableId,
-                        const QStringList& requestedPlatforms,
-                        const QStringList& requestedLanguages,
-                        const QString& singleActionArtifactName, bool includeUnchecked)
+std::map<harkenstudio::ObjectId, bool> localizedActionsFor(
+    const ProjectData& project, const std::vector<const ProjectItem*>& actionItems,
+    const ItemIndex& index)
 {
-    PackBuildPlan plan;
-    const QStringList platforms = requestedPlatforms.isEmpty()
-        ? project.platformIds() : requestedPlatforms;
-    QString platformError;
-    if (!ProjectPlatformSemantics::validatePlatforms(project.platforms, &platformError)
-        || !ProjectPlatformSemantics::validateIds(platforms, project.platforms, &platformError)) {
-        plan.diagnostics.push_back({ActionClosureDiagnosticCode::InvalidBuildPlatform,
-            platformError, actionStableId, -1, {}, QStringLiteral("platformIds"), {}});
-        return plan;
-    }
-    QString languageError;
-    const QStringList languages =
-        requestedOrProjectLanguages(project, requestedLanguages, &languageError);
-    const ItemIndex index = makeItemIndex(project);
-    const auto actionItems = actions(project, actionStableId);
     std::map<harkenstudio::ObjectId, ActionClosurePlan> closures;
     std::map<harkenstudio::ObjectId, bool> localizedActions;
     for (const auto* action : actionItems) {
-        auto closure = ActionClosureSemantics::build(project, action->runtimeId());
+        auto closure = ActionClosureSemantics::contentReferences(project, action->runtimeId());
         localizedActions.emplace(action->runtimeId(), localizedClosure(closure, index));
         closures.emplace(action->runtimeId(), std::move(closure));
     }
@@ -148,6 +132,30 @@ PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actio
             }
         }
     } while (changed);
+    return localizedActions;
+}
+
+PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actionStableId,
+                        const QStringList& requestedPlatforms,
+                        const QStringList& requestedLanguages,
+                        const QString& singleActionArtifactName, bool includeUnchecked)
+{
+    PackBuildPlan plan;
+    const QStringList platforms = requestedPlatforms.isEmpty()
+        ? project.platformIds() : requestedPlatforms;
+    QString platformError;
+    if (!ProjectPlatformSemantics::validatePlatforms(project.platforms, &platformError)
+        || !ProjectPlatformSemantics::validateIds(platforms, project.platforms, &platformError)) {
+        plan.diagnostics.push_back({ActionClosureDiagnosticCode::InvalidBuildPlatform,
+            platformError, actionStableId, -1, {}, QStringLiteral("platformIds"), {}});
+        return plan;
+    }
+    QString languageError;
+    const QStringList languages =
+        requestedOrProjectLanguages(project, requestedLanguages, &languageError);
+    const ItemIndex index = makeItemIndex(project);
+    const auto actionItems = actions(project, actionStableId);
+    const auto localizedActions = localizedActionsFor(project, actionItems, index);
     for (const auto* action : actionItems) {
         const QString artifactName = singleActionArtifactName.isEmpty()
             ? action->name : singleActionArtifactName;
@@ -289,6 +297,26 @@ bool localizedAction(const ProjectData& project, harkenstudio::ObjectId actionSt
     return false;
 }
 
+}
+
+QHash<harkenstudio::ObjectId, QStringList> artifactLanguages(
+    const ProjectData& project, const QStringList& requestedPlatforms)
+{
+    QHash<harkenstudio::ObjectId, QStringList> result;
+    const QStringList platforms = requestedPlatforms.isEmpty()
+        ? project.platformIds() : requestedPlatforms;
+    if (!ProjectPlatformSemantics::validatePlatforms(project.platforms)
+        || !ProjectPlatformSemantics::validateIds(platforms, project.platforms))
+        return result;
+
+    const auto actionItems = actions(project, {});
+    const ItemIndex index = makeItemIndex(project);
+    const auto localized = localizedActionsFor(project, actionItems, index);
+    const QStringList languages = ProjectLanguageSemantics::buildLanguages(project);
+    for (const auto* action : actionItems)
+        result.insert(action->runtimeId(), localized.at(action->runtimeId())
+            ? languages : QStringList{QString()});
+    return result;
 }
 
 QString stableArtifactKey(harkenstudio::ObjectId actionStableId)

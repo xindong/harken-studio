@@ -1259,10 +1259,36 @@ TEST_F(SignalPathRenderingTest, WaveformUsesActiveSourceAndItsEffectiveTrimWindo
     s1->sourcePath = QStringLiteral("source0.wav");
     BlueprintCanvasWidget canvas;
     canvas.setNodeContentFields(NodeContentField::Waveform);
+    const auto render = [](NodeItem* node) {
+        QImage image(node->shape().boundingRect().size().toSize(), QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter painter(&image);
+        node->paint(&painter, nullptr, nullptr);
+        return image;
+    };
+    const auto expectFreshPresentation = [&](const SignalPathGraph& graph) {
+        BlueprintCanvasWidget fresh;
+        fresh.setNodeContentFields(NodeContentField::Waveform);
+        fresh.useSignalPaths(project, graph);
+        const auto currentNodes = nodesFor(canvas, s1);
+        const auto freshNodes = nodesFor(fresh, s1);
+        ASSERT_EQ(currentNodes.size(), 1u);
+        ASSERT_EQ(freshNodes.size(), 1u);
+        const auto* current = currentNodes.front();
+        const auto* expected = freshNodes.front();
+        EXPECT_EQ(current->blueprintWaveformMode(), expected->blueprintWaveformMode());
+        EXPECT_EQ(current->contentHeight(), expected->contentHeight());
+        EXPECT_EQ(current->shape().boundingRect(), expected->shape().boundingRect());
+        EXPECT_EQ(render(currentNodes.front()), render(freshNodes.front()));
+    };
     for (const auto platform : {HarkenTest::PlatformIds::Android, HarkenTest::PlatformIds::Windows}) {
         const auto graph = buildSignalPathGraph(project, {{s1->guid, {}}}, toFieldGroupScope(platform));
         ASSERT_TRUE(graph.ok());
-        canvas.useSignalPaths(project, graph);
+        if (platform == HarkenTest::PlatformIds::Android)
+            canvas.useSignalPaths(project, graph);
+        else
+            canvas.activeSignalPathSource()->loadGraph(project, graph);
+        expectFreshPresentation(graph);
         auto* node = nodesFor(canvas, s1).front();
         const auto descriptors = canvas.activeSignalPathSource()->buildNodes();
         const auto desc = std::find_if(descriptors.begin(), descriptors.end(),
@@ -1274,40 +1300,60 @@ TEST_F(SignalPathRenderingTest, WaveformUsesActiveSourceAndItsEffectiveTrimWindo
         EXPECT_EQ(desc->waveformRange, (WaveformFrameRange{4096, 8192}));
         WaveformPeakData peaks;
         ASSERT_TRUE(WaveformCache::load(path, peaks));
-        const auto render = [&]() {
-            QImage image(node->shape().boundingRect().size().toSize(), QImage::Format_ARGB32_Premultiplied);
-            image.fill(Qt::transparent);
-            QPainter painter(&image);
-            node->paint(&painter, nullptr, nullptr);
-            return image;
-        };
-        const auto actual = render();
+        const auto actual = render(node);
         node->setWaveformPeakData(peaks, WaveformFrameRange{4096, 8192});
-        EXPECT_EQ(render(), actual);
+        EXPECT_EQ(render(node), actual);
         node->setWaveformPeakData(peaks);
-        EXPECT_NE(render(), actual);
+        EXPECT_NE(render(node), actual);
+        node->setWaveformPeakData(peaks, WaveformFrameRange{4096, 8192});
     }
-    sound->sources.plain.entries[1].trimEndFrame = 32768;
-    SignalPathSource source;
     const auto androidGraph = buildSignalPathGraph(project, {{s1->guid, {}}},
         toFieldGroupScope(HarkenTest::PlatformIds::Android));
-    source.loadGraph(project, androidGraph);
-    for (const auto& desc : source.buildNodes()) {
+    ASSERT_TRUE(androidGraph.ok());
+    canvas.activeSignalPathSource()->loadGraph(project, androidGraph);
+    expectFreshPresentation(androidGraph);
+    const auto originalSource = render(nodesFor(canvas, s1).front());
+    sound->sources.plain.active = sound->sources.plain.entries[0].entryId;
+    canvas.activeSignalPathSource()->loadGraph(project, androidGraph);
+    expectFreshPresentation(androidGraph);
+    const auto changedSource = render(nodesFor(canvas, s1).front());
+    EXPECT_NE(changedSource, originalSource);
+    sound->sources.plain.entries[0].trimStartFrame = 0;
+    sound->sources.plain.entries[0].trimEndFrame = 4096;
+    canvas.activeSignalPathSource()->loadGraph(project, androidGraph);
+    expectFreshPresentation(androidGraph);
+    EXPECT_NE(render(nodesFor(canvas, s1).front()), changedSource);
+    sound->sources.plain.active = sound->sources.plain.entries[1].entryId;
+    sound->sources.plain.entries[1].trimEndFrame = 32768;
+    canvas.activeSignalPathSource()->loadGraph(project, androidGraph);
+    expectFreshPresentation(androidGraph);
+    const auto waveformHeight = nodesFor(canvas, s1).front()->contentHeight();
+    for (const auto& desc : canvas.activeSignalPathSource()->buildNodes()) {
         if (desc.id == s1->objectID) EXPECT_EQ(desc.waveformRange, (WaveformFrameRange{4096, 16384}));
     }
     sound->sources.plain.entries[1].trimStartFrame = 16384;
-    source.loadGraph(project, androidGraph);
-    for (const auto& desc : source.buildNodes()) {
+    canvas.activeSignalPathSource()->loadGraph(project, androidGraph);
+    expectFreshPresentation(androidGraph);
+    EXPECT_FALSE(nodesFor(canvas, s1).front()->blueprintWaveformMode());
+    EXPECT_LT(nodesFor(canvas, s1).front()->contentHeight(), waveformHeight);
+    for (const auto& desc : canvas.activeSignalPathSource()->buildNodes()) {
         if (desc.id != s1->objectID) continue;
         EXPECT_FALSE(desc.waveformMode);
         EXPECT_TRUE(desc.mediaPath.isEmpty());
     }
     sound->sources.plain.active = QUuid{};
     sound->sources.plain.platforms.clear();
-    source.loadGraph(project, androidGraph);
-    for (const auto& desc : source.buildNodes()) {
+    canvas.activeSignalPathSource()->loadGraph(project, androidGraph);
+    expectFreshPresentation(androidGraph);
+    EXPECT_FALSE(nodesFor(canvas, s1).front()->blueprintWaveformMode());
+    for (const auto& desc : canvas.activeSignalPathSource()->buildNodes()) {
         if (desc.id == s1->objectID) EXPECT_FALSE(desc.waveformMode);
     }
+    sound->sources.plain.active = sound->sources.plain.entries[0].entryId;
+    canvas.activeSignalPathSource()->loadGraph(project, androidGraph);
+    expectFreshPresentation(androidGraph);
+    EXPECT_TRUE(nodesFor(canvas, s1).front()->blueprintWaveformMode());
+    EXPECT_EQ(nodesFor(canvas, s1).front()->contentHeight(), waveformHeight);
 }
 
 TEST_F(SignalPathRenderingTest, SquareSocketsFaceOutwardAndKeepAGapAroundConnectedPlugs)
