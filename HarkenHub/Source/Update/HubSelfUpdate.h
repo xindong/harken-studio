@@ -61,8 +61,8 @@ signals:
 
 private:
     bool persist(UpdateStateRecord record, const QDateTime& now);
-    void restoreState(const UpdateStateRecord& record,
-                      const UpdateStateRecord& pending);
+    static void restoreState(const UpdateStateRecord& record,
+                             const UpdateStateRecord& pending);
     void handleDownloadFinished(const DownloadResult& result);
 
     UpdateChecker checker_;

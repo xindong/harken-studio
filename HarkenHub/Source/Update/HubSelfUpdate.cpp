@@ -12,6 +12,7 @@
 #include "Update/ServerEndpoints.h"
 #include "Update/UpdateQueue.h"
 
+#include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -159,14 +160,14 @@ bool HubSelfUpdate::persist(UpdateStateRecord record, const QDateTime& now)
 void HubSelfUpdate::restoreState(const UpdateStateRecord& record,
                                 const UpdateStateRecord& pending)
 {
-    const auto current = currentState();
+    const auto current = UpdateStateStore::load(kProduct);
     if (!current.found || current.state != pending.state ||
         current.buildId != pending.buildId ||
         current.transactionId != pending.transactionId ||
         current.updatedAt != pending.updatedAt)
         return;
-    if (!persist(record, QDateTime::currentDateTimeUtc())) {
-        QTimer::singleShot(1000, this, [this, record, pending]() {
+    if (!UpdateStateStore::save(record, QDateTime::currentDateTimeUtc())) {
+        QTimer::singleShot(1000, QCoreApplication::instance(), [record, pending]() {
             restoreState(record, pending);
         });
     }
