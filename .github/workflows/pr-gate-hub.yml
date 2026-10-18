@@ -37,9 +37,19 @@ jobs:
         shell: powershell
         continue-on-error: true
         run: |
-          Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber
-          Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled,IoavProtectionEnabled
-          Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct | Select-Object displayName
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber | ConvertTo-Json
+          Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled,IoavProtectionEnabled | ConvertTo-Json
+          Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct | Select-Object displayName | ConvertTo-Json
+      - name: Start filesystem trace on original runner
+        if: runner.name == 'harken-win-1'
+        shell: powershell
+        continue-on-error: true
+        run: |
+          $evidence = Join-Path $PWD ".temp/issue-51-$env:GITHUB_RUN_ID"
+          New-Item -ItemType Directory -Force $evidence | Out-Null
+          Get-Process | Select-Object Id,ProcessName | ConvertTo-Json | Set-Content (Join-Path $evidence 'processes.json')
+          logman start "Issue51-$env:GITHUB_RUN_ID" -p Microsoft-Windows-Kernel-File 0x1ff0 4 -o (Join-Path $evidence 'files.etl') -ets
+          if ($LASTEXITCODE -eq 0) { Set-Content (Join-Path $evidence 'trace-started') 'yes' }
       - name: Capture recovery failures across fresh processes
         shell: python
         run: |
@@ -47,6 +57,8 @@ jobs:
           root = pathlib.Path.cwd()
           evidence = root / '.temp' / ('issue-51-' + os.environ['GITHUB_RUN_ID'])
           evidence.mkdir(parents=True, exist_ok=True)
+          if os.environ['RUNNER_NAME'] != 'harken-win-1':
+              raise SystemExit(0)
           env = os.environ.copy()
           env['PATH'] = str(pathlib.Path(env['VENUS_QT_DIR']) / 'bin') + os.pathsep + env['PATH']
           env['QT_QPA_PLATFORM'] = 'offscreen'
@@ -68,16 +80,50 @@ jobs:
                   break
               if (index + 1) % 25 == 0:
                   print(f'{index + 1} fresh processes recorded', flush=True)
-              if time.monotonic() - started > 360:
+              if time.monotonic() - started > 45:
                   break
           summary = {'runner': os.environ['RUNNER_NAME'], 'machine': os.environ.get('COMPUTERNAME'),
                      'head': os.environ['GITHUB_SHA'], 'records': records}
           (evidence / 'summary.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
           raise SystemExit(1 if records[-1]['exit_code'] else 0)
+      - name: Stop filesystem trace
+        if: always() && runner.name == 'harken-win-1'
+        shell: powershell
+        run: |
+          $evidence = Join-Path $PWD ".temp/issue-51-$env:GITHUB_RUN_ID"
+          if (Test-Path (Join-Path $evidence 'trace-started')) {
+            logman stop "Issue51-$env:GITHUB_RUN_ID" -ets
+            tracerpt (Join-Path $evidence 'files.etl') -of XML -o (Join-Path $evidence 'files.xml') -y
+          }
+      - name: Extract state file events
+        if: always() && runner.name == 'harken-win-1'
+        shell: python
+        run: |
+          import json, os, pathlib, xml.etree.ElementTree as ET
+          evidence = pathlib.Path('.temp') / ('issue-51-' + os.environ['GITHUB_RUN_ID'])
+          path = evidence / 'files.xml'
+          if not path.exists():
+              raise SystemExit(0)
+          keys, selected = set(), []
+          for _, event in ET.iterparse(path, events=('end',)):
+              if event.tag.rsplit('}', 1)[-1] != 'Event':
+                  continue
+              fields = {node.attrib.get('Name', ''): node.text or '' for node in event.iter() if node.tag.rsplit('}', 1)[-1] == 'Data'}
+              identifiers = [value for key, value in fields.items() if key in ('FileObject', 'FileKey') and value not in ('', '0', '0x0')]
+              relevant = any('update-state.json' in value for value in fields.values())
+              if relevant:
+                  keys.update(identifiers)
+              if relevant or any(value in keys for value in identifiers):
+                  selected.append(ET.tostring(event, encoding='unicode'))
+              event.clear()
+          (evidence / 'state-file-events.json').write_text(json.dumps(selected, indent=2), encoding='utf-8')
+          print(f'Recorded {len(selected)} state-file events')
       - name: Upload diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: issue-51-${{ github.run_id }}-${{ matrix.slot }}-${{ runner.name }}
-          path: .temp/issue-51-${{ github.run_id }}/
+          path: |
+            .temp/issue-51-${{ github.run_id }}/*.log
+            .temp/issue-51-${{ github.run_id }}/*.json
           retention-days: 14
