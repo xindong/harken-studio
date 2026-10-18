@@ -1170,10 +1170,9 @@ TEST(EditorPackExportOrchestration, OnlyUnitsRejectsUntargetedDependencyBeforeIn
         {{QStringLiteral("Tone"), kSoundAObjectId, sourceId}},
         {{QStringLiteral("Head"), kActionOneObjectId, {}, kActionTwoObjectId},
          {QStringLiteral("Tail"), kActionTwoObjectId, {kSoundAObjectId}}}));
-    project.actionPackTargeting.push_back(
-        {harkentest::StudioObjectId(kActionTwoObjectId + kStableIdBias), false, {HarkenTest::platformIdString("Linux")}});
-
     VNX::ProjectPackExporter::ExportOptions options;
+    options.selection.actionTargeting.push_back(
+        {harkentest::StudioObjectId(kActionTwoObjectId + kStableIdBias), false, {HarkenTest::platformIdString("Linux")}});
     options.platform = HarkenTest::platformIdString("Windows");
     options.onlyUnits.insert(QStringLiteral("Head"));
     VNX::ProjectPackExporter exporter;
@@ -1746,15 +1745,16 @@ TEST(EditorPackExportOrchestration, ExportActionPackRejectsPlatformExcludedPostA
         {{QStringLiteral("Tone"), kSoundAObjectId, sourceId}},
         {{QStringLiteral("Head"), kActionOneObjectId, {}, kActionTwoObjectId},
          {QStringLiteral("Tail"), kActionTwoObjectId, {kSoundAObjectId}}}));
-    project.actionPackTargeting.push_back(
+    VNX::ProjectPackExporter::ExportOptions options;
+    options.platform = HarkenTest::platformIdString("Windows");
+    options.selection.actionTargeting.push_back(
         {harkentest::StudioObjectId(kActionTwoObjectId + kStableIdBias), false,
          {HarkenTest::platformIdString("Linux")}});
 
     const QString packPath = QDir(dir.path()).filePath(QStringLiteral("head.pack"));
     VNX::ProjectPackExporter exporter;
     const auto result = exporter.ExportActionPack(
-        project, QStringLiteral("Head"), packPath,
-        {.platform = HarkenTest::platformIdString("Windows")});
+        project, QStringLiteral("Head"), packPath, options);
 
     EXPECT_FALSE(result.success);
     EXPECT_TRUE(result.error.contains(QStringLiteral("depends on Action")))

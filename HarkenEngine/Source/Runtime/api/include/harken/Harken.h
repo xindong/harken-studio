@@ -1727,6 +1727,9 @@ typedef struct VnCanonicalPackSetUnloadDescV1 {
     uint64_t reserved0;
 } VnCanonicalPackSetUnloadDescV1;
 
+VnResult Vn_SetGameplayCatalog(VnPackHandle expectedInitHandle,
+                              const VnPackByteSpan* catalog);
+
 VnResult Vn_ActivateCanonicalPackSetV1(
     const VnCanonicalPackSetActivationDescV1* desc,
     VnCanonicalPackSetActivationReportV1* outReport);

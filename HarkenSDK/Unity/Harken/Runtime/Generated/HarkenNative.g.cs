@@ -92,6 +92,9 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceOrientation", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_SetVoiceOrientation(ulong handle, VnVec3 forward);
 
+        [DllImport(LibraryName, EntryPoint = "Vn_SetGameplayCatalog", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_SetGameplayCatalog(ulong expectedInitHandle, in VnPackByteSpan catalog);
+
         [DllImport(LibraryName, EntryPoint = "Vn_ActivateCanonicalPackSetV1", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_ActivateCanonicalPackSetV1(in VnCanonicalPackSetActivationDescV1 desc, ref VnCanonicalPackSetActivationReportV1 outReport);
 

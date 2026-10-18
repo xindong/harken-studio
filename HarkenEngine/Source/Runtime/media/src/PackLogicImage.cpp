@@ -1425,6 +1425,11 @@ VnResult ParseGameplayCatalogPayload(const std::uint8_t* payload,
 
 } // namespace
 
+VnResult ParseGameplayCatalog(const std::uint8_t* bytes, std::uint64_t size,
+                              GameplayCatalogImage* out) {
+    return ParseGameplayCatalogPayload(bytes, size, out);
+}
+
 VnResult ValidateCanonicalInitDependency(
     std::span<const PackDependencyEdge> edges,
     std::uint64_t expectedInitPackStableId) noexcept {

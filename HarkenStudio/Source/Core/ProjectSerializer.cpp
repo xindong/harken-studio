@@ -1212,29 +1212,6 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
             conversionFailurePolicyToString(project.conversionFailurePolicy);
     }
 
-    if (!project.packExportCurrentPlatformId.isEmpty()) {
-        root["packExportCurrentPlatformId"] = project.packExportCurrentPlatformId;
-    }
-    {
-        QJsonArray selectedPlatformsArr;
-        for (const auto& p : project.packExportSelectedPlatformIds)
-            selectedPlatformsArr.append(p);
-        root["packExportSelectedPlatformIds"] = selectedPlatformsArr;
-    }
-    if (!project.packGroups.empty()) {
-        QJsonArray groupArray;
-        for (const auto& group : project.packGroups) groupArray.append(group.toJson());
-        root["packGroups"] = groupArray;
-    }
-
-    {
-        QJsonArray targetingArray;
-        for (const auto& targeting : project.actionPackTargeting)
-            targetingArray.append(targeting.toJson());
-        if (!targetingArray.isEmpty())
-            root["actionPackTargeting"] = targetingArray;
-    }
-
     if (!project.actionPublishedNameHistory.empty()) {
         QJsonArray history;
         for (const auto& row : project.actionPublishedNameHistory)
@@ -1566,27 +1543,6 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
             conversionFailurePolicyFromString(root["conversionFailurePolicy"].toString());
     }
 
-    project.packExportCurrentPlatformId = root["packExportCurrentPlatformId"].toString();
-    project.packExportSelectedPlatformIds.clear();
-    for (const auto& value : root["packExportSelectedPlatformIds"].toArray())
-        project.packExportSelectedPlatformIds.append(value.toString());
-    project.packGroups.clear();
-    if (root.contains("packGroups")) {
-        for (const auto& v : root["packGroups"].toArray())
-            project.packGroups.push_back(PackGroup::fromJson(v.toObject()));
-    }
-
-    project.actionPackTargeting.clear();
-    if (root.contains("actionPackTargeting")) {
-        for (const auto& v : root["actionPackTargeting"].toArray()) {
-            const ActionPackTargeting targeting =
-                ActionPackTargeting::fromJson(v.toObject());
-            if (!harkenstudio::IsNull(targeting.stableId))
-                project.actionPackTargeting.push_back(targeting);
-        }
-    }
-
-    project.dissolvePackGroups();
     project.actionPublishedNameHistory.clear();
     if (root.contains(QLatin1String(kActionPublishedNameHistory))) {
         for (const auto& value : root[QLatin1String(kActionPublishedNameHistory)].toArray()) {

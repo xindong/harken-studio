@@ -3,6 +3,7 @@
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/SearchField.h"
 #include "Widgets/Common/SegmentedControl.h"
+#include "Widgets/Common/MultiSelectComboBox.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/ValueSegmentedControl.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
@@ -249,6 +250,9 @@ TEST(QtControlSkin, FieldEditorsShareOuterHeightInFormsAndTables)
     compact->setProperty("fieldRole", QStringLiteral("compact"));
     auto* combo = new QComboBox(&form);
     combo->addItem(QStringLiteral("Random"));
+    auto* multiCombo = new VNX::MultiSelectComboBox(&form);
+    multiCombo->setOptions({{QStringLiteral("First"), 1}, {QStringLiteral("Second"), 2}});
+    multiCombo->setSelectedData({1, 2});
     auto* editableCombo = new QComboBox(&form);
     editableCombo->setEditable(true);
     editableCombo->addItem(QStringLiteral("Value"));
@@ -265,7 +269,7 @@ TEST(QtControlSkin, FieldEditorsShareOuterHeightInFormsAndTables)
     auto* swatch = new QPushButton(QStringLiteral("0xFF808080"), &form);
     swatch->setProperty("fieldRole", QStringLiteral("colorSwatch"));
     const QList<QWidget*> fields = {text, search, integer, decimal, compact,
-                                    combo, editableCombo, ref, compactRef,
+                                    combo, multiCombo, editableCombo, ref, compactRef,
                                     segments, loop, swatch};
     for (auto* field : fields)
         layout->addWidget(field);

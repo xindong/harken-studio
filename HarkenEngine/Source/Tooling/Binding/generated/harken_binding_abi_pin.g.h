@@ -2293,6 +2293,7 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_RegisterAttenuation)(VnAttenuationId, const VnAttenuationDesc*) = &Vn_RegisterAttenuation;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_BindVoiceAttenuation)(VnVoiceHandle, VnAttenuationId) = &Vn_BindVoiceAttenuation;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoiceOrientation)(VnVoiceHandle, VnVec3) = &Vn_SetVoiceOrientation;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_SetGameplayCatalog)(VnPackHandle, const VnPackByteSpan*) = &Vn_SetGameplayCatalog;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_ActivateCanonicalPackSetV1)(const VnCanonicalPackSetActivationDescV1*, VnCanonicalPackSetActivationReportV1*) = &Vn_ActivateCanonicalPackSetV1;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_UnloadCanonicalPackSetV1)(const VnCanonicalPackSetUnloadDescV1*) = &Vn_UnloadCanonicalPackSetV1;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_InspectInitPack)(const VnPackLoadDesc*, VnInitPackInspectReport*) = &Vn_InspectInitPack;

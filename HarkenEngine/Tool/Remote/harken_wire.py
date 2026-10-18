@@ -7092,6 +7092,14 @@ TABLE_JSON = r'''
       ]
     },
     {
+      "name": "Vn_SetGameplayCatalog",
+      "note": "public Runtime API; binds the publication directory independently of Init. No remote opcode.",
+      "params": [
+        { "name": "expectedInitHandle", "ctype": "VnPackHandle", "wire": "u64" },
+        { "name": "catalog", "ctype": "const VnPackByteSpan*", "wire": "desc", "type": "VnPackByteSpan" }
+      ]
+    },
+    {
       "name": "Vn_ActivateCanonicalPackSetV1",
       "note": "public Runtime API; additive Canonical Pack Set activation. Not part of the remote wire protocol (no opcode).",
       "params": [

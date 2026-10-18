@@ -1,9 +1,12 @@
 
 #pragma once
 
+#include "PackExportSelection.h"
+
 #include "ActionClosureSemantics.h"
 #include "AssetPipeline/AssetTypes.h"
 #include "PlatformContext.h"
+#include "PackArtifactCache.h"
 #include "ProjectTypes.h"
 #include "RuntimeBridge/PackagingBridge.h"
 #include <QObject>
@@ -35,13 +38,24 @@ namespace VNX {
 
 namespace ProjectPackExporterInternal {
 
+    struct PackResourceReuse
+    {
+        QString path;
+        QString fingerprint;
+    };
+
     struct ProjectPackExporterExportOptions
     {
         QString platform;
+        PackExportSelection selection;
         std::shared_ptr<const ProjectBuildSnapshot> snapshot;
         QString currentWorldOutputPath;
         QString language;
         bool    debugStrings = true;
+        bool    forceReexport = false;
+        bool    selfCleaning = false;
+        bool    updateSelectedOnly = false;
+        std::optional<PackResourceReuse> resourceReuse;
 
         ConversionFailurePolicy conversionFailurePolicy = ConversionFailurePolicy::AbortBuild;
 
@@ -87,6 +101,12 @@ public:
         int     mediaFallbacks = 0;
         uint64_t currentWorldSemanticFingerprint = 0;
         std::map<harkenstudio::ObjectId, uint64_t> controlSoundContentRevisions;
+        QString resourceFingerprint;
+        bool reusedResources = false;
+        int builtPackCount = 0;
+        int skippedPackCount = 0;
+        int removedPackCount = 0;
+        QVector<PackArtifactMetadata> artifacts;
     };
 
     struct PackBuildRecord
@@ -106,6 +126,8 @@ public:
         QString  platformName;
         BasePlatform basePlatform = BasePlatform::Windows;
         QJsonObject platformDefinition;
+        bool     skipped = false;
+        QString  unitKey;
     };
 
     ExportResult ExportAllPacks(const ProjectData& project,
@@ -137,6 +159,15 @@ public:
                                const QVector<ProjectPlatform>& platforms,
                                QString* errorOut = nullptr);
 
+    static QJsonObject BuildPackIndex(const QString& baseDir,
+                                      const QVector<ProjectPlatform>& platforms,
+                                      QString* errorOut = nullptr);
+
+    static ExportResult FinalizePackExport(const QString& baseDir,
+                                           const QVector<ProjectPlatform>& platforms,
+                                           const QStringList& selectedPlatformIds,
+                                           bool selfCleaning);
+
     static bool PublishPackIndex(const QString& baseDir,
                                  const QVector<ProjectPlatform>& platforms,
                                  const QStringList& requestedIds,
@@ -146,12 +177,9 @@ public:
     static std::shared_ptr<QLockFile> LockPackOutputRoot(const QString& baseDir,
                                                        QString* errorOut = nullptr);
 
-    // Empty explicitPlatform resolves to the project's selected export
-    // platforms intersected with its target platforms; a non-empty one must
-    // name a supported platform that is also a project target. Returns an
-    // empty list with errorOut set when nothing valid can be resolved.
     static QStringList resolveExportPlatforms(const ProjectData& project,
                                               const QString& explicitPlatform,
+                                              const PackExportSelection& selection,
                                               QString* errorOut = nullptr);
 
     int GenerateHarkenPeakFiles(const ProjectData& project,

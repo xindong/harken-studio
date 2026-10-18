@@ -1372,6 +1372,11 @@ harkenstudiobuild::PackResult ParseGameplayCatalogPayload(const std::uint8_t* pa
 
 } // namespace
 
+PackResult ParseGameplayCatalog(const std::uint8_t* bytes, std::uint64_t size,
+                                GameplayCatalogImage* out) {
+    return ParseGameplayCatalogPayload(bytes, size, out);
+}
+
 harkenstudiobuild::PackResult ValidateCanonicalInitDependency(
     std::span<const PackDependencyEdge> edges,
     std::uint64_t expectedInitPackStableId) noexcept {

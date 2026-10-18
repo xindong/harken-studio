@@ -373,9 +373,7 @@ QStringList validateDocuments(const QJsonObject& rootContent, const QMap<QString
         if (rootContent.contains(QLatin1String(key)))
             validator.errors.append(QStringLiteral("Legacy platform field is unsupported: %1").arg(QLatin1String(key)));
     }
-    validator.reference(rootContent.value(QStringLiteral("packExportCurrentPlatformId")), QStringLiteral("packExportCurrentPlatformId"));
-    validator.references(rootContent.value(QStringLiteral("packExportSelectedPlatformIds")), QStringLiteral("packExportSelectedPlatformIds"));
-    for (const auto& key : {"packGroups", "actionPackTargeting", "deploymentProfiles"}) {
+    for (const auto& key : {"deploymentProfiles"}) {
         qsizetype index = 0;
         for (const auto& value : rootContent.value(QLatin1String(key)).toArray()) {
             const auto row = value.toObject();
@@ -408,15 +406,7 @@ QVector<ProjectItem*> referenceOwners(const ProjectData& project)
 bool validateProject(const ProjectData& project, QString* error)
 {
     if (!validatePlatforms(project.platforms, error)) return false;
-    QJsonObject root{{QStringLiteral("metadata"), QJsonObject{{QStringLiteral("platforms"), platformsToJson(project.platforms)}}},
-                     {QStringLiteral("packExportCurrentPlatformId"), project.packExportCurrentPlatformId},
-                     {QStringLiteral("packExportSelectedPlatformIds"), QJsonArray::fromStringList(project.packExportSelectedPlatformIds)}};
-    QJsonArray groups;
-    for (const auto& group : project.packGroups) groups.append(group.toJson());
-    root.insert(QStringLiteral("packGroups"), groups);
-    QJsonArray targeting;
-    for (const auto& row : project.actionPackTargeting) targeting.append(row.toJson());
-    root.insert(QStringLiteral("actionPackTargeting"), targeting);
+    QJsonObject root{{QStringLiteral("metadata"), QJsonObject{{QStringLiteral("platforms"), platformsToJson(project.platforms)}}}};
     QJsonArray deployments;
     for (const auto& row : project.deploymentProfiles)
         deployments.append(QJsonObject{{QStringLiteral("platformIds"), QJsonArray::fromStringList(row.platformIds)}});

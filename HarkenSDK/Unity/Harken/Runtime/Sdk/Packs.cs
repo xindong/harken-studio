@@ -95,6 +95,21 @@ namespace Harken
         private static readonly uint InspectReportSize =
             (uint)Marshal.SizeOf<VnInitPackInspectReport>();
 
+        public static unsafe VnResult SetGameplayCatalog(Pack init, GameplayPublication publication)
+        {
+            if (!init.IsValid || publication == null) return VnResult.VN_INVALID_ARG;
+            var result = GameplayCatalogPairing.Encode(publication, out byte[] bytes, out _);
+            if (result != VnResult.VN_OK) return result;
+            fixed (byte* data = bytes)
+            {
+                VnPackByteSpan span = default;
+                span.structSize = (uint)sizeof(VnPackByteSpan);
+                span.bytes = (IntPtr)data;
+                span.byteCount = (ulong)bytes.Length;
+                return ObserveMutation(HarkenNative.Vn_SetGameplayCatalog(init.Handle, span));
+            }
+        }
+
         public static unsafe VnResult ActivateCanonicalPackSet(
             CanonicalPackMember[] members, ulong setRevision,
             out VnCanonicalPackSetActivationReportV1 report,

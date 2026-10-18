@@ -696,8 +696,8 @@ TEST_F(EditorWorkflowScenarioTest,
     auto& manager = ProjectManager::instance();
     ProjectData* project = manager.currentProject();
     project->platforms = HarkenTest::platforms({QStringLiteral("Windows")});
-    project->packExportCurrentPlatformId = project->platformIds().front();
-    project->packExportSelectedPlatformIds = project->platformIds();
+    manager.setPackExportCurrentPlatformInternal(project->platformIds().front());
+    manager.setPackExportSelectedPlatformsInternal(project->platformIds());
     project->projectLanguages = {QStringLiteral("English"), QStringLiteral("Japanese")};
     ProjectItem* layer = create(nullptr, QStringLiteral("Callouts"), ProjectItem::Type::Layer);
     ProjectItem* sound = create(layer, QStringLiteral("Reload"), ProjectItem::Type::Sound);

@@ -1,7 +1,10 @@
 #pragma once
 
+#include "PackExportSelection.h"
+
 #include "ActionClosureSemantics.h"
 
+#include <QHash>
 #include <QJsonObject>
 #include <QString>
 #include <vector>
@@ -50,12 +53,15 @@ namespace PackBuildPlanning {
 PackBuildPlan build(const ProjectData& project,
                     const QStringList& platforms = {},
                     const QStringList& languages = {},
-                    bool includeUnchecked = false);
+                    bool includeUnchecked = false,
+                    const PackExportSelection& selection = {});
 PackBuildPlan buildForAction(const ProjectData& project,
                             harkenstudio::ObjectId actionStableId,
                             const QStringList& platforms = {},
                             const QStringList& languages = {},
-                            const QString& artifactName = {});
+                            const QString& artifactName = {},
+                            bool includeUnchecked = false,
+                            const PackExportSelection& selection = {});
 QString stableArtifactKey(harkenstudio::ObjectId actionStableId);
 QString packNameError(const QString& name, bool grouped = false);
 QString relativePackPath(const QString& platform, const QString& language,
@@ -63,6 +69,7 @@ QString relativePackPath(const QString& platform, const QString& language,
 QString packFileName(const QString& language, const QString& artifact,
                      const QString& extension);
 bool actionIsLocalized(const ProjectData& project, harkenstudio::ObjectId actionStableId);
+QHash<harkenstudio::ObjectId, QStringList> actionLanguages(const ProjectData& project);
 
 }
 }

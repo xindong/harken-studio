@@ -2038,7 +2038,6 @@ QLineEdit[tableEditor="true"] {
     border-radius: 0px;
     padding: 0 @tableCellPaddingX@px;
 }
-QWidget#packPlatformChips QCheckBox:unchecked { color: @textMuted@; }
 QWidget#MonitorPerformancePanel,
 QWidget#MonitorPlayablesPanel,
 QWidget#MonitorEffectsPanel,

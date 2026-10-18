@@ -10,16 +10,23 @@
 #include "Core/PackGenerationRecord.h"
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
+#include "Core/ProjectPlatformActivity.h"
 #include "Core/UndoCommands.h"
 #include "RuntimeBridge/PackagingBridge.h"
-#include "Widgets/Common/SegmentedControl.h"
+#include "Widgets/Common/MultiSelectComboBox.h"
+#include "Widgets/Common/SplitButton.h"
 #include "Widgets/PackManager/PackManagerPanel.h"
 #include "Support/AITestSupport.h"
 
 #include <gtest/gtest.h>
 #include <QAbstractButton>
+#include <QAbstractItemView>
+#include <QCheckBox>
+#include <QKeyEvent>
+#include <QMenu>
+#include <QMouseEvent>
 #include <QTemporaryDir>
-#include <QToolButton>
+#include <QTimer>
 
 #include <algorithm>
 
@@ -206,19 +213,58 @@ TEST_F(ProjectPlatformUiIpc, NarrowPackSelectorExportsOnlyTheRequestedSiblingAnd
     panel.resize(380, 480);
     panel.show();
     QApplication::processEvents();
-    auto* selector = panel.findChild<SegmentedControl*>("packPlatformChips");
+    auto* selector = panel.findChild<MultiSelectComboBox*>("packPlatformCombo");
     ASSERT_NE(selector, nullptr);
-    EXPECT_LT(selector->width(), selector->sizeHint().width());
-    for (int i = 0; i < 9; ++i) {
-        auto* button = selector->button(i);
-        ASSERT_NE(button, nullptr);
-        EXPECT_TRUE(button->isVisible());
-        EXPECT_GT(button->width(), 0);
-        if (button->property("segmentValue").toString() != high) button->click();
-    }
+    EXPECT_EQ(panel.width(), 380);
+    selector->showPopup();
     QApplication::processEvents();
+    auto* view = selector->view();
+    ASSERT_EQ(selector->count(), 9);
+    for (int i = 0; i < selector->count(); ++i) {
+        if (selector->itemData(i).toString() == high) continue;
+        const auto index = selector->model()->index(i, 0);
+        view->scrollTo(index);
+        QApplication::processEvents();
+        const QPoint center = view->visualRect(index).center();
+        const QPoint global = view->viewport()->mapToGlobal(center);
+        QMouseEvent press(QEvent::MouseButtonPress, center, global,
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(view->viewport(), &press);
+        QMouseEvent release(QEvent::MouseButtonRelease, center, global,
+                            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(view->viewport(), &release);
+        QApplication::processEvents();
+        EXPECT_TRUE(view->isVisible());
+    }
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(view, &enter);
+    QApplication::processEvents();
+    EXPECT_FALSE(view->isVisible());
     EXPECT_EQ(panel.generationPlatforms(), QStringList{high});
     EXPECT_EQ(PlatformContextService::instance().context().primary, QUuid(low));
+    EXPECT_EQ(selector->selectedText(), QStringLiteral("Android_High"));
+    auto* exportButton = panel.findChild<QAbstractButton*>("projectPackGenerateAllBtn");
+    ASSERT_NE(exportButton, nullptr);
+    QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    QApplication::sendEvent(selector, &down);
+    QApplication::processEvents();
+    view->setCurrentIndex(selector->model()->index(selector->findData(high), 0));
+    QKeyEvent space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+    QApplication::sendEvent(view, &space);
+    EXPECT_TRUE(view->isVisible());
+    EXPECT_TRUE(panel.generationPlatforms().isEmpty());
+    EXPECT_TRUE(selector->selectedText().isEmpty());
+    EXPECT_FALSE(exportButton->isEnabled());
+    view->setCurrentIndex(selector->model()->index(selector->findData(high), 0));
+    QApplication::sendEvent(view, &space);
+    EXPECT_EQ(selector->selectedData(), QVariantList{high});
+    EXPECT_EQ(selector->selectedText(), QStringLiteral("Android_High"));
+    EXPECT_TRUE(view->isVisible());
+    EXPECT_TRUE(exportButton->isEnabled());
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(view, &escape);
+    QApplication::processEvents();
+    EXPECT_FALSE(view->isVisible());
     QStringList requested;
     QObject::connect(&panel, &PackManagerPanel::exportRequested, &panel,
         [&](const QStringList& ids, const QStringList&) {
@@ -257,9 +303,12 @@ TEST_F(ProjectPlatformUiIpc, GlobalContextSeparatesObservationEditingAndExportSc
     context.setSelected({QUuid(low)}, QUuid(low), false);
     manager.setPackExportSelectedPlatformsInternal({high});
     PackManagerPanel panel;
+    panel.show();
+    QApplication::processEvents();
     auto* tree = panel.findChild<QTreeWidget*>();
     ASSERT_NE(tree, nullptr);
     const auto row = [&]() {
+        QApplication::processEvents();
         return tree->findItems(QStringLiteral("Play"), Qt::MatchExactly | Qt::MatchRecursive).value(0);
     };
     ASSERT_NE(row(), nullptr);
@@ -270,6 +319,7 @@ TEST_F(ProjectPlatformUiIpc, GlobalContextSeparatesObservationEditingAndExportSc
         record.source = QStringLiteral("Action");
         record.packName = action->name;
         record.objectID = action->objectID;
+        record.unitKey = QStringLiteral("a:") + objectIdString(actionId);
         record.platform = platform;
         record.success = true;
         record.elapsedMs = platform == low ? 10 : 20;
@@ -287,7 +337,7 @@ TEST_F(ProjectPlatformUiIpc, GlobalContextSeparatesObservationEditingAndExportSc
     context.setSelected({QUuid(high)}, QUuid(high), false);
     QApplication::processEvents();
     const auto included = [&](const QString& platform) {
-        const auto& targeting = manager.currentProject()->actionPackTargeting;
+        const auto targeting = manager.getActionPackTargeting();
         return std::none_of(targeting.begin(), targeting.end(), [&](const auto& entry) {
             return entry.stableId == actionId && !entry.includesPlatform(platform);
         });
@@ -304,14 +354,11 @@ TEST_F(ProjectPlatformUiIpc, GlobalContextSeparatesObservationEditingAndExportSc
     QApplication::processEvents();
     for (const auto& platform : manager.currentProject()->platformIds())
         EXPECT_FALSE(included(platform));
-    UndoRedoManager::instance().undoStack()->undo();
-    EXPECT_FALSE(included(low));
-    EXPECT_TRUE(included(high));
-    EXPECT_EQ(row()->checkState(0), Qt::PartiallyChecked);
+    EXPECT_EQ(row()->checkState(0), Qt::Unchecked);
 
     context.setSelected({QUuid(low)}, QUuid(low), true);
     EXPECT_EQ(row()->text(5), QStringLiteral("10 ms"));
-    EXPECT_EQ(row()->checkState(0), Qt::PartiallyChecked);
+    EXPECT_EQ(row()->checkState(0), Qt::Unchecked);
     row()->setCheckState(0, Qt::Checked);
     QApplication::processEvents();
     for (const auto& platform : manager.currentProject()->platformIds())
@@ -319,13 +366,70 @@ TEST_F(ProjectPlatformUiIpc, GlobalContextSeparatesObservationEditingAndExportSc
 
     manager.setPackExportSelectedPlatformsInternal({high});
     QStringList requested;
+    QStringList requestedPaths;
+    bool forceRequested = false;
+    bool cleaningRequested = false;
     QObject::connect(&panel, &PackManagerPanel::exportRequested, &panel,
-        [&](const QStringList& ids, const QStringList&) { requested = ids; });
+        [&](const QStringList& ids, const QStringList& paths, bool, bool force, bool cleaning) {
+            requested = ids;
+            requestedPaths = paths;
+            forceRequested = force;
+            cleaningRequested = cleaning;
+        });
     panel.findChild<QAbstractButton*>("projectPackGenerateAllBtn")->click();
     EXPECT_EQ(requested, QStringList{high});
+    auto* force = panel.findChild<QCheckBox*>("packForceReexportCheck");
+    auto* cleaning = panel.findChild<QCheckBox*>("packSelfCleaningCheck");
+    ASSERT_NE(force, nullptr);
+    ASSERT_NE(cleaning, nullptr);
+    EXPECT_FALSE(force->isChecked());
+    EXPECT_TRUE(cleaning->isChecked());
+    EXPECT_FALSE(forceRequested);
+    EXPECT_TRUE(cleaningRequested);
+    force->setChecked(true);
+    cleaning->setChecked(false);
+    panel.findChild<QAbstractButton*>("projectPackGenerateAllBtn")->click();
+    EXPECT_EQ(requested, QStringList{high});
+    EXPECT_TRUE(forceRequested);
+    EXPECT_FALSE(cleaningRequested);
+    cleaning->setChecked(true);
+    panel.resize(1000, 600);
+    panel.show();
+    tree->expandAll();
+    row()->setSelected(true);
+    QApplication::processEvents();
+    for (const bool forceExport : {false, true}) {
+        const QPoint contextPoint = tree->visualItemRect(row()).center();
+        QTimer::singleShot(0, &panel, [&] {
+            auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+            ASSERT_NE(menu, nullptr);
+            const QString label = forceExport ? QStringLiteral("Force Re-export") : QStringLiteral("Export");
+            const auto actions = menu->actions();
+            const auto found = std::find_if(actions.begin(), actions.end(), [&](const auto* action) {
+                return action->text() == label;
+            });
+            EXPECT_NE(found, actions.end());
+            if (found != actions.end()) (*found)->trigger();
+            menu->close();
+        });
+        tree->customContextMenuRequested(contextPoint);
+        EXPECT_EQ(requestedPaths, QStringList{QStringLiteral("Play")});
+        EXPECT_EQ(forceRequested, forceExport);
+        EXPECT_FALSE(cleaningRequested);
+    }
+    {
+        const auto busy = ProjectPlatformActivity::acquire();
+        EXPECT_FALSE(force->isEnabled());
+        EXPECT_FALSE(cleaning->isEnabled());
+        EXPECT_FALSE(panel.findChild<QAbstractButton*>("projectPackGenerateAllBtn")->isEnabled());
+    }
+    EXPECT_TRUE(force->isEnabled());
+    EXPECT_TRUE(cleaning->isEnabled());
     EXPECT_EQ(row()->text(5), QStringLiteral("10 ms"));
     EXPECT_EQ(context.context().primary, QUuid(low));
     EXPECT_TRUE(context.context().all);
+    manager.setPackExportSelectedPlatformsInternal({});
+    EXPECT_FALSE(panel.findChild<QAbstractButton*>("projectPackGenerateAllBtn")->isEnabled());
 }
 
 }

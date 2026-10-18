@@ -108,9 +108,15 @@ Inputs/Receives 是路由反向查询，不再适用“所有 Inspector 表都�
 
 Pack 的 Init 独立显示且始终必选；General 包含不区分语言的 Action，工程中的每种语言各自形成分区，同时显示全部语言，不受 toolbar 当前语言筛选。每个 Action 按平台和语言独立出包，取消自定义合包、成员行、组名编辑及合包拖放。旧工程的合包平台选择迁移到成员 Action。语言变体由完整打包计划决定，即使取消所有平台也保留对应行。每行仅显示当前观察平台下一个包的文件、大小及构建状态，缺失值留空，不再聚合语言或显示横线；发布状态按清单中的 Action 归属核验。
 
-Action targeting 可携带 language：省略时保留整 Action 的平台选择语义，空字符串指定 General，非空字符串指定对应语言。各语言平台设置独立保存，批量勾选通过同一命令提交并支持撤销。正常导出读取各目标平台保存的全部语言选择；选中行导出精确匹配语言与 Action，并按相同语言展开 PostAction 依赖，被取消的依赖必须报告错误。各语言只编译所选 Action 和公共包的定义，Init 汇总所有已选语言需要的 Layer；若工程默认语言没有被导出，产物以工程语言顺序中的首个已导出语言作为默认入口，工程默认语言不变。Export All 清除快照中的筛选，不修改工程勾选。
+Action targeting 可携带 language：省略时保留整 Action 的平台选择语义，空字符串指定 General，非空字符串指定对应语言。各语言平台设置独立保存，批量勾选通过同一命令提交并支持撤销。正常导出读取各目标平台保存的全部语言选择，并按相同语言展开 PostAction 依赖，被取消的依赖必须报告错误。各语言只编译所选 Action 和公共包的定义，Init 汇总所有已选语言需要的 Layer；若工程默认语言没有被导出，产物以工程语言顺序中的首个已导出语言作为默认入口，工程默认语言不变。Export All 清除快照中的筛选，不修改工程勾选。
 
-Pack 表格的产物信息跟随主 toolbar 的当前平台。平台归属使用公共勾选框皮肤，遵守全局单平台／ALL 编辑语境，ALL 下归属不一致时显示半勾选；保留点击、空格和拖动连续勾选，沿用原有平台命令与撤销语义。表格不提供独立的平台观察切换。顶部 Export Platforms 多选仅指定导出目标，不限制表格的观察或编辑范围，未选择导出目标时仍可查看和编辑当前平台。
+Pack 表格的产物信息跟随主 toolbar 的当前平台。平台归属使用公共勾选框皮肤，遵守全局单平台／ALL 编辑语境，ALL 下归属不一致时显示半勾选；保留点击、空格和拖动连续勾选，沿用原有平台命令与撤销语义。表格不提供独立的平台观察切换。底部 Export Platforms 使用公共 `MultiSelectComboBox`，框内显示已选平台名称，与主 toolbar 下拉框一样按 12 字符设置基准宽度，不随选项文字增长，剩余空间留在控件与导出按钮之间；窗口空间不足时可被布局压缩，文字省略并通过悬停展示完整列表。展开列表复用公共菜单绘制，已选项仅显示对钩，支持连续多选。多选指定 Export Checked 和右键导出的目标平台，不限制表格的观察或编辑范围，未选择目标时仍可查看和编辑当前平台。
+
+Export 左侧提供使用公共皮肤的 Force Re-export 和 Self-cleaning 勾选框，Force Re-export 默认关闭，Self-cleaning 默认开启，仅作用于 Export 按钮（含 Export All）。底栏始终保持单行，不约束面板的最小宽度，空间不足时优先压缩平台选择框；未选择任何平台时 Export 主按钮禁用。默认验证已有包并比较内容，未变化的包跳过生成且保留文件时间戳；缺失、损坏或内容变化时重新生成。Force Re-export 强制重新生成本次范围内的包。正常导出按当前选择重建平台与语言清单、Action 发布目录、波形附属数据及平台索引，总索引仅包含本次选择的平台。导出目标目录由导出器整体管理：未勾选 Self-cleaning 时保留退出清单的文件；勾选时，在所选平台全部导出成功后扫描整个目标目录，仅保留本次有效产物，删除其他文件和空目录，包括取消、删除或改名的平台目录、任意后缀文件及 Unity .meta。清理不依赖旧清单或历史导出记录；工程 .cache/pack-inputs 仅按包内容哈希缓存构建输入指纹，可删除重建，不参与清理判断。平台发布与根目录收尾清理均通过发布事务提交并支持失败恢复。
+
+右键提供 Export / Force Re-export，多选时作用于所选行。右键忽略底部两个勾选框且始终不清理旧包，只更新所选包及清单中的对应记录，保留其他已发布包、Init 及其记录；首次输出尚无 Init 时创建 Init。依赖内容只作为编译上下文，不自动导出未选包。单包导出用于快速查看变化，不检查或提示新旧包之间的共享内容兼容性；无法为混合状态生成匹配的波形伴随数据时，不输出该伴随文件。投入游戏前使用常规 Export 刷新整套状态。
+
+Init 不包含 Action 发布目录，各语言清单共用平台根目录中的 Init。SDK 从所选清单绑定独立 Action 目录，原生引擎继续校验项目、Init 版本、Action 归属和依赖；常规导出旧发布时移除 Init 中的旧目录，统一语言 Init 引用。
 
 Sources 仅在同语言组内移动；Binding 仅编辑本地贡献；Clips 移动保持 occurrence 身份和时间语义；Labels 的 # 显示真实索引，身份与名称随普通行移动进入原有索引位置，范围外记录不参与。Transition 按匹配具体程度排序，默认规则最后；Resample Policies 按阈值排序且保留 Infinite 行。共享表格仅扩展自定义编号显示，保留原有拖动逻辑。
 
@@ -246,7 +252,7 @@ auto* items = table->createItemView(QStringLiteral("Platforms"),
 auto* table = new TableWidget(TableOptions::display(), parent);
 auto* view = table->createCustomView(QStringLiteral("Packs"),
     [](QWidget* owner, ThemeManager* themeManager) {
-        return new PackManagerTree({280, 70, 90, 150, 80, 80, 120, 60, 80}, owner, themeManager);
+        return new PackManagerTree({280, 70, 90, 150, 80, 80, 120, 60}, owner, themeManager);
     });
 ```
 
@@ -256,7 +262,9 @@ auto* view = table->createCustomView(QStringLiteral("Packs"),
 
 公共分组不增加子条目的视觉缩进：Init、General 和语言分区中的直接条目，以及 Shortcuts 分类下的命令，仍从对应列的正常留白起排。真正的业务父子层级保留内容缩进，绘制、编辑器和点击命中使用同一内容区域；分隔线和选择背景不随内容缩进。未创建公共分组的普通树继续使用原生层级布局。
 
-Pack Exporter 的 General 和语言分区使用实际父子关系，并按语言 ID 恢复折叠状态；Action 行选择同时包含 Action ID 和语言。Init 独立显示并在每次导出时重建；各分区同时启用勾选和折叠，聚合当前编辑平台上的可操作包状态。批量操作包含搜索过滤隐藏的包，沿用平台 targeting 命令并合为一步撤销；不改变导出平台选择。没有可操作包或编辑平台时，勾选框禁用，折叠仍可使用。
+Pack Exporter 的 General 和语言分区使用实际父子关系，并按语言 ID 恢复折叠状态；Action 行选择同时包含 Action ID 和语言。Init 独立显示且始终包含在发布中，未变化时可复用；各分区同时启用勾选和折叠，聚合当前编辑平台上的可操作包状态。批量操作包含搜索过滤隐藏的包，沿用平台 targeting 命令写入本地缓存，不进入工程撤销栈；不改变导出平台选择。没有可操作包或编辑平台时，勾选框禁用，折叠仍可使用。
+
+Pack Exporter 数据归属：Name 和语言分区由当前工程 Action 及其语言依赖派生。勾选与 Export Platforms 存于 `.cache/pack-export-selection.json`，Built、Size、Modified、File、Version 存于 `.cache/pack-artifacts.json`；产物缓存由成功发布更新，面板刷新不读取产物或 manifest。Built 表示最近成功发布的快照，外部删除或替换产物不会自动同步；Self Cleaning 的已知删除会同步清缓存。CRC32 列已移除。Result 与 Cost 共用会话内结果存储，GUI/IPC 导出按稳定身份更新，工程关闭后清空，不写入缓存或工程文件。Cost 为每包资源准备与写包耗时，不包含共享编译和发布阶段。清缓存后默认全选，产物列留空；Build 配置、平台与语言定义仍是工程数据。隐藏面板延后刷新，可见时合并更新，并用共享语言投影代替完整构建计划。
 
 控件行通过 `registerRow(row, cells, details)` 将同属 `rowsWidget()` 的主行和展开容器登记为一条逻辑行，`details` 可省略。字段先放入 `createCell` 创建的共享单元格，再登记单元格；不把裸字段控件作为补边距的容器。展开容器提供自己的内容布局；公共表格负责同步选中状态、行号列宽度、内容缩进及主行与详情之间的分隔线，删除主行时一并清理详情。业务用 `rowForWidget(widget)` 将展开区及其子控件的交互归属到主行，不再复制详情的行号或选中状态。
 

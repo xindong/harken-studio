@@ -28,6 +28,7 @@
 #include "ProjectPlatformActivity.h"
 #include "PackSchemaGenerated.h"
 #include "ProjectSchemaValidator.h"
+#include <harken_studio_build/PackFormat.h>
 #include "Components/VBus.h"
 #include "RuntimeBridge/PackagingBridge.h"
 #include "ActionStepUtils.h"
@@ -58,6 +59,30 @@
 namespace VNX {
 
 namespace Bridge = HarkenEditor::Bridge;
+
+static bool buildPackResources(Bridge::PackBuildSession& builder, const QString& outputPath,
+                               const ProjectPackExporter::ExportOptions& options,
+                               ProjectPackExporter::ExportResult& result)
+{
+    if (options.resourceReuse) {
+        result.resourceFingerprint = builder.inputFingerprint();
+        if (result.resourceFingerprint.isEmpty()) {
+            result.error = builder.lastError();
+            return false;
+        }
+        result.reusedResources = !options.forceReexport && !options.resourceReuse->path.isEmpty()
+            && result.resourceFingerprint == options.resourceReuse->fingerprint;
+    }
+    if (!result.reusedResources && !builder.buildToFile(outputPath)) {
+        result.error = builder.lastError();
+        return false;
+    }
+    result.warnings += builder.warnings();
+    result.success = true;
+    result.outputPath = result.reusedResources ? options.resourceReuse->path : outputPath;
+    result.fileSize = QFileInfo(result.outputPath).size();
+    return true;
+}
 
 static void collectObjectMetadataRecursive(const ProjectItem* item,
                                             Bridge::PackBuildSession& builder,
@@ -300,6 +325,7 @@ QString ProjectPackExporter::platformOutputDir(const QString& baseDir,
 
 QStringList ProjectPackExporter::resolveExportPlatforms(const ProjectData& project,
                                                         const QString& explicitPlatform,
+                                                        const PackExportSelection& selection,
                                                         QString* errorOut)
 {
     if (!explicitPlatform.isEmpty())
@@ -317,7 +343,7 @@ QStringList ProjectPackExporter::resolveExportPlatforms(const ProjectData& proje
         return {explicitPlatform};
     }
 
-    if (project.packExportSelectedPlatformIds.isEmpty())
+    if (selection.selectedPlatformIds.isEmpty())
     {
         if (errorOut)
             *errorOut = QStringLiteral("No pack export platforms selected; pass an "
@@ -327,7 +353,7 @@ QStringList ProjectPackExporter::resolveExportPlatforms(const ProjectData& proje
     }
 
     QStringList platforms;
-    for (const QString& platform : project.packExportSelectedPlatformIds)
+    for (const QString& platform : selection.selectedPlatformIds)
         if (project.platformIds().contains(platform) && !platforms.contains(platform))
             platforms.append(platform);
     if (platforms.isEmpty())
@@ -404,17 +430,18 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
         return result;
     }
 
-    const ValidationResult readiness =
-        ValidatePackBuildReadiness(project, outputDir, &options.snapshot->media);
-    if (readiness.errorCount > 0)
-    {
-        QStringList errors;
-        for (const ValidationIssue& issue : readiness.issues)
-            if (issue.severity == ValidationIssue::Error)
-                errors.append(issue.message);
-        result.error = QStringLiteral("Pack build readiness failed: %1")
-                           .arg(errors.join(QStringLiteral("; ")));
-        return result;
+    if (!options.updateSelectedOnly) {
+        const ValidationResult readiness =
+            ValidatePackBuildReadiness(project, outputDir, &options.snapshot->media);
+        if (readiness.errorCount > 0) {
+            QStringList errors;
+            for (const ValidationIssue& issue : readiness.issues)
+                if (issue.severity == ValidationIssue::Error)
+                    errors.append(issue.message);
+            result.error = QStringLiteral("Pack build readiness failed: %1")
+                               .arg(errors.join(QStringLiteral("; ")));
+            return result;
+        }
     }
 
     QDir dir(outputDir);
@@ -434,7 +461,28 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
     if (!effectiveOpts.language.trimmed().isEmpty())
         languages.append(effectiveOpts.language.trimmed());
 
-    PackBuildPlan buildPlan = PackBuildPlanning::build(project, {effectiveOpts.platform}, languages);
+    PackBuildPlan buildPlan = PackBuildPlanning::build(project, {effectiveOpts.platform}, languages,
+                                                       effectiveOpts.updateSelectedOnly, effectiveOpts.selection);
+    if (effectiveOpts.updateSelectedOnly) {
+        effectiveOpts.selfCleaning = false;
+        const QString manifestPath = dir.filePath(Bridge::packManifestFileName());
+        QFile file(manifestPath);
+        if (file.exists()) {
+            if (QFileInfo(manifestPath).isSymLink() || !file.open(QIODevice::ReadOnly)) {
+                result.error = QStringLiteral("Cannot read the existing publication: %1").arg(manifestPath);
+                return result;
+            }
+            const auto manifest = QJsonDocument::fromJson(file.readAll()).object();
+            if (!ProjectSchemaValidator::validatePackManifest(PackSchema::kPackManifestSchemaVersion,
+                    manifest, manifestPath).isEmpty()
+                || manifest.value(QStringLiteral("platformId")).toString() != effectiveOpts.platform
+                || QUuid(manifest.value(QStringLiteral("gameplayCatalog")).toObject()
+                    .value(QStringLiteral("projectId")).toString()) != QUuid(project.projectId)) {
+                result.error = QStringLiteral("The existing publication does not match this project and platform");
+                return result;
+            }
+        }
+    }
     const auto actionRequested = [&](harkenstudio::ObjectId id, const QString& name) {
         if (!effectiveOpts.onlyActionStableIds.empty())
             return effectiveOpts.onlyActionStableIds.count(id) != 0;
@@ -568,9 +616,11 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
                     unit.variant.language, unit.name, packExt)),
                 unit.grouped ? QStringLiteral("Pack group has no Actions with steps; nothing to pack")
                              : QStringLiteral("Action has no steps; nothing to pack"), 0,
-                effectiveOpts.platform, {}, 0, unit.variant.language,
+                effectiveOpts.platform, {}, -1, unit.variant.language,
                 unit.platformDefinition.name, unit.platformDefinition.basePlatform,
-                unit.platformDefinition.toJson()});
+                unit.platformDefinition.toJson(), false,
+                unit.grouped ? QStringLiteral("g:") + unit.artifactKey
+                    : QStringLiteral("a:") + objectIdString(*empty)});
         }
     }
     if (!emptyActionIds.empty())
@@ -638,17 +688,7 @@ ProjectPackExporter::ExportInitPack(const ProjectData& project,
 
     emit progressChanged(90, "Writing Init pack...");
 
-    if (!builder.buildToFile(outputPath))
-    {
-        result.error = builder.lastError();
-        return result;
-    }
-    result.warnings += builder.warnings();
-
-    QFileInfo fi(outputPath);
-    result.success    = true;
-    result.outputPath = outputPath;
-    result.fileSize   = fi.size();
+    if (!buildPackResources(builder, outputPath, options, result)) return result;
 
     emit progressChanged(100, "Init pack exported.");
     return result;
@@ -753,7 +793,7 @@ ProjectPackExporter::exportSingleActionPack(
     const QStringList languages = language.isEmpty() ? QStringList() : QStringList{language};
     const auto buildPlan = PackBuildPlanning::buildForAction(
         project, action.runtimeId(), {options.platform}, languages,
-        QFileInfo(outputPath).completeBaseName());
+        QFileInfo(outputPath).completeBaseName(), options.updateSelectedOnly, options.selection);
     const auto planned = std::find_if(buildPlan.variants.begin(), buildPlan.variants.end(),
                                       [&](const auto& value) {
         return value.actionStableId == action.runtimeId();
@@ -859,18 +899,12 @@ ProjectPackExporter::exportSingleActionPack(
         }
     }
 
-    if (!builder.buildToFile(outputPath))
+    if (!buildPackResources(builder, outputPath, options, result))
     {
         result.error = QStringLiteral("Action pack export failed for '%1': %2")
-                           .arg(action.name, builder.lastError());
+                           .arg(action.name, result.error);
         return result;
     }
-    result.warnings += builder.warnings();
-
-    QFileInfo fi(outputPath);
-    result.success    = true;
-    result.outputPath = outputPath;
-    result.fileSize   = fi.size();
 
     return result;
 }

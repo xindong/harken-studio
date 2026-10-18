@@ -109,14 +109,14 @@ TEST(PackBuildPlanTest, LegacyGroupMembersBecomeIndependentBuildUnits)
 
 }
 
-TEST(PackBuildPlanTest, LegacyGroupPlatformSelectionTransfersToMembers)
+TEST(PackBuildPlanTest, LegacyGroupPlatformSelectionDoesNotRestrictBuildUnits)
 {
     auto project = HarkenTest::projectWithPlatforms();
     auto action = item(ProjectItem::Type::Action, 1, harkentest::StudioObjectId(11));
     ProjectFileBinding binding;
     binding.rootItem = action;
     project.actions.push_back(std::move(binding));
-    project.platforms = HarkenTest::platforms({QStringLiteral("Windows")});
+    project.platforms = HarkenTest::platforms({QStringLiteral("Windows"), QStringLiteral("macOS")});
     PackGroup group;
     group.name = QStringLiteral("Bundle");
     group.actionIds = {harkentest::StudioObjectId(11)};
@@ -126,10 +126,11 @@ TEST(PackBuildPlanTest, LegacyGroupPlatformSelectionTransfersToMembers)
 
     const auto plan = PackBuildPlanning::build(project);
     EXPECT_TRUE(plan.groupMetadata.value(QStringLiteral("groups")).toArray().isEmpty());
-    EXPECT_EQ(plan.variants.size(), 1u);
-    ASSERT_EQ(plan.units.size(), 1u);
+    EXPECT_EQ(plan.variants.size(), 2u);
+    ASSERT_EQ(plan.units.size(), 2u);
     EXPECT_EQ(plan.units.front().name, action->name);
     EXPECT_EQ(plan.units.front().variant.platform, HarkenTest::platformIdString("Windows"));
+    EXPECT_EQ(plan.units.back().variant.platform, HarkenTest::platformIdString("macOS"));
 
 }
 
@@ -163,6 +164,8 @@ TEST(PackBuildPlanTest, UnlocalizedActionStaysOnPlatformAxisEvenWithProjectLangu
     EXPECT_EQ(plan.variants[1].relativePackPath, QStringLiteral("macOS/Item"));
     EXPECT_TRUE(plan.variants[0].variant.language.isEmpty());
     EXPECT_TRUE(plan.variants[1].variant.language.isEmpty());
+    EXPECT_EQ(PackBuildPlanning::actionLanguages(project).value(action->runtimeId()),
+              QStringList{QString()});
 
     const auto requested = PackBuildPlanning::build(project, {}, {QStringLiteral("French")});
     EXPECT_EQ(requested.toJson().value(QStringLiteral("variants")),
@@ -257,12 +260,13 @@ TEST(PackBuildPlanTest, LocalizedActionFansOutLanguageDirectoriesWithSharedFilen
     }
     const auto selectedUnits = PackBuildPlanning::build(project, {}, {QStringLiteral("Japanese")});
     ASSERT_EQ(selectedUnits.units.size(), 2u);
-    project.actionPackTargeting.push_back({action->runtimeId(), false, {}, QStringLiteral("English")});
+    PackExportSelection selection;
+    selection.actionTargeting.push_back({action->runtimeId(), false, {}, QStringLiteral("English")});
     project.packGroups.clear();
-    const auto targeted = PackBuildPlanning::build(project);
+    const auto targeted = PackBuildPlanning::build(project, {}, {}, false, selection);
     ASSERT_EQ(targeted.units.size(), 2u);
     for (const auto& unit : targeted.units) EXPECT_NE(unit.variant.language, QStringLiteral("English"));
-    const auto visible = PackBuildPlanning::build(project, {}, {}, true);
+    const auto visible = PackBuildPlanning::build(project, {}, {}, true, selection);
     EXPECT_EQ(visible.units.size(), 3u);
 
 }
@@ -307,6 +311,9 @@ TEST(PackBuildPlanTest, NamedPostActionAndExternalOccurrenceUseTheSameLocalizedC
             project.layers.push_back(std::move(binding));
     }
     EXPECT_TRUE(PackBuildPlanning::actionIsLocalized(project, harkentest::StudioObjectId(104)));
+    const auto projected = PackBuildPlanning::actionLanguages(project);
+    EXPECT_EQ(projected.value(inner->runtimeId()), project.projectLanguages);
+    EXPECT_EQ(projected.value(outer->runtimeId()), project.projectLanguages);
     const auto plan = PackBuildPlanning::buildForAction(project, harkentest::StudioObjectId(104));
     ASSERT_EQ(plan.variants.size(), 2u);
     for (const auto& variant : plan.variants) {
@@ -323,6 +330,11 @@ TEST(PackBuildPlanTest, NamedPostActionAndExternalOccurrenceUseTheSameLocalizedC
         }));
     }
     project.projectLanguages.clear();
+    const auto withoutLanguages = PackBuildPlanning::actionLanguages(project);
+    EXPECT_TRUE(withoutLanguages.contains(inner->runtimeId()));
+    EXPECT_TRUE(withoutLanguages.value(inner->runtimeId()).isEmpty());
+    EXPECT_TRUE(withoutLanguages.contains(outer->runtimeId()));
+    EXPECT_TRUE(withoutLanguages.value(outer->runtimeId()).isEmpty());
     const auto empty = PackBuildPlanning::buildForAction(project, harkentest::StudioObjectId(104));
     EXPECT_TRUE(empty.variants.empty());
     ASSERT_EQ(empty.diagnostics.size(), 1u);
@@ -361,11 +373,12 @@ TEST(PackBuildPlanTest, LocalizedActionWithoutProjectLanguagesEmitsError)
               ActionClosureDiagnosticCode::InvalidBuildLanguage);
     EXPECT_FALSE(requested.ready());
 
-    project.actionPackTargeting.push_back({action->runtimeId(), false, {}});
-    const auto excluded = PackBuildPlanning::build(project);
+    PackExportSelection selection;
+    selection.actionTargeting.push_back({action->runtimeId(), false, {}});
+    const auto excluded = PackBuildPlanning::build(project, {}, {}, false, selection);
     EXPECT_TRUE(excluded.variants.empty());
     EXPECT_TRUE(excluded.ready());
-    EXPECT_FALSE(PackBuildPlanning::build(project, {}, {}, true).ready());
+    EXPECT_FALSE(PackBuildPlanning::build(project, {}, {}, true, selection).ready());
 }
 
 TEST(PackBuildPlanTest, MixedClosureCopiesUnlocalizedMediaIntoEveryLanguagePack)

@@ -21,6 +21,7 @@
 #include "VariableRehearsal.h"
 #include "ItemTypeCatalog.h"
 #include "ProjectTypes.h"
+#include "PackExportSelection.h"
 #include "Components/VBus.h"
 #include "ProjectSerializer.h"
 #include "FileWatcher.h"
@@ -538,6 +539,9 @@ public:
 
     ConversionFailurePolicy getConversionFailurePolicy() const;
     void setConversionFailurePolicy(ConversionFailurePolicy value);
+
+    PackExportSelection packExportSelection() const;
+    void setPackExportSelectionInternal(PackExportSelection selection);
 
     QString getPackExportCurrentPlatform() const;
     void setPackExportCurrentPlatformInternal(const QString& value);

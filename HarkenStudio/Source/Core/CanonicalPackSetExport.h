@@ -31,6 +31,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     ProjectPackExporter& exporter, const CanonicalPackSetExportRequest& request,
     std::vector<ProjectPackExporter::PackBuildRecord>* outRecords);
 
+bool RecoverPackOutput(const QString& outputDir, QString* error);
+
 inline bool ValidateSnapshotBusIds(harkenstudio::ObjectId bus, harkenstudio::ObjectId parent,
                                    harkenstudio::ObjectId sendSource, harkenstudio::ObjectId sendTarget,
                                    harkenstudio::ObjectId downmix, harkenstudio::ObjectId master)

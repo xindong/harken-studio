@@ -90011,6 +90011,8 @@ bool CancelNativeQueueResetResourcesForTest(Engine& engine, std::uint32_t scratc
 namespace harken {
 void JournalCanonicalPackFileRef(TraceCallScribe& trace, const Engine& engine,
                                  const VnPackLoadDesc& load);
+VnResult SetGameplayCatalog(Engine& engine, VnPackHandle expectedInitHandle,
+                            const VnPackByteSpan* catalog);
 VnResult ActivateCanonicalPackSetV1(
     Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,
     VnCanonicalPackSetActivationReportV1* outReport);
@@ -91750,6 +91752,18 @@ VnResult Vn_UnloadPackEx(VnPackHandle handle, std::uint32_t flags) {
     harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_UNLOAD_PACK, result,
                                      VN_MONITOR_ENTITY_NONE, {}, handle, flags);
     return result;
+}
+
+VnResult Vn_SetGameplayCatalog(VnPackHandle expectedInitHandle,
+                              const VnPackByteSpan* catalog) {
+    if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+    try {
+        harken::Engine* engine = harken::detail::g_engine;
+        if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+        return harken::SetGameplayCatalog(*engine, expectedInitHandle, catalog);
+    } catch (...) {
+        return VN_DEVICE_ERROR;
+    }
 }
 
 VnResult Vn_ActivateCanonicalPackSetV1(
@@ -107448,7 +107462,8 @@ VnResult PrepareCanonicalOwners(
     PackVariablePublicationReason reason,
     PreparedCanonicalPublication* out,
     const PackAttenuationBindingMapV1* attenuationBindings = nullptr,
-    const PackComposition::CanonicalPackSetLedgerV1* ledger = nullptr) {
+    const PackComposition::CanonicalPackSetLedgerV1* ledger = nullptr,
+    const GameplayCatalogImage* gameplayCatalog = nullptr) {
     if (out == nullptr) {
         return VN_INVALID_ARG;
     }
@@ -107474,7 +107489,7 @@ VnResult PrepareCanonicalOwners(
         const VnResult composed = engine.packComposition.PrepareCommit(
             std::move(owners), catalog, initHandle, engine.config.maxActions,
             engine.serviceFrameClock, &prepared.composition, attenuationBindings, ledger,
-            reason == PackVariablePublicationReason::InitUnload);
+            reason == PackVariablePublicationReason::InitUnload, gameplayCatalog);
         if (composed != VN_OK) {
             const auto& facts = engine.packComposition.Facts();
             if (facts.conflictingStableId != VnObjectId{}) {
@@ -110013,6 +110028,36 @@ void JournalSuccessfulCanonicalPackSetActivation(
 }
 
 }  // namespace
+
+VnResult SetGameplayCatalog(Engine& engine, VnPackHandle expectedInitHandle,
+                            const VnPackByteSpan* catalog) {
+    if (catalog == nullptr || catalog->structSize != sizeof(VnPackByteSpan) ||
+        catalog->reserved0 != 0 || catalog->bytes == nullptr || expectedInitHandle == 0)
+        return VN_INVALID_ARG;
+    if (engine.canonicalPackSetBusy) return VN_IN_USE;
+    CanonicalSetScope scope(engine);
+    const auto* published = engine.packComposition.Published();
+    if (published == nullptr || published->initHandle != expectedInitHandle)
+        return VN_STALE_HANDLE;
+    GameplayCatalogImage image;
+    const auto parsed = ParseGameplayCatalog(
+        static_cast<const std::uint8_t*>(catalog->bytes), catalog->byteCount, &image);
+    if (parsed != VN_OK) return parsed;
+    std::vector<PackComposition::CandidateOwner> owners;
+    owners.reserve(published->owners.size());
+    for (const auto& owner : published->owners)
+        owners.push_back(PackComposition::Keep(owner));
+    PreparedCanonicalPublication prepared;
+    const auto result = PrepareCanonicalOwners(engine, std::move(owners), nullptr,
+        expectedInitHandle, PackVariablePublicationReason::ContentMutation,
+        &prepared, nullptr, &published->ledger, &image);
+    if (result != VN_OK) return result;
+    CommitCanonicalOwners(engine, &prepared);
+    auto trace = ::TraceStateful(&engine, kTraceCallSetGameplayCatalog);
+    trace.U64(expectedInitHandle).U64(catalog->byteCount)
+        .Bytes(catalog->bytes, static_cast<std::size_t>(catalog->byteCount));
+    return VN_OK;
+}
 
 VnResult ActivateCanonicalPackSetV1(
     Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,

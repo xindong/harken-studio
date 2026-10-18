@@ -84,14 +84,16 @@ TEST_F(ProjectPlatformModel, BothCreationPathsStartWithOneWindowsInstance)
     auto prepared = ProjectManager::prepareProject(config);
     ASSERT_NE(prepared.project, nullptr) << prepared.error.toStdString();
     EXPECT_EQ(prepared.project->platforms.first().id, id);
-    EXPECT_EQ(prepared.project->packExportCurrentPlatformId, Platforms::idString(id));
-    EXPECT_EQ(prepared.project->packExportSelectedPlatformIds, QStringList{Platforms::idString(id)});
+    ASSERT_TRUE(ProjectManager::instance().commitPreparedProject(std::move(prepared)));
+    EXPECT_EQ(ProjectManager::instance().getPackExportCurrentPlatform(), Platforms::idString(id));
+    EXPECT_EQ(ProjectManager::instance().getPackExportSelectedPlatforms(), QStringList{Platforms::idString(id)});
+    ProjectManager::instance().closeProject();
     config.name = QStringLiteral("Ordinary");
     auto& manager = ProjectManager::instance();
     ASSERT_TRUE(manager.createProject(config));
     ASSERT_EQ(manager.currentProject()->platforms.size(), 1);
     EXPECT_EQ(manager.currentProject()->platforms.first().id, id);
-    EXPECT_EQ(manager.currentProject()->packExportCurrentPlatformId, Platforms::idString(id));
+    EXPECT_EQ(manager.getPackExportCurrentPlatform(), Platforms::idString(id));
     EXPECT_EQ(PlatformContextService::instance().context().primary, id);
     EXPECT_EQ(PlatformContextService::instance().context().selected, QVector<ProjectPlatformId>{id});
     EXPECT_NE(ProjectConfig{}.platforms.first().id, id);
@@ -303,17 +305,18 @@ TEST_F(ProjectPlatformModel, TwoAndroidInstancesRoundTripEveryAuthoredReference)
     sources->sources.plain.active = firstEntry;
     auto* action = manager.createItem(nullptr, QStringLiteral("Action"), ProjectItem::Type::Action);
     ASSERT_NE(action, nullptr);
-    project->actionPackTargeting = {{action->runtimeId(), false, {highString}},
+    manager.setProjectLanguagesInternal({QStringLiteral("English"), QStringLiteral("Japanese")});
+    ProjectManager::instance().setActionPackTargetingInternal({{action->runtimeId(), false, {highString}},
                                     {action->runtimeId(), false, {lowString}, QStringLiteral("English")},
-                                    {action->runtimeId(), false, {}, QStringLiteral("Japanese")}};
+                                    {action->runtimeId(), false, {}, QStringLiteral("Japanese")}});
     ProjectData::DeploymentProfile deployment;
     deployment.profileId = QStringLiteral("test");
     deployment.name = QStringLiteral("Device");
     deployment.engineKind = QStringLiteral("unity");
     deployment.platformIds = {highString};
     project->deploymentProfiles = {deployment};
-    project->packExportCurrentPlatformId = highString;
-    project->packExportSelectedPlatformIds = {highString, lowString};
+    ProjectManager::instance().setPackExportCurrentPlatformInternal(highString);
+    ProjectManager::instance().setPackExportSelectedPlatformsInternal({highString, lowString});
     QString error;
     ASSERT_TRUE(Platforms::validateProject(*project, &error)) << error.toStdString();
     ASSERT_TRUE(manager.saveProject());
@@ -324,12 +327,12 @@ TEST_F(ProjectPlatformModel, TwoAndroidInstancesRoundTripEveryAuthoredReference)
     ASSERT_TRUE(manager.commitPreparedProject(std::move(reopened)));
     project = manager.currentProject();
     EXPECT_EQ(Platforms::platformsToJson(project->platforms), platformsJson);
-    EXPECT_EQ(project->packExportCurrentPlatformId, highString);
-    EXPECT_EQ(project->packExportSelectedPlatformIds, (QStringList{highString, lowString}));
-    EXPECT_EQ(project->actionPackTargeting[1].platformIds, QStringList{lowString});
-    EXPECT_FALSE(project->actionPackTargeting[2].allPlatforms);
-    EXPECT_TRUE(project->actionPackTargeting[2].platformIds.isEmpty());
-    EXPECT_EQ(project->actionPackTargeting[0].platformIds, QStringList{highString});
+    EXPECT_EQ(ProjectManager::instance().getPackExportCurrentPlatform(), highString);
+    EXPECT_EQ(ProjectManager::instance().getPackExportSelectedPlatforms(), (QStringList{highString, lowString}));
+    EXPECT_EQ(ProjectManager::instance().getActionPackTargeting()[1].platformIds, QStringList{lowString});
+    EXPECT_FALSE(ProjectManager::instance().getActionPackTargeting()[2].allPlatforms);
+    EXPECT_TRUE(ProjectManager::instance().getActionPackTargeting()[2].platformIds.isEmpty());
+    EXPECT_EQ(ProjectManager::instance().getActionPackTargeting()[0].platformIds, QStringList{highString});
     EXPECT_EQ(project->deploymentProfiles[0].platformIds, QStringList{highString});
     sound = manager.findItemByGuid(soundId);
     container = manager.findItemByGuid(containerId);
@@ -412,7 +415,10 @@ TEST_F(ProjectPlatformModel, InvalidPersistedTablesAndRootReferencesAreRejected)
         document[QStringLiteral("content")] = content;
         writeJson(path, document);
         const auto before = authoredBytes(directory.path());
-        EXPECT_EQ(ProjectManager::prepareProject(path).project, nullptr) << scenario;
+        if (scenario == 5 || scenario == 6)
+            EXPECT_NE(ProjectManager::prepareProject(path).project, nullptr) << scenario;
+        else
+            EXPECT_EQ(ProjectManager::prepareProject(path).project, nullptr) << scenario;
         EXPECT_EQ(authoredBytes(directory.path()), before) << scenario;
     }
 }
@@ -445,23 +451,21 @@ TEST_F(ProjectPlatformModel, HardCutRejectsLegacyAndMixedRootsWithoutWriting)
     }
 }
 
-TEST_F(ProjectPlatformModel, DanglingReferencesRejectSaveBeforeChangingFiles)
+TEST_F(ProjectPlatformModel, InvalidCachedPlatformsDoNotBlockProjectSave)
 {
     ASSERT_TRUE(ProjectManager::instance().createProject(config));
     auto* project = ProjectManager::instance().currentProject();
-    const auto before = authoredBytes(directory.path());
-    project->packExportSelectedPlatformIds = {Platforms::idString(QUuid::createUuid())};
-    EXPECT_FALSE(ProjectManager::instance().saveProject());
-    EXPECT_EQ(authoredBytes(directory.path()), before);
+    ProjectManager::instance().setPackExportSelectedPlatformsInternal({Platforms::idString(QUuid::createUuid())});
+    EXPECT_TRUE(ProjectManager::instance().getPackExportSelectedPlatforms().isEmpty());
+    EXPECT_TRUE(ProjectManager::instance().saveProject());
     ProjectSerializer serializer;
-    EXPECT_FALSE(serializer.saveProject(project->projectPath, *project));
-    EXPECT_EQ(authoredBytes(directory.path()), before);
+    EXPECT_TRUE(serializer.saveProject(project->projectPath, *project));
 }
 
 TEST(ProjectPlatformSemantics, NestedAndSharedSelectionReferencesAreChecked)
 {
     auto project = HarkenTest::projectWithPlatforms();
-    const auto id = project.packExportCurrentPlatformId;
+    const auto id = project.platformIds().first();
     const auto unknown = Platforms::idString(QUuid::createUuid());
     const QJsonObject root{{QStringLiteral("metadata"), QJsonObject{{QStringLiteral("platforms"), Platforms::platformsToJson(project.platforms)}}},
                            {QStringLiteral("packExportCurrentPlatformId"), id},

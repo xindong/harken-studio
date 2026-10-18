@@ -3,7 +3,6 @@
 #include "IPCBinaryMixerLevels.h"
 #include "IPCBinaryVoiceSnapshot.h"
 #include "ActionManager.h"
-#include "../PackGenerationRecord.h"
 #include <QFileInfo>
 #include <QSet>
 #include <QThread>
@@ -87,18 +86,8 @@ VQLEngine* IPCServer::vqlEngine() const
 void IPCServer::setProjectManager(ProjectManager* projectManager)
 {
     projectManager_ = projectManager;
-    PackGenerationRecordStore::instance().clear();
-
     if (projectManager_)
     {
-        connect(projectManager_, &ProjectManager::projectOpened, this,
-                [](ProjectData*) {
-            PackGenerationRecordStore::instance().clear();
-        }, Qt::DirectConnection);
-        connect(projectManager_, &ProjectManager::projectClosed, this,
-                []() {
-            PackGenerationRecordStore::instance().clear();
-        }, Qt::DirectConnection);
         connect(projectManager_, &ProjectManager::itemCreated, this,
                 [this](ProjectItem*) { if (vqlEngine_) vqlEngine_->notifyProjectChanged(); });
         connect(projectManager_, &ProjectManager::itemMoved, this,

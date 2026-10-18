@@ -1,3 +1,4 @@
+#include "../../Source/Tooling/PackC/GameplayPublication.h"
 #include <harken/Harken.h>
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "AssetPipeline/AssetRegistry.h"
@@ -203,7 +204,7 @@ protected:
     {
         ProjectPackExporter exporter;
         ProjectPackExporter::ExportOptions opts;
-        opts.platform = ProjectManager::instance().currentProject()->packExportCurrentPlatformId;
+        opts.platform = ProjectManager::instance().getPackExportCurrentPlatform();
         return exporter.ExportAllPacks(
             *ProjectManager::instance().currentProject(), outputDir, opts);
     }
@@ -232,6 +233,19 @@ protected:
     harken::PackCanonicalImage parseInit(const QString& outputDir)
     {
         return parsePack(QDir(outputDir).filePath(QStringLiteral("Init.bytes")));
+    }
+
+    harken::GameplayCatalogImage parseCatalog(const QString& outputDir)
+    {
+        const auto manifest = readJson(QDir(outputDir).filePath(HarkenEditor::Bridge::packManifestFileName()));
+        harkenstudiojson::JsonValue json;
+        std::string error;
+        std::vector<std::uint8_t> payload;
+        EXPECT_TRUE(harkenstudiojson::ParseJson(QJsonDocument(manifest).toJson(QJsonDocument::Compact).toStdString(), &json, &error, true));
+        EXPECT_TRUE(harkenstudiobuild::tooling::EncodeGameplayPublication(json, &payload));
+        harken::GameplayCatalogImage catalog;
+        EXPECT_EQ(VN_OK, harken::ParseGameplayCatalog(payload.data(), payload.size(), &catalog));
+        return catalog;
     }
 
     QTemporaryDir tempDir_;
@@ -277,7 +291,7 @@ TEST_F(ActionCatalogExportTest, CreateSaveExportTwiceKeepsDigestAndAuthoredName)
               QStringLiteral("Play_Fire"));
 
     const auto image = parseInit(firstDir);
-    ASSERT_TRUE(image.hasGameplayCatalog);
+    EXPECT_FALSE(image.hasGameplayCatalog);
     EXPECT_FALSE(image.hasCatalog);
     EXPECT_TRUE(image.hasBusDefinitionSnapshot);
     ASSERT_TRUE(image.hasPartition);
@@ -340,7 +354,7 @@ TEST_F(ActionCatalogExportTest, CreateSaveExportTwiceKeepsDigestAndAuthoredName)
               secondImage.requirement.packContentRevision);
     EXPECT_TRUE(harken::CanonicalBusTripleEqual(
         harken::SnapshotBusTriple(secondImage.busDefinitionSnapshotHeader), expected));
-    EXPECT_EQ(QString::number(image.gameplayCatalog.header.digest),
+    EXPECT_EQ(QString::number(parseCatalog(firstDir).header.digest),
               firstCatalog.value(QStringLiteral("digest")).toString());
 }
 
@@ -360,7 +374,7 @@ TEST_F(ActionCatalogExportTest, RenameExportsOnlyCurrentName)
     EXPECT_EQ(actions.at(0).toObject().value(QStringLiteral("name")).toString(),
               QStringLiteral("Play_Storm"));
     EXPECT_TRUE(retired.isEmpty());
-    EXPECT_TRUE(parseInit(outputDir).gameplayCatalog.retired.empty());
+    EXPECT_TRUE(parseCatalog(outputDir).retired.empty());
 }
 
 TEST_F(ActionCatalogExportTest, CurrentVariableNamesChangeInitContentRevision)
@@ -408,7 +422,7 @@ TEST_F(ActionCatalogExportTest, DeleteSaveReopenOmitsFormerName)
     EXPECT_TRUE(catalog.value(QStringLiteral("actions")).toArray().isEmpty());
     const QJsonArray retired = catalog.value(QStringLiteral("retired")).toArray();
     EXPECT_TRUE(retired.isEmpty());
-    EXPECT_TRUE(parseInit(outputDir).gameplayCatalog.retired.empty());
+    EXPECT_TRUE(parseCatalog(outputDir).retired.empty());
 }
 
 TEST_F(ActionCatalogExportTest, DuplicateUnicodeTargetsExportWithDistinctIdentities)
@@ -455,11 +469,11 @@ TEST_F(ActionCatalogExportTest, CloneRenameExportsCurrentIdentity)
     const QString outputDir = QDir(tempDir_.path()).filePath("out-clone-rename");
     const auto result = exportPacks(outputDir);
     ASSERT_TRUE(result.success) << result.error.toStdString();
-    const auto image = parseInit(outputDir);
-    EXPECT_TRUE(image.gameplayCatalog.retired.empty());
-    const auto row = std::find_if(image.gameplayCatalog.active.begin(), image.gameplayCatalog.active.end(),
+    const auto image = parseCatalog(outputDir);
+    EXPECT_TRUE(image.retired.empty());
+    const auto row = std::find_if(image.active.begin(), image.active.end(),
         [&](const auto& current) { return current.actionStableId == id; });
-    ASSERT_NE(row, image.gameplayCatalog.active.end());
+    ASSERT_NE(row, image.active.end());
     EXPECT_EQ(row->nameBindingRevision, 2u);
     EXPECT_TRUE(catalogOf(outputDir).value("retired").toArray().isEmpty());
 }
@@ -475,9 +489,9 @@ TEST_F(ActionCatalogExportTest, CloneDeleteOmitsFormerIdentity)
     const QString outputDir = QDir(tempDir_.path()).filePath("out-clone-delete");
     const auto result = exportPacks(outputDir);
     ASSERT_TRUE(result.success) << result.error.toStdString();
-    const auto image = parseInit(outputDir);
-    EXPECT_TRUE(image.gameplayCatalog.retired.empty());
-    EXPECT_TRUE(std::none_of(image.gameplayCatalog.active.begin(), image.gameplayCatalog.active.end(),
+    const auto image = parseCatalog(outputDir);
+    EXPECT_TRUE(image.retired.empty());
+    EXPECT_TRUE(std::none_of(image.active.begin(), image.active.end(),
         [&](const auto& current) { return current.actionStableId == id; }));
 }
 
@@ -523,11 +537,11 @@ TEST_F(ActionCatalogExportTest, NameReuseAndUndoRedoExportCurrentIdentity)
     auto check = [&](const QString& currentName, uint64_t revision) {
         const auto result = exportPacks(outputDir);
         ASSERT_TRUE(result.success) << result.error.toStdString();
-        const auto image = parseInit(outputDir);
-        EXPECT_TRUE(image.gameplayCatalog.retired.empty());
-        ASSERT_EQ(image.gameplayCatalog.active.size(), 1u);
-        EXPECT_EQ(image.gameplayCatalog.active.front().actionStableId, actionId);
-        EXPECT_EQ(image.gameplayCatalog.active.front().nameBindingRevision, revision);
+        const auto image = parseCatalog(outputDir);
+        EXPECT_TRUE(image.retired.empty());
+        ASSERT_EQ(image.active.size(), 1u);
+        EXPECT_EQ(image.active.front().actionStableId, actionId);
+        EXPECT_EQ(image.active.front().nameBindingRevision, revision);
         EXPECT_EQ(catalogOf(outputDir).value("actions").toArray().at(0).toObject()
                       .value("name").toString(), currentName);
     };

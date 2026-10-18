@@ -615,6 +615,8 @@
         "managed:Harken.Core/HarkenSDK/Unity/Harken/Runtime/Sdk/Packs.cs/Harken.Packs::public static unsafe VnResult LoadPack ( ulong packStableId , string utf8ContainmentRoot , out Pack pack )",
         "managed:Harken.Core/HarkenSDK/Unity/Harken/Runtime/Sdk/Packs.cs/Harken.Packs::public static unsafe VnResult LoadPack ( ulong packStableId , string utf8ContainmentRoot , string language , out Pack pack )",
         "native:Vn_ActivateCanonicalPackSetV1",
+        "native:Vn_SetGameplayCatalog",
+        "managed:Harken.Core/HarkenSDK/Unity/Harken/Runtime/Sdk/Packs.cs/Harken.Packs::public static unsafe VnResult SetGameplayCatalog ( Pack init , GameplayPublication publication )",
         "native:Vn_Init",
         "native:Vn_InspectInitPack",
         "native:Vn_LoadCurrentWorld",

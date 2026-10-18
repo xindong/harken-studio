@@ -49,11 +49,15 @@ namespace Harken.Samples
                 new CanonicalPackMember(initId, 2, expectedInitPath, platformRoot),
                 new CanonicalPackMember(contentPackStableId, 3, contentPath, platformRoot)
             };
-            result = Packs.ActivateCanonicalPackSet(members, 1, out _, out _);
+            result = GameplayPublication.Read(platformRoot, null, out var publication, out _);
+            if (result != VnResult.VN_OK) return result;
+            result = Packs.ActivateCanonicalPackSet(members, 1, out var activation, out _);
             if (result != VnResult.VN_OK)
             {
                 return result;
             }
+            result = Packs.SetGameplayCatalog(new Pack(activation.initHandle), publication);
+            if (result != VnResult.VN_OK) return result;
             return Actions.Post(actionName, Emitter.None, out firing);
         }
     }

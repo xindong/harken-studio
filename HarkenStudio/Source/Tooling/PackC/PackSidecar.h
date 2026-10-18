@@ -242,7 +242,8 @@ inline bool LoadPackSidecarManifest(const std::filesystem::path& root, PackSidec
             if (original == packs->end() || expected.erase(pack.packStableId) != 1
                 || original->name != pack.name || original->dependencies != pack.dependencies) return false;
             if (pack.isInit) {
-                if (pack.path != selectedLanguage + "/" + original->path) return false;
+                if (pack.path != original->path && pack.path != selectedLanguage + "/" + original->path) return false;
+                if (pack.path == original->path && pack.contentHash != original->contentHash) return false;
             } else if (pack.path != original->path || pack.contentHash != original->contentHash) return false;
         }
         *packs = std::move(selected);
