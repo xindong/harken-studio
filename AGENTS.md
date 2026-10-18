@@ -48,8 +48,6 @@ harken/
 └── README*.md | LICENSE | VERSION | NOTICE
 ```
 
-> 禁止自主在根目录下产生其他的文件夹或文件
-
 ## 配置构建规范
 
 @README.md
