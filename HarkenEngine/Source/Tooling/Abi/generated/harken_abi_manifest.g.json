@@ -22053,7 +22053,7 @@
         "kTraceFlagArgsUnreplayable": 1,
         "kTraceFlagCallbackContext": 2,
         "kTraceFlagRawReadableAttempt": 4,
-        "kTraceFormatVersion": 6,
+        "kTraceFormatVersion": 7,
         "kTraceFormatVersionV2": 2,
         "kTraceFormatVersionV3": 3,
         "kTraceFormatVersionV4": 4,
@@ -22076,16 +22076,17 @@
         "kTraceRecordMeterProbeUninstall": 8,
         "kTraceRecordPreparedTopologyPlan": 15,
         "kTraceRecordProjectGenerationInstallAck": 14,
+        "kTraceRecordSessionTerminate": 16,
         "kTraceRecordUpdateBegin": 3,
         "kTraceRecordUpdateEnd": 4,
         "kTraceRecordVariableOutcome": 13,
         "kTraceRequiredCountUnavailable": 4294967295,
         "kTraceStrNull": 4294967295
       },
-      "formatVersion": 6
+      "formatVersion": 7
     }
   },
-  "contractSha256": "b1729c529cadd876e156e920b3b29326e1fe8d061ca462a207692153a94d0fbe",
+  "contractSha256": "cd972ccf401d982f9d33d391b1b807ea6c78a1aec81f40c7d4cddac947a1e738",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
       "sha256": "140d02263a13509b1a34ce786c61aaae2937cdb060667b96cadd00a8a7b1e88e",
@@ -22129,7 +22130,7 @@
   "sectionSha256": {
     "nativeAbiSha256": "f9b82bbc00e26483f01cb7d94532a362aa22eb9bd93c8d55662f505e0ce60089",
     "remoteWireSha256": "d99304d71d24436e14a34fd990b3ded5e6ddd7bca6c13dc2065a9709d53577d3",
-    "traceFormatSha256": "5efdc3d3c1e257bf0fed7c951a0a9111e3d1d44b0ee5d57389265fd0707e56be"
+    "traceFormatSha256": "897457aabe1f306ae60f8dd19fe17bf7e37b61c4380c8f8732ce0087c68444ce"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
@@ -22141,8 +22142,8 @@
       "size": 4323
     },
     "HarkenEngine/Source/Runtime/api/src/TraceFormat.h": {
-      "sha256": "7ddef27e27211a862614822fe293dfa17ea3bb56c250b284bb18d6a1b123aeb7",
-      "size": 18968
+      "sha256": "c64f9c7270257df2bd276688938acee0ab9d8e56a4c2354585be047fd5f3a830",
+      "size": 19028
     },
     "HarkenEngine/Source/Tooling/Abi/gen_abi_manifest.py": {
       "sha256": "5bda54ee40f5af045fbc9a0a420c1695056061d83db9960c88f53b054bbf2214",

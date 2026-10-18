@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace {
 
@@ -78,7 +79,6 @@ void PublishAndApply(harken::VariableSliceTable& table,
 TEST(VariableSliceTable, ResetAllowsDisabledTargetsAndRejectsHardLimits) {
     harken::VariableSliceTable table;
     EXPECT_FALSE(table.Reset(0, 1, 1));
-    EXPECT_FALSE(table.Reset(harken::kVariableSliceRowHardLimit + 1, 1, 1));
     EXPECT_FALSE(table.Reset(1, harken::kVariableSliceTargetHardLimit + 1, 1));
     EXPECT_FALSE(
         table.Reset(1, 1, harken::kVariableSliceTargetPoolHardLimit + 1));
@@ -99,6 +99,37 @@ TEST(VariableSliceTable, ResetAllowsDisabledTargetsAndRejectsHardLimits) {
         table.Reset(1, 1, harken::kVariableSliceTargetPoolHardLimit));
     EXPECT_TRUE(table.Reset(1, harken::kVariableSliceTargetHardLimit,
                             harken::kVariableSliceTargetPoolHardLimit));
+}
+
+TEST(VariableSliceTable, SourcesAndStableProofSlotsCrossFormerFixedLimits) {
+    constexpr std::uint32_t capacity = 5600;
+    harken::VariableSliceTable table;
+    ASSERT_TRUE(table.Reset(capacity, 0, 0));
+    std::vector<harken::VariableSliceRef> rows(capacity);
+    for (std::uint32_t i = 0; i < capacity; ++i) {
+        ASSERT_TRUE(ReserveTargets(table, 0, i + 1, &rows[i]));
+    }
+    for (std::uint32_t i = 0; i + 1 < capacity; ++i) {
+        harken::VariableSliceSource source{};
+        ASSERT_TRUE(table.CaptureSource(rows[i], &source));
+        ASSERT_TRUE(table.AddSource(rows.back(), source));
+        ASSERT_TRUE(table.Publish(rows[i]));
+    }
+    EXPECT_EQ(capacity - 1, table.SourceCount(rows.back()));
+    std::uint32_t cursor = 0;
+    for (std::uint32_t i = 0; i + 1 < capacity; ++i) {
+        const auto* source = table.NextSource(rows.back(), &cursor);
+        ASSERT_NE(nullptr, source);
+        EXPECT_EQ(rows[i].slot, source->slice.slot);
+        EXPECT_EQ(rows[i].generation, source->slice.generation);
+        EXPECT_EQ(i + 1, source->ticket);
+        EXPECT_EQ(1u, table.SourceObserverCount(rows[i]));
+    }
+    EXPECT_EQ(nullptr, table.NextSource(rows.back(), &cursor));
+    ASSERT_TRUE(table.ClearPreparedSources(rows.back()));
+    for (std::uint32_t i = 0; i + 1 < capacity; ++i)
+        EXPECT_EQ(0u, table.SourceObserverCount(rows[i]));
+    EXPECT_EQ(0u, table.SourceCount(rows.back()));
 }
 
 TEST(VariableSliceTable, BankOnlySliceRequiresActualConsumptionAndDoesNotReserveTargets) {

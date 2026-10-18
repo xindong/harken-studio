@@ -1,6 +1,7 @@
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "Common/VariableOutcomeCapture.h"
 #include "Common/PackFoundationFixture.h"
 #include "UnitTest/PlayableStorageTestSupport.h"
 #include "UnitTest/OriginalServiceStorageTestAccess.h"
@@ -1945,11 +1946,12 @@ TEST(PackComposition, FirstInitPublicationTerminatesProvisionalContentWritesOnly
     EXPECT_EQ(world, e.variables.CurrentWorldGeneration());
     EXPECT_EQ(1u, e.variables.PendingCount());
     EXPECT_EQ(0u, e.variables.TerminationCount());
+    harkentest::VariableOutcomeCapture outcomes(e);
     ASSERT_EQ(VN_OK, activateInit(&init));
     EXPECT_EQ(world + 1, e.variables.CurrentWorldGeneration());
     EXPECT_EQ(0u, e.variables.PendingCount());
     VariableOutcomeRecord record{};
-    ASSERT_TRUE(e.variables.PopOutcome(&record));
+    ASSERT_TRUE(outcomes.Pop(&record));
     EXPECT_EQ(ticket, record.acceptedTicket.sequence);
     EXPECT_EQ(VariableOutcomeKind::WorldReplacement, record.outcome);
     EXPECT_EQ(world, record.world);
@@ -1963,7 +1965,7 @@ TEST(PackComposition, FirstInitPublicationTerminatesProvisionalContentWritesOnly
     ASSERT_EQ(VN_OK, Vn_QueryVariableTicket(&query, &result));
     EXPECT_EQ(VN_VARIABLE_TICKET_FOUND, result.status);
     EXPECT_EQ(VN_VARIABLE_OUTCOME_TERMINATED_WORLD, result.outcome);
-    EXPECT_FALSE(e.variables.PopOutcome(&record));
+    EXPECT_FALSE(outcomes.Pop(&record));
     EXPECT_EQ(world + 1, e.variables.CurrentWorldGeneration());
     EXPECT_EQ(1u, e.variables.TerminationCount());
     ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(&e));
@@ -2270,12 +2272,13 @@ TEST_F(NativeSlicePack, FailedPublicationPreservesAppliedBanksAndPendingTicket) 
         EXPECT_FLOAT_EQ(-0.25f, value);
         EXPECT_FALSE(e.variables.CurrentValue(harkentest::ObjectId(9), &value));
     }
+    harkentest::VariableOutcomeCapture outcomes(e);
     std::uint32_t applied = 0;
     for (std::uint32_t block = 0; block < 32 && e.variables.PendingCount() != 0; ++block) {
         e.nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
         VariableOutcomeRecord outcome{};
-        while (e.variables.PopOutcome(&outcome)) {
+        while (outcomes.Pop(&outcome)) {
             if (outcome.acceptedTicket.sequence == ticket) {
                 EXPECT_EQ(VariableOutcomeKind::Applied, outcome.outcome);
                 ++applied;
