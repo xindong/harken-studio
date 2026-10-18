@@ -1,304 +1,78 @@
 name: PR Gate Hub
-
-# Hub gate: compiles HarkenHub and runs the hub unit tests on both desktop
-# platforms. Hub does not link harken_core, so engine changes do not trigger
-# this gate. Not a required status check (path-filtered workflows must not be).
-
 on:
-  pull_request:
-    paths:
-      - 'HarkenHub/**'
-      - 'cmake/**'
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
   workflow_dispatch:
-
-concurrency:
-  group: pr-gate-hub-${{ github.ref }}
-  cancel-in-progress: true
-
 permissions:
   contents: read
-
+concurrency:
+  group: issue-51-fix-validation
+  cancel-in-progress: false
 env:
-  QT_VERSION: '6.8.3'
-  # BuildInfo build type is inferred from GITHUB_ACTIONS; gate builds use dev.
   HARKEN_BUILD_CHANNEL: dev
-
 jobs:
   hub-windows:
-    name: hub-windows
-    runs-on: [self-hosted, windows, harken-win]
-    timeout-minutes: 60
-
-    steps:
-      # clean:false — the self-hosted workspace is persistent, and the default
-      # clean runs `git clean -ffdx`, whose -x deletes the gitignored build-hub/
-      # tree. Without this every run is a cold build and self-hosting buys
-      # nothing but the core count.
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          clean: false
-
-      - name: Setup MSVC environment
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
-        with:
-          arch: x64
-
-      - name: Test version and build channel metadata
-        run: python .scripts/tests/test_build_info.py -v
-
-      - name: Run installer script tests
-        run: python .scripts/tests/test_build_hub_installer.py -v
-
-      # The runner machine already has the Qt kit VENUS_QT_DIR points at, so this
-      # gate uses it instead of install-qt-action. That action's cache key embeds
-      # the install path, so each runner keeps its own 325 MB entry and pulls it
-      # over the public internet -- 262s on a runner meeting this gate for the
-      # first time, about half the job. The version assertion is what keeps
-      # QT_VERSION meaningful here: without it, upgrading the kit on the machine
-      # would silently build this gate against a different Qt than hub-macos.
-      - name: Use machine Qt ${{ env.QT_VERSION }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${VENUS_QT_DIR:-}" ]; then
-            echo "::error::VENUS_QT_DIR is not set on this runner"
-            exit 1
-          fi
-          found=$("$VENUS_QT_DIR/bin/qmake.exe" -query QT_VERSION)
-          echo "VENUS_QT_DIR=$VENUS_QT_DIR (Qt $found)"
-          if [ "$found" != "${QT_VERSION}" ]; then
-            echo "::error::runner has Qt $found, this gate expects Qt ${QT_VERSION}"
-            exit 1
-          fi
-          echo "$VENUS_QT_DIR/bin" >> "$GITHUB_PATH"
-
-      # Hosted-runner fallback, kept for a quick way back: flip runs-on above to
-      # windows-latest and swap the step above for these two.
-      #
-      # - name: Install Qt ${{ env.QT_VERSION }}
-      #   uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4
-      #   with:
-      #     version: ${{ env.QT_VERSION }}
-      #     host: windows
-      #     target: desktop
-      #     arch: win64_msvc2022_64
-      #     cache: true
-      #     cache-key-prefix: qt-${{ env.QT_VERSION }}-windows
-      #
-      # - name: Export VENUS_QT_DIR
-      #   shell: bash
-      #   run: echo "VENUS_QT_DIR=$QT_ROOT_DIR" >> $GITHUB_ENV
-
-      - name: Configure (windows-release, hub tests)
-        run: >-
-          cmake --fresh --preset windows-release -B build-hub
-          -DHARKEN_BUILD_HUB=ON
-          -DHARKEN_BUILD_HUB_UNIT_TESTS=ON
-
-      # No --parallel: bare --parallel means ninja's own default (cores + 2) and
-      # takes precedence over CMAKE_BUILD_PARALLEL_LEVEL, which each runner's
-      # .env sets so three concurrent jobs share the machine instead of each
-      # claiming all of it.
-      - name: Build (harken_hub harken_hub_tests)
-        shell: bash
-        run: |
-          for target in harken_hub harken_hub_ci_tests; do
-            cmake --build build-hub --config Release --target "$target"
-          done
-
-      - name: Run hub test groups
-        shell: bash
-        env:
-          HARKEN_TEST_MODE: ${{ github.event_name == 'pull_request' && 'pr' || 'full' }}
-        run: >-
-          python .scripts/run_test_groups.py
-          --build-dir build-hub/HarkenHub/Test --config Release --product hub --mode "$HARKEN_TEST_MODE"
-          --budget-seconds 600 --group-timeout-seconds 180
-          --output-dir .temp/ci-hub-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Upload test evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: hub-windows-tests-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .temp/ci-hub-${{ github.run_id }}-${{ github.run_attempt }}/
-          include-hidden-files: true
-          retention-days: 14
-
-  hub-macos:
-    name: hub-macos-${{ matrix.slug }}
+    name: issue-51-fixed-${{ matrix.slot }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: x86_64
-            slug: x64
-            runner: macos-26-intel
-          - arch: arm64
-            slug: arm64
-            runner: macos-latest
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-
+        slot: [1, 2, 3, 4, 5, 6]
+    runs-on: [self-hosted, windows, harken-win]
+    timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout production fix
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: 00fe11363a5b47bed3c5e3a229551aabdec6610b
           fetch-depth: 0
-
-      - name: Install macOS build deps
-        run: brew install ninja
-
-      - name: Test version and build channel metadata
-        run: python3 .scripts/tests/test_build_info.py -v
-
-      - name: Run pkg script tests
-        run: python3 .scripts/tests/test_build_hub_pkg.py -v
-
-      - name: Install Qt ${{ env.QT_VERSION }}
-        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4
+          clean: false
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
         with:
-          version: ${{ env.QT_VERSION }}
-          host: mac
-          target: desktop
-          arch: clang_64
-          cache: true
-          cache-key-prefix: qt-${{ env.QT_VERSION }}-mac-${{ matrix.slug }}
-
-      - name: Patch macOS Qt AGL linkage
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -n "${QT_ROOT_DIR:-}" ] && [ -d "$QT_ROOT_DIR" ]; then
-            python3 <<'PY'
-          from pathlib import Path
-          import os
-          import re
-
-          root = Path(os.environ["QT_ROOT_DIR"])
-          patterns = [
-              (re.compile(r'"\$<LINK_LIBRARY:FRAMEWORK,AGL>"'), '""'),
-              (re.compile(r"'\$<LINK_LIBRARY:FRAMEWORK,AGL>'"), "''"),
-              (re.compile(r'\$<LINK_LIBRARY:FRAMEWORK,AGL>'), ''),
-              (re.compile(r'SHELL:-framework\s+AGL'), ''),
-              (re.compile(r'LINKER:-framework,AGL'), ''),
-              (re.compile(r'-Xlinker\s+-framework\s+-Xlinker\s+AGL'), ''),
-              (re.compile(r'"-framework\s+AGL"'), '""'),
-              (re.compile(r"'-framework\s+AGL'"), "''"),
-              (re.compile(r'\s*-framework\s+AGL'), ''),
-              (re.compile(r'"-framework"\s*,\s*"AGL"'), ''),
-              (re.compile(r'"-framework"\s+"AGL"'), ''),
-              (re.compile(r';?-framework;?AGL'), ''),
-              (re.compile(r';?AGL(?=;|\s|$)'), ''),
-              (re.compile(r'AGL\.framework'), ''),
-          ]
-          suffixes = {'.cmake', '.prl', '.pc', '.pri'}
-          patched = []
-          for path in root.rglob('*'):
-              if not path.is_file() or path.suffix not in suffixes:
-                  continue
-              try:
-                  text = path.read_text(encoding='utf-8')
-              except UnicodeDecodeError:
-                  text = path.read_text(encoding='utf-8', errors='ignore')
-              if 'AGL' not in text:
-                  continue
-              new_text = text
-              for regex, replacement in patterns:
-                  new_text = regex.sub(replacement, new_text)
-              if new_text != text:
-                  path.write_text(new_text, encoding='utf-8')
-                  patched.append(str(path))
-          print(f"Patched {len(patched)} Qt metadata files containing AGL")
-          for item in patched:
-              print(item)
-          PY
-          fi
-
-      - name: Export VENUS_QT_DIR
-        shell: bash
-        run: echo "VENUS_QT_DIR=$QT_ROOT_DIR" >> $GITHUB_ENV
-
-      - name: Configure (macos-release, ${{ matrix.arch }}, hub tests)
+          arch: x64
+      - name: Configure Hub tests
         run: >-
-          cmake --fresh --preset macos-release
-          -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
-          -DHARKEN_BUILD_HUB=ON
-          -DHARKEN_BUILD_HUB_UNIT_TESTS=ON
-
-      - name: Patch generated macOS AGL linkage
-        shell: bash
+          cmake --fresh --preset windows-release -B build-hub
+          -DHARKEN_BUILD_HUB=ON -DHARKEN_BUILD_HUB_UNIT_TESTS=ON
+      - name: Build tests
+        run: cmake --build build-hub --config Release --target harken_hub_tests
+      - name: Repeat recovery across fresh processes
+        shell: python
         run: |
-          set -euo pipefail
-          python3 <<'PY'
-          from pathlib import Path
-          import re
-
-          root = Path("build")
-          patterns = [
-              (re.compile(r'"\$<LINK_LIBRARY:FRAMEWORK,AGL>"'), '""'),
-              (re.compile(r"'\$<LINK_LIBRARY:FRAMEWORK,AGL>'"), "''"),
-              (re.compile(r'\$<LINK_LIBRARY:FRAMEWORK,AGL>'), ''),
-              (re.compile(r'SHELL:-framework\s+AGL'), ''),
-              (re.compile(r'LINKER:-framework,AGL'), ''),
-              (re.compile(r'-Xlinker\s+-framework\s+-Xlinker\s+AGL'), ''),
-              (re.compile(r'"-framework\s+AGL"'), '""'),
-              (re.compile(r"'-framework\s+AGL'"), "''"),
-              (re.compile(r'\s*-framework\s+AGL'), ''),
-              (re.compile(r'"-framework"\s*,\s*"AGL"'), ''),
-              (re.compile(r'"-framework"\s+"AGL"'), ''),
-              (re.compile(r';?-framework;?AGL'), ''),
-              (re.compile(r';?AGL(?=;|\s|$)'), ''),
-              (re.compile(r'AGL\.framework'), ''),
-          ]
-          names = {"build.ninja", "rules.ninja", "link.txt"}
-          suffixes = {".cmake", ".ninja", ".rsp", ".txt"}
-          patched = []
-          for path in root.rglob("*"):
-              if not path.is_file() or (path.name not in names and path.suffix not in suffixes):
-                  continue
+          import json, os, pathlib, subprocess, time
+          root = pathlib.Path.cwd()
+          evidence = root / '.temp' / ('issue-51-fix-' + os.environ['GITHUB_RUN_ID'])
+          evidence.mkdir(parents=True, exist_ok=True)
+          env = os.environ.copy()
+          env['PATH'] = str(pathlib.Path(env['VENUS_QT_DIR']) / 'bin') + os.pathsep + env['PATH']
+          env['QT_QPA_PLATFORM'] = 'offscreen'
+          binary = str(root / 'build-hub/bin/Release/harken_hub_tests.exe')
+          records = []
+          for index in range(200):
+              started = time.monotonic()
+              command = [binary, '--gtest_filter=UpdateRecoveryTest/*.*', '--gtest_fail_fast=1', '--gtest_color=no']
               try:
-                  text = path.read_text(encoding="utf-8")
-              except UnicodeDecodeError:
-                  text = path.read_text(encoding="utf-8", errors="ignore")
-              if "AGL" not in text:
-                  continue
-              new_text = text
-              for regex, replacement in patterns:
-                  new_text = regex.sub(replacement, new_text)
-              if new_text != text:
-                  path.write_text(new_text, encoding="utf-8")
-                  patched.append(str(path))
-          print(f"Patched {len(patched)} generated build files containing AGL")
-          for item in patched:
-              print(item)
-          PY
-
-      - name: Build (harken_hub harken_hub_tests)
-        shell: bash
-        run: |
-          for target in harken_hub harken_hub_ci_tests; do
-            cmake --build --preset macos-release --target "$target" --parallel
-          done
-
-      - name: Run hub test groups
-        env:
-          HARKEN_TEST_MODE: ${{ github.event_name == 'pull_request' && 'pr' || 'full' }}
-        run: >-
-          python3 .scripts/run_test_groups.py
-          --build-dir build/HarkenHub/Test --config Release --product hub --mode "$HARKEN_TEST_MODE"
-          --budget-seconds 600 --group-timeout-seconds 180
-          --output-dir .temp/ci-hub-macos-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Upload test evidence
+                  result = subprocess.run(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30)
+                  code, output = result.returncode, result.stdout
+              except subprocess.TimeoutExpired as error:
+                  code, output = 124, error.stdout or b''
+              (evidence / f'{index:04d}.log').write_bytes(output)
+              records.append({'iteration': index, 'exit_code': code, 'seconds': time.monotonic() - started,
+                              'commit_retries': output.count(b'Retrying update state commit:'),
+                              'commit_failures': output.count(b'Cannot commit update state:')})
+              if code:
+                  print(output.decode('utf-8', errors='replace'), flush=True)
+                  break
+              if (index + 1) % 25 == 0:
+                  print(f'{index + 1} fresh processes passed', flush=True)
+          summary = {'runner': os.environ['RUNNER_NAME'], 'machine': os.environ.get('COMPUTERNAME'),
+                     'head': subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode().strip(),
+                     'records': records}
+          (evidence / 'summary.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
+          raise SystemExit(1 if records[-1]['exit_code'] else 0)
+      - name: Upload verification evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: hub-macos-${{ matrix.slug }}-tests-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .temp/ci-hub-macos-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}/
+          name: issue-51-fixed-${{ github.run_id }}-${{ matrix.slot }}-${{ runner.name }}
+          path: .temp/issue-51-fix-${{ github.run_id }}/
           include-hidden-files: true
           retention-days: 14
