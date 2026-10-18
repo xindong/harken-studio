@@ -218,10 +218,10 @@ VnConfig AdmissionConfig(
     std::uint32_t mixLayout = VN_CHANNEL_LAYOUT_DEFAULT,
     std::uint32_t deviceLayout = VN_CHANNEL_LAYOUT_DEFAULT) {
     auto config = harkentest::MakeNullConfigLayout(4, 64, 48000, mixLayout, deviceLayout);
-    // Admission worlds contain a flat Play and at most four authored buses.
+    // Flat Play needs no nested scratch; topology replacement keeps old slots.
     config.maxTriggerDepth = 1;
     config.maxActionFirings = 8;
-    config.maxBuses = 4;
+    config.maxBuses = 8;
     config.delayEffectPoolCapacity = 1;
     return config;
 }
