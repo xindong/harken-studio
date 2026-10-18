@@ -1003,11 +1003,15 @@ TEST(CurrentWorldCompiler, ArtifactEnvelopeRefusesRetiredBodyVintage) {
                   mismatched.data(), mismatched.size(), observedBytes, header));
     EXPECT_EQ(harken::kCurrentWorldBodyVintageV19, header.bodyVintage);
     harken::CurrentWorldBodyImage image;
-    EXPECT_EQ(harken::CurrentWorldLoadStatusV1::DecodeFailed,
+    ASSERT_EQ(harken::CurrentWorldLoadStatusV1::Ok,
               harken::DecodeCurrentWorldArtifactBodyV1(
                   header, mismatched.data() + harken::kCurrentWorldArtifactHeaderBytes,
                   mismatched.size() - harken::kCurrentWorldArtifactHeaderBytes,
                   image));
+    EXPECT_EQ(harken::kCurrentWorldBodyVintageV19,
+              image.ProductionView()->sourceBodyVintage);
+    EXPECT_EQ(harken::WorldInstallStatus::InvalidFormat,
+              harken::ValidateCurrentWorldV1(*image.ProductionView()));
 }
 
 TEST(CurrentWorldCompiler, VintageEightRetainsV7WireAndCannotBecomeProduction) {
