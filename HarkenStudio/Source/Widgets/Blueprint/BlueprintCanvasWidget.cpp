@@ -543,6 +543,7 @@ void BlueprintCanvasWidget::rebuildFromProject()
 
 void BlueprintCanvasWidget::clearScene()
 {
+    pathSceneState_.reset();
     locationPing_->stop();
     locationPingObjectID_ = 0;
     chainRefreshPending_ = false;
@@ -595,6 +596,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
         // just edits the canvas initiated itself.
         chainSource_->refreshView();
     }
+    if (updatePathScene_()) return;
     clearScene();
 
     auto nodes = activeSource_->buildNodes();
@@ -830,7 +832,77 @@ void BlueprintCanvasWidget::materializeFromSource_()
     refreshNodeWaveforms_();
     refreshPlaybackActivity_();
     refreshPathFocus_();
+    if (activeSource_ == pathSource_.get() && pathSource_->graph().ok())
+        pathSceneState_ = PathSceneState{pathProjectId_, pathSource_->graph(), flowDir_, nodeContentFields_};
     emit signalChainViewChanged();
+}
+
+bool BlueprintCanvasWidget::updatePathScene_()
+{
+    if (activeSource_ != pathSource_.get() || !pathSceneState_
+        || pathSceneState_->projectId != pathProjectId_
+        || pathSceneState_->flowDirection != flowDir_
+        || pathSceneState_->contentFields != nodeContentFields_
+        || nodeFieldEditing_() || !pathDragStartPositions_.empty() || dragSourcePin_ || externalDragActive_)
+        return false;
+    const auto& previous = pathSceneState_->graph;
+    const auto& graph = pathSource_->graph();
+    if (!graph.ok() || previous.platform != graph.platform
+        || previous.nodes.size() != graph.nodes.size() || previous.edges.size() != graph.edges.size())
+        return false;
+    const auto nodes = pathSource_->buildNodes();
+    const auto edges = pathSource_->buildEdges();
+    if (nodes.size() != nodeMap_.size() || edges.size() != edges_.size()) return false;
+    for (size_t index = 0; index < graph.nodes.size(); ++index) {
+        const auto& before = previous.nodes[index];
+        const auto& after = graph.nodes[index];
+        if (before.key != after.key || before.objectID != after.objectID || before.type != after.type
+            || before.portPairs.size() != after.portPairs.size()
+            || signalPathNode(index)->contentInfo().fields() != nodes[index].content.fields())
+            return false;
+    }
+    for (size_t index = 0; index < graph.edges.size(); ++index) {
+        const auto& before = previous.edges[index];
+        const auto& after = graph.edges[index];
+        if (before.from != after.from || before.to != after.to || before.kind != after.kind
+            || before.routingSource != after.routingSource)
+            return false;
+        const auto* gain = signalPathGainNode(index);
+        if (gain && gain->contentInfo().fields() != edges[index].gainContent.fields()) return false;
+    }
+
+    locationPing_->stop();
+    locationPingObjectID_ = 0;
+    waveformNodes_.clear();
+    for (size_t index = 0; index < nodes.size(); ++index) {
+        const auto& desc = nodes[index];
+        auto* node = signalPathNode(index);
+        node->setTitle(desc.title);
+        node->setSubtitle(desc.subtitle);
+        if (node->contentInfo() != desc.content) node->setContentInfo(desc.content);
+        tagContentEditor_(qobject_cast<NodeContentEditor*>(node->contentWidget()),
+            ProjectManager::instance().findItemByGuid(graph.nodes[index].key.objectGuid));
+        node->setBlueprintWaveformMode(desc.waveformMode);
+        if (desc.waveformMode)
+            waveformNodes_[desc.mediaPath].push_back({node, desc.waveformRange});
+        else
+            node->setWaveformPeakData({});
+    }
+    for (size_t index = 0; index < edges.size(); ++index) {
+        if (auto* gain = signalPathGainNode(index)) {
+            if (gain->contentInfo() != edges[index].gainContent) gain->setContentInfo(edges[index].gainContent);
+            tagContentEditor_(qobject_cast<NodeContentEditor*>(gain->contentWidget()), routeGainTopicItem_(index));
+        }
+    }
+    layoutPathNodes_();
+    applyTreeVisibility_();
+    if (selectedObjectGuids_) applyProjectItemSelection_();
+    refreshNodeTitles_();
+    refreshNodeWaveforms_();
+    refreshPlaybackActivity_();
+    refreshPathFocus_();
+    emit signalChainViewChanged();
+    return true;
 }
 
 ConnectionPath* BlueprintCanvasWidget::signalPathEdge(size_t edgeIndex) const
@@ -2976,6 +3048,7 @@ SignalChainSource* BlueprintCanvasWidget::activeSignalChainSource() const
 
 void BlueprintCanvasWidget::useSignalPaths(const ProjectData& project, SignalPathGraph graph)
 {
+    pathSceneState_.reset();
     projectView_ = false;
     selectedPathKeys_.clear();
     selectedPathEdgeKeys_.clear();

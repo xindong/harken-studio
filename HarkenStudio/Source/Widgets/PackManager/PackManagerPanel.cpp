@@ -277,8 +277,12 @@ PackManagerPanel::PackManagerPanel(QWidget* parent)
     setupUI();
 
     auto& pm = ProjectManager::instance();
+    openedProject_ = pm.currentProject();
     connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
-            this, [this](const PlatformContext&) { populateProjectPackTable(); });
+            this, [this](const PlatformContext&) {
+        if (openedProject_ && openedProject_ == ProjectManager::instance().currentProject())
+            populateProjectPackTable();
+    });
     connect(&pm, &ProjectManager::actionPackTargetingChanged, this,
             [this]() { populateProjectPackTable(); });
     connect(&pm, &ProjectManager::projectLanguagesChanged, this,
@@ -321,12 +325,14 @@ PackManagerPanel::PackManagerPanel(QWidget* parent)
         populateProjectPackTable();
     });
 
-    connect(&pm, &ProjectManager::projectOpened, this, [this](ProjectData*) {
+    connect(&pm, &ProjectManager::projectOpened, this, [this](ProjectData* project) {
+        openedProject_ = project;
         static_cast<TableWidget*>(packTree_->parentWidget())->clearSelection();
         populatePlatformControls();
         refreshPackList();
     });
     connect(&pm, &ProjectManager::projectClosed, this, [this]() {
+        openedProject_ = nullptr;
         static_cast<TableWidget*>(packTree_->parentWidget())->clearSelection();
         searchEdit_->clear();
         lastResults_.clear();
@@ -688,11 +694,7 @@ void PackManagerPanel::populateProjectPackTable()
 
     const std::vector<ProjectPackExporter::ActionPackUnit> units =
         ProjectPackExporter::CollectActionPackUnits(*project);
-    const auto buildPlan = PackBuildPlanning::build(*project, viewPlatforms, {}, true);
-    QHash<harkenstudio::ObjectId, QStringList> languagesByAction;
-    for (const auto& variant : buildPlan.variants)
-        if (!languagesByAction[variant.actionStableId].contains(variant.variant.language))
-            languagesByAction[variant.actionStableId].append(variant.variant.language);
+    const auto languagesByAction = PackBuildPlanning::artifactLanguages(*project, viewPlatforms);
 
     const bool devMode = AppSettings::instance().developerMode();
     QHash<QString, QHash<QString, QString>> publishedActionPaths;
