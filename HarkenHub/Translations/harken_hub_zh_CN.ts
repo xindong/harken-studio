@@ -156,6 +156,7 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Project format incompatibility messages show the selected Studio version and the project and Studio Schema versions from the compatibility check.</source><translation>工程格式不兼容提示显示当前选择的 Studio 版本，并展示兼容性检查返回的工程与 Studio Schema 版本。</translation></message>
     <message><source>Hub and Studio updates preserve each other's progress when running together, and outdated operations cannot overwrite newer update state.</source><translation>Hub 与 Studio 同时更新时，各自的进度不会相互覆盖；过时操作也不会覆盖已经推进的更新状态。</translation></message>
     <message><source>Manual and background Studio downloads can run together. Packages remain protected from competing downloads and cache cleanup until installation handoff finishes.</source><translation>Studio 手动下载可与后台下载同时进行。下载包在交接给安装程序前，持续受到保护，避免被其他下载覆盖或被缓存清理删除。</translation></message>
     <message><source>Updates and local build checks recover from temporary file locks on Windows without reporting unsaved state as complete.</source><translation>Windows 上的更新与本地构建检查可在文件短暂占用后恢复，不再将尚未保存的状态报告为完成。</translation></message>
@@ -5035,8 +5036,24 @@ Harken Studio %2 使用 Schema %3。
     </message>
     <message>
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="67"/>
-        <source>This project requires a newer Studio. Choose or install a newer version.</source>
-        <translation>此工程需要较新的 Studio，请选择或安装较新版本。</translation>
+        <source>The selected Harken Studio %1 does not support this project format.
+Project format version: Schema %2
+Current Studio format version: Schema %3
+
+Choose or install a Harken Studio version that supports this project format.</source>
+        <translation>当前选择的 Harken Studio %1 不支持此工程格式。
+工程格式版本：Schema %2
+当前 Studio 格式版本：Schema %3
+
+请选择或安装支持此工程格式的 Harken Studio 版本。</translation>
+    </message>
+    <message>
+        <source>The selected Harken Studio %1 does not support this project format.
+
+Choose or install a Harken Studio version that supports this project format.</source>
+        <translation>当前选择的 Harken Studio %1 不支持此工程格式。
+
+请选择或安装支持此工程格式的 Harken Studio 版本。</translation>
     </message>
     <message>
         <location filename="../Source/Localization/ProjectOpenTranslations.cpp" line="72"/>
