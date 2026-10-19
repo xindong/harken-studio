@@ -43,7 +43,7 @@ recorded in `.docs/quality/DEPENDENCY_POLICY.md`).
 | LMDB | 0.9.33 | OpenLDAP Public License 2.8 (permissive, non-copyleft) | Persistent search-index backend (optional, `HARKEN_DISABLE_LMDB` falls back to memory) | Vendored at `HarkenStudio/ThirdParty/lmdb` |
 | dr_wav (dr_libs) | 0.14.4 | Public domain / MIT-0 (dual, user's choice) | Editor-side WAV read/write in the asset pipeline, the VST3 offline processor, and the runtime bridge's private preview/pack-source decode, independent of the runtime decoder | Vendored at `HarkenStudio/ThirdParty/dr_wav` (single header; dual license text embedded at end of `dr_wav.h`) |
 
-## Harken Hub only (`HarkenHub/` subtree, never in the runtime closure)
+## Harken Studio Hub only (`HarkenHub/` subtree, never in the runtime closure)
 
 | Name | Version | License | Use | How obtained |
 |---|---|---|---|---|

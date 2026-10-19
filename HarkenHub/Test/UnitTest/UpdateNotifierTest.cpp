@@ -52,7 +52,7 @@ TEST(UpdateNotifierTest, NotifiesStudioUpdateAwaitingManualInstall)
         QStringLiteral("run1.aaaa1111")));
     EXPECT_TRUE(notification.show);
     EXPECT_TRUE(notification.message.contains(
-        QStringLiteral("Open Harken Hub")));
+        QStringLiteral("Open Harken Studio Hub")));
 }
 
 TEST(UpdateNotifierTest, NotifiesHubUpdateAwaitingApproval)
@@ -63,7 +63,7 @@ TEST(UpdateNotifierTest, NotifiesHubUpdateAwaitingApproval)
         QStringLiteral("run2.bbbb2222")));
     EXPECT_TRUE(notification.show);
     EXPECT_TRUE(
-        notification.title.contains(QStringLiteral("Harken Hub")));
+        notification.title.contains(QStringLiteral("Harken Studio Hub")));
 }
 
 TEST(UpdateNotifierTest, StaysQuietForIntermediateStates)

@@ -90,7 +90,7 @@ void StartupCoordinator::startAfterHubConnection()
             connect(hubClient_.get(), &HubClient::forwardedCompleted,
                     this, [this](bool acknowledged) {
                 if (!acknowledged) {
-                    fail(tr("The project window was activated, but Harken Hub did not confirm the request."),
+                    fail(tr("The project window was activated, but Harken Studio Hub did not confirm the request."),
                          3, QStringLiteral("PROJECT_FORWARD_UNCONFIRMED"));
                     return;
                 }

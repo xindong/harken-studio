@@ -1,6 +1,6 @@
 name: Hub Artifact
 
-# Builds the Harken Hub artifacts: Windows MSI installer and macOS pkg.
+# Builds the Harken Studio Hub artifacts: Windows MSI installer and macOS pkg.
 # Called by release-artifacts.yml.
 on:
   workflow_call:
@@ -88,7 +88,7 @@ jobs:
           dotnet tool install --global wix --version ${{ env.WIX_VERSION }}
           wix extension add -g WixToolset.UI.wixext/${{ env.WIX_VERSION }}
 
-      - name: Build Harken Hub MSI and setup EXE
+      - name: Build Harken Studio Hub MSI and setup EXE
         shell: bash
         run: |
           set -euo pipefail
@@ -291,7 +291,7 @@ jobs:
           done
           exit $status
 
-      - name: Build Harken Hub pkg
+      - name: Build Harken Studio Hub pkg
         shell: bash
         run: |
           set -euo pipefail

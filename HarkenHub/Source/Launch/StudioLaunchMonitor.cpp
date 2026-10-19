@@ -196,7 +196,7 @@ void StudioLaunchMonitor::processMessage(const QByteArray& line)
                 rejectClient(expectedOperation_ ==
                                      QStringLiteral("createProject")
                                  ? hubText("This HarkenStudio version cannot "
-                                           "create projects from Harken Hub. "
+                                           "create projects from Harken Studio Hub. "
                                            "Update HarkenStudio and try again.")
                                  : hubText("HarkenStudio reported an unexpected "
                                            "launch operation"));

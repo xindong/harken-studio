@@ -16,7 +16,7 @@ git clone https://github.com/xindong/harken-studio.git
 
 ### The Four Products
 
-1. **Harken Hub** — the official distribution platform, providing Harken updates and downloads;
+1. **Harken Studio Hub** — the official distribution platform, providing Harken updates and downloads;
 2. **Harken Studio** — the designer-facing editor for arranging sounds and authoring playback logic;
 3. **Harken Engine** — the core sound engine, the primary deliverable for client and engine integration;
 4. **Harken SDK** — the standalone integration package for embedding Harken into game engines;

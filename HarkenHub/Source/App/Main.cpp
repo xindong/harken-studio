@@ -5,6 +5,7 @@
 #include <QDebug>
 #include <QFont>
 #include <QFontDatabase>
+#include <QIcon>
 #include <QMessageBox>
 #include <QStyleFactory>
 #include <QStyleHints>
@@ -888,6 +889,7 @@ int main(int argc, char* argv[])
     }
 
     QApplication app(argc, argv);
+    app.setWindowIcon(QIcon(QStringLiteral(":/Resources/icons/HubIcon.png")));
     VNH::HubLocalization::install(&app);
     app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);
     if (QStyle* fusion = QStyleFactory::create(QStringLiteral("Fusion")))
@@ -897,7 +899,7 @@ int main(int argc, char* argv[])
         QString::fromUtf8(Harken::BuildInfo::HubVersion.data(),
                           static_cast<int>(Harken::BuildInfo::HubVersion.size())));
 
-    qInfo().noquote() << "Harken Hub"
+    qInfo().noquote() << "Harken Studio Hub"
                       << QString::fromUtf8(Harken::BuildInfo::Label.data(),
                                            static_cast<int>(Harken::BuildInfo::Label.size()));
 
@@ -912,8 +914,8 @@ int main(int argc, char* argv[])
             return 0;
         if (!guard.retryPrimary()) {
             QMessageBox::critical(
-                nullptr, hubTr("Harken Hub"),
-                hubTr("Another Harken Hub instance is running but not "
+                nullptr, hubTr("Harken Studio Hub"),
+                hubTr("Another Harken Studio Hub instance is running but not "
                       "responding. Please close it and try again."));
             return 1;
         }
