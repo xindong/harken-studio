@@ -6,6 +6,7 @@
 #include "harken/core/MonitorLifecycleSink.h"
 #include "harken/core/MonitorRequest.h"
 #include "harken/core/PackReadinessContract.h"
+#include "harken/core/StableRowStorage.h"
 
 #include <cstdint>
 #include <utility>
@@ -299,9 +300,16 @@ public:
                      ActionFiringStepResult* out) const noexcept;
 
     std::uint32_t Capacity() const noexcept {
-        return static_cast<std::uint32_t>(rows_.size());
+        return rows_.Capacity();
     }
     std::uint32_t LiveCount() const noexcept { return liveCount_; }
+    std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
+    std::uint64_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
+    std::uint64_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
+    std::uint64_t RowReservedBytes() const noexcept { return rows_.ReservedBytes(); }
+    void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
+        rows_.SetCommitPageLimitForTests(pages);
+    }
     // Result payload requests, including hidden preparations and retained terminals.
     std::uint64_t ResultStorageBytes() const noexcept;
     void SetResultAllocationFailureForTests(bool fail) noexcept {
@@ -381,7 +389,7 @@ private:
     bool TryFinalize(Row& row) noexcept;
     bool PrepareResults(Row& row, std::uint32_t count) noexcept;
 
-    std::vector<Row> rows_;
+    StableRowStorage<Row> rows_;
     std::uint32_t liveCount_ = 0;
     std::uint32_t highWater_ = 0;
     std::uint32_t quarantinedCount_ = 0;

@@ -2,6 +2,7 @@
 #include "harken/core/ActionFiringTable.h"
 
 #include <gtest/gtest.h>
+#include <array>
 #include <type_traits>
 
 namespace {
@@ -90,6 +91,131 @@ TEST(ActionFiringTable, ExactCapacityAndOneMoreRefusalHaveNoVisibleEffect) {
     EXPECT_NE(second.Handle(), replacement.Handle());
     EXPECT_EQ(0u, table.LiveCount());
     EXPECT_EQ(0u, table.HighWater());
+}
+
+TEST(ActionFiringTable, UnissuedRowsStayUncommittedAndGrowthPreservesRetainedResults) {
+    harken::ActionFiringTable table;
+    constexpr auto capacity = harken::kMaxActionFiringsHard;
+    ASSERT_TRUE(table.Reset(capacity));
+    EXPECT_EQ(capacity, table.Capacity());
+    EXPECT_EQ(capacity, table.FreeCount());
+    EXPECT_EQ(0u, table.ConstructedRowCount());
+    EXPECT_EQ(0u, table.RowStorageBytes());
+    EXPECT_EQ(0u, table.RowCommittedBytes());
+    EXPECT_GT(table.RowReservedBytes(), 0u);
+    harken::ActionFiringSnapshot snapshot;
+    EXPECT_EQ(0u, table.CaptureMonitorIdentityAt(capacity - 1, &snapshot));
+    EXPECT_EQ(0u, table.ActiveRootAt(capacity - 1));
+
+    std::array<harken::PreparedActionFiring, capacity> firings;
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 1, 1, &firings[0]));
+    const auto rowBytes = table.RowStorageBytes();
+    harken::ActionFiringStepResult result;
+    result.state = harken::ActionStepState::Succeeded;
+    result.executionOrdinal = 123;
+    ASSERT_TRUE(table.SetPreparedStep(firings[0], 0, result));
+    ASSERT_TRUE(table.Commit(&firings[0], 9));
+    for (std::uint32_t index = 1; index < capacity; ++index) {
+        ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(index + 1), 1, 0, &firings[index]));
+        ASSERT_TRUE(table.Commit(&firings[index], 9));
+    }
+    EXPECT_EQ(capacity, table.ConstructedRowCount());
+    EXPECT_EQ(capacity * rowBytes, table.RowStorageBytes());
+    EXPECT_GE(table.RowCommittedBytes(), table.RowStorageBytes());
+    EXPECT_GE(table.RowReservedBytes(), table.RowCommittedBytes());
+    EXPECT_EQ(capacity, table.LiveCount());
+    EXPECT_EQ(capacity, table.HighWater());
+    EXPECT_EQ(0u, table.FreeCount());
+    ASSERT_TRUE(table.CaptureStep(firings[0].Handle(), 0, &result));
+    EXPECT_EQ(123u, result.executionOrdinal);
+    const auto committed = table.RowCommittedBytes();
+    for (const auto& firing : firings) ASSERT_TRUE(table.ReleaseRoot(firing.Handle()));
+    EXPECT_EQ(capacity, table.FreeCount());
+    EXPECT_EQ(0u, table.ResultStorageBytes());
+    EXPECT_EQ(committed, table.RowCommittedBytes());
+    EXPECT_EQ(capacity, table.HighWater());
+    ASSERT_TRUE(table.Reset(capacity));
+    EXPECT_EQ(0u, table.RowCommittedBytes());
+    EXPECT_EQ(0u, table.ConstructedRowCount());
+    EXPECT_FALSE(table.CaptureStep(firings[0].Handle(), 0, &result));
+}
+
+TEST(ActionFiringTable, PageFailureKeepsUnpublishedPrefixChargedAndParentUnchanged) {
+    harken::ActionFiringTable table;
+    constexpr auto capacity = harken::kMaxActionFiringsHard;
+    ASSERT_TRUE(table.Reset(capacity));
+    table.SetRowCommitPageLimitForTests(0);
+    harken::PreparedActionFiring root, child;
+    EXPECT_FALSE(table.PrepareRoot(harkentest::ObjectId(1), 1, 1, &root));
+    EXPECT_FALSE(root.Valid());
+    EXPECT_EQ(0u, table.ConstructedRowCount());
+    EXPECT_EQ(0u, table.RowCommittedBytes());
+    EXPECT_EQ(1u, table.RefusalCount());
+
+    table.SetRowCommitPageLimitForTests(1);
+    EXPECT_FALSE(table.SetFreeGenerationForTests(capacity - 1, 100));
+    EXPECT_GT(table.RowCommittedBytes(), 0u);
+    EXPECT_EQ(0u, table.RowStorageBytes());
+    EXPECT_EQ(0u, table.ConstructedRowCount());
+    EXPECT_EQ(capacity, table.FreeCount());
+    EXPECT_EQ(0u, table.HighWater());
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 1, 1, &root));
+    ASSERT_TRUE(table.Commit(&root, 9));
+    const auto rowsOnPage = table.RowCommittedBytes() / table.RowStorageBytes();
+    ASSERT_LT(rowsOnPage, capacity);
+    std::vector<harken::PreparedActionFiring> fillers(rowsOnPage - 1);
+    for (auto& filler : fillers)
+        ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(2), 1, 0, &filler));
+    const auto resultBytes = table.ResultStorageBytes();
+    EXPECT_FALSE(table.PrepareChild(root.Handle(), harkentest::ObjectId(3),
+        harken::ActionFiringOwnerStamp::DirectWorld(1), 1, &child));
+    EXPECT_FALSE(child.Valid());
+    EXPECT_EQ(rowsOnPage, table.ConstructedRowCount());
+    EXPECT_EQ(capacity - rowsOnPage, table.FreeCount());
+    EXPECT_EQ(resultBytes, table.ResultStorageBytes());
+    harken::ActionFiringSnapshot snapshot;
+    ASSERT_TRUE(table.Capture(root.Handle(), &snapshot));
+    EXPECT_EQ(0u, snapshot.childFiringCount);
+    EXPECT_EQ(2u, table.RefusalCount());
+    EXPECT_EQ(1u, table.LiveCount());
+    EXPECT_EQ(1u, table.HighWater());
+    table.SetRowCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(table.PrepareChild(root.Handle(), harkentest::ObjectId(3),
+        harken::ActionFiringOwnerStamp::DirectWorld(1), 1, &child));
+    ASSERT_TRUE(table.Abandon(&child));
+    ASSERT_TRUE(table.Capture(root.Handle(), &snapshot));
+    EXPECT_EQ(0u, snapshot.childFiringCount);
+    ASSERT_TRUE(table.MarkTerminal(root.Handle()));
+    ASSERT_TRUE(table.ReleaseRoot(root.Handle()));
+    for (auto& filler : fillers) ASSERT_TRUE(table.Abandon(&filler));
+    EXPECT_EQ(capacity, table.FreeCount());
+}
+
+TEST(ActionFiringTable, AudioThreadCannotGrowResetOrReleaseControlOwnedStorage) {
+    harken::ActionFiringTable table;
+    ASSERT_TRUE(table.Reset(3));
+    harken::PreparedActionFiring prepared, terminal, rejected;
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 1, 1, &prepared));
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(2), 1, 0, &terminal));
+    ASSERT_TRUE(table.Commit(&terminal, 9));
+    const auto committed = table.RowCommittedBytes();
+    const auto resultBytes = table.ResultStorageBytes();
+    {
+        harken::memguard::AudioThreadScope audio;
+        EXPECT_FALSE(table.Reset(3));
+        EXPECT_FALSE(table.PrepareRoot(harkentest::ObjectId(3), 1, 1, &rejected));
+        EXPECT_FALSE(table.PrepareChild(prepared, harkentest::ObjectId(3), 1, 1, &rejected));
+        EXPECT_FALSE(table.Abandon(&prepared));
+        EXPECT_FALSE(table.ReleaseRoot(terminal.Handle()));
+    }
+    EXPECT_EQ(2u, table.ConstructedRowCount());
+    EXPECT_EQ(committed, table.RowCommittedBytes());
+    EXPECT_EQ(resultBytes, table.ResultStorageBytes());
+    EXPECT_TRUE(prepared.Valid());
+    EXPECT_FALSE(rejected.Valid());
+    ASSERT_TRUE(table.Abandon(&prepared));
+    ASSERT_TRUE(table.ReleaseRoot(terminal.Handle()));
+    EXPECT_EQ(3u, table.FreeCount());
 }
 
 TEST(ActionFiringTable, ResultsUseActualLengthAndSurviveTerminalUntilRelease) {
