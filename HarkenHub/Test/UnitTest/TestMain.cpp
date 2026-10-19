@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+namespace HarkenHubTest { int runStateWriter(const QStringList& arguments); }
+
 int main(int argc, char* argv[])
 {
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
@@ -15,6 +17,8 @@ int main(int argc, char* argv[])
     QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(false);
+    if (app.arguments().value(1) == QStringLiteral("--update-state-writer"))
+        return HarkenHubTest::runStateWriter(app.arguments());
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }

@@ -6,6 +6,11 @@
 #include <QFile>
 #include <QTemporaryDir>
 
+#include <QCoreApplication>
+#include <QProcess>
+#include <QTextStream>
+#include <QThread>
+
 using VNH::UpdateStateRecord;
 using VNH::UpdateStateStore;
 
@@ -85,6 +90,86 @@ TEST_F(UpdateStateStoreTest, RejectsIncompleteRecords)
     EXPECT_FALSE(UpdateStateStore::save(record, kNow));
 }
 
+TEST_F(UpdateStateStoreTest, ConcurrentProcessesPreserveIndependentProducts)
+{
+    QProcess studio;
+    QProcess hub;
+    const auto readReply = [](QProcess& process) {
+        while (!process.canReadLine()) {
+            if (!process.waitForReadyRead(5000))
+                return QByteArray();
+        }
+        return process.readLine().trimmed();
+    };
+    for (auto* process : {&studio, &hub}) {
+        process->start(QCoreApplication::applicationFilePath(),
+                       {QStringLiteral("--update-state-writer"), dir.path(),
+                        process == &studio ? QStringLiteral("HarkenStudio")
+                                           : QStringLiteral("HarkenHub")});
+        ASSERT_EQ(readReply(*process), QByteArrayLiteral("ready"));
+    }
+    for (int round = 1; round <= 20; ++round) {
+        const QByteArray command = QByteArray::number(round) + " " +
+            QByteArray::number(QDateTime::currentMSecsSinceEpoch() + 15) + "\n";
+        studio.write(command);
+        hub.write(command);
+        studio.waitForBytesWritten(5000);
+        hub.waitForBytesWritten(5000);
+        ASSERT_EQ(readReply(studio), QByteArrayLiteral("ok"));
+        ASSERT_EQ(readReply(hub), QByteArrayLiteral("ok"));
+        const auto studioState = UpdateStateStore::load(QStringLiteral("HarkenStudio"));
+        const auto hubState = UpdateStateStore::load(QStringLiteral("HarkenHub"));
+        EXPECT_EQ(studioState.releaseSequence, round);
+        if (round % 2 == 0)
+            EXPECT_FALSE(hubState.found);
+        else
+            EXPECT_EQ(hubState.releaseSequence, round);
+    }
+    for (auto* process : {&studio, &hub}) {
+        process->write("quit\n");
+        ASSERT_TRUE(process->waitForFinished(5000));
+        EXPECT_EQ(process->exitCode(), 0);
+    }
+}
+
+TEST_F(UpdateStateStoreTest, StaleSnapshotsCannotReplaceOrClearNewerState)
+{
+    UpdateStateRecord record;
+    record.product = QStringLiteral("HarkenStudio");
+    record.state = QStringLiteral("Downloading");
+    ASSERT_TRUE(UpdateStateStore::save(record, kNow));
+    const auto stale = UpdateStateStore::load(record.product);
+    record.state = QStringLiteral("AwaitingBridge");
+    record.transactionId = QStringLiteral("new-transaction");
+    ASSERT_EQ(UpdateStateStore::replace(stale, record, kNow),
+              UpdateStateStore::WriteResult::Saved);
+    const auto current = UpdateStateStore::load(record.product);
+    EXPECT_EQ(UpdateStateStore::replace(stale, stale, kNow),
+              UpdateStateStore::WriteResult::Conflict);
+    EXPECT_EQ(UpdateStateStore::clear(stale), UpdateStateStore::WriteResult::Conflict);
+    EXPECT_EQ(UpdateStateStore::load(record.product), current);
+    ASSERT_EQ(UpdateStateStore::clear(current), UpdateStateStore::WriteResult::Saved);
+    EXPECT_EQ(UpdateStateStore::replace(current, current, kNow),
+              UpdateStateStore::WriteResult::Conflict);
+    EXPECT_FALSE(UpdateStateStore::load(record.product).found);
+}
+
+TEST_F(UpdateStateStoreTest, UnreadableStateCannotBeReplacedWithAnEmptySnapshot)
+{
+    QFile file(UpdateStateStore::filePath());
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    const QByteArray contents("{broken");
+    ASSERT_EQ(file.write(contents), contents.size());
+    file.close();
+    UpdateStateRecord record;
+    record.product = QStringLiteral("HarkenStudio");
+    record.state = QStringLiteral("Downloading");
+    EXPECT_FALSE(UpdateStateStore::save(record, kNow));
+    EXPECT_FALSE(UpdateStateStore::clear(record.product));
+    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
+    EXPECT_EQ(file.readAll(), contents);
+}
+
 #if defined(Q_OS_WIN)
 TEST_F(UpdateStateStoreTest, FailedReplacementPreservesAllRecords)
 {
@@ -114,5 +199,35 @@ TEST_F(UpdateStateStoreTest, FailedReplacementPreservesAllRecords)
     EXPECT_EQ(UpdateStateStore::load(hub.product).state, hub.state);
 }
 #endif
+
+}
+
+namespace HarkenHubTest {
+
+int runStateWriter(const QStringList& arguments)
+{
+    qputenv("HARKEN_HUB_USER_ROOT", arguments.value(2).toUtf8());
+    UpdateStateRecord record;
+    record.product = arguments.value(3);
+    record.state = QStringLiteral("Downloading");
+    QTextStream input(stdin);
+    QTextStream output(stdout);
+    output << "ready" << Qt::endl;
+    for (;;) {
+        const QString line = input.readLine();
+        if (line.isNull() || line == QStringLiteral("quit"))
+            return 0;
+        const auto parts = line.split(QLatin1Char(' '));
+        record.releaseSequence = parts.value(0).toLongLong();
+        const qint64 startAt = parts.value(1).toLongLong();
+        while (QDateTime::currentMSecsSinceEpoch() < startAt)
+            QThread::yieldCurrentThread();
+        const bool ok = record.product == QStringLiteral("HarkenHub") &&
+                                record.releaseSequence % 2 == 0
+                            ? UpdateStateStore::clear(record.product)
+                            : UpdateStateStore::save(record, QDateTime::currentDateTimeUtc());
+        output << (ok ? "ok" : "failed") << Qt::endl;
+    }
+}
 
 }

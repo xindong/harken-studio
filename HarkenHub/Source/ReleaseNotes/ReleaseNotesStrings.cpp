@@ -1,6 +1,11 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub and Studio updates preserve each other's progress when running together, and outdated operations cannot overwrite newer update state."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Manual and background Studio downloads can run together. Packages remain protected from competing downloads and cache cleanup until installation handoff finishes."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Updates and local build checks recover from temporary file locks on Windows without reporting unsaved state as complete."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Studio installation, repair, and removal recover when Windows briefly locks the installation index."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Reopening a project in a compatible Studio version activates its existing window, and Hub recognizes a successful handoff."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Choose SDKs bundled with installed Studio versions directly from the SDK source dropdown. Click anywhere in the field to open the list, or browse for another folder."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "SDK checks show version changes and file counts grouped by addition, update, removal, and preservation. Preserved files are collapsed, and a separate check log highlights failures, warnings, and recommended actions."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "New Studio installations use shorter folder names without lengthy build identifiers. Different builds of the same version can still be installed side by side."),

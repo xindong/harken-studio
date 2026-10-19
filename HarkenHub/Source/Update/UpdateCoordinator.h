@@ -41,19 +41,23 @@ public:
 
     void handleCheckResult(const UpdateCheckResult& result,
                            const QDateTime& now);
-    void beginAutoInstall(const QDateTime& now);
+    void beginAutoInstall(const QDateTime& now,
+                          std::shared_ptr<DownloadLease> lease = {});
 
 signals:
     void stateChanged(const VNH::UpdateStateRecord& record);
 
 private:
-    bool persist(UpdateStateRecord record, const QDateTime& now);
+    bool persist(UpdateStateRecord& record, const QDateTime& now,
+                 const UpdateStateRecord& expected);
     void restoreState(const UpdateStateRecord& record,
                       const UpdateStateRecord& pending);
-    void beginDownload(const ReleaseManifest& manifest, const QDateTime& now);
+    void beginDownload(const ReleaseManifest& manifest, const QDateTime& now,
+                       std::shared_ptr<DownloadLease> lease);
     void handleDownloadFinished(const DownloadResult& result);
     void verifyDownloaded(const QString& packagePath,
-                          const ReleaseManifest& manifest, const QDateTime& now);
+                          const ReleaseManifest& manifest, const QDateTime& now,
+                          std::shared_ptr<DownloadLease> lease = {});
     void startBridgePoll();
     void pollBridgeOutcome();
     bool isBuildInstalled(const QString& buildId) const;

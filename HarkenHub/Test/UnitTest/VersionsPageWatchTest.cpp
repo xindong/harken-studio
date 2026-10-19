@@ -3,8 +3,10 @@
 #include "Projects/ProjectStore.h"
 #include "Support/StudioProtocolTestUtils.h"
 #include "Transactions/UninstallExecutor.h"
+#include "Update/UpdateStateStore.h"
 
 #include <QComboBox>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFrame>
@@ -13,6 +15,9 @@
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QSemaphore>
+#include <QScopeGuard>
+#include <QThreadPool>
 
 #include <gtest/gtest.h>
 
@@ -146,6 +151,52 @@ TEST_F(VersionsPageIssuesTest, LegacyVersionIsVisibleAndDoesNotNeedRepair)
     ASSERT_EQ(page.installedVersions().size(), 1u);
     EXPECT_EQ(page.installedVersions().front().capabilitiesVersion, 1);
     EXPECT_TRUE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
+}
+
+TEST_F(VersionsPageIssuesTest, AsyncInstallationOwnsAllCacheInputsAfterViewCloses)
+{
+    VNH::UpdateStateRecord record;
+    record.product = QStringLiteral("HarkenStudio");
+    record.state = QStringLiteral("AwaitingUserInstall");
+    record.buildId = QStringLiteral("build");
+    record.downloadPath = VNH::userDataDir() + QStringLiteral("/downloads/build.zip");
+    record.manifestEnvelopePath = VNH::userDataDir() + QStringLiteral("/downloads/manual/build.manifest");
+    write(record.downloadPath, "package");
+    write(record.manifestEnvelopePath, "manifest");
+    ASSERT_TRUE(VNH::UpdateStateStore::save(record, QDateTime::currentDateTimeUtc()));
+
+    auto* pool = QThreadPool::globalInstance();
+    pool->waitForDone();
+    const int maxThreads = pool->maxThreadCount();
+    pool->setMaxThreadCount(1);
+    QSemaphore started;
+    QSemaphore release;
+    pool->start([&]() { started.release(); release.acquire(); });
+    const auto guard = qScopeGuard([&]() {
+        release.release();
+        pool->waitForDone();
+        pool->setMaxThreadCount(maxThreads);
+    });
+    ASSERT_TRUE(started.tryAcquire(1, 5000));
+    {
+        VersionsPage page(&store);
+        page.refresh();
+        QPushButton* installButton = nullptr;
+        for (auto* button : page.findChildren<QPushButton*>())
+            if (button->text() == QCoreApplication::translate("HarkenHub", "Install"))
+                installButton = button;
+        ASSERT_NE(installButton, nullptr);
+        ASSERT_TRUE(installButton->isEnabled());
+        installButton->click();
+        EXPECT_FALSE(VNH::DownloadLease::acquire(record.downloadPath));
+        EXPECT_FALSE(VNH::DownloadLease::acquire(record.manifestEnvelopePath));
+    }
+    EXPECT_FALSE(VNH::DownloadLease::acquire(record.downloadPath));
+    EXPECT_FALSE(VNH::DownloadLease::acquire(record.manifestEnvelopePath));
+    release.release();
+    ASSERT_TRUE(pool->waitForDone(5000));
+    EXPECT_TRUE(VNH::DownloadLease::acquire(record.downloadPath));
+    EXPECT_TRUE(VNH::DownloadLease::acquire(record.manifestEnvelopePath));
 }
 
 TEST_F(VersionsPageIssuesTest, NewerProtocolRemainsInstalledWithSpecificHubLimitations)

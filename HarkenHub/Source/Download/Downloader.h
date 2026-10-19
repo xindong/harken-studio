@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Download/BackoffPolicy.h"
+#include "Download/DownloadLease.h"
 
 #include <QFile>
 #include <QNetworkAccessManager>
@@ -21,6 +22,7 @@ struct DownloadRequest
     qint64 expectedSizeBytes = -1;
     int maxAttempts = 5;
     int transferTimeoutMs = 30000;
+    std::shared_ptr<DownloadLease> lease;
 };
 
 struct DownloadResult
@@ -31,6 +33,7 @@ struct DownloadResult
     QString filePath;
     int attemptsUsed = 0;
     int httpStatus = 0;
+    std::shared_ptr<DownloadLease> lease;
 };
 
 class Downloader : public QObject
@@ -43,7 +46,7 @@ public:
     void setBackoffPolicy(const BackoffPolicy& policy);
     bool isActive() const;
 
-    bool start(const DownloadRequest& request);
+    bool start(const DownloadRequest& request, QString* error = nullptr);
     void cancel();
 
     static QString partPath(const QString& targetPath);

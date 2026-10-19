@@ -60,13 +60,15 @@ signals:
     void stateChanged(const VNH::UpdateStateRecord& record);
 
 private:
-    bool persist(UpdateStateRecord record, const QDateTime& now);
+    bool persist(UpdateStateRecord& record, const QDateTime& now,
+                 const UpdateStateRecord& expected);
     static void restoreState(const UpdateStateRecord& record,
                              const UpdateStateRecord& pending);
     void handleDownloadFinished(const DownloadResult& result);
 
     UpdateChecker checker_;
     Downloader downloader_;
+    std::weak_ptr<DownloadLease> activeDownloadLease_;
     Options options_;
     ReleaseManifest activeManifest_;
     QString activeObjectPath_;

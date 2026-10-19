@@ -302,6 +302,72 @@ TEST_F(HubSelfUpdateTest, ApproveViaBridgeQueuesHandoffAndDispatches)
         backupRoot.entryList(QDir::Dirs | QDir::NoDotAndDotDot).isEmpty());
 }
 
+TEST_F(HubSelfUpdateTest, DownloadOwnershipSurvivesImmediateBridgeHandoff)
+{
+    qputenv("HARKEN_HUB_BRIDGE_COMMAND", "noop");
+    const QByteArray content = QByteArrayLiteral("installer-bytes");
+    const auto ready = readyBridgeRecord(content);
+    QFile envelope(ready.manifestEnvelopePath);
+    ASSERT_TRUE(envelope.open(QIODevice::ReadOnly));
+
+    HarkenHubTest::RangeHttpServer server;
+    ASSERT_TRUE(server.listen());
+    server.setPayload(content, QByteArrayLiteral("hub-build"));
+    HubSelfUpdate::Options options;
+    options.serverBaseUrl = server.baseUrl();
+    options.currentVersion = QStringLiteral("0.1.0");
+    options.downloadDir = dir.filePath(QStringLiteral("hub-updates"));
+    HubSelfUpdate update;
+    HubSelfUpdate contender;
+    update.configure(options);
+    contender.configure(options);
+
+    VNH::UpdateCheckResult result;
+    result.ok = true;
+    result.manifest.product = ready.product;
+    result.manifest.version = ready.version;
+    result.manifest.buildId = ready.buildId;
+    result.manifest.packageSize = ready.packageSize;
+    result.manifest.sha256Hex = ready.expectedSha256;
+    result.envelope = envelope.readAll();
+    result.objectPath = QStringLiteral("release/hub/windows-x64/0.2.0/run4.dddd4444/HarkenHubSetup.exe");
+    int approvals = 0;
+    QObject::connect(&update, &HubSelfUpdate::stateChanged, &update,
+        [&](const UpdateStateRecord& record) {
+            if (record.state != QStringLiteral("AwaitingRestart"))
+                return;
+            ++approvals;
+            EXPECT_FALSE(VNH::DownloadLease::acquire(record.downloadPath));
+            EXPECT_FALSE(VNH::DownloadLease::acquire(record.manifestEnvelopePath));
+            QString error;
+            EXPECT_TRUE(update.approveViaBridge(QStringLiteral("background"), &error, kNow))
+                << error.toStdString();
+        });
+    update.handleCheckResult(result, kNow);
+    const auto downloading = update.currentState();
+    ASSERT_EQ(downloading.state, QStringLiteral("Downloading"));
+    auto conflicting = result;
+    conflicting.envelope = QByteArrayLiteral("must-not-overwrite");
+    contender.handleCheckResult(conflicting, kNow);
+    EXPECT_EQ(update.currentState(), downloading);
+    QFile storedEnvelope(downloading.manifestEnvelopePath);
+    ASSERT_TRUE(storedEnvelope.open(QIODevice::ReadOnly));
+    EXPECT_EQ(storedEnvelope.readAll(), result.envelope);
+    storedEnvelope.close();
+
+    QElapsedTimer timer;
+    timer.start();
+    while (approvals == 0 && timer.elapsed() < 8000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    EXPECT_EQ(approvals, 1);
+    const auto landed = update.currentState();
+    ASSERT_EQ(landed.state, QStringLiteral("AwaitingBridge"));
+    QFile handedPackage(HandoffArea::packagePath(landed.transactionId));
+    ASSERT_TRUE(handedPackage.open(QIODevice::ReadOnly));
+    EXPECT_EQ(handedPackage.readAll(), content);
+    EXPECT_TRUE(VNH::DownloadLease::acquire(landed.downloadPath));
+}
+
 TEST_F(HubSelfUpdateTest, ApproveViaBridgeRollsBackWhenDispatchFails)
 {
     qputenv("HARKEN_HUB_BRIDGE_COMMAND", " ");

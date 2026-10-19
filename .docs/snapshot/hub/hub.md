@@ -12,10 +12,10 @@ HarkenHubUpdateBridge（特权更新桥）。
 |---|---|---|
 | 主窗口双页 UI | `Source/UI/HubWindow`：VersionsPage（版本管理）+ ProjectsPage（工程管理），无边框标题栏 | 可用 |
 | 匿名资源访问 | 版本发现、下载与自更新均匿名，不实现登录、设备授权或身份 token 存储 | 可用 |
-| 版本目录与更新检查 | `Source/Update/` ServerVersionCatalog / UpdateChecker / Coordinator / Queue / StateStore 全链路 | 可用 |
-| 下载与包校验 | `Source/Download/`（重试退避）+ `Source/Packaging/`（zip 读取校验）+ `Source/Security/` ed25519 清单签名与信任锚 | 可用 |
-| 事务化安装/修复/卸载 | `Source/Transactions/` 三类 Executor + Journal / Reclaimer / HandoffArea；新安装目录使用版本、渠道和平台架构，重名时追加短序号；构建身份保存在元数据中，既有安装路径保持兼容 | 可用 |
-| Hub 自更新 + 特权桥 | `Source/Update/HubSelfUpdate` + 更新桥（Windows 计划任务 / macOS LaunchDaemon），带健康检查与单测 | 可用 |
+| 版本目录与更新检查 | `Source/Update/` ServerVersionCatalog / UpdateChecker / Coordinator / Queue / StateStore 全链路；共享状态文件以跨进程锁串行提交，条件更新与清除拒绝过时快照 | 可用 |
+| 下载与包校验 | `Source/Download/`（重试退避、文件占用保护）+ `Source/Packaging/`（zip 读取校验）+ `Source/Security/` ed25519 清单签名与信任锚；Studio 手动与后台缓存隔离，占用保护延续到校验和安装交接复制完成 | 可用 |
+| 事务化安装/修复/卸载 | `Source/Transactions/` 三类 Executor + Journal / Reclaimer / HandoffArea；安装索引共用有界原子写入重试，Windows 短暂占用后恢复，持续失败保留旧索引并沿用事务回滚；新安装目录使用版本、渠道和平台架构，重名时追加短序号；构建身份保存在元数据中，既有安装路径保持兼容 | 可用 |
+| Hub 自更新 + 特权桥 | `Source/Update/HubSelfUpdate` + 更新桥（Windows 计划任务 / macOS LaunchDaemon），带健康检查与单测；安装包及其清单共用占用保护，覆盖下载、校验和安装交接，同步静默更新复用当前下载锁 | 可用 |
 | 已装版本管理与启动链 | `Source/Versions/`（扫描/完整性/自检）+ `Source/Launch/`（预检/工程打开流/启动监控） | 可用 |
 | 工程库与登记回流 | `Source/Projects/` ProjectStore（Qt Sql）+ ProjectProbe + IntakeConsumer（FS watcher 接收 Studio 侧登记） | 可用 |
 | 引擎集成 SDK 来源选择 | 安装/更换 SDK 弹窗的源目录控件可直接下拉选择 Hub 已安装 Studio 附带的 SDK，按目标引擎筛选，悬停提示 Studio/SDK 版本；保留手动选文件夹，每次打开刷新候选 | 可用 |
