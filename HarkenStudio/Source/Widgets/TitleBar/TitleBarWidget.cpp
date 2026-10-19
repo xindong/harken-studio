@@ -84,12 +84,18 @@ TitleBarWidget::TitleBarWidget(QWidget* parent) : QWidget(parent) {
 
     logoLabel_ = new QLabel(this);
     logoLabel_->setObjectName("titleBarLogo");
+    logoLabel_->setAccessibleName(QStringLiteral("Harken Studio"));
+    const QSize logoSize(150, 12);
+    logoLabel_->setFixedSize(logoSize);
+    logoLabel_->setAlignment(Qt::AlignCenter);
     const auto logo = ThemeManager::instance().resolveImage(
-        QString::fromLatin1(ThemeAssetIds::AppLogo),
-        ThemeAssetVariant{QSize(24, 24), devicePixelRatioF(), 0, QColor()});
-    if (logo.resource)
-        logoLabel_->setPixmap(QPixmap::fromImage(logo.resource->image));
-    logoLabel_->setFixedSize(24, 24);
+        QString::fromLatin1(ThemeAssetIds::AppLogo));
+    if (logo.resource) {
+        QPixmap pixmap = QPixmap::fromImage(logo.resource->image).scaled(
+            logoSize * devicePixelRatioF(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        pixmap.setDevicePixelRatio(devicePixelRatioF());
+        logoLabel_->setPixmap(pixmap);
+    }
 
     layout_->addWidget(logoLabel_);
     layout_->addStretch();

@@ -4,7 +4,6 @@
 #include <QPointer>
 #include <QWidget>
 
-class QLabel;
 class QHBoxLayout;
 class QEvent;
 class QShowEvent;
@@ -31,7 +30,6 @@ private:
     void syncMaxButton();
 
     QHBoxLayout* layout_{nullptr};
-    QLabel*      logoLabel_{nullptr};
     TitleBarButton* btnMin_{nullptr};
     TitleBarButton* btnMax_{nullptr};
     TitleBarButton* btnClose_{nullptr};

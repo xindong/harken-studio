@@ -1,9 +1,6 @@
 #include "DialogTitleBar.h"
-#include "Core/ThemeAssetCatalog.h"
-#include "Core/ThemeManager.h"
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QPixmap>
 
 namespace VNX {
 
@@ -15,19 +12,9 @@ DialogTitleBar::DialogTitleBar(QWidget* parent) : QWidget(parent) {
     layout_->setContentsMargins(8, 0, 0, 0);
     layout_->setSpacing(6);
 
-    logoLabel_ = new QLabel(this);
-    logoLabel_->setObjectName("titleBarLogo");
-    const auto logo = ThemeManager::instance().resolveImage(
-        QString::fromLatin1(ThemeAssetIds::AppLogo),
-        ThemeAssetVariant{QSize(20, 20), devicePixelRatioF(), 0, QColor()});
-    if (logo.resource)
-        logoLabel_->setPixmap(QPixmap::fromImage(logo.resource->image));
-    logoLabel_->setFixedSize(20, 20);
-
     titleLabel_ = new QLabel(this);
     titleLabel_->setObjectName("titleBarLabel");
 
-    layout_->addWidget(logoLabel_);
     layout_->addWidget(titleLabel_);
     layout_->addStretch();
 

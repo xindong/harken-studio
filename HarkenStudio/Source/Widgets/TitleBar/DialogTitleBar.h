@@ -19,7 +19,6 @@ public:
 
 private:
     QHBoxLayout* layout_{nullptr};
-    QLabel*      logoLabel_{nullptr};
     QLabel*      titleLabel_{nullptr};
     TitleBarButton* btnClose_{nullptr};
 };
