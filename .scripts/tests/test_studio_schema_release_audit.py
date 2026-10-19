@@ -511,7 +511,8 @@ class ReleaseLifecycleTest(unittest.TestCase):
             target = source_root / tree / str(version) / MODULE.SCHEMA_NAMES[tree]
             target.parent.mkdir()
             target.write_text(json.dumps(MODULE.schema_archive.materialize_source(tree, loaded["currentSource"], version)), encoding="utf-8")
-            shutil.rmtree(source_root / tree / str(loaded["currentVersion"]))
+            for published_version in loaded["published"]:
+                shutil.rmtree(source_root / tree / str(published_version))
         self.assertEqual(MODULE.required_baselines(source_root), {})
         errors = MODULE.release_schema_errors(source_root)
         for tree in MODULE.TREE_NAMES:
