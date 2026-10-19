@@ -6792,6 +6792,47 @@ TEST(DecisionGroup, NativeDetachedMemberEpisodeReturnsWithoutTouchingRealReconst
     EXPECT_EQ(0u, MemberOriginAccess::Count(*arms, newArm));
 }
 
+TEST(DecisionGroup, JointCancellationRefusesUnissuedReconstructedReceiverWithoutTouchingItsStorage) {
+    NativeGroupOriginFixture f;
+    ASSERT_NO_FATAL_FAILURE(f.Init());
+    harken::PreparedPlan03GroupSlice prepared;
+    harken::Plan03GroupSliceIdentity oldId{};
+    ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 0, prepared, oldId));
+    harken::CommittedPlan03GroupSlice committed;
+    ASSERT_TRUE(f.pool.CommitPreparedPlan03GroupSlice(&prepared, &committed));
+    const auto oldIncarnation = f.arms.Incarnation();
+    std::destroy_at(&f.arms);
+    std::construct_at(&f.arms, 2);
+    ASSERT_NE(oldIncarnation, f.arms.Incarnation());
+    ASSERT_EQ(0u, f.arms.ConstructedRowCount());
+
+    std::array<harken::CommittedPlan03GroupSlice*, 1> originals{&committed};
+    std::array<harken::UnpublishedGroupCancellationHold, 1> groups;
+    std::array<harken::UnpublishedArmCancellationHold, 1> arms;
+    harken::UnpublishedGroupArmCancellationProof proof;
+    EXPECT_EQ(harken::UnpublishedGroupArmCancellationStatus::Busy,
+        f.pool.BeginUnpublishedGroupArmCancellation(originals, f.arms, groups, arms, &proof));
+    EXPECT_FALSE(proof.Valid());
+    EXPECT_TRUE(committed.Valid());
+    EXPECT_EQ(0u, f.arms.ConstructedRowCount());
+    EXPECT_EQ(0u, f.arms.RowStorageBytes());
+    EXPECT_EQ(0u, f.arms.RowCommittedBytes());
+    EXPECT_EQ(0u, f.arms.ScopeStorageBytes());
+    EXPECT_EQ(0u, f.arms.ScopeCommittedBytes());
+
+    ASSERT_TRUE(f.arms.PreparePendingImmediateGrouped(11, 1, 7, {}, {f.decision}, 0, &f.arm));
+    harken::PreparedPlan03GroupSlice fresh;
+    harken::Plan03GroupSliceIdentity freshId{};
+    ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 1, fresh, freshId));
+    const auto* current = MemberOriginAccess::Member(f.pool, freshId);
+    ASSERT_EQ(1u, MemberOriginAccess::Count(f.arms, f.arm));
+    ASSERT_TRUE(f.pool.RollbackCommittedPlan03GroupSlice(&committed));
+    EXPECT_EQ(1u, MemberOriginAccess::Count(f.arms, f.arm));
+    EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, f.arm, std::array{current}));
+    ASSERT_TRUE(f.pool.CancelPreparedPlan03GroupSlice(&fresh));
+    EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
+}
+
 TEST(DecisionGroup, UnpublishedStorageRetentionRefusesActualGroupAndDecisionReaders) {
     harken::ScheduledTransactionPool pool;
     auto config = MakePoolConfig();

@@ -470,6 +470,9 @@ void UnpublishedGroupArmCancellationProof::Release() noexcept {
 
 bool ScheduledTransactionPool::CompleteJointGroupMemberCoverage(
     const UnpublishedGroupArmCancellationProof& proof, TimelineArmToken arm) const noexcept {
+    if (proof.armTable_ == nullptr || !arm.Valid() ||
+        proof.armTableIncarnation_ != proof.armTable_->Incarnation() ||
+        arm.slot >= proof.armTable_->rows_.ConstructedCount()) return false;
     const auto& table = *proof.armTable_;
     const auto& scope = table.groupMemberScopes_[arm.slot];
     if (!SameJointArm(scope.arm, arm)) return false;

@@ -9008,12 +9008,11 @@ TEST(OriginalSourceSubmission, NativeUnparentedExitQuarantinesActualLastGenerati
     ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
     const auto free = engine.timelineArms.FreeCount();
     ASSERT_GT(free, 1u);
+    ASSERT_TRUE(engine.timelineArms.SetFreeGenerationForTests(0, UINT32_MAX));
     auto* finalRow = engine.timelineArms.RowAt(0);
     ASSERT_NE(nullptr, finalRow);
     ASSERT_EQ(harken::ArmState::Free, finalRow->state.load());
     ASSERT_EQ(0u, finalRow->identity.load());
-    // Seed only the allocation counter before the genuine native factory issues.
-    finalRow->generation = UINT32_MAX;
     NativeUnpublishedDispositionSource source;
     ASSERT_NO_FATAL_FAILURE(source.Prepare(engine, true, true, true, true, {}, false, 0, true));
     ASSERT_EQ(0u, source.arm.slot); ASSERT_EQ(UINT32_MAX, source.arm.generation);
