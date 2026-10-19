@@ -66,8 +66,14 @@ void PackGenerationRecordStore::replace(const QVector<PackGenerationRecord>& rec
 
 void PackGenerationRecordStore::clear()
 {
+    const bool exporting = isExporting();
+    cancelExport();
+    activeRunId_ = 0;
+    cancel_.reset();
     records_.clear();
+    progress_.clear();
     emit changed();
+    if (exporting) emit exportActivityChanged(false);
 }
 
 const PackGenerationRecord* PackGenerationRecordStore::find(
@@ -83,6 +89,93 @@ const PackGenerationRecord* PackGenerationRecordStore::find(
 QVector<PackGenerationRecord> PackGenerationRecordStore::records() const
 {
     return records_;
+}
+
+quint64 PackGenerationRecordStore::beginProgress(const std::shared_ptr<std::atomic_bool>& cancel)
+{
+    if (isExporting()) return 0;
+    activeRunId_ = ++nextRunId_;
+    cancel_ = cancel;
+    emit exportActivityChanged(true);
+    return activeRunId_;
+}
+
+void PackGenerationRecordStore::updateProgress(quint64 runId, const PackGenerationProgress& progress)
+{
+    if (!isCurrentRun(runId)) return;
+    auto existing = std::find_if(progress_.begin(), progress_.end(), [&](const auto& entry) {
+        return entry.progress.platform == progress.platform
+            && entry.progress.language == progress.language
+            && entry.progress.unitKey == progress.unitKey;
+    });
+    PackGenerationProgress next = progress;
+    next.percent = std::clamp(next.percent, 0, 100);
+    const bool newRun = existing == progress_.end() || existing->runId != runId;
+    if (existing == progress_.end()) {
+        progress_.push_back({next, runId});
+    } else {
+        if (existing->runId == runId) {
+            if (next.stage == PackGenerationStage::Queued
+                || existing->progress.stage == PackGenerationStage::Complete
+                || existing->progress.stage == PackGenerationStage::Failed
+                || existing->progress.stage == PackGenerationStage::Canceled)
+                return;
+            next.percent = std::max(next.percent, existing->progress.percent);
+        }
+        *existing = {next, runId};
+    }
+    if (newRun && next.stage == PackGenerationStage::Queued) {
+        records_.erase(std::remove_if(records_.begin(), records_.end(), [&](const auto& record) {
+            return record.platform == next.platform && record.language == next.language
+                && record.resolvedUnitKey() == next.unitKey;
+        }), records_.end());
+    }
+    emit progressChanged(next.platform, next.language, next.unitKey);
+}
+
+void PackGenerationRecordStore::finishProgress(quint64 runId, bool canceled)
+{
+    if (!isCurrentRun(runId)) return;
+    QVector<PackGenerationProgress> unfinished;
+    for (auto& entry : progress_) {
+        if (entry.runId != runId
+            || entry.progress.stage == PackGenerationStage::Complete
+            || entry.progress.stage == PackGenerationStage::Failed
+            || entry.progress.stage == PackGenerationStage::Canceled)
+            continue;
+        entry.progress.stage = canceled ? PackGenerationStage::Canceled : PackGenerationStage::Failed;
+        unfinished.push_back(entry.progress);
+    }
+    activeRunId_ = 0;
+    cancel_.reset();
+    for (const auto& progress : unfinished)
+        emit progressChanged(progress.platform, progress.language, progress.unitKey);
+    emit exportActivityChanged(false);
+}
+
+const PackGenerationProgress* PackGenerationRecordStore::findProgress(
+    const QString& platform, const QString& language, const QString& unitKey) const
+{
+    const auto found = std::find_if(progress_.cbegin(), progress_.cend(), [&](const auto& entry) {
+        return entry.progress.platform == platform && entry.progress.language == language
+            && entry.progress.unitKey == unitKey;
+    });
+    return found == progress_.cend() ? nullptr : &found->progress;
+}
+
+bool PackGenerationRecordStore::isExporting() const
+{
+    return activeRunId_ != 0;
+}
+
+bool PackGenerationRecordStore::isCurrentRun(quint64 runId) const
+{
+    return runId != 0 && runId == activeRunId_;
+}
+
+void PackGenerationRecordStore::cancelExport()
+{
+    if (cancel_) cancel_->store(true, std::memory_order_relaxed);
 }
 
 }

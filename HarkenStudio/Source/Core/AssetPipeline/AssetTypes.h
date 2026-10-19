@@ -446,32 +446,6 @@ inline MediaStatus mediaStatusFromString(const QString& s) {
     return MediaStatus::Imported;
 }
 
-enum class ConversionFailurePolicy {
-    AbortBuild,
-    SkipAndWarn
-};
-
-inline QString conversionFailurePolicyToString(ConversionFailurePolicy policy)
-{
-    switch (policy) {
-        case ConversionFailurePolicy::AbortBuild:
-            return QStringLiteral("abort_build");
-        case ConversionFailurePolicy::SkipAndWarn:
-            return QStringLiteral("skip_and_warn");
-    }
-    return QStringLiteral("abort_build");
-}
-
-inline ConversionFailurePolicy conversionFailurePolicyFromString(const QString& value)
-{
-    const QString normalized = value.trimmed().toLower();
-    if (normalized == QStringLiteral("skip_and_warn") ||
-        normalized == QStringLiteral("skip") ||
-        normalized == QStringLiteral("warn"))
-        return ConversionFailurePolicy::SkipAndWarn;
-    return ConversionFailurePolicy::AbortBuild;
-}
-
 }
 
 inline size_t qHash(VNX::Platform key, size_t seed = 0) {
@@ -480,4 +454,3 @@ inline size_t qHash(VNX::Platform key, size_t seed = 0) {
 
 Q_DECLARE_METATYPE(VNX::MediaStatus)
 Q_DECLARE_METATYPE(VNX::Platform)
-Q_DECLARE_METATYPE(VNX::ConversionFailurePolicy)

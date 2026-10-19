@@ -5,7 +5,6 @@
 #include "../../Core/ActionManager.h"
 #include "../../Core/AppSettings.h"
 #include "../../Core/AssetPipeline/PathUtils.h"
-#include "../../Core/BaseDialog.h"
 #include "../../Core/Components/VAction.h"
 #include "../../Core/PackBuildPlan.h"
 #include "../../Core/PackArtifactCache.h"
@@ -18,7 +17,6 @@
 #include "../../Core/ThemeManager.h"
 #include "../../Core/ToastManager.h"
 #include "../Common/LayoutDebugTint.h"
-#include "../Common/DialogFormLayout.h"
 #include "../Common/ProportionalTreeWidget.h"
 #include "../Common/TableItemDelegate.h"
 #include "../Common/TableWidget.h"
@@ -33,7 +31,6 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QFileInfo>
-#include <QDialogButtonBox>
 #include <QDir>
 #include <QDateTime>
 #include <QDesktopServices>
@@ -243,14 +240,6 @@ private:
     int checkDragY_ = 0;
 };
 
-class PanelChildDialog : public BaseDialog
-{
-public:
-    using BaseDialog::BaseDialog;
-    using BaseDialog::setupStandardButtons;
-    using BaseDialog::buttonBox;
-};
-
 }
 
 PackManagerPanel::PackManagerPanel(QWidget* parent)
@@ -261,6 +250,13 @@ PackManagerPanel::PackManagerPanel(QWidget* parent)
 
     connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::changed,
             this, &PackManagerPanel::requestPackTableRefresh);
+    connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::progressChanged,
+            this, &PackManagerPanel::updatePackProgress);
+    connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::exportActivityChanged,
+            this, [this](bool) {
+        cancelRequested_ = false;
+        updateExportButton();
+    });
     connect(&PackArtifactCache::instance(), &PackArtifactCache::changed,
             this, &PackManagerPanel::requestPackTableRefresh);
     auto& pm = ProjectManager::instance();
@@ -298,7 +294,7 @@ PackManagerPanel::PackManagerPanel(QWidget* parent)
             [this]() { requestPackTableRefresh(); });
 
     connect(&pm, &ProjectManager::packBuildOutputDirChanged, this,
-            [this](const QString&) { requestPackTableRefresh(); populateSettings(); });
+            [this](const QString&) { requestPackTableRefresh(); });
 
     connect(&pm, &ProjectManager::packExportSelectedPlatformsChanged, this,
             [this](const QStringList&) { populatePlatformControls(); });
@@ -316,7 +312,6 @@ PackManagerPanel::PackManagerPanel(QWidget* parent)
         static_cast<TableWidget*>(packTree_->parentWidget())->clearSelection();
         populatePlatformControls();
         requestPackTableRefresh();
-        populateSettings();
     });
     connect(&pm, &ProjectManager::projectClosed, this, [this]() {
         openedProject_ = nullptr;
@@ -324,7 +319,6 @@ PackManagerPanel::PackManagerPanel(QWidget* parent)
         searchEdit_->clear();
         populatePlatformControls();
         requestPackTableRefresh();
-        populateSettings();
     });
 
     connect(&AppSettings::instance(), &AppSettings::developerModeChanged,
@@ -372,6 +366,10 @@ void PackManagerPanel::setupUI()
     packTree_->setHeaderLabels(
         {tr("Name"), tr("Built"), tr("Size"), tr("Modified"),
          tr("Result"), tr("Cost"), tr("File"), tr("Version")});
+    packTree_->setPinnedTrailingColumns({kColResult, kColCost});
+    packTree_->setAccentedColumns({kColResult, kColCost});
+    packTree_->setColumnSeparatorBefore(kColResult);
+    packTree_->setRowProgressEndColumn(kColResult);
     packTree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     packTree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     packTree_->setItemDelegate(new PackTreeDelegate(packTree_));
@@ -396,9 +394,6 @@ void PackManagerPanel::setupUI()
 
     mainLayout->addWidget(content, 1);
 
-    createSettingsDialog();
-
-    populateSettings();
     updateExportButton();
 }
 
@@ -459,55 +454,9 @@ QWidget* PackManagerPanel::createToolbar()
     return toolbar;
 }
 
-void PackManagerPanel::createSettingsDialog()
-{
-    auto* dialog = new PanelChildDialog(this);
-    dialog->setObjectName("packSettingsDialog");
-    dialog->setWindowTitle(tr("Export Settings"));
-    dialog->setMinimumWidth(460);
-    settingsDialog_ = dialog;
-
-    auto* dialogLayout = new QVBoxLayout(dialog);
-    dialogLayout->setContentsMargins(16, 16, 16, 16);
-    dialogLayout->setSpacing(12);
-
-    auto* form = new DialogFormLayout();
-
-    buildOutputDirEdit_ = new QLineEdit();
-    buildOutputDirEdit_->setObjectName("packSettingsBuildOutputDirEdit");
-    buildOutputDirEdit_->setReadOnly(true);
-    buildOutputDirEdit_->setToolTip(tr("Change this directory in Project Settings > Build."));
-    form->addRow(tr("Pack build output:"), buildOutputDirEdit_);
-
-    conversionFailurePolicyCombo_ = new QComboBox();
-    conversionFailurePolicyCombo_->setObjectName("packSettingsConversionFailureCombo");
-    conversionFailurePolicyCombo_->addItem(
-        tr("Abort build"), static_cast<int>(ConversionFailurePolicy::AbortBuild));
-    conversionFailurePolicyCombo_->addItem(
-        tr("Skip and warn"), static_cast<int>(ConversionFailurePolicy::SkipAndWarn));
-    connect(conversionFailurePolicyCombo_,
-            QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
-        if (settingsUpdating_)
-            return;
-        auto& pm = ProjectManager::instance();
-        if (!pm.isProjectOpen())
-            return;
-        pm.setConversionFailurePolicy(static_cast<ConversionFailurePolicy>(
-            conversionFailurePolicyCombo_->currentData().toInt()));
-    });
-    form->addRow(tr("On conversion failure:"), conversionFailurePolicyCombo_);
-
-    dialogLayout->addLayout(form);
-    dialogLayout->addStretch(1);
-
-    dialog->setupStandardButtons(QDialogButtonBox::Close);
-    dialogLayout->addWidget(dialog->buttonBox());
-}
-
 void PackManagerPanel::refreshPackList()
 {
     populateProjectPackTable();
-    populateSettings();
 }
 
 void PackManagerPanel::requestPackTableRefresh()
@@ -521,31 +470,89 @@ void PackManagerPanel::requestPackTableRefresh()
     });
 }
 
+void PackManagerPanel::updatePackProgress(const QString& platform, const QString& language,
+                                        const QString& unitKey)
+{
+    if (!openedProject_ || openedProject_ != ProjectManager::instance().currentProject()) return;
+    const auto scope = currentWorldPlatformScope(PlatformContextService::instance().context());
+    if (!scope || ProjectPlatformSemantics::idString(*scope) != platform) return;
+    auto* item = packRows_.value(qMakePair(unitKey, language));
+    if (!item) return;
+    const QScopedValueRollback guard(packTreeUpdating_, true);
+    applyGenerationState(item, platform, language, unitKey);
+    const QRect row = packTree_->visualItemRect(item);
+    if (!row.isEmpty())
+        packTree_->viewport()->update(QRect(0, row.top(), packTree_->viewport()->width(), row.height()));
+}
+
+void PackManagerPanel::applyGenerationState(QTreeWidgetItem* item, const QString& platform,
+                                          const QString& language, const QString& unitKey)
+{
+    auto& store = PackGenerationRecordStore::instance();
+    const auto* record = store.find(platform, language, unitKey);
+    item->setText(kColResult, {});
+    item->setText(kColCost, {});
+    item->setToolTip(kColResult, {});
+    item->setData(kColResult, TableTextRole, static_cast<int>(TableTextState::Normal));
+    item->setData(kColName, TableRowProgressRole, {});
+    item->setData(kColName, TableRowProgressStateRole, {});
+    if (record) {
+        item->setText(kColResult, record->status.isEmpty()
+            ? (record->success ? tr("Built") : tr("Failed")) : record->status);
+        item->setData(kColResult, TableTextRole, static_cast<int>(record->success
+            ? TableTextState::Success : TableTextState::Error));
+        QStringList details;
+        if (!record->errors.isEmpty()) details.append(record->errors);
+        if (!record->warnings.isEmpty()) details.append(record->warnings);
+        item->setToolTip(kColResult, details.join(QLatin1Char('\n')));
+        if (record->elapsedMs >= 0) item->setText(kColCost, tr("%1 ms").arg(record->elapsedMs));
+    }
+    if (const auto* progress = store.findProgress(platform, language, unitKey)) {
+        QString stage;
+        auto state = TableRowProgressState::Active;
+        switch (progress->stage) {
+        case PackGenerationStage::Queued: stage = tr("Queued"); break;
+        case PackGenerationStage::Preparing: stage = tr("Preparing"); break;
+        case PackGenerationStage::Compiling: stage = tr("Compiling"); break;
+        case PackGenerationStage::Writing: stage = tr("Writing"); break;
+        case PackGenerationStage::Publishing: stage = tr("Publishing"); break;
+        case PackGenerationStage::Complete:
+            stage = tr("Completed");
+            state = TableRowProgressState::Complete;
+            break;
+        case PackGenerationStage::Failed:
+            stage = tr("Failed");
+            state = TableRowProgressState::Failed;
+            break;
+        case PackGenerationStage::Canceled:
+            stage = tr("Canceled");
+            state = TableRowProgressState::Canceled;
+            break;
+        }
+        const int percent = state == TableRowProgressState::Complete
+            ? 100 : std::clamp(progress->percent, 0, 100);
+        item->setData(kColName, TableRowProgressRole, percent);
+        item->setData(kColName, TableRowProgressStateRole, static_cast<int>(state));
+        if (state == TableRowProgressState::Active) {
+            item->setText(kColResult, stage);
+            item->setText(kColCost, {});
+            item->setToolTip(kColResult, tr("%1 (%2%)").arg(stage).arg(percent));
+            item->setData(kColResult, TableTextRole, static_cast<int>(TableTextState::Custom));
+        } else if (!record || state == TableRowProgressState::Canceled) {
+            item->setText(kColResult, stage);
+            item->setData(kColResult, TableTextRole, static_cast<int>(state == TableRowProgressState::Complete
+                ? TableTextState::Success : state == TableRowProgressState::Failed
+                    ? TableTextState::Error : TableTextState::Muted));
+        }
+    }
+    if (item->data(kColName, TableTextRole).toInt() == static_cast<int>(TableTextState::Disabled))
+        item->setData(kColResult, TableTextRole, static_cast<int>(TableTextState::Disabled));
+}
+
 void PackManagerPanel::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
     if (packTableDirty_) populateProjectPackTable();
-}
-
-void PackManagerPanel::populateSettings()
-{
-    auto& pm = ProjectManager::instance();
-    const bool open = pm.isProjectOpen();
-
-    settingsUpdating_ = true;
-    if (buildOutputDirEdit_) {
-        buildOutputDirEdit_->setEnabled(open);
-        buildOutputDirEdit_->setText(open
-            ? PathUtils::packBuildOutputRoot(pm.currentProject()->projectPath,
-                                             pm.packBuildOutputDir()) : QString());
-    }
-    if (conversionFailurePolicyCombo_) {
-        conversionFailurePolicyCombo_->setEnabled(open);
-        conversionFailurePolicyCombo_->setCurrentIndex(
-            open && pm.getConversionFailurePolicy() == ConversionFailurePolicy::SkipAndWarn
-                ? 1 : 0);
-    }
-    settingsUpdating_ = false;
 }
 
 void PackManagerPanel::populatePlatformControls()
@@ -682,6 +689,7 @@ void PackManagerPanel::populateProjectPackTable()
     }
 
     packTreeUpdating_ = true;
+    packRows_.clear();
     packTree_->clear();
 
     auto& pm = ProjectManager::instance();
@@ -716,19 +724,7 @@ void PackManagerPanel::populateProjectPackTable()
                            const QString& name, const QString& unitKey) {
         if (viewPlatforms.isEmpty()) return;
         const auto& platform = viewPlatforms.front();
-        const auto* record = PackGenerationRecordStore::instance().find(platform, language, unitKey);
-        if (record) {
-            item->setText(kColResult, record->status.isEmpty()
-                ? (record->success ? tr("Built") : tr("Failed")) : record->status);
-            item->setData(kColResult, TableTextRole, static_cast<int>(record->success
-                ? TableTextState::Success : TableTextState::Error));
-            QStringList details;
-            if (!record->errors.isEmpty()) details.append(record->errors);
-            if (!record->warnings.isEmpty()) details.append(record->warnings);
-            item->setToolTip(kColResult, details.join(QLatin1Char('\n')));
-            if (record->elapsedMs >= 0)
-                item->setText(kColCost, tr("%1 ms").arg(record->elapsedMs));
-        }
+        applyGenerationState(item, platform, language, unitKey);
         const QString outputDir = outputDirs.value(platform);
         if (outputDir.isEmpty()) return;
         const QString path = QDir(outputDir).filePath(
@@ -750,6 +746,7 @@ void PackManagerPanel::populateProjectPackTable()
     init->setData(0, kNodeKindRole, static_cast<int>(NodeKind::SystemPack));
     init->setFlags(Qt::ItemIsEnabled);
     init->setToolTip(kColName, tr("Buses, sends and attenuations."));
+    packRows_.insert(qMakePair(QStringLiteral("Init"), QString()), init);
     applyCached(init, {}, QStringLiteral("Init"), QStringLiteral("Init"));
 
     QHash<QString, QTreeWidgetItem*> sections;
@@ -796,6 +793,7 @@ void PackManagerPanel::populateProjectPackTable()
             item->setData(0, kStableIdRole, QVariant::fromValue(unit.stableId));
             item->setData(0, kObjectIdRole, unit.objectID);
             item->setData(0, kLanguageRole, language);
+            packRows_.insert(qMakePair(QStringLiteral("a:") + objectIdString(unit.stableId), language), item);
             Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
             if (matrixEditable) flags |= Qt::ItemIsUserCheckable;
             item->setFlags(flags);
@@ -886,6 +884,12 @@ void PackManagerPanel::addGenerationResult(const PackGenerationResult& result)
 
 void PackManagerPanel::onExportClicked()
 {
+    if (PackGenerationRecordStore::instance().isExporting()) {
+        cancelRequested_ = true;
+        PackGenerationRecordStore::instance().cancelExport();
+        updateExportButton();
+        return;
+    }
     requestExport({}, false, forceReexportBox_->isChecked(), selfCleaningBox_->isChecked());
 }
 
@@ -893,7 +897,8 @@ void PackManagerPanel::requestExport(const QStringList& packPaths, bool includeU
                                      bool forceReexport, bool selfCleaning)
 {
     const auto* project = ProjectManager::instance().currentProject();
-    if (!project || ProjectPlatformActivity::instance().isBusy())
+    if (!project || ProjectPlatformActivity::instance().isBusy()
+        || PackGenerationRecordStore::instance().isExporting())
         return;
     const QStringList platforms = includeUnchecked
         ? effectivePlatforms(project) : generationPlatforms();
@@ -924,6 +929,18 @@ void PackManagerPanel::updateExportButton()
 {
     if (!exportBtn_)
         return;
+    if (PackGenerationRecordStore::instance().isExporting()) {
+        exportBtn_->setEnabled(true);
+        exportBtn_->primaryButton()->setText(cancelRequested_ ? tr("Canceling...") : tr("Cancel export"));
+        exportBtn_->primaryButton()->setToolTip(tr("Cancel the current export."));
+        exportBtn_->primaryButton()->setEnabled(!cancelRequested_);
+        exportAllAction_->setEnabled(false);
+        exportAllAction_->setVisible(false);
+        exportBtn_->dropdownButton()->setEnabled(false);
+        forceReexportBox_->setEnabled(false);
+        selfCleaningBox_->setEnabled(false);
+        return;
+    }
     const auto* project = ProjectManager::instance().currentProject();
     const QStringList platforms = effectivePlatforms(project);
     const QStringList selectedPlatforms = generationPlatforms();
@@ -941,11 +958,15 @@ void PackManagerPanel::updateExportButton()
         }
     }
     exportBtn_->primaryButton()->setText(partial ? tr("Export Checked") : tr("Export All"));
+    exportBtn_->primaryButton()->setToolTip(
+        tr("Export checked packs to the selected platforms. Reuse unchanged packs."));
     const bool enabled = project && !platforms.isEmpty()
         && !ProjectPlatformActivity::instance().isBusy();
     exportBtn_->setEnabled(enabled);
     exportBtn_->primaryButton()->setEnabled(!selectedPlatforms.isEmpty());
+    exportAllAction_->setEnabled(enabled);
     exportAllAction_->setVisible(partial);
+    exportBtn_->dropdownButton()->setEnabled(enabled);
 
     forceReexportBox_->setEnabled(enabled);
     selfCleaningBox_->setEnabled(enabled);
@@ -1024,16 +1045,6 @@ void PackManagerPanel::clearGenerationResults()
     PackGenerationRecordStore::instance().clear();
 }
 
-void PackManagerPanel::onOpenSettingsDialog()
-{
-    if (!settingsDialog_)
-        return;
-    populateSettings();
-    settingsDialog_->show();
-    settingsDialog_->raise();
-    settingsDialog_->activateWindow();
-}
-
 void PackManagerPanel::showFileInExplorer(const QString& path)
 {
     if (path.isEmpty())
@@ -1068,12 +1079,14 @@ void PackManagerPanel::onPackTreeContextMenu(const QPoint& pos)
     const QStringList units = kind == NodeKind::SystemPack
         ? QStringList() : selectedPackPaths();
     if (!units.isEmpty()) {
+        const bool enabled = !PackGenerationRecordStore::instance().isExporting()
+            && !ProjectPlatformActivity::instance().isBusy();
         const QString label = units.size() == 1 ? tr("Export")
             : tr("Export Selected (%1)").arg(units.size());
-        menu.addAction(label, this, [this, units]() { requestExport(units); });
+        menu.addAction(label, this, [this, units]() { requestExport(units); })->setEnabled(enabled);
         const QString forceLabel = units.size() == 1 ? tr("Force Re-export")
             : tr("Force Re-export Selected (%1)").arg(units.size());
-        menu.addAction(forceLabel, this, [this, units]() { requestExport(units, false, true); });
+        menu.addAction(forceLabel, this, [this, units]() { requestExport(units, false, true); })->setEnabled(enabled);
     }
 
     const uint32_t objectID = item ? item->data(0, kObjectIdRole).toUInt() : 0u;
@@ -1092,10 +1105,6 @@ void PackManagerPanel::onPackTreeContextMenu(const QPoint& pos)
             preview->setEnabled(!packPath.isEmpty() && QFileInfo::exists(packPath));
         }
     }
-
-    menu.addSeparator();
-    menu.addAction(tr("Export Settings..."), this,
-                   &PackManagerPanel::onOpenSettingsDialog);
 
     menu.exec(packTree_->viewport()->mapToGlobal(pos));
 }

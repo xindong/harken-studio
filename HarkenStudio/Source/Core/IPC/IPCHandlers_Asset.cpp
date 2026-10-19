@@ -13,6 +13,8 @@
 #include <QFileInfo>
 
 #include <memory>
+#include <map>
+#include <tuple>
 
 namespace VNX {
 
@@ -312,7 +314,7 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                              "output_path must be an output directory; single pack files are not supported");
     }
 
-    if (packBuildInProgress_)
+    if (packBuildInProgress_ || PackGenerationRecordStore::instance().isExporting())
     {
         return errorResponse("PACK_BUILD_IN_PROGRESS",
                              "A pack build is already running. Poll get_pack_build_status.");
@@ -359,13 +361,16 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
     QString outputLockError;
     const auto outputLock = ProjectPackExporter::LockPackOutputRoot(outputPath, &outputLockError);
     if (!outputLock) return errorResponse("OUTPUT_BUSY", outputLockError);
+    const auto cancel = std::make_shared<std::atomic_bool>(false);
+    const quint64 runId = PackGenerationRecordStore::instance().beginProgress(cancel);
+    if (runId == 0)
+        return errorResponse("PACK_BUILD_IN_PROGRESS",
+                             "A pack build is already running. Poll get_pack_build_status.");
     packBuildProject_ = project;
     packBuildInProgress_ = true;
     packBuildProgress_ = 0;
     packBuildMessage_ = "Starting v2 pack build...";
     packBuildResult_ = QJsonObject();
-    if (actionName.isEmpty()) PackGenerationRecordStore::instance().clear();
-    const auto cancel = std::make_shared<std::atomic_bool>(false);
     packBuildCancel_ = cancel;
 
     QPointer<ProjectManager> pmGuard = projectManager_;
@@ -373,7 +378,7 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
     const auto platformActivity = ProjectPlatformActivity::acquire();
     QThread* buildThread = QThread::create(
         [this, pmGuard, project, snapshot, outputPath, platforms, actionName,
-         actionStableId, language, exportSelection, cancel, platformActivity, outputLock]() {
+         actionStableId, language, exportSelection, cancel, runId, platformActivity, outputLock]() {
         struct ExportGate {
             ~ExportGate() { ProjectPackExporter::endBackgroundExport(); }
         } gate;
@@ -381,6 +386,7 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
 
         QJsonArray platformResults;
         QVector<PackGenerationRecord> generationRecords;
+        std::map<std::tuple<QString, QString, QString>, PackGenerationProgress> unitProgress;
         QMap<QString, QVector<PackArtifactMetadata>> publishedArtifacts;
         bool allSuccess = true;
         QString firstError;
@@ -398,6 +404,13 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 exportOpts.onlyActionStableIds.insert(actionStableId);
             exportOpts.cancelCheck = [cancel]() {
                 return cancel->load(std::memory_order_relaxed);
+            };
+            exportOpts.progressCallback = [this, pmGuard, project, runId, &unitProgress](const PackGenerationProgress& progress) {
+                unitProgress[{progress.platform, progress.language, progress.unitKey}] = progress;
+                QMetaObject::invokeMethod(this, [pmGuard, project, runId, progress]() {
+                    if (!pmGuard || pmGuard->currentProject() != project.get()) return;
+                    PackGenerationRecordStore::instance().updateProgress(runId, progress);
+                }, Qt::QueuedConnection);
             };
             exportOpts.debugStrings = true;
 
@@ -476,15 +489,15 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
             const QString message =
                 QStringLiteral("Exported %1 (%2/%3)").arg(definition.name).arg(done).arg(platforms.size());
             QMetaObject::invokeMethod(this, [this, cancel, percent, message]() {
-                if (cancel->load(std::memory_order_relaxed)) return;
+                if (cancel != packBuildCancel_ || cancel->load(std::memory_order_relaxed)) return;
                 packBuildProgress_ = percent;
                 packBuildMessage_ = message;
             }, Qt::QueuedConnection);
         }
 
-        packBuildCompletion_ = [this, platformResults, generationRecords, publishedArtifacts,
+        packBuildCompletion_ = [this, platformResults, generationRecords, unitProgress, publishedArtifacts,
                                          allSuccess, firstError, pmGuard,
-                                         cancel, project, platformActivity, outputPath,
+                                         cancel, runId, project, platformActivity, outputPath,
                                          platforms, succeededPlatforms, outputLock]() mutable {
             QString indexError;
             if (!ProjectPackExporter::PublishPackIndex(outputPath, project->platforms,
@@ -493,7 +506,9 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 firstError = indexError;
             }
             if (!pmGuard || !pmGuard->currentProject()
-                || pmGuard->currentProject() != project.get()) {
+                || pmGuard->currentProject() != project.get()
+                || !PackGenerationRecordStore::instance().isCurrentRun(runId)) {
+                PackGenerationRecordStore::instance().finishProgress(runId, true);
                 packBuildInProgress_ = false;
                 packBuildProgress_ = 0;
                 packBuildMessage_ = QStringLiteral("Export result discarded because the project changed");
@@ -503,8 +518,15 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
             }
             for (auto it = publishedArtifacts.cbegin(); it != publishedArtifacts.cend(); ++it)
                 PackArtifactCache::instance().publish(it.key(), it.value());
+            for (const auto& [key, progress] : unitProgress) {
+                PackGenerationRecordStore::instance().updateProgress(runId,
+                    {progress.platform, progress.language, progress.unitKey, 0, PackGenerationStage::Queued});
+                PackGenerationRecordStore::instance().updateProgress(runId, progress);
+            }
             for (const auto& record : generationRecords)
                 PackGenerationRecordStore::instance().add(record);
+            PackGenerationRecordStore::instance().finishProgress(
+                runId, cancel->load(std::memory_order_relaxed));
             if (cancel->load(std::memory_order_relaxed)) {
                 packBuildInProgress_ = false;
                 packBuildProgress_ = 0;

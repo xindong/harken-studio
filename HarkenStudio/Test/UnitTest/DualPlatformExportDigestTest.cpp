@@ -178,7 +178,6 @@ VNX::ProjectData makeDualPlatformProject(const QString& root, uint32_t sourceId)
     auto project = HarkenTest::projectWithPlatforms({"Windows", "Android", "Linux"});
     project.name = QStringLiteral("s7-dual-platform-digest");
     project.projectPath = QDir(root).filePath(QStringLiteral("scenario.vproj"));
-    project.conversionFailurePolicy = VNX::ConversionFailurePolicy::AbortBuild;
     project.platforms = HarkenTest::platforms({QStringLiteral("Windows"), QStringLiteral("Linux")});
 
     VNX::AudioSourceData source;

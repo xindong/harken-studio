@@ -1012,6 +1012,11 @@ QHeaderView::section:!last:!only-one {
     border-right: 1px solid @borderPrimary@;
 }
 
+QHeaderView[columnAccents="true"]::section:checked {
+    background-color: @bgTertiary@;
+    color: @textSecondary@;
+}
+
 QHeaderView::up-arrow, QHeaderView::down-arrow {
     width: @chevronExtent@px;
     height: @chevronExtent@px;
@@ -2021,6 +2026,11 @@ QAbstractItemView[tableRole="data"]::item {
 }
 QAbstractItemView[tableRole="data"]::item:hover:!selected { background-color: @bgPrimary@; }
 QAbstractItemView[tableRole="data"]::item:selected { background-color: @bgSelected@; }
+QAbstractItemView[columnAccents="true"]::item:alternate:!selected { background-color: @bgSecondary@; }
+QAbstractItemView[rowProgress="true"]::item,
+QAbstractItemView[rowProgress="true"]::item:selected,
+QAbstractItemView[rowProgress="true"]::item:hover:!selected,
+QAbstractItemView[rowProgress="true"]::item:alternate:!selected { background-color: transparent; }
 QFrame#tableRowInsertion { background-color: @accent@; border: none; }
 QFrame[matrixTable="true"] QTableView { gridline-color: @borderPrimary@; }
 QFrame[matrixHeader="true"] {

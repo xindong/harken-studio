@@ -204,7 +204,6 @@ void buildProject(VNX::ProjectData& project,
     project.name = QStringLiteral("manifest-pack");
     project.projectPath =
         QDir(projectRoot).filePath(QStringLiteral("manifest-pack.vproj"));
-    project.conversionFailurePolicy = VNX::ConversionFailurePolicy::AbortBuild;
 
     for (uint32_t sourceID : {sharedSourceId, soloSourceId})
     {

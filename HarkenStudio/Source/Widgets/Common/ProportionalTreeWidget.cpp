@@ -11,6 +11,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QRegion>
 #include <QStyle>
 
 #include <algorithm>
@@ -56,6 +57,73 @@ void ProportionalTreeWidget::setColumnsHidden(const QList<int>& columns, bool hi
         for (int column : columns) setColumnHidden(column, hidden);
     }
     applyColumnWidths();
+}
+
+void ProportionalTreeWidget::setPinnedTrailingColumns(const QList<int>& columns)
+{
+    static_cast<ReorderHeaderView*>(header())->setPinnedTrailingSections(columns);
+}
+
+void ProportionalTreeWidget::setAccentedColumns(const QList<int>& columns)
+{
+    for (int column : columns) Q_ASSERT(column >= 0 && column < columnCount());
+    for (int column = 0; column < columnCount(); ++column)
+        headerItem()->setData(column, TableColumnAccentRole, columns.contains(column));
+    QtControlSkin::setSemanticProperty(this, "columnAccents", !columns.isEmpty());
+    QtControlSkin::setSemanticProperty(header(), "columnAccents", !columns.isEmpty());
+    viewport()->update();
+}
+
+void ProportionalTreeWidget::setColumnSeparatorBefore(int column)
+{
+    Q_ASSERT(column >= -1 && column < columnCount());
+    separatorColumn_ = column;
+    viewport()->update();
+}
+
+void ProportionalTreeWidget::setRowProgressEndColumn(int column)
+{
+    Q_ASSERT(column >= -1 && column < columnCount());
+    progressEndColumn_ = column;
+    QtControlSkin::setSemanticProperty(this, "rowProgress", column >= 0);
+    viewport()->update();
+}
+
+QRect ProportionalTreeWidget::rowProgressRect(const QRect& rowRect, int percent) const
+{
+    if (progressEndColumn_ < 0 || isColumnHidden(progressEndColumn_)) return {};
+    const int right = std::max(0, header()->sectionViewportPosition(progressEndColumn_));
+    return QRect(0, rowRect.top(), qRound(right * std::clamp(percent, 0, 100) / 100.0),
+                 rowRect.height()).intersected(viewport()->rect());
+}
+
+void ProportionalTreeWidget::paintEvent(QPaintEvent* event)
+{
+    QTreeWidget::paintEvent(event);
+    const int x = separatorColumn_ >= 0 && !isColumnHidden(separatorColumn_)
+        ? header()->sectionViewportPosition(separatorColumn_) - 1 : -1;
+    const bool drawSeparator = x >= 0 && x < viewport()->width();
+    if (!drawSeparator && !property("columnAccents").toBool()) return;
+    QRegion region(drawSeparator ? QRect(x, 0, 1, viewport()->height()) : QRect());
+    int emptyTop = 0;
+    for (auto index = indexAt(QPoint(0, 0)); index.isValid(); index = indexBelow(index)) {
+        const QRect rect = visualRect(index);
+        if (rect.top() >= viewport()->height()) break;
+        emptyTop = std::max(emptyTop, rect.bottom() + 1);
+        if (index.siblingAtColumn(0).data(TableGroupRole).toBool()) region -= rect;
+    }
+    QPainter painter(viewport());
+    if (emptyTop < viewport()->height()) {
+        for (int column = 0; column < columnCount(); ++column) {
+            if (isColumnHidden(column) || !headerItem()->data(column, TableColumnAccentRole).toBool()) continue;
+            painter.fillRect(QRect(header()->sectionViewportPosition(column), emptyTop,
+                columnWidth(column), viewport()->height() - emptyTop), themeManager_->colors().bgSecondary);
+        }
+    }
+    if (drawSeparator) {
+        painter.setClipRegion(region);
+        painter.fillRect(viewport()->rect(), themeManager_->colors().borderPrimary);
+    }
 }
 
 void ProportionalTreeWidget::setHierarchyIndentation(int indentation)

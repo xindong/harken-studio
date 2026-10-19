@@ -364,7 +364,6 @@ void buildProject(VNX::ProjectData& project,
     project.name = QStringLiteral("orchestration");
     project.projectPath =
         QDir(projectRoot).filePath(QStringLiteral("orchestration.vproj"));
-    project.conversionFailurePolicy = VNX::ConversionFailurePolicy::AbortBuild;
 
     std::set<uint32_t> seenSources;
     for (const SoundSpec& spec : soundSpecs)

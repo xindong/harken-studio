@@ -2414,6 +2414,11 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
         outRecords->push_back(std::move(record));
     };
+    const auto reportProgress = [&](const PackMeta& pack, int percent, PackGenerationStage stage) {
+        if (!request.options.progressCallback) return;
+        request.options.progressCallback({request.options.platform, pack.language,
+            pack.unitKey, percent, stage});
+    };
 
     auto prepareUnit = [&](PackMeta& meta) -> ProjectPackExporter::ExportResult {
         const QString path = QDir(stagingDir).filePath(meta.fileName);
@@ -2541,6 +2546,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         return unit;
     };
     for (PackMeta& pack : packs) {
+        reportProgress(pack, 5, PackGenerationStage::Preparing);
         QElapsedTimer timer;
         timer.start();
         pack.mediaResult = prepareUnit(pack);
@@ -2554,6 +2560,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
     }
 
+    for (const auto& pack : packs)
+        reportProgress(pack, 40, PackGenerationStage::Compiling);
     QString compileError;
     std::set<harkenstudio::ObjectId> requiredDefinitions;
     for (const auto& variant : request.plan->variants)
@@ -3115,6 +3123,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     };
 
     for (PackMeta& pack : packs) {
+        reportProgress(pack, 60, PackGenerationStage::Writing);
         QElapsedTimer timer;
         timer.start();
         auto unit = writeUnit(pack);
@@ -3133,6 +3142,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
     }
 
+    for (const auto& pack : packs)
+        reportProgress(pack, 85, PackGenerationStage::Publishing);
     QStringList publishedLanguages;
     for (const auto& pack : packs)
         if (!pack.language.isEmpty() && !publishedLanguages.contains(pack.language))

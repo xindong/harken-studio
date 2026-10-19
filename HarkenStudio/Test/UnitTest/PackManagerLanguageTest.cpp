@@ -372,7 +372,7 @@ TEST_F(PackManagerLanguageTest, ContinuousColumnResizeIsStableWithDeveloperColum
     for (bool developer : {true, false}) {
         SCOPED_TRACE(developer);
         VNX::AppSettings::instance().setDeveloperMode(developer);
-        if (!developer) header->moveSection(header->visualIndex(4), 2);
+        if (!developer) header->moveSection(header->visualIndex(3), 2);
         QApplication::processEvents();
         const int column = 1;
         const int neighbor = header->logicalIndex(header->visualIndex(column) + 1);

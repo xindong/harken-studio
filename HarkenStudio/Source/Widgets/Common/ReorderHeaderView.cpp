@@ -1,5 +1,6 @@
 
 #include "ReorderHeaderView.h"
+#include "TableItemDelegate.h"
 
 #include <QApplication>
 #include <QEvent>
@@ -8,6 +9,7 @@
 #include <QKeyEvent>
 #include <QPainter>
 #include <QPropertyAnimation>
+#include <QScopedValueRollback>
 #include <QStyle>
 #include <QStyleOptionHeaderV2>
 
@@ -37,6 +39,35 @@ ReorderHeaderView::ReorderHeaderView(Qt::Orientation orientation, QWidget* paren
     dropAnim_->setEasingCurve(QEasingCurve::OutCubic);
     connect(dropAnim_, &QPropertyAnimation::finished,
             this, &ReorderHeaderView::finishDrag);
+    connect(this, &QHeaderView::sectionMoved,
+            this, &ReorderHeaderView::restorePinnedTrailingSections);
+}
+
+void ReorderHeaderView::setPinnedTrailingSections(const QList<int>& sections)
+{
+    for (int section : sections) Q_ASSERT(section >= 0 && section < count());
+    cancelDrag();
+    pinnedTrailingSections_ = sections;
+    restorePinnedTrailingSections();
+}
+
+void ReorderHeaderView::restorePinnedTrailingSections()
+{
+    if (restoringPinnedSections_) return;
+    const QScopedValueRollback guard(restoringPinnedSections_, true);
+    for (int i = pinnedTrailingSections_.size() - 1; i >= 0; --i) {
+        const int from = visualIndex(pinnedTrailingSections_[i]);
+        const int to = count() - pinnedTrailingSections_.size() + i;
+        if (from >= 0 && from != to) moveSection(from, to);
+    }
+}
+
+void ReorderHeaderView::initStyleOptionForIndex(QStyleOptionHeader* option, int logicalIndex) const
+{
+    QHeaderView::initStyleOptionForIndex(option, logicalIndex);
+    if (property("columnAccents").toBool())
+        option->state.setFlag(QStyle::State_On,
+            model()->headerData(logicalIndex, orientation(), TableColumnAccentRole).toBool());
 }
 
 void ReorderHeaderView::setSlideProgress(qreal progress)
@@ -78,7 +109,7 @@ bool ReorderHeaderView::isMovableSection(int logical) const
 {
     if (orientation() != Qt::Horizontal || isRightToLeft() || !sectionsMovable())
         return false;
-    if (logical < 0 || isSectionHidden(logical))
+    if (logical < 0 || isSectionHidden(logical) || pinnedTrailingSections_.contains(logical))
         return false;
     return logical != 0 || isFirstSectionMovable();
 }

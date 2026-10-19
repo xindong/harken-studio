@@ -4,12 +4,10 @@
 #include "Utils/ObjectId.h"
 
 #include <QWidget>
-#include <QDialog>
 #include <QLabel>
 #include <QTreeWidget>
 #include <QCheckBox>
 #include <QLineEdit>
-#include <QComboBox>
 #include <QStringList>
 #include <QList>
 #include <QPair>
@@ -64,15 +62,15 @@ private slots:
     void onExportClicked();
     void onPackTreeContextMenu(const QPoint& pos);
     void onPackItemChanged(QTreeWidgetItem* item, int column);
-    void onOpenSettingsDialog();
 
 private:
     void setupUI();
     QWidget* createToolbar();
-    void createSettingsDialog();
     void populateProjectPackTable();
     void requestPackTableRefresh();
-    void populateSettings();
+    void updatePackProgress(const QString& platform, const QString& language, const QString& unitKey);
+    void applyGenerationState(QTreeWidgetItem* item, const QString& platform,
+                              const QString& language, const QString& unitKey);
     void populatePlatformControls();
     void applyNameFilter();
     void updateExportButton();
@@ -89,7 +87,6 @@ private:
     QString platformOutputDirFor(const QString& platform) const;
     void showFileInExplorer(const QString& path);
 
-    QDialog*    settingsDialog_ = nullptr;
     ProjectData* openedProject_ = nullptr;
 
     ProportionalTreeWidget* packTree_ = nullptr;
@@ -98,6 +95,8 @@ private:
 
     bool packTableDirty_ = true;
     bool packTableRefreshQueued_ = false;
+    QHash<QPair<QString, QString>, QTreeWidgetItem*> packRows_;
+    bool cancelRequested_ = false;
 
     SplitButton*  exportBtn_ = nullptr;
     QAction*      exportAllAction_ = nullptr;
@@ -105,10 +104,6 @@ private:
     QCheckBox*    selfCleaningBox_ = nullptr;
     MultiSelectComboBox* platformCombo_ = nullptr;
     QLineEdit*    searchEdit_ = nullptr;
-
-    QLineEdit* buildOutputDirEdit_ = nullptr;
-    QComboBox* conversionFailurePolicyCombo_ = nullptr;
-    bool       settingsUpdating_ = false;
 };
 
 }

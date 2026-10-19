@@ -1938,20 +1938,6 @@ void ProjectManager::setPackBuildOutputDirInternal(const QString& value)
     emit packBuildOutputDirChanged(value);
 }
 
-ConversionFailurePolicy ProjectManager::getConversionFailurePolicy() const
-{
-    if (!m_currentProject) return ConversionFailurePolicy::AbortBuild;
-    return m_currentProject->conversionFailurePolicy;
-}
-
-void ProjectManager::setConversionFailurePolicy(ConversionFailurePolicy value)
-{
-    if (!m_currentProject) return;
-    if (m_currentProject->conversionFailurePolicy == value) return;
-    m_currentProject->conversionFailurePolicy = value;
-    emit conversionFailurePolicyChanged(value);
-}
-
 PackExportSelection ProjectManager::packExportSelection() const
 {
     return m_currentProject ? PackExportSelectionStore::instance().selection() : PackExportSelection{};
@@ -3166,6 +3152,7 @@ bool ProjectManager::closeProject()
     if (m_currentProject)
     {
         PropertyEditSession::finishAllActive(false);
+        PackGenerationRecordStore::instance().cancelExport();
         if (ProjectPackExporter::hasBackgroundExportInFlight())
         {
             qInfo() << "[ProjectManager] closeProject: waiting for in-flight"

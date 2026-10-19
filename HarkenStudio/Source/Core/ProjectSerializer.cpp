@@ -1207,11 +1207,6 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
         root["packBuildOutputDir"] = project.packBuildOutputDir;
     }
 
-    if (project.conversionFailurePolicy != ConversionFailurePolicy::AbortBuild) {
-        root["conversionFailurePolicy"] =
-            conversionFailurePolicyToString(project.conversionFailurePolicy);
-    }
-
     if (!project.actionPublishedNameHistory.empty()) {
         QJsonArray history;
         for (const auto& row : project.actionPublishedNameHistory)
@@ -1538,11 +1533,6 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
                 project.deploymentProfiles.push_back(std::move(profile));
         }
     }
-    if (root.contains("conversionFailurePolicy")) {
-        project.conversionFailurePolicy =
-            conversionFailurePolicyFromString(root["conversionFailurePolicy"].toString());
-    }
-
     project.actionPublishedNameHistory.clear();
     if (root.contains(QLatin1String(kActionPublishedNameHistory))) {
         for (const auto& value : root[QLatin1String(kActionPublishedNameHistory)].toArray()) {

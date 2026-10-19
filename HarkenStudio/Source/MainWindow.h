@@ -14,6 +14,7 @@
 #include <QUndoStack>
 #include <QStackedWidget>
 #include <QPointer>
+#include <QThread>
 #include <QMap>
 #include <QHash>
 #include <QVariant>
@@ -418,7 +419,7 @@ private:
 
     ProjectExplorer* projectExplorer_ = nullptr;
     AIAssistantPanel* aiPanel_ = nullptr;
-    bool packGenerationInProgress_ = false;
+    QList<QPointer<QThread>> packExportThreads_;
 
     HarkenEditor::AuditionManager* auditionManager_ = nullptr;
     PlaybackControls* playbackControls_ = nullptr;

@@ -264,7 +264,11 @@ auto* view = table->createCustomView(QStringLiteral("Packs"),
 
 Pack Exporter 的 General 和语言分区使用实际父子关系，并按语言 ID 恢复折叠状态；Action 行选择同时包含 Action ID 和语言。Init 独立显示且始终包含在发布中，未变化时可复用；各分区同时启用勾选和折叠，聚合当前编辑平台上的可操作包状态。批量操作包含搜索过滤隐藏的包，沿用平台 targeting 命令写入本地缓存，不进入工程撤销栈；不改变导出平台选择。没有可操作包或编辑平台时，勾选框禁用，折叠仍可使用。
 
-Pack Exporter 数据归属：Name 和语言分区由当前工程 Action 及其语言依赖派生。勾选与 Export Platforms 存于 `.cache/pack-export-selection.json`，Built、Size、Modified、File、Version 存于 `.cache/pack-artifacts.json`；产物缓存由成功发布更新，面板刷新不读取产物或 manifest。Built 表示最近成功发布的快照，外部删除或替换产物不会自动同步；Self Cleaning 的已知删除会同步清缓存。CRC32 列已移除。Result 与 Cost 共用会话内结果存储，GUI/IPC 导出按稳定身份更新，工程关闭后清空，不写入缓存或工程文件。Cost 为每包资源准备与写包耗时，不包含共享编译和发布阶段。清缓存后默认全选，产物列留空；Build 配置、平台与语言定义仍是工程数据。隐藏面板延后刷新，可见时合并更新，并用共享语言投影代替完整构建计划。
+Pack Exporter 数据归属：Name 和语言分区由当前工程 Action 及其语言依赖派生。勾选与 Export Platforms 存于 `.cache/pack-export-selection.json`，Built、Size、Modified、File、Version 存于 `.cache/pack-artifacts.json`；产物缓存由成功发布更新，面板刷新不读取产物或 manifest。Built 表示最近成功发布的快照，外部删除或替换产物不会自动同步；Self Cleaning 的已知删除会同步清缓存。CRC32 列已移除。Result 与 Cost 共用会话内结果存储，GUI/IPC 导出按稳定身份更新，工程关闭后清空，不写入缓存或工程文件。两列按 Result、Cost 顺序固定在最右侧，Result 左侧以公共表格竖线分隔表头、数据行和空白区域，遇到整行分组时断开；两列通过公共列强调样式使用略有区别的表头颜色和整列背景（包括表体空白区域），选中态保持整行一致；其他列可在前方移动，所有列仍可调整宽度，开发者列显隐不改变末尾顺序。Cost 为每包资源准备与写包耗时，不包含共享编译和发布阶段。清缓存后默认全选，产物列留空；Build 配置、平台与语言定义仍是工程数据。隐藏面板延后刷新，可见时合并更新，并用共享语言投影代替完整构建计划。
+
+Pack Exporter 的 Init 与 Action 行通过公共 `TableRowProgressRole` / `TableRowProgressStateRole` 和 `ProportionalTreeWidget::setRowProgressEndColumn` 绘制连续背景进度，范围从行左边到 Result 左侧，适应前方列换位、调宽及开发者列显隐；分组不填充，Result/Cost 保持独立区域。进度与结果遵循主 toolbar 的 primary 平台、语言和稳定 unitKey，不聚合导出平台。进度仅在当前工程会话内保存，关闭工程或重启即清空；本轮参与打包的行从零开始并清除旧 Result/Cost，未参与的行保留。准备、编译、写入、发布按阶段推进，仅发布成功到 100%；失败及取消冻结当前位置。GUI 与 IPC 共用会话任务身份隔离迟到事件，进度通知仅更新对应行，不重建整表。面板导出在后台执行，取消入口位于原 Export 主按钮，不再显示独立进度弹窗。
+
+Pack Exporter 不再提供行右键 Export Settings 弹窗；打包输出目录统一在 Project Settings > Build 设置。媒体转换失败固定尝试默认处理参数或原始文件回退，成功后继续并记录首次失败原因；源文件缺失、变更或回退失败仍报错。旧工程的 `conversionFailurePolicy` 字段允许加载，但不再参与导出，保存时不再写入。
 
 控件行通过 `registerRow(row, cells, details)` 将同属 `rowsWidget()` 的主行和展开容器登记为一条逻辑行，`details` 可省略。字段先放入 `createCell` 创建的共享单元格，再登记单元格；不把裸字段控件作为补边距的容器。展开容器提供自己的内容布局；公共表格负责同步选中状态、行号列宽度、内容缩进及主行与详情之间的分隔线，删除主行时一并清理详情。业务用 `rowForWidget(widget)` 将展开区及其子控件的交互归属到主行，不再复制详情的行号或选中状态。
 
