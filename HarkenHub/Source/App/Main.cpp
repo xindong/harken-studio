@@ -97,6 +97,7 @@ QMainWindow { background-color: #06080D; }
 }
   #pageTitle { font-size: 16px; font-weight: 600; color: #00F0FF; background: transparent; }
   #pageSubtitle { color: #888888; background: transparent; }
+  #sidebarLogo { background: transparent; }
   #sidebarProduct { color: #00F0FF; background: transparent; font-size: 24px; font-weight: 700; }
 #sidebarNote { color: #6B7488; background: transparent; font-size: 11px; }
 #sidebarLinks { background: transparent; font-size: 11px; }
