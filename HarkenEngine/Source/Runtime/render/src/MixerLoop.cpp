@@ -2003,9 +2003,15 @@ bool MixerLoop::TakeChannelPeaks(ChannelPeakBatch& batch) {
     for (std::uint32_t bus = 0; bus < VN_SNAPSHOT_MAX_BUSES; ++bus) {
         batch.busIds[bus] = m_buses.IdAt(bus);
         const auto generation = IsNull(batch.busIds[bus]) ? 0 : m_buses.GenerationAt(bus);
-        for (std::uint32_t channel = 0; channel < VN_MAX_CHANNELS; ++channel)
-            batch.channelPeaks[bus * VN_MAX_CHANNELS + channel] =
-                m_channelPeakStorage->Take(bus, generation, channel);
+        for (std::uint32_t channel = 0; channel < VN_MAX_CHANNELS; ++channel) {
+            const auto lane = bus * VN_MAX_CHANNELS + channel;
+            auto& peak = m_channelPeakValues[lane];
+            if (m_channelPeakGenerations[bus] != generation)
+                peak = 0.0f;
+            m_channelPeakStorage->Take(bus, generation, channel, peak);
+            batch.channelPeaks[lane] = peak;
+        }
+        m_channelPeakGenerations[bus] = generation;
     }
     return true;
 }
