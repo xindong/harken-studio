@@ -1,6 +1,7 @@
 #include "harken/core/VoiceLedger.h"
 
 #include <cassert>
+#include <new>
 #include <stdexcept>
 #include <utility>
 
@@ -148,19 +149,33 @@ std::size_t VoiceLedger::MonitorSelectionStorageBytes() const noexcept {
 VoiceLedger::VoiceLedger(std::uint32_t capacity,
                          std::uint32_t renderCapacity,
                          std::size_t monitorSelectionCapacity)
-    : m_entries(capacity == 0 ? 1 : capacity),
-      m_monitorControlReceipts(m_entries.size()),
-      m_renderOwners(renderCapacity == 0
+    : m_renderOwners(renderCapacity == 0
                          ? (capacity == 0 ? 1 : capacity)
                          : renderCapacity),
       m_monitorSelections(std::make_shared<MonitorSelectionStorage>(monitorSelectionCapacity == 0
-          ? 2 * m_entries.size() : monitorSelectionCapacity)) {}
+          ? 2 * static_cast<std::size_t>(capacity == 0 ? 1 : capacity) : monitorSelectionCapacity)) {
+    const auto logicalCapacity = capacity == 0 ? 1 : capacity;
+    if (!m_monitorControlReceipts.Reserve(logicalCapacity) || !m_entries.Reserve(logicalCapacity))
+        throw std::bad_alloc();
+}
 
 
 VoiceLedger::~VoiceLedger() {
     // The owning Ledger/Engine must outlive every external loan. Destruction
     // does not fabricate a VoiceEnd or a physical completion fence.
-    for (const auto& entry : m_entries) assert(entry.originalCompletion.externalCount == 0);
+    for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i)
+        assert(m_entries[i].originalCompletion.externalCount == 0);
+}
+
+std::uint32_t VoiceLedger::FindReusableSlot() noexcept {
+    if (memguard::IsAudioTagged()) return UINT32_MAX;
+    const auto constructed = m_entries.ConstructedCount();
+    for (std::uint32_t i = 0; i < constructed; ++i)
+        if (ReusableEntry(m_entries[i])) return i;
+    if (constructed == m_entries.Capacity() ||
+        !m_monitorControlReceipts.ConstructThrough(constructed + 1) ||
+        !m_entries.ConstructThrough(constructed + 1)) return UINT32_MAX;
+    return constructed;
 }
 
 bool VoiceLedger::OriginalCompletionMutationOwner::Valid() const noexcept {
@@ -213,7 +228,7 @@ bool VoiceLedger::IsCurrentOriginalCompositeCompletionMutationOwner(
 bool VoiceLedger::IssueOriginalCompletionMutationOwnerInternal(
     const PreparedCommitProof& proof, OriginalCompletionMutationOwner* out, CompletionOwnerKind kind) noexcept {
     if (out == nullptr || out->table_ != nullptr || proof.table_ != this ||
-        proof.slot_ >= m_entries.size() || proof.entry_ != &m_entries[proof.slot_] ||
+        proof.slot_ >= m_entries.ConstructedCount() || proof.entry_ != &m_entries[proof.slot_] ||
         proof.renderHandle_ == 0 || static_cast<std::uint32_t>(proof.renderHandle_ >> 32) == 0 ||
         static_cast<std::uint32_t>(proof.renderHandle_) >= m_renderOwners.size() ||
         proof.reverse_ != &m_renderOwners[static_cast<std::uint32_t>(proof.renderHandle_)] ||
@@ -247,7 +262,7 @@ bool VoiceLedger::IssueOriginalCompletionMutationOwnerInternal(
 
 bool VoiceLedger::MatchesOriginalCompletionMutationOwner(
     const OriginalCompletionMutationOwner& cap) const noexcept {
-    if (cap.table_ != this || cap.slot_ >= m_entries.size() ||
+    if (cap.table_ != this || cap.slot_ >= m_entries.ConstructedCount() ||
         cap.entry_ != &m_entries[cap.slot_] || cap.marker_ == 0 || cap.generation_ == 0) return false;
     const auto& original = cap.entry_->originalCompletion;
     return original.marker == cap.marker_ && original.generation == cap.generation_ &&
@@ -336,45 +351,39 @@ void VoiceLedger::ConsumeOriginalCompletionAssociation(Entry& entry, VnVoiceHand
 bool VoiceLedger::Acquire(VnVoiceHandle* outPublicHandle,
                           std::uint32_t* outLedgerSlot,
                           const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin, VnObjectId media) {
-    for (std::uint32_t i = 0; i < m_entries.size(); ++i) {
-        Entry& entry = m_entries[i];
-        if (!ReusableEntry(entry)) {
-            continue;
-        }
-        // Reuse of an Ended slot needs no extra generation bump: reap already
-        // advanced it, so the value here is the fresh generation for this
-        // acquisition. Steal metadata from a prior tenant is cleared so a
-        // reused entry never inherits a stale victim flag.
-        entry.state = EntryState::Live;
-        entry.playbackRequest = request;
-        entry.emitterOrigin = emitterOrigin;
-        entry.monitorContent = {};
-        entry.monitorContent.content.stableId = media;
-        entry.monitorContent.kind = media == VnObjectId{} ? VN_MONITOR_CONTENT_UNKNOWN : VN_MONITOR_CONTENT_MEDIA;
-        entry.controlCause = {};
-        entry.selectionCause = {};
-        entry.monitorSelectionAccepted = false;
-        entry.monitorCancellationAccepted = false;
-        entry.stolen = false;
-        entry.terminating = false;
-        entry.preparedReservation = false;
-        entry.renderHandle = 0;
-        entry.visibility = PublicVisibility::DirectVoice;
-        entry.parent = {};
-        entry.completionMutation = {};
-        entry.monitorObserveCount = 0;
-        entry.publicHandle = MakeHandle(i, entry.generation);
-        *outPublicHandle = entry.publicHandle;
-        *outLedgerSlot = i;
-        return true;
-    }
-    return false; // every entry is live: a defined degradation (see header)
+    const auto i = FindReusableSlot();
+    if (i == UINT32_MAX) return false;
+    Entry& entry = m_entries[i];
+    // Reap already advanced an Ended slot's generation. Clear prior steal
+    // metadata so a reused entry never inherits its previous tenant's flags.
+    entry.state = EntryState::Live;
+    entry.playbackRequest = request;
+    entry.emitterOrigin = emitterOrigin;
+    entry.monitorContent = {};
+    entry.monitorContent.content.stableId = media;
+    entry.monitorContent.kind = media == VnObjectId{} ? VN_MONITOR_CONTENT_UNKNOWN : VN_MONITOR_CONTENT_MEDIA;
+    entry.controlCause = {};
+    entry.selectionCause = {};
+    entry.monitorSelectionAccepted = false;
+    entry.monitorCancellationAccepted = false;
+    entry.stolen = false;
+    entry.terminating = false;
+    entry.preparedReservation = false;
+    entry.renderHandle = 0;
+    entry.visibility = PublicVisibility::DirectVoice;
+    entry.parent = {};
+    entry.completionMutation = {};
+    entry.monitorObserveCount = 0;
+    entry.publicHandle = MakeHandle(i, entry.generation);
+    *outPublicHandle = entry.publicHandle;
+    *outLedgerSlot = i;
+    return true;
 }
 
 bool VoiceLedger::CaptureMonitorIdentity(std::uint32_t ledgerSlot, MonitorIdentity* out) const noexcept {
     if (out == nullptr) return false;
     *out = {};
-    if (ledgerSlot >= m_entries.size()) return false;
+    if (ledgerSlot >= m_entries.ConstructedCount()) return false;
     const auto& entry = m_entries[ledgerSlot];
     if (entry.state != EntryState::Live && entry.state != EntryState::PendingStart &&
         entry.state != EntryState::Parked && entry.state != EntryState::PreparedCommitHeld) return false;
@@ -399,7 +408,7 @@ VnVoiceHandle VoiceLedger::CaptureMonitorIdentityAt(std::uint32_t ledgerSlot,
     MonitorLifecycleFacts* out) const noexcept {
     if (out == nullptr) return 0;
     *out = {};
-    if (ledgerSlot >= m_entries.size()) return 0;
+    if (ledgerSlot >= m_entries.ConstructedCount()) return 0;
     const auto& entry = m_entries[ledgerSlot];
     if (entry.preparedReservation || (entry.state != EntryState::Live &&
         entry.state != EntryState::PendingStart && entry.state != EntryState::Parked &&
@@ -410,7 +419,7 @@ VnVoiceHandle VoiceLedger::CaptureMonitorIdentityAt(std::uint32_t ledgerSlot,
 }
 
 void VoiceLedger::RecordMonitorContent(std::uint32_t ledgerSlot, const MonitorContent& content) noexcept {
-    if (ledgerSlot >= m_entries.size()) return;
+    if (ledgerSlot >= m_entries.ConstructedCount()) return;
     auto& entry = m_entries[ledgerSlot];
     if (entry.state != EntryState::Live && entry.state != EntryState::PendingStart &&
         entry.state != EntryState::PreparedCommitHeld) return;
@@ -429,7 +438,7 @@ bool VoiceLedger::CaptureMonitorSelection(std::uint32_t ledgerSlot, VnVoiceHandl
     MonitorSelection* out) const noexcept {
     if (out == nullptr) return false;
     *out = {};
-    if (ledgerSlot >= m_entries.size() || render == 0) return false;
+    if (ledgerSlot >= m_entries.ConstructedCount() || render == 0) return false;
     const auto& entry = m_entries[ledgerSlot];
     if (entry.state != EntryState::Live && entry.state != EntryState::PendingStart &&
         entry.state != EntryState::PreparedCommitHeld) return false;
@@ -468,7 +477,7 @@ void VoiceLedger::PublishMonitorSelection(MonitorSelection& selection,
     // Publishing retires every alias; stale aliases cannot publish after slot reuse.
     m_monitorSelections->Release(selection.slot_);
     if (facts.logicalVoice == 0 || generation == 0) return;
-    if (ledgerSlot < m_entries.size()) {
+    if (ledgerSlot < m_entries.ConstructedCount()) {
         auto& entry = m_entries[ledgerSlot];
         if (entry.generation == generation && entry.publicHandle == facts.logicalVoice &&
             entry.renderHandle == facts.renderActivation) {
@@ -493,7 +502,7 @@ void VoiceLedger::RecordMonitorCancellation(VnVoiceHandle render, const MonitorC
 
 MonitorVoiceControlBinding VoiceLedger::ArmMonitorControl(std::uint32_t ledgerSlot,
     VnVoiceHandle render) noexcept {
-    if (ledgerSlot >= m_entries.size() || render == 0) return {};
+    if (ledgerSlot >= m_entries.ConstructedCount() || render == 0) return {};
     auto& entry = m_entries[ledgerSlot];
     if (entry.state != EntryState::Live && entry.state != EntryState::PreparedCommitHeld &&
         entry.state != EntryState::PendingStart && entry.state != EntryState::Parked) return {};
@@ -557,7 +566,7 @@ void VoiceLedger::CaptureMonitorFacts(const Entry& entry, MonitorLifecycleFacts&
 void VoiceLedger::ObserveVoice(MonitorLifecyclePhase phase,
                                std::uint32_t ledgerSlot, std::uint32_t reason,
                                const MonitorLifecycleFacts& facts) noexcept {
-    if (ledgerSlot >= m_entries.size()) {
+    if (ledgerSlot >= m_entries.ConstructedCount()) {
         return;
     }
     Entry& entry = m_entries[ledgerSlot];
@@ -582,34 +591,30 @@ bool VoiceLedger::AcquirePlayableOwned(const PlayableParentRef& parent,
     if (parent.internalToken == 0 || outLedgerSlot == nullptr) {
         return false;
     }
-    for (std::uint32_t i = 0; i < m_entries.size(); ++i) {
-        Entry& entry = m_entries[i];
-        if (!ReusableEntry(entry)) {
-            continue;
-        }
-        entry.state = EntryState::Live;
-        entry.playbackRequest = request;
-        entry.emitterOrigin = emitterOrigin;
-        entry.controlCause = {};
-        entry.selectionCause = {};
-        entry.monitorContent = {};
-        entry.monitorSelectionAccepted = false;
-        entry.monitorCancellationAccepted = false;
-        entry.stolen = false;
-        entry.terminating = false;
-        entry.priority = 128;
-        entry.startOrder = 0;
-        entry.renderHandle = 0;
-        entry.publicHandle = MakeHandle(i, entry.generation);
-        entry.visibility = PublicVisibility::PlayableOwnedInternal;
-        entry.parent = parent;
-        entry.completionMutation = {};
-        entry.preparedReservation = false;
-        entry.monitorObserveCount = 0;
-        *outLedgerSlot = i;
-        return true;
-    }
-    return false;
+    const auto i = FindReusableSlot();
+    if (i == UINT32_MAX) return false;
+    Entry& entry = m_entries[i];
+    entry.state = EntryState::Live;
+    entry.playbackRequest = request;
+    entry.emitterOrigin = emitterOrigin;
+    entry.controlCause = {};
+    entry.selectionCause = {};
+    entry.monitorContent = {};
+    entry.monitorSelectionAccepted = false;
+    entry.monitorCancellationAccepted = false;
+    entry.stolen = false;
+    entry.terminating = false;
+    entry.priority = 128;
+    entry.startOrder = 0;
+    entry.renderHandle = 0;
+    entry.publicHandle = MakeHandle(i, entry.generation);
+    entry.visibility = PublicVisibility::PlayableOwnedInternal;
+    entry.parent = parent;
+    entry.completionMutation = {};
+    entry.preparedReservation = false;
+    entry.monitorObserveCount = 0;
+    *outLedgerSlot = i;
+    return true;
 }
 
 bool VoiceLedger::PreparePlayableOwned(const PlayableParentRef& parent,
@@ -619,40 +624,36 @@ bool VoiceLedger::PreparePlayableOwned(const PlayableParentRef& parent,
     if (parent.internalToken == 0 || outLedgerSlot == nullptr) {
         return false;
     }
-    for (std::uint32_t i = 0; i < m_entries.size(); ++i) {
-        Entry& entry = m_entries[i];
-        if (!ReusableEntry(entry)) {
-            continue;
-        }
-        entry.state = EntryState::Live;
-        entry.playbackRequest = request;
-        entry.emitterOrigin = emitterOrigin;
-        entry.controlCause = {};
-        entry.selectionCause = {};
-        entry.monitorContent = {};
-        entry.monitorSelectionAccepted = false;
-        entry.monitorCancellationAccepted = false;
-        entry.stolen = false;
-        entry.terminating = false;
-        entry.preparedReservation = true;
-        entry.priority = 128;
-        entry.startOrder = 0;
-        entry.renderHandle = 0;
-        entry.publicHandle = MakeHandle(i, entry.generation);
-        entry.visibility = PublicVisibility::PlayableOwnedInternal;
-        entry.parent = parent;
-        entry.completionMutation = {};
-        entry.monitorObserveCount = 0;
-        *outLedgerSlot = i;
-        if (outIdentity != nullptr) *outIdentity = {i, entry.generation};
-        return true;
-    }
-    return false;
+    const auto i = FindReusableSlot();
+    if (i == UINT32_MAX) return false;
+    Entry& entry = m_entries[i];
+    entry.state = EntryState::Live;
+    entry.playbackRequest = request;
+    entry.emitterOrigin = emitterOrigin;
+    entry.controlCause = {};
+    entry.selectionCause = {};
+    entry.monitorContent = {};
+    entry.monitorSelectionAccepted = false;
+    entry.monitorCancellationAccepted = false;
+    entry.stolen = false;
+    entry.terminating = false;
+    entry.preparedReservation = true;
+    entry.priority = 128;
+    entry.startOrder = 0;
+    entry.renderHandle = 0;
+    entry.publicHandle = MakeHandle(i, entry.generation);
+    entry.visibility = PublicVisibility::PlayableOwnedInternal;
+    entry.parent = parent;
+    entry.completionMutation = {};
+    entry.monitorObserveCount = 0;
+    *outLedgerSlot = i;
+    if (outIdentity != nullptr) *outIdentity = {i, entry.generation};
+    return true;
 }
 
 bool VoiceLedger::CommitPreparedPlayableOwned(
     std::uint32_t ledgerSlot) {
-    if (ledgerSlot >= m_entries.size()) {
+    if (ledgerSlot >= m_entries.ConstructedCount()) {
         return false;
     }
     Entry& entry = m_entries[ledgerSlot];
@@ -667,7 +668,7 @@ bool VoiceLedger::CommitPreparedPlayableOwned(
 
 bool VoiceLedger::CancelPreparedPlayableOwned(
     std::uint32_t ledgerSlot) {
-    if (ledgerSlot >= m_entries.size()) {
+    if (ledgerSlot >= m_entries.ConstructedCount()) {
         return false;
     }
     Entry& entry = m_entries[ledgerSlot];
@@ -736,7 +737,7 @@ bool VoiceLedger::BindPreparedCompositeCompletionMutation(PreparedCommitInput* o
 }
 bool VoiceLedger::BindPreparedCompletionMutationInternal(PreparedCommitInput* original,
     const CompletionMutationBinding& binding, CompletionOwnerKind kind) noexcept {
-    if (original == nullptr || original->identity.slot >= m_entries.size() ||
+    if (original == nullptr || original->identity.slot >= m_entries.ConstructedCount() ||
         original->identity.generation == 0 || original->parent.internalToken == 0 ||
         original->renderHandle == 0 || static_cast<std::uint32_t>(original->renderHandle >> 32) == 0 ||
         static_cast<std::uint32_t>(original->renderHandle) >= m_renderOwners.size() ||
@@ -769,7 +770,7 @@ bool VoiceLedger::MatchesPreparedSingleCompletionCommit(
     const PreparedSingleCompletionCommitProof& proof) const noexcept {
     const auto& native = proof.native_;
     const auto& original = proof.original_;
-    if (native.table_ != this || native.slot_ >= m_entries.size() ||
+    if (native.table_ != this || native.slot_ >= m_entries.ConstructedCount() ||
         native.entry_ != &m_entries[native.slot_] || !native.Valid() ||
         native.renderHandle_ == 0 || static_cast<std::uint32_t>(native.renderHandle_) >= m_renderOwners.size() ||
         native.reverse_ != &m_renderOwners[static_cast<std::uint32_t>(native.renderHandle_)] ||
@@ -800,7 +801,7 @@ bool VoiceLedger::IssueOriginalCompletionMutationOwner(const PreparedSingleCompl
 bool VoiceLedger::ProvePreparedPlayableCommit(
     const PreparedCommitInput& expected, PreparedCommitProof* out) noexcept {
     if (out == nullptr || out->Valid() ||
-        expected.identity.slot >= m_entries.size() ||
+        expected.identity.slot >= m_entries.ConstructedCount() ||
         expected.identity.generation == 0 || expected.parent.internalToken == 0 ||
         expected.renderHandle == 0 ||
         static_cast<std::uint32_t>(expected.renderHandle >> 32) == 0 ||
@@ -832,7 +833,7 @@ bool VoiceLedger::ProvePreparedPlayableCommit(
 
 bool VoiceLedger::MatchesPreparedPlayableCommit(const PreparedCommitProof& proof,
     const PreparedCommitInput& original) const noexcept {
-    if (proof.table_ != this || proof.slot_ >= m_entries.size() ||
+    if (proof.table_ != this || proof.slot_ >= m_entries.ConstructedCount() ||
         proof.entry_ != &m_entries[proof.slot_] || !proof.Valid() ||
         proof.renderHandle_ == 0 || static_cast<std::uint32_t>(proof.renderHandle_ >> 32) == 0 ||
         static_cast<std::uint32_t>(proof.renderHandle_) >= m_renderOwners.size() ||
@@ -875,7 +876,9 @@ void VoiceLedger::ConsumePreparedPlayableCommit(PreparedCommitProof&& proof) noe
 }
 
 bool VoiceLedger::HasFreeEntry() const noexcept {
-    for (const Entry& entry : m_entries) {
+    if (m_entries.ConstructedCount() < m_entries.Capacity()) return true;
+    for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+        const Entry& entry = m_entries[i];
         if (ReusableEntry(entry)) {
             return true;
         }
@@ -884,8 +887,9 @@ bool VoiceLedger::HasFreeEntry() const noexcept {
 }
 
 std::uint32_t VoiceLedger::AvailableEntryCount() const noexcept {
-    std::uint32_t count = 0;
-    for (const Entry& entry : m_entries) {
+    std::uint32_t count = m_entries.Capacity() - m_entries.ConstructedCount();
+    for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+        const Entry& entry = m_entries[i];
         if (ReusableEntry(entry)) {
             ++count;
         }
@@ -896,7 +900,7 @@ std::uint32_t VoiceLedger::AvailableEntryCount() const noexcept {
 void VoiceLedger::BindRender(std::uint32_t ledgerSlot,
                              VnVoiceHandle renderHandle,
                              std::uint32_t priority) {
-    if (ledgerSlot >= m_entries.size()) {
+    if (ledgerSlot >= m_entries.ConstructedCount()) {
         return;
     }
     Entry& entry = m_entries[ledgerSlot];
@@ -919,44 +923,40 @@ bool VoiceLedger::AcquirePending(VnVoiceHandle* outPublicHandle,
                                  std::uint32_t* outLedgerSlot,
                                  std::uint32_t priority,
                                  const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin, VnObjectId media) {
-    for (std::uint32_t i = 0; i < m_entries.size(); ++i) {
-        Entry& entry = m_entries[i];
-        if (!ReusableEntry(entry)) {
-            continue;
-        }
-        entry.state = EntryState::PendingStart;
-        entry.playbackRequest = request;
-        entry.emitterOrigin = emitterOrigin;
-        entry.monitorContent = {};
-        entry.monitorContent.content.stableId = media;
-        entry.monitorContent.kind = media == VnObjectId{} ? VN_MONITOR_CONTENT_UNKNOWN : VN_MONITOR_CONTENT_MEDIA;
-        entry.controlCause = {};
-        entry.selectionCause = {};
-        entry.monitorSelectionAccepted = false;
-        entry.monitorCancellationAccepted = false;
-        entry.stolen = false;
-        entry.terminating = false;
-        entry.preparedReservation = false;
-        entry.priority = priority;
-        entry.startOrder = 0; // assigned when the render slot is acquired
-        entry.renderHandle = 0;
-        entry.publicHandle = MakeHandle(i, entry.generation);
-        entry.visibility = PublicVisibility::DirectVoice;
-        entry.parent = {};
-        entry.completionMutation = {};
-        entry.monitorObserveCount = 0;
-        *outPublicHandle = entry.publicHandle;
-        *outLedgerSlot = i;
-        ObserveVoice(MonitorLifecyclePhase::VoicePending, i,
-                     VN_ACTION_TERMINAL_CAPABILITY_UNAVAILABLE);
-        return true;
-    }
-    return false;
+    const auto i = FindReusableSlot();
+    if (i == UINT32_MAX) return false;
+    Entry& entry = m_entries[i];
+    entry.state = EntryState::PendingStart;
+    entry.playbackRequest = request;
+    entry.emitterOrigin = emitterOrigin;
+    entry.monitorContent = {};
+    entry.monitorContent.content.stableId = media;
+    entry.monitorContent.kind = media == VnObjectId{} ? VN_MONITOR_CONTENT_UNKNOWN : VN_MONITOR_CONTENT_MEDIA;
+    entry.controlCause = {};
+    entry.selectionCause = {};
+    entry.monitorSelectionAccepted = false;
+    entry.monitorCancellationAccepted = false;
+    entry.stolen = false;
+    entry.terminating = false;
+    entry.preparedReservation = false;
+    entry.priority = priority;
+    entry.startOrder = 0; // assigned when the render slot is acquired
+    entry.renderHandle = 0;
+    entry.publicHandle = MakeHandle(i, entry.generation);
+    entry.visibility = PublicVisibility::DirectVoice;
+    entry.parent = {};
+    entry.completionMutation = {};
+    entry.monitorObserveCount = 0;
+    *outPublicHandle = entry.publicHandle;
+    *outLedgerSlot = i;
+    ObserveVoice(MonitorLifecyclePhase::VoicePending, i,
+                 VN_ACTION_TERMINAL_CAPABILITY_UNAVAILABLE);
+    return true;
 }
 
 void VoiceLedger::StartPending(std::uint32_t ledgerSlot,
                                VnVoiceHandle renderHandle) {
-    if (ledgerSlot >= m_entries.size()) {
+    if (ledgerSlot >= m_entries.ConstructedCount()) {
         return;
     }
     Entry& entry = m_entries[ledgerSlot];
@@ -972,7 +972,7 @@ void VoiceLedger::StartPending(std::uint32_t ledgerSlot,
 }
 
 void VoiceLedger::ParkPending(std::uint32_t ledgerSlot) {
-    if (ledgerSlot >= m_entries.size()) {
+    if (ledgerSlot >= m_entries.ConstructedCount()) {
         return;
     }
     Entry& entry = m_entries[ledgerSlot];
@@ -991,7 +991,7 @@ void VoiceLedger::ParkPending(std::uint32_t ledgerSlot) {
 }
 
 void VoiceLedger::CancelPending(std::uint32_t ledgerSlot, const MonitorControlCause& cause) {
-    if (ledgerSlot >= m_entries.size()) {
+    if (ledgerSlot >= m_entries.ConstructedCount()) {
         return;
     }
     Entry& entry = m_entries[ledgerSlot];
@@ -1021,7 +1021,8 @@ void VoiceLedger::MarkStolen(VnVoiceHandle renderHandle, const MonitorControlCau
     if (renderHandle == 0) {
         return;
     }
-    for (Entry& entry : m_entries) {
+    for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+        Entry& entry = m_entries[i];
         if (entry.state == EntryState::Live &&
             entry.renderHandle == renderHandle) {
             if (!entry.stolen && !entry.terminating && !entry.monitorCancellationAccepted) entry.controlCause = cause;
@@ -1035,7 +1036,8 @@ bool VoiceLedger::IsStolen(VnVoiceHandle renderHandle) const {
     if (renderHandle == 0) {
         return false;
     }
-    for (const Entry& entry : m_entries) {
+    for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+        const Entry& entry = m_entries[i];
         if (entry.state == EntryState::Live &&
             entry.renderHandle == renderHandle) {
             return entry.stolen;
@@ -1049,7 +1051,8 @@ void VoiceLedger::MarkTerminating(VnVoiceHandle renderHandle, const MonitorContr
     if (renderHandle == 0) {
         return;
     }
-    for (Entry& entry : m_entries) {
+    for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+        Entry& entry = m_entries[i];
         if (entry.state == EntryState::Live &&
             entry.renderHandle == renderHandle) {
             if (recordControlCause && !entry.stolen && !entry.terminating && !entry.monitorCancellationAccepted) entry.controlCause = cause;
@@ -1063,7 +1066,8 @@ bool VoiceLedger::IsTerminating(VnVoiceHandle renderHandle) const {
     if (renderHandle == 0) {
         return false;
     }
-    for (const Entry& entry : m_entries) {
+    for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+        const Entry& entry = m_entries[i];
         if (entry.state == EntryState::Live &&
             entry.renderHandle == renderHandle) {
             return entry.terminating;
@@ -1074,7 +1078,8 @@ bool VoiceLedger::IsTerminating(VnVoiceHandle renderHandle) const {
 
 std::uint32_t VoiceLedger::PendingStartCount() const {
     std::uint32_t count = 0;
-    for (const Entry& entry : m_entries) {
+    for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+        const Entry& entry = m_entries[i];
         if (entry.state == EntryState::PendingStart) {
             ++count;
         }
@@ -1108,7 +1113,8 @@ VoiceLedger::RenderOwner VoiceLedger::OwnerForRender(
     RenderOwner owner{};
     const Entry* entry = EntryForRender(renderHandle);
     if (entry == nullptr && renderHandle != 0) {
-        for (const Entry& candidate : m_entries) {
+        for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+            const Entry& candidate = m_entries[i];
             if (candidate.state == EntryState::Live &&
                 candidate.renderHandle == renderHandle) {
                 entry = &candidate;
@@ -1121,7 +1127,7 @@ VoiceLedger::RenderOwner VoiceLedger::OwnerForRender(
     }
     owner.live = true;
     owner.visibility = entry->visibility;
-    owner.ledgerSlot = static_cast<std::uint32_t>(entry - m_entries.data());
+    owner.ledgerSlot = m_entries.IndexOf(*entry);
     owner.parent = entry->parent;
     return owner;
 }
@@ -1129,7 +1135,7 @@ VoiceLedger::RenderOwner VoiceLedger::OwnerForRender(
 bool VoiceLedger::BindCompletionMutation(
     std::uint32_t ledgerSlot,
     const CompletionMutationBinding& binding) noexcept {
-    if (ledgerSlot >= m_entries.size() ||
+    if (ledgerSlot >= m_entries.ConstructedCount() ||
         !IsValidCompletionMutationBinding(binding)) {
         return false;
     }
@@ -1181,7 +1187,7 @@ bool VoiceLedger::CaptureCompletionMutationForRender(
 bool VoiceLedger::CaptureCompletionMutationForSlot(
     std::uint32_t ledgerSlot,
     CompletionMutationBinding* out) const noexcept {
-    if (out == nullptr || ledgerSlot >= m_entries.size()) {
+    if (out == nullptr || ledgerSlot >= m_entries.ConstructedCount()) {
         return false;
     }
     const Entry& entry = m_entries[ledgerSlot];
@@ -1198,7 +1204,7 @@ bool VoiceLedger::ReplaceCompletionMutationExact(
     std::uint32_t ledgerSlot,
     const CompletionMutationBinding& expected,
     const CompletionMutationBinding& replacement) noexcept {
-    if (ledgerSlot >= m_entries.size() ||
+    if (ledgerSlot >= m_entries.ConstructedCount() ||
         !IsValidCompletionMutationBinding(expected) ||
         !IsValidCompletionMutationBinding(replacement)) {
         return false;
@@ -1220,7 +1226,7 @@ bool VoiceLedger::ReplaceCompletionMutationExact(
 bool VoiceLedger::ClearCompletionMutationExact(
     std::uint32_t ledgerSlot,
     const CompletionMutationBinding& binding) noexcept {
-    if (ledgerSlot >= m_entries.size() ||
+    if (ledgerSlot >= m_entries.ConstructedCount() ||
         !IsValidCompletionMutationBinding(binding)) {
         return false;
     }
@@ -1244,7 +1250,7 @@ bool VoiceLedger::Park(VnVoiceHandle renderHandle,
         return false;
     }
     const std::uint32_t ledgerSlot =
-        static_cast<std::uint32_t>(entry - m_entries.data());
+        m_entries.IndexOf(*entry);
     ClearReverse(ledgerSlot, renderHandle);
     RevokeOriginalCompletionAssociation(*entry);
     MonitorLifecycleFacts facts{};
@@ -1261,7 +1267,7 @@ bool VoiceLedger::Park(VnVoiceHandle renderHandle,
 
 void VoiceLedger::ReturnPark(std::uint32_t ledgerSlot,
                              VnVoiceHandle renderHandle) {
-    if (ledgerSlot >= m_entries.size()) {
+    if (ledgerSlot >= m_entries.ConstructedCount()) {
         return;
     }
     Entry& entry = m_entries[ledgerSlot];
@@ -1280,7 +1286,7 @@ void VoiceLedger::ReturnPark(std::uint32_t ledgerSlot,
 }
 
 void VoiceLedger::EndParked(std::uint32_t ledgerSlot, const MonitorControlCause& cause) {
-    if (ledgerSlot >= m_entries.size()) {
+    if (ledgerSlot >= m_entries.ConstructedCount()) {
         return;
     }
     Entry& entry = m_entries[ledgerSlot];
@@ -1308,7 +1314,8 @@ void VoiceLedger::EndParked(std::uint32_t ledgerSlot, const MonitorControlCause&
 
 std::uint32_t VoiceLedger::ParkedCount() const {
     std::uint32_t count = 0;
-    for (const Entry& entry : m_entries) {
+    for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+        const Entry& entry = m_entries[i];
         if (entry.state == EntryState::Parked) {
             ++count;
         }
@@ -1317,7 +1324,7 @@ std::uint32_t VoiceLedger::ParkedCount() const {
 }
 
 VnVoiceHandle VoiceLedger::PublicHandleForSlot(std::uint32_t ledgerSlot) const {
-    if (ledgerSlot >= m_entries.size()) {
+    if (ledgerSlot >= m_entries.ConstructedCount()) {
         return 0;
     }
     const Entry& entry = m_entries[ledgerSlot];
@@ -1327,7 +1334,7 @@ VnVoiceHandle VoiceLedger::PublicHandleForSlot(std::uint32_t ledgerSlot) const {
 }
 
 void VoiceLedger::Release(std::uint32_t ledgerSlot) {
-    if (ledgerSlot >= m_entries.size()) {
+    if (ledgerSlot >= m_entries.ConstructedCount()) {
         return;
     }
     Entry& entry = m_entries[ledgerSlot];
@@ -1363,7 +1370,8 @@ VnVoiceHandle VoiceLedger::ToRender(VnVoiceHandle publicHandle) const {
 VnVoiceHandle VoiceLedger::ToPublic(VnVoiceHandle renderHandle) const {
     const Entry* entry = EntryForRender(renderHandle);
     if (entry == nullptr && renderHandle != 0) {
-        for (const Entry& candidate : m_entries) {
+        for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+            const Entry& candidate = m_entries[i];
             if (candidate.state == EntryState::Live &&
                 candidate.renderHandle == renderHandle) {
                 entry = &candidate;
@@ -1381,7 +1389,8 @@ VnVoiceHandle VoiceLedger::ToPublic(VnVoiceHandle renderHandle) const {
 void VoiceLedger::Reap(VnVoiceHandle renderHandle) {
     Entry* entry = EntryForRender(renderHandle);
     if (entry == nullptr && renderHandle != 0) {
-        for (Entry& candidate : m_entries) {
+        for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+            Entry& candidate = m_entries[i];
             if (candidate.state == EntryState::Live &&
                 candidate.renderHandle == renderHandle) {
                 entry = &candidate;
@@ -1393,7 +1402,7 @@ void VoiceLedger::Reap(VnVoiceHandle renderHandle) {
         return;
     }
     const std::uint32_t ledgerSlot =
-        static_cast<std::uint32_t>(entry - m_entries.data());
+        m_entries.IndexOf(*entry);
     ClearReverse(ledgerSlot, renderHandle);
     const bool stolen = entry->stolen;
     const std::uint64_t endedHandle = entry->publicHandle;
@@ -1426,7 +1435,7 @@ VoiceLedger::EntryFor(VnVoiceHandle publicHandle) const {
     const std::uint32_t slot = static_cast<std::uint32_t>(publicHandle);
     const std::uint32_t generation =
         static_cast<std::uint32_t>(publicHandle >> 32);
-    if (slot >= m_entries.size()) {
+    if (slot >= m_entries.ConstructedCount()) {
         return nullptr;
     }
     const Entry& entry = m_entries[slot];
@@ -1450,7 +1459,7 @@ VoiceLedger::EntryForRender(VnVoiceHandle renderHandle) const noexcept {
     }
     const ReverseRenderEntry& reverse = m_renderOwners[renderSlot];
     if (reverse.renderGeneration != renderGeneration ||
-        reverse.ledgerSlot >= m_entries.size()) {
+        reverse.ledgerSlot >= m_entries.ConstructedCount()) {
         return nullptr;
     }
     const Entry& entry = m_entries[reverse.ledgerSlot];
@@ -1538,8 +1547,9 @@ bool VoiceLedger::CanBindRender(VnVoiceHandle renderHandle) const noexcept {
 
 bool VoiceLedger::SetGenerationForTests(std::uint32_t slot,
                                         std::uint32_t generation) noexcept {
-    if (slot >= m_entries.size() || generation == 0 ||
-        generation > kMaxGeneration) {
+    if (memguard::IsAudioTagged() || slot >= m_entries.Capacity() || generation == 0 ||
+        generation > kMaxGeneration || !m_monitorControlReceipts.ConstructThrough(slot + 1) ||
+        !m_entries.ConstructThrough(slot + 1)) {
         return false;
     }
     Entry& entry = m_entries[slot];

@@ -1325,7 +1325,7 @@ struct PreparedSingleBundleBorrowLimitTestAccess {
     static bool RefuseLastBorrow(VoiceLedger& table,
         const VoiceLedger::OriginalCompletionMutationOwner& original) {
         const auto identity = original.OriginalIdentity();
-        if (!original.Valid() || identity.slot >= table.m_entries.size()) return false;
+        if (!original.Valid() || identity.slot >= table.m_entries.ConstructedCount()) return false;
         auto& entry = table.m_entries[identity.slot];
         auto& native = entry.originalCompletion;
         if (entry.state != VoiceLedger::EntryState::PreparedCommitHeld ||

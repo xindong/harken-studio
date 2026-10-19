@@ -19,9 +19,9 @@
 // and Ended (the voice finished and the entry awaits reuse).
 //
 // Logic thread only: the ledger is consulted and mutated on the pumping
-// thread (the externally synchronized C API and Vn_Update). It never crosses
-// to the audio thread. Storage is allocated once at construction; acquire,
-// reap, and translation touch no heap.
+// thread (the externally synchronized C API and Vn_Update). Native rows are
+// constructed on demand by that owner and retain stable addresses until teardown.
+// Only separate control receipts cross to audio; queries and reap never grow storage.
 #ifndef HARKEN_CORE_VOICE_LEDGER_H
 #define HARKEN_CORE_VOICE_LEDGER_H
 
@@ -31,6 +31,7 @@
 #include "harken/core/MonitorLifecycleSink.h"
 #include "harken/core/MonitorVoiceControl.h"
 #include "harken/core/PlayableInstanceTable.h"
+#include "harken/core/StableRowStorage.h"
 
 #include <cassert>
 #include <cstddef>
@@ -209,7 +210,8 @@ public:
 
     // Capacity is the resolved Logical Voice capacity L = R + V. Live,
     // PendingStart, and Parked all consume one entry; ended-but-unreaped Live
-    // entries temporarily retain theirs. Allocated once here.
+    // entries temporarily retain theirs. The logical limit is reserved here;
+    // native rows are prepared by the serialized control owner before issuance.
     explicit VoiceLedger(std::uint32_t capacity,
                          std::uint32_t renderCapacity = 0,
                          std::size_t monitorSelectionCapacity = 0);
@@ -438,7 +440,7 @@ public:
     // per-tick park/return/virtual-time scan.
     template <typename Fn>
     void ForEachParked(Fn&& fn) const {
-        for (std::uint32_t i = 0; i < m_entries.size(); ++i) {
+        for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
             const Entry& entry = m_entries[i];
             if (entry.state == EntryState::Parked) {
                 fn(i, entry.publicHandle);
@@ -452,7 +454,8 @@ public:
     // slot is promised), so the caller skips it. Logic thread only.
     template <typename Fn>
     void ForEachLive(Fn&& fn) const {
-        for (const Entry& entry : m_entries) {
+        for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+            const Entry& entry = m_entries[i];
             if (entry.state == EntryState::Live && entry.renderHandle != 0 &&
                 entry.visibility == PublicVisibility::DirectVoice) {
                 fn(entry.renderHandle, entry.priority, entry.startOrder,
@@ -464,7 +467,7 @@ public:
     // Visits every PendingStart entry with its ledger slot and public handle.
     template <typename Fn>
     void ForEachPending(Fn&& fn) const {
-        for (std::uint32_t i = 0; i < m_entries.size(); ++i) {
+        for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
             const Entry& entry = m_entries[i];
             if (entry.state == EntryState::PendingStart) {
                 fn(i, entry.publicHandle);
@@ -474,7 +477,8 @@ public:
 
     template <typename Fn>
     void ForEachPlayableOwnedLive(Fn&& fn) const {
-        for (const Entry& entry : m_entries) {
+        for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+            const Entry& entry = m_entries[i];
             if (entry.state == EntryState::Live && entry.renderHandle != 0 &&
                 entry.visibility ==
                     PublicVisibility::PlayableOwnedInternal) {
@@ -525,7 +529,7 @@ public:
     // isRenderLive answers whether a render handle still names a live voice.
     template <typename LivePred>
     void SweepEnded(LivePred&& isRenderLive) {
-        for (std::uint32_t i = 0; i < m_entries.size(); ++i) {
+        for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
             Entry& entry = m_entries[i];
             if (entry.state != EntryState::Live || entry.renderHandle == 0) {
                 continue; // Free/Ended, or a reserved entry mid-play
@@ -568,7 +572,8 @@ public:
         for (std::uint32_t i = 0; i < count; ++i) {
             out[i] = 0;
         }
-        for (const Entry& entry : m_entries) {
+        for (std::uint32_t i = 0; i < m_entries.ConstructedCount(); ++i) {
+            const Entry& entry = m_entries[i];
             if (entry.state != EntryState::Live || entry.renderHandle == 0 ||
                 entry.visibility != PublicVisibility::DirectVoice) {
                 continue;
@@ -588,7 +593,20 @@ public:
     }
 
     std::uint32_t Capacity() const {
-        return static_cast<std::uint32_t>(m_entries.size());
+        return m_entries.Capacity();
+    }
+    std::uint32_t ConstructedEntryCount() const noexcept { return m_entries.ConstructedCount(); }
+    std::size_t EntryStorageBytes() const noexcept { return m_entries.RequestedBytes(); }
+    std::size_t EntryCommittedBytes() const noexcept { return m_entries.CommittedBytes(); }
+    std::size_t EntryReservedBytes() const noexcept { return m_entries.ReservedBytes(); }
+    std::size_t MonitorReceiptStorageBytes() const noexcept { return m_monitorControlReceipts.RequestedBytes(); }
+    std::size_t MonitorReceiptCommittedBytes() const noexcept { return m_monitorControlReceipts.CommittedBytes(); }
+    std::size_t MonitorReceiptReservedBytes() const noexcept { return m_monitorControlReceipts.ReservedBytes(); }
+    void SetEntryCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_entries.SetCommitPageLimitForTests(pages);
+    }
+    void SetReceiptCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_monitorControlReceipts.SetCommitPageLimitForTests(pages);
     }
     std::uint32_t QuarantinedCount() const { return m_quarantinedCount; }
     bool SetGenerationForTests(std::uint32_t slot,
@@ -667,6 +685,7 @@ private:
         return (entry.state == EntryState::Free || entry.state == EntryState::Ended) &&
             entry.originalCompletion.marker == 0;
     }
+    std::uint32_t FindReusableSlot() noexcept;
     bool BindPreparedCompletionMutationInternal(PreparedCommitInput* original,
         const CompletionMutationBinding& binding, CompletionOwnerKind kind) noexcept;
     bool IssueOriginalCompletionMutationOwnerInternal(const PreparedCommitProof& proof,
@@ -695,8 +714,8 @@ private:
         bool terminal = false, bool readAudioReceipt = true) const noexcept;
     static void InvalidateMonitorControl(Entry& entry) noexcept;
 
-    std::vector<Entry> m_entries;
-    std::vector<MonitorVoiceControlReceipt> m_monitorControlReceipts;
+    StableRowStorage<Entry> m_entries;
+    StableRowStorage<MonitorVoiceControlReceipt> m_monitorControlReceipts;
     std::uint64_t m_monitorControlTicket = 0;
     std::uint64_t m_monitorControlUnavailable = 0;
     std::vector<ReverseRenderEntry> m_renderOwners;
