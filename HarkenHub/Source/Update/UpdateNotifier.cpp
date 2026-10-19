@@ -4,11 +4,13 @@
 #include "Update/HubSelfUpdate.h"
 #include "Update/UpdateCoordinator.h"
 
+#include <QApplication>
 #include <QCoreApplication>
 #include <QDebug>
 #include <QIcon>
 #include <QMenu>
 #include <QProcess>
+#include <QStyle>
 #include <QSystemTrayIcon>
 #include <QTimer>
 
@@ -109,9 +111,7 @@ bool UpdateNotifier::ensureTray()
         return false;
     if (!tray_) {
         tray_ = new QSystemTrayIcon(this);
-        tray_->setIcon(
-            QIcon(QStringLiteral(
-                ":/Resources/icons/HarkenHub_256x256.png")));
+        tray_->setIcon(QApplication::style()->standardIcon(QStyle::SP_ComputerIcon));
         tray_->setToolTip(tr("Harken Hub"));
         connect(tray_, &QSystemTrayIcon::messageClicked, this,
                 &UpdateNotifier::activateVersionsPage);

@@ -169,7 +169,6 @@ def wix_command(
     product_wxs: Path,
     payload_wxs: Path,
     eula_rtf: Path,
-    icon_ico: Path,
     version: str,
     msi_path: Path,
     wix_exe: str,
@@ -187,8 +186,6 @@ def wix_command(
         f"HarkenVersion={version}",
         "-d",
         f"HarkenEulaRtf={eula_rtf}",
-        "-d",
-        f"HarkenIconIco={icon_ico}",
         "-d",
         f"HarkenHandoffSddl={HANDOFF_SDDL}",
         "-d",
@@ -270,12 +267,7 @@ def build_installer(
     script_dir = Path(__file__).resolve().parent
     product_wxs = Path(args.product_wxs or script_dir / "wix" / "HarkenHub.wxs")
     eula_rtf = Path(args.eula_rtf).resolve() if args.eula_rtf else None
-    icon_ico = Path(
-        args.icon_ico
-        or script_dir.parents[1]
-        / "HarkenHub" / "Resources" / "icons" / "HarkenHub.ico"
-    )
-    for required in (product_wxs, icon_ico) + ((eula_rtf,) if eula_rtf else ()):
+    for required in (product_wxs,) + ((eula_rtf,) if eula_rtf else ()):
         if not required.is_file():
             raise SystemExit(f"error: missing authoring input: {required}")
 
@@ -303,7 +295,7 @@ def build_installer(
         )
         release_evidence.retain_packaging_inputs(evidence, {
             "product.wxs": product_wxs, "payload.wxs": payload_wxs,
-            "license.rtf": eula_rtf, "icon.ico": icon_ico})
+            "license.rtf": eula_rtf})
 
         product_version = msi_version(args.version)
         msi_path = (
@@ -311,7 +303,7 @@ def build_installer(
         )
 
         command = wix_command(
-            product_wxs, payload_wxs, eula_rtf, icon_ico, product_version,
+            product_wxs, payload_wxs, eula_rtf, product_version,
             msi_path, args.wix_exe,
         )
         result = run(command)
@@ -384,7 +376,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--build-dir", default="build")
     parser.add_argument("--product-wxs", default=None)
     parser.add_argument("--eula-rtf", default=None)
-    parser.add_argument("--icon-ico", default=None)
     parser.add_argument("--wix-exe", default="wix")
     parser.add_argument("--stub-exe", default=None)
     return parser.parse_args(argv)

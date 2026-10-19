@@ -14,6 +14,10 @@
       "changes": [
         {
           "category": "improved",
+          "text": "Hub now displays Harken Studio Hub and Harken Studio website and repository links, and no longer uses the previous brand icon."
+        },
+        {
+          "category": "improved",
           "text": "Project format incompatibility messages show the selected Studio version and the project and Studio Schema versions from the compatibility check."
         },
         {

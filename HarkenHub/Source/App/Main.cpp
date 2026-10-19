@@ -5,7 +5,6 @@
 #include <QDebug>
 #include <QFont>
 #include <QFontDatabase>
-#include <QIcon>
 #include <QMessageBox>
 #include <QStyleFactory>
 #include <QStyleHints>
@@ -952,8 +951,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    app.setWindowIcon(
-        QIcon(QStringLiteral(":/Resources/icons/HarkenHub_256x256.png")));
+    app.setApplicationDisplayName(QStringLiteral("Harken Studio Hub"));
     app.setStyleSheet(QString::fromLatin1(kStyleSheet));
 
     QTimer::singleShot(0, &app, [&app]() {

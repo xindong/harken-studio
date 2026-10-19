@@ -234,13 +234,9 @@ if(HARKEN_BUILD_HUB_UNIT_TESTS)
 endif()
 
 if(WIN32)
-    add_executable(harken_hub WIN32 Source/App/Main.cpp "resources.qrc"
-        "HarkenHub.rc")
+    add_executable(harken_hub WIN32 Source/App/Main.cpp "resources.qrc")
 else()
-    set_source_files_properties("Resources/macOS/HarkenHub.icns"
-        PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
-    add_executable(harken_hub Source/App/Main.cpp "resources.qrc"
-        "Resources/macOS/HarkenHub.icns")
+    add_executable(harken_hub Source/App/Main.cpp "resources.qrc")
 endif()
 
 target_link_libraries(harken_hub PRIVATE harken_hub_lib)
@@ -275,7 +271,7 @@ set_target_properties(harken_hub PROPERTIES OUTPUT_NAME "HarkenHub")
 
 harken_attach_version_resource(
     harken_hub
-    "Harken Hub"
+    "Harken Studio Hub"
     "HarkenHub.exe"
     hub)
 
@@ -315,8 +311,7 @@ endif()
 
 if(WIN32)
     add_executable(harken_hub_setup WIN32
-        Source/Setup/SetupStubMain.cpp
-        "HarkenHubSetup.rc")
+        Source/Setup/SetupStubMain.cpp)
     set_target_properties(harken_hub_setup PROPERTIES
         OUTPUT_NAME "HarkenHubSetup"
         AUTOMOC OFF
@@ -327,7 +322,7 @@ if(WIN32)
         "/MANIFESTUAC:level='requireAdministrator'")
     harken_attach_version_resource(
         harken_hub_setup
-        "Harken Hub Setup"
+        "Harken Studio Hub Setup"
         "HarkenHubSetup.exe"
         hub)
 
