@@ -90,7 +90,7 @@ class SchemaCompatibilityTest(unittest.TestCase):
         for field in ("readers", "writers", "validators"):
             candidate["x-harken-format"][field] = ["MovedSource"]
         self.assertEqual(MODULE.same_generation_errors("Pack", self.pack, candidate), [])
-        candidate["properties"]["future"] = {}
+        candidate["$defs"]["identity"]["properties"]["future"] = {}
         self.assertTrue(MODULE.same_generation_errors("Pack", self.pack, candidate))
         candidate = copy.deepcopy(self.pack)
         candidate["x-harken-format"]["versionLocator"] = "other"
@@ -428,7 +428,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
             self.assertTrue(any(tag in error for error in errors))
             path = self.root / "HarkenSchema/Pack/current/PackManifestSchema.json"
             source = json.loads(path.read_text(encoding="utf-8"))
-            source["properties"]["future"] = {}
+            source["$defs"]["identity"]["properties"]["future"] = {}
             path.write_text(json.dumps(source), encoding="utf-8")
             errors = MODULE.release_schema_errors(self.root / "HarkenSchema")
             self.assertTrue(any(tag in error for error in errors))

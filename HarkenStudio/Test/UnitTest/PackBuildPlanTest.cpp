@@ -62,6 +62,8 @@ TEST(PackBuildPlanTest, PostActionDependenciesAreOrderedBeforeRoot)
     auto project = HarkenTest::projectWithPlatforms();
     auto dependency = item(ProjectItem::Type::Action, 1, harkentest::StudioObjectId(11));
     auto root = item(ProjectItem::Type::Action, 2, harkentest::StudioObjectId(12));
+    dependency->name = QStringLiteral("Child");
+    root->name = QStringLiteral("Parent");
     VActionStep post;
     post.type = VActionStep::Type::PostAction;
     post.targetObjectID = dependency->objectID;
@@ -79,6 +81,14 @@ TEST(PackBuildPlanTest, PostActionDependenciesAreOrderedBeforeRoot)
     });
     ASSERT_NE(variant, plan.variants.end());
     EXPECT_EQ(variant->dependencyOrder, (std::vector<harkenstudio::ObjectId>{harkentest::StudioObjectId(11), harkentest::StudioObjectId(12)}));
+
+    PackExportSelection selection;
+    selection.actionTargeting.push_back({dependency->runtimeId(), false, {}});
+    const auto selected = PackBuildPlanning::build(project, {}, {}, false, selection);
+    ASSERT_EQ(selected.variants.size(), 1u);
+    EXPECT_EQ(selected.variants.front().actionStableId, root->runtimeId());
+    EXPECT_EQ(selected.variants.front().dependencyOrder, variant->dependencyOrder);
+    EXPECT_EQ(selected.variants.front().closure.toJson(), variant->closure.toJson());
 }
 
 TEST(PackBuildPlanTest, LegacyGroupMembersBecomeIndependentBuildUnits)

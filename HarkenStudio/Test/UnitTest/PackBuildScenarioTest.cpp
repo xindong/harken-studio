@@ -9,6 +9,7 @@
 #include "PackBuildPlan.h"
 #include "PackExportSelection.h"
 #include "ProjectPackExporter.h"
+#include "CanonicalPackSetExport.h"
 #include "ProjectTypes.h"
 #include "FieldGroupProjectAdapter.h"
 #include "RuntimeBridge/PackagingBridge.h"
@@ -251,14 +252,14 @@ void readPack(const QString& path, PackImage& image)
             + i * harken::kPackV2DirectoryEntryBytes));
 }
 
-QJsonObject readManifest(const QString& outputDir)
+QJsonArray readPublication(const QString& outputDir)
 {
-    QFile file(QDir(outputDir).filePath(
-        HarkenEditor::Bridge::packManifestFileName()));
-    EXPECT_TRUE(file.open(QIODevice::ReadOnly));
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
-    EXPECT_TRUE(document.isObject());
-    return document.object();
+    QJsonArray packs;
+    QStringList files;
+    QString error;
+    EXPECT_TRUE(VNX::ReadPackPublication(outputDir, {}, {}, &packs, &files, &error))
+        << error.toStdString();
+    return packs;
 }
 
 QJsonObject findNamed(const QJsonArray& array, const QString& name)
@@ -283,24 +284,15 @@ QString variantPackPath(const VNX::ProjectData& project, const QString& outputDi
     return {};
 }
 
-QStringList manifestPlan(const QString& outputDir, const QString& actionName)
+QStringList publicationPlan(const QString& outputDir, const QString& actionName)
 {
     QStringList result;
-    const QJsonObject manifest = readManifest(outputDir);
-    const QJsonArray packs = manifest.value(QStringLiteral("packs")).toArray();
+    const QJsonArray packs = readPublication(outputDir);
     const QJsonObject initPack = findNamed(packs, QStringLiteral("Init"));
     EXPECT_FALSE(initPack.isEmpty());
     result.append(QDir(outputDir).filePath(
         QFileInfo(initPack.value(QStringLiteral("path")).toString()).fileName()));
-    const QJsonObject catalogAction = findNamed(
-        manifest.value(QStringLiteral("gameplayCatalog")).toObject()
-            .value(QStringLiteral("actions")).toArray(), actionName);
-    QJsonObject action;
-    for (const auto& value : packs) {
-        const auto pack = value.toObject();
-        if (pack.value(QStringLiteral("packStableId")) == catalogAction.value(QStringLiteral("ownerPackStableId")))
-            action = pack;
-    }
+    const QJsonObject action = findNamed(packs, actionName);
     EXPECT_FALSE(action.isEmpty());
     for (const QJsonValue& value :
          action.value(QStringLiteral("dependencies")).toArray()) {
@@ -653,8 +645,7 @@ TEST(PackBuildScenario, PhysicalLocalizedVariantsUseSelectedAndCommonMedia)
     EXPECT_EQ(englishMedia.at(common->runtimeId()).blobChecksum,
               japaneseMedia.at(common->runtimeId()).blobChecksum);
 
-    const QJsonArray events = readManifest(dir.path())
-        .value(QStringLiteral("packs")).toArray();
+    const QJsonArray events = readPublication(dir.path());
     std::set<QString> manifestLanguages;
     std::set<QString> manifestPaths;
     for (const QJsonValue& value : events) {
@@ -674,7 +665,7 @@ TEST(PackBuildScenario, PhysicalLocalizedVariantsUseSelectedAndCommonMedia)
     VNX::AssetRegistry::instance().clear();
 }
 
-TEST(PackBuildScenario, ExportManifestAndRuntimeHonorActionOwnershipAndPlatformSelection)
+TEST(PackBuildScenario, ExportAndRuntimeHonorActionOwnershipAndPlatformSelection)
 {
     PackRuntimeGuard guard;
     qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
@@ -734,11 +725,10 @@ TEST(PackBuildScenario, ExportManifestAndRuntimeHonorActionOwnershipAndPlatformS
     EXPECT_EQ(tailImage.countKind(10u), 0);
     EXPECT_EQ(peerImage.countKind(10u), 0);
 
-    const QStringList loadPlan = manifestPlan(windowsDir, QStringLiteral("Head"));
-    ASSERT_EQ(loadPlan.size(), 3);
+    const QStringList loadPlan = publicationPlan(windowsDir, QStringLiteral("Head"));
+    ASSERT_EQ(loadPlan.size(), 2);
     EXPECT_EQ(QFileInfo(loadPlan[0]).fileName(), QStringLiteral("Init.bytes"));
-    EXPECT_EQ(QFileInfo(loadPlan[1]).fileName(), QFileInfo(tailPath).fileName());
-    EXPECT_EQ(QFileInfo(loadPlan[2]).fileName(), QFileInfo(headPath).fileName());
+    EXPECT_EQ(QFileInfo(loadPlan[1]).fileName(), QFileInfo(headPath).fileName());
 
     VnConfig config{};
     config.structSize = sizeof(config);
@@ -761,10 +751,9 @@ TEST(PackBuildScenario, ExportManifestAndRuntimeHonorActionOwnershipAndPlatformS
     ASSERT_TRUE(linuxResult.success) << linuxResult.error.toStdString();
     EXPECT_FALSE(QFileInfo::exists(
         variantPackPath(project, linuxDir, harkentest::StudioObjectId(21 + kStableIdBias), HarkenTest::platformIdString(QStringLiteral("Linux")))));
-    const QJsonObject linuxManifest = readManifest(linuxDir);
-    EXPECT_TRUE(findNamed(linuxManifest.value(QStringLiteral("packs")).toArray(),
+    const QJsonArray linuxPublication = readPublication(linuxDir);
+    EXPECT_TRUE(findNamed(linuxPublication,
                           QStringLiteral("Head")).isEmpty());
-    EXPECT_FALSE(findNamed(linuxManifest.value(QStringLiteral("packs")).toArray(),
+    EXPECT_FALSE(findNamed(linuxPublication,
                            QStringLiteral("Tail")).isEmpty());
-    EXPECT_TRUE(linuxManifest.value(QStringLiteral("groups")).toArray().isEmpty());
 }

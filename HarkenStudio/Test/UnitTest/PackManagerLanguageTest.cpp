@@ -534,7 +534,7 @@ TEST_F(PackManagerLanguageTest, CachedArtifactsAndSessionResultsHaveIndependentL
         EXPECT_TRUE(actionRow()->text(column).isEmpty());
 }
 
-TEST_F(PackManagerLanguageTest, KnownOutputCleanupRemovesOnlyArtifactsInThatOutputRoot)
+TEST_F(PackManagerLanguageTest, SelectedUpdatesPreserveOtherArtifactsUntilTheirOutputRootIsCleaned)
 {
     auto& cache = VNX::PackArtifactCache::instance();
     const QString windows = HarkenTest::platformIdString("Windows");
@@ -547,6 +547,12 @@ TEST_F(PackManagerLanguageTest, KnownOutputCleanupRemovesOnlyArtifactsInThatOutp
     otherArtifact.language = QStringLiteral("Japanese");
     otherArtifact.outputPath = temp_.filePath("Other/Linux/Japanese/PlayVoice.bytes");
     cache.publish(linuxId, {linuxArtifact, otherArtifact});
+    linuxArtifact.bytes += 16;
+    cache.publish(linuxId, {linuxArtifact}, true);
+    const auto* updated = cache.find(linuxId, linuxArtifact.language, linuxArtifact.unitKey, linuxArtifact.outputPath);
+    ASSERT_NE(updated, nullptr);
+    EXPECT_EQ(updated->bytes, linuxArtifact.bytes);
+    EXPECT_NE(cache.find(linuxId, otherArtifact.language, otherArtifact.unitKey, otherArtifact.outputPath), nullptr);
     cache.removeUnselectedPlatforms(temp_.filePath("Generated"), {windows});
     EXPECT_EQ(cache.find(linuxId, linuxArtifact.language, linuxArtifact.unitKey, linuxArtifact.outputPath), nullptr);
     EXPECT_NE(cache.find(linuxId, otherArtifact.language, otherArtifact.unitKey, otherArtifact.outputPath), nullptr);

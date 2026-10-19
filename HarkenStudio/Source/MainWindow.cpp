@@ -4273,7 +4273,7 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         }
         if (readiness.errorCount > 0) {
             QString indexError;
-            if (!ProjectPackExporter::PublishPackIndex(baseDir, projectLease->platforms, genPlatforms, {}, &indexError))
+            if (!ProjectPackExporter::FinalizePackOutputs(baseDir, projectLease->platforms, genPlatforms, {}, &indexError))
                 LogPanel::logError(LogCategory::Pack, indexError);
             QMessageBox::critical(
                 this, tr("Export Readiness"),
@@ -4311,6 +4311,7 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
         int skippedCount = 0;
         int removedCount = 0;
         QStringList succeededPlatforms;
+        QVector<PackArtifactMetadata> publishedArtifacts;
         ProjectPackExporter exporter;
         for (const QString& platform : genPlatforms) {
             if (cancel->load(std::memory_order_relaxed)) {
@@ -4341,6 +4342,7 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             const auto result = exporter.ExportAllPacks(snapshot->project, platformDir, opts, &records);
             if (result.success) {
                 succeededPlatforms.append(platform);
+                publishedArtifacts.append(result.artifacts);
                 removedCount += result.removedPackCount;
             }
             for (const auto& rec : records) {
@@ -4354,12 +4356,13 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             if (records.empty() && !result.canceled && !result.success)
                 ++failedCount;
             QMetaObject::invokeMethod(store,
-                [window, store, projectLease, runId, platform, platformDir, definition, result, records] {
+                [window, store, projectLease, runId, platform, platformDir, definition, result, records,
+                 updateSelectedOnly = opts.updateSelectedOnly] {
                 if (!store->isCurrentRun(runId)
                     || ProjectManager::instance().currentProject() != projectLease.get())
                     return;
                 if (result.success)
-                    PackArtifactCache::instance().publish(platform, result.artifacts);
+                    PackArtifactCache::instance().publish(platform, result.artifacts, updateSelectedOnly);
                 if (!window) return;
                 for (const auto& rec : records) {
                     window->recordPackGenerationResult(rec.packName, rec.objectID, rec.success,
@@ -4388,18 +4391,21 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             if (canceled) break;
         }
         QMetaObject::invokeMethod(store,
-            [window, store, projectLease, runId, canceled, failedCount, builtCount,
+            [window, store, projectLease, snapshot, runId, canceled, failedCount, builtCount,
              skippedCount, removedCount, baseDir, packPaths, selfCleaning,
-             genPlatforms, succeededPlatforms, platformActivity, outputLock]() mutable {
+             genPlatforms, succeededPlatforms, publishedArtifacts, platformActivity, outputLock]() mutable {
             if (!store->isCurrentRun(runId)) return;
             if (ProjectManager::instance().currentProject() != projectLease.get()) {
                 store->finishProgress(runId, true);
                 return;
             }
             QString publicationError;
-            if (packPaths.isEmpty() && !canceled && succeededPlatforms.size() == genPlatforms.size()) {
+            if (!ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
+                    projectLease->platforms, succeededPlatforms, &publicationError)) {
+                ++failedCount;
+            } else if (packPaths.isEmpty() && !canceled && succeededPlatforms.size() == genPlatforms.size()) {
                 const auto publication = ProjectPackExporter::FinalizePackExport(
-                    baseDir, projectLease->platforms, genPlatforms, selfCleaning);
+                    baseDir, projectLease->platforms, genPlatforms, selfCleaning, publishedArtifacts);
                 if (publication.success) {
                     removedCount += publication.removedPackCount;
                     if (selfCleaning)
@@ -4408,8 +4414,8 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                     ++failedCount;
                     publicationError = publication.error;
                 }
-            } else if (!ProjectPackExporter::PublishPackIndex(baseDir, projectLease->platforms,
-                           genPlatforms, succeededPlatforms, &publicationError)) {
+            } else if (!ProjectPackExporter::FinalizePackOutputs(baseDir, projectLease->platforms,
+                           genPlatforms, succeededPlatforms, &publicationError, publishedArtifacts)) {
                 ++failedCount;
             }
             store->finishProgress(runId, canceled);

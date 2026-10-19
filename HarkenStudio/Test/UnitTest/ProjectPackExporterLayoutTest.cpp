@@ -1,13 +1,10 @@
 #include "ProjectPackExporter.h"
-#include "PackSchemaGenerated.h"
 #include "Support/ProjectPlatformTestUtils.h"
 #include "RuntimeBridge/PackagingBridge.h"
 
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QJsonArray>
-#include <QJsonDocument>
 #include <QTemporaryDir>
 #include <gtest/gtest.h>
 
@@ -19,40 +16,35 @@ TEST(EditorProjectPackExporterLayout, AlwaysNestsPlatformDirectory)
               QDir(root).filePath(QStringLiteral("Windows")));
 }
 
-TEST(EditorProjectPackExporterLayout, RejectsUnbuiltPlatformWithoutCreatingIndex)
+TEST(EditorProjectPackExporterLayout, RejectsUnbuiltPlatformWithoutCreatingOutputs)
 {
     QTemporaryDir dir;
     QString error;
-    EXPECT_FALSE(VNX::ProjectPackExporter::WritePackIndex(
+    EXPECT_FALSE(VNX::ProjectPackExporter::ValidatePackOutputs(
         dir.path(), HarkenTest::platforms({"Windows"}), &error));
     EXPECT_FALSE(error.isEmpty());
     EXPECT_FALSE(QFile::exists(QDir(dir.path()).filePath(HarkenEditor::Bridge::packIndexFileName())));
 }
 
-TEST(EditorProjectPackExporterLayout, FailedFirstBuildPublishesEmptyIndex)
+TEST(EditorProjectPackExporterLayout, FailedFirstBuildLeavesNoPublishedIndex)
 {
     QTemporaryDir dir;
     QString error;
-    ASSERT_TRUE(VNX::ProjectPackExporter::PublishPackIndex(dir.path(),
+    ASSERT_TRUE(VNX::ProjectPackExporter::FinalizePackOutputs(dir.path(),
         HarkenTest::platforms({"Windows", "Android"}), HarkenTest::platformIdStrings({"Windows", "Android"}), {}, &error));
-    QFile file(QDir(dir.path()).filePath(HarkenEditor::Bridge::packIndexFileName()));
-    ASSERT_TRUE(file.open(QIODevice::ReadOnly));
-    const auto index = QJsonDocument::fromJson(file.readAll()).object();
-    EXPECT_EQ(index.value("schema_version").toInt(),
-              VNX::PackSchema::kPackManifestSchemaVersion);
-    EXPECT_TRUE(index.value("platforms").toArray().isEmpty());
+    EXPECT_TRUE(QDir(dir.path()).entryList(QDir::Files).isEmpty());
 }
 
-TEST(EditorProjectPackExporterLayout, MultiPlatformRootAlwaysHasIndex)
+TEST(EditorProjectPackExporterLayout, MultiPlatformRootKeepsPlatformDirectoriesWithoutIndex)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
 
     const auto platforms = HarkenTest::platforms({"Windows", "Android"});
     QString error;
-    ASSERT_TRUE(VNX::ProjectPackExporter::PublishPackIndex(dir.path(), platforms, {}, {}, &error))
+    ASSERT_TRUE(VNX::ProjectPackExporter::FinalizePackOutputs(dir.path(), platforms, {}, {}, &error))
         << error.toStdString();
-    EXPECT_TRUE(QFileInfo::exists(
+    EXPECT_FALSE(QFileInfo::exists(
         QDir(dir.path()).filePath(HarkenEditor::Bridge::packIndexFileName())));
     for (const auto& platform : platforms) {
         const QString nested = VNX::ProjectPackExporter::platformOutputDir(

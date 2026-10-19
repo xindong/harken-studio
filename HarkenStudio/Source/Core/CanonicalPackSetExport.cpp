@@ -16,7 +16,6 @@
 #include "BindingRuntimeLowering.h"
 #include "SoundSourceEditing.h"
 #include "VariableConsumerSemantics.h"
-#include "EditorWaveformPublication.h"
 #include "AssetPipeline/PathUtils.h"
 
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
@@ -30,7 +29,6 @@
 #include <harken_studio_build/PackFormat.h>
 #include <harken_studio_build/PackFormatV2.h>
 #include <harken_studio_build/PackImage.h>
-#include <harken_project_schema/VariableContract.h>
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -303,7 +301,8 @@ bool containsPublicationFile(const QDir& dir, const QStringList& names, const QS
     });
 }
 
-bool scanOutputFiles(const QDir& dir, QStringList* names, QStringList* packs, QString* error)
+bool scanOutputFiles(const QDir& dir, QStringList* names, QStringList* packs, QString* error,
+                     bool includeStagingDirectories = false)
 {
     if (QFileInfo(dir.absolutePath()).isSymLink()) {
         *error = QStringLiteral("Output directory is a symbolic link: %1").arg(dir.absolutePath());
@@ -321,6 +320,9 @@ bool scanOutputFiles(const QDir& dir, QStringList* names, QStringList* packs, QS
             }
             if (!safePublicationPath(dir, relative)) continue;
             if (entry.isDir()) {
+                if ((!includeStagingDirectories && entry.fileName().startsWith(QString::fromLatin1(kStagingPrefix)))
+                    || entry.fileName().startsWith(QString::fromLatin1(kPreviousPrefix))
+                    || entry.fileName().startsWith(QString::fromLatin1(kNextPrefix))) continue;
                 directories.append(relative);
                 continue;
             }
@@ -343,77 +345,14 @@ bool scanOutputFiles(const QDir& dir, QStringList* names, QStringList* packs, QS
 bool publishedRelativeNames(const QDir& dir, QStringList* names, QString* error,
                             bool requireComplete = false, QStringList* packNames = nullptr)
 {
-    names->clear();
-    QStringList packs;
-    const QString manifestName = Bridge::packManifestFileName();
-    QStringList manifests;
-    if (QFileInfo::exists(dir.filePath(manifestName))) manifests.append(manifestName);
-    for (qsizetype index = 0; index < manifests.size(); ++index) {
-        const QString relative = manifests[index];
-        QFile file(dir.filePath(relative));
-        if (!safePublicationPath(dir, relative) || !file.open(QIODevice::ReadOnly)) {
-            *error = QStringLiteral("Cannot read previous publication '%1'").arg(relative);
-            return false;
-        }
-        QJsonParseError parseError;
-        const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
-        const QJsonObject manifest = document.object();
-        const QStringList errors = ProjectSchemaValidator::validatePackManifest(
-            PackSchema::kPackManifestSchemaVersion, manifest, relative);
-        if (parseError.error != QJsonParseError::NoError || !document.isObject() || !errors.isEmpty()
-            || manifest.value(QStringLiteral("packs")).toArray().isEmpty()) {
-            *error = QStringLiteral("Cannot establish publication ownership from '%1': invalid manifest").arg(relative);
-            return false;
-        }
-        names->append(relative);
-        const QString companion = QDir::cleanPath(QDir(QFileInfo(relative).path()).filePath(
-            QString::fromLatin1(harkenstudiobuild::tooling::kEditorWaveformFileName)));
-        if (QFileInfo::exists(dir.filePath(companion))) {
-            if (!safePublicationPath(dir, companion)) {
-                *error = QStringLiteral("Unsafe publication path '%1'").arg(companion);
-                return false;
-            }
-            names->append(companion);
-        }
-        for (const QJsonValue& value : manifest.value(QStringLiteral("packs")).toArray()) {
-            const QJsonObject row = value.toObject();
-            QString path = row.value(QStringLiteral("path")).toString();
-            if (!safePublicationPath(dir, path)) {
-                *error = QStringLiteral("Unsafe publication path '%1'").arg(path);
-                return false;
-            }
-            const QString wrapped = path + QStringLiteral(".bytes");
-            if (!path.endsWith(QStringLiteral(".bytes"), Qt::CaseInsensitive)
-                && QFileInfo::exists(dir.filePath(wrapped))) {
-                if (QFileInfo::exists(dir.filePath(path)) || !safePublicationPath(dir, wrapped)) {
-                    *error = QStringLiteral("Ambiguous previous Pack '%1'").arg(path);
-                    return false;
-                }
-                path = wrapped;
-            }
-            if (QFileInfo::exists(dir.filePath(path)))
-                packs.append(path);
-            else if (requireComplete) {
-                *error = QStringLiteral("Previous publication file is missing: %1").arg(path);
-                return false;
-            }
-            if (index == 0) {
-                const QString language = row.value(QStringLiteral("language")).toString();
-                if (language.isEmpty()) continue;
-                const QString selected = language + QLatin1Char('/') + manifestName;
-                if (!safePublicationPath(dir, selected)) {
-                    *error = QStringLiteral("Unsafe language publication '%1'").arg(selected);
-                    return false;
-                }
-                if (QFileInfo::exists(dir.filePath(selected)) && !manifests.contains(selected))
-                    manifests.append(selected);
-            }
-        }
+    QJsonArray rows;
+    if (!ReadPackPublication(dir.absolutePath(), {}, {}, &rows, names, error, requireComplete))
+        return false;
+    if (packNames) {
+        packNames->clear();
+        for (const auto& value : rows)
+            packNames->append(value.toObject().value(QStringLiteral("path")).toString());
     }
-    packs.removeDuplicates();
-    names->append(packs);
-    names->removeDuplicates();
-    if (packNames) *packNames = packs;
     return true;
 }
 
@@ -463,18 +402,18 @@ void removeEmptyOutputDirs(const QDir& dir)
 
 void removePublicationCopy(const QDir& dir, const QStringList& names)
 {
-    QStringList manifests;
+    QStringList companions;
     bool removed = true;
     for (const QString& name : names) {
-        if (QFileInfo(name).fileName() == Bridge::packManifestFileName()) {
-            manifests.prepend(name);
+        if (QFileInfo(name).suffix() == QStringLiteral("json")) {
+            companions.prepend(name);
             continue;
         }
         removeRelativeFile(dir, name);
         removed = removed && !QFileInfo::exists(dir.filePath(name));
     }
     if (!removed) return;
-    for (const QString& name : manifests) {
+    for (const QString& name : companions) {
         removeRelativeFile(dir, name);
         if (QFileInfo::exists(dir.filePath(name))) return;
     }
@@ -672,7 +611,6 @@ struct PackMeta
     bool grouped = false;
     std::uint64_t packStableId = 0;
     std::uint32_t packKind = 0;
-    std::uint64_t contentHash = 0;
     std::uint64_t contentRevision = 1;
     std::uint64_t requiredInitRevision = 0;
     std::vector<std::uint64_t> dependencies;
@@ -682,14 +620,12 @@ struct PackMeta
     std::uint64_t lineageFingerprint = 0;
     std::vector<std::uint8_t> partitionPayload;
     std::vector<std::uint8_t> variablePolicyOverlayPayload;
-    harkenstudiobuild::PackVariableNameCatalog variableNameCatalog;
-    std::vector<std::uint8_t> variableNameCatalogPayload;
+    QJsonObject companion;
     std::vector<std::uint8_t> variableRequirementsPayload;
     std::unordered_map<harkenstudio::ObjectId, std::uint64_t> variableExecutionFingerprints;
     std::unordered_map<harkenstudio::ObjectId, std::uint64_t> variableLabelMappingFingerprints;
     std::vector<Bridge::PackBuildSession::CanonicalPackEntry> resourceEntries;
     QJsonObject previousRow;
-    QJsonArray previousActions;
     std::vector<Bridge::PackBuildSession::CanonicalPackEntry> previousEntries;
     QString resourceFingerprint;
     QString previousResourceFingerprint;
@@ -702,8 +638,6 @@ struct PackMeta
     qint64 fileSize = 0;
     std::unordered_map<harkenstudio::ObjectId, std::uint64_t> soundContentRevisions;
     ProjectPackExporter::ExportResult mediaResult;
-    QJsonObject gameplayCatalog;
-    std::vector<std::uint8_t> gameplayCatalogPayload;
     std::set<harkenstudio::ObjectId> ownedPlayableIds;
     std::vector<std::vector<harkenstudiobuild::SendV1>> ownedSends;
     std::vector<std::vector<harkenstudiobuild::LayerAncestorRefV1>> ownedLayerAncestors;
@@ -760,242 +694,6 @@ const ProjectItem* findAction(const ProjectData& project, harkenstudio::ObjectId
         walk(binding->rootItem.get());
     }
     return found;
-}
-
-std::array<std::uint8_t, 16> guidRfc4122(const QUuid& guid)
-{
-    const QByteArray bytes = guid.toRfc4122();
-    std::array<std::uint8_t, 16> out{};
-    if (bytes.size() == 16)
-        std::memcpy(out.data(), bytes.constData(), 16);
-    return out;
-}
-
-std::uint64_t providerClosureFingerprint(const PackMeta& pack,
-                                         std::uint64_t initId,
-                                         std::uint64_t initRevision)
-{
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> edges;
-    edges.push_back({pack.packStableId, pack.contentRevision});
-    for (std::uint64_t dependency : pack.dependencies) {
-        const std::uint64_t revision =
-            dependency == initId ? initRevision : 0;
-        edges.push_back({dependency, revision});
-    }
-    std::sort(edges.begin(), edges.end());
-    edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
-    std::vector<std::uint8_t> bytes(edges.size() * 16, 0);
-    for (std::size_t i = 0; i < edges.size(); ++i) {
-        harkenstudiobuild::StoreLE64(bytes.data() + i * 16, edges[i].first);
-        harkenstudiobuild::StoreLE64(bytes.data() + i * 16 + 8, edges[i].second);
-    }
-    return harkenstudiobuild::Fnv1a64(bytes.data(), bytes.size());
-}
-
-void visitActions(const ProjectData& project,
-                  const std::function<void(const ProjectItem*)>& fn)
-{
-    for (const auto* binding : project.allFileBindings()) {
-        if (!binding || !binding->rootItem)
-            continue;
-        std::function<void(const ProjectItem*)> walk = [&](const ProjectItem* item) {
-            if (!item)
-                return;
-            if (item->type == ProjectItem::Type::Action)
-                fn(item);
-            for (const auto& child : item->children)
-                walk(child.get());
-        };
-        walk(binding->rootItem.get());
-    }
-}
-
-QString escapeActionSymbol(QString name)
-{
-    if (name.startsWith(QStringLiteral("A_"))) return QStringLiteral("A_") + name;
-    for (QChar& c : name) {
-        if (c == QLatin1Char(' ') || c == QLatin1Char('-') || c == QLatin1Char('.'))
-            c = QLatin1Char('_');
-    }
-    if (!name.isEmpty() && name.front().isDigit())
-        name.prepend(QLatin1Char('A'));
-    // Closed C# / C identifier set from the gameplay contract.
-    static const QStringList reserved = QStringLiteral(
-        "abstract as base bool break byte case catch char checked class const continue "
-        "decimal default delegate do double else enum event explicit extern false finally "
-        "fixed float for foreach goto if implicit in int interface internal is lock long "
-        "namespace new null object operator out override params private protected public "
-        "readonly ref return sbyte sealed short sizeof stackalloc static string struct "
-        "switch this throw true try typeof uint ulong unchecked unsafe ushort using "
-        "virtual void volatile while "
-        "add alias and ascending args async await by descending dynamic equals from "
-        "get global group init into join let managed nameof nint not notnull nuint on "
-        "or orderby partial record remove required scoped select set unmanaged value "
-        "var when where with yield "
-        "auto inline register restrict signed typedef union unsigned _Alignas _Alignof "
-        "_Atomic _Bool _Complex _Generic _Imaginary _Noreturn _Static_assert _Thread_local"
-    ).split(QLatin1Char(' '));
-    if (reserved.contains(name))
-        name.prepend(QStringLiteral("A_"));
-    return name;
-}
-
-bool fillGameplayCatalog(const ProjectData& project,
-                             const std::vector<PackMeta>& packs,
-                             PackMeta& init, const QString& language,
-                              bool selectedOnly, QString* error)
-{
-    if (packs.empty()) {
-        if (error)
-            *error = QStringLiteral("Init Pack is missing");
-        return false;
-    }
-    const QUuid projectGuid = QUuid::fromString(project.projectId);
-    if (projectGuid.isNull()) {
-        if (error)
-            *error = QStringLiteral("Project is missing a project UUID");
-        return false;
-    }
-    std::set<QString> liveNames;
-    std::set<QString> liveSymbols;
-    bool validNames = true;
-    visitActions(project, [&](const ProjectItem* item) {
-        if (!validNames) return;
-        if (selectedOnly && std::none_of(packs.begin(), packs.end(), [&](const auto& pack) {
-                return !pack.retained && std::find(pack.actionStableIds.begin(),
-                    pack.actionStableIds.end(), item->runtimeId()) != pack.actionStableIds.end();
-            })) return;
-        QString problem;
-        if (!NameValidator::validateItemName(item->name, ProjectItem::Type::Action))
-            problem = QStringLiteral("Invalid Action name '%1'").arg(item->name);
-        else if (!liveNames.insert(item->name).second)
-            problem = QStringLiteral("Duplicate Action name '%1'").arg(item->name);
-        else if (!liveSymbols.insert(escapeActionSymbol(item->name)).second)
-            problem = QStringLiteral("Action '%1' collides with another generated symbol").arg(item->name);
-        else if (harkenstudio::IsNull(item->runtimeId()) || item->guid.isNull() ||
-                 item->nameBindingRevision == 0)
-            problem = QStringLiteral("Action '%1' is missing publication identity").arg(item->name);
-        if (!problem.isEmpty()) {
-            validNames = false;
-            if (error) *error = problem;
-        }
-    });
-    if (!validNames) return false;
-    std::vector<QByteArray> nameBytes;
-    std::vector<harkenstudiobuild::PackGameplayCatalogActiveDraft> active;
-    std::set<QString> publishedNames;
-    std::set<QString> publishedSymbols;
-    for (const PackMeta& pack : packs) {
-        if (pack.packKind != harkenstudiobuild::kPackKindCanonicalContent ||
-            pack.actionStableIds.empty() ||
-            (!pack.language.isEmpty() && pack.language != language))
-            continue;
-        if (pack.retained) {
-            for (const auto& value : pack.previousActions) {
-                const auto previous = value.toObject();
-                nameBytes.push_back(previous.value(QStringLiteral("name")).toString().toUtf8());
-                harkenstudiobuild::PackGameplayCatalogActiveDraft row;
-                row.actionStableId = runtimeObjectId(QUuid(previous.value(QStringLiteral("actionStableId")).toString()));
-                row.nameBindingRevision = previous.value(QStringLiteral("nameBindingRevision")).toString().toULongLong();
-                row.callableFingerprint = previous.value(QStringLiteral("callableFingerprint")).toString().toULongLong();
-                row.ownerPackStableId = pack.packStableId;
-                row.providerClosureFingerprint = previous.value(QStringLiteral("providerClosureFingerprint")).toString().toULongLong();
-                row.name = std::string_view(nameBytes.back().constData(), nameBytes.back().size());
-                active.push_back(row);
-            }
-            continue;
-        }
-        for (harkenstudio::ObjectId actionId : pack.actionStableIds) {
-            const ProjectItem* action = findAction(project, actionId);
-            if (!action)
-                continue;
-            QString name = action->name;
-            std::uint64_t nameRevision = action->nameBindingRevision;
-            nameBytes.push_back(name.toUtf8());
-            harkenstudiobuild::PackGameplayCatalogActiveDraft row;
-            row.actionStableId = !harkenstudio::IsNull(action->runtimeId())
-                ? action->runtimeId()
-                : actionId;
-            row.nameBindingRevision = nameRevision;
-            row.callableFingerprint = harkenstudiobuild::GameplayCallableFingerprint(
-                row.actionStableId, row.nameBindingRevision,
-                std::string_view(nameBytes.back().constData(), nameBytes.back().size()));
-            row.ownerPackStableId = pack.packStableId;
-            row.providerClosureFingerprint = providerClosureFingerprint(
-                pack, init.packStableId, pack.requiredInitRevision);
-            row.name = std::string_view(nameBytes.back().constData(),
-                                        static_cast<std::size_t>(nameBytes.back().size()));
-            active.push_back(row);
-        }
-    }
-    for (const auto& bytes : nameBytes) {
-        const auto name = QString::fromUtf8(bytes);
-        if (!publishedNames.insert(name).second || !publishedSymbols.insert(escapeActionSymbol(name)).second) {
-            if (error) *error = QStringLiteral("Action '%1' conflicts with another published name").arg(name);
-            return false;
-        }
-    }
-    harkenstudiobuild::PackGameplayCatalogHeader identity;
-    identity.projectGuid = guidRfc4122(projectGuid);
-    identity.initPackStableId = init.packStableId;
-    identity.initContentRevision = init.contentRevision;
-    if (!harkenstudiobuild::EncodeGameplayCatalog(identity, active, {},
-                                      &init.gameplayCatalogPayload)) {
-        if (error) {
-            *error = QStringLiteral(
-                "Gameplay catalog exceeds 4096 entries or 1 MiB");
-        }
-        return false;
-    }
-    const auto digest = harkenstudiobuild::LoadLE64(init.gameplayCatalogPayload.data() + 24);
-    auto catalogSort = [](const QByteArray& a, harkenstudio::ObjectId aId,
-                          const QByteArray& b, harkenstudio::ObjectId bId) {
-        const int c = harkenstudiobuild::CompareGameplayCatalogNameBytes(
-            a.constData(), static_cast<std::uint16_t>(a.size()),
-            b.constData(), static_cast<std::uint16_t>(b.size()));
-        if (c != 0)
-            return c < 0;
-        return aId < bId;
-    };
-    std::sort(active.begin(), active.end(),
-              [&](const auto& a, const auto& b) {
-                  return catalogSort(QByteArray(a.name.data(),
-                                                static_cast<int>(a.name.size())),
-                                     a.actionStableId,
-                                     QByteArray(b.name.data(),
-                                                static_cast<int>(b.name.size())),
-                                     b.actionStableId);
-              });
-    QJsonObject catalog;
-    catalog.insert(QStringLiteral("schema"), 2);
-    catalog.insert(QStringLiteral("projectId"), project.projectId);
-    catalog.insert(QStringLiteral("digest"), QString::number(digest));
-    catalog.insert(QStringLiteral("initPackStableId"),
-                   QString::number(init.packStableId));
-    catalog.insert(QStringLiteral("initContentRevision"),
-                   static_cast<qint64>(init.contentRevision));
-    QJsonArray actionsJson;
-    for (const auto& row : active) {
-        QJsonObject item;
-        item.insert(QStringLiteral("name"),
-                    QString::fromUtf8(row.name.data(),
-                                      static_cast<int>(row.name.size())));
-        item.insert(QStringLiteral("actionStableId"),
-                    objectIdString(row.actionStableId));
-        item.insert(QStringLiteral("nameBindingRevision"),
-                    QString::number(row.nameBindingRevision));
-        item.insert(QStringLiteral("callableFingerprint"),
-                    QString::number(row.callableFingerprint));
-        item.insert(QStringLiteral("ownerPackStableId"),
-                    QString::number(row.ownerPackStableId));
-        item.insert(QStringLiteral("providerClosureFingerprint"),
-                    QString::number(row.providerClosureFingerprint));
-        actionsJson.append(item);
-    }
-    catalog.insert(QStringLiteral("actions"), actionsJson);
-    catalog.insert(QStringLiteral("retired"), QJsonArray{});
-    init.gameplayCatalog = std::move(catalog);
-    return true;
 }
 
 const ProjectItem* findItemByGuid(const ProjectData& project, const QUuid& guid)
@@ -1236,7 +934,6 @@ bool appendCanonicalBindingEntries(
 bool encodeVariablePolicyOverlay(
     const harkenstudiobuild::ContainerWorldInstallViewV1& world,
     const ProjectData& project,
-    const harkenprojectschema::VariableContractArtifactV1& contract,
     std::vector<std::uint8_t>* outPayload,
     std::unordered_map<harkenstudio::ObjectId, std::uint64_t>* fingerprints,
     std::unordered_map<harkenstudio::ObjectId, std::uint64_t>* labelFingerprints,
@@ -1249,7 +946,6 @@ bool encodeVariablePolicyOverlay(
         std::vector<std::int32_t> anchors;
         std::vector<harkenstudiobuild::VariableLabelDefinitionV1> labels;
         std::uint64_t labelMappingFingerprint = 0;
-        std::uint64_t catalogFingerprint = 0;
     };
     std::vector<Row> rows;
     rows.reserve(world.variableCount);
@@ -1279,14 +975,12 @@ bool encodeVariablePolicyOverlay(
             return false;
         }
         (*fingerprints)[def.variableId] = fingerprint;
-        const auto record = std::find_if(contract.variables.begin(), contract.variables.end(),
-            [&](const auto& candidate) { return candidate.execution.variableId == def.variableId; });
-        if (record == contract.variables.end()) return false;
-        const auto mapping = harkenstudiobuild::ComputeVariableLabelMappingFingerprintV1(
-            def.variableId, record->catalog.labels);
+        std::vector<harkenstudiobuild::VariableLabelDefinitionV1> labels;
+        for (const auto& label : VariableSemantics::effectiveLabels(*item->comp<VVariable>()))
+            labels.push_back({label.anchor, {}, runtimeObjectId(label.id)});
+        const auto mapping = harkenstudiobuild::ComputeVariableLabelMappingFingerprintV1(def.variableId, labels);
         (*labelFingerprints)[def.variableId] = mapping;
-        rows.push_back({def.variableId, writers, fingerprint, std::move(anchors), record->catalog.labels,
-            mapping, harkenprojectschema::ComputeVariableCatalogFingerprintV1(def.variableId, record->catalog)});
+        rows.push_back({def.variableId, writers, fingerprint, std::move(anchors), std::move(labels), mapping});
     }
     std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {
         return a.variableId < b.variableId;
@@ -1294,13 +988,11 @@ bool encodeVariablePolicyOverlay(
     std::size_t bytes = 16 + rows.size() * 32;
     for (const auto& row : rows) {
         bytes += 4 + row.anchors.size() * 4;
-        bytes += 24;
-        for (const auto& label : row.labels)
-            bytes += 24 + ((label.name.size() + 3) & ~std::size_t{3});
+        bytes += 16 + row.labels.size() * 24;
     }
     std::vector<std::uint8_t> payload(bytes, 0);
     harkenstudiobuild::StoreLE32(payload.data(), static_cast<std::uint32_t>(rows.size()));
-    harkenstudiobuild::StoreLE32(payload.data() + 4, 1);
+    harkenstudiobuild::StoreLE32(payload.data() + 4, harkenstudiobuild::kPackVariablePolicyOverlayFormat);
     std::size_t offset = 16;
     for (const auto& row : rows) {
         harkenstudiobuild::StoreObjectId(payload.data() + offset, row.variableId);
@@ -1320,118 +1012,43 @@ bool encodeVariablePolicyOverlay(
     }
     for (const auto& row : rows) {
         harkenstudiobuild::StoreLE64(payload.data() + offset, row.labelMappingFingerprint);
-        harkenstudiobuild::StoreLE64(payload.data() + offset + 8, row.catalogFingerprint);
-        harkenstudiobuild::StoreLE32(payload.data() + offset + 16, static_cast<std::uint32_t>(row.labels.size()));
-        offset += 24;
+        harkenstudiobuild::StoreLE32(payload.data() + offset + 8, static_cast<std::uint32_t>(row.labels.size()));
+        offset += 16;
         for (const auto& label : row.labels) {
             harkenstudiobuild::StoreObjectId(payload.data() + offset, label.labelId);
             harkenstudiobuild::StoreLE32(payload.data() + offset + 16, static_cast<std::uint32_t>(label.anchor));
-            harkenstudiobuild::StoreLE32(payload.data() + offset + 20, static_cast<std::uint32_t>(label.name.size()));
             offset += 24;
-            std::memcpy(payload.data() + offset, label.name.data(), label.name.size());
-            offset += (label.name.size() + 3) & ~std::size_t{3};
         }
     }
     *outPayload = std::move(payload);
     return true;
 }
 
-bool fillVariableNameCatalog(
-    const harkenstudiobuild::ContainerWorldInstallViewV1& world,
-    const ProjectData& project, PackMeta& init, QString* error)
+bool fillInitCompanion(const harkenstudiobuild::ContainerWorldInstallViewV1& world,
+                       const ProjectData& project, QJsonObject* companion, QString* error)
 {
-    auto& catalog = init.variableNameCatalog;
-    catalog.projectGuid = guidRfc4122(QUuid::fromString(project.projectId));
-    catalog.initPackStableId = init.packStableId;
-    catalog.initContentRevision = 1;
-    catalog.rows.clear();
-    std::set<QString> liveNames;
+    QJsonArray variables;
+    QSet<QString> names;
     for (std::uint32_t i = 0; i < world.variableCount; ++i) {
         const auto* item = findItemByStableId(project, world.variables[i].variableId);
-        if (!item || item->type != ProjectItem::Type::Variable ||
-            !NameValidator::validateItemName(item->name, item->type) ||
-            !liveNames.insert(item->name).second) {
+        if (!item || item->type != ProjectItem::Type::Variable
+            || !NameValidator::validateItemName(item->name, item->type)
+            || names.contains(item->name)) {
             if (error) *error = QStringLiteral("Invalid Variable publication identity or name");
             return false;
         }
-        catalog.rows.push_back({item->runtimeId(), item->name.toStdString()});
-    }
-    if (!harkenstudiobuild::EncodeVariableNameCatalog(catalog, &init.variableNameCatalogPayload)) {
-        if (error) *error = QStringLiteral("Invalid or oversized Variable name catalog");
-        return false;
-    }
-    return true;
-}
-
-bool fillVariableContractArtifact(
-    const harkenstudiobuild::ContainerWorldInstallViewV1& world,
-    const ProjectData& project, std::uint64_t initPackStableId,
-    harkenprojectschema::VariableContractArtifactV1* artifact, QString* error)
-{
-    if (artifact == nullptr)
-        return false;
-    harkenprojectschema::VariableContractArtifactV1 built;
-    built.schemaVersion =
-        harkenprojectschema::kVariableContractSchemaVersionV1;
-    built.variables.reserve(world.variableCount);
-    for (std::uint32_t i = 0; i < world.variableCount; ++i) {
-        const auto& def = world.variables[i];
-        const ProjectItem* item = findItemByStableId(project, def.variableId);
-        std::uint8_t writers = 1;
-        if (!overlayWritersFor(item, &writers, error))
-            return false;
-        const auto* source = item->comp<VVariable>();
-        harkenprojectschema::VariableContractRecordV1 record;
-        record.execution.variableId = def.variableId;
-        record.execution.kind =
-            static_cast<harkenprojectschema::ControlValueKindV1>(def.kind);
-        record.execution.scopePolicy =
-            harkenprojectschema::VariableScopePolicyV1::GlobalWithEmitterOverride;
-        record.execution.writers =
-            static_cast<harkenprojectschema::VariableWriterMaskV1>(writers);
-        record.execution.range = {def.rangeMin, def.rangeMax, def.defaultValue};
-        record.catalog.codeName = item->name.toStdString();
-        record.catalog.displayName = item->name.toStdString();
-        record.catalog.description = source->description.toStdString();
-        record.catalog.unit = source->unit.toStdString();
-        record.catalog.precision = source->precision;
-        record.catalog.displayScale = source->displayScale;
-        record.catalog.ownerInitPackId = initPackStableId;
-        record.catalog.labels.reserve(source->labels.size());
-        for (const auto& label : VariableSemantics::effectiveLabels(*source)) {
-            record.catalog.labels.push_back(
-                {label.anchor, label.name.toStdString(), runtimeObjectId(label.id)});
+        names.insert(item->name);
+        QJsonArray labels;
+        for (const auto& label : VariableSemantics::effectiveLabels(*item->comp<VVariable>())) {
+            if (label.name.isEmpty()) continue;
+            labels.append(QJsonObject{{QStringLiteral("name"), label.name},
+                {QStringLiteral("guid"), objectIdString(runtimeObjectId(label.id))}});
         }
-        built.variables.push_back(std::move(record));
+        variables.append(QJsonObject{{QStringLiteral("name"), item->name},
+            {QStringLiteral("guid"), objectIdString(item->runtimeId())},
+            {QStringLiteral("labels"), labels}});
     }
-    built.capacity.definitionCount =
-        static_cast<std::uint32_t>(built.variables.size());
-    *artifact = std::move(built);
-    return true;
-}
-
-bool encodeVariableCatalogJson(
-    const harkenprojectschema::VariableContractArtifactV1& artifact,
-    QJsonObject* outCatalog, std::string* outExactJson, QString* error)
-{
-    if (outCatalog == nullptr || outExactJson == nullptr)
-        return false;
-    std::string json;
-    if (!harkenprojectschema::EncodeVariableContractArtifactJsonV1(artifact,
-                                                                  &json)) {
-        if (error)
-            *error = QStringLiteral("Variable catalog failed to encode");
-        return false;
-    }
-    const QJsonDocument document =
-        QJsonDocument::fromJson(QByteArray::fromStdString(json));
-    if (!document.isObject()) {
-        if (error)
-            *error = QStringLiteral("Variable catalog JSON is not an object");
-        return false;
-    }
-    *outCatalog = document.object();
-    *outExactJson = std::move(json);
+    *companion = QJsonObject{{QStringLiteral("variables"), variables}};
     return true;
 }
 
@@ -1483,52 +1100,24 @@ bool assignOwnership(
         if (pack.actionStableIds.empty()
             || (!pack.language.isEmpty() && pack.language != language))
             continue;
-        for (harkenstudio::ObjectId actionId : pack.actionStableIds)
-            if (!claimIdentity(owners, actionId, pack.packStableId,
-                               harkenstudiobuild::kInitCatalogIdentityClassAction, error))
-                return false;
-    }
-
-    std::unordered_map<harkenstudio::ObjectId, std::vector<std::uint64_t>> playableRequirers;
-    for (const PackMeta& pack : packs) {
-        if (pack.actionStableIds.empty()
-            || (!pack.language.isEmpty() && pack.language != language))
-            continue;
-        const std::uint64_t actionOwnerPack = pack.packStableId;
         for (const PackBuildVariant& variant : request.plan->variants) {
             if (std::find(pack.actionStableIds.begin(), pack.actionStableIds.end(),
                           variant.actionStableId) == pack.actionStableIds.end()
                 || variant.variant.platform != pack.platform
                 || variant.variant.language != pack.language)
                 continue;
-            std::set<harkenstudio::ObjectId> dependencyActionIds;
             for (const ActionClosureMember& action : variant.closure.actions)
-                if (action.stableId != variant.actionStableId)
-                    dependencyActionIds.insert(action.stableId);
+                if (!claimIdentity(owners, action.stableId, pack.packStableId,
+                                   harkenstudiobuild::kInitCatalogIdentityClassAction, error))
+                    return false;
             for (const ActionClosureMember& member : variant.closure.objects) {
                 if (!isPlayableType(member.type) || harkenstudio::IsNull(member.stableId)
                     || member.type == ProjectItem::Type::Layer)
                     continue;
-                if (std::any_of(member.referencePath.begin(),
-                                member.referencePath.end(), [&](harkenstudio::ObjectId id) {
-                                    return dependencyActionIds.count(id) != 0;
-                                }))
-                    continue;
-                auto& requirers = playableRequirers[member.stableId];
-                if (std::find(requirers.begin(), requirers.end(), actionOwnerPack)
-                    == requirers.end())
-                    requirers.push_back(actionOwnerPack);
+                if (!claimIdentity(owners, member.stableId, pack.packStableId,
+                                   harkenstudiobuild::kInitCatalogIdentityClassPlayable, error))
+                    return false;
             }
-        }
-    }
-
-    for (const auto& [playableId, requirers] : playableRequirers) {
-        if (requirers.empty())
-            continue;
-        for (const std::uint64_t ownerId : requirers) {
-            if (!claimIdentity(owners, playableId, ownerId,
-                               harkenstudiobuild::kInitCatalogIdentityClassPlayable, error))
-                return false;
         }
     }
 
@@ -2102,6 +1691,354 @@ std::uint32_t ownedDefinitionCount(
 
 } // namespace
 
+bool ReadPackPublication(const QString& directory, const QString& projectId,
+                         const QString& platformId, QJsonArray* packs,
+                         QStringList* managedFiles, QString* error, bool requireComplete,
+                         const QStringList& expectedPackPaths)
+{
+    *packs = {};
+    managedFiles->clear();
+    const QDir dir(directory);
+    const auto reject = [&](const QString& message) {
+        if (error) *error = message;
+        return false;
+    };
+    QStringList files, binaries;
+    QString detail;
+    if (!scanOutputFiles(dir, &files, &binaries, &detail)) return reject(detail);
+    for (const auto& path : expectedPackPaths)
+        if (!safePublicationPath(dir, path))
+            return reject(QStringLiteral("Unsafe requested Pack path '%1'").arg(path));
+    if (!expectedPackPaths.isEmpty())
+        std::stable_sort(binaries.begin(), binaries.end(), [&](const auto& left, const auto& right) {
+            return expectedPackPaths.contains(left) && !expectedPackPaths.contains(right);
+        });
+    QHash<QString, QJsonObject> legacyRows;
+    QHash<QString, QJsonObject> legacyCompanions;
+    QHash<QString, QStringList> legacyReferences;
+    QHash<QString, QString> legacyProjects;
+    QStringList legacyFiles;
+    for (const auto& relative : files) {
+        if (QFileInfo(relative).fileName() != QStringLiteral("HarkenPackManifest.json")) continue;
+        QByteArray bytes;
+        if (!readAll(dir.filePath(relative), &bytes, &detail)) return reject(detail);
+        const auto manifest = QJsonDocument::fromJson(bytes).object();
+        if (ProjectSchemaValidator::validatePackManifest(
+                PackSchema::kPackManifestSchemaVersion, manifest, relative).isEmpty()) continue;
+        const auto catalog = manifest.value(QStringLiteral("gameplayCatalog")).toObject();
+        if (manifest.value(QStringLiteral("schema_version")).toInt() != 3
+            || QUuid(catalog.value(QStringLiteral("projectId")).toString()).isNull()
+            || !manifest.value(QStringLiteral("packs")).isArray())
+            return reject(QStringLiteral("Cannot establish ownership of previous publication '%1'").arg(relative));
+        if ((!projectId.isEmpty() && QUuid(catalog.value(QStringLiteral("projectId")).toString()) != QUuid(projectId))
+            || (!platformId.isEmpty() && manifest.value(QStringLiteral("platformId")).toString() != platformId))
+            return reject(QStringLiteral("Pack publication belongs to another project or platform"));
+        legacyFiles.append(relative);
+        legacyReferences.insert(relative, {});
+        legacyProjects.insert(relative, catalog.value(QStringLiteral("projectId")).toString());
+        const auto waveform = QDir::cleanPath(QDir(QFileInfo(relative).path()).filePath(
+            QStringLiteral("HarkenEditorWaveforms.json")));
+        if (files.contains(waveform)) {
+            QByteArray waveformBytes;
+            if (!readAll(dir.filePath(waveform), &waveformBytes, &detail)) return reject(detail);
+            const auto metadata = QJsonDocument::fromJson(waveformBytes).object();
+            if (metadata.value(QStringLiteral("manifestFnv1a64")).toString().toULongLong()
+                    == harkenstudiobuild::Fnv1a64(bytes.constData(), bytes.size())
+                && metadata.value(QStringLiteral("manifestByteLength")).toInteger() == bytes.size())
+                legacyFiles.append(waveform);
+        }
+        for (const auto& value : manifest.value(QStringLiteral("packs")).toArray()) {
+            auto row = value.toObject();
+            QString path = row.value(QStringLiteral("path")).toString();
+            if (!path.endsWith(QStringLiteral(".bytes"), Qt::CaseInsensitive)
+                && files.contains(path + QStringLiteral(".bytes"))) path += QStringLiteral(".bytes");
+            if (!safePublicationPath(dir, path))
+                return reject(QStringLiteral("Unsafe previous Pack path '%1'").arg(path));
+            row.insert(QStringLiteral("path"), path);
+            row.insert(QStringLiteral("projectId"), catalog.value(QStringLiteral("projectId")));
+            row.insert(QStringLiteral("platformId"), manifest.value(QStringLiteral("platformId")));
+            legacyReferences[relative].append(path);
+            if (legacyRows.contains(path)) continue;
+            legacyRows.insert(path, row);
+            QJsonObject companion;
+            if (row.value(QStringLiteral("packKind")).toInt() == harkenstudiobuild::kPackKindInit) {
+                QJsonArray variables;
+                for (const auto& variableValue : manifest.value(QStringLiteral("variableCatalog")).toObject()
+                        .value(QStringLiteral("variables")).toArray()) {
+                    const auto variable = variableValue.toObject();
+                    QJsonArray labels;
+                    for (const auto& labelValue : variable.value(QStringLiteral("labels")).toArray()) {
+                        const auto label = labelValue.toObject();
+                        if (label.value(QStringLiteral("name")).toString().isEmpty()) continue;
+                        labels.append(QJsonObject{{QStringLiteral("name"), label.value(QStringLiteral("name"))},
+                            {QStringLiteral("guid"), label.value(QStringLiteral("labelId"))}});
+                    }
+                    variables.append(QJsonObject{{QStringLiteral("name"), variable.value(QStringLiteral("codeName"))},
+                        {QStringLiteral("guid"), variable.value(QStringLiteral("variableId"))},
+                        {QStringLiteral("labels"), labels}});
+                }
+                companion.insert(QStringLiteral("variables"), variables);
+            } else {
+                for (const auto& actionValue : catalog.value(QStringLiteral("actions")).toArray()) {
+                    const auto action = actionValue.toObject();
+                    if (action.value(QStringLiteral("ownerPackStableId")) != row.value(QStringLiteral("packStableId"))) continue;
+                    if (!companion.isEmpty()) return reject(QStringLiteral("Previous Pack contains multiple Actions: %1").arg(path));
+                    companion = QJsonObject{{QStringLiteral("name"), action.value(QStringLiteral("name"))},
+                        {QStringLiteral("guid"), action.value(QStringLiteral("actionStableId"))}};
+                }
+            }
+            legacyCompanions.insert(path, companion);
+        }
+    }
+    harkenstudio::ObjectId expectedProject = runtimeObjectId(QUuid(projectId));
+    std::uint64_t initId = 0;
+    bool selectedInit = false;
+    QSet<QString> selectedPaths;
+    QSet<qulonglong> ids;
+    std::unordered_map<std::uint64_t, std::uint32_t> kinds;
+    std::vector<harkenstudiobuild::PackDependencyEdge> dependencyEdges;
+    QSet<QString> names;
+    QSet<QString> actionIds;
+    QSet<QString> localizedNames;
+    QSet<QString> localizedActionIds;
+    for (const auto& path : binaries) {
+        const auto info = QFileInfo(path);
+        const bool selected = expectedPackPaths.isEmpty() || expectedPackPaths.contains(path);
+        const QString companionPath = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".json")));
+        const bool hasCompanion = files.contains(companionPath);
+        if (!hasCompanion && !legacyRows.contains(path)) continue;
+        QJsonObject row;
+        harkenstudiobuild::PackCanonicalImage image;
+        harkenstudio::ObjectId pairProject;
+        QString pairError;
+        const auto inspectPair = [&] {
+            const auto rejectPair = [&](const QString& message) {
+                pairError = message;
+                return false;
+            };
+            QJsonObject companion;
+            QByteArray bytes;
+            if (hasCompanion) {
+                if (!readAll(dir.filePath(companionPath), &bytes, &detail)) return rejectPair(detail);
+                QJsonParseError parseError;
+                const auto document = QJsonDocument::fromJson(bytes, &parseError);
+                if (parseError.error != QJsonParseError::NoError || !document.isObject())
+                    return rejectPair(QStringLiteral("Invalid Pack companion '%1'").arg(companionPath));
+                companion = document.object();
+            } else {
+                companion = legacyCompanions.value(path);
+            }
+            const auto companionErrors = ProjectSchemaValidator::validatePackManifest(
+                PackSchema::kPackManifestSchemaVersion, companion, companionPath);
+            if (!companionErrors.isEmpty()) return rejectPair(companionErrors.join(QLatin1Char('\n')));
+            if (!readAll(dir.filePath(path), &bytes, &detail)) return rejectPair(detail);
+            if (harkenstudiobuild::ParsePackCanonicalImage(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
+                    bytes.size(), &image) != harkenstudiobuild::kPackOk)
+                return rejectPair(QStringLiteral("Invalid published Pack '%1'").arg(path));
+            const auto hash = harkenstudiobuild::Fnv1a64(bytes.constData(), bytes.size());
+            if (!hasCompanion && legacyRows.value(path).value(QStringLiteral("contentHash")).toString().toULongLong() != hash)
+                return rejectPair(QStringLiteral("Previous Pack differs from its publication: %1").arg(path));
+            harkenstudiobuild::CurrentWorldBodyImage body;
+            if (!body.Decode(image.partitionBody.data(), image.partitionBody.size(),
+                    harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage))
+                return rejectPair(QStringLiteral("Invalid published Pack definitions '%1'").arg(path));
+            const auto& world = *body.ProductionView();
+            if (!hasCompanion && (runtimeObjectId(QUuid(legacyRows.value(path).value(QStringLiteral("projectId")).toString()))
+                    != world.identity.projectId
+                    || legacyRows.value(path).value(QStringLiteral("packStableId")).toString().toULongLong() != image.packStableId
+                    || legacyRows.value(path).value(QStringLiteral("packKind")).toInt() != image.packKind))
+                return rejectPair(QStringLiteral("Previous Pack identity differs from its publication: %1").arg(path));
+            pairProject = world.identity.projectId;
+            if (harkenstudio::IsNull(pairProject)
+                || (!harkenstudio::IsNull(expectedProject) && pairProject != expectedProject))
+                return rejectPair(QStringLiteral("Pack publication contains another project's content: %1").arg(path));
+            if (requireComplete && selected && ids.contains(image.packStableId))
+                return rejectPair(QStringLiteral("Pack publication repeats a Pack identity: %1").arg(path));
+            QString name;
+            if (image.packKind == harkenstudiobuild::kPackKindInit) {
+                if ((selected && initId != 0) || (hasCompanion && path != QStringLiteral("Init.bytes"))
+                    || (!platformId.isEmpty() && image.packStableId != fnvName(platformId + QStringLiteral("/Init")))
+                    || companion.size() != 1 || !companion.value(QStringLiteral("variables")).isArray())
+                    return rejectPair(QStringLiteral("Invalid Init publication in '%1'").arg(directory));
+                name = QStringLiteral("Init");
+                const auto variables = companion.value(QStringLiteral("variables")).toArray();
+                if (variables.size() != world.variableCount)
+                    return rejectPair(QStringLiteral("Init companion does not match its Variable definitions"));
+                QSet<QString> variableNames;
+                std::set<harkenstudio::ObjectId> variableIds;
+                for (const auto& value : variables) {
+                    const auto variable = value.toObject();
+                    const QString variableName = variable.value(QStringLiteral("name")).toString();
+                    const QString guid = variable.value(QStringLiteral("guid")).toString();
+                    const auto id = runtimeObjectId(QUuid(guid));
+                    if (variable.size() != 3 || !NameValidator::validateItemName(variableName, ProjectItem::Type::Variable)
+                        || harkenstudio::IsNull(id) || objectIdString(id) != guid
+                        || variableNames.contains(variableName) || !variableIds.insert(id).second
+                        || !variable.value(QStringLiteral("labels")).isArray()
+                        || std::none_of(world.variables, world.variables + world.variableCount,
+                            [&](const auto& definition) { return definition.variableId == id; }))
+                        return rejectPair(QStringLiteral("Invalid Variable in Init companion"));
+                    variableNames.insert(variableName);
+                    const auto overlay = std::find_if(image.variablePolicyOverlays.begin(), image.variablePolicyOverlays.end(),
+                        [&](const auto& row) { return row.variableId == id; });
+                    const auto labels = variable.value(QStringLiteral("labels")).toArray();
+                    if (overlay == image.variablePolicyOverlays.end())
+                        return rejectPair(QStringLiteral("Init companion does not match its Label definitions"));
+                    QSet<QString> labelNames;
+                    std::set<harkenstudio::ObjectId> labelIds;
+                    for (const auto& labelValue : labels) {
+                        const auto label = labelValue.toObject();
+                        const QString labelName = label.value(QStringLiteral("name")).toString();
+                        const QString labelGuid = label.value(QStringLiteral("guid")).toString();
+                        const auto labelId = runtimeObjectId(QUuid(labelGuid));
+                        if (label.size() != 2 || labelName.isEmpty() || harkenstudio::IsNull(labelId)
+                            || objectIdString(labelId) != labelGuid || labelNames.contains(labelName)
+                            || !labelIds.insert(labelId).second
+                            || std::none_of(overlay->labels.begin(), overlay->labels.end(),
+                                [&](const auto& row) { return row.labelId == labelId; }))
+                            return rejectPair(QStringLiteral("Invalid Label in Init companion"));
+                        labelNames.insert(labelName);
+                    }
+                }
+            } else {
+                name = companion.value(QStringLiteral("name")).toString();
+                const QString guid = companion.value(QStringLiteral("guid")).toString();
+                const auto id = runtimeObjectId(QUuid(guid));
+                const QString scope = info.path() == QStringLiteral(".") ? QString() : info.path();
+                if (image.packKind != harkenstudiobuild::kPackKindCanonicalContent || companion.size() != 2
+                    || !NameValidator::validateItemName(name, ProjectItem::Type::Action)
+                    || harkenstudio::IsNull(id) || objectIdString(id) != guid || world.actionCount == 0
+                    || std::none_of(world.actions, world.actions + world.actionCount,
+                        [&](const auto& action) { return action.actionStableId == id; })
+                    || (!platformId.isEmpty() && image.packStableId != fnvName(PackBuildPlanning::relativePackPath(
+                        platformId, scope, PackBuildPlanning::stableArtifactKey(id))))
+                    || (requireComplete && selected && (names.contains(scope + QLatin1Char('/') + name)
+                    || actionIds.contains(scope + QLatin1Char('/') + guid)
+                    || (!scope.isEmpty() && (names.contains(QLatin1Char('/') + name)
+                        || actionIds.contains(QLatin1Char('/') + guid)))
+                    || (scope.isEmpty() && (localizedNames.contains(name) || localizedActionIds.contains(guid))))))
+                    return rejectPair(QStringLiteral("Invalid Action companion '%1'").arg(companionPath));
+            }
+            QJsonArray dependencies;
+            for (const auto& edge : image.dependencyEdges)
+                dependencies.append(QString::number(edge.prerequisitePackStableId));
+            row = QJsonObject{{QStringLiteral("name"), name},
+                {QStringLiteral("path"), path}, {QStringLiteral("packStableId"), QString::number(image.packStableId)},
+                {QStringLiteral("packKind"), static_cast<int>(image.packKind)},
+                {QStringLiteral("contentHash"), QString::number(hash)},
+                {QStringLiteral("contentRevision"), static_cast<qint64>(image.requirement.packContentRevision)},
+                {QStringLiteral("dependencies"), dependencies},
+                {QStringLiteral("language"), info.path() == QStringLiteral(".") ? QString() : info.path()},
+                {QStringLiteral("projectId"), objectIdString(pairProject)},
+                {QStringLiteral("platformId"), platformId}, {QStringLiteral("companion"), companion}};
+            return true;
+        };
+        if (!inspectPair()) {
+            if (requireComplete && selected) return reject(pairError);
+            continue;
+        }
+        if (harkenstudio::IsNull(expectedProject) && selected) expectedProject = pairProject;
+        if (selected && image.packKind == harkenstudiobuild::kPackKindInit) {
+            initId = image.packStableId;
+            selectedInit = true;
+        } else if (selected) {
+            const QString name = row.value(QStringLiteral("name")).toString();
+            const QString guid = row.value(QStringLiteral("companion")).toObject().value(QStringLiteral("guid")).toString();
+            const QString scope = row.value(QStringLiteral("language")).toString();
+            names.insert(scope + QLatin1Char('/') + name);
+            actionIds.insert(scope + QLatin1Char('/') + guid);
+            if (!scope.isEmpty()) {
+                localizedNames.insert(name);
+                localizedActionIds.insert(guid);
+            }
+        }
+        managedFiles->append(path);
+        if (hasCompanion) managedFiles->append(companionPath);
+        if (!selected) continue;
+        selectedPaths.insert(path);
+        ids.insert(image.packStableId);
+        kinds.emplace(image.packStableId, image.packKind);
+        dependencyEdges.insert(dependencyEdges.end(), image.dependencyEdges.begin(), image.dependencyEdges.end());
+        packs->append(row);
+    }
+    if (requireComplete && !selectedInit) return reject(QStringLiteral("Pack publication is missing Init.bytes and Init.json"));
+    if (requireComplete && initId != 0) {
+        for (const auto& value : *packs) {
+            const auto row = value.toObject();
+            const auto id = row.value(QStringLiteral("packStableId")).toString().toULongLong();
+            const auto dependencies = row.value(QStringLiteral("dependencies")).toArray();
+            if (id != initId && !dependencies.contains(QString::number(initId)))
+                return reject(QStringLiteral("Pack does not depend on this publication's Init"));
+            for (const auto& dependency : dependencies)
+                if (!ids.contains(dependency.toString().toULongLong()))
+                    return reject(QStringLiteral("Pack publication is missing a dependency"));
+        }
+    } else if (requireComplete && !packs->isEmpty()) {
+        return reject(QStringLiteral("Pack publication contains Actions without Init"));
+    }
+    if (requireComplete) {
+        for (const auto& path : expectedPackPaths)
+            if (!selectedPaths.contains(path))
+                return reject(QStringLiteral("Pack publication is missing requested Pack: %1").arg(path));
+        for (auto row = legacyRows.cbegin(); row != legacyRows.cend(); ++row)
+            if ((expectedPackPaths.isEmpty() || expectedPackPaths.contains(row.key()))
+                && !managedFiles->contains(row.key()))
+                return reject(QStringLiteral("Previous publication is missing Pack: %1").arg(row.key()));
+        for (const auto& relative : files) {
+            if (!relative.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)
+                || managedFiles->contains(relative) || legacyFiles.contains(relative)) continue;
+            const QFileInfo info(relative);
+            const auto binary = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".bytes")));
+            if (!expectedPackPaths.isEmpty() && !expectedPackPaths.contains(binary)) continue;
+            QByteArray bytes;
+            if (!readAll(dir.filePath(relative), &bytes, &detail)) return reject(detail);
+            const auto document = QJsonDocument::fromJson(bytes);
+            if (!document.isObject() || !ProjectSchemaValidator::validatePackManifest(
+                    PackSchema::kPackManifestSchemaVersion, document.object(), relative).isEmpty()) continue;
+            return reject(QStringLiteral("Pack companion has no valid matching binary: %1").arg(relative));
+        }
+        for (const auto& edge : dependencyEdges) {
+            const auto prerequisite = kinds.find(edge.prerequisitePackStableId);
+            if (prerequisite == kinds.end()
+                || (edge.edgeKind == harkenstudiobuild::kPackDependencyEdgeKindInit)
+                    != (prerequisite->second == harkenstudiobuild::kPackKindInit))
+                return reject(QStringLiteral("Pack publication contains an incompatible dependency"));
+        }
+    }
+    if (initId != 0) {
+        for (const auto& path : binaries) {
+            if (managedFiles->contains(path)) continue;
+            const QFileInfo info(path);
+            const auto companion = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".json")));
+            if (files.contains(companion) || legacyRows.contains(path)) continue;
+            QByteArray bytes;
+            harkenstudiobuild::PackCanonicalImage image;
+            harkenstudiobuild::CurrentWorldBodyImage body;
+            if (!readAll(dir.filePath(path), &bytes, &detail)
+                || harkenstudiobuild::ParsePackCanonicalImage(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
+                    bytes.size(), &image) != harkenstudiobuild::kPackOk
+                || !body.Decode(image.partitionBody.data(), image.partitionBody.size(),
+                    harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage)
+                || body.ProductionView()->identity.projectId != expectedProject) continue;
+            if ((image.packKind == harkenstudiobuild::kPackKindCanonicalContent
+                    && harkenstudiobuild::ValidateCanonicalInitDependency(image.dependencyEdges, initId)
+                        == harkenstudiobuild::kPackOk)
+                || (image.packKind == harkenstudiobuild::kPackKindInit && image.packStableId == initId))
+                managedFiles->append(path);
+        }
+    }
+    for (auto manifest = legacyReferences.cbegin(); manifest != legacyReferences.cend(); ++manifest) {
+        const bool verified = std::any_of(manifest.value().begin(), manifest.value().end(), [&](const auto& path) {
+            return managedFiles->contains(path)
+                && expectedProject == runtimeObjectId(QUuid(legacyProjects.value(manifest.key())));
+        });
+        if (!verified) return reject(QStringLiteral("Previous publication has no verifiable Pack ownership: %1").arg(manifest.key()));
+    }
+    managedFiles->append(legacyFiles);
+    managedFiles->removeDuplicates();
+    return true;
+}
+
 ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     ProjectPackExporter& exporter, const CanonicalPackSetExportRequest& request,
     std::vector<ProjectPackExporter::PackBuildRecord>* outRecords)
@@ -2159,46 +2096,28 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     }
     if (!recoverInterruptedPublish(liveDir, &result.error))
         return result;
-    QStringList liveNames, previousPackNames;
-    if (!publishedRelativeNames(liveDir, &liveNames, &result.error, false, &previousPackNames)) return result;
-    QStringList previousMetadataNames;
-    for (const auto& name : liveNames)
-        if (!previousPackNames.contains(name)) previousMetadataNames.append(name);
-    if (!scanOutputFiles(liveDir, &liveNames, &previousPackNames, &result.error)) return result;
-    previousPackNames.removeDuplicates();
-    liveNames.removeDuplicates();
+    QStringList liveNames, allPackNames;
+    if (!scanOutputFiles(liveDir, &liveNames, &allPackNames, &result.error)) return result;
     const QDir resourceCacheDir(QDir(PathUtils::getDotCacheDir(QFileInfo(project.projectPath).absolutePath()))
         .filePath(QStringLiteral("pack-inputs")));
     QMap<QString, QJsonObject> previousPacks;
     QHash<qulonglong, QJsonObject> publishedPacks;
-    QHash<qulonglong, QJsonArray> publishedActions;
-    for (const auto& name : previousMetadataNames) {
-        if (QFileInfo(name).fileName() != Bridge::packManifestFileName()) continue;
-        QByteArray bytes;
-        if (!readAll(liveDir.filePath(name), &bytes, &result.error)) return result;
-        const auto manifest = QJsonDocument::fromJson(bytes).object();
-        if (request.options.updateSelectedOnly
-            && (QUuid(manifest.value(QStringLiteral("gameplayCatalog")).toObject()
-                    .value(QStringLiteral("projectId")).toString()) != QUuid(project.projectId)
-                || manifest.value(QStringLiteral("platformId")).toString() != request.options.platform)) {
-            result.error = QStringLiteral("Pack publication belongs to another project or platform");
-            return result;
-        }
-        for (const auto& value : manifest.value(QStringLiteral("packs")).toArray()) {
-            auto row = value.toObject();
-            QString path = row.value(QStringLiteral("path")).toString();
-            if (!path.endsWith(QStringLiteral(".bytes"), Qt::CaseInsensitive)
-                && liveNames.contains(path + QStringLiteral(".bytes"))) path += QStringLiteral(".bytes");
-            row.insert(QStringLiteral("path"), path);
-            if (liveNames.contains(path)) previousPacks.insert(path, row);
-            const auto id = row.value(QStringLiteral("packStableId")).toString().toULongLong();
-            if (!publishedPacks.contains(id)) publishedPacks.insert(id, row);
-        }
-        for (const auto& value : manifest.value(QStringLiteral("gameplayCatalog")).toObject()
-                .value(QStringLiteral("actions")).toArray()) {
-            const auto id = value.toObject().value(QStringLiteral("ownerPackStableId")).toString().toULongLong();
-            if (!publishedActions[id].contains(value)) publishedActions[id].append(value);
-        }
+    QJsonArray previousPublication;
+    QStringList previousManaged;
+    if (!ReadPackPublication(request.outputDir, project.projectId, request.options.platform,
+            &previousPublication, &previousManaged, &result.error, false)) return result;
+    for (const auto& value : previousPublication) {
+        const auto row = value.toObject();
+        previousPacks.insert(row.value(QStringLiteral("path")).toString(), row);
+    }
+    QStringList previousPackNames;
+    QStringList previousCompanionNames;
+    for (const auto& name : previousManaged)
+        if (allPackNames.contains(name)) previousPackNames.append(name);
+    for (const auto& value : previousPublication) {
+        const QFileInfo file(value.toObject().value(QStringLiteral("path")).toString());
+        previousCompanionNames.append(QDir::cleanPath(QDir(file.path()).filePath(
+            file.completeBaseName() + QStringLiteral(".json"))));
     }
 
     const QString stagingDir = liveDir.filePath(
@@ -2287,34 +2206,16 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     return fail(QStringLiteral("Pack '%1' on %2/%3: %4")
                         .arg(content.name, content.platform, content.language, diagnostic.message));
             }
-            for (harkenstudio::ObjectId dependencyId : variant.dependencyOrder) {
-                if (std::find(content.actionStableIds.begin(), content.actionStableIds.end(),
-                              dependencyId) != content.actionStableIds.end())
-                    continue;
-                const auto dependency = std::find_if(packs.begin(), packs.end(),
-                    [&](const PackMeta& candidate) {
-                        return candidate.platform == content.platform
-                            && (candidate.language.isEmpty() || candidate.language == content.language)
-                            && std::find(candidate.actionStableIds.begin(), candidate.actionStableIds.end(),
-                                         dependencyId) != candidate.actionStableIds.end();
-                    });
-                if (dependency == packs.end())
-                    return fail(QStringLiteral("Missing Pack for Action %1 on %2/%3")
-                                    .arg(VNX::objectIdString(dependencyId), content.platform,
-                                         content.language));
-                if (std::find(content.dependencies.begin(), content.dependencies.end(),
-                              dependency->packStableId) == content.dependencies.end())
-                    content.dependencies.push_back(dependency->packStableId);
-            }
         }
     }
 
     std::set<harkenstudio::ObjectId> previousInitLayerIds;
     for (auto& pack : packs) {
-        pack.previousRow = previousPacks.value(pack.fileName, publishedPacks.value(pack.packStableId));
+        pack.previousRow = previousPacks.value(pack.fileName);
+        if (pack.previousRow.value(QStringLiteral("packStableId")).toString().toULongLong() == pack.packStableId)
+            publishedPacks.insert(pack.packStableId, pack.previousRow);
         if (pack.previousRow.isEmpty() && liveNames.contains(pack.fileName))
             pack.previousRow.insert(QStringLiteral("path"), pack.fileName);
-        pack.previousActions = publishedActions.value(pack.packStableId);
         const auto oldPath = pack.previousRow.value(QStringLiteral("path")).toString();
         QByteArray bytes;
         QString error;
@@ -2359,6 +2260,12 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             if (!seenLocators.insert(pack.fileName.toCaseFolded()).second)
                 return fail(QStringLiteral("Pack file name collision at '%1' (case-insensitive); rename the conflicting Actions.")
                                 .arg(pack.fileName));
+            const QFileInfo file(pack.fileName);
+            const auto companion = QDir::cleanPath(QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json")));
+            for (const auto& path : {pack.fileName, companion})
+                if (QFileInfo::exists(liveDir.filePath(path))
+                    && !containsPublicationFile(liveDir, liveNames, path))
+                    return fail(QStringLiteral("Pack output conflicts with an output directory: %1").arg(path));
         }
     }
     {
@@ -2588,19 +2495,19 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         ? project.defaultLanguage : stagingOpts.language.trimmed();
     const QString selectedLanguage = languages.contains(preferredLanguage)
         ? preferredLanguage : languages.front();
-    harkenprojectschema::VariableContractArtifactV1 variableContract;
-    variableContract.schemaVersion = harkenprojectschema::kVariableContractSchemaVersionV1;
     for (const QString& language : languages) {
+        std::set<harkenstudio::ObjectId> packedRootActionIds;
         std::set<harkenstudio::ObjectId> packedActionIds;
         std::set<harkenstudio::ObjectId> packedDefinitionIds = sharedLayerIds;
         for (const PackMeta& pack : packs) {
             if (!pack.language.isEmpty() && pack.language != language) continue;
-            packedActionIds.insert(pack.actionStableIds.begin(), pack.actionStableIds.end());
+            packedRootActionIds.insert(pack.actionStableIds.begin(), pack.actionStableIds.end());
         }
         for (const auto& variant : request.plan->variants) {
             if ((!variant.variant.language.isEmpty() && variant.variant.language != language)
-                || packedActionIds.count(variant.actionStableId) == 0)
+                || packedRootActionIds.count(variant.actionStableId) == 0)
                 continue;
+            for (const auto& member : variant.closure.actions) packedActionIds.insert(member.stableId);
             for (const auto& member : variant.closure.objects) packedDefinitionIds.insert(member.stableId);
             for (const auto& member : variant.closure.controlObjects) packedDefinitionIds.insert(member.stableId);
         }
@@ -2872,17 +2779,13 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     - harkenstudiobuild::kCanonicalDefinitionPartitionHeaderV2Bytes);
             pack.lineageFingerprint = lineageFingerprint(owners, pack.packStableId);
             if (pack.packKind == harkenstudiobuild::kPackKindInit &&
-                !fillVariableNameCatalog(world, project, pack, &compileError))
+                !fillInitCompanion(world, project, &pack.companion, &compileError))
                 return fail(compileError);
             if (pack.packKind == harkenstudiobuild::kPackKindInit
                 && pack.variablePolicyOverlayPayload.empty()
                 && world.variableCount > 0) {
-                if (!fillVariableContractArtifact(world, project, initId,
-                                                  &variableContract,
-                                                  &compileError))
-                    return fail(compileError);
                 if (!encodeVariablePolicyOverlay(
-                        world, project, variableContract, &pack.variablePolicyOverlayPayload,
+                        world, project, &pack.variablePolicyOverlayPayload,
                         &pack.variableExecutionFingerprints, &pack.variableLabelMappingFingerprints,
                         &compileError))
                     return fail(compileError);
@@ -2957,17 +2860,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             harkenstudiobuild::StoreLE64(semantics.data() + offset + 8, 0);
             semantics.insert(semantics.end(), payload.begin(), payload.end());
         }
-        semantics.insert(semantics.end(), pack.variableNameCatalogPayload.begin(),
-                         pack.variableNameCatalogPayload.end());
         pack.contentRevision = harkenstudiobuild::Fnv1a64(semantics.data(), semantics.size()) & INT64_MAX;
         if (pack.contentRevision == 0)
             pack.contentRevision = 1;
-        if (pack.packKind == harkenstudiobuild::kPackKindInit) {
-            pack.variableNameCatalog.initContentRevision = pack.contentRevision;
-            if (!harkenstudiobuild::EncodeVariableNameCatalog(
-                    pack.variableNameCatalog, &pack.variableNameCatalogPayload))
-                return fail(QStringLiteral("Variable name catalog failed to encode"));
-        }
     }
 
     for (auto& pack : packs)
@@ -2989,7 +2884,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             PackMeta retained;
             retained.retained = true;
             retained.previousRow = it.value();
-            retained.previousActions = publishedActions.value(it.key());
+            retained.companion = it.value().value(QStringLiteral("companion")).toObject();
             retained.packStableId = it.key();
             retained.packKind = it.value().value(QStringLiteral("packKind")).toInt();
             retained.name = it.value().value(QStringLiteral("name")).toString();
@@ -3003,9 +2898,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 retained.unitKey = QStringLiteral("Init");
                 packs.front() = std::move(retained);
             } else {
-                for (const auto& action : retained.previousActions)
-                    retained.actionStableIds.push_back(runtimeObjectId(QUuid(
-                        action.toObject().value(QStringLiteral("actionStableId")).toString())));
+                retained.actionStableIds.push_back(runtimeObjectId(QUuid(
+                    retained.companion.value(QStringLiteral("guid")).toString())));
                 if (!retained.actionStableIds.empty())
                     retained.unitKey = QStringLiteral("a:") + objectIdString(retained.actionStableIds.front());
                 packs.push_back(std::move(retained));
@@ -3088,11 +2982,6 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         entries.push_back(std::move(requirement));
 
         if (meta.packKind == harkenstudiobuild::kPackKindInit) {
-            Bridge::PackBuildSession::CanonicalPackEntry variableNames;
-            variableNames.kind = harkenstudiobuild::kPackEntryKindVariableNameCatalog;
-            variableNames.vintage = harkenstudiobuild::kPackCanonicalEntryVintage;
-            variableNames.payload = meta.variableNameCatalogPayload;
-            entries.push_back(std::move(variableNames));
             Bridge::PackBuildSession::CanonicalPackEntry snapshot;
             snapshot.kind = harkenstudiobuild::kPackEntryKindBusDefinitionSnapshot;
             snapshot.vintage = harkenstudiobuild::kPackBusDefinitionSnapshotVintage2;
@@ -3144,197 +3033,27 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
 
     for (const auto& pack : packs)
         reportProgress(pack, 85, PackGenerationStage::Publishing);
-    QStringList publishedLanguages;
-    for (const auto& pack : packs)
-        if (!pack.language.isEmpty() && !publishedLanguages.contains(pack.language))
-            publishedLanguages.append(pack.language);
-    languages.clear();
-    for (const auto& language : ProjectLanguageSemantics::buildLanguages(project))
-        if (publishedLanguages.removeOne(language)) languages.append(language);
-    publishedLanguages.sort();
-    languages.append(publishedLanguages);
-    if (languages.isEmpty()) languages.append(QString());
-    const bool publishedLocalized = languages != QStringList{QString()};
-    const QString publicationLanguage = languages.contains(preferredLanguage)
-        ? preferredLanguage : languages.front();
-    if (!fillGameplayCatalog(project, packs, packs.front(), publicationLanguage,
-                             request.options.updateSelectedOnly, &compileError))
-        return fail(compileError);
-    std::vector<PackMeta> languageCatalogs;
-    if (publishedLocalized) {
-        for (const QString& language : languages) {
-            PackMeta catalog = packs.front();
-            catalog.language = language;
-            if (!fillGameplayCatalog(project, packs, catalog, language, request.options.updateSelectedOnly, &compileError))
-                return fail(compileError);
-            languageCatalogs.push_back(std::move(catalog));
-        }
-    }
     std::vector<PackMeta*> allPacks;
-    for (auto& pack : packs) allPacks.push_back(&pack);
-    for (PackMeta* item : allPacks) {
-        PackMeta& pack = *item;
-        QByteArray bytes;
-        QString error;
-        if (!readAll(QDir(stagingDir).filePath(pack.fileName), &bytes, &error))
-            return fail(error);
-        pack.contentHash =
-            harkenstudiobuild::Fnv1a64(bytes.constData(), static_cast<std::size_t>(bytes.size()));
-        pack.resourceCacheKey = QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
-    }
-
+    QStringList companionNames;
     QString error;
-    QJsonObject wrapper;
-    wrapper.insert(QStringLiteral("schema_version"),
-                   PackSchema::kPackManifestSchemaVersion);
-    const auto& platform = *ProjectPlatformSemantics::find(project.platforms, QUuid(request.options.platform));
-    wrapper.insert(QStringLiteral("platformId"), request.options.platform);
-    wrapper.insert(QStringLiteral("platformName"), platform.name);
-    wrapper.insert(QStringLiteral("basePlatform"), ProjectPlatformSemantics::basePlatformName(platform.basePlatform));
-    wrapper.insert(QStringLiteral("language"), publicationLanguage);
-    wrapper.insert(QStringLiteral("initPackStableId"), QString::number(initId));
-    QJsonArray packArray;
-    std::vector<const PackMeta*> manifestPacks;
-    manifestPacks.reserve(packs.size());
-    for (const PackMeta& pack : packs)
-        manifestPacks.push_back(&pack);
-    std::stable_sort(manifestPacks.begin(), manifestPacks.end(),
-                     [](const PackMeta* a, const PackMeta* b) {
-                         const auto rank = [](const PackMeta& pack) {
-                             if (pack.packKind == harkenstudiobuild::kPackKindInit)
-                                 return 0;
-                             return 1;
-                         };
-                         const int left = rank(*a);
-                         const int right = rank(*b);
-                         if (left != right)
-                             return left < right;
-                         if (left == 1 && a->packStableId != b->packStableId)
-                             return a->packStableId < b->packStableId;
-                         return false;
-                     });
-    for (const PackMeta* pack : manifestPacks) {
-        QJsonObject row;
-        row.insert(QStringLiteral("name"), pack->name);
-        row.insert(QStringLiteral("packStableId"), QString::number(pack->packStableId));
-        row.insert(QStringLiteral("packKind"), static_cast<int>(pack->packKind));
-        row.insert(QStringLiteral("path"), pack->fileName);
-        row.insert(QStringLiteral("platformId"),
-                   pack->platform.isEmpty() ? request.options.platform
-                                            : pack->platform);
-        row.insert(QStringLiteral("language"), pack->language);
-        row.insert(QStringLiteral("contentHash"), QString::number(pack->contentHash));
-        row.insert(QStringLiteral("contentRevision"), static_cast<qint64>(pack->contentRevision));
-        row.insert(QStringLiteral("variantKey"),
-                   pack->packKind == harkenstudiobuild::kPackKindCanonicalContent
-                           && !pack->actionStableIds.empty()
-                       ? QString::number(static_cast<std::uint32_t>(pack->packStableId))
-                       : QString::number(0));
-        QJsonArray deps;
-        for (std::uint64_t dependency : pack->dependencies)
-            deps.append(QString::number(dependency));
-        row.insert(QStringLiteral("dependencies"), deps);
-        if (pack->retained) row = pack->previousRow;
-        packArray.append(row);
-    }
-    wrapper.insert(QStringLiteral("packs"), packArray);
-    wrapper.insert(QStringLiteral("groups"), QJsonArray{});
-    wrapper.insert(QStringLiteral("gameplayCatalog"), packs.front().gameplayCatalog);
-    QJsonObject variableCatalog;
-    std::string variableCatalogJson;
-    if (!encodeVariableCatalogJson(variableContract, &variableCatalog,
-                                   &variableCatalogJson, &error))
-        return fail(error);
-    // Hash and publish the same lossless Variable representation.
-    const auto encodeManifest = [&](const QJsonObject& root) {
-        QByteArray bytes = QJsonDocument(root).toJson(QJsonDocument::Compact);
-        bytes.chop(1);
-        if (bytes.size() > 1)
-            bytes += ',';
-        bytes += QByteArrayLiteral("\"variableCatalog\":");
-        bytes += QByteArray::fromStdString(variableCatalogJson);
-        bytes += '}';
-        return bytes;
-    };
-    QStringList waveformNames;
-    const auto writeManifest = [&](QJsonObject root, const QString& relative) {
-        root.remove(QStringLiteral("catalogChecksum"));
-        const QByteArray catalogChecksumBytes = encodeManifest(root);
-        root.insert(QStringLiteral("catalogChecksum"),
-                    QString::number(harkenstudiobuild::Fnv1a64(
-                        catalogChecksumBytes.constData(),
-                        static_cast<std::size_t>(catalogChecksumBytes.size()))));
-        QJsonObject validated = root;
-        validated.insert(QStringLiteral("variableCatalog"), variableCatalog);
-        const QStringList schemaErrors = ProjectSchemaValidator::validatePackManifest(
-            PackSchema::kPackManifestSchemaVersion, validated,
-            QStringLiteral("pack manifest"));
-        if (!schemaErrors.isEmpty()) {
-            error = schemaErrors.join(QLatin1Char('\n'));
-            return false;
+    for (auto& pack : packs) {
+        allPacks.push_back(&pack);
+        if (!pack.retained && pack.packKind == harkenstudiobuild::kPackKindCanonicalContent) {
+            if (pack.actionStableIds.size() != 1)
+                return fail(QStringLiteral("An Action Pack must contain exactly one Action"));
+            const auto* action = findAction(project, pack.actionStableIds.front());
+            if (!action) return fail(QStringLiteral("Action publication identity is unavailable"));
+            pack.companion = QJsonObject{{QStringLiteral("name"), action->name},
+                {QStringLiteral("guid"), objectIdString(action->runtimeId())}};
         }
-        const QByteArray manifestBytes = encodeManifest(root);
-        QSaveFile manifestFile(QDir(stagingDir).filePath(relative));
-        if (!manifestFile.open(QIODevice::WriteOnly | QIODevice::Text) ||
-            manifestFile.write(manifestBytes) != manifestBytes.size() ||
-            !manifestFile.commit()) {
-            error = QStringLiteral("Failed to write pack manifest");
-            return false;
-        }
-        if (!publishedLocalized || relative != Bridge::packManifestFileName()) {
-            std::vector<harkenstudiobuild::tooling::EditorMetadataPackBytes> metadataPacks;
-            for (const QJsonValue& value : root.value(QStringLiteral("packs")).toArray()) {
-                const QJsonObject row = value.toObject();
-                QByteArray bytes;
-                if (!readAll(QDir(stagingDir).filePath(row.value(QStringLiteral("path")).toString()),
-                        &bytes, &error)) return false;
-                const auto* begin = reinterpret_cast<const std::uint8_t*>(bytes.constData());
-                metadataPacks.push_back({row.value(QStringLiteral("packStableId")).toString().toULongLong(),
-                    std::vector<std::uint8_t>(begin, begin + bytes.size())});
-            }
-            std::string companion, metadataError;
-            if (!harkenstudiobuild::tooling::BuildEditorWaveformPublication(
-                    std::string_view(manifestBytes.constData(), manifestBytes.size()),
-                    metadataPacks, &companion, &metadataError)) {
-                if (request.options.updateSelectedOnly) return true;
-                error = QStringLiteral("Failed to build editor waveform metadata: %1")
-                    .arg(QString::fromStdString(metadataError));
-                return false;
-            }
-            const QString companionName = QDir::cleanPath(QDir(QFileInfo(relative).path()).filePath(
-                QString::fromLatin1(harkenstudiobuild::tooling::kEditorWaveformFileName)));
-            QSaveFile companionFile(QDir(stagingDir).filePath(companionName));
-            if (!companionFile.open(QIODevice::WriteOnly)
-                || companionFile.write(companion.data(), companion.size()) != static_cast<qint64>(companion.size())
-                || !companionFile.commit()) {
-                error = QStringLiteral("Failed to write editor waveform metadata");
-                return false;
-            }
-            waveformNames.append(companionName);
-        }
-        return true;
-    };
-    QStringList manifestNames{Bridge::packManifestFileName()};
-    if (!writeManifest(wrapper, manifestNames.front()))
-        return fail(error);
-    for (const PackMeta& init : languageCatalogs) {
-        QJsonObject selected = wrapper;
-        selected.insert(QStringLiteral("language"), init.language);
-        selected.insert(QStringLiteral("gameplayCatalog"), init.gameplayCatalog);
-        QJsonArray selectedPacks;
-        for (const QJsonValue& value : packArray) {
-            QJsonObject row = value.toObject();
-            if (!row.value(QStringLiteral("language")).toString().isEmpty()
-                       && row.value(QStringLiteral("language")).toString() != init.language) {
-                continue;
-            }
-            selectedPacks.append(row);
-        }
-        selected.insert(QStringLiteral("packs"), selectedPacks);
-        const QString relative = init.language + QLatin1Char('/') + Bridge::packManifestFileName();
-        if (!writeManifest(selected, relative))
-            return fail(error);
-        manifestNames.append(relative);
+        const QFileInfo file(pack.fileName);
+        const QString relative = QDir::cleanPath(QDir(file.path()).filePath(
+            file.completeBaseName() + QStringLiteral(".json")));
+        const auto schemaErrors = ProjectSchemaValidator::validatePackManifest(
+            PackSchema::kPackManifestSchemaVersion, pack.companion, relative);
+        if (!schemaErrors.isEmpty()) return fail(schemaErrors.join(QLatin1Char('\n')));
+        if (!writeJson(QDir(stagingDir).filePath(relative), pack.companion, &error)) return fail(error);
+        companionNames.append(relative);
     }
 
     for (PackMeta* item : allPacks) {
@@ -3356,8 +3075,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                             .arg(pack.fileName));
         if (pack.packKind == harkenstudiobuild::kPackKindInit && decoded.hasCatalog)
             return fail(QStringLiteral("Init Pack still contains a routing catalog"));
-        if (pack.packKind == harkenstudiobuild::kPackKindInit && decoded.hasGameplayCatalog)
-            return fail(QStringLiteral("Init Pack still contains an Action publication directory"));
+        if (decoded.hasGameplayCatalog || decoded.hasVariableNameCatalog)
+            return fail(QStringLiteral("Pack still contains a name publication directory"));
         harkenstudiobuild::PackV2Header stagedHeader;
         if (!harkenstudiobuild::ParsePackV2Header(
                 reinterpret_cast<const std::uint8_t*>(stagedBytes.constData()),
@@ -3388,8 +3107,11 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         return fail(QStringLiteral("Export canceled"));
     }
 
-    QStringList publishedNames = manifestNames;
-    publishedNames.append(waveformNames);
+    QJsonArray stagedPublication;
+    QStringList stagedFiles;
+    if (!ReadPackPublication(stagingDir, project.projectId, request.options.platform,
+            &stagedPublication, &stagedFiles, &error)) return fail(error);
+    QStringList publishedNames = companionNames;
     for (const PackMeta* pack : allPacks)
         publishedNames.append(pack->fileName);
     QStringList preservedNames;
@@ -3397,14 +3119,16 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         if (pack.skipped && pack.fileName == pack.previousRow.value(QStringLiteral("path")).toString())
             preservedNames.append(pack.fileName);
     }
-    if (!request.options.selfCleaning) {
-        for (const auto& name : liveNames) {
-            if (containsPublicationFile(liveDir, publishedNames, name) || previousMetadataNames.contains(name)) continue;
+    for (const auto& name : liveNames) {
+        if (containsPublicationFile(liveDir, publishedNames, name)) continue;
+        if (!request.options.selfCleaning
+            && (!previousManaged.contains(name)
+                || previousPackNames.contains(name) || previousCompanionNames.contains(name))) {
             publishedNames.append(name);
             preservedNames.append(name);
         }
     }
-    for (const auto& name : manifestNames + waveformNames) {
+    for (const auto& name : companionNames) {
         if (!liveNames.contains(name)) continue;
         QByteArray before, after;
         if (readAll(liveDir.filePath(name), &before, &error)
@@ -3473,7 +3197,8 @@ bool RecoverPackOutput(const QString& outputDir, QString* error)
 
 ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
     const QString& baseDir, const QVector<ProjectPlatform>& platforms,
-    const QStringList& selectedPlatformIds, bool selfCleaning)
+    const QStringList& selectedPlatformIds, bool selfCleaning,
+    const QVector<PackArtifactMetadata>& artifacts)
 {
     ExportResult result;
     if (selectedPlatformIds.isEmpty()) {
@@ -3489,49 +3214,69 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
         }
         selectedPlatforms.append(*platform);
     }
+    if (!FinalizePackOutputs(baseDir, platforms, selectedPlatformIds, selectedPlatformIds,
+            &result.error, artifacts)) return result;
     const QDir liveDir(baseDir);
-    QLockFile indexLock(liveDir.filePath(QStringLiteral(".harken-pack-index.lock")));
-    indexLock.setStaleLockTime(0);
-    if (!indexLock.tryLock(2000)) {
-        result.error = QStringLiteral("Pack index is being published by another build");
+    QLockFile publicationLock(liveDir.filePath(QStringLiteral(".harken-pack-index.lock")));
+    publicationLock.setStaleLockTime(0);
+    if (!publicationLock.tryLock(2000)) {
+        result.error = QStringLiteral("Pack output is being finalized by another build");
         return result;
     }
-    const QJsonObject index = BuildPackIndex(baseDir, selectedPlatforms, &result.error);
-    if (index.isEmpty()) return result;
-    const QString indexName = Bridge::packIndexFileName();
-    QStringList publishedNames{indexName};
-    QStringList preservedNames;
+    QString projectId;
+    QStringList selectedFiles;
     for (const auto& platform : selectedPlatforms) {
+        QJsonArray rows;
         QStringList names;
-        if (!publishedRelativeNames(QDir(platformOutputDir(baseDir, platform)), &names, &result.error, true))
+        const QString platformId = ProjectPlatformSemantics::idString(platform.id);
+        const QDir platformDir(platformOutputDir(baseDir, platform));
+        QStringList expectedPaths;
+        for (const auto& artifact : artifacts)
+            if (artifact.platform == platformId)
+                expectedPaths.append(platformDir.relativeFilePath(artifact.outputPath));
+        if (!artifacts.isEmpty() && expectedPaths.isEmpty()) {
+            result.error = QStringLiteral("No generated Pack artifacts for platform: %1").arg(platform.name);
             return result;
-        for (const auto& name : names) {
-            const auto relative = platform.name + QLatin1Char('/') + name;
-            publishedNames.append(relative);
-            preservedNames.append(relative);
+        }
+        if (!ReadPackPublication(platformDir.path(), projectId, platformId, &rows, &names,
+                &result.error, true, expectedPaths)) return result;
+        if (!rows.isEmpty()) projectId = rows.first().toObject().value(QStringLiteral("projectId")).toString();
+        for (const auto& value : rows) {
+            const QString path = value.toObject().value(QStringLiteral("path")).toString();
+            selectedFiles.append(platform.name + QLatin1Char('/') + path);
+            const QFileInfo file(path);
+            selectedFiles.append(platform.name + QLatin1Char('/')
+                + QDir::cleanPath(QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json"))));
         }
     }
     QStringList liveNames, previousPackNames;
     if (!scanOutputFiles(liveDir, &liveNames, &previousPackNames, &result.error)) return result;
-    if (!selfCleaning) {
-        for (const auto& name : liveNames) {
-            if (containsPublicationFile(liveDir, publishedNames, name)) continue;
-            publishedNames.append(name);
-            preservedNames.append(name);
+    if (selfCleaning) {
+        for (const auto& directory : liveDir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::Hidden)) {
+            if (directory.fileName().startsWith(QString::fromLatin1(kStagingPrefix))
+                || directory.fileName().startsWith(QString::fromLatin1(kPreviousPrefix))
+                || directory.fileName().startsWith(QString::fromLatin1(kNextPrefix))
+                || std::any_of(selectedPlatforms.begin(), selectedPlatforms.end(),
+                    [&](const auto& platform) { return platform.name == directory.fileName(); })) continue;
+            QStringList retiredFiles, retiredPacks;
+            if (!scanOutputFiles(QDir(directory.absoluteFilePath()), &retiredFiles, &retiredPacks,
+                    &result.error, true)) return result;
+            for (const auto& name : retiredFiles) liveNames.append(directory.fileName() + QLatin1Char('/') + name);
+            for (const auto& name : retiredPacks) previousPackNames.append(directory.fileName() + QLatin1Char('/') + name);
         }
+        liveNames.removeDuplicates();
+        previousPackNames.removeDuplicates();
     }
+    QStringList publishedNames;
+    for (const auto& name : liveNames)
+        if (!selfCleaning || selectedFiles.contains(name)) publishedNames.append(name);
     QTemporaryDir next(liveDir.filePath(QString::fromLatin1(kNextPrefix) + QStringLiteral("XXXXXX")));
     if (!next.isValid()) {
-        result.error = QStringLiteral("Cannot stage the Pack output index");
+        result.error = QStringLiteral("Cannot stage the Pack output publication");
         return result;
     }
-    if (!writeJson(QDir(next.path()).filePath(indexName), index, &result.error)) return result;
-    QByteArray before, after;
-    QString detail;
-    if (readAll(liveDir.filePath(indexName), &before, &detail)
-        && readAll(QDir(next.path()).filePath(indexName), &after, &detail) && before == after)
-        preservedNames.append(indexName);
-    if (!commitPublication(liveDir, next.path(), liveNames, publishedNames, preservedNames, &result.error)) {
+    if (!commitPublication(liveDir, next.path(), liveNames, publishedNames, publishedNames, &result.error)) {
+        QString detail;
         if (!recoverInterruptedPublish(liveDir, &detail)) {
             next.setAutoRemove(false);
             result.error += QLatin1Char('\n') + detail;

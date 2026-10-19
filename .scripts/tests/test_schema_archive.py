@@ -60,8 +60,9 @@ class SchemaArchiveTest(unittest.TestCase):
         self.assertEqual(editor["current"]["projectSchemaVersion"], EDITOR_VERSION)
         pack = MODULE["load_tree"]("Pack")
         self.assertNotIn("formatVersion", pack["currentSource"]["x-harken-format"])
-        self.assertEqual(pack["currentSource"]["properties"]["schema_version"], {"type": "integer"})
-        self.assertEqual(pack["current"]["properties"]["schema_version"], {"type": "integer", "const": PACK_VERSION})
+        self.assertNotIn("schema_version", pack["currentSource"].get("properties", {}))
+        self.assertNotIn("schema_version", pack["current"].get("properties", {}))
+        self.assertEqual(pack["current"]["x-harken-format"]["formatVersion"], PACK_VERSION)
 
     def test_current_rejects_embedded_generations(self) -> None:
         for tree, top, slot in (
@@ -80,7 +81,7 @@ class SchemaArchiveTest(unittest.TestCase):
             if tree == "Editor":
                 invalid["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"][slot]["const"] = 2
             else:
-                invalid["properties"][slot]["const"] = 1
+                invalid.setdefault("properties", {})[slot] = {"type": "integer", "const": 1}
             with self.assertRaises(ValueError):
                 MODULE["materialize_source"](tree, invalid, 2)
 
@@ -394,11 +395,11 @@ class SchemaArchiveTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             MODULE["validate_project_source"](source)
         pack = MODULE["read_pack_sources"]()[0]
-        pack["properties"]["schema_version"]["const"] = 6
+        pack.setdefault("properties", {})["schema_version"] = {"type": "integer", "const": 6}
         with self.assertRaises(ValueError):
             MODULE["validate_pack_source"](pack)
         pack = MODULE["read_pack_sources"]()[0]
-        pack["properties"]["schema_version"]["anyOf"] = []
+        pack["$defs"]["guid"]["anyOf"] = []
         with self.assertRaises(ValueError):
             MODULE["validate_pack_source"](pack)
 

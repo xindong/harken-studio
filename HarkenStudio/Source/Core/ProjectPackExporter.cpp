@@ -26,8 +26,6 @@
 
 #include "PlayablePropertyAuthoringV1.h"
 #include "ProjectPlatformActivity.h"
-#include "PackSchemaGenerated.h"
-#include "ProjectSchemaValidator.h"
 #include <harken_studio_build/PackFormat.h>
 #include "Components/VBus.h"
 #include "RuntimeBridge/PackagingBridge.h"
@@ -324,6 +322,26 @@ QString ProjectPackExporter::platformOutputDir(const QString& baseDir,
     return QDir(baseDir).filePath(platform.name);
 }
 
+bool ProjectPackExporter::ValidatePackBuildPlatforms(const QVector<ProjectPlatform>& captured,
+                                                     const QVector<ProjectPlatform>& current,
+                                                     const QStringList& succeededIds,
+                                                     QString* errorOut)
+{
+    for (const auto& id : succeededIds) {
+        const auto* before = ProjectPlatformSemantics::find(captured, QUuid(id));
+        const auto* after = ProjectPlatformSemantics::find(current, QUuid(id));
+        if (!after) {
+            if (errorOut) *errorOut = QStringLiteral("Pack platform was deleted during the build: %1").arg(id);
+            return false;
+        }
+        if (!before || before->toJson() != after->toJson()) {
+            if (errorOut) *errorOut = QStringLiteral("Pack platform changed during the build: %1").arg(id);
+            return false;
+        }
+    }
+    return true;
+}
+
 QStringList ProjectPackExporter::resolveExportPlatforms(const ProjectData& project,
                                                         const QString& explicitPlatform,
                                                         const PackExportSelection& selection,
@@ -407,8 +425,10 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
             if (!result.success)
                 return result;
             QString indexError;
-            if (!PublishPackIndex(root, project.platforms, {prepared.platform},
-                    {prepared.platform}, &indexError)) {
+            if (!ValidatePackBuildPlatforms(captured.platforms, project.platforms,
+                    {prepared.platform}, &indexError)
+                || !FinalizePackOutputs(root, project.platforms, {prepared.platform},
+                    {prepared.platform}, &indexError, result.artifacts)) {
                 result.success = false;
                 result.error = indexError;
             }
@@ -464,23 +484,6 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
                 PackBuildPlanning::packFileName(variant.variant.language, variant.artifactName, {}))))
             selectedVariants.emplace(variant.actionStableId, variant.variant.language);
     }
-    std::size_t previousCount;
-    do {
-        previousCount = selectedVariants.size();
-        for (const auto& variant : buildPlan.variants) {
-            if (!selectedVariants.count({variant.actionStableId, variant.variant.language})) continue;
-            for (const auto id : variant.dependencyOrder) {
-                const auto dependency = std::find_if(buildPlan.variants.begin(), buildPlan.variants.end(),
-                    [&](const auto& candidate) {
-                        return candidate.actionStableId == id
-                            && (candidate.variant.language.isEmpty()
-                                || candidate.variant.language == variant.variant.language);
-                    });
-                if (dependency != buildPlan.variants.end())
-                    selectedVariants.emplace(id, dependency->variant.language);
-            }
-        }
-    } while (previousCount != selectedVariants.size());
     buildPlan.variants.erase(std::remove_if(buildPlan.variants.begin(), buildPlan.variants.end(),
         [&](const auto& variant) {
             return !selectedVariants.count({variant.actionStableId, variant.variant.language});
@@ -564,23 +567,11 @@ ProjectPackExporter::ExportAllPacks(const ProjectData& project,
         dir.mkpath(".");
     if (effectiveOpts.updateSelectedOnly) {
         effectiveOpts.selfCleaning = false;
-        const QString manifestPath = dir.filePath(Bridge::packManifestFileName());
-        QFile file(manifestPath);
-        if (file.exists()) {
-            if (QFileInfo(manifestPath).isSymLink() || !file.open(QIODevice::ReadOnly)) {
-                result.error = QStringLiteral("Cannot read the existing publication: %1").arg(manifestPath);
-                return result;
-            }
-            const auto manifest = QJsonDocument::fromJson(file.readAll()).object();
-            if (!ProjectSchemaValidator::validatePackManifest(PackSchema::kPackManifestSchemaVersion,
-                    manifest, manifestPath).isEmpty()
-                || manifest.value(QStringLiteral("platformId")).toString() != effectiveOpts.platform
-                || QUuid(manifest.value(QStringLiteral("gameplayCatalog")).toObject()
-                    .value(QStringLiteral("projectId")).toString()) != QUuid(project.projectId)) {
-                result.error = QStringLiteral("The existing publication does not match this project and platform");
-                return result;
-            }
-        }
+        QJsonArray packs;
+        QStringList managedFiles;
+        if (!ReadPackPublication(outputDir, project.projectId, effectiveOpts.platform,
+                                 &packs, &managedFiles, &result.error, false))
+            return result;
     }
     for (const auto& diagnostic : buildPlan.diagnostics) {
         if (diagnostic.code != ActionClosureDiagnosticCode::LocalizedWithoutLanguages
@@ -883,15 +874,8 @@ ProjectPackExporter::exportSingleActionPack(
     std::set<uint32_t> visitedObjects;
     std::set<uint32_t> requiredMedia;
 
-    std::set<harkenstudio::ObjectId> dependencyActionIds;
-    for (const auto& member : closure.actions)
-        if (member.stableId != action.runtimeId())
-            dependencyActionIds.insert(member.stableId);
     for (const auto& member : closure.objects)
     {
-        if (std::any_of(member.referencePath.begin(), member.referencePath.end(),
-                        [&](harkenstudio::ObjectId id) { return dependencyActionIds.count(id) != 0; }))
-            continue;
         auto dependency = globalIndex.find(member.objectId);
         if (dependency == globalIndex.end() || !dependency->second)
             continue;
@@ -914,7 +898,8 @@ ProjectPackExporter::exportSingleActionPack(
                              exportLanguageOf(variantOptions));
 
     QSet<uint32_t> actionFilter;
-    actionFilter.insert(action.objectID);
+    for (const auto& member : closure.actions)
+        actionFilter.insert(member.objectId);
     std::set<uint32_t> requiredObjects;
     CollectActions(project, builder, requiredObjects, &actionFilter);
     if (QString scErr = takeActionScopeErrors(); !scErr.isEmpty())
@@ -942,7 +927,7 @@ ProjectPackExporter::exportSingleActionPack(
     }
     ApplyMediaCollectionStats(result, mediaStats);
     result.mediaCount = static_cast<int>(requiredMedia.size());
-    result.actionCount = 1;
+    result.actionCount = static_cast<int>(closure.actions.size());
 
     if (options.debugStrings)
     {

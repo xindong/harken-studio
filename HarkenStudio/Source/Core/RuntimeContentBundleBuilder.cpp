@@ -3,10 +3,9 @@
 
 #include "CurrentWorldArtifactWriter.h"
 #include "ProjectPackExporter.h"
+#include "CanonicalPackSetExport.h"
 #include "ProjectBuildSnapshot.h"
 #include "ProjectTypes.h"
-#include "JsonReader.h"
-#include "EditorWaveformPublication.h"
 #include "Components/VAction.h"
 #include "RuntimeBridge/PackagingBridge.h"
 #include <harken_studio_build/PackFormat.h>
@@ -28,7 +27,6 @@
 #endif
 
 #include <algorithm>
-#include <charconv>
 #include <functional>
 #include <unordered_map>
 
@@ -46,61 +44,6 @@ QString fileSha256(const QString& path)
     return QString::fromLatin1(hash.result().toHex());
 }
 
-QJsonArray losslessIdentity(const harkenstudiojson::JsonValue& value)
-{
-    QJsonArray items;
-    for (const auto& item : value.items)
-        items.append(losslessIdentity(item));
-    QJsonObject members;
-    for (const auto& [key, member] : value.members)
-        members.insert(QString::fromStdString(key), losslessIdentity(member));
-    // Type tags distinguish numeric literals from strings without rounding uint64 values.
-    return {static_cast<int>(value.kind), QString::fromStdString(value.text),
-            value.boolean, items, members};
-}
-
-QString publicationSha256(const QString& path)
-{
-    const bool waveform = QFileInfo(path).fileName() == QString::fromLatin1(harkenstudiobuild::tooling::kEditorWaveformFileName);
-    if (!waveform && QFileInfo(path).fileName() != HarkenEditor::Bridge::packManifestFileName())
-        return fileSha256(path);
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly))
-        return {};
-    harkenstudiojson::JsonValue manifest;
-    std::string error;
-    if (!harkenstudiojson::ParseJson(file.readAll().toStdString(), &manifest, &error, true)
-        || manifest.kind != harkenstudiojson::JsonValue::Kind::Object)
-        return {};
-    if (waveform) {
-        QFile paired(QDir(QFileInfo(path).absolutePath()).filePath(HarkenEditor::Bridge::packManifestFileName()));
-        if (!paired.open(QIODevice::ReadOnly)) return {};
-        const QByteArray pairedBytes = paired.readAll();
-        const auto* length = manifest.Find("manifestByteLength");
-        const auto* hash = manifest.Find("manifestFnv1a64");
-        std::uint64_t decodedLength = 0, decodedHash = 0;
-        if (!length || !length->AsU64(&decodedLength) || decodedLength != static_cast<std::uint64_t>(pairedBytes.size())
-            || !hash || hash->kind != harkenstudiojson::JsonValue::Kind::String) return {};
-        const auto parsedHash = std::from_chars(hash->text.data(), hash->text.data() + hash->text.size(), decodedHash);
-        if (parsedHash.ec != std::errc{} || parsedHash.ptr != hash->text.data() + hash->text.size()
-            || decodedHash != harkenstudiobuild::Fnv1a64(pairedBytes.constData(), pairedBytes.size())) return {};
-    } else {
-        const auto* name = manifest.Find("platformName");
-        if (!name || name->kind != harkenstudiojson::JsonValue::Kind::String
-            || !ProjectPlatformSemantics::validateName(QString::fromStdString(name->text)))
-            return {};
-    }
-    // Bundles retain captured display metadata; renames do not change content identity.
-    // The wrapper checksum is derived from all fields, including the display name.
-    std::erase_if(manifest.members, [waveform](const auto& member) {
-        return waveform ? member.first == "manifestFnv1a64" || member.first == "manifestByteLength"
-            : member.first == "platformName" || member.first == "catalogChecksum";
-    });
-    return QString::fromLatin1(QCryptographicHash::hash(
-        QJsonDocument(losslessIdentity(manifest)).toJson(QJsonDocument::Compact),
-        QCryptographicHash::Sha256).toHex());
-}
-
 bool copyFile(const QString& source, const QString& target)
 {
     QDir().mkpath(QFileInfo(target).absolutePath());
@@ -112,7 +55,7 @@ bool verifyPublications(const RuntimeContentBundleResult& bundle, const QString&
 {
     for (const auto& publication : bundle.requiredPublications) {
         const QString path = QDir(root).filePath(publication.path);
-        const QString identity = publicationSha256(path);
+        const QString identity = fileSha256(path);
         if (identity.isEmpty() || identity != publication.identitySha256) {
             if (error) *error = QStringLiteral("Publication does not match the captured bundle: %1").arg(path);
             return false;
@@ -295,17 +238,19 @@ RuntimeContentBundleResult RuntimeContentBundleBuilder::build(
         result.error = QStringLiteral("Runtime content build produced no packs");
         return result;
     }
-    // Ship language publications alongside the existing ordered Pack inventory.
-    std::vector<QString> publicationPaths = packPaths;
-    QDirIterator publications(buildPath,
-        {HarkenEditor::Bridge::packManifestFileName(), QStringLiteral("Init") + HarkenEditor::Bridge::packArtifactExtension(),
-         QString::fromLatin1(harkenstudiobuild::tooling::kEditorWaveformFileName)},
-        QDir::Files, QDirIterator::Subdirectories);
-    while (publications.hasNext())
-        publicationPaths.push_back(QFileInfo(publications.next()).absoluteFilePath());
+    QJsonArray publicationRows;
+    QStringList publicationFiles;
+    if (!ReadPackPublication(buildPath, project.projectId, result.platform,
+                             &publicationRows, &publicationFiles, &result.error))
+        return result;
+    std::vector<QString> publicationPaths;
+    for (const auto& row : publicationRows) {
+        const QFileInfo file(row.toObject().value(QStringLiteral("path")).toString());
+        publicationPaths.push_back(buildDir.absoluteFilePath(file.filePath()));
+        publicationPaths.push_back(buildDir.absoluteFilePath(
+            QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json"))));
+    }
     std::sort(publicationPaths.begin(), publicationPaths.end());
-    publicationPaths.erase(std::unique(publicationPaths.begin(), publicationPaths.end()),
-                           publicationPaths.end());
 
     const std::uint64_t fingerprint = exported.currentWorldSemanticFingerprint;
     if (fingerprint == 0) {
@@ -318,7 +263,7 @@ RuntimeContentBundleResult RuntimeContentBundleBuilder::build(
     identity.addData(QByteArray::number(static_cast<qulonglong>(fingerprint)));
     identity.addData(fileSha256(worldPath).toLatin1());
     for (const QString& pack : publicationPaths) {
-        const QString digest = publicationSha256(pack);
+        const QString digest = fileSha256(pack);
         if (digest.isEmpty()) {
             result.error = QStringLiteral("Publication cannot be hashed: %1").arg(pack);
             return result;
@@ -355,27 +300,16 @@ RuntimeContentBundleResult RuntimeContentBundleBuilder::build(
              QFileInfo(target).size(), digest});
     }
     std::set<harkenstudio::ObjectId> builtActions;
-    for (const QString& publication : publicationPaths) {
-        if (QFileInfo(publication).fileName() != HarkenEditor::Bridge::packManifestFileName())
-            continue;
-        QFile manifestFile(publication);
-        if (!manifestFile.open(QIODevice::ReadOnly)) {
-            result.error = QStringLiteral("Pack manifest cannot be read: %1").arg(publication);
+    for (const auto& row : publicationRows) {
+        const auto companion = row.toObject().value(QStringLiteral("companion")).toObject();
+        if (!companion.contains(QStringLiteral("guid"))) continue;
+        harkenstudio::ObjectId actionStableId;
+        if (!parseObjectIdJson(companion.value(QStringLiteral("guid")), &actionStableId)
+            || harkenstudio::IsNull(actionStableId)) {
+            result.error = QStringLiteral("Pack companion contains an invalid Action identity");
             return result;
         }
-        const auto catalog = QJsonDocument::fromJson(manifestFile.readAll()).object()
-            .value(QStringLiteral("gameplayCatalog")).toObject();
-        for (const auto& value : catalog.value(QStringLiteral("actions")).toArray()) {
-            harkenstudio::ObjectId actionStableId;
-            if (!parseObjectIdJson(value.toObject().value(QStringLiteral("actionStableId")),
-                                   &actionStableId)
-                || harkenstudio::IsNull(actionStableId)) {
-                result.error = QStringLiteral("Pack manifest contains an invalid Action identity: %1")
-                    .arg(publication);
-                return result;
-            }
-            builtActions.insert(actionStableId);
-        }
+        builtActions.insert(actionStableId);
     }
     result.actions = actions(project, builtActions);
     result.worldSemanticFingerprint = fingerprint;
@@ -391,8 +325,8 @@ RuntimeContentBundleResult RuntimeContentBundleBuilder::build(
     }
     for (const QString& source : publicationPaths) {
         const QString target = QDir(activeBundle).filePath(buildDir.relativeFilePath(source));
-        const QString digest = publicationSha256(source);
-        if (digest.isEmpty() || digest != publicationSha256(target)) {
+        const QString digest = fileSha256(source);
+        if (digest.isEmpty() || digest != fileSha256(target)) {
             result.error = QStringLiteral("Existing language publication does not match the built platform: %1").arg(target);
             return result;
         }
