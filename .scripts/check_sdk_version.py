@@ -9,7 +9,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 VERSION_FILE = REPOSITORY / "HarkenSDK" / "VERSION"
 UNITY_PACKAGE = REPOSITORY / "HarkenSDK" / "Unity" / "Harken" / "package.json"
 UNREAL_PLUGIN = REPOSITORY / "HarkenSDK" / "Unreal" / "Harken" / "Harken.uplugin"
-UNITY_PACKAGE_VERSION = "0.3.3"
+UNITY_PACKAGE_VERSION = "0.3.4"
 
 
 def version() -> str:

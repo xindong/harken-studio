@@ -221,6 +221,16 @@ TEST(ProjectUpgradeManager, InjectedMigrationRunsThroughValidationAndTransaction
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
     const QString projectPath = createBaselineProject(directory);
+    const QStringList backupFiles{
+        QStringLiteral("Other.hsp"), QStringLiteral("Backups/Old.hsp"),
+        QStringLiteral("Layers/Nested/Old.hsp")};
+    QMap<QString, QByteArray> backupBytes;
+    for (const QString& relative : backupFiles) {
+        const QString path = directory.filePath(relative);
+        ASSERT_TRUE(QDir().mkpath(QFileInfo(path).absolutePath()));
+        ASSERT_TRUE(QFile::copy(projectPath, path));
+        backupBytes.insert(relative, readBytes(path));
+    }
 
     const QStringList documents{QStringLiteral("Baseline.hsp"),
                                 QStringLiteral("Layers/Main.vp"),
@@ -251,9 +261,7 @@ TEST(ProjectUpgradeManager, InjectedMigrationRunsThroughValidationAndTransaction
     step.id = QStringLiteral("test-current-to-next");
     step.fromSchema = VNX::kCurrentProjectSchemaVersion;
     step.toSchema = VNX::kCurrentProjectSchemaVersion + 1;
-    step.writeSet = {QStringLiteral("<project-file>"),
-                     QStringLiteral("Layers/Main.vp"),
-                     QStringLiteral("Busses/Root.vp")};
+    step.writeSet = {QStringLiteral("<all-documents>")};
     step.transform = [](VNX::ProjectMigrationWorkspace& workspace,
                         QStringList*, QString* error) {
         for (const QString& path : workspace.writeSet()) {
@@ -279,6 +287,8 @@ TEST(ProjectUpgradeManager, InjectedMigrationRunsThroughValidationAndTransaction
     ASSERT_TRUE(analysis.ok)
         << analysis.blockingErrors.join(QStringLiteral("; ")).toStdString();
     ASSERT_TRUE(analysis.upgradeRequired);
+    for (const QString& relative : backupFiles)
+        EXPECT_FALSE(analysis.migrationPlan.writeSet.contains(relative));
     const VNX::ProjectUpgradeResult result = manager.execute(analysis);
     ASSERT_TRUE(result.ok) << result.error.toStdString();
     ASSERT_TRUE(result.changed);
@@ -291,9 +301,13 @@ TEST(ProjectUpgradeManager, InjectedMigrationRunsThroughValidationAndTransaction
         expected.insert(QStringLiteral("harkenDocument"), header);
         EXPECT_EQ(readJson(directory.filePath(path)), expected);
     }
+    for (const QString& relative : backupFiles)
+        EXPECT_EQ(readBytes(directory.filePath(relative)), backupBytes.value(relative));
     ASSERT_TRUE(manager.rollback(result));
     for (const QString& path : documents)
         EXPECT_EQ(readBytes(directory.filePath(path)), originals.value(path));
+    for (const QString& relative : backupFiles)
+        EXPECT_EQ(readBytes(directory.filePath(relative)), backupBytes.value(relative));
 }
 
 class ProjectPackOutputUpgradeTest : public testing::TestWithParam<QString>
