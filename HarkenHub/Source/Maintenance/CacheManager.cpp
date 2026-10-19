@@ -1,4 +1,5 @@
 #include "Maintenance/CacheManager.h"
+#include "Download/DownloadLease.h"
 
 #include <QDir>
 #include <QFile>
@@ -11,7 +12,7 @@ namespace {
 void cleanDirectory(const QString& directory, const QStringList& nameFilters,
                     int retentionDays, const QDateTime& now,
                     const QList<QFileInfo>& protectedFiles,
-                    CacheCleanReport& report)
+                    CacheCleanReport& report, bool downloadCache = false)
 {
     if (retentionDays < 0)
         return;
@@ -23,6 +24,12 @@ void cleanDirectory(const QString& directory, const QStringList& nameFilters,
         dir.entryInfoList(nameFilters, QDir::Files | QDir::NoSymLinks);
     for (const QFileInfo& info : entries) {
         if (info.lastModified() >= cutoff || protectedFiles.contains(info))
+            continue;
+        const auto lease = downloadCache ? DownloadLease::acquire(info.filePath())
+                                         : std::shared_ptr<DownloadLease>();
+        if (downloadCache && !lease)
+            continue;
+        if (QFileInfo(info.filePath()).lastModified() >= cutoff)
             continue;
         if (QFile::remove(info.filePath()))
             report.removedFiles.append(info.filePath());
@@ -49,19 +56,23 @@ CacheCleanReport CacheManager::clean(const QString& userDataRoot,
     const QString quarantine = userDataRoot + QStringLiteral("/quarantine");
     const QString logs = userDataRoot + QStringLiteral("/logs");
 
-    cleanDirectory(downloads,
-                   {QStringLiteral("*.part"), QStringLiteral("*.part.meta")},
-                   options.partialRetentionDays, now, protectedFiles, report);
-    cleanDirectory(downloads,
-                   {QStringLiteral("*.zip"), QStringLiteral("*.manifest")},
-                   options.downloadRetentionDays, now, protectedFiles, report);
+    for (const auto& directory : {downloads, downloads + QStringLiteral("/manual")}) {
+        cleanDirectory(directory,
+                       {QStringLiteral("*.part"), QStringLiteral("*.part.meta")},
+                       options.partialRetentionDays, now, protectedFiles, report, true);
+        cleanDirectory(directory,
+                       {QStringLiteral("*.zip"), QStringLiteral("*.manifest"),
+                        QStringLiteral("*.stale")},
+                       options.downloadRetentionDays, now, protectedFiles, report, true);
+    }
     cleanDirectory(hubUpdates,
                    {QStringLiteral("*.part"), QStringLiteral("*.part.meta")},
-                   options.partialRetentionDays, now, protectedFiles, report);
+                   options.partialRetentionDays, now, protectedFiles, report, true);
     cleanDirectory(hubUpdates,
                    {QStringLiteral("*.exe"), QStringLiteral("*.msi"),
-                    QStringLiteral("*.manifest")},
-                   options.downloadRetentionDays, now, protectedFiles, report);
+                    QStringLiteral("*.pkg"), QStringLiteral("*.manifest"),
+                    QStringLiteral("*.stale")},
+                   options.downloadRetentionDays, now, protectedFiles, report, true);
     cleanDirectory(quarantine, {}, options.quarantineRetentionDays, now,
                    protectedFiles, report);
     cleanDirectory(logs, {QStringLiteral("*.log")}, options.logRetentionDays,

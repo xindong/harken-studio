@@ -81,6 +81,7 @@ set(HARKEN_HUB_SOURCES
     Source/App/SingleInstanceGuard.cpp
     Source/Download/BackoffPolicy.cpp
     Source/Download/Downloader.cpp
+    Source/Download/DownloadLease.cpp
     Source/Packaging/PackageReader.cpp
     Source/Packaging/PackageVerifier.cpp
     Source/Security/BinaryTrustPolicy.cpp

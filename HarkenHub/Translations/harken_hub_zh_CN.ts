@@ -156,6 +156,10 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Hub and Studio updates preserve each other's progress when running together, and outdated operations cannot overwrite newer update state.</source><translation>Hub 与 Studio 同时更新时，各自的进度不会相互覆盖；过时操作也不会覆盖已经推进的更新状态。</translation></message>
+    <message><source>Manual and background Studio downloads can run together. Packages remain protected from competing downloads and cache cleanup until installation handoff finishes.</source><translation>Studio 手动下载可与后台下载同时进行。下载包在交接给安装程序前，持续受到保护，避免被其他下载覆盖或被缓存清理删除。</translation></message>
+    <message><source>Updates and local build checks recover from temporary file locks on Windows without reporting unsaved state as complete.</source><translation>Windows 上的更新与本地构建检查可在文件短暂占用后恢复，不再将尚未保存的状态报告为完成。</translation></message>
+    <message><source>Reopening a project in a compatible Studio version activates its existing window, and Hub recognizes a successful handoff.</source><translation>使用支持此功能的 Studio 版本重复打开工程时，会激活已有窗口，Hub 会正确识别转交成功。</translation></message>
     <message>
         <source>Hub and Studio updates now use the new GitHub repository, with COS downloads retained as a fallback.</source>
         <translation>Hub 与 Studio 的更新入口已迁移到新的 GitHub 仓库，并保留 COS 备用下载。</translation>
@@ -722,6 +726,9 @@ Continue?</source>
 </context>
 <context>
     <name>HarkenHub</name>
+    <message><source>Cannot create the download directory</source><translation>无法创建下载目录</translation></message>
+    <message><source>This package is in use by another operation</source><translation>此安装包正在被另一项操作使用</translation></message>
+    <message><source>Cannot lock the download cache</source><translation>无法锁定下载缓存</translation></message>
     <message><source>The Unreal SDK is missing a readable, nonempty header: %1. Select a complete SDK source.</source><translation>Unreal SDK &#x7f3a;&#x5c11;&#x53ef;&#x8bfb;&#x53d6;&#x4e14;&#x975e;&#x7a7a;&#x7684;&#x5934;&#x6587;&#x4ef6;&#xff1a;%1&#x3002;&#x8bf7;&#x9009;&#x62e9;&#x5b8c;&#x6574;&#x7684; SDK &#x6765;&#x6e90;&#x3002;</translation></message>
     <message>
         <source>Project Association</source>

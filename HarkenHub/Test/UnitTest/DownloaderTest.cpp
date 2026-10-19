@@ -140,6 +140,54 @@ TEST_F(DownloaderTest, FreshDownloadDeliversTargetAndRemovesPartFiles)
     EXPECT_FALSE(downloader.isActive());
 }
 
+TEST_F(DownloaderTest, ArtifactOwnershipSurvivesDownloadUntilConsumerReleasesIt)
+{
+    const auto payload = patternedPayload(150000);
+    server.setPayload(payload, QByteArrayLiteral("v1"));
+    RangeHttpServer::Script response;
+    response.delayMs = 100;
+    server.enqueue(response);
+    Downloader first;
+    Downloader second;
+    ResultCapture capture(first);
+    ResultCapture other(second);
+    const auto request = makeRequest(payload.size());
+    ASSERT_TRUE(first.start(request));
+    EXPECT_FALSE(second.start(request));
+    EXPECT_FALSE(VNH::DownloadLease::acquire(request.targetPath + QStringLiteral(".manifest")));
+    ASSERT_TRUE(spinUntil([&]() { return capture.finishedCount == 1; }));
+    ASSERT_TRUE(capture.result.ok);
+    EXPECT_FALSE(second.start(request));
+    EXPECT_EQ(readAll(request.targetPath), payload);
+    capture.result.lease.reset();
+    ASSERT_TRUE(second.start(request));
+    ASSERT_TRUE(spinUntil([&]() { return other.finishedCount == 1; }));
+    EXPECT_TRUE(other.result.ok);
+    EXPECT_EQ(readAll(request.targetPath), payload);
+}
+
+TEST_F(DownloaderTest, IndependentArtifactsCanDownloadTogether)
+{
+    const auto payload = patternedPayload(150000);
+    server.setPayload(payload, QByteArrayLiteral("v1"));
+    Downloader automatic;
+    Downloader manual;
+    ResultCapture autoResult(automatic);
+    ResultCapture manualResult(manual);
+    auto request = makeRequest(payload.size());
+    ASSERT_TRUE(automatic.start(request));
+    const auto automaticPath = request.targetPath;
+    request.targetPath = dir.filePath(QStringLiteral("pkg/manual/studio.pkg"));
+    ASSERT_TRUE(manual.start(request));
+    ASSERT_TRUE(spinUntil([&]() {
+        return autoResult.finishedCount == 1 && manualResult.finishedCount == 1;
+    }));
+    EXPECT_TRUE(autoResult.result.ok);
+    EXPECT_TRUE(manualResult.result.ok);
+    EXPECT_EQ(readAll(automaticPath), payload);
+    EXPECT_EQ(readAll(request.targetPath), payload);
+}
+
 TEST_F(DownloaderTest, AbortedTransferResumesWithRangeAfterHeadCheck)
 {
     const QByteArray payload = patternedPayload(200000);

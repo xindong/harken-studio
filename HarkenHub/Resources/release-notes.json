@@ -7,9 +7,33 @@
   },
   "releases": [
     {
+      "version": "0.1.59",
+      "date": "2026-10-19",
+      "pullRequests": [49, 56],
+      "contributors": ["liuxin2-sys", "Probus-XD"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "Hub and Studio updates preserve each other's progress when running together, and outdated operations cannot overwrite newer update state."
+        },
+        {
+          "category": "improved",
+          "text": "Manual and background Studio downloads can run together. Packages remain protected from competing downloads and cache cleanup until installation handoff finishes."
+        },
+        {
+          "category": "improved",
+          "text": "Updates and local build checks recover from temporary file locks on Windows without reporting unsaved state as complete."
+        },
+        {
+          "category": "improved",
+          "text": "Reopening a project in a compatible Studio version activates its existing window, and Hub recognizes a successful handoff."
+        }
+      ]
+    },
+    {
       "version": "0.1.58",
       "date": "2026-10-15",
-      "pullRequests": [30, 31],
+      "pullRequests": [30, 31, 34],
       "contributors": [
         "liuxin2-sys"
       ],

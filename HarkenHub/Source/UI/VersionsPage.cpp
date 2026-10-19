@@ -1146,13 +1146,18 @@ void VersionsPage::onCatalogFinished(const ServerVersionList& result)
         return;
     }
 
-    const QString downloadDir = userDataDir() + QStringLiteral("/downloads");
+    const QString downloadDir = userDataDir() + QStringLiteral("/downloads/manual");
     const QString envelopePath =
         downloadDir + QStringLiteral("/") + buildId +
         QStringLiteral(".manifest");
+    QString leaseError;
+    const auto manifestLease = DownloadLease::acquire(envelopePath, &leaseError);
+    if (!manifestLease) {
+        finishElevatedFlow(leaseError);
+        return;
+    }
     QSaveFile envelopeFile(envelopePath);
-    if (!QDir().mkpath(downloadDir) ||
-        !envelopeFile.open(QIODevice::WriteOnly) ||
+    if (!envelopeFile.open(QIODevice::WriteOnly) ||
         envelopeFile.write(envelope) != envelope.size() ||
         !envelopeFile.commit()) {
         finishElevatedFlow(QString());
@@ -1162,7 +1167,7 @@ void VersionsPage::onCatalogFinished(const ServerVersionList& result)
         return;
     }
 
-    beginInstallFromFiles(packagePath, envelopePath, true);
+    beginInstallFromFiles(packagePath, envelopePath, true, manifestLease);
 }
 
 void VersionsPage::beginGetFromServer()
@@ -1194,15 +1199,49 @@ void VersionsPage::beginGetFromServer()
         return;
     if (dialog.packagePath().isEmpty() || dialog.manifestPath().isEmpty())
         return;
-    beginInstallFromFiles(dialog.packagePath(), dialog.manifestPath(), true);
+    const auto currentIndex = InstallIndex::snapshot();
+    if (currentIndex.ok) {
+        for (const auto& record : currentIndex.records) {
+            if (record.buildId == dialog.buildId()) {
+                refresh();
+                installStatusLabel_->setText(
+                    QCoreApplication::translate("HarkenHub", "Installed"));
+                return;
+            }
+        }
+    }
+    beginInstallFromFiles(dialog.packagePath(), dialog.manifestPath(), true,
+                          dialog.takeDownloadLease());
 }
 
 void VersionsPage::beginInstallFromFiles(const QString& packagePath,
                                          const QString& manifestPath,
-                                         bool explicitInstall)
+                                         bool explicitInstall,
+                                         std::shared_ptr<DownloadLease> lease)
 {
     if (operationBusy())
         return;
+    auto packageLease = lease && lease->covers(packagePath)
+                            ? lease : std::shared_ptr<DownloadLease>();
+    if (!packageLease && DownloadLease::isCachePath(packagePath)) {
+        QString error;
+        packageLease = DownloadLease::acquire(packagePath, &error);
+        if (!packageLease) {
+            finishElevatedFlow(error);
+            return;
+        }
+    }
+    auto manifestLease = lease && lease->covers(manifestPath) ? lease
+                         : packageLease && packageLease->covers(manifestPath)
+                             ? packageLease : std::shared_ptr<DownloadLease>();
+    if (!manifestLease && DownloadLease::isCachePath(manifestPath)) {
+        QString error;
+        manifestLease = DownloadLease::acquire(manifestPath, &error);
+        if (!manifestLease) {
+            finishElevatedFlow(error);
+            return;
+        }
+    }
     preparing_ = true;
     setManagementButtonsEnabled(false);
     busyBar_->show();
@@ -1213,7 +1252,9 @@ void VersionsPage::beginInstallFromFiles(const QString& packagePath,
     const QDateTime now = QDateTime::currentDateTimeUtc();
     const QPointer<VersionsPage> self(this);
     QThreadPool::globalInstance()->start(
-        [self, packagePath, manifestPath, publicKey, now, explicitInstall]() {
+        [self, packagePath, manifestPath, publicKey, now, explicitInstall,
+         packageLease = std::move(packageLease),
+         manifestLease = std::move(manifestLease)]() {
             const InstallPreparation preparation =
                 InstallRequest::prepare(packagePath, manifestPath, publicKey,
                                         now, explicitInstall);
@@ -1241,6 +1282,16 @@ void VersionsPage::onPrepared(const InstallPreparation& preparation)
         return;
     }
 
+    const auto index = InstallIndex::snapshot();
+    if (index.ok) {
+        for (const auto& record : index.records) {
+            if (record.buildId == preparation.buildId) {
+                HandoffArea::discard(preparation.transactionId);
+                finishElevatedFlow(QCoreApplication::translate("HarkenHub", "Installed"));
+                return;
+            }
+        }
+    }
     installStatusLabel_->setText(
         QCoreApplication::translate("HarkenHub", "Installing HarkenStudio %1...").arg(preparation.version));
 
@@ -1399,7 +1450,7 @@ void VersionsPage::onElevatedPoll()
                 UpdateStateStore::load(QStringLiteral("HarkenStudio"));
             if (pendingUpdate.found &&
                 pendingUpdate.buildId == activeBuildId_)
-                UpdateStateStore::clear(QStringLiteral("HarkenStudio"));
+                UpdateStateStore::clear(pendingUpdate);
             finishElevatedFlow(QCoreApplication::translate("HarkenHub", "Install finished"));
             runSelfTest(activeBuildId_);
             break;
