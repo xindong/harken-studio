@@ -1,7 +1,8 @@
 # Unity SDK Test Fixtures
 
-These are real Pack publications created through Harken Studio ProjectManager
-and `ExportAllPacks`. They are test input, not hand-authored Pack schemas.
+These are real Pack publications exported by Harken Studio from the ordinary
+author projects in `Projects`. SDK tests consume the publications; regeneration
+uses the Studio application and does not require an editor test executable.
 The original and renamed publications come from the same project; the other
 project publication intentionally has different project and object identities.
 
@@ -92,51 +93,100 @@ Sample admission uses Null and is not listening or real-device fade evidence.
 
 Fixture paths are derived from this repository and the `--project` argument;
 the preparation process does not depend on a developer's local plan or worktree.
-The committed JSON and Pack fixtures are regenerated through the current
-production project/platform export chain. Set `HARKEN_UNITY_PLATFORM_FIXTURE_OUT`
-when running the focused editor fixture test to retain its exported publication
-for synchronization. Do not hand-edit manifests, indexes, or Pack binaries.
+Regenerate the publications in `Data` from their source projects as described
+below. Do not hand-edit manifests, indexes, or Pack binaries.
 Use each publication's Init path when configuring test startup; current exports
 use original `.bytes` files rather than the older `.pack` fixture names.
 
-## Regenerate Playback Publications
+## Regenerate Publications
 
-Configure a Studio-enabled build with
-`CMAKE_PROJECT_HarkenCore_INCLUDE` pointing to this directory's
-`GeneratePublication.cmake`, then build `harken_unity_publication` and
-`harken_packc`. Invoke the generator with a new output directory and the packc
-executable path. It creates an author project and exports `original` and
-`renamed` publications using four-second synthetic tones, so real-device stop
-tests can observe independent firings before natural completion. Run again with a different new output directory for
-`U4OtherProject`; pass `--spatial` for `SpatialPacks`. Copy the corresponding
-exports to `Data`, removing superseded generated Pack files. Omit the optional
-`HarkenEditorWaveforms.json` from the three U4 playback fixtures: their tests
-explicitly cover publications without waveform metadata.
-For an existing copied author project, append `--project <copy.hsp>` instead
-of `--spatial`. This exports the platform directory and index while preserving
-project, Action, Pack and Variable identities. The export saves the project;
-always use a recoverable copy of its authoritative source.
+Use a current Studio build with its matching `packc` executable. Copy the complete
+source project directory, including its `AudioSources`, to a new temporary
+directory before opening the `.hsp` in Studio. Keep the checked-in projects as
+authoritative inputs; save and export from the copies. Existing author projects
+can be reexported the same way, preserving their project, Action, Pack and
+Variable identities.
 
-Regenerate the language and platform fixtures with the existing Studio tests:
-`EditorProjectPackExporterManifest.LanguageVariantsKeepDistinctPackIdentities`
-uses `HARKEN_UNITY_FIXTURE_OUT`, and
-`ProjectPlatformBuild.DeliveryIndexAccumulatesOnlyPublishedInstances` uses
-`HARKEN_UNITY_PLATFORM_FIXTURE_OUT`. Set each output to a new directory and run
-only those exact tests in `harken_editor_tests`. Copy the published Pack files,
-manifests, waveform companions and platform index into `NameFirstPacks` and
-`PlatformContractPacks`; exclude source audio and caches. Retain both
-English/ja publications and both Android_Low/Android_High platform instances.
+In the Pack Exporter, select the platforms below, include all Actions and language
+rows, and use **Export All**. The projects use `BuildPacks` as the output directory;
+Studio writes each platform under `BuildPacks/<platformName>` and the platform
+index at `BuildPacks/HarkenPackIndex.json`.
 
-On headless Windows, set `QT_QPA_PLATFORM=offscreen` and point
-`QT_QPA_PLATFORM_PLUGIN_PATH` to the matching Qt installation's `plugins/platforms`
-directory. The generator uses the real ProjectManager and export pipeline;
-it does not rewrite Pack schemas or binary payloads.
+| Source project under `Projects` | Export selection | Publication to copy | Destination |
+| --- | --- | --- | --- |
+| `Playback/Playback.hsp` | Windows | `BuildPacks/Windows` | `Data/U4Original` |
+| Same Playback copy after renaming A | Windows | `BuildPacks/Windows` | `Data/U4Renamed` |
+| `OtherProject/OtherProject.hsp` | Windows | `BuildPacks/Windows` | `Data/U4OtherProject` |
+| `Spatial/Spatial.hsp` | Windows | `BuildPacks/Windows` | `Data/SpatialPacks` |
+| `Languages/Languages.hsp` | Windows, all languages | `BuildPacks/Windows`, including `English` and `ja` | `Data/NameFirstPacks` |
+| `Platforms/Platforms.hsp` | Android_Low and Android_High | Complete `BuildPacks`, including its index | `Data/PlatformContractPacks` |
+| `VariableNames/VariableNames.hsp` | Windows | `BuildPacks/Windows` | Unity project's `Assets/StreamingAssets/Audio/VariableNames` |
+
+For Playback, copy the original publication before changing the project. Then
+rename the existing `Play_U4_A` Action to `Play_U4_Renamed` in Studio, save and
+move the generated `BuildPacks` directory aside before exporting again. Copy the
+new publication to U4Renamed. Starting from an empty output directory keeps files
+from the previous Action name out of the renamed fixture. Do not delete and
+recreate the Action or create another project for this step: both publications
+must retain the same project and Action identities. `OtherProject` already has distinct
+identities and must remain a separate source project.
+
+Replace each destination's old generated files with the corresponding complete
+publication. Copy only published Pack files, manifests, waveform companions and,
+for PlatformContractPacks, the platform index; exclude source projects, audio and
+caches. Omit `HarkenEditorWaveforms.json` from U4Original, U4Renamed and
+U4OtherProject because their tests cover publications without waveform metadata.
+Retain both language directories in NameFirstPacks and both Android platform
+directories in PlatformContractPacks.
+
+The playback projects contain four-second tones so stop tests can observe
+independent firings before natural completion. Spatial adds a distance profile
+with volume points at 0 metres/0 dB and 100 metres/-60 dB, plus a 100 ms delayed
+Action. VariableNames declares the Smooth variable `Sdk_Value` with range 0..1
+and default 0. Keep these authored properties when updating the source projects.
+
+The existing `.scripts/studio/harken_ipc.ps1` client can perform the same operations
+against a running Studio instance. For example, copy Playback to
+`.temp/sdk-fixtures/Playback` and open that copy's `.hsp` in Studio. From the
+repository root, verify the connected instance before saving or exporting:
+
+```powershell
+$projectPath = (Resolve-Path ".temp/sdk-fixtures/Playback/Playback.hsp").Path
+$state = & .scripts/studio/harken_ipc.ps1 get_app_state -AsObject
+if ($state.result.state -ne "project_loaded" -or
+    [IO.Path]::GetFullPath($state.result.project_path) -ne $projectPath) {
+    throw "The connected Studio instance has not loaded the copied project."
+}
+& .scripts/studio/harken_ipc.ps1 save_project
+& .scripts/studio/harken_ipc.ps1 export_pack
+$build = (& .scripts/studio/harken_ipc.ps1 get_pack_build_status -AsObject).result
+```
+
+`export_pack` starts asynchronously. Repeat the last command until
+`$build.in_progress` is false, then require `$build.result.status` to be `ok` and
+`$build.result.result.success` to be true before copying files or issuing another
+build. It uses the Pack Exporter's current
+selection; select all Actions, languages and the required platforms first.
+`get_project_info` lists platform IDs, and `set_pack_export_selected_platforms`
+accepts them in its `platform_ids` array. After copying U4Original and moving
+`BuildPacks` aside, rename through Studio's IPC, then save and export:
+
+```powershell
+& .scripts/studio/harken_ipc.ps1 rename_item '{"path":"Play_U4_A","new_name":"Play_U4_Renamed"}'
+& .scripts/studio/harken_ipc.ps1 save_project
+& .scripts/studio/harken_ipc.ps1 export_pack
+$build = (& .scripts/studio/harken_ipc.ps1 get_pack_build_status -AsObject).result
+```
+
+The client connects to the local Studio IPC port 9527 and requests normal
+Studio operations; it does not
+construct project internals or rewrite publication schemas.
 
 ## Deterministic Native Rendering Tests
 
-For the named-variable startup regression, generate a current publication with
-`harken_unity_publication <new-output-directory> <packc-path> --variable`.
-Copy its `original` publication into the dedicated Unity project's
+For the named-variable startup regression, export a temporary copy of
+`Projects/VariableNames/VariableNames.hsp` with Studio as described above.
+Copy its Windows publication into the dedicated Unity project's
 `Assets/StreamingAssets/Audio/VariableNames`, then invoke
 `Harken.Unity.Tests.HarkenUnityFixtureAssets.PrepareVariableSource`.
 With the test-native bridge and `HARKEN_SDK_TEST_NULL_PUMP` enabled as below,

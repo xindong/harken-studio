@@ -1,0 +1,58 @@
+{
+    "content": {
+        "children": [
+        ],
+        "components": {
+            "spatial": {
+                "spatializationMix": 1
+            }
+        },
+        "expanded": true,
+        "fieldGroups": {
+            "shared": {
+                "mainOutput": {
+                    "inherit": true,
+                    "values": {
+                        "mainOutputBusRef": "3cc75f27-9a2e-49e4-aa9a-08897e554a94",
+                        "outputBusVolume": 0
+                    }
+                },
+                "send": {
+                    "inherit": true,
+                    "values": {
+                        "sends": [
+                        ]
+                    }
+                },
+                "spatialRating": {
+                    "inherit": true,
+                    "values": {
+                        "spatialAttenuationDistanceScaling": 1,
+                        "spatialAttenuationRef": "00000000-0000-0000-0000-000000000000",
+                        "spatialIs3DEnabled": false,
+                        "spatialPanning": 0
+                    }
+                }
+            }
+        },
+        "guid": "ad1ca8ac-2156-4f3f-b66e-dc8d247c5dcf",
+        "name": "Sounds",
+        "objectPath": "\\Sounds",
+        "order": 0,
+        "parentRef": {
+            "kind": "root"
+        },
+        "playableProperties": {
+            "presence": "0000000000000000"
+        },
+        "type": "Layer"
+    },
+    "harkenDocument": {
+        "id": "ad1ca8ac-2156-4f3f-b66e-dc8d247c5dcf",
+        "projectId": "2a160729-e1cb-45ec-9be9-180a6b5a1a8c",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.7.2",
+        "schemaVersion": 7,
+        "type": "project.layer"
+    }
+}
