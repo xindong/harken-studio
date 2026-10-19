@@ -1,6 +1,7 @@
 <RCC>
     <qresource prefix="/">
-        <file>Resources/branding/HarkenStudioBlue.png</file>
+        <file>Resources/branding/HarkenStudioBlueGradient.png</file>
+        <file>Resources/icons/HubIcon.png</file>
         <file>Resources/icons/Settings.svg</file>
         <file>Resources/release-notes.json</file>
     </qresource>

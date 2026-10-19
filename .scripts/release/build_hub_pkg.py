@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Harken Hub macOS installer package (.pkg) from a deployed app bundle."""
+"""Build the Harken Studio Hub macOS installer package (.pkg) from a deployed app bundle."""
 
 from __future__ import annotations
 

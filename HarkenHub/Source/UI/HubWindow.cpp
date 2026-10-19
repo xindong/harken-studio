@@ -148,7 +148,7 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
                             candidate->data().toString() == previous);
                     }
                     QMessageBox::warning(
-                        this, tr("Harken Hub"),
+                        this, tr("Harken Studio Hub"),
                         tr("The language setting could not be saved."));
                     return;
                 }
@@ -156,13 +156,13 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
                     SingleInstanceGuard::backgroundServerName(),
                     {QStringLiteral("--settings-changed")});
                 QMessageBox::information(
-                    this, tr("Harken Hub"),
+                    this, tr("Harken Studio Hub"),
                     tr("The language change will take effect after restarting "
-                       "Harken Hub."));
+                       "Harken Studio Hub."));
             });
     settingsMenu->addSeparator();
     QMenu* autoHubUpdateMenu =
-        settingsMenu->addMenu(tr("Automatically Update Harken Hub Silently"));
+        settingsMenu->addMenu(tr("Automatically Update Harken Studio Hub Silently"));
     auto* autoHubUpdateGroup = new QActionGroup(autoHubUpdateMenu);
     autoHubUpdateGroup->setExclusive(true);
     autoHubUpdateYesAction_ = autoHubUpdateMenu->addAction(tr("Yes"));
@@ -235,7 +235,7 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
     hubUpdateButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
     hubUpdateButton_->setFixedHeight(30);
     hubUpdateButton_->setToolTip(
-        tr("A Harken Hub update is ready. Click to close the hub, install it, "
+        tr("A Harken Studio Hub update is ready. Click to close the hub, install it, "
            "and restart."));
     hubUpdateButton_->hide();
     connect(hubUpdateButton_, &QToolButton::clicked, this,
@@ -251,7 +251,7 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
     productLogo->setObjectName(QStringLiteral("sidebarLogo"));
     productLogo->setAccessibleName(QStringLiteral("Harken Studio"));
     const qreal logoScale = devicePixelRatioF();
-    QPixmap logo(QStringLiteral(":/Resources/branding/HarkenStudioBlue.png"));
+    QPixmap logo(QStringLiteral(":/Resources/branding/HarkenStudioBlueGradient.png"));
     logo = logo.scaledToWidth(qRound(156 * logoScale), Qt::SmoothTransformation);
     logo.setDevicePixelRatio(logoScale);
     productLogo->setPixmap(logo);
@@ -489,7 +489,7 @@ void HubWindow::requestUpdateCheck()
         --manualUpdateChecksPending_;
         manualUpdateCheckErrors_.append(
             QStringLiteral("%1: %2")
-                .arg(hubProduct ? QStringLiteral("Harken Hub")
+                .arg(hubProduct ? QStringLiteral("Harken Studio Hub")
                                 : QStringLiteral("HarkenStudio"),
                      tr("The update service is unavailable.")));
     };
@@ -515,7 +515,7 @@ void HubWindow::handleManualUpdateCheckResult(
     checker->deleteLater();
     --manualUpdateChecksPending_;
 
-    const QString productName = hubProduct ? QStringLiteral("Harken Hub")
+    const QString productName = hubProduct ? QStringLiteral("Harken Studio Hub")
                                            : QStringLiteral("HarkenStudio");
     const QString expectedProduct = hubProduct
                                         ? QStringLiteral("HarkenHub")
@@ -554,15 +554,15 @@ void HubWindow::finishManualUpdateCheck()
     checkUpdatesAction_->setEnabled(true);
     if (!manualUpdateCheckErrors_.isEmpty()) {
         QMessageBox::warning(
-            this, tr("Harken Hub"),
+            this, tr("Harken Studio Hub"),
             tr("The update check could not be completed.\n\n%1")
                 .arg(manualUpdateCheckErrors_.join(QLatin1Char('\n'))));
         return;
     }
     if (!manualHubUpdateAvailable_ && !manualStudioUpdateAvailable_) {
         QMessageBox::information(
-            this, tr("Harken Hub"),
-            tr("The current Harken Hub is up to date, and the latest "
+            this, tr("Harken Studio Hub"),
+            tr("The current Harken Studio Hub is up to date, and the latest "
                "HarkenStudio is already in the Versions list."));
     }
 }
@@ -627,7 +627,7 @@ void HubWindow::applyAutoDownloadStudioPreference(bool enabled)
         autoDownloadYesAction_->setChecked(stored);
         autoDownloadNoAction_->setChecked(!stored);
         QMessageBox::warning(
-            this, tr("Harken Hub"),
+            this, tr("Harken Studio Hub"),
             tr("The automatic download setting could not be saved."));
         return;
     }
@@ -653,7 +653,7 @@ void HubWindow::applyAutoSilentlyUpdateHubPreference(bool enabled)
         autoHubUpdateYesAction_->setChecked(stored);
         autoHubUpdateNoAction_->setChecked(!stored);
         QMessageBox::warning(
-            this, tr("Harken Hub"),
+            this, tr("Harken Studio Hub"),
             tr("The automatic Hub update setting could not be saved."));
         return;
     }
@@ -692,12 +692,12 @@ void HubWindow::refreshHubUpdateButton()
 void HubWindow::beginHubUpdateLanding()
 {
     QMessageBox confirm(
-        QMessageBox::Question, tr("Harken Hub"),
+        QMessageBox::Question, tr("Harken Studio Hub"),
         tr(
-            "Harken Hub will close now, update in the background, and "
+            "Harken Studio Hub will close now, update in the background, and "
             "restart automatically. This usually takes a few seconds.\n\n"
-            "If Harken Hub does not come back within 2 minutes, close any "
-            "remaining Harken Hub processes and start it manually.\n\n"
+            "If Harken Studio Hub does not come back within 2 minutes, close any "
+            "remaining Harken Studio Hub processes and start it manually.\n\n"
             "Development builds can be unstable - if the wait drags on, "
             "download the latest installer from the Harken website and "
             "install it over the current version.\n\n"
@@ -717,7 +717,7 @@ void HubWindow::beginHubUpdateLanding()
         if (!selfUpdate.approveViaBridge(QStringLiteral("gui"), &error,
                                          QDateTime::currentDateTimeUtc())) {
             QMessageBox::warning(
-                this, tr("Harken Hub"),
+                this, tr("Harken Studio Hub"),
                 tr("The Hub update could not be started.\n\n%1").arg(error));
             return;
         }
@@ -725,7 +725,7 @@ void HubWindow::beginHubUpdateLanding()
         QString dispatchError;
         if (!BridgeDispatcher::dispatch(&dispatchError)) {
             QMessageBox::warning(
-                this, tr("Harken Hub"),
+                this, tr("Harken Studio Hub"),
                 tr("The Hub update could not be started.\n\n%1").arg(dispatchError));
             return;
         }

@@ -305,7 +305,7 @@ if(APPLE)
         COMMAND ${MACDEPLOYQT_EXE}
             $<TARGET_BUNDLE_DIR:harken_hub>
             -always-overwrite
-        COMMENT "Deploying Qt runtime for Harken Hub"
+        COMMENT "Deploying Qt runtime for Harken Studio Hub"
     )
 endif()
 
@@ -348,7 +348,7 @@ if(WIN32)
             --no-opengl-sw
             --no-quick-import
             $<TARGET_FILE:harken_hub>
-        COMMENT "Deploying Qt runtime for Harken Hub"
+        COMMENT "Deploying Qt runtime for Harken Studio Hub"
     )
 
     add_executable(harken_hub_update_bridge WIN32
@@ -359,7 +359,7 @@ if(WIN32)
     target_link_libraries(harken_hub_update_bridge PRIVATE harken_hub_lib)
     harken_attach_version_resource(
         harken_hub_update_bridge
-        "Harken Hub Update Bridge"
+        "Harken Studio Hub Update Bridge"
         "HarkenHubUpdateBridge.exe"
         hub)
 

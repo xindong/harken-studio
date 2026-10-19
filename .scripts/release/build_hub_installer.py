@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Harken Hub MSI installer (WiX v4+) and, when a setup stub is
+"""Build the Harken Studio Hub MSI installer (WiX v4+) and, when a setup stub is
 supplied, the self-contained HarkenHubSetup EXE from a deployed hub
 directory."""
 

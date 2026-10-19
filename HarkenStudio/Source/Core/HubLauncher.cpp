@@ -114,7 +114,7 @@ bool HubLauncher::open(HubPage page, QString* error,
     const QString program = executablePath();
     if (program.isEmpty()) {
         if (error)
-            *error = QStringLiteral("Harken Hub is not installed.");
+            *error = QStringLiteral("Harken Studio Hub is not installed.");
         return false;
     }
     qint64 processId = 0;
@@ -125,7 +125,7 @@ bool HubLauncher::open(HubPage page, QString* error,
                                  QFileInfo(program).absolutePath(),
                                  &processId)) {
         if (error)
-            *error = QStringLiteral("Harken Hub did not start.");
+            *error = QStringLiteral("Harken Studio Hub did not start.");
         return false;
     }
 #ifdef Q_OS_WIN

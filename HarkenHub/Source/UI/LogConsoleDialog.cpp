@@ -129,10 +129,10 @@ QString localizeLogMessage(const QString& message)
     }
 
     static const QRegularExpression hubBuildPattern(
-        QStringLiteral("^Harken Hub (.+)$"));
+        QStringLiteral("^Harken (?:Studio )?Hub (.+)$"));
     match = hubBuildPattern.match(message);
     if (match.hasMatch()) {
-        return QCoreApplication::translate("HubLog", "Harken Hub %1")
+        return QCoreApplication::translate("HubLog", "Harken Studio Hub %1")
             .arg(match.captured(1));
     }
 
@@ -208,7 +208,7 @@ QString LogConsoleDialog::localizeLine(const QString& line)
 LogConsoleDialog::LogConsoleDialog(QWidget* parent)
     : QDialog(parent)
 {
-    setWindowTitle(tr("Harken Hub Activity Log (%1)")
+    setWindowTitle(tr("Harken Studio Hub Activity Log (%1)")
                        .arg(QCoreApplication::applicationVersion()));
     setModal(false);
     resize(860, 420);
