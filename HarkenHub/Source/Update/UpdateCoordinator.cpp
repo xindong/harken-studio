@@ -421,7 +421,7 @@ void UpdateCoordinator::verifyDownloaded(const QString& packagePath,
         (record.state != QStringLiteral("Downloaded") &&
          record.state != QStringLiteral("Verifying")))
         return;
-    if (!lease)
+    if (!lease || !lease->covers(packagePath))
         lease = DownloadLease::acquire(packagePath);
     if (!lease)
         return;
@@ -483,7 +483,7 @@ void UpdateCoordinator::beginAutoInstall(const QDateTime& now,
         return;
     }
 
-    if (!lease)
+    if (!lease || !lease->covers(record.downloadPath))
         lease = DownloadLease::acquire(record.downloadPath);
     if (!lease)
         return;
