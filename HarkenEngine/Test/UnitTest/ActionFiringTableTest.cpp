@@ -156,7 +156,6 @@ TEST(ActionFiringTable, ReservationFailurePreservesOldTreeResultsAndAllowsResetR
     result.executionOrdinal = 123;
     ASSERT_TRUE(table.SetPreparedStep(child, 0, result));
     ASSERT_TRUE(table.CommitTree(&root, 9));
-    ASSERT_TRUE(table.MarkTerminal(child.Handle()));
     const auto resultBytes = table.ResultStorageBytes();
     const auto rowBytes = table.RowStorageBytes();
     const auto committed = table.RowCommittedBytes();
@@ -169,6 +168,7 @@ TEST(ActionFiringTable, ReservationFailurePreservesOldTreeResultsAndAllowsResetR
     ASSERT_TRUE(table.Capture(root.Handle(), &beforeRoot));
     ASSERT_TRUE(table.Capture(child.Handle(), &beforeChild));
     ASSERT_EQ(harken::ActionFiringState::TerminalRetained, beforeRoot.state);
+    ASSERT_EQ(harken::ActionFiringState::TerminalRetained, beforeChild.state);
 
     harken::detail::StablePageReservation::FailNextReservationForTests();
     EXPECT_FALSE(table.Reset(8));
