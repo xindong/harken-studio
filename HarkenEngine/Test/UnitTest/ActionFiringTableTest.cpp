@@ -92,6 +92,88 @@ TEST(ActionFiringTable, ExactCapacityAndOneMoreRefusalHaveNoVisibleEffect) {
     EXPECT_EQ(0u, table.HighWater());
 }
 
+TEST(ActionFiringTable, ResultsUseActualLengthAndSurviveTerminalUntilRelease) {
+    harken::ActionFiringTable table;
+    ASSERT_TRUE(table.Reset(harken::kMaxActionFiringsHard));
+    EXPECT_EQ(0u, table.ResultStorageBytes());
+
+    harken::PreparedActionFiring empty, small, full;
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 1, 0, &empty));
+    EXPECT_EQ(0u, table.ResultStorageBytes());
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(2), 1, 1, &small));
+    const auto smallBytes = table.ResultStorageBytes();
+    EXPECT_EQ(sizeof(harken::ActionFiringStepResult), smallBytes);
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(3), 1,
+        harken::kMaxActionSteps, &full));
+    EXPECT_EQ((harken::kMaxActionSteps + 1u) * smallBytes, table.ResultStorageBytes());
+
+    harken::ActionFiringStepResult result;
+    result.state = harken::ActionStepState::Succeeded;
+    result.authoredEventIndex = 0;
+    result.executionOrdinal = 123;
+    ASSERT_TRUE(table.SetPreparedStep(small, 0, result));
+    ASSERT_TRUE(table.Commit(&small, 9));
+    harken::ActionFiringSnapshot snapshot;
+    ASSERT_TRUE(table.Capture(small.Handle(), &snapshot));
+    EXPECT_EQ(harken::ActionFiringState::TerminalRetained, snapshot.state);
+    ASSERT_TRUE(table.Abandon(&full));
+    EXPECT_EQ(smallBytes, table.ResultStorageBytes());
+    harken::ActionFiringStepResult retained;
+    ASSERT_TRUE(table.CaptureStep(small.Handle(), 0, &retained));
+    EXPECT_EQ(123u, retained.executionOrdinal);
+    EXPECT_EQ(9u, retained.logicCommitSequence);
+    EXPECT_FALSE(table.CaptureStep(small.Handle(), 1, &retained));
+    const auto oldHandle = small.Handle();
+    ASSERT_TRUE(table.ReleaseRoot(oldHandle));
+    EXPECT_EQ(0u, table.ResultStorageBytes());
+    ASSERT_TRUE(table.Abandon(&empty));
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(4), 2, 1, &small));
+    ASSERT_TRUE(table.Commit(&small, 10));
+    EXPECT_FALSE(table.CaptureStep(oldHandle, 0, &retained));
+    ASSERT_TRUE(table.CaptureStep(small.Handle(), 0, &retained));
+    EXPECT_EQ(0u, retained.executionOrdinal);
+    EXPECT_EQ(harken::ActionStepState::Pending, retained.state);
+}
+
+TEST(ActionFiringTable, ResultAllocationFailureLeavesRowsAndParentLinksUnchanged) {
+    harken::ActionFiringTable table;
+    ASSERT_TRUE(table.Reset(3));
+    table.SetResultAllocationFailureForTests(true);
+    harken::PreparedActionFiring root, child;
+    EXPECT_FALSE(table.PrepareRoot(harkentest::ObjectId(1), 1, 1, &root));
+    EXPECT_FALSE(root.Valid());
+    EXPECT_EQ(3u, table.FreeCount());
+    EXPECT_EQ(0u, table.ResultStorageBytes());
+    table.SetResultAllocationFailureForTests(false);
+    ASSERT_TRUE(table.PrepareRoot(harkentest::ObjectId(1), 1, 1, &root));
+    const auto rootBytes = table.ResultStorageBytes();
+    table.SetResultAllocationFailureForTests(true);
+    EXPECT_FALSE(table.PrepareChild(root, harkentest::ObjectId(2), 1, 2, &child));
+    EXPECT_FALSE(child.Valid());
+    EXPECT_EQ(2u, table.FreeCount());
+    EXPECT_EQ(rootBytes, table.ResultStorageBytes());
+    ASSERT_TRUE(table.Commit(&root, 22));
+    harken::ActionFiringSnapshot snapshot;
+    ASSERT_TRUE(table.Capture(root.Handle(), &snapshot));
+    EXPECT_EQ(0u, snapshot.childFiringCount);
+    EXPECT_FALSE(table.PrepareChild(root.Handle(), harkentest::ObjectId(3),
+        harken::ActionFiringOwnerStamp::DirectWorld(1), 2, &child));
+    ASSERT_TRUE(table.Capture(root.Handle(), &snapshot));
+    EXPECT_EQ(0u, snapshot.childFiringCount);
+    EXPECT_EQ(2u, table.FreeCount());
+    EXPECT_EQ(rootBytes, table.ResultStorageBytes());
+    EXPECT_EQ(3u, table.RefusalCount());
+    table.SetResultAllocationFailureForTests(false);
+    ASSERT_TRUE(table.PrepareChild(root.Handle(), harkentest::ObjectId(4),
+        harken::ActionFiringOwnerStamp::DirectWorld(1), 2, &child));
+    EXPECT_EQ(22u, child.InheritedSequence());
+    ASSERT_TRUE(table.Abandon(&child));
+    EXPECT_EQ(rootBytes, table.ResultStorageBytes());
+    ASSERT_TRUE(table.MarkTerminal(root.Handle()));
+    ASSERT_TRUE(table.ReleaseRoot(root.Handle()));
+    EXPECT_EQ(0u, table.ResultStorageBytes());
+}
+
 TEST(ActionFiringTable, InheritedOrderRequiresActualPreparedChildAndLiveUncancelledParent) {
     harken::ActionFiringTable table;
     ASSERT_TRUE(table.Reset(3));

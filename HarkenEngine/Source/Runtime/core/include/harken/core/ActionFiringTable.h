@@ -302,6 +302,11 @@ public:
         return static_cast<std::uint32_t>(rows_.size());
     }
     std::uint32_t LiveCount() const noexcept { return liveCount_; }
+    // Result payload requests, including hidden preparations and retained terminals.
+    std::uint64_t ResultStorageBytes() const noexcept;
+    void SetResultAllocationFailureForTests(bool fail) noexcept {
+        failResultAllocationForTests_ = fail;
+    }
     std::uint32_t HighWater() const noexcept { return highWater_; }
     std::uint32_t FreeCount() const noexcept;
     std::uint32_t QuarantinedCount() const noexcept {
@@ -349,6 +354,8 @@ private:
         std::uint32_t childFiringCount = 0;
         std::uint32_t livePlayableCount = 0;
         std::uint32_t ownedDeferredCount = 0;
+        // The serialized control owner constructs this before publishing the row.
+        std::vector<ActionFiringStepResult> results;
     };
 
     static ActionFiringHandle MakeHandle(std::uint32_t slot,
@@ -372,13 +379,14 @@ private:
     bool PropagateTerminal(Row& row) noexcept;
     bool TryFinalizeSubtree(ActionFiringHandle handle) noexcept;
     bool TryFinalize(Row& row) noexcept;
+    bool PrepareResults(Row& row, std::uint32_t count) noexcept;
 
     std::vector<Row> rows_;
-    std::vector<ActionFiringStepResult> results_;
     std::uint32_t liveCount_ = 0;
     std::uint32_t highWater_ = 0;
     std::uint32_t quarantinedCount_ = 0;
     std::uint64_t refusalCount_ = 0;
+    bool failResultAllocationForTests_ = false;
 };
 
 } // namespace harken
