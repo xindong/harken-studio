@@ -20,8 +20,8 @@
       "release-38687506468-2620aeacdbeb"
     ],
     "currentReader": {
-      "buildId": "local-windows-x64-c4882b93-20261019T085025Z",
-      "gitCommit": "c4882b93a24ce04a5fbf82f2c5e1ad7cd1a70a0b",
+      "buildId": "local-windows-x64-f52955f5-20261019T090219Z",
+      "gitCommit": "f52955f550a7a601a9e7334151a45d4782d85d3a",
       "gitDirty": false,
       "version": "0.8.0"
     },
@@ -124,7 +124,7 @@
     "protocol": "schema-roundtrip-v1",
     "readers": [
       {
-        "buildId": "local-windows-x64-c4882b93-20261019T085025Z",
+        "buildId": "local-windows-x64-f52955f5-20261019T090219Z",
         "checks": [
           "new-reads-old",
           "old-edits-new",
