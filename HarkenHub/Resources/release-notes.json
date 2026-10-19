@@ -9,9 +9,17 @@
     {
       "version": "0.1.59",
       "date": "2026-10-19",
-      "pullRequests": [49, 56],
+      "pullRequests": [49, 56, 59],
       "contributors": ["liuxin2-sys", "Probus-XD"],
       "changes": [
+        {
+          "category": "improved",
+          "text": "Hub displays the Harken Studio logo above a separate Hub label, updates its window title and repository link, and removes the previous application icon."
+        },
+        {
+          "category": "improved",
+          "text": "Project format incompatibility messages show the selected Studio version and the project and Studio Schema versions from the compatibility check."
+        },
         {
           "category": "improved",
           "text": "Hub and Studio updates preserve each other's progress when running together, and outdated operations cannot overwrite newer update state."

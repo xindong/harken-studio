@@ -12,7 +12,7 @@
 namespace {
 
 constexpr wchar_t kPayloadResource[] = L"HARKENHUBMSI";
-constexpr wchar_t kDialogTitle[] = L"Harken Hub Setup";
+constexpr wchar_t kDialogTitle[] = L"Harken Studio Hub Setup";
 constexpr wchar_t kStagingSddl[] = L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
 
 bool isQuietCommandLine(PCWSTR commandLine)

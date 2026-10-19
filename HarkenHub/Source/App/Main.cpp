@@ -5,7 +5,6 @@
 #include <QDebug>
 #include <QFont>
 #include <QFontDatabase>
-#include <QIcon>
 #include <QMessageBox>
 #include <QStyleFactory>
 #include <QStyleHints>
@@ -98,6 +97,7 @@ QMainWindow { background-color: #06080D; }
 }
   #pageTitle { font-size: 16px; font-weight: 600; color: #00F0FF; background: transparent; }
   #pageSubtitle { color: #888888; background: transparent; }
+  #sidebarLogo { background: transparent; }
   #sidebarProduct { color: #00F0FF; background: transparent; font-size: 24px; font-weight: 700; }
 #sidebarNote { color: #6B7488; background: transparent; font-size: 11px; }
 #sidebarLinks { background: transparent; font-size: 11px; }
@@ -952,8 +952,7 @@ int main(int argc, char* argv[])
         }
     }
 
-    app.setWindowIcon(
-        QIcon(QStringLiteral(":/Resources/icons/HarkenHub_256x256.png")));
+    app.setApplicationDisplayName(QStringLiteral("Harken Studio Hub"));
     app.setStyleSheet(QString::fromLatin1(kStyleSheet));
 
     QTimer::singleShot(0, &app, [&app]() {

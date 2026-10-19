@@ -281,7 +281,6 @@ jobs:
           done
           for required in \
             "$bundle/Contents/Library/LaunchDaemons/com.harkensound.harkenhub.updatebridge.plist" \
-            "$bundle/Contents/Resources/HarkenHub.icns" \
             "$bundle/Contents/Resources/Legal/NOTICE.txt" \
             "$bundle/Contents/Frameworks" \
             "$bundle/Contents/PlugIns/platforms"; do

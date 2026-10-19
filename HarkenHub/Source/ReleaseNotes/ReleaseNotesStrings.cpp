@@ -1,6 +1,8 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub displays the Harken Studio logo above a separate Hub label, updates its window title and repository link, and removes the previous application icon."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Project format incompatibility messages show the selected Studio version and the project and Studio Schema versions from the compatibility check."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub and Studio updates preserve each other's progress when running together, and outdated operations cannot overwrite newer update state."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Manual and background Studio downloads can run together. Packages remain protected from competing downloads and cache cleanup until installation handoff finishes."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Updates and local build checks recover from temporary file locks on Windows without reporting unsaved state as complete."),

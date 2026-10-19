@@ -148,13 +148,12 @@ class BuildHubInstallerTest(unittest.TestCase):
     def test_wix_command_carries_authoring_inputs(self):
         command = self.module.wix_command(
             Path("Product.wxs"), Path("Payload.wxs"), Path("Eula.rtf"),
-            Path("Icon.ico"), "0.1.0", Path("out.msi"), "wix",
+            "0.1.0", Path("out.msi"), "wix",
         )
         self.assertEqual(command[:2], ["wix", "build"])
         self.assertIn("-ext", command)
         self.assertIn("WixToolset.UI.wixext", command)
         self.assertIn("HarkenVersion=0.1.0", command)
-        self.assertIn("HarkenIconIco=Icon.ico", command)
         self.assertIn(f"HarkenHandoffSddl={self.module.HANDOFF_SDDL}", command)
         self.assertIn(f"HarkenUpdaterSddl={self.module.UPDATER_SDDL}", command)
         self.assertEqual(command[-2:], ["Product.wxs", "Payload.wxs"])

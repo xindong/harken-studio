@@ -44,6 +44,7 @@
 #include <QCloseEvent>
 #include <QMoveEvent>
 #include <QProcess>
+#include <QPixmap>
 #include <QPushButton>
 #include <QGuiApplication>
 #include <QScreen>
@@ -90,7 +91,7 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
     : QMainWindow(parent)
     , store_(store)
 {
-    setWindowTitle(tr("Harken Hub"));
+    setWindowTitle(tr("Harken Studio Hub"));
     resize(1280, 720);
 
     sidebar_ = new QListWidget(this);
@@ -246,11 +247,23 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
     sidebarPanel->setFixedWidth(196);
     auto* sidebarLayout = new QVBoxLayout(sidebarPanel);
     sidebarLayout->setContentsMargins(0, 0, 0, 14);
-    auto* productLabel = new QLabel(tr("Harken\nHub"), sidebarPanel);
+    auto* productLogo = new QLabel(sidebarPanel);
+    productLogo->setObjectName(QStringLiteral("sidebarLogo"));
+    productLogo->setAccessibleName(QStringLiteral("Harken Studio"));
+    const qreal logoScale = devicePixelRatioF();
+    QPixmap logo(QStringLiteral(":/Resources/branding/HarkenStudioBlue.png"));
+    logo = logo.scaledToWidth(qRound(156 * logoScale), Qt::SmoothTransformation);
+    logo.setDevicePixelRatio(logoScale);
+    productLogo->setPixmap(logo);
+    auto* productLabel = new QLabel(tr("Hub"), sidebarPanel);
     productLabel->setObjectName(QStringLiteral("sidebarProduct"));
+    auto* productColumn = new QVBoxLayout();
+    productColumn->setSpacing(8);
+    productColumn->addWidget(productLogo, 0, Qt::AlignLeft);
+    productColumn->addWidget(productLabel, 0, Qt::AlignLeft);
     auto* productRow = new QHBoxLayout();
     productRow->setContentsMargins(26, 20, 14, 16);
-    productRow->addWidget(productLabel);
+    productRow->addLayout(productColumn);
     productRow->addStretch();
     sidebarLayout->addLayout(productRow);
     sidebarLayout->addWidget(sidebar_);
@@ -272,7 +285,7 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
             "<a href=\"https://harken.xd.com\" "
             "style=\"color:#00F0FF;\">Harken Website</a><br/>"
             "<a href=\"https://github.com/xindong/harken-studio\" "
-            "style=\"color:#00F0FF;\">Harken Repository</a>"),
+            "style=\"color:#00F0FF;\">Harken Studio Repository</a>"),
         this);
     sidebarLinks->setObjectName(QStringLiteral("sidebarLinks"));
     sidebarLinks->setOpenExternalLinks(true);
