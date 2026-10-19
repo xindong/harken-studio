@@ -3,7 +3,7 @@
   "product": "HarkenStudio",
   "publication": "released",
   "releaseTag": "studio-v0.8.0",
-  "sourceFingerprint": "c745fcbc9280ccd2489ce1ce7d7f41f794fae1ea490b688361317840b8b51bd1",
+  "sourceFingerprint": "750919b1db703da26ba58e5c39b0e176e4e1ac6f65930acd7d9592a1dd448b9c",
   "trees": {
     "Editor": {
       "generation": 8,
@@ -20,8 +20,8 @@
       "release-38687506468-2620aeacdbeb"
     ],
     "currentReader": {
-      "buildId": "local-windows-x64-d847b813-20261019T093205Z",
-      "gitCommit": "d847b8134080494d1dffaea4fdb919ac2c8a7c1e",
+      "buildId": "local-windows-x64-863e458d-20261019T111757Z",
+      "gitCommit": "863e458df2c9241ce24f36acaec453f48df1209c",
       "gitDirty": false,
       "version": "0.8.0"
     },
@@ -31,7 +31,7 @@
         "Content.pack": "bde8022499e0d45e2d4e1160266c93efb4c6dcd73f600c7a4e43735a0d071d3c",
         "Init.pack": "c91393749a6490d6deb24ab2c72bf6975ef7298dd4bf71f31eff7af374f44d17"
       },
-      "readerSha256": "9535751b232ee554b2451f6b79040274d15ba43f68f08c24eb8012c974fb33d8",
+      "readerSha256": "c5428f7d02d9015b28f33a14ab085f182dd296b46d07b3e3288856eb2b0b82b3",
       "schemaVersion": 3,
       "status": "passed"
     },
@@ -124,7 +124,7 @@
     "protocol": "schema-roundtrip-v1",
     "readers": [
       {
-        "buildId": "local-windows-x64-d847b813-20261019T093205Z",
+        "buildId": "local-windows-x64-863e458d-20261019T111757Z",
         "checks": [
           "new-reads-old",
           "old-edits-new",
