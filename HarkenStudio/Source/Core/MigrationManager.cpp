@@ -1,5 +1,6 @@
 
 #include "MigrationManager.h"
+#include "ItemTypeCatalog.h"
 #include "ProjectDataPolicy.h"
 #include "ProjectDocument.h"
 #include "ProjectContract.h"
@@ -20,15 +21,18 @@ QStringList projectDocumentRelativePaths(const QString& projectDirectory,
 {
     const ProjectDataPolicy dataPolicy = ProjectDataPolicy::forProjectFile(projectFile);
     const QDir root(projectDirectory);
-    QStringList paths;
-    QDirIterator files(projectDirectory,
-                       {QStringLiteral("*.hsp"), QStringLiteral("*.vp")},
-                       QDir::Files, QDirIterator::Subdirectories);
-    while (files.hasNext()) {
-        const QString relative = ProjectDataPolicy::normalizeRelativePath(
-            root.relativeFilePath(files.next()));
-        if (dataPolicy.classify(relative) == ProjectDataClass::Raw)
-            paths.append(relative);
+    QStringList paths{ProjectDataPolicy::normalizeRelativePath(
+        root.relativeFilePath(projectFile))};
+    for (const auto bucket : ItemTypeCatalog::allBuckets()) {
+        QDirIterator files(root.filePath(ItemTypeCatalog::folderNameOf(bucket)),
+                           {QStringLiteral("*.vp")},
+                           QDir::Files, QDirIterator::Subdirectories);
+        while (files.hasNext()) {
+            const QString relative = ProjectDataPolicy::normalizeRelativePath(
+                root.relativeFilePath(files.next()));
+            if (dataPolicy.classify(relative) == ProjectDataClass::Raw)
+                paths.append(relative);
+        }
     }
     paths.sort();
     paths.removeDuplicates();
