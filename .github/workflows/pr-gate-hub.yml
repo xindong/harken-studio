@@ -78,7 +78,7 @@ jobs:
               if time.monotonic() - started > 30:
                   break
           summary = {'runner': os.environ['RUNNER_NAME'], 'machine': os.environ.get('COMPUTERNAME'),
-                     'head': os.environ['GITHUB_SHA'], 'production_head': '6868a71858b30b77730226553e83d447d5b89563', 'records': records}
+                     'head': os.environ['GITHUB_SHA'], 'production_head': 'bf8da1d7287f94a1585ad886486cdbeeec5e83e0', 'records': records}
           (evidence / 'summary.json').write_text(json.dumps(summary, indent=2), encoding='utf-8')
           raise SystemExit(1 if records[-1]['exit_code'] else 0)
       - name: Stop trace
