@@ -4180,7 +4180,9 @@ struct EngineActionPlayScratch {
     std::array<EnginePreparedTimelineVoiceStart,
                kMaxKnownScheduleLeaves> voiceStarts{};
     std::array<PreparedTimelineVoiceOwnerContext,
-               2u * kMaxKnownScheduleLeaves> voiceOwnerContexts{};
+               kMaxKnownScheduleLeaves> voiceOwnerContexts{};
+    std::array<PreparedTimelineVoiceOwnerContext,
+               kMaxKnownScheduleLeaves> queueSuccessorVoiceOwnerContexts{};
     std::uint32_t voiceStartCount = 0;
     std::uint32_t initialCommandBase = 0;
     std::uint32_t initialCommandCount = 0;
@@ -4203,6 +4205,26 @@ struct EngineActionPlayScratch {
     // failure can still select the VC-specific rollback path.
     bool variableControlCommitted = false;
     bool prepared = false;
+
+    auto VoiceOwnerContextSides() noexcept {
+        return std::array{std::span{voiceOwnerContexts},
+                          std::span{queueSuccessorVoiceOwnerContexts}};
+    }
+
+    auto VoiceOwnerContextSides() const noexcept {
+        return std::array{std::span{voiceOwnerContexts},
+                          std::span{queueSuccessorVoiceOwnerContexts}};
+    }
+
+    bool VoiceOwnerCommitProofsHeld() const noexcept {
+        for (const auto side : VoiceOwnerContextSides()) {
+            for (const auto& owner : side) {
+                if (owner.armCommitProof.Valid() || owner.ledgerCommitProof.Valid() ||
+                    owner.voiceCommitProof.Valid() || owner.HasEffectCommitProofs()) return true;
+            }
+        }
+        return false;
+    }
 
     void InitializeVariableControlStorage(std::size_t capacity) {
         variableControlChildren.resize(capacity);
@@ -8621,7 +8643,8 @@ public:
             scratch.privateInitialVcPageCohort.ReleaseLaneTransferProofs();
             scratch.variableControlOwnerContext.serviceCommitProof.Release();
             scratch.playableTreeExecutor.ReleaseCommitProofs();
-            for (auto& owner : scratch.voiceOwnerContexts) owner.ReleaseCommitProofs();
+            for (const auto side : scratch.VoiceOwnerContextSides())
+                for (auto& owner : side) owner.ReleaseCommitProofs();
             scratch.variableControlDiscreteDecisionOwnerContext.ticketCommitProof.Release();
             scratch.variableControlContinuousDecisionOwnerContext.ticketCommitProof.Release();
             scratch.variableControlOwnerContext.commitProof.Release();

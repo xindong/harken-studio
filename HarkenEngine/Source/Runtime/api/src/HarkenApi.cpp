@@ -1850,10 +1850,12 @@ void ReleasePreparedTimelineVoiceProofs(harken::EngineActionPlayScratch& scratch
     scratch.queueDecisionOwnerContext.ticketCommitProof.Release();
     for (std::uint32_t i = 0; i < scratch.frontierQueueCount; ++i)
         scratch.storage.frontierQueues[i].current.originalSingleDecisionCommitProof.Release();
-    for (auto& owner : scratch.voiceOwnerContexts) {
-        owner.ReleaseCommitProofs();
-        if (owner.engine != nullptr && owner.token != nullptr)
-            (void)owner.engine->ReleaseOriginalQueuePreparationProofs(*owner.token);
+    for (const auto side : scratch.VoiceOwnerContextSides()) {
+        for (auto& owner : side) {
+            owner.ReleaseCommitProofs();
+            if (owner.engine != nullptr && owner.token != nullptr)
+                (void)owner.engine->ReleaseOriginalQueuePreparationProofs(*owner.token);
+        }
     }
     scratch.variableControlDiscreteDecisionOwnerContext.ticketCommitProof.Release();
     scratch.variableControlContinuousDecisionOwnerContext.ticketCommitProof.Release();
@@ -2261,10 +2263,12 @@ harken::UnpublishedGroupArmCancellationStatus CancelUnpublishedActionGroupSource
         if (!find(scratch.voiceStarts, scratch.voiceStartCount) ||
             !find(scratch.queueSuccessorVoiceStarts, scratch.queueSuccessorVoiceStartCount) ||
             voices[index] == nullptr) return Status::Busy;
-        for (auto& owner : scratch.voiceOwnerContexts) {
-            if (owner.token != voices[index]) continue;
-            if (owners[index] != nullptr || owner.engine != &engine) return Status::Busy;
-            owners[index] = &owner;
+        for (const auto side : scratch.VoiceOwnerContextSides()) {
+            for (auto& owner : side) {
+                if (owner.token != voices[index]) continue;
+                if (owners[index] != nullptr || owner.engine != &engine) return Status::Busy;
+                owners[index] = &owner;
+            }
         }
     }
     if (!CancelPreparedQueueCompletionBindings(engine, scratch)) return Status::Busy;
@@ -17638,12 +17642,7 @@ bool PrepareImmediateActionPlayScratchReset(
         scratch->playableTreeExecutor.InstanceCommitProofsHeld() ||
         scratch->playableTreeExecutor.ParentLinkProofHeld() ||
         scratch->storage.initialVcRetirementProof.Valid() ||
-        std::any_of(scratch->voiceOwnerContexts.begin(),
-            scratch->voiceOwnerContexts.end(),
-            [](const auto& owner) noexcept {
-                return owner.armCommitProof.Valid() || owner.ledgerCommitProof.Valid() ||
-                    owner.voiceCommitProof.Valid() || owner.HasEffectCommitProofs();
-            }) ||
+        scratch->VoiceOwnerCommitProofsHeld() ||
         scratch->storage.ordinaryDeferredRollback.active ||
         scratch->storage.ordinaryDeferredRollback.fault ||
         scratch->storage.deferredContainerOwner.active ||
@@ -18162,7 +18161,7 @@ bool CancelQueueFutureAttempt(
         !CancelPreparedQueueCompletionBindings(engine, *scratch)) return false;
     // Contexts exist before registration, so partial ledgers retain all owners.
     for (std::uint32_t index = scratch->queueSuccessorVoiceStartCount; index-- > 0;)
-        if (!CancelPreparedTimelineVoiceOwner(&scratch->voiceOwnerContexts[index])) return false;
+        if (!CancelPreparedTimelineVoiceOwner(&scratch->queueSuccessorVoiceOwnerContexts[index])) return false;
     if (!CancelPreparedCompositeOwner(&scratch->queueSuccessorCompositeOwnerContext)) return false;
     for (std::uint32_t index = scratch->queueSuccessorLeafOccurrenceCount; index-- > 0;)
         if (!CancelPreparedOccurrenceOwner(&scratch->queueSuccessorLeafOccurrenceOwnerContexts[index])) return false;
@@ -22398,15 +22397,15 @@ bool ProveInitialVariableControlServicePartitionCommit(harken::Engine& engine,
 
 bool ProvePreparedFrontierVoiceRange(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch,
-    std::span<harken::EnginePreparedTimelineVoiceStart> voices) noexcept {
+    std::span<harken::EnginePreparedTimelineVoiceStart> voices,
+    std::span<harken::EngineActionPlayScratch::PreparedTimelineVoiceOwnerContext> owners) noexcept {
     if (!scratch.frontierOwnerLedgerComplete || voices.empty() ||
-        voices.size() > scratch.voiceOwnerContexts.size()) return false;
+        voices.size() != owners.size()) return false;
     const auto releaseAll = [&]() noexcept {
-        for (std::uint32_t index = 0; index < voices.size(); ++index)
-            scratch.voiceOwnerContexts[index].ReleaseCommitProofs();
+        for (auto& owner : owners) owner.ReleaseCommitProofs();
     };
     for (std::uint32_t index = 0; index < voices.size(); ++index) {
-        auto& owner = scratch.voiceOwnerContexts[index];
+        auto& owner = owners[index];
         auto& voice = voices[index];
         const auto& original = voice.armPreparation.arm;
         owner.preparedCommitProofsRequired = true;
@@ -22449,9 +22448,11 @@ bool ProvePreparedFrontierVoiceRange(harken::Engine& engine,
 bool ProvePreparedFrontierVoiceCommits(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch) noexcept {
     if (scratch.frontierCurrentVoiceOwnerCount != scratch.voiceStartCount ||
-        scratch.voiceStartCount > scratch.voiceStarts.size()) return false;
+        scratch.voiceStartCount > scratch.voiceStarts.size() ||
+        scratch.voiceStartCount > scratch.voiceOwnerContexts.size()) return false;
     return ProvePreparedFrontierVoiceRange(engine, scratch,
-        {scratch.voiceStarts.data(), scratch.voiceStartCount});
+        {scratch.voiceStarts.data(), scratch.voiceStartCount},
+        {scratch.voiceOwnerContexts.data(), scratch.voiceStartCount});
 }
 
 bool ProvePreparedQueueFutureVoiceCommits(harken::Engine& engine,
@@ -22459,10 +22460,11 @@ bool ProvePreparedQueueFutureVoiceCommits(harken::Engine& engine,
     if (!scratch.queueFutureExecution || !scratch.prepared || scratch.row == nullptr ||
         scratch.storage.phase != harken::EngineFrontierAttemptPhase::Preparing ||
         scratch.queueSuccessorVoiceStartCount > scratch.queueSuccessorVoiceStarts.size() ||
-        scratch.queueSuccessorVoiceStartCount > scratch.voiceOwnerContexts.size()) return false;
+        scratch.queueSuccessorVoiceStartCount > scratch.queueSuccessorVoiceOwnerContexts.size()) return false;
     if (scratch.queueSuccessorVoiceStartCount == 0) return true;
     return ProvePreparedFrontierVoiceRange(engine, scratch,
-        {scratch.queueSuccessorVoiceStarts.data(), scratch.queueSuccessorVoiceStartCount});
+        {scratch.queueSuccessorVoiceStarts.data(), scratch.queueSuccessorVoiceStartCount},
+        {scratch.queueSuccessorVoiceOwnerContexts.data(), scratch.queueSuccessorVoiceStartCount});
 }
 
 bool ProveInitialVariableControlVoiceCommits(harken::Engine& engine,
@@ -34991,15 +34993,17 @@ bool CaptureRetiredPendingVariableAbortVoices(harken::Engine& engine,
             return true;
         };
         if (!matches(scratch.voiceStarts) || !matches(scratch.queueSuccessorVoiceStarts)) return false;
-        for (const auto& owner : scratch.voiceOwnerContexts) {
-            if (!owner.committed && !owner.armCommitProof.Valid() && !owner.ledgerCommitProof.Valid() &&
-                !owner.voiceCommitProof.Valid() && !owner.HasEffectCommitProofs()) continue;
-            std::uint32_t matches = 0;
-            for (std::uint32_t index = 0; index < group->leafCount; ++index)
-                matches += &scratch == &producer && &owner == &producer.voiceOwnerContexts[index] &&
-                    owner.engine == &engine && owner.token == &producer.voiceStarts[index] && owner.committed &&
-                    engine.PendingVariableRetiredSourceMatches(producer.voiceStarts[index]);
-            if (matches != 1) return false;
+        for (const auto side : scratch.VoiceOwnerContextSides()) {
+            for (const auto& owner : side) {
+                if (!owner.committed && !owner.armCommitProof.Valid() && !owner.ledgerCommitProof.Valid() &&
+                    !owner.voiceCommitProof.Valid() && !owner.HasEffectCommitProofs()) continue;
+                std::uint32_t matches = 0;
+                for (std::uint32_t index = 0; index < group->leafCount; ++index)
+                    matches += &scratch == &producer && &owner == &producer.voiceOwnerContexts[index] &&
+                        owner.engine == &engine && owner.token == &producer.voiceStarts[index] && owner.committed &&
+                        engine.PendingVariableRetiredSourceMatches(producer.voiceStarts[index]);
+                if (matches != 1) return false;
+            }
         }
     }
     // An unrelated live Source in this same invocation cannot disappear from the census.
@@ -41486,18 +41490,16 @@ const harken::TimelineArmTable::PreparedCommitInput* FindCommittedPrivateVcArmPr
         producer.queueFutureAttemptCount > producer.storage.queueFutureOwners.size()) return nullptr;
     *queueHolder = nullptr;
     const harken::TimelineArmTable::PreparedCommitInput* result = nullptr;
-    const auto takeVoice = [&](harken::EngineActionPlayScratch& owner,
-                              harken::EnginePreparedTimelineVoiceStart& voice, std::uint32_t index) {
+    const auto takeVoice = [&](harken::EnginePreparedTimelineVoiceStart& voice,
+                              const harken::EngineActionPlayScratch::PreparedTimelineVoiceOwnerContext& commit) {
         if (!harken::OriginalSourceSubmissionRegistry::SameToken(voice.arm, arm)) return true;
-        if (index >= owner.voiceOwnerContexts.size()) return false;
-        const auto& commit = owner.voiceOwnerContexts[index];
         if (result != nullptr || commit.engine != &engine || commit.token != &voice || !commit.committed ||
             !harken::OriginalSourceSubmissionRegistry::SameToken(voice.armPreparation.arm, arm)) return false;
         result = &voice.armPreparation;
         return true;
     };
     for (std::uint32_t voice = 0; voice < producer.voiceStartCount; ++voice)
-        if (!takeVoice(producer, producer.voiceStarts[voice], voice)) return nullptr;
+        if (!takeVoice(producer.voiceStarts[voice], producer.voiceOwnerContexts[voice])) return nullptr;
     for (std::uint32_t queue = 0; queue < producer.queueFutureAttemptCount; ++queue) {
         const auto token = producer.storage.queueFutureAttempts[queue];
         const auto& owner = producer.storage.queueFutureOwners[queue];
@@ -41513,6 +41515,7 @@ const harken::TimelineArmTable::PreparedCommitInput* FindCommittedPrivateVcArmPr
             future->continuationPartition.generation != future->row->partition.generation ||
             !MatchesPrivateVcProducerService(engine, *future->row, *producer.row) ||
             future->queueSuccessorVoiceStartCount > future->queueSuccessorVoiceStarts.size() ||
+            future->queueSuccessorVoiceStartCount > future->queueSuccessorVoiceOwnerContexts.size() ||
             future->queueSourceControlArmCount > future->queueSourceArmPreparations.size()) return nullptr;
         std::uint32_t queueMatches = 0;
         for (std::uint32_t context = 0; context < producer.frontierQueueCount; ++context) {
@@ -41522,7 +41525,8 @@ const harken::TimelineArmTable::PreparedCommitInput* FindCommittedPrivateVcArmPr
         if (queueMatches != 1 || future->row->pendingImmediateCohortRoot != attempt.root) return nullptr;
         const auto* before = result;
         for (std::uint32_t voice = 0; voice < future->queueSuccessorVoiceStartCount; ++voice)
-            if (!takeVoice(*future, future->queueSuccessorVoiceStarts[voice], voice)) return nullptr;
+            if (!takeVoice(future->queueSuccessorVoiceStarts[voice],
+                    future->queueSuccessorVoiceOwnerContexts[voice])) return nullptr;
         for (std::uint32_t source = 0; source < future->queueSourceControlArmCount; ++source) {
             const auto& input = future->queueSourceArmPreparations[source];
             if (!harken::OriginalSourceSubmissionRegistry::SameToken(input.arm, arm)) continue;
@@ -52202,7 +52206,7 @@ bool Engine::BindPendingVariableGroupQueueFutureSources(EngineActionPlayScratch&
             !playableInstances.MatchesPreparedOriginalAncestry(links, future->row->ownerInstance,
                 group->root.OriginalHandle()) ||
             future->queueSuccessorVoiceStartCount > future->queueSuccessorVoiceStarts.size() ||
-            future->queueSuccessorVoiceStartCount > future->voiceOwnerContexts.size()) return false;
+            future->queueSuccessorVoiceStartCount > future->queueSuccessorVoiceOwnerContexts.size()) return false;
         if (future->row->queueSameProgramKey) {
             if (future->queueSuccessorVoiceStartCount != 0) return false;
             continue;
@@ -52280,7 +52284,7 @@ bool Engine::BindPendingVariableGroupQueueFutureSources(EngineActionPlayScratch&
         }
         for (std::uint32_t index = 0; index < future->queueSuccessorVoiceStartCount; ++index) {
             const auto& start = future->queueSuccessorVoiceStarts[index];
-            const auto& commit = future->voiceOwnerContexts[index];
+            const auto& commit = future->queueSuccessorVoiceOwnerContexts[index];
             if (!start.prepared || commit.engine != this || commit.token != &start || commit.committed ||
                 !commit.preparedCommitProofsRequired || !start.armPreparation.pendingImmediateStart ||
                 !start.armPreparation.parentGroup.Valid() || start.arm.slot >= pendingVariableLeafSources.size() ||
@@ -79257,7 +79261,7 @@ bool RegisterPreparedQueueFutureOwners(
     }
     for (std::uint32_t index = 0;
          index < scratch.queueSuccessorVoiceStartCount; ++index) {
-        auto& context = scratch.voiceOwnerContexts[index];
+        auto& context = scratch.queueSuccessorVoiceOwnerContexts[index];
         context = {&engine, &scratch.queueSuccessorVoiceStarts[index], false};
         ok = RegisterFrontierPreparedOwner(
                  scratch, &context, ValidatePreparedTimelineVoiceOwner,
@@ -86102,8 +86106,7 @@ bool PrepareOriginalSingleNonVariableOwners(harken::Engine& engine,
     for (std::uint32_t leafIndex = 0;
          leafIndex < scratch.queueSuccessorVoiceStartCount;
          ++leafIndex) {
-        auto& context = scratch.voiceOwnerContexts[
-            scratch.voiceStartCount + leafIndex];
+        auto& context = scratch.queueSuccessorVoiceOwnerContexts[leafIndex];
         context.engine = &engine;
         context.token = &scratch.queueSuccessorVoiceStarts[leafIndex];
         ok = RegisterFrontierPreparedOwner(scratch,

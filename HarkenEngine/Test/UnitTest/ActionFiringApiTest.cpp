@@ -10067,7 +10067,7 @@ static void ObserveQueueTreeOnlyFactory(harken::Engine& engine, QueueTreeOnlyFac
             seen.linkedFutureVoiceCount += future.queueSuccessorVoiceStartCount;
             for (std::uint32_t leaf = 0; leaf < future.queueSuccessorVoiceStartCount; ++leaf) {
                 const auto& voice = future.queueSuccessorVoiceStarts[leaf];
-                const auto& commitOwner = future.voiceOwnerContexts[leaf];
+                const auto& commitOwner = future.queueSuccessorVoiceOwnerContexts[leaf];
                 EXPECT_EQ(&actual, commitOwner.engine);
                 EXPECT_EQ(&voice, commitOwner.token);
                 EXPECT_TRUE(commitOwner.preparedCommitProofsRequired);
@@ -27201,11 +27201,13 @@ void ExpectSetValueImmediateVariableControlFinalOwnerSeal(bool injectFault, bool
                 EXPECT_FALSE(scratch.variableControlContinuousDecisionOwnerContext.ticketCommitProof.Valid());
                 EXPECT_FALSE(scratch.variableControlOwnerContext.commitProof.Valid());
                 EXPECT_FALSE(scratch.variableControlOwnerContext.serviceCommitProof.Valid());
-                for (const auto& owner : scratch.voiceOwnerContexts) {
-                    EXPECT_FALSE(owner.armCommitProof.Valid());
-                    EXPECT_FALSE(owner.ledgerCommitProof.Valid());
-                    EXPECT_FALSE(owner.voiceCommitProof.Valid());
-                    EXPECT_FALSE(owner.HasEffectCommitProofs());
+                for (const auto side : scratch.VoiceOwnerContextSides()) {
+                    for (const auto& owner : side) {
+                        EXPECT_FALSE(owner.armCommitProof.Valid());
+                        EXPECT_FALSE(owner.ledgerCommitProof.Valid());
+                        EXPECT_FALSE(owner.voiceCommitProof.Valid());
+                        EXPECT_FALSE(owner.HasEffectCommitProofs());
+                    }
                 }
             }
         }
@@ -28821,11 +28823,13 @@ void ExpectSetValueMixedVcGroupCapacityBeforeCommit(bool refuseSecondGroup,
             EXPECT_FALSE(scratch.variableControlContinuousDecisionOwnerContext.ticketCommitProof.Valid());
             EXPECT_FALSE(scratch.variableControlOwnerContext.commitProof.Valid());
             EXPECT_FALSE(scratch.variableControlOwnerContext.serviceCommitProof.Valid());
-            for (const auto& owner : scratch.voiceOwnerContexts) {
-                EXPECT_FALSE(owner.armCommitProof.Valid());
-                EXPECT_FALSE(owner.ledgerCommitProof.Valid());
-                EXPECT_FALSE(owner.voiceCommitProof.Valid());
-                EXPECT_FALSE(owner.HasEffectCommitProofs());
+            for (const auto side : scratch.VoiceOwnerContextSides()) {
+                for (const auto& owner : side) {
+                    EXPECT_FALSE(owner.armCommitProof.Valid());
+                    EXPECT_FALSE(owner.ledgerCommitProof.Valid());
+                    EXPECT_FALSE(owner.voiceCommitProof.Valid());
+                    EXPECT_FALSE(owner.HasEffectCommitProofs());
+                }
             }
         }
         ASSERT_NO_FATAL_FAILURE(ExpectBoundSourcesReleased(*engine, sources));
