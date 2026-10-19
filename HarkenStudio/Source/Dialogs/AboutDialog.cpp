@@ -8,7 +8,6 @@
 #include <QDateTime>
 #include <QFrame>
 #include <QGridLayout>
-#include <QHBoxLayout>
 #include <QLabel>
 #include <QPlainTextEdit>
 #include <QPixmap>
@@ -79,36 +78,28 @@ AboutDialog::AboutDialog(QWidget* parent, bool showDeveloperInformation)
     root->setContentsMargins(28, 22, 28, 18);
     root->setSpacing(0);
 
-    auto* header = new QHBoxLayout();
-    header->setSpacing(18);
-
     auto* logo = new QLabel(this);
     logo->setObjectName(QStringLiteral("aboutLogo"));
-    logo->setFixedSize(64, 64);
+    logo->setAccessibleName(QStringLiteral("Harken Studio"));
+    const QSize logoSize(400, 32);
+    logo->setFixedSize(logoSize);
     logo->setAlignment(Qt::AlignCenter);
     const auto resolvedLogo = ThemeManager::instance().resolveImage(
-        QString::fromLatin1(ThemeAssetIds::AppLogo),
-        ThemeAssetVariant{QSize(64, 64), devicePixelRatioF(), 0, QColor()});
-    if (resolvedLogo.resource)
-        logo->setPixmap(QPixmap::fromImage(resolvedLogo.resource->image));
-    header->addWidget(logo, 0, Qt::AlignTop);
-
-    auto* identity = new QVBoxLayout();
-    identity->setSpacing(0);
-    identity->addStretch(1);
-    auto* productName = new QLabel(tr("Harken Studio"), this);
-    productName->setObjectName(QStringLiteral("aboutProductName"));
-    identity->addWidget(productName);
-    identity->addSpacing(4);
+        QString::fromLatin1(ThemeAssetIds::AppLogo));
+    if (resolvedLogo.resource) {
+        QPixmap pixmap = QPixmap::fromImage(resolvedLogo.resource->image).scaled(
+            logoSize * devicePixelRatioF(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        pixmap.setDevicePixelRatio(devicePixelRatioF());
+        logo->setPixmap(pixmap);
+    }
+    root->addWidget(logo);
+    root->addSpacing(12);
 
     auto* tagline = new QLabel(
         tr("Professional Audio Middleware Editor"), this);
     tagline->setObjectName(QStringLiteral("aboutTagline"));
     tagline->setWordWrap(true);
-    identity->addWidget(tagline);
-    identity->addStretch(1);
-    header->addLayout(identity, 1);
-    root->addLayout(header);
+    root->addWidget(tagline);
     root->addSpacing(20);
 
     auto* summary = new QFrame(this);

@@ -1496,12 +1496,6 @@ QLineEdit[settingsRole="invalid"] { border: 1px solid @error@; }
     background-color: transparent;
 }
 
-#aboutProductName {
-    color: @textPrimary@;
-    font-size: @titlePointSize@pt;
-    font-weight: bold;
-}
-
 #aboutTagline {
     color: @textSecondary@;
     font-size: @bodyPointSize@pt;
