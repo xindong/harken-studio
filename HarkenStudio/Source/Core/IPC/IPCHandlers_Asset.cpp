@@ -497,11 +497,16 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
 
         packBuildCompletion_ = [this, platformResults, generationRecords, unitProgress, publishedArtifacts,
                                          allSuccess, firstError, pmGuard,
-                                         cancel, runId, project, platformActivity, outputPath,
-                                         platforms, succeededPlatforms, outputLock]() mutable {
+                                         cancel, runId, project, snapshot, platformActivity, outputPath,
+                                         platforms, succeededPlatforms, outputLock, actionStableId]() mutable {
             QString indexError;
-            if (!ProjectPackExporter::PublishPackIndex(outputPath, project->platforms,
-                    platforms, succeededPlatforms, &indexError)) {
+            QVector<PackArtifactMetadata> completedArtifacts;
+            for (const auto& artifacts : publishedArtifacts)
+                completedArtifacts.append(artifacts);
+            if (!ProjectPackExporter::ValidatePackBuildPlatforms(snapshot->project.platforms,
+                    project->platforms, succeededPlatforms, &indexError)
+                || !ProjectPackExporter::FinalizePackOutputs(outputPath, project->platforms,
+                    platforms, succeededPlatforms, &indexError, completedArtifacts)) {
                 allSuccess = false;
                 firstError = indexError;
             }
@@ -517,7 +522,7 @@ QJsonObject IPCServer::handleExportPack(const QJsonObject& args)
                 return;
             }
             for (auto it = publishedArtifacts.cbegin(); it != publishedArtifacts.cend(); ++it)
-                PackArtifactCache::instance().publish(it.key(), it.value());
+                PackArtifactCache::instance().publish(it.key(), it.value(), !harkenstudio::IsNull(actionStableId));
             for (const auto& [key, progress] : unitProgress) {
                 PackGenerationRecordStore::instance().updateProgress(runId,
                     {progress.platform, progress.language, progress.unitKey, 0, PackGenerationStage::Queued});

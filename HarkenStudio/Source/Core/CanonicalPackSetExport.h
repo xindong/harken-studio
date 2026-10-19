@@ -31,6 +31,13 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     ProjectPackExporter& exporter, const CanonicalPackSetExportRequest& request,
     std::vector<ProjectPackExporter::PackBuildRecord>* outRecords);
 
+bool ReadPackPublication(const QString& directory, const QString& projectId,
+                         const QString& platformId, QJsonArray* packs,
+                         QStringList* managedFiles, QString* error,
+                         bool requireComplete = true,
+                         const QStringList& expectedPackPaths = {},
+                         bool allowPlatformReplacement = false);
+
 bool RecoverPackOutput(const QString& outputDir, QString* error);
 
 inline bool ValidateSnapshotBusIds(harkenstudio::ObjectId bus, harkenstudio::ObjectId parent,

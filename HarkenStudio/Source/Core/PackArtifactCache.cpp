@@ -12,6 +12,8 @@
 #include <QSaveFile>
 #include <QDebug>
 
+#include <algorithm>
+
 namespace VNX {
 
 PackArtifactCache& PackArtifactCache::instance()
@@ -61,10 +63,18 @@ void PackArtifactCache::closeProject()
 }
 
 void PackArtifactCache::publish(const QString& platform,
-                               const QVector<PackArtifactMetadata>& artifacts)
+                               const QVector<PackArtifactMetadata>& artifacts,
+                               bool updateSelectedOnly)
 {
     if (cachePath_.isEmpty()) return;
-    artifacts_.removeIf([&](const auto& artifact) { return artifact.platform == platform; });
+    artifacts_.removeIf([&](const auto& artifact) {
+        if (artifact.platform != platform) return false;
+        if (!updateSelectedOnly) return true;
+        return std::any_of(artifacts.begin(), artifacts.end(), [&](const auto& updated) {
+            return updated.platform == platform && updated.unitKey == artifact.unitKey
+                && updated.language == artifact.language;
+        });
+    });
     for (const auto& artifact : artifacts)
         if (artifact.platform == platform) artifacts_.append(artifact);
     save();

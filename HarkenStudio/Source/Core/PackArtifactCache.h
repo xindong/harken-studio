@@ -31,7 +31,8 @@ public:
 
     void openProject(const ProjectData& project);
     void closeProject();
-    void publish(const QString& platform, const QVector<PackArtifactMetadata>& artifacts);
+    void publish(const QString& platform, const QVector<PackArtifactMetadata>& artifacts,
+                 bool updateSelectedOnly = false);
     void removeUnselectedPlatforms(const QString& outputRoot, const QStringList& platforms);
     const PackArtifactMetadata* find(const QString& platform, const QString& language,
                                     const QString& unitKey, const QString& outputPath) const;

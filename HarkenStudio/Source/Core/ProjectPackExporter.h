@@ -155,24 +155,28 @@ public:
     static QString platformOutputDir(const QString& baseDir,
                                      const ProjectPlatform& platform);
 
-    static bool WritePackIndex(const QString& baseDir,
-                               const QVector<ProjectPlatform>& platforms,
-                               QString* errorOut = nullptr);
+    static bool ValidatePackOutputs(const QString& baseDir,
+                                    const QVector<ProjectPlatform>& platforms,
+                                    QString* errorOut = nullptr,
+                                    const QVector<PackArtifactMetadata>& artifacts = {});
 
-    static QJsonObject BuildPackIndex(const QString& baseDir,
-                                      const QVector<ProjectPlatform>& platforms,
-                                      QString* errorOut = nullptr);
+    static bool ValidatePackBuildPlatforms(const QVector<ProjectPlatform>& captured,
+                                           const QVector<ProjectPlatform>& current,
+                                           const QStringList& succeededIds,
+                                           QString* errorOut = nullptr);
 
     static ExportResult FinalizePackExport(const QString& baseDir,
                                            const QVector<ProjectPlatform>& platforms,
                                            const QStringList& selectedPlatformIds,
-                                           bool selfCleaning);
+                                           bool selfCleaning,
+                                           const QVector<PackArtifactMetadata>& artifacts = {});
 
-    static bool PublishPackIndex(const QString& baseDir,
+    static bool FinalizePackOutputs(const QString& baseDir,
                                  const QVector<ProjectPlatform>& platforms,
                                  const QStringList& requestedIds,
                                  const QStringList& succeededIds,
-                                 QString* errorOut = nullptr);
+                                 QString* errorOut = nullptr,
+                                 const QVector<PackArtifactMetadata>& artifacts = {});
 
     static std::shared_ptr<QLockFile> LockPackOutputRoot(const QString& baseDir,
                                                        QString* errorOut = nullptr);

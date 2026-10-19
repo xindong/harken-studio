@@ -210,20 +210,6 @@ PackBuildPlan buildImpl(const ProjectData& project, harkenstudio::ObjectId actio
                     relativePackPath(definition.name, language, variant.artifactName);
                 variant.closure = ActionClosureSemantics::build(
                     project, action->runtimeId(), variant.variant);
-                for (const auto& dependency : variant.closure.actions) {
-                    const auto localizedDependency = localization.find(dependency.stableId);
-                    const bool dependencyIsLocalized = localizedDependency != localization.end()
-                        ? localizedDependency->second
-                        : localizedClosure(ActionClosureSemantics::build(project, dependency.stableId), index);
-                    const QString dependencyLanguage = dependencyIsLocalized ? language : QString();
-                    if (!includeUnchecked && !selection.includesActionPack(dependency.stableId, platform, dependencyLanguage))
-                        variant.closure.diagnostics.push_back({
-                            ActionClosureDiagnosticCode::ExcludedDependency,
-                            QStringLiteral("Action %1 depends on Action %2 excluded from platform '%3', language '%4'")
-                                .arg(objectIdString(action->runtimeId())).arg(objectIdString(dependency.stableId)).arg(definition.name, dependencyLanguage),
-                            action->runtimeId(), -1, dependency.stableId,
-                            QStringLiteral("platformIds"), dependency.referencePath});
-                }
                 variant.capability = RuntimeCapabilityMatrix::assess(
                     *action, project, RuntimeCapabilityOperation::PackBuild, variant.variant);
                 std::map<harkenstudio::ObjectId, std::vector<harkenstudio::ObjectId>> dependencies;

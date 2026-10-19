@@ -668,7 +668,7 @@ harkenstudiobuild::PackResult ParseVariablePolicyOverlayPayload(
     }
     const std::uint32_t rowCount = LoadLE32(payload);
     const std::uint32_t format = LoadLE32(payload + 4);
-    if (format > 1 || LoadLE64(payload + 8) != 0) {
+    if (format > kPackVariablePolicyOverlayFormat || LoadLE64(payload + 8) != 0) {
         return harkenstudiobuild::kPackInvalid;
     }
     std::uint64_t rowsBytes = 0;
@@ -719,16 +719,20 @@ harkenstudiobuild::PackResult ParseVariablePolicyOverlayPayload(
             rows[i].discreteAnchors.push_back(anchor);
         }
     }
-    if (format == 1) {
+    if (format != 0) {
         for (auto& row : rows) {
-            if (size - cursor < 24) return harkenstudiobuild::kPackInvalid;
+            const std::uint32_t headerBytes = format == 1 ? 24 : 16;
+            if (size - cursor < headerBytes) return harkenstudiobuild::kPackInvalid;
             row.labelMappingFingerprint = LoadLE64(payload + cursor);
-            row.catalogFingerprint = LoadLE64(payload + cursor + 8);
-            const std::uint32_t count = LoadLE32(payload + cursor + 16);
-            if (LoadLE32(payload + cursor + 20) != 0
-                || row.labelMappingFingerprint == 0 || row.catalogFingerprint == 0)
+            if (format == 1) {
+                row.catalogFingerprint = LoadLE64(payload + cursor + 8);
+                if (row.catalogFingerprint == 0) return harkenstudiobuild::kPackInvalid;
+            }
+            const std::uint32_t count = LoadLE32(payload + cursor + headerBytes - 8);
+            if (LoadLE32(payload + cursor + headerBytes - 4) != 0
+                || row.labelMappingFingerprint == 0)
                 return harkenstudiobuild::kPackInvalid;
-            cursor += 24;
+            cursor += headerBytes;
             if (count > (size - cursor) / 24) return harkenstudiobuild::kPackInvalid;
             std::set<harkenstudio::ObjectId> identities;
             std::set<std::string> names;
@@ -740,12 +744,16 @@ harkenstudiobuild::PackResult ParseVariablePolicyOverlayPayload(
                 label.anchor = static_cast<std::int32_t>(LoadLE32(payload + cursor + 16));
                 const std::uint32_t length = LoadLE32(payload + cursor + 20);
                 cursor += 24;
-                const std::uint64_t paddedLength = (static_cast<std::uint64_t>(length) + 3u) & ~std::uint64_t{3};
-                if (paddedLength > size - cursor) return harkenstudiobuild::kPackInvalid;
-                label.name.assign(reinterpret_cast<const char*>(payload + cursor), length);
-                for (std::uint64_t k = length; k < paddedLength; ++k)
-                    if (payload[cursor + k] != 0) return harkenstudiobuild::kPackInvalid;
-                cursor += static_cast<std::size_t>(paddedLength);
+                if (format == 1) {
+                    const std::uint64_t paddedLength = (static_cast<std::uint64_t>(length) + 3u) & ~std::uint64_t{3};
+                    if (paddedLength > size - cursor) return harkenstudiobuild::kPackInvalid;
+                    label.name.assign(reinterpret_cast<const char*>(payload + cursor), length);
+                    for (std::uint64_t k = length; k < paddedLength; ++k)
+                        if (payload[cursor + k] != 0) return harkenstudiobuild::kPackInvalid;
+                    cursor += static_cast<std::size_t>(paddedLength);
+                } else if (length != 0) {
+                    return harkenstudiobuild::kPackInvalid;
+                }
                 if (label.labelId == harkenstudio::ObjectId{} || !identities.insert(label.labelId).second
                     || label.anchor < 0 || label.anchor > 16777216
                     || (j > 0 && label.anchor <= row.labels.back().anchor)
