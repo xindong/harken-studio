@@ -8,6 +8,7 @@
 #include "AudioEngine.h"
 #include "AttenuationStore.h"
 #include "BindingEditing.h"
+#include "CanonicalPackSetExport.h"
 #include "CompileTargetProfileCatalog.h"
 #include "ActionManager.h"
 #include "AssetPipeline/AssetRegistry.h"
@@ -4893,10 +4894,11 @@ TEST(AudioEnginePreview, AbsoluteSchedulesOverlapAlignAndLoadFromFormalPacks)
     options.onlyActionStableIds = {actionId};
     const auto exported = exporter.ExportAllPacks(*project, outputDirectory, options);
     ASSERT_TRUE(exported.success) << exported.error.toStdString();
-    QFile manifestFile(QDir(outputDirectory).filePath(HarkenEditor::Bridge::packManifestFileName()));
-    ASSERT_TRUE(manifestFile.open(QIODevice::ReadOnly));
-    const auto manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
-    const QJsonArray packs = manifest.value(QStringLiteral("packs")).toArray();
+    QJsonArray packs;
+    QStringList publicationFiles;
+    QString publicationError;
+    ASSERT_TRUE(ReadPackPublication(outputDirectory, project->projectId, options.platform,
+        &packs, &publicationFiles, &publicationError)) << publicationError.toStdString();
     ASSERT_GE(packs.size(), 2);
     ASSERT_FALSE(project->busses.empty());
     ASSERT_NE(project->busses.front().rootItem, nullptr);
@@ -4919,15 +4921,9 @@ TEST(AudioEnginePreview, AbsoluteSchedulesOverlapAlignAndLoadFromFormalPacks)
     sound->fieldGroups.send = originalSend;
     sound->fieldGroups.mainOutput = originalMainOutput;
     ASSERT_TRUE(sendExported.success) << sendExported.error.toStdString();
-    QFile sendManifestFile(QDir(sendOutputDirectory).filePath(
-        HarkenEditor::Bridge::packManifestFileName()));
-    ASSERT_TRUE(sendManifestFile.open(QIODevice::ReadOnly));
-    const auto sendPacks = QJsonDocument::fromJson(sendManifestFile.readAll())
-        .object().value(QStringLiteral("packs")).toArray();
     uint32_t checkedMasterSends = 0;
-    for (const auto& value : sendPacks) {
-        QFile file(QDir(sendOutputDirectory).filePath(
-            value.toObject().value(QStringLiteral("path")).toString()));
+    for (const auto& artifact : sendExported.artifacts) {
+        QFile file(artifact.outputPath);
         ASSERT_TRUE(file.open(QIODevice::ReadOnly));
         const QByteArray bytes = file.readAll();
         harken::PackCanonicalImage canonical;

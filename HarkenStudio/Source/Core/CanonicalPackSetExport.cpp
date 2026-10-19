@@ -1694,7 +1694,7 @@ std::uint32_t ownedDefinitionCount(
 bool ReadPackPublication(const QString& directory, const QString& projectId,
                          const QString& platformId, QJsonArray* packs,
                          QStringList* managedFiles, QString* error, bool requireComplete,
-                         const QStringList& expectedPackPaths)
+                         const QStringList& expectedPackPaths, bool allowPlatformReplacement)
 {
     *packs = {};
     managedFiles->clear();
@@ -1806,10 +1806,37 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
         const bool selected = expectedPackPaths.isEmpty() || expectedPackPaths.contains(path);
         const QString companionPath = QDir::cleanPath(QDir(info.path()).filePath(info.completeBaseName() + QStringLiteral(".json")));
         const bool hasCompanion = files.contains(companionPath);
-        if (!hasCompanion && !legacyRows.contains(path)) continue;
-        QJsonObject row;
+        QByteArray bytes;
         harkenstudiobuild::PackCanonicalImage image;
-        harkenstudio::ObjectId pairProject;
+        harkenstudiobuild::CurrentWorldBodyImage body;
+        if (!readAll(dir.filePath(path), &bytes, &detail)
+            || harkenstudiobuild::ParsePackCanonicalImage(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
+                bytes.size(), &image) != harkenstudiobuild::kPackOk
+            || !body.Decode(image.partitionBody.data(), image.partitionBody.size(),
+                harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage)) {
+            if (requireComplete && selected && (hasCompanion || legacyRows.contains(path)))
+                return reject(QStringLiteral("Invalid published Pack '%1'").arg(path));
+            continue;
+        }
+        const auto& world = *body.ProductionView();
+        const auto pairProject = world.identity.projectId;
+        if (!harkenstudio::IsNull(pairProject) && !harkenstudio::IsNull(expectedProject)
+            && pairProject != expectedProject)
+            return reject(QStringLiteral("Pack publication contains another project's content: %1").arg(path));
+        if (selected && !platformId.isEmpty() && (requireComplete || !allowPlatformReplacement)) {
+            const auto expectedInit = fnvName(platformId + QStringLiteral("/Init"));
+            if (image.packKind == harkenstudiobuild::kPackKindInit && image.packStableId != expectedInit)
+                return reject(QStringLiteral("Pack publication contains another platform's content: %1").arg(path));
+            for (const auto& edge : image.dependencyEdges)
+                if (edge.edgeKind == harkenstudiobuild::kPackDependencyEdgeKindInit
+                    && edge.prerequisitePackStableId != expectedInit
+                    && harkenstudiobuild::ValidateCanonicalInitDependency(
+                        image.dependencyEdges, edge.prerequisitePackStableId) == harkenstudiobuild::kPackOk)
+                    return reject(QStringLiteral("Pack publication contains another platform's content: %1").arg(path));
+        }
+        if (!hasCompanion && !legacyRows.contains(path)) continue;
+        const auto hash = harkenstudiobuild::Fnv1a64(bytes.constData(), bytes.size());
+        QJsonObject row;
         QString pairError;
         const auto inspectPair = [&] {
             const auto rejectPair = [&](const QString& message) {
@@ -1817,11 +1844,11 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                 return false;
             };
             QJsonObject companion;
-            QByteArray bytes;
+            QByteArray companionBytes;
             if (hasCompanion) {
-                if (!readAll(dir.filePath(companionPath), &bytes, &detail)) return rejectPair(detail);
+                if (!readAll(dir.filePath(companionPath), &companionBytes, &detail)) return rejectPair(detail);
                 QJsonParseError parseError;
-                const auto document = QJsonDocument::fromJson(bytes, &parseError);
+                const auto document = QJsonDocument::fromJson(companionBytes, &parseError);
                 if (parseError.error != QJsonParseError::NoError || !document.isObject())
                     return rejectPair(QStringLiteral("Invalid Pack companion '%1'").arg(companionPath));
                 companion = document.object();
@@ -1831,27 +1858,15 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
             const auto companionErrors = ProjectSchemaValidator::validatePackManifest(
                 PackSchema::kPackManifestSchemaVersion, companion, companionPath);
             if (!companionErrors.isEmpty()) return rejectPair(companionErrors.join(QLatin1Char('\n')));
-            if (!readAll(dir.filePath(path), &bytes, &detail)) return rejectPair(detail);
-            if (harkenstudiobuild::ParsePackCanonicalImage(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
-                    bytes.size(), &image) != harkenstudiobuild::kPackOk)
-                return rejectPair(QStringLiteral("Invalid published Pack '%1'").arg(path));
-            const auto hash = harkenstudiobuild::Fnv1a64(bytes.constData(), bytes.size());
             if (!hasCompanion && legacyRows.value(path).value(QStringLiteral("contentHash")).toString().toULongLong() != hash)
                 return rejectPair(QStringLiteral("Previous Pack differs from its publication: %1").arg(path));
-            harkenstudiobuild::CurrentWorldBodyImage body;
-            if (!body.Decode(image.partitionBody.data(), image.partitionBody.size(),
-                    harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage))
-                return rejectPair(QStringLiteral("Invalid published Pack definitions '%1'").arg(path));
-            const auto& world = *body.ProductionView();
             if (!hasCompanion && (runtimeObjectId(QUuid(legacyRows.value(path).value(QStringLiteral("projectId")).toString()))
                     != world.identity.projectId
                     || legacyRows.value(path).value(QStringLiteral("packStableId")).toString().toULongLong() != image.packStableId
                     || legacyRows.value(path).value(QStringLiteral("packKind")).toInt() != image.packKind))
                 return rejectPair(QStringLiteral("Previous Pack identity differs from its publication: %1").arg(path));
-            pairProject = world.identity.projectId;
-            if (harkenstudio::IsNull(pairProject)
-                || (!harkenstudio::IsNull(expectedProject) && pairProject != expectedProject))
-                return rejectPair(QStringLiteral("Pack publication contains another project's content: %1").arg(path));
+            if (harkenstudio::IsNull(pairProject))
+                return rejectPair(QStringLiteral("Pack publication contains an invalid project identity: %1").arg(path));
             if (requireComplete && selected && ids.contains(image.packStableId))
                 return rejectPair(QStringLiteral("Pack publication repeats a Pack identity: %1").arg(path));
             QString name;
@@ -2105,7 +2120,8 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     QJsonArray previousPublication;
     QStringList previousManaged;
     if (!ReadPackPublication(request.outputDir, project.projectId, request.options.platform,
-            &previousPublication, &previousManaged, &result.error, false)) return result;
+            &previousPublication, &previousManaged, &result.error, false, {},
+            !request.options.updateSelectedOnly)) return result;
     for (const auto& value : previousPublication) {
         const auto row = value.toObject();
         previousPacks.insert(row.value(QStringLiteral("path")).toString(), row);

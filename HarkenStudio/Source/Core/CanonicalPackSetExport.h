@@ -35,7 +35,8 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                          const QString& platformId, QJsonArray* packs,
                          QStringList* managedFiles, QString* error,
                          bool requireComplete = true,
-                         const QStringList& expectedPackPaths = {});
+                         const QStringList& expectedPackPaths = {},
+                         bool allowPlatformReplacement = false);
 
 bool RecoverPackOutput(const QString& outputDir, QString* error);
 

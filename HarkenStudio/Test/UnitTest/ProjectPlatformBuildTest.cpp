@@ -1390,6 +1390,9 @@ TEST_F(ProjectPlatformBuild, RenamedAndRecreatedPlatformsCannotReuseOldDirectory
 {
     const QString root = directory.filePath("Delivery");
     const QString oldDir = QDir(root).filePath("Android_Low");
+    auto* retainedAction = manager().createItem(nullptr, "Retained", ProjectItem::Type::Action);
+    ASSERT_NE(retainedAction, nullptr);
+    retainedAction->comp<VAction>()->steps = action->comp<VAction>()->steps;
     std::vector<ProjectPackExporter::PackBuildRecord> records;
     ASSERT_TRUE(exportPlatform(low, oldDir, records).success);
     const auto original = publicationBytes(oldDir, low);
@@ -1412,10 +1415,20 @@ TEST_F(ProjectPlatformBuild, RenamedAndRecreatedPlatformsCannotReuseOldDirectory
     EXPECT_FALSE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {replacementId}, {replacementId}, &error));
     EXPECT_EQ(publicationBytes(oldDir, low), original);
     records.clear();
-    ASSERT_TRUE(exportPlatform(replacement, oldDir, records).success);
-    EXPECT_NE(publicationBytes(oldDir, replacement), original);
+    ProjectPackExporter exporter;
+    ProjectPackExporter::ExportOptions options;
+    options.platform = replacementId;
+    options.selfCleaning = false;
+    options.selection.actionTargeting.push_back({retainedAction->runtimeId(), false, {}});
+    const auto rebuilt = exporter.ExportAllPacks(project(), oldDir, options, &records);
+    ASSERT_TRUE(rebuilt.success) << rebuilt.error.toStdString();
+    EXPECT_NE(bytes(QDir(oldDir).filePath("Init.bytes")), original.value(QStringLiteral("Init.bytes")));
+    EXPECT_NE(bytes(QDir(oldDir).filePath("PlayTone.bytes")), original.value(QStringLiteral("PlayTone.bytes")));
+    for (const auto& name : {QStringLiteral("Retained.bytes"), QStringLiteral("Retained.json")})
+        EXPECT_EQ(bytes(QDir(oldDir).filePath(name)), original.value(name));
     EXPECT_FALSE(validPublication(oldDir, low));
-    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, {replacementId}, {replacementId}, &error));
+    ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms,
+        {replacementId}, {replacementId}, &error, rebuilt.artifacts)) << error.toStdString();
 }
 
 TEST_F(ProjectPlatformBuild, ChangedPlatformsCannotReportSuccessfulPublication)
@@ -1515,6 +1528,57 @@ TEST_F(ProjectPlatformBuild, DeliveryRejectsMismatchedIdentityCorruptionAndIncom
     ASSERT_TRUE(exportPlatform(low, platformDir, records).success);
     const auto original = publicationBytes(platformDir, low);
     ASSERT_FALSE(original.isEmpty());
+    auto foreignProject = project();
+    foreignProject.projectId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    ProjectPackExporter exporter;
+    for (int companionState : {0, 1, 2}) {
+        SCOPED_TRACE(companionState);
+        auto preserved = original;
+        for (auto file = original.cbegin(); file != original.cend(); ++file) {
+            if (companionState == 0 || !file.key().endsWith(QStringLiteral(".json"))) continue;
+            const QString path = QDir(platformDir).filePath(file.key());
+            if (companionState == 1) {
+                QFile output(path);
+                ASSERT_TRUE(output.open(QIODevice::WriteOnly | QIODevice::Truncate));
+                ASSERT_EQ(output.write("invalid"), 7);
+                preserved[file.key()] = QByteArray("invalid");
+            } else {
+                ASSERT_TRUE(QFile::remove(path));
+                preserved.remove(file.key());
+            }
+        }
+        if (companionState == 2) {
+            ASSERT_TRUE(QFile::remove(QDir(platformDir).filePath("Init.bytes")));
+            preserved.remove(QStringLiteral("Init.bytes"));
+        }
+        for (bool otherProject : {false, true}) {
+            for (bool selectedOnly : {false, true}) {
+                if (!otherProject && !selectedOnly) continue;
+                SCOPED_TRACE(otherProject);
+                SCOPED_TRACE(selectedOnly);
+                ProjectPackExporter::ExportOptions options;
+                options.platform = otherProject ? id : Platforms::idString(high);
+                options.updateSelectedOnly = selectedOnly;
+                if (selectedOnly) options.onlyActionStableIds.insert(action->runtimeId());
+                const auto rejected = exporter.ExportAllPacks(
+                    otherProject ? foreignProject : project(), platformDir, options);
+                EXPECT_FALSE(rejected.success);
+                EXPECT_TRUE(rejected.error.contains(otherProject
+                    ? QStringLiteral("another project") : QStringLiteral("another platform")))
+                    << rejected.error.toStdString();
+                for (auto file = original.cbegin(); file != original.cend(); ++file) {
+                    const QString path = QDir(platformDir).filePath(file.key());
+                    EXPECT_EQ(QFileInfo::exists(path), preserved.contains(file.key()));
+                    if (preserved.contains(file.key())) EXPECT_EQ(bytes(path), preserved.value(file.key()));
+                }
+            }
+        }
+        ProjectPackExporter::ExportOptions repairOptions;
+        repairOptions.platform = id;
+        const auto repaired = exporter.ExportAllPacks(project(), platformDir, repairOptions);
+        ASSERT_TRUE(repaired.success) << repaired.error.toStdString();
+        EXPECT_EQ(publicationBytes(platformDir, low), original);
+    }
     QString initCompanion;
     for (const auto& value : publication(platformDir, low)) {
         const auto row = value.toObject();
@@ -1838,7 +1902,12 @@ TEST_F(ProjectPlatformBuild, CompetingOutputRequestsDoNotChangePublishedPairs)
 
 TEST_F(ProjectPlatformBuild, WritesTwoAndroidInstancesForNativeSdkReader)
 {
-    const QString root = QDir(QString::fromUtf8(HARKEN_TEMP_DIR)).filePath("p6-sdk-delivery");
+    ASSERT_TRUE(QDir().mkpath(QString::fromUtf8(HARKEN_TEMP_DIR)));
+    QTemporaryDir fixtureDirectory(QDir(QString::fromUtf8(HARKEN_TEMP_DIR)).filePath(
+        QStringLiteral("p6-sdk-delivery-XXXXXX")));
+    ASSERT_TRUE(fixtureDirectory.isValid()) << fixtureDirectory.errorString().toStdString();
+    fixtureDirectory.setAutoRemove(false);
+    const QString root = fixtureDirectory.path();
     QString error;
     QStringList ids;
     for (const auto id : {low, high}) {
@@ -1847,6 +1916,7 @@ TEST_F(ProjectPlatformBuild, WritesTwoAndroidInstancesForNativeSdkReader)
         ids.append(Platforms::idString(id));
     }
     ASSERT_TRUE(ProjectPackExporter::FinalizePackOutputs(root, project().platforms, ids, ids, &error)) << error.toStdString();
+    qInfo().noquote() << "Platform fixture root:" << root;
 }
 
 
