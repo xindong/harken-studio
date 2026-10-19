@@ -10,6 +10,7 @@
 #include "harken/core/PlayablePropertyCut.h"
 #include "harken/core/TimelineProgram.h"
 #include "harken/core/TimelineVoiceInstallInput.h"
+#include "harken/core/CapturedTimelineVoiceInstall.h"
 
 namespace harken {
 
@@ -43,6 +44,11 @@ struct TimelineVoiceInstallResult {
 PlayableStartStatus BuildTimelineVoiceInstallFromCut(
     Engine& engine, const ResolvedPlayablePropertyCutViewV1& cut,
     TimelineVoiceInstallDesc* out,
+    const PackPartitionLease* leaseOrNull = nullptr) noexcept;
+
+PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
+    Engine& engine, const ResolvedPlayablePropertyCutViewV1& cut,
+    TimelineSemanticTarget finalTarget, CapturedTimelineVoiceInstall* out,
     const PackPartitionLease* leaseOrNull = nullptr) noexcept;
 
 VnResult PreflightTimelineVoiceStart(

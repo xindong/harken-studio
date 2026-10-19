@@ -31681,8 +31681,10 @@ TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
                    row.Invocation().actionFiring == firing;
         });
     ASSERT_NE(engine->playableServices.end(), service);
-    ASSERT_TRUE(service->voice.streamed);
-    ASSERT_EQ(1u, service->voice.loopCount);
+    ASSERT_TRUE(service->usesCapturedVoice);
+    ASSERT_TRUE(service->capturedVoice.Valid());
+    ASSERT_TRUE(service->capturedVoice.Input().facts->streamed);
+    ASSERT_EQ(1u, service->capturedVoice.Input().facts->loopCount);
     std::uint64_t originalRingToken = 0;
     ASSERT_TRUE(engine->voices.CaptureStreamRingToken(
         service->renderHandle, &originalRingToken));
@@ -42652,6 +42654,9 @@ TEST(ActionFiringApi, DefaultFactoryStorageLoanLetsSourceEndBeforeFinalServiceRe
     const auto original = observed.original->FactoryReference();
     auto* row = harken::detail::EngineOriginalServiceStorageTestAccess::ActualService(*observed.original);
     ASSERT_NE(nullptr, row);
+    ASSERT_TRUE(row->usesCapturedVoice);
+    ASSERT_TRUE(row->capturedVoice.Valid());
+    const auto* frozenVoice = row->capturedVoice.Input().facts;
     const auto partition = row->partition;
     harken::EngineTimelineVoiceInstallIdentity installation{};
     ASSERT_TRUE(engine.CaptureTimelineVoiceInstallIdentity(row->renderHandle, &installation));
@@ -42686,6 +42691,8 @@ TEST(ActionFiringApi, DefaultFactoryStorageLoanLetsSourceEndBeforeFinalServiceRe
     EXPECT_EQ(harken::OriginalSourceSubmissionRegistry::Phase::Disposed, source->State());
     EXPECT_TRUE(engine.voices.ReleaseObserved(installation.releaseObserver));
     EXPECT_EQ(0u, engine.voices.ActiveCount());
+    ASSERT_TRUE(row->capturedVoice.Valid());
+    EXPECT_EQ(frozenVoice, row->capturedVoice.Input().facts);
     EXPECT_TRUE(foreign.Valid());
     EXPECT_TRUE(observed.original->Valid());
     EXPECT_TRUE(observed.original->HasOriginalWorldNoPackDuty());
@@ -42708,6 +42715,8 @@ TEST(ActionFiringApi, DefaultFactoryStorageLoanLetsSourceEndBeforeFinalServiceRe
     EXPECT_FALSE(foreign.FactoryReference().Valid());
     ASSERT_TRUE(independent.Valid());
     EXPECT_FALSE(engine.CanReclaimOriginalPlayableServiceStorage(*row));
+    ASSERT_TRUE(row->capturedVoice.Valid());
+    EXPECT_EQ(frozenVoice, row->capturedVoice.Input().facts);
     independent.Return();
     EXPECT_FALSE(independent.Valid());
     EXPECT_TRUE(engine.CanReclaimOriginalPlayableServiceStorage(*row));
@@ -42716,6 +42725,7 @@ TEST(ActionFiringApi, DefaultFactoryStorageLoanLetsSourceEndBeforeFinalServiceRe
         engine.nullBackend.Pump(1);
     }
     EXPECT_EQ(0u, engine.playablePartitions.OccupiedCount());
+    EXPECT_FALSE(row->capturedVoice.Valid());
     EXPECT_FALSE(observed.original->Valid());
     EXPECT_FALSE(observed.original->HasOriginalWorldNoPackDuty());
     EXPECT_FALSE(engine.MatchesOriginalPlayableServicePackDuty(*observed.original));
@@ -61084,8 +61094,9 @@ TEST(ActionFiringApi, PreinitLaneBQueueAndTwoDirectSoundsSameQuantum) {
             });
         ASSERT_NE(engine->playableServices.end(), row);
         ASSERT_EQ(initialRender[index], row->renderHandle);
-        ASSERT_EQ(sounds[index == 0u ? 0u : index + 1u],
-            row->voice.soundId);
+        const auto sound = row->usesCapturedVoice
+            ? row->capturedVoice.Input().facts->soundId : row->voice.soundId;
+        ASSERT_EQ(sounds[index == 0u ? 0u : index + 1u], sound);
         if (index == 0u) {
             ASSERT_TRUE(row->queueMode);
             successorRender = row->queueSuccessorRenderHandle;

@@ -6,6 +6,7 @@
 #include "CommandQueueSubmissionTestAccess.h"
 #include "VoicePoolReleaseTestAccess.h"
 #include "harken/core/CurrentWorld.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/PlayablePropertyCut.h"
 #include "harken/param/MeterProbe.h"
 #include "harken/param/ParamTargets.h"
@@ -469,6 +470,21 @@ TEST(TimelineVoiceInstall, NoLeaseCopySurvivesCatalogChange) {
               harken::test::BuildTimelineVoiceInstallFromCut(*engine, cut, &voice));
     ASSERT_EQ(1u, voice.bindingCount);
 
+    harken::TimelineSemanticTarget target{};
+    target.programSemanticFingerprint = cut.root.expectedProgramSemanticFingerprint;
+    target.subjectId = kSound;
+    harken::CapturedTimelineVoiceInstall captured;
+    ASSERT_EQ(harken::PlayableStartStatus::Accepted,
+        harken::test::CaptureTimelineVoiceInstallFromCut(*engine, cut, target, &captured));
+    const auto frozen = captured.Input();
+    ASSERT_EQ(1u, frozen.bindings.size());
+    ASSERT_EQ(cut.pathCount, frozen.pathRows.size());
+    EXPECT_EQ(target, frozen.facts->target);
+    harken::CapturedTimelineVoiceInstall moved(std::move(captured));
+    EXPECT_FALSE(captured.Valid());
+    EXPECT_EQ(frozen.facts, moved.Input().facts);
+    EXPECT_EQ(frozen.bindings.data(), moved.Input().bindings.data());
+
     VnBindingAttachDesc attach{};
     attach.structSize = sizeof(attach);
     attach.scopeKind = VN_TARGET_SCOPE_VOICE;
@@ -479,6 +495,67 @@ TEST(TimelineVoiceInstall, NoLeaseCopySurvivesCatalogChange) {
 
     EXPECT_EQ(kBinding, voice.bindingStorage[0].bindingId);
     EXPECT_FLOAT_EQ(-6.0f, voice.bindingStorage[0].curve.points[0].y);
+    EXPECT_TRUE(storage.Reset({}));
+    EXPECT_EQ(kBinding, moved.Input().bindings[0].bindingId);
+    EXPECT_EQ(kSound, moved.Input().pathRows[0].stableId);
+    EXPECT_FLOAT_EQ(-6.0f, moved.Input().bindings[0].curve.points[0].y);
+    EXPECT_EQ(target, moved.Input().facts->target);
+}
+
+TEST(TimelineVoiceInstall, CapturedCutRefusalPreservesExistingDefinitionAndColumns) {
+    auto config = TimelineInstallConfig(8, kBlock, kRate);
+    config.voiceSendSlots = 1;
+    config.fxSlotsPerVoice = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    harken::ResolvedPlayablePropertyCutStorageV1 storage;
+    auto cut = ResolveSoundCut(&storage, engine.registry.Lookup(kSound).contentRevision);
+    harken::SendV1 send{};
+    send.targetBusId = VN_BUS_MASTER;
+    send.sendLevel = -9.0f;
+    harken::EffectParamV1 parameter{};
+    parameter.valueBits = std::bit_cast<std::uint32_t>(-6.0f);
+    harken::EffectNodeV1 effect{};
+    effect.effectType = VN_EFFECT_GAIN;
+    effect.paramCount = 1;
+    effect.params = &parameter;
+    cut.sendCount = 1;
+    cut.sends = &send;
+    cut.effectNodeCount = 1;
+    cut.effectNodes = &effect;
+    harken::TimelineSemanticTarget target{};
+    target.programSemanticFingerprint = cut.root.expectedProgramSemanticFingerprint;
+    target.subjectId = kSound;
+    harken::CapturedTimelineVoiceInstall captured;
+    ASSERT_EQ(harken::PlayableStartStatus::Accepted,
+        harken::test::CaptureTimelineVoiceInstallFromCut(engine, cut, target, &captured));
+    const auto before = captured.Input();
+    ASSERT_EQ(1u, before.sends.size());
+    ASSERT_EQ(1u, before.effects.size());
+    EXPECT_FLOAT_EQ(-9.0f, before.sends[0].levelDb);
+    VnGainDesc gain{};
+    ASSERT_EQ(sizeof(gain), before.effects[0].descriptorSize);
+    std::memcpy(&gain, before.effects[0].descriptor, sizeof(gain));
+    EXPECT_FLOAT_EQ(-6.0f, gain.gainDb);
+    cut.volumeDb = -18.0f;
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::CapturedVoiceInstall);
+    const auto refused = harken::test::CaptureTimelineVoiceInstallFromCut(engine, cut, {}, &captured);
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_EQ(harken::PlayableStartStatus::Capacity, refused);
+    EXPECT_EQ(before.facts, captured.Input().facts);
+    EXPECT_FLOAT_EQ(0.0f, captured.Input().facts->volumeDb);
+    EXPECT_EQ(target, captured.Input().facts->target);
+    send.sendLevel = -30.0f;
+    parameter.valueBits = std::bit_cast<std::uint32_t>(-24.0f);
+    cut.pathCount = harken::kPlaybackPathRowCapacity + 1u;
+    EXPECT_EQ(harken::PlayableStartStatus::Capacity,
+        harken::test::CaptureTimelineVoiceInstallFromCut(engine, cut, {}, &captured));
+    EXPECT_EQ(before.facts, captured.Input().facts);
+    EXPECT_FLOAT_EQ(-9.0f, captured.Input().sends[0].levelDb);
+    std::memcpy(&gain, captured.Input().effects[0].descriptor, sizeof(gain));
+    EXPECT_FLOAT_EQ(-6.0f, gain.gainDb);
 }
 
 TEST(TimelineVoiceInstall, NoLeaseAbsenceIsZeroBindings) {
@@ -930,6 +1007,88 @@ TEST(TimelineVoiceInstall, DirectWorldPostActionWithoutAttachmentHasNoInstance) 
         engine->nullBackend.Pump(1);
     }
     EXPECT_EQ(0u, BindingInstanceCount(engine));
+}
+
+TEST(TimelineVoiceInstall, PendingSoundReinstallKeepsCapturedCatalogAndReturnsOwner) {
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_NO_FATAL_FAILURE(AttachVoiceVolume(-6.0f));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    VnPostActionDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.actionId = kAction;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    const auto row = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+        [&](const auto& service) {
+            return service.InvocationValid() && service.Invocation().actionFiring == firing;
+        });
+    ASSERT_NE(engine.playableServices.end(), row);
+    ASSERT_TRUE(row->usesCapturedVoice);
+    const auto frozen = row->capturedVoice.Input();
+    ASSERT_EQ(1u, frozen.bindings.size());
+    const auto original = row->renderHandle;
+    const auto release = row->releaseObserver;
+    ASSERT_NE(0u, original);
+    ASSERT_TRUE(row->pendingImmediateEntry);
+    VnBindingAttachDesc attach{};
+    attach.structSize = sizeof(attach);
+    attach.scopeKind = VN_TARGET_SCOPE_VOICE;
+    attach.objectId = kSound;
+    ASSERT_EQ(VN_OK, Vn_DetachBinding(kBinding, &attach));
+    const auto replaced = MakeVoiceVolumeBinding(-12.0f, 0.0f);
+    ASSERT_EQ(VN_OK, Vn_ReplaceBinding(kBinding, &replaced));
+    ASSERT_TRUE(engine.playablePropertyCutScratch.Reset({}));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    for (unsigned block = 0; block < 8 && !row->immediateLane.Valid(); ++block) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    ASSERT_TRUE(row->immediateLane.Valid());
+    while (engine.mixer.BlocksRendered() < row->startFrame / kBlock)
+        engine.nullBackend.Pump(1);
+    engine.mixer.ArenaForTests().SetCapacityForTests(0);
+    engine.nullBackend.Pump(1);
+    engine.mixer.ArenaForTests().RestoreCapacityForTests();
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    bool reinstalled = false;
+    bool heard = false;
+    for (unsigned block = 0; block < 64 && !heard; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_TRUE(row->capturedVoice.Valid());
+        EXPECT_EQ(frozen.facts, row->capturedVoice.Input().facts);
+        EXPECT_EQ(frozen.bindings.data(), row->capturedVoice.Input().bindings.data());
+        EXPECT_FLOAT_EQ(-6.0f, row->capturedVoice.Input().bindings[0].curve.points[0].y);
+        reinstalled |= row->renderHandle != 0 && row->renderHandle != original;
+        engine.nullBackend.Pump(1);
+        heard = harkentest::Peak(engine.nullBackend.LastBlock(), 2 * kBlock) > 0.01f;
+    }
+    ASSERT_TRUE(reinstalled);
+    ASSERT_TRUE(heard);
+    EXPECT_TRUE(engine.voices.ReleaseObserved(release));
+    EXPECT_EQ(nullptr, engine.voices.Resolve(original));
+    float contribution = 0.0f;
+    ASSERT_TRUE(BindingContribution(&engine, row->renderHandle, &contribution));
+    EXPECT_FLOAT_EQ(-6.0f, contribution);
+    const auto expected = 0.5f * std::pow(10.0f, -6.0f / 20.0f);
+    for (std::uint32_t frame = kBlock / 2; frame < kBlock; ++frame)
+        EXPECT_NEAR(expected, engine.nullBackend.LastBlock()[2 * frame], 1e-6f);
+    ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+    for (unsigned block = 0; block < 128 && row->capturedVoice.Valid(); ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine.nullBackend.Pump(1);
+    }
+    EXPECT_FALSE(row->capturedVoice.Valid());
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
 }
 
 static void CheckOrderedActionFirstPcm(bool sameAction, bool fixedStart = false,
@@ -1875,6 +2034,11 @@ TEST(TimelineVoiceInstall, OriginalSourceCancelReleaseHeldAcrossBlocksUsesFinalD
     const auto tokens = PublishedSourceTokens(engine);
     ASSERT_EQ(1u, tokens.size());
     const auto token = tokens[0];
+    const auto service = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+        [&](const auto& row) { return row.renderHandle == SourceRegistry::RenderOf(token); });
+    ASSERT_NE(engine.playableServices.end(), service);
+    ASSERT_TRUE(service->usesCapturedVoice);
+    ASSERT_TRUE(service->capturedVoice.Valid());
     harken::VoiceReleaseObserver release{};
     ASSERT_TRUE(engine.voices.CaptureReleaseObserver(SourceRegistry::RenderOf(token), &release));
     ASSERT_TRUE(engine.timelineArms.RequestCancel(token));
@@ -1883,8 +2047,11 @@ TEST(TimelineVoiceInstall, OriginalSourceCancelReleaseHeldAcrossBlocksUsesFinalD
         harken::TimelineArmToken token;
         harken::VoiceReleaseObserver release;
         std::uint64_t tail;
+        const harken::EnginePlayableServiceRow* service;
+        const harken::TimelineVoiceInstallFacts* facts;
         std::uint32_t calls = 0;
-    } held{&engine, token, release, engine.commands.ConsumedCount()};
+    } held{&engine, token, release, engine.commands.ConsumedCount(),
+        &*service, service->capturedVoice.Input().facts};
     harken::detail::VoicePoolReleaseTestAccess::SetReleaseHeldHook(engine.voices, [](void* opaque) {
         auto& context = *static_cast<HeldContext*>(opaque);
         ++context.calls;
@@ -1894,6 +2061,8 @@ TEST(TimelineVoiceInstall, OriginalSourceCancelReleaseHeldAcrossBlocksUsesFinalD
             EXPECT_EQ(before + i + 1u, context.engine->mixer.BlocksRendered());
             EXPECT_EQ(context.tail, context.engine->commands.ConsumedCount());
             EXPECT_FALSE(context.engine->voices.ReleaseObserved(context.release));
+            ASSERT_TRUE(context.service->capturedVoice.Valid());
+            EXPECT_EQ(context.facts, context.service->capturedVoice.Input().facts);
             const auto* row = context.engine->timelineArms.RowAt(context.token.slot);
             EXPECT_EQ(0u, row->armedCompletionSequence.load());
             EXPECT_EQ(0u, row->tombstoneAudioSequence.load());

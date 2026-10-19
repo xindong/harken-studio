@@ -24,6 +24,7 @@
 #include "harken/core/StreamSeekHandoffTable.h"
 #include "harken/core/ActionDeferredRecordTable.h"
 #include "harken/core/ActionCooldownTable.h"
+#include "harken/core/CapturedTimelineVoiceInstall.h"
 #include "harken/core/AuthoredStopFence.h"
 #include "harken/core/CommandQueue.h"
 #include "harken/core/CpuClock.h"
@@ -1959,6 +1960,8 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     bool queueFinalSourceTombstoned = false;
     bool queueAbortRequested = false;
     bool queueCleanupStarted = false;
+    bool usesCapturedVoice = false;
+    CapturedTimelineVoiceInstall capturedVoice{};
     TimelineVoiceInstallDesc voice{};
     TimelineEventPayload payload{};
     TimelineProgramView runtimeProgram{};
