@@ -14,6 +14,8 @@
 namespace harken::detail {
 namespace {
 
+thread_local bool failNextReservationForTests = false;
+
 bool RoundUp(std::size_t bytes, std::size_t alignment, std::size_t* out) noexcept {
     if (alignment == 0 || bytes > SIZE_MAX - (alignment - 1)) return false;
     *out = ((bytes + alignment - 1) / alignment) * alignment;
@@ -51,6 +53,7 @@ bool StablePageReservation::Reserve(std::size_t bytes, std::size_t alignment) no
     if (alignment == 0 || pageBytes % alignment != 0 ||
         !RoundUp(bytes, granularity, &reservedBytes))
         return false;
+    if (std::exchange(failNextReservationForTests, false)) return false;
 #if defined(_WIN32)
     void* address = VirtualAlloc(nullptr, reservedBytes, MEM_RESERVE, PAGE_NOACCESS);
     if (address == nullptr) return false;
@@ -63,6 +66,10 @@ bool StablePageReservation::Reserve(std::size_t bytes, std::size_t alignment) no
     pageBytes_ = pageBytes;
     reservedBytes_ = reservedBytes;
     return true;
+}
+
+void StablePageReservation::FailNextReservationForTests() noexcept {
+    failNextReservationForTests = true;
 }
 
 bool StablePageReservation::CommitThrough(std::size_t bytes) noexcept {

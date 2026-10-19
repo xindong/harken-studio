@@ -30,6 +30,7 @@ public:
     std::size_t ReservedBytes() const noexcept { return reservedBytes_; }
     std::size_t CommittedBytes() const noexcept { return committedBytes_; }
     void SetCommitPageLimitForTests(std::size_t pages) noexcept { remainingPagesForTests_ = pages; }
+    static void FailNextReservationForTests() noexcept;
 
 private:
     void* address_ = nullptr;
