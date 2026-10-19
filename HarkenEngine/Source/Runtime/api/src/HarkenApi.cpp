@@ -6165,9 +6165,107 @@ struct TimelineVoiceInstallResult {
     harken::KnownCompletionPredicateV1 completionPredicate{};
 };
 
-std::uint32_t TimelineVoiceStartCommandBudget(
-    const harken::TimelineVoiceInstallDesc& install) noexcept {
-    return 3u + install.sendCount + install.effectCount + install.bindingCount;
+VnResult ValidateTimelineVoiceInstallInputShape(
+    const harken::TimelineVoiceInstallInput& input) noexcept {
+    if (input.facts == nullptr) return VN_INVALID_ARG;
+    if (input.bindings.size() > harken::kMaxVoiceBindingInstanceSlots ||
+        input.pathRows.size() > harken::kPlaybackPathRowCapacity ||
+        input.sends.size() > harken::kTimelineMaxVoiceSends ||
+        input.effects.size() > harken::kTimelineMaxVoiceEffects) return VN_INVALID_CONFIG;
+    return VN_OK;
+}
+
+VnResult ValidateLegacyTimelineVoiceInstallCounts(
+    const harken::TimelineVoiceInstallDesc& source) noexcept {
+    if (source.bindingCount > harken::kMaxVoiceBindingInstanceSlots ||
+        source.playbackPath.rowCount > harken::kPlaybackPathRowCapacity ||
+        source.sendCount > harken::kTimelineMaxVoiceSends ||
+        source.effectCount > harken::kTimelineMaxVoiceEffects) return VN_INVALID_CONFIG;
+    return VN_OK;
+}
+
+harken::TimelineVoiceInstallFacts CopyLegacyTimelineVoiceInstallFacts(
+    const harken::TimelineVoiceInstallDesc& source) noexcept {
+    harken::TimelineVoiceInstallFacts facts{};
+    facts.monitorContent = source.monitorContent;
+    facts.monitorOccurrence = source.monitorOccurrence;
+    facts.capturedMedia = source.capturedMedia;
+    facts.streamed = source.streamed;
+    facts.streamFileIndex = source.streamFileIndex;
+    facts.streamSampleRate = source.streamSampleRate;
+    facts.streamChannelCount = source.streamChannelCount;
+    facts.streamFlags = source.streamFlags;
+    facts.streamFrameCount = source.streamFrameCount;
+    facts.streamContentRevision = source.streamContentRevision;
+    facts.streamLoopStartFrame = source.streamLoopStartFrame;
+    facts.streamLoopEndFrame = source.streamLoopEndFrame;
+    facts.soundId = source.soundId;
+    facts.outputBusId = source.outputBusId;
+    facts.sourceStartFrame = source.sourceStartFrame;
+    facts.authoredDurationFrames = source.authoredDurationFrames;
+    facts.volumeDb = source.volumeDb;
+    facts.outputBusVolumeDb = source.outputBusVolumeDb;
+    facts.pitchRatio = source.pitchRatio;
+    facts.pan = source.pan;
+    facts.spread = source.spread;
+    facts.spatializationMix = source.spatializationMix;
+    facts.attenuationDistanceScaling = source.attenuationDistanceScaling;
+    facts.attenuationId = source.attenuationId;
+    facts.loopCount = source.loopCount;
+    facts.spatialized = source.spatialized;
+    facts.attenuationResolved = source.attenuationResolved;
+    facts.target = source.target;
+    return facts;
+}
+
+class LegacyTimelineVoiceInstallProjection final {
+public:
+    explicit LegacyTimelineVoiceInstallProjection(
+        const harken::TimelineVoiceInstallDesc& source) noexcept {
+        status_ = ValidateLegacyTimelineVoiceInstallCounts(source);
+        if (status_ != VN_OK) return;
+        facts_ = CopyLegacyTimelineVoiceInstallFacts(source);
+        input_ = {&facts_, {source.bindingStorage, source.bindingCount},
+            {source.playbackPath.rows, source.playbackPath.rowCount},
+            {source.sends, source.sendCount}, {source.effects, source.effectCount}};
+    }
+
+    LegacyTimelineVoiceInstallProjection(const LegacyTimelineVoiceInstallProjection&) = delete;
+    LegacyTimelineVoiceInstallProjection& operator=(const LegacyTimelineVoiceInstallProjection&) = delete;
+    LegacyTimelineVoiceInstallProjection(LegacyTimelineVoiceInstallProjection&&) = delete;
+    LegacyTimelineVoiceInstallProjection& operator=(LegacyTimelineVoiceInstallProjection&&) = delete;
+
+    VnResult Status() const noexcept { return status_; }
+    const harken::TimelineVoiceInstallInput& Input() const & noexcept {
+        assert(status_ == VN_OK);
+        return input_;
+    }
+    const harken::TimelineVoiceInstallInput& Input() const && = delete;
+
+private:
+    harken::TimelineVoiceInstallFacts facts_{};
+    harken::TimelineVoiceInstallInput input_{};
+    VnResult status_ = VN_INVALID_CONFIG;
+};
+
+VnResult TimelineVoiceStartCommandBudget(
+    const harken::TimelineVoiceInstallInput& input, std::uint32_t* out) noexcept {
+    if (out == nullptr) return VN_INVALID_ARG;
+    const auto status = ValidateTimelineVoiceInstallInputShape(input);
+    if (status != VN_OK) return status;
+    *out = 3u + static_cast<std::uint32_t>(input.bindings.size()) +
+        static_cast<std::uint32_t>(input.sends.size()) +
+        static_cast<std::uint32_t>(input.effects.size());
+    return VN_OK;
+}
+
+VnResult TimelineVoiceStartCommandBudget(
+    const harken::TimelineVoiceInstallDesc& install, std::uint32_t* out) noexcept {
+    if (out == nullptr) return VN_INVALID_ARG;
+    const auto status = ValidateLegacyTimelineVoiceInstallCounts(install);
+    if (status != VN_OK) return status;
+    *out = 3u + install.sendCount + install.effectCount + install.bindingCount;
+    return VN_OK;
 }
 
 bool AppendTimelineBindingCommands(
@@ -6183,7 +6281,11 @@ void ReleaseTimelineVoiceBindings(harken::Engine& engine, VnVoiceHandle render,
 
 VnResult PreflightTimelineVoiceStart(
     const harken::Engine& engine,
-    const harken::TimelineVoiceInstallDesc& install) noexcept {
+    const harken::TimelineVoiceInstallInput& input) noexcept {
+    std::uint32_t commandCount = 0;
+    const auto shape = TimelineVoiceStartCommandBudget(input, &commandCount);
+    if (shape != VN_OK) return shape;
+    const auto& install = *input.facts;
     if (engine.timelinePhysicalAdmissionFault !=
         harken::TimelinePhysicalAdmissionFault::None) {
         return VN_NO_VOICE;
@@ -6211,13 +6313,8 @@ VnResult PreflightTimelineVoiceStart(
         install.spatializationMix < 0.0f || install.spatializationMix > 1.0f) {
         return VN_INVALID_ARG;
     }
-    const std::uint32_t commandCount =
-        TimelineVoiceStartCommandBudget(install);
-    if (install.sendCount > harken::kTimelineMaxVoiceSends ||
-        install.sendCount > engine.config.voiceSendSlots ||
-        install.effectCount > harken::kTimelineMaxVoiceEffects ||
-        install.bindingCount > engine.config.voiceBindingInstanceSlots ||
-        install.bindingCount > harken::kMaxVoiceBindingInstanceSlots ||
+    if (input.sends.size() > engine.config.voiceSendSlots ||
+        input.bindings.size() > engine.config.voiceBindingInstanceSlots ||
         commandCount > engine.playLedBatchScratch.size() ||
         !AtomicBatchFitsCapacities(engine, commandCount)) {
         return VN_INVALID_CONFIG;
@@ -6237,14 +6334,14 @@ VnResult PreflightTimelineVoiceStart(
         !engine.spatial.HasProfile(install.attenuationId)) {
         return VN_UNKNOWN_ID;
     }
-    for (std::uint32_t send = 0; send < install.sendCount; ++send) {
-        if (!engine.buses.FindRef(install.sends[send].targetBusId).Valid()) {
+    for (const auto& send : input.sends) {
+        if (!engine.buses.FindRef(send.targetBusId).Valid()) {
             return VN_UNKNOWN_ID;
         }
     }
-    for (std::uint32_t effect = 0; effect < install.effectCount; ++effect) {
+    for (std::size_t effect = 0; effect < input.effects.size(); ++effect) {
         const harken::TimelineVoiceEffectInstall& source =
-            install.effects[effect];
+            input.effects[effect];
         if (source.descriptorSize < sizeof(VnEffectDesc) ||
             source.descriptorSize >
                 harken::kTimelineMaxEffectDescriptorBytes ||
@@ -6260,7 +6357,7 @@ VnResult PreflightTimelineVoiceStart(
         }
         std::uint32_t sameTypeDemand = 1;
         for (std::uint32_t prior = 0; prior < effect; ++prior) {
-            if (install.effects[prior].type == source.type) {
+            if (input.effects[prior].type == source.type) {
                 ++sameTypeDemand;
             }
         }
@@ -6272,6 +6369,14 @@ VnResult PreflightTimelineVoiceStart(
         }
     }
     return VN_OK;
+}
+
+VnResult PreflightTimelineVoiceStart(
+    const harken::Engine& engine,
+    const harken::TimelineVoiceInstallDesc& install) noexcept {
+    const LegacyTimelineVoiceInstallProjection projection{install};
+    if (projection.Status() != VN_OK) return projection.Status();
+    return PreflightTimelineVoiceStart(engine, projection.Input());
 }
 
 void FillStopLeafExitMarker(const harken::Engine& engine,
@@ -6330,28 +6435,35 @@ bool PrepareVariableAncestorWeights(harken::Engine& engine,
 }
 
 TimelineVoiceInstallResult InstallTimelineVoiceStart(
-    harken::Engine& engine, const harken::TimelineVoiceInstallDesc& install,
+    harken::Engine& engine, const harken::TimelineVoiceInstallInput& input,
     harken::ProgramGeneration programGeneration, std::uint64_t startFrame,
     harken::PlayableInstanceHandle parentInstance,
     harken::PlayableInstanceHandle playableRoot,
     const harken::OccurrenceToken* progressOccurrence,
     const harken::PlayableProgramKey* completionProgram,
-    harken::ParentAudioGroupRef parentGroup = {},
-    std::uint16_t groupMemberIndex = UINT16_MAX,
-    const harken::WeightSegmentV1* variableWeight = nullptr,
-    harken::EnginePreparedTimelineVoiceStart* preparedOut = nullptr,
-    harken::EnginePreparedTimelineVoiceStart* committedOut = nullptr,
-    harken::EnginePlayableServiceRow* resourceService = nullptr,
-    const harken::EnginePlayableServiceRow* variableWeightService = nullptr,
-    bool pendingImmediateStart = false,
-    bool retainOriginalSingleSource = false,
-    bool retainOriginalQueueSource = false,
-    bool deferInheritedStop = false,
-    harken::VariableReadCutRef* initialVariableCut = nullptr,
-    harken::VariablePlaybackOrder initialVariableOrder = {},
-    bool shareInitialVariableCut = false,
-    std::uint64_t initialVariableAuthoredOffset = 0) {
+    harken::ParentAudioGroupRef parentGroup,
+    std::uint16_t groupMemberIndex,
+    const harken::WeightSegmentV1* variableWeight,
+    harken::EnginePreparedTimelineVoiceStart* preparedOut,
+    harken::EnginePreparedTimelineVoiceStart* committedOut,
+    harken::EnginePlayableServiceRow* resourceService,
+    const harken::EnginePlayableServiceRow* variableWeightService,
+    bool pendingImmediateStart,
+    bool retainOriginalSingleSource,
+    bool retainOriginalQueueSource,
+    bool deferInheritedStop,
+    harken::VariableReadCutRef* initialVariableCut,
+    harken::VariablePlaybackOrder initialVariableOrder,
+    bool shareInitialVariableCut,
+    std::uint64_t initialVariableAuthoredOffset) {
     TimelineVoiceInstallResult result;
+    std::uint32_t commandCount = 0;
+    const auto shape = TimelineVoiceStartCommandBudget(input, &commandCount);
+    if (shape != VN_OK) {
+        result.status = shape;
+        return result;
+    }
+    const auto& install = *input.facts;
     if (preparedOut != nullptr && preparedOut->prepared) {
         return result;
     }
@@ -6422,14 +6534,9 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         result.status = VN_INVALID_ARG;
         return result;
     }
-    std::uint32_t commandCount =
-        TimelineVoiceStartCommandBudget(install) +
-        static_cast<std::uint32_t>(variableWeight != nullptr);
-    if (install.sendCount > harken::kTimelineMaxVoiceSends ||
-        install.sendCount > engine.config.voiceSendSlots ||
-        install.effectCount > harken::kTimelineMaxVoiceEffects ||
-        install.bindingCount > engine.config.voiceBindingInstanceSlots ||
-        install.bindingCount > harken::kMaxVoiceBindingInstanceSlots ||
+    commandCount += static_cast<std::uint32_t>(variableWeight != nullptr);
+    if (input.sends.size() > engine.config.voiceSendSlots ||
+        input.bindings.size() > engine.config.voiceBindingInstanceSlots ||
         commandCount > engine.playLedBatchScratch.size() ||
         !AtomicBatchFitsCapacities(engine, commandCount)) {
         result.status = VN_INVALID_CONFIG;
@@ -6674,9 +6781,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     engine.params.SetApiDirect(render, harken::kTargetVoicePan, install.pan);
     engine.params.SetApiDirect(render, harken::kTargetVoiceWidth, install.spread);
     bool pitchFixed = true;
-    for (std::uint32_t i = 0; i < install.bindingCount; ++i) {
-        const harken::TimelineVoiceBindingInstall& binding =
-            install.bindingStorage[i];
+    for (const auto& binding : input.bindings) {
         harken::BindingDefinitionView definition;
         definition.definitionId = binding.bindingId;
         definition.variableId = binding.variableId;
@@ -6765,9 +6870,9 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     }
 
     std::array<harken::VoiceSendConfig, harken::kMaxVoiceSendSlots> timelineSends{};
-    for (std::uint32_t send = 0; send < install.sendCount; ++send) {
+    for (std::uint32_t send = 0; send < input.sends.size(); ++send) {
         const harken::BusSlotRef target =
-            engine.buses.FindRef(install.sends[send].targetBusId);
+            engine.buses.FindRef(input.sends[send].targetBusId);
         if (!target.Valid()) {
             return rollback(VN_UNKNOWN_ID);
         }
@@ -6781,13 +6886,11 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         sendCommand.payload.setVoiceSend.targetBusGeneration =
             target.generation;
         sendCommand.payload.setVoiceSend.levelDb =
-            install.sends[send].levelDb;
-        timelineSends[send] = {true, target.index, install.sends[send].levelDb, target.generation};
+            input.sends[send].levelDb;
+        timelineSends[send] = {true, target.index, input.sends[send].levelDb, target.generation};
     }
 
-    for (std::uint32_t effect = 0; effect < install.effectCount; ++effect) {
-        const harken::TimelineVoiceEffectInstall& source =
-            install.effects[effect];
+    for (const auto& source : input.effects) {
         if (source.descriptorSize < sizeof(VnEffectDesc) ||
             source.descriptorSize > harken::kTimelineMaxEffectDescriptorBytes ||
             source.slot >= engine.config.fxSlotsPerVoice) {
@@ -7170,9 +7273,11 @@ engine.runtimeRecreateRequired = true;
     observedPath.voiceInstance = render;
     observedPath.soundId = install.soundId;
     observedPath.outputBusId = install.outputBusId;
-    observedPath.path = install.playbackPath;
-    observedPath.sendCount = install.sendCount;
-    std::copy_n(install.sends, install.sendCount, observedPath.sends);
+    observedPath.path = {};
+    observedPath.path.rowCount = static_cast<std::uint32_t>(input.pathRows.size());
+    std::copy(input.pathRows.begin(), input.pathRows.end(), observedPath.path.rows);
+    observedPath.sendCount = static_cast<std::uint32_t>(input.sends.size());
+    std::copy(input.sends.begin(), input.sends.end(), observedPath.sends);
     result.status = VN_OK;
     result.renderHandle = render;
     result.sourceTerminal = sourceTerminal;
@@ -7182,6 +7287,44 @@ engine.runtimeRecreateRequired = true;
     result.completionPredictability = completionPredictability;
     result.completionPredicate = completionPredicate;
     return result;
+}
+
+TimelineVoiceInstallResult InstallTimelineVoiceStart(
+    harken::Engine& engine, const harken::TimelineVoiceInstallDesc& install,
+    harken::ProgramGeneration programGeneration, std::uint64_t startFrame,
+    harken::PlayableInstanceHandle parentInstance,
+    harken::PlayableInstanceHandle playableRoot,
+    const harken::OccurrenceToken* progressOccurrence,
+    const harken::PlayableProgramKey* completionProgram,
+    harken::ParentAudioGroupRef parentGroup = {},
+    std::uint16_t groupMemberIndex = UINT16_MAX,
+    const harken::WeightSegmentV1* variableWeight = nullptr,
+    harken::EnginePreparedTimelineVoiceStart* preparedOut = nullptr,
+    harken::EnginePreparedTimelineVoiceStart* committedOut = nullptr,
+    harken::EnginePlayableServiceRow* resourceService = nullptr,
+    const harken::EnginePlayableServiceRow* variableWeightService = nullptr,
+    bool pendingImmediateStart = false,
+    bool retainOriginalSingleSource = false,
+    bool retainOriginalQueueSource = false,
+    bool deferInheritedStop = false,
+    harken::VariableReadCutRef* initialVariableCut = nullptr,
+    harken::VariablePlaybackOrder initialVariableOrder = {},
+    bool shareInitialVariableCut = false,
+    std::uint64_t initialVariableAuthoredOffset = 0) {
+    const LegacyTimelineVoiceInstallProjection projection{install};
+    if (projection.Status() != VN_OK) {
+        TimelineVoiceInstallResult result;
+        result.status = projection.Status();
+        return result;
+    }
+    return InstallTimelineVoiceStart(
+        engine, projection.Input(), programGeneration, startFrame,
+        parentInstance, playableRoot, progressOccurrence, completionProgram,
+        parentGroup, groupMemberIndex, variableWeight, preparedOut,
+        committedOut, resourceService, variableWeightService,
+        pendingImmediateStart, retainOriginalSingleSource,
+        retainOriginalQueueSource, deferInheritedStop, initialVariableCut,
+        initialVariableOrder, shareInitialVariableCut, initialVariableAuthoredOffset);
 }
 
 bool CancelPreparedTimelineVoiceStart(
@@ -17127,8 +17270,10 @@ harken::PlayableStartStatus PreflightScheduleLeafStarts(
         } else {
             ++futureFrameCount;
         }
+        const LegacyTimelineVoiceInstallProjection projection{leaves[index].voice};
+        if (projection.Status() != VN_OK) return harken::PlayableStartStatus::InvalidInput;
         const VnResult physical =
-            PreflightTimelineVoiceStart(engine, leaves[index].voice);
+            PreflightTimelineVoiceStart(engine, projection.Input());
         if (physical != VN_OK) {
             return physical == VN_NO_VOICE
                        ? harken::PlayableStartStatus::Capacity
@@ -17136,10 +17281,11 @@ harken::PlayableStartStatus PreflightScheduleLeafStarts(
                              ? harken::PlayableStartStatus::Backpressure
                              : harken::PlayableStartStatus::InvalidInput;
         }
-        const std::uint32_t demand =
-            TimelineVoiceStartCommandBudget(leaves[index].voice) +
-            static_cast<std::uint32_t>(
-                leaves[index].hasVariableWeight);
+        std::uint32_t demand = 0;
+        if (TimelineVoiceStartCommandBudget(projection.Input(), &demand) != VN_OK) {
+            return harken::PlayableStartStatus::InvalidInput;
+        }
+        demand += static_cast<std::uint32_t>(leaves[index].hasVariableWeight);
         if (demand > UINT32_MAX - commandCount) {
             return harken::PlayableStartStatus::Capacity;
         }
@@ -17167,21 +17313,17 @@ harken::PlayableStartStatus PreflightScheduleLeafStarts(
         return harken::PlayableStartStatus::Backpressure;
     }
     for (std::uint32_t index = 0; index < leafCount; ++index) {
-        for (std::uint32_t effect = 0;
-             effect < leaves[index].voice.effectCount; ++effect) {
-            const std::uint32_t type =
-                leaves[index].voice.effects[effect].type;
+        const auto effects = std::span{leaves[index].voice.effects}.first(
+            leaves[index].voice.effectCount);
+        for (std::size_t effect = 0; effect < effects.size(); ++effect) {
+            const std::uint32_t type = effects[effect].type;
             std::uint32_t demand = 0;
             for (std::uint32_t priorLeaf = 0;
                  priorLeaf <= index; ++priorLeaf) {
-                const std::uint32_t limit =
-                    priorLeaf == index
-                        ? effect + 1u
-                        : leaves[priorLeaf].voice.effectCount;
-                for (std::uint32_t priorEffect = 0;
-                     priorEffect < limit; ++priorEffect) {
-                    if (leaves[priorLeaf].voice.effects[priorEffect].type ==
-                        type) {
+                const auto priorEffects = std::span{leaves[priorLeaf].voice.effects}.first(
+                    priorLeaf == index ? effect + 1u : leaves[priorLeaf].voice.effectCount);
+                for (const auto& priorEffect : priorEffects) {
+                    if (priorEffect.type == type) {
                         ++demand;
                     }
                 }
@@ -23776,8 +23918,8 @@ bool PrepareCompositeQueueContinuation(
     };
     std::uint32_t targetCommandCount = 0;
     for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
-        const std::uint32_t demand =
-            TimelineVoiceStartCommandBudget(prepared[index].voice);
+        std::uint32_t demand = 0;
+        if (TimelineVoiceStartCommandBudget(prepared[index].voice, &demand) != VN_OK) return false;
         if (demand > UINT32_MAX - targetCommandCount) return false;
         targetCommandCount += demand;
     }
@@ -25072,8 +25214,10 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
             : engine.timelinePool.PreflightPlan03GroupSlices(
                   secondFrame, 1);
     };
-    const std::uint32_t successorCommandCount =
-        TimelineVoiceStartCommandBudget(voice);
+    std::uint32_t successorCommandCount = 0;
+    if (TimelineVoiceStartCommandBudget(voice, &successorCommandCount) != VN_OK) {
+        return QueueContinuationPrepareStatus::Failed;
+    }
     std::array<std::array<harken::ScheduledEventInput, 2>,
                1u + harken::kMaxKnownScheduleLeaves> preflightEvents{};
     std::array<harken::TransactionRequest,
@@ -30125,8 +30269,10 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteEntry(
             targets[index].leaf.stableId;
         targets[index].voice.target.occurrenceOrdinal =
             targets[index].occurrenceOrdinal;
-        const std::uint32_t demand =
-            TimelineVoiceStartCommandBudget(targets[index].voice);
+        std::uint32_t demand = 0;
+        if (TimelineVoiceStartCommandBudget(targets[index].voice, &demand) != VN_OK) {
+            return VariableRetargetPrepareStatus::Fatal;
+        }
         if (demand > UINT32_MAX - enteringCommandCount) {
             return VariableRetargetPrepareStatus::Fatal;
         }
@@ -31035,8 +31181,10 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
             targetFadeEndFrame,
             targetStartFrame + targets[index].startOffsetFrames +
                 targetFadeFrames);
-        const std::uint32_t demand =
-            TimelineVoiceStartCommandBudget(targets[index].voice);
+        std::uint32_t demand = 0;
+        if (TimelineVoiceStartCommandBudget(targets[index].voice, &demand) != VN_OK) {
+            return VariableRetargetPrepareStatus::Fatal;
+        }
         if (demand > UINT32_MAX - enteringCommandCount) {
             return VariableRetargetPrepareStatus::Fatal;
         }
@@ -50755,12 +50903,27 @@ VnResult PreflightTimelineVoiceStartForExport(
     return PreflightTimelineVoiceStart(engine, install);
 }
 
+VnResult PreflightTimelineVoiceStartForExport(
+    const harken::Engine& engine,
+    const harken::TimelineVoiceInstallInput& input) noexcept {
+    return PreflightTimelineVoiceStart(engine, input);
+}
+
 TimelineVoiceInstallResult InstallTimelineVoiceStartForExport(
     harken::Engine& engine, const harken::TimelineVoiceInstallDesc& install,
     harken::ProgramGeneration programGeneration, harken::PlayableInstanceHandle parentInstance,
     harken::PlayableInstanceHandle playableRoot) {
     return InstallTimelineVoiceStart(engine, install, programGeneration, 0, parentInstance, playableRoot, nullptr,
                                      nullptr);
+}
+
+TimelineVoiceInstallResult InstallTimelineVoiceStartForExport(
+    harken::Engine& engine, const harken::TimelineVoiceInstallInput& input,
+    harken::ProgramGeneration programGeneration, harken::PlayableInstanceHandle parentInstance,
+    harken::PlayableInstanceHandle playableRoot) {
+    return InstallTimelineVoiceStart(engine, input, programGeneration, 0,
+        parentInstance, playableRoot, nullptr, nullptr, {}, UINT16_MAX, nullptr,
+        nullptr, nullptr, nullptr, nullptr, false, false, false, false, nullptr, {}, false, 0);
 }
 
 } // namespace
@@ -50812,10 +50975,26 @@ VnResult PreflightTimelineVoiceStart(
     return PreflightTimelineVoiceStartForExport(engine, install);
 }
 
+VnResult PreflightTimelineVoiceStart(
+    const Engine& engine, const TimelineVoiceInstallInput& input) noexcept {
+    return PreflightTimelineVoiceStartForExport(engine, input);
+}
+
 TimelineVoiceInstallResult InstallTimelineVoiceStart(
     Engine& engine, const TimelineVoiceInstallDesc& install, ProgramGeneration programGeneration,
     PlayableInstanceHandle parentInstance, PlayableInstanceHandle playableRoot) {
     const auto inner = InstallTimelineVoiceStartForExport(engine, install, programGeneration,
+        parentInstance, playableRoot);
+    TimelineVoiceInstallResult result;
+    result.status = inner.status;
+    result.renderHandle = inner.renderHandle;
+    return result;
+}
+
+TimelineVoiceInstallResult InstallTimelineVoiceStart(
+    Engine& engine, const TimelineVoiceInstallInput& input, ProgramGeneration programGeneration,
+    PlayableInstanceHandle parentInstance, PlayableInstanceHandle playableRoot) {
+    const auto inner = InstallTimelineVoiceStartForExport(engine, input, programGeneration,
         parentInstance, playableRoot);
     TimelineVoiceInstallResult result;
     result.status = inner.status;

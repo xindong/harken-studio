@@ -9,6 +9,7 @@
 #include "harken/core/QueueRuntime.h"
 #include "harken/core/PlayablePropertyCut.h"
 #include "harken/core/TimelineProgram.h"
+#include "harken/core/TimelineVoiceInstallInput.h"
 
 namespace harken {
 
@@ -47,8 +48,15 @@ PlayableStartStatus BuildTimelineVoiceInstallFromCut(
 VnResult PreflightTimelineVoiceStart(
     const Engine& engine, const TimelineVoiceInstallDesc& install) noexcept;
 
+VnResult PreflightTimelineVoiceStart(
+    const Engine& engine, const TimelineVoiceInstallInput& input) noexcept;
+
 TimelineVoiceInstallResult InstallTimelineVoiceStart(
     Engine& engine, const TimelineVoiceInstallDesc& install, ProgramGeneration programGeneration = 0,
+    PlayableInstanceHandle parentInstance = 0, PlayableInstanceHandle playableRoot = 0);
+
+TimelineVoiceInstallResult InstallTimelineVoiceStart(
+    Engine& engine, const TimelineVoiceInstallInput& input, ProgramGeneration programGeneration = 0,
     PlayableInstanceHandle parentInstance = 0, PlayableInstanceHandle playableRoot = 0);
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)

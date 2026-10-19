@@ -331,6 +331,7 @@ struct FrontierTrace {
     void Capture(harken::Engine& engine) {
         for (std::uint32_t slot = 0; slot < engine.timelineArms.Capacity(); ++slot) {
             const auto* arm = engine.timelineArms.RowAt(slot);
+            if (arm == nullptr) continue;
             if (arm->startedBlockSequence.load() == 0 && arm->frontierLastReadSequence.load() == 0) continue;
             const auto matches = [&](const harken::TimelineArmToken& token) {
                 return token.slot == slot && token.generation == arm->generation &&
