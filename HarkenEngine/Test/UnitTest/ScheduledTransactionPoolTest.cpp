@@ -253,7 +253,7 @@ struct PrivateUnboundPageArmHarness {
         config.maxArmsPerGroup = 1;
         ASSERT_TRUE(pool->Reset(config, base, kEpoch));
         frame = base + 10;
-        if (maximumArm) arms->RowAt(0)->generation = UINT32_MAX;
+        if (maximumArm) ASSERT_TRUE(arms->SetFreeGenerationForTests(0, UINT32_MAX));
         const harken::PreparedPageGroupTransferScope scope{17, 51, 7, 3};
         for (std::size_t i = 0; i < 2; ++i) {
             harken::DecisionReserveRequest request{};

@@ -6588,7 +6588,7 @@ TEST(AuthoredStopAudio, PendingControlSourceLoanReturnsBeforeMaximumGenerationQu
         SCOPED_TRACE(sourceMaximum);
         harken::TimelineArmTable table(2);
         PendingControlRecord h;
-        table.RowAt(sourceMaximum ? 0u : 1u)->generation = UINT32_MAX;
+        ASSERT_TRUE(table.SetFreeGenerationForTests(sourceMaximum ? 0u : 1u, UINT32_MAX));
         ASSERT_TRUE(h.PrepareSource(table));
         ASSERT_TRUE(h.CommitControl(table));
         ASSERT_TRUE(h.BindSource(table, 120));
@@ -6783,7 +6783,7 @@ TEST(AuthoredStopAudio, PendingControlPreparedMaximumDisposesToQuarantineWithout
     for (const bool sourceMaximum : {false, true}) {
         harken::TimelineArmTable table(2);
         PendingControlRecord h;
-        table.RowAt(sourceMaximum ? 0 : 1)->generation = UINT32_MAX;
+        ASSERT_TRUE(table.SetFreeGenerationForTests(sourceMaximum ? 0u : 1u, UINT32_MAX));
         ASSERT_TRUE(h.PrepareSource(table));
         const auto token = sourceMaximum ? h.source : h.record.token;
         ASSERT_EQ(UINT32_MAX, token.generation);

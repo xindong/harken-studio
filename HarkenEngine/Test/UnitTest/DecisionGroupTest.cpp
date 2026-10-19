@@ -2288,7 +2288,7 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
     harken::ScheduledTransactionPool pool;
     harken::TimelineArmTable arms(1);
     if (armEnd == UnpublishedRetirementArmEnd::Quarantined)
-        arms.RowAt(0)->generation = UINT32_MAX;
+        ASSERT_TRUE(arms.SetFreeGenerationForTests(0, UINT32_MAX));
     harken::DecisionTable decisions(2, 2);
     auto config = MakePoolConfig();
     config.maxPlan03GroupHeadersPerPage =

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <new>
 
 namespace harken {
 namespace {
@@ -193,11 +194,13 @@ bool TombstoneReservedRow(TimelineArmTable::Row* row,
 } // namespace
 
 TimelineArmTable::TimelineArmTable(std::uint32_t capacity)
-    : groupMemberScopes_(capacity == 0 ? nullptr : std::make_unique<GroupMemberScope[]>(capacity)),
-      rows_(capacity == 0 ? nullptr : std::make_unique<Row[]>(capacity)),
-      capacity_(capacity), incarnation_(NextArmTableIncarnation()) {}
+    : capacity_(capacity), incarnation_(NextArmTableIncarnation()) {
+    if (!groupMemberScopes_.Reserve(capacity) || !rows_.Reserve(capacity))
+        throw std::bad_alloc{};
+}
 
 TimelineArmTable::~TimelineArmTable() {
+    if (memguard::IsAudioTagged()) std::terminate();
     while (unpublishedGroupArmCancellations_ != nullptr)
         unpublishedGroupArmCancellations_->Release();
     // Quiescent receiver detachment protects pools destroyed after this table.
@@ -210,7 +213,7 @@ TimelineArmTable::~TimelineArmTable() {
     while (privateUnboundPageArmRetirements_ != nullptr)
         privateUnboundPageArmRetirements_->Release();
     // Table destruction returns its actual retained loans without an audio receipt.
-    for (std::uint32_t index = 0; index < capacity_; ++index) {
+    for (std::uint32_t index = 0; index < rows_.ConstructedCount(); ++index) {
         auto& pin = rows_[index].pendingControlSourceReader;
         if (!pin.Valid()) continue;
         const auto* source = PinnedAuthoredControlSource(rows_[index]);
@@ -321,7 +324,7 @@ void TimelineArmTable::DetachGroupMemberReceiver(GroupMemberReceiver& receiver) 
 
 bool TimelineArmTable::CompleteOriginalGroupMemberCoverage(TimelineArmToken arm,
     const OriginalGroupMember* const* originals, std::size_t count) const noexcept {
-    if (!arm.Valid() || arm.slot >= capacity_ || (count != 0 && originals == nullptr)) return false;
+    if (!arm.Valid() || arm.slot >= rows_.ConstructedCount() || (count != 0 && originals == nullptr)) return false;
     const auto& scope = groupMemberScopes_[arm.slot];
     if (!SameOriginalGroupArm(scope.arm, arm) || scope.activeCount != count) return false;
     for (std::size_t i = 0; i < count; ++i) {
@@ -339,8 +342,9 @@ bool TimelineArmTable::CompleteOriginalGroupMemberCoverage(TimelineArmToken arm,
 }
 
 std::uint32_t TimelineArmTable::FreeCount() const noexcept {
-    std::uint32_t count = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    const auto constructed = rows_.ConstructedCount();
+    std::uint32_t count = capacity_ - constructed;
+    for (std::uint32_t slot = 0; slot < constructed; ++slot) {
         if (rows_[slot].state.load(std::memory_order_acquire) ==
             ArmState::Free) {
             ++count;
@@ -349,9 +353,30 @@ std::uint32_t TimelineArmTable::FreeCount() const noexcept {
     return count;
 }
 
+bool TimelineArmTable::SetFreeGenerationForTests(
+    std::uint32_t slot, std::uint32_t generation) noexcept {
+    if (memguard::IsAudioTagged() || slot >= capacity_ || generation == 0 ||
+        !groupMemberScopes_.ConstructThrough(slot + 1) ||
+        !rows_.ConstructThrough(slot + 1))
+        return false;
+    auto& row = rows_[slot];
+    ArmMutationAccess access(&row);
+    if (!access || row.state.load(std::memory_order_acquire) != ArmState::Free ||
+        row.identity.load(std::memory_order_acquire) != 0 ||
+        row.originalLifetimePinned.load(std::memory_order_acquire) ||
+        row.variableReadPins.load(std::memory_order_acquire) != 0 ||
+        row.frontierReaderPins.load(std::memory_order_acquire) != 0 ||
+        row.pendingControlSourceReader.Valid() ||
+        row.frontierActiveLease.load(std::memory_order_acquire) != nullptr ||
+        groupMemberScopes_[slot].activeCount != 0 || groupMemberScopes_[slot].jointHeld)
+        return false;
+    row.generation = generation;
+    return true;
+}
+
 TimelineArmTable::Row* TimelineArmTable::Resolve(
     TimelineArmToken token) noexcept {
-    if (!token.Valid() || token.slot >= capacity_) {
+    if (!token.Valid() || token.slot >= rows_.ConstructedCount()) {
         return nullptr;
     }
     Row& row = rows_[token.slot];
@@ -407,7 +432,7 @@ bool TimelineArmTable::PreparePendingAuthoredControlInternal(
     const auto* view = input.program.program;
     const auto source = input.sourceStart;
     if (outToken == nullptr || outToken->Valid() || incarnation_ == 0 ||
-        !source.Valid() || source.slot >= capacity_ || input.operation == nullptr ||
+        !source.Valid() || source.slot >= rows_.ConstructedCount() || input.operation == nullptr ||
         view == nullptr || input.events == nullptr || input.eventCapacity == 0 ||
         input.eventCapacity > 2 || input.program.programGeneration == 0 ||
         view->generation != input.program.programGeneration || view->payloads == nullptr ||
@@ -454,7 +479,7 @@ bool TimelineArmTable::PreparePendingAuthoredControlInternal(
 
 bool TimelineArmTable::ProvePendingAuthoredControlCommit(TimelineArmToken token,
     const PendingAuthoredControlInput& expected, PreparedCommitProof* out) noexcept {
-    if (out == nullptr || out->Valid() || !token.Valid() || token.slot >= capacity_) return false;
+    if (out == nullptr || out->Valid() || !token.Valid() || token.slot >= rows_.ConstructedCount()) return false;
     auto& row = rows_[token.slot];
     if (row.reservation.test_and_set(std::memory_order_acquire)) return false;
     const auto& control = row.authoredControl;
@@ -500,9 +525,9 @@ bool TimelineArmTable::ProvePendingAuthoredControlBinding(TimelineArmToken token
 bool TimelineArmTable::ProvePendingAuthoredControlBindingInternal(TimelineArmToken token,
     const TimelineArmReaderPin& sourceReader, const AuthoredControlInput& final,
     ParentAudioGroupRef selectedSourceGroup, PendingAuthoredControlBindingProof* out) noexcept {
-    if (out == nullptr || out->Valid() || incarnation_ == 0 || !token.Valid() || token.slot >= capacity_ ||
+    if (out == nullptr || out->Valid() || incarnation_ == 0 || !token.Valid() || token.slot >= rows_.ConstructedCount() ||
         sourceReader.owner_ != this || !sourceReader.token_.Valid() ||
-        sourceReader.token_.slot >= capacity_ || sourceReader.token_.slot == token.slot) return false;
+        sourceReader.token_.slot >= rows_.ConstructedCount() || sourceReader.token_.slot == token.slot) return false;
     auto& row = rows_[token.slot];
     if (row.reservation.test_and_set(std::memory_order_acquire)) return false;
     auto& source = rows_[sourceReader.token_.slot];
@@ -626,7 +651,7 @@ bool TimelineArmTable::ProveAuthoredControlBucket(TimelineArmToken token,
     std::uint64_t quantumBegin, std::uint32_t blockFrames, std::uint64_t audioSequence,
     const ScheduledEventInput* dueEvents, std::uint32_t dueCount,
     AuthoredControlBucketProof* out) noexcept {
-    if (out == nullptr || out->Valid() || !token.Valid() || token.slot >= capacity_ ||
+    if (out == nullptr || out->Valid() || !token.Valid() || token.slot >= rows_.ConstructedCount() ||
         reader.owner_ != this || !SameArm(reader.token_, token) ||
         blockFrames == 0 || quantumBegin > UINT64_MAX - blockFrames ||
         quantumBegin % blockFrames != 0 || audioSequence != quantumBegin / blockFrames + 1u ||
@@ -834,13 +859,15 @@ bool TimelineArmTable::ReserveInternal(
     ParentAudioGroupRef parentGroup, std::uint16_t memberIndex, bool grouped,
     bool prepared, bool pendingImmediateStart,
     TimelineArmToken* outToken, const AuthoredControlMetadata* control) noexcept {
-    if (outToken == nullptr || renderSlot == UINT32_MAX ||
+    if (memguard::IsAudioTagged() || outToken == nullptr || renderSlot == UINT32_MAX ||
         renderGeneration == 0 ||
         (grouped && (!parentGroup.Valid() || memberIndex == UINT16_MAX)) ||
         (!grouped && (parentGroup.Valid() || memberIndex != UINT16_MAX))) {
         return false;
     }
     for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+        if (!groupMemberScopes_.ConstructThrough(slot + 1) ||
+            !rows_.ConstructThrough(slot + 1)) return false;
         Row& row = rows_[slot];
         if (row.state.load(std::memory_order_acquire) != ArmState::Free ||
             row.reservation.test_and_set(std::memory_order_acquire)) {
@@ -910,7 +937,7 @@ bool TimelineArmTable::ProvePreparedCommit(
     const PreparedCommitInput& expected, PreparedCommitProof* out) noexcept {
     const auto token = expected.arm;
     if (out == nullptr || out->Valid() || !token.Valid() ||
-        token.slot >= capacity_ || expected.armDeadline > expected.startFrame ||
+        token.slot >= rows_.ConstructedCount() || expected.armDeadline > expected.startFrame ||
         (expected.parentGroup.Valid() != (expected.memberIndex != UINT16_MAX)) ||
         (expected.pendingImmediateStart &&
          (expected.startFrame != 0 || expected.armDeadline != 0))) return false;
@@ -988,7 +1015,7 @@ bool TimelineArmTable::PinPreparedVariableRead(const PreparedCommitProof& proof,
         row.authoredControl.stage != AuthoredControlStage::None ||
         row.authoredControl.operation != nullptr ||
         row.variableReadPins.load(std::memory_order_relaxed) == UINT32_MAX) return false;
-    const auto slot = static_cast<std::uint32_t>(&row - rows_.get());
+    const auto slot = rows_.IndexOf(row);
     row.variableReadPins.fetch_add(1u, std::memory_order_release);
     out->owner_ = this;
     out->row_ = &row;
@@ -1045,7 +1072,7 @@ bool TimelineArmTable::IssueOriginalArmRowOwner(const PreparedCommitProof& prepa
         row.authoredControl.stage != AuthoredControlStage::None ||
         row.originalLifetimeIssued ||
         row.originalLifetimePinned.load(std::memory_order_acquire)) return false;
-    const auto slot = static_cast<std::uint32_t>(&row - rows_.get());
+    const auto slot = rows_.IndexOf(row);
     assert(slot < capacity_ && row.generation != 0);
     row.originalLifetimeIssued = true;
     row.originalLifetimePinned.store(true, std::memory_order_release);
@@ -1066,7 +1093,7 @@ bool TimelineArmTable::IssueOriginalControlHeaderRowOwner(
         row.authoredControl.operation == nullptr || row.pendingImmediateStart ||
         row.startBound || row.originalLifetimeIssued ||
         row.originalLifetimePinned.load(std::memory_order_acquire)) return false;
-    const auto slot = static_cast<std::uint32_t>(&row - rows_.get());
+    const auto slot = rows_.IndexOf(row);
     assert(slot < capacity_ && row.generation != 0);
     row.originalLifetimeIssued = true;
     row.originalLifetimePinned.store(true, std::memory_order_release);
@@ -1123,7 +1150,7 @@ bool TimelineArmTable::RetirePendingImmediateBatchExact(
     std::size_t reserved = 0;
     for (; reserved < inputCount; ++reserved) {
         const auto& input = inputs[reserved];
-        if (!input.arm.Valid() || input.arm.slot >= capacity_ ||
+        if (!input.arm.Valid() || input.arm.slot >= rows_.ConstructedCount() ||
             !input.parentGroup.Valid() || input.memberIndex == UINT16_MAX ||
             input.binding == nullptr || input.lease == nullptr ||
             !input.binding->Valid() ||
@@ -1370,7 +1397,7 @@ TimelineArmTable::ControlCommandAckStatus TimelineArmTable::AcknowledgeControlCo
     TimelineArmToken token, std::uint64_t originalCompletionSequence,
     std::uint64_t currentAudioSequence) noexcept {
     using Status = ControlCommandAckStatus;
-    if (!token.Valid() || token.slot >= capacity_ || originalCompletionSequence == 0 ||
+    if (!token.Valid() || token.slot >= rows_.ConstructedCount() || originalCompletionSequence == 0 ||
         currentAudioSequence < originalCompletionSequence) return Status::Invalid;
     auto& row = rows_[token.slot];
     ArmMutationAccess access(&row);
@@ -1414,7 +1441,7 @@ TimelineArmTable::SourceCommandRowStatus TimelineArmTable::ProvePendingSourceCom
     TimelineArmToken token, SourceCommandRowProof* out, const void* originalSubmission) noexcept {
     using Status = SourceCommandRowStatus;
     if (out == nullptr || out->Valid() || incarnation_ == 0 ||
-        !token.Valid() || token.slot >= capacity_) return Status::Invalid;
+        !token.Valid() || token.slot >= rows_.ConstructedCount()) return Status::Invalid;
     auto& row = rows_[token.slot];
     if (row.reservation.test_and_set(std::memory_order_acquire))
         return Status::DeferredReservation;
@@ -1668,7 +1695,7 @@ bool TimelineArmTable::IssueOriginalUnpublishedSourceDisposition(
     std::uint64_t sourceEpisode, std::uint64_t originalMarker,
     std::uint64_t sourceIdentity, OriginalUnpublishedSourceDisposition* out) const noexcept {
     if (out == nullptr || out->Valid() || original.owner_ != this || original.row_ == nullptr ||
-        !original.token_.Valid() || original.token_.slot >= capacity_ || incarnation_ == 0 ||
+        !original.token_.Valid() || original.token_.slot >= rows_.ConstructedCount() || incarnation_ == 0 ||
         submission == nullptr || sourceEpisode == 0 || sourceIdentity == 0) return false;
     const auto token = original.token_;
     const auto& row = *original.row_;
@@ -1692,7 +1719,7 @@ TimelineArmTable::ConsumeOriginalUnparentedUnpublishedSource(
     const OriginalUnpublishedSourceDisposition& original) noexcept {
     using Status = UnparentedUnpublishedSourceRetirement;
     const auto token = original.token_;
-    if (original.owner_ != this || !token.Valid() || token.slot >= capacity_ ||
+    if (original.owner_ != this || !token.Valid() || token.slot >= rows_.ConstructedCount() ||
         original.tableIncarnation_ != incarnation_ || original.row_ != &rows_[token.slot] ||
         original.submission_ == nullptr || original.sourceIdentity_ == 0 || original.sourceEpisode_ == 0 ||
         (original.unboundOriginal_
@@ -1747,7 +1774,7 @@ TimelineArmTable::ConsumeOriginalUnparentedUnpublishedSource(
 
 TimelineArmToken TimelineArmTable::PreparedCommitProof::OriginalPreparedToken() const noexcept {
     if (owner_ == nullptr || row_ == nullptr) return {};
-    return {static_cast<std::uint32_t>(row_ - owner_->rows_.get()), row_->generation,
+    return {owner_->rows_.IndexOf(*row_), row_->generation,
         row_->renderSlot, row_->renderGeneration};
 }
 
@@ -1756,7 +1783,7 @@ TimelineArmTable::SourceCommandRowStatus TimelineArmTable::RequestOriginalPendin
     std::uint64_t sourceEpisode) noexcept {
     using Status = SourceCommandRowStatus;
     const auto token = original.token_;
-    if (original.owner_ != this || !token.Valid() || token.slot >= capacity_ ||
+    if (original.owner_ != this || !token.Valid() || token.slot >= rows_.ConstructedCount() ||
         original.row_ != &rows_[token.slot] || submission == nullptr || sourceEpisode == 0)
         return Status::Invalid;
     auto& row = *original.row_;
@@ -1785,7 +1812,7 @@ TimelineArmTable::SourceCommandRowStatus TimelineArmTable::RequestOriginalPendin
 bool TimelineArmTable::OriginalPendingSourceRetirementSettled(const OriginalArmRowOwner& original,
     const void* submission, std::uint64_t sourceEpisode) const noexcept {
     const auto token = original.token_;
-    if (original.owner_ != this || !token.Valid() || token.slot >= capacity_ ||
+    if (original.owner_ != this || !token.Valid() || token.slot >= rows_.ConstructedCount() ||
         original.row_ != &rows_[token.slot] || submission == nullptr || sourceEpisode == 0) return false;
     const auto& row = *original.row_;
     return IdentityMatches(row, token) && row.renderSlot == token.renderSlot &&
@@ -1852,7 +1879,7 @@ void TimelineArmTable::TombstoneOriginalSourceCommand(SourceCommandRowProof& pro
 bool TimelineArmTable::AcknowledgeApplied(
     std::uint64_t packedIdentity, std::uint64_t completionSequence) noexcept {
     const std::uint32_t slot = static_cast<std::uint32_t>(packedIdentity);
-    if (slot >= capacity_) {
+    if (slot >= rows_.ConstructedCount()) {
         return false;
     }
     Row& row = rows_[slot];
@@ -1874,7 +1901,7 @@ bool TimelineArmTable::AcknowledgeApplied(
 bool TimelineArmTable::ResolveIdentity(
     std::uint64_t packedIdentity, TimelineArmToken* outToken) const noexcept {
     const std::uint32_t slot = static_cast<std::uint32_t>(packedIdentity);
-    if (slot >= capacity_ || outToken == nullptr) {
+    if (slot >= rows_.ConstructedCount() || outToken == nullptr) {
         return false;
     }
     Row& row = rows_[slot];
@@ -1975,7 +2002,7 @@ bool TimelineArmTable::ProvePrivatePendingImmediateArmBatch(
     std::size_t reserved = 0;
     for (; reserved < inputCount; ++reserved) {
         const auto& input = inputs[reserved];
-        if (!input.arm.Valid() || input.arm.slot >= capacity_ ||
+        if (!input.arm.Valid() || input.arm.slot >= rows_.ConstructedCount() ||
             input.armDeadline > input.startFrame || input.pin == nullptr ||
             input.pin->Valid() ||
             (input.admission == nullptr) != (input.lease == nullptr))
@@ -2118,7 +2145,7 @@ bool TimelineArmTable::ProveBoundArmPublicationBatch(
                 !input.sourceStart.Valid();
         AuthoredControlMetadata captured{};
         if (control.stage != AuthoredControlStage::Bound || expected.pendingImmediateStart ||
-            input.admission != nullptr || !input.sourceStart.Valid() || input.sourceStart.slot >= capacity_ ||
+            input.admission != nullptr || !input.sourceStart.Valid() || input.sourceStart.slot >= rows_.ConstructedCount() ||
             !SameArm(input.sourceStart, control.sourceStart) ||
             input.control->renderSlot != token.renderSlot ||
             input.control->renderGeneration != token.renderGeneration ||
@@ -2144,7 +2171,7 @@ bool TimelineArmTable::ProveBoundArmPublicationBatch(
     for (std::size_t index = 0; index < inputCount; ++index) {
         const auto& input = inputs[index];
         const auto token = input.expected.arm;
-        if (!token.Valid() || token.slot >= capacity_) return false;
+        if (!token.Valid() || token.slot >= rows_.ConstructedCount()) return false;
         auto& row = rows_[token.slot];
         bool held = false;
         for (std::size_t prior = 0; prior < acquired.count_; ++prior)
@@ -2275,7 +2302,7 @@ bool TimelineArmTable::ProveLaneCancelledStart(const TimelineArmReaderPin& reade
     std::uint64_t audioSequence, LaneAudioProof* out) noexcept {
     if (out == nullptr || out->Valid() || audioSequence == 0 ||
         !original.frozenTxnValid || reader.owner_ != this ||
-        !SameArm(reader.token_, original.armToken) || reader.token_.slot >= capacity_) return false;
+        !SameArm(reader.token_, original.armToken) || reader.token_.slot >= rows_.ConstructedCount()) return false;
     auto& row = rows_[reader.token_.slot];
     if (row.reservation.test_and_set(std::memory_order_acquire)) return false;
     const auto state = row.state.load(std::memory_order_acquire);
@@ -2296,7 +2323,7 @@ bool TimelineArmTable::ReleasePendingControlSourceReader(Row& control,
     TimelineArmToken token, std::uint64_t completedAudioSequence) noexcept {
     auto& pin = control.pendingControlSourceReader;
     if (!pin.Valid()) return true;
-    if (pin.owner_ != this || pin.token_.slot >= capacity_ ||
+    if (pin.owner_ != this || pin.token_.slot >= rows_.ConstructedCount() ||
         !SameArm(pin.token_, control.authoredControl.sourceStart)) return false;
     auto& source = rows_[pin.token_.slot];
     if (source.reservation.test_and_set(std::memory_order_acquire)) return false;
@@ -2564,7 +2591,7 @@ bool TimelineArmTable::Start(TimelineArmToken token,
 
 bool TimelineArmTable::PinFrontierReader(TimelineArmToken token,
     TimelineArmReaderPin* out) noexcept {
-    if (out == nullptr || out->Valid() || !token.Valid() || token.slot >= capacity_) return false;
+    if (out == nullptr || out->Valid() || !token.Valid() || token.slot >= rows_.ConstructedCount()) return false;
     auto& row = rows_[token.slot];
     if (row.reservation.test_and_set(std::memory_order_acquire)) return false;
     const auto state = row.state.load(std::memory_order_acquire);
@@ -2914,7 +2941,7 @@ bool TimelineArmTable::UnbindPrivatePendingFrontierAdmissionRow(TimelineArmReade
 bool TimelineArmTable::WitnessUnpublishedFrontierRetirement(
     TimelineArmToken token, const FrontierGroupBinding& binding,
     const AudioSliceLease& lease) const noexcept {
-    if (incarnation_ == 0 || !token.Valid() || token.slot >= capacity_) return false;
+    if (incarnation_ == 0 || !token.Valid() || token.slot >= rows_.ConstructedCount()) return false;
     auto& row = const_cast<Row&>(rows_[token.slot]);
     if (row.reservation.test_and_set(std::memory_order_acquire)) return false;
     const auto state = row.state.load(std::memory_order_acquire);
@@ -2934,7 +2961,7 @@ bool TimelineArmTable::WitnessUnpublishedFrontierRetirement(
 bool TimelineArmTable::FrontierAdmissionReleasedForRetirement(
     TimelineArmToken token, const FrontierGroupBinding& binding,
     const AudioSliceLease& lease) const noexcept {
-    if (!token.Valid() || token.slot >= capacity_) return false;
+    if (!token.Valid() || token.slot >= rows_.ConstructedCount()) return false;
     auto& row = const_cast<Row&>(rows_[token.slot]);
     if (row.reservation.test_and_set(std::memory_order_acquire)) return false;
     const auto state = row.state.load(std::memory_order_acquire);
@@ -2956,7 +2983,7 @@ bool TimelineArmTable::FrontierAdmissionReleasedForRetirement(
 bool TimelineArmTable::FrontierArmReclaimedAfterRetirementWitness(
     TimelineArmToken token, std::uint64_t witnessedIncarnation) const noexcept {
     if (witnessedIncarnation == 0 || witnessedIncarnation != incarnation_ ||
-        !token.Valid() || token.slot >= capacity_) return false;
+        !token.Valid() || token.slot >= rows_.ConstructedCount()) return false;
     auto& row = const_cast<Row&>(rows_[token.slot]);
     if (row.reservation.test_and_set(std::memory_order_acquire)) return false;
     const auto state = row.state.load(std::memory_order_acquire);
@@ -3136,7 +3163,7 @@ void TimelineArmTable::ApplyBoundFrontierArm(BoundAudioProof& proof, bool comple
 
 bool TimelineArmTable::ReleaseFrontierReader(TimelineArmToken token,
     std::uint64_t completedAudioSequence) noexcept {
-    if (!token.Valid() || token.slot >= capacity_) return false;
+    if (!token.Valid() || token.slot >= rows_.ConstructedCount()) return false;
     auto& row = rows_[token.slot];
     if (row.reservation.test_and_set(std::memory_order_acquire)) return false;
     const auto pins = row.frontierReaderPins.load(std::memory_order_acquire);
@@ -3167,7 +3194,7 @@ bool TimelineArmReaderPin::Release(std::uint64_t completedAudioSequence) noexcep
 
 const TimelineArmTable::Row* TimelineArmTable::PinnedPlainRow(
     const TimelineArmReaderPin& pin) const noexcept {
-    if (pin.owner_ != this || !pin.token_.Valid() || pin.token_.slot >= capacity_) return nullptr;
+    if (pin.owner_ != this || !pin.token_.Valid() || pin.token_.slot >= rows_.ConstructedCount()) return nullptr;
     const auto& row = rows_[pin.token_.slot];
     const auto state = row.state.load(std::memory_order_acquire);
     if (!IdentityMatches(row, pin.token_) || row.renderSlot != pin.token_.renderSlot ||
@@ -3186,7 +3213,7 @@ const TimelineArmTable::Row* TimelineArmTable::PinnedAuthoredControlSource(
     const auto& pin = control.pendingControlSourceReader;
     const auto selected = control.authoredControl.selectedSourceGroup;
     if (!selected.Valid()) return PinnedPlainRow(pin);
-    if (pin.owner_ != this || !pin.token_.Valid() || pin.token_.slot >= capacity_ ||
+    if (pin.owner_ != this || !pin.token_.Valid() || pin.token_.slot >= rows_.ConstructedCount() ||
         !SameArm(pin.token_, control.authoredControl.sourceStart)) return nullptr;
     const auto& row = rows_[pin.token_.slot];
     const auto state = row.state.load(std::memory_order_acquire);
@@ -3263,7 +3290,7 @@ TimelineArmOperationDisposition TimelineArmTable::BeginFrontierOperation(
     TimelineArmOperationKind kind, std::uint64_t audioSequence,
     AudioOperationClaim* out, const FrontierEventBinding* binding,
     const ScheduledTransactionPool* pool) noexcept {
-    if (out == nullptr || out->Valid() || !token.Valid() || token.slot >= capacity_ ||
+    if (out == nullptr || out->Valid() || !token.Valid() || token.slot >= rows_.ConstructedCount() ||
         !operation.Valid() || operation.group.Valid() || audioSequence == 0 ||
         operation.armSlot != token.slot || operation.armGeneration != token.generation ||
         operation.renderSlot != token.renderSlot || operation.renderGeneration != token.renderGeneration)
@@ -3374,7 +3401,7 @@ bool TimelineArmTable::AcknowledgeLogicalComplete(
     TimelineArmToken token,
     std::uint64_t completionSequence) noexcept {
     if (completionSequence == 0 || !token.Valid() ||
-        token.slot >= capacity_) {
+        token.slot >= rows_.ConstructedCount()) {
         return false;
     }
     Row& row = rows_[token.slot];
@@ -3473,7 +3500,7 @@ bool TimelineArmTable::Tombstone(TimelineArmToken token,
 
 std::uint32_t TimelineArmTable::LiveCount() const noexcept {
     std::uint32_t live = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
         const ArmState state =
             rows_[slot].state.load(std::memory_order_acquire);
         if (state != ArmState::Free && state != ArmState::Tombstoned &&
@@ -3486,7 +3513,7 @@ std::uint32_t TimelineArmTable::LiveCount() const noexcept {
 
 bool TimelineArmTable::State(TimelineArmToken token,
                              ArmState* outState) const noexcept {
-    if (outState == nullptr || !token.Valid() || token.slot >= capacity_) {
+    if (outState == nullptr || !token.Valid() || token.slot >= rows_.ConstructedCount()) {
         return false;
     }
     const Row& row = rows_[token.slot];
@@ -3503,7 +3530,7 @@ bool TimelineArmTable::AckSnapshot(
     TimelineArmToken token, ArmState* outState,
     std::uint64_t* outCompletionSequence) const noexcept {
     if (outState == nullptr || outCompletionSequence == nullptr ||
-        !token.Valid() || token.slot >= capacity_) {
+        !token.Valid() || token.slot >= rows_.ConstructedCount()) {
         return false;
     }
     const Row& row = rows_[token.slot];
@@ -3521,7 +3548,7 @@ bool TimelineArmTable::AckSnapshot(
 bool TimelineArmTable::Observe(
     TimelineArmToken token,
     TimelineArmObservation* out) const noexcept {
-    if (out == nullptr || !token.Valid() || token.slot >= capacity_) {
+    if (out == nullptr || !token.Valid() || token.slot >= rows_.ConstructedCount()) {
         return false;
     }
     const Row& row = rows_[token.slot];
@@ -3554,7 +3581,7 @@ bool TimelineArmTable::Snapshot(
     TimelineArmToken token, ArmState* outState,
     TimelineSemanticTarget* outTarget) noexcept {
     if (outState == nullptr || outTarget == nullptr || !token.Valid() ||
-        token.slot >= capacity_) {
+        token.slot >= rows_.ConstructedCount()) {
         return false;
     }
     Row& row = rows_[token.slot];
@@ -3575,7 +3602,7 @@ bool TimelineArmTable::Snapshot(
 
 bool TimelineArmTable::HasUnpublishedTombstoneExact(TimelineArmToken token,
     ParentAudioGroupRef parent, std::uint16_t memberIndex) noexcept {
-    if (!token.Valid() || token.slot >= capacity_ || !parent.Valid() ||
+    if (!token.Valid() || token.slot >= rows_.ConstructedCount() || !parent.Valid() ||
         memberIndex == UINT16_MAX) return false;
     Row& row = rows_[token.slot];
     ArmMutationAccess access(&row);
@@ -3597,7 +3624,7 @@ bool TimelineArmTable::HasUnpublishedTombstoneExact(TimelineArmToken token,
 
 bool TimelineArmTable::HasUnobservedTombstoneExact(TimelineArmToken token,
     ParentAudioGroupRef parent, std::uint16_t memberIndex) noexcept {
-    if (!token.Valid() || token.slot >= capacity_ || !parent.Valid() ||
+    if (!token.Valid() || token.slot >= rows_.ConstructedCount() || !parent.Valid() ||
         memberIndex == UINT16_MAX) return false;
     Row& row = rows_[token.slot];
     ArmMutationAccess access(&row);
@@ -3624,7 +3651,7 @@ bool TimelineArmTable::HasUnobservedTombstoneExact(TimelineArmToken token,
 
 bool TimelineArmTable::HasLiveGeneration(
     ProgramGeneration generation) const noexcept {
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
         const Row& row = rows_[slot];
         const ArmState state = row.state.load(std::memory_order_acquire);
         if (state == ArmState::Free || state == ArmState::Tombstoned ||
@@ -3641,7 +3668,7 @@ bool TimelineArmTable::HasLiveGeneration(
 std::uint32_t TimelineArmTable::ReclaimTombstoned(
     std::uint64_t observedAudioSequence) noexcept {
     std::uint32_t reclaimed = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
         Row& row = rows_[slot];
         if (row.state.load(std::memory_order_acquire) != ArmState::Tombstoned ||
             observedAudioSequence <= row.tombstoneAudioSequence.load(
@@ -3663,7 +3690,7 @@ std::uint32_t TimelineArmTable::ReclaimTombstoned(
 
 bool TimelineArmTable::Reclaim(
     TimelineArmToken token, std::uint64_t observedAudioSequence) noexcept {
-    if (!token.Valid() || token.slot >= capacity_) {
+    if (!token.Valid() || token.slot >= rows_.ConstructedCount()) {
         return false;
     }
     Row* row = &rows_[token.slot];
