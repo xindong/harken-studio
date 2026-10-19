@@ -26,6 +26,10 @@
         },
         {
           "category": "improved",
+          "text": "Studio installation, repair, and removal recover when Windows briefly locks the installation index."
+        },
+        {
+          "category": "improved",
           "text": "Reopening a project in a compatible Studio version activates its existing window, and Hub recognizes a successful handoff."
         }
       ]

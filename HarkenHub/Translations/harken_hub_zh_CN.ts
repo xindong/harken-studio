@@ -159,6 +159,7 @@
     <message><source>Hub and Studio updates preserve each other's progress when running together, and outdated operations cannot overwrite newer update state.</source><translation>Hub 与 Studio 同时更新时，各自的进度不会相互覆盖；过时操作也不会覆盖已经推进的更新状态。</translation></message>
     <message><source>Manual and background Studio downloads can run together. Packages remain protected from competing downloads and cache cleanup until installation handoff finishes.</source><translation>Studio 手动下载可与后台下载同时进行。下载包在交接给安装程序前，持续受到保护，避免被其他下载覆盖或被缓存清理删除。</translation></message>
     <message><source>Updates and local build checks recover from temporary file locks on Windows without reporting unsaved state as complete.</source><translation>Windows 上的更新与本地构建检查可在文件短暂占用后恢复，不再将尚未保存的状态报告为完成。</translation></message>
+    <message><source>Studio installation, repair, and removal recover when Windows briefly locks the installation index.</source><translation>Windows 短暂占用安装索引时，Studio 的安装、修复和卸载可自动恢复。</translation></message>
     <message><source>Reopening a project in a compatible Studio version activates its existing window, and Hub recognizes a successful handoff.</source><translation>使用支持此功能的 Studio 版本重复打开工程时，会激活已有窗口，Hub 会正确识别转交成功。</translation></message>
     <message>
         <source>Hub and Studio updates now use the new GitHub repository, with COS downloads retained as a fallback.</source>
