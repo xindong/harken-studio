@@ -27,10 +27,6 @@ public:
 
     QString packagePath() const { return packagePath_; }
     QString manifestPath() const { return manifestPath_; }
-    QString buildId() const
-    {
-        return activeRow_ >= 0 ? rows_.at(activeRow_).manifest.buildId : QString();
-    }
     std::shared_ptr<DownloadLease> takeDownloadLease() { return std::move(downloadLease_); }
 
 private:

@@ -1199,17 +1199,6 @@ void VersionsPage::beginGetFromServer()
         return;
     if (dialog.packagePath().isEmpty() || dialog.manifestPath().isEmpty())
         return;
-    const auto currentIndex = InstallIndex::snapshot();
-    if (currentIndex.ok) {
-        for (const auto& record : currentIndex.records) {
-            if (record.buildId == dialog.buildId()) {
-                refresh();
-                installStatusLabel_->setText(
-                    QCoreApplication::translate("HarkenHub", "Installed"));
-                return;
-            }
-        }
-    }
     beginInstallFromFiles(dialog.packagePath(), dialog.manifestPath(), true,
                           dialog.takeDownloadLease());
 }
@@ -1282,16 +1271,6 @@ void VersionsPage::onPrepared(const InstallPreparation& preparation)
         return;
     }
 
-    const auto index = InstallIndex::snapshot();
-    if (index.ok) {
-        for (const auto& record : index.records) {
-            if (record.buildId == preparation.buildId) {
-                HandoffArea::discard(preparation.transactionId);
-                finishElevatedFlow(QCoreApplication::translate("HarkenHub", "Installed"));
-                return;
-            }
-        }
-    }
     installStatusLabel_->setText(
         QCoreApplication::translate("HarkenHub", "Installing HarkenStudio %1...").arg(preparation.version));
 
