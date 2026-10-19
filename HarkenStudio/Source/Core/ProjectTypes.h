@@ -938,8 +938,6 @@ struct ProjectData
 
     QString packBuildOutputDir;
 
-    ConversionFailurePolicy conversionFailurePolicy = ConversionFailurePolicy::AbortBuild;
-
     std::vector<AudioSourceData> audioSources;
 
     QStringList actionNames;

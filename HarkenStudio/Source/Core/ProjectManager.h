@@ -537,9 +537,6 @@ public:
     bool setPackBuildOutputDir(const QString& value);
     void setPackBuildOutputDirInternal(const QString& value);
 
-    ConversionFailurePolicy getConversionFailurePolicy() const;
-    void setConversionFailurePolicy(ConversionFailurePolicy value);
-
     PackExportSelection packExportSelection() const;
     void setPackExportSelectionInternal(PackExportSelection selection);
 
@@ -590,7 +587,6 @@ signals:
     void busChanged(uint32_t busID, const QString& propertyName,
                     const QObject* originator = nullptr);
     void packBuildOutputDirChanged(QString newValue);
-    void conversionFailurePolicyChanged(ConversionFailurePolicy value);
     void packExportCurrentPlatformChanged(QString newValue);
     void packExportSelectedPlatformsChanged(QStringList newValue);
     void packGroupsChanged();

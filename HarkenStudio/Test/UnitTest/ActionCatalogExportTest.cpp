@@ -161,7 +161,6 @@ protected:
         ProjectData* project = manager.currentProject();
         if (!project || project->busses.empty() || !project->busses.front().rootItem)
             return false;
-        project->conversionFailurePolicy = ConversionFailurePolicy::AbortBuild;
         const uint32_t sourceId = registerToneAsset(projectRoot_, QStringLiteral("tone.wav"));
         AudioSourceData sourceData;
         sourceData.sourceID = sourceId;

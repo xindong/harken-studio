@@ -267,7 +267,6 @@ void buildProject(VNX::ProjectData& project,
     project.name = QStringLiteral("shared-pack");
     project.projectPath =
         QDir(projectRoot).filePath(QStringLiteral("shared-pack.vproj"));
-    project.conversionFailurePolicy = VNX::ConversionFailurePolicy::AbortBuild;
 
     for (uint32_t sourceID : {sharedSourceId, soloSourceId})
     {

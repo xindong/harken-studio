@@ -1,15 +1,19 @@
 #include "Core/QtControlSkin.h"
+#include "Core/ThemeManager.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
+#include "Widgets/Common/TableItemDelegate.h"
 
 #include <gtest/gtest.h>
 
 #include <QApplication>
 #include <QDir>
+#include <QEventLoop>
 #include <QFontDatabase>
 #include <QHeaderView>
 #include <QImage>
 #include <QMouseEvent>
 #include <QScopeGuard>
+#include <QTimer>
 
 namespace {
 
@@ -153,6 +157,187 @@ TEST_F(ProportionalTreeWidgetTest, HiddenAndReorderedColumnsKeepTheirOwnShares)
     QCoreApplication::processEvents();
     EXPECT_NEAR(table.columnWidth(2), ratio * table.viewport()->width(), 2);
     expectFilled(table);
+}
+
+TEST_F(ProportionalTreeWidgetTest, PinnedTrailingColumnsKeepOrderWhileOtherColumnsMove)
+{
+    VNX::ProportionalTreeWidget table({200, 200, 200, 200, 200});
+    table.setHeaderLabels({"A", "B", "C", "D", "E"});
+    table.setPinnedTrailingColumns({1, 3});
+    auto* header = table.header();
+    header->setSectionsMovable(true);
+    header->setFirstSectionMovable(true);
+    table.resize(900, 200);
+    table.show();
+    QCoreApplication::processEvents();
+    const auto order = [&] {
+        QList<int> result;
+        for (int i = 0; i < header->count(); ++i) result.append(header->logicalIndex(i));
+        return result;
+    };
+    EXPECT_EQ(order(), (QList<int>{0, 2, 4, 1, 3}));
+    header->moveSection(header->visualIndex(1), 0);
+    EXPECT_EQ(order(), (QList<int>{0, 2, 4, 1, 3}));
+    header->moveSection(header->visualIndex(2), header->count() - 1);
+    EXPECT_EQ(order(), (QList<int>{0, 4, 2, 1, 3}));
+    const auto drag = [&](const QPoint& from, const QPoint& to) {
+        auto* viewport = header->viewport();
+        QMouseEvent press(QEvent::MouseButtonPress, from, viewport->mapToGlobal(from),
+                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &press);
+        QMouseEvent move(QEvent::MouseMove, to, viewport->mapToGlobal(to),
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &move);
+        QMouseEvent release(QEvent::MouseButtonRelease, to, viewport->mapToGlobal(to),
+                            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &release);
+        QEventLoop loop;
+        QTimer::singleShot(200, &loop, &QEventLoop::quit);
+        loop.exec();
+    };
+    for (int column : {1, 3}) {
+        drag(QPoint(header->sectionViewportPosition(column) + header->sectionSize(column) / 2,
+                    header->height() / 2), QPoint(10, header->height() / 2));
+        EXPECT_EQ(order(), (QList<int>{0, 4, 2, 1, 3}));
+    }
+    drag(QPoint(header->sectionViewportPosition(4) + header->sectionSize(4) / 2,
+                header->height() / 2), QPoint(header->viewport()->width() - 10, header->height() / 2));
+    EXPECT_EQ(order(), (QList<int>{0, 2, 4, 1, 3}));
+    const int width = header->sectionSize(1);
+    const QPoint edge(header->sectionViewportPosition(1) + width - 1, header->height() / 2);
+    drag(edge, edge + QPoint(30, 0));
+    EXPECT_GT(header->sectionSize(1), width);
+    expectFilled(table);
+    table.setColumnsHidden({4}, true);
+    EXPECT_EQ(order(), (QList<int>{0, 2, 4, 1, 3}));
+    table.setPinnedTrailingColumns({});
+    header->moveSection(header->visualIndex(3), 0);
+    EXPECT_EQ(header->logicalIndex(0), 3);
+}
+
+TEST_F(ProportionalTreeWidgetTest, ColumnDecorationsPreserveGroupsAndSelectionAcrossLayoutChanges)
+{
+    VNX::ProportionalTreeWidget table({400, 300, 300});
+    table.setHeaderLabels({"A", "B", "C"});
+    auto* group = table.createGroup("Group");
+    auto* child = new QTreeWidgetItem(group, {"Child"});
+    table.show();
+    for (int width : {640, 920, 360}) {
+        child->setSelected(false);
+        table.setAccentedColumns({});
+        table.setColumnSeparatorBefore(-1);
+        table.resize(width, 240);
+        table.setColumnsHidden({2}, width == 360);
+        if (width == 920) table.header()->moveSection(table.header()->visualIndex(1), 2);
+        QCoreApplication::processEvents();
+        const QImage plain = table.grab().toImage();
+        table.setAccentedColumns({1});
+        table.setColumnSeparatorBefore(1);
+        QCoreApplication::processEvents();
+        const int x = table.viewport()->x() + table.header()->sectionViewportPosition(1) - 1;
+        const QImage image = table.grab().toImage();
+        const QRect groupRect = table.visualItemRect(group).translated(table.viewport()->pos());
+        EXPECT_EQ(image.copy(groupRect), plain.copy(groupRect));
+        for (int y = table.header()->y(); y <= table.viewport()->geometry().bottom(); ++y) {
+            if (y >= groupRect.top() && y <= groupRect.bottom()) continue;
+            ASSERT_EQ(image.pixelColor(x, y), VNX::ThemeManager::instance().colors().borderPrimary)
+                << "width " << width << ", row " << y;
+        }
+        const int normalX = table.viewport()->x() + table.header()->sectionViewportPosition(0)
+            + table.columnWidth(0) - 8;
+        const int accentedX = x + table.columnWidth(1) - 8;
+        const int headerY = table.header()->geometry().center().y();
+        const int rowY = table.viewport()->y() + table.visualItemRect(child).bottom() - 5;
+        const int emptyY = table.viewport()->geometry().bottom() - 4;
+        EXPECT_NE(image.pixelColor(normalX, headerY), image.pixelColor(accentedX, headerY));
+        EXPECT_NE(image.pixelColor(normalX, rowY), image.pixelColor(accentedX, rowY));
+        EXPECT_EQ(image.pixelColor(accentedX, emptyY), image.pixelColor(accentedX, rowY));
+        EXPECT_EQ(image.pixelColor(normalX, emptyY), image.pixelColor(normalX, rowY));
+        child->setSelected(true);
+        QCoreApplication::processEvents();
+        const QImage selected = table.grab().toImage();
+        EXPECT_EQ(selected.pixelColor(normalX, rowY), selected.pixelColor(accentedX, rowY));
+        auto* hit = table.childAt(x, table.header()->geometry().center().y());
+        ASSERT_NE(hit, nullptr);
+        EXPECT_TRUE(table.header() == hit || table.header()->isAncestorOf(hit));
+    }
+    const int accentedX = table.viewport()->x() + table.header()->sectionViewportPosition(1) + 8;
+    const int emptyY = table.viewport()->geometry().bottom() - 4;
+    const QColor background = table.grab().toImage().pixelColor(accentedX, emptyY);
+    table.clear();
+    table.setColumnSeparatorBefore(-1);
+    QCoreApplication::processEvents();
+    const QImage empty = table.grab().toImage();
+    EXPECT_EQ(empty.pixelColor(accentedX, table.viewport()->y() + 4), background);
+    EXPECT_EQ(empty.pixelColor(accentedX, emptyY), background);
+}
+
+TEST_F(ProportionalTreeWidgetTest, RowProgressPreservesGroupsAndTrailingCellsAcrossLayoutAndSelection)
+{
+    VNX::ProportionalTreeWidget table({300, 250, 250, 200});
+    table.setHeaderLabels({"A", "B", "C", "Status"});
+    table.setPinnedTrailingColumns({3});
+    table.setAccentedColumns({3});
+    table.setColumnSeparatorBefore(3);
+    auto* group = table.createGroup("Group");
+    auto* child = new QTreeWidgetItem(group, {"Task", "Value"});
+    child->setCheckState(0, Qt::Checked);
+    table.show();
+    for (int width : {700, 1000, 380}) {
+        table.resize(width, 240);
+        table.setColumnsHidden({1}, width == 380);
+        if (width == 1000) table.header()->moveSection(table.header()->visualIndex(2), 0);
+        for (bool selected : {false, true}) {
+            SCOPED_TRACE(::testing::Message() << "width " << width << ", selected " << selected);
+            child->setSelected(selected);
+            child->setData(0, VNX::TableRowProgressRole, {});
+            table.setRowProgressEndColumn(-1);
+            QCoreApplication::processEvents();
+            const QImage baseline = table.viewport()->grab().toImage();
+            table.setRowProgressEndColumn(3);
+            QCoreApplication::processEvents();
+            EXPECT_EQ(table.viewport()->grab().toImage(), baseline);
+            const QRect row = table.visualItemRect(child);
+            const QRect groupRect = table.visualItemRect(group);
+            const int boundary = table.header()->sectionViewportPosition(3);
+            const int y = row.top() + 2;
+            const int inside = boundary / 4;
+            const int outside = boundary * 3 / 4;
+            child->setData(0, VNX::TableRowProgressRole, 50);
+            child->setData(0, VNX::TableRowProgressStateRole,
+                static_cast<int>(VNX::TableRowProgressState::Active));
+            table.viewport()->update();
+            QCoreApplication::processEvents();
+            const QImage progress = table.viewport()->grab().toImage();
+            EXPECT_NE(progress.pixelColor(inside, y), baseline.pixelColor(inside, y));
+            EXPECT_EQ(progress.pixelColor(outside, y), baseline.pixelColor(outside, y));
+            EXPECT_EQ(progress.copy(groupRect), baseline.copy(groupRect));
+            const QRect trailing(boundary, row.top(), table.viewport()->width() - boundary, row.height());
+            EXPECT_EQ(progress.copy(trailing), baseline.copy(trailing));
+            EXPECT_EQ(progress.copy(0, row.bottom(), boundary, 1), baseline.copy(0, row.bottom(), boundary, 1));
+            if (selected)
+                EXPECT_EQ(progress.pixelColor(1, y), VNX::ThemeManager::instance().colors().accent);
+            child->setData(0, VNX::TableRowProgressStateRole,
+                static_cast<int>(VNX::TableRowProgressState::Failed));
+            table.viewport()->update();
+            QCoreApplication::processEvents();
+            const QImage failed = table.viewport()->grab().toImage();
+            EXPECT_NE(failed.pixelColor(inside, y), progress.pixelColor(inside, y));
+            EXPECT_EQ(failed.pixelColor(outside, y), baseline.pixelColor(outside, y));
+            child->setData(0, VNX::TableRowProgressRole, 100);
+            child->setData(0, VNX::TableRowProgressStateRole,
+                static_cast<int>(VNX::TableRowProgressState::Complete));
+            table.viewport()->update();
+            QCoreApplication::processEvents();
+            const QImage complete = table.viewport()->grab().toImage();
+            EXPECT_NE(complete.pixelColor(outside, y), baseline.pixelColor(outside, y));
+            EXPECT_EQ(complete.copy(trailing), baseline.copy(trailing));
+            child->setData(0, VNX::TableRowProgressRole, 0);
+            table.viewport()->update();
+            QCoreApplication::processEvents();
+            EXPECT_EQ(table.viewport()->grab().toImage(), baseline);
+        }
+    }
 }
 
 TEST_F(ProportionalTreeWidgetTest, SharedHeaderActuallyRendersMixedCaseLabels)

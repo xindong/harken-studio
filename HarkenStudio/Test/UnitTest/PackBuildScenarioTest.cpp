@@ -334,7 +334,6 @@ VNX::ProjectData executableProject(const QString& root, uint32_t sharedSourceId)
     VNX::ProjectData project = HarkenTest::projectWithPlatforms();
     project.name = QStringLiteral("phase6-pack-scenario");
     project.projectPath = QDir(root).filePath(QStringLiteral("scenario.vproj"));
-    project.conversionFailurePolicy = VNX::ConversionFailurePolicy::AbortBuild;
     project.platforms = HarkenTest::platforms({QStringLiteral("Windows"), QStringLiteral("Linux")});
 
     const VNX::AssetInfo* asset =
@@ -572,7 +571,6 @@ TEST(PackBuildScenario, PhysicalLocalizedVariantsUseSelectedAndCommonMedia)
     project.projectPath = QDir(dir.path()).filePath(QStringLiteral("localized.vproj"));
     project.platforms = HarkenTest::platforms({QStringLiteral("Windows")});
     project.projectLanguages = {QStringLiteral("English"), QStringLiteral("Japanese")};
-    project.conversionFailurePolicy = VNX::ConversionFailurePolicy::AbortBuild;
     for (const auto& [sourceId, path, language] :
          std::vector<std::tuple<uint32_t, QString, QString>>{
              {localizedEnglishSource, QStringLiteral("localized-en.wav"), QStringLiteral("English")},

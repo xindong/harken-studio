@@ -809,6 +809,9 @@ void MainWindow::initializeDeferred(
 
 MainWindow::~MainWindow()
 {
+    PackGenerationRecordStore::instance().cancelExport();
+    for (const auto& thread : packExportThreads_)
+        if (thread) thread->wait();
     delete eventCaptureController_;
     eventCaptureController_ = nullptr;
     closeMonitorSession();
@@ -4199,6 +4202,8 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                                       bool includeUnchecked,
                                       bool forceReexport, bool selfCleaning)
 {
+    auto& progressStore = PackGenerationRecordStore::instance();
+    if (progressStore.isExporting()) return;
     const auto projectLease = ProjectManager::instance().currentProjectLease();
     if (!projectLease) return;
     PropertyEditSession::finishAllActive(true);
@@ -4219,8 +4224,6 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
     }
     const ProjectData* pmProject = &snapshot->project;
 
-    if (packGenerationInProgress_) return;
-    QScopedValueRollback<bool> generationGuard(packGenerationInProgress_, true);
     const auto platformActivity = ProjectPlatformActivity::acquire();
 
     const QStringList genPlatforms = platforms;
@@ -4236,9 +4239,6 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
             return;
         }
     }
-    if (packPaths.isEmpty())
-        PackGenerationRecordStore::instance().clear();
-
     const QString baseDir = PathUtils::packBuildOutputRoot(
         pmProject->projectPath, pmProject->packBuildOutputDir);
     if (PathUtils::isProjectRootDirectory(baseDir, pmProject->projectPath)
@@ -4292,147 +4292,150 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                   .arg(packPaths.size())
                   .arg(genPlatforms.join(QStringLiteral(", "))));
 
-    QProgressDialog progress(tr("Exporting packs..."), tr("Cancel"),
-                             0, genPlatforms.size() * 100, this);
-    progress.setWindowModality(Qt::ApplicationModal);
-    progress.setMinimumDuration(0);
-    progress.setValue(0);
-
-    bool canceled = false;
-    int failedCount = 0;
-    int builtCount = 0;
-    int skippedCount = 0;
-    int removedCount = 0;
-    int platformIndex = 0;
-
-    QStringList succeededPlatforms;
-
-    for (const QString& platform : genPlatforms) {
-        const QString platformName = ProjectPlatformSemantics::find(pmProject->platforms, QUuid(platform))->name;
-        const QString platformDir = ProjectPackExporter::platformOutputDir(
-            baseDir, *ProjectPlatformSemantics::find(pmProject->platforms, QUuid::fromString(platform)));
-        if (progress.wasCanceled()) { canceled = true; break; }
-        QDir outputDir(platformDir);
-        outputDir.mkpath(".");
-
-        ProjectPackExporter exporter(this);
-        connect(&exporter, &ProjectPackExporter::unitProgressChanged, &progress,
-                [&progress, platformName, platformIndex](int done, int total,
-                                                     const QString& unitName) {
-            if (total > 0)
-                progress.setValue(platformIndex * 100 + (done * 100) / total);
-            progress.setLabelText(tr("%1 — %2 (%3/%4)")
-                                      .arg(platformName, unitName)
-                                      .arg(done + 1)
-                                      .arg(total));
-        });
-        ProjectPackExporter::ExportOptions opts;
-        opts.platform = platform;
-        opts.snapshot = snapshot;
-        opts.selection = exportSelection;
-        opts.debugStrings = true;
-        opts.forceReexport = forceReexport;
-        opts.selfCleaning = false;
-        opts.updateSelectedOnly = !packPaths.isEmpty();
-        for (const QString& unit : packPaths)
-            opts.onlyPackPaths.insert(unit);
-        opts.cancelCheck = [&progress]() { return progress.wasCanceled(); };
-
-        std::vector<ProjectPackExporter::PackBuildRecord> records;
-        auto result = exporter.ExportAllPacks(*pmProject, outputDir.path(), opts, &records);
-
-        if (result.success) {
-            succeededPlatforms.append(platform);
-            removedCount += result.removedPackCount;
-        }
-        if (ProjectManager::instance().currentProject() != projectLease.get()) {
-            canceled = true;
-            break;
-        }
-        if (result.success)
-            PackArtifactCache::instance().publish(platform, result.artifacts);
-        for (const auto& rec : records) {
-            recordPackGenerationResult(rec.packName, rec.objectID, rec.success,
-                                       rec.outputPath, rec.error, rec.fileSize,
-                                       rec.elapsedMs, rec.platform,
-                                       packBuildSourceLabel(rec.source),
-                                       rec.warnings.join(QStringLiteral("\n")),
-                                       rec.success && rec.skipped ? tr("Up to date") : QString(),
-                                       rec.language, &rec.platformDefinition, rec.unitKey);
-            if (rec.success && rec.skipped)
-                ++skippedCount;
-            else if (rec.success)
-                ++builtCount;
-            else
+    const auto cancel = std::make_shared<std::atomic_bool>(false);
+    const quint64 runId = progressStore.beginProgress(cancel);
+    if (runId == 0) return;
+    const QPointer<MainWindow> window(this);
+    auto* store = &progressStore;
+    ProjectPackExporter::beginBackgroundExport();
+    auto* thread = QThread::create(
+        [window, store, projectLease, snapshot, genPlatforms, packPaths,
+         exportSelection, baseDir, forceReexport, selfCleaning, cancel, runId,
+         platformActivity, outputLock]() {
+        struct ExportGate {
+            ~ExportGate() { ProjectPackExporter::endBackgroundExport(); }
+        } gate;
+        bool canceled = false;
+        int failedCount = 0;
+        int builtCount = 0;
+        int skippedCount = 0;
+        int removedCount = 0;
+        QStringList succeededPlatforms;
+        ProjectPackExporter exporter;
+        for (const QString& platform : genPlatforms) {
+            if (cancel->load(std::memory_order_relaxed)) {
+                canceled = true;
+                break;
+            }
+            const auto& definition = *ProjectPlatformSemantics::find(
+                snapshot->project.platforms, QUuid(platform));
+            const QString platformDir = ProjectPackExporter::platformOutputDir(baseDir, definition);
+            ProjectPackExporter::ExportOptions opts;
+            opts.platform = platform;
+            opts.snapshot = snapshot;
+            opts.selection = exportSelection;
+            opts.debugStrings = true;
+            opts.forceReexport = forceReexport;
+            opts.selfCleaning = false;
+            opts.updateSelectedOnly = !packPaths.isEmpty();
+            for (const QString& unit : packPaths)
+                opts.onlyPackPaths.insert(unit);
+            opts.cancelCheck = [cancel] { return cancel->load(std::memory_order_relaxed); };
+            opts.progressCallback = [store, projectLease, runId](const PackGenerationProgress& progress) {
+                QMetaObject::invokeMethod(store, [store, projectLease, runId, progress] {
+                    if (ProjectManager::instance().currentProject() == projectLease.get())
+                        store->updateProgress(runId, progress);
+                }, Qt::QueuedConnection);
+            };
+            std::vector<ProjectPackExporter::PackBuildRecord> records;
+            const auto result = exporter.ExportAllPacks(snapshot->project, platformDir, opts, &records);
+            if (result.success) {
+                succeededPlatforms.append(platform);
+                removedCount += result.removedPackCount;
+            }
+            for (const auto& rec : records) {
+                if (rec.success && rec.skipped)
+                    ++skippedCount;
+                else if (rec.success)
+                    ++builtCount;
+                else
+                    ++failedCount;
+            }
+            if (records.empty() && !result.canceled && !result.success)
                 ++failedCount;
+            QMetaObject::invokeMethod(store,
+                [window, store, projectLease, runId, platform, platformDir, definition, result, records] {
+                if (!store->isCurrentRun(runId)
+                    || ProjectManager::instance().currentProject() != projectLease.get())
+                    return;
+                if (result.success)
+                    PackArtifactCache::instance().publish(platform, result.artifacts);
+                if (!window) return;
+                for (const auto& rec : records) {
+                    window->recordPackGenerationResult(rec.packName, rec.objectID, rec.success,
+                        rec.outputPath, rec.error, rec.fileSize, rec.elapsedMs, rec.platform,
+                        packBuildSourceLabel(rec.source), rec.warnings.join(QStringLiteral("\n")),
+                        rec.success && rec.skipped ? tr("Up to date") : QString(),
+                        rec.language, &rec.platformDefinition, rec.unitKey);
+                }
+                if (records.empty() && !result.canceled) {
+                    const auto platformJson = definition.toJson();
+                    window->recordPackGenerationResult(tr("All Packs"), 0, result.success,
+                        result.outputPath, result.error, result.fileSize, -1, platform,
+                        {}, {}, {}, {}, &platformJson);
+                }
+                if (!result.canceled && !result.success)
+                    LogPanel::logError(LogCategory::Pack,
+                        result.error.isEmpty() ? tr("Pack export failed") : result.error);
+                for (const QString& warning : result.warnings)
+                    LogPanel::logWarning(LogCategory::Pack, warning);
+                LogPanel::logInfo(LogCategory::Pack,
+                    tr("%1: exported %2 pack(s) to %3").arg(definition.name)
+                        .arg(static_cast<int>(records.size()))
+                        .arg(QDir::toNativeSeparators(platformDir)));
+            }, Qt::QueuedConnection);
+            canceled = result.canceled || cancel->load(std::memory_order_relaxed);
+            if (canceled) break;
         }
-        if (records.empty() && !result.canceled) {
-            if (!result.success) ++failedCount;
-            const auto definition = ProjectPlatformSemantics::find(pmProject->platforms, QUuid(opts.platform))->toJson();
-            recordPackGenerationResult(tr("All Packs"), 0, result.success,
-                                       result.outputPath, result.error, result.fileSize,
-                                       -1, opts.platform, {}, {}, {}, {}, &definition);
-        }
-
-        if (result.canceled) {
-            canceled = true;
-        } else if (!result.success) {
-            LogPanel::logError(LogCategory::Pack,
-                result.error.isEmpty()
-                    ? tr("Pack export failed")
-                    : result.error);
-        }
-        for (const QString& warning : result.warnings)
-            LogPanel::logWarning(LogCategory::Pack, warning);
-
-        LogPanel::logInfo(LogCategory::Pack,
-            tr("%1: exported %2 pack(s) to %3")
-                .arg(platformName)
-                .arg(static_cast<int>(records.size()))
-                .arg(QDir::toNativeSeparators(outputDir.path())));
-        ++platformIndex;
-        if (canceled) break;
-        progress.setValue(platformIndex * 100);
-    }
-
-    if (ProjectManager::instance().currentProject() != projectLease.get()) return;
-    if (packPaths.isEmpty() && !canceled && succeededPlatforms.size() == genPlatforms.size()) {
-        const auto publication = ProjectPackExporter::FinalizePackExport(
-            baseDir, projectLease->platforms, genPlatforms, selfCleaning);
-        if (publication.success) {
-            removedCount += publication.removedPackCount;
-            if (selfCleaning)
-                PackArtifactCache::instance().removeUnselectedPlatforms(baseDir, genPlatforms);
-        } else {
-            ++failedCount;
-            LogPanel::logError(LogCategory::Pack, publication.error);
-        }
-    } else {
-        QString indexError;
-        if (!ProjectPackExporter::PublishPackIndex(baseDir, projectLease->platforms,
-                genPlatforms, succeededPlatforms, &indexError)) {
-            ++failedCount;
-            LogPanel::logError(LogCategory::Pack, indexError);
-        }
-    }
-
-    if (canceled) {
-        LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
-        ToastManager::instance().showToast(
-            tr("Export canceled"), 3000, ToastType::Warning);
-    } else {
-        progress.setValue(genPlatforms.size() * 100);
-        if (failedCount > 0)
-            ToastManager::instance().showToast(
-                tr("Export finished — %1 pack(s) failed").arg(failedCount),
-                4000, ToastType::Error);
-        else {
-            QString message = tr("Export finished — %1 built, %2 up to date").arg(builtCount).arg(skippedCount);
-            if (removedCount > 0) message += tr(", %1 removed").arg(removedCount);
-            ToastManager::instance().showToast(
-                message, 3000, ToastType::Success);
-        }
-    }
+        QMetaObject::invokeMethod(store,
+            [window, store, projectLease, runId, canceled, failedCount, builtCount,
+             skippedCount, removedCount, baseDir, packPaths, selfCleaning,
+             genPlatforms, succeededPlatforms, platformActivity, outputLock]() mutable {
+            if (!store->isCurrentRun(runId)) return;
+            if (ProjectManager::instance().currentProject() != projectLease.get()) {
+                store->finishProgress(runId, true);
+                return;
+            }
+            QString publicationError;
+            if (packPaths.isEmpty() && !canceled && succeededPlatforms.size() == genPlatforms.size()) {
+                const auto publication = ProjectPackExporter::FinalizePackExport(
+                    baseDir, projectLease->platforms, genPlatforms, selfCleaning);
+                if (publication.success) {
+                    removedCount += publication.removedPackCount;
+                    if (selfCleaning)
+                        PackArtifactCache::instance().removeUnselectedPlatforms(baseDir, genPlatforms);
+                } else {
+                    ++failedCount;
+                    publicationError = publication.error;
+                }
+            } else if (!ProjectPackExporter::PublishPackIndex(baseDir, projectLease->platforms,
+                           genPlatforms, succeededPlatforms, &publicationError)) {
+                ++failedCount;
+            }
+            store->finishProgress(runId, canceled);
+            if (!window) return;
+            if (!publicationError.isEmpty())
+                LogPanel::logError(LogCategory::Pack, publicationError);
+            if (canceled) {
+                LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
+                ToastManager::instance().showToast(tr("Export canceled"), 3000, ToastType::Warning);
+            } else if (failedCount > 0) {
+                ToastManager::instance().showToast(
+                    tr("Export finished — %1 pack(s) failed").arg(failedCount), 4000, ToastType::Error);
+            } else {
+                QString message = tr("Export finished — %1 built, %2 up to date")
+                    .arg(builtCount).arg(skippedCount);
+                if (removedCount > 0) message += tr(", %1 removed").arg(removedCount);
+                ToastManager::instance().showToast(message, 3000, ToastType::Success);
+            }
+        }, Qt::QueuedConnection);
+    });
+    packExportThreads_.append(thread);
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    connect(thread, &QThread::finished, this, [this, thread] {
+        packExportThreads_.removeAll(thread);
+    });
+    thread->start();
 }
 
 void MainWindow::setupUndoRedo()

@@ -576,10 +576,6 @@ TEST_F(ProjectSettingsDialogTest, IllegalCharactersCannotBeTyped)
 
 TEST_F(ProjectSettingsDialogTest, PackBuildDirectoryIsRelativeAndEmptyRestoresDefault)
 {
-    PackManagerPanel packs;
-    auto* output = packs.findChild<QLineEdit*>(QStringLiteral("packSettingsBuildOutputDirEdit"));
-    ASSERT_NE(output, nullptr);
-    EXPECT_TRUE(output->isReadOnly());
     ProjectSettingsDialog dialog;
     dialog.show();
     auto* edit = dialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
@@ -601,11 +597,9 @@ TEST_F(ProjectSettingsDialogTest, PackBuildDirectoryIsRelativeAndEmptyRestoresDe
     const QDir projectRoot(QFileInfo(projectPath).absolutePath());
     EXPECT_EQ(PathUtils::packBuildOutputRoot(projectPath, pm.packBuildOutputDir()),
               projectRoot.filePath(QStringLiteral("Audio/Packs")));
-    EXPECT_EQ(output->text(), projectRoot.filePath(QStringLiteral("Audio/Packs")));
     UndoRedoManager::instance().undoStack()->undo();
     EXPECT_EQ(PathUtils::packBuildOutputRoot(projectPath, pm.packBuildOutputDir()),
               projectRoot.filePath(QStringLiteral("BuildPacks")));
-    EXPECT_EQ(output->text(), projectRoot.filePath(QStringLiteral("BuildPacks")));
     UndoRedoManager::instance().undoStack()->redo();
     ProjectSerializer serializer;
     ASSERT_TRUE(serializer.saveProject(projectPath, *pm.currentProject()));

@@ -22,11 +22,13 @@ class ReorderHeaderView : public QHeaderView
 public:
     explicit ReorderHeaderView(Qt::Orientation orientation,
                                QWidget* parent = nullptr);
+    void setPinnedTrailingSections(const QList<int>& sections);
 
 signals:
     void sectionPositionsChanged();
 
 protected:
+    void initStyleOptionForIndex(QStyleOptionHeader* option, int logicalIndex) const override;
     bool event(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
@@ -47,6 +49,7 @@ private:
     void setGhostX(qreal x);
 
     int handleAt(int x) const;
+    void restorePinnedTrailingSections();
     void beginDrag(int x);
     void updateTarget();
     void retarget(int visual);
@@ -56,6 +59,8 @@ private:
 
     QPropertyAnimation* slideAnim_ = nullptr;
     QPropertyAnimation* dropAnim_  = nullptr;
+    QList<int> pinnedTrailingSections_;
+    bool restoringPinnedSections_ = false;
 
     int  pressLogical_ = -1;
     int  pressX_       = 0;

@@ -7,6 +7,7 @@
 #include "AssetPipeline/AssetTypes.h"
 #include "PlatformContext.h"
 #include "PackArtifactCache.h"
+#include "PackGenerationRecord.h"
 #include "ProjectTypes.h"
 #include "RuntimeBridge/PackagingBridge.h"
 #include <QObject>
@@ -57,8 +58,6 @@ namespace ProjectPackExporterInternal {
         bool    updateSelectedOnly = false;
         std::optional<PackResourceReuse> resourceReuse;
 
-        ConversionFailurePolicy conversionFailurePolicy = ConversionFailurePolicy::AbortBuild;
-
         QSet<QString> onlyUnits;
         QSet<QString> onlyPackPaths;
         std::set<harkenstudio::ObjectId> onlyActionStableIds;
@@ -66,6 +65,7 @@ namespace ProjectPackExporterInternal {
         // Polled between units; returning true aborts the export with
         // ExportResult::canceled set.
         std::function<bool()> cancelCheck;
+        std::function<void(const PackGenerationProgress&)> progressCallback;
     };
 
 }

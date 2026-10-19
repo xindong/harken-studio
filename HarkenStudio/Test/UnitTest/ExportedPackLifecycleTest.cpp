@@ -511,7 +511,6 @@ void buildExportedPack(VNX::ProjectData& project, const QString& projectRoot)
     project.name = QStringLiteral("ExportedPack");
     project.projectId = QString::fromLatin1(kExportedPackProjectId);
     project.projectPath = QDir(projectRoot).filePath(QStringLiteral("ExportedPack.vproj"));
-    project.conversionFailurePolicy = VNX::ConversionFailurePolicy::AbortBuild;
     project.platforms = HarkenTest::platforms({QStringLiteral("Windows")});
     project.projectLanguages = {};
 

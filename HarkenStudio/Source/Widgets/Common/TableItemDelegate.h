@@ -11,10 +11,14 @@ enum TableDataRole {
     TableTextRole,
     TableDropTargetRole,
     TableCursorRole,
-    TableGroupCollapsibleRole
+    TableGroupCollapsibleRole,
+    TableColumnAccentRole,
+    TableRowProgressRole,
+    TableRowProgressStateRole
 };
 
 enum class TableTextState { Normal, Muted, Disabled, Error, Modified, Custom, Success, Warning };
+enum class TableRowProgressState { Active, Complete, Failed, Canceled };
 
 class TableItemDelegate : public QStyledItemDelegate
 {
