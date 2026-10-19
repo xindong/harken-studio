@@ -1,0 +1,30 @@
+{
+    "content": {
+        "actions": [
+            {
+                "delay": 0,
+                "targetRef": {
+                    "documentId": "ecac6c1d-484b-46cf-bc95-61298d326e7b",
+                    "id": "ecac6c1d-484b-46cf-bc95-61298d326e7b"
+                },
+                "type": "Play"
+            }
+        ],
+        "guid": "77808b87-fb31-4f03-8fb0-a7a6c7b02b44",
+        "name": "Play_U4_A",
+        "nameBindingRevision": 1,
+        "objectPath": "\\Play_U4_A",
+        "parentRef": {
+            "kind": "root"
+        },
+        "type": "Action"
+    },
+    "harkenDocument": {
+        "id": "77808b87-fb31-4f03-8fb0-a7a6c7b02b44",
+        "projectId": "2a160729-e1cb-45ec-9be9-180a6b5a1a8c",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.7.2",
+        "schemaVersion": 7,
+        "type": "project.action"
+    }
+}

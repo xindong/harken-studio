@@ -1,0 +1,84 @@
+{
+    "content": {
+        "children": [
+        ],
+        "components": {
+            "sound": {
+                "distinguishLanguage": true,
+                "sources": {
+                    "localized": {
+                        "English": {
+                            "active": "fd711f6d-769c-43c8-b6ca-57f06387bbb4",
+                            "entries": [
+                                {
+                                    "entryId": "fd711f6d-769c-43c8-b6ca-57f06387bbb4",
+                                    "rangeContentHash": "fb9b3c695fed0ecf505cb3c3491a649cda84e2b3ea35b8aed36dc0fba454b7da",
+                                    "sourceId": 2074157640
+                                }
+                            ],
+                            "platforms": {
+                            }
+                        },
+                        "ja": {
+                            "active": "c6122435-5233-4bfb-bb4c-53aacd9d90dd",
+                            "entries": [
+                                {
+                                    "entryId": "c6122435-5233-4bfb-bb4c-53aacd9d90dd",
+                                    "rangeContentHash": "fb9b3c695fed0ecf505cb3c3491a649cda84e2b3ea35b8aed36dc0fba454b7da",
+                                    "sourceId": 2074157640
+                                }
+                            ],
+                            "platforms": {
+                            }
+                        }
+                    },
+                    "plain": {
+                        "active": null,
+                        "entries": [
+                        ],
+                        "platforms": {
+                        }
+                    }
+                }
+            },
+            "spatial": {
+                "spatializationMix": 1
+            }
+        },
+        "expanded": true,
+        "fieldGroups": {
+            "shared": {
+                "mainOutput": {
+                    "inherit": true
+                },
+                "send": {
+                    "inherit": true
+                },
+                "spatialRating": {
+                    "inherit": true
+                }
+            }
+        },
+        "guid": "8479fdff-bb16-4309-a53a-0e1fbfb66c8e",
+        "name": "Voice",
+        "objectPath": "\\MediaLayer\\Voice",
+        "order": 0,
+        "parentRef": {
+            "documentId": "1288d2c8-35b8-4374-95d7-64dab616526d",
+            "id": "1288d2c8-35b8-4374-95d7-64dab616526d",
+            "kind": "item"
+        },
+        "playableProperties": {
+            "presence": "0000000000000000"
+        },
+        "type": "Sound"
+    },
+    "harkenDocument": {
+        "id": "8479fdff-bb16-4309-a53a-0e1fbfb66c8e",
+        "projectId": "c6ec5c0b-d1e6-44c8-b604-e508dadb9a68",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.7.2",
+        "schemaVersion": 7,
+        "type": "project.layer"
+    }
+}

@@ -1,0 +1,81 @@
+{
+    "content": {
+        "actionPublishedNameHistory": [
+            {
+                "event": "created",
+                "name": "Play_U4_A",
+                "nameBindingRevision": 1,
+                "objectGuid": "77808b87-fb31-4f03-8fb0-a7a6c7b02b44"
+            },
+            {
+                "event": "created",
+                "name": "Play_U4_B",
+                "nameBindingRevision": 1,
+                "objectGuid": "9ed810a4-76fd-4155-abc1-ab7b1f6d5cb1"
+            },
+            {
+                "event": "created",
+                "name": "Play_U4_Caller",
+                "nameBindingRevision": 1,
+                "objectGuid": "2b8951fd-ced8-421a-a426-f272edfc8af9"
+            }
+        ],
+        "defaultLanguage": "English",
+        "metadata": {
+            "author": "",
+            "channelConfig": 1,
+            "createdDate": "2026-10-19T17:23:18",
+            "description": "",
+            "enableLFE": true,
+            "modifiedDate": "2026-10-19T17:23:20",
+            "name": "Playback",
+            "platforms": [
+                {
+                    "basePlatform": "Windows",
+                    "id": "b6c64d9a-5c95-4b32-8ac7-6c0962856368",
+                    "name": "Windows",
+                    "profile": {
+                        "performResample": false,
+                        "sizePolicies": [
+                            {
+                                "config": {
+                                    "format": 1,
+                                    "targetSampleRate": 48000,
+                                    "vorbisAverageBitrate": 0,
+                                    "vorbisEncodeMode": 0,
+                                    "vorbisMaxBitrate": 0,
+                                    "vorbisMinBitrate": 0,
+                                    "vorbisQuality": 0.6000000238418579
+                                },
+                                "maxBytes": null
+                            }
+                        ]
+                    }
+                }
+            ],
+            "projectTemplateId": "",
+            "sampleRate": 48000,
+            "toolVersion": "HarkenStudio 1.0.0",
+            "version": "1.0"
+        },
+        "paths": {
+            "audioFolder": "Layers",
+            "packFolder": "Packs"
+        },
+        "projectLanguages": [
+            "English"
+        ],
+        "sourceAssets": {
+            "1232648818": "b.wav",
+            "3139783688": "a.wav"
+        }
+    },
+    "harkenDocument": {
+        "id": "2a160729-e1cb-45ec-9be9-180a6b5a1a8c",
+        "projectId": "2a160729-e1cb-45ec-9be9-180a6b5a1a8c",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.7.2",
+        "schemaVersion": 7,
+        "type": "project.root"
+    }
+}

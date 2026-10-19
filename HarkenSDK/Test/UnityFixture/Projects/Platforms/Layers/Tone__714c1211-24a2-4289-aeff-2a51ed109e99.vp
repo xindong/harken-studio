@@ -1,0 +1,64 @@
+{
+    "content": {
+        "children": [
+        ],
+        "components": {
+            "sound": {
+                "sources": {
+                    "localized": {
+                    },
+                    "plain": {
+                        "active": "53e20138-d6c0-4aea-a6b4-4397f0ea438d",
+                        "entries": [
+                            {
+                                "entryId": "53e20138-d6c0-4aea-a6b4-4397f0ea438d",
+                                "rangeContentHash": "fb9b3c695fed0ecf505cb3c3491a649cda84e2b3ea35b8aed36dc0fba454b7da",
+                                "sourceId": 2243087271
+                            }
+                        ],
+                        "platforms": {
+                        }
+                    }
+                }
+            },
+            "spatial": {
+                "spatializationMix": 1
+            }
+        },
+        "expanded": true,
+        "fieldGroups": {
+            "shared": {
+                "mainOutput": {
+                    "inherit": true
+                },
+                "send": {
+                    "inherit": true
+                },
+                "spatialRating": {
+                    "inherit": true
+                }
+            }
+        },
+        "guid": "714c1211-24a2-4289-aeff-2a51ed109e99",
+        "name": "Tone",
+        "objectPath": "\\MediaLayer\\Tone",
+        "order": 0,
+        "parentRef": {
+            "documentId": "aab1fd06-fa56-4a93-823d-2facf94edee2",
+            "id": "aab1fd06-fa56-4a93-823d-2facf94edee2",
+            "kind": "item"
+        },
+        "playableProperties": {
+            "presence": "0000000000000000"
+        },
+        "type": "Sound"
+    },
+    "harkenDocument": {
+        "id": "714c1211-24a2-4289-aeff-2a51ed109e99",
+        "projectId": "bc73664a-b4d5-464f-ab61-8e084d8f7dae",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.7.2",
+        "schemaVersion": 7,
+        "type": "project.layer"
+    }
+}

@@ -1,0 +1,48 @@
+{
+    "content": {
+        "components": {
+            "attenuation": {
+                "dimensions": [
+                    {
+                        "handles": [
+                            [
+                                0,
+                                0,
+                                100,
+                                -60
+                            ]
+                        ],
+                        "points": [
+                            {
+                                "distance": 0,
+                                "value": 0
+                            },
+                            {
+                                "distance": 100,
+                                "value": -60
+                            }
+                        ],
+                        "type": "volume"
+                    }
+                ],
+                "maxDistance": 100
+            }
+        },
+        "expanded": true,
+        "guid": "7de5e183-0bf5-43ed-a6c6-c24e74d0b3a2",
+        "name": "Distance",
+        "objectPath": "\\Distance",
+        "parentRef": {
+            "kind": "root"
+        },
+        "type": "Attenuation"
+    },
+    "harkenDocument": {
+        "id": "7de5e183-0bf5-43ed-a6c6-c24e74d0b3a2",
+        "projectId": "329c86b6-237e-4d84-8c89-bc0bf1c44b6c",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.7.2",
+        "schemaVersion": 7,
+        "type": "project.attenuation"
+    }
+}

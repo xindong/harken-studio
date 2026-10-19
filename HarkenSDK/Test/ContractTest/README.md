@@ -52,13 +52,15 @@ capacity recommendations, starts the null-device Runtime, loads content Pack
 `22`, posts one loaded Action, verifies known-unloaded result `-220`, and shuts
 the Runtime down explicitly.
 
-To validate two Android platform instances, first run the Editor fixture writer:
+To validate two Android platform instances, use the committed Studio publication
+or regenerate it from `UnityFixture/Projects/Platforms/Platforms.hsp` using the
+[normal Studio export workflow](../UnityFixture/README.md#regenerate-publications).
+The gate consumes the exported directory and does not require Studio unit tests:
 
 ```powershell
-ctest --test-dir build-nc -C RelWithDebInfo -R '^ProjectPlatformBuild.WritesTwoAndroidInstancesForNativeSdkReader$' --output-on-failure
 $env:HARKEN_NATIVE_DIR = (Resolve-Path "build-nc/bin/RelWithDebInfo").Path
 dotnet run --project HarkenSDK/Test/ContractTest --configuration Release -- `
-  --require-native --platform-root ".temp/p6-sdk-delivery"
+  --require-native --platform-root "HarkenSDK/Test/UnityFixture/Data/PlatformContractPacks"
 ```
 
 This gate rejects automatic selection of the two Android candidates, resolves
@@ -124,7 +126,10 @@ their manifests. This gate verifies JSON/Init pairing, tampered active/retired
 rows, exact large integer revisions, byte-provider inspection/release, retained
 partial startup, explicit correction of missing/corrupt content, and preservation
 of the first engine owner when a second startup is rejected. It requires the
-native library and fails when any required fixture is unavailable.
+native library and fails when any required fixture is unavailable. Use the
+committed `UnityFixture/Data/U4Original`, `U4Renamed` and `NameFirstPacks`
+publications, or regenerate them from ordinary source projects through the
+[same Studio export workflow](../UnityFixture/README.md#regenerate-publications).
 
 - **ABI fidelity** — `HarkenAbi.CheckLayout()` asserts every mirrored struct's
   managed `Marshal.SizeOf` / `Marshal.OffsetOf` equals the value the layout

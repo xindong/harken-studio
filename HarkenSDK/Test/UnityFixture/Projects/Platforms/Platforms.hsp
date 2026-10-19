@@ -1,0 +1,90 @@
+{
+    "content": {
+        "actionPublishedNameHistory": [
+            {
+                "event": "created",
+                "name": "PlayTone",
+                "nameBindingRevision": 1,
+                "objectGuid": "d7751bee-0c60-4c1a-aedd-f3278bfbf324"
+            }
+        ],
+        "defaultLanguage": "English",
+        "metadata": {
+            "author": "",
+            "channelConfig": 1,
+            "createdDate": "2026-10-19T17:23:33",
+            "description": "",
+            "enableLFE": true,
+            "modifiedDate": "2026-10-19T17:23:35",
+            "name": "Platforms",
+            "platforms": [
+                {
+                    "basePlatform": "Android",
+                    "id": "ce1523ba-ad45-4a5e-8f38-2e708dda8211",
+                    "name": "Android_Low",
+                    "profile": {
+                        "performResample": true,
+                        "sizePolicies": [
+                            {
+                                "config": {
+                                    "format": 1,
+                                    "targetSampleRate": 22050,
+                                    "vorbisAverageBitrate": 0,
+                                    "vorbisEncodeMode": 0,
+                                    "vorbisMaxBitrate": 0,
+                                    "vorbisMinBitrate": 0,
+                                    "vorbisQuality": 0.6000000238418579
+                                },
+                                "maxBytes": null
+                            }
+                        ]
+                    }
+                },
+                {
+                    "basePlatform": "Android",
+                    "id": "62a91f00-111a-4321-a745-91c3d237ef42",
+                    "name": "Android_High",
+                    "profile": {
+                        "performResample": true,
+                        "sizePolicies": [
+                            {
+                                "config": {
+                                    "format": 1,
+                                    "targetSampleRate": 44100,
+                                    "vorbisAverageBitrate": 0,
+                                    "vorbisEncodeMode": 0,
+                                    "vorbisMaxBitrate": 0,
+                                    "vorbisMinBitrate": 0,
+                                    "vorbisQuality": 0.6000000238418579
+                                },
+                                "maxBytes": null
+                            }
+                        ]
+                    }
+                }
+            ],
+            "projectTemplateId": "",
+            "sampleRate": 48000,
+            "toolVersion": "HarkenStudio 1.0.0",
+            "version": "1.0"
+        },
+        "paths": {
+            "audioFolder": "Layers",
+            "packFolder": "Packs"
+        },
+        "projectLanguages": [
+            "English"
+        ],
+        "sourceAssets": {
+            "2243087271": "a.wav"
+        }
+    },
+    "harkenDocument": {
+        "id": "bc73664a-b4d5-464f-ab61-8e084d8f7dae",
+        "projectId": "bc73664a-b4d5-464f-ab61-8e084d8f7dae",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.7.2",
+        "schemaVersion": 7,
+        "type": "project.root"
+    }
+}

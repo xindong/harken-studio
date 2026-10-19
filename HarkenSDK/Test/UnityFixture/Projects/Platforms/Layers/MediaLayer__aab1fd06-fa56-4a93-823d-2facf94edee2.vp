@@ -1,0 +1,58 @@
+{
+    "content": {
+        "children": [
+        ],
+        "components": {
+            "spatial": {
+                "spatializationMix": 1
+            }
+        },
+        "expanded": true,
+        "fieldGroups": {
+            "shared": {
+                "mainOutput": {
+                    "inherit": true,
+                    "values": {
+                        "mainOutputBusRef": "6ef3df42-4182-4375-b65f-1618bc1dc7cd",
+                        "outputBusVolume": 0
+                    }
+                },
+                "send": {
+                    "inherit": true,
+                    "values": {
+                        "sends": [
+                        ]
+                    }
+                },
+                "spatialRating": {
+                    "inherit": true,
+                    "values": {
+                        "spatialAttenuationDistanceScaling": 1,
+                        "spatialAttenuationRef": "00000000-0000-0000-0000-000000000000",
+                        "spatialIs3DEnabled": false,
+                        "spatialPanning": 0
+                    }
+                }
+            }
+        },
+        "guid": "aab1fd06-fa56-4a93-823d-2facf94edee2",
+        "name": "MediaLayer",
+        "objectPath": "\\MediaLayer",
+        "order": 0,
+        "parentRef": {
+            "kind": "root"
+        },
+        "playableProperties": {
+            "presence": "0000000000000000"
+        },
+        "type": "Layer"
+    },
+    "harkenDocument": {
+        "id": "aab1fd06-fa56-4a93-823d-2facf94edee2",
+        "projectId": "bc73664a-b4d5-464f-ab61-8e084d8f7dae",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.7.2",
+        "schemaVersion": 7,
+        "type": "project.layer"
+    }
+}
