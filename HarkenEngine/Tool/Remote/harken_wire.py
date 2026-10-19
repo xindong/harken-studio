@@ -9896,7 +9896,8 @@ TABLE_JSON = r'''
           "VN_MONITOR_FACT_WAITING": 36,
           "VN_MONITOR_FACT_SOURCE_APPLIED": 37,
           "VN_MONITOR_FACT_SEEK_APPLIED": 38,
-          "VN_MONITOR_FACT_RESOURCE_RETIRED": 39
+          "VN_MONITOR_FACT_RESOURCE_RETIRED": 39,
+          "VN_MONITOR_FACT_PLAYABLE_STARTED": 40
         }
       },
       "VnMonitorExecutionField": {
@@ -10002,6 +10003,16 @@ TABLE_JSON = r'''
           "VN_MONITOR_CONTENT_PIECE": 4,
           "VN_MONITOR_CONTENT_ACTION": 5,
           "VN_MONITOR_CONTENT_MEDIA": 6
+        }
+      },
+      "VnMonitorExecutionTerminalKind": {
+        "backing": "u32",
+        "values": {
+          "VN_MONITOR_TERMINAL_NATURAL_COMPLETION": 1,
+          "VN_MONITOR_TERMINAL_REQUESTED_STOP": 2,
+          "VN_MONITOR_TERMINAL_PARENT_CANCELLATION": 3,
+          "VN_MONITOR_TERMINAL_REPLACEMENT_RESET": 4,
+          "VN_MONITOR_TERMINAL_FAILURE": 5
         }
       },
       "VnMonitorExecutionTargetKind": {
@@ -10789,7 +10800,8 @@ TABLE_JSON = r'''
         "values": {
           "VN_MONITOR_HOST_UNKNOWN": 0,
           "VN_MONITOR_HOST_UNITY_EMITTER": 1,
-          "VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE": 2
+          "VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE": 2,
+          "VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER": 3
         }
       },
       "VnMonitorHostSymbolField": {
@@ -11103,6 +11115,10 @@ TABLE_JSON = r'''
       "VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE": {
         "type": "u64",
         "value": 67108864
+      },
+      "VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID": {
+        "type": "u64",
+        "value": 18446744073709551614
       },
       "VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES": {
         "type": "u32",

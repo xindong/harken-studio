@@ -53,11 +53,7 @@ int32_t queryPreviewPlayable(uint64_t handle, PreviewPlayableState& out)
 
 uint64_t createPreviewEmitter(EngineResult* outResult)
 {
-    VnEmitterHandle handle = 0;
-    const auto result = Vn_CreateEmitter(&handle);
-    if (outResult != nullptr)
-        *outResult = static_cast<EngineResult>(result);
-    return result == VN_OK ? handle : 0;
+    return Detail::runtimeCreatePreviewEmitter(outResult);
 }
 
 void destroyPreviewEmitter(uint64_t emitter) { Vn_DestroyEmitter(emitter); }

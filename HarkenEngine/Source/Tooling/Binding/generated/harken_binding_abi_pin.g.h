@@ -142,6 +142,7 @@ static_assert(static_cast<int>(VN_MONITOR_FACT_WAITING) == 36, "binding enum dri
 static_assert(static_cast<int>(VN_MONITOR_FACT_SOURCE_APPLIED) == 37, "binding enum drift: VN_MONITOR_FACT_SOURCE_APPLIED");
 static_assert(static_cast<int>(VN_MONITOR_FACT_SEEK_APPLIED) == 38, "binding enum drift: VN_MONITOR_FACT_SEEK_APPLIED");
 static_assert(static_cast<int>(VN_MONITOR_FACT_RESOURCE_RETIRED) == 39, "binding enum drift: VN_MONITOR_FACT_RESOURCE_RETIRED");
+static_assert(static_cast<int>(VN_MONITOR_FACT_PLAYABLE_STARTED) == 40, "binding enum drift: VN_MONITOR_FACT_PLAYABLE_STARTED");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_SUBJECT) == 0, "binding enum drift: VN_MONITOR_FACT_FIELD_SUBJECT");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_PROJECT) == 1, "binding enum drift: VN_MONITOR_FACT_FIELD_PROJECT");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_CONTENT_OBJECT) == 2, "binding enum drift: VN_MONITOR_FACT_FIELD_CONTENT_OBJECT");
@@ -232,6 +233,11 @@ static_assert(static_cast<int>(VN_MONITOR_CONTENT_TRACK) == 3, "binding enum dri
 static_assert(static_cast<int>(VN_MONITOR_CONTENT_PIECE) == 4, "binding enum drift: VN_MONITOR_CONTENT_PIECE");
 static_assert(static_cast<int>(VN_MONITOR_CONTENT_ACTION) == 5, "binding enum drift: VN_MONITOR_CONTENT_ACTION");
 static_assert(static_cast<int>(VN_MONITOR_CONTENT_MEDIA) == 6, "binding enum drift: VN_MONITOR_CONTENT_MEDIA");
+static_assert(static_cast<int>(VN_MONITOR_TERMINAL_NATURAL_COMPLETION) == 1, "binding enum drift: VN_MONITOR_TERMINAL_NATURAL_COMPLETION");
+static_assert(static_cast<int>(VN_MONITOR_TERMINAL_REQUESTED_STOP) == 2, "binding enum drift: VN_MONITOR_TERMINAL_REQUESTED_STOP");
+static_assert(static_cast<int>(VN_MONITOR_TERMINAL_PARENT_CANCELLATION) == 3, "binding enum drift: VN_MONITOR_TERMINAL_PARENT_CANCELLATION");
+static_assert(static_cast<int>(VN_MONITOR_TERMINAL_REPLACEMENT_RESET) == 4, "binding enum drift: VN_MONITOR_TERMINAL_REPLACEMENT_RESET");
+static_assert(static_cast<int>(VN_MONITOR_TERMINAL_FAILURE) == 5, "binding enum drift: VN_MONITOR_TERMINAL_FAILURE");
 static_assert(static_cast<int>(VN_MONITOR_TARGET_NONE) == 0, "binding enum drift: VN_MONITOR_TARGET_NONE");
 static_assert(static_cast<int>(VN_MONITOR_TARGET_PLAYABLE) == 1, "binding enum drift: VN_MONITOR_TARGET_PLAYABLE");
 static_assert(static_cast<int>(VN_MONITOR_TARGET_ACTION) == 2, "binding enum drift: VN_MONITOR_TARGET_ACTION");
@@ -650,6 +656,7 @@ static_assert(static_cast<int>(VN_MONITOR_REDUCTION_RMS) == 2, "binding enum dri
 static_assert(static_cast<int>(VN_MONITOR_HOST_UNKNOWN) == 0, "binding enum drift: VN_MONITOR_HOST_UNKNOWN");
 static_assert(static_cast<int>(VN_MONITOR_HOST_UNITY_EMITTER) == 1, "binding enum drift: VN_MONITOR_HOST_UNITY_EMITTER");
 static_assert(static_cast<int>(VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE) == 2, "binding enum drift: VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE");
+static_assert(static_cast<int>(VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER) == 3, "binding enum drift: VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER");
 static_assert(static_cast<int>(VN_MONITOR_HOST_SYMBOL_NAME) == 1, "binding enum drift: VN_MONITOR_HOST_SYMBOL_NAME");
 static_assert(static_cast<int>(VN_MONITOR_HOST_SYMBOL_PATH) == 2, "binding enum drift: VN_MONITOR_HOST_SYMBOL_PATH");
 static_assert(static_cast<int>(VN_MONITOR_HOST_SYMBOL_SCENE) == 3, "binding enum drift: VN_MONITOR_HOST_SYMBOL_SCENE");
@@ -730,6 +737,7 @@ static_assert(static_cast<std::uint64_t>(VN_MONITOR_DEFAULT_CAPTURE_BYTE_RATE) =
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_HARD_CAPTURE_BYTE_RATE) == 134217728ull, "binding define drift: VN_MONITOR_HARD_CAPTURE_BYTE_RATE");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_DEFAULT_RAW_AUDIO_BYTE_RATE) == 8388608ull, "binding define drift: VN_MONITOR_DEFAULT_RAW_AUDIO_BYTE_RATE");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE) == 67108864ull, "binding define drift: VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE");
+static_assert(static_cast<std::uint64_t>(VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID) == 18446744073709551614ull, "binding define drift: VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES) == 316ull, "binding define drift: VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_STATE_ENTITY_SLOTS) == 16ull, "binding define drift: VN_MONITOR_STATE_ENTITY_SLOTS");
 

@@ -10432,7 +10432,24 @@ bool ObserveActiveArrivalMembers(
     return engine.armGroups.Capture(record.group, snapshot);
 }
 
+void ObservePlayableStarts(harken::Engine& engine) noexcept {
+    const auto observedAudioSequence = engine.mixer.BlocksRendered();
+    for (std::uint32_t slot = 0; slot < engine.timelineArms.Capacity(); ++slot) {
+        const auto* arm = engine.timelineArms.RowAt(slot);
+        if (arm->originalSourceSubmission == nullptr || arm->programGeneration == 0) continue;
+        const harken::TimelineArmToken token{
+            slot, arm->generation, arm->renderSlot, arm->renderGeneration};
+        harken::TimelineArmObservation onset{};
+        if (!engine.timelineArms.Observe(token, &onset) ||
+            onset.startedBlockSequence == 0 ||
+            onset.startedBlockSequence > observedAudioSequence) continue;
+        engine.playableInstances.ObserveStarted(
+            arm->programGeneration, onset.startedBlockSequence, arm->startFrame);
+    }
+}
+
 bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
+    ObservePlayableStarts(engine);
     bool complete = true;
     // Transient Start arms retire before their Sound; preserve their actual onset.
     for (std::size_t slot = 0; slot < engine.variableControlMemberCompletions.size(); ++slot) {
@@ -13035,6 +13052,7 @@ engine.runtimeRecreateRequired = true;
 bool RetirePlayableInstanceTree(harken::Engine& engine,
                                 harken::PlayableInstanceHandle handle,
                                 harken::PlayableTerminalKind terminalKind) noexcept {
+    ObservePlayableStarts(engine);
     for (std::uint32_t index = 0; index < engine.sourceTerminals.Capacity(); ++index) {
         auto& source = *engine.sourceTerminals.At(index);
         if (!source.occupied || !IsPlayableDescendant(engine, source.leaf, handle)) continue;
@@ -59785,6 +59803,7 @@ bool DrainCancelledActionDeferredClaims(Engine& engine) noexcept {
 } // namespace
 
 void TimelineServiceCoordinator::Service() {
+    ObservePlayableStarts(engine_);
     if (!ServiceRetainedImmediateRetryCleanup(engine_)) return;
     const std::uint64_t observedAudioSequence = engine_.mixer.BlocksRendered();
     const std::uint64_t blockFrames = engine_.config.blockFrames;
@@ -67835,10 +67854,11 @@ engine.runtimeRecreateRequired = true;
             return result;
         }
     }
-    const bool pathAlreadyEndsInSound =
-        pathContainerCount != 0 &&
-        pathLastChildKind == PlayableKind::Sound;
-    if (!directCompositeScheduleActive && queueInitialFrontier.schedule.leafCount <= 1u && !pathAlreadyEndsInSound &&
+    const bool soundInstancePrepared =
+        rootKind == PlayableKind::Sound ||
+        (pathContainerCount != 0 &&
+         pathLastChildKind == PlayableKind::Sound);
+    if (!directCompositeScheduleActive && queueInitialFrontier.schedule.leafCount <= 1u && !soundInstancePrepared &&
         current.kind == PlayableKindV1::Sound) {
         const auto parent = treeStep.PreparedInstanceHandle(
             treeStep.InstanceReservationCount() - 1u);
@@ -82264,6 +82284,19 @@ bool PrepareImmediateActionCompositePlay(
     ObservePreparedContent(engine, scratch->playableTreeExecutor, scratch->instance.Handle(),
         scratch->packLeaseOwned ? MonitorContentFor(scratch->packPlaybackView, root)
                                 : MonitorContentFor(world, root));
+    for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
+        if (!scratch->playableTreeExecutor.PrepareInstance(engine.playableInstances,
+                harken::PlayableKind::Sound, scratch->instance.Handle())) {
+            (void)scratch->playableTreeExecutor.Cancel(engine.playableInstances);
+            (void)ReleaseImmediateActionPlayableLease(engine, scratch, &plan);
+            plan.result = VN_NO_VOICE;
+            return false;
+        }
+        const auto leafInstance = scratch->playableTreeExecutor.PreparedInstanceHandle(index);
+        ObservePreparedContent(engine, scratch->playableTreeExecutor, leafInstance,
+            scratch->packLeaseOwned ? MonitorContentFor(scratch->packPlaybackView, leaves[index].leaf)
+                                    : MonitorContentFor(world, leaves[index].leaf));
+    }
 
     if (!PreparePlayableServiceRow(engine, *row, scratch->instance.Handle(),
                                   scratch->instance.ScheduleEpoch(), nullptr, nullptr, &scratch->storage)) {
@@ -82356,6 +82389,15 @@ bool PrepareImmediateActionCompositePlay(
     for (std::uint32_t index = 0;
          index < materialized.leafCount; ++index) {
         const std::size_t memberSlot = memberBase + index;
+        const auto leafInstance = scratch->playableTreeExecutor.PreparedInstanceHandle(index);
+        const auto leafEpoch = scratch->playableTreeExecutor.PreparedInstanceEpoch(index);
+        std::size_t physicalSlot = 0;
+        if (!PreparePlayableMemberStorage(engine, *row, memberSlot,
+                leafInstance, leafEpoch, &physicalSlot) || physicalSlot != memberSlot) {
+            plan.result = VN_NO_VOICE;
+            (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
+            return false;
+        }
         const std::size_t eventSlot = eventBase + index;
         const std::size_t endpointSlot = endpointBase + index;
         PreparedScheduleLeafStart& source = leaves[index];
@@ -82367,10 +82409,11 @@ bool PrepareImmediateActionCompositePlay(
             baseStartFrame + source.startOffsetFrames;
         const TimelineVoiceInstallResult installed =
             InstallTimelineVoiceStart(
-                engine, source.voice, row->rootInstance, startFrame,
+                engine, source.voice, leafInstance, startFrame,
                 row->rootInstance, row->rootInstance, nullptr, nullptr, {}, UINT16_MAX,
-                nullptr, &scratch->voiceStarts[index], nullptr, nullptr,
+                nullptr, &scratch->voiceStarts[index], nullptr, row,
                 nullptr, row->pendingImmediateEntry);
+        if (scratch->voiceStarts[index].prepared) scratch->voiceStartCount = index + 1u;
         if (installed.status != VN_OK) {
             plan.result = installed.status;
             (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
@@ -82385,6 +82428,8 @@ bool PrepareImmediateActionCompositePlay(
         engine.playableScheduleStartFrames[memberSlot] = startFrame;
         engine.playableScheduleReleaseObservers[memberSlot] = installed.releaseObserver;
         engine.playableScheduleSelections[memberSlot] = installed.monitorSelection;
+        engine.variableControlMemberCompletions[memberSlot].source = installed.sourceTerminal;
+        engine.variableControlMemberCompletions[memberSlot].monitorSelection = installed.monitorSelection;
         auto& payload = engine.playableSchedulePayloads[eventSlot];
         payload = {};
         payload.kind = harken::TimelineEventKind::Start;
@@ -82418,6 +82463,7 @@ bool PrepareImmediateActionCompositePlay(
         schedule.armToken = installed.armToken;
     }
     if (!markerOnly) {
+        row->activeLeafInstance = scratch->playableTreeExecutor.PreparedInstanceHandle(0);
         row->voice = engine.playableScheduleVoices[memberBase];
         row->leaf = engine.playableScheduleLeaves[memberBase];
         row->arm = engine.playableScheduleArms[memberBase];
@@ -90118,7 +90164,8 @@ HARKEN_OPTIONAL_HOST_EXPORT VnResult Vn_MonitorRegisterHost(const VnMonitorHostR
     if (desc == nullptr || desc->structSize != sizeof(*desc) || desc->reserved0 != 0 ||
         desc->localSequence == 0 || desc->registrationRevision == 0 ||
         (desc->ownershipKind != VN_MONITOR_HOST_UNITY_EMITTER &&
-         desc->ownershipKind != VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE)) return VN_INVALID_ARG;
+         desc->ownershipKind != VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE &&
+         desc->ownershipKind != VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER)) return VN_INVALID_ARG;
     const auto gate = harken::monitor::GateControlEntry();
     if (gate != VN_OK) return gate;
     if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
@@ -90137,7 +90184,8 @@ HARKEN_OPTIONAL_HOST_EXPORT VnResult Vn_MonitorRegisterHostV2(const VnMonitorHos
     if (desc == nullptr || desc->structSize != sizeof(*desc) || desc->reserved0 != 0 ||
         desc->localSequence == 0 || desc->registrationRevision == 0 ||
         (desc->ownershipKind != VN_MONITOR_HOST_UNITY_EMITTER &&
-         desc->ownershipKind != VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE)) return VN_INVALID_ARG;
+         desc->ownershipKind != VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE &&
+         desc->ownershipKind != VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER)) return VN_INVALID_ARG;
     harken::MonitorHostDescription description{};
     if (!harken::MonitorHostDescription::Capture(*desc, description)) return VN_INVALID_ARG;
     const auto gate = harken::monitor::GateControlEntry();

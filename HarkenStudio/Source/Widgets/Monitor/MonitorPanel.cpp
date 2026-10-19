@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QClipboard>
 #include <QComboBox>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
@@ -42,14 +43,12 @@ protected:
     {
         const auto* model = static_cast<const MonitorCatalogModel*>(sourceModel());
         const auto* event = model->eventAt(row);
-        if (!event || (category && event->detail.category != category) ||
-            (level >= 0 && event->detail.level != level)) return false;
+        if (!event || !event->isDesignerEvent() || (category && event->category() != category) ||
+            (level >= 0 && event->level() != level)) return false;
         if (search.isEmpty()) return true;
         for (int column = 0; column < MonitorCatalogModel::ColumnCount; ++column)
             if (model->data(model->index(row, column)).toString().contains(search, Qt::CaseInsensitive)) return true;
-        return objectIdString(event->header.stableId).contains(search) ||
-            QString::number(event->header.instanceHandle).contains(search) ||
-            QString::number(event->detail.code).contains(search);
+        return false;
     }
 };
 
@@ -77,7 +76,7 @@ MonitorPanel::MonitorPanel(QWidget* parent)
     filters->addWidget(levelFilter_);
     categoryFilter_ = new QComboBox(this);
     categoryFilter_->setObjectName(QStringLiteral("MonitorCategoryFilter"));
-    categoryFilter_->addItem(tr("All categories"), 0);
+    categoryFilter_->addItem(tr("All types"), 0);
     categoryFilter_->addItem(tr("Operation"), VNX::Monitor::kMonitorEventCategoryOperation);
     categoryFilter_->addItem(tr("Playback"), VNX::Monitor::kMonitorEventCategoryLifecycle);
     categoryFilter_->addItem(tr("Diagnostic"), VNX::Monitor::kMonitorEventCategoryDiagnostic);
@@ -211,7 +210,7 @@ bool MonitorPanel::jumpCurrentRow()
     const auto index = filter_->mapToSource(table_->currentIndex());
     const auto* event = model_->eventAt(index.row());
     if (!event || !locator_ || capture_->matchingProjectObject(*event) == 0) return false;
-    locator_(event->header.stableId);
+    locator_(event->objectId());
     return true;
 }
 
@@ -231,11 +230,19 @@ void MonitorPanel::setCaptureController(Monitor::EventCaptureController* capture
     tableFrame_->setModel(filter_);
     table_->setWordWrap(false);
     table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+    const auto metrics = table_->fontMetrics();
+    const auto numericIdWidth = std::max(170, metrics.horizontalAdvance(QStringLiteral("18446744073709551614")) + 20);
+    const auto objectIdWidth = std::max(280, metrics.horizontalAdvance(QStringLiteral("00000000-0000-0000-0000-000000000000")) + 20);
     table_->setColumnWidth(MonitorCatalogModel::Time, 100);
     table_->setColumnWidth(MonitorCatalogModel::Level, 70);
-    table_->setColumnWidth(MonitorCatalogModel::Category, 90);
-    table_->setColumnWidth(MonitorCatalogModel::Object, 160);
-    table_->horizontalHeader()->setStretchLastSection(true);
+    table_->setColumnWidth(MonitorCatalogModel::Type, 90);
+    table_->setColumnWidth(MonitorCatalogModel::Description, 180);
+    table_->setColumnWidth(MonitorCatalogModel::RequestId, numericIdWidth);
+    table_->setColumnWidth(MonitorCatalogModel::Object, 150);
+    table_->setColumnWidth(MonitorCatalogModel::ObjectId, objectIdWidth);
+    table_->setColumnWidth(MonitorCatalogModel::GameObject, 120);
+    table_->setColumnWidth(MonitorCatalogModel::GameObjectId, numericIdWidth);
+    table_->horizontalHeader()->setStretchLastSection(false);
     jumpButton_->setText({});
     jumpButton_->setFixedSize(26, 22);
     jumpButton_->setAccessibleName(tr("Show object in project"));
@@ -263,20 +270,19 @@ void MonitorPanel::setCaptureController(Monitor::EventCaptureController* capture
 void MonitorPanel::refreshCaptureView()
 {
     if (!capture_) return;
-    QStringList status{capture_->statusText(), tr("%1 / %2 records").arg(visibleRowCount()).arg(capture_->rowCount())};
+    QStringList status{capture_->statusText(), tr("%1 records").arg(visibleRowCount())};
     if (capture_->incomplete()) status << tr("Incomplete");
-    if (capture_->sourceDropped()) status << tr("Source lost: %1").arg(capture_->sourceDropped());
-    if (capture_->deliveryDropped()) status << tr("Delivery lost: %1").arg(capture_->deliveryDropped());
-    if (capture_->transportDropped()) status << tr("Transport lost: %1").arg(capture_->transportDropped());
-    if (capture_->trimmedRecords()) status << tr("History trimmed: %1").arg(capture_->trimmedRecords());
+    if (capture_->sourceDropped() || capture_->deliveryDropped() || capture_->transportDropped())
+        status << tr("Some records were lost");
+    if (capture_->trimmedRecords()) status << tr("History limit reached");
     status_->setText(status.join(QStringLiteral(" | ")));
     QString empty;
-    if (!capture_->rowCount()) {
+    if (!visibleRowCount()) {
         using Monitor::EventCaptureState;
         switch (capture_->state()) {
         case EventCaptureState::Idle:
         case EventCaptureState::Capturing:
-        case EventCaptureState::Stopped: break;
+        case EventCaptureState::Stopped: empty = tr("No matching log entries"); break;
         default: empty = capture_->statusText(); break;
         }
     }

@@ -374,6 +374,10 @@
           "type": "u32",
           "value": 16
         },
+        "VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID": {
+          "type": "u64",
+          "value": 18446744073709551614
+        },
         "VN_PACK_LOAD_FLAG_PROVIDER": {
           "type": "u32",
           "value": 1
@@ -857,6 +861,7 @@
             "VN_MONITOR_FACT_PLAYABLE_LOGICAL_COMPLETE": 6,
             "VN_MONITOR_FACT_PLAYABLE_PREPARED": 4,
             "VN_MONITOR_FACT_PLAYABLE_RETIRED": 8,
+            "VN_MONITOR_FACT_PLAYABLE_STARTED": 40,
             "VN_MONITOR_FACT_QUEUE_ADVANCED": 14,
             "VN_MONITOR_FACT_QUEUE_FAILED": 15,
             "VN_MONITOR_FACT_RENDER_ACTIVATION_ENDED": 33,
@@ -993,9 +998,20 @@
             "VN_MONITOR_TARGET_RENDER_ACTIVATION": 4
           }
         },
+        "VnMonitorExecutionTerminalKind": {
+          "backing": "u32",
+          "values": {
+            "VN_MONITOR_TERMINAL_FAILURE": 5,
+            "VN_MONITOR_TERMINAL_NATURAL_COMPLETION": 1,
+            "VN_MONITOR_TERMINAL_PARENT_CANCELLATION": 3,
+            "VN_MONITOR_TERMINAL_REPLACEMENT_RESET": 4,
+            "VN_MONITOR_TERMINAL_REQUESTED_STOP": 2
+          }
+        },
         "VnMonitorHostOwnership": {
           "backing": "u32",
           "values": {
+            "VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER": 3,
             "VN_MONITOR_HOST_UNITY_EMITTER": 1,
             "VN_MONITOR_HOST_UNITY_SPATIAL_SOURCE": 2,
             "VN_MONITOR_HOST_UNKNOWN": 0
@@ -22103,11 +22119,11 @@
       "formatVersion": 7
     }
   },
-  "contractSha256": "4f591bf2b46cc9f09cae1cced8d2ded478031dad3cae2aa73eb42ac677e3d2c6",
+  "contractSha256": "0f44a149700fd9b367ea66528980bbeeeb4481e152eba0484bf64848abe406e7",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
-      "sha256": "2be85484130b8549e7bfca9a5c16468b06e86e51198216f6aa985f2be9a2f9b5",
-      "size": 303092
+      "sha256": "a43839ceb60d9abfaa8e60696c43f0bb621491b074a664663bb32fc6c130fc5e",
+      "size": 304209
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_desc_meta.h": {
       "sha256": "81999c02d794859c96b7478fd43673b8ba53504c33ea9e6d9fb70b7bccfde244",
@@ -22126,8 +22142,8 @@
       "size": 218942
     },
     "HarkenEngine/Tool/Remote/harken_wire.py": {
-      "sha256": "3d9bd52be0c79406c693020372577d80d89b5a2794239752f1da1abd5c2e1931",
-      "size": 236066
+      "sha256": "82eb196d7707541d625efa37524edc2e8c6f83bd76128031a8b606f2cf2c460c",
+      "size": 236659
     },
     "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
       "sha256": "1def4763a3c25b8f7a60b8e3c6a34a21e8b0561a33885e383679b825425c5794",
@@ -22138,21 +22154,21 @@
       "size": 35507
     },
     "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
-      "sha256": "0ae252f053db6144d10dbaf915ab9a9af61aba63d1f25fb6db90f62ba68e58a5",
-      "size": 97656
+      "sha256": "a741213d81443688620c892166eb365688aac70fa811b273e32e13c23e4703fb",
+      "size": 98165
     }
   },
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "b23f3fb9f31a1a4c6cb92c033c7f6919df18abac908e1973f5db015f492b8e45",
+    "nativeAbiSha256": "5f3e1e3ea77424ae7df9423a02895880fd451bb3fff26d8f6be3d9ecd15f9fc7",
     "remoteWireSha256": "d99304d71d24436e14a34fd990b3ded5e6ddd7bca6c13dc2065a9709d53577d3",
     "traceFormatSha256": "c06f2ddb406768176cc45d164a0ecaa66abdb79a1de84f42d52b53e9a0239f9d"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
-      "sha256": "57a6a7cccb55e0df68e3462af149e89c41938e0e1b6673c970f210148cfeac85",
-      "size": 227333
+      "sha256": "f410b6353766c5c75ede3b04557a1048f9e4979a9d0f3987cd38819faa9c67ec",
+      "size": 227733
     },
     "HarkenEngine/Source/Runtime/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
@@ -22175,8 +22191,8 @@
       "size": 30774
     },
     "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json": {
-      "sha256": "b5a614a700066f00c87b860e7ec0f699e3b5df8c655c5e94fac4378ee747fefe",
-      "size": 234821
+      "sha256": "1d1b21602673fbd6b2b2ed40c271658e21d42fd53a9eef511164ba1579e744d9",
+      "size": 235414
     }
   }
 }

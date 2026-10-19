@@ -45,14 +45,14 @@ int32_t openSession(const VNX::Monitor::MonitorSessionDesc* desc, uint64_t* hand
 {
     if (!desc) return VN_INVALID_ARG;
     const auto native = toNative(*desc);
-    return Vn_MonitorOpenSession(&native, handle);
+    return Vn_MonitorOpenSession(reinterpret_cast<const VnMonitorSessionDesc*>(&native), handle);
 }
 
 int32_t openEventSession(const VNX::Monitor::MonitorSessionDesc* desc, uint64_t* handle)
 {
     if (!desc) return VN_INVALID_ARG;
     const auto native = toNative(*desc);
-    return Vn_MonitorOpenEventSession(&native, handle);
+    return Vn_MonitorOpenEventSession(reinterpret_cast<const VnMonitorSessionDesc*>(&native), handle);
 }
 
 int32_t closeSession(uint64_t handle) { return Vn_MonitorCloseSession(handle); }
@@ -60,8 +60,8 @@ int32_t sealEventSession(uint64_t handle) { return Vn_MonitorSealEventSession(ha
 
 int32_t getEventSessionStatus(uint64_t handle, VNX::Monitor::MonitorEventSessionStatus* out)
 {
-    return readValue<VnMonitorEventSessionStatus>(out, [&](auto* value) {
-        return Vn_MonitorGetEventSessionStatus(handle, value);
+    return readValue<VnMonitorEventSessionStatusV2>(out, [&](auto* value) {
+        return Vn_MonitorGetEventSessionStatus(handle, reinterpret_cast<VnMonitorEventSessionStatus*>(value));
     });
 }
 
