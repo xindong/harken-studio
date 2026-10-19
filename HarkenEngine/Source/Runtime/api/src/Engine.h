@@ -9,6 +9,7 @@
 #include "DeviceBackend.h"
 #include "EngineFrontierOwnerLedger.h"
 #include "EnginePendingSelectionBatch.h"
+#include "EngineNativeVoiceSide.h"
 #include "PlayableRuntime.h"
 #include "ProjectGenerationTransaction.h"
 #include "TraceCodec.h"
@@ -3659,6 +3660,9 @@ struct EngineActionPlayScratch {
             for (auto& proof : effectCommitProofs) proof.Release();
         }
     };
+    using NativeVoiceSide = EngineNativeVoiceSide<
+        EnginePreparedTimelineVoiceStart, PreparedTimelineVoiceOwnerContext>;
+
     struct PreparedSelectionOwnerContext {
         SelectionMemoryTableV1* table = nullptr;
         PreparedSelectionPlayV1* token = nullptr;
@@ -4098,8 +4102,7 @@ struct EngineActionPlayScratch {
     EngineOriginalCompositeCompletionPreparation* queueSuccessorOriginalComposite = nullptr;
     OccurrenceToken queueSuccessorOccurrence{};
     CompletionOwnerRef queueSuccessorOwner{};
-    std::array<EnginePreparedTimelineVoiceStart,
-               kMaxKnownScheduleLeaves> queueSuccessorVoiceStarts{};
+    NativeVoiceSide queueSuccessorVoiceStarts;
     std::array<OccurrenceToken, kMaxKnownScheduleLeaves>
         queueSuccessorLeafOccurrences{};
     std::array<bool, kMaxKnownScheduleLeaves>
@@ -4177,12 +4180,9 @@ struct EngineActionPlayScratch {
         variableControlNestedOwnerContexts{};
     PreparedActionResourceOwnerContext actionResourceOwnerContext{};
     std::uint32_t selectionPlayCount = 0;
-    std::array<EnginePreparedTimelineVoiceStart,
-               kMaxKnownScheduleLeaves> voiceStarts{};
-    std::array<PreparedTimelineVoiceOwnerContext,
-               kMaxKnownScheduleLeaves> voiceOwnerContexts{};
-    std::array<PreparedTimelineVoiceOwnerContext,
-               kMaxKnownScheduleLeaves> queueSuccessorVoiceOwnerContexts{};
+    NativeVoiceSide voiceStarts;
+    bool currentNativeBorrowed = false;
+    bool successorNativeBorrowed = false;
     std::uint32_t voiceStartCount = 0;
     std::uint32_t initialCommandBase = 0;
     std::uint32_t initialCommandCount = 0;
@@ -4207,13 +4207,11 @@ struct EngineActionPlayScratch {
     bool prepared = false;
 
     auto VoiceOwnerContextSides() noexcept {
-        return std::array{std::span{voiceOwnerContexts},
-                          std::span{queueSuccessorVoiceOwnerContexts}};
+        return std::array{voiceStarts.Owners(), queueSuccessorVoiceStarts.Owners()};
     }
 
     auto VoiceOwnerContextSides() const noexcept {
-        return std::array{std::span{voiceOwnerContexts},
-                          std::span{queueSuccessorVoiceOwnerContexts}};
+        return std::array{voiceStarts.Owners(), queueSuccessorVoiceStarts.Owners()};
     }
 
     bool VoiceOwnerCommitProofsHeld() const noexcept {
@@ -4683,6 +4681,7 @@ struct Engine {
         TimelineArmToken arm{};
         VoiceReleaseObserver release{};
         OriginalSourceSubmissionRegistry::PendingInstalledSourceRetirementReceipt retirement;
+        EngineActionPlayScratch::NativeVoiceSide nativeReplacement;
         EngineFrontierAttemptToken replacement{};
         std::array<EnginePlayableServiceReference, kSelectionPathNodeCapacity> retiredServices{};
         std::uint32_t retiredServiceCount = 0;
@@ -4696,9 +4695,16 @@ struct Engine {
                 !producer.Valid() && !service.Valid() && !resource.Valid() && !resourceReference.Valid() &&
                 !root.Valid() && !source.Valid() &&
                 !body.Valid() && !arm.Valid() && !release.Valid() && !retirement.Valid() &&
-                !replacement.Valid() && retiredServiceCount == 0 && retiredChild == 0 &&
+                nativeReplacement.Empty() && !replacement.Valid() && retiredServiceCount == 0 && retiredChild == 0 &&
                 retiredChildEpoch == 0 && !sourceRetired && !accepted;
         }
+    };
+
+    struct NativeReplacementSlot {
+        EngineActionPlayScratch::NativeVoiceSide side;
+        EngineFrontierAttemptToken borrower{};
+        std::uint32_t producerOrdinal = UINT32_MAX;
+        std::uint32_t capacity = 0;
     };
 
     struct OriginalPendingVariableGroupHolder;
@@ -4817,6 +4823,7 @@ struct Engine {
             reselectionRequested = std::exchange(other.reselectionRequested, false);
             nextSelectionFrame = std::exchange(other.nextSelectionFrame, 0);
             selectionReservations = std::move(other.selectionReservations);
+            nativeReplacementSlots = std::move(other.nativeReplacementSlots);
             leafRetirementReceipts = std::move(other.leafRetirementReceipts);
             initialSides = std::move(other.initialSides);
             initialDecisionInputs = std::exchange(other.initialDecisionInputs, {});
@@ -4839,6 +4846,7 @@ struct Engine {
                 !reprepare_.replacementCommandsReserved && reprepare_.replacementCommandCount == 0 &&
                 !reprepare_.replacementLane.Valid() && reprepare_.replacementDemand.events == 0 &&
                 !selectionReservations[0].Valid() && !selectionReservations[1].Valid() && !topology_.sealed &&
+                nativeReplacementSlots.empty() &&
                 nestedInitialSideCount == 0 && initialSelectionBatch.Empty() && !boundAbort.captured;
         }
         bool Close(Engine& receiver) noexcept {
@@ -4855,6 +4863,7 @@ struct Engine {
                 if (reservation.Valid() && !receiver.decisions.CancelPreparedReservation(&reservation)) return false;
             if (!initialSelectionBatch.Cancel()) return false;
             if (!receiver.ReturnPendingSelectionCensusProducer(producer, reference)) return false;
+            if (!receiver.ReleasePendingVariableNativeBacking(*this)) return false;
             if (!receiver.variables.ReleaseReadCut(cut)) return false;
             cut = {};
             for (auto& side : initialSides) side.Release();
@@ -4894,6 +4903,7 @@ struct Engine {
         std::uint64_t nextSelectionFrame = 0;
         EnginePendingSelectionBatch initialSelectionBatch;
         std::array<PreparedDecisionReservation, 2> selectionReservations;
+        std::vector<NativeReplacementSlot> nativeReplacementSlots;
         std::array<OriginalSourceSubmissionRegistry::PendingInstalledSourceRetirementReceipt,
             kMaxKnownScheduleLeaves> leafRetirementReceipts{};
         std::array<VariableControlInstanceTable::OriginalInitialSideReceipt, 2> initialSides{};
@@ -5020,6 +5030,7 @@ struct Engine {
             CommandQueue::BatchReservation replacementCommandReservation{};
             std::uint32_t replacementCommandCount = 0;
             bool replacementCommandsReserved = false;
+            bool reserveForReplacement = true;
             ImmediateLaneHandle replacementLane{};
             ImmediateLaneDemand replacementDemand{};
             Phase phase = Phase::None;
@@ -5036,6 +5047,43 @@ struct Engine {
         std::uint32_t topIndex = UINT32_MAX;
     };
     using PendingVariableGroupTop = EngineActionPlayScratch::PendingVariableReplacementTop;
+
+    struct NativeBackingReturnPlan {
+        EngineActionPlayScratch::NativeVoiceSide* current = nullptr;
+        EngineFrontierAttemptToken* currentBorrower = nullptr;
+        std::uint32_t* currentCapacity = nullptr;
+        EngineActionPlayScratch::NativeVoiceSide* successor = nullptr;
+        EngineFrontierAttemptToken* successorBorrower = nullptr;
+        std::uint32_t* successorCapacity = nullptr;
+    };
+    bool AllowNativeBackingAllocation() noexcept {
+        ++nativeBackingAllocationCountForTest;
+        if (forcePreparedScheduleAllocationFailureForTest || nativeBackingAllocationFailureCountdownForTest == 0)
+            return false;
+        if (nativeBackingAllocationFailureCountdownForTest > 0) --nativeBackingAllocationFailureCountdownForTest;
+        return true;
+    }
+    EngineFrontierAttemptToken NativeBackingTokenFor(const EngineActionPlayScratch& scratch) const noexcept;
+    EngineActionPlayScratch* NativeBackingParentFor(const EngineActionPlayScratch& future) noexcept;
+    OriginalPendingVariableGroupHolder* NativeBackingGroupFor(const EngineActionPlayScratch& child) noexcept;
+    OriginalPendingVariableGroupHolder* NativeBackingOwnerFor(
+        OriginalPendingVariableGroupHolder& group, std::uint32_t* ordinal) noexcept;
+    bool PrepareNativeVoiceSide(EngineActionPlayScratch& scratch, bool successor, std::uint32_t shape) noexcept;
+    bool PrepareNativeBackingReturn(EngineActionPlayScratch& scratch, NativeBackingReturnPlan* plan) noexcept;
+    void CommitNativeBackingReturn(EngineActionPlayScratch& scratch, const NativeBackingReturnPlan& plan) noexcept;
+    void CommitNativeBackingTransferEnd(EngineActionPlayScratch& scratch, const NativeBackingReturnPlan& plan) noexcept;
+    bool ReleasePendingVariableNativeBacking(OriginalPendingVariableGroupHolder& group) noexcept {
+        for (const auto& slot : group.nativeReplacementSlots) if (slot.borrower.Valid()) return false;
+        std::vector<NativeReplacementSlot>().swap(group.nativeReplacementSlots);
+        return true;
+    }
+    bool EnsurePendingVariableNativeBacking(EngineActionPlayScratch& producer,
+        const EngineImmediateEntryAttempt& attempt, bool* waiting) noexcept;
+    bool ReserveRegisteredPendingVariableNativeBacking(EngineImmediateEntryAttempt& attempt, bool* waiting) noexcept;
+    bool BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt& attempt,
+        EngineActionPlayScratch* single, std::vector<NativeReplacementSlot>* slots, bool* waiting) noexcept;
+    bool MatchesPendingVariableNativeBacking(OriginalPendingVariableGroupHolder& owner,
+        std::uint32_t producerCount) noexcept;
 private:
     class PendingVariableGroupReplacementScope {
         friend struct Engine;
@@ -7079,6 +7127,7 @@ public:
         holder.retiredServiceCount = 0;
         holder.retiredChild = 0;
         holder.retiredChildEpoch = 0;
+        holder.nativeReplacement = {};
         // Disposition may already be ending the root; its original loan still identifies it.
         holder.producer.Return();
         holder.service.Return();
@@ -7232,6 +7281,20 @@ public:
             group.futureSourceCount > pendingVariableFutureSources.size() ||
             !MatchesPendingVariableQueueNativeOrigins(group) ||
             !MatchesPendingVariableGroupFutureNodes(group, true)) return false;
+        for (const auto& slot : group.nativeReplacementSlots) {
+            if (slot.capacity > kMaxKnownScheduleLeaves ||
+                (slot.borrower.Valid() ? !slot.side.Empty() :
+                    slot.side.size() != slot.capacity || slot.side.Shape() != 0)) return false;
+            if (slot.borrower.Valid()) {
+                if (slot.borrower.slot >= actionPlayScratch.size()) return false;
+                const auto& child = actionPlayScratch[slot.borrower.slot];
+                const auto& side = slot.producerOrdinal == UINT32_MAX
+                    ? child.queueSuccessorVoiceStarts : child.voiceStarts;
+                if (child.storage.generation != slot.borrower.generation || side.size() != slot.capacity ||
+                    !(slot.producerOrdinal == UINT32_MAX ? child.successorNativeBorrowed : child.currentNativeBorrowed))
+                    return false;
+            }
+        }
         for (std::uint32_t index = 0; index < group.leafCount; ++index)
             if (group.leafRetained[index] && !MatchesPendingVariableGroupLeaf(group, index)) return false;
         std::uint32_t futures = 0;
@@ -7252,6 +7315,12 @@ public:
 
     void RebindMovedPendingVariableGroupSources(OriginalPendingVariableGroupHolder& old,
         OriginalPendingVariableGroupHolder& moved) noexcept {
+        const auto rebindHead = [&](auto& holder) noexcept {
+            if (holder.reprepare_.cohortHead == &old) holder.reprepare_.cohortHead = &moved;
+        };
+        rebindHead(moved);
+        for (auto& holder : preparedPendingVariableGroups) rebindHead(holder);
+        for (auto& holder : acceptedPendingVariableGroups) rebindHead(holder);
         for (std::uint32_t index = 0; index < moved.leafCount; ++index)
             if (moved.leafRetained[index]) pendingVariableLeafSources[moved.leafArms[index].slot].group = &moved;
         for (auto& original : pendingVariableFutureSources) {
@@ -7342,6 +7411,10 @@ public:
             group->leafCount != scratch.row->scheduleLeafCount ||
             !MatchesPendingVariableGroupRetirementFutureCensus(*group)) return Result::Refused;
         if (group->leafRetirement == Phase::Failed) return Result::Refused;
+        if (group->leafRetirement != Phase::None && group->reprepare_.reserveForReplacement) {
+            bool waiting = false;
+            if (!EnsurePendingVariableNativeBacking(scratch, attempt, &waiting)) return Result::Refused;
+        }
         if (group->leafRetirement == Phase::None) {
             if (!variables.CanReleaseReadCut(group->cut) &&
                 !variables.OriginalPendingVariableGroupUsesMatch(*this, scratch, attempt, placement))
@@ -7392,6 +7465,11 @@ public:
                     !pendingSource(holder) || arm->parentGroup.decision.slot != original.parentGroup.decision.slot ||
                     arm->parentGroup.decision.generation != original.parentGroup.decision.generation ||
                     arm->memberIndex != original.memberIndex) return Result::Refused;
+            }
+            if (group->reprepare_.reserveForReplacement) {
+                bool waiting = false;
+                if (!EnsurePendingVariableNativeBacking(scratch, attempt, &waiting))
+                    return waiting ? Result::Waiting : Result::Refused;
             }
             group->leafRetirement = Phase::Requesting;
         }
@@ -7561,7 +7639,7 @@ public:
         // Authenticate the complete current-leaf census before attaching any loan.
         for (std::uint32_t index = 0; index < scratch.voiceStartCount; ++index) {
             const auto& start = scratch.voiceStarts[index];
-            const auto& owner = scratch.voiceOwnerContexts[index];
+            const auto& owner = scratch.voiceStarts.Owners()[index];
             if (!start.prepared || owner.token != &start || owner.engine != this ||
                 !start.armPreparation.pendingImmediateStart || !start.armPreparation.parentGroup.Valid() ||
                 start.arm.slot >= pendingVariableLeafSources.size() || start.commandCount == 0 ||
@@ -8247,7 +8325,8 @@ public:
         EngineImmediateEntryAttempt& attempt, OriginalPendingVariableGroupHolder& group) noexcept;
 
     bool BeginRegisteredPendingVariableCohortReprepare(EngineImmediateEntryAttempt& attempt,
-        const PrivateImmediateLanePlacementProof& placement) noexcept;
+        const PrivateImmediateLanePlacementProof& placement, bool reserveForReplacement = true,
+        bool* waiting = nullptr) noexcept;
     bool RegisteredPendingVariableCohortRepreparePending(const EngineImmediateEntryAttempt& attempt) noexcept;
     bool MatchesRegisteredPendingVariableCohortReprepare(const EngineActionPlayScratch& producer,
         const EngineImmediateEntryAttempt& attempt) noexcept;
@@ -11987,6 +12066,8 @@ public:
     std::uint32_t actionQueueInstanceOwnerCancelAttemptsForTest = 0;
     bool forceDirectPlayablePostFailureForTest = false;
     bool forcePreparedScheduleAllocationFailureForTest = false;
+    std::int32_t nativeBackingAllocationFailureCountdownForTest = -1;
+    std::uint64_t nativeBackingAllocationCountForTest = 0;
     bool forceContainerLoopPostFailureForTest = false;
     void (*queueArrivalCancelObservationHookForTest)(Engine&, TimelineArmToken) = nullptr;
     void (*armGroupTombstoneObservationHookForTest)(

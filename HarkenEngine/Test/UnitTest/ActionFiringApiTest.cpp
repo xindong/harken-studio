@@ -4163,6 +4163,58 @@ struct ActionScheduleCapacityWorld {
     }
 };
 
+std::size_t NativePreparationBackingBytes(const harken::Engine& engine) {
+    std::size_t bytes = 0;
+    for (const auto& scratch : engine.actionPlayScratch)
+        bytes += scratch.voiceStarts.RequestedBytes() + scratch.queueSuccessorVoiceStarts.RequestedBytes();
+    for (const auto& ordinary : engine.pendingOrdinarySelections)
+        bytes += ordinary.nativeReplacement.RequestedBytes();
+    const auto addGroups = [&](const auto& groups) {
+        for (const auto& group : groups) {
+            bytes += group.nativeReplacementSlots.capacity() * sizeof(harken::Engine::NativeReplacementSlot);
+            for (const auto& slot : group.nativeReplacementSlots) bytes += slot.side.RequestedBytes();
+        }
+    };
+    addGroups(engine.preparedPendingVariableGroups);
+    addGroups(engine.acceptedPendingVariableGroups);
+    return bytes;
+}
+
+void RecordNativeBackingInventory(const harken::Engine& engine, const std::string& stage) {
+    std::size_t pairs = 0, freePairs = 0, slotCapacity = 0, largeSlotVectors = 0;
+    std::size_t freePayload = 0;
+    const auto countSide = [&](const auto& side, bool free) {
+        if (side.Empty()) return;
+        ++pairs;
+        freePairs += free;
+        if (free) freePayload += side.RequestedBytes();
+    };
+    for (const auto& scratch : engine.actionPlayScratch) {
+        const bool free = scratch.storage.phase == harken::EngineFrontierAttemptPhase::Free;
+        countSide(scratch.voiceStarts, free);
+        countSide(scratch.queueSuccessorVoiceStarts, free);
+    }
+    for (const auto& ordinary : engine.pendingOrdinarySelections) countSide(ordinary.nativeReplacement, false);
+    const auto countGroups = [&](const auto& groups) {
+        for (const auto& group : groups) {
+            const auto capacity = group.nativeReplacementSlots.capacity();
+            slotCapacity += capacity;
+            largeSlotVectors += capacity * sizeof(harken::Engine::NativeReplacementSlot) >= 4096u;
+            for (const auto& slot : group.nativeReplacementSlots) countSide(slot.side, false);
+        }
+    };
+    countGroups(engine.preparedPendingVariableGroups);
+    countGroups(engine.acceptedPendingVariableGroups);
+    const auto prefix = "native_inventory_" + stage;
+    ::testing::Test::RecordProperty(prefix + "_payload", std::to_string(NativePreparationBackingBytes(engine)));
+    ::testing::Test::RecordProperty(prefix + "_pairs", std::to_string(pairs));
+    ::testing::Test::RecordProperty(prefix + "_free_pairs", std::to_string(freePairs));
+    ::testing::Test::RecordProperty(prefix + "_free_payload", std::to_string(freePayload));
+    ::testing::Test::RecordProperty(prefix + "_slot_capacity", std::to_string(slotCapacity));
+    ::testing::Test::RecordProperty(prefix + "_large_slot_vectors", std::to_string(largeSlotVectors));
+    ::testing::Test::RecordProperty(prefix + "_block_sequence", std::to_string(engine.mixer.BlocksRendered()));
+}
+
 void ExpectScheduleCapacityActionCompletes(
     ActionScheduleCapacityRoot root, std::uint32_t leafCount,
     bool refuseAllocationFirst = false) {
@@ -4172,6 +4224,7 @@ void ExpectScheduleCapacityActionCompletes(
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_NE(nullptr, engine);
+    EXPECT_EQ(0u, NativePreparationBackingBytes(*engine));
     std::vector<float> samples(64, 0.25f);
     const VnPCMDesc pcm = harkentest::MonoDesc(samples, 48000);
     ASSERT_EQ(VN_OK,
@@ -4214,6 +4267,28 @@ void ExpectScheduleCapacityActionCompletes(
         EXPECT_EQ(occurrencesBefore, engine->timelineOccurrences.OccupiedCount());
         EXPECT_EQ(compositeBefore, engine->compositeCompletionOwners.OccupiedCount());
         EXPECT_FALSE(engine->runtimeRecreateRequired);
+        for (const auto countdown : {0, 1}) {
+            engine->nativeBackingAllocationFailureCountdownForTest = countdown;
+            EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+            EXPECT_EQ(0, engine->nativeBackingAllocationFailureCountdownForTest);
+            engine->nativeBackingAllocationFailureCountdownForTest = -1;
+            EXPECT_EQ(0u, firing);
+            EXPECT_EQ(0u, engine->actionFirings.LiveCount());
+            EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+            EXPECT_EQ(sequence, engine->logicCommits.IssuedCount());
+            EXPECT_EQ(playableBefore, engine->playableInstances.LiveCount());
+            EXPECT_EQ(voicesBefore, engine->voices.ActiveCount());
+            EXPECT_EQ(ledgerAvailableBefore, engine->ledger.AvailableEntryCount());
+            EXPECT_EQ(armsBefore, engine->timelineArms.LiveCount());
+            EXPECT_EQ(occurrencesBefore, engine->timelineOccurrences.OccupiedCount());
+            EXPECT_EQ(compositeBefore, engine->compositeCompletionOwners.OccupiedCount());
+            for (const auto& scratch : engine->actionPlayScratch) {
+                EXPECT_TRUE(scratch.voiceStarts.Empty());
+                EXPECT_TRUE(scratch.queueSuccessorVoiceStarts.Empty());
+            }
+            EXPECT_EQ(0u, NativePreparationBackingBytes(*engine));
+            EXPECT_FALSE(engine->runtimeRecreateRequired);
+        }
         for (const auto site : {harken::detail::LogicAllocSite::CapturedScheduleVoices,
                                 harken::detail::LogicAllocSite::CapturedVoiceInstall}) {
             harken::detail::ArmLogicAllocFaultForTests(
@@ -4253,6 +4328,10 @@ void ExpectScheduleCapacityActionCompletes(
               play.targetKind);
     EXPECT_NE(0u, play.producedPlayableInstance);
     EXPECT_EQ(leafCount, engine->voices.ActiveCount());
+    EXPECT_EQ(static_cast<std::size_t>(leafCount) *
+                  (sizeof(harken::EnginePreparedTimelineVoiceStart) +
+                   sizeof(harken::EngineActionPlayScratch::PreparedTimelineVoiceOwnerContext)),
+              NativePreparationBackingBytes(*engine));
 
     for (std::uint32_t block = 0; block < 64; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -4412,6 +4491,27 @@ void ExpectDirectScheduleRootBuildsAndReclaims(
         EXPECT_EQ(occurrencesBefore, engine->timelineOccurrences.OccupiedCount());
         EXPECT_EQ(compositeBefore, engine->compositeCompletionOwners.OccupiedCount());
         EXPECT_FALSE(engine->runtimeRecreateRequired);
+        for (const auto countdown : {0, 1}) {
+            engine->nativeBackingAllocationFailureCountdownForTest = countdown;
+            const auto nativeRefused = harken::StartCurrentPlayableByIdentity(
+                definition.kind, definition.stableId, emitter);
+            EXPECT_EQ(0, engine->nativeBackingAllocationFailureCountdownForTest);
+            engine->nativeBackingAllocationFailureCountdownForTest = -1;
+            EXPECT_EQ(harken::PlayableStartStatus::Backpressure, nativeRefused.status);
+            EXPECT_EQ(0u, nativeRefused.instance);
+            EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+            EXPECT_EQ(playableBefore, engine->playableInstances.LiveCount());
+            EXPECT_EQ(voicesBefore, engine->voices.ActiveCount());
+            EXPECT_EQ(ledgerAvailableBefore, engine->ledger.AvailableEntryCount());
+            EXPECT_EQ(armsBefore, engine->timelineArms.LiveCount());
+            EXPECT_EQ(occurrencesBefore, engine->timelineOccurrences.OccupiedCount());
+            EXPECT_EQ(compositeBefore, engine->compositeCompletionOwners.OccupiedCount());
+            for (const auto& scratch : engine->actionPlayScratch) {
+                EXPECT_TRUE(scratch.voiceStarts.Empty());
+                EXPECT_TRUE(scratch.queueSuccessorVoiceStarts.Empty());
+            }
+            EXPECT_FALSE(engine->runtimeRecreateRequired);
+        }
     }
     const auto started = harken::StartCurrentPlayableByIdentity(
         definition.kind, definition.stableId, emitter);
@@ -10067,7 +10167,7 @@ static void ObserveQueueTreeOnlyFactory(harken::Engine& engine, QueueTreeOnlyFac
             seen.linkedFutureVoiceCount += future.queueSuccessorVoiceStartCount;
             for (std::uint32_t leaf = 0; leaf < future.queueSuccessorVoiceStartCount; ++leaf) {
                 const auto& voice = future.queueSuccessorVoiceStarts[leaf];
-                const auto& commitOwner = future.queueSuccessorVoiceOwnerContexts[leaf];
+                const auto& commitOwner = future.queueSuccessorVoiceStarts.Owners()[leaf];
                 EXPECT_EQ(&actual, commitOwner.engine);
                 EXPECT_EQ(&voice, commitOwner.token);
                 EXPECT_TRUE(commitOwner.preparedCommitProofsRequired);
@@ -43663,6 +43763,331 @@ TEST(ActionFiringApi, SameActionPendingVariableControlLeavesKeepOwnFirstPcm) {
     CheckOrderedSelectedLeafFirstPcm(false, true, true);
 }
 
+static void CheckNativeBackingReservationFailures(harken::Engine& engine,
+    harken::EngineActionPlayScratch& producer, harken::EngineImmediateEntryAttempt& attempt,
+    const harken::PrivateImmediateLanePlacementProof& placement, bool requireFuture = false) {
+    using Phase = harken::Engine::OriginalPendingVariableGroupHolder::LeafRetirement;
+    using Result = harken::Engine::PendingVariableGroupLeafRetirementResult;
+    struct RestoreFault {
+        harken::Engine& engine;
+        std::int32_t countdown;
+        ~RestoreFault() { engine.nativeBackingAllocationFailureCountdownForTest = countdown; }
+    } restore{engine, engine.nativeBackingAllocationFailureCountdownForTest};
+    std::vector<harken::Engine::OriginalPendingVariableGroupHolder*> groups;
+    if (attempt.privateVcProducerCount == 0) {
+        ASSERT_NE(nullptr, producer.row);
+        groups.push_back(&engine.acceptedPendingVariableGroups[producer.row->identity.slot]);
+    } else {
+        auto token = attempt.privateVcProducerHead;
+        for (std::uint32_t ordinal = 0; ordinal < attempt.privateVcProducerCount; ++ordinal) {
+            ASSERT_LT(token.slot, engine.actionPlayScratch.size());
+            auto& current = engine.actionPlayScratch[token.slot];
+            ASSERT_EQ(token.generation, current.storage.generation);
+            ASSERT_NE(nullptr, current.row);
+            groups.push_back(&engine.acceptedPendingVariableGroups[current.row->identity.slot]);
+            token = current.privateInitialVcPageCohort.rootProducerNext;
+        }
+        ASSERT_FALSE(token.Valid());
+    }
+    const auto owners = CaptureActionReclaimableOwners(engine);
+    const auto backingBytes = NativePreparationBackingBytes(engine);
+    RecordNativeBackingInventory(engine, "reservation_old");
+    const auto publishedHead = engine.commands.PublishedHead();
+    const auto allocationsBefore = engine.nativeBackingAllocationCountForTest;
+    {
+        std::vector<harken::Engine::NativeReplacementSlot> candidate;
+        bool waiting = false;
+        ASSERT_TRUE(engine.BuildPendingVariableNativeBacking(attempt,
+            attempt.privateVcProducerCount == 0 ? &producer : nullptr, &candidate, &waiting));
+        ASSERT_FALSE(waiting);
+        ASSERT_GE(candidate.size(), groups.size());
+        if (requireFuture) {
+            const auto future = std::find_if(candidate.begin(), candidate.end(), [](const auto& slot) {
+                return slot.producerOrdinal == UINT32_MAX && slot.capacity != 0;
+            });
+            ASSERT_NE(candidate.end(), future);
+            EXPECT_EQ(1u, future->capacity);
+            EXPECT_EQ(future->capacity, future->side.size());
+        }
+        std::size_t rows = 0;
+        std::size_t nonzeroSides = 0;
+        std::string capacities;
+        for (const auto& slot : candidate) {
+            rows += slot.side.size();
+            nonzeroSides += slot.side.size() != 0;
+            if (!capacities.empty()) capacities += ',';
+            capacities += std::to_string(slot.capacity);
+        }
+        ::testing::Test::RecordProperty("native_reservation_capacities", capacities);
+        ::testing::Test::RecordProperty("native_reservation_producers", std::to_string(groups.size()));
+        ::testing::Test::RecordProperty("native_reservation_slot_capacity", std::to_string(candidate.capacity()));
+        ::testing::Test::RecordProperty("native_reservation_rows", std::to_string(rows));
+        ::testing::Test::RecordProperty("native_reservation_nonzero_sides", std::to_string(nonzeroSides));
+        ::testing::Test::RecordProperty("native_reservation_old_owned_bytes", std::to_string(backingBytes));
+    }
+    const auto allocationCount = engine.nativeBackingAllocationCountForTest - allocationsBefore;
+    ASSERT_GT(allocationCount, 0u);
+    ASSERT_LE(allocationCount, static_cast<std::uint64_t>(INT32_MAX));
+    ::testing::Test::RecordProperty("native_reservation_allocation_gates", std::to_string(allocationCount));
+    for (std::uint64_t ordinal = 0; ordinal < allocationCount; ++ordinal) {
+        SCOPED_TRACE(ordinal);
+        engine.nativeBackingAllocationFailureCountdownForTest = static_cast<std::int32_t>(ordinal);
+        const auto before = engine.nativeBackingAllocationCountForTest;
+        if (attempt.privateVcProducerCount == 0) {
+            EXPECT_EQ(Result::Waiting,
+                engine.RequestPendingVariableGroupLeafRetirement(producer, attempt, placement));
+        } else {
+            bool waiting = false;
+            EXPECT_FALSE(engine.BeginRegisteredPendingVariableCohortReprepare(attempt, placement, true, &waiting));
+            EXPECT_TRUE(waiting);
+        }
+        EXPECT_EQ(ordinal + 1u, engine.nativeBackingAllocationCountForTest - before);
+        EXPECT_EQ(owners, CaptureActionReclaimableOwners(engine));
+        EXPECT_EQ(backingBytes, NativePreparationBackingBytes(engine));
+        EXPECT_EQ(publishedHead, engine.commands.PublishedHead());
+        for (const auto* group : groups) {
+            EXPECT_EQ(Phase::None, group->leafRetirement);
+            EXPECT_FALSE(group->RepreparePending());
+            EXPECT_TRUE(group->nativeReplacementSlots.empty());
+            EXPECT_EQ(0u, group->nativeReplacementSlots.capacity());
+            for (std::uint32_t leaf = 0; leaf < group->leafCount; ++leaf) {
+                EXPECT_FALSE(group->leafRetirementReceipts[leaf].Valid());
+                EXPECT_TRUE(group->leafRetained[leaf]);
+                EXPECT_TRUE(engine.MatchesPendingVariableGroupLeaf(*group, leaf));
+                harken::TimelineArmObservation arm{};
+                ASSERT_TRUE(engine.timelineArms.Observe(group->leafArms[leaf], &arm));
+                EXPECT_EQ(harken::ArmState::Armed, arm.state);
+                EXPECT_EQ(0u, arm.startedBlockSequence);
+            }
+        }
+    }
+}
+
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+static void CheckPendingVariableNativeShapeRetries(harken::Engine& engine,
+    harken::EngineActionPlayScratch& producer, harken::EngineImmediateEntryAttempt& attempt,
+    CanonicalActionWorld& image, VnActionFiringHandle play) {
+    constexpr std::uint32_t block = 64;
+    auto& group = engine.acceptedPendingVariableGroups[producer.row->identity.slot];
+    const auto root = producer.row->rootInstance;
+    ASSERT_TRUE(group.ReprepareReady());
+    RecordNativeBackingInventory(engine, "shape_reserved");
+    ASSERT_EQ(0u, attempt.privateVcProducerCount);
+    std::uint32_t ordinal = UINT32_MAX;
+    auto* owner = engine.NativeBackingOwnerFor(group, &ordinal);
+    ASSERT_NE(nullptr, owner);
+    const auto slot = std::find_if(owner->nativeReplacementSlots.begin(), owner->nativeReplacementSlots.end(),
+        [&](const auto& candidate) { return candidate.producerOrdinal == ordinal; });
+    ASSERT_NE(owner->nativeReplacementSlots.end(), slot);
+    ASSERT_EQ(3u, slot->capacity);
+    ASSERT_EQ(3u, slot->side.size());
+    struct Probe {
+        harken::Engine* engine;
+        harken::EngineActionPlayScratch* producer;
+        harken::EngineImmediateEntryAttempt* attempt;
+        harken::Engine::OriginalPendingVariableGroupHolder* group;
+        harken::Engine::NativeReplacementSlot* slot;
+        harken::EngineFrontierAttemptToken producerToken;
+        harken::VariableReadCutRef cut;
+        harken::EnginePlayableServiceToken service;
+        std::uint64_t entryGeneration;
+        std::uint64_t allocations;
+        std::size_t bytes;
+        harken::EnginePreparedTimelineVoiceStart* starts;
+        VnVariableId variable;
+        unsigned seen = 0;
+        harken::EngineActionPlayScratch* child = nullptr;
+        std::uint64_t finalAnchor = 0;
+    } probe{&engine, &producer, &attempt, &group, &*slot, engine.NativeBackingTokenFor(producer),
+        group.cut, producer.row->identity, attempt.generation, engine.nativeBackingAllocationCountForTest,
+        NativePreparationBackingBytes(engine), slot->side.data(), image.variables[3].variableId};
+    struct RestoreHooks {
+        harken::Engine& engine;
+        std::int32_t countdown;
+        bool entryDeferral;
+        ~RestoreHooks() {
+            harken::detail::SetPendingVariablePrepareRefusalHookForTest(nullptr, nullptr);
+            engine.nativeBackingAllocationFailureCountdownForTest = countdown;
+            engine.deferRegisteredPendingVariableSelectionReplacementForTest = false;
+            engine.deferPendingImmediateEntriesForTest = entryDeferral;
+        }
+    } restore{engine, engine.nativeBackingAllocationFailureCountdownForTest, false};
+    engine.nativeBackingAllocationFailureCountdownForTest = 0;
+    const auto observePreparation = [](harken::Engine& actual,
+        harken::EngineActionPlayScratch& child, harken::detail::PendingVariablePrepareStageForTest stage,
+        unsigned, void* opaque) {
+        auto& probe = *static_cast<Probe*>(opaque);
+        if (&actual != probe.engine ||
+            stage != harken::detail::PendingVariablePrepareStageForTest::ReplacementPrepared) return false;
+        actual.deferPendingImmediateEntriesForTest = true;
+        probe.child = &child;
+        const auto inspect = [&]() {
+            ASSERT_LT(probe.seen, 3u);
+            const auto shape = probe.seen == 1 ? 3u : 1u;
+            const auto selector = probe.seen == 1 ? 3.0f : 1.0f;
+            EXPECT_EQ(probe.producerToken.slot, child.pendingVariableReplacementProducer.slot);
+            EXPECT_EQ(probe.producerToken.generation, child.pendingVariableReplacementProducer.generation);
+            EXPECT_EQ(probe.producerToken.slot, actual.NativeBackingTokenFor(*probe.producer).slot);
+            EXPECT_EQ(probe.producerToken.generation, actual.NativeBackingTokenFor(*probe.producer).generation);
+            EXPECT_EQ(probe.entryGeneration, probe.attempt->generation);
+            EXPECT_EQ(probe.entryGeneration, child.pendingVariableReplacementEntryGeneration);
+            EXPECT_EQ(probe.service, child.row->identity);
+            EXPECT_EQ(probe.cut, child.pendingVariableReplacementCut);
+            EXPECT_EQ(probe.cut, probe.group->cut);
+            EXPECT_TRUE(child.prepared);
+            EXPECT_EQ(harken::EngineFrontierAttemptPhase::PendingVariableChildren, child.storage.phase);
+            float value = 0;
+            EXPECT_EQ(harken::VariableReadCutValueStatus::Value,
+                actual.variables.ReadCutReader(probe.cut).Read(probe.variable, &value));
+            EXPECT_FLOAT_EQ(selector, value);
+            const auto anchor = child.pendingVariableReplacementAnchorFrame;
+            probe.finalAnchor = anchor;
+            ::testing::Test::RecordProperty("native_shape_anchor_" + std::to_string(probe.seen),
+                std::to_string(anchor));
+            EXPECT_GE(anchor, (probe.seen == 0 ? 6u : probe.seen == 1 ? 512u : 768u) * block);
+            if (probe.seen < 2) EXPECT_LT(anchor, (probe.seen == 0 ? 512u : 768u) * block);
+            EXPECT_EQ(shape, child.voiceStartCount);
+            EXPECT_EQ(shape, child.pendingVariableReplacementLeafCount);
+            EXPECT_EQ(shape, child.voiceStarts.Shape());
+            EXPECT_EQ(3u, child.voiceStarts.size());
+            EXPECT_TRUE(child.currentNativeBorrowed);
+            EXPECT_EQ(probe.starts, child.voiceStarts.data());
+            EXPECT_EQ(actual.NativeBackingTokenFor(child).slot, probe.slot->borrower.slot);
+            EXPECT_EQ(actual.NativeBackingTokenFor(child).generation, probe.slot->borrower.generation);
+            ASSERT_GE(child.voiceStarts.size(), shape);
+            for (std::uint32_t index = 0; index < shape; ++index) {
+                const auto& leaf = child.pendingVariableReplacementLeaves[index];
+                const bool second = shape == 1;
+                EXPECT_EQ(second ? CanonicalActionWorld::kSecondSound : CanonicalActionWorld::kFirstSound,
+                    leaf.leaf.stableId);
+                EXPECT_EQ(second ? 8u : 7u, leaf.authoredChildOrdinal);
+                EXPECT_EQ(harken::VariableControlSide::Discrete, leaf.side);
+                EXPECT_TRUE(child.voiceStarts[index].prepared);
+                EXPECT_EQ(child.variableControlLeafHandles[index],
+                    child.voiceStarts[index].armPreparation.programGeneration);
+                const auto& proof = child.voiceStarts.Owners()[index].voiceCommitProof;
+                EXPECT_TRUE(proof.Valid());
+                EXPECT_EQ(&actual.voices, proof.Owner());
+                EXPECT_EQ(child.voiceStarts[index].renderHandle, proof.OriginalPreparedHandle());
+            }
+            EXPECT_EQ(probe.allocations, actual.nativeBackingAllocationCountForTest);
+            EXPECT_EQ(0, actual.nativeBackingAllocationFailureCountdownForTest);
+            EXPECT_FALSE(actual.runtimeRecreateRequired);
+        };
+        inspect();
+        RecordNativeBackingInventory(actual, "shape_prepared_" + std::to_string(probe.seen));
+        ++probe.seen;
+        return probe.seen < 3 || ::testing::Test::HasFailure();
+    };
+    constexpr std::array<std::uint64_t, 3> selectionFrames{6u * block, 512u * block, 768u * block};
+    for (unsigned round = 0; round < 3; ++round) {
+        SCOPED_TRACE(round);
+        engine.deferPendingImmediateEntriesForTest = true;
+        for (unsigned waiting = 0; waiting < 512u &&
+            (ImmediateActionStartFrame(engine) < selectionFrames[round] ||
+                ImmediateActionStartFrame(engine) >= engine.timelinePool.WindowEndFrame());
+            ++waiting) {
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        ASSERT_GE(ImmediateActionStartFrame(engine), selectionFrames[round]);
+        ASSERT_LT(ImmediateActionStartFrame(engine), engine.timelinePool.WindowEndFrame());
+        if (round + 1u < selectionFrames.size())
+            ASSERT_LT(ImmediateActionStartFrame(engine), selectionFrames[round + 1u]);
+        group.nextSelectionFrame = selectionFrames[round];
+        const auto owners = CaptureActionReclaimableOwners(engine);
+        engine.deferPendingImmediateEntriesForTest = false;
+        harken::detail::SetPendingVariablePrepareRefusalHookForTest(observePreparation, &probe);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(round + 1u, probe.seen);
+        ASSERT_NE(nullptr, probe.child);
+        EXPECT_EQ(probe.allocations, engine.nativeBackingAllocationCountForTest);
+        EXPECT_EQ(0, engine.nativeBackingAllocationFailureCountdownForTest);
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+        if (round == 2) break;
+        bool cancelled = false;
+        for (unsigned waiting = 0; waiting < 32u && !cancelled; ++waiting) {
+            cancelled = engine.CancelPendingVariableGroupChildren(group);
+            if (!cancelled) {
+                engine.nullBackend.Pump(1);
+                ASSERT_EQ(VN_OK, Vn_Update());
+            }
+        }
+        ASSERT_TRUE(cancelled);
+        for (auto& reservation : group.selectionReservations)
+            if (reservation.Valid()) ASSERT_TRUE(engine.decisions.CancelPreparedReservation(&reservation));
+        EXPECT_EQ(nullptr, engine.OriginalCancelledPendingVariableGroupChildren(producer, attempt));
+        EXPECT_EQ(harken::EngineFrontierAttemptPhase::Free, probe.child->storage.phase);
+        EXPECT_TRUE(probe.child->storage.ownerLedger.Empty());
+        EXPECT_FALSE(probe.child->currentNativeBorrowed);
+        EXPECT_TRUE(probe.child->voiceStarts.Empty());
+        EXPECT_FALSE(slot->borrower.Valid());
+        EXPECT_EQ(3u, slot->side.size());
+        EXPECT_EQ(0u, slot->side.Shape());
+        EXPECT_EQ(probe.starts, slot->side.data());
+        EXPECT_EQ(probe.bytes, NativePreparationBackingBytes(engine));
+        EXPECT_TRUE(group.ReprepareReady());
+        EXPECT_EQ(probe.cut, group.cut);
+        EXPECT_TRUE(engine.variables.CanReleaseReadCut(group.cut));
+        EXPECT_EQ(owners, CaptureActionReclaimableOwners(engine));
+        EXPECT_EQ(4u, engine.voices.AvailableSlotCount());
+        RecordNativeBackingInventory(engine, "shape_returned_" + std::to_string(round));
+    }
+    harken::detail::SetPendingVariablePrepareRefusalHookForTest(nullptr, nullptr);
+    engine.deferRegisteredPendingVariableSelectionReplacementForTest = false;
+    engine.deferPendingImmediateEntriesForTest = false;
+    ASSERT_EQ(probe.finalAnchor, producer.row->startFrame);
+    std::uint32_t audibleFrames = 0;
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    const auto finalBlock = (producer.row->startFrame + 1024u + block - 1u) / block;
+    const auto currentBlock = engine.mixer.BlocksRendered();
+    const auto remainingBlocks = finalBlock > currentBlock ? finalBlock - currentBlock : 0;
+    for (std::uint64_t quantum = 0; quantum < remainingBlocks + 32u; ++quantum) {
+        engine.nullBackend.Pump(1);
+        const auto* pcm = engine.nullBackend.LastBlock();
+        for (unsigned frame = 0; frame < block; ++frame) {
+            if (std::abs(pcm[2u * frame]) < 1e-7f && std::abs(pcm[2u * frame + 1u]) < 1e-7f) continue;
+            ++audibleFrames;
+            EXPECT_NEAR(-0.25f, pcm[2u * frame], 1e-6f);
+            EXPECT_NEAR(-0.25f, pcm[2u * frame + 1u], 1e-6f);
+        }
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(play, &info));
+        if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+    }
+    EXPECT_EQ(1024u, audibleFrames);
+    ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+    VnActionStepResult step{};
+    step.structSize = sizeof(step);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(play, 0, &step));
+    EXPECT_EQ(VN_ACTION_STEP_SUCCEEDED, step.state);
+    EXPECT_EQ(root, step.producedPlayableInstance);
+    ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(play));
+    for (unsigned quantum = 0; quantum < 16; ++quantum) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_TRUE(group.Empty());
+    EXPECT_EQ(probe.allocations, engine.nativeBackingAllocationCountForTest);
+    EXPECT_EQ(0, engine.nativeBackingAllocationFailureCountdownForTest);
+    EXPECT_EQ(4u, engine.voices.AvailableSlotCount());
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
+    std::size_t retained = 0;
+    for (const auto& scratch : engine.actionPlayScratch) {
+        if (scratch.voiceStarts.Empty() && scratch.queueSuccessorVoiceStarts.Empty()) continue;
+        EXPECT_EQ(harken::EngineFrontierAttemptPhase::Free, scratch.storage.phase);
+        EXPECT_TRUE(scratch.storage.ownerLedger.Empty());
+        EXPECT_FALSE(scratch.currentNativeBorrowed);
+        EXPECT_FALSE(scratch.successorNativeBorrowed);
+        retained += scratch.voiceStarts.RequestedBytes() + scratch.queueSuccessorVoiceStarts.RequestedBytes();
+    }
+    EXPECT_EQ(retained, NativePreparationBackingBytes(engine));
+    ::testing::Test::RecordProperty("native_retained_free_bytes", std::to_string(retained));
+    RecordNativeBackingInventory(engine, "shape_final");
+}
+#endif
+
 static void CheckPendingVariableControlAtActualPlacement(bool requireReselection, unsigned sideProbe = 0) {
     constexpr std::uint32_t block = 64;
     harkentest::EngineSession session(harkentest::MakeNullConfig(sideProbe == 9 ? 1 : 4, block, 48000));
@@ -43677,6 +44102,7 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
             engine->timelineVoicePreparedHookForTest = nullptr;
             engine->timelineVoicePreparedContextForTest = nullptr;
             engine->deferRegisteredPendingVariableSelectionReplacementForTest = false;
+            engine->deferPendingImmediateEntriesForTest = false;
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
             harken::detail::SetTimelineVoiceOwnerCommitRefusalHookForTest(nullptr, nullptr);
 #endif
@@ -43690,8 +44116,37 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
     CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
         engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
     image.MakeImmediateVariableControlPlayAction();
+    std::array<harken::ScheduleClipPlacementV1, 3> retryPlacements{};
+    std::array<harken::PlayableOccurrencePropertyViewV1, 9> retryOccurrences{};
     if (sideProbe >= 14) {
         engine.deferRegisteredPendingVariableSelectionReplacementForTest = true;
+    }
+    if (sideProbe == 70) {
+        const auto sound = image.variableControlChildren[0].playable;
+        image.MakeFirstVariableControlChildCompositeTrack();
+        std::copy_n(image.occurrences, 6, retryOccurrences.begin());
+        for (std::uint32_t index = 0; index < retryPlacements.size(); ++index) {
+            auto& placement = retryPlacements[index];
+            placement = image.trackPlacements[0];
+            placement.stablePlacementOrdinal = index;
+            placement.stableOccurrenceOrdinal = 20u + index;
+            placement.content = sound;
+            placement.clipId = harkentest::ObjectId(5001u + index);
+            placement.clipGuidHigh = 6001u + index;
+            placement.clipGuidLow = 7001u + index;
+            auto& occurrence = retryOccurrences[6u + index];
+            occurrence = image.occurrences[6];
+            occurrence.stableOccurrenceOrdinal = placement.stableOccurrenceOrdinal;
+            occurrence.childPlayable = sound;
+            occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(occurrence);
+        }
+        image.track.placements = retryPlacements.data();
+        image.track.placementCount = static_cast<std::uint32_t>(retryPlacements.size());
+        image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
+        image.world.playableOccurrences = retryOccurrences.data();
+        image.world.playableOccurrenceCount = static_cast<std::uint32_t>(retryOccurrences.size());
+        image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    } else if (sideProbe >= 14) {
         image.ConfigureImmediateVariableControlContinuousSide();
         // Three direct Sound children use the ordinary pending-group producer.
         for (std::uint32_t index = 0; index < 2; ++index) {
@@ -43727,6 +44182,17 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
     const auto set = engine.variables.AcceptGlobal(image.variables[3].variableId, 1.0f, future,
         engine.params, engine.bindings, engine.busTargets);
     ASSERT_EQ(VN_OK, set.result);
+    if (sideProbe == 70) {
+        auto lastTicket = set.ticket.sequence;
+        for (const auto& [frame, value] : std::array{std::pair{512u * block, 3.0f}, std::pair{768u * block, 1.0f}}) {
+            future.requestedEffectiveFrame = frame;
+            const auto write = engine.variables.AcceptGlobal(image.variables[3].variableId, value, future,
+                engine.params, engine.bindings, engine.busTargets);
+            ASSERT_EQ(VN_OK, write.result);
+            ASSERT_GT(write.ticket.sequence, lastTicket);
+            lastTicket = write.ticket.sequence;
+        }
+    }
     ASSERT_EQ(0u, engine.commands.PublishedHead());
     const auto cutoff = engine.timelinePool.PublishCutoffFrame();
     // Capture the source frontier before the later Play publishes installation commands.
@@ -43792,8 +44258,15 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
             ASSERT_TRUE(actual.variables.OriginalPendingVariableGroupUsesMatch(actual, producer, attempt, placement));
         EXPECT_EQ(harken::VariableReadCutStatus::Waiting, actual.variables.ReadCutSourcesStatus(reader.cut));
         float selector = 0.0f;
+        std::uint64_t placementAnchor = 0;
+        ASSERT_TRUE(placement.CaptureAnchorFrame(&placementAnchor));
+        const auto expectedSelector = probe.sideProbe == 70
+            ? (placementAnchor < 6u * actual.config.blockFrames ? 3.0f
+                : placementAnchor < 512u * actual.config.blockFrames ? 1.0f
+                : placementAnchor < 768u * actual.config.blockFrames ? 3.0f : 1.0f)
+            : 1.0f;
         ASSERT_EQ(harken::VariableReadCutValueStatus::Value, reader.Read(probe.variable, &selector));
-        EXPECT_FLOAT_EQ(1.0f, selector);
+        EXPECT_FLOAT_EQ(expectedSelector, selector);
         harken::VariableReadCutReader rejected = reader;
         harken::PrivateImmediateLanePlacementProof empty;
         EXPECT_FALSE(actual.variables.BeginPendingVariableGroupPlacement(actual, producer, attempt, empty, &rejected));
@@ -43803,7 +44276,7 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
         EXPECT_FALSE(actual.variables.BeginPendingVariableGroupPlacement(actual, producer, foreign, placement, &rejected));
         EXPECT_FALSE(rejected.cut.Valid());
         ASSERT_EQ(harken::VariableReadCutValueStatus::Value, reader.Read(probe.variable, &selector));
-        EXPECT_FLOAT_EQ(1.0f, selector);
+        EXPECT_FLOAT_EQ(expectedSelector, selector);
         if ((probe.sideProbe == 1 && actual.variables.CanReleaseReadCut(group.cut)) ||
             probe.sideProbe == 2) {
             auto& row = *producer.row;
@@ -43917,6 +44390,19 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                 *producer.row, &probe.producerLoan));
             probe.retainedStorage = &producer.storage;
         }
+        if (probe.sideProbe == 70) {
+            auto& mutableGroup = actual.acceptedPendingVariableGroups[producer.row->identity.slot];
+            if (probe.retirementChecks != 0) {
+                ASSERT_TRUE(mutableGroup.reselectionRequested);
+                ASSERT_EQ(harken::Engine::OriginalPendingVariableGroupHolder::LeafRetirement::Settled,
+                    mutableGroup.leafRetirement);
+                ASSERT_TRUE(actual.BeginPendingVariableGroupReprepare(producer, attempt, placement));
+                actual.deferPendingImmediateEntriesForTest = true;
+            }
+            ++probe.retirementChecks;
+            probe.seen = true;
+            return;
+        }
         if (probe.sideProbe >= 5) {
             using Phase = harken::Engine::OriginalPendingVariableGroupHolder::LeafRetirement;
             using Result = harken::Engine::PendingVariableGroupLeafRetirementResult;
@@ -43927,6 +44413,10 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                 EXPECT_EQ(Result::Refused, actual.RequestPendingVariableGroupLeafRetirement(producer, attempt, empty));
                 EXPECT_EQ(Result::Refused, actual.RequestPendingVariableGroupLeafRetirement(producer, foreign, placement));
                 EXPECT_EQ(Phase::None, mutableGroup.leafRetirement);
+                if (probe.sideProbe == 10 || probe.sideProbe == 14) {
+                    ASSERT_EQ(probe.sideProbe == 10 ? 0u : 1u, attempt.privateVcProducerCount);
+                    ASSERT_NO_FATAL_FAILURE(CheckNativeBackingReservationFailures(actual, producer, attempt, placement));
+                }
                 if (attempt.privateVcProducerCount != 0) {
                     EXPECT_FALSE(actual.BeginRegisteredPendingVariableCohortReprepare(attempt, empty));
                     EXPECT_FALSE(actual.BeginRegisteredPendingVariableCohortReprepare(foreign, placement));
@@ -43980,7 +44470,7 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                     for (std::uint32_t leaf = 0; leaf < mutableGroup.leafCount; ++leaf) {
                         harken::TimelineArmObservation retired{};
                         ASSERT_TRUE(actual.timelineArms.Observe(mutableGroup.leafArms[leaf], &retired));
-                        const auto sideGroup = leaf == 0 ? producer.row->variableControlDiscreteArmGroup
+                        const auto sideGroup = leaf == 0 || probe.sideProbe == 70 ? producer.row->variableControlDiscreteArmGroup
                             : producer.row->variableControlContinuousArmGroup;
                         harken::ArmGroupMemberSnapshot existing{};
                         ASSERT_TRUE(actual.armGroups.CaptureMember(sideGroup, retired.memberIndex, &existing));
@@ -43994,6 +44484,7 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                         }
                     }
                     ASSERT_TRUE(actual.BeginPendingVariableGroupReprepare(producer, attempt, placement));
+                    if (probe.sideProbe == 70) actual.deferPendingImmediateEntriesForTest = true;
                     EXPECT_TRUE(mutableGroup.RepreparePending());
                     EXPECT_FALSE(mutableGroup.ReprepareReady());
                     EXPECT_FALSE(actual.BeginPendingVariableGroupReprepare(producer, attempt, placement));
@@ -44032,6 +44523,7 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
     ASSERT_EQ(CanonicalActionWorld::kFirstSound, row->leaf.stableId);
     ASSERT_LT(row->startFrame, 6u * block);
     ASSERT_LT(set.ticket.sequence, playSequence);
+    if (sideProbe == 70) engine.deferPendingImmediateEntriesForTest = true;
     ASSERT_EQ(VN_OK, Vn_Update());
     const auto source = engine.variables.SliceForTicketForTests(set.ticket.sequence);
     ASSERT_TRUE(source.Valid());
@@ -44057,6 +44549,7 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
     ASSERT_NE(nullptr, originalArm);
     ASSERT_NE(0u, originalArm->armedCompletionSequence.load(std::memory_order_acquire));
     ASSERT_EQ(0u, originalArm->startedBlockSequence.load(std::memory_order_acquire));
+    if (sideProbe == 70) engine.deferPendingImmediateEntriesForTest = false;
     ASSERT_EQ(VN_OK, Vn_Update());
     if (sideProbe >= 5) {
         auto& group = engine.acceptedPendingVariableGroups[service.slot];
@@ -44080,7 +44573,8 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
             ASSERT_TRUE(engine.variables.CanReleaseReadCut(group.cut));
             ASSERT_EQ(harken::Engine::OriginalPendingVariableGroupHolder::LeafRetirement::Settled, group.leafRetirement);
             EXPECT_EQ(&group, engine.OriginalPendingVariableGroupForReprepare(producer, attempt));
-            EXPECT_TRUE(engine.MatchesRegisteredPendingVariableCohortReprepare(producer, attempt));
+            EXPECT_EQ(attempt.privateVcProducerCount != 0,
+                engine.MatchesRegisteredPendingVariableCohortReprepare(producer, attempt));
             EXPECT_TRUE(group.RepreparePending());
             EXPECT_FALSE(group.ReprepareReady());
             for (std::uint32_t leaf = 0; leaf < group.leafCount; ++leaf) {
@@ -44110,7 +44604,7 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
             ASSERT_EQ(VN_OK, Vn_Term());
             return;
         }
-        ASSERT_EQ(sideProbe >= 14 ? 1u : 2u, placementProbe.retirementChecks);
+        ASSERT_EQ(sideProbe >= 14 && sideProbe != 70 ? 1u : 2u, placementProbe.retirementChecks);
         EXPECT_EQ(harken::EnginePlayableStartPhase::PendingImmediateEntry, row->phase);
         EXPECT_TRUE(harken::OriginalSourceSubmissionRegistry::SameToken(originalArm, group.leafArms[0]));
         VnActionStepResult current{};
@@ -44120,6 +44614,21 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
         EXPECT_EQ(accepted.producedPlayableInstance, current.producedPlayableInstance);
         engine.pendingVariableGroupPlacementHookForTest = nullptr;
         engine.pendingVariableGroupPlacementContextForTest = nullptr;
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+        if (sideProbe == 70) {
+            auto& producer = *placementProbe.retirementProducer;
+            auto& attempt = *placementProbe.retirementAttempt;
+            ASSERT_EQ(0u, attempt.privateVcProducerCount);
+            for (unsigned waiting = 0; !group.ReprepareReady() && waiting < 32u; ++waiting) {
+                engine.nullBackend.Pump(1);
+                ASSERT_EQ(VN_OK, Vn_Update());
+                (void)engine.ServicePendingVariableGroupReprepare(producer, attempt);
+            }
+            ASSERT_TRUE(group.ReprepareReady());
+            ASSERT_NO_FATAL_FAILURE(CheckPendingVariableNativeShapeRetries(engine, producer, attempt, image, play));
+            return;
+        }
+#endif
         if (sideProbe >= 10) {
             ASSERT_NE(nullptr, placementProbe.retirementProducer);
             auto& producer = *placementProbe.retirementProducer;
@@ -44510,7 +45019,7 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                                                     if (index != 1u) return false;
                                                     const auto& first = probe.child->voiceStarts[0];
                                                     harken::TimelineArmObservation native{};
-                                                    probe.firstCommitted = probe.child->voiceOwnerContexts[0].committed &&
+                                                    probe.firstCommitted = probe.child->voiceStarts.Owners()[0].committed &&
                                                         !first.prepared && actual.timelineArms.Observe(first.arm, &native) &&
                                                         native.state == harken::ArmState::PendingApply;
                                                     EXPECT_TRUE(probe.firstCommitted);
@@ -44528,7 +45037,7 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                                             EXPECT_EQ(2u, partialCommit.calls);
                                             EXPECT_TRUE(partialCommit.firstCommitted);
                                             EXPECT_EQ(harken::EngineFrontierAttemptPhase::PendingVariableChildrenSourcesCommitting, child->storage.phase);
-                                            EXPECT_TRUE(child->voiceOwnerContexts[0].committed);
+                                            EXPECT_TRUE(child->voiceStarts.Owners()[0].committed);
                                             EXPECT_FALSE(child->directCommandsReserved);
                                             EXPECT_TRUE(engine.MatchesPendingVariableReplacementBatch(*child, producer, attempt));
                                             EXPECT_TRUE(engine.preparedVoiceCommandBatchProof.Valid());
@@ -44544,7 +45053,7 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                                             EXPECT_FALSE(engine.variables.CommitFrontierEntryReadUse(group.cut));
                                             for (std::uint32_t index = 0; index < 3u; ++index) {
                                                 const auto& start = child->voiceStarts[index];
-                                                EXPECT_TRUE(child->voiceOwnerContexts[index].committed);
+                                                EXPECT_TRUE(child->voiceStarts.Owners()[index].committed);
                                                 EXPECT_FALSE(start.prepared);
                                                 harken::TimelineArmObservation native{};
                                                 EXPECT_TRUE(engine.timelineArms.Observe(start.arm, &native));
@@ -44914,7 +45423,9 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                                 harken::TimelineArmReaderPin readerLoan;
                                 ASSERT_TRUE(engine.timelineArms.PinFrontierReader(arm, &readerLoan));
                                 entryPlacement.Release();
+                                RecordNativeBackingInventory(engine, "arm_reader_held");
                                 EXPECT_FALSE(engine.CancelPendingVariableGroupChildren(group));
+                                RecordNativeBackingInventory(engine, "arm_reader_refused");
                                 EXPECT_FALSE(entry.coordinatorCommitted);
                                 EXPECT_FALSE(entry.sideCommitted[0]);
                                 EXPECT_FALSE(entry.sideCommitted[1]);
@@ -44931,7 +45442,9 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                                 ASSERT_TRUE(engine.timelinePool.AcquirePlan03GroupReader(
                                     preparedChildren->frontierDescriptor.primary, &readerLoan));
                                 entryPlacement.Release();
+                                RecordNativeBackingInventory(engine, "read_use_reader_held");
                                 EXPECT_FALSE(engine.CancelPendingVariableGroupChildren(group));
+                                RecordNativeBackingInventory(engine, "read_use_reader_refused");
                                 EXPECT_FALSE(entry.coordinatorCommitted);
                                 EXPECT_FALSE(entry.primaryBound);
                                 EXPECT_TRUE(entry.entryReadUsePrepared);
@@ -45001,6 +45514,9 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                             }
                             EXPECT_TRUE(engine.CancelPendingVariableGroupChildren(group));
                             EXPECT_EQ(harken::EngineFrontierAttemptPhase::Free, preparedChildren->storage.phase);
+                            if (sideProbe == 55 || sideProbe == 57)
+                                RecordNativeBackingInventory(engine, sideProbe == 55 ?
+                                    "read_use_reader_returned" : "arm_reader_returned");
                             EXPECT_FALSE(engine.decisions.Contains(coordinator));
                             harken::ArmGroupSnapshot reclaimed{};
                             EXPECT_FALSE(engine.armGroups.Capture(coordinatorGroup, &reclaimed));
@@ -46934,7 +47450,208 @@ TEST(ActionFiringApi, PendingVariableControlMultiPlayInitialRandomUnchangedPubli
     CheckPendingVariableControlMultiPlaySequencePcm(PendingMultiPlaySequenceCase::RefusePublication, UINT32_MAX, true, true, UINT32_MAX, true);
 }
 
-enum class OrderedVariableSubtreeCase { NestedVariableControl, NestedQueue, DeferredPlay, SoundSibling };
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+struct PendingQueueNativeBackingProbe {
+    harken::Engine& engine;
+    bool enabled;
+    std::int32_t savedCountdown;
+    bool savedEntryDeferral = engine.deferPendingImmediateEntriesForTest;
+    harken::EngineActionPlayScratch* producer = nullptr;
+    harken::EngineImmediateEntryAttempt* attempt = nullptr;
+    harken::Engine::OriginalPendingVariableGroupHolder* group = nullptr;
+    std::array<harken::Engine::NativeReplacementSlot*, 2> slots{};
+    std::array<harken::EnginePreparedTimelineVoiceStart*, 2> bases{};
+    std::array<harken::EngineActionPlayScratch*, 2> children{};
+    std::array<VnVoiceHandle, 2> voices{};
+    std::array<harken::TimelineArmToken, 2> arms{};
+    std::array<harken::VariableTimelineReadUseRef, 2> readUses{};
+    harken::VariableReadCutRef cut{};
+    std::uint64_t allocations = 0;
+    std::uint64_t entryGeneration = 0;
+    std::size_t bytes = 0;
+    std::array<std::uint64_t, 19> owners{};
+    std::uint32_t available = 0;
+    unsigned visits = 0;
+    bool ready = false;
+    bool returned = false;
+
+    ~PendingQueueNativeBackingProbe() {
+        if (!enabled) return;
+        harken::detail::SetPendingVariablePrepareRefusalHookForTest(nullptr, nullptr);
+        engine.pendingVariableGroupPlacementHookForTest = nullptr;
+        engine.pendingVariableGroupPlacementContextForTest = nullptr;
+        engine.nativeBackingAllocationFailureCountdownForTest = savedCountdown;
+        engine.deferPendingImmediateEntriesForTest = savedEntryDeferral;
+    }
+    void ArmPreparationProbe() {
+        harken::detail::SetPendingVariablePrepareRefusalHookForTest([](harken::Engine& actual,
+            harken::EngineActionPlayScratch& child, harken::detail::PendingVariablePrepareStageForTest stage,
+            unsigned, void* opaque) {
+            auto& probe = *static_cast<PendingQueueNativeBackingProbe*>(opaque);
+            if (&actual != &probe.engine ||
+                stage != harken::detail::PendingVariablePrepareStageForTest::ReplacementPrepared) return false;
+            actual.deferPendingImmediateEntriesForTest = true;
+            probe.Prepared(child);
+            return probe.visits == 1 || ::testing::Test::HasFailure();
+        }, this);
+    }
+    void Reserve(harken::EngineActionPlayScratch& source, harken::EngineImmediateEntryAttempt& entry,
+        const harken::PrivateImmediateLanePlacementProof& placement) {
+        ASSERT_EQ(nullptr, producer);
+        ASSERT_EQ(0u, entry.privateVcProducerCount);
+        ASSERT_NO_FATAL_FAILURE(CheckNativeBackingReservationFailures(engine, source, entry, placement, true));
+        bool waiting = false;
+        ASSERT_TRUE(engine.EnsurePendingVariableNativeBacking(source, entry, &waiting));
+        ASSERT_FALSE(waiting);
+        producer = &source;
+        attempt = &entry;
+        group = &engine.acceptedPendingVariableGroups[source.row->identity.slot];
+        cut = group->cut;
+        entryGeneration = entry.generation;
+        std::uint32_t ordinal = UINT32_MAX;
+        auto* owner = engine.NativeBackingOwnerFor(*group, &ordinal);
+        ASSERT_NE(nullptr, owner);
+        for (auto& slot : owner->nativeReplacementSlots) {
+            if (slot.producerOrdinal == ordinal) slots[0] = &slot;
+            else if (slot.producerOrdinal == UINT32_MAX && slot.capacity != 0) slots[1] = &slot;
+        }
+        for (unsigned index = 0; index < slots.size(); ++index) {
+            ASSERT_NE(nullptr, slots[index]);
+            EXPECT_EQ(1u, slots[index]->capacity);
+            ASSERT_EQ(1u, slots[index]->side.size());
+            bases[index] = slots[index]->side.data();
+        }
+        allocations = engine.nativeBackingAllocationCountForTest;
+        engine.nativeBackingAllocationFailureCountdownForTest = 0;
+        RecordNativeBackingInventory(engine, "queue_reserved");
+    }
+    void Placement(harken::EngineActionPlayScratch& source, harken::EngineImmediateEntryAttempt& entry,
+        const harken::PrivateImmediateLanePlacementProof& placement) {
+        if (producer == nullptr) {
+            ASSERT_NO_FATAL_FAILURE(Reserve(source, entry, placement));
+            return;
+        }
+        ASSERT_EQ(producer, &source);
+        ASSERT_EQ(attempt, &entry);
+        if (group->leafRetirement == harken::Engine::OriginalPendingVariableGroupHolder::LeafRetirement::Settled &&
+            !group->RepreparePending()) {
+            ASSERT_TRUE(group->reselectionRequested);
+            ASSERT_TRUE(engine.BeginPendingVariableGroupReprepare(source, entry, placement));
+            engine.deferPendingImmediateEntriesForTest = true;
+        }
+    }
+    void Prepared(harken::EngineActionPlayScratch& child) {
+        ASSERT_TRUE(ready);
+        ASSERT_LT(visits, 2u);
+        ++visits;
+        EXPECT_TRUE(child.prepared);
+        EXPECT_EQ(harken::EngineFrontierAttemptPhase::PendingVariableChildren, child.storage.phase);
+        EXPECT_TRUE(engine.MatchesPendingVariableReplacementProducer(child, *producer, *attempt));
+        EXPECT_EQ(entryGeneration, child.pendingVariableReplacementEntryGeneration);
+        EXPECT_EQ(cut, child.pendingVariableReplacementCut);
+        ASSERT_EQ(1u, child.voiceStartCount);
+        ASSERT_EQ(1u, child.queueFutureAttemptCount);
+        ASSERT_EQ(1u, child.frontierQueueCount);
+        const auto* queue = engine.ResolvePlayableService(child.storage.frontierQueues[0].service);
+        ASSERT_NE(nullptr, queue);
+        EXPECT_LT(queue->queueCompletionFrame, engine.timelinePool.WindowEndFrame());
+        ::testing::Test::RecordProperty("native_future_anchor", std::to_string(child.pendingVariableReplacementAnchorFrame));
+        ::testing::Test::RecordProperty("native_future_completion", std::to_string(queue->queueCompletionFrame));
+        ::testing::Test::RecordProperty("native_future_window_end", std::to_string(engine.timelinePool.WindowEndFrame()));
+        const auto token = child.storage.queueFutureAttempts[0];
+        ASSERT_LT(token.slot, engine.actionPlayScratch.size());
+        auto& future = engine.actionPlayScratch[token.slot];
+        EXPECT_EQ(token.generation, future.storage.generation);
+        EXPECT_TRUE(future.queueFutureExecution);
+        EXPECT_TRUE(future.directExecution);
+        EXPECT_TRUE(future.continuationExecution);
+        EXPECT_TRUE(future.prepared);
+        EXPECT_EQ(1u, future.queueSuccessorVoiceStartCount);
+        EXPECT_EQ(&child, engine.NativeBackingParentFor(future));
+        EXPECT_EQ(queue, engine.ResolvePlayableService(future.continuationService));
+        children = {&child, &future};
+        for (unsigned index = 0; index < children.size(); ++index) {
+            auto& current = *children[index];
+            auto& side = index == 0 ? current.voiceStarts : current.queueSuccessorVoiceStarts;
+            EXPECT_TRUE(index == 0 ? current.currentNativeBorrowed : current.successorNativeBorrowed);
+            ASSERT_EQ(1u, side.size());
+            EXPECT_EQ(1u, side.Shape());
+            EXPECT_EQ(bases[index], side.data());
+            EXPECT_TRUE(slots[index]->side.Empty());
+            const auto borrower = engine.NativeBackingTokenFor(current);
+            EXPECT_EQ(borrower.slot, slots[index]->borrower.slot);
+            EXPECT_EQ(borrower.generation, slots[index]->borrower.generation);
+            EXPECT_TRUE(side[0].prepared);
+            voices[index] = side[0].renderHandle;
+            arms[index] = side[0].arm;
+            readUses[index] = side[0].initialVariableReadUse;
+            const auto& proof = side.Owners()[0].voiceCommitProof;
+            EXPECT_TRUE(proof.Valid());
+            EXPECT_EQ(&engine.voices, proof.Owner());
+            EXPECT_EQ(voices[index], proof.OriginalPreparedHandle());
+        }
+        EXPECT_EQ(CanonicalActionWorld::kFirstSound, child.pendingVariableReplacementLeaves[0].leaf.stableId);
+        EXPECT_EQ(bytes, NativePreparationBackingBytes(engine));
+        RecordNativeBackingInventory(engine, "queue_prepared_" + std::to_string(visits));
+    }
+    void AfterUpdate() {
+        if (producer == nullptr) return;
+        EXPECT_EQ(allocations, engine.nativeBackingAllocationCountForTest);
+        EXPECT_EQ(0, engine.nativeBackingAllocationFailureCountdownForTest);
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+        if (!ready) {
+            if (!group->RepreparePending()) return;
+            if (!group->ReprepareReady() && !engine.ServicePendingVariableGroupReprepare(*producer, *attempt)) return;
+            ASSERT_TRUE(group->ReprepareReady());
+            ready = true;
+            bytes = NativePreparationBackingBytes(engine);
+            owners = CaptureActionReclaimableOwners(engine);
+            available = engine.voices.AvailableSlotCount();
+            group->nextSelectionFrame = engine.timelinePool.WindowStartFrame() + 4u * engine.config.blockFrames;
+            engine.deferPendingImmediateEntriesForTest = false;
+        } else if (visits == 1 && !returned) {
+            if (!engine.CancelPendingVariableGroupChildren(*group)) return;
+            for (auto& reservation : group->selectionReservations)
+                if (reservation.Valid()) ASSERT_TRUE(engine.decisions.CancelPreparedReservation(&reservation));
+            ASSERT_EQ(nullptr, engine.OriginalCancelledPendingVariableGroupChildren(*producer, *attempt));
+            for (unsigned index = 0; index < children.size(); ++index) {
+                ASSERT_NE(nullptr, children[index]);
+                const auto& child = *children[index];
+                EXPECT_EQ(harken::EngineFrontierAttemptPhase::Free, child.storage.phase);
+                EXPECT_TRUE(child.storage.ownerLedger.Empty());
+                EXPECT_TRUE(child.voiceStarts.Empty());
+                EXPECT_TRUE(child.queueSuccessorVoiceStarts.Empty());
+                EXPECT_FALSE(child.currentNativeBorrowed);
+                EXPECT_FALSE(child.successorNativeBorrowed);
+                EXPECT_FALSE(slots[index]->borrower.Valid());
+                EXPECT_EQ(1u, slots[index]->side.size());
+                EXPECT_EQ(0u, slots[index]->side.Shape());
+                EXPECT_EQ(bases[index], slots[index]->side.data());
+                EXPECT_EQ(nullptr, engine.voices.Resolve(voices[index]));
+                harken::TimelineArmObservation arm{};
+                EXPECT_FALSE(engine.timelineArms.Observe(arms[index], &arm));
+                if (readUses[index].Valid())
+                    EXPECT_FALSE(harken::detail::TimelineReadUseStorageAliveForTest(engine.variables, readUses[index]));
+            }
+            EXPECT_TRUE(group->ReprepareReady());
+            EXPECT_EQ(cut, group->cut);
+            EXPECT_TRUE(engine.variables.CanReleaseReadCut(cut));
+            EXPECT_EQ(bytes, NativePreparationBackingBytes(engine));
+            EXPECT_EQ(owners, CaptureActionReclaimableOwners(engine));
+            EXPECT_EQ(available, engine.voices.AvailableSlotCount());
+            RecordNativeBackingInventory(engine, "queue_returned");
+            returned = true;
+            group->nextSelectionFrame = engine.timelinePool.WindowStartFrame() + 4u * engine.config.blockFrames;
+            ArmPreparationProbe();
+            engine.deferPendingImmediateEntriesForTest = false;
+        } else if (visits == 2) {
+            engine.deferPendingImmediateEntriesForTest = false;
+        }
+    }
+};
+#endif
+
+enum class OrderedVariableSubtreeCase { NestedVariableControl, NestedQueue, DeferredPlay, SoundSibling, NativeQueueBacking };
 enum class OrderedVariableSubtreePlacement { Initial, InitialSelectedSubtree, SoundToSubtree, SubtreeToSound, InnerToSound };
 enum class NestedReplacementPolicyShape { Single, TwoLevels, BothSides };
 enum class PendingQueueRetirementLoan { None, Queue, NativeGroup, SuccessorBank, Service };
@@ -46956,7 +47673,8 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
     bool precedingResetStep = false, bool trackQueueSource = false, bool precedingSilentVc = false) {
     constexpr std::uint32_t block = 64, rate = 48000;
     const bool nested = shape == OrderedVariableSubtreeCase::NestedVariableControl;
-    const bool queue = shape == OrderedVariableSubtreeCase::NestedQueue;
+    const bool nativeFutureProbe = shape == OrderedVariableSubtreeCase::NativeQueueBacking;
+    const bool queue = shape == OrderedVariableSubtreeCase::NestedQueue || nativeFutureProbe;
     const bool deferred = shape == OrderedVariableSubtreeCase::DeferredPlay;
     const bool sibling = shape == OrderedVariableSubtreeCase::SoundSibling;
     const bool finalPlacement = placement != OrderedVariableSubtreePlacement::Initial &&
@@ -47502,8 +48220,21 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
         ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
         if (initialQueueService.Valid()) recordInitialQueueExit("after_stop");
     }
-    struct PlacementInputProbe { unsigned visits = 0; VnVariableId selector{}; float expected = 3.0f; }
-        placementProbe{0, image.variables[3].variableId, finalSelector};
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+    PendingQueueNativeBackingProbe nativeProbe{engine, nativeFutureProbe,
+        engine.nativeBackingAllocationFailureCountdownForTest};
+#endif
+    struct PlacementInputProbe {
+        unsigned visits = 0;
+        VnVariableId selector{};
+        float expected = 3.0f;
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+        PendingQueueNativeBackingProbe* native = nullptr;
+#endif
+    } placementProbe{0, image.variables[3].variableId, finalSelector};
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+    if (nativeFutureProbe) placementProbe.native = &nativeProbe;
+#endif
     if (nested || queue) {
         engine.pendingVariableGroupPlacementContextForTest = &placementProbe;
         engine.pendingVariableGroupPlacementHookForTest = [](harken::Engine& actual,
@@ -47522,6 +48253,10 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
             EXPECT_EQ(harken::VariableReadCutValueStatus::Value,
                 reader.Read(probe.selector, &selector));
             EXPECT_FLOAT_EQ(probe.expected, selector);
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+            if (probe.native != nullptr)
+                ASSERT_NO_FATAL_FAILURE(probe.native->Placement(producer, attempt, placement));
+#endif
         };
     }
     struct NestedPolicyProbe {
@@ -48038,6 +48773,11 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
             EXPECT_TRUE(child.storage.ownerLedger.Validate(child.storage.generation));
         };
     }
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+    if (nativeFutureProbe) {
+        nativeProbe.ArmPreparationProbe();
+    }
+#endif
     const float unit = -second[0] * std::pow(10.0f, -12.0f / 20.0f);
     std::array<std::uint32_t, 2> frames{};
     std::uint64_t firstAudibleFrame = UINT64_MAX;
@@ -48061,6 +48801,9 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
     bool recordedInitialFailure = false;
     for (std::uint64_t quantum = 0; quantum < targetFrame / block + first.size() / block + 96u; ++quantum) {
         ASSERT_EQ(VN_OK, Vn_Update());
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+        if (nativeFutureProbe) ASSERT_NO_FATAL_FAILURE(nativeProbe.AfterUpdate());
+#endif
         if (quantum == 0 && initialQueueService.Valid()) recordInitialQueueExit("first_update");
         if (heldPrelude.Exact() && !preludeReturned &&
             engine.timelinePool.FrontierMemberBindingDetached(detachedTarget, retryEntry, engine.mixer.BlocksRendered())) {
@@ -48377,6 +49120,16 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
         ASSERT_EQ(VN_OK, Vn_Update());
     }
     EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+    if (nativeFutureProbe) {
+        EXPECT_EQ(2u, nativeProbe.visits);
+        EXPECT_TRUE(nativeProbe.returned);
+        EXPECT_EQ(nativeProbe.allocations, engine.nativeBackingAllocationCountForTest);
+        EXPECT_EQ(0, engine.nativeBackingAllocationFailureCountdownForTest);
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+        RecordNativeBackingInventory(engine, "queue_final");
+    }
+#endif
     if (initialQueueService.Valid()) recordInitialQueueExit("final_exit");
     if (CaptureActionReclaimableOwners(engine) != baseline) {
         for (const auto& service : engine.playableServices) {
@@ -48820,6 +49573,13 @@ TEST(ActionFiringApi, PendingVariableControlActualPlacementRebuildsSoundToQueueW
     CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase::NestedQueue, false,
         OrderedVariableSubtreePlacement::SoundToSubtree);
 }
+
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+TEST(ActionFiringApi, PendingVariableControlQueueFutureCancelledRetryReusesNativeBacking) {
+    CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase::NativeQueueBacking, false,
+        OrderedVariableSubtreePlacement::SoundToSubtree);
+}
+#endif
 
 TEST(ActionFiringApi, PendingVariableControlActualPlacementRebuildsQueueToSoundWithInitialBinding) {
     CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase::NestedQueue, false,
@@ -49904,6 +50664,7 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
         scenario == PendingOrdinarySuccessorCase::NestedToNestedEffectStop;
     const bool preservePredecessor = scenario == PendingOrdinarySuccessorCase::NestedUnchanged;
     const bool warmup = scenario == PendingOrdinarySuccessorCase::NestedToSound;
+    const bool probeOrdinaryNative = scenario == PendingOrdinarySuccessorCase::EffectCapacityRetry;
     if (scenario != PendingOrdinarySuccessorCase::Normal) ASSERT_TRUE(variableControl && ordinarySuccessor);
     auto config = harkentest::MakeNullConfig(8, block, 48000);
     if (effectPressure) config.gainEffectPoolCapacity = 4;
@@ -50107,8 +50868,15 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
     bool sawRetiredNestedServices = false;
     bool requestedStop = false;
     bool sawRetiredLoanStorage = false;
+    bool probedOrdinaryNative = false;
+    bool frozeOrdinaryNative = false;
+    std::uint64_t ordinaryNativeAllocationCount = 0;
     const auto render = [&](VnActionFiringHandle firing, float level, std::uint32_t expectedFrames = 128,
         VnActionStepState expectedState = VN_ACTION_STEP_SUCCEEDED) {
+        struct RestoreNativeFault {
+            harken::Engine& engine;
+            ~RestoreNativeFault() { engine.nativeBackingAllocationFailureCountdownForTest = -1; }
+        } restoreNativeFault{engine};
         VnActionStepResult accepted{};
         accepted.structSize = sizeof(accepted);
         ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &accepted));
@@ -50133,6 +50901,56 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
                     effects.clear();
                 }
             }
+            if (probeOrdinaryNative && firing == firings[1] && !probedOrdinaryNative) {
+                auto* pending = std::find_if(engine.immediateEntryAttempts.get(),
+                    engine.immediateEntryAttempts.get() + engine.immediateEntryAttemptCapacity,
+                    [&](const auto& attempt) { return attempt.active && attempt.root == firing; });
+                ASSERT_NE(engine.immediateEntryAttempts.get() + engine.immediateEntryAttemptCapacity, pending);
+                ASSERT_EQ(1u, pending->selectionProducerCount);
+                auto& storage = engine.actionPlayStorage[pending->selectionProducers[0].token.slot];
+                auto* holder = engine.PendingOrdinarySelectionFor(storage);
+                ASSERT_NE(nullptr, holder);
+                harken::TimelineArmObservation original{};
+                ASSERT_TRUE(engine.timelineArms.Observe(holder->arm, &original));
+                if (original.state == harken::ArmState::Armed) {
+                    const auto owners = CaptureActionReclaimableOwners(engine);
+                    const auto bytes = NativePreparationBackingBytes(engine);
+                    const auto head = engine.commands.PublishedHead();
+                    const auto anchor = engine.timelinePool.WindowStartFrame() + 4u * block;
+                    for (std::int32_t ordinal = 0; ordinal < 2; ++ordinal) {
+                        SCOPED_TRACE(ordinal);
+                        engine.nativeBackingAllocationFailureCountdownForTest = ordinal;
+                        const auto count = engine.nativeBackingAllocationCountForTest;
+                        const auto result = engine.ServicePendingOrdinarySelections(*pending, anchor);
+                        if (ordinal == 0 && engine.nativeBackingAllocationCountForTest == count) {
+                            EXPECT_EQ(harken::Engine::PendingOrdinarySelectionResult::Ready, result);
+                            break;
+                        }
+                        EXPECT_EQ(harken::Engine::PendingOrdinarySelectionResult::Waiting, result);
+                        EXPECT_EQ(static_cast<std::uint64_t>(ordinal + 1),
+                            engine.nativeBackingAllocationCountForTest - count);
+                        EXPECT_FALSE(holder->retirement.Valid());
+                        EXPECT_FALSE(holder->sourceRetired);
+                        EXPECT_TRUE(holder->source.Valid());
+                        EXPECT_TRUE(holder->body.Valid());
+                        EXPECT_TRUE(holder->nativeReplacement.Empty());
+                        auto waitingOwners = owners;
+                        ASSERT_GT(waitingOwners.back(), 0u);
+                        --waitingOwners.back();
+                        EXPECT_EQ(waitingOwners, CaptureActionReclaimableOwners(engine));
+                        EXPECT_TRUE(storage.initialSelectionBatch.CancelReplacement());
+                        EXPECT_EQ(owners, CaptureActionReclaimableOwners(engine));
+                        EXPECT_EQ(bytes, NativePreparationBackingBytes(engine));
+                        EXPECT_EQ(head, engine.commands.PublishedHead());
+                        harken::TimelineArmObservation unchanged{};
+                        ASSERT_TRUE(engine.timelineArms.Observe(holder->arm, &unchanged));
+                        EXPECT_EQ(original.state, unchanged.state);
+                        EXPECT_EQ(original.startedBlockSequence, unchanged.startedBlockSequence);
+                        if (ordinal == 1) probedOrdinaryNative = true;
+                    }
+                    if (probedOrdinaryNative) engine.nativeBackingAllocationFailureCountdownForTest = -1;
+                }
+            }
             ASSERT_EQ(VN_OK, Vn_Update());
             engine.nullBackend.Pump(1);
             EXPECT_FALSE(engine.runtimeRecreateRequired);
@@ -50148,6 +50966,11 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
                     const auto* row = engine.ResolvePlayableService(holder.reference);
                     if (row == nullptr || row->Invocation().actionFiring != firing) continue;
                     sawRetiredCapacityWait = true;
+                    if (probeOrdinaryNative && !frozeOrdinaryNative) {
+                        ordinaryNativeAllocationCount = engine.nativeBackingAllocationCountForTest;
+                        engine.nativeBackingAllocationFailureCountdownForTest = 0;
+                        frozeOrdinaryNative = true;
+                    }
                     EXPECT_TRUE(holder.retirement.StorageReturned());
                     EXPECT_TRUE(row->ordinaryFinalSourceTransferred);
                     EXPECT_EQ(0u, row->renderHandle);
@@ -50182,6 +51005,11 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
         EXPECT_EQ(accepted.producedPlayableInstance, finished.producedPlayableInstance);
         EXPECT_EQ(expectedState, finished.state);
         if (reject && firing == firings[1]) EXPECT_EQ(VN_INVALID_CONFIG, finished.result);
+        if (probeOrdinaryNative && firing == firings[1]) {
+            EXPECT_TRUE(probedOrdinaryNative);
+            EXPECT_TRUE(frozeOrdinaryNative);
+            EXPECT_EQ(ordinaryNativeAllocationCount, engine.nativeBackingAllocationCountForTest);
+        }
     };
     const auto gain = binding ? std::pow(10.0f, -12.0f / 20.0f) : effectPressure ? 0.5f : 1.0f;
     if (preservePredecessor) {
@@ -51500,6 +52328,18 @@ static void CheckRegisteredPendingVariableCohort(bool stopWithLaneLoan, bool pre
     harkentest::EngineSession session(harkentest::MakeNullConfig(8, block, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
+    struct NativeProbeCleanup {
+        harken::Engine& engine;
+        ~NativeProbeCleanup() {
+            if (harken::detail::ActiveEngine() != &engine) return;
+            engine.pendingVariableGroupPlacementHookForTest = nullptr;
+            engine.pendingVariableGroupPlacementContextForTest = nullptr;
+            engine.nativeBackingAllocationFailureCountdownForTest = -1;
+        }
+    } nativeProbeCleanup{engine};
+    const bool probeNativeReservation = !stopWithLaneLoan && !prepareOnly && !realVoicePressure &&
+        stoppedMember == UINT32_MAX;
+    bool nativeReservationProbed = false;
     const std::vector<float> first(2048, 0.25f), second(2048, -0.25f);
     engine.deferRegisteredPendingVariableSelectionReplacementForTest = prepareOnly || realVoicePressure;
     const auto firstPcm = harkentest::MonoDesc(first, 48000);
@@ -51581,6 +52421,19 @@ static void CheckRegisteredPendingVariableCohort(bool stopWithLaneLoan, bool pre
         [](const auto& candidate) { return candidate.active && candidate.privateVcProducerCount != 0; });
     ASSERT_NE(engine.immediateEntryAttempts.get() + engine.immediateEntryAttemptCapacity, attempt);
     ASSERT_EQ(2u, attempt->privateVcProducerCount);
+    if (probeNativeReservation) {
+        engine.pendingVariableGroupPlacementContextForTest = &nativeReservationProbed;
+        engine.pendingVariableGroupPlacementHookForTest = [](harken::Engine& actual,
+            harken::EngineActionPlayScratch& producer, harken::EngineImmediateEntryAttempt& current,
+            const harken::PrivateImmediateLanePlacementProof& placement,
+            harken::VariableReadCutReader, void* context) noexcept {
+            auto& probed = *static_cast<bool*>(context);
+            if (probed) return;
+            ASSERT_EQ(2u, current.privateVcProducerCount);
+            ASSERT_NO_FATAL_FAILURE(CheckNativeBackingReservationFailures(actual, producer, current, placement));
+            probed = true;
+        };
+    }
     const auto waitingState = [&]() {
         testing::Message message;
         for (const auto service : services) {
@@ -51669,6 +52522,12 @@ static void CheckRegisteredPendingVariableCohort(bool stopWithLaneLoan, bool pre
     ASSERT_EQ(harken::VariableSliceState::SliceApplied, engine.variableSlices.State(source));
     if (stoppedMember <= accepted.size() && !stopBeforeFirstUpdate) ASSERT_NO_FATAL_FAILURE(stop());
     ASSERT_EQ(VN_OK, Vn_Update());
+    const auto nativeAllocationsAtRetirement = engine.nativeBackingAllocationCountForTest;
+    if (probeNativeReservation) {
+        ASSERT_TRUE(nativeReservationProbed);
+        ASSERT_TRUE(engine.RegisteredPendingVariableCohortRepreparePending(*attempt));
+        engine.nativeBackingAllocationFailureCountdownForTest = 0;
+    }
     if (stopBeforeFirstUpdate && !noSurvivor && stoppedMember < accepted.size()) {
         ASSERT_TRUE(engine.RegisteredPendingVariableCohortRepreparePending(*attempt));
         const auto& stoppedRow = engine.playableServices[services[stoppedMember].slot];
@@ -52122,6 +52981,7 @@ static void CheckRegisteredPendingVariableCohort(bool stopWithLaneLoan, bool pre
                 engine.privateInitialVcLaneTransferHookForTest = nullptr;
                 engine.privateInitialVcLaneTransferContextForTest = nullptr;
                 ASSERT_TRUE(published);
+                RecordNativeBackingInventory(engine, "cohort_transfer");
                 EXPECT_EQ(1u, observation.calls);
                 EXPECT_EQ(bindSharedEntries == 12 ? 1u : 0u, observation.installedCalls);
                 EXPECT_FALSE(placement.Valid());
@@ -52260,8 +53120,16 @@ static void CheckRegisteredPendingVariableCohort(bool stopWithLaneLoan, bool pre
         laneLoan.Return();
     }
     bool heard = false;
+    bool installedInventoryRecorded = false;
     for (unsigned quantum = 0; !stopWithLaneLoan && !prepareOnly && !noSurvivor && quantum < 40 && !heard; ++quantum) {
         ASSERT_EQ(VN_OK, Vn_Update());
+        if (!installedInventoryRecorded && std::all_of(services.begin(), services.end(), [&](const auto service) {
+                const auto phase = engine.playableServices[service.slot].phase;
+                return phase == harken::EnginePlayableStartPhase::Filed || phase == harken::EnginePlayableStartPhase::Started;
+            })) {
+            RecordNativeBackingInventory(engine, "cohort_installed");
+            installedInventoryRecorded = true;
+        }
         engine.nullBackend.Pump(1);
         const auto* output = engine.nullBackend.LastBlock();
         for (unsigned frame = 0; frame < block; ++frame) {
@@ -52347,6 +53215,22 @@ static void CheckRegisteredPendingVariableCohort(bool stopWithLaneLoan, bool pre
     }
     EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
     ASSERT_NO_FATAL_FAILURE(ExpectBoundSourcesReleased(engine, sourceGenerations));
+    if (probeNativeReservation) {
+        EXPECT_EQ(nativeAllocationsAtRetirement, engine.nativeBackingAllocationCountForTest);
+        std::size_t retainedBytes = 0;
+        for (const auto& scratch : engine.actionPlayScratch) {
+            const auto bytes = scratch.voiceStarts.RequestedBytes() +
+                scratch.queueSuccessorVoiceStarts.RequestedBytes();
+            if (bytes == 0) continue;
+            EXPECT_EQ(harken::EngineFrontierAttemptPhase::Free, scratch.storage.phase);
+            EXPECT_FALSE(scratch.currentNativeBorrowed);
+            EXPECT_FALSE(scratch.successorNativeBorrowed);
+            retainedBytes += bytes;
+        }
+        EXPECT_EQ(retainedBytes, NativePreparationBackingBytes(engine));
+        ::testing::Test::RecordProperty("native_retained_free_bytes", std::to_string(retainedBytes));
+    }
+    RecordNativeBackingInventory(engine, "cohort_final");
     EXPECT_FALSE(engine.runtimeRecreateRequired);
 }
 
@@ -52684,6 +53568,12 @@ TEST(ActionFiringApi, PendingVariableGroupReplacementFrozenCancellationRetriesSa
 TEST(ActionFiringApi, PendingVariableGroupReplacementFrozenCancellationRetriesNewAnchor) {
     CheckPendingVariableControlAtActualPlacement(false, 31);
 }
+
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+TEST(ActionFiringApi, PendingVariableGroupChangedShapeCancelledRetriesReuseNativeBacking) {
+    CheckPendingVariableControlAtActualPlacement(true, 70);
+}
+#endif
 
 TEST(ActionFiringApi, PendingVariableGroupReplacementFrozenSourcesReturnOnStop) {
     CheckPendingVariableControlAtActualPlacement(false, 32);
@@ -63401,7 +64291,7 @@ TEST(ActionFiringApi, OriginalSourcePrivatePageDispositionSurvivesOwnerRefusalAn
         ++actual.calls;
         ASSERT_NE(nullptr, actual.scratch);
         actual.oldStart = &old;
-        for (auto& owner : actual.scratch->voiceOwnerContexts) {
+        for (auto& owner : actual.scratch->voiceStarts.Owners()) {
             if (owner.token == &old) actual.oldOwner = &owner;
         }
         ASSERT_NE(nullptr, actual.oldOwner);
@@ -66148,7 +67038,7 @@ static void CheckQueueSourceRetainedPreparationRefusal(bool composite) {
     EXPECT_EQ(harken::ArmState::Prepared, native.state);
     auto retained = std::find_if(engine.actionPlayScratch.begin(), engine.actionPlayScratch.end(),
         [&](const auto& candidate) {
-            return candidate.voiceStartCount != 0 &&
+            return !candidate.voiceStarts.empty() && candidate.voiceStartCount != 0 &&
                 harken::Engine::SameOriginalSingleArm(candidate.voiceStarts[0].arm, loan.arm);
         });
     ASSERT_NE(engine.actionPlayScratch.end(), retained);
@@ -66849,8 +67739,10 @@ void CheckInitialOriginalPublicMixedFactory(bool refusePost, bool ordinaryRefusa
             EXPECT_FALSE(engine.runtimeRecreateRequired);
             EXPECT_EQ(ownGeneration, probe.ordinary->storage.generation);
             EXPECT_EQ(harken::EngineFrontierAttemptPhase::CancelPending, probe.ordinary->storage.phase);
-            EXPECT_FALSE(probe.ordinary->voiceStarts[0].prepared);
-            EXPECT_EQ(0u, probe.ordinary->voiceStarts[0].renderHandle);
+            for (const auto& start : probe.ordinary->voiceStarts) {
+                EXPECT_FALSE(start.prepared);
+                EXPECT_EQ(0u, start.renderHandle);
+            }
             EXPECT_TRUE(engine.voices.ReleaseObserved(ownRelease));
             harken::TimelineArmObservation ownNative{};
             EXPECT_FALSE(engine.timelineArms.Observe(ownArm, &ownNative));

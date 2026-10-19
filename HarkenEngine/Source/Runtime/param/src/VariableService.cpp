@@ -5490,7 +5490,7 @@ bool VariableServiceV1::PreparedPendingVariableGroupUsesMatch(const EngineAction
     for (std::uint32_t index = 0; index < child.voiceStartCount; ++index) {
         const auto& start = child.voiceStarts[index];
         const auto* use = ResolveTimelineReadUse(start.initialVariableReadUse);
-        const auto& proof = child.voiceOwnerContexts[index].armCommitProof;
+        const auto& proof = child.voiceStarts.Owners()[index].armCommitProof;
         const auto token = proof.OriginalPreparedToken();
         std::uint64_t logical = 0, onset = 0;
         if (use == nullptr || use->state.load(std::memory_order_acquire) != TimelineReadUseState::Prepared ||
