@@ -28,6 +28,7 @@ enum class LogicAllocSite : unsigned int {
     ProjectFinalPreflight,
     ProjectTraceProjection,
     CapturedVoiceInstall,
+    CapturedScheduleVoices,
 };
 
 struct LogicAllocFaultState {

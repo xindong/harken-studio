@@ -6343,10 +6343,12 @@ public:
 
     explicit RetainedTimelineVoiceInstallBorrow(
         const harken::EnginePlayableServiceRow& row,
-        const harken::TimelineVoiceInstallDesc* member = nullptr) noexcept
+        const harken::TimelineVoiceInstallDesc* member = nullptr,
+        std::uint32_t scheduleIndex = 0) noexcept
         : RetainedTimelineVoiceInstallBorrow(
-              member == nullptr && row.usesCapturedVoice ? &row.capturedVoice : nullptr,
-              member != nullptr ? member : row.usesCapturedVoice ? nullptr : &row.voice) {}
+              CapturedMember(row, member, scheduleIndex),
+              row.usesCapturedScheduleVoices ? nullptr :
+                  member != nullptr ? member : row.usesCapturedVoice ? nullptr : &row.voice) {}
 
     RetainedTimelineVoiceInstallBorrow(const RetainedTimelineVoiceInstallBorrow&) = delete;
     RetainedTimelineVoiceInstallBorrow& operator=(const RetainedTimelineVoiceInstallBorrow&) = delete;
@@ -6361,6 +6363,19 @@ public:
     const harken::TimelineVoiceInstallInput& Input() const && = delete;
 
 private:
+    static const harken::CapturedTimelineVoiceInstall* CapturedMember(
+        const harken::EnginePlayableServiceRow& row,
+        const harken::TimelineVoiceInstallDesc* member,
+        std::uint32_t index) noexcept {
+        if (row.usesCapturedScheduleVoices) {
+            if (row.usesCapturedVoice || member != nullptr ||
+                row.capturedScheduleVoices.size() != row.scheduleLeafCount ||
+                index >= row.capturedScheduleVoices.size()) return nullptr;
+            return &row.capturedScheduleVoices[index];
+        }
+        return member == nullptr && row.usesCapturedVoice ? &row.capturedVoice : nullptr;
+    }
+
     std::optional<LegacyTimelineVoiceInstallProjection> legacy_;
     harken::TimelineVoiceInstallInput input_{};
     VnResult status_ = VN_DEVICE_ERROR;
@@ -17233,7 +17248,8 @@ harken::PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
     harken::Engine& engine, const harken::ResolvedPlayablePropertyCutViewV1& cut,
     const harken::PackPartitionLease* leaseOrNull, bool allowDirectActionStream,
     harken::TimelineSemanticTarget finalTarget,
-    harken::CapturedTimelineVoiceInstall* out) noexcept {
+    harken::CapturedTimelineVoiceInstall* out,
+    std::uint64_t authoredDurationFrames = UINT64_MAX) noexcept {
     if (out == nullptr || harken::memguard::IsAudioTagged())
         return harken::PlayableStartStatus::InvalidInput;
     ResolvedTimelineVoiceInstallSource source;
@@ -17245,9 +17261,38 @@ harken::PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
         [&](auto& facts, auto bindings, auto path, auto sends, auto effects) noexcept {
             facts = source.facts;
             facts.target = finalTarget;
+            facts.authoredDurationFrames = authoredDurationFrames;
             return PopulateTimelineVoiceInstallColumns(
                 engine, cut, source, bindings, path, sends, effects);
         }, out);
+}
+
+template<class World>
+harken::PlayableStartStatus CaptureScheduleLeafStart(
+    harken::Engine& engine, const World& world,
+    const harken::PlayableRefV1& root,
+    const MaterializedScheduleLeaf& materialized,
+    const harken::PackPartitionLease* leaseOrNull,
+    harken::CapturedTimelineVoiceInstall* out) noexcept {
+    if (out == nullptr || materialized.selectionCount == 0 ||
+        (materialized.endOffsetFrames != UINT64_MAX &&
+         materialized.endOffsetFrames < materialized.startOffsetFrames) ||
+        engine.playablePropertyCutScratch.Resolve(
+            world, root, materialized.selectedOrdinals.data(),
+            materialized.selectionCount, materialized.pathTrackIds.data()) !=
+            harken::ResolvedPlayablePropertyCutStatusV1::Ok)
+        return harken::PlayableStartStatus::InvalidInput;
+    const auto& cut = engine.playablePropertyCutScratch.View();
+    if (!SamePlayableRef(cut.leaf, materialized.leaf))
+        return harken::PlayableStartStatus::InvalidInput;
+    harken::TimelineSemanticTarget target{};
+    target.programSemanticFingerprint = root.expectedProgramSemanticFingerprint;
+    target.subjectId = cut.leaf.stableId;
+    target.occurrenceOrdinal = materialized.selectedOrdinals[materialized.selectionCount - 1u];
+    const auto duration = materialized.endOffsetFrames == UINT64_MAX ? UINT64_MAX :
+        materialized.endOffsetFrames - materialized.startOffsetFrames;
+    return CaptureTimelineVoiceInstallFromCut(
+        engine, cut, leaseOrNull, false, target, out, duration);
 }
 
 harken::PlayableStartStatus BuildScheduleLeafStart(
@@ -17397,17 +17442,33 @@ bool PrepareVariableControlDiscreteLeafStarts(
     return true;
 }
 
-harken::PlayableStartStatus PreflightScheduleLeafStarts(
-    harken::Engine& engine,
-    const PreparedScheduleLeafStart* leaves,
+struct ScheduleLeafStartBorrow {
+    explicit ScheduleLeafStartBorrow(const PreparedScheduleLeafStart& leaf) noexcept
+        : startOffsetFrames(leaf.startOffsetFrames), endOffsetFrames(leaf.endOffsetFrames),
+          hasVariableWeight(leaf.hasVariableWeight), voice(nullptr, &leaf.voice) {}
+
+    ScheduleLeafStartBorrow(const MaterializedScheduleLeaf& leaf,
+        const harken::CapturedTimelineVoiceInstall& captured) noexcept
+        : startOffsetFrames(leaf.startOffsetFrames), endOffsetFrames(leaf.endOffsetFrames),
+          voice(&captured, nullptr) {}
+
+    std::uint64_t startOffsetFrames = 0;
+    std::uint64_t endOffsetFrames = UINT64_MAX;
+    bool hasVariableWeight = false;
+    RetainedTimelineVoiceInstallBorrow voice;
+};
+
+template<class BorrowLeaf, class EffectsFor>
+harken::PlayableStartStatus PreflightScheduleLeafStartsImpl(
+    harken::Engine& engine, const BorrowLeaf& borrowLeaf, const EffectsFor& effectsFor,
     std::uint32_t leafCount,
     std::uint64_t baseStartFrame,
-    std::uint32_t leafCapacity = 0,
-    bool useImmediateLane = false) noexcept {
+    std::uint32_t leafCapacity,
+    bool useImmediateLane) noexcept {
     if (leafCapacity == 0) {
         leafCapacity = engine.config.maxKnownScheduleLeaves;
     }
-    if (leaves == nullptr || leafCount == 0 ||
+    if (leafCount == 0 ||
         leafCount > 2u * harken::kMaxKnownScheduleLeaves ||
         leafCount > leafCapacity ||
         leafCount > engine.ledger.AvailableEntryCount() ||
@@ -17421,25 +17482,25 @@ harken::PlayableStartStatus PreflightScheduleLeafStarts(
     std::array<std::uint64_t, 2u * harken::kMaxKnownScheduleLeaves>
         transactionFrames{};
     for (std::uint32_t index = 0; index < leafCount; ++index) {
-        if (leaves[index].startOffsetFrames > UINT64_MAX - baseStartFrame ||
-            leaves[index].startOffsetFrames > INT64_MAX) {
+        const auto leaf = borrowLeaf(index);
+        if (leaf.startOffsetFrames > UINT64_MAX - baseStartFrame ||
+            leaf.startOffsetFrames > INT64_MAX) {
             return harken::PlayableStartStatus::CapabilityUnavailable;
         }
-        if (leaves[index].endOffsetFrames != UINT64_MAX &&
-            leaves[index].endOffsetFrames > UINT64_MAX - baseStartFrame) {
+        if (leaf.endOffsetFrames != UINT64_MAX &&
+            leaf.endOffsetFrames > UINT64_MAX - baseStartFrame) {
             return harken::PlayableStartStatus::CapabilityUnavailable;
         }
         const std::uint64_t frame =
-            baseStartFrame + leaves[index].startOffsetFrames;
+            baseStartFrame + leaf.startOffsetFrames;
         if (frame < engine.timelinePool.WindowEndFrame()) {
             transactionFrames[currentFrameCount++] = frame;
         } else {
             ++futureFrameCount;
         }
-        const LegacyTimelineVoiceInstallProjection projection{leaves[index].voice};
-        if (projection.Status() != VN_OK) return harken::PlayableStartStatus::InvalidInput;
+        if (leaf.voice.Status() != VN_OK) return harken::PlayableStartStatus::InvalidInput;
         const VnResult physical =
-            PreflightTimelineVoiceStart(engine, projection.Input());
+            PreflightTimelineVoiceStart(engine, leaf.voice.Input());
         if (physical != VN_OK) {
             return physical == VN_NO_VOICE
                        ? harken::PlayableStartStatus::Capacity
@@ -17448,10 +17509,10 @@ harken::PlayableStartStatus PreflightScheduleLeafStarts(
                              : harken::PlayableStartStatus::InvalidInput;
         }
         std::uint32_t demand = 0;
-        if (TimelineVoiceStartCommandBudget(projection.Input(), &demand) != VN_OK) {
+        if (TimelineVoiceStartCommandBudget(leaf.voice.Input(), &demand) != VN_OK) {
             return harken::PlayableStartStatus::InvalidInput;
         }
-        demand += static_cast<std::uint32_t>(leaves[index].hasVariableWeight);
+        demand += static_cast<std::uint32_t>(leaf.hasVariableWeight);
         if (demand > UINT32_MAX - commandCount) {
             return harken::PlayableStartStatus::Capacity;
         }
@@ -17479,15 +17540,15 @@ harken::PlayableStartStatus PreflightScheduleLeafStarts(
         return harken::PlayableStartStatus::Backpressure;
     }
     for (std::uint32_t index = 0; index < leafCount; ++index) {
-        const auto effects = std::span{leaves[index].voice.effects}.first(
-            leaves[index].voice.effectCount);
+        const auto effects = effectsFor(index);
         for (std::size_t effect = 0; effect < effects.size(); ++effect) {
             const std::uint32_t type = effects[effect].type;
             std::uint32_t demand = 0;
             for (std::uint32_t priorLeaf = 0;
                  priorLeaf <= index; ++priorLeaf) {
-                const auto priorEffects = std::span{leaves[priorLeaf].voice.effects}.first(
-                    priorLeaf == index ? effect + 1u : leaves[priorLeaf].voice.effectCount);
+                const auto allPriorEffects = effectsFor(priorLeaf);
+                const auto priorEffects = allPriorEffects.first(
+                    priorLeaf == index ? effect + 1u : allPriorEffects.size());
                 for (const auto& priorEffect : priorEffects) {
                     if (priorEffect.type == type) {
                         ++demand;
@@ -17503,6 +17564,32 @@ harken::PlayableStartStatus PreflightScheduleLeafStarts(
         }
     }
     return harken::PlayableStartStatus::Accepted;
+}
+
+harken::PlayableStartStatus PreflightScheduleLeafStarts(
+    harken::Engine& engine, const PreparedScheduleLeafStart* leaves,
+    std::uint32_t leafCount, std::uint64_t baseStartFrame,
+    std::uint32_t leafCapacity = 0, bool useImmediateLane = false) noexcept {
+    if (leaves == nullptr) return harken::PlayableStartStatus::Capacity;
+    return PreflightScheduleLeafStartsImpl(engine,
+        [&](std::uint32_t index) { return ScheduleLeafStartBorrow{leaves[index]}; },
+        [&](std::uint32_t index) {
+            return std::span{leaves[index].voice.effects}.first(leaves[index].voice.effectCount);
+        },
+        leafCount, baseStartFrame, leafCapacity, useImmediateLane);
+}
+
+harken::PlayableStartStatus PreflightCapturedScheduleLeafStarts(
+    harken::Engine& engine, const MaterializedScheduleSet& materialized,
+    std::span<const harken::CapturedTimelineVoiceInstall> captures,
+    std::uint64_t baseStartFrame, bool useImmediateLane) noexcept {
+    if (captures.size() != materialized.leafCount)
+        return harken::PlayableStartStatus::InvalidInput;
+    return PreflightScheduleLeafStartsImpl(engine,
+        [&](std::uint32_t index) {
+            return ScheduleLeafStartBorrow{materialized.leaves[index], captures[index]};
+        }, [&](std::uint32_t index) { return captures[index].Input().effects; },
+        materialized.leafCount, baseStartFrame, 0, useImmediateLane);
 }
 
 bool PrepareImmediateActionPlayScratchReset(
@@ -43411,7 +43498,8 @@ void ServicePendingImmediateEntries(
                         auto* prepared = starts.At(replacementCount);
                         const auto slot = bases.member + leaf;
                         const RetainedTimelineVoiceInstallBorrow voice{member,
-                            member.scheduleLeafCount > 1u ? &engine.playableScheduleVoices[slot] : nullptr};
+                            !member.usesCapturedScheduleVoices && member.scheduleLeafCount > 1u
+                                ? &engine.playableScheduleVoices[slot] : nullptr, leaf};
                         if (voice.Status() != VN_OK) {
                             replaced = false;
                             break;
@@ -43606,7 +43694,7 @@ void ServicePendingImmediateEntries(
                         for (std::uint32_t leaf = 0;
                              leaf < leafCount(member); ++leaf) {
                             const auto* installed = starts.At(index++);
-                            if (member.scheduleLeafCount > 1u) {
+                            if (member.scheduleLeafCount > 1u || member.usesCapturedScheduleVoices) {
                                 const auto slot = bases.member + leaf;
                                 engine.playableScheduleArms[slot] =
                                     installed->arm;
@@ -43745,8 +43833,10 @@ void ServicePendingImmediateEntries(
                     const bool memberSlot = member.variableControlIndependentFrontier &&
                         ResolveImmediateInitialMemberSlots(engine, member, leaf, &logicalSlot, &physicalSlot);
                     const RetainedTimelineVoiceInstallBorrow voice{member,
-                        memberSlot ? &engine.playableScheduleVoices[physicalSlot] :
-                        member.scheduleLeafCount > 1u ? &engine.playableScheduleVoices[bases.member + leaf] : nullptr};
+                        member.usesCapturedScheduleVoices ? nullptr :
+                            memberSlot ? &engine.playableScheduleVoices[physicalSlot] :
+                            member.scheduleLeafCount > 1u
+                                ? &engine.playableScheduleVoices[bases.member + leaf] : nullptr, leaf};
                     if (voice.Status() != VN_OK) {
                         invalidTiming = true;
                         break;
@@ -71685,9 +71775,6 @@ bool ResolveStopLeafSilence(
                                                  : delayBase;
         return *outSilence != UINT64_MAX;
     }
-    const RetainedTimelineVoiceInstallBorrow install{row};
-    if (install.Status() != VN_OK) return false;
-    const auto& voice = *install.Input().facts;
     const harken::PCMView media =
         engine.registry.Lookup(row.leaf.stableId != VnObjectId{} ? row.leaf.stableId
                                                       : row.root.stableId);
@@ -71696,6 +71783,9 @@ bool ResolveStopLeafSilence(
         *outMissing = true;
         return true;
     }
+    const RetainedTimelineVoiceInstallBorrow install{row};
+    if (install.Status() != VN_OK) return false;
+    const auto& voice = *install.Input().facts;
     harken::ResamplerAdvanceState advance{};
     advance.sourceIntegerFrame = voice.sourceStartFrame;
     advance.sourceStartFrame = voice.sourceStartFrame;
@@ -82545,26 +82635,36 @@ bool PrepareImmediateActionCompositePlay(
                 : VN_CAPABILITY_UNAVAILABLE;
         return false;
     }
-    auto leavesStorage = AllocatePreparedScheduleLeaves(engine);
-    if (!leavesStorage) {
+    std::vector<harken::CapturedTimelineVoiceInstall> captures;
+    bool allocationRefused = materialized.leafCount != 0 &&
+        engine.forcePreparedScheduleAllocationFailureForTest;
+    if (!allocationRefused) {
+        try {
+            harken::detail::CheckedGrow(captures, materialized.leafCount,
+                harken::detail::LogicAllocSite::CapturedScheduleVoices);
+            captures.resize(materialized.leafCount);
+        } catch (const std::bad_alloc&) {
+            allocationRefused = true;
+        }
+    }
+    if (allocationRefused) {
         if (scratch->packLeaseOwned) {
             (void)ReleaseImmediateActionPlayableLease(engine, scratch, &plan);
         }
         plan.result = VN_BACKPRESSURE;
         return false;
     }
-    auto& leaves = *leavesStorage;
     for (std::uint32_t index = 0;
          index < materialized.leafCount; ++index) {
         const harken::PlayableStartStatus status =
             scratch->packLeaseOwned
-                ? BuildScheduleLeafStart(
+                ? CaptureScheduleLeafStart(
                       engine, scratch->packPlaybackView, root,
-                      materialized.leaves[index], scratch->packLease,
-                      &leaves[index])
-                : BuildScheduleLeafStart(
+                      materialized.leaves[index], &scratch->packLease,
+                      &captures[index])
+                : CaptureScheduleLeafStart(
                       engine, world, root, materialized.leaves[index],
-                      &leaves[index]);
+                      nullptr, &captures[index]);
         if (status != harken::PlayableStartStatus::Accepted) {
             if (scratch->packLeaseOwned) {
                 (void)ReleaseImmediateActionPlayableLease(engine, scratch, &plan);
@@ -82601,9 +82701,8 @@ bool PrepareImmediateActionCompositePlay(
         PendingImmediateOffsetsFit(engine, materialized);
     const harken::PlayableStartStatus preflight = markerOnly
         ? harken::PlayableStartStatus::Accepted
-        : PreflightScheduleLeafStarts(
-              engine, leaves.data(), materialized.leafCount,
-              baseStartFrame, 0, pendingImmediateEntry);
+        : PreflightCapturedScheduleLeafStarts(
+              engine, materialized, captures, baseStartFrame, pendingImmediateEntry);
     if (preflight != harken::PlayableStartStatus::Accepted) {
         (void)ReleaseImmediateActionPlayableLease(engine, scratch, &plan);
         plan.result = MapImmediateActionPlayStatus(preflight);
@@ -82667,8 +82766,10 @@ bool PrepareImmediateActionCompositePlay(
     const std::size_t eventBase = bases.currentEvent;
     const std::size_t endpointBase = bases.endpoint;
     if (memberBase > UINT32_MAX ||
+        captures.size() != materialized.leafCount ||
+        materialized.leafCount > scratch->voiceStarts.size() ||
         memberBase + materialized.leafCount >
-            engine.playableScheduleVoices.size() ||
+            engine.playableScheduleLeaves.size() ||
         eventBase + materialized.leafCount >
             engine.playableSchedulePayloads.size() ||
         endpointBase + materialized.leafCount >
@@ -82713,11 +82814,13 @@ bool PrepareImmediateActionCompositePlay(
     row->root = root;
     row->scheduleStorageBase = static_cast<std::uint32_t>(memberBase);
     row->scheduleLeafCount = materialized.leafCount;
+    row->usesCapturedScheduleVoices = true;
+    row->capturedScheduleVoices = std::move(captures);
     row->pendingImmediateEntry = pendingImmediateEntry;
     row->pendingFutureCount = markerOnly ? 1u : materialized.leafCount;
     row->startFrame = markerOnly
         ? zeroWorkCompletionFrame
-        : baseStartFrame + leaves[0].startOffsetFrames;
+        : baseStartFrame + materialized.leaves[0].startOffsetFrames;
     row->zeroWorkMarker = markerOnly;
     row->hasZeroWorkCompletion =
         !markerOnly && materialized.hasZeroWorkCompletion;
@@ -82746,26 +82849,23 @@ bool PrepareImmediateActionCompositePlay(
         const std::size_t memberSlot = memberBase + index;
         const std::size_t eventSlot = eventBase + index;
         const std::size_t endpointSlot = endpointBase + index;
-        PreparedScheduleLeafStart& source = leaves[index];
-        source.voice.target.programSemanticFingerprint =
-            root.expectedProgramSemanticFingerprint;
-        source.voice.target.subjectId = source.leaf.stableId;
-        source.voice.target.occurrenceOrdinal = source.occurrenceOrdinal;
+        const auto& source = materialized.leaves[index];
+        const auto voice = row->capturedScheduleVoices[index].Input();
         const std::uint64_t startFrame =
             baseStartFrame + source.startOffsetFrames;
         const TimelineVoiceInstallResult installed =
             InstallTimelineVoiceStart(
-                engine, source.voice, row->rootInstance, startFrame,
+                engine, voice, row->rootInstance, startFrame,
                 row->rootInstance, row->rootInstance, nullptr, nullptr, {}, UINT16_MAX,
                 nullptr, &scratch->voiceStarts[index], nullptr, nullptr,
-                nullptr, row->pendingImmediateEntry);
+                nullptr, row->pendingImmediateEntry, false, false, false,
+                nullptr, {}, false, 0);
+        if (scratch->voiceStarts[index].prepared) scratch->voiceStartCount = index + 1u;
         if (installed.status != VN_OK) {
             plan.result = installed.status;
             (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
             return false;
         }
-        scratch->voiceStartCount = index + 1u;
-        engine.playableScheduleVoices[memberSlot] = source.voice;
         engine.playableScheduleLeaves[memberSlot] = source.leaf;
         engine.playableScheduleArms[memberSlot] = installed.armToken;
         engine.playableScheduleRenderHandles[memberSlot] =
@@ -82776,7 +82876,7 @@ bool PrepareImmediateActionCompositePlay(
         auto& payload = engine.playableSchedulePayloads[eventSlot];
         payload = {};
         payload.kind = harken::TimelineEventKind::Start;
-        payload.target = source.voice.target;
+        payload.target = voice.facts->target;
         auto& event = engine.playableScheduleEvents[eventSlot];
         event = {};
         event.frameOffsetFromEntry = static_cast<std::int64_t>(
@@ -82806,7 +82906,6 @@ bool PrepareImmediateActionCompositePlay(
         schedule.armToken = installed.armToken;
     }
     if (!markerOnly) {
-        row->voice = engine.playableScheduleVoices[memberBase];
         row->leaf = engine.playableScheduleLeaves[memberBase];
         row->arm = engine.playableScheduleArms[memberBase];
         if (materialized.leafCount == 1u) {

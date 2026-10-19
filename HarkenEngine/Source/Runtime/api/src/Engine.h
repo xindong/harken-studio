@@ -1961,7 +1961,9 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     bool queueAbortRequested = false;
     bool queueCleanupStarted = false;
     bool usesCapturedVoice = false;
+    bool usesCapturedScheduleVoices = false;
     CapturedTimelineVoiceInstall capturedVoice{};
+    std::vector<CapturedTimelineVoiceInstall> capturedScheduleVoices{};
     TimelineVoiceInstallDesc voice{};
     TimelineEventPayload payload{};
     TimelineProgramView runtimeProgram{};
