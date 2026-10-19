@@ -14,6 +14,9 @@ namespace {
 
 TEST(ChannelPeakAccumulator, RetainsIndependentMaximaAndReplacesRetiredGenerations) {
     harken::ChannelPeakAccumulator peaks;
+    float value = -1.0f;
+    EXPECT_FALSE(peaks.Take(0, 1, 0, value));
+    EXPECT_FLOAT_EQ(-1.0f, value);
     for (std::uint32_t block = 0; block < 4096; ++block) {
         for (std::uint32_t bus = 0; bus < VN_SNAPSHOT_MAX_BUSES; ++bus) {
             for (std::uint32_t channel = 0; channel < VN_MAX_CHANNELS; ++channel) {
@@ -24,20 +27,32 @@ TEST(ChannelPeakAccumulator, RetainsIndependentMaximaAndReplacesRetiredGeneratio
     }
     for (std::uint32_t bus = 0; bus < VN_SNAPSHOT_MAX_BUSES; ++bus) {
         for (std::uint32_t channel = 0; channel < VN_MAX_CHANNELS; ++channel) {
-            EXPECT_FLOAT_EQ((channel + 1) * 0.1f, peaks.Take(bus, 1, channel));
-            EXPECT_FLOAT_EQ(0.0f, peaks.Take(bus, 1, channel));
+            EXPECT_TRUE(peaks.Take(bus, 1, channel, value));
+            EXPECT_FLOAT_EQ((channel + 1) * 0.1f, value);
+            EXPECT_FALSE(peaks.Take(bus, 1, channel, value));
+            EXPECT_FLOAT_EQ((channel + 1) * 0.1f, value);
         }
     }
     peaks.Publish(1, 1, 0, 0.9f);
-    EXPECT_FLOAT_EQ(0.0f, peaks.Take(1, 2, 0));
+    value = -1.0f;
+    EXPECT_FALSE(peaks.Take(1, 2, 0, value));
+    EXPECT_FLOAT_EQ(-1.0f, value);
     peaks.Publish(1, 1, 0, 0.9f);
     peaks.Publish(1, 2, 0, 0.1f);
-    EXPECT_FLOAT_EQ(0.1f, peaks.Take(1, 2, 0));
+    EXPECT_TRUE(peaks.Take(1, 2, 0, value));
+    EXPECT_FLOAT_EQ(0.1f, value);
+    peaks.Publish(1, 2, 0, 0.0f);
+    EXPECT_TRUE(peaks.Take(1, 2, 0, value));
+    EXPECT_FLOAT_EQ(0.0f, value);
+    EXPECT_FALSE(peaks.Take(1, 2, 0, value));
+    EXPECT_FLOAT_EQ(0.0f, value);
     peaks.Publish(1, 2, 0, std::numeric_limits<float>::infinity());
     peaks.Publish(1, 2, 0, std::numeric_limits<float>::quiet_NaN());
-    EXPECT_FLOAT_EQ(0.0f, peaks.Take(1, 2, 0));
+    EXPECT_TRUE(peaks.Take(1, 2, 0, value));
+    EXPECT_FLOAT_EQ(0.0f, value);
     peaks.Publish(1, 2, 0, 1.5f);
-    EXPECT_FLOAT_EQ(1.5f, peaks.Take(1, 2, 0));
+    EXPECT_TRUE(peaks.Take(1, 2, 0, value));
+    EXPECT_FLOAT_EQ(1.5f, value);
 }
 
 TEST(ChannelPeakAccumulator, ConcurrentTakeRetainsEveryRoundImpulse) {
@@ -57,11 +72,15 @@ TEST(ChannelPeakAccumulator, ConcurrentTakeRetainsEveryRoundImpulse) {
         }
     });
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    std::uint32_t lost = 0, completed = 0;
+    std::uint32_t lost = 0, completed = 0, emptyMutations = 0;
     for (std::uint32_t round = 1; round <= rounds; ++round) {
         float maximum = 0.0f;
         while (published.load(std::memory_order_acquire) < round) {
-            maximum = std::max(maximum, peaks.Take(0, 7, 0));
+            float value = -1.0f;
+            if (peaks.Take(0, 7, 0, value))
+                maximum = std::max(maximum, value);
+            else
+                emptyMutations += value != -1.0f;
             if (std::chrono::steady_clock::now() >= deadline) {
                 abort.store(true, std::memory_order_relaxed);
                 break;
@@ -69,7 +88,11 @@ TEST(ChannelPeakAccumulator, ConcurrentTakeRetainsEveryRoundImpulse) {
             std::this_thread::yield();
         }
         if (abort.load(std::memory_order_relaxed)) break;
-        maximum = std::max(maximum, peaks.Take(0, 7, 0));
+        float value = -1.0f;
+        if (peaks.Take(0, 7, 0, value))
+            maximum = std::max(maximum, value);
+        else
+            emptyMutations += value != -1.0f;
         lost += maximum != static_cast<float>(round);
         completed = round;
         consumed.store(round, std::memory_order_release);
@@ -77,7 +100,10 @@ TEST(ChannelPeakAccumulator, ConcurrentTakeRetainsEveryRoundImpulse) {
     producer.join();
     EXPECT_EQ(rounds, completed);
     EXPECT_EQ(0u, lost);
-    EXPECT_FLOAT_EQ(0.0f, peaks.Take(0, 7, 0));
+    EXPECT_EQ(0u, emptyMutations);
+    float value = -1.0f;
+    EXPECT_FALSE(peaks.Take(0, 7, 0, value));
+    EXPECT_FLOAT_EQ(-1.0f, value);
 }
 
 TEST(ChannelPeakMeter, DelayedTakeRetainsRenderedTransientWithoutChangingSnapshot) {
@@ -127,47 +153,67 @@ TEST(ChannelPeakMeter, DelayedTakeRetainsRenderedTransientWithoutChangingSnapsho
                     snapshot.busChannelPeaks[row * VN_MAX_CHANNELS + channel], 1e-5f);
             }
         }
+        const auto retainedPeaks = batch.channelPeaks;
         engine->mixer.EnableChannelPeakMetering();
         ASSERT_TRUE(engine->mixer.TakeChannelPeaks(batch));
         EXPECT_GT(batch.consumeSerial, firstSerial);
-        for (const float peak : batch.channelPeaks) EXPECT_FLOAT_EQ(0.0f, peak);
+        EXPECT_EQ(retainedPeaks, batch.channelPeaks);
         engine->nullBackend.Pump(1);
         ASSERT_TRUE(engine->mixer.TakeChannelPeaks(batch));
         EXPECT_NEAR(0.01f, batch.channelPeaks[0], 1e-5f);
+        const auto sustainedPeaks = batch.channelPeaks;
+        for (int read = 0; read < 4; ++read) {
+            ASSERT_TRUE(engine->mixer.TakeChannelPeaks(batch));
+            EXPECT_EQ(sustainedPeaks, batch.channelPeaks);
+        }
+        ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));
+        engine->nullBackend.Pump(1);
+        ASSERT_TRUE(engine->mixer.TakeChannelPeaks(batch));
+        for (const float peak : batch.channelPeaks) EXPECT_FLOAT_EQ(0.0f, peak);
+        ASSERT_TRUE(engine->mixer.TakeChannelPeaks(batch));
+        for (const float peak : batch.channelPeaks) EXPECT_FLOAT_EQ(0.0f, peak);
     }
 }
 
 TEST(ChannelPeakMeter, BusSlotReuseRejectsRetiredGenerationBeforeNewAudio) {
-    harkentest::EngineSession session(harkentest::MakeNullConfig(2, 128));
-    ASSERT_EQ(VN_OK, session.InitResult());
-    auto* engine = session.Engine();
-    engine->mixer.EnableChannelPeakMetering();
-    const auto oldId = harkentest::ObjectId(42), newId = harkentest::ObjectId(43);
-    ASSERT_EQ(VN_OK, Vn_CreateBus(oldId, VN_BUS_MASTER));
-    const std::vector<float> samples(4096, 0.8f);
-    const auto pcm = harkentest::MonoDesc(samples, 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
-    auto play = harkentest::MakePlayDesc(harkentest::ObjectId(1));
-    play.busId = oldId;
-    VnVoiceHandle voice = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
-    engine->nullBackend.Pump(2);
-    const auto oldRef = engine->buses.FindRef(oldId);
-    ASSERT_EQ(VN_OK, Vn_DestroyBus(oldId));
-    engine->nullBackend.Pump(1);
-    ASSERT_EQ(VN_OK, Vn_Update());
-    ASSERT_EQ(VN_OK, Vn_CreateBus(newId, VN_BUS_MASTER));
-    const auto newRef = engine->buses.FindRef(newId);
-    ASSERT_EQ(oldRef.index, newRef.index);
-    ASSERT_NE(oldRef.generation, newRef.generation);
-    harken::ChannelPeakBatch batch;
-    ASSERT_TRUE(engine->mixer.TakeChannelPeaks(batch));
-    EXPECT_EQ(newId, batch.busIds[newRef.index]);
-    EXPECT_FLOAT_EQ(0.0f, batch.channelPeaks[newRef.index * VN_MAX_CHANNELS]);
-    EXPECT_GT(batch.channelPeaks[0], 0.1f);
-    engine->nullBackend.Pump(1);
-    ASSERT_TRUE(engine->mixer.TakeChannelPeaks(batch));
-    EXPECT_FLOAT_EQ(0.0f, batch.channelPeaks[newRef.index * VN_MAX_CHANNELS]);
+    for (const bool observeDeletion : {false, true}) {
+        harkentest::EngineSession session(harkentest::MakeNullConfig(2, 128));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        engine->mixer.EnableChannelPeakMetering();
+        const auto oldId = harkentest::ObjectId(42), newId = harkentest::ObjectId(43);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(oldId, VN_BUS_MASTER));
+        const std::vector<float> samples(4096, 0.8f);
+        const auto pcm = harkentest::MonoDesc(samples, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+        auto play = harkentest::MakePlayDesc(harkentest::ObjectId(1));
+        play.busId = oldId;
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        engine->nullBackend.Pump(2);
+        const auto oldRef = engine->buses.FindRef(oldId);
+        harken::ChannelPeakBatch batch;
+        ASSERT_TRUE(engine->mixer.TakeChannelPeaks(batch));
+        ASSERT_GT(batch.channelPeaks[oldRef.index * VN_MAX_CHANNELS], 0.1f);
+        ASSERT_EQ(VN_OK, Vn_DestroyBus(oldId));
+        if (observeDeletion) {
+            ASSERT_TRUE(engine->mixer.TakeChannelPeaks(batch));
+            EXPECT_EQ(VnBusId{}, batch.busIds[oldRef.index]);
+            EXPECT_FLOAT_EQ(0.0f, batch.channelPeaks[oldRef.index * VN_MAX_CHANNELS]);
+        }
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_CreateBus(newId, VN_BUS_MASTER));
+        const auto newRef = engine->buses.FindRef(newId);
+        ASSERT_EQ(oldRef.index, newRef.index);
+        ASSERT_NE(oldRef.generation, newRef.generation);
+        ASSERT_TRUE(engine->mixer.TakeChannelPeaks(batch));
+        EXPECT_EQ(newId, batch.busIds[newRef.index]);
+        EXPECT_FLOAT_EQ(0.0f, batch.channelPeaks[newRef.index * VN_MAX_CHANNELS]);
+        engine->nullBackend.Pump(1);
+        ASSERT_TRUE(engine->mixer.TakeChannelPeaks(batch));
+        EXPECT_FLOAT_EQ(0.0f, batch.channelPeaks[newRef.index * VN_MAX_CHANNELS]);
+    }
 }
 
 TEST(ChannelPeakMeter, DegradedBlockDoesNotRepublishPreviousOutput) {

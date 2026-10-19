@@ -140,10 +140,13 @@ TEST_F(StudioRuntimeApi, ChannelPeaksRetainTransientAndResetAcrossTermInit) {
     --peaks.structSize;
     EXPECT_EQ(VN_INVALID_ARG, VnPreview_TakeChannelPeaks(&peaks));
     peaks.structSize = sizeof(peaks);
-    std::vector<float> samples(128 * 4 * 2, 0.05f);
-    for (std::size_t frame = 0; frame < 128; ++frame) {
-        samples[2 * frame] = 0.8f;
-        samples[2 * frame + 1] = 0.2f;
+    std::vector<float> samples(128 * 8 * 2, 0.05f);
+    for (std::size_t frame = 0; frame < samples.size() / 2; ++frame) {
+        samples[2 * frame + 1] = frame < 128 ? 0.2f : 0.025f;
+        if (frame < 128)
+            samples[2 * frame] = 0.8f;
+        else if (frame >= 128 * 7)
+            samples[2 * frame] = 0.0f;
     }
     const auto pcm = harkentest::InterleavedDesc(samples, 2, 48000);
     const auto soundId = harkentest::ObjectId(90);
@@ -161,12 +164,38 @@ TEST_F(StudioRuntimeApi, ChannelPeaksRetainTransientAndResetAcrossTermInit) {
     const auto firstSerial = peaks.consumeSerial;
     ASSERT_EQ(VN_OK, VnPreview_TakeChannelPeaks(&peaks));
     EXPECT_GT(peaks.consumeSerial, firstSerial);
-    EXPECT_FLOAT_EQ(0.0f, peaks.channelPeaks[0]);
+    EXPECT_NEAR(0.8f, peaks.channelPeaks[0], 1e-5f);
+    EXPECT_NEAR(0.2f, peaks.channelPeaks[1], 1e-5f);
+    for (const std::uint32_t blocks : {1u, 3u, 1u}) {
+        VnPreview_PumpNullMixer(blocks);
+        for (int poll = 0; poll < 4; ++poll) {
+            ASSERT_EQ(VN_OK, VnPreview_TakeChannelPeaks(&peaks));
+            EXPECT_NEAR(0.05f, peaks.channelPeaks[0], 1e-5f);
+            EXPECT_NEAR(0.025f, peaks.channelPeaks[1], 1e-5f);
+        }
+    }
+    VnPreview_PumpNullMixer(1);
+    for (int poll = 0; poll < 2; ++poll) {
+        ASSERT_EQ(VN_OK, VnPreview_TakeChannelPeaks(&peaks));
+        EXPECT_FLOAT_EQ(0.0f, peaks.channelPeaks[0]);
+        EXPECT_NEAR(0.025f, peaks.channelPeaks[1], 1e-5f);
+    }
+    VnPreview_PumpNullMixer(1);
+    for (int poll = 0; poll < 2; ++poll) {
+        ASSERT_EQ(VN_OK, VnPreview_TakeChannelPeaks(&peaks));
+        EXPECT_FLOAT_EQ(0.0f, peaks.channelPeaks[0]);
+        EXPECT_FLOAT_EQ(0.0f, peaks.channelPeaks[1]);
+    }
+    ASSERT_EQ(VN_OK, VnPreview_PlayVoiceRaw(&play, &voice));
+    VnPreview_PumpNullMixer(1);
+    ASSERT_EQ(VN_OK, VnPreview_TakeChannelPeaks(&peaks));
+    EXPECT_NEAR(0.8f, peaks.channelPeaks[0], 1e-5f);
+    EXPECT_NEAR(0.2f, peaks.channelPeaks[1], 1e-5f);
     VnPreview_PumpNullMixer(1);
     ASSERT_EQ(VN_OK, Vn_Term());
     EXPECT_EQ(VN_NOT_INITIALIZED, VnPreview_TakeChannelPeaks(&peaks));
     EXPECT_EQ(0u, peaks.consumeSerial);
-    EXPECT_FLOAT_EQ(0.0f, peaks.channelPeaks[0]);
+    for (const float peak : peaks.channelPeaks) EXPECT_FLOAT_EQ(0.0f, peak);
     ASSERT_EQ(VN_OK, Vn_Init(&config));
     ASSERT_EQ(VN_OK, VnPreview_EnableChannelPeakMetering());
     ASSERT_EQ(VN_OK, VnPreview_TakeChannelPeaks(&peaks));

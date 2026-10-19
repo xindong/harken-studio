@@ -43,12 +43,14 @@ public:
         }
     }
 
-    float Take(std::uint32_t bus, std::uint32_t generation,
-               std::uint32_t channel) noexcept {
+    bool Take(std::uint32_t bus, std::uint32_t generation,
+              std::uint32_t channel, float& peak) noexcept {
         const auto value = m_lanes[bus * VN_MAX_CHANNELS + channel].exchange(
             0, std::memory_order_relaxed);
-        return generation != 0 && static_cast<std::uint32_t>(value >> 32) == generation
-            ? std::bit_cast<float>(static_cast<std::uint32_t>(value)) : 0.0f;
+        if (generation == 0 || static_cast<std::uint32_t>(value >> 32) != generation)
+            return false;
+        peak = std::bit_cast<float>(static_cast<std::uint32_t>(value));
+        return true;
     }
 
 private:
