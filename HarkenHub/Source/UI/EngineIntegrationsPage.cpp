@@ -1301,24 +1301,6 @@ void EngineIntegrationsPage::browseEngineProject()
                        | QFileDialog::DontUseCustomDirectoryIcons);
     dialog->setFileMode(QFileDialog::Directory);
     connect(dialog, &QFileDialog::fileSelected, this, [this](const QString& path) {
-        const QDir directory(path);
-        const auto descriptors = directory.entryList({QStringLiteral("*.uproject")}, QDir::Files);
-        const bool unity = directory.exists(QStringLiteral("Assets"))
-            && directory.exists(QStringLiteral("Packages")) && directory.exists(QStringLiteral("ProjectSettings"));
-        if (descriptors.size() > 1 || (unity && !descriptors.isEmpty())) {
-            auto* descriptorDialog = new QFileDialog(this,
-                QCoreApplication::translate("HarkenHub", "Select Unreal Project"), path,
-                QCoreApplication::translate("HarkenHub", "Unreal Project (*.uproject)"));
-            descriptorDialog->setObjectName(QStringLiteral("unrealProjectSelection"));
-            descriptorDialog->setAttribute(Qt::WA_DeleteOnClose);
-            descriptorDialog->setOptions(QFileDialog::DontUseCustomDirectoryIcons);
-            descriptorDialog->setFileMode(QFileDialog::ExistingFile);
-            connect(descriptorDialog, &QFileDialog::fileSelected, this, [this](const QString& descriptor) {
-                acceptEngineTarget(descriptor, true);
-            });
-            descriptorDialog->open();
-            return;
-        }
         acceptEngineTarget(path, true);
     });
     dialog->open();
