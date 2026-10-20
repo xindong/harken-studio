@@ -226,13 +226,9 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
         bytes += column(scratch.successorVoices) + column(scratch.successorLeaves) +
             column(scratch.successorStarts) + column(scratch.successorLeafOccurrences) +
             column(scratch.successorLeafCompletions) + column(scratch.successorStartFrames) +
-            column(scratch.successorLeafEventCounts) + column(scratch.successorPayloads) +
-            column(scratch.successorEvents) + column(scratch.successorRuntimes) +
-            column(scratch.successorSchedules) + column(scratch.sourceRenderHandles) +
+            column(scratch.successorLeafEventCounts) + column(scratch.sourceRenderHandles) +
             column(scratch.sourceTargets) + column(scratch.sourceArms) + column(scratch.sourceCommands) +
-            column(scratch.sourcePayloads) + column(scratch.sourceEvents) +
-            column(scratch.sourceLeafEventCounts) + column(scratch.sourceRuntimes) +
-            column(scratch.sourceSchedules) + column(scratch.replacementGroupArms);
+            column(scratch.sourceLeafEventCounts) + column(scratch.replacementGroupArms);
     }
     for (const auto& row : playableServices) {
         bytes += column(row.variableControlDiscreteRetargetPayloads) +
@@ -90060,12 +90056,12 @@ bool PrepareImmediateActionQueueReplacement(
              !BakeTransitionFadeCurve(
                  *resolution.container,
                  resolution.transitionRule->sourceFade,
-                 &scratch.sourceFadeCurve)) ||
+                 &scratch.programBank->curves[0])) ||
             (targetFadeActive &&
              !BakeTransitionFadeCurve(
                  *resolution.container,
                  resolution.transitionRule->targetFade,
-                 &scratch.successorTargetFadeCurve))) {
+                 &scratch.programBank->curves[1]))) {
             (void)ReleaseImmediateActionQueueReplacement(engine, scratch);
             return false;
         }
@@ -90126,6 +90122,15 @@ bool PrepareImmediateActionQueueReplacement(
             (void)ReleaseImmediateActionQueueReplacement(engine, scratch);
             return false;
         }
+        auto& programBank = *scratch.programBank;
+        scratch.sourcePayloads = std::span{programBank.payloads}.first(sourceEventCount);
+        scratch.sourceEvents = std::span{programBank.events}.first(sourceEventCount);
+        scratch.sourceRuntimes = std::span{programBank.runtimes}.first(sourceSet.count);
+        scratch.sourceSchedules = std::span{programBank.schedules}.first(sourceSet.count);
+        scratch.successorPayloads = std::span{programBank.payloads}.subspan(sourceEventCount, successorEventCount);
+        scratch.successorEvents = std::span{programBank.events}.subspan(sourceEventCount, successorEventCount);
+        scratch.successorRuntimes = std::span{programBank.runtimes}.subspan(sourceSet.count, successorLeafCount);
+        scratch.successorSchedules = std::span{programBank.schedules}.subspan(sourceSet.count, successorLeafCount);
         try {
             const auto resizeColumn = [&](auto& column, std::size_t count) {
                 if (count != 0 && !engine.AllowNativeBackingAllocation()) throw std::bad_alloc{};
@@ -90138,19 +90143,11 @@ bool PrepareImmediateActionQueueReplacement(
             resizeColumn(scratch.successorLeafCompletions, successorLeafCount);
             resizeColumn(scratch.successorStartFrames, successorLeafCount);
             resizeColumn(scratch.successorLeafEventCounts, successorLeafCount);
-            resizeColumn(scratch.successorPayloads, successorEventCount);
-            resizeColumn(scratch.successorEvents, successorEventCount);
-            resizeColumn(scratch.successorRuntimes, successorLeafCount);
-            resizeColumn(scratch.successorSchedules, successorLeafCount);
             resizeColumn(scratch.sourceRenderHandles, sourceSet.count);
             resizeColumn(scratch.sourceTargets, sourceSet.count);
             resizeColumn(scratch.sourceArms, sourceSet.count);
             resizeColumn(scratch.sourceCommands, sourceSet.count);
-            resizeColumn(scratch.sourcePayloads, sourceEventCount);
-            resizeColumn(scratch.sourceEvents, sourceEventCount);
             resizeColumn(scratch.sourceLeafEventCounts, sourceSet.count);
-            resizeColumn(scratch.sourceRuntimes, sourceSet.count);
-            resizeColumn(scratch.sourceSchedules, sourceSet.count);
             resizeColumn(scratch.replacementGroupArms, sourceSet.count + successorLeafCount);
         } catch (const std::bad_alloc&) {
             plan.result = VN_BACKPRESSURE;
@@ -90211,7 +90208,7 @@ bool PrepareImmediateActionQueueReplacement(
                 fade.target = scratch.sourceTargets[sourceIndex];
                 fade.envelopeStartFrame = scratch.sourcePhaseFrame;
                 fade.envelopeEndFrame = scratch.sourceStopFrame;
-                fade.envelopeCurve = &scratch.sourceFadeCurve;
+                fade.envelopeCurve = &programBank.curves[0];
                 fade.authoredFadeOutCandidate = true;
                 auto& event =
                     scratch.sourceEvents[scratch.sourceEventCount];
@@ -90436,7 +90433,7 @@ bool PrepareImmediateActionQueueReplacement(
                 fade.target = leaf.voice.target;
                 fade.envelopeStartFrame = startFrame;
                 fade.envelopeEndFrame = startFrame + targetFadeFrames;
-                fade.envelopeCurve = &scratch.successorTargetFadeCurve;
+                fade.envelopeCurve = &programBank.curves[1];
                 auto& fadeEvent =
                     scratch.successorEvents[eventBase + 1u];
                 fadeEvent.frameOffsetFromEntry =
@@ -91301,7 +91298,7 @@ void CommitImmediateActionQueueReplacements(
             if (scratch.transition.Valid()) {
                 row.queueTransitionTargetFadeCurves[
                     row.queueSuccessorProgramPlane] =
-                        scratch.successorTargetFadeCurve;
+                        bank.curves[1];
             }
             const auto targetPrograms = harken::EngineQueueProgramRange{
                 scratch.sourceControlCount, scratch.successorLeafCount}.Resolve(&bank);
@@ -91383,7 +91380,7 @@ void CommitImmediateActionQueueReplacements(
             if (scratch.sourceControlCount != 0) {
                 row.queueTransitionSourceFadeCurves[
                     row.queueSuccessorProgramPlane] =
-                        scratch.sourceFadeCurve;
+                        bank.curves[0];
                 if (BindQueueSourcePrograms(row, bank, 0, 0,
                         scratch.sourceControlCount, scratch.sourceEventCount)) {
                     for (std::uint32_t sourceIndex = 0;
