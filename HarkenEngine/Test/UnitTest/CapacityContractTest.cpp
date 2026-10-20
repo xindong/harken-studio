@@ -98,6 +98,41 @@ TEST(StableBackingPreparation, DependenciesPrecedePublicationAndPreparedUseCanno
     EXPECT_EQ(3u, dependencies.ConstructedCount());
 }
 
+TEST(StableBackingPreparation, SplitCheckpointAllowanceSurvivesClearAndPreservesLogicalCapacity) {
+    harken::QueueCheckpointTable checkpoints(1), foreign(1);
+    harken::QueueCheckpointTable::BackingPreparation parent, first, second, other;
+    ASSERT_TRUE(checkpoints.PrepareBacking(2, &parent));
+    ASSERT_TRUE(foreign.PrepareBacking(1, &other));
+    ASSERT_TRUE(parent.Split(1, 0, &first));
+    ASSERT_TRUE(parent.Split(1, 0, &second));
+    ASSERT_TRUE(parent.Valid());
+    EXPECT_FALSE(first.ReturnTo(&other));
+    harken::QueueCheckpointKey key{};
+    key.world = 1;
+    key.containerStableId = harkentest::ObjectId(2);
+    key.programSemanticFingerprint = 3;
+    harken::QueueCheckpointImage image{};
+    image.effective.version = 1;
+    image.replayCurrent = true;
+    {
+        const auto use = parent.Use();
+        harken::QueueCheckpointTable::BackingPreparation refused;
+        EXPECT_FALSE(checkpoints.PrepareBacking(1, &refused));
+        ASSERT_TRUE(checkpoints.Store(key, image));
+        auto different = key;
+        different.containerStableId = harkentest::ObjectId(4);
+        EXPECT_FALSE(checkpoints.Store(different, image));
+        ASSERT_TRUE(checkpoints.Clear(key));
+        ASSERT_TRUE(checkpoints.Store(key, image));
+        ASSERT_TRUE(first.ReturnTo(&parent));
+        ASSERT_TRUE(second.ReturnTo(&parent));
+        EXPECT_EQ(1u, checkpoints.ConstructedRowCount());
+        EXPECT_EQ(1u, checkpoints.LiveCount());
+    }
+    EXPECT_FALSE(first.Valid());
+    EXPECT_FALSE(second.Valid());
+}
+
 TEST(EnginePlayablePartitionStorage, RealStorageLoansLeaveNativeProgressAndFenceIndependent) {
     PartitionPool pool(1);
     const harken::EnginePlayableServiceToken owner{2, 7};

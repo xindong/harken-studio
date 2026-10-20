@@ -43,6 +43,26 @@ public:
         }
         bool Valid() const noexcept { return owner_ != nullptr; }
         PreparedUse Use() const noexcept { return PreparedUse(owner_); }
+        bool Split(std::uint32_t low, std::uint32_t high, Preparation* out) noexcept {
+            if (owner_ == nullptr || memguard::IsAudioTagged() || out == nullptr || out->Valid() ||
+                low > low_ || high > high_) return false;
+            out->owner_ = owner_;
+            out->low_ = low;
+            out->high_ = high;
+            low_ -= low;
+            high_ -= high;
+            return true;
+        }
+        bool ReturnTo(Preparation* destination) noexcept {
+            if (owner_ == nullptr || memguard::IsAudioTagged() || destination == nullptr ||
+                destination == this || destination->owner_ != owner_ ||
+                destination->low_ > UINT32_MAX - low_ || destination->high_ > UINT32_MAX - high_) return false;
+            destination->low_ += low_;
+            destination->high_ += high_;
+            owner_ = nullptr;
+            low_ = high_ = 0;
+            return true;
+        }
         void Release() noexcept {
             if (owner_ == nullptr) return;
             assert(!memguard::IsAudioTagged() && owner_->heldLow_ >= low_ && owner_->heldHigh_ >= high_);

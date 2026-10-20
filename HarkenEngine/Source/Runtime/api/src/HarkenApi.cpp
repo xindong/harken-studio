@@ -10394,7 +10394,8 @@ bool PrepareFrontierQueueOwner(harken::Engine& engine, harken::EngineFrontierQue
     harken::EnginePlayableServiceRow& service, const harken::ContainerProgramViewV3& program,
     const harken::EffectiveQueueState& initial, const harken::EffectiveQueueState& resetInitial,
     const harken::EffectiveQueueState& next,
-    const harken::RandomQueueSeedContext& seed, bool hasSuccessor) noexcept {
+    const harken::RandomQueueSeedContext& seed, bool hasSuccessor,
+    harken::EngineActionPlayScratch* checkpointOwner = nullptr) noexcept {
     if (service.queueInstance.Valid()) return false;
     QueueEmitterIdentity emitter{};
     if (ResolveQueueEmitterIdentity(program.mode, program.memoryScope, program.resumePosition != 0,
@@ -10421,7 +10422,8 @@ bool PrepareFrontierQueueOwner(harken::Engine& engine, harken::EngineFrontierQue
     create.initial = initial;
     create.resetInitial = resetInitial;
     if (!engine.PrepareOriginalQueueAcquire(create, &context.prepared,
-            service.actionPrepared ? &engine.originalPlayableServiceLifetimeHolders[service.identity.slot] : nullptr)) return false;
+            service.actionPrepared ? &engine.originalPlayableServiceLifetimeHolders[service.identity.slot] : nullptr,
+            checkpointOwner)) return false;
     service.queueInstance = context.prepared.Token();
     service.queueMode = true;
     service.queueWorldUsesCurrentAuthority = service.containerLoopAuthorityKind == harken::PlayableExecutionAuthorityKind::CurrentWorld;
@@ -10451,7 +10453,7 @@ bool PrepareFrontierQueueMode(harken::Engine& engine, harken::EngineActionPlaySc
     auto& context = *record;
     ++scratch.frontierQueueCount;
     if (!PrepareFrontierQueueOwner(engine, context, service, program, initial,
-            resetInitial, next, seed, hasSuccessor)) return false;
+            resetInitial, next, seed, hasSuccessor, scratch.queueRolesBorrowed ? &scratch : nullptr)) return false;
     const auto* initialService = scratch.row;
     if (initialService != nullptr && initialService->pendingImmediateEntry &&
         !scratch.continuationExecution && !scratch.queueFutureExecution &&
@@ -46722,8 +46724,8 @@ engine.runtimeRecreateRequired = true;
                         checkpoint.randomSeedValid =
                             row.queueRandomSeedValid;
                         checkpoint.replayCurrent = true;
-                        (void)engine.queueCheckpoints.Store(
-                            row.queueCheckpointKey, checkpoint);
+                        (void)engine.StoreOriginalQueueCheckpoint(
+                            row.queueInstance, row.queueCheckpointKey, checkpoint);
                     }
                 } else {
                     (void)engine.queueCheckpoints.Clear(
@@ -51615,8 +51617,8 @@ engine.runtimeRecreateRequired = true;
                                 checkpoint.randomSeedValid =
                                     row.queueRandomSeedValid;
                                 checkpoint.replayCurrent = true;
-                                if (!engine.queueCheckpoints.Store(
-                                        row.queueCheckpointKey,
+                                if (!engine.StoreOriginalQueueCheckpoint(
+                                        row.queueInstance, row.queueCheckpointKey,
                                         checkpoint)) {
 engine.runtimeRecreateRequired = true;
                                 }
@@ -51845,6 +51847,43 @@ EngineFrontierAttemptToken Engine::NativeBackingTokenFor(const EngineActionPlayS
     return {};
 }
 
+bool Engine::PrepareOriginalQueueCheckpointReturn(const OriginalQueueFactoryLifetimeHolder& factory,
+    QueueCheckpointTable::BackingPreparation** destination) noexcept {
+    if (destination == nullptr) return false;
+    *destination = nullptr;
+    const auto token = factory.checkpointBorrower_;
+    if (!token.Valid()) return true;
+    auto* child = FindFrontierAttempt(*this, token);
+    if (child == nullptr || !child->queueRolesBorrowed || !child->queueCheckpointBacking.Valid() ||
+        !factory.checkpointBacking_.Valid()) return false;
+    auto* group = NativeBackingGroupFor(*child);
+    std::uint32_t ordinal = UINT32_MAX;
+    auto* owner = group == nullptr ? nullptr : NativeBackingOwnerFor(*group, &ordinal);
+    if (owner == nullptr || ordinal >= owner->queueRoleReservations.size()) return false;
+    const auto& slot = owner->queueRoleReservations[ordinal];
+    if (slot.state != QueueRoleReservationSlot::State::Borrowed || !slot.directory.Empty() ||
+        slot.borrower.slot != token.slot || slot.borrower.generation != token.generation ||
+        child->frontierQueueCount > child->storage.frontierQueues.size()) return false;
+    std::uint32_t matches = 0;
+    for (std::uint32_t index = 0; index < child->frontierQueueCount; ++index)
+        matches += &child->storage.frontierQueues[index].prepared == factory.preparation_;
+    if (matches != 1) return false;
+    *destination = &child->queueCheckpointBacking;
+    return true;
+}
+
+bool Engine::FinishOriginalQueueCheckpointReturn(OriginalQueueFactoryLifetimeHolder& factory,
+    QueueCheckpointTable::BackingPreparation* destination) noexcept {
+    if (destination != nullptr) {
+        if (!factory.checkpointBacking_.ReturnTo(destination)) {
+            runtimeRecreateRequired = true;
+            return false;
+        }
+    } else factory.checkpointBacking_.Release();
+    factory.checkpointBorrower_ = {};
+    return true;
+}
+
 EngineActionPlayScratch* Engine::NativeBackingParentFor(const EngineActionPlayScratch& future) noexcept {
     const auto token = NativeBackingTokenFor(future);
     if (!token.Valid() || FindFrontierAttempt(*this, token) != &future || !future.queueFutureExecution ||
@@ -52015,6 +52054,7 @@ bool Engine::AdoptPendingVariableQueueRoles(EngineActionPlayScratch& scratch) no
     if (scratch.queueRolesBorrowed) {
         return slot.state == QueueRoleReservationSlot::State::Borrowed && slot.directory.Empty() &&
             slot.ReplacementStorageEmpty() &&
+            scratch.queueCheckpointBacking.Valid() &&
             slot.borrower.slot == token.slot && slot.borrower.generation == token.generation &&
             scratch.storage.frontierQueues.size() == slot.capacity && scratch.frontierQueueCount <= slot.capacity &&
             scratch.pendingVariableReplacementControls.size() == slot.controlCapacity &&
@@ -52025,11 +52065,13 @@ bool Engine::AdoptPendingVariableQueueRoles(EngineActionPlayScratch& scratch) no
         slot.directory.size() != slot.capacity || slot.capacity > scratch.storage.queueRoleCapacity ||
         !slot.ReplacementStorageComplete() || !scratch.pendingVariableReplacementControls.empty() ||
         !scratch.pendingVariableReplacementGroups.empty() || !scratch.pendingVariableReplacementQueueLanes.empty() ||
+        scratch.queueCheckpointBacking.Valid() ||
         !scratch.storage.frontierQueues.Empty() || scratch.frontierQueueCount != 0) return false;
     scratch.storage.frontierQueues = std::move(slot.directory);
     scratch.pendingVariableReplacementControls = std::move(slot.controls);
     scratch.pendingVariableReplacementGroups = std::move(slot.groups);
     scratch.pendingVariableReplacementQueueLanes = std::move(slot.lanes);
+    scratch.queueCheckpointBacking = std::move(slot.checkpoints);
     slot.borrower = token;
     slot.state = QueueRoleReservationSlot::State::Borrowed;
     scratch.queueRolesBorrowed = true;
@@ -52089,6 +52131,7 @@ bool Engine::PrepareNativeBackingReturn(const EngineActionPlayScratch& scratch,
         auto& slot = owner->queueRoleReservations[ordinal];
         if (slot.state != QueueRoleReservationSlot::State::Borrowed || !slot.directory.Empty() ||
             !slot.ReplacementStorageEmpty() ||
+            !scratch.queueCheckpointBacking.Valid() ||
             slot.borrower.slot != token.slot || slot.borrower.generation != token.generation ||
             scratch.storage.frontierQueues.size() != slot.capacity ||
             slot.capacity > scratch.storage.queueRoleCapacity || scratch.frontierQueueCount > slot.capacity ||
@@ -52125,6 +52168,7 @@ void Engine::CommitNativeBackingReturn(EngineActionPlayScratch& scratch,
         plan.queue->controls = std::move(scratch.pendingVariableReplacementControls);
         plan.queue->groups = std::move(scratch.pendingVariableReplacementGroups);
         plan.queue->lanes = std::move(scratch.pendingVariableReplacementQueueLanes);
+        plan.queue->checkpoints = std::move(scratch.queueCheckpointBacking);
         plan.queue->borrower = {};
         plan.queue->state = QueueRoleReservationSlot::State::Available;
         scratch.queueRolesBorrowed = false;
@@ -52143,6 +52187,12 @@ void Engine::CommitNativeBackingTransferEnd(EngineActionPlayScratch& scratch,
     if (plan.queue != nullptr) {
         assert(scratch.queueRolesBorrowed && plan.queue->state == QueueRoleReservationSlot::State::Borrowed &&
             plan.queue->directory.Empty());
+        const auto token = NativeBackingTokenFor(scratch);
+        for (auto& factory : originalQueueFactoryLifetimeHolders)
+            if (factory.checkpointBorrower_.slot == token.slot &&
+                factory.checkpointBorrower_.generation == token.generation)
+                factory.checkpointBorrower_ = {};
+        scratch.queueCheckpointBacking.Release();
         plan.queue->borrower = {};
         plan.queue->state = QueueRoleReservationSlot::State::Consumed;
         scratch.queueRolesBorrowed = false;
@@ -52398,6 +52448,9 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 &nativeCandidate->actionPlays) ||
             !PrepareQueueProgramBankBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(
                 2u * queueControls, queueProgramBanks.size())), &nativeCandidate->queueBanks) ||
+            !queueInstances.PrepareBacking(static_cast<std::uint32_t>(queueControls),
+                static_cast<std::uint32_t>(queueControls), &nativeCandidate->queues) ||
+            !queueCheckpoints.PrepareBacking(static_cast<std::uint32_t>(queueControls), &nativeCandidate->checkpoints) ||
             !decisions.PrepareBacking(static_cast<std::uint32_t>(nativeGroups), &nativeCandidate->decisions) ||
             !compositeCompletionOwners.PrepareBacking(static_cast<std::uint32_t>(nativeCompletions), &nativeCandidate->completions) ||
             !voices.PrepareSlotBacking(static_cast<std::uint32_t>(nativeVoices), &nativeCandidate->voices) ||
@@ -52418,6 +52471,9 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             !PreparePendingVariableQueueOriginBacking(static_cast<std::uint32_t>(nativeGroups),
                 &nativeCandidate->queueOrigins) ||
             !effectBank.PrepareBacking(effectInstances, &nativeCandidate->effects)) return shortage();
+        for (std::uint32_t ordinal = 0; ordinal < producerCount; ++ordinal)
+            if (!nativeCandidate->checkpoints.Split(profiles[ordinal].Q, 0, &queueCandidate[ordinal].checkpoints))
+                return false;
         if (!preparing && single == nullptr && !MatchesPrivateImmediateVcProducerChain(*this, attempt, true)) return false;
         token = firstToken();
         for (std::uint32_t ordinal = 0; ordinal < producerCount; ++ordinal) {
@@ -52457,6 +52513,8 @@ bool Engine::MatchesPendingVariableNativeBacking(OriginalPendingVariableGroupHol
         owner.queueRoleReservations.size() != producerCount || !owner.nativeRuntimeBacking ||
         !owner.nativeRuntimeBacking->groups.Valid() || !owner.nativeRuntimeBacking->actionPlays.Valid() ||
         !owner.nativeRuntimeBacking->queueBanks.Valid() ||
+        !owner.nativeRuntimeBacking->queues.instances.Valid() ||
+        !owner.nativeRuntimeBacking->queues.conditionals.Valid() || !owner.nativeRuntimeBacking->checkpoints.Valid() ||
         !owner.nativeRuntimeBacking->arms.Valid() ||
         !owner.nativeRuntimeBacking->laneAttempts.Valid()) return false;
     for (std::size_t index = 0; index < owner.nativeReplacementSlots.size(); ++index) {
@@ -52493,6 +52551,7 @@ bool Engine::MatchesPendingVariableNativeBacking(OriginalPendingVariableGroupHol
         } else if (slot.state == QueueRoleReservationSlot::State::Borrowed) {
             auto* child = FindFrontierAttempt(*this, slot.borrower);
             if (child == nullptr || !child->queueRolesBorrowed || !slot.directory.Empty() || !slot.ReplacementStorageEmpty() ||
+                !child->queueCheckpointBacking.Valid() ||
                 child->storage.frontierQueues.size() != slot.capacity || child->frontierQueueCount > slot.capacity ||
                 child->pendingVariableReplacementControls.size() != slot.controlCapacity ||
                 child->pendingVariableReplacementGroups.size() != slot.GroupCapacity() ||
@@ -90657,6 +90716,33 @@ bool ReserveImmediateActionQueueReplacements(
     const harken::PreparedQueueReplacementOrder nativeOrder = plan->materializingDeferred
         ? harken::PreparedQueueReplacementOrder(engine.actionFiringPlanScratch[0].prepared)
         : harken::PreparedQueueReplacementOrder(plan->originalSingleIssue);
+    std::array<std::uint64_t, (harken::kMaxQueueInstancesHard + 63u) / 64u> selectedQueues{};
+    std::uint32_t selectedSpanCount = 0;
+    for (const auto& row : engine.playableServices) {
+        if (!row.queueMode || !row.queueInstance.Valid() || !row.queueContinuationPrepared ||
+            row.queuePreparedPages.Valid() || row.queueInstance.slot >= engine.originalQueueReplacementHolders.size() ||
+            engine.originalQueueReplacementHolders[row.queueInstance.slot].phase !=
+                harken::Engine::OriginalQueueReplacementHolder::Phase::Empty ||
+            engine.OriginalQueueConditionalForService(row) == nullptr) continue;
+        harken::QueueInstanceSnapshot queue{};
+        if (!engine.queueInstances.Capture(row.queueInstance, &queue)) continue;
+        for (std::uint32_t index = 0; index < plan->stepCount; ++index) {
+            const auto& step = engine.actionStepPlanScratch[index];
+            if (!IsImmediateActionQueueReset(step) ||
+                !SameImmediateActionQueueTarget(queue, MakeImmediateActionQueueResetTarget(*plan, step))) continue;
+            auto& word = selectedQueues[row.queueInstance.slot / 64u];
+            const auto bit = std::uint64_t{1} << (row.queueInstance.slot % 64u);
+            if ((word & bit) == 0) { word |= bit; ++selectedSpanCount; }
+            break;
+        }
+    }
+    harken::PrivateSelectedQueueFutureSpanPool::BackingPreparation selectedBacking;
+    if (selectedSpanCount != 0 && (engine.originalQueueReplacementSpans == nullptr ||
+        !engine.originalQueueReplacementSpans->PrepareBacking(selectedSpanCount, &selectedBacking))) {
+        plan->result = VN_BACKPRESSURE;
+        return false;
+    }
+    const auto selectedUse = selectedBacking.Use();
     for (std::uint32_t stepIndex = 0;
          stepIndex < plan->stepCount; ++stepIndex) {
         const auto& planned =

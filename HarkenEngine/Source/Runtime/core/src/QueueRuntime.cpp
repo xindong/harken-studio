@@ -142,7 +142,7 @@ QueueCheckpointTable::QueueCheckpointTable(std::uint32_t capacity)
           rows_.Reserve(capacity) ? capacity : 0) {}
 
 bool QueueCheckpointTable::PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
-    return rows_.PrepareBacking(std::min(count, capacity_), 0,
+    return rows_.PrepareBacking(count, 0,
         [](const Row& row) noexcept { return !row.live && !row.resetReserved; },
         [this](std::uint32_t slot) noexcept { return rows_.Emplace(slot); }, out);
 }

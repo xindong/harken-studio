@@ -4293,6 +4293,7 @@ struct EngineActionPlayScratch {
     bool currentNativeBorrowed = false;
     bool successorNativeBorrowed = false;
     bool queueRolesBorrowed = false;
+    QueueCheckpointTable::BackingPreparation queueCheckpointBacking;
     std::uint32_t voiceStartCount = 0;
     std::uint32_t initialCommandBase = 0;
     std::uint32_t initialCommandCount = 0;
@@ -4793,6 +4794,7 @@ struct Engine {
         std::vector<EngineActionPlayScratch::PendingVariableReplacementControl> controls;
         std::vector<Plan03GroupSliceIdentity> groups;
         std::vector<EngineActionPlayScratch::PendingVariableReplacementQueueLane> lanes;
+        QueueCheckpointTable::BackingPreparation checkpoints;
         EngineFrontierAttemptToken borrower{};
         std::uint32_t capacity = 0;
         std::uint32_t controlCapacity = 0;
@@ -4801,11 +4803,14 @@ struct Engine {
             return std::min<std::size_t>(capacity, EngineActionPlayScratch::kPendingVariableReplacementQueueCapacity);
         }
         std::size_t GroupCapacity() const noexcept { return controlCapacity + 1u + 4u * LaneCapacity(); }
-        bool ReplacementStorageEmpty() const noexcept { return controls.empty() && groups.empty() && lanes.empty(); }
+        bool ReplacementStorageEmpty() const noexcept {
+            return controls.empty() && groups.empty() && lanes.empty() && !checkpoints.Valid();
+        }
         bool ReplacementStorageComplete() const noexcept {
             return controlCapacity >= 2u &&
                 controlCapacity <= EngineActionPlayScratch::kPendingVariableReplacementControlCapacity &&
-                controls.size() == controlCapacity && groups.size() == GroupCapacity() && lanes.size() == LaneCapacity();
+                controls.size() == controlCapacity && groups.size() == GroupCapacity() && lanes.size() == LaneCapacity() &&
+                checkpoints.Valid();
         }
     };
 
@@ -4822,6 +4827,8 @@ struct Engine {
         StableStoragePreparation services;
         StableSlotStorage<EngineActionPlayScratch>::Preparation actionPlays;
         StableSlotStorage<EngineQueueProgramBank>::Preparation queueBanks;
+        QueueInstanceTable::BackingPreparation queues;
+        QueueCheckpointTable::BackingPreparation checkpoints;
         VariableServiceV1::ReadCutBackingPreparation readCuts;
         StableStoragePreparation queueOrigins;
         EffectPoolBank::BackingPreparation effects;
@@ -4832,6 +4839,8 @@ struct Engine {
         ScheduledTransactionPool::ImmediateLaneBackingUse laneGroups;
         StableSlotStorage<EngineActionPlayScratch>::PreparedUse actionPlays;
         StableSlotStorage<EngineQueueProgramBank>::PreparedUse queueBanks;
+        QueueInstanceTable::BackingUse queues;
+        QueueCheckpointTable::BackingUse checkpoints;
         VariableServiceV1::ReadCutBackingUse readCuts;
         EffectPoolBank::BackingUse effects;
         NativeRuntimeBackingUse(Engine& engine, NativeRuntimeBacking* backing) noexcept
@@ -4844,6 +4853,8 @@ struct Engine {
                   : backing->actionPlays.Use()),
               queueBanks(backing == nullptr ? StableSlotStorage<EngineQueueProgramBank>::PreparedUse{}
                   : backing->queueBanks.Use()),
+              queues(backing == nullptr ? nullptr : &backing->queues),
+              checkpoints(backing == nullptr ? QueueCheckpointTable::BackingUse{} : backing->checkpoints.Use()),
               readCuts(backing == nullptr ? VariableServiceV1::ReadCutBackingUse{}
                   : backing->readCuts.Use()),
               effects(EffectPoolBank::UseBacking(backing == nullptr ? nullptr : &backing->effects)) {}
@@ -5479,6 +5490,8 @@ public:
         const OriginalPlayableServiceLifetimeHolder* service_ = nullptr;
         QueueInstanceToken queue_{};
         QueueInstanceCreateRequest create_{};
+        QueueCheckpointTable::BackingPreparation checkpointBacking_;
+        EngineFrontierAttemptToken checkpointBorrower_{};
         State state_ = State::Empty;
     };
     struct OriginalQueueBankHolder {
@@ -5523,6 +5536,7 @@ public:
               resolved.topologyPlanPoolCapacity,
               ProjectGenerationInstallAckIdentityV1{}),
           projectGenerationInstallAckRing(resolved.topologyPlanPoolCapacity),
+          queueCheckpoints(resolved.maxQueueCheckpoints),
           dynamicRoutes(resolved),
           dynamicRouteCaptureScratch(
               resolved.dynamicRouteCapacity == 0
@@ -5655,7 +5669,6 @@ public:
           playableSuccessorStartFrames(playableStorage.endpointCount),
           playableSuccessorPostSourceTailFrames(
               playableStorage.endpointCount),
-          queueCheckpoints(resolved.maxQueueCheckpoints),
           queueSelectionChildScratch(resolved.maxQueueChildren),
           queueRemainingScratch(resolved.maxQueueChildren),
           queuePermutationScratch(resolved.maxQueueChildren),
@@ -11558,21 +11571,41 @@ public:
 
     bool PrepareOriginalQueueAcquire(const QueueInstanceCreateRequest& create,
         PreparedQueueInstanceV1* prepared,
-        const OriginalPlayableServiceLifetimeHolder* service = nullptr) noexcept {
+        const OriginalPlayableServiceLifetimeHolder* service = nullptr,
+        EngineActionPlayScratch* checkpointOwner = nullptr) noexcept {
         if (service != nullptr && (service->engine_ != this || service->service_ == nullptr ||
                 !service->service_->actionPrepared || !MatchesOriginalPlayableServicePackDuty(*service) ||
                 playablePartitions.Published(service->service_->partition, service->service_->identity) ||
                 create.world != service->invocation_->worldGeneration ||
                 create.projectId != service->invocation_->projectId)) return false;
+        QueueCheckpointTable::BackingPreparation checkpoint;
+        EngineFrontierAttemptToken borrower{};
+        if (create.resumePosition) {
+            if (checkpointOwner != nullptr) {
+                borrower = NativeBackingTokenFor(*checkpointOwner);
+                if (!borrower.Valid() || !checkpointOwner->queueRolesBorrowed ||
+                    !checkpointOwner->queueCheckpointBacking.Split(1, 0, &checkpoint)) return false;
+            } else if (!queueCheckpoints.PrepareBacking(1, &checkpoint)) return false;
+        }
+        const auto returnCheckpoint = [&]() noexcept {
+            if (!borrower.Valid()) return;
+            const bool returned = checkpoint.ReturnTo(&checkpointOwner->queueCheckpointBacking);
+            assert(returned);
+            (void)returned;
+        };
         QueueInstanceTable::OriginalLifetimePin original;
         auto observedCreate = create;
         observedCreate.monitorIdentity = CaptureMonitorOwner(create.rootInstance);
-        if (!queueInstances.PrepareAcquire(observedCreate, prepared, &original)) return false;
+        if (!queueInstances.PrepareAcquire(observedCreate, prepared, &original)) {
+            returnCheckpoint();
+            return false;
+        }
         const auto token = original.Token();
         if (token.slot >= originalQueueLifetimeHolders.size() ||
             originalQueueLifetimeHolders[token.slot].Valid()) {
             const bool cancelled = queueInstances.CancelPreparedAcquire(prepared, &original);
             assert(cancelled);
+            returnCheckpoint();
             runtimeRecreateRequired = true;
             return false;
         }
@@ -11583,8 +11616,31 @@ public:
         factory.service_ = service;
         factory.queue_ = token;
         factory.create_ = create;
+        factory.checkpointBacking_ = std::move(checkpoint);
+        factory.checkpointBorrower_ = borrower;
         factory.state_ = OriginalQueueFactoryLifetimeHolder::State::Acquired;
         return true;
+    }
+
+    bool PrepareOriginalQueueCheckpointReturn(const OriginalQueueFactoryLifetimeHolder& factory,
+        QueueCheckpointTable::BackingPreparation** destination) noexcept;
+    bool FinishOriginalQueueCheckpointReturn(OriginalQueueFactoryLifetimeHolder& factory,
+        QueueCheckpointTable::BackingPreparation* destination) noexcept;
+
+    bool StoreOriginalQueueCheckpoint(QueueInstanceToken token, const QueueCheckpointKey& key,
+        const QueueCheckpointImage& image) noexcept {
+        if (!token.Valid() || token.slot >= originalQueueFactoryLifetimeHolders.size() ||
+            token.slot >= originalQueueLifetimeHolders.size()) return false;
+        auto& factory = originalQueueFactoryLifetimeHolders[token.slot];
+        const auto& create = factory.create_;
+        if (factory.engine_ != this || factory.queue_.slot != token.slot ||
+            factory.queue_.generation != token.generation || !factory.checkpointBacking_.Valid() ||
+            !queueInstances.IsOriginalLifetimePinFor(originalQueueLifetimeHolders[token.slot], token) ||
+            key.world != create.world || key.containerStableId != create.containerStableId ||
+            key.programSemanticFingerprint != create.programSemanticFingerprint || key.resetEpoch != create.resetEpoch ||
+            key.emitterSlot != create.emitterSlot || key.emitterGeneration != create.emitterGeneration) return false;
+        const auto use = factory.checkpointBacking_.Use();
+        return queueCheckpoints.Store(key, image);
     }
 
     bool JoinOriginalQueueFactoryLifetime(const PreparedQueueInstanceV1& preparation,
@@ -11655,15 +11711,23 @@ public:
         const auto token = prepared->Token();
         if (!token.Valid() || token.slot >= originalQueueLifetimeHolders.size()) return false;
         auto& original = originalQueueLifetimeHolders[token.slot];
+        auto& factory = originalQueueFactoryLifetimeHolders[token.slot];
+        QueueCheckpointTable::BackingPreparation* destination = nullptr;
+        if (!PrepareOriginalQueueCheckpointReturn(factory, &destination)) return false;
         CloseOriginalQueueFactoryLifetime(token);
-        return queueInstances.CancelPreparedAcquire(prepared, original.Valid() ? &original : nullptr);
+        if (!queueInstances.CancelPreparedAcquire(prepared, original.Valid() ? &original : nullptr)) return false;
+        return FinishOriginalQueueCheckpointReturn(factory, destination);
     }
 
     bool ReleaseOriginalQueue(QueueInstanceToken token) noexcept {
         if (!token.Valid() || token.slot >= originalQueueLifetimeHolders.size()) return false;
         auto& original = originalQueueLifetimeHolders[token.slot];
+        auto& factory = originalQueueFactoryLifetimeHolders[token.slot];
+        QueueCheckpointTable::BackingPreparation* destination = nullptr;
+        if (!PrepareOriginalQueueCheckpointReturn(factory, &destination)) return false;
         CloseOriginalQueueFactoryLifetime(token);
-        return queueInstances.Release(token, original.Valid() ? &original : nullptr);
+        if (!queueInstances.Release(token, original.Valid() ? &original : nullptr)) return false;
+        return FinishOriginalQueueCheckpointReturn(factory, destination);
     }
 
     // Bind private initial Single geometry from the original factory outputs.
@@ -11878,6 +11942,7 @@ public:
     ActionCommitBundle actionCommitBundle;
     TransportEpochOwner transportEpochOwner;
     ScheduledTransactionPool timelinePool;
+    QueueCheckpointTable queueCheckpoints;
     // Fixed, producer-only storage. Copy/reset of service or scratch rows cannot
     // move these native loans. Destruction precedes Pool, Queue table, and banks.
     StableSlotStorage<OriginalQueueBankHolder> originalQueueBankHolders;
@@ -12311,7 +12376,6 @@ public:
     std::vector<KnownCompletionPredicateV1> playableSuccessorCompletions;
     std::vector<std::uint64_t> playableSuccessorStartFrames;
     std::vector<std::uint32_t> playableSuccessorPostSourceTailFrames;
-    QueueCheckpointTable queueCheckpoints;
     std::vector<SelectionChildV1> queueSelectionChildScratch;
     std::vector<std::uint32_t> queueRemainingScratch;
     std::vector<std::uint32_t> queuePermutationScratch;
