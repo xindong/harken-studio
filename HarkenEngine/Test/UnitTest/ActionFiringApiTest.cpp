@@ -34624,7 +34624,7 @@ TEST(ActionFiringApi, DefaultQueueBeforeHeadForeignLaneLoanDoesNotMaskNativeSour
     ASSERT_NE(nullptr, probe.ordinary);
     ASSERT_TRUE(probe.ordinaryReader.Valid());
     EXPECT_FALSE(engine.originalInitialSingleQueueOriginProducerEnabled);
-    EXPECT_NE(nullptr, engine.originalQueueConditionalHolders.get());
+    EXPECT_NE(nullptr, engine.originalQueueConditionalHolders.data());
     // This real Lane result cannot explain the distinct Source reader refusal.
     ASSERT_TRUE(engine.immediateActionLane.ObserveOriginalUnpublishedStorageOnlyRetention(
         probe.attempt->originalLaneLifetime, probe.handle, probe.root, blocks));

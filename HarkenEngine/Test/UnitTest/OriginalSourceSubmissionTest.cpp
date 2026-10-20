@@ -5122,7 +5122,7 @@ TEST(OriginalSourceSubmission, EngineConditionalHolderDefaultDisabledKeepsActual
     auto& engine = *owned;
     EngineOriginalConditionalHolderHarness state(engine);
     ASSERT_NO_FATAL_FAILURE(state.Acquire());
-    ASSERT_EQ(nullptr, engine.originalQueueConditionalHolders.get());
+    ASSERT_EQ(nullptr, engine.originalQueueConditionalHolders.data());
     EXPECT_FALSE(engine.PrepareOriginalQueueConditional(state.queue, state.request, &state.prepared));
     EXPECT_FALSE(state.prepared.Valid());
     ASSERT_TRUE(engine.queueInstances.PrepareConditional(state.queue, state.request, &state.prepared));

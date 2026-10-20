@@ -11112,7 +11112,7 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
     // Selected Reset replaces the row's future aliases. Its retained original
     // group still needs the actual member tombstones before the Arm slots retire.
     if (engine.originalQueueReplacementCount != 0) {
-        for (std::uint32_t index = 0; index < engine.queueInstances.Capacity(); ++index) {
+        for (std::uint32_t index = 0; index < engine.originalQueueReplacementHolders.size(); ++index) {
             const auto& held = engine.originalQueueReplacementHolders[index];
             if (held.phase < harken::Engine::OriginalQueueReplacementHolder::Phase::Selected ||
                 !held.oldFuture.queueArmGroup.Valid()) continue;
@@ -71223,8 +71223,7 @@ static PlayableControlStatus BeginPlayableCancellation(
                 }
                 const bool ownedByRetainedNativeFuture = [&]() noexcept {
                     if (!row->queueMode || !row->queueInstance.Valid() ||
-                        row->queueInstance.slot >= engine.queueInstances.Capacity() ||
-                        engine.originalQueueReplacementHolders == nullptr) return false;
+                        row->queueInstance.slot >= engine.originalQueueReplacementHolders.size()) return false;
                     const auto& held = engine.originalQueueReplacementHolders[row->queueInstance.slot];
                     if (held.phase < Engine::OriginalQueueReplacementHolder::Phase::Selected ||
                         held.queue.generation != row->queueInstance.generation ||
@@ -78080,8 +78079,7 @@ bool InitialQueueOriginalScratchRetryRetained(harken::Engine& engine,
     const auto* row = scratch.row;
     if (row == nullptr || !scratch.initialOriginalConditionalVersion.Valid() ||
         !scratch.initialOriginalConditionalQueue.Valid() ||
-        scratch.initialOriginalConditionalQueue.slot >= engine.queueInstances.Capacity() ||
-        engine.originalQueueConditionalHolders == nullptr ||
+        scratch.initialOriginalConditionalQueue.slot >= engine.originalQueueConditionalHolders.size() ||
         !scratch.initialOriginalScratchService.Valid() ||
         row->identity != scratch.initialOriginalScratchService ||
         row->invocationGeneration != scratch.initialOriginalScratchInvocationGeneration ||
@@ -78202,7 +78200,7 @@ bool PrepareQueueConditionalWithOriginal(
     harken::Engine& engine, harken::EngineActionPlayScratch& scratch,
     harken::EnginePlayableServiceRow& row,
     const harken::ConditionalQueuePrepareRequest& request) noexcept {
-    const bool initial = engine.originalQueueConditionalHolders != nullptr &&
+    const bool initial = engine.originalQueueConditionalHolders.Capacity() != 0 &&
         scratch.row == &row && !scratch.variableControl && !scratch.variableControlCommitted &&
         !scratch.queueFutureExecution && scratch.queueFutureCanonicalCurrent == nullptr &&
         !row.variableControlIndependentFrontier && row.queueTimingPending &&
@@ -85829,7 +85827,7 @@ bool CaptureOriginalPlainActionManifest(ImmediateActionPlan& plan,
 bool OriginalInitialSingleQueueOriginRouteEligible(ImmediateActionPlan& plan,
     std::uint32_t preparedCount) noexcept {
     if (plan.engine == nullptr || !plan.engine->originalInitialSingleQueueOriginProducerEnabled ||
-        plan.engine->originalQueueConditionalHolders == nullptr || plan.materializingDeferred ||
+        plan.engine->originalQueueConditionalHolders.Capacity() == 0 || plan.materializingDeferred ||
         plan.stopCount != 0 || plan.variableWriteCount != 0 || plan.deferredCount != 0 ||
         plan.selectionResetCount != 0 || plan.queueResetCount != 0 || plan.queueReplacementCount != 0)
         return false;
@@ -85858,7 +85856,7 @@ bool OriginalInitialSingleQueueOriginRouteEligible(ImmediateActionPlan& plan,
 }
 
 bool InitialSoundSequenceQueueRouteEligible(const ImmediateActionPlan& plan) noexcept {
-    if (plan.engine == nullptr || plan.engine->originalQueueConditionalHolders == nullptr ||
+    if (plan.engine == nullptr || plan.engine->originalQueueConditionalHolders.Capacity() == 0 ||
         plan.engine->packComposition.Authority() == harken::PackAuthorityMode::Pack ||
         plan.targetPackLease.leaseToken != 0 || plan.postedActionLease != nullptr ||
         plan.stepCount != 2 || plan.playCount != 2 || plan.firingCount != 1 ||
@@ -91579,7 +91577,7 @@ void ServiceNativeQueueReplacements(harken::Engine& engine, std::uint64_t comple
         }
     }
     if (engine.originalQueueReplacementCount == 0) return;
-    for (std::uint32_t index = 0; index < engine.queueInstances.Capacity(); ++index) {
+    for (std::uint32_t index = 0; index < engine.originalQueueReplacementHolders.size(); ++index) {
         auto& holder = engine.originalQueueReplacementHolders[index];
         using Phase = harken::Engine::OriginalQueueReplacementHolder::Phase;
         if (holder.phase < Phase::Selected) continue;

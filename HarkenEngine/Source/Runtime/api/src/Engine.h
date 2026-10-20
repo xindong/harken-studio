@@ -5892,19 +5892,16 @@ public:
             throw std::bad_alloc{};
         }
         mixer.InitializeVariableSliceConsumptionStorage();
-        originalQueueBankHolders = std::make_unique<OriginalQueueBankHolder[]>(
-            queueProgramBanks.size());
-        originalQueueLifetimeHolders =
-            std::make_unique<QueueInstanceTable::OriginalLifetimePin[]>(queueInstances.Capacity());
-        originalQueueFactoryLifetimeHolders =
-            std::make_unique<OriginalQueueFactoryLifetimeHolder[]>(queueInstances.Capacity());
+        if (!originalQueueBankHolders.Reserve(queueProgramBanks.size()) ||
+            !originalQueueLifetimeHolders.Reserve(queueInstances.Capacity()) ||
+            !originalQueueFactoryLifetimeHolders.Reserve(queueInstances.Capacity()))
+            throw std::bad_alloc{};
         if (queueInstances.originalConditionalCapacity_ != 0) {
-            originalQueueConditionalHolders =
-                std::make_unique<OriginalQueueConditionalHolder[]>(queueInstances.Capacity());
+            if (!originalQueueConditionalHolders.Reserve(queueInstances.Capacity()) ||
+                !originalQueueReplacementHolders.Reserve(queueInstances.Capacity()))
+                throw std::bad_alloc{};
             originalQueueReplacementSpans =
                 std::make_unique<PrivateSelectedQueueFutureSpanPool>(queueInstances.Capacity());
-            originalQueueReplacementHolders =
-                std::make_unique<OriginalQueueReplacementHolder[]>(queueInstances.Capacity());
             originalQueueReplacementBatch =
                 std::make_unique<OriginalConditionalReplacementBatch>(queueInstances.Capacity());
             const bool registered = queueInstances.RegisterOriginalConditionalOwner(this,
@@ -5912,6 +5909,10 @@ public:
             assert(registered);
             (void)registered;
         }
+        if (!queueInstances.AttachRowStoragePreparation(this,
+                [](void* context, std::uint32_t count) noexcept {
+                    return static_cast<Engine*>(context)->PrepareQueueInstanceHolders(count);
+                })) throw std::bad_alloc{};
         originalQueueGroupCapacity = timelinePoolConfig.maxImmediateLaneGroupRows;
         if (originalQueueGroupCapacity != 0)
             originalQueueGroupHolders =
@@ -9077,8 +9078,8 @@ public:
             resource.nativeStopLaneOwner.Return();
         }
         queueInstances.EndOriginalConditionalAssociationsAfterQuiescence();
-        if (originalQueueReplacementHolders != nullptr)
-            for (std::uint32_t i = 0; i < queueInstances.Capacity(); ++i) {
+        if (originalQueueReplacementHolders.data() != nullptr)
+            for (std::uint32_t i = 0; i < originalQueueReplacementHolders.size(); ++i) {
                 auto& holder = originalQueueReplacementHolders[i];
                 if (holder.phase == OriginalQueueReplacementHolder::Phase::Empty) continue;
                 holder.sourceArmCommit.Release();
@@ -9149,8 +9150,8 @@ public:
         for (auto& original : originalOccurrencePreparations) original.original_.Release();
         // Pool backing outlives the genuine conditional group-loan returns.
         queueInstances.EndOriginalConditionalsForQuiescentOwnerTeardown();
-        if (originalQueueConditionalHolders != nullptr)
-            for (std::uint32_t index = 0; index < queueInstances.Capacity(); ++index)
+        if (originalQueueConditionalHolders.data() != nullptr)
+            for (std::uint32_t index = 0; index < originalQueueConditionalHolders.size(); ++index)
                 assert(queueInstances.OriginalConditionalOwnerEmpty(
                     originalQueueConditionalHolders[index].baseline,
                     originalQueueConditionalHolders[index].clock));
@@ -9158,14 +9159,11 @@ public:
         // Every external loan must have returned before the owning Engine dies.
         for (std::size_t index = 0; index < originalQueueGroupCapacity; ++index)
             originalQueueGroupHolders[index].Release();
-        if (originalQueueLifetimeHolders != nullptr)
-            for (std::uint32_t index = 0; index < queueInstances.Capacity(); ++index)
-                originalQueueLifetimeHolders[index].Release();
-        if (originalQueueBankHolders != nullptr)
-            for (std::size_t index = 0; index < queueProgramBanks.size(); ++index) {
-                originalQueueBankHolders[index].baseline.Release();
-                originalQueueBankHolders[index].reservation.Release();
-            }
+        for (auto& holder : originalQueueLifetimeHolders) holder.Release();
+        for (auto& holder : originalQueueBankHolders) {
+            holder.baseline.Release();
+            holder.reservation.Release();
+        }
         // Join every offline/real-time worker before Source registry destruction.
         // Disposed Source records can still have a physical installed Slot loan.
         voices.ShutdownOriginalSourceBodiesAfterQuiescence();
@@ -9762,7 +9760,7 @@ public:
     }
     bool RecordInitialSoundQueueCohortFromPreparedFactories(EngineImmediateEntryAttempt& attempt,
         EngineActionPlayScratch& sound, EngineActionPlayScratch& queue) noexcept {
-        if (originalQueueConditionalHolders == nullptr || attempt.soundQueueCohort.receiver_ != nullptr ||
+        if (originalQueueConditionalHolders.size() == 0 || attempt.soundQueueCohort.receiver_ != nullptr ||
             !attempt.active || !attempt.lane.Valid() || attempt.root == 0 ||
             attempt.gate.Observe(attempt.generation) != ImmediateEntryAttemptState::Preparing ||
             !sound.prepared || !queue.prepared || !sound.instance.Valid() || !queue.instance.Valid() ||
@@ -10586,10 +10584,11 @@ public:
 
     OriginalQueueBankHolder* OriginalQueueBankHolderFor(
         const EngineQueueProgramBank* bank) noexcept {
-        if (bank == nullptr || originalQueueBankHolders == nullptr ||
+        if (bank == nullptr ||
             queueProgramBanks.size() == 0) return nullptr;
         const auto index = queueProgramBanks.IndexOf(*bank);
-        if (index == UINT32_MAX || &queueProgramBanks[index] != bank) return nullptr;
+        if (index == UINT32_MAX || !originalQueueBankHolders.IsConstructed(index) ||
+            &queueProgramBanks[index] != bank) return nullptr;
         return &originalQueueBankHolders[index];
     }
 
@@ -10600,19 +10599,31 @@ public:
     bool PrepareQueueProgramBankBacking(std::uint32_t count,
         StableSlotStorage<EngineQueueProgramBank>::Preparation* out) noexcept {
         return queueProgramBanks.PrepareBacking(count, 0, QueueProgramBankReusable,
-            [this](std::uint32_t slot) noexcept { return queueProgramBanks.Emplace(slot); }, out);
+            [this](std::uint32_t slot) noexcept { return PrepareQueueProgramBankSlot(slot); }, out);
+    }
+
+    bool PrepareQueueProgramBankSlot(std::uint32_t slot) noexcept {
+        return originalQueueBankHolders.Emplace(slot) && queueProgramBanks.Emplace(slot);
+    }
+
+    bool PrepareQueueInstanceHolders(std::uint32_t count) noexcept {
+        return originalQueueLifetimeHolders.ConstructThrough(count) &&
+            originalQueueFactoryLifetimeHolders.ConstructThrough(count) &&
+            (queueInstances.originalConditionalCapacity_ == 0 ||
+                (originalQueueConditionalHolders.ConstructThrough(count) &&
+                 originalQueueReplacementHolders.ConstructThrough(count)));
     }
 
     EngineQueueProgramBank* ReserveOriginalQueueBank() noexcept {
         for (std::uint32_t index = 0; index < queueProgramBanks.size(); ++index) {
             if (!queueProgramBanks.IsConstructed(index)) {
                 if (queueProgramBanks.PreparedUseActive()) continue;
-                if (!queueProgramBanks.Emplace(index)) return nullptr;
+                if (!PrepareQueueProgramBankSlot(index)) return nullptr;
             }
             auto& bank = queueProgramBanks[index];
             if (!QueueProgramBankReusable(bank)) continue;
             if (!queueProgramBanks.ProtectBackingForAcquire(index, QueueProgramBankReusable,
-                    [this](std::uint32_t slot) noexcept { return queueProgramBanks.Emplace(slot); })) return nullptr;
+                    [this](std::uint32_t slot) noexcept { return PrepareQueueProgramBankSlot(slot); })) return nullptr;
             auto& original = originalQueueBankHolders[index];
             if (!bank.TryReserve(&original.reservation)) continue;
             if (bank.IssueLifetimePin(original.reservation, &original.baseline)) return &bank;
@@ -10706,8 +10717,7 @@ public:
     OriginalQueueReplacementHolder* OriginalQueueReplacementFor(
         const EngineActionQueueReplacementScratch& scratch) noexcept {
         const auto queue = scratch.nativeReplacement;
-        if (!queue.Valid() || queue.slot >= queueInstances.Capacity() ||
-            originalQueueReplacementHolders == nullptr) return nullptr;
+        if (!queue.Valid() || queue.slot >= originalQueueReplacementHolders.size()) return nullptr;
         auto& holder = originalQueueReplacementHolders[queue.slot];
         return holder.phase != OriginalQueueReplacementHolder::Phase::Empty &&
             holder.preparation == &scratch && holder.queue.slot == queue.slot &&
@@ -10717,7 +10727,7 @@ public:
     bool BeginOriginalQueueReplacement(EngineActionQueueReplacementScratch& scratch,
         EnginePlayableServiceRow& row, const PreparedQueueReplacementOrder& order) noexcept {
         if (scratch.nativeReplacement.Valid() || !order.Valid() ||
-            originalQueueReplacementHolders == nullptr || originalQueueReplacementSpans == nullptr)
+            row.queueInstance.slot >= originalQueueReplacementHolders.size() || originalQueueReplacementSpans == nullptr)
             return false;
         const auto* original = OriginalQueueConditionalForService(row);
         if (original == nullptr || !original->projection.Valid() ||
@@ -11141,7 +11151,7 @@ public:
     bool HasSelectedOriginalQueueReplacement(const EngineImmediateEntryAttempt& attempt) const noexcept {
         const auto queue = attempt.queueContinuationQueue;
         if (!OwnsImmediateEntryAttemptStorage(attempt) || !attempt.active || !queue.Valid() ||
-            queue.slot >= queueInstances.Capacity() || originalQueueReplacementHolders == nullptr) return false;
+            queue.slot >= originalQueueReplacementHolders.size()) return false;
         const auto& holder = originalQueueReplacementHolders[queue.slot];
         return holder.phase >= OriginalQueueReplacementHolder::Phase::Selected &&
             holder.queue.generation == queue.generation && holder.originalAttempt == &attempt &&
@@ -11202,8 +11212,7 @@ public:
         const EngineImmediateEntryAttempt& attempt) const noexcept {
         const auto queue = attempt.queueContinuationQueue;
         if (!OwnsImmediateEntryAttemptStorage(attempt) || !attempt.active ||
-            originalQueueConditionalHolders == nullptr || !queue.Valid() ||
-            queue.slot >= queueInstances.Capacity()) return nullptr;
+            !queue.Valid() || queue.slot >= originalQueueConditionalHolders.size()) return nullptr;
         const auto& holder = originalQueueConditionalHolders[queue.slot];
         const auto original = holder.baseline.Token();
         return original.slot == queue.slot && original.generation == queue.generation &&
@@ -11220,7 +11229,7 @@ public:
         QueueInstanceToken queue) noexcept {
         auto* engine = static_cast<Engine*>(opaque);
         if (engine == nullptr || &engine->queueInstances != &table || !queue.Valid() ||
-            queue.slot >= table.Capacity() || engine->originalQueueConditionalHolders == nullptr)
+            queue.slot >= engine->originalQueueConditionalHolders.size())
             return nullptr;
         auto& cap = engine->originalQueueConditionalHolders[queue.slot].baseline;
         const auto token = cap.Token();
@@ -11261,8 +11270,8 @@ public:
         const ConditionalQueuePrepareRequest& request, PreparedQueueConditionalV1* out,
         QueueInstanceTable::OriginalConditionalFutureReservation** issued = nullptr) noexcept {
         if (out == nullptr || (issued != nullptr && *issued != nullptr) ||
-            !queue.Valid() || queue.slot >= queueInstances.Capacity() ||
-            originalQueueConditionalHolders == nullptr || originalQueueLifetimeHolders == nullptr)
+            !queue.Valid() || queue.slot >= originalQueueConditionalHolders.size() ||
+            queue.slot >= originalQueueLifetimeHolders.size())
             return false;
         auto& holder = originalQueueConditionalHolders[queue.slot];
         const auto& parent = originalQueueLifetimeHolders[queue.slot];
@@ -11363,7 +11372,7 @@ public:
         const EnginePlayableServiceRow& row) const noexcept {
         const auto queue = row.queueInstance;
         if (!row.InvocationValid() || !queue.Valid() ||
-            originalQueueConditionalHolders == nullptr || queue.slot >= queueInstances.Capacity())
+            queue.slot >= originalQueueConditionalHolders.size())
             return nullptr;
         const auto& holder = originalQueueConditionalHolders[queue.slot];
         const auto original = holder.baseline.Token();
@@ -11485,8 +11494,7 @@ public:
         QueueInstanceToken originalQueue, ConditionalQueueVersionToken issuedVersion, DecisionToken decision,
         OccurrenceToken current) noexcept {
         if (issued == nullptr) return true;
-        if (!originalQueue.Valid() || originalQueue.slot >= queueInstances.Capacity() ||
-            originalQueueConditionalHolders == nullptr ||
+        if (!originalQueue.Valid() || originalQueue.slot >= originalQueueConditionalHolders.size() ||
             &originalQueueConditionalHolders[originalQueue.slot].baseline != issued) return false;
         // Native End may already have returned this Engine's own cap. An alias
         // to a new episode is rejected by the original full version check.
@@ -11561,7 +11569,7 @@ public:
         observedCreate.monitorIdentity = CaptureMonitorOwner(create.rootInstance);
         if (!queueInstances.PrepareAcquire(observedCreate, prepared, &original)) return false;
         const auto token = original.Token();
-        if (originalQueueLifetimeHolders == nullptr || token.slot >= queueInstances.Capacity() ||
+        if (token.slot >= originalQueueLifetimeHolders.size() ||
             originalQueueLifetimeHolders[token.slot].Valid()) {
             const bool cancelled = queueInstances.CancelPreparedAcquire(prepared, &original);
             assert(cancelled);
@@ -11582,7 +11590,7 @@ public:
     bool JoinOriginalQueueFactoryLifetime(const PreparedQueueInstanceV1& preparation,
         const PlayableInstanceTable::PreparedParentLinksProof& links) noexcept {
         const auto token = preparation.Token();
-        if (!token.Valid() || token.slot >= queueInstances.Capacity()) return false;
+        if (!token.Valid() || token.slot >= originalQueueFactoryLifetimeHolders.size()) return false;
         auto& factory = originalQueueFactoryLifetimeHolders[token.slot];
         const auto* service = factory.service_;
         if (factory.engine_ != this || factory.preparation_ != &preparation ||
@@ -11608,7 +11616,7 @@ public:
         const auto token = factory.queue_;
         if (out == nullptr || out->engine_ != nullptr || factory.engine_ != this ||
                 factory.state_ != OriginalQueueFactoryLifetimeHolder::State::Joined || !token.Valid() ||
-                token.slot >= queueInstances.Capacity() ||
+                token.slot >= originalQueueFactoryLifetimeHolders.size() ||
                 &originalQueueFactoryLifetimeHolders[token.slot] != &factory || factory.service_ == nullptr ||
                 !queueInstances.IsOriginalLifetimePinFor(originalQueueLifetimeHolders[token.slot], token))
             return false;
@@ -11635,6 +11643,7 @@ public:
     }
 
     void CloseOriginalQueueFactoryLifetime(QueueInstanceToken token) noexcept {
+        if (!token.Valid() || token.slot >= originalQueueFactoryLifetimeHolders.size()) return;
         auto& factory = originalQueueFactoryLifetimeHolders[token.slot];
         if (factory.engine_ == this && factory.queue_.slot == token.slot &&
                 factory.queue_.generation == token.generation)
@@ -11644,14 +11653,14 @@ public:
     bool CancelOriginalQueueAcquire(PreparedQueueInstanceV1* prepared) noexcept {
         if (prepared == nullptr) return false;
         const auto token = prepared->Token();
-        if (!token.Valid() || token.slot >= queueInstances.Capacity()) return false;
+        if (!token.Valid() || token.slot >= originalQueueLifetimeHolders.size()) return false;
         auto& original = originalQueueLifetimeHolders[token.slot];
         CloseOriginalQueueFactoryLifetime(token);
         return queueInstances.CancelPreparedAcquire(prepared, original.Valid() ? &original : nullptr);
     }
 
     bool ReleaseOriginalQueue(QueueInstanceToken token) noexcept {
-        if (!token.Valid() || token.slot >= queueInstances.Capacity()) return false;
+        if (!token.Valid() || token.slot >= originalQueueLifetimeHolders.size()) return false;
         auto& original = originalQueueLifetimeHolders[token.slot];
         CloseOriginalQueueFactoryLifetime(token);
         return queueInstances.Release(token, original.Valid() ? &original : nullptr);
@@ -11871,15 +11880,15 @@ public:
     ScheduledTransactionPool timelinePool;
     // Fixed, producer-only storage. Copy/reset of service or scratch rows cannot
     // move these native loans. Destruction precedes Pool, Queue table, and banks.
-    std::unique_ptr<OriginalQueueBankHolder[]> originalQueueBankHolders;
-    std::unique_ptr<QueueInstanceTable::OriginalLifetimePin[]> originalQueueLifetimeHolders;
-    std::unique_ptr<OriginalQueueFactoryLifetimeHolder[]> originalQueueFactoryLifetimeHolders;
+    StableSlotStorage<OriginalQueueBankHolder> originalQueueBankHolders;
+    StableRowStorage<QueueInstanceTable::OriginalLifetimePin> originalQueueLifetimeHolders;
+    StableRowStorage<OriginalQueueFactoryLifetimeHolder> originalQueueFactoryLifetimeHolders;
     void (*originalQueueFactoryLifetimeHookForTest)(Engine&,
         const OriginalQueueFactoryLifetimeHolder&, void*) = nullptr;
     void* originalQueueFactoryLifetimeContextForTest = nullptr;
-    std::unique_ptr<OriginalQueueConditionalHolder[]> originalQueueConditionalHolders;
+    StableRowStorage<OriginalQueueConditionalHolder> originalQueueConditionalHolders;
     std::unique_ptr<PrivateSelectedQueueFutureSpanPool> originalQueueReplacementSpans;
-    std::unique_ptr<OriginalQueueReplacementHolder[]> originalQueueReplacementHolders;
+    StableRowStorage<OriginalQueueReplacementHolder> originalQueueReplacementHolders;
     std::unique_ptr<OriginalConditionalReplacementBatch> originalQueueReplacementBatch;
     std::uint32_t originalQueueReplacementAbandonCount = 0;
     std::uint32_t originalQueueReplacementCount = 0;
