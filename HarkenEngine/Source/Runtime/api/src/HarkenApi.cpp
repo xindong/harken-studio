@@ -70337,6 +70337,25 @@ engine.runtimeRecreateRequired = true;
                 engine.playableScheduleCompletions.size()) {
             installFailed = true;
         } else {
+            if (row.queueMode) {
+                row.queueCurrentProgramBank = ReserveQueueProgramBank(engine,
+                    {initialSchedule.leafCount, initialSchedule.leafCount});
+                if (row.queueCurrentProgramBank == nullptr) {
+                    rollbackDirectStart();
+                    result.status = PlayableStartStatus::Backpressure;
+                    return result;
+                }
+                row.queueCurrentPrograms = {0, initialSchedule.leafCount};
+            }
+            auto* const currentBank = row.queueCurrentProgramBank;
+            auto* const payloads = currentBank != nullptr ? currentBank->payloads.data()
+                : engine.playableSchedulePayloads.data() + eventBase;
+            auto* const events = currentBank != nullptr ? currentBank->events.data()
+                : engine.playableScheduleEvents.data() + eventBase;
+            auto* const runtimes = currentBank != nullptr ? currentBank->runtimes.data()
+                : engine.playableScheduleRuntimePrograms.data() + endpointBase;
+            auto* const schedules = currentBank != nullptr ? currentBank->schedules.data()
+                : engine.playableSchedules.data() + endpointBase;
             row.queueCurrentScheduleBase =
                 static_cast<std::uint32_t>(memberBase);
             row.queueCurrentScheduleLeafCount = initialSchedule.leafCount;
@@ -70348,13 +70367,11 @@ engine.runtimeRecreateRequired = true;
                 (directCompositeScheduleActive
                      ? (*directCompositePrepared)[0].startOffsetFrames
                      : queuePreparedLeaves[0].startOffsetFrames);
-            row.runtimeProgram.payloads =
-                engine.playableSchedulePayloads.data() + eventBase;
+            row.runtimeProgram.payloads = payloads;
             row.runtimeProgram.payloadCount =
                 initialSchedule.leafCount;
             row.schedule.entryAnchorFrame = row.startFrame;
-            row.schedule.events =
-                engine.playableScheduleEvents.data() + eventBase;
+            row.schedule.events = events;
             row.schedule.eventCount = initialSchedule.leafCount;
             row.schedule.armToken = {};
             std::array<KnownScheduleLeafV1, 64> knownLeaves{};
@@ -70372,7 +70389,6 @@ engine.runtimeRecreateRequired = true;
                     installFailed = true;
                     break;
                 }
-                const std::size_t eventSlot = eventBase + installedCount;
                 const std::size_t endpointSlot =
                     endpointBase + installedCount;
                 const std::size_t pairedSlot = pairedBase + installedCount;
@@ -70483,13 +70499,11 @@ engine.runtimeRecreateRequired = true;
                     leafInstalled.postSourceTailFrames;
                 engine.playableScheduleCompletions[pairedSlot] =
                     leafInstalled.completionPredicate;
-                TimelineEventPayload& payload =
-                    engine.playableSchedulePayloads[eventSlot];
+                TimelineEventPayload& payload = payloads[installedCount];
                 payload = {};
                 payload.kind = TimelineEventKind::Start;
                 payload.target = source.voice.target;
-                EventTemplate& event =
-                    engine.playableScheduleEvents[eventSlot];
+                EventTemplate& event = events[installedCount];
                 event = {};
                 event.frameOffsetFromEntry = static_cast<std::int64_t>(
                     leafStart - row.startFrame);
@@ -70499,14 +70513,12 @@ engine.runtimeRecreateRequired = true;
                 event.subeventPhase = 20;
                 event.payload = 0;
                 event.armToken = leafInstalled.armToken;
-                TimelineProgramView& runtime =
-                    engine.playableScheduleRuntimePrograms[endpointSlot];
+                TimelineProgramView& runtime = runtimes[installedCount];
                 runtime = {};
                 runtime.generation = instance;
                 runtime.payloads = &payload;
                 runtime.payloadCount = 1;
-                ProgramView& schedule =
-                    engine.playableSchedules[endpointSlot];
+                ProgramView& schedule = schedules[installedCount];
                 schedule = {};
                 schedule.ownerInstance = instance;
                 schedule.ownerInstanceScheduleEpoch =
@@ -70517,6 +70529,11 @@ engine.runtimeRecreateRequired = true;
                 schedule.eventCount = 1;
                 schedule.runtimeProgram = {instance, &runtime};
                 schedule.armToken = leafInstalled.armToken;
+                if (currentBank != nullptr &&
+                    FreezeQueueProgram(engine, *currentBank, schedule) == nullptr) {
+                    installFailed = true;
+                    break;
+                }
                 if (queueInitialHasContinuation) {
                     KnownScheduleLeafV1& known = knownLeaves[installedCount];
                     known.stableLeafOrdinal =
@@ -70538,6 +70555,9 @@ engine.runtimeRecreateRequired = true;
                 }
                 if (installedCount == 0) installed = leafInstalled;
             }
+            if (!installFailed && currentBank != nullptr &&
+                !FreezeQueueAggregate(*currentBank, row.schedule, 0, initialSchedule.leafCount))
+                installFailed = true;
             if (!installFailed && queueInitialHasContinuation) {
                 CompositeCompletionOwnerToken composite{};
                 if (engine.PrepareOriginalCompositeCompletion(
@@ -70690,11 +70710,16 @@ engine.runtimeRecreateRequired = true;
         }
         for (std::uint32_t index = 0;
              !installFailed && index < scheduleCount; ++index) {
-            const ProgramView& schedule =
-                row.queueCurrentScheduleLeafCount > 1u
-                    ? engine.playableSchedules[
-                          transactionStorage.endpoint + index]
-                    : row.schedule;
+            const auto* program = row.queueCurrentProgramBank != nullptr
+                ? ResolveQueueCurrentProgram(row, index)
+                : row.queueCurrentScheduleLeafCount > 1u
+                    ? &engine.playableSchedules[transactionStorage.endpoint + index]
+                    : &row.schedule;
+            if (program == nullptr) {
+                installFailed = true;
+                break;
+            }
+            const ProgramView& schedule = *program;
             if (schedule.events == nullptr || schedule.eventCount != 1u ||
                 schedule.events[0].frameOffsetFromEntry < 0) {
                 installFailed = true;
