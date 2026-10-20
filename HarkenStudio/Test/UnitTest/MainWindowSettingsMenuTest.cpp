@@ -159,15 +159,26 @@ TEST(MainWindowPlacement, FirstShowRecoversAnUnreachableFrameAfterChromeSetup)
         QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         QApplication::processEvents();
     });
-    const QRect available = QGuiApplication::primaryScreen()->availableGeometry();
+    QRect desktop;
+    for (QScreen* screen : QGuiApplication::screens())
+        desktop = desktop.united(screen->geometry());
+    ASSERT_TRUE(desktop.isValid());
     window->setWindowState(Qt::WindowNoState);
     window->resize(1200, 800);
-    window->move(available.right(), available.top() + 50);
+    window->move(desktop.right() + window->width(), desktop.top() + 50);
     window->show();
     QApplication::processEvents();
     const QRect frame = window->frameGeometry();
-    EXPECT_TRUE(available.contains(frame.topLeft()));
-    EXPECT_GE(available.intersected(frame).width(), qMin(160, frame.width()));
+    const QRect reachableTitle(frame.topLeft(),
+                               QSize(qMin(160, frame.width()), qMin(32, frame.height())));
+    bool visibleOnScreen = false;
+    for (QScreen* screen : QGuiApplication::screens())
+        visibleOnScreen = visibleOnScreen || screen->availableGeometry().contains(reachableTitle);
+    EXPECT_TRUE(visibleOnScreen)
+        << "frame=" << frame.x() << ',' << frame.y() << ','
+        << frame.width() << ',' << frame.height()
+        << " desktop=" << desktop.x() << ',' << desktop.y() << ','
+        << desktop.width() << ',' << desktop.height();
     window->showMaximized();
     QApplication::processEvents();
     EXPECT_TRUE(window->isMaximized());

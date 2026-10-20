@@ -187,11 +187,13 @@ TEST(EditorWorkspaceWindowContract, UnreachableFramesReturnToARealScreenWorkArea
 
 TEST(EditorWorkspaceWindowContract, ValidSecondaryAndReachableSpanningPositionsArePreserved)
 {
-    const QList<QRect> screens{{0, 0, 1920, 1040}, {-1920, 0, 1920, 1040}};
+    const QList<QRect> screens{
+        {0, 0, 1920, 1040}, {-1920, 0, 1920, 1040}, {1920, 0, 1920, 1040}};
     const QList<QRect> frames{
         {-1800, 80, 1200, 800},
         {200, 80, 1200, 800},
-        {-600, 80, 1200, 800}};
+        {-600, 80, 1200, 800},
+        {1919, 50, 1200, 800}};
     for (const QRect& frame : frames)
         EXPECT_EQ(visibleWindowPlacement(frame, screens, 0).frame, frame);
 }
