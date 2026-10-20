@@ -681,7 +681,6 @@ struct EngineQueueProgramBankBody : EngineQueueScheduleColumns {
     std::uint32_t eventCount = 0;
     std::uint32_t curveCount = 0;
     std::uint32_t aggregateCount = 0;
-    TimelineProgramReadFence readFence;
     bool occupied = false;
     bool published = false;
     bool heldByOwner = false;
@@ -691,6 +690,7 @@ struct EngineQueueProgramBankBody : EngineQueueScheduleColumns {
 // Bank storage stays at its original fixed Engine address for every loan.
 struct EngineQueueProgramBank : EngineQueueProgramBankBody {
     EngineQueueScheduleStorage::Loan scheduleStorageLoan;
+    TimelineProgramReadFence readFence;
     class OriginalReservation {
     public:
         OriginalReservation() noexcept = default;
