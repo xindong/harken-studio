@@ -677,6 +677,8 @@ struct EngineQueueProgramBankBody : EngineQueueScheduleColumns {
     std::array<const CurveLUT*, 2> originalCurves{};
     std::array<ArmGroupToken, 2> groups{};
     TransitionInstanceToken transition{};
+    PlayableInstanceHandle supersededRoot = 0;
+    std::uint64_t supersededEpoch = 0;
     std::uint32_t programCount = 0;
     std::uint32_t eventCount = 0;
     std::uint32_t curveCount = 0;
@@ -811,6 +813,7 @@ struct EngineQueueProgramBank : EngineQueueProgramBankBody {
         scheduleStorageLoan.Reset();
         programCount = 0; eventCount = 0; curveCount = 0; aggregateCount = 0;
         groups = {}; transition = {};
+        supersededRoot = 0; supersededEpoch = 0;
         readFence.ResetAfterSafeRetirement();
         occupied = false; published = false; heldByOwner = false;
         return true;
@@ -1043,6 +1046,7 @@ struct EnginePlayableMemberRecord {
     std::uint32_t programOwners = 0;
     std::uint8_t dynamic = 0;
     bool primaryOwned = false;
+    bool retirePrimary = false;
     bool occupied = false;
 };
 
@@ -4590,6 +4594,8 @@ struct EngineActionQueueReplacementScratch {
     std::uint64_t resetExecuteFrame = 0;
     std::uint32_t resetExecutionOrdinal = 0;
     EngineQueueProgramBank* programBank = nullptr;
+    EngineActionPlayScratch* successorTree = nullptr;
+    std::vector<EnginePlayableMemberReference> successorMembers;
     PreparedTransactionBatch transactions{};
     PreparedDecisionReservation decision{};
     PreparedDecisionReservation successorDecision{};
@@ -10787,6 +10793,8 @@ public:
     }
 
     bool ResetOriginalQueueBank(EngineQueueProgramBank& bank) noexcept {
+        if (bank.supersededRoot != 0 && playableInstances.Classify(bank.supersededRoot).live)
+            return false;
         auto* original = OriginalQueueBankHolderFor(&bank);
         if (original == nullptr || bank.HasOriginalOwnersOtherThan(original->reservation, original->baseline))
             return false;

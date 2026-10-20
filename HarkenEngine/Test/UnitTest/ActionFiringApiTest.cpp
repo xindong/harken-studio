@@ -20020,13 +20020,14 @@ TEST(ActionFiringApi, NestedQueueAttemptReusesCompositeAsSingleAfterRejectedAdmi
 
 void ExpectDeferredNestedQueueCompositeSuccessor(
     bool pieceChild, bool refuseSecondLeaf, bool singleLeaf = false,
-    bool appendSound = false, bool logicalTrack = false) {
+    bool appendSound = false, bool logicalTrack = false, std::uint32_t resetCount = 0,
+    std::uint32_t containerDepth = 0) {
     (void)Vn_Term();
     harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     std::vector<float> first(
-        logicalTrack ? 1024u
+        logicalTrack || resetCount != 0 ? 1024u
                      : engine.timelinePool.WindowEndFrame() + 256u,
         0.25f);
     std::vector<float> second(logicalTrack ? 1024u : 256u, -0.25f);
@@ -20041,7 +20042,10 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
     auto finalSound = composite.queueChildren[1];
     if (pieceChild) donor.MakeSecondQueueChildCompositePiece();
     else donor.MakeSecondQueueChildCompositeTrack();
-    if (singleLeaf) donor.track.placementCount = 1;
+    if (singleLeaf) {
+        donor.track.placementCount = 1;
+        if (resetCount != 0) donor.trackPlacements[0].authoredStart = pieceChild ? 1 : 1000000;
+    }
     if (logicalTrack) {
         ASSERT_FALSE(pieceChild);
         for (std::uint32_t index = 0;
@@ -20084,6 +20088,32 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
     composite.queueChildren[1].timingHint = harken::MakeScheduleReferenceTimingHint(
         composite.queueChildren[1].playable.kind, composite.queueChildren[1].playable.stableId,
         pieceChild ? donor.piece.scheduleSemanticFingerprint : donor.track.scheduleSemanticFingerprint);
+    auto nestedTarget = composite.child;
+    auto nestedContainer = composite.child;
+    if (containerDepth != 0) {
+        nestedTarget.playable = composite.queueChildren[1].playable;
+        nestedTarget.timingHint = {};
+        composite.containers[0].children = &nestedTarget;
+        const auto containerRef = [&](std::uint32_t propertyIndex) {
+            const auto& property = composite.properties[propertyIndex];
+            return harken::PlayableRefV1{harken::PlayableKindV1::Container, 0, property.stableId,
+                property.programSemanticFingerprint, property.contentRevision, property.routeStableId,
+                property.compatibilityFingerprint};
+        };
+        nestedContainer.playable = containerRef(2);
+        nestedContainer.timingHint = {};
+        composite.containers[1].children = &nestedContainer;
+        composite.queueChildren[1].playable = containerRef(containerDepth == 1 ? 2u : 3u);
+        composite.queueChildren[1].timingHint = {};
+        for (auto& occurrence : occurrences) {
+            const auto parent = occurrence.parentStableId;
+            if (parent != composite.containers[0].containerStableId &&
+                parent != composite.containers[1].containerStableId) continue;
+            occurrence.childPlayable = parent == composite.containers[0].containerStableId
+                ? nestedTarget.playable : nestedContainer.playable;
+            occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(occurrence);
+        }
+    }
     for (auto& occurrence : occurrences) {
         if (occurrence.parentStableId != composite.containers[2].containerStableId ||
             occurrence.stableOccurrenceOrdinal != composite.queueChildren[1].stableChildOrdinal) continue;
@@ -20147,12 +20177,70 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
         : (singleLeaf ? 2u : 3u) + (appendSound ? 1u : 0u);
     const auto budget = static_cast<std::uint32_t>(2u * first.size() / engine.config.blockFrames + 96u);
     bool observedLogicalTrack = false;
+    std::uint32_t resets = 0;
+    harken::EngineQueueProgramBank::OriginalLifetimePin oldProgramReader;
+    harken::EngineQueueProgramBank* oldProgram = nullptr;
+    harken::EnginePlayableMemberToken oldMember{};
+    harken::PlayableInstanceHandle oldLeaf = 0;
     for (std::uint32_t block = 0; block < budget; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine.nullBackend.Pump(1);
         trace.Capture(engine);
         harkentest::monitor::CollectIdentityEvents(capture, records);
         ASSERT_FALSE(engine.runtimeRecreateRequired) << block;
+        if (resets < resetCount && trace.heard.size() == 1u) {
+            for (auto& row : engine.playableServices) {
+                if (!row.queueMode || !row.partition.Valid() || !row.parentService.Valid() ||
+                    !row.queuePreparedPages.Valid() || !row.queueContinuationPrepared ||
+                    row.queueArrivalDecision.Valid() || row.variableControlNestedQueueSuccessorInstance == 0)
+                    continue;
+                const auto priorRoot = row.variableControlNestedQueueSuccessorInstance;
+                const auto priorRender = row.renderHandle;
+                const auto priorFuture = row.queueSuccessorRenderHandle;
+                auto reset = ValidPostDesc();
+                reset.actionId = harkentest::ObjectId(49);
+                reset.emitter = emitter;
+                VnActionFiringHandle firing = 0;
+                if (resets == 0) {
+                    if (!logicalTrack) {
+                        const auto before = CaptureActionPreparationOwners(engine);
+                        harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::CapturedVoiceInstall);
+                        const auto result = Vn_PostAction(&reset, &firing);
+                        harken::detail::DisarmLogicAllocFaultForTests();
+                        ASSERT_EQ(VN_BACKPRESSURE, result);
+                        EXPECT_EQ(0u, firing);
+                        ExpectActionPreparationOwnersUnchanged(engine, before);
+                        EXPECT_EQ(priorRoot, row.variableControlNestedQueueSuccessorInstance);
+                        EXPECT_EQ(priorFuture, row.queueSuccessorRenderHandle);
+                    }
+                    oldProgram = row.queueSuccessorProgramBank;
+                    ASSERT_NE(nullptr, oldProgram);
+                    auto* holder = engine.OriginalQueueBankHolderFor(oldProgram);
+                    ASSERT_NE(nullptr, holder);
+                    ASSERT_TRUE(holder->baseline.Borrow(&oldProgramReader));
+                    if (!logicalTrack) {
+                        oldMember = oldProgram->members[row.queueSuccessorPrograms.first];
+                        oldLeaf = engine.FindPlayableMember(oldMember)->completion.leafInstance;
+                    }
+                }
+                ASSERT_EQ(VN_OK, Vn_PostAction(&reset, &firing));
+                ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+                EXPECT_EQ(priorRender, row.renderHandle);
+                EXPECT_NE(priorRoot, row.variableControlNestedQueueSuccessorInstance);
+                EXPECT_TRUE(engine.playableInstances.Classify(row.variableControlNestedQueueSuccessorInstance).live);
+                if (!singleLeaf && !logicalTrack) {
+                    const auto before = CaptureActionPreparationOwners(engine);
+                    const auto replacement = row.variableControlNestedQueueSuccessorInstance;
+                    ASSERT_EQ(VN_BACKPRESSURE, Vn_PostAction(&reset, &firing));
+                    EXPECT_EQ(0u, firing);
+                    ExpectActionPreparationOwnersUnchanged(engine, before);
+                    EXPECT_EQ(replacement, row.variableControlNestedQueueSuccessorInstance);
+                }
+                ASSERT_FALSE(engine.runtimeRecreateRequired);
+                ++resets;
+                break;
+            }
+        }
         for (const auto& row : engine.playableServices) {
             if (row.queueMode && row.partition.Valid() &&
                 row.controlReason == harken::PlayableControlReason::StartRefused) {
@@ -20211,6 +20299,18 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
         if (trace.heard.size() >= expectedHeard && engine.voices.ActiveCount() == 0 &&
             engine.timelineArms.LiveCount() == 0) break;
     }
+    EXPECT_EQ(resetCount, resets);
+    if (oldProgram != nullptr) {
+        EXPECT_TRUE(oldProgram->occupied);
+        EXPECT_FALSE(engine.ResetOriginalQueueBank(*oldProgram));
+        if (oldMember.Valid()) {
+            const auto* retained = engine.FindPlayableMember(oldMember);
+            ASSERT_NE(nullptr, retained);
+            EXPECT_EQ(oldLeaf, retained->completion.leafInstance);
+            EXPECT_FALSE(retained->primaryOwned);
+        }
+        oldProgramReader.Release();
+    }
     ASSERT_EQ(expectedHeard, trace.heard.size());
     harkentest::monitor::CollectIdentityEvents(capture, records);
     std::vector<harkentest::monitor::IdentityRecord> selections;
@@ -20248,6 +20348,7 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
     EXPECT_EQ(0u, engine.timelineArms.LiveCount());
     EXPECT_EQ(0u, engine.queueInstances.LiveCount());
     EXPECT_EQ(0u, engine.voices.ActiveCount());
+    if (oldMember.Valid()) EXPECT_EQ(nullptr, engine.FindPlayableMember(oldMember));
     EXPECT_FALSE(engine.runtimeRecreateRequired);
 }
 
@@ -20279,6 +20380,26 @@ TEST(ActionFiringApi,
      VariableControlNestedQueueAdvancesThroughLogicalTrackToFinalSound) {
     ExpectDeferredNestedQueueCompositeSuccessor(
         false, false, false, true, true);
+}
+
+TEST(ActionFiringApi, NestedQueuePageResetReplacesPrivateTreeAndRetainsOldReader) {
+    ExpectDeferredNestedQueueCompositeSuccessor(false, false, false, true, false, 1);
+}
+
+TEST(ActionFiringApi, NestedQueuePageResetPreservesSingleLeafTrackAndPiece) {
+    for (bool piece : {false, true})
+        ExpectDeferredNestedQueueCompositeSuccessor(piece, false, true, false, false, 1);
+}
+
+TEST(ActionFiringApi, NestedQueuePageResetKeepsLogicalSuccessorIdentity) {
+    ExpectDeferredNestedQueueCompositeSuccessor(false, false, false, true, true, 1);
+}
+
+TEST(ActionFiringApi, NestedQueuePageResetPreservesOrdinaryContainerPath) {
+    for (bool piece : {false, true})
+        ExpectDeferredNestedQueueCompositeSuccessor(piece, false, false, true, false, 1, piece ? 2u : 1u);
+    ExpectDeferredNestedQueueCompositeSuccessor(false, false, true, false, false, 1, 2);
+    ExpectDeferredNestedQueueCompositeSuccessor(false, false, false, true, true, 1, 2);
 }
 
 void ExpectImmediateNestedQueueActionBatch(NestedQueueBatchCase testCase, bool observeOriginalTree = false) {
