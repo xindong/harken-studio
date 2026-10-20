@@ -1000,6 +1000,12 @@ TEST(MeterProbe, RepeatedWithdrawalReturnsSharedSliceResources) {
         EXPECT_EQ(4u, engine.variableSlices.FreeRowCount());
         EXPECT_EQ(2u, engine.variableSlices.FreePayloadCount());
         EXPECT_EQ(8u, engine.variableSlices.FreeTargetCapacity());
+        harken::BindingDirtyTarget target;
+        for (std::uint32_t cursor = 0; engine.bindings.Dependencies().DirtyTargetAt(cursor, &target); ++cursor) {
+            harken::BindingDependencyIdentity identity;
+            ASSERT_TRUE(engine.bindings.Dependencies().TargetIdentity(target, &identity));
+            EXPECT_NE(static_cast<std::uint32_t>(harken::BindingSourceKind::MeterProbe), identity.detail);
+        }
     }
 }
 

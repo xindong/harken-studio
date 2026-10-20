@@ -2710,7 +2710,7 @@ void VariableServiceV1::ProjectCandidate(Engine& engine,
         (static_cast<std::uint64_t>(row.scope.emitterGeneration) << 32) |
         row.scope.emitterSlot;
     (void)engine.emitters.SetLocalValue(emitter, row.variableId, row.value);
-    engine.params.NoteVariableWrite(row.variableId);
+    engine.params.NoteVariableWrite(row.variableId, emitter);
 }
 
 void VariableServiceV1::ProjectCurrentApplied(Engine& engine,
@@ -2752,12 +2752,12 @@ void VariableServiceV1::ProjectCurrentApplied(Engine& engine,
         (void)engine.emitters.SetLocalValue(emitter, row.variableId,
                                             override->currentValue);
     }
-    engine.params.NoteVariableWrite(row.variableId);
+    engine.params.NoteVariableWrite(row.variableId, emitter);
 }
 
 void VariableServiceV1::RunVariableEvaluators(Engine& engine) {
-    engine.bindings.EvaluateBusAttachments(engine.params, engine.busTargets);
-    engine.bindings.EvaluateEffectParamBindings(
+    engine.bindings.EvaluateDirtyBusAttachments(engine.params, engine.busTargets);
+    engine.bindings.EvaluateDirtyEffectParamBindings(
         engine.params, engine.effectParamTargets, &engine.emitters);
     engine.params.EvaluateDirtyBindings(&engine.emitters);
 }

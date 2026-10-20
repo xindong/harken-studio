@@ -950,11 +950,20 @@ void MeterProbeSystem::Evaluate(Engine& engine) {
             probe->withdrawalProjected = true;
         }
     }
+    auto& dependencies = engine.bindings.Dependencies();
+    for (std::uint32_t slot = 0; slot < engine.meterDetectors.Capacity(); ++slot) {
+        const auto* probe = engine.meterDetectors.RowAt(slot);
+        if (probe == nullptr || (probe->state != MeterSystem::State::Installed &&
+                                probe->state != MeterSystem::State::Withdrawing)) continue;
+        BindingDependencyIdentity identity{};
+        identity.source = probe->identity.probeStableId;
+        identity.generation = probe->identity.probeGeneration;
+        dependencies.Notify(BindingDependencyKind::Probe, identity);
+    }
     engine.busTargets.BeginMeterProbeSweep();
     engine.effectParamTargets.BeginMeterProbeSweep();
-    engine.bindings.ForEachProbeAttachmentMutable(
-        [&](BindingTable::Attachment& attachment,
-            const BindingTable::Definition& def) {
+    const auto evaluate = [&](BindingTable::Attachment& attachment,
+                              const BindingTable::Definition& def) {
         const MeterSystem::Probe* probe =
             engine.meterDetectors.Find(def.probeStableId);
         if (probe == nullptr ||
@@ -1052,9 +1061,59 @@ void MeterProbeSystem::Evaluate(Engine& engine) {
                 scope, target.locator.object, loc.slot, loc.paramIndex,
                 loc.effectType, def.id, contribution);
         }
-        });
+    };
+    BindingDirtyTarget target;
+    for (std::uint32_t cursor = 0; dependencies.DirtyTargetAt(cursor, &target); ++cursor) {
+        BindingDependencyIdentity identity;
+        if (!dependencies.TargetIdentity(target, &identity) ||
+            identity.detail != static_cast<std::uint32_t>(BindingSourceKind::MeterProbe)) continue;
+        for (auto token = dependencies.FirstContribution(target); token.Valid();
+             token = dependencies.NextContribution(token)) {
+            auto& attachment = *const_cast<BindingTable::Attachment*>(
+                static_cast<const BindingTable::Attachment*>(dependencies.Fact(token)));
+            evaluate(attachment, *attachment.dependencyDefinition);
+        }
+    }
     engine.busTargets.EndMeterProbeSweep();
     engine.effectParamTargets.EndMeterProbeSweep();
+    // Folding leaves the index unchanged. Confirm before withdrawal releases add new departures.
+    for (std::uint32_t cursor = 0; dependencies.DirtyTargetAt(cursor, &target);) {
+        BindingDependencyIdentity identity;
+        if (!dependencies.TargetIdentity(target, &identity) ||
+            identity.detail != static_cast<std::uint32_t>(BindingSourceKind::MeterProbe)) {
+            ++cursor;
+            continue;
+        }
+        if (identity.scope == VN_TARGET_SCOPE_BUS &&
+            engine.busTargets.ActiveGeneration(static_cast<std::uint32_t>(identity.object)) == identity.generation) {
+            const auto* meta = FindTargetMeta(kTargetScopeBus, identity.target);
+            float accumulated = 0.0f;
+            bool active = false;
+            for (auto token = dependencies.FirstContribution(target); token.Valid();
+                 token = dependencies.NextContribution(token)) {
+                const auto& attachment = *static_cast<const BindingTable::Attachment*>(dependencies.Fact(token));
+                const auto& definition = *attachment.dependencyDefinition;
+                const auto* probe = engine.meterDetectors.Find(definition.probeStableId);
+                if (!attachment.lastHadValue || probe == nullptr ||
+                    probe->identity.probeGeneration != definition.probeGeneration ||
+                    (probe->state != MeterSystem::State::Installed &&
+                     probe->state != MeterSystem::State::Withdrawing) ||
+                    (probe->state == MeterSystem::State::Withdrawing && probe->withdrawalProjected &&
+                     AttachmentInWithdrawalChunk(engine, *probe, attachment, definition))) continue;
+                accumulated = active && meta != nullptr
+                    ? CombineValue(meta->domain, accumulated, attachment.lastContribution)
+                    : attachment.lastContribution;
+                active = true;
+            }
+            if (active && !std::isfinite(engine.busTargets.ReduceWithSlot(
+                    static_cast<std::uint32_t>(identity.object), identity.target,
+                    BusTargetStore::kSlotMeterProbeIndex, accumulated))) {
+                ++cursor;
+                continue;
+            }
+        }
+        if (!dependencies.CommitTarget(target, dependencies.TargetVersion(target))) ++cursor;
+    }
     for (std::uint32_t slot = 0; slot < engine.meterDetectors.Capacity();
          ++slot) {
         MeterSystem::Probe* probe = engine.meterDetectors.RowAt(slot);

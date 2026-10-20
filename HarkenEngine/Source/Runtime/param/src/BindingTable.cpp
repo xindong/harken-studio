@@ -559,7 +559,8 @@ BindingDependencyIdentity BindingTable::ReadAttachmentDependency(const void* fac
     const auto& definition = *row.dependencyDefinition;
     BindingDependencyIdentity identity{};
     if (kind == BindingDependencyKind::Target) {
-        identity.object = row.scopeKind == kTargetScopeVoice ? row.instanceHandle : row.busIndex;
+        identity.object = row.scopeKind == kTargetScopeVoice || row.scopeKind == VN_TARGET_SCOPE_VOICE_EFFECT_PARAM
+            ? row.instanceHandle : row.busIndex;
         identity.scope = row.scopeKind;
         identity.target = definition.targetId;
         identity.generation = row.targetGeneration;
@@ -625,6 +626,11 @@ void BindingTable::RemoveEffectDependency(VoiceEffectInstance& row) noexcept {
 
 bool BindingTable::RefreshEffectDependencyEmitter(VoiceEffectInstance& row, VnEmitterHandle emitter) noexcept {
     if (row.dependencyEmitter == emitter) return true;
+    if (emitter == 0) {
+        if (row.dependency.Valid() && !m_dependencies.DetachLocal(row.dependency)) return false;
+        row.dependencyEmitter = 0;
+        return true;
+    }
     if (!PrepareEffectDependency(static_cast<std::uint32_t>(&row - m_voiceEffectInstances.data()))) return false;
     RemoveEffectDependency(row);
     row.dependencyEmitter = emitter;

@@ -30,7 +30,18 @@ void EmitterTable::RestoreVariableProjection() noexcept {
     for (std::size_t i = 0; i < m_emitters.size(); ++i) {
         auto& locals = m_emitters[i].locals;
         const auto begin = m_projectionLocals.begin() + i * m_projectionStride;
-        std::copy(begin, begin + m_projectionStride, locals.begin());
+        const auto handle = MakeHandle(static_cast<std::uint32_t>(i), m_emitters[i].generation);
+        for (std::size_t slot = 0; slot < locals.size(); ++slot) {
+            const auto previous = locals[slot];
+            const auto restored = begin[slot];
+            locals[slot] = restored;
+            const bool sameVariable = previous.inUse && restored.inUse &&
+                                      previous.variableId == restored.variableId;
+            if (previous.inUse && (!sameVariable || previous.value != restored.value))
+                NotifyVariableChange(handle, previous.variableId);
+            if (restored.inUse && !sameVariable)
+                NotifyVariableChange(handle, restored.variableId);
+        }
     }
     m_projectionActive = false;
 }
@@ -77,7 +88,9 @@ bool EmitterTable::Destroy(VnEmitterHandle handle) {
         ++emitter->generation;
     }
     for (LocalVar& local : emitter->locals) {
+        const auto previous = local;
         local = LocalVar{};
+        if (previous.inUse) NotifyVariableChange(handle, previous.variableId);
     }
     --m_activeCount;
     return true;
@@ -157,7 +170,9 @@ VnResult EmitterTable::SetLocalValue(VnEmitterHandle handle,
     LocalVar* free = nullptr;
     for (LocalVar& local : emitter->locals) {
         if (local.inUse && local.variableId == variableId) {
+            const bool changed = local.value != value;
             local.value = value; // update in place
+            if (changed) NotifyVariableChange(handle, variableId);
             return VN_OK;
         }
         if (!local.inUse && free == nullptr) {
@@ -170,6 +185,7 @@ VnResult EmitterTable::SetLocalValue(VnEmitterHandle handle,
     free->inUse = true;
     free->variableId = variableId;
     free->value = value;
+    NotifyVariableChange(handle, variableId);
     return VN_OK;
 }
 
@@ -182,6 +198,7 @@ VnResult EmitterTable::ClearLocalValue(VnEmitterHandle handle,
     for (LocalVar& local : emitter->locals) {
         if (local.inUse && local.variableId == variableId) {
             local = LocalVar{};
+            NotifyVariableChange(handle, variableId);
             return VN_OK;
         }
     }
@@ -194,7 +211,9 @@ VnResult EmitterTable::ClearLocalValues(VnEmitterHandle handle) noexcept {
         return VN_STALE_HANDLE;
     }
     for (LocalVar& local : emitter->locals) {
+        const auto previous = local;
         local = LocalVar{};
+        if (previous.inUse) NotifyVariableChange(handle, previous.variableId);
     }
     return VN_OK;
 }
@@ -212,6 +231,11 @@ bool EmitterTable::LocalValue(VnEmitterHandle handle, VnVariableId variableId,
         }
     }
     return false;
+}
+
+void EmitterTable::NotifyVariableChange(VnEmitterHandle handle, VnVariableId variableId) const noexcept {
+    if (m_variableObserver != nullptr)
+        m_variableObserver(m_variableObserverContext, handle, variableId);
 }
 
 EmitterTable::Emitter* EmitterTable::Live(VnEmitterHandle handle) noexcept {

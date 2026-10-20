@@ -4155,11 +4155,14 @@ VnResult AttachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
     // otherwise-admissible attach consumes worst-case growth, so a pool
     // or validation refusal never needs a capacity undo.
     const VnResult pre = engine.bindings.CanAttach(id, scopeKind, objectId);
+    const auto targetGeneration =
+        scopeKind == kTargetScopeBus || scopeKind == VN_TARGET_SCOPE_BUS_EFFECT_PARAM
+            ? engine.buses.GenerationAt(busIndex) : 0u;
     if (pre != VN_OK) {
         // Re-route through attach so a pool-full refusal logs the
         // pool-naming record exactly once.
         return engine.bindings.Attach(id, scopeKind, objectId, busIndex,
-                                      &engine.logicLogRing);
+                                      &engine.logicLogRing, 0, targetGeneration);
     }
     const BindingTable::Definition* definition = engine.bindings.Find(id);
     if (definition != nullptr &&
@@ -4177,7 +4180,7 @@ VnResult AttachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
         return VN_INVALID_CONFIG;
     }
     const VnResult result = engine.bindings.Attach(
-        id, scopeKind, objectId, busIndex, &engine.logicLogRing);
+        id, scopeKind, objectId, busIndex, &engine.logicLogRing, 0, targetGeneration);
     if (result != VN_OK) {
         if (usesPublisher) {
             engine.propertyPublisher.ShrinkWorstCase(1); // defensive undo
@@ -4288,8 +4291,12 @@ VnResult ApplyVoiceBinding(Engine& engine, VnVoiceHandle publicHandle,
             const VnResult applied =
                 engine.bindings.ApplyVoiceEffectInstance(
                     id, publicHandle, rec.parkedRenderHandle,
-                    &engine.logicLogRing);
+                    &engine.logicLogRing, rec.stateEmitter);
             if (applied == VN_OK) {
+                if (!engine.bindings.PrepareVoiceEffectInstancePark(rec.parkedRenderHandle)) {
+                    (void)engine.bindings.ClearVoiceEffectInstance(rec.parkedRenderHandle, id);
+                    return kResultNoBinding;
+                }
                 engine.bindings.ParkVoiceEffectInstances(
                     rec.parkedRenderHandle);
             }
@@ -4323,7 +4330,7 @@ VnResult ApplyVoiceBinding(Engine& engine, VnVoiceHandle publicHandle,
         }
         return engine.bindings.ApplyVoiceEffectInstance(
             id, publicHandle, resolved.renderHandle,
-            &engine.logicLogRing);
+            &engine.logicLogRing, engine.params.EmitterHandleOf(resolved.renderHandle));
     }
     if (def->scopeKind != kTargetScopeVoice) {
         return VN_INVALID_ARG;
@@ -63451,7 +63458,7 @@ bool PrimeRecipeBindingsWith(
     }
     const bool activated =
         engine.bindings.ActivateReservedVoiceEffectInstances(
-            publicHandle, renderHandle);
+            publicHandle, renderHandle, emitter);
     if (!activated) {
         return false;
     }
@@ -65323,7 +65330,9 @@ void DoParkVoice(harken::Engine& engine, VnVoiceHandle render,
     stop.opcode = harken::kOpcodeStop;
     stop.payload.stop.handle = render;
     stop.payload.stop.fadeMs = 0; // immediate cut: the render slot frees
+    if (!engine.bindings.PrepareVoiceEffectInstancePark(render)) return;
     if (!engine.commands.TryPush(stop)) {
+        engine.bindings.CancelVoiceEffectInstancePark(render);
         // The live voice and ledger identity remain untouched when the internal
         // stop cannot be admitted despite the caller's capacity preflight.
         harken::LogRecord record{};
@@ -65335,6 +65344,7 @@ void DoParkVoice(harken::Engine& engine, VnVoiceHandle render,
     }
 
     if (!engine.ledger.Park(render, &ledgerSlot)) {
+        engine.bindings.CancelVoiceEffectInstancePark(render);
         return; // defensive: the entry was not Live
     }
     rec.active = true;
@@ -65602,14 +65612,21 @@ StreamVictimWaitResult TryWaitStreamVictim(
         requestSequence = engine.nextStreamParkRequestSequence++;
     }
     rec.streamParkRequestSequence = requestSequence;
+    if (!engine.bindings.PrepareVoiceEffectInstancePark(victim)) {
+        engine.streams.ReleasePendingRef(facts.streamFileIndex);
+        rec = harken::ParkRecord{};
+        return StreamVictimWaitResult::Refused;
+    }
     if (!engine.voices.ReserveStreamPark(
             victim, publicHandle, requestSequence,
             facts.resampleProfile)) {
+        engine.bindings.CancelVoiceEffectInstancePark(victim);
         engine.streams.ReleasePendingRef(facts.streamFileIndex);
         rec = harken::ParkRecord{};
         return StreamVictimWaitResult::Refused;
     }
     if (!engine.voiceManager.PublishClaim(victim, claimant)) {
+        engine.bindings.CancelVoiceEffectInstancePark(victim);
         engine.voices.AbortStreamParkReservation(
             victim, publicHandle, requestSequence);
         engine.streams.ReleasePendingRef(facts.streamFileIndex);
@@ -65618,6 +65635,7 @@ StreamVictimWaitResult TryWaitStreamVictim(
     }
     std::uint32_t ledgerSlot = resolved.ledgerSlot;
     if (!engine.ledger.Park(victim, &ledgerSlot)) {
+        engine.bindings.CancelVoiceEffectInstancePark(victim);
         engine.voiceManager.ReleaseClaim(claimant);
         engine.voices.AbortStreamParkReservation(
             victim, publicHandle, requestSequence);
@@ -66645,9 +66663,9 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     if (commands.Overflowed() || !variableCut.BindVoice(newRender) ||
         !engine.voices.CommitPreparedVoice(newRender)) return false;
     variableCut.Commit();
-    engine.bindings.ReturnVoiceEffectInstances(rec.parkedRenderHandle, newRender);
+    engine.bindings.ReturnVoiceEffectInstances(rec.parkedRenderHandle, newRender, em);
     if (rec.recipeBindingCount != 0) {
-        const bool activated = engine.bindings.ActivateReservedVoiceEffectInstances(publicHandle, newRender);
+        const bool activated = engine.bindings.ActivateReservedVoiceEffectInstances(publicHandle, newRender, em);
         assert(activated);
         (void)activated;
     }
@@ -92879,7 +92897,7 @@ VnResult Vn_Update(void) {
      * folds; the bus flush below stages them into the tick's transaction.
      * A bus with no attachments and no direct set marks nothing and
      * publishes nothing — bit-identical to M5. */
-    engine->bindings.EvaluateBusAttachments(engine->params,
+    engine->bindings.EvaluateDirtyBusAttachments(engine->params,
                                             engine->busTargets);
     /* Effect-parameter bindings, on the SAME tick semantics as the bus
      * attachments above (no extra update lag): fold each bus-effect and
@@ -92891,7 +92909,7 @@ VnResult Vn_Update(void) {
      * the resolver reuses it. A push refused for a full queue leaves the
      * parameter dirty to retry next update (no silent loss). */
     engine->meterProbes.Evaluate(*engine);
-    engine->bindings.EvaluateEffectParamBindings(
+    engine->bindings.EvaluateDirtyEffectParamBindings(
         engine->params, engine->effectParamTargets, &engine->emitters);
     engine->params.EvaluateDirtyBindings(&engine->emitters);
     engine->effectParamTargets.FlushDirty(
@@ -93176,6 +93194,7 @@ VnResult Vn_Update(void) {
     engine->variables.EndService(*engine);
     engine->variables.AcknowledgeFinishedNativeReadCuts();
     engine->CompleteVariableOperation();
+    engine->variables.ReleaseUnusedReadCutBacking();
     while (engine->logicLogRing.TryPop(record, &monitorLogTicket)) {
         if (engine->config.logCallback == nullptr && !harken::monitor::EventCatalogEnabled()) {
             continue;
@@ -107499,7 +107518,9 @@ VnResult PrepareRevisionBindings(
             slot, revision.handle,
             &revision.preparedBindingAttachmentAdds[i], definitionSlot,
             definitionWillBeAdded, engine.bindings.AttachmentUsedAt(slot),
-            duplicateWillBeDetached);
+            duplicateWillBeDetached,
+            entry.scopeKind == kTargetScopeBus || entry.scopeKind == VN_TARGET_SCOPE_BUS_EFFECT_PARAM
+                ? ProspectiveRevisionBusGeneration(engine, revision, entry.objectId) : 0u);
         if (result != VN_OK) {
             CancelRevisionBindings(engine, revision);
             return result;
@@ -110719,7 +110740,10 @@ VnResult PrepareCanonicalBindingDiff(
         const VnResult result = engine.bindings.PrepareAttach(
             attachment.bindingId, attachment.scopeKind, attachment.objectId,
             busIndex, slot, handle, &token, definitionSlot, definitionWillBeAdded,
-            engine.bindings.AttachmentUsedAt(slot), duplicateWillBeDetached);
+            engine.bindings.AttachmentUsedAt(slot), duplicateWillBeDetached,
+            attachment.scopeKind == kTargetScopeBus || attachment.scopeKind == VN_TARGET_SCOPE_BUS_EFFECT_PARAM
+                ? (slotPlan == nullptr ? engine.buses.GenerationAt(busIndex)
+                                       : slotPlan->generations[busIndex]) : 0u);
         if (result != VN_OK) {
             return result;
         }

@@ -38,6 +38,11 @@ public:
     bool BeginVariableProjection() noexcept;
     void RestoreVariableProjection() noexcept;
     std::uint64_t VariableProjectionStorageBytes() const noexcept;
+    using VariableChangeObserver = void (*)(void*, VnEmitterHandle, VnVariableId) noexcept;
+    void SetVariableChangeObserver(void* context, VariableChangeObserver observer) noexcept {
+        m_variableObserverContext = context;
+        m_variableObserver = observer;
+    }
 
     // Mints a fresh emitter at a free slot, forming its handle. Returns false
     // when every slot is live (the caller maps this to VN_NO_EMITTER). A new
@@ -119,6 +124,7 @@ private:
 
     Emitter* Live(VnEmitterHandle handle) noexcept;
     const Emitter* Live(VnEmitterHandle handle) const noexcept;
+    void NotifyVariableChange(VnEmitterHandle handle, VnVariableId variableId) const noexcept;
 
     std::vector<Emitter> m_emitters;
     std::vector<LocalVar> m_projectionLocals;
@@ -126,6 +132,8 @@ private:
     std::uint32_t m_projectionStride = 0;
     std::uint32_t m_activeCount = 0;
     std::uint64_t m_highWater = 0;
+    void* m_variableObserverContext = nullptr;
+    VariableChangeObserver m_variableObserver = nullptr;
 };
 
 } // namespace harken

@@ -5693,7 +5693,7 @@ public:
           queuePermutationScratch(resolved.maxQueueChildren),
           queueProjectionScratch(static_cast<std::size_t>(resolved.maxQueueChildren) + 1u),
           bindings(resolved.maxBindings, resolved.maxBindingAttachments,
-                   resolved.maxBuses),
+                   resolved.maxBuses, params.BindingCapacity()),
           busTargets(resolved.maxBuses,
                      resolved.maxVariableSliceTargetsTotal),
           effectParamTargets(
@@ -5923,6 +5923,11 @@ public:
                                   variables.ApplyPayloadCapacity())) {
             throw std::bad_alloc{};
         }
+        if (!params.AttachBindingDependencies(&bindings.Dependencies())) throw std::bad_alloc{};
+        emitters.SetVariableChangeObserver(this,
+            [](void* context, VnEmitterHandle emitter, VnVariableId variable) noexcept {
+                static_cast<Engine*>(context)->params.NoteVariableWrite(variable, emitter);
+            });
         mixer.InitializeVariableSliceConsumptionStorage();
         if (!originalQueueBankHolders.Reserve(queueProgramBanks.size()) ||
             !originalQueueLifetimeHolders.Reserve(queueInstances.Capacity()) ||
