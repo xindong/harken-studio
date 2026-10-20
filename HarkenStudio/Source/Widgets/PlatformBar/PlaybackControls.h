@@ -6,12 +6,15 @@ class QToolButton;
 
 namespace VNX {
 
+struct ProjectItem;
+
 class PlaybackControls : public QWidget
 {
     Q_OBJECT
 public:
     explicit PlaybackControls(QWidget* parent = nullptr);
 
+    void setAuditionTarget(ProjectItem* item);
     void setPlaying(bool playing);
     void setResetEnabled(bool enabled);
     bool isResetEnabled() const;

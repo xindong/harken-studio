@@ -227,6 +227,11 @@ void ProjectTreePanel::setupTree()
     connect(treeWidget_, &QTreeWidget::itemCollapsed, this, &ProjectTreePanel::onItemCollapsed);
     connect(treeWidget_, &QTreeWidget::customContextMenuRequested, this, &ProjectTreePanel::onContextMenu);
     connect(treeWidget_, &QTreeWidget::itemSelectionChanged, this, &ProjectTreePanel::onSelectionChanged);
+    connect(treeWidget_, &QTreeWidget::itemSelectionChanged, this, [this] {
+        const auto items = selectedItems();
+        auto* current = selectedItem();
+        emit auditionTargetRequested(items.contains(current) ? current : items.value(0));
+    });
 }
 
 void ProjectTreePanel::setupContextMenu()

@@ -186,22 +186,39 @@ TEST(ListProperty, DrawerRendersRowsAndEditsElements)
     auto* drawer = VNX::InspectorCustomizationRegistry::instance().fieldDrawer(VNX::PropType::List);
     ASSERT_NE(drawer, nullptr);
 
-    const VNX::PropertyDescriptor& d = ListHarnessComp::schema()[0];
-    std::unique_ptr<QWidget> w(drawer->build(d, nullptr));
-    QVariant captured;
-    drawer->connectChanged(w.get(), [&captured](const QVariant& v) { captured = v; });
-    drawer->bind(w.get(), QVariantList{makeEntry(7u, -6.0), makeEntry(3u, 0.0)}, nullptr);
-
-    const auto spins = w->findChildren<QDoubleSpinBox*>();
-    ASSERT_EQ(spins.size(), 2);
-    EXPECT_DOUBLE_EQ(spins[0]->value(), -6.0);
-
-    spins[0]->setValue(-12.0);
-    ASSERT_TRUE(captured.isValid());
-    QVariantList edited = captured.toList();
-    ASSERT_EQ(edited.size(), 2);
-    EXPECT_DOUBLE_EQ(edited[0].toMap().value(QStringLiteral("level")).toDouble(), -12.0);
-    EXPECT_EQ(edited[1].toMap().value(QStringLiteral("target")).toUInt(), 3u);
+    for (bool ranged : {true, false}) {
+        SCOPED_TRACE(ranged);
+        auto d = ListHarnessComp::schema()[0];
+        if (!ranged) {
+            d.elementSchema[1].min = QVariant();
+            d.elementSchema[1].max = QVariant();
+        }
+        std::unique_ptr<QWidget> w(drawer->build(d, nullptr));
+        QVariant captured;
+        drawer->connectChanged(w.get(), [&captured](const QVariant& v) { captured = v; });
+        drawer->bind(w.get(), QVariantList{makeEntry(7u, -6.0), makeEntry(3u, 0.0)}, nullptr);
+        w->show();
+        auto* table = w->findChild<VNX::TableWidget*>();
+        ASSERT_NE(table, nullptr);
+        for (int width : {600, 96, 600}) {
+            w->resize(width, 200);
+            QCoreApplication::processEvents();
+            table->refreshLayout();
+            QCoreApplication::processEvents();
+            const auto spins = w->findChildren<QDoubleSpinBox*>();
+            ASSERT_EQ(spins.size(), 2);
+            for (auto* spin : spins)
+                EXPECT_EQ(spin->visibleRegion().boundingRect(), spin->rect());
+        }
+        const auto spins = w->findChildren<QDoubleSpinBox*>();
+        EXPECT_DOUBLE_EQ(spins[0]->value(), -6.0);
+        spins[0]->setValue(-12.0);
+        ASSERT_TRUE(captured.isValid());
+        QVariantList edited = captured.toList();
+        ASSERT_EQ(edited.size(), 2);
+        EXPECT_DOUBLE_EQ(edited[0].toMap().value(QStringLiteral("level")).toDouble(), -12.0);
+        EXPECT_EQ(edited[1].toMap().value(QStringLiteral("target")).toUInt(), 3u);
+    }
 }
 
 TEST(ListProperty, SeparateValueEditorSynchronizesAndCancelsDraftWithoutCommitting)

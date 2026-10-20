@@ -10,6 +10,8 @@
 #include "Core/QtControlSkin.h"
 #include "Core/ShortcutManager.h"
 #include "Core/ToastManager.h"
+#include "Widgets/Common/ProportionalTreeWidget.h"
+#include "Widgets/Common/TableWidget.h"
 #include "Widgets/Shared/RefIdMime.h"
 #include "Widgets/Shared/TreeRowStyle.h"
 #include "Widgets/Shared/InlineRenameEdit.h"
@@ -23,7 +25,6 @@
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
-#include <QHeaderView>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -268,13 +269,10 @@ bool SourcesTreeWidget::importDroppedAudio(const QMimeData* mimeData, const QStr
         "When several dropped files have the same name, choose one incoming version."), &dialog);
     summary->setWordWrap(true);
     layout->addWidget(summary);
-    auto* conflicts = new QTreeWidget(&dialog);
-    conflicts->setObjectName(QStringLiteral("sourceImportConflicts"));
-    conflicts->setHeaderLabels({tr("Replace"), tr("Incoming file")});
-    conflicts->setRootIsDecorated(false);
-    conflicts->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    conflicts->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    layout->addWidget(conflicts, 1);
+    auto* table = new TableWidget(TableOptions::display(), &dialog);
+    auto* conflicts = table->createItemView(QStringLiteral("sourceImportConflicts"),
+        {tr("Replace"), tr("Incoming file")}, {2, 3});
+    layout->addWidget(table, 1);
     for (auto& group : groups) {
         if (group.files.size() == 1 && (!group.exists || group.hashes.first() == group.currentHash))
             continue;

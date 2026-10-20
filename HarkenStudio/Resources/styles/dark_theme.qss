@@ -51,7 +51,7 @@ QWidget#timelineHeaderColumn QWidget#timelineLane {
     border-bottom: 1px solid transparent;
 }
 
-QWidget#timelineHeaderColumn QFrame#listBox[rowNumberSelection="true"] QWidget[tableRowNumber="true"] {
+QWidget#timelineHeaderColumn QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"] {
     border-right: 1px solid @borderPrimary@;
 }
 
@@ -1735,16 +1735,16 @@ QFrame#listBox QWidget[listRow="true"][selected="true"] {
     background-color: @bgSelected@;
     border-left-color: @accent@;
 }
-QFrame#listBox[rowNumberSelection="true"] QWidget#listRow[selected="true"],
-QFrame#listBox[rowNumberSelection="true"] QWidget[listRow="true"][selected="true"] {
+QFrame#listBox[cellSelection="true"] QWidget#listRow[selected="true"],
+QFrame#listBox[cellSelection="true"] QWidget[listRow="true"][selected="true"] {
     background-color: @bgPrimary@;
     border-left-color: transparent;
 }
-QFrame#listBox[rowNumberSelection="true"] QWidget[tableRowNumber="true"] {
+QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"] {
     border-left: 2px solid transparent;
     border-right: 2px solid transparent;
 }
-QFrame#listBox[rowNumberSelection="true"] QWidget[tableRowNumber="true"][selected="true"] {
+QFrame#listBox[cellSelection="true"] QWidget[tableRowNumber="true"][selected="true"] {
     background-color: @bgSelected@;
     border-left-color: @accent@;
 }
