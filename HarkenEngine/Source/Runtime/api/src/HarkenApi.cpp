@@ -70332,7 +70332,8 @@ engine.runtimeRecreateRequired = true;
                 engine.playableScheduleCompletions.size()) {
             installFailed = true;
         } else {
-            if (row.queueMode) {
+            if (row.queueMode || request.root.kind == PlayableKindV1::Track ||
+                request.root.kind == PlayableKindV1::Piece) {
                 row.queueCurrentProgramBank = ReserveQueueProgramBank(engine,
                     {initialSchedule.leafCount, initialSchedule.leafCount});
                 if (row.queueCurrentProgramBank == nullptr) {
@@ -84579,11 +84580,30 @@ bool PrepareImmediateActionCompositePlay(
         (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
         return false;
     }
+    if (materialized.leafCount > 1u) {
+        row->queueCurrentProgramBank = ReserveQueueProgramBank(engine,
+            {materialized.leafCount, materialized.leafCount});
+        if (row->queueCurrentProgramBank == nullptr) {
+            plan.result = VN_BACKPRESSURE;
+            (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
+            return false;
+        }
+        row->queueCurrentPrograms = {0, materialized.leafCount};
+    }
+    auto* const currentBank = row->queueCurrentProgramBank;
+    auto* const payloads = currentBank != nullptr ? currentBank->payloads.data()
+        : engine.playableSchedulePayloads.data() + eventBase;
+    auto* const events = currentBank != nullptr ? currentBank->events.data()
+        : engine.playableScheduleEvents.data() + eventBase;
+    auto* const runtimes = currentBank != nullptr ? currentBank->runtimes.data()
+        : engine.playableScheduleRuntimePrograms.data() + endpointBase;
+    auto* const schedules = currentBank != nullptr ? currentBank->schedules.data()
+        : engine.playableSchedules.data() + endpointBase;
+    row->runtimeProgram.payloads = payloads;
+    row->schedule.events = events;
     for (std::uint32_t index = 0;
          index < materialized.leafCount; ++index) {
         const std::size_t memberSlot = memberBase + index;
-        const std::size_t eventSlot = eventBase + index;
-        const std::size_t endpointSlot = endpointBase + index;
         const auto& source = materialized.leaves[index];
         const auto voice = row->capturedScheduleVoices[index].Input();
         const std::uint64_t startFrame =
@@ -84609,11 +84629,11 @@ bool PrepareImmediateActionCompositePlay(
         engine.playableScheduleStartFrames[memberSlot] = startFrame;
         engine.playableScheduleReleaseObservers[memberSlot] = installed.releaseObserver;
         engine.playableScheduleSelections[memberSlot] = installed.monitorSelection;
-        auto& payload = engine.playableSchedulePayloads[eventSlot];
+        auto& payload = payloads[index];
         payload = {};
         payload.kind = harken::TimelineEventKind::Start;
         payload.target = voice.facts->target;
-        auto& event = engine.playableScheduleEvents[eventSlot];
+        auto& event = events[index];
         event = {};
         event.frameOffsetFromEntry = static_cast<std::int64_t>(
             startFrame - row->startFrame);
@@ -84623,13 +84643,12 @@ bool PrepareImmediateActionCompositePlay(
         event.transactionOrdinal = planned.executionOrdinal;
         event.subeventPhase = 20;
         event.armToken = installed.armToken;
-        auto& runtime =
-            engine.playableScheduleRuntimePrograms[endpointSlot];
+        auto& runtime = runtimes[index];
         runtime = {};
         runtime.generation = row->rootInstance;
         runtime.payloads = &payload;
         runtime.payloadCount = 1;
-        auto& schedule = engine.playableSchedules[endpointSlot];
+        auto& schedule = schedules[index];
         schedule = {};
         schedule.ownerInstance = row->rootInstance;
         schedule.ownerInstanceScheduleEpoch =
@@ -84640,6 +84659,17 @@ bool PrepareImmediateActionCompositePlay(
         schedule.eventCount = 1;
         schedule.runtimeProgram = {row->rootInstance, &runtime};
         schedule.armToken = installed.armToken;
+        if (currentBank != nullptr && FreezeQueueProgram(engine, *currentBank, schedule) == nullptr) {
+            plan.result = VN_DEVICE_ERROR;
+            (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
+            return false;
+        }
+    }
+    if (currentBank != nullptr &&
+        !FreezeQueueAggregate(*currentBank, row->schedule, 0, materialized.leafCount)) {
+        plan.result = VN_DEVICE_ERROR;
+        (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
+        return false;
     }
     if (!markerOnly) {
         row->leaf = engine.playableScheduleLeaves[memberBase];
