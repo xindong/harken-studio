@@ -681,10 +681,9 @@ struct EngineQueueProgramBankBody : EngineQueueScheduleColumns {
     std::uint32_t eventCount = 0;
     std::uint32_t curveCount = 0;
     std::uint32_t aggregateCount = 0;
-    std::uint64_t retirementAudioSequence = 0;
+    TimelineProgramReadFence readFence;
     bool occupied = false;
     bool published = false;
-    bool retirementObserved = false;
     bool heldByOwner = false;
 };
 
@@ -810,8 +809,9 @@ struct EngineQueueProgramBank : EngineQueueProgramBankBody {
         if (HasOriginalLifetimeOwners()) return false;
         scheduleStorageLoan.Reset();
         programCount = 0; eventCount = 0; curveCount = 0; aggregateCount = 0;
-        groups = {}; transition = {}; retirementAudioSequence = 0;
-        occupied = false; published = false; retirementObserved = false; heldByOwner = false;
+        groups = {}; transition = {};
+        readFence.ResetAfterSafeRetirement();
+        occupied = false; published = false; heldByOwner = false;
         return true;
     }
 

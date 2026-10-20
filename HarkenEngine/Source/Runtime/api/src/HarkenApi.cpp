@@ -9344,6 +9344,7 @@ harken::ProgramView* FreezeQueueProgram(
     auto& frozenRuntime = bank.runtimes[bank.programCount];
     frozenRuntime = *runtime;
     frozenRuntime.payloads = bank.payloads.data() + base;
+    frozenRuntime.readFence = &bank.readFence;
     auto& frozen = bank.schedules[bank.programCount++];
     frozen = source;
     frozen.events = bank.events.data() + base;
@@ -9420,7 +9421,8 @@ bool StampQueueSuccessorPrograms(const harken::EngineQueueFutureFilingLayout& fu
 bool CanonicalQueueBankHasReaders(const harken::Engine& engine,
     const harken::EngineQueueProgramBank& bank) noexcept {
     if (!bank.occupied || bank.programCount > bank.schedules.size() ||
-        bank.aggregateCount > bank.aggregateSchedules.size()) return true;
+        bank.aggregateCount > bank.aggregateSchedules.size() ||
+        !bank.readFence.ReadCompleted(engine.mixer.BlocksRendered())) return true;
     for (std::uint32_t index = 0; index < bank.programCount; ++index) {
         const auto& schedule = bank.schedules[index];
         if (engine.timelinePool.HasProgramReference(schedule.runtimeProgram) ||
@@ -9492,12 +9494,7 @@ void ServiceQueueProgramBanks(harken::Engine& engine) noexcept {
         harken::TransitionInstanceSnapshot transition{};
         retained = (bank.transition.Valid() &&
             engine.transitionInstances.Capture(bank.transition, &transition)) || retained;
-        if (retained) {
-            bank.retirementObserved = false;
-        } else if (!bank.retirementObserved) {
-            bank.retirementObserved = true;
-            bank.retirementAudioSequence = engine.mixer.BlocksRendered();
-        } else if (engine.mixer.BlocksRendered() > bank.retirementAudioSequence) {
+        if (!retained && bank.readFence.ReadCompleted(engine.mixer.BlocksRendered())) {
             const bool reset = ResetQueueProgramBank(engine, bank);
             assert(reset);
             (void)reset;
