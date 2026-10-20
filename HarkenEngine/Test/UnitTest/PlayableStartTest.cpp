@@ -18940,6 +18940,25 @@ TEST(PlayableStart, QueueCompositeTrackWaitsForItsLatestFiniteLeaf) {
     const harken::PlayableStartResult started =
         harken::StartPlayable(*engine, image.world, request);
     ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+    auto* initialRow = FindPlayableRow(*engine, started.instance);
+    ASSERT_NE(nullptr, initialRow);
+    auto* initial = initialRow->queueCurrentProgramBank;
+    ASSERT_NE(nullptr, initial);
+    ASSERT_EQ(2u, initial->programCount);
+    std::array<harken::EnginePlayableMemberToken, 2> members{};
+    std::array<harken::PlayableRefV1, 2> leaves{};
+    std::array<VnVoiceHandle, 2> renders{};
+    for (std::uint32_t index = 0; index < members.size(); ++index) {
+        members[index] = initial->members[index];
+        const auto* member = engine->FindPlayableMember(members[index]);
+        ASSERT_NE(nullptr, member);
+        leaves[index] = member->leaf;
+        renders[index] = member->render;
+    }
+    auto* holder = engine->OriginalQueueBankHolderFor(initial);
+    ASSERT_NE(nullptr, holder);
+    harken::EngineQueueProgramBank::OriginalLifetimePin reader;
+    ASSERT_TRUE(holder->baseline.Borrow(&reader));
     bool heardFirstLeaf = false;
     bool heardLatestLeaf = false;
     bool heardSuccessorAfterLatest = false;
@@ -18975,6 +18994,19 @@ TEST(PlayableStart, QueueCompositeTrackWaitsForItsLatestFiniteLeaf) {
                   queue.failureReason);
         EXPECT_EQ(0u, queue.failureFrame);
     }
+    EXPECT_TRUE(initial->occupied);
+    for (std::uint32_t index = 0; index < members.size(); ++index) {
+        const auto* member = engine->FindPlayableMember(members[index]);
+        ASSERT_NE(nullptr, member);
+        EXPECT_EQ(leaves[index].stableId, member->leaf.stableId);
+        EXPECT_EQ(renders[index], member->render);
+        EXPECT_FALSE(member->primaryOwned);
+    }
+    reader.Release();
+    ASSERT_TRUE(PumpBlocks(*engine, 8));
+    EXPECT_FALSE(initial->occupied);
+    for (const auto member : members) EXPECT_EQ(nullptr, engine->FindPlayableMember(member));
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
 }
 
 TEST(PlayableStart, QueueCompositeTrackStartsEverySimultaneousSourceLeaf) {

@@ -11213,8 +11213,14 @@ bool FreezeInitialQueuePrograms(harken::Engine& engine, harken::EnginePlayableSe
     if (count <= 1 && !row.queueCurrentCompositeOwner.Valid())
         return FreezeQueueProgram(engine, *bank, row.schedule) != nullptr;
     for (std::uint32_t index = 0; index < count; ++index) {
-        auto* program = ResolveInitialMemberProgram(engine, bases.member + index);
-        if (program == nullptr || FreezeQueueProgram(engine, *bank, *program) == nullptr) return false;
+        const auto logicalSlot = bases.member + index;
+        auto* program = ResolveInitialMemberProgram(engine, logicalSlot);
+        harken::EnginePlayableServiceRow* owner = nullptr;
+        std::size_t physicalSlot = 0;
+        if (program == nullptr ||
+            !engine.ResolvePlayableMember(engine.playableMemberReferences[logicalSlot], &owner, &physicalSlot) ||
+            RetainQueueProgramMemberAt(engine, *bank, bank->programCount, *owner, physicalSlot) == nullptr ||
+            FreezeQueueProgram(engine, *bank, *program) == nullptr) return false;
     }
     return FreezeQueueAggregate(*bank, row.schedule, 0, count);
 }
@@ -70626,7 +70632,9 @@ engine.runtimeRecreateRequired = true;
                 schedule.runtimeProgram = {instance, &runtime};
                 schedule.armToken = leafInstalled.armToken;
                 if (currentBank != nullptr &&
-                    FreezeQueueProgram(engine, *currentBank, schedule) == nullptr) {
+                    ((row.queueMode && RetainQueueProgramMemberAt(engine, *currentBank,
+                        currentBank->programCount, row, memberSlot) == nullptr) ||
+                     FreezeQueueProgram(engine, *currentBank, schedule) == nullptr)) {
                     installFailed = true;
                     break;
                 }
@@ -82380,7 +82388,10 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
         schedule.eventCount = 1;
         schedule.runtimeProgram = {row->rootInstance, &runtime};
         schedule.armToken = installed.armToken;
-        if (currentBank != nullptr && FreezeQueueProgram(engine, *currentBank, schedule) == nullptr) {
+        if (currentBank != nullptr &&
+            ((row->queueMode && RetainQueueProgramMemberAt(engine, *currentBank,
+                currentBank->programCount, *row, memberSlot) == nullptr) ||
+             FreezeQueueProgram(engine, *currentBank, schedule) == nullptr)) {
             plan.queueProgramCapacityRefused = true;
             plan.result = VN_BACKPRESSURE;
             (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
