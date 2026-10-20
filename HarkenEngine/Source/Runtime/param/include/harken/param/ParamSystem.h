@@ -50,6 +50,9 @@ namespace harken {
 // global-only scope).
 class EmitterTable;
 class BindingTable;
+class BindingDependencyIndex;
+enum class BindingDependencyKind : std::uint32_t;
+struct BindingDependencyIdentity;
 
 // Fixed contribution slots per target, reduced in index order. The order
 // is part of the model's determinism guarantee.
@@ -128,6 +131,8 @@ enum class FlushOutcome : std::uint8_t {
 class ParamSystem {
 public:
     explicit ParamSystem(const EngineConfig& config);
+    ParamSystem(const ParamSystem& other);
+    ParamSystem& operator=(const ParamSystem&) = delete;
 
     // Voice lifecycle, called by the API layer when a play succeeds. Resets
     // the reused slot's combine state and records the authored bases
@@ -240,7 +245,8 @@ public:
     // is consumed only by binding evaluation — a direct setter cannot
     // erase it, so demand known since a deferral survives until the
     // gather that realizes (or disproves) it.
-    void NoteVariableWrite(VnVariableId id) noexcept;
+    void NoteVariableWrite(VnVariableId id, VnEmitterHandle emitter = 0) noexcept;
+    void NoteProbeChanged(VnObjectId stableId, std::uint32_t generation) noexcept;
     // Marks every bound target of every voice attached to `emitter` as
     // pending-input: destroying the emitter flips those voices' scoped
     // Variable resolution to the global fallback, a latent change the
@@ -268,8 +274,30 @@ public:
     // the worst-case one-tick publication past the command queue; the
     // capacity refusal logs a
     // record carrying both numbers and changes no state.
+    class PreparedBindingToken {
+    public:
+        PreparedBindingToken() = default;
+        ~PreparedBindingToken();
+        PreparedBindingToken(const PreparedBindingToken&) = delete;
+        PreparedBindingToken& operator=(const PreparedBindingToken&) = delete;
+        PreparedBindingToken(PreparedBindingToken&& other) noexcept;
+        PreparedBindingToken& operator=(PreparedBindingToken&& other) noexcept;
+        bool IsPrepared() const noexcept { return m_owner != nullptr; }
+
+    private:
+        friend class ParamSystem;
+        ParamSystem* m_owner = nullptr;
+        std::uint32_t m_slot = UINT32_MAX;
+    };
+
+    // Attach before creating bindings. A preparation reserves backing only;
+    // binding admission and every native identity remain with their original owner.
+    bool AttachBindingDependencies(BindingDependencyIndex* dependencies) noexcept;
+    bool PrepareBinding(PreparedBindingToken* out) noexcept;
+    void CancelPreparedBinding(PreparedBindingToken* token) noexcept;
     bool BindVoiceTarget(VnVariableId variableId, VnVoiceHandle handle,
-                         std::uint32_t targetId, const Curve& curve);
+                         std::uint32_t targetId, const Curve& curve,
+                         PreparedBindingToken* preparation = nullptr);
 
     // --- definition-backed binding instances: the M1 mechanism above
     // evolved to reference a
@@ -302,7 +330,8 @@ public:
     InstanceBindResult BindVoiceInstance(const BindingDefinitionView& view,
                                          VnVoiceHandle handle,
                                          VnObjectId attachmentObjectId,
-                                         bool viaApply);
+                                         bool viaApply,
+                                         PreparedBindingToken* preparation = nullptr);
     InstanceBindResult CanBindVoiceInstance(
         const BindingDefinitionView& view, VnVoiceHandle handle,
         VnObjectId attachmentObjectId, bool viaApply) const;
@@ -855,6 +884,9 @@ private:
         VnVariableId variableId{};
         VnVoiceHandle handle = 0;
         std::uint32_t targetId = 0;
+        VnEmitterHandle dependencyEmitter = 0;
+        std::uint32_t dependencySlot = UINT32_MAX;
+        std::uint32_t dependencyGeneration = 0;
         // Raw (definition-less) and snapshotOwned instances copy their
         // curve here. Live definition-backed instances leave it empty
         // and evaluate through liveCurve instead. snapshotOwned must
@@ -882,6 +914,7 @@ private:
         // (ramping to neutral with the definition's transitionMs).
         bool neutralized = false;
         bool neutralizePending = false;
+        Binding* nextNeutralization = nullptr;
         // Change detection is per binding, not per Variable, because a
         // binding's contribution depends on the Variable value resolved at its
         // voice's emitter scope (emitter-local or global): the same global
@@ -1013,6 +1046,13 @@ private:
         if (targetId == kTargetVoicePan) state.lastCommittedPan2d = pan2d;
     }
     void EvalDirtyBindings(const EmitterTable* emitters);
+    void EvalIndexedBindings(const EmitterTable* emitters);
+    static BindingDependencyIdentity ReadBindingDependency(
+        const void* fact, BindingDependencyKind kind) noexcept;
+    void RegisterBindingDependency(Binding& binding, PreparedBindingToken* preparation) noexcept;
+    void RemoveBindingDependency(Binding& binding) noexcept;
+    void RemovePendingNeutralization(Binding& binding) noexcept;
+    void MoveBinding(std::uint32_t from, std::uint32_t to) noexcept;
     // Whether any binding already feeds (handle, targetId) — a duplicate
     // pair adds no worst-case demand.
     bool HasBinding(VnVoiceHandle handle,
@@ -1095,6 +1135,11 @@ private:
     // order. Raw bindings and definition-backed instances share it; a
     // slot-reuse purge reclaims the dead occupant's entries.
     std::vector<Binding> m_bindings;
+    BindingDependencyIndex* m_dependencies = nullptr;
+    Binding* m_pendingNeutralizations = nullptr;
+    std::vector<std::uint32_t> m_freeDependencySlots;
+    std::uint32_t m_dependencySlotCount = 0;
+    std::uint32_t m_preparedBindingCount = 0;
     std::vector<PrimingInput> m_primingInputs;
     std::vector<Variable> m_projectionVariables;
     std::vector<BindingEvaluation> m_projectionBindings;

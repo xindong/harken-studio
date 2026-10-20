@@ -7,11 +7,14 @@
 #include "Common/TestUtil.h"
 
 #include "harken/core/EngineConfig.h"
+#include "harken/param/BindingTable.h"
+#include "harken/param/EmitterTable.h"
 #include "harken/param/ParamSystem.h"
 
 #include <cmath>
 #include <limits>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -76,6 +79,212 @@ std::vector<ParamCommit> FlushAll(ParamSystem& params) {
         return harken::FlushOutcome::Committed;
     });
     return commits;
+}
+
+void AttachIndex(ParamSystem& params, harken::BindingDependencyIndex& index) {
+    ASSERT_TRUE(index.Reset(params.BindingCapacity(), params.BindingCapacity() + 2u));
+    ASSERT_TRUE(params.AttachBindingDependencies(&index));
+}
+
+std::uint32_t DirtyDependencyCount(const harken::BindingDependencyIndex& index) {
+    std::uint32_t count = 0;
+    harken::BindingDirtyTarget target;
+    while (index.DirtyTargetAt(count, &target)) ++count;
+    return count;
+}
+
+TEST(ParamCombine, IndexedPreparationCancelsRefusalsAndConsumesWithoutGrowth) {
+    auto config = DefaultConfig();
+    config.voiceBindingInstanceSlots = 1;
+    harken::BindingDependencyIndex index;
+    ParamSystem params(config);
+    AttachIndex(params, index);
+    params.OnVoiceStarted(kVoice0, 0, 1);
+    const auto variable = harkentest::ObjectId(7);
+    const Curve curve = LinearCurve(0, 0, 1, -6);
+    ParamSystem::PreparedBindingToken prepared;
+    {
+        ASSERT_TRUE(params.PrepareBinding(&prepared));
+        ParamSystem::PreparedBindingToken moved(std::move(prepared));
+        EXPECT_FALSE(prepared.IsPrepared());
+        EXPECT_TRUE(moved.IsPrepared());
+    }
+    ASSERT_TRUE(params.PrepareBinding(&prepared));
+    auto bytes = index.StorageBytes();
+    EXPECT_FALSE(params.BindVoiceTarget(variable, kVoice0, harken::kBuiltinTargetCount, curve, &prepared));
+    EXPECT_FALSE(prepared.IsPrepared());
+    EXPECT_EQ(bytes, index.StorageBytes());
+    EXPECT_EQ(0u, params.VoiceBindingCount(kVoice0));
+    ASSERT_TRUE(params.PrepareBinding(&prepared));
+    bytes = index.StorageBytes();
+    ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0, harken::kTargetVoiceVolume, curve, &prepared));
+    EXPECT_FALSE(prepared.IsPrepared());
+    EXPECT_EQ(bytes, index.StorageBytes());
+    ASSERT_TRUE(params.PrepareBinding(&prepared));
+    bytes = index.StorageBytes();
+    EXPECT_FALSE(params.BindVoiceTarget(variable, kVoice0, harken::kTargetVoicePitch, curve, &prepared));
+    EXPECT_FALSE(prepared.IsPrepared());
+    EXPECT_EQ(bytes, index.StorageBytes());
+    ASSERT_TRUE(params.PrepareBinding(&prepared));
+    bytes = index.StorageBytes();
+    ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice1, harken::kTargetVoiceVolume, curve, &prepared));
+    EXPECT_EQ(bytes, index.StorageBytes());
+}
+
+TEST(ParamCombine, IndexedCompactionAndAppendRetainFloatingPointContributorOrder) {
+    harken::BindingDependencyIndex index;
+    ParamSystem params(DefaultConfig());
+    AttachIndex(params, index);
+    params.OnVoiceStarted(kVoice0, 0, 1);
+    const auto variable = harkentest::ObjectId(7);
+    const Curve curves[] = {LinearCurve(0, 0, 1, 0), LinearCurve(0, 16777216, 1, 16777216),
+        LinearCurve(0, 1, 1, 1), LinearCurve(0, -16777216, 1, -16777216)};
+    for (std::uint32_t i = 0; i < std::size(curves); ++i) {
+        const harken::BindingDefinitionView view{harkentest::ObjectId(100 + i), variable,
+            harken::kTargetVoicePitch, &curves[i], nullptr, nullptr, true};
+        ASSERT_EQ(ParamSystem::InstanceBindResult::Ok,
+            params.BindVoiceInstance(view, kVoice0, {}, true));
+    }
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 1));
+    FlushAll(params);
+    EXPECT_FLOAT_EQ(0, params.ResolvedValue(kVoice0, harken::kTargetVoicePitch));
+    params.PurgeInstancesOf(harkentest::ObjectId(100));
+    ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0, harken::kTargetVoicePitch, LinearCurve(0, 1, 1, 1)));
+    const auto commits = FlushAll(params);
+    ASSERT_EQ(1u, commits.size());
+    EXPECT_FLOAT_EQ(1, commits[0].resolved);
+    EXPECT_EQ(0u, DirtyDependencyCount(index));
+}
+
+TEST(ParamCombine, IndexedLocalFallbackAndLiveDefinitionKeepExactSubscriptions) {
+    harken::BindingDependencyIndex index;
+    ParamSystem params(DefaultConfig());
+    harken::EmitterTable emitters(DefaultConfig());
+    AttachIndex(params, index);
+    VnEmitterHandle emitter = 0;
+    ASSERT_TRUE(emitters.Create(&emitter));
+    params.OnVoiceStarted(kVoice0, 0, 1, emitter);
+    params.OnVoiceStarted(kVoice1, 0, 1);
+    const auto variable = harkentest::ObjectId(7);
+    Curve curve = LinearCurve(0, 0, 1, -6);
+    std::uint32_t revision = 1;
+    harken::BindingDefinitionView view{harkentest::ObjectId(100), variable,
+        harken::kTargetVoiceVolume, &curve, nullptr, &revision, false};
+    ASSERT_EQ(ParamSystem::InstanceBindResult::Ok, params.BindVoiceInstance(view, kVoice0, {}, true));
+    view.snapshotOwned = true;
+    ASSERT_EQ(ParamSystem::InstanceBindResult::Ok, params.BindVoiceInstance(view, kVoice1, {}, true));
+    ASSERT_EQ(VN_OK, emitters.SetLocalValue(emitter, variable, 0));
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 1));
+    params.EvaluateDirtyBindings(&emitters);
+    EXPECT_FLOAT_EQ(0, params.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
+    EXPECT_FLOAT_EQ(-6, params.ResolvedValue(kVoice1, harken::kTargetVoiceVolume));
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 0));
+    EXPECT_EQ(2u, DirtyDependencyCount(index));
+    params.EvaluateDirtyBindings(&emitters);
+    EXPECT_FLOAT_EQ(0, params.ResolvedValue(kVoice1, harken::kTargetVoiceVolume));
+    ASSERT_EQ(VN_OK, emitters.SetLocalValue(emitter, variable, 1));
+    params.NoteVariableWrite(variable, emitter);
+    ASSERT_EQ(1u, DirtyDependencyCount(index));
+    harken::BindingDirtyTarget dirty;
+    harken::BindingDependencyIdentity identity;
+    ASSERT_TRUE(index.DirtyTargetAt(0, &dirty));
+    ASSERT_TRUE(index.TargetIdentity(dirty, &identity));
+    EXPECT_EQ(kVoice0, identity.object);
+    params.EvaluateDirtyBindings(&emitters);
+    EXPECT_FLOAT_EQ(-6, params.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
+    curve = LinearCurve(0, 0, 1, -12);
+    ++revision;
+    params.NoteDefinitionReplaced(view.definitionId);
+    EXPECT_EQ(1u, DirtyDependencyCount(index));
+    params.EvaluateDirtyBindings(&emitters);
+    EXPECT_FLOAT_EQ(-12, params.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
+    EXPECT_FLOAT_EQ(0, params.ResolvedValue(kVoice1, harken::kTargetVoiceVolume));
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 1));
+    params.EvaluateDirtyBindings(&emitters);
+    EXPECT_FLOAT_EQ(-6, params.ResolvedValue(kVoice1, harken::kTargetVoiceVolume));
+    ASSERT_TRUE(emitters.Destroy(emitter));
+    params.NoteEmitterDetached(emitter);
+    params.EvaluateDirtyBindings(&emitters);
+    params.NoteVariableWrite(variable, emitter);
+    EXPECT_EQ(0u, DirtyDependencyCount(index));
+    params.ClearInstalledValues();
+    EXPECT_EQ(2u, DirtyDependencyCount(index));
+    params.EvaluateDirtyBindings(&emitters);
+    EXPECT_FLOAT_EQ(0, params.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
+    EXPECT_FLOAT_EQ(0, params.ResolvedValue(kVoice1, harken::kTargetVoiceVolume));
+}
+
+TEST(ParamCombine, IndexedPrivateCopyAndCompactionOwnTheirPendingExits) {
+    harken::BindingDependencyIndex index;
+    ParamSystem params(DefaultConfig());
+    AttachIndex(params, index);
+    params.OnVoiceStarted(kVoice0, 0, 1);
+    const auto variable = harkentest::ObjectId(7);
+    const Curve curves[] = {LinearCurve(0, 0, 1, -6), LinearCurve(0, 0, 1, -3)};
+    const std::uint32_t ramp = 17;
+    for (std::uint32_t i = 0; i < std::size(curves); ++i) {
+        const harken::BindingDefinitionView view{harkentest::ObjectId(100 + i), variable,
+            harken::kTargetVoiceVolume, &curves[i], &ramp, nullptr, true};
+        ASSERT_EQ(ParamSystem::InstanceBindResult::Ok, params.BindVoiceInstance(view, kVoice0, {}, true));
+    }
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 1));
+    FlushAll(params);
+    ASSERT_TRUE(params.NeutralizeVoiceInstance(kVoice0, harkentest::ObjectId(101)));
+    harken::BindingDirtyTarget dirty;
+    ASSERT_TRUE(index.DirtyTargetAt(0, &dirty));
+    const auto version = index.TargetVersion(dirty);
+    ParamSystem copy(params);
+    copy.PurgeInstancesOf(harkentest::ObjectId(100));
+    FlushAll(copy);
+    EXPECT_EQ(version, index.TargetVersion(dirty));
+    EXPECT_FLOAT_EQ(-9, params.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
+    params.PurgeInstancesOf(harkentest::ObjectId(100));
+    const auto commits = FlushAll(params);
+    ASSERT_EQ(1u, commits.size());
+    EXPECT_FLOAT_EQ(0, commits[0].resolved);
+    EXPECT_EQ(ramp, commits[0].rampMs);
+    std::uint32_t captured = 0;
+    params.ForEachInstance([&](const ParamSystem::InstanceCaptureRow& row) {
+        ++captured;
+        EXPECT_TRUE(row.neutralized);
+        EXPECT_FLOAT_EQ(0, row.lastContribution);
+    });
+    EXPECT_EQ(1u, captured);
+    params.NoteVariableWrite(variable);
+    EXPECT_EQ(0u, DirtyDependencyCount(index));
+}
+
+TEST(ParamCombine, IndexedEvaluationLeavesOtherOwnersAndRetiredGenerationsIsolated) {
+    ParamSystem params(DefaultConfig());
+    harken::BindingTable bindings(2, 2, 2, params.BindingCapacity(), params.BindingCapacity() + 2u);
+    auto& index = bindings.Dependencies();
+    ASSERT_TRUE(params.AttachBindingDependencies(&index));
+    harken::BusTargetStore buses(2);
+    params.OnVoiceStarted(kVoice0, 0, 1);
+    const auto variable = harkentest::ObjectId(7);
+    ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0, harken::kTargetVoiceVolume, LinearCurve(0, 0, 1, -6)));
+    const CurvePoint points[] = {{0, 0}, {1, -3}};
+    const harken::CurveHandlePair handles[] = {{0, 0, 1, -3}};
+    ASSERT_EQ(VN_OK, bindings.RegisterBinding(harkentest::ObjectId(100), variable,
+        harken::kTargetScopeBus, harken::kBusTargetBusVolume, points, handles, 2, 0, nullptr));
+    ASSERT_EQ(VN_OK, bindings.Attach(harkentest::ObjectId(100), harken::kTargetScopeBus,
+        harkentest::ObjectId(200), 0, nullptr));
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 1));
+    params.EvaluateDirtyBindings(nullptr);
+    EXPECT_EQ(1u, DirtyDependencyCount(index));
+    bindings.EvaluateDirtyBusAttachments(params, buses);
+    EXPECT_EQ(0u, DirtyDependencyCount(index));
+    EXPECT_FLOAT_EQ(-3, buses.Reduce(0, harken::kBusTargetBusVolume));
+    params.RetireVoiceTargets(kVoice0);
+    params.EvaluateDirtyBindings(nullptr);
+    constexpr VnVoiceHandle replacement = (2ULL << 32) | 0u;
+    params.OnVoiceStarted(replacement, -3, 1);
+    ASSERT_TRUE(params.BindVoiceTarget(variable, replacement,
+        harken::kTargetVoiceVolume, LinearCurve(0, 0, 1, -6)));
+    params.EvaluateDirtyBindings(nullptr);
+    EXPECT_FLOAT_EQ(-9, params.ResolvedValue(replacement, harken::kTargetVoiceVolume));
+    EXPECT_FLOAT_EQ(0, params.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
+    EXPECT_EQ(0u, DirtyDependencyCount(index));
 }
 
 TEST(ParamCombine, CapturedMissingVolumeClearsThePreviousVariableContribution) {
@@ -334,7 +543,9 @@ TEST(ParamCombine, PitchAddsInCentsAndCancelsToBase) {
 }
 
 TEST(ParamCombine, LowpassTakesMinimumAndDefaultsOpen) {
+    harken::BindingDependencyIndex index;
     ParamSystem params(DefaultConfig());
+    AttachIndex(params, index);
     params.OnVoiceStarted(kVoice0, 0.0f, 1.0);
 
     // Untouched: fully open (the no-contribution sentinel).
@@ -362,7 +573,9 @@ TEST(ParamCombine, LowpassTakesMinimumAndDefaultsOpen) {
 }
 
 TEST(ParamCombine, HighpassTakesMaximumOverClosedBase) {
+    harken::BindingDependencyIndex index;
     ParamSystem params(DefaultConfig());
+    AttachIndex(params, index);
     params.OnVoiceStarted(kVoice0, 0.0f, 1.0);
 
     EXPECT_EQ(harken::kHighpassClosedHz,
@@ -381,7 +594,9 @@ TEST(ParamCombine, HighpassTakesMaximumOverClosedBase) {
 }
 
 TEST(ParamCombine, ToneFrequencyAndQComposeInLog2Domains) {
+    harken::BindingDependencyIndex index;
     ParamSystem params(DefaultConfig());
+    AttachIndex(params, index);
     params.OnVoiceStarted(kVoice0, 0.0f, 1.0);
 
     ASSERT_TRUE(params.BindVoiceTarget(
@@ -403,7 +618,9 @@ TEST(ParamCombine, ToneFrequencyAndQComposeInLog2Domains) {
 }
 
 TEST(ParamCombine, ToneHighQCompositionClampsAfterLogReduction) {
+    harken::BindingDependencyIndex index;
     ParamSystem params(DefaultConfig());
+    AttachIndex(params, index);
     params.OnVoiceStarted(kVoice0, 0.0f, 1.0);
     ASSERT_TRUE(params.BindVoiceTarget(
         harkentest::ObjectId(7), kVoice0, harken::kTargetVoiceHighShelfQ,
@@ -639,7 +856,9 @@ TEST(ParamCombine, SharedPublicationSettlesOneSnapshotAndKeepsLaterDemandAndClai
 }
 
 TEST(ParamCombine, VariableProjectionRestoresInsertedValuesCachesAndDemand) {
+    harken::BindingDependencyIndex index;
     ParamSystem params(DefaultConfig());
+    AttachIndex(params, index);
     params.OnVoiceStarted(kVoice0, 0.0f, 1.0);
     const auto variable = harkentest::ObjectId(7);
     const auto inserted = harkentest::ObjectId(8);
@@ -650,6 +869,10 @@ TEST(ParamCombine, VariableProjectionRestoresInsertedValuesCachesAndDemand) {
     params.EvaluateDirtyBindings(nullptr);
     FlushAll(params);
     const auto count = params.VariableCount();
+    params.NoteVariableWrite(variable);
+    harken::BindingDirtyTarget pending;
+    ASSERT_TRUE(index.DirtyTargetAt(0, &pending));
+    const auto pendingVersion = index.TargetVersion(pending);
     const auto demand = params.DirtyTargetCount();
     ASSERT_TRUE(params.BeginVariableProjection());
     EXPECT_FALSE(params.BeginVariableProjection());
@@ -657,6 +880,8 @@ TEST(ParamCombine, VariableProjectionRestoresInsertedValuesCachesAndDemand) {
     ASSERT_EQ(VN_OK, params.SetInstalledValue(inserted, 0.5f));
     params.NoteVariableWrite(variable);
     params.EvaluateDirtyBindings(nullptr);
+    EXPECT_EQ(1u, DirtyDependencyCount(index));
+    EXPECT_EQ(pendingVersion, index.TargetVersion(pending));
     EXPECT_FLOAT_EQ(-12.0f, params.ResolvedValue(kVoice0, harken::kTargetVoiceVolume));
     params.RestoreVariableProjection();
     EXPECT_EQ(count, params.VariableCount());
@@ -675,7 +900,9 @@ TEST(ParamCombine, VariableProjectionRestoresInsertedValuesCachesAndDemand) {
 }
 
 TEST(ParamCombine, PrivateInitialPrimingDoesNotPublishValuesOrSuppressTheNextLiveUpdate) {
+    harken::BindingDependencyIndex index;
     ParamSystem params(DefaultConfig());
+    AttachIndex(params, index);
     params.OnVoiceStarted(kVoice0, 0, 1);
     const auto variable = harkentest::ObjectId(7);
     ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0, harken::kTargetVoiceVolume,
