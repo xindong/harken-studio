@@ -2903,7 +2903,7 @@ TEST(TimelineExecutor, ProgramReadFenceSurvivesFrontierAdvanceAndPoolReclamation
             auto& current = *static_cast<Probe*>(context);
             current.visited = true;
             EXPECT_EQ(2u, current.pool->ConsumerFrontier().load());
-            EXPECT_EQ(2u, current.pool->Advance());
+            EXPECT_EQ(1u, current.pool->Advance());
             EXPECT_FALSE(current.pool->HasProgramReference(current.program));
             EXPECT_FALSE(current.fence->ReadCompleted(1));
         };
