@@ -848,6 +848,17 @@ private:
     std::uint32_t originalLifetimePinCount_ = 0;
 };
 
+struct EngineQueueProgramRange {
+    std::uint32_t first = 0;
+    std::uint32_t count = 0;
+
+    std::span<ProgramView> Resolve(EngineQueueProgramBank* bank) const noexcept {
+        if (bank == nullptr || !bank->occupied || bank->programCount > bank->schedules.size() ||
+            first > bank->programCount || count > bank->programCount - first) return {};
+        return std::span{bank->schedules}.subspan(first, count);
+    }
+};
+
 struct EngineMonitorSelection {
     VoiceLedger::MonitorSelection observation{};
     TimelineArmToken arm{};
@@ -1454,6 +1465,7 @@ struct EngineQueueFutureFilingLayout {
     ConditionalQueueVersionToken queueConditional{};
     std::uint8_t queueSuccessorProgramPlane = 1;
     EngineQueueProgramBank* queueSuccessorProgramBank = nullptr;
+    EngineQueueProgramRange queueSuccessorPrograms{};
     std::uint32_t queueSuccessorScheduleBase = 0;
     std::uint32_t queueSuccessorScheduleLeafCount = 0;
     KnownCompletionPredicateV1 queueSuccessorCompletion{};
@@ -1880,6 +1892,7 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     bool queueCompositeMirrorsCleared = false;
     std::uint8_t queueCurrentProgramPlane = 0;
     EngineQueueProgramBank* queueCurrentProgramBank = nullptr;
+    EngineQueueProgramRange queueCurrentPrograms{};
     std::uint32_t queueCurrentScheduleBase = 0;
     std::uint32_t queueCurrentScheduleLeafCount = 0;
     std::array<std::uint16_t, kMaxKnownScheduleLeaves>
