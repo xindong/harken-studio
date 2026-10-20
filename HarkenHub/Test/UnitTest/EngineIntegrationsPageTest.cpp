@@ -1641,7 +1641,7 @@ TEST_F(EngineIntegrationsPageTest, InstallUpdateUnlinkAndRelinkKeepSdkIdentity)
     EXPECT_TRUE(integrations.list().empty());
     EXPECT_EQ(page->findChild<QStackedWidget*>()->currentIndex(), 1);
     EXPECT_FALSE(field("Select a .hsp project file")->isReadOnly());
-    EXPECT_FALSE(field("Select a Unity or Unreal project")->isReadOnly());
+    EXPECT_FALSE(field("Select a Unity project")->isReadOnly());
     EXPECT_EQ(field("Select a .hsp project file")->text(), harkenPath);
     EXPECT_FALSE(primary()->isVisible());
     EXPECT_TRUE(page->findChild<QPushButton*>(QStringLiteral("linkProjects"))->isEnabled());

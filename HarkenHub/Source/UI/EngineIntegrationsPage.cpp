@@ -628,7 +628,7 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     engineField->setSpacing(8);
     engineProjectEdit_ = new QLineEdit(engineFieldWidget);
     engineProjectEdit_->setPlaceholderText(
-        QCoreApplication::translate("HarkenHub", "Select a Unity or Unreal project"));
+        QCoreApplication::translate("HarkenHub", "Select a Unity project"));
     engineProjectEdit_->setObjectName(QStringLiteral("engineProjectPath"));
     engineBrowseButton_ = new QPushButton(
         QCoreApplication::translate("HarkenHub", "Select Game Project"), engineFieldWidget);
@@ -1491,7 +1491,7 @@ bool EngineIntegrationsPage::acceptEngineTarget(
     if (redirectOnConflict && !conflict.isEmpty()) {
         showConflict(
             conflict,
-            QCoreApplication::translate("HarkenHub", "This Unity or Unreal project already belongs to an engine integration."));
+            QCoreApplication::translate("HarkenHub", "This Unity project already belongs to an engine integration."));
         return false;
     }
     selectedEngineTargetId_ = selected.targetId;
@@ -1548,7 +1548,7 @@ bool EngineIntegrationsPage::resolveSelection(
     if (engineInput.isEmpty()) {
         QMessageBox::warning(
             this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
-            QCoreApplication::translate("HarkenHub", "Select a Unity or Unreal project before checking integration."));
+            QCoreApplication::translate("HarkenHub", "Select a Unity project before checking integration."));
         return false;
     }
     auto targets = targets_->list();
@@ -1563,7 +1563,7 @@ bool EngineIntegrationsPage::resolveSelection(
             if (!registerTarget) {
                 QMessageBox::warning(
                     this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
-                    QCoreApplication::translate("HarkenHub", "Select a valid Unity project folder or Unreal .uproject file."));
+                    QCoreApplication::translate("HarkenHub", "Select a valid Unity project folder."));
             }
             return false;
         }
@@ -2180,7 +2180,7 @@ void EngineIntegrationsPage::runCheck()
                 QStringLiteral("verify"));
             return;
         }
-        setSummaryText(QCoreApplication::translate("HarkenHub", "Select a Unity or Unreal project before checking integration."));
+        setSummaryText(QCoreApplication::translate("HarkenHub", "Select a Unity project before checking integration."));
         return;
     }
     ProjectRecord project;

@@ -2,6 +2,7 @@
     <qresource prefix="/">
         <file>Resources/branding/HarkenStudioBlueGradient.png</file>
         <file>Resources/icons/HubIcon.png</file>
+        <file>Resources/icons/HubIcon.ico</file>
         <file>Resources/icons/Settings.svg</file>
         <file>Resources/release-notes.json</file>
     </qresource>

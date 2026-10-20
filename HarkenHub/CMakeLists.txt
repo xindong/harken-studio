@@ -234,7 +234,9 @@ if(HARKEN_BUILD_HUB_UNIT_TESTS)
 endif()
 
 if(WIN32)
-    add_executable(harken_hub WIN32 Source/App/Main.cpp "resources.qrc")
+    set_source_files_properties("HarkenHub.rc" PROPERTIES
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Resources/icons/HubIcon.ico")
+    add_executable(harken_hub WIN32 Source/App/Main.cpp "resources.qrc" "HarkenHub.rc")
 else()
     add_executable(harken_hub Source/App/Main.cpp "resources.qrc")
 endif()
@@ -311,7 +313,7 @@ endif()
 
 if(WIN32)
     add_executable(harken_hub_setup WIN32
-        Source/Setup/SetupStubMain.cpp)
+        Source/Setup/SetupStubMain.cpp "HarkenHub.rc")
     set_target_properties(harken_hub_setup PROPERTIES
         OUTPUT_NAME "HarkenHubSetup"
         AUTOMOC OFF

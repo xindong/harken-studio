@@ -58,13 +58,13 @@ bool EngineTargetProbe::resolve(const QString& input, EngineTargetRecord* record
         && !root.entryList({QStringLiteral("*.uproject")}, QDir::Files).isEmpty();
     if (unity && unreal) {
         if (error) *error = hubTranslate(QStringLiteral(
-            "Both Unity and Unreal projects were found. Select the Unreal .uproject file or a separate Unity project folder."));
+            "Multiple game projects were found. Select a separate Unity project folder."));
         return false;
     }
     if (unity || unreal)
         return resolve(unity ? EngineKind::Unity : EngineKind::Unreal, input, record, error);
     if (error) *error = hubTranslate(QStringLiteral(
-        "Select a Unity or Unreal project folder, or an Unreal .uproject file."));
+        "Select a Unity project folder."));
     return false;
 }
 

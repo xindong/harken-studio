@@ -1,6 +1,8 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Windows desktop shortcuts and taskbar icons now display the H logo with crisp images for different icon sizes."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Project association prompts in Engine Integrations now refer only to Unity projects."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub uses the gradient Harken Studio logo and matching H window and tray icons, and consistently displays Harken Studio Hub in menus, notifications, dialogs, and installer details."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub displays the Harken Studio logo above a separate Hub label, updates its window title and repository link, and removes the previous application icon."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Project format incompatibility messages show the selected Studio version and the project and Studio Schema versions from the compatibility check."),

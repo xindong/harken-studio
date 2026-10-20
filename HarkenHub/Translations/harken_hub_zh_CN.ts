@@ -156,6 +156,8 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Windows desktop shortcuts and taskbar icons now display the H logo with crisp images for different icon sizes.</source><translation>&#x4fee;&#x590d; Windows &#x684c;&#x9762;&#x5feb;&#x6377;&#x65b9;&#x5f0f;&#x548c;&#x4efb;&#x52a1;&#x680f;&#x56fe;&#x6807;&#xff0c;&#x4f7f;&#x7528;&#x9002;&#x914d;&#x4e0d;&#x540c;&#x5c3a;&#x5bf8;&#x7684;&#x6e05;&#x6670; H &#x6807;&#x5fd7;&#x3002;</translation></message>
+    <message><source>Project association prompts in Engine Integrations now refer only to Unity projects.</source><translation>&#x5f15;&#x64ce;&#x96c6;&#x6210;&#x4e2d;&#x7684;&#x5de5;&#x7a0b;&#x5173;&#x8054;&#x63d0;&#x793a;&#x4ec5;&#x4fdd;&#x7559; Unity &#x5de5;&#x7a0b;&#x4fe1;&#x606f;&#x3002;</translation></message>
     <message><source>Hub uses the gradient Harken Studio logo and matching H window and tray icons, and consistently displays Harken Studio Hub in menus, notifications, dialogs, and installer details.</source><translation>Hub 使用渐变 Harken Studio 标识以及一致的 H 窗口和托盘图标，菜单、通知、对话框及安装器详情统一显示 Harken Studio Hub。</translation></message>
     <message><source>Hub displays the Harken Studio logo above a separate Hub label, updates its window title and repository link, and removes the previous application icon.</source><translation>Hub 左上角改为 Harken Studio 标识，下方独立显示 Hub；窗口标题与仓库链接使用 Harken Studio 名称，并移除原有应用图标。</translation></message>
     <message><source>Project format incompatibility messages show the selected Studio version and the project and Studio Schema versions from the compatibility check.</source><translation>工程格式不兼容提示显示当前选择的 Studio 版本，并展示兼容性检查返回的工程与 Studio Schema 版本。</translation></message>
@@ -3212,21 +3214,21 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="716"/>
-        <source>This Unity or Unreal project already belongs to an engine integration.</source>
-        <translation>该 Unity 或 Unreal 工程已经建立过引擎集成。</translation>
+        <source>This Unity project already belongs to an engine integration.</source>
+        <translation>&#x8be5; Unity &#x5de5;&#x7a0b;&#x5df2;&#x7ecf;&#x5efa;&#x7acb;&#x8fc7;&#x5f15;&#x64ce;&#x96c6;&#x6210;&#x3002;</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="772"/>
-        <source>Select a valid Unity project folder or Unreal .uproject file.</source>
-        <translation>请选择有效的 Unity 工程文件夹或 Unreal .uproject 文件。</translation>
+        <source>Select a valid Unity project folder.</source>
+        <translation>&#x8bf7;&#x9009;&#x62e9;&#x6709;&#x6548;&#x7684; Unity &#x5de5;&#x7a0b;&#x6587;&#x4ef6;&#x5939;&#x3002;</translation>
     </message>
     <message>
         <source>Select a Harken project before checking integration.</source>
         <translation>请先选择 Harken 工程，再检查集成。</translation>
     </message>
     <message>
-        <source>Select a Unity or Unreal project before checking integration.</source>
-        <translation>请先选择 Unity 或 Unreal 工程，再检查集成。</translation>
+        <source>Select a Unity project before checking integration.</source>
+        <translation>&#x8bf7;&#x5148;&#x9009;&#x62e9; Unity &#x5de5;&#x7a0b;&#xff0c;&#x518d;&#x68c0;&#x67e5;&#x96c6;&#x6210;&#x3002;</translation>
     </message>
     <message>
         <source>Select a Runtime / SDK source before checking integration.</source>
@@ -5067,9 +5069,9 @@ Choose or install a Harken Studio version that supports this project format.</so
         <translation>暂时无法读取工程详情，将由所选 Studio 检查工程。</translation>
     </message>
     <message><source>Select Game Project</source><translation>选择游戏工程</translation></message>
-    <message><source>Select a Unity or Unreal project</source><translation>选择 Unity 或 Unreal 工程</translation></message>
-    <message><source>Select a Unity or Unreal project folder, or an Unreal .uproject file.</source><translation>请选择 Unity 或 Unreal 工程目录，或 Unreal 的 .uproject 文件。</translation></message>
-    <message><source>Both Unity and Unreal projects were found. Select the Unreal .uproject file or a separate Unity project folder.</source><translation>目录中同时发现 Unity 和 Unreal 工程。请选择 Unreal 的 .uproject 文件，或独立的 Unity 工程目录。</translation></message>
+    <message><source>Select a Unity project</source><translation>&#x9009;&#x62e9; Unity &#x5de5;&#x7a0b;</translation></message>
+    <message><source>Select a Unity project folder.</source><translation>&#x8bf7;&#x9009;&#x62e9; Unity &#x5de5;&#x7a0b;&#x6587;&#x4ef6;&#x5939;&#x3002;</translation></message>
+    <message><source>Multiple game projects were found. Select a separate Unity project folder.</source><translation>&#x76ee;&#x5f55;&#x4e2d;&#x53d1;&#x73b0;&#x591a;&#x4e2a;&#x6e38;&#x620f;&#x5de5;&#x7a0b;&#x3002;&#x8bf7;&#x9009;&#x62e9;&#x72ec;&#x7acb;&#x7684; Unity &#x5de5;&#x7a0b;&#x76ee;&#x5f55;&#x3002;</translation></message>
     <message><source>Uninstall SDK...</source><translation>卸载 SDK...</translation></message>
     <message><source>Installed SDK files match the installation record.</source><translation>已安装 SDK 文件与安装记录一致。</translation></message>
     <message><source>Safety check passed. No SDK files were changed.</source><translation>安全检查通过，未修改 SDK 文件。</translation></message>

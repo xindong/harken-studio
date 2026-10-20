@@ -889,7 +889,7 @@ int main(int argc, char* argv[])
     }
 
     QApplication app(argc, argv);
-    app.setWindowIcon(QIcon(QStringLiteral(":/Resources/icons/HubIcon.png")));
+    app.setWindowIcon(QIcon(QStringLiteral(":/Resources/icons/HubIcon.ico")));
     VNH::HubLocalization::install(&app);
     app.styleHints()->setColorScheme(Qt::ColorScheme::Dark);
     if (QStyle* fusion = QStyleFactory::create(QStringLiteral("Fusion")))
