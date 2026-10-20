@@ -20010,16 +20010,16 @@ TEST(ActionFiringApi, NestedQueueAttemptReusesCompositeAsSingleAfterRejectedAdmi
 void ExpectDeferredNestedQueueCompositeSuccessor(
     bool pieceChild, bool refuseSecondLeaf, bool singleLeaf = false,
     bool appendSound = false, bool logicalTrack = false, std::uint32_t resetCount = 0,
-    std::uint32_t containerDepth = 0) {
+    std::uint32_t containerDepth = 0, bool sourceFade = false) {
     (void)Vn_Term();
     harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     std::vector<float> first(
-        logicalTrack || resetCount != 0 ? 1024u
+        logicalTrack || resetCount != 0 || sourceFade ? 1024u
                      : engine.timelinePool.WindowEndFrame() + 256u,
         0.25f);
-    std::vector<float> second(logicalTrack ? 1024u : 256u, -0.25f);
+    std::vector<float> second(sourceFade ? first.size() : logicalTrack ? 1024u : 256u, -0.25f);
     const auto firstPcm = harkentest::MonoDesc(first, 48000);
     const auto secondPcm = harkentest::MonoDesc(second, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &firstPcm));
@@ -20028,6 +20028,7 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
     const auto secondRevision = engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision;
     CanonicalActionWorld composite(firstRevision, secondRevision), donor(firstRevision, secondRevision);
     composite.MakeImmediateNestedQueueVariableControlPlayAction();
+    if (sourceFade) composite.EnableNaturalEndQueueTransition(64, 128);
     auto finalSound = composite.queueChildren[1];
     if (pieceChild) donor.MakeSecondQueueChildCompositePiece();
     else donor.MakeSecondQueueChildCompositeTrack();
@@ -20164,8 +20165,10 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
     const auto expectedHeard = logicalTrack
         ? 2u
         : (singleLeaf ? 2u : 3u) + (appendSound ? 1u : 0u);
-    const auto budget = static_cast<std::uint32_t>(2u * first.size() / engine.config.blockFrames + 96u);
+    const auto budget = static_cast<std::uint32_t>((sourceFade ? 3u : 2u) *
+        first.size() / engine.config.blockFrames + 96u);
     bool observedLogicalTrack = false;
+    bool observedPromotedSourceFade = false;
     std::uint32_t resets = 0;
     harken::EngineQueueProgramBank::OriginalLifetimePin oldProgramReader;
     harken::EngineQueueProgramBank* oldProgram = nullptr;
@@ -20177,6 +20180,25 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
         trace.Capture(engine);
         harkentest::monitor::CollectIdentityEvents(capture, records);
         ASSERT_FALSE(engine.runtimeRecreateRequired) << block;
+        if (sourceFade && !observedPromotedSourceFade) {
+            for (const auto& row : engine.playableServices) {
+                if (!row.queueMode || !row.partition.Valid() || !row.parentService.Valid() ||
+                    row.queueCurrentScheduleLeafCount != 2u || !row.queueContinuationPrepared ||
+                    row.queueDeferredNeedsFullPreparation || row.queueSuccessorProgramBank == nullptr ||
+                    !row.queueSuccessorProgramBank->published || !row.queuePreparedPages.Valid()) continue;
+                ASSERT_EQ(2u, row.queueSourceControlArmCount) << "block=" << block
+                    << " completion=" << row.queueCompletionFrame
+                    << " transition=" << row.queueTransition.Valid()
+                    << " sameProgram=" << row.queueSameProgramKey;
+                for (std::uint32_t index = 0; index < row.queueSourceControlArmCount; ++index) {
+                    const auto& member = engine.ReadLogicalPlayableMember(row.queueCurrentScheduleBase + index);
+                    const auto control = row.queueTransitionGroupArms[index];
+                    EXPECT_EQ(static_cast<std::uint32_t>(member.render), control.renderSlot);
+                    EXPECT_EQ(static_cast<std::uint32_t>(member.render >> 32), control.renderGeneration);
+                }
+                observedPromotedSourceFade = true;
+            }
+        }
         if (resets < resetCount && trace.heard.size() == 1u) {
             for (auto& row : engine.playableServices) {
                 if (!row.queueMode || !row.partition.Valid() || !row.parentService.Valid() ||
@@ -20313,6 +20335,7 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
     }
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
     if (logicalTrack) EXPECT_TRUE(observedLogicalTrack);
+    if (sourceFade) EXPECT_TRUE(observedPromotedSourceFade);
     if (appendSound) EXPECT_EQ(CanonicalActionWorld::kSecondSound, trace.heard.back().subject);
     EXPECT_EQ(CanonicalActionWorld::kFirstSound, trace.heard[0].subject);
     if (!logicalTrack) {
@@ -20389,6 +20412,11 @@ TEST(ActionFiringApi, NestedQueuePageResetPreservesOrdinaryContainerPath) {
         ExpectDeferredNestedQueueCompositeSuccessor(piece, false, false, true, false, 1, piece ? 2u : 1u);
     ExpectDeferredNestedQueueCompositeSuccessor(false, false, true, false, false, 1, 2);
     ExpectDeferredNestedQueueCompositeSuccessor(false, false, false, true, true, 1, 2);
+}
+
+TEST(ActionFiringApi, NestedQueueFadesPromotedTrackAndPieceSources) {
+    for (bool piece : {false, true})
+        ExpectDeferredNestedQueueCompositeSuccessor(piece, false, false, true, false, 0, 0, true);
 }
 
 void ExpectImmediateNestedQueueActionBatch(NestedQueueBatchCase testCase, bool observeOriginalTree = false) {
