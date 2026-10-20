@@ -142,6 +142,90 @@ struct RunnableWorld {
     }
 };
 
+TEST(CurrentWorldInstall, LargeActionUsesDeclaredCountsAndPreservesAcceptedDecodeOnRefusal) {
+    RunnableWorld source;
+    constexpr std::uint32_t stepCount = 10000;
+    std::vector<harken::ActionStepProgramViewV1> steps(stepCount);
+    for (std::uint32_t index = 0; index < stepCount; ++index) {
+        auto& step = steps[index];
+        step.opcode = harken::ActionOpcodeV1::Stop;
+        step.authoredEventIndex = index;
+        step.target.stableId = source.properties[0].stableId;
+        step.target.expectedProgramSemanticFingerprint =
+            source.properties[0].programSemanticFingerprint;
+        step.delay.domain = harken::AuthoredTimeDomainV1::AbsoluteNanoseconds;
+        step.delay.denominator = 1;
+        step.fade = step.delay;
+        step.cooldown = step.delay;
+    }
+    harken::ActionProgramViewV1 action;
+    action.actionStableId = harkentest::ObjectId(30);
+    action.steps = steps.data();
+    action.stepCount = stepCount;
+    action.expandedStepOccurrenceCount = stepCount;
+    action.expandedFiringCount = 1;
+    action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+    source.world.actions = &action;
+    source.world.actionCount = 1;
+    source.world.identity.capabilityMask |= harken::kWorldCapabilityActionDefinitions;
+    source.world.capacity.maxActionStepsPerDefinition = stepCount;
+    source.world.capacity.maxActionStepsTotal = stepCount;
+    source.world.capacity.maxActionTriggerDepth = 1;
+    source.world.capacity.maxActionExpandedWork = stepCount;
+    source.RefreshWorldFingerprint();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::ValidateCurrentWorldV1(source.world));
+
+    std::vector<std::uint8_t> bytes;
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(source.world, bytes));
+    harken::CurrentWorldBodyImage decoded;
+    ASSERT_TRUE(decoded.Decode(bytes.data(), bytes.size(),
+        harken::kCurrentWorldShippingBodyVintage, harken::CurrentWorldDecodeMode::StrictArtifact));
+    const auto* accepted = decoded.ProductionView();
+    ASSERT_NE(nullptr, accepted);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::ValidateCurrentWorldV1(*accepted));
+    ASSERT_EQ(1u, accepted->actionCount);
+    ASSERT_EQ(stepCount, accepted->actions[0].stepCount);
+    for (std::uint32_t index = 0; index < stepCount; ++index) {
+        EXPECT_EQ(index, accepted->actions[0].steps[index].authoredEventIndex);
+        EXPECT_EQ(harken::ActionOpcodeV1::Stop, accepted->actions[0].steps[index].opcode);
+    }
+
+    EXPECT_FALSE(decoded.Decode(bytes.data(), bytes.size() - 1,
+        harken::kCurrentWorldShippingBodyVintage, harken::CurrentWorldDecodeMode::StrictArtifact));
+    EXPECT_EQ(accepted, decoded.ProductionView());
+    auto excessiveCount = bytes;
+    const auto countOffset = bytes.size() -
+        static_cast<std::size_t>(stepCount) * harken::kCurrentWorldActionStepWireBytes -
+        harken::kCurrentWorldActionHeaderWireBytes + 24;
+    for (std::uint32_t byte = 0; byte < 4; ++byte) excessiveCount[countOffset + byte] = 0xff;
+    EXPECT_FALSE(decoded.Decode(excessiveCount.data(), excessiveCount.size(),
+        harken::kCurrentWorldShippingBodyVintage, harken::CurrentWorldDecodeMode::StrictArtifact));
+    EXPECT_EQ(accepted, decoded.ProductionView());
+
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harken::InstallContainerWorldV1(*engine, source.world).status);
+    const auto generation = engine->variables.CurrentWorldGeneration();
+    EXPECT_EQ(stepCount, engine->variables.ActionProgramAt(0).stepCount);
+    for (auto* limit : {&source.world.capacity.maxActionStepsPerDefinition,
+                       &source.world.capacity.maxActionStepsTotal,
+                       &source.world.capacity.maxActionExpandedWork}) {
+        *limit = stepCount - 1;
+        source.RefreshWorldFingerprint();
+        EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld,
+            harken::InstallContainerWorldV1(*engine, source.world).status);
+        EXPECT_EQ(generation, engine->variables.CurrentWorldGeneration());
+        EXPECT_EQ(stepCount - 1,
+            engine->variables.ActionProgramAt(0).steps[stepCount - 1].authoredEventIndex);
+        *limit = stepCount;
+    }
+    source.RefreshWorldFingerprint();
+    EXPECT_EQ(harken::WorldInstallStatus::Ok,
+        harken::InstallContainerWorldV1(*engine, source.world).status);
+}
+
 TEST(CurrentWorldInstall, DefinitionFingerprintMatchesPinnedCanonicalBytes) {
     RunnableWorld image;
     image.properties[0].payload = CanonicalPayload(1);

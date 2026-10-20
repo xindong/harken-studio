@@ -166,12 +166,16 @@ bool ActionFiringTable::Reset(std::uint32_t capacity) {
 }
 
 bool ActionFiringTable::PrepareResults(Row& row, std::uint32_t count) noexcept {
-    if (memguard::IsAudioTagged() || (failResultAllocationForTests_ && count != 0)) {
+    std::vector<ActionFiringStepResult> results;
+    const auto resultCount = static_cast<std::size_t>(count);
+    if (memguard::IsAudioTagged() || count > kHardActionStepCapacity ||
+        resultCount > std::numeric_limits<std::size_t>::max() / sizeof(ActionFiringStepResult) ||
+        resultCount > results.max_size() || (failResultAllocationForTests_ && count != 0)) {
         ++refusalCount_;
         return false;
     }
     try {
-        std::vector<ActionFiringStepResult> results(count);
+        results.resize(resultCount);
         row.results.swap(results);
         return true;
     } catch (const std::bad_alloc&) {
@@ -248,7 +252,7 @@ bool ActionFiringTable::PrepareRoot(
     std::uint32_t directStepCount, PreparedActionFiring* out,
     const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin) noexcept {
     if (memguard::IsAudioTagged() || out == nullptr || actionId == VnObjectId{} || !owner.Valid() ||
-        directStepCount > kMaxActionSteps) {
+        directStepCount > kHardActionStepCapacity) {
         return false;
     }
     *out = {};
@@ -319,7 +323,7 @@ bool ActionFiringTable::PrepareChild(
     PreparedActionFiring* out) noexcept {
     Row* parentRow = ResolvePrepared(parent);
     if (memguard::IsAudioTagged() || out == nullptr || parentRow == nullptr || actionId == VnObjectId{} ||
-        !owner.Valid() || directStepCount > kMaxActionSteps) {
+        !owner.Valid() || directStepCount > kHardActionStepCapacity) {
         return false;
     }
     *out = {};
@@ -384,7 +388,7 @@ bool ActionFiringTable::PrepareChild(
     Row* parentRow = Resolve(parent);
     const Row* rootRow = parentRow == nullptr ? nullptr : Resolve(parentRow->root);
     if (memguard::IsAudioTagged() || out == nullptr || parentRow == nullptr || actionId == VnObjectId{} ||
-        !owner.Valid() || directStepCount > kMaxActionSteps ||
+        !owner.Valid() || directStepCount > kHardActionStepCapacity ||
         rootRow == nullptr || rootRow->state != SlotState::Active ||
         (parent != parentRow->root && rootRow->cancellationEpoch != parentRow->rootCancellationEpoch) ||
         (parentRow->state != SlotState::Active &&

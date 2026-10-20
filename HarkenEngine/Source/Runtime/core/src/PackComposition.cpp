@@ -1876,6 +1876,14 @@ VnResult ValidateCompositeWorld(
         scratch.actions.size() > capacity.maxActionDefinitions) {
         return VN_PACK_RESIDENT_CAPACITY;
     }
+    std::uint64_t actionStepTotal = 0;
+    for (const auto& action : scratch.actions) {
+        if (action.stepCount > capacity.maxActionStepsPerDefinition ||
+            !CheckedCompositeCount(&actionStepTotal, action.stepCount,
+                capacity.maxActionStepsTotal)) {
+            return VN_PACK_RESIDENT_CAPACITY;
+        }
+    }
 
     for (ContainerProgramViewV3& container : scratch.containers) {
         if (container.transitionProgramIndex == UINT32_MAX) {

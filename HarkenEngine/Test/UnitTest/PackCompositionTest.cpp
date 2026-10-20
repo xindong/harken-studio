@@ -5903,6 +5903,94 @@ TEST(PackComposition, CompositeRowAggregateExactThenPlusOneKeepsPublication) {
     }
 }
 
+TEST(PackComposition, LargeActionStepAggregateRefusesBeforePublicationAndRecovers) {
+    constexpr std::uint32_t stepCount = 10000;
+    constexpr VnObjectId firstAction = harkentest::ObjectId(7100);
+    constexpr VnObjectId secondAction = harkentest::ObjectId(8100);
+    WorldCapacitySummaryV1 capacity;
+    capacity.maxActionDefinitions = 2;
+    capacity.maxActionStepsPerDefinition = stepCount + 1;
+    capacity.maxActionStepsTotal = stepCount * 2;
+    capacity.maxActionTriggerDepth = 1;
+    capacity.maxActionExpandedWork = stepCount + 1;
+    PackComposition composition(2);
+    const auto prepare = [&](std::uint64_t packId, VnPackHandle handle,
+                             VnObjectId actionId, VnObjectId variableId,
+                             std::uint32_t count, PackComposition::CandidateOwner* out) {
+        VariableDefinitionV1 variable;
+        variable.variableId = variableId;
+        variable.kind = VariableKindV1::Smooth;
+        variable.rangeMax = 1.0f;
+        std::vector<ActionStepProgramViewV1> steps(count);
+        for (std::uint32_t index = 0; index < count; ++index) {
+            auto& step = steps[index];
+            step.opcode = ActionOpcodeV1::SetVariable;
+            step.authoredEventIndex = index;
+            step.target.kind = ActionTargetKindV1::Variable;
+            step.target.stableId = variableId;
+            SetAbsoluteTime(&step.delay);
+            SetAbsoluteTime(&step.fade);
+            SetAbsoluteTime(&step.cooldown);
+        }
+        ActionProgramViewV1 action;
+        action.actionStableId = actionId;
+        action.steps = steps.data();
+        action.stepCount = count;
+        action.expandedStepOccurrenceCount = count;
+        action.expandedFiringCount = 1;
+        action.programSemanticFingerprint = ComputeActionProgramFingerprintV1(action);
+        ContainerWorldInstallViewV1 world;
+        world.identity.capabilityMask = kWorldCapabilityVariableDefinitions |
+            kWorldCapabilityActionDefinitions;
+        world.capacity = capacity;
+        world.variables = &variable;
+        world.variableCount = 1;
+        world.actions = &action;
+        world.actionCount = 1;
+        world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(world);
+        const auto bytes = BuildCanonicalPartitionPack(packId, 1, 1,
+            WrapWorldPartition(packId, 1, world, 0));
+        PackCanonicalImage image;
+        const auto parsed = ParsePackCanonicalImage(bytes.data(), bytes.size(), &image);
+        return parsed == VN_OK ? composition.PrepareCandidate(image, handle, out) : parsed;
+    };
+
+    PackComposition::CandidateOwner first, second;
+    ASSERT_EQ(VN_OK, prepare(22, VnPackHandle{1} << 32, firstAction,
+        harkentest::ObjectId(9100), stepCount, &first));
+    std::vector<PackComposition::CandidateOwner> initial;
+    initial.push_back(std::move(first));
+    ASSERT_EQ(VN_OK, composition.Commit(std::move(initial), nullptr, 0, 8, 0));
+    const auto accepted = composition.PublishedHandle();
+    const auto generation = composition.CompositeGeneration();
+    const auto* acceptedAction = composition.FindAction(firstAction);
+    ASSERT_NE(nullptr, acceptedAction);
+    ASSERT_EQ(stepCount, acceptedAction->stepCount);
+
+    ASSERT_EQ(VN_OK, prepare(33, VnPackHandle{2} << 32, secondAction,
+        harkentest::ObjectId(9200), stepCount + 1, &second));
+    std::vector<PackComposition::CandidateOwner> refused;
+    refused.push_back(PackComposition::Keep(accepted->owners[0]));
+    refused.push_back(std::move(second));
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY,
+        composition.Commit(std::move(refused), nullptr, 0, 8, 0));
+    EXPECT_EQ(accepted, composition.PublishedHandle());
+    EXPECT_EQ(generation, composition.CompositeGeneration());
+    EXPECT_EQ(acceptedAction, composition.FindAction(firstAction));
+    EXPECT_EQ(nullptr, composition.FindAction(secondAction));
+
+    ASSERT_EQ(VN_OK, prepare(33, VnPackHandle{2} << 32, secondAction,
+        harkentest::ObjectId(9200), stepCount, &second));
+    std::vector<PackComposition::CandidateOwner> recovered;
+    recovered.push_back(PackComposition::Keep(accepted->owners[0]));
+    recovered.push_back(std::move(second));
+    ASSERT_EQ(VN_OK, composition.Commit(std::move(recovered), nullptr, 0, 8, 0));
+    ASSERT_NE(nullptr, composition.FindAction(secondAction));
+    EXPECT_EQ(stepCount, composition.FindAction(secondAction)->stepCount);
+    EXPECT_EQ(stepCount - 1,
+        composition.FindAction(secondAction)->steps[stepCount - 1].authoredEventIndex);
+}
+
 TEST(PackComposition,
      CompositeActionDependencyDepth64PublishesAnd65KeepsPublication) {
     constexpr std::uint64_t kConsumerPack = 22;
