@@ -138,22 +138,25 @@ bool ValidateProjection(const ConditionalQueuePrepareRequest& request,
 } // namespace
 
 QueueCheckpointTable::QueueCheckpointTable(std::uint32_t capacity)
-    : rows_(capacity != 0 && capacity <= kMaxQueueCheckpointRowsHard
-                ? std::make_unique<Row[]>(capacity)
-                : nullptr),
-      capacity_(rows_ ? capacity : 0) {}
+    : capacity_(capacity != 0 && capacity <= kMaxQueueCheckpointRowsHard &&
+          rows_.Reserve(capacity) ? capacity : 0) {}
+
+bool QueueCheckpointTable::PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
+    return rows_.PrepareBacking(std::min(count, capacity_), 0,
+        [](const Row& row) noexcept { return !row.live && !row.resetReserved; },
+        [this](std::uint32_t slot) noexcept { return rows_.Emplace(slot); }, out);
+}
 
 QueueInstanceTable::~QueueInstanceTable() {
     assert(liveCatalogResetScopeMarker_ == 0);
-    for (std::uint32_t index = 0; index < originalConditionalCapacity_; ++index) {
-        const auto& original = originalConditionalRows_[index];
+    for (const auto& original : originalConditionalRows_) {
         assert(original.state == OriginalConditionalState::Free ||
             original.state == OriginalConditionalState::Quarantined);
         assert(original.loans == 0 && !original.parent.Valid());
     }
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        assert(rows_[slot].originalLifetimePinCount == 0);
-        assert(rows_[slot].originalLifetimeMarker == 0);
+    for (const auto& row : rows_) {
+        assert(row.originalLifetimePinCount == 0);
+        assert(row.originalLifetimeMarker == 0);
     }
 }
 
@@ -175,7 +178,7 @@ void QueueInstanceTable::OriginalLifetimePin::Release() noexcept {
 bool QueueInstanceTable::MatchesOriginalLifetimePin(
     const OriginalLifetimePin& original) const noexcept {
     if (original.owner_ != this || !original.token_.Valid() ||
-        original.token_.slot >= capacity_ || original.marker_ == 0) return false;
+        !rows_.IsConstructed(original.token_.slot) || original.marker_ == 0) return false;
     const auto& row = rows_[original.token_.slot];
     const auto state = row.slotState.load(std::memory_order_acquire);
     return row.generation == original.token_.generation &&
@@ -228,9 +231,7 @@ void QueueInstanceTable::ConsumeOriginalLifetimePinAfterReclaim(
 
 std::uint32_t QueueCheckpointTable::LiveCount() const noexcept {
     std::uint32_t count = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        count += rows_[slot].live ? 1u : 0u;
-    }
+    for (const auto& row : rows_) count += row.live ? 1u : 0u;
     return count;
 }
 
@@ -241,15 +242,25 @@ bool QueueCheckpointTable::Store(
         !image.replayCurrent) {
         return false;
     }
-    Row* freeRow = nullptr;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        Row& row = rows_[slot];
+    for (auto& row : rows_) {
         if (row.live && SameCheckpointKey(row.key, key)) {
             if (row.resetReserved) return false;
             row.image = image;
             return true;
         }
-        if (!row.live && freeRow == nullptr) freeRow = &row;
+    }
+    Row* freeRow = nullptr;
+    const auto available = [](const Row& row) noexcept { return !row.live && !row.resetReserved; };
+    const auto construct = [this](std::uint32_t slot) noexcept { return rows_.Emplace(slot); };
+    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+        if (!rows_.IsConstructed(slot)) {
+            if (rows_.PreparedUseActive()) continue;
+            if (!construct(slot)) return false;
+        }
+        if (!available(rows_[slot])) continue;
+        if (!rows_.ProtectBackingForAcquire(slot, available, construct)) return false;
+        freeRow = &rows_[slot];
+        break;
     }
     if (freeRow == nullptr) return false;
     freeRow->key = key;
@@ -262,8 +273,7 @@ bool QueueCheckpointTable::Load(
     const QueueCheckpointKey& key,
     QueueCheckpointImage* out) const noexcept {
     if (out == nullptr || !ValidCheckpointKey(key)) return false;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        const Row& row = rows_[slot];
+    for (const auto& row : rows_) {
         if (row.live && SameCheckpointKey(row.key, key)) {
             *out = row.image;
             return true;
@@ -275,8 +285,7 @@ bool QueueCheckpointTable::Load(
 bool QueueCheckpointTable::Clear(
     const QueueCheckpointKey& key) noexcept {
     if (!ValidCheckpointKey(key)) return false;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        Row& row = rows_[slot];
+    for (auto& row : rows_) {
         if (row.live && SameCheckpointKey(row.key, key)) {
             if (row.resetReserved) return false;
             row = {};
@@ -292,13 +301,12 @@ QueueResetStatusV1 QueueCheckpointTable::PrepareReset(
     if (out == nullptr || out->Valid() || !ValidCheckpointKey(key)) {
         return QueueResetStatusV1::InvalidInput;
     }
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        Row& row = rows_[slot];
+    for (auto& row : rows_) {
         if (!row.live || !SameCheckpointKey(row.key, key)) continue;
         if (row.resetReserved) return QueueResetStatusV1::Backpressure;
         row.resetReserved = true;
         out->owner_ = this;
-        out->slot_ = slot;
+        out->slot_ = rows_.IndexOf(row);
         out->prepared_ = true;
         return QueueResetStatusV1::Ok;
     }
@@ -321,7 +329,7 @@ QueueResetStatusV1 QueueCheckpointTable::CommitPreparedReset(
         prepared->idempotent_ = false;
         return QueueResetStatusV1::Ok;
     }
-    if (prepared->slot_ >= capacity_) return QueueResetStatusV1::NotFound;
+    if (!rows_.IsConstructed(prepared->slot_)) return QueueResetStatusV1::NotFound;
     Row& row = rows_[prepared->slot_];
     if (!row.live || !row.resetReserved) {
         return QueueResetStatusV1::NotFound;
@@ -345,7 +353,7 @@ QueueResetStatusV1 QueueCheckpointTable::CancelPreparedReset(
         prepared->idempotent_ = false;
         return QueueResetStatusV1::Ok;
     }
-    if (prepared->slot_ >= capacity_) return QueueResetStatusV1::NotFound;
+    if (!rows_.IsConstructed(prepared->slot_)) return QueueResetStatusV1::NotFound;
     Row& row = rows_[prepared->slot_];
     if (!row.live || !row.resetReserved) {
         return QueueResetStatusV1::NotFound;
@@ -359,33 +367,62 @@ QueueResetStatusV1 QueueCheckpointTable::CancelPreparedReset(
 
 void QueueCheckpointTable::ClearWorld(WorldGeneration world) noexcept {
     if (world == 0) return;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        if (rows_[slot].live && rows_[slot].key.world == world) {
-            rows_[slot] = {};
-        }
+    for (auto& row : rows_) {
+        if (row.live && row.key.world == world) row = {};
     }
 }
 
 void QueueCheckpointTable::ClearAll() noexcept {
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        rows_[slot] = {};
-    }
+    for (auto& row : rows_) row = {};
 }
 
 QueueInstanceTable::QueueInstanceTable(std::uint32_t capacity,
     std::uint32_t originalConditionalCapacity)
-    : rows_(capacity != 0 && capacity <= kMaxQueueInstancesHard
-                ? std::make_unique<Row[]>(capacity)
-                : nullptr),
-      originalConditionalRows_(rows_ && originalConditionalCapacity != 0 &&
-              originalConditionalCapacity <= kMaxQueueInstancesHard
-          ? std::make_unique<OriginalConditionalRow[]>(originalConditionalCapacity)
-          : nullptr),
-      originalConditionalCapacity_(originalConditionalRows_ ? originalConditionalCapacity : 0),
-      capacity_(rows_ ? capacity : 0) {}
+    : capacity_(capacity != 0 && capacity <= kMaxQueueInstancesHard &&
+          rows_.Reserve(capacity) ? capacity : 0) {
+    if (capacity_ != 0 && originalConditionalCapacity != 0 &&
+        originalConditionalCapacity <= kMaxQueueInstancesHard &&
+        originalConditionalRows_.Reserve(originalConditionalCapacity))
+        originalConditionalCapacity_ = originalConditionalCapacity;
+}
 
 bool QueueInstanceTable::Valid() const noexcept {
-    return rows_ != nullptr && capacity_ != 0;
+    return capacity_ != 0;
+}
+
+bool QueueInstanceTable::AttachRowStoragePreparation(void* context,
+    bool (*prepare)(void*, std::uint32_t) noexcept) noexcept {
+    if (context == nullptr || prepare == nullptr || rowStorageContext_ != nullptr ||
+        rows_.ConstructedCount() != 0) return false;
+    rowStorageContext_ = context;
+    prepareRowStorage_ = prepare;
+    return true;
+}
+
+bool QueueInstanceTable::PrepareInstanceSlot(std::uint32_t slot) noexcept {
+    if (slot >= capacity_) return false;
+    if (rows_.IsConstructed(slot)) return true;
+    if (memguard::IsAudioTagged() || rows_.PreparedUseActive()) return false;
+    return (prepareRowStorage_ == nullptr || prepareRowStorage_(rowStorageContext_, slot + 1u)) &&
+        rows_.Emplace(slot);
+}
+
+bool QueueInstanceTable::PrepareConditionalSlot(std::uint32_t slot) noexcept {
+    return originalConditionalRows_.Emplace(slot);
+}
+
+bool QueueInstanceTable::PrepareBacking(std::uint32_t instances, std::uint32_t conditionals,
+    BackingPreparation* out) noexcept {
+    if (out == nullptr || out->instances.Valid() || out->conditionals.Valid()) return false;
+    BackingPreparation candidate;
+    if (!rows_.PrepareBacking(std::min(instances, capacity_), 0,
+            [](const Row& row) noexcept { return row.slotState.load(std::memory_order_acquire) == SlotState::Free; },
+            [this](std::uint32_t slot) noexcept { return PrepareInstanceSlot(slot); }, &candidate.instances) ||
+        !originalConditionalRows_.PrepareBacking(std::min(conditionals, originalConditionalCapacity_), 0,
+            [](const OriginalConditionalRow& row) noexcept { return row.state == OriginalConditionalState::Free; },
+            [this](std::uint32_t slot) noexcept { return PrepareConditionalSlot(slot); }, &candidate.conditionals)) return false;
+    *out = std::move(candidate);
+    return true;
 }
 
 bool QueueInstanceTable::PreparedCatalogResetScope::Valid() const noexcept {
@@ -417,11 +454,11 @@ QueueResetStatusV1 QueueInstanceTable::PrepareNativeConditionalCatalogResetScope
 }
 
 bool QueueInstanceTable::HasCurrentNativeConditional(const Row& row) const noexcept {
-    if (row.originalConditionalRow >= originalConditionalCapacity_) return false;
+    if (!originalConditionalRows_.IsConstructed(row.originalConditionalRow)) return false;
     const auto& original = originalConditionalRows_[row.originalConditionalRow];
     if (original.state != OriginalConditionalState::Committed || original.selectedFutureConsumed ||
         original.marker != row.originalConditionalMarker ||
-        original.queue.slot >= capacity_ || &rows_[original.queue.slot] != &row ||
+        !rows_.IsConstructed(original.queue.slot) || &rows_[original.queue.slot] != &row ||
         original.queue.generation != row.generation || !original.parent.Valid() ||
         (original.clockState != OriginalConditionalClockState::Unbound &&
          original.clockState != OriginalConditionalClockState::Bound) ||
@@ -462,8 +499,7 @@ QueueResetStatusV1 QueueInstanceTable::ExtendCatalogResetScope(
         target.containerStableId == VnObjectId{} || target.programSemanticFingerprint == 0 ||
         !ValidEmitterIdentity(target.emitterSlot, target.emitterGeneration))
         return QueueResetStatusV1::InvalidInput;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        Row& row = rows_[slot];
+    for (auto& row : rows_) {
         const auto state = row.slotState.load(std::memory_order_acquire);
         if ((state != SlotState::Live && state != SlotState::Initializing) ||
             !SameResetTarget(row, target) || row.catalogResetScopeMarker == original.marker_ ||
@@ -483,6 +519,7 @@ bool QueueInstanceTable::CaptureCatalogResetScopeQueue(
     if (!MatchesCatalogResetScope(original) || index >= original.matchedCount_ ||
         outToken == nullptr || outSnapshot == nullptr) return false;
     for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+        if (!rows_.IsConstructed(slot)) continue;
         const Row& row = rows_[slot];
         if (row.catalogResetScopeMarker != original.marker_) continue;
         if (index-- != 0) continue;
@@ -501,8 +538,7 @@ void QueueInstanceTable::ReleaseCatalogResetScope(
     PreparedCatalogResetScope& original) noexcept {
     assert(MatchesCatalogResetScope(original));
     if (!MatchesCatalogResetScope(original)) return;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        Row& row = rows_[slot];
+    for (auto& row : rows_) {
         if (row.catalogResetScopeMarker != original.marker_) continue;
         const auto state = row.slotState.load(std::memory_order_acquire);
         assert(row.generation == row.catalogResetScopeGeneration &&
@@ -516,8 +552,8 @@ void QueueInstanceTable::ReleaseCatalogResetScope(
 
 std::uint32_t QueueInstanceTable::LiveCount() const noexcept {
     std::uint32_t count = 0;
-    for (std::uint32_t i = 0; i < capacity_; ++i) {
-        if (rows_[i].slotState.load(std::memory_order_acquire) ==
+    for (const auto& row : rows_) {
+        if (row.slotState.load(std::memory_order_acquire) ==
             SlotState::Live) {
             ++count;
         }
@@ -527,8 +563,8 @@ std::uint32_t QueueInstanceTable::LiveCount() const noexcept {
 
 std::uint32_t QueueInstanceTable::QuarantinedCount() const noexcept {
     std::uint32_t count = 0;
-    for (std::uint32_t i = 0; i < capacity_; ++i) {
-        if (rows_[i].slotState.load(std::memory_order_acquire) ==
+    for (const auto& row : rows_) {
+        if (row.slotState.load(std::memory_order_acquire) ==
             SlotState::Quarantined) {
             ++count;
         }
@@ -538,7 +574,7 @@ std::uint32_t QueueInstanceTable::QuarantinedCount() const noexcept {
 
 QueueInstanceTable::Row* QueueInstanceTable::Resolve(
     QueueInstanceToken token) noexcept {
-    if (!token.Valid() || token.slot >= capacity_) return nullptr;
+    if (!token.Valid() || !rows_.IsConstructed(token.slot)) return nullptr;
     Row& row = rows_[token.slot];
     if (row.slotState.load(std::memory_order_acquire) != SlotState::Live ||
         row.generation != token.generation) {
@@ -549,7 +585,7 @@ QueueInstanceTable::Row* QueueInstanceTable::Resolve(
 
 const QueueInstanceTable::Row* QueueInstanceTable::Resolve(
     QueueInstanceToken token) const noexcept {
-    if (!token.Valid() || token.slot >= capacity_) return nullptr;
+    if (!token.Valid() || !rows_.IsConstructed(token.slot)) return nullptr;
     const Row& row = rows_[token.slot];
     if (row.slotState.load(std::memory_order_acquire) != SlotState::Live ||
         row.generation != token.generation) {
@@ -602,7 +638,7 @@ bool QueueInstanceTable::HasFrontierReaders(const Row& row) noexcept {
 
 bool QueueInstanceTable::BindFrontierInitial(QueueInstanceToken token,
     const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool) noexcept {
-    if (!token.Valid() || token.slot >= capacity_ || !binding.Valid() || !binding.queueInitial.Valid() ||
+    if (!token.Valid() || !rows_.IsConstructed(token.slot) || !binding.Valid() || !binding.queueInitial.Valid() ||
         binding.variableSide.Valid() || binding.queueInitial.slot != token.slot ||
         binding.queueInitial.generation != token.generation ||
         !pool.PrivatePlan03GroupBindable(binding.operation.group)) return false;
@@ -1148,6 +1184,7 @@ void QueueInstanceTable::ReleaseResetReservations(
     const std::uint32_t end =
         slotEndExclusive < capacity_ ? slotEndExclusive : capacity_;
     for (std::uint32_t slot = 0; slot < end; ++slot) {
+        if (!rows_.IsConstructed(slot)) continue;
         Row& row = rows_[slot];
         if (row.slotState.load(std::memory_order_acquire) ==
                 SlotState::Live &&
@@ -1200,8 +1237,18 @@ bool QueueInstanceTable::AcquireInternal(
         request.resetInitial.version == 0 ? request.initial
                                           : request.resetInitial;
     if (!ValidEffectiveState(resetInitial, request.childCount)) return false;
+    const auto available = [](const Row& row) noexcept {
+        return row.slotState.load(std::memory_order_acquire) == SlotState::Free;
+    };
+    const auto construct = [this](std::uint32_t slot) noexcept { return PrepareInstanceSlot(slot); };
     for (std::uint32_t i = 0; i < capacity_; ++i) {
+        if (!rows_.IsConstructed(i)) {
+            if (rows_.PreparedUseActive()) continue;
+            if (!construct(i)) return false;
+        }
         Row& row = rows_[i];
+        if (!available(row)) continue;
+        if (!rows_.ProtectBackingForAcquire(i, available, construct)) return false;
         SlotState expected = SlotState::Free;
         if (!row.slotState.compare_exchange_strong(
                 expected, SlotState::Initializing, std::memory_order_acq_rel,
@@ -1227,7 +1274,7 @@ bool QueueInstanceTable::AcquireInternal(
         row.emitterSlot = request.emitterSlot;
         row.emitterGeneration = request.emitterGeneration;
         row.resetInitial = resetInitial;
-        row.resetNext = {};
+        row.resetNextVersion = 0;
         row.resetReserved.store(false, std::memory_order_relaxed);
         row.resetPending.store(false, std::memory_order_relaxed);
         row.resetExecuteFrame = 0;
@@ -1281,7 +1328,7 @@ bool QueueInstanceTable::CommitPreparedAcquire(
     QueueInstanceToken* outToken) noexcept {
     if (prepared == nullptr || prepared->owner_ != this ||
         !prepared->prepared_ || outToken == nullptr ||
-        !prepared->token_.Valid() || prepared->token_.slot >= capacity_) {
+        !prepared->token_.Valid() || !rows_.IsConstructed(prepared->token_.slot)) {
         return false;
     }
     Row& row = rows_[prepared->token_.slot];
@@ -1306,7 +1353,7 @@ bool QueueInstanceTable::CancelPreparedAcquire(
     PreparedQueueInstanceV1* prepared, OriginalLifetimePin* originalBaseline) noexcept {
     if (prepared == nullptr || prepared->owner_ != this ||
         !prepared->prepared_ || !prepared->token_.Valid() ||
-        prepared->token_.slot >= capacity_) {
+        !rows_.IsConstructed(prepared->token_.slot)) {
         return false;
     }
     Row& row = rows_[prepared->token_.slot];
@@ -1335,7 +1382,7 @@ bool QueueInstanceTable::CancelPreparedAcquire(
     row.programSemanticFingerprint = 0;
     row.childCount = 0;
     row.resetInitial = {};
-    row.resetNext = {};
+    row.resetNextVersion = 0;
     row.mirrorSequence.store(0, std::memory_order_relaxed);
     row.mirrorVersion.store(0, std::memory_order_relaxed);
     row.mirrorCursor.store(0, std::memory_order_relaxed);
@@ -1552,7 +1599,7 @@ void QueueInstanceTable::ConsumeResetIntent(Row& row, std::uint64_t intent) noex
     if (intent == 0 || row.resetIntentGeneration != intent) return;
     row.resetPending.store(false, std::memory_order_release);
     row.resetExecuteFrame = 0;
-    row.resetNext = {};
+    row.resetNextVersion = 0;
     row.resetIntentGeneration = 0;
     row.resetOrder = {};
 }
@@ -1614,6 +1661,7 @@ QueueResetStatusV1 QueueInstanceTable::PrepareResetInternal(
     std::uint32_t matched = 0;
     std::uint32_t reserved = 0;
     for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+        if (!rows_.IsConstructed(slot)) continue;
         Row& row = rows_[slot];
         if (row.slotState.load(std::memory_order_acquire) !=
                 SlotState::Live ||
@@ -1683,14 +1731,13 @@ QueueResetStatusV1 QueueInstanceTable::CommitPreparedReset(
     if (prepared->nativeScopeMarker_ != 0 &&
         prepared->nativeScopeMarker_ != liveCatalogResetScopeMarker_)
         return QueueResetStatusV1::InvalidInput;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        const Row& row = rows_[slot];
+    for (const auto& row : rows_) {
         if (prepared->nativeScopeMarker_ != 0 &&
             row.catalogResetScopeMarker == prepared->nativeScopeMarker_ && SameResetTarget(row, prepared->target_)) {
             // A remainder can commit only after the real shared winner selected
             // every excluded native row under this exact authored Reset order.
             if (row.generation != row.catalogResetScopeGeneration ||
-                row.originalConditionalRow >= originalConditionalCapacity_ ||
+                !originalConditionalRows_.IsConstructed(row.originalConditionalRow) ||
                 !originalConditionalRows_[row.originalConditionalRow].selectedFutureConsumed ||
                 row.resetIntentGeneration == 0 || row.resetOrder.sequence != sequence ||
                 row.resetOrder.executeFrame != prepared->order_.executeFrame ||
@@ -1709,8 +1756,7 @@ QueueResetStatusV1 QueueInstanceTable::CommitPreparedReset(
     if (matchedReservations != prepared->reservedCount_)
         return QueueResetStatusV1::RuntimeRecreateRequired;
     std::uint32_t committed = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        Row& row = rows_[slot];
+    for (auto& row : rows_) {
         if (row.slotState.load(std::memory_order_acquire) !=
                 SlotState::Live ||
             !SameResetTarget(row, prepared->target_) ||
@@ -1720,12 +1766,12 @@ QueueResetStatusV1 QueueInstanceTable::CommitPreparedReset(
         }
         EffectiveQueueState current{};
         (void)LoadMirror(row, &current);
-        (void)ProjectReset(row, current, &row.resetNext);
+        row.resetNextVersion = current.version + 1u;
         row.resetIntentGeneration = ++row.resetIntentCounter;
         row.resetOrder = prepared->order_;
         row.resetOrder.sequence = sequence;
         row.monitorReset = {cause, row.resetOrder, row.resetIntentGeneration, current.version,
-            row.resetNext.version, row.pendingConsumesReset.load(std::memory_order_acquire) &&
+            row.resetNextVersion, row.pendingConsumesReset.load(std::memory_order_acquire) &&
                 row.pendingResetIntent == row.resetIntentGeneration
                 ? MonitorQueueResetObservation::Stage::Selected : MonitorQueueResetObservation::Stage::Intent};
         row.resetExecuteFrame = row.resetOrder.executeFrame;
@@ -1746,11 +1792,7 @@ QueueResetStatusV1 QueueInstanceTable::CommitPreparedReset(
 
 void QueueInstanceTable::ApplyDue(std::uint64_t now) noexcept {
     logicNow_ = now;
-    if (rows_ == nullptr) {
-        return;
-    }
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        Row& row = rows_[slot];
+    for (auto& row : rows_) {
         if (row.slotState.load(std::memory_order_acquire) != SlotState::Live ||
             row.signalReservation != SignalReservation::None ||
             row.resetIntentGeneration == 0 || row.resetExecuteFrame > now ||
@@ -1769,8 +1811,7 @@ QueueResetStatusV1 QueueInstanceTable::CancelPreparedReset(
         return QueueResetStatusV1::NotFound;
     }
     std::uint32_t cancelled = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
-        Row& row = rows_[slot];
+    for (auto& row : rows_) {
         if (row.slotState.load(std::memory_order_acquire) !=
                 SlotState::Live ||
             !SameResetTarget(row, prepared->target_) ||
@@ -2003,7 +2044,7 @@ bool QueueInstanceTable::PrepareOriginalConditionalLaneClock(
 bool QueueInstanceTable::MatchesOriginalConditionalFutureReservation(
     const OriginalConditionalFutureReservation& cap) const noexcept {
     if (cap.owner_ != this || cap.marker_ == 0 || cap.generation_ == 0 ||
-        cap.row_ >= originalConditionalCapacity_) return false;
+        !originalConditionalRows_.IsConstructed(cap.row_)) return false;
     const auto& original = originalConditionalRows_[cap.row_];
     return original.state != OriginalConditionalState::Free &&
         original.state != OriginalConditionalState::Quarantined &&
@@ -2152,7 +2193,7 @@ bool QueueInstanceTable::MatchesPreparedOriginalConditional(
     if (prepared.originalRow_ == UINT32_MAX)
         return prepared.originalMarker_ == 0 && row.originalConditionalRow == UINT32_MAX &&
             row.originalConditionalMarker == 0;
-    if (prepared.originalRow_ >= originalConditionalCapacity_ ||
+    if (!originalConditionalRows_.IsConstructed(prepared.originalRow_) ||
         prepared.originalMarker_ == 0 || row.originalConditionalRow != prepared.originalRow_ ||
         row.originalConditionalMarker != prepared.originalMarker_) return false;
     const auto& original = originalConditionalRows_[prepared.originalRow_];
@@ -2167,8 +2208,11 @@ bool QueueInstanceTable::MatchesPreparedOriginalConditional(
         SameOccurrence(original.current, row.pendingExpectedCurrent) &&
         SameOccurrence(original.successor, row.pendingSuccessor) &&
         SameCompletionOwner(original.completionOwner, row.pendingCompletionOwner) &&
-        SameEffectiveState(original.next, row.pendingNext) &&
-        SameEffectiveState(original.first, row.pendingFirst) &&
+        original.next.version == row.pendingNext.version &&
+        original.currentState.version != UINT64_MAX &&
+        original.first.version == original.currentState.version + 1u &&
+        original.next.version >= original.first.version &&
+        original.next.version - original.first.version + 1u == original.stepCount &&
         original.stepCount == row.pendingStepCount &&
         original.logicalBoundary == row.pendingCompletionIsLogicalBoundary &&
         original.logicalFloor == row.pendingCompletionHasLogicalFloor &&
@@ -2183,9 +2227,8 @@ bool QueueInstanceTable::RegisterOriginalConditionalOwner(void* context,
     OriginalConditionalAssociationEnding associationEnding) noexcept {
     if (context == nullptr || resolver == nullptr || associationEnding == nullptr ||
         originalConditionalOwnerContext_ != nullptr) return false;
-    for (std::uint32_t index = 0; index < originalConditionalCapacity_; ++index)
-        if (originalConditionalRows_[index].state != OriginalConditionalState::Free ||
-            originalConditionalRows_[index].loans != 0) return false;
+    for (const auto& original : originalConditionalRows_)
+        if (original.state != OriginalConditionalState::Free || original.loans != 0) return false;
     originalConditionalOwnerContext_ = context;
     originalConditionalBaselineResolver_ = resolver;
     originalConditionalAssociationEnding_ = associationEnding;
@@ -2267,15 +2310,14 @@ void QueueInstanceTable::EndOriginalConditionalFuture(Row& row) noexcept {
 void QueueInstanceTable::EndOriginalConditionalAssociationsAfterQuiescence() noexcept {
     // Only owning Engine teardown enters after actual callback quiescence. This
     // returns genuine retained native associations, never foreign loan counts.
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot)
-        if (rows_[slot].originalConditionalRow != UINT32_MAX)
-            EndOriginalConditionalFuture(rows_[slot]);
+    for (auto& row : rows_)
+        if (row.originalConditionalRow != UINT32_MAX)
+            EndOriginalConditionalFuture(row);
 }
 
 void QueueInstanceTable::EndOriginalConditionalsForQuiescentOwnerTeardown() noexcept {
     EndOriginalConditionalAssociationsAfterQuiescence();
-    for (std::uint32_t index = 0; index < originalConditionalCapacity_; ++index) {
-        auto& original = originalConditionalRows_[index];
+    for (auto& original : originalConditionalRows_) {
         assert(original.loans == 0);
         ReclaimOriginalConditionalIfUnowned(original);
         assert(original.clockPool == nullptr);
@@ -2346,11 +2388,20 @@ bool QueueInstanceTable::PrepareConditionalInternal(
         if (outOriginal->owner_ != nullptr ||
             nextOriginalConditionalFactoryMarker_ == UINT64_MAX ||
             !IsOriginalLifetimePinFor(*parentOriginal, token)) return false;
-        for (std::uint32_t index = 0; index < originalConditionalCapacity_; ++index)
-            if (originalConditionalRows_[index].state == OriginalConditionalState::Free) {
-                originalIndex = index;
-                break;
+        const auto available = [](const OriginalConditionalRow& original) noexcept {
+            return original.state == OriginalConditionalState::Free;
+        };
+        const auto construct = [this](std::uint32_t slot) noexcept { return PrepareConditionalSlot(slot); };
+        for (std::uint32_t index = 0; index < originalConditionalCapacity_; ++index) {
+            if (!originalConditionalRows_.IsConstructed(index)) {
+                if (originalConditionalRows_.PreparedUseActive()) continue;
+                if (!construct(index)) return false;
             }
+            if (!available(originalConditionalRows_[index])) continue;
+            if (!originalConditionalRows_.ProtectBackingForAcquire(index, available, construct)) return false;
+            originalIndex = index;
+            break;
+        }
         if (originalIndex == UINT32_MAX || !parentOriginal->Borrow(&parentLoan)) return false;
     }
     const CompletionOwnerRef owner =
@@ -2405,7 +2456,7 @@ bool QueueInstanceTable::PrepareConditionalInternal(
          1u)) {
         return false;
     }
-    if (!token.Valid() || token.slot >= capacity_) {
+    if (!token.Valid() || !rows_.IsConstructed(token.slot)) {
         return false;
     }
     Row& row = rows_[token.slot];
@@ -2456,7 +2507,6 @@ bool QueueInstanceTable::PrepareConditionalInternal(
     row.pendingRetiredSource = request.retiredSource;
     row.pendingNext = request.next;
     row.nextStateOwner = NextStateOwner::RealConditional;
-    row.pendingFirst = first;
     row.pendingStepCount = stepCount;
     row.pendingActivation.store(ConditionalQueueActivation::Waiting,
                                 std::memory_order_relaxed);
@@ -2486,8 +2536,8 @@ bool QueueInstanceTable::PrepareConditionalInternal(
         original.logicalCompletionFrame = row.pendingLogicalCompletionFrame;
         original.retiredSource = row.pendingRetiredSource;
         original.currentState = current;
-        original.next = row.pendingNext;
-        original.first = row.pendingFirst;
+        original.next = {row.pendingNext.version};
+        original.first = {first.version};
         original.stepCount = row.pendingStepCount;
         original.resetIntent = row.pendingResetIntent;
         original.consumesReset = consumesReset;
@@ -2518,7 +2568,7 @@ bool QueueInstanceTable::CommitPreparedConditional(
     if (prepared == nullptr || prepared->owner_ != this ||
         !prepared->prepared_ || outVersion == nullptr ||
         !prepared->queue_.Valid() || !prepared->version_.Valid() ||
-        prepared->queue_.slot >= capacity_) {
+        !rows_.IsConstructed(prepared->queue_.slot)) {
         return false;
     }
     Row& row = rows_[prepared->queue_.slot];
@@ -2557,7 +2607,7 @@ bool QueueInstanceTable::ProvePrivateConditionalTimingBeforePublication(
     std::uint64_t newLogicalCompletionFrame,
     PrivateConditionalTimingProof* out) noexcept {
     if (out == nullptr || out->Valid() || !queue.Valid() ||
-        queue.slot >= capacity_ || !version.Valid() ||
+        !rows_.IsConstructed(queue.slot) || !version.Valid() ||
         !decision.Valid() || currentOccurrence.generation == 0) return false;
     Row& row = rows_[queue.slot];
     if (row.generation != queue.generation ||
@@ -2668,7 +2718,7 @@ bool QueueInstanceTable::CancelPreparedConditional(
     PreparedQueueConditionalV1* prepared) noexcept {
     if (prepared == nullptr || prepared->owner_ != this ||
         !prepared->prepared_ || !prepared->queue_.Valid() ||
-        prepared->queue_.slot >= capacity_) {
+        !rows_.IsConstructed(prepared->queue_.slot)) {
         return false;
     }
     Row& row = rows_[prepared->queue_.slot];
@@ -2894,7 +2944,6 @@ QueueInstanceTable::CommitPreparedConditionalReplacement(
     row->pendingLogicalCompletionFrame = replacement.logicalCompletionFrame;
     row->pendingRetiredSource = replacement.retiredSource;
     row->pendingNext = replacement.next;
-    row->pendingFirst = prepared->projectionFirst_;
     row->pendingStepCount = prepared->projectionCount_;
     row->pendingVersion.store(replacement.next.version, std::memory_order_release);
     row->pendingConsumesReset.store(true, std::memory_order_release);
@@ -3204,7 +3253,7 @@ bool QueueInstanceTable::RollbackInitializingConditional(
         !preparedInstance.token_.Valid() || !expectedQueue.Valid() ||
         preparedInstance.token_.slot != expectedQueue.slot ||
         preparedInstance.token_.generation != expectedQueue.generation ||
-        expectedQueue.slot >= capacity_ || !expectedVersion.Valid() ||
+        !rows_.IsConstructed(expectedQueue.slot) || !expectedVersion.Valid() ||
         !expectedDecision.Valid()) return false;
     Row& row = rows_[expectedQueue.slot];
     if (row.generation != expectedQueue.generation ||

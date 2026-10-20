@@ -33,6 +33,7 @@ private:
 // batch consumes a prepared Queue selection after its shared native winner.
 // No method publishes a command head or derives firstS from an observation.
 class PrivateSelectedQueueFutureSpanPool {
+    struct Row;
 public:
     enum class Phase : std::uint8_t { Free, Prepared, FrozenUnbound, Closed, Quarantined };
     struct Observation {
@@ -213,15 +214,31 @@ public:
         QueueInstanceTable::FrontierConditionalSlice slice_ = QueueInstanceTable::FrontierConditionalSlice::Activation;
     };
 
+    using BackingPreparation = StableSlotStorage<Row>::Preparation;
+    using BackingUse = StableSlotStorage<Row>::PreparedUse;
+    bool PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
+        return rows_.PrepareBacking(count < capacity_ ? count : capacity_, 0,
+            [](const Row& row) noexcept { return row.phase == Phase::Free; },
+            [this](std::uint32_t slot) noexcept { return rows_.Emplace(slot); }, out);
+    }
+    std::uint32_t Capacity() const noexcept { return capacity_; }
+    std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
+    std::size_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
+    std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
+    std::size_t RowDirectoryBytes() const noexcept { return rows_.DirectoryBytes(); }
+    void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
+        rows_.SetCommitPageLimitForTests(pages);
+    }
+
     explicit PrivateSelectedQueueFutureSpanPool(std::uint32_t capacity)
-        : rows_(capacity == 0 ? nullptr : new Row[capacity]), capacity_(capacity) {}
+        : capacity_(capacity != 0 && rows_.Reserve(capacity) ? capacity : 0) {}
     PrivateSelectedQueueFutureSpanPool(const PrivateSelectedQueueFutureSpanPool&) = delete;
     PrivateSelectedQueueFutureSpanPool& operator=(const PrivateSelectedQueueFutureSpanPool&) = delete;
     PrivateSelectedQueueFutureSpanPool(PrivateSelectedQueueFutureSpanPool&&) = delete;
     PrivateSelectedQueueFutureSpanPool& operator=(PrivateSelectedQueueFutureSpanPool&&) = delete;
     ~PrivateSelectedQueueFutureSpanPool() {
-        for (std::uint32_t i = 0; i < capacity_; ++i)
-            assert(rows_[i].phase == Phase::Free || rows_[i].phase == Phase::Quarantined);
+        for (const auto& row : rows_)
+            assert(row.phase == Phase::Free || row.phase == Phase::Quarantined);
     }
 
     // Only this retained factory can associate a plain Stop control with its
@@ -453,8 +470,18 @@ private:
                     newMember.provisionalAnchorFrame_, expected, *newMember.armTable_)) return false;
         }
         std::uint32_t slot = UINT32_MAX;
-        for (std::uint32_t i = 0; i < capacity_; ++i)
-            if (rows_[i].phase == Phase::Free) { slot = i; break; }
+        const auto available = [](const Row& row) noexcept { return row.phase == Phase::Free; };
+        const auto construct = [this](std::uint32_t index) noexcept { return rows_.Emplace(index); };
+        for (std::uint32_t i = 0; i < capacity_; ++i) {
+            if (!rows_.IsConstructed(i)) {
+                if (rows_.PreparedUseActive()) continue;
+                if (!construct(i)) return false;
+            }
+            if (!available(rows_[i])) continue;
+            if (!rows_.ProtectBackingForAcquire(i, available, construct)) return false;
+            slot = i;
+            break;
+        }
         if (slot == UINT32_MAX) return false;
         Row provisional;
         if (!oldFuture.Borrow(&provisional.oldFuture) || !oldClock.Borrow(&provisional.oldClock) ||
@@ -854,9 +881,8 @@ private:
         live.pendingLogicalCompletionFrame = body.logicalFloor ? selected.completionFloor : 0;
         live.pendingRetiredSource = {};
         live.pendingNext = body.next;
-        live.pendingFirst = body.next;
         live.pendingStepCount = 1;
-        live.resetNext = body.next;
+        live.resetNextVersion = body.next.version;
         live.resetOrder = order;
         live.resetExecuteFrame = order.executeFrame;
         live.resetIntentGeneration = ++live.resetIntentCounter;
@@ -1023,7 +1049,7 @@ private:
         return true;
     }
     template<class Cap> bool Matches(const Cap& cap) const noexcept {
-        if (cap.pool_ != this || cap.slot_ >= capacity_ || cap.marker_ == 0) return false;
+        if (cap.pool_ != this || !rows_.IsConstructed(cap.slot_) || cap.marker_ == 0) return false;
         const auto& row = rows_[cap.slot_];
         return row.phase != Phase::Free && row.phase != Phase::Quarantined &&
             row.generation == cap.generation_ && row.marker == cap.marker_ && row.loans != 0;
@@ -1111,7 +1137,7 @@ private:
         if (row.generation == UINT32_MAX) row.phase = Phase::Quarantined;
         else { ++row.generation; row.phase = Phase::Free; }
     }
-    std::unique_ptr<Row[]> rows_;
+    StableSlotStorage<Row> rows_;
     std::uint32_t capacity_ = 0;
     std::uint64_t nextMarker_ = 0;
 };

@@ -60,6 +60,7 @@ struct QueueInstanceTableTestAccess {
     }
     static void SetFreeOriginalConditionalGenerationMax(
         QueueInstanceTable& table, std::uint32_t index) {
+        ASSERT_TRUE(table.PrepareConditionalSlot(index));
         auto& row = table.originalConditionalRows_[index];
         ASSERT_EQ(QueueInstanceTable::OriginalConditionalState::Free, row.state);
         ASSERT_EQ(0u, row.loans);
@@ -81,6 +82,7 @@ struct QueueInstanceTableTestAccess {
         table.rows_[token.slot].originalLifetimePinCount = count;
     }
     static void SetFreeNativeGenerationToMax(QueueInstanceTable& table) {
+        ASSERT_TRUE(table.PrepareInstanceSlot(0));
         ASSERT_EQ(QueueInstanceTable::SlotState::Free, table.rows_[0].slotState.load());
         table.rows_[0].generation = UINT32_MAX;
     }
@@ -111,7 +113,7 @@ struct QueueInstanceTableTestAccess {
             for (const auto recent : state.randomInitialRecent) values.push_back(recent);
         };
         append(row.resetInitial);
-        append(row.resetNext);
+        values.push_back(row.resetNextVersion);
         return values;
     }
     static std::vector<std::uint64_t> Snapshot(const QueueInstanceTable& table, QueueInstanceToken token) {
@@ -152,9 +154,7 @@ struct QueueInstanceTableTestAccess {
         row.resetPending.store(true);
         row.resetReserved.store(true);
         row.resetExecuteFrame = 4096;
-        row.resetNext = row.resetInitial;
-        row.resetNext.version = 19;
-        row.resetNext.cursor = 1;
+        row.resetNextVersion = 19;
     }
 };
 } // namespace harken
@@ -232,6 +232,128 @@ harken::QueueInstanceCreateRequest OriginalQueueCreateRequest() {
     request.initial.version = 1;
     request.initial.currentChildOrdinal = 3;
     return request;
+}
+
+TEST(QueueRuntime, UnusedTablesReserveIdentitySpaceWithoutConstructingRows) {
+    harken::QueueInstanceTable queues(harken::kMaxQueueInstancesHard,
+        harken::kMaxQueueInstancesHard);
+    harken::QueueCheckpointTable checkpoints(harken::kMaxQueueCheckpointRowsHard);
+    harken::PrivateSelectedQueueFutureSpanPool selected(harken::kMaxQueueInstancesHard);
+    EXPECT_TRUE(queues.Valid());
+    EXPECT_TRUE(checkpoints.Valid());
+    EXPECT_EQ(0u, queues.ConstructedRowCount());
+    EXPECT_EQ(0u, queues.ConstructedConditionalRowCount());
+    EXPECT_EQ(0u, checkpoints.ConstructedRowCount());
+    EXPECT_EQ(0u, selected.ConstructedRowCount());
+    EXPECT_EQ(0u, queues.RowCommittedBytes());
+    EXPECT_EQ(0u, queues.ConditionalRowCommittedBytes());
+    EXPECT_EQ(0u, checkpoints.RowCommittedBytes());
+    EXPECT_EQ(0u, selected.RowCommittedBytes());
+    harken::QueueInstanceSnapshot snapshot;
+    EXPECT_FALSE(queues.Capture({harken::kMaxQueueInstancesHard - 1u, 1}, &snapshot));
+    queues.ApplyDue(19);
+    checkpoints.ClearAll();
+    EXPECT_EQ(0u, queues.LiveCount());
+    EXPECT_EQ(0u, queues.QuarantinedCount());
+    EXPECT_EQ(0u, checkpoints.LiveCount());
+}
+
+TEST(QueueRuntime, PreparedRowsSurviveCompetingAcquireAndRetainedConditionalReturn) {
+    harken::QueueInstanceTable queues(4, 4);
+    harken::QueueInstanceTable::BackingPreparation backing;
+    ASSERT_TRUE(queues.PrepareBacking(2, 2, &backing));
+    harken::QueueInstanceToken competitor;
+    ASSERT_TRUE(queues.Acquire(OriginalQueueCreateRequest(), &competitor));
+    EXPECT_EQ(3u, queues.ConstructedRowCount());
+    const auto rowBytes = queues.RowStorageBytes();
+    const auto conditionalBytes = queues.ConditionalRowStorageBytes();
+    queues.SetRowCommitPageLimitForTests(0);
+    queues.SetConditionalRowCommitPageLimitForTests(0);
+    std::array<harken::QueueInstanceToken, 2> tokens;
+    std::array<harken::QueueInstanceTable::OriginalLifetimePin, 2> parents;
+    std::array<harken::QueueInstanceTable::OriginalConditionalFutureReservation, 2> originals;
+    std::array<harken::PreparedQueueConditionalV1, 2> prepared;
+    std::array<bool, 2> acquired{}, conditional{};
+    harken::QueueInstanceToken refused;
+    bool extra = false;
+    {
+        harken::QueueInstanceTable::BackingUse use(&backing);
+        harken::memguard::AudioThreadScope audio;
+        for (std::uint32_t index = 0; index < tokens.size(); ++index) {
+            acquired[index] = queues.Acquire(OriginalQueueCreateRequest(), &tokens[index], &parents[index]);
+            conditional[index] = queues.PrepareConditional(tokens[index], LogicalBoundaryRequest(),
+                &prepared[index], parents[index], &originals[index]);
+        }
+        extra = queues.Acquire(OriginalQueueCreateRequest(), &refused);
+    }
+    EXPECT_FALSE(extra);
+    EXPECT_EQ(rowBytes, queues.RowStorageBytes());
+    EXPECT_EQ(conditionalBytes, queues.ConditionalRowStorageBytes());
+    for (std::uint32_t index = 0; index < tokens.size(); ++index) {
+        ASSERT_TRUE(acquired[index]);
+        ASSERT_TRUE(conditional[index]);
+        ASSERT_TRUE(queues.CancelPreparedConditional(&prepared[index]));
+        EXPECT_TRUE(originals[index].Valid());
+        EXPECT_FALSE(queues.Release(tokens[index], &parents[index]));
+    }
+    backing = {};
+    originals[0].Release();
+    ASSERT_TRUE(queues.Release(tokens[0], &parents[0]));
+    EXPECT_TRUE(originals[1].Valid());
+    originals[1].Release();
+    ASSERT_TRUE(queues.Release(tokens[1], &parents[1]));
+    ASSERT_TRUE(queues.Release(competitor));
+}
+
+TEST(QueueRuntime, FailedBackingPreparationRetainsOnlyConstructedPrefixAndCanRetry) {
+    harken::QueueInstanceTable queues(16, 4);
+    queues.SetRowCommitPageLimitForTests(1);
+    harken::QueueInstanceTable::BackingPreparation refused;
+    EXPECT_FALSE(queues.PrepareBacking(16, 4, &refused));
+    EXPECT_FALSE(refused.instances.Valid());
+    EXPECT_FALSE(refused.conditionals.Valid());
+    EXPECT_GT(queues.ConstructedRowCount(), 0u);
+    EXPECT_LT(queues.ConstructedRowCount(), 16u);
+    EXPECT_EQ(0u, queues.ConstructedConditionalRowCount());
+    EXPECT_EQ(0u, queues.LiveCount());
+    queues.SetRowCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(queues.PrepareBacking(2, 2, &refused));
+    harken::QueueInstanceToken token;
+    {
+        harken::QueueInstanceTable::BackingUse use(&refused);
+        ASSERT_TRUE(queues.Acquire(OriginalQueueCreateRequest(), &token));
+    }
+    EXPECT_TRUE(queues.Release(token));
+}
+
+TEST(QueueRuntime, AudioRefusesMissingBackingBeforeInvokingDependencyPreparation) {
+    harken::QueueInstanceTable queues(2);
+    std::uint32_t dependencyCalls = 0;
+    ASSERT_TRUE(queues.AttachRowStoragePreparation(&dependencyCalls,
+        [](void* context, std::uint32_t) noexcept {
+            ++*static_cast<std::uint32_t*>(context);
+            return true;
+        }));
+    harken::QueueInstanceToken token;
+    bool acquired = true;
+    {
+        harken::memguard::AudioThreadScope audio;
+        acquired = queues.Acquire(OriginalQueueCreateRequest(), &token);
+    }
+    EXPECT_FALSE(acquired);
+    EXPECT_EQ(0u, dependencyCalls);
+    EXPECT_EQ(0u, queues.ConstructedRowCount());
+    harken::QueueInstanceTable::BackingPreparation backing;
+    ASSERT_TRUE(queues.PrepareBacking(1, 0, &backing));
+    EXPECT_EQ(1u, dependencyCalls);
+    {
+        harken::QueueInstanceTable::BackingUse use(&backing);
+        harken::memguard::AudioThreadScope audio;
+        acquired = queues.Acquire(OriginalQueueCreateRequest(), &token);
+    }
+    ASSERT_TRUE(acquired);
+    EXPECT_EQ(1u, dependencyCalls);
+    EXPECT_TRUE(queues.Release(token));
 }
 
 TEST(QueueRuntime, OriginalInitializingLoansRetainPreparedRowUntilEveryReturn) {
@@ -2197,6 +2319,47 @@ TEST(QueueRuntime,
     EXPECT_FALSE(owner.committed);
     EXPECT_FALSE(committed.Valid());
     EXPECT_EQ(0u, table.LiveCount());
+}
+
+TEST(QueueRuntime, PreparedCheckpointBackingSurvivesCompetitionAndAudioRefusesGrowth) {
+    harken::QueueCheckpointTable checkpoints(4);
+    harken::QueueCheckpointKey key{};
+    key.world = 7;
+    key.containerStableId = harkentest::ObjectId(13);
+    key.programSemanticFingerprint = 17;
+    key.resetEpoch = 19;
+    harken::QueueCheckpointImage image{};
+    image.effective.version = 2;
+    image.replayCurrent = true;
+    bool stored = true;
+    {
+        harken::memguard::AudioThreadScope audio;
+        stored = checkpoints.Store(key, image);
+    }
+    EXPECT_FALSE(stored);
+    EXPECT_EQ(0u, checkpoints.ConstructedRowCount());
+    harken::QueueCheckpointTable::BackingPreparation backing;
+    ASSERT_TRUE(checkpoints.PrepareBacking(2, &backing));
+    ASSERT_TRUE(checkpoints.Store(key, image));
+    EXPECT_EQ(3u, checkpoints.ConstructedRowCount());
+    checkpoints.SetRowCommitPageLimitForTests(0);
+    const auto bytes = checkpoints.RowStorageBytes();
+    std::array<bool, 3> results{};
+    {
+        auto use = backing.Use();
+        harken::memguard::AudioThreadScope audio;
+        for (std::uint32_t index = 0; index < results.size(); ++index) {
+            ++key.resetEpoch;
+            results[index] = checkpoints.Store(key, image);
+        }
+    }
+    EXPECT_TRUE(results[0]);
+    EXPECT_TRUE(results[1]);
+    EXPECT_FALSE(results[2]);
+    EXPECT_EQ(bytes, checkpoints.RowStorageBytes());
+    EXPECT_EQ(3u, checkpoints.LiveCount());
+    backing = {};
+    checkpoints.ClearAll();
 }
 
 TEST(QueueRuntime, CheckpointStoresOnlyExplicitEffectiveStateAndClearsAtEnd) {
@@ -5327,6 +5490,7 @@ struct PrivateSelectedQueueFutureSpanTestAccess {
         pool.rows_[slot].loans = count;
     }
     static void GenerationLimit(PrivateSelectedQueueFutureSpanPool& pool) {
+        ASSERT_TRUE(pool.rows_.Emplace(0));
         pool.rows_[0].generation = UINT32_MAX;
     }
 };
@@ -5593,6 +5757,43 @@ struct GenuineHiddenSelectedFuture {
         EXPECT_EQ(0u, arms.LiveCount());
     }
 };
+
+TEST(QueueRuntime, PreparedSelectedFutureBackingRetainsExactNativeReaderUntilReturn) {
+    GenuineHiddenSelectedFuture state;
+    ASSERT_NO_FATAL_FAILURE(state.Prepare());
+    SelectedFuturePool spans(1);
+    spans.SetRowCommitPageLimitForTests(0);
+    SelectedFuturePool::Owner owner;
+    EXPECT_FALSE(state.Issue(spans, &owner));
+    EXPECT_FALSE(owner.Valid());
+    EXPECT_EQ(0u, spans.ConstructedRowCount());
+    spans.SetRowCommitPageLimitForTests(SIZE_MAX);
+    SelectedFuturePool::BackingPreparation backing;
+    ASSERT_TRUE(spans.PrepareBacking(1, &backing));
+    spans.SetRowCommitPageLimitForTests(0);
+    const auto bytes = spans.RowStorageBytes();
+    {
+        auto use = backing.Use();
+        ASSERT_TRUE(state.Issue(spans, &owner));
+    }
+    ASSERT_TRUE(spans.FreezeUnbound(owner));
+    SelectedFuturePool::NativeConditionalRead reader;
+    ASSERT_TRUE(owner.BorrowNativeConditional(&reader));
+    SelectedFuturePool::ConditionalBacking original, captured;
+    ASSERT_TRUE(reader.Capture(&original));
+    owner.Release();
+    backing = {};
+    ASSERT_TRUE(reader.Valid());
+    ASSERT_TRUE(reader.Capture(&captured));
+    EXPECT_EQ(original.version.version, captured.version.version);
+    EXPECT_EQ(original.decision.generation, captured.decision.generation);
+    EXPECT_FALSE(state.Issue(spans, &owner));
+    EXPECT_EQ(bytes, spans.RowStorageBytes());
+    ASSERT_TRUE(reader.Release());
+    ASSERT_TRUE(state.Issue(spans, &owner));
+    owner.Release();
+    ASSERT_NO_FATAL_FAILURE(state.Cleanup());
+}
 
 TEST(QueueRuntime, HiddenSelectedFutureActualPreparedUnboundFactoryFreezesBeforeAnyAck) {
     static_assert(!std::is_copy_constructible_v<SelectedFuturePool::Owner>);

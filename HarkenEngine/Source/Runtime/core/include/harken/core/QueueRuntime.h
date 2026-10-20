@@ -14,6 +14,7 @@
 #include "harken/core/PlayableInstanceTable.h"
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/ScheduledTransactionPool.h"
+#include "harken/core/StableSlotStorage.h"
 
 #include <atomic>
 #include <array>
@@ -230,11 +231,22 @@ private:
 };
 
 class QueueCheckpointTable {
+    struct Row;
 public:
     explicit QueueCheckpointTable(std::uint32_t capacity);
 
-    bool Valid() const noexcept { return rows_ != nullptr; }
+    bool Valid() const noexcept { return capacity_ != 0; }
     std::uint32_t Capacity() const noexcept { return capacity_; }
+    using BackingPreparation = StableSlotStorage<Row>::Preparation;
+    using BackingUse = StableSlotStorage<Row>::PreparedUse;
+    bool PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept;
+    std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
+    std::size_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
+    std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
+    std::size_t RowDirectoryBytes() const noexcept { return rows_.DirectoryBytes(); }
+    void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
+        rows_.SetCommitPageLimitForTests(pages);
+    }
     std::uint32_t LiveCount() const noexcept;
     bool Store(const QueueCheckpointKey& key,
                const QueueCheckpointImage& image) noexcept;
@@ -260,7 +272,7 @@ private:
         QueueCheckpointImage image{};
     };
 
-    std::unique_ptr<Row[]> rows_;
+    StableSlotStorage<Row> rows_;
     std::uint32_t capacity_ = 0;
 };
 
@@ -646,7 +658,44 @@ QueueSequenceStepStatus ResolveRandomQueueStep(
     EffectiveQueueState* outNext) noexcept;
 
 class QueueInstanceTable {
+    struct Row;
+    struct OriginalConditionalRow;
 public:
+    struct BackingPreparation {
+        StableSlotStorage<Row>::Preparation instances;
+        StableSlotStorage<OriginalConditionalRow>::Preparation conditionals;
+    };
+    class BackingUse {
+    public:
+        explicit BackingUse(const BackingPreparation* backing = nullptr) noexcept
+            : instances_(backing == nullptr ? StableSlotStorage<Row>::PreparedUse{}
+                  : backing->instances.Use()),
+              conditionals_(backing == nullptr ? StableSlotStorage<OriginalConditionalRow>::PreparedUse{}
+                  : backing->conditionals.Use()) {}
+    private:
+        StableSlotStorage<Row>::PreparedUse instances_;
+        StableSlotStorage<OriginalConditionalRow>::PreparedUse conditionals_;
+    };
+    bool PrepareBacking(std::uint32_t instances, std::uint32_t conditionals,
+        BackingPreparation* out) noexcept;
+    bool AttachRowStoragePreparation(void* context,
+        bool (*prepare)(void*, std::uint32_t) noexcept) noexcept;
+    std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
+    std::uint32_t ConstructedConditionalRowCount() const noexcept {
+        return originalConditionalRows_.ConstructedCount();
+    }
+    std::size_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
+    std::size_t ConditionalRowStorageBytes() const noexcept { return originalConditionalRows_.RequestedBytes(); }
+    std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
+    std::size_t ConditionalRowCommittedBytes() const noexcept { return originalConditionalRows_.CommittedBytes(); }
+    std::size_t RowDirectoryBytes() const noexcept { return rows_.DirectoryBytes(); }
+    std::size_t ConditionalRowDirectoryBytes() const noexcept { return originalConditionalRows_.DirectoryBytes(); }
+    void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
+        rows_.SetCommitPageLimitForTests(pages);
+    }
+    void SetConditionalRowCommitPageLimitForTests(std::size_t pages) noexcept {
+        originalConditionalRows_.SetCommitPageLimitForTests(pages);
+    }
     // Logic-producer storage ownership issued only by the actual row factory.
     // It preserves Initializing/Live storage without freezing queue progress.
     class OriginalLifetimePin {
@@ -1194,7 +1243,7 @@ private:
         std::uint32_t emitterSlot = UINT32_MAX;
         std::uint32_t emitterGeneration = 0;
         EffectiveQueueState resetInitial{};
-        EffectiveQueueState resetNext{};
+        std::uint64_t resetNextVersion = 0;
         std::atomic<bool> resetReserved{false};
         std::atomic<bool> resetPending{false};
         std::uint64_t resetExecuteFrame = 0;
@@ -1232,7 +1281,6 @@ private:
         std::uint64_t pendingLogicalCompletionFrame = 0;
         RetiredQueueSourceProof pendingRetiredSource{};
         EffectiveQueueState pendingNext{};
-        EffectiveQueueState pendingFirst{};
         std::uint32_t pendingStepCount = 0;
         std::atomic<ConditionalQueueActivation> pendingActivation{
             ConditionalQueueActivation::Waiting};
@@ -1284,8 +1332,10 @@ private:
         std::uint64_t logicalCompletionFrame = 0;
         RetiredQueueSourceProof retiredSource{};
         EffectiveQueueState currentState{};
-        EffectiveQueueState next{};
-        EffectiveQueueState first{};
+        // Projection bodies are validated before reservation; the live row owns
+        // the selected body. Historical native readers retain only its versions.
+        ConditionalQueueVersionToken next{};
+        ConditionalQueueVersionToken first{};
         std::uint32_t stepCount = 0;
         std::uint64_t resetIntent = 0;
         bool consumesReset = false;
@@ -1384,9 +1434,13 @@ private:
                row.nextStateOwner == NextStateOwner::AcceptedSignal;
     }
 
-    std::unique_ptr<Row[]> rows_;
+    bool PrepareInstanceSlot(std::uint32_t slot) noexcept;
+    bool PrepareConditionalSlot(std::uint32_t slot) noexcept;
+    StableSlotStorage<Row> rows_;
     // Noncopyable loans live in fixed separate storage, never in resettable Row.
-    std::unique_ptr<OriginalConditionalRow[]> originalConditionalRows_;
+    StableSlotStorage<OriginalConditionalRow> originalConditionalRows_;
+    void* rowStorageContext_ = nullptr;
+    bool (*prepareRowStorage_)(void*, std::uint32_t) noexcept = nullptr;
     std::uint32_t originalConditionalCapacity_ = 0;
     std::uint64_t nextOriginalConditionalFactoryMarker_ = 0;
     void* originalConditionalOwnerContext_ = nullptr;
