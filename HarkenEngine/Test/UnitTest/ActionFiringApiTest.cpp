@@ -6727,7 +6727,11 @@ TEST(ActionFiringApi, QuantizedPlayUsesStrictlyNextBeatAfterDelayedFrame) {
     pieceDesc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle pieceFiring = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&pieceDesc, &pieceFiring));
-    ASSERT_EQ(1u, engine->playableInstances.LiveCount());
+    VnActionStepResult pieceStep{};
+    pieceStep.structSize = sizeof(pieceStep);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(pieceFiring, 0, &pieceStep));
+    ASSERT_EQ(VN_ACTION_STEP_ACTIVE, pieceStep.state);
+    ASSERT_NE(0u, pieceStep.producedPlayableInstance);
     const std::uint64_t entryFrame = engine->playableServices[0].startFrame;
     const std::uint64_t delayedFrame = entryFrame;
     const std::uint64_t expected =
@@ -7032,7 +7036,12 @@ TEST(ActionFiringApi, QuantizedStopUsesStrictlyNextBeatAfterDelayedFrame) {
     playDesc.actionId = image.actions[10].actionStableId;
     VnActionFiringHandle playFiring = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&playDesc, &playFiring));
-    ASSERT_EQ(2u, engine->playableInstances.LiveCount());
+    VnActionStepResult playStep{};
+    playStep.structSize = sizeof(playStep);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(playFiring, 0, &playStep));
+    ASSERT_EQ(VN_ACTION_STEP_ACTIVE, playStep.state);
+    ASSERT_NE(0u, playStep.producedPlayableInstance);
+    const auto liveBeforeStop = engine->playableInstances.LiveCount();
     const std::uint64_t entryFrame = engine->playableServices[0].startFrame;
     const std::uint64_t expected =
         MusicalBoundaryFrameAfter(entryFrame, 0, 960, 1);
@@ -7055,7 +7064,7 @@ TEST(ActionFiringApi, QuantizedStopUsesStrictlyNextBeatAfterDelayedFrame) {
         step.structSize = sizeof(step);
         ASSERT_EQ(VN_OK, Vn_QueryActionStep(stopFiring, 0, &step));
         EXPECT_EQ(VN_ACTION_STEP_AWAITING_MATERIALIZATION, step.state);
-        EXPECT_EQ(2u, engine->playableInstances.LiveCount());
+        EXPECT_EQ(liveBeforeStop, engine->playableInstances.LiveCount());
     } else {
         EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
         VnActionStepResult step{};
@@ -10858,6 +10867,7 @@ TEST(ActionFiringApi, QuantizedStopFadeStartsBeforeTheBoundary) {
         MusicalBoundaryFrameAfter(entryFrame, 0, 960, 1);
     const std::uint64_t fadeFrames =
         (10000000ull * 48000ull + 999999999ull) / 1000000000ull;
+    const auto liveBeforeStop = engine->playableInstances.LiveCount();
 
     VnPostActionDesc stopDesc = ValidPostDesc();
     stopDesc.actionId = image.actions[11].actionStableId;
@@ -10875,7 +10885,7 @@ TEST(ActionFiringApi, QuantizedStopFadeStartsBeforeTheBoundary) {
         EXPECT_EQ(expected - fadeFrames, record.firstRowFrame);
     } else {
         EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
-        EXPECT_EQ(2u, engine->playableInstances.LiveCount());
+        EXPECT_EQ(liveBeforeStop, engine->playableInstances.LiveCount());
         EXPECT_NE(harken::PlayableControlLifecycle::Cancelling,
                   engine->playableServices[1].controlLifecycle);
     }

@@ -267,8 +267,8 @@ Wire::MonitorRecords eventRecords(quint64 epoch, quint64 firstSequence, int coun
         harken::monitor::PackHeader(packed, header);
         VNX::Monitor::MonitorEventDetail detail{};
         detail.structSize = sizeof(detail);
-        detail.category = VN_MONITOR_EVENT_CATEGORY_OPERATION;
-        detail.code = VN_MONITOR_OPERATION_STOP_ALL;
+        detail.category = VN_MONITOR_EVENT_CATEGORY_DIAGNOSTIC;
+        detail.level = VN_LOG_WARN;
         detail.timestampNs = firstTimestamp + i;
         std::memcpy(packed + VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES, &detail, sizeof(detail));
     }
@@ -577,8 +577,8 @@ TEST(EventCaptureController, ProjectAndObjectIdentityGateNamesAndJumps)
         harken::monitor::PackHeader(records.bytes.data(), header);
         VNX::Monitor::MonitorEventDetailV2 detail{};
         detail.structSize = sizeof(detail);
-        detail.category = VN_MONITOR_EVENT_CATEGORY_OPERATION;
-        detail.code = VN_MONITOR_OPERATION_POST_ACTION;
+        detail.category = VN_MONITOR_EVENT_CATEGORY_DIAGNOSTIC;
+        detail.level = VN_LOG_WARN;
         detail.timestampNs = 200 + sequence;
         const auto guid = sourceProject.toRfc4122();
         std::memcpy(detail.projectGuid, guid.constData(), sizeof(detail.projectGuid));
@@ -592,7 +592,7 @@ TEST(EventCaptureController, ProjectAndObjectIdentityGateNamesAndJumps)
     EXPECT_EQ(capture.eventAt(0).objectName, QStringLiteral("Engine Start"));
     EXPECT_TRUE(capture.eventAt(1).objectName.isEmpty());
     EXPECT_EQ(capture.eventAt(2).objectName, QStringLiteral("Engine Start"));
-    EXPECT_EQ(panel.table()->model()->index(0, 3).data().toString(), QStringLiteral("Engine Start"));
+    EXPECT_EQ(panel.table()->model()->index(0, VNX::MonitorCatalogModel::Object).data().toString(), QStringLiteral("Engine Start"));
     auto* search = panel.findChild<QLineEdit*>(QStringLiteral("MonitorTextFilter"));
     search->setText(QStringLiteral("Engine Start"));
     EXPECT_EQ(panel.visibleRowCount(), 2);
