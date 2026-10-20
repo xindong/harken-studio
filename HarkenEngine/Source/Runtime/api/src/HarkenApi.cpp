@@ -6472,6 +6472,23 @@ struct TimelineVoiceInstallResult {
     harken::KnownCompletionPredicateV1 completionPredicate{};
 };
 
+void CaptureQueueProgramMember(harken::EnginePlayableMemberRecord& member,
+    harken::CapturedTimelineVoiceInstall voice, const harken::PlayableRefV1& leaf,
+    const TimelineVoiceInstallResult& installed, std::uint64_t startFrame,
+    harken::OccurrenceToken occurrence) noexcept {
+    assert(!member.primaryOwned && member.programOwners != 0);
+    member.voice = std::move(voice);
+    member.leaf = leaf;
+    member.arm = installed.armToken;
+    member.render = installed.renderHandle;
+    member.release = installed.releaseObserver;
+    member.startFrame = startFrame;
+    member.postSourceTailFrames = installed.postSourceTailFrames;
+    member.occurrence = occurrence;
+    member.nativeCompletion = installed.completionPredicate;
+    member.monitorSelection = installed.monitorSelection;
+}
+
 VnResult ValidateTimelineVoiceInstallInputShape(
     const harken::TimelineVoiceInstallInput& input) noexcept {
     if (input.facts == nullptr) return VN_INVALID_ARG;
@@ -12424,6 +12441,38 @@ bool RetireNestedVariableControlDecision(
     return TransferDecisionRetirement(engine, decision, cancelled);
 }
 
+bool ClearTimelineVoiceInstallationAfterNativeEnd(harken::Engine& engine,
+    VnVoiceHandle render, harken::TimelineArmToken arm,
+    std::uint64_t observedAudioSequence) noexcept {
+    if (render == 0) return true;
+    if (!arm.Valid()) return false;
+    const auto originalRender =
+        (static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot;
+    if (render != originalRender) return false;
+    harken::EngineTimelineVoiceInstallIdentity installation{};
+    if (!engine.CaptureTimelineVoiceInstallIdentity(render, &installation)) return true;
+    if (!harken::OriginalSourceSubmissionRegistry::SameToken(installation.startArm, arm)) return true;
+    if (!installation.releaseObserver.Valid() ||
+        !engine.voices.ReleaseObserved(installation.releaseObserver) ||
+        engine.voices.Resolve(render) != nullptr ||
+        engine.originalSourceSubmissions.HasOriginalVoice(arm)) return false;
+    if (const auto* source = engine.originalSourceSubmissions.Find(arm)) {
+        if (source->State() != harken::OriginalSourceSubmissionRegistry::Phase::Disposed) return false;
+    }
+    harken::TimelineArmObservation nativeEnd{};
+    if (engine.timelineArms.Observe(arm, &nativeEnd)) {
+        if (nativeEnd.state != harken::ArmState::Tombstoned ||
+            nativeEnd.tombstoneAudioSequence == UINT64_MAX ||
+            observedAudioSequence <= nativeEnd.tombstoneAudioSequence ||
+            !ObserveActiveArrivalsBeforeArmReclaim(engine)) return false;
+        // Native reclaim also waits for original lifetime and all reader returns.
+        if (!engine.timelineArms.Reclaim(arm, observedAudioSequence) &&
+            engine.timelineArms.Observe(arm, &nativeEnd)) return false;
+    }
+    return engine.ClearOriginalTimelineVoiceInstallIdentity(
+        render, installation.releaseObserver, arm);
+}
+
 enum class PlayableStartResetResult : std::uint8_t {
     Released,
     Deferred,
@@ -12654,6 +12703,18 @@ PlayableStartResetResult ResetPlayableStartRow(
     if (!engine.CanReclaimOriginalPlayableServiceStorage(row)) {
         engine.ObserveOriginalPreparingStorageWait(row);
         return PlayableStartResetResult::Deferred;
+    }
+    if (row.queueMode && !row.parentService.Valid()) {
+        // Earlier Queue members may have left the current directory already.
+        // Their installation stays authoritative until the real native End.
+        const auto count = std::min<std::size_t>(
+            engine.timelineVoiceInstallIdentities.size(), engine.voices.ConstructedSlotCount());
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto& installation = engine.timelineVoiceInstallIdentities[index];
+            if (installation.renderHandle != 0 && installation.rootInstance == row.rootInstance &&
+                !ClearTimelineVoiceInstallationAfterNativeEnd(engine, installation.renderHandle,
+                    installation.startArm, completedSequence)) return PlayableStartResetResult::Deferred;
+        }
     }
     if (row.queueUnplacedCredit.Valid()) {
         if (row.queueUnplacedCredit.epoch == engine.timelinePool.Epoch() &&
@@ -12888,37 +12949,7 @@ bool ClearQueueSuccessorInstallationAfterNativeEnd(
     harken::Engine& engine, const harken::EnginePlayableServiceRow& row,
     std::uint64_t observedAudioSequence) noexcept {
     const auto clear = [&](VnVoiceHandle render, harken::TimelineArmToken arm) noexcept {
-        if (render == 0) return true;
-        if (!arm.Valid()) return false;
-        const auto originalRender =
-            (static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot;
-        if (render != originalRender) return false;
-        harken::EngineTimelineVoiceInstallIdentity installation{};
-        if (!engine.CaptureTimelineVoiceInstallIdentity(render, &installation)) return true;
-        // A different full Source episode is not this exit's installation.
-        if (!harken::OriginalSourceSubmissionRegistry::SameToken(installation.startArm, arm)) return true;
-        if (!installation.releaseObserver.Valid() ||
-            !engine.voices.ReleaseObserved(installation.releaseObserver) ||
-            engine.voices.Resolve(render) != nullptr ||
-            engine.originalSourceSubmissions.HasOriginalVoice(arm)) return false;
-        if (const auto* source = engine.originalSourceSubmissions.Find(arm)) {
-            if (source->State() != harken::OriginalSourceSubmissionRegistry::Phase::Disposed) return false;
-        }
-        harken::TimelineArmObservation nativeEnd{};
-        if (engine.timelineArms.Observe(arm, &nativeEnd)) {
-            if (nativeEnd.state != harken::ArmState::Tombstoned ||
-                nativeEnd.tombstoneAudioSequence == UINT64_MAX ||
-                observedAudioSequence <= nativeEnd.tombstoneAudioSequence ||
-                !ObserveActiveArrivalsBeforeArmReclaim(engine)) return false;
-            // The real Reclaim also checks original lifetime, native readers,
-            // their last-use returns, and the pending control-source reader.
-            if (!engine.timelineArms.Reclaim(arm, observedAudioSequence) &&
-                engine.timelineArms.Observe(arm, &nativeEnd)) return false;
-        }
-        // Only the full old Arm's genuine native End/reclaim is now absent.
-        // An independently reused installation remains protected below.
-        return engine.ClearOriginalTimelineVoiceInstallIdentity(
-            render, installation.releaseObserver, arm);
+        return ClearTimelineVoiceInstallationAfterNativeEnd(engine, render, arm, observedAudioSequence);
     };
     if (!clear(row.queueSuccessorRenderHandle, row.queueSuccessorArm)) return false;
     const auto base = static_cast<std::size_t>(row.queueSuccessorScheduleBase);
@@ -24692,11 +24723,6 @@ bool PrepareCompositeQueueContinuation(
           engine.transitionInstances.FreeCount() == 0)) {
         return false;
     }
-    PreparedPlayableMemberRecords currentMembers{engine, row};
-    if (!row.parentService.Valid() && materialized.leafCount > 1u) {
-        for (std::uint32_t index = 0; index < materialized.leafCount; ++index)
-            if (!currentMembers.Acquire(index)) return false;
-    }
     PreparedTimelineStarts starts(engine);
     preparedTree.Attach(starts);
     if (!(packQueue ? preparedTree.PrepareLeaves(row.Invocation().packPlaybackView, prepared.data(), materialized.leafCount)
@@ -24739,6 +24765,12 @@ bool PrepareCompositeQueueContinuation(
     std::array<harken::KnownScheduleLeafV1, 64> knownLeaves{};
     for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
         const std::size_t slot = base + index;
+        auto* retained = row.parentService.Valid() ? nullptr
+            : engine.AcquireQueueProgramMember(*starts.QueueBank(), index);
+        if (!row.parentService.Valid() && retained == nullptr) {
+            abortPrepared();
+            return false;
+        }
         const std::uint64_t startFrame =
             completionFrame + prepared[index].startOffsetFrames;
         harken::OccurrenceToken* progressOccurrence = nullptr;
@@ -24796,7 +24828,13 @@ bool PrepareCompositeQueueContinuation(
             abortPrepared();
             return false;
         }
-        engine.playableSuccessorVoices[slot] = std::move(captured);
+        if (retained != nullptr) {
+            CaptureQueueProgramMember(*retained, std::move(captured), prepared[index].leaf,
+                installed, startFrame, successorHasContinuation
+                    ? engine.playableSuccessorOccurrences[slot] : row.queueSuccessorOccurrence);
+        } else {
+            engine.playableSuccessorVoices[slot] = std::move(captured);
+        }
         engine.playableSuccessorLeaves[slot] = prepared[index].leaf;
         engine.playableSuccessorArms[slot] = installed.armToken;
         engine.playableSuccessorSelections[slot] = installed.monitorSelection;
@@ -24918,6 +24956,8 @@ bool PrepareCompositeQueueContinuation(
                 return false;
             }
             engine.playableSuccessorCompletions[slot] = bound.predicate;
+            if (auto* member = engine.FindQueueProgramMember(starts.QueueBank(), index))
+                member->nativeCompletion = bound.predicate;
         }
     }
     if (materialized.leafCount != 0) {
@@ -25279,7 +25319,6 @@ engine.runtimeRecreateRequired = true;
     row.queueContinuationPrepared = true;
     row.queueTransitionEndFrame = transitionEndFrame;
     ++row.pendingFutureCount;
-    currentMembers.retained = true;
     return true;
 }
 
@@ -26020,6 +26059,10 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
     if (!starts.ReserveQueuePrograms(row, {sourceControlCount + 1u,
             sourceControlCount * (static_cast<std::uint32_t>(sourceFadeActive) + !naturalEnd) +
                 1u + static_cast<std::uint32_t>(targetFadeActive)})) return QueueContinuationPrepareStatus::Failed;
+    auto* retainedMember = row.parentService.Valid() ? nullptr
+        : engine.AcquireQueueProgramMember(*starts.QueueBank(), 0);
+    if (!row.parentService.Valid() && retainedMember == nullptr)
+        return QueueContinuationPrepareStatus::Failed;
     if (successorHasContinuation &&
         !ReserveQueueDecision(
             engine, row, &row.queueSuccessorDecision,
@@ -26095,7 +26138,12 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         abortPrepared();
         return QueueContinuationPrepareStatus::Failed;
     }
-    engine.playableSuccessorVoices[StorageBasesForRow(engine, row).endpoint] = std::move(captured);
+    if (retainedMember != nullptr) {
+        CaptureQueueProgramMember(*retainedMember, std::move(captured), cut.leaf,
+            installed, successorStartFrame, row.queueSuccessorOccurrence);
+    } else {
+        engine.playableSuccessorVoices[StorageBasesForRow(engine, row).endpoint] = std::move(captured);
+    }
     if (successorHasContinuation) {
         const harken::CompletionOwnerRef owner =
             harken::CompletionOwnerRef::Single(
@@ -26123,6 +26171,7 @@ engine.runtimeRecreateRequired = true;
         }
         row.queueSuccessorCompletion = bound;
     }
+    if (retainedMember != nullptr) retainedMember->nativeCompletion = row.queueSuccessorCompletion;
     const auto rollbackUnpublishedTransition = [&]() {
         starts.Cancel();
         row.queueSourceArm = {};
@@ -40281,6 +40330,10 @@ void ApplyInitialQueueSuccessorStartMirrors(harken::Engine& engine,
             ? timing.oldPhysicalStartFrame : timing.newExecuteFrame;
         if (timing.physicalCompletionBound) future.queueSuccessorCompletion = restore
             ? timing.oldPhysicalCompletion : timing.newPhysicalCompletion;
+        if (auto* member = engine.FindQueueProgramMember(&bank, future.queueSuccessorPrograms.first)) {
+            member->startFrame = restore ? timing.oldPhysicalStartFrame : timing.newExecuteFrame;
+            if (timing.physicalCompletionBound) member->nativeCompletion = future.queueSuccessorCompletion;
+        }
     };
     if (restore) {
         for (std::size_t programIndex = 0;
@@ -40318,6 +40371,11 @@ void ApplyInitialQueueSuccessorStartMirrors(harken::Engine& engine,
                 if (timing.physicalCompletionBound)
                     engine.playableSuccessorCompletions[slot] =
                         timing.oldPhysicalCompletion;
+                if (auto* member = engine.FindQueueProgramMember(future.queueSuccessorProgramBank,
+                        future.queueSuccessorPrograms.first + slot - future.queueSuccessorScheduleBase)) {
+                    member->startFrame = timing.oldPhysicalStartFrame;
+                    if (timing.physicalCompletionBound) member->nativeCompletion = timing.oldPhysicalCompletion;
+                }
                 engine.ReflectOriginalQueueFiling(*holder);
             }
         }
@@ -40353,6 +40411,11 @@ void ApplyInitialQueueSuccessorStartMirrors(harken::Engine& engine,
             if (timing.physicalCompletionBound)
                 engine.playableSuccessorCompletions[slot] =
                     timing.newPhysicalCompletion;
+            if (auto* member = engine.FindQueueProgramMember(future.queueSuccessorProgramBank,
+                    future.queueSuccessorPrograms.first + slot - future.queueSuccessorScheduleBase)) {
+                member->startFrame = timing.newExecuteFrame;
+                if (timing.physicalCompletionBound) member->nativeCompletion = timing.newPhysicalCompletion;
+            }
             engine.ReflectOriginalQueueFiling(*holder);
         }
     }
@@ -49453,6 +49516,16 @@ engine.runtimeRecreateRequired = true;
                         const std::size_t currentPaired =
                             currentPairedBase + index;
                         const std::size_t successor = successorBase + index;
+                        const auto programIndex = row.queueSuccessorPrograms.first + index;
+                        if (!row.parentService.Valid()) {
+                            if (!engine.BindPlayableMember(row, index,
+                                    row.queueSuccessorProgramBank->members[programIndex])) {
+                                engine.runtimeRecreateRequired = true;
+                                break;
+                            }
+                            eventOffset += static_cast<std::uint32_t>(programs[index].eventCount);
+                            continue;
+                        }
                         engine.MutablePlayableMember(currentMember).voice =
                             std::move(engine.playableSuccessorVoices[successor]);
                         engine.MutablePlayableMember(currentMember).leaf =
@@ -49522,10 +49595,25 @@ engine.runtimeRecreateRequired = true;
                         engine.runtimeRecreateRequired = true;
                         continue;
                     }
+                    const auto memberIndex = row.queueSuccessorPrograms.first;
+                    auto* retained = engine.FindQueueProgramMember(row.queueSuccessorProgramBank, memberIndex);
+                    if (retained != nullptr && !row.parentService.Valid()) {
+                        if (!engine.BindPlayableMember(row, 0, row.queueSuccessorProgramBank->members[memberIndex])) {
+                            engine.runtimeRecreateRequired = true;
+                            continue;
+                        }
+                        row.capturedVoice = {};
+                        row.usesCapturedVoice = false;
+                    } else {
+                        if (!row.parentService.Valid() && !engine.ReleasePlayableMember(row, 0)) {
+                            engine.runtimeRecreateRequired = true;
+                            continue;
+                        }
+                        row.capturedVoice = std::move(engine.playableSuccessorVoices[storageBases.endpoint]);
+                        row.usesCapturedVoice = row.capturedVoice.Valid();
+                    }
                     row.arm = row.queueSuccessorArm;
                     row.renderHandle = row.queueSuccessorRenderHandle;
-                    row.capturedVoice = std::move(engine.playableSuccessorVoices[storageBases.endpoint]);
-                    row.usesCapturedVoice = row.capturedVoice.Valid();
                     row.leaf = row.queueSuccessorLeaf;
                     row.schedule = *successor;
                     row.runtimeProgram = *successor->runtimeProgram.program;
@@ -49541,6 +49629,16 @@ engine.runtimeRecreateRequired = true;
                     row.leaf = {};
                     row.startFrame = row.queueSuccessorZeroWorkCompletionFrame;
                     row.activeLeafInstance = 0;
+                }
+                if (!sameProgramKey && !row.parentService.Valid()) {
+                    const auto retainedCount = row.queueSuccessorScheduleLeafCount > 1u
+                        ? row.queueSuccessorScheduleLeafCount : row.queueSuccessorArm.Valid() ? 1u : 0u;
+                    for (std::uint32_t index = retainedCount; index < row.members.size(); ++index) {
+                        if (!engine.ReleasePlayableMember(row, index)) {
+                            engine.runtimeRecreateRequired = true;
+                            break;
+                        }
+                    }
                 }
                 if (!sameProgramKey) {
                     row.queueCurrentProgramBank = row.queueSuccessorProgramBank;
@@ -78661,8 +78759,9 @@ bool PrepareQueueTransitionContinuation(
     std::array<harken::TransactionRequest,
                2u * harken::kMaxKnownScheduleLeaves> transactions{};
     std::uint64_t transitionEndFrame = sourceStopFrame;
+    const bool retainMembers = !row.parentService.Valid() && &row == scratch->row;
     PreparedPlayableMemberRecords currentMembers{engine, row};
-    if (!row.parentService.Valid() && leafCount > 1u) {
+    if (!retainMembers && !row.parentService.Valid() && leafCount > 1u) {
         for (std::uint32_t index = 0; index < leafCount; ++index) {
             if (!currentMembers.Acquire(index)) {
                 (void)entry.ReleasePrefix(scratch);
@@ -78671,6 +78770,12 @@ bool PrepareQueueTransitionContinuation(
         }
     }
     for (std::uint32_t index = 0; index < leafCount; ++index) {
+        auto* retained = retainMembers ? engine.AcquireQueueProgramMember(bank, index) : nullptr;
+        if (retainMembers && retained == nullptr) {
+            entry.Result() = VN_BACKPRESSURE;
+            (void)entry.ReleasePrefix(scratch);
+            return false;
+        }
         const auto capturedInput = captures[index].voice.Input();
         if (leaves[index].startOffsetFrames >
             UINT64_MAX - row.queueCompletionFrame) {
@@ -78767,7 +78872,13 @@ bool PrepareQueueTransitionContinuation(
             engine.MutablePlayableMember(memberSlot).monitorSelection = installed.monitorSelection;
         }
         const std::size_t slot = successorBase + index;
-        captures[index].Stage(engine.playableSuccessorVoices[slot]);
+        if (retained != nullptr) {
+            CaptureQueueProgramMember(*retained, captures[index].voice.Share(), leaves[index].leaf,
+                installed, startFrame, successorHasContinuation
+                    ? scratch->queueSuccessorLeafOccurrences[index] : scratch->queueSuccessorOccurrence);
+        } else {
+            captures[index].Stage(engine.playableSuccessorVoices[slot]);
+        }
         engine.playableSuccessorLeaves[slot] = leaves[index].leaf;
         engine.playableSuccessorArms[slot] = installed.armToken;
         engine.playableSuccessorSelections[slot] = installed.monitorSelection;
@@ -78925,6 +79036,8 @@ bool PrepareQueueTransitionContinuation(
             scratch->queueSuccessorCompletionMutationCount = index + 1u;
             engine.playableSuccessorCompletions[
                 successorBase + index] = bound.predicate;
+            if (auto* member = engine.FindQueueProgramMember(&bank, index))
+                member->nativeCompletion = bound.predicate;
         }
         if (!engine.PrepareOriginalCompositeLeafCompletionCommits(scratch->queueSuccessorOriginalComposite)) {
             (void)entry.ReleasePrefix(scratch);
@@ -78965,6 +79078,8 @@ bool PrepareQueueTransitionContinuation(
         row.queueSuccessorOwner = scratch->queueSuccessorOwner;
         row.queueSuccessorCompletion = bound;
     }
+    if (retainMembers && leafCount == 1u)
+        engine.FindQueueProgramMember(&bank, 0)->nativeCompletion = row.queueSuccessorCompletion;
 
     row.queueSuccessorLeaf =
         engine.playableSuccessorLeaves[successorBase];
@@ -80396,6 +80511,8 @@ bool PrepareQueueContinuation(
     auto& successorScheduleStorage = bank.schedules;
     constexpr std::size_t successorEventBase = 0;
 
+    const bool retainMembers = !actualChild && !row.parentService.Valid();
+
     if (successorHasContinuation) {
         harken::DecisionReserveRequest decision{};
         decision.world = queueWorldGeneration;
@@ -80437,7 +80554,7 @@ bool PrepareQueueContinuation(
                harken::kMaxKnownScheduleLeaves> transactions{};
     std::uint64_t successorEntryFrame = row.queueCompletionFrame;
     PreparedPlayableMemberRecords currentMembers{engine, row};
-    if (!row.parentService.Valid() && leafCount > 1u) {
+    if (!retainMembers && !row.parentService.Valid() && leafCount > 1u) {
         for (std::uint32_t index = 0; index < leafCount; ++index) {
             if (!currentMembers.Acquire(index)) {
                 (void)entry.ReleasePrefix(scratch);
@@ -80446,6 +80563,12 @@ bool PrepareQueueContinuation(
         }
     }
     for (std::uint32_t index = 0; index < leafCount; ++index) {
+        auto* retained = retainMembers ? engine.AcquireQueueProgramMember(bank, index) : nullptr;
+        if (retainMembers && retained == nullptr) {
+            entry.Result() = VN_BACKPRESSURE;
+            (void)entry.ReleasePrefix(scratch);
+            return false;
+        }
         const auto capturedInput = captures[index].voice.Input();
         if (leaves[index].startOffsetFrames >
             UINT64_MAX - row.queueCompletionFrame) {
@@ -80545,7 +80668,13 @@ bool PrepareQueueContinuation(
         }
         groupMembers[index] = installed.armToken;
         const std::size_t slot = successorBase + index;
-        captures[index].Stage(engine.playableSuccessorVoices[slot]);
+        if (retained != nullptr) {
+            CaptureQueueProgramMember(*retained, captures[index].voice.Share(), leaves[index].leaf,
+                installed, startFrame, successorHasContinuation
+                    ? scratch->queueSuccessorLeafOccurrences[index] : scratch->queueSuccessorOccurrence);
+        } else {
+            captures[index].Stage(engine.playableSuccessorVoices[slot]);
+        }
         engine.playableSuccessorLeaves[slot] = leaves[index].leaf;
         engine.playableSuccessorArms[slot] = installed.armToken;
         engine.playableSuccessorSelections[slot] = installed.monitorSelection;
@@ -80658,6 +80787,8 @@ bool PrepareQueueContinuation(
             scratch->queueSuccessorCompletionMutationCount = index + 1u;
             engine.playableSuccessorCompletions[
                 successorBase + index] = bound.predicate;
+            if (auto* member = engine.FindQueueProgramMember(&bank, index))
+                member->nativeCompletion = bound.predicate;
         }
         if (!engine.PrepareOriginalCompositeLeafCompletionCommits(scratch->queueSuccessorOriginalComposite)) {
             (void)entry.ReleasePrefix(scratch);
@@ -80699,6 +80830,8 @@ bool PrepareQueueContinuation(
         row.queueSuccessorCompletion = bound;
     }
 
+    if (retainMembers && leafCount == 1u)
+        engine.FindQueueProgramMember(&bank, 0)->nativeCompletion = row.queueSuccessorCompletion;
     row.queueSuccessorOccurrence = scratch->queueSuccessorOccurrence;
     if (leafCount != 0) {
         row.queueSuccessorLeaf =
@@ -90374,6 +90507,15 @@ bool PrepareImmediateActionQueueReplacement(
                 (void)ReleaseImmediateActionQueueReplacement(engine, scratch);
                 return false;
             }
+            harken::EnginePlayableMemberRecord* retainedMember = nullptr;
+            if (!row.parentService.Valid()) {
+                retainedMember = engine.AcquireQueueProgramMember(programBank, scratch.sourceControlCount + index);
+                if (retainedMember == nullptr) {
+                    plan.result = VN_BACKPRESSURE;
+                    (void)ReleaseImmediateActionQueueReplacement(engine, scratch);
+                    return false;
+                }
+            }
             const TimelineVoiceInstallResult installed =
                 InstallTimelineVoiceStart(
                     engine, scratch.successorVoices[index].Input(), row.rootInstance, startFrame,
@@ -90397,6 +90539,11 @@ bool PrepareImmediateActionQueueReplacement(
             scratch.successorStartFrames[index] = startFrame;
             scratch.successorLeafCompletions[index] =
                 installed.completionPredicate;
+            if (retainedMember != nullptr) {
+                CaptureQueueProgramMember(*retainedMember, scratch.successorVoices[index].Share(), leaf.leaf,
+                    installed, startFrame, resolution.successorHasContinuation
+                        ? scratch.successorLeafOccurrences[index] : scratch.successorOccurrence);
+            }
             scratch.replacementGroupArms[
                 scratch.sourceControlCount + index] = installed.armToken;
             if (resolution.successorHasContinuation &&
@@ -90519,6 +90666,8 @@ bool PrepareImmediateActionQueueReplacement(
                 }
                 scratch.successorLeafCompletions[index] =
                     bound.predicate;
+                if (auto* member = engine.FindQueueProgramMember(&programBank, scratch.sourceControlCount + index))
+                    member->nativeCompletion = bound.predicate;
             }
         } else if (resolution.successorHasContinuation &&
                    scratch.successorLeafCount != 0) {
@@ -91062,8 +91211,9 @@ bool CommitNativeImmediateActionQueueReplacement(harken::Engine& engine,
         row.queueSuccessorOccurrence = scratch.successorOccurrence;
         row.queueSuccessorCompletion = scratch.successorCompletion;
         row.queueSuccessorOwner = scratch.successorOwner;
-        engine.playableSuccessorVoices[StorageBasesForRow(engine, row).endpoint] =
-            std::move(scratch.successorVoices[0]);
+        auto* member = engine.FindQueueProgramMember(&bank, 0);
+        if (member == nullptr || !member->voice.Valid()) return false;
+        member->nativeCompletion = scratch.successorCompletion;
         row.queueSuccessorLeaf = scratch.successorLeaves[0];
         row.queueSuccessorArm = start.arm;
         row.queueMonitorSelection = start.monitorSelection;
@@ -91329,8 +91479,8 @@ void CommitImmediateActionQueueReplacements(
                          leafIndex < scratch.successorLeafCount;
                          ++leafIndex) {
                         const std::size_t slot = endpointBase + leafIndex;
-                        engine.playableSuccessorVoices[slot] =
-                            scratch.successorVoices[leafIndex].Share();
+                        if (row.parentService.Valid())
+                            engine.playableSuccessorVoices[slot] = scratch.successorVoices[leafIndex].Share();
                         engine.playableSuccessorLeaves[slot] =
                             scratch.successorLeaves[leafIndex];
                         engine.playableSuccessorArms[slot] =
@@ -91374,7 +91524,7 @@ void CommitImmediateActionQueueReplacements(
 
             row.queueSuccessorOccurrence = scratch.successorOccurrence;
             if (scratch.successorLeafCount != 0) {
-                if (scratch.successorLeafCount == 1)
+                if (scratch.successorLeafCount == 1 && row.parentService.Valid())
                     engine.playableSuccessorVoices[StorageBasesForRow(engine, row).endpoint] =
                         scratch.successorVoices[0].Share();
                 row.queueSuccessorLeaf = scratch.successorLeaves[0];
@@ -91389,6 +91539,8 @@ void CommitImmediateActionQueueReplacements(
                 row.queueSuccessorCompletion =
                     scratch.successorCompletion;
                 row.queueSuccessorOwner = scratch.successorOwner;
+                if (auto* member = engine.FindQueueProgramMember(&bank, scratch.sourceControlCount))
+                    member->nativeCompletion = scratch.successorCompletion;
             }
             if (scratch.sourceControlCount != 0) {
                 row.queueTransitionSourceFadeCurves[
@@ -91561,6 +91713,10 @@ bool BindNativeQueueReplacementSource(harken::Engine& engine,
     mirror.entryAnchorFrame = start;
     engine.timelineVoiceInstallIdentities[arm.renderSlot].onsetFrame = start;
     row.queueSuccessorCompletion = completion;
+    if (auto* member = engine.FindQueueProgramMember(bank, 0)) {
+        member->startFrame = start;
+        member->nativeCompletion = completion;
+    }
     holder.sourceClockBound = true;
     return true;
 }

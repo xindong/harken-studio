@@ -13562,6 +13562,11 @@ static void CheckOriginalResetBodyUsesRealEngineOwners(bool afterBinding, bool m
             ASSERT_TRUE(engine.timelineArms.PinFrontierReader(scratch.successorStarts[0].arm, &sourceReader));
             auto* const programBank = scratch.programBank;
             ASSERT_NE(nullptr, programBank);
+            const auto memberToken = programBank->members[0];
+            ASSERT_TRUE(memberToken.Valid());
+            const auto* member = engine.FindPlayableMember(memberToken);
+            ASSERT_NE(nullptr, member);
+            ASSERT_TRUE(member->voice.Valid());
             EXPECT_FALSE(harken::test::CancelNativeQueueResetResourcesForTest(engine, 0));
             EXPECT_EQ(1u, engine.originalQueueReplacementAbandonCount);
             EXPECT_TRUE(scratch.prepared);
@@ -13580,6 +13585,7 @@ static void CheckOriginalResetBodyUsesRealEngineOwners(bool afterBinding, bool m
             EXPECT_FALSE(scratch.prepared);
             EXPECT_EQ(nullptr, scratch.programBank);
             EXPECT_FALSE(programBank->occupied);
+            EXPECT_EQ(nullptr, engine.FindPlayableMember(memberToken));
         }
     } else
 #endif
@@ -37727,7 +37733,9 @@ TEST(ActionFiringApi, InitialQueueArenaRefusalLeavesNoPartialSoundAndRecovers) {
         if (refusedInfo.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
     }
     EXPECT_FALSE(lateSound);
+    harken::monitor::StopDrainForTests();
     harken::monitor::DrainOnceForTests();
+    harken::monitor::StartDrainForTests();
     std::array<std::uint8_t, 65536> monitorBuffer{};
     VnMonitorPollDesc monitorPoll{};
     monitorPoll.structSize = sizeof(monitorPoll);
@@ -37971,7 +37979,9 @@ TEST(ActionFiringApi, InitialQueueContinuationArenaRefusalKeepsFirstSoundAndFail
     EXPECT_EQ(VN_ACTION_OUTCOME_FAILED, refusedInfo.outcome);
     EXPECT_EQ(VN_ACTION_TERMINAL_CAPACITY, refusedInfo.terminalReason);
     EXPECT_EQ(0u, refusedInfo.livePlayableCount);
+    harken::monitor::StopDrainForTests();
     harken::monitor::DrainOnceForTests();
+    harken::monitor::StartDrainForTests();
     std::array<std::uint8_t, 65536> monitorBuffer{};
     VnMonitorPollDesc monitorPoll{};
     monitorPoll.structSize = sizeof(monitorPoll);
@@ -41132,14 +41142,16 @@ TEST(ActionFiringApi, DirectStaggeredCurrentSecondPublicationRefusalRetainsFourG
 }
 
 void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
-                                                            std::uint32_t laterLeafFrames = 0u) {
+                                                            std::uint32_t laterLeafFrames = 0u,
+                                                            bool retainSinglePredecessor = false) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(8, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
-    std::vector<float> first(64, 0.25f);
-    std::vector<float> second(128, laterLeafFrames == 0u ? -0.25f : -0.5f);
+    std::vector<float> first(retainSinglePredecessor ? 2048u : 64u, 0.25f);
+    std::vector<float> second(retainSinglePredecessor ? 4096u : 128u,
+        laterLeafFrames == 0u ? -0.25f : -0.5f);
     const VnPCMDesc firstPcm = harkentest::MonoDesc(first, 48000);
     const VnPCMDesc secondPcm = harkentest::MonoDesc(second, 48000);
     ASSERT_EQ(VN_OK,
@@ -41157,6 +41169,10 @@ void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
         image.MakeSecondQueueChildCompositePiece();
     } else {
         image.MakeSecondQueueChildCompositeTrack();
+    }
+    if (retainSinglePredecessor) {
+        image.containers[2].queueCycle = harken::QueueCycleV1::Loop;
+        image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
     }
     if (laterLeafFrames != 0u) {
         image.trackPlacements[1].authoredStart = pieceChild
@@ -41241,11 +41257,15 @@ void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
     }
 
     bool observedOnlyLongLeaf = false;
+    harken::EngineQueueProgramBank::OriginalLifetimePin oldProgramReader;
+    harken::EnginePlayableMemberToken oldMember;
+    VnVoiceHandle oldRender = 0;
+    harken::TimelineArmToken oldArm;
     std::uint64_t firstPositiveFrame = UINT64_MAX;
     std::uint64_t firstNegativeFrame = UINT64_MAX;
     std::uint32_t positiveSamples = 0u;
     std::uint32_t negativeSamples = 0u;
-    for (std::uint32_t block = 0; block < 96; ++block) {
+    for (std::uint32_t block = 0; block < (retainSinglePredecessor ? 256u : 96u); ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine->nullBackend.Pump(1);
         if (laterLeafFrames != 0u) {
@@ -41265,6 +41285,40 @@ void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
         }
         ASSERT_EQ(VN_OK, Vn_Update());
         ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+        if (retainSinglePredecessor && row->queueCurrentScheduleLeafCount == 0 && !oldMember.Valid()) {
+            auto* member = engine->FindPlayableMember(*row, 0);
+            if (member != nullptr && member->voice.Valid() && row->queueCurrentProgramBank != nullptr) {
+                auto* original = engine->OriginalQueueBankHolderFor(row->queueCurrentProgramBank);
+                ASSERT_NE(nullptr, original);
+                ASSERT_TRUE(original->baseline.Borrow(&oldProgramReader));
+                oldMember = row->members[0];
+                oldRender = member->render;
+                oldArm = member->arm;
+            }
+        }
+        if (oldMember.Valid()) {
+            const auto* retained = engine->FindPlayableMember(oldMember);
+            ASSERT_NE(nullptr, retained);
+            ASSERT_TRUE(retained->voice.Valid());
+            EXPECT_EQ(oldRender, retained->render);
+            EXPECT_TRUE(harken::OriginalSourceSubmissionRegistry::SameToken(oldArm, retained->arm));
+            if (row->queueCurrentScheduleLeafCount == 2u) {
+                EXPECT_FALSE(retained->primaryOwned);
+                EXPECT_NE(oldMember, row->members[0]);
+                oldProgramReader.Release();
+                ASSERT_EQ(harken::PlayableControlStatus::Ok,
+                    harken::StopPlayable(*engine, row->rootInstance, 0));
+                for (unsigned cleanup = 0; cleanup < 64; ++cleanup) {
+                    engine->nullBackend.Pump(1);
+                    ASSERT_EQ(VN_OK, Vn_Update());
+                }
+                EXPECT_FALSE(engine->runtimeRecreateRequired);
+                EXPECT_EQ(nullptr, engine->FindPlayableMember(oldMember));
+                EXPECT_FALSE(engine->playableInstances.Classify(play.producedPlayableInstance).live);
+                EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+                return;
+            }
+        }
         if (engine->voices.Resolve(successorHandles[0]) == nullptr &&
             engine->voices.Resolve(successorHandles[1]) != nullptr &&
             info.state == VN_ACTION_FIRING_ACTIVE) {
@@ -41275,6 +41329,10 @@ void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
         }
     }
 
+    ASSERT_FALSE(retainSinglePredecessor) << "Mixed Queue did not promote after the retained single source"
+        << " state=" << info.state << " outcome=" << info.outcome << " reason=" << info.terminalReason
+        << " held=" << oldMember.Valid() << " current=" << row->queueCurrentScheduleLeafCount
+        << " successor=" << row->queueSuccessorScheduleLeafCount << " recreate=" << engine->runtimeRecreateRequired;
     EXPECT_TRUE(observedOnlyLongLeaf);
     if (laterLeafFrames != 0u) {
         ASSERT_NE(UINT64_MAX, firstPositiveFrame);
@@ -41300,6 +41358,10 @@ void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
 TEST(ActionFiringApi,
      ImmediateSequenceQueueCompositeTrackSuccessorCompletesAfterEveryLeaf) {
     ExpectImmediateSequenceQueueCompositeSuccessorCompletes(false);
+}
+
+TEST(ActionFiringApi, RepeatedMixedQueueKeepsOldSingleFactsUntilProgramReaderReturns) {
+    ExpectImmediateSequenceQueueCompositeSuccessorCompletes(false, 0, true);
 }
 
 TEST(ActionFiringApi,
@@ -41557,16 +41619,18 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
         ? 0u : savedSuccessorBank->Generation();
     const auto savedSuccessorPlane = row->queueSuccessorProgramPlane;
     const auto savedSuccessorMirrorSlot = static_cast<std::size_t>(row->queueSuccessorScheduleBase);
-    const auto& savedSuccessorVoice = engine->playableSuccessorVoices[
-        engine->playableStorage.EndpointBase(row->partition.slot)];
-    const auto savedSuccessorSoundId = savedSuccessorVoice.Facts().soundId;
+    const auto* savedSuccessorMember = engine->FindQueueProgramMember(
+        savedSuccessorBank, row->queueSuccessorPrograms.first);
+    const auto savedSuccessorSoundId = savedSuccessorMember == nullptr
+        ? VnObjectId{} : savedSuccessorMember->voice.Facts().soundId;
     const auto sameArm = [](harken::TimelineArmToken a, harken::TimelineArmToken b) {
         return a.slot == b.slot && a.generation == b.generation &&
             a.renderSlot == b.renderSlot && a.renderGeneration == b.renderGeneration;
     };
     harken::EngineTimelineVoiceInstallIdentity savedSuccessorInstallation{};
     if (restartCycle) {
-        ASSERT_TRUE(savedSuccessorVoice.Valid());
+        ASSERT_NE(nullptr, savedSuccessorMember);
+        ASSERT_TRUE(savedSuccessorMember->voice.Valid());
         ASSERT_TRUE(savedSuccessorArm.Valid());
         ASSERT_NE(nullptr, savedSuccessorBank);
         ASSERT_NE(0u, savedSuccessorRender);
@@ -41903,8 +41967,10 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
     if (restartCycle) {
         EXPECT_TRUE(harken::QueueSuccessorRestartsCycle(sameWithinCycle, following));
         EXPECT_NE(current->renderHandle, current->queueSuccessorRenderHandle);
-        const auto& successorVoice = engine->playableSuccessorVoices[
-            engine->playableStorage.EndpointBase(current->partition.slot)];
+        const auto* successorMember = engine->FindQueueProgramMember(
+            current->queueSuccessorProgramBank, current->queueSuccessorPrograms.first);
+        ASSERT_NE(nullptr, successorMember);
+        const auto& successorVoice = successorMember->voice;
         ASSERT_TRUE(successorVoice.Valid());
         const auto* currentInstall = engine->ResolvePlayableServiceVoice(*current);
         ASSERT_NE(nullptr, currentInstall);
@@ -56922,8 +56988,10 @@ TEST(ActionFiringApi,
     ExpectEffectiveQueueState(expectedReset, row->queueNextState);
     EXPECT_EQ(originalBoundary, row->queueCompletionFrame);
     EXPECT_NE(current, row->queueSuccessorRenderHandle);
-    const auto& successorVoice = engine->playableSuccessorVoices[
-        engine->playableStorage.EndpointBase(row->partition.slot)];
+    const auto* successorMember = engine->FindQueueProgramMember(
+        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+    ASSERT_NE(nullptr, successorMember);
+    const auto& successorVoice = successorMember->voice;
     ASSERT_TRUE(successorVoice.Valid());
     EXPECT_EQ(CanonicalActionWorld::kSecondSound, successorVoice.Facts().soundId);
     harken::DecisionCommittedSnapshot oldSnapshot{};
@@ -58503,8 +58571,10 @@ TEST(ActionFiringApi,
     EXPECT_EQ(originalBoundary, row->queueCompletionFrame);
     EXPECT_NE(current, row->queueSuccessorRenderHandle);
     EXPECT_NE(oldSuccessor, row->queueSuccessorRenderHandle);
-    const auto& successorVoice = engine->playableSuccessorVoices[
-        engine->playableStorage.EndpointBase(row->partition.slot)];
+    const auto* successorMember = engine->FindQueueProgramMember(
+        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+    ASSERT_NE(nullptr, successorMember);
+    const auto& successorVoice = successorMember->voice;
     ASSERT_TRUE(successorVoice.Valid());
     EXPECT_EQ(CanonicalActionWorld::kSecondSound, successorVoice.Facts().soundId);
     EXPECT_EQ(oldTransition.slot, row->queueArrivalTransition.slot);
@@ -63285,8 +63355,10 @@ TEST(ActionFiringApi, PreinitLaneBQueueAndTwoDirectSoundsSameQuantum) {
             ASSERT_TRUE(row->queueMode);
             successorRender = row->queueSuccessorRenderHandle;
             ASSERT_NE(0u, successorRender);
-            const auto& successorVoice = engine->playableSuccessorVoices[
-                engine->playableStorage.EndpointBase(row->partition.slot)];
+            const auto* successorMember = engine->FindQueueProgramMember(
+                row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+            ASSERT_NE(nullptr, successorMember);
+            const auto& successorVoice = successorMember->voice;
             ASSERT_TRUE(successorVoice.Valid());
             ASSERT_EQ(sounds[1], successorVoice.Facts().soundId);
             ASSERT_NE(initialRender[index], successorRender);

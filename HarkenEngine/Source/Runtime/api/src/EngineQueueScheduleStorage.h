@@ -17,6 +17,13 @@
 
 namespace harken {
 
+struct EnginePlayableMemberToken {
+    std::uint32_t slot = UINT32_MAX;
+    std::uint64_t generation = 0;
+    bool Valid() const noexcept { return slot != UINT32_MAX && generation != 0; }
+    bool operator==(const EnginePlayableMemberToken&) const noexcept = default;
+};
+
 struct QueueScheduleShape {
     std::uint32_t programs = 0;
     std::uint32_t events = 0;
@@ -35,13 +42,14 @@ struct EngineQueueScheduleColumns {
     std::vector<TimelineProgramView> runtimes;
     std::vector<ProgramView> schedules;
     std::vector<VoiceReleaseObserver> releaseObservers;
+    std::vector<EnginePlayableMemberToken> members;
 
     EngineQueueScheduleColumns() noexcept = default;
     ~EngineQueueScheduleColumns() { assert(!borrowed_); }
     // Copies are detached snapshots, never another loan of the original buffers.
     EngineQueueScheduleColumns(const EngineQueueScheduleColumns& other)
         : payloads(other.payloads), events(other.events), runtimes(other.runtimes),
-          schedules(other.schedules), releaseObservers(other.releaseObservers) {}
+          schedules(other.schedules), releaseObservers(other.releaseObservers), members(other.members) {}
     EngineQueueScheduleColumns& operator=(const EngineQueueScheduleColumns& other) {
         if (this != &other) {
             if (borrowed_) std::terminate();
@@ -59,9 +67,10 @@ struct EngineQueueScheduleColumns {
         runtimes.swap(other.runtimes);
         schedules.swap(other.schedules);
         releaseObservers.swap(other.releaseObservers);
+        members.swap(other.members);
     }
     QueueScheduleShape Shape() const noexcept {
-        const auto programs = std::min({runtimes.size(), schedules.size(), releaseObservers.size()});
+        const auto programs = std::min({runtimes.size(), schedules.size(), releaseObservers.size(), members.size()});
         const auto eventCount = std::min(payloads.size(), events.size());
         return {static_cast<std::uint32_t>(std::min<std::size_t>(programs, UINT32_MAX)),
             static_cast<std::uint32_t>(std::min<std::size_t>(eventCount, UINT32_MAX))};
@@ -71,7 +80,8 @@ struct EngineQueueScheduleColumns {
             events.capacity() * sizeof(EventTemplate) +
             runtimes.capacity() * sizeof(TimelineProgramView) +
             schedules.capacity() * sizeof(ProgramView) +
-            releaseObservers.capacity() * sizeof(VoiceReleaseObserver);
+            releaseObservers.capacity() * sizeof(VoiceReleaseObserver) +
+            members.capacity() * sizeof(EnginePlayableMemberToken);
     }
 private:
     friend class EngineQueueScheduleStorage;
@@ -376,7 +386,7 @@ private:
             };
             return resize(columns.payloads, shape.events) && resize(columns.events, shape.events) &&
                 resize(columns.runtimes, shape.programs) && resize(columns.schedules, shape.programs) &&
-                resize(columns.releaseObservers, shape.programs);
+                resize(columns.releaseObservers, shape.programs) && resize(columns.members, shape.programs);
         } catch (...) { return false; }
     }
     template<class AllowAllocation>

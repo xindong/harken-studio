@@ -805,7 +805,8 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(engine->config.maxContainerInstances, engine->queueInstances.Capacity());
     EXPECT_EQ(engine->config.maxContainerInstances, engine->variableControlInstances.Capacity());
 
-    EXPECT_EQ(layout.memberCount, engine->playableMemberRecords.size());
+    EXPECT_EQ(layout.memberCount + harken::QueueProgramBankCapacity(engine->config) *
+        harken::EngineQueueProgramBankBody::kProgramCapacity, engine->playableMemberRecords.size());
     EXPECT_EQ(0u, engine->playableMemberRecords.ConstructedCount());
     EXPECT_EQ(0u, engine->playableMemberRecords.RequestedBytes());
     EXPECT_EQ(layout.memberCount, engine->playableMemberReferences.size());

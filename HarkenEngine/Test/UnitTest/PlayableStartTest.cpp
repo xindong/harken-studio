@@ -17488,8 +17488,10 @@ TEST(PlayableStart, QueueSingleLeafTrackSuccessorKeepsAuthoredClipDeadline) {
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
-    const auto& successorVoice = engine->playableSuccessorVoices[
-        engine->playableStorage.EndpointBase(row->partition.slot)];
+    const auto* successorMember = engine->FindQueueProgramMember(
+        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+    ASSERT_NE(nullptr, successorMember);
+    const auto& successorVoice = successorMember->voice;
     ASSERT_TRUE(successorVoice.Valid());
     EXPECT_EQ(480u, successorVoice.Facts().authoredDurationFrames);
 
@@ -17595,8 +17597,10 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
     EXPECT_FALSE(row->queueSameProgramKey);
-    const auto& successorVoice = engine->playableSuccessorVoices[
-        engine->playableStorage.EndpointBase(row->partition.slot)];
+    const auto* successorMember = engine->FindQueueProgramMember(
+        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+    ASSERT_NE(nullptr, successorMember);
+    const auto& successorVoice = successorMember->voice;
     ASSERT_TRUE(successorVoice.Valid());
     EXPECT_EQ(480u, successorVoice.Facts().authoredDurationFrames);
     EXPECT_EQ(row->queueCompletionFrame + 240u,

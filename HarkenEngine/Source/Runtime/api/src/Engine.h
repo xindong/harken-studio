@@ -807,6 +807,7 @@ struct EngineQueueProgramBank : EngineQueueProgramBankBody {
     // Callers still own the actual program/observer/read-fence qualification.
     bool TryResetStorage() noexcept {
         if (HasOriginalLifetimeOwners()) return false;
+        for (const auto token : members) if (token.Valid()) return false;
         scheduleStorageLoan.Reset();
         programCount = 0; eventCount = 0; curveCount = 0; aggregateCount = 0;
         groups = {}; transition = {};
@@ -1023,12 +1024,6 @@ struct EngineControlProgramRecord {
     bool reserved = false;
 };
 
-struct EnginePlayableMemberToken {
-    std::uint32_t slot = UINT32_MAX;
-    std::uint64_t generation = 0;
-    bool Valid() const noexcept { return slot != UINT32_MAX && generation != 0; }
-};
-
 struct EnginePlayableMemberRecord {
     CapturedTimelineVoiceInstall voice{};
     PlayableRefV1 leaf{};
@@ -1045,7 +1040,9 @@ struct EnginePlayableMemberRecord {
     std::uint64_t partitionGeneration = 0;
     std::uint64_t generation = 0;
     std::uint32_t physicalSlot = UINT32_MAX;
+    std::uint32_t programOwners = 0;
     std::uint8_t dynamic = 0;
+    bool primaryOwned = false;
     bool occupied = false;
 };
 
@@ -5876,6 +5873,8 @@ public:
         if (!playableServices.Reserve(resolved.maxPlayableInstances)) throw std::bad_alloc{};
         const auto playSlotCapacity = ActionPreparationSlotCapacity(resolved);
         const auto queueBankCapacity = QueueProgramBankCapacity(resolved);
+        const auto playableMemberCapacity = static_cast<std::uint64_t>(playableStorage.memberCount) +
+            static_cast<std::uint64_t>(queueBankCapacity) * EngineQueueProgramBankBody::kProgramCapacity;
         const auto privateLaneMetadataCapacity = std::max(resolved.maxTransactionEvents,
             resolved.maxKnownScheduleLeaves * 4u);
         if (playSlotCapacity > UINT32_MAX || queueBankCapacity > UINT32_MAX ||
@@ -5885,10 +5884,10 @@ public:
             !pendingOrdinarySelections.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !preparedPendingVariableGroups.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !actionPlayScratch.Reserve(static_cast<std::uint32_t>(playSlotCapacity))) throw std::bad_alloc{};
-        if (playableStorage.memberCount > UINT32_MAX || playableStorage.initialProgramCount > UINT32_MAX ||
+        if (playableMemberCapacity > UINT32_MAX || playableStorage.initialProgramCount > UINT32_MAX ||
             playableStorage.continuousCount > UINT32_MAX ||
             !memberProgramRecords.Reserve(static_cast<std::uint32_t>(playableStorage.initialProgramCount)) ||
-            !playableMemberRecords.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
+            !playableMemberRecords.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
             !variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions) ||
             !memberOnsets.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
             !playableServiceWork.Reserve(resolved.maxPlayableInstances) ||
@@ -9326,6 +9325,12 @@ public:
             (void)released;
         }
         // Joined Source/Body/control exit precedes our service storage Return.
+        for (auto& bank : queueProgramBanks) {
+            const bool returned = ReleaseQueueProgramMembers(bank);
+            assert(returned);
+            (void)returned;
+            bank.scheduleStorageLoan.Reset();
+        }
         ReturnOriginalPlayableServiceStorageAfterQuiescence();
         ShutdownOriginalPackIdentityLeasesAfterQuiescence();
         // Executors borrow scratch tokens, whose sparse backing is destroyed first.
@@ -10784,7 +10789,9 @@ public:
 
     bool ResetOriginalQueueBank(EngineQueueProgramBank& bank) noexcept {
         auto* original = OriginalQueueBankHolderFor(&bank);
-        return original != nullptr &&
+        if (original == nullptr || bank.HasOriginalOwnersOtherThan(original->reservation, original->baseline))
+            return false;
+        return ReleaseQueueProgramMembers(bank) &&
             bank.TryResetOriginalStorage(original->reservation, original->baseline);
     }
 
@@ -12214,16 +12221,20 @@ public:
         return playableMemberRecords.PrepareBacking(count, 0, PlayableMemberReusable,
             [this](std::uint32_t slot) noexcept { return playableMemberRecords.Emplace(slot); }, out);
     }
+    EnginePlayableMemberRecord* FindPlayableMember(EnginePlayableMemberToken token) noexcept {
+        if (!token.Valid() || !playableMemberRecords.IsConstructed(token.slot)) return nullptr;
+        auto& record = playableMemberRecords[token.slot];
+        return record.occupied && record.generation == token.generation ? &record : nullptr;
+    }
     EnginePlayableMemberRecord* FindPlayableMember(const EnginePlayableServiceRow& row,
         std::uint32_t offset) noexcept {
         if (offset >= row.members.size() || !row.InvocationValid() || row.quarantined ||
             !playablePartitions.Owns(row.partition, row.identity)) return nullptr;
         const auto token = row.members[offset];
-        if (!token.Valid() || !playableMemberRecords.IsConstructed(token.slot)) return nullptr;
-        auto& record = playableMemberRecords[token.slot];
-        return record.occupied && record.generation == token.generation && record.service == row.identity &&
-            record.partitionGeneration == row.partition.generation &&
-            record.physicalSlot == playableStorage.MemberBase(row.partition.slot) + offset ? &record : nullptr;
+        auto* record = FindPlayableMember(token);
+        return record != nullptr && record->primaryOwned && record->service == row.identity &&
+            record->partitionGeneration == row.partition.generation &&
+            record->physicalSlot == playableStorage.MemberBase(row.partition.slot) + offset ? record : nullptr;
     }
     EnginePlayableMemberRecord* FindPlayableMember(std::size_t physicalSlot) noexcept {
         if (physicalSlot >= playableStorage.memberCount || playableStorage.memberStride == 0) return nullptr;
@@ -12244,29 +12255,54 @@ public:
         assert(record != nullptr);
         return *record;
     }
-    EnginePlayableMemberRecord* AcquirePlayableMember(EnginePlayableServiceRow& row,
-        std::uint32_t offset) noexcept {
-        if (offset >= row.members.size() || !row.InvocationValid() || row.quarantined ||
-            !playablePartitions.Owns(row.partition, row.identity)) return nullptr;
-        auto& token = row.members[offset];
-        if (token.Valid()) return FindPlayableMember(row, offset);
+    EnginePlayableMemberToken AcquirePlayableMemberRecord() noexcept {
         for (std::uint32_t slot = 0; slot < playableMemberRecords.size(); ++slot) {
             if (!playableMemberRecords.IsConstructed(slot)) {
                 if (playableMemberRecords.PreparedUseActive()) continue;
-                if (!playableMemberRecords.Emplace(slot)) return nullptr;
+                if (!playableMemberRecords.Emplace(slot)) return {};
             }
             auto& record = playableMemberRecords[slot];
             if (!PlayableMemberReusable(record)) continue;
             if (!playableMemberRecords.ProtectBackingForAcquire(slot, PlayableMemberReusable,
-                    [this](std::uint32_t next) noexcept { return playableMemberRecords.Emplace(next); })) return nullptr;
-            record.service = row.identity;
-            record.partitionGeneration = row.partition.generation;
-            record.physicalSlot = static_cast<std::uint32_t>(playableStorage.MemberBase(row.partition.slot) + offset);
+                    [this](std::uint32_t next) noexcept { return playableMemberRecords.Emplace(next); })) return {};
             record.occupied = true;
             ++record.generation;
-            token = {slot, record.generation};
-            return &record;
+            return {slot, record.generation};
         }
+        return {};
+    }
+    static void RecyclePlayableMember(EnginePlayableMemberRecord& record) noexcept {
+        if (record.primaryOwned || record.programOwners != 0) return;
+        const auto generation = record.generation;
+        record = {};
+        record.generation = generation;
+    }
+    bool BindPlayableMember(EnginePlayableServiceRow& row, std::uint32_t offset,
+        EnginePlayableMemberToken token) noexcept {
+        if (offset >= row.members.size() || !row.InvocationValid() || row.quarantined ||
+            !playablePartitions.Owns(row.partition, row.identity)) return false;
+        auto* record = FindPlayableMember(token);
+        if (record == nullptr) return false;
+        if (row.members[offset] == token) return FindPlayableMember(row, offset) == record;
+        if (record->primaryOwned || !ReleasePlayableMember(row, offset)) return false;
+        record->service = row.identity;
+        record->partitionGeneration = row.partition.generation;
+        record->physicalSlot = static_cast<std::uint32_t>(playableStorage.MemberBase(row.partition.slot) + offset);
+        record->primaryOwned = true;
+        row.members[offset] = token;
+        RefreshPlayableMemberOnset(record->physicalSlot);
+        return true;
+    }
+    EnginePlayableMemberRecord* AcquirePlayableMember(EnginePlayableServiceRow& row,
+        std::uint32_t offset) noexcept {
+        if (offset >= row.members.size() || !row.InvocationValid() || row.quarantined ||
+            !playablePartitions.Owns(row.partition, row.identity)) return nullptr;
+        if (row.members[offset].Valid()) return FindPlayableMember(row, offset);
+        const auto token = AcquirePlayableMemberRecord();
+        auto* record = FindPlayableMember(token);
+        if (record == nullptr) return nullptr;
+        if (BindPlayableMember(row, offset, token)) return record;
+        RecyclePlayableMember(*record);
         return nullptr;
     }
     bool ReleasePlayableMember(EnginePlayableServiceRow& row, std::uint32_t offset) noexcept {
@@ -12275,11 +12311,61 @@ public:
         if (offset < row.memberPrograms.size() && row.memberPrograms[offset].Valid()) return false;
         auto* record = FindPlayableMember(row, offset);
         if (record == nullptr) return false;
-        SetPlayableMemberCompletion(record->physicalSlot, {});
-        const auto generation = record->generation;
-        *record = {};
-        record->generation = generation;
+        auto& reference = playableMemberReferences[record->physicalSlot];
+        if (reference.service.token == row.identity &&
+            reference.service.owner == row.ownerInstance && reference.service.epoch == row.ownerEpoch &&
+            reference.service.invocationGeneration == row.invocationGeneration &&
+            reference.partitionGeneration == row.partition.generation && reference.memberOffset == offset &&
+            reference.leaf == record->completion.leafInstance &&
+            reference.leafEpoch == record->completion.leafEpoch) reference = {};
+        RemovePlayableMemberOnset(record->physicalSlot);
+        record->primaryOwned = false;
+        record->physicalSlot = UINT32_MAX;
         row.members[offset] = {};
+        RecyclePlayableMember(*record);
+        return true;
+    }
+
+    EnginePlayableMemberRecord* FindQueueProgramMember(const EngineQueueProgramBank* bank,
+        std::uint32_t index) noexcept {
+        return bank != nullptr && bank->occupied && index < bank->members.size()
+            ? FindPlayableMember(bank->members[index]) : nullptr;
+    }
+    bool RetainQueueProgramMember(EngineQueueProgramBank& bank, std::uint32_t index,
+        EnginePlayableMemberToken token) noexcept {
+        if (!bank.occupied || bank.published || index >= bank.members.size()) return false;
+        auto* record = FindPlayableMember(token);
+        if (record == nullptr) return false;
+        if (bank.members[index].Valid()) return bank.members[index] == token;
+        if (record->programOwners == UINT32_MAX) return false;
+        ++record->programOwners;
+        bank.members[index] = token;
+        return true;
+    }
+    EnginePlayableMemberRecord* AcquireQueueProgramMember(EngineQueueProgramBank& bank,
+        std::uint32_t index) noexcept {
+        if (!bank.occupied || bank.published || index >= bank.members.size()) return nullptr;
+        if (bank.members[index].Valid()) return FindQueueProgramMember(&bank, index);
+        const auto token = AcquirePlayableMemberRecord();
+        auto* record = FindPlayableMember(token);
+        if (record == nullptr) return nullptr;
+        if (RetainQueueProgramMember(bank, index, token)) return record;
+        RecyclePlayableMember(*record);
+        return nullptr;
+    }
+    bool ReleaseQueueProgramMembers(EngineQueueProgramBank& bank) noexcept {
+        for (const auto token : bank.members) {
+            if (!token.Valid()) continue;
+            const auto* record = FindPlayableMember(token);
+            if (record == nullptr || record->programOwners == 0) return false;
+        }
+        for (auto& token : bank.members) {
+            if (!token.Valid()) continue;
+            auto* record = FindPlayableMember(token);
+            --record->programOwners;
+            token = {};
+            RecyclePlayableMember(*record);
+        }
         return true;
     }
 
@@ -12567,6 +12653,11 @@ public:
         }
         if (row.usesCapturedVoice)
             return index == 0 && row.capturedVoice.Valid() ? &row.capturedVoice : nullptr;
+        if (row.queueMode && index == 0) {
+            const auto* member = const_cast<Engine*>(this)->FindPlayableMember(row, 0);
+            if (member != nullptr && member->voice.Valid() && SameOriginalSingleArm(member->arm, row.arm))
+                return &member->voice;
+        }
         if (index >= row.scheduleLeafCount) return nullptr;
         std::size_t offset = index;
         if (row.variableControlIndependentFrontier && index >= row.variableControlDiscreteMemberCount) {
@@ -12646,7 +12737,7 @@ public:
         assert(recorded);
         if (!recorded) runtimeRecreateRequired = true;
     }
-    void SetPlayableMemberCompletion(std::size_t slot, VariableControlMemberCompletion value) noexcept {
+    void RemovePlayableMemberOnset(std::size_t slot) noexcept {
         const auto previous = PlayableMemberOnsetIdentity(static_cast<std::uint32_t>(slot));
         if (previous.Valid()) {
             const bool removed = memberOnsets.SetMembership(previous, RuntimeActivitySet::Active,
@@ -12656,6 +12747,9 @@ public:
             assert(removed);
             if (!removed) runtimeRecreateRequired = true;
         }
+    }
+    void SetPlayableMemberCompletion(std::size_t slot, VariableControlMemberCompletion value) noexcept {
+        RemovePlayableMemberOnset(slot);
         auto* record = FindPlayableMember(slot);
         if (record == nullptr) {
             assert(value.leafInstance == 0);
