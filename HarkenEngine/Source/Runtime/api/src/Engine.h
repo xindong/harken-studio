@@ -5741,7 +5741,6 @@ public:
           playableSuccessorLeaves(playableStorage.endpointCount),
           playableSuccessorArms(playableStorage.endpointCount),
           playableSuccessorRenderHandles(playableStorage.endpointCount),
-          playableSuccessorSelections(playableStorage.endpointCount),
           playableSuccessorOccurrences(playableStorage.endpointCount),
           playableSuccessorCompletions(playableStorage.endpointCount),
           playableSuccessorStartFrames(playableStorage.endpointCount),
@@ -12795,7 +12794,6 @@ public:
     std::vector<PlayableRefV1> playableSuccessorLeaves;
     std::vector<TimelineArmToken> playableSuccessorArms;
     std::vector<VnVoiceHandle> playableSuccessorRenderHandles;
-    std::vector<EngineMonitorSelection> playableSuccessorSelections;
     std::vector<OccurrenceToken> playableSuccessorOccurrences;
     std::vector<KnownCompletionPredicateV1> playableSuccessorCompletions;
     std::vector<std::uint64_t> playableSuccessorStartFrames;

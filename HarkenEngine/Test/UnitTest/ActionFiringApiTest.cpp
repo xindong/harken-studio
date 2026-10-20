@@ -20132,6 +20132,10 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
     request.root = {harken::PlayableKindV1::Container, 0, property.stableId,
         property.programSemanticFingerprint, property.contentRevision, property.routeStableId,
         property.compatibilityFingerprint};
+    request.playbackRequest = engine.monitorRequests.Begin(
+        harken::MonitorRequestOrigin::StudioPreview, VN_MONITOR_OPERATION_PLAY_PREVIEW);
+    const auto capture = harkentest::monitor::OpenIdentityEvents();
+    std::vector<harkentest::monitor::IdentityRecord> records;
     const auto started = harken::StartPlayable(engine, request);
     ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
     FrontierTrace trace;
@@ -20147,6 +20151,7 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
         ASSERT_EQ(VN_OK, Vn_Update());
         engine.nullBackend.Pump(1);
         trace.Capture(engine);
+        harkentest::monitor::CollectIdentityEvents(capture, records);
         ASSERT_FALSE(engine.runtimeRecreateRequired) << block;
         for (const auto& row : engine.playableServices) {
             if (row.queueMode && row.partition.Valid() &&
@@ -20195,6 +20200,8 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
             ASSERT_EQ(0u, engine.playableInstances.LiveCount());
             ASSERT_EQ(0u, engine.playablePartitions.OccupiedCount());
             ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &secondPcm));
+            (void)harkentest::monitor::ReadIdentityEvents(capture);
+            records.clear();
             const auto replayed = harken::StartPlayable(engine, request);
             ASSERT_EQ(harken::PlayableStartStatus::Accepted, replayed.status);
             trace = {};
@@ -20205,6 +20212,17 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
             engine.timelineArms.LiveCount() == 0) break;
     }
     ASSERT_EQ(expectedHeard, trace.heard.size());
+    harkentest::monitor::CollectIdentityEvents(capture, records);
+    std::vector<harkentest::monitor::IdentityRecord> selections;
+    for (const auto& record : records)
+        if (record.fact.factKind == VN_MONITOR_FACT_SELECTION_COMMITTED) selections.push_back(record);
+    ASSERT_EQ(trace.heard.size(), selections.size());
+    for (std::size_t index = 0; index < selections.size(); ++index) {
+        EXPECT_EQ(trace.heard[index].subject, selections[index].header.stableId);
+        EXPECT_EQ(trace.heard[index].root, selections[index].fact.root);
+        EXPECT_EQ(request.playbackRequest.key.sequence, selections[index].fact.playbackRequest.sequence);
+    }
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
     if (logicalTrack) EXPECT_TRUE(observedLogicalTrack);
     if (appendSound) EXPECT_EQ(CanonicalActionWorld::kSecondSound, trace.heard.back().subject);
     EXPECT_EQ(CanonicalActionWorld::kFirstSound, trace.heard[0].subject);
