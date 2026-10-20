@@ -69811,6 +69811,23 @@ engine.runtimeRecreateRequired = true;
         result.status = PlayableStartStatus::Backpressure;
         return result;
     }
+    if (directNativeCount > 1u &&
+        !directScratch.voiceStarts.ConstructCaptures([&]() noexcept {
+            return !directScratch.currentNativeBorrowed && engine.AllowNativeBackingAllocation();
+        })) {
+        result.status = PlayableStartStatus::Backpressure;
+        return result;
+    }
+    if (directNativeCount > 1u &&
+        (queueProgram != nullptr || request.root.kind == PlayableKindV1::Track ||
+         request.root.kind == PlayableKindV1::Piece)) {
+        directScratch.frontierProgramBank = ReserveQueueProgramBank(engine,
+            {directNativeCount, directNativeCount});
+        if (directScratch.frontierProgramBank == nullptr) {
+            result.status = PlayableStartStatus::Backpressure;
+            return result;
+        }
+    }
     if (!treeStep.PrepareInstance(engine.playableInstances, rootKind, 0, request.playbackRequest, request.emitterOrigin)) {
         rollbackSelections();
         result.status = PlayableStartStatus::Capacity;
@@ -70334,13 +70351,7 @@ engine.runtimeRecreateRequired = true;
         } else {
             if (row.queueMode || request.root.kind == PlayableKindV1::Track ||
                 request.root.kind == PlayableKindV1::Piece) {
-                row.queueCurrentProgramBank = ReserveQueueProgramBank(engine,
-                    {initialSchedule.leafCount, initialSchedule.leafCount});
-                if (row.queueCurrentProgramBank == nullptr) {
-                    rollbackDirectStart();
-                    result.status = PlayableStartStatus::Backpressure;
-                    return result;
-                }
+                row.queueCurrentProgramBank = std::exchange(directScratch.frontierProgramBank, nullptr);
                 row.queueCurrentPrograms = {0, initialSchedule.leafCount};
             }
             auto* const currentBank = row.queueCurrentProgramBank;

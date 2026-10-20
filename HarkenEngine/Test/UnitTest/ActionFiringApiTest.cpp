@@ -4342,28 +4342,6 @@ void ExpectScheduleCapacityActionCompletes(
         EXPECT_EQ(occurrencesBefore, engine->timelineOccurrences.OccupiedCount());
         EXPECT_EQ(compositeBefore, engine->compositeCompletionOwners.OccupiedCount());
         EXPECT_FALSE(engine->runtimeRecreateRequired);
-        for (const auto countdown : {0, 1}) {
-            engine->nativeBackingAllocationFailureCountdownForTest = countdown;
-            EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
-            EXPECT_EQ(0, engine->nativeBackingAllocationFailureCountdownForTest);
-            engine->nativeBackingAllocationFailureCountdownForTest = -1;
-            EXPECT_EQ(0u, firing);
-            EXPECT_EQ(0u, engine->actionFirings.LiveCount());
-            EXPECT_EQ(commandHead, engine->commands.PublishedHead());
-            EXPECT_EQ(sequence, engine->logicCommits.IssuedCount());
-            EXPECT_EQ(playableBefore, engine->playableInstances.LiveCount());
-            EXPECT_EQ(voicesBefore, engine->voices.ActiveCount());
-            EXPECT_EQ(ledgerAvailableBefore, engine->ledger.AvailableEntryCount());
-            EXPECT_EQ(armsBefore, engine->timelineArms.LiveCount());
-            EXPECT_EQ(occurrencesBefore, engine->timelineOccurrences.OccupiedCount());
-            EXPECT_EQ(compositeBefore, engine->compositeCompletionOwners.OccupiedCount());
-            for (const auto& scratch : engine->actionPlayScratch) {
-                EXPECT_TRUE(scratch.voiceStarts.Empty());
-                EXPECT_TRUE(scratch.queueSuccessorVoiceStarts.Empty());
-            }
-            EXPECT_EQ(0u, NativePreparationBackingBytes(*engine));
-            EXPECT_FALSE(engine->runtimeRecreateRequired);
-        }
         for (const auto site : {harken::detail::LogicAllocSite::CapturedScheduleVoices,
                                 harken::detail::LogicAllocSite::CapturedVoiceInstall}) {
             harken::detail::ArmLogicAllocFaultForTests(
@@ -4385,8 +4363,43 @@ void ExpectScheduleCapacityActionCompletes(
             EXPECT_EQ(compositeBefore, engine->compositeCompletionOwners.OccupiedCount());
             EXPECT_FALSE(engine->runtimeRecreateRequired);
         }
+        ASSERT_TRUE(engine->queueScheduleStorage.CollectUnused());
+        const auto scheduleBytes = engine->queueScheduleStorage.StorageBytes();
+        for (std::int32_t countdown = 0; firing == 0; ++countdown) {
+            SCOPED_TRACE(::testing::Message() << "schedule allocation refusal " << countdown);
+            engine->nativeBackingAllocationFailureCountdownForTest = countdown;
+            const auto result = Vn_PostAction(&desc, &firing);
+            const auto remaining = engine->nativeBackingAllocationFailureCountdownForTest;
+            engine->nativeBackingAllocationFailureCountdownForTest = -1;
+            if (result == VN_OK) break;
+            ASSERT_EQ(VN_BACKPRESSURE, result);
+            EXPECT_EQ(0, remaining);
+            EXPECT_EQ(0u, firing);
+            EXPECT_EQ(0u, engine->actionFirings.LiveCount());
+            EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+            EXPECT_EQ(sequence, engine->logicCommits.IssuedCount());
+            EXPECT_EQ(playableBefore, engine->playableInstances.LiveCount());
+            EXPECT_EQ(voicesBefore, engine->voices.ActiveCount());
+            EXPECT_EQ(ledgerAvailableBefore, engine->ledger.AvailableEntryCount());
+            EXPECT_EQ(armsBefore, engine->timelineArms.LiveCount());
+            EXPECT_EQ(occurrencesBefore, engine->timelineOccurrences.OccupiedCount());
+            EXPECT_EQ(compositeBefore, engine->compositeCompletionOwners.OccupiedCount());
+            for (const auto& scratch : engine->actionPlayScratch) {
+                EXPECT_TRUE(scratch.voiceStarts.Empty());
+                EXPECT_TRUE(scratch.queueSuccessorVoiceStarts.Empty());
+            }
+            for (const auto& bank : engine->queueProgramBanks) {
+                EXPECT_FALSE(bank.occupied);
+                EXPECT_FALSE(bank.scheduleStorageLoan.Valid());
+                EXPECT_FALSE(bank.HasOriginalLifetimeOwners());
+            }
+            ASSERT_TRUE(engine->queueScheduleStorage.CollectUnused());
+            EXPECT_EQ(scheduleBytes, engine->queueScheduleStorage.StorageBytes());
+            EXPECT_EQ(0u, NativePreparationBackingBytes(*engine));
+            EXPECT_FALSE(engine->runtimeRecreateRequired);
+        }
     }
-    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    if (!refuseAllocationFirst) ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     ASSERT_NE(0u, firing);
 
     VnActionFiringInfo info{};
@@ -4550,6 +4563,7 @@ void ExpectDirectScheduleRootBuildsAndReclaims(
         root == ActionScheduleCapacityRoot::Track
             ? image.tracks[0].rootDefinition
             : image.pieces[0].rootDefinition;
+    harken::PlayableStartResult started{};
     if (refuseAllocationFirst) {
         const auto commandHead = engine->commands.PublishedHead();
         engine->forcePreparedScheduleAllocationFailureForTest = true;
@@ -4566,15 +4580,22 @@ void ExpectDirectScheduleRootBuildsAndReclaims(
         EXPECT_EQ(occurrencesBefore, engine->timelineOccurrences.OccupiedCount());
         EXPECT_EQ(compositeBefore, engine->compositeCompletionOwners.OccupiedCount());
         EXPECT_FALSE(engine->runtimeRecreateRequired);
-        for (const auto countdown : {0, 1}) {
+        const auto sequence = engine->logicCommits.IssuedCount();
+        ASSERT_TRUE(engine->queueScheduleStorage.CollectUnused());
+        const auto scheduleBytes = engine->queueScheduleStorage.StorageBytes();
+        for (std::int32_t countdown = 0; started.instance == 0; ++countdown) {
+            SCOPED_TRACE(::testing::Message() << "direct schedule allocation refusal " << countdown);
             engine->nativeBackingAllocationFailureCountdownForTest = countdown;
-            const auto nativeRefused = harken::StartCurrentPlayableByIdentity(
+            started = harken::StartCurrentPlayableByIdentity(
                 definition.kind, definition.stableId, emitter);
-            EXPECT_EQ(0, engine->nativeBackingAllocationFailureCountdownForTest);
+            const auto remaining = engine->nativeBackingAllocationFailureCountdownForTest;
             engine->nativeBackingAllocationFailureCountdownForTest = -1;
-            EXPECT_EQ(harken::PlayableStartStatus::Backpressure, nativeRefused.status);
-            EXPECT_EQ(0u, nativeRefused.instance);
+            if (started.status == harken::PlayableStartStatus::Accepted) break;
+            ASSERT_EQ(harken::PlayableStartStatus::Backpressure, started.status);
+            EXPECT_EQ(0, remaining);
+            EXPECT_EQ(0u, started.instance);
             EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+            EXPECT_EQ(sequence, engine->logicCommits.IssuedCount());
             EXPECT_EQ(playableBefore, engine->playableInstances.LiveCount());
             EXPECT_EQ(voicesBefore, engine->voices.ActiveCount());
             EXPECT_EQ(ledgerAvailableBefore, engine->ledger.AvailableEntryCount());
@@ -4585,10 +4606,17 @@ void ExpectDirectScheduleRootBuildsAndReclaims(
                 EXPECT_TRUE(scratch.voiceStarts.Empty());
                 EXPECT_TRUE(scratch.queueSuccessorVoiceStarts.Empty());
             }
+            for (const auto& bank : engine->queueProgramBanks) {
+                EXPECT_FALSE(bank.occupied);
+                EXPECT_FALSE(bank.scheduleStorageLoan.Valid());
+                EXPECT_FALSE(bank.HasOriginalLifetimeOwners());
+            }
+            ASSERT_TRUE(engine->queueScheduleStorage.CollectUnused());
+            EXPECT_EQ(scheduleBytes, engine->queueScheduleStorage.StorageBytes());
             EXPECT_FALSE(engine->runtimeRecreateRequired);
         }
     }
-    const auto started = harken::StartCurrentPlayableByIdentity(
+    if (!refuseAllocationFirst) started = harken::StartCurrentPlayableByIdentity(
         definition.kind, definition.stableId, emitter);
     ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
     ASSERT_NE(0u, started.instance);
