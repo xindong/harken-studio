@@ -102,6 +102,7 @@ ParamSystem::ParamSystem(const ParamSystem& other)
         binding.dependencySlot = UINT32_MAX;
         binding.dependencyGeneration = 0;
         binding.preparation = nullptr;
+        binding.ownsPreparation = false;
         binding.nextNeutralization = nullptr;
     }
 }
@@ -127,10 +128,64 @@ ParamSystem::PreparedBindingToken& ParamSystem::PreparedBindingToken::operator=(
     return *this;
 }
 
+ParamSystem::BackingPreparation::~BackingPreparation() { Release(); }
+
+ParamSystem::BackingPreparation::BackingPreparation(BackingPreparation&& other) noexcept {
+    *this = std::move(other);
+}
+
+ParamSystem::BackingPreparation& ParamSystem::BackingPreparation::operator=(BackingPreparation&& other) noexcept {
+    if (this != &other) {
+        Release();
+        m_owner = std::exchange(other.m_owner, nullptr);
+        m_dependencies = std::move(other.m_dependencies);
+    }
+    return *this;
+}
+
+void ParamSystem::BackingPreparation::Release() noexcept {
+    if (m_owner != nullptr) {
+        if (m_owner->m_backingUsers != 0) std::terminate();
+        assert(m_owner->m_backingPreparationCount != 0);
+        --m_owner->m_backingPreparationCount;
+        m_owner = nullptr;
+    }
+    for (auto& hold : m_dependencies) hold.Release();
+}
+
+ParamSystem::PreparedUse::PreparedUse(ParamSystem& owner, const BackingPreparation* backing) noexcept
+    : m_owner(backing == nullptr ? nullptr : &owner),
+      m_dependencies(BindingDependencyIndex::UseBacking(backing == nullptr ? nullptr : &backing->m_dependencies)) {
+    if (backing != nullptr) {
+        if (backing->m_owner != &owner) std::terminate();
+        ++owner.m_backingUsers;
+    }
+}
+
+ParamSystem::PreparedUse::~PreparedUse() {
+    if (m_owner != nullptr) --m_owner->m_backingUsers;
+}
+
+bool ParamSystem::PrepareBindingBacking(std::uint32_t count, BackingPreparation* out) noexcept {
+    if (out == nullptr || out->Valid() || m_projectionActive || m_backingUsers != 0) return false;
+    BackingPreparation candidate;
+    if (m_dependencies != nullptr) {
+        if (!m_dependencies->PrepareBacking(std::min(count, m_preparationCapacity), &candidate.m_dependencies)) return false;
+        try {
+            m_freeDependencySlots.reserve(std::min(m_preparationCapacity, m_dependencies->BackedBindingCapacity()));
+        } catch (...) { return false; }
+    }
+    candidate.m_owner = this;
+    ++m_backingPreparationCount;
+    *out = std::move(candidate);
+    return true;
+}
+
 bool ParamSystem::AttachBindingDependencies(BindingDependencyIndex* dependencies) noexcept {
     if (dependencies == m_dependencies) return true;
     if (m_bindingCount != 0 || m_preparedBindingCount != 0 || m_projectionActive ||
-        (dependencies != nullptr && dependencies->BindingCapacity() < m_preparationCapacity)) return false;
+        m_backingPreparationCount != 0 || m_backingUsers != 0 ||
+        (dependencies != nullptr && dependencies->ParamBindingCapacity() < m_preparationCapacity)) return false;
     m_dependencies = dependencies;
     m_dependencySlotCount = 0;
     m_freeDependencySlots.clear();
@@ -145,13 +200,14 @@ bool ParamSystem::PrepareBinding(PreparedBindingToken* out) noexcept {
         slot = append ? m_dependencySlotCount : m_freeDependencySlots.back();
         if (slot >= m_preparationCapacity) return false;
         const auto needed = static_cast<std::size_t>(m_dependencySlotCount) + (append ? 1u : 0u);
-        try {
-            if (m_freeDependencySlots.capacity() < needed)
-                m_freeDependencySlots.reserve(std::min(static_cast<std::size_t>(m_preparationCapacity),
-                    std::max(needed, m_freeDependencySlots.capacity() * 2u)));
-        }
-        catch (...) { return false; }
+        if (m_backingUsers != 0 && m_freeDependencySlots.capacity() < needed) return false;
         if (!m_dependencies->PrepareBinding(slot)) return false;
+        try {
+            const auto backed = std::min(m_preparationCapacity, m_dependencies->BackedBindingCapacity());
+            if (m_backingUsers == 0 && m_freeDependencySlots.capacity() < backed)
+                m_freeDependencySlots.reserve(backed);
+        }
+        catch (...) { m_dependencies->CancelBindingPreparation(slot); return false; }
         if (append) ++m_dependencySlotCount;
         else m_freeDependencySlots.pop_back();
     }
@@ -215,6 +271,14 @@ void ParamSystem::RemoveBindingDependency(Binding& binding) noexcept {
         if (binding.preparation->m_stagedBinding != &binding) std::terminate();
         binding.preparation->m_stagedBinding = nullptr;
         binding.preparation = nullptr;
+    }
+    if (binding.ownsPreparation) {
+        PreparedBindingToken owned;
+        owned.m_owner = this;
+        owned.m_slot = binding.dependencySlot;
+        binding.ownsPreparation = false;
+        binding.dependencySlot = UINT32_MAX;
+        CancelPreparedBinding(&owned);
     }
     if (binding.dependencyGeneration == 0) return;
     const bool removed = m_dependencies->Remove({binding.dependencySlot, binding.dependencyGeneration});
@@ -971,6 +1035,14 @@ bool ParamSystem::BindVoiceTarget(VnVariableId variableId,
 void ParamSystem::CommitStagedVoiceBindings(VnVoiceHandle handle) noexcept {
     for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
         auto& binding = m_bindings[i];
+        if (binding.handle == handle && binding.ownsPreparation) {
+            PreparedBindingToken owned;
+            owned.m_owner = this;
+            owned.m_slot = binding.dependencySlot;
+            binding.ownsPreparation = false;
+            RegisterBindingDependency(binding, &owned);
+            continue;
+        }
         auto* prepared = binding.preparation;
         if (binding.handle != handle || prepared == nullptr) continue;
         if (prepared->m_owner != this || prepared->m_stagedBinding != &binding) std::terminate();
@@ -978,6 +1050,23 @@ void ParamSystem::CommitStagedVoiceBindings(VnVoiceHandle handle) noexcept {
         prepared->m_stagedBinding = nullptr;
         RegisterBindingDependency(binding, prepared);
     }
+}
+
+ParamSystem::InstanceBindResult ParamSystem::StageOwnedVoiceInstance(
+    const BindingDefinitionView& view, VnVoiceHandle handle,
+    VnObjectId attachmentObjectId, bool viaApply) {
+    PreparedBindingToken owned;
+    if (!PrepareBinding(&owned)) return InstanceBindResult::TableFull;
+    const auto result = BindVoiceInstance(view, handle, attachmentObjectId, viaApply, &owned, true);
+    if (result != InstanceBindResult::Ok) return result;
+    auto& binding = *owned.m_stagedBinding;
+    binding.preparation = nullptr;
+    binding.ownsPreparation = true;
+    binding.dependencySlot = owned.m_slot;
+    owned.m_stagedBinding = nullptr;
+    owned.m_owner = nullptr;
+    owned.m_slot = UINT32_MAX;
+    return result;
 }
 
 ParamSystem::InstanceBindResult ParamSystem::BindVoiceInstance(

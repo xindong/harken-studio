@@ -36,6 +36,7 @@
 #include "harken/param/ParamTargetTable.h"
 
 #include <cstdint>
+#include <array>
 #include <utility>
 #include <vector>
 
@@ -92,6 +93,10 @@ public:
     bool Reset(std::uint32_t bindingCapacity, std::uint32_t targetCapacity,
                std::uint32_t keyCapacity = 0) noexcept;
     bool PrepareBinding(std::uint32_t slot) noexcept;
+    using BackingPreparation = std::array<StableStoragePreparation, 3>;
+    using BackingUse = std::array<StableStoragePreparedUse, 3>;
+    bool PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept;
+    static BackingUse UseBacking(const BackingPreparation* backing) noexcept;
     bool HasBindingPreparation(std::uint32_t slot) const noexcept;
     void CancelBindingPreparation(std::uint32_t slot) noexcept;
     bool Register(std::uint32_t slot, const void* fact, ReadIdentity read, std::uint32_t order,
@@ -114,8 +119,17 @@ public:
     bool CommitTarget(BindingDirtyTarget target, std::uint64_t version) noexcept;
     std::size_t StorageBytes() const noexcept;
     std::uint32_t BindingCapacity() const noexcept { return bindingCapacity_; }
+    std::uint32_t ParamBindingCapacity() const noexcept { return paramBindingCapacity_; }
+    std::uint32_t BackedBindingCapacity() const noexcept { return inputs_.ConstructedCount() / 3u; }
 
 private:
+    friend class BindingTable;
+    bool PrepareInputs(std::uint32_t count, std::uint32_t occupied,
+                       StableStoragePreparation* backing = nullptr) noexcept;
+    bool PrepareKeys(std::uint32_t count, std::uint32_t occupied,
+                     StableStoragePreparation* backing = nullptr) noexcept;
+    bool PrepareTargets(std::uint32_t count, std::uint32_t occupied,
+                        StableStoragePreparation* backing = nullptr) noexcept;
     struct InputNode {
         const void* fact = nullptr;
         ReadIdentity read = nullptr;
@@ -169,6 +183,7 @@ private:
     std::uint32_t Height(std::uint32_t key) const noexcept;
     void UpdateHeight(std::uint32_t key) noexcept;
     std::uint32_t bindingCapacity_ = 0;
+    std::uint32_t paramBindingCapacity_ = 0;
     std::uint32_t targetCapacity_ = 0;
     std::uint32_t keyCapacity_ = 0;
     std::uint32_t root_ = UINT32_MAX;

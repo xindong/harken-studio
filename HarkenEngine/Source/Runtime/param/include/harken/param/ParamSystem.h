@@ -30,12 +30,14 @@
 
 #include "harken/core/EngineConfig.h"
 #include "harken/core/LogRing.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/core/VariableReadCut.h"
 #include "harken/core/VariableSliceTable.h"
 #include "harken/param/Curve.h"
 #include "harken/param/ParamTargets.h"
 #include "harken/param/PropertyPublisher.h"
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -293,6 +295,38 @@ public:
         Binding* m_stagedBinding = nullptr;
     };
 
+    class PreparedUse;
+    class BackingPreparation {
+    public:
+        BackingPreparation() = default;
+        ~BackingPreparation();
+        BackingPreparation(const BackingPreparation&) = delete;
+        BackingPreparation& operator=(const BackingPreparation&) = delete;
+        BackingPreparation(BackingPreparation&& other) noexcept;
+        BackingPreparation& operator=(BackingPreparation&& other) noexcept;
+        bool Valid() const noexcept { return m_owner != nullptr; }
+        void Release() noexcept;
+    private:
+        friend class ParamSystem;
+        friend class PreparedUse;
+        ParamSystem* m_owner = nullptr;
+        std::array<StableStoragePreparation, 3> m_dependencies;
+    };
+
+    class PreparedUse {
+    public:
+        PreparedUse(ParamSystem& owner, const BackingPreparation* backing) noexcept;
+        ~PreparedUse();
+        PreparedUse(const PreparedUse&) = delete;
+        PreparedUse& operator=(const PreparedUse&) = delete;
+    private:
+        ParamSystem* m_owner = nullptr;
+        std::array<StableStoragePreparedUse, 3> m_dependencies;
+    };
+
+    // Physical holds do not claim dependency identities. PreparedUse forbids growth.
+    bool PrepareBindingBacking(std::uint32_t count, BackingPreparation* out) noexcept;
+
     // Attach before creating bindings. A preparation reserves backing only;
     // binding admission and every native identity remain with their original owner.
     bool AttachBindingDependencies(BindingDependencyIndex* dependencies) noexcept;
@@ -343,6 +377,9 @@ public:
     InstanceBindResult CanBindVoiceInstance(
         const BindingDefinitionView& view, VnVoiceHandle handle,
         VnObjectId attachmentObjectId, bool viaApply) const;
+    // The new Binding owns this attempt's reservation until commit or discard.
+    InstanceBindResult StageOwnedVoiceInstance(const BindingDefinitionView& view,
+        VnVoiceHandle handle, VnObjectId attachmentObjectId, bool viaApply);
 
     // Neutralizes every instance born from one attachment identity
     // (definition id + object id, viaApply false): the contribution ramps
@@ -897,6 +934,7 @@ private:
         std::uint32_t dependencySlot = UINT32_MAX;
         std::uint32_t dependencyGeneration = 0;
         PreparedBindingToken* preparation = nullptr;
+        bool ownsPreparation = false;
         // Raw (definition-less) and snapshotOwned instances copy their
         // curve here. Live definition-backed instances leave it empty
         // and evaluate through liveCurve instead. snapshotOwned must
@@ -1151,6 +1189,8 @@ private:
     std::uint32_t m_dependencySlotCount = 0;
     std::uint32_t m_preparedBindingCount = 0;
     std::uint32_t m_preparationCapacity = 0;
+    std::uint32_t m_backingPreparationCount = 0;
+    std::uint32_t m_backingUsers = 0;
     std::vector<PrimingInput> m_primingInputs;
     std::vector<Variable> m_projectionVariables;
     std::vector<BindingEvaluation> m_projectionBindings;

@@ -60,6 +60,7 @@ BindingDependencyIndex::BindingDependencyIndex(const BindingDependencyIndex& oth
     dirtyTargets_.reserve(targets_.ConstructedCount());
     preparedBindings_ = other.preparedBindings_;
     preparedBindingCount_ = other.preparedBindingCount_;
+    paramBindingCapacity_ = other.paramBindingCapacity_;
     root_ = other.root_;
     version_ = other.version_;
 }
@@ -67,6 +68,7 @@ BindingDependencyIndex::BindingDependencyIndex(const BindingDependencyIndex& oth
 bool BindingDependencyIndex::Reset(std::uint32_t bindingCapacity, std::uint32_t targetCapacity,
     std::uint32_t keyCapacity) noexcept {
     if (memguard::IsAudioTagged() || root_ != UINT32_MAX || preparedBindingCount_ != 0 ||
+        inputs_.HasPreparedBacking() || keys_.HasPreparedBacking() || targets_.HasPreparedBacking() ||
         bindingCapacity > UINT32_MAX / 3u) return false;
     const auto needed = std::uint64_t{bindingCapacity} * 3u + targetCapacity;
     if (keyCapacity == 0 && needed > UINT32_MAX) return false;
@@ -85,40 +87,92 @@ bool BindingDependencyIndex::Reset(std::uint32_t bindingCapacity, std::uint32_t 
     std::vector<std::uint64_t>().swap(preparedBindings_);
     preparedBindingCount_ = 0;
     bindingCapacity_ = bindingCapacity;
+    paramBindingCapacity_ = bindingCapacity;
     targetCapacity_ = targetCapacity;
     keyCapacity_ = keyCapacity;
     version_ = 0;
     return true;
 }
 
+bool BindingDependencyIndex::PrepareInputs(std::uint32_t count, std::uint32_t occupied,
+                                          StableStoragePreparation* backing) noexcept {
+    const auto metadata = [this](std::uint32_t required) noexcept {
+        try {
+            const auto words = (std::uint64_t{required / 3u} + 63u) / 64u;
+            if (preparedBindings_.size() < words) preparedBindings_.resize(static_cast<std::size_t>(words), 0);
+            return true;
+        } catch (...) { return false; }
+    };
+    return backing != nullptr ? inputs_.PrepareBacking(count, occupied, backing, metadata)
+                              : inputs_.ConstructThrough(count, metadata);
+}
+
+bool BindingDependencyIndex::PrepareKeys(std::uint32_t count, std::uint32_t occupied,
+                                        StableStoragePreparation* backing) noexcept {
+    const auto previous = keys_.ConstructedCount();
+    const auto metadata = [this](std::uint32_t required) noexcept {
+        try { freeKeys_.reserve(required); return true; }
+        catch (...) { return false; }
+    };
+    const bool ready = backing != nullptr ? keys_.PrepareBacking(count, occupied, backing, metadata)
+                                          : keys_.ConstructThrough(count, metadata);
+    if (!ready) return false;
+    for (auto next = previous; next < keys_.ConstructedCount(); ++next) freeKeys_.push_back(next);
+    return true;
+}
+
+bool BindingDependencyIndex::PrepareTargets(std::uint32_t count, std::uint32_t occupied,
+                                           StableStoragePreparation* backing) noexcept {
+    const auto previous = targets_.ConstructedCount();
+    const auto metadata = [this](std::uint32_t required) noexcept {
+        try { freeTargets_.reserve(required); dirtyTargets_.reserve(required); return true; }
+        catch (...) { return false; }
+    };
+    const bool ready = backing != nullptr ? targets_.PrepareBacking(count, occupied, backing, metadata)
+                                          : targets_.ConstructThrough(count, metadata);
+    if (!ready) return false;
+    for (auto next = previous; next < targets_.ConstructedCount(); ++next) freeTargets_.push_back(next);
+    return true;
+}
+
+bool BindingDependencyIndex::PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
+    if (out == nullptr || memguard::IsAudioTagged() ||
+        std::any_of(out->begin(), out->end(), [](const auto& hold) { return hold.Valid(); })) return false;
+    count = std::min(count, bindingCapacity_);
+    auto occupiedInputs = inputs_.ConstructedCount() / 3u;
+    while (occupiedInputs != 0 && inputs_[(occupiedInputs - 1u) * 3u].fact == nullptr &&
+           !HasBindingPreparation(occupiedInputs - 1u)) --occupiedInputs;
+    const auto occupiedKeys = static_cast<std::uint32_t>(keys_.ConstructedCount() - freeKeys_.size()) +
+        preparedBindingCount_ * 4u;
+    const auto occupiedTargets = static_cast<std::uint32_t>(targets_.ConstructedCount() - freeTargets_.size()) +
+        preparedBindingCount_;
+    BackingPreparation candidate;
+    if (!PrepareInputs(count * 3u, occupiedInputs * 3u, &candidate[0]) ||
+        !PrepareKeys(static_cast<std::uint32_t>(std::min<std::uint64_t>(std::uint64_t{count} * 4u,
+                                                                    keyCapacity_)), occupiedKeys, &candidate[1]) ||
+        !PrepareTargets(std::min(count, targetCapacity_), occupiedTargets, &candidate[2])) return false;
+    *out = std::move(candidate);
+    return true;
+}
+
+BindingDependencyIndex::BackingUse BindingDependencyIndex::UseBacking(const BackingPreparation* backing) noexcept {
+    return {backing == nullptr ? StableStoragePreparedUse{} : (*backing)[0].Use(),
+            backing == nullptr ? StableStoragePreparedUse{} : (*backing)[1].Use(),
+            backing == nullptr ? StableStoragePreparedUse{} : (*backing)[2].Use()};
+}
+
 bool BindingDependencyIndex::PrepareBinding(std::uint32_t slot) noexcept {
     if (memguard::IsAudioTagged() || slot >= bindingCapacity_ ||
-        !inputs_.ConstructThrough((slot + 1u) * 3u)) return false;
+        !PrepareInputs((slot + 1u) * 3u, 0)) return false;
     if (HasBindingPreparation(slot)) return true;
     if (inputs_[slot * 3u].generation == UINT32_MAX) return false;
-    const auto keyNeed = std::uint64_t{preparedBindingCount_ + 1u} * 4u;
-    const auto targetNeed = preparedBindingCount_ + 1u;
-    const auto newKeys = std::uint64_t{keys_.ConstructedCount()} +
-        (keyNeed > freeKeys_.size() ? keyNeed - freeKeys_.size() : 0u);
-    const auto newTargets = std::uint64_t{targets_.ConstructedCount()} +
-        (targetNeed > freeTargets_.size() ? targetNeed - freeTargets_.size() : 0u);
-    if (newKeys > keyCapacity_ || newTargets > targetCapacity_) return false;
-    try {
-        preparedBindings_.resize((std::uint64_t{inputs_.ConstructedCount() / 3u} + 63u) / 64u, 0);
-        freeKeys_.reserve(static_cast<std::size_t>(newKeys));
-        while (keys_.ConstructedCount() < newKeys) {
-            const auto next = keys_.ConstructedCount();
-            if (!keys_.ConstructThrough(next + 1u)) return false;
-            freeKeys_.push_back(next);
-        }
-        freeTargets_.reserve(static_cast<std::size_t>(newTargets));
-        dirtyTargets_.reserve(static_cast<std::size_t>(newTargets));
-        while (targets_.ConstructedCount() < newTargets) {
-            const auto next = targets_.ConstructedCount();
-            if (!targets_.ConstructThrough(next + 1u)) return false;
-            freeTargets_.push_back(next);
-        }
-    } catch (...) { return false; }
+    const auto keyNeed = std::uint64_t{keys_.ConstructedCount() - freeKeys_.size()} +
+        std::uint64_t{preparedBindingCount_ + 1u} * 4u;
+    const auto targetNeed = std::uint64_t{targets_.ConstructedCount() - freeTargets_.size()} +
+        preparedBindingCount_ + 1u;
+    if (keyNeed > keyCapacity_ || targetNeed > targetCapacity_ ||
+        !PrepareKeys(static_cast<std::uint32_t>(keyNeed), 0) ||
+        !PrepareTargets(static_cast<std::uint32_t>(targetNeed), 0)) return false;
     preparedBindings_[slot / 64u] |= std::uint64_t{1} << (slot % 64u);
     ++preparedBindingCount_;
     return true;
@@ -530,6 +584,7 @@ BindingTable::BindingTable(std::uint32_t maxDefinitions,
     if (bindings > UINT32_MAX || targets > UINT32_MAX ||
         !m_dependencies.Reset(static_cast<std::uint32_t>(bindings), static_cast<std::uint32_t>(targets)))
         throw std::bad_alloc{};
+    m_dependencies.paramBindingCapacity_ = renderBindingCapacity;
 }
 
 BindingTable::BindingTable(const BindingTable& other)
