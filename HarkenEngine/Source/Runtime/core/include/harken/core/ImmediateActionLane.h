@@ -558,6 +558,7 @@ public:
         std::uint32_t bucketOrdinal, std::uint32_t groupOffset,
         ImmediateLaneGroupRef* out) const noexcept;
     bool HasProgramReference(ProgramGeneration generation) const noexcept;
+    bool HasProgramReference(TimelineTransactionProgramRef program) const noexcept;
     // Logic requests exact withdrawal; false retains any issued request for retry.
     bool WithdrawPlainNoneFence(ImmediateLaneHandle handle, std::uint64_t root,
         const TimelineTransactionProgramRef& program,
@@ -853,6 +854,8 @@ private:
     void ReturnPrivatePlacementProof(PrivateImmediateLanePlacementProof& proof) noexcept;
     void InstallPlacement(ImmediateLaneHandle handle, std::uint64_t anchor) noexcept;
     void FinishPrivateLayout(PrivatePlainLayoutEdit& edit, bool commit) noexcept;
+    bool HasProgramReferenceImpl(ProgramGeneration generation,
+        const TimelineProgramView* program) const noexcept;
     bool AcquirePrivatePlainLayoutEditImpl(ImmediateLaneHandle handle,
         std::uint64_t root, ImmediateLaneDemand originalDemand,
         PrivatePlainLayoutEdit* out, bool pristineReserved) noexcept;

@@ -1528,18 +1528,47 @@ bool ImmediateActionLane::DeclareAcceptedPrivateVariableControlEntry(
 }
 
 bool ImmediateActionLane::HasProgramReference(ProgramGeneration generation) const noexcept {
+    return HasProgramReferenceImpl(generation, nullptr);
+}
+
+bool ImmediateActionLane::HasProgramReference(
+    TimelineTransactionProgramRef program) const noexcept {
+    return program.program != nullptr &&
+        HasProgramReferenceImpl(program.programGeneration, program.program);
+}
+
+bool ImmediateActionLane::HasProgramReferenceImpl(ProgramGeneration generation,
+    const TimelineProgramView* program) const noexcept {
     if (!valid_ || generation == 0) return false;
+    const auto matches = [generation, program](TimelineTransactionProgramRef reference) noexcept {
+        return reference.programGeneration == generation &&
+            (program == nullptr || reference.program == program);
+    };
     for (std::uint32_t slot = 0; slot < config_.attempts; ++slot) {
         const auto& attempt = attempts_[slot];
         const auto state = attempt.state.load(std::memory_order_acquire);
-        if (state == ImmediateLaneAttemptState::PrivateLayoutHeld) return true;
+        if (state == ImmediateLaneAttemptState::PrivateLayoutHeld) {
+            // Held layouts can restore originals or regenerate an omitted authored event.
+            for (std::uint32_t event = 0; event < attempt.eventCount; ++event)
+                if (matches(EventBase(slot)[event].event.program)) return true;
+            const auto* edit = attempt.privateLayoutEdit;
+            if (edit != nullptr) {
+                for (std::uint32_t event = 0; event < edit->originalEventCount_; ++event)
+                    if (matches(edit->originalEvents_[event].event.program)) return true;
+                if (edit->hasAuthoredLayout_ &&
+                    (matches(edit->authoredLayout_.start.event.program) ||
+                     matches(edit->authoredLayout_.envelope.event.program) ||
+                     matches(edit->authoredLayout_.stop.event.program))) return true;
+            }
+            continue;
+        }
         if (state == ImmediateLaneAttemptState::Free ||
             state == ImmediateLaneAttemptState::Reserved) continue;
         for (std::uint32_t event = 0; event < attempt.eventCount; ++event)
             if ((eventWithdrawal_[static_cast<std::size_t>(slot) * config_.eventsPerAttempt +
                     eventWithdrawalLeader_[static_cast<std::size_t>(slot) * config_.eventsPerAttempt + event]]
                     .load(std::memory_order_acquire) & kEventReferenceReleased) == 0 &&
-                EventBase(slot)[event].event.program.programGeneration == generation) return true;
+                matches(EventBase(slot)[event].event.program)) return true;
     }
     return false;
 }

@@ -1272,7 +1272,8 @@ TEST(ImmediateActionLane, PrivatePlainLayoutAbortRestoresOriginalPlacedEventsAnd
     ASSERT_TRUE(lane.Reset({2, 2, 1, 64}));
     const harken::TimelineProgramView program{};
     const harken::ImmediateLaneDemand demand{2, 0, 0, 2};
-    const harken::ImmediateLaneEvent original[]{FixedEvent(64, &program, 8), FixedEvent(128, &program, 9)};
+    harken::ImmediateLaneEvent original[]{FixedEvent(64, &program, 8), FixedEvent(128, &program, 9)};
+    for (auto& event : original) event.event.program.programGeneration = 17;
     harken::ImmediateLaneHandle handle{}, competitor{};
     ASSERT_TRUE(lane.Reserve(1, demand, &handle));
     ASSERT_TRUE(lane.Prepare(handle, original, 2));
@@ -1285,13 +1286,20 @@ TEST(ImmediateActionLane, PrivatePlainLayoutAbortRestoresOriginalPlacedEventsAnd
         harken::PrivatePlainLayoutEdit first;
         ASSERT_TRUE(lane.AcquirePrivatePlainLayoutEdit(handle, 1, demand, &first));
         first.ClearCandidate();
+        EXPECT_TRUE(lane.HasProgramReference({17, &program}));
+        EXPECT_FALSE(lane.HasProgramReference({19, &program}));
         EXPECT_FALSE(lane.TryPlace(competitor, 64, 0, &anchor));
         harken::PrivatePlainLayoutEdit moved(std::move(first));
         EXPECT_FALSE(first.Valid());
-        const auto changed = FixedEvent(256, &program, 0);
+        auto changed = FixedEvent(256, &program, 0);
+        changed.event.program.programGeneration = 19;
         ASSERT_TRUE(moved.StageCandidate(&changed, 1, 192, 64));
+        EXPECT_TRUE(lane.HasProgramReference({17, &program}));
+        EXPECT_TRUE(lane.HasProgramReference({19, &program}));
         EXPECT_FALSE(lane.TryPlace(competitor, 64, 0, &anchor));
     }
+    EXPECT_TRUE(lane.HasProgramReference({17, &program}));
+    EXPECT_FALSE(lane.HasProgramReference({19, &program}));
     ASSERT_TRUE(lane.Publish(handle));
     for (const auto quantum : {1u, 2u}) {
         const auto* bucket = lane.CaptureDue(handle.slot, quantum);
@@ -1417,10 +1425,15 @@ TEST(ImmediateActionLane, PrivatePlainLayoutHeldExcludesPrivateMutationAndAudioC
     harken::ImmediateActionLane lane;
     ASSERT_TRUE(lane.Reset({1, 2, 2, 64}));
     const harken::TimelineProgramView program{};
-    const auto event = FixedEvent(64, &program, 0);
+    const harken::TimelineProgramView originalProgram{}, unrelatedProgram{};
+    auto event = FixedEvent(64, &program, 0);
+    event.event.program.programGeneration = 9;
+    auto original = event;
+    original.event.program = {5, &originalProgram};
     harken::ImmediateLaneHandle handle{};
     const harken::ImmediateLaneDemand demand{2, 0, 0, 2};
     ASSERT_TRUE(lane.Reserve(1, demand, &handle));
+    ASSERT_TRUE(lane.Prepare(handle, &original, 1));
     harken::PrivatePlainLayoutEdit edit;
     ASSERT_TRUE(lane.AcquirePrivatePlainLayoutEdit(handle, 1, demand, &edit));
     ASSERT_TRUE(edit.StageCandidate(&event, 1, 64, 64));
@@ -1434,6 +1447,17 @@ TEST(ImmediateActionLane, PrivatePlainLayoutHeldExcludesPrivateMutationAndAudioC
     EXPECT_FALSE(lane.Cancel(handle));
     EXPECT_FALSE(lane.Retire(handle));
     EXPECT_TRUE(lane.HasProgramReference(9));
+    EXPECT_TRUE(lane.HasProgramReference(event.event.program));
+    EXPECT_TRUE(lane.HasProgramReference(original.event.program));
+    EXPECT_FALSE(lane.HasProgramReference({9, &unrelatedProgram}));
+    EXPECT_FALSE(lane.HasProgramReference({5, &program}));
+    EXPECT_FALSE(lane.HasProgramReference(10));
+    EXPECT_FALSE(lane.HasProgramReference({9, nullptr}));
+    EXPECT_FALSE(lane.HasProgramReference({0, &program}));
+    edit.ClearCandidate();
+    EXPECT_FALSE(lane.HasProgramReference(event.event.program));
+    EXPECT_TRUE(lane.HasProgramReference(original.event.program));
+    ASSERT_TRUE(edit.StageCandidate(&event, 1, 64, 64));
     const harken::ImmediateLaneBucket* captured = nullptr;
     bool due = true;
     std::thread audio([&] { captured = lane.CaptureDue(handle.slot, 1); due = lane.HasDue(1); });
@@ -1442,8 +1466,13 @@ TEST(ImmediateActionLane, PrivatePlainLayoutHeldExcludesPrivateMutationAndAudioC
     EXPECT_FALSE(due);
     harken::PrivatePlainLayoutCommitProof ready;
     ASSERT_TRUE(edit.SealCandidate(&ready));
+    EXPECT_TRUE(lane.HasProgramReference(event.event.program));
+    EXPECT_TRUE(lane.HasProgramReference(original.event.program));
+    EXPECT_FALSE(lane.HasProgramReference({9, &unrelatedProgram}));
     EXPECT_FALSE(lane.Cancel(handle));
     ready.Consume();
+    EXPECT_TRUE(lane.HasProgramReference(event.event.program));
+    EXPECT_FALSE(lane.HasProgramReference(original.event.program));
     ASSERT_TRUE(lane.Publish(handle));
     const auto* actual = lane.CaptureDue(handle.slot, 1);
     ASSERT_NE(nullptr, actual);
@@ -1451,6 +1480,7 @@ TEST(ImmediateActionLane, PrivatePlainLayoutHeldExcludesPrivateMutationAndAudioC
     EXPECT_FALSE(lane.Cancel(handle));
     ASSERT_TRUE(lane.Finish(handle.slot, actual, true));
     ASSERT_TRUE(lane.Retire(handle));
+    EXPECT_FALSE(lane.HasProgramReference(event.event.program));
 }
 
 TEST(ImmediateActionLane, PrivatePlainLayoutExactIssuedIdentityAndCreditCannotBeReplayed) {
@@ -1643,16 +1673,29 @@ TEST(ImmediateActionLane, AuthoredLayoutStopBeforeShiftedStartOmitsEnvelopeAndKe
         harken::ImmediateActionLane lane;
         ASSERT_TRUE(lane.Reset({1, 3, 3, 64}));
         const harken::TimelineProgramView program{};
-        const auto input = AuthoredLayout(&program);
+        const harken::TimelineProgramView envelopeProgram{};
+        auto input = AuthoredLayout(&program);
+        input.start.event.program.programGeneration = 7;
+        input.stop.event.program.programGeneration = 7;
+        input.envelope.event.program = {11, &envelopeProgram};
         harken::ImmediateLaneHandle handle{};
         const harken::ImmediateLaneDemand demand{3, 0, 0, 3};
         ASSERT_TRUE(lane.Reserve(1, demand, &handle));
         harken::PrivatePlainLayoutEdit edit;
         ASSERT_TRUE(lane.AcquirePrivatePlainAuthoredControlLayoutEdit(handle, 1, demand, input, &edit));
         ASSERT_TRUE(edit.StageAuthoredControlCandidate(anchor, 64));
+        EXPECT_TRUE(lane.HasProgramReference(input.start.event.program));
+        EXPECT_TRUE(lane.HasProgramReference(input.envelope.event.program));
+        edit.ClearCandidate();
+        EXPECT_TRUE(lane.HasProgramReference(input.start.event.program));
+        EXPECT_TRUE(lane.HasProgramReference(input.envelope.event.program));
+        ASSERT_TRUE(edit.StageAuthoredControlCandidate(anchor, 64));
         harken::PrivatePlainLayoutCommitProof ready;
         ASSERT_TRUE(edit.SealCandidate(&ready));
+        EXPECT_TRUE(lane.HasProgramReference(input.envelope.event.program));
         ready.Consume();
+        EXPECT_TRUE(lane.HasProgramReference(input.start.event.program));
+        EXPECT_FALSE(lane.HasProgramReference(input.envelope.event.program));
         ASSERT_TRUE(lane.Publish(handle));
         std::uint32_t count = 0;
         for (std::uint64_t quantum = 4; quantum <= anchor / 64; ++quantum) {

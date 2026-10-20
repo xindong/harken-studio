@@ -9424,7 +9424,7 @@ bool CanonicalQueueBankHasReaders(const harken::Engine& engine,
     for (std::uint32_t index = 0; index < bank.programCount; ++index) {
         const auto& schedule = bank.schedules[index];
         if (engine.timelinePool.HasProgramReference(schedule.runtimeProgram) ||
-            engine.immediateActionLane.HasProgramReference(schedule.runtimeProgram.programGeneration) ||
+            engine.immediateActionLane.HasProgramReference(schedule.runtimeProgram) ||
             engine.timelinePlanner.HasProgramReference(schedule.runtimeProgram)) return true;
         const auto& runtime = bank.runtimes[index];
         for (std::uint32_t event = 0; event < runtime.payloadCount; ++event)
@@ -9434,7 +9434,7 @@ bool CanonicalQueueBankHasReaders(const harken::Engine& engine,
     for (std::uint32_t index = 0; index < bank.aggregateCount; ++index) {
         const auto program = bank.aggregateSchedules[index].runtimeProgram;
         if (engine.timelinePool.HasProgramReference(program) ||
-            engine.immediateActionLane.HasProgramReference(program.programGeneration) ||
+            engine.immediateActionLane.HasProgramReference(program) ||
             engine.timelinePlanner.HasProgramReference(program)) return true;
     }
     return false;
@@ -9463,7 +9463,7 @@ void ServiceQueueProgramBanks(harken::Engine& engine) noexcept {
         for (std::uint32_t index = 0; index < bank.programCount && !retained; ++index) {
             const auto& schedule = bank.schedules[index];
             retained = engine.timelinePool.HasProgramReference(schedule.runtimeProgram) ||
-                engine.immediateActionLane.HasProgramReference(schedule.runtimeProgram.programGeneration) ||
+                engine.immediateActionLane.HasProgramReference(schedule.runtimeProgram) ||
                 engine.timelinePlanner.HasProgramReference(schedule.runtimeProgram);
             const auto& runtime = bank.runtimes[index];
             for (std::uint32_t event = 0; event < runtime.payloadCount && !retained; ++event) {
@@ -9482,7 +9482,7 @@ void ServiceQueueProgramBanks(harken::Engine& engine) noexcept {
         for (std::uint32_t index = 0; index < bank.aggregateCount && !retained; ++index) {
             const auto reference = bank.aggregateSchedules[index].runtimeProgram;
             retained = engine.timelinePool.HasProgramReference(reference) ||
-                engine.immediateActionLane.HasProgramReference(reference.programGeneration) ||
+                engine.immediateActionLane.HasProgramReference(reference) ||
                 engine.timelinePlanner.HasProgramReference(reference);
         }
         for (const auto group : bank.groups) {
@@ -10241,7 +10241,8 @@ engine.runtimeRecreateRequired = true;
             const bool referenced = engine.timelinePool.HasProgramReference(
                 {resource.runtime.generation, &resource.runtime}) ||
                 (resource.originalPlainSelected && (!resource.originalPlainReferencesReturned ||
-                 engine.immediateActionLane.HasProgramReference(resource.runtime.generation)));
+                 engine.immediateActionLane.HasProgramReference(
+                     {resource.runtime.generation, &resource.runtime})));
             harken::ArmState state{};
             const bool terminalArm = !resource.arm.Valid() ||
                 !engine.timelineArms.State(resource.arm, &state) ||
