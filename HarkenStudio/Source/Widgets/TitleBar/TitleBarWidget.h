@@ -31,7 +31,10 @@ public:
 
     void updateMaxButton(bool maximized);
 
+    void setProjectTitle(const QString& name, bool modified);
+
 protected:
+    bool event(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
     void changeEvent(QEvent* event) override;
     void showEvent(QShowEvent* event) override;
@@ -56,6 +59,8 @@ private:
     QPointer<QScreen> trackedScreen_;
     QString menuBarBaseStyleSheet_;
     QString appliedMenuBarStyleSheet_;
+    QString projectName_;
+    bool projectModified_{false};
     bool metricsSyncQueued_{false};
 };
 

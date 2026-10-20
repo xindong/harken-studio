@@ -789,6 +789,7 @@ void MainWindow::initializeFinalState()
     setMenuWidget(m_titleBar);
 
     setupTitleBarToggles();
+    updateWindowTitle();
 #endif
 }
 
@@ -3906,17 +3907,21 @@ bool MainWindow::maybeSave()
 
 void MainWindow::updateWindowTitle()
 {
-    QString title = "Harken Studio";
+    QString projectName;
     
     ProjectData* proj = ProjectManager::instance().currentProject();
     if (proj && !proj->name.isEmpty())
     {
-        title += " - " + proj->name;
+        projectName = proj->name;
     }
     else if (!currentProjectPath_.isEmpty())
     {
-        title += " - " + QFileInfo(currentProjectPath_).baseName();
+        projectName = QFileInfo(currentProjectPath_).baseName();
     }
+
+    QString title = "Harken Studio";
+    if (!projectName.isEmpty())
+        title += " - " + projectName;
     
     if (projectModified_)
     {
@@ -3924,6 +3929,10 @@ void MainWindow::updateWindowTitle()
     }
     
     setWindowTitle(title);
+#ifdef HARKEN_HAS_QWINDOWKIT
+    if (m_titleBar)
+        m_titleBar->setProjectTitle(projectName, projectModified_);
+#endif
 }
 
 void MainWindow::setProjectModified(bool modified)

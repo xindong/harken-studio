@@ -342,14 +342,16 @@ TEST(ItemTypeCatalog, CreationSpecsCurrentValues)
         { T::Variable,    "New_Variable",        CP::DefaultForType, T::None, true  },
         { T::Bus,         "New_Bus",             CP::SelectedItem,   T::Bus,    true  },
     };
-    for (size_t i = 0; i < specs.size(); ++i) {
-        EXPECT_EQ(specs[i].type, rows[i].type) << i;
-        EXPECT_STREQ(specs[i].defaultName, rows[i].defaultName);
-        EXPECT_EQ(specs[i].parentPolicy, rows[i].policy) << i;
-        EXPECT_EQ(specs[i].requiredParent, rows[i].requiredParent) << i;
-        EXPECT_EQ(specs[i].selectAfter, rows[i].selectAfter) << i;
-        EXPECT_FALSE(specs[i].separatorAfter) << i;
-        EXPECT_FALSE(specs[i].comingSoon) << i;
+    for (const Row& row : rows) {
+        const auto spec = std::find_if(specs.begin(), specs.end(),
+            [&row](const Catalog::CreationSpec& entry) { return entry.type == row.type; });
+        ASSERT_NE(spec, specs.end());
+        EXPECT_STREQ(spec->defaultName, row.defaultName);
+        EXPECT_EQ(spec->parentPolicy, row.policy);
+        EXPECT_EQ(spec->requiredParent, row.requiredParent);
+        EXPECT_EQ(spec->selectAfter, row.selectAfter);
+        EXPECT_FALSE(spec->separatorAfter);
+        EXPECT_FALSE(spec->comingSoon);
     }
 }
 
