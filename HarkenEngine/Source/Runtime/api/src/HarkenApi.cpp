@@ -34007,10 +34007,11 @@ bool CaptureInitialRootQueueLedgerMutation(harken::Engine& engine,
 bool ValidateInitialRootQueueMixedCurrent(harken::Engine& engine,
     const harken::EnginePlayableServiceRow& row) noexcept {
     const auto bases = StorageBasesForRow(engine, row);
+    const auto* currentProgram = ResolveQueueCurrentProgram(row, 0);
     if (!row.queueCurrentCompositeOwner.Valid() || row.scheduleLeafCount != 1 ||
         row.queueCurrentScheduleLeafCount != 1 || row.queueCurrentScheduleBase != bases.member ||
         bases.member >= engine.variableControlMemberCompletions.size() ||
-        bases.endpoint >= engine.playableSchedules.size() ||
+        currentProgram == nullptr ||
         bases.endpoint >= engine.playableScheduleOccurrences.size() ||
         bases.paired >= engine.playableScheduleCompletions.size()) return false;
     harken::CompositeCompletionOwnerInfo info{};
@@ -34076,8 +34077,7 @@ bool ValidateInitialRootQueueMixedCurrent(harken::Engine& engine,
         install.target == arm->target && install.releaseObserver.slot == source->release.slot &&
         install.releaseObserver.targetSequence == source->release.targetSequence &&
         !row.queueCurrentProgramBank->published &&
-        exactProgram(engine.playableSchedules[bases.endpoint]) &&
-        exactProgram(row.queueCurrentProgramBank->schedules[0]) &&
+        exactProgram(*currentProgram) &&
         CaptureInitialRootQueueLedgerMutation(engine, row, &mutation) &&
         harken::SameCompletionMutationBinding(mutation, {leaf.occurrence, leaf.predicate.owner}) &&
         engine.timelineOccurrences.CaptureCompletionOwner(leaf.occurrence, &owner) &&
@@ -44259,11 +44259,11 @@ void ServicePendingImmediateEntries(
                                 if (engine.variableControlMemberCompletions[slot].leafInstance != 0)
                                     engine.variableControlMemberCompletions[slot].monitorSelection = installed->monitorSelection;
                                 else engine.playableScheduleSelections[slot] = installed->monitorSelection;
-                                engine.playableScheduleEvents[
-                                    bases.currentEvent + leaf].armToken =
-                                    installed->arm;
-                                engine.playableSchedules[bases.endpoint + leaf]
-                                    .armToken = installed->arm;
+                                if (member.queueCurrentProgramBank == nullptr) {
+                                    engine.playableScheduleEvents[
+                                        bases.currentEvent + leaf].armToken = installed->arm;
+                                    engine.playableSchedules[bases.endpoint + leaf].armToken = installed->arm;
+                                }
                             }
                             if (auto* program = leafProgram(member, leaf)) {
                                 program->armToken = installed->arm;
@@ -45392,8 +45392,8 @@ void ServicePendingImmediateEntries(
                         frozen.immediateEntry = program->immediateEntry;
                     }
                     if (member.scheduleLeafCount > 1u || member.queueCurrentCompositeOwner.Valid()) {
-                        engine.playableSchedules[bases.endpoint + leaf]
-                            .entryAnchorFrame = startFrame;
+                        if (member.queueCurrentProgramBank == nullptr)
+                            engine.playableSchedules[bases.endpoint + leaf].entryAnchorFrame = startFrame;
                         engine.playableScheduleStartFrames[bases.member + leaf] =
                             actual;
                     }
@@ -81971,16 +81971,12 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
     row->hasZeroWorkCompletion = materialized.hasZeroWorkCompletion;
     row->zeroWorkCompletionFrame = zeroWorkCompletionFrame;
     row->runtimeProgram.generation = row->rootInstance;
-    row->runtimeProgram.payloads =
-        engine.playableSchedulePayloads.data() + eventBase;
     row->runtimeProgram.payloadCount = materialized.leafCount;
     row->schedule.ownerInstance = row->rootInstance;
     row->schedule.ownerInstanceScheduleEpoch =
         scratch->instance.ScheduleEpoch();
     row->schedule.transactionId = provisionalSequence;
     row->schedule.entryAnchorFrame = row->startFrame;
-    row->schedule.events =
-        engine.playableScheduleEvents.data() + eventBase;
     row->schedule.eventCount = materialized.leafCount;
     row->schedule.runtimeProgram = {row->rootInstance,
                                     &row->runtimeProgram};
@@ -81999,6 +81995,29 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
     }
     row->queueRandomSeed = randomSeed;
     row->queueRandomSeedValid = randomQueue;
+
+    if (row->queueMode) {
+        row->queueCurrentProgramBank = ReserveQueueProgramBank(engine,
+            {materialized.leafCount, materialized.leafCount});
+        if (row->queueCurrentProgramBank == nullptr) {
+            plan.queueProgramCapacityRefused = true;
+            plan.result = VN_BACKPRESSURE;
+            (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
+            return false;
+        }
+        row->queueCurrentPrograms = {0, materialized.leafCount};
+    }
+    auto* const currentBank = row->queueCurrentProgramBank;
+    auto* const payloads = currentBank != nullptr ? currentBank->payloads.data()
+        : engine.playableSchedulePayloads.data() + eventBase;
+    auto* const events = currentBank != nullptr ? currentBank->events.data()
+        : engine.playableScheduleEvents.data() + eventBase;
+    auto* const runtimes = currentBank != nullptr ? currentBank->runtimes.data()
+        : engine.playableScheduleRuntimePrograms.data() + endpointBase;
+    auto* const schedules = currentBank != nullptr ? currentBank->schedules.data()
+        : engine.playableSchedules.data() + endpointBase;
+    row->runtimeProgram.payloads = payloads;
+    row->schedule.events = events;
 
     std::optional<PreparedImmediateQueueSuccessorSelection> retainedSuccessor;
     std::uint64_t preSourceComplete = 0;
@@ -82066,7 +82085,6 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
             (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
             return false;
         }
-        const std::size_t eventSlot = eventBase + index;
         const std::size_t endpointSlot = endpointBase + index;
         const std::size_t pairedSlot = pairedBase + index;
         PreparedScheduleLeafStart& source = leaves[index];
@@ -82203,13 +82221,13 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
             installed.postSourceTailFrames;
         engine.playableScheduleCompletions[pairedSlot] =
             installed.completionPredicate;
-        auto& payload = engine.playableSchedulePayloads[eventSlot];
+        auto& payload = payloads[index];
         payload = {};
         payload.kind = harken::TimelineEventKind::Start;
         payload.target = source.voice.target;
         if (initialMember != UINT16_MAX)
             payload.reserved |= harken::kTimelineEventTransientStartArm;
-        auto& event = engine.playableScheduleEvents[eventSlot];
+        auto& event = events[index];
         event = {};
         event.frameOffsetFromEntry = static_cast<std::int64_t>(
             startFrame - row->startFrame);
@@ -82219,13 +82237,12 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
         event.transactionOrdinal = planned.executionOrdinal;
         event.subeventPhase = 20;
         event.armToken = installed.armToken;
-        auto& runtime =
-            engine.playableScheduleRuntimePrograms[endpointSlot];
+        auto& runtime = runtimes[index];
         runtime = {};
         runtime.generation = row->rootInstance;
         runtime.payloads = &payload;
         runtime.payloadCount = 1;
-        auto& schedule = engine.playableSchedules[endpointSlot];
+        auto& schedule = schedules[index];
         schedule = {};
         schedule.ownerInstance = row->rootInstance;
         schedule.ownerInstanceScheduleEpoch =
@@ -82236,6 +82253,12 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
         schedule.eventCount = 1;
         schedule.runtimeProgram = {row->rootInstance, &runtime};
         schedule.armToken = installed.armToken;
+        if (currentBank != nullptr && FreezeQueueProgram(engine, *currentBank, schedule) == nullptr) {
+            plan.queueProgramCapacityRefused = true;
+            plan.result = VN_BACKPRESSURE;
+            (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
+            return false;
+        }
         if (hasContinuation) {
             auto& known = knownLeaves[index];
             known.stableLeafOrdinal =
@@ -82270,6 +82293,13 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
     } else {
         row->leaf = selected.playable;
         row->queueCompletionFrame = zeroWorkCompletionFrame;
+    }
+    if (currentBank != nullptr && materialized.leafCount != 0 &&
+        !FreezeQueueAggregate(*currentBank, row->schedule, 0, materialized.leafCount)) {
+        plan.queueProgramCapacityRefused = true;
+        plan.result = VN_BACKPRESSURE;
+        (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
+        return false;
     }
 
     if (hasContinuation && !markerOnly) {
@@ -88432,6 +88462,8 @@ engine.runtimeRecreateRequired = true;
           }
           row.event.logicCommitSequence = sequence;
           row.schedule.transactionId = sequence;
+          if (row.queueCurrentProgramBank != nullptr)
+              ok = StampQueueProgramBank(*row.queueCurrentProgramBank, sequence) && ok;
           row.phase = row.zeroWorkMarker
               ? harken::EnginePlayableStartPhase::Filed
               : row.scheduleLeafCount == 0 && row.hasZeroWorkCompletion
@@ -88490,15 +88522,19 @@ engine.runtimeRecreateRequired = true;
                 StorageBasesForRow(engine, row);
             for (std::uint32_t leafIndex = 0;
                  leafIndex < row.scheduleLeafCount; ++leafIndex) {
-                engine.playableScheduleEvents[
-                    bases.currentEvent + leafIndex]
-                    .logicCommitSequence = sequence;
-                engine.playableSchedules[bases.endpoint + leafIndex]
-                    .transactionId = sequence;
+                if (row.queueCurrentProgramBank == nullptr) {
+                    engine.playableScheduleEvents[bases.currentEvent + leafIndex].logicCommitSequence = sequence;
+                    engine.playableSchedules[bases.endpoint + leafIndex].transactionId = sequence;
+                }
+                const auto* program = row.queueCurrentProgramBank != nullptr
+                    ? ResolveQueueCurrentProgram(row, leafIndex)
+                    : &engine.playableSchedules[bases.endpoint + leafIndex];
+                if (program == nullptr) {
+                    postedAll = false;
+                    break;
+                }
                 const harken::PostResult posted =
-                    engine.timelinePlanner.PostPlay(
-                        FrozenInitialQueueProgram(row, leafIndex,
-                            engine.playableSchedules[bases.endpoint + leafIndex]), post);
+                    engine.timelinePlanner.PostPlay(*program, post);
                 postedAll =
                     (posted.status == harken::PostStatus::Reserved ||
                      posted.status == harken::PostStatus::Rescheduled ||
