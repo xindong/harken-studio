@@ -231,7 +231,7 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
             column(scratch.sourceLeafEventCounts) + column(scratch.replacementGroupArms);
     }
     for (const auto& row : playableServices) {
-        bytes += column(row.variableControlDiscreteRetargetPayloads) +
+        bytes += column(row.memberPrograms) + column(row.variableControlDiscreteRetargetPayloads) +
             column(row.variableControlDiscreteRetargetEnteringPayloads) +
             column(row.variableControlDiscreteRetargetEvents) +
             column(row.variableControlDiscreteRetargetEnteringEvents) +
@@ -240,7 +240,7 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
             column(row.variableControlDiscreteRetargetSchedules) +
             column(row.variableControlDiscreteRetargetEnteringSchedules);
     }
-    return bytes;
+    return bytes + memberProgramRecords.RequestedBytes() + memberProgramRecords.DirectoryBytes();
 }
 
 std::size_t Engine::PendingSelectionStorageBytes() const noexcept {
@@ -10868,12 +10868,8 @@ harken::ProgramView* ResolveInitialMemberProgram(
     harken::Engine& engine, std::size_t logicalMemberSlot) noexcept {
     if (logicalMemberSlot >= engine.playableMemberReferences.size()) return nullptr;
     const auto& reference = engine.playableMemberReferences[logicalMemberSlot];
-    harken::EnginePlayableServiceRow* owner = nullptr;
-    std::size_t physicalSlot = 0;
-    if (!engine.ResolvePlayableMember(reference, &owner, &physicalSlot) ||
-        reference.memberOffset >= engine.playableStorage.initialProgramStride) return nullptr;
-    const auto bases = StorageBasesForRow(engine, *owner);
-    return &engine.variableControlSchedules[bases.initialProgram + reference.memberOffset];
+    auto* record = engine.ResolveMemberProgram(reference);
+    return record == nullptr ? nullptr : &record->schedule;
 }
 
 std::uint32_t VariableControlMemberOrdinal(const harken::Engine& engine,
@@ -10923,10 +10919,11 @@ bool PlayableMemberStorageHasReaders(
         if (reference.service.token == row.identity &&
             reference.partitionGeneration == row.partition.generation) return true;
     }
-    for (std::size_t index = 0; index < engine.playableStorage.initialProgramStride; ++index) {
-        const auto& program = engine.variableControlSchedules[bases.initialProgram + index];
-        if (engine.timelinePool.HasProgramReference(program.runtimeProgram) ||
-            engine.timelinePlanner.HasProgramReference(program.runtimeProgram)) return true;
+    for (std::uint32_t index = 0; index < row.memberPrograms.size(); ++index) {
+        if (!row.memberPrograms[index].Valid()) continue;
+        const auto* record = engine.FindMemberProgram(row, index);
+        if (record == nullptr || engine.timelinePool.HasProgramReference(record->schedule.runtimeProgram) ||
+            engine.timelinePlanner.HasProgramReference(record->schedule.runtimeProgram)) return true;
     }
     for (std::size_t index = 0; index < engine.playableStorage.memberStride; ++index) {
         const auto slot = bases.member + index;
@@ -12660,6 +12657,8 @@ PlayableStartResetResult ResetPlayableStartRow(
         row.Invocation().packLease = {};
         row.Invocation().packPlaybackView = {};
     }
+    for (std::uint32_t index = 0; index < row.memberPrograms.size(); ++index)
+        if (!engine.ReleaseMemberProgram(row, index)) return PlayableStartResetResult::Deferred;
     const bool released = engine.ReclaimOriginalPlayableServiceStorage(
         row, completedSequence, published);
     if (!released) {
@@ -12683,10 +12682,6 @@ PlayableStartResetResult ResetPlayableStartRow(
           engine.playableStorage.memberStride);
     clear(engine.playableScheduleLeaves, bases.member,
           engine.playableStorage.memberStride);
-    clear(engine.playableSchedulePayloads, bases.currentEvent,
-          engine.playableStorage.currentEventStride);
-    clear(engine.playableScheduleEvents, bases.currentEvent,
-          engine.playableStorage.currentEventStride);
     clear(engine.playableScheduleArms, bases.member,
           engine.playableStorage.memberStride);
     clear(engine.playableScheduleSelections, bases.member,
@@ -12713,10 +12708,6 @@ PlayableStartResetResult ResetPlayableStartRow(
           engine.playableStorage.weightStride);
     clear(engine.variableControlPendingWeightSegments, bases.continuous,
           engine.playableStorage.continuousStride);
-    clear(engine.variableControlRuntimePrograms, bases.initialProgram,
-          engine.playableStorage.initialProgramStride);
-    clear(engine.variableControlSchedules, bases.initialProgram,
-          engine.playableStorage.initialProgramStride);
     clear(engine.variableControlInitialContinuousArms, bases.continuous,
           engine.playableStorage.continuousStride);
     clear(engine.variableControlDynamicMembers, bases.member,
@@ -18947,10 +18938,11 @@ bool VariableControlRollbackHasMappingReaders(
         }
     }
     const auto bases = StorageBasesForRow(engine, row);
-    for (std::size_t index = 0; index < engine.playableStorage.initialProgramStride; ++index) {
-        const auto& program = engine.variableControlSchedules[bases.initialProgram + index];
-        if (engine.timelinePool.HasProgramReference(program.runtimeProgram) ||
-            engine.timelinePlanner.HasProgramReference(program.runtimeProgram)) {
+    for (std::uint32_t index = 0; index < row.memberPrograms.size(); ++index) {
+        if (!row.memberPrograms[index].Valid()) continue;
+        const auto* record = engine.FindMemberProgram(row, index);
+        if (record == nullptr || engine.timelinePool.HasProgramReference(record->schedule.runtimeProgram) ||
+            engine.timelinePlanner.HasProgramReference(record->schedule.runtimeProgram)) {
             return true;
         }
     }
@@ -21488,10 +21480,6 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     if (base > UINT32_MAX ||
         base + engine.playableStorage.memberStride >
             engine.playableScheduleVoices.size() ||
-        bases.currentEvent + engine.playableStorage.currentEventStride >
-            engine.playableSchedulePayloads.size() ||
-        bases.initialProgram + engine.playableStorage.initialProgramStride >
-            engine.variableControlRuntimePrograms.size() ||
         bases.weight + engine.playableStorage.weightStride >
             engine.variableControlWeightSegments.size() ||
         bases.continuous + engine.playableStorage.continuousStride >
@@ -21635,18 +21623,14 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         : 0;
     row.variableControlDiscreteSilent =
         discreteSidePresent && !haveDiscrete;
-    row.runtimeProgram.generation = instance;
-    row.runtimeProgram.payloads =
-        engine.playableSchedulePayloads.data() + bases.currentEvent;
-    row.runtimeProgram.payloadCount = memberCount;
+    row.runtimeProgram = {};
     row.schedule.ownerInstance = instance;
     row.schedule.ownerInstanceScheduleEpoch = scratch->instance.ScheduleEpoch();
     row.schedule.transactionId = provisionalTicket;
     row.schedule.entryAnchorFrame = startFrame;
-    row.schedule.events =
-        engine.playableScheduleEvents.data() + bases.currentEvent;
-    row.schedule.eventCount = memberCount;
-    row.schedule.runtimeProgram = {instance, &row.runtimeProgram};
+    row.schedule.events = nullptr;
+    row.schedule.eventCount = 0;
+    row.schedule.runtimeProgram = {};
 
     scratch->row = &row;
     scratch->variableControl = true;
@@ -21876,8 +21860,10 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         engine.playableMemberReferences[logicalSlot].authoredChildOrdinal = capturedInput.facts->target.occurrenceOrdinal;
         const auto resourceBases = StorageBasesForRow(engine, *resourceService);
         const auto resourceOffset = slot - resourceBases.member;
-        if (resourceOffset >= engine.playableStorage.currentEventStride ||
-            resourceOffset >= engine.playableStorage.initialProgramStride) break;
+        if (resourceOffset >= engine.playableStorage.initialProgramStride) break;
+        auto* memberProgram = engine.AcquireMemberProgram(*resourceService,
+            engine.playableMemberReferences[logicalSlot]);
+        if (memberProgram == nullptr) break;
         harken::PlayableProgramKey queueCompletionProgram{};
         const harken::OccurrenceToken* queueProgressOccurrence = nullptr;
         const harken::PlayableProgramKey* queueCompletionProgramPtr = nullptr;
@@ -21915,10 +21901,6 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         if (inheritedWeightCount != 0 &&
             !engine.voices.PrepareVariableWeightControls(installed.renderHandle,
                 inheritedWeights.data(), inheritedWeightCount)) break;
-        const std::size_t eventSlot =
-            resourceBases.currentEvent + resourceOffset;
-        const std::size_t programSlot =
-            resourceBases.initialProgram + resourceOffset;
         const std::size_t weightSlot = bases.weight + logicalOffset;
         captured->Stage(engine.playableScheduleVoices[slot]);
         engine.playableScheduleLeaves[slot] = source.leaf;
@@ -21963,13 +21945,13 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         engine.variableControlWeightSegments[weightSlot] =
             variableWeight;
         harken::TimelineEventPayload& payload =
-            engine.playableSchedulePayloads[eventSlot];
+            memberProgram->payloads[0];
         payload = {};
         payload.kind = harken::TimelineEventKind::Start;
         payload.target = capturedInput.facts->target;
         payload.reserved = harken::kTimelineEventTransientStartArm;
         harken::EventTemplate& event =
-            engine.playableScheduleEvents[eventSlot];
+            memberProgram->events[0];
         event = {};
         event.logicCommitSequence = discreteMember
             ? row.variableControlDiscreteTicket
@@ -21982,13 +21964,13 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         event.payload = 0;
         event.armToken = installed.armToken;
         harken::TimelineProgramView& runtime =
-            engine.variableControlRuntimePrograms[programSlot];
+            memberProgram->runtime;
         runtime = {};
         runtime.generation = childInstance;
         runtime.payloads = &payload;
         runtime.payloadCount = 1;
         harken::ProgramView& schedule =
-            engine.variableControlSchedules[programSlot];
+            memberProgram->schedule;
         schedule = {};
         schedule.ownerInstance = childInstance;
         schedule.ownerInstanceScheduleEpoch =
@@ -23417,10 +23399,9 @@ engine.runtimeRecreateRequired = true;
             auto* resourceOwner = engine.ResolvePlayableService(reference.service);
             if (program == nullptr || resourceOwner == nullptr ||
                 reference.memberOffset >= engine.playableStorage.currentEventStride) return false;
-            const auto resourceBases = StorageBasesForRow(engine, *resourceOwner);
-            const std::size_t eventSlot = resourceBases.currentEvent + reference.memberOffset;
-            engine.playableScheduleEvents[eventSlot].logicCommitSequence =
-                sequence;
+            auto* record = engine.ResolveMemberProgram(reference);
+            if (record == nullptr) return false;
+            record->events[0].logicCommitSequence = sequence;
             program->transactionId = sequence;
             const harken::PostResult posted =
                 engine.timelinePlanner.PostPlay(
@@ -31409,23 +31390,22 @@ engine.runtimeRecreateRequired = true;
     for (std::uint32_t index = 0; index < targetSchedule.leafCount;
          ++index) {
         auto& owner = *targetOwners[index];
-        const auto ownerBases = StorageBasesForRow(engine, owner);
-        const auto memberOffset = targetSlots[index] - ownerBases.member;
-        if (&owner != &row && (memberOffset >= engine.playableStorage.currentEventStride ||
-                memberOffset >= engine.playableStorage.initialProgramStride)) {
+        auto* record = &owner == &row ? nullptr : engine.AcquireMemberProgram(owner,
+            engine.playableMemberReferences[row.scheduleStorageBase + index]);
+        if (&owner != &row && record == nullptr) {
             cancelIncomingPrepared();
             (void)engine.decisions.Cancel(decision);
             (void)engine.decisions.ReclaimCancelled(decision);
             return VariableRetargetPrepareStatus::Retry;
         }
         auto& payload = &owner == &row ? row.variableControlDiscreteRetargetPayloads[index]
-            : engine.playableSchedulePayloads[ownerBases.currentEvent + memberOffset];
+            : record->payloads[0];
         payload = {};
         payload.kind = harken::TimelineEventKind::Start;
         payload.reserved = harken::kTimelineEventTransientStartArm;
         payload.target = capturedTargets[index].Facts().target;
         auto& event = &owner == &row ? row.variableControlDiscreteRetargetEvents[index]
-            : engine.playableScheduleEvents[ownerBases.currentEvent + memberOffset];
+            : record->events[0];
         event = {};
         event.logicCommitSequence = ticket;
         event.eventIndex = index;
@@ -31433,13 +31413,13 @@ engine.runtimeRecreateRequired = true;
         event.subeventPhase = 20;
         event.armToken = installedTargets[index].armToken;
         auto& runtime = &owner == &row ? row.variableControlDiscreteRetargetRuntimePrograms[index]
-            : engine.variableControlRuntimePrograms[ownerBases.initialProgram + memberOffset];
+            : record->runtime;
         runtime = {};
         runtime.generation = incomingLeaves[index];
         runtime.payloads = &payload;
         runtime.payloadCount = 1;
         auto& schedule = &owner == &row ? row.variableControlDiscreteRetargetSchedules[index]
-            : engine.variableControlSchedules[ownerBases.initialProgram + memberOffset];
+            : record->schedule;
         schedule = {};
         targetPrograms[index] = &schedule;
         schedule.ownerInstance = incomingLeaves[index];
@@ -32390,20 +32370,18 @@ engine.runtimeRecreateRequired = true;
         engine.variableControlDynamicMembers[enteringSlot] = 1;
 
         auto& resourceOwner = *targetOwners[index];
-        const auto ownerBases = StorageBasesForRow(engine, resourceOwner);
-        const auto memberOffset = enteringSlot - ownerBases.member;
-        if (&resourceOwner != &row &&
-            (memberOffset >= engine.playableStorage.initialProgramStride ||
-             memberOffset * 2u + enteringEventsPerTarget > engine.playableStorage.currentEventStride)) {
+        auto* record = &resourceOwner == &row ? nullptr : engine.AcquireMemberProgram(resourceOwner,
+            engine.playableMemberReferences[base + row.variableControlDiscreteTransitionOffset + index]);
+        if (&resourceOwner != &row && record == nullptr) {
             rollbackBeforeInstall();
             return VariableRetargetPrepareStatus::Retry;
         }
         auto* payloads = &resourceOwner == &row
             ? row.variableControlDiscreteRetargetEnteringPayloads.data() + eventBase
-            : engine.playableSchedulePayloads.data() + ownerBases.currentEvent + memberOffset * 2u;
+            : record->payloads.data();
         auto* events = &resourceOwner == &row
             ? row.variableControlDiscreteRetargetEnteringEvents.data() + eventBase
-            : engine.playableScheduleEvents.data() + ownerBases.currentEvent + memberOffset * 2u;
+            : record->events.data();
         auto& start = payloads[0];
         start = {};
         start.kind = harken::TimelineEventKind::Start;
@@ -32439,14 +32417,14 @@ engine.runtimeRecreateRequired = true;
         }
         auto& runtime = &resourceOwner == &row
             ? row.variableControlDiscreteRetargetEnteringRuntimePrograms[index]
-            : engine.variableControlRuntimePrograms[ownerBases.initialProgram + memberOffset];
+            : record->runtime;
         runtime = {};
         runtime.generation = incomingLeaves[index];
         runtime.payloads = payloads;
         runtime.payloadCount = enteringEventsPerTarget;
         auto& schedule = &resourceOwner == &row
             ? row.variableControlDiscreteRetargetEnteringSchedules[index]
-            : engine.variableControlSchedules[ownerBases.initialProgram + memberOffset];
+            : record->schedule;
         schedule = {};
         targetPrograms[index] = &schedule;
         schedule.ownerInstance = incomingLeaves[index];
@@ -52462,6 +52440,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 &nativeCandidate->actionPlays) ||
             !PrepareQueueProgramBankBacking(queueControls == 0 ? 0u : queueProgramBanks.size(),
                 &nativeCandidate->queueBanks) ||
+            !PrepareMemberProgramBacking(static_cast<std::uint32_t>(nativeVoices),
+                &nativeCandidate->memberPrograms) ||
             !queueInstances.PrepareBacking(static_cast<std::uint32_t>(queueControls),
                 static_cast<std::uint32_t>(queueControls), &nativeCandidate->queues) ||
             !queueCheckpoints.PrepareBacking(static_cast<std::uint32_t>(queueControls), &nativeCandidate->checkpoints) ||
@@ -52528,6 +52508,7 @@ bool Engine::MatchesPendingVariableNativeBacking(OriginalPendingVariableGroupHol
     if (producerCount == 0 || producerCount > owner.nativeReplacementSlots.size() ||
         owner.queueRoleReservations.size() != producerCount || !owner.nativeRuntimeBacking ||
         !owner.nativeRuntimeBacking->groups.Valid() || !owner.nativeRuntimeBacking->actionPlays.Valid() ||
+        !owner.nativeRuntimeBacking->memberPrograms.Valid() ||
         !owner.nativeRuntimeBacking->queueBanks.Valid() ||
         !owner.nativeRuntimeBacking->queues.instances.Valid() ||
         !owner.nativeRuntimeBacking->queues.conditionals.Valid() || !owner.nativeRuntimeBacking->checkpoints.Valid() ||
@@ -54259,12 +54240,14 @@ bool Engine::CapturePendingVariableGroupRetiredMemberStorage(OriginalPendingVari
         member.render = playableScheduleRenderHandles[slot];
         member.release = playableScheduleReleaseObservers[slot];
         member.source = variableControlMemberCompletions[slot].source;
-        const auto bases = StorageBasesForRow(*this, *owner);
-        const auto& schedule = variableControlSchedules[bases.initialProgram + member.reference.memberOffset];
+        const auto* record = ResolveMemberProgram(member.reference);
+        if (record == nullptr) return false;
+        member.program = owner->memberPrograms[member.reference.memberOffset];
+        const auto& schedule = record->schedule;
         if (!SameOriginalSingleArm(member.arm, group.leafArms[index]) || member.render == 0 ||
             !member.release.Valid() || schedule.ownerInstance != member.reference.leaf ||
             schedule.ownerInstanceScheduleEpoch != member.reference.leafEpoch ||
-            schedule.runtimeProgram.program != &variableControlRuntimePrograms[bases.initialProgram + member.reference.memberOffset])
+            schedule.runtimeProgram.program != &record->runtime)
             return false;
         if (group.leafRetirement == OriginalPendingVariableGroupHolder::LeafRetirement::None) {
             const auto* source = sourceTerminals.Resolve(member.source);
@@ -54304,10 +54287,11 @@ bool Engine::MatchesPendingVariableGroupRetiredMemberStorage(const OriginalPendi
         return false;
     const auto& reference = playableMemberReferences[original.logicalSlot];
     const auto& member = variableControlMemberCompletions[slot];
-    const auto bases = StorageBasesForRow(*this, *owner);
     const auto offset = original.reference.memberOffset;
-    const auto& runtime = variableControlRuntimePrograms[bases.initialProgram + offset];
-    const auto& schedule = variableControlSchedules[bases.initialProgram + offset];
+    const auto* record = ResolveMemberProgram(original.reference);
+    if (record == nullptr || owner->memberPrograms[offset] != original.program) return false;
+    const auto& runtime = record->runtime;
+    const auto& schedule = record->schedule;
     return reference.service.token == original.reference.service.token &&
         reference.service.owner == original.reference.service.owner && reference.service.epoch == original.reference.service.epoch &&
         reference.service.invocationGeneration == original.reference.service.invocationGeneration &&
@@ -54329,8 +54313,8 @@ bool Engine::MatchesPendingVariableGroupRetiredMemberStorage(const OriginalPendi
         schedule.ownerInstance == original.reference.leaf && schedule.ownerInstanceScheduleEpoch == original.reference.leafEpoch &&
         schedule.runtimeProgram.program == &runtime && schedule.runtimeProgram.programGeneration == runtime.generation &&
         runtime.generation == original.reference.leaf && runtime.payloadCount == 1 &&
-        runtime.payloads == &playableSchedulePayloads[bases.currentEvent + offset] &&
-        schedule.events == &playableScheduleEvents[bases.currentEvent + offset] && schedule.eventCount == 1 &&
+        runtime.payloads == record->payloads.data() &&
+        schedule.events == record->events.data() && schedule.eventCount == 1 &&
         SameOriginalSingleArm(schedule.armToken, original.arm) &&
         !member.source.Valid() && member.resourcesRetired && member.completedSource.kind != SourceTerminalKind::None &&
         member.completedSource.kind != SourceTerminalKind::ProducerFailure &&
@@ -55068,6 +55052,13 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
         auto* resource = ResolvePreparedResourceService(*this, *producer.row, instance->Handle(),
             child->variableControlChildren, child->variableControlLeafChildren);
         if (resource == nullptr) return refuse();
+        std::size_t memberSlot = 0;
+        if (!PreparePlayableMemberStorage(*this, *resource,
+                StorageBasesForRow(*this, *producer.row).member + index,
+                instance->Handle(), instance->ScheduleEpoch(), &memberSlot, &mirror.storageReference)) return refuse();
+        auto* memberProgram = AcquireMemberProgram(*resource, mirror.storageReference);
+        if (memberProgram == nullptr) return refuse();
+        mirror.program = {instance->Handle(), &memberProgram->runtime};
         if (resource != producer.row) {
             auto terminal = instance->Parent();
             resource->activeLeafInstance = kind == PlayableKind::Sound ? instance->Handle() : terminal;
@@ -55090,7 +55081,6 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
     members = {};
     // Queue completion preparation reads the physical storage and changes voice facts.
     // Finish it before capturing voice/ledger proofs or the command batch.
-    const auto logicalBases = StorageBasesForRow(*this, *producer.row);
     for (std::uint32_t index = 0; index < child->voiceStartCount; ++index) {
         const auto& leaf = leaves[index];
         const auto side = leaf.side == VariableControlSide::Discrete ? 0u : 1u;
@@ -55105,18 +55095,15 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
         mirror.memberOrdinal = members[side]++;
         mirror.authoredOffset = leaf.authoredOffset;
         std::size_t slot = 0;
-        auto* resource = ResolvePreparedResourceService(*this, *producer.row, instance,
-            child->variableControlChildren, child->variableControlLeafChildren);
-        if (resource == nullptr || !PreparePlayableMemberStorage(*this, *resource, logicalBases.member + index,
-                instance, epoch, &slot, &mirror.storageReference)) return refuse();
+        EnginePlayableServiceRow* resource = nullptr;
+        if (!ResolvePlayableMember(mirror.storageReference, &resource, &slot)) return refuse();
         const auto storageBases = StorageBasesForRow(*this, *resource);
-        const auto offset = mirror.storageReference.memberOffset;
-        if (offset >= playableStorage.currentEventStride || offset >= playableStorage.initialProgramStride)
-            return refuse();
-        auto& payload = playableSchedulePayloads[storageBases.currentEvent + offset];
-        auto& event = playableScheduleEvents[storageBases.currentEvent + offset];
-        auto& runtime = variableControlRuntimePrograms[storageBases.initialProgram + offset];
-        auto& schedule = variableControlSchedules[storageBases.initialProgram + offset];
+        auto* record = ResolveMemberProgram(mirror.storageReference);
+        if (record == nullptr || mirror.program.program != &record->runtime) return refuse();
+        auto& payload = record->payloads[0];
+        auto& event = record->events[0];
+        auto& runtime = record->runtime;
+        auto& schedule = record->schedule;
         mirror.target = leaf.voice.target;
         mirror.sequence = (*scope->proofs_)[side].Sequence();
         mirror.program = {instance, &runtime};
@@ -55490,12 +55477,12 @@ bool Engine::MatchesPendingVariableReplacementMemberStorage(const EngineActionPl
             child.variableControlChildren, child.variableControlLeafChildren) != owner ||
         leaf.storageReference.memberOffset >= playableStorage.currentEventStride ||
         leaf.storageReference.memberOffset >= playableStorage.initialProgramStride) return false;
-    const auto bases = StorageBasesForRow(*this, *owner);
-    const auto offset = leaf.storageReference.memberOffset;
-    const auto& payload = playableSchedulePayloads[bases.currentEvent + offset];
-    const auto& event = playableScheduleEvents[bases.currentEvent + offset];
-    const auto& runtime = variableControlRuntimePrograms[bases.initialProgram + offset];
-    const auto& schedule = variableControlSchedules[bases.initialProgram + offset];
+    const auto* record = ResolveMemberProgram(leaf.storageReference);
+    if (record == nullptr) return false;
+    const auto& payload = record->payloads[0];
+    const auto& event = record->events[0];
+    const auto& runtime = record->runtime;
+    const auto& schedule = record->schedule;
     const auto& completion = variableControlMemberCompletions[slot];
     return leaf.program.program == &runtime && leaf.program.programGeneration == leaf.storageReference.leaf &&
         runtime.payloads == &payload && runtime.payloadCount == 1 &&
@@ -57579,12 +57566,10 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
     row.variableControlNextEvaluationFrame = shifted(row.variableControlNextEvaluationFrame);
     row.startFrame = anchor;
     row.schedule.entryAnchorFrame = anchor;
-    row.schedule.eventCount = child.voiceStartCount;
-    row.schedule.events = playableScheduleEvents.data() + bases.currentEvent;
-    row.runtimeProgram.generation = row.ownerInstance;
-    row.runtimeProgram.payloads = playableSchedulePayloads.data() + bases.currentEvent;
-    row.runtimeProgram.payloadCount = child.voiceStartCount;
-    row.schedule.runtimeProgram = {row.ownerInstance, &row.runtimeProgram};
+    row.schedule.eventCount = 0;
+    row.schedule.events = nullptr;
+    row.runtimeProgram = {};
+    row.schedule.runtimeProgram = {};
     for (std::uint32_t index = 0; index < child.pendingVariableReplacementTopCount; ++index) {
         const auto& top = child.pendingVariableReplacementTops[index];
         const auto& instance = child.variableControlChildren[index];
@@ -59384,11 +59369,11 @@ bool Engine::CancelPendingVariableGroupChildren(OriginalPendingVariableGroupHold
         EnginePlayableServiceRow* owner = nullptr;
         std::size_t slot = 0;
         if (!ResolvePlayableMember(leaf.storageReference, &owner, &slot)) return false;
-        const auto bases = StorageBasesForRow(*this, *owner);
         const auto offset = leaf.storageReference.memberOffset;
         if (offset >= playableStorage.currentEventStride || offset >= playableStorage.initialProgramStride ||
             timelinePool.HasProgramReference(leaf.program) ||
             timelinePlanner.HasProgramReference(leaf.program)) return false;
+        if (!ReleaseMemberProgram(*owner, offset)) return false;
         SetPlayableMemberCompletion(slot, {});
         playableScheduleVoices[slot] = {};
         playableScheduleLeaves[slot] = {};
@@ -59397,10 +59382,6 @@ bool Engine::CancelPendingVariableGroupChildren(OriginalPendingVariableGroupHold
         playableScheduleReleaseObservers[slot] = {};
         playableScheduleStartFrames[slot] = 0;
         variableControlDynamicMembers[slot] = 0;
-        playableSchedulePayloads[bases.currentEvent + offset] = {};
-        playableScheduleEvents[bases.currentEvent + offset] = {};
-        variableControlRuntimePrograms[bases.initialProgram + offset] = {};
-        variableControlSchedules[bases.initialProgram + offset] = {};
         leaf.storageReference = {};
     }
     if (!ReleaseCancelledFrontierServices(*this, *child)) return false;
@@ -60430,8 +60411,10 @@ bool Engine::ServicePendingVariableGroupReprepare(EngineActionPlayScratch& scrat
                 slot != original.physicalSlot) return false;
             const auto& reference = playableMemberReferences[original.logicalSlot];
             const auto& member = variableControlMemberCompletions[slot];
-            const auto ownerBases = StorageBasesForRow(*this, *owner);
-            const auto& schedule = variableControlSchedules[ownerBases.initialProgram + original.reference.memberOffset];
+            const auto* record = ResolveMemberProgram(original.reference);
+            if (record == nullptr || owner->memberPrograms[original.reference.memberOffset] != original.program)
+                return false;
+            const auto& schedule = record->schedule;
             TimelineArmObservation arm{};
             if (reference.service.token != original.reference.service.token ||
                 reference.service.owner != original.reference.service.owner ||
@@ -60523,7 +60506,9 @@ bool Engine::ServicePendingVariableGroupReprepare(EngineActionPlayScratch& scrat
             std::size_t resolvedSlot = 0;
             if (!ResolvePlayableMember(original.reference, &owner, &resolvedSlot) || resolvedSlot != slot)
                 return false;
-            const auto ownerBases = StorageBasesForRow(*this, *owner);
+            if (offset >= owner->memberPrograms.size() || owner->memberPrograms[offset] != original.program)
+                return false;
+            if (!ReleaseMemberProgram(*owner, offset)) return false;
             SetPlayableMemberCompletion(slot, {});
             playableScheduleVoices[slot] = {};
             playableScheduleLeaves[slot] = {};
@@ -60532,10 +60517,6 @@ bool Engine::ServicePendingVariableGroupReprepare(EngineActionPlayScratch& scrat
             playableScheduleReleaseObservers[slot] = {};
             playableScheduleStartFrames[slot] = 0;
             variableControlDynamicMembers[slot] = 0;
-            playableSchedulePayloads[ownerBases.currentEvent + offset] = {};
-            playableScheduleEvents[ownerBases.currentEvent + offset] = {};
-            variableControlRuntimePrograms[ownerBases.initialProgram + offset] = {};
-            variableControlSchedules[ownerBases.initialProgram + offset] = {};
             playableMemberReferences[original.logicalSlot] = {};
             const auto logicalOffset = original.logicalSlot - bases.member;
             if (logicalOffset < playableStorage.weightStride)
@@ -76756,11 +76737,7 @@ bool RemovePublishedDeferredFrontierEntry(
         return false;
 
     auto& related = engine.publishedFrontierProgramRefsScratch;
-    const auto bases = StorageBasesForRow(engine, row);
-    if (related.size() < engine.playableStorage.initialProgramStride + 1u ||
-        bases.initialProgram > engine.variableControlSchedules.size() ||
-        engine.playableStorage.initialProgramStride >
-            engine.variableControlSchedules.size() - bases.initialProgram)
+    if (related.size() < row.memberPrograms.size() + 1u)
         return false;
     std::size_t relatedCount = 0;
     const harken::ProgramView* candidate = nullptr;
@@ -76786,10 +76763,10 @@ bool RemovePublishedDeferredFrontierEntry(
         return true;
     };
     if (!inspect(row.schedule)) return false;
-    for (std::size_t index = 0;
-         index < engine.playableStorage.initialProgramStride; ++index) {
-        if (!inspect(engine.variableControlSchedules[bases.initialProgram + index]))
-            return false;
+    for (std::uint32_t index = 0; index < row.memberPrograms.size(); ++index) {
+        if (!row.memberPrograms[index].Valid()) continue;
+        const auto* record = engine.FindMemberProgram(row, index);
+        if (record == nullptr || !inspect(record->schedule)) return false;
     }
     if (candidate == nullptr || relatedCount == 0 ||
         engine.playableInstances.ValidateStamp(

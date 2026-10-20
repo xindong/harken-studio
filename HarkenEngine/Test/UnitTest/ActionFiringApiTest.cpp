@@ -1137,12 +1137,14 @@ void ExpectVariableControlTree(
                       ? selected
                       : row.rootInstance,
                   leafView.parent);
-        const auto schedule = engine.variableControlSchedules[
-            row.scheduleStorageBase +
+        const auto logicalSlot = row.scheduleStorageBase +
             (index < row.variableControlDiscreteMemberCount
                  ? index
                  : row.variableControlContinuousMemberOffset +
-                       index - row.variableControlDiscreteMemberCount)];
+                       index - row.variableControlDiscreteMemberCount);
+        const auto* record = engine.ResolveMemberProgram(engine.playableMemberReferences[logicalSlot]);
+        ASSERT_NE(nullptr, record);
+        const auto& schedule = record->schedule;
         EXPECT_EQ(leaf, schedule.ownerInstance);
         EXPECT_EQ(row.variableControlLeafEpochs[index],
                   schedule.ownerInstanceScheduleEpoch);
@@ -25216,22 +25218,18 @@ static void ExpectImmediateVariableControlNestedRetargetPromotesCompleteInstance
     ASSERT_TRUE(engine->ResolvePlayableMember(incomingReference, &referenceOwner, &incomingPhysicalSlot));
     EXPECT_EQ(resourceService, referenceOwner);
     EXPECT_EQ(incomingLeaf, engine->variableControlMemberCompletions[incomingPhysicalSlot].leafInstance);
-    const auto programSlot = engine->playableStorage.InitialProgramBase(resourceService->partition.slot) +
-        incomingReference.memberOffset;
-    const auto& ownedProgram = engine->variableControlSchedules[programSlot];
+    const auto* record = engine->ResolveMemberProgram(incomingReference);
+    ASSERT_NE(nullptr, record);
+    const auto& ownedProgram = record->schedule;
     const auto* originalMember = &engine->variableControlMemberCompletions[incomingPhysicalSlot];
     const auto* originalRuntime = ownedProgram.runtimeProgram.program;
     const auto* originalEvents = ownedProgram.events;
-    ASSERT_EQ(&engine->variableControlRuntimePrograms[programSlot], originalRuntime);
+    ASSERT_EQ(&record->runtime, originalRuntime);
     ASSERT_NE(nullptr, originalRuntime);
     const auto* originalPayloads = originalRuntime->payloads;
     EXPECT_EQ(incomingLeaf, ownedProgram.ownerInstance);
-    EXPECT_EQ(&engine->playableScheduleEvents[
-        engine->playableStorage.CurrentEventBase(resourceService->partition.slot) +
-        2u * incomingReference.memberOffset], originalEvents);
-    EXPECT_EQ(&engine->playableSchedulePayloads[
-        engine->playableStorage.CurrentEventBase(resourceService->partition.slot) +
-        2u * incomingReference.memberOffset], originalPayloads);
+    EXPECT_EQ(record->events.data(), originalEvents);
+    EXPECT_EQ(record->payloads.data(), originalPayloads);
 
     bool promoted = false;
     for (std::uint32_t block = 0; block < 96 && !promoted; ++block) {
@@ -26396,16 +26394,14 @@ void ExpectVariableControlToVariableControlInitial(bool direct) {
     EXPECT_EQ(originalSource.token.slot, engine->variableControlMemberCompletions[physicalSlot].source.slot);
     EXPECT_EQ(originalSource.token.generation,
               engine->variableControlMemberCompletions[physicalSlot].source.generation);
-    const auto programSlot = engine->playableStorage.InitialProgramBase(innerService->partition.slot) +
-        reference.memberOffset;
-    const auto eventSlot = engine->playableStorage.CurrentEventBase(innerService->partition.slot) +
-        reference.memberOffset;
-    const auto& ownedProgram = engine->variableControlSchedules[programSlot];
+    const auto* record = engine->ResolveMemberProgram(reference);
+    ASSERT_NE(nullptr, record);
+    const auto& ownedProgram = record->schedule;
     EXPECT_EQ(innerChild, ownedProgram.ownerInstance);
-    EXPECT_EQ(&engine->variableControlRuntimePrograms[programSlot], ownedProgram.runtimeProgram.program);
-    EXPECT_EQ(&engine->playableScheduleEvents[eventSlot], ownedProgram.events);
+    EXPECT_EQ(&record->runtime, ownedProgram.runtimeProgram.program);
+    EXPECT_EQ(record->events.data(), ownedProgram.events);
     ASSERT_NE(nullptr, ownedProgram.runtimeProgram.program);
-    EXPECT_EQ(&engine->playableSchedulePayloads[eventSlot], ownedProgram.runtimeProgram.program->payloads);
+    EXPECT_EQ(record->payloads.data(), ownedProgram.runtimeProgram.program->payloads);
 
     if (direct) {
         ASSERT_EQ(harken::PlayableControlStatus::Ok,
@@ -44195,6 +44191,9 @@ static void CheckPendingVariableNativeShapeRetries(harken::Engine& engine,
     constexpr std::uint32_t block = 64;
     auto& group = engine.acceptedPendingVariableGroups[producer.row->identity.slot];
     const auto root = producer.row->rootInstance;
+    const auto* originalService = producer.row;
+    const auto* originalDirectory = originalService->memberPrograms.data();
+    const auto preparedProgramRecords = engine.memberProgramRecords.ConstructedCount();
     ASSERT_TRUE(group.ReprepareReady());
     RecordNativeBackingInventory(engine, "shape_reserved");
     ASSERT_EQ(0u, attempt.privateVcProducerCount);
@@ -44229,6 +44228,7 @@ static void CheckPendingVariableNativeShapeRetries(harken::Engine& engine,
         unsigned seen = 0;
         harken::EngineActionPlayScratch* child = nullptr;
         std::uint64_t finalAnchor = 0;
+        harken::EngineMemberProgramToken previousProgram{};
     } probe{&engine, &producer, &attempt, &group, &*slot, &queueSlot, engine.NativeBackingTokenFor(producer),
         group.cut, producer.row->identity, attempt.generation, engine.nativeBackingAllocationCountForTest,
         NativePreparationBackingBytes(engine), slot->side.data(), image.variables[3].variableId};
@@ -44247,6 +44247,7 @@ static void CheckPendingVariableNativeShapeRetries(harken::Engine& engine,
             engine.originalSourceSubmissions.SetCommitPageLimitForTests(SIZE_MAX);
             engine.originalSinglePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
             engine.originalQueueSourcePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
+            engine.memberProgramRecords.SetCommitPageLimitForTests(SIZE_MAX);
             engine.nativeBackingAllocationFailureCountdownForTest = countdown;
             engine.deferRegisteredPendingVariableSelectionReplacementForTest = false;
             engine.deferPendingImmediateEntriesForTest = entryDeferral;
@@ -44258,6 +44259,7 @@ static void CheckPendingVariableNativeShapeRetries(harken::Engine& engine,
     engine.originalSourceSubmissions.SetCommitPageLimitForTests(0);
     engine.originalSinglePreparationHolders.SetCommitPageLimitForTests(0);
     engine.originalQueueSourcePreparationHolders.SetCommitPageLimitForTests(0);
+    engine.memberProgramRecords.SetCommitPageLimitForTests(0);
 #if !defined(HARKEN_RT_QUALIFICATION)
     const auto privateEntryCommit = engine.immediateActionLane.PrivateEntryCommittedBytes();
     const auto lanePayloadCommit = engine.immediateActionLane.PayloadCommittedBytes();
@@ -44326,6 +44328,22 @@ static void CheckPendingVariableNativeShapeRetries(harken::Engine& engine,
             ASSERT_GE(child.voiceStarts.size(), shape);
             for (std::uint32_t index = 0; index < shape; ++index) {
                 const auto& leaf = child.pendingVariableReplacementLeaves[index];
+                auto* service = actual.ResolvePlayableService(leaf.storageReference.service);
+                ASSERT_NE(nullptr, service);
+                auto& token = service->memberPrograms[leaf.storageReference.memberOffset];
+                ASSERT_TRUE(token.Valid());
+                ASSERT_NE(nullptr, actual.ResolveMemberProgram(leaf.storageReference));
+                if (index == 0) {
+                    const auto current = token;
+                    if (probe.previousProgram.Valid()) {
+                        if (current.slot == probe.previousProgram.slot)
+                            EXPECT_NE(current.generation, probe.previousProgram.generation);
+                        token = probe.previousProgram;
+                        EXPECT_EQ(nullptr, actual.ResolveMemberProgram(leaf.storageReference));
+                        token = current;
+                    }
+                    probe.previousProgram = current;
+                }
                 const bool second = shape == 1;
                 EXPECT_EQ(second ? CanonicalActionWorld::kSecondSound : CanonicalActionWorld::kFirstSound,
                     leaf.leaf.stableId);
@@ -44446,6 +44464,9 @@ static void CheckPendingVariableNativeShapeRetries(harken::Engine& engine,
         ASSERT_EQ(VN_OK, Vn_Update());
     }
     EXPECT_TRUE(group.Empty());
+    EXPECT_EQ(originalDirectory, originalService->memberPrograms.data());
+    EXPECT_EQ(preparedProgramRecords, engine.memberProgramRecords.ConstructedCount());
+    for (const auto& record : engine.memberProgramRecords) EXPECT_FALSE(record.occupied);
     EXPECT_EQ(probe.allocations, engine.nativeBackingAllocationCountForTest);
     EXPECT_EQ(0, engine.nativeBackingAllocationFailureCountdownForTest);
     EXPECT_EQ(4u, engine.voices.AvailableSlotCount());
@@ -45246,13 +45267,13 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                                     std::size_t storageSlot = 0;
                                     EXPECT_TRUE(engine.ResolvePlayableMember(mirror.storageReference, &storageOwner, &storageSlot));
                                     EXPECT_EQ(&*row, storageOwner);
-                                    const auto storageOffset = mirror.storageReference.memberOffset;
-                                    const auto programSlot = engine.playableStorage.InitialProgramBase(row->partition.slot) + storageOffset;
-                                    const auto eventSlot = engine.playableStorage.CurrentEventBase(row->partition.slot) + storageOffset;
-                                    const auto& runtime = engine.variableControlRuntimePrograms[programSlot];
-                                    const auto& schedule = engine.variableControlSchedules[programSlot];
-                                    const auto& event = engine.playableScheduleEvents[eventSlot];
-                                    EXPECT_EQ(&engine.playableSchedulePayloads[eventSlot], runtime.payloads);
+                                    const auto* record = engine.ResolveMemberProgram(mirror.storageReference);
+                                    EXPECT_NE(nullptr, record);
+                                    if (record == nullptr) continue;
+                                    const auto& runtime = record->runtime;
+                                    const auto& schedule = record->schedule;
+                                    const auto& event = record->events[0];
+                                    EXPECT_EQ(record->payloads.data(), runtime.payloads);
                                     EXPECT_EQ(&runtime, mirror.program.program);
                                     EXPECT_EQ(&runtime, schedule.runtimeProgram.program);
                                     EXPECT_EQ(&event, schedule.events);
@@ -45946,13 +45967,14 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                             EXPECT_EQ(3u, preparedChildren->pendingVariableReplacementLeafCount);
                             for (const auto& mirror : std::span(preparedChildren->pendingVariableReplacementLeaves.data(), 3u)) {
                                 const auto offset = mirror.storageReference.memberOffset;
-                                const auto programSlot = engine.playableStorage.InitialProgramBase(row->partition.slot) + offset;
-                                const auto eventSlot = engine.playableStorage.CurrentEventBase(row->partition.slot) + offset;
-                                const auto& runtime = engine.variableControlRuntimePrograms[programSlot];
-                                const auto& schedule = engine.variableControlSchedules[programSlot];
-                                EXPECT_EQ(&engine.playableSchedulePayloads[eventSlot], runtime.payloads);
+                                const auto* record = engine.ResolveMemberProgram(mirror.storageReference);
+                                EXPECT_NE(nullptr, record);
+                                if (record == nullptr) continue;
+                                const auto& runtime = record->runtime;
+                                const auto& schedule = record->schedule;
+                                EXPECT_EQ(record->payloads.data(), runtime.payloads);
                                 EXPECT_EQ(&runtime, mirror.program.program);
-                                EXPECT_EQ(&engine.playableScheduleEvents[eventSlot], schedule.events);
+                                EXPECT_EQ(record->events.data(), schedule.events);
                                 EXPECT_EQ(mirror.storageReference.leaf,
                                     engine.variableControlMemberCompletions[engine.playableStorage.MemberBase(row->partition.slot) + offset].leafInstance);
                             }

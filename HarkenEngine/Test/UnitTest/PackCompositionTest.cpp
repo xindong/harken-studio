@@ -23203,7 +23203,9 @@ void RunContainerMatrixEntry(ContainerModeV1 mode, ContainerMatrixChild childKin
         observedSchedule->eventCount == 0) {
         ASSERT_NE(0u, row->scheduleLeafCount);
         if (mode == ContainerModeV1::VariableControl) {
-            observedSchedule = &engine->variableControlSchedules[row->scheduleStorageBase];
+            const auto* record = engine->ResolveMemberProgram(engine->playableMemberReferences[row->scheduleStorageBase]);
+            ASSERT_NE(nullptr, record);
+            observedSchedule = &record->schedule;
         } else {
             const auto programs = row->queueCurrentPrograms.Resolve(row->queueCurrentProgramBank);
             ASSERT_FALSE(programs.empty());

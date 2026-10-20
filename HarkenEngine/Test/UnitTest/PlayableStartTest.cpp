@@ -23417,8 +23417,9 @@ TEST(PlayableStart,
     ASSERT_EQ(0u, engine->voices.ActiveCount());
     const auto partition = row->partition;
     const auto service = row->identity;
-    const auto programBase = engine->playableStorage.InitialProgramBase(partition.slot);
-    const auto program = engine->variableControlSchedules[programBase].runtimeProgram;
+    const auto* record = engine->ResolveMemberProgram(engine->playableMemberReferences[row->scheduleStorageBase]);
+    ASSERT_NE(nullptr, record);
+    const auto program = record->schedule.runtimeProgram;
     ASSERT_NE(0u, program.programGeneration);
     harken::ScheduledEventInput heldEvent{};
     heldEvent.executeFrame = engine->timelinePool.WindowEndFrame() - 1u;
