@@ -76,7 +76,16 @@ public:
         if (engineInstance != engineInstance_ || slot == nullptr || session == 0 || session != session_ ||
             localSequence == 0 || revision == 0 ||
             (ownership != MonitorHostOwnership::UnityEmitter &&
-             ownership != MonitorHostOwnership::UnitySpatialSource)) return false;
+             ownership != MonitorHostOwnership::UnitySpatialSource &&
+             ownership != MonitorHostOwnership::StudioDefaultEmitter)) return false;
+        if (ownership == MonitorHostOwnership::StudioDefaultEmitter) {
+            for (const auto& other : slots_) {
+                if (other.emitter != emitter && other.host.Valid() &&
+                    other.host.sdkSession == session &&
+                    other.ownership == MonitorHostOwnership::StudioDefaultEmitter &&
+                    emitters_.IsPublicLive(other.emitter)) return false;
+            }
+        }
         const MonitorHostKey key{engineInstance_, session, localSequence};
         if (slot->host.Valid()) {
             if (!(slot->host == key) || slot->ownership != ownership ||

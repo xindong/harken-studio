@@ -66,7 +66,7 @@ static_assert(VN_MONITOR_OPERATION_STOP_EMITTER < 256);
 static_assert(kMonitorOperationResetPreview < 256 && kMonitorOperationPlayRawPreview < 256);
 static_assert(static_cast<unsigned>(MonitorRequestOrigin::StudioPreview) < 256);
 static_assert(static_cast<unsigned>(MonitorEmitterKind::ExplicitSpatial) < 256);
-static_assert(static_cast<unsigned>(MonitorHostOwnership::UnitySpatialSource) < 256);
+static_assert(static_cast<unsigned>(MonitorHostOwnership::StudioDefaultEmitter) < 256);
 static_assert(static_cast<unsigned>(MonitorBindingState::Detached) < 16);
 
 inline bool ValidRequestOperation(std::uint32_t value) noexcept {
@@ -177,7 +177,7 @@ inline void CaptureFactEmitters(MonitorExecutionFact& fact, const MonitorEmitter
         }
     } else if (origin.host.engineInstance != 0 || origin.host.sdkSession != 0 || origin.host.localSequence != 0)
         fact.flags |= kMonitorFactIdentityIncomplete;
-    if (origin.ownership != MonitorHostOwnership::Unknown && origin.ownership <= MonitorHostOwnership::UnitySpatialSource) {
+    if (origin.ownership != MonitorHostOwnership::Unknown && origin.ownership <= MonitorHostOwnership::StudioDefaultEmitter) {
         fact.hostOwnership = static_cast<std::uint8_t>(origin.ownership);
         SetSourceField(fact, VN_MONITOR_FACT_FIELD_HOST_OWNERSHIP);
     }

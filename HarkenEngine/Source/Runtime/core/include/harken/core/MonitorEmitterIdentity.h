@@ -18,6 +18,7 @@ enum class MonitorHostOwnership : std::uint32_t {
     Unknown = 0,
     UnityEmitter = 1,
     UnitySpatialSource = 2,
+    StudioDefaultEmitter = 3,
 };
 
 struct MonitorHostKey {

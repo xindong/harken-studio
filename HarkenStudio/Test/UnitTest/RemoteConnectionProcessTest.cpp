@@ -257,39 +257,48 @@ TEST(MonitorPanel, RemoteGameCallsFromSharedDllAppearInPanel) {
     }).toJson(QJsonDocument::Compact);
     ASSERT_EQ(probe.write(probeRequest), probeRequest.size());
     ASSERT_TRUE(probe.commit());
-    bool sawVariable = false, sawAction = false, sawRefusal = false, sawLifecycle = false, sawEffect = false;
+    bool sawVariable = false, sawAction = false, sawRefusal = false, sawSoundStarted = false, sawEffect = false;
     ASSERT_TRUE(waitForRemote([&] {
         for (int row = 0; row < capture.rowCount(); ++row) {
             const auto& event = capture.eventAt(row);
-            if (event.detail.category == VN_MONITOR_EVENT_CATEGORY_OPERATION) {
+            if (event.isExecution()) {
+                const auto& fact = event.execution;
+                if (fact.factKind == VN_MONITOR_FACT_REQUEST_RETURNED &&
+                    monitorFactHas(fact, kMonitorFactFieldRequestOperation) &&
+                    fact.request.operation == VN_MONITOR_OPERATION_POST_ACTION &&
+                    monitorFactHas(fact, kMonitorFactFieldResult) &&
+                    monitorFactHas(fact, kMonitorFactFieldTargetObject)) {
+                    sawAction |= fact.target.objectId == harkentest::remote::kPlayAction && fact.result == VN_OK;
+                    sawRefusal |= fact.target.objectId == harkentest::StudioObjectId(999000111) && fact.result == VN_UNKNOWN_ID;
+                }
+                sawSoundStarted |= fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED &&
+                    event.objectId() == harkentest::remote::kSound;
+            } else if (event.detail.category == VN_MONITOR_EVENT_CATEGORY_OPERATION) {
                 sawVariable |= event.detail.code == VN_MONITOR_OPERATION_SET_VALUE &&
                     event.header.stableId == harkentest::remote::kVariable && event.detail.result == VN_OK;
-                sawAction |= event.detail.code == VN_MONITOR_OPERATION_POST_ACTION &&
-                    event.header.stableId == harkentest::remote::kPlayAction && event.detail.result == VN_OK;
-                sawRefusal |= event.detail.code == VN_MONITOR_OPERATION_POST_ACTION &&
-                    event.header.stableId == harkentest::StudioObjectId(999000111) && event.detail.result != VN_OK;
             } else if (event.detail.category == VN_MONITOR_EVENT_CATEGORY_LIFECYCLE) {
-                sawLifecycle |= event.detail.code == VN_MONITOR_LIFECYCLE_PLAYABLE_START &&
-                    event.header.stableId == harkentest::remote::kSound;
                 sawEffect |= event.detail.code == VN_MONITOR_LIFECYCLE_EFFECT_INSTALLED &&
                     event.header.stableId == harkentest::remote::kEffect &&
                     event.objectName == QStringLiteral("Remote Tone / gain");
             }
         }
-        return sawVariable && sawAction && sawRefusal && sawLifecycle && sawEffect;
+        return sawVariable && sawAction && sawRefusal && sawSoundStarted && sawEffect;
     })) << capture.statusText().toStdString()
         << ", process=" << game.process.exitCode()
         << ", stderr=" << game.process.readAllStandardError().toStdString()
-        << ", observed=" << sawVariable << sawAction << sawRefusal << sawLifecycle << sawEffect;
+        << ", observed=" << sawVariable << sawAction << sawRefusal << sawSoundStarted << sawEffect;
     capture.stop();
     ASSERT_TRUE(waitForRemote([&] { return capture.state() == EventCaptureState::Stopped; }));
     EXPECT_FALSE(capture.incomplete());
     const auto retained = capture.rowCount();
     EXPECT_GT(retained, 3);
     bool namedVariable = false, namedAction = false, namedSound = false, namedLifecycleAction = false;
+    int visibleRecords = 0;
     for (int row = 0; row < retained; ++row) {
         const auto& event = capture.eventAt(row);
-        SCOPED_TRACE(::testing::Message() << "row " << row << " code " << event.detail.code
+        visibleRecords += event.isDesignerEvent();
+        SCOPED_TRACE(::testing::Message() << "row " << row << " code "
+            << (event.isExecution() ? event.execution.factKind : event.detail.code)
             << " world " << event.header.worldGeneration
             << " project " << event.projectGuid.toString().toStdString());
         if (event.header.stableId == harkentest::remote::kVariable) {
@@ -299,7 +308,7 @@ TEST(MonitorPanel, RemoteGameCallsFromSharedDllAppearInPanel) {
         if (event.header.stableId == harkentest::remote::kPlayAction) {
             EXPECT_EQ(event.objectName, QStringLiteral("Play Remote Probe"));
             namedAction = true;
-            namedLifecycleAction |= event.detail.category == VN_MONITOR_EVENT_CATEGORY_LIFECYCLE;
+            namedLifecycleAction |= event.isExecution() && event.category() == VN_MONITOR_EVENT_CATEGORY_LIFECYCLE;
         }
         if (event.header.stableId == harkentest::remote::kSound) {
             EXPECT_EQ(event.objectName, QStringLiteral("Remote Tone"));
@@ -307,7 +316,19 @@ TEST(MonitorPanel, RemoteGameCallsFromSharedDllAppearInPanel) {
         }
     }
     EXPECT_TRUE(namedVariable && namedAction && namedSound && namedLifecycleAction);
-    ASSERT_EQ(panel.visibleRowCount(), retained);
+    ASSERT_EQ(panel.visibleRowCount(), visibleRecords);
+    EXPECT_LT(visibleRecords, retained);
+    bool visibleSoundPlayback = false;
+    const auto* catalogModel = panel.table()->model();
+    for (int row = 0; row < catalogModel->rowCount(); ++row) {
+        if (catalogModel->index(row, VNX::MonitorCatalogModel::ObjectId).data().toString() !=
+                VNX::objectIdString(harkentest::ToStudio(harkentest::remote::kSound)) ||
+            catalogModel->index(row, VNX::MonitorCatalogModel::Description).data().toString() != QStringLiteral("Playing"))
+            continue;
+        visibleSoundPlayback = true;
+        EXPECT_NE(catalogModel->index(row, VNX::MonitorCatalogModel::RequestId).data().toULongLong(), 0u);
+    }
+    EXPECT_TRUE(visibleSoundPlayback);
     auto* level = panel.findChild<QComboBox*>(QStringLiteral("MonitorLevelFilter"));
     auto* search = panel.findChild<QLineEdit*>(QStringLiteral("MonitorTextFilter"));
     ASSERT_NE(level, nullptr);
@@ -315,17 +336,17 @@ TEST(MonitorPanel, RemoteGameCallsFromSharedDllAppearInPanel) {
     level->setCurrentIndex(level->findData(VN_LOG_ERROR));
     search->setText(VNX::objectIdString(harkentest::StudioObjectId(999000111)));
     ASSERT_EQ(panel.visibleRowCount(), 1);
-    EXPECT_EQ(panel.table()->model()->index(0, 1).data().toString(), QStringLiteral("Error"));
-    EXPECT_TRUE(panel.table()->model()->index(0, 4).data().toString().contains(QStringLiteral("Unknown object")));
+    EXPECT_EQ(panel.table()->model()->index(0, VNX::MonitorCatalogModel::Level).data().toString(), QStringLiteral("Error"));
+    EXPECT_TRUE(panel.table()->model()->index(0, VNX::MonitorCatalogModel::Description).data().toString().contains(QString::number(VN_UNKNOWN_ID)));
     panel.table()->selectRow(0);
     panel.copySelected();
     EXPECT_TRUE(QApplication::clipboard()->text().contains(VNX::objectIdString(harkentest::StudioObjectId(999000111))));
     search->setText(QStringLiteral("no-such-event"));
     EXPECT_EQ(panel.visibleRowCount(), 0);
-    EXPECT_TRUE(panel.gapMessage().isEmpty());
+    EXPECT_FALSE(panel.gapMessage().isEmpty());
     search->clear();
     level->setCurrentIndex(0);
-    EXPECT_EQ(panel.visibleRowCount(), retained);
+    EXPECT_EQ(panel.visibleRowCount(), visibleRecords);
     EXPECT_EQ(RemoteConnectionState::Connected, connection.state());
     capture.start();
     ASSERT_TRUE(waitForRemote([&] { return capture.state() == EventCaptureState::Capturing; }))
@@ -334,7 +355,7 @@ TEST(MonitorPanel, RemoteGameCallsFromSharedDllAppearInPanel) {
         << ", result=" << connection.eventCaptureStatus().result;
     EXPECT_EQ(0, capture.rowCount());
     EXPECT_EQ(panel.visibleRowCount(), 0);
-    EXPECT_TRUE(panel.gapMessage().isEmpty());
+    EXPECT_FALSE(panel.gapMessage().isEmpty());
     ASSERT_TRUE(game.stop());
     ASSERT_TRUE(waitForRemote([&] { return capture.state() == EventCaptureState::Failed; }));
     EXPECT_TRUE(capture.incomplete());

@@ -1,7 +1,11 @@
+#include "Engine.h"
 #include <harken/Harken.h>
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "Widgets/Monitor/MonitorPanel.h"
 #include "ActionManager.h"
+#include "AssetPipeline/AssetRegistry.h"
+#include "Components/VSelection.h"
+#include "Components/VTrack.h"
 #include "Core/AudioEngine.h"
 #include "Core/ProjectManager.h"
 #include "Core/RuntimeSyncCoordinator.h"
@@ -9,14 +13,20 @@
 #include "Core/UndoCommands.h"
 #include "Core/WorkspaceWindowManager.h"
 #include "MainWindow.h"
+#include "RuntimeBridge/PreviewBridge.h"
 #include "Widgets/PlatformBar/PlatformBar.h"
 
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QAbstractProxyModel>
 #include <QAction>
 #include <QComboBox>
+#include <QDataStream>
+#include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QFileInfo>
 #include <QMouseEvent>
 #include <QPersistentModelIndex>
 #include <QScopeGuard>
@@ -28,6 +38,11 @@
 #include <QVariantMap>
 
 #include <memory>
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <set>
+#include <string>
 #include <utility>
 
 using namespace VNX;
@@ -70,41 +85,459 @@ TEST(MonitorPanel, LocalCaptureKeepsHistoryAcrossPanelLifetime)
         }
         return ready();
     };
+    const auto completedRequests = [&] {
+        std::set<quint64> submitted, returned;
+        for (int row = 0; row < capture.rowCount(); ++row) {
+            const auto& event = capture.eventAt(row);
+            if (!event.isExecution() || event.execution.request.operation != VN_MONITOR_OPERATION_STOP_ALL)
+                continue;
+            const auto sequence = event.execution.request.sequence;
+            EXPECT_NE(sequence, 0u);
+            if (event.execution.factKind == VN_MONITOR_FACT_REQUEST_SUBMITTED) submitted.insert(sequence);
+            if (event.execution.factKind == VN_MONITOR_FACT_REQUEST_RETURNED) returned.insert(sequence);
+        }
+        return std::count_if(submitted.begin(), submitted.end(), [&](quint64 sequence) {
+            return returned.contains(sequence);
+        });
+    };
     ASSERT_EQ(VN_OK, Vn_StopAll(19));
-    ASSERT_TRUE(waitFor([&] { return panel->visibleRowCount() == 1; }));
-    EXPECT_TRUE(panel->table()->model()->index(0, 4).data().toString().contains(QStringLiteral("19 ms")));
+    ASSERT_TRUE(waitFor([&] { return completedRequests() == 1; }));
+    ASSERT_GT(panel->visibleRowCount(), 0);
     panel->table()->selectRow(0);
     QPersistentModelIndex selected(panel->table()->currentIndex());
     int resets = 0;
     QObject::connect(panel->table()->model(), &QAbstractItemModel::modelReset, panel.get(), [&] { ++resets; });
     ASSERT_EQ(VN_OK, Vn_StopAll(23));
-    ASSERT_TRUE(waitFor([&] { return panel->visibleRowCount() == 2; }));
+    ASSERT_TRUE(waitFor([&] { return completedRequests() == 2; }));
     EXPECT_TRUE(selected.isValid());
     EXPECT_EQ(selected, panel->table()->currentIndex());
     EXPECT_EQ(resets, 0);
     panel.reset();
     ASSERT_EQ(VN_OK, Vn_StopAll(31));
-    ASSERT_TRUE(waitFor([&] { return capture.rowCount() == 3; }));
+    ASSERT_TRUE(waitFor([&] { return completedRequests() == 3; }));
     panel = std::make_unique<MonitorPanel>();
     panel->setCaptureController(&capture);
-    EXPECT_EQ(panel->visibleRowCount(), 3);
+    const auto visible = panel->visibleRowCount();
+    EXPECT_GT(visible, 0);
     capture.stop();
     ASSERT_TRUE(waitFor([&] { return capture.state() == Monitor::EventCaptureState::Stopped; }));
-    EXPECT_EQ(panel->visibleRowCount(), 3);
+    const auto retained = capture.rowCount();
+    EXPECT_EQ(panel->visibleRowCount(), visible);
     ASSERT_EQ(VN_OK, Vn_StopAll(37));
     ASSERT_EQ(VN_OK, Vn_Update());
     capture.pollLocal();
-    EXPECT_EQ(panel->visibleRowCount(), 3);
+    EXPECT_EQ(capture.rowCount(), retained);
     capture.start();
     EXPECT_EQ(panel->visibleRowCount(), 0);
     ASSERT_EQ(VN_OK, Vn_StopAll(41));
-    ASSERT_TRUE(waitFor([&] { return panel->visibleRowCount() == 1; }));
+    ASSERT_TRUE(waitFor([&] { return completedRequests() == 1; }));
     panel->findChild<QToolButton*>(QStringLiteral("MonitorClear"))->click();
     EXPECT_EQ(capture.state(), Monitor::EventCaptureState::Capturing);
     EXPECT_EQ(capture.rowCount(), 0);
     ASSERT_EQ(VN_OK, Vn_StopAll(43));
-    ASSERT_TRUE(waitFor([&] { return panel->visibleRowCount() == 1; }));
-    EXPECT_TRUE(panel->table()->model()->index(0, 4).data().toString().contains(QStringLiteral("43 ms")));
+    ASSERT_TRUE(waitFor([&] { return completedRequests() == 1; }));
+}
+
+TEST(MonitorPanel, ConcurrentPreviewKeepsSelectedContentAndPlaybackIdentity)
+{
+    ensureApp();
+    auto& engine = AudioEngine::instance();
+    engine.shutdown();
+    auto& projects = ProjectManager::instance();
+    if (projects.isProjectOpen()) projects.closeProject();
+    AssetRegistry::instance().clear();
+    QTemporaryDir directory(QStringLiteral(HARKEN_TEMP_DIR "/monitor-preview-XXXXXX"));
+    ASSERT_TRUE(directory.isValid());
+    const auto cleanup = qScopeGuard([&] {
+        engine.shutdown();
+        projects.closeProject();
+        QApplication::processEvents();
+        AssetRegistry::instance().clear();
+    });
+    HarkenEditor::Bridge::EngineSessionConfig config;
+    config.sampleRate = 48000;
+    config.bufferSize = 64;
+    config.maxVoices = 8;
+    config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+    ASSERT_TRUE(engine.initialize(config));
+    ASSERT_TRUE(engine.startOutput());
+    ProjectConfig projectConfig;
+    projectConfig.name = QStringLiteral("MonitorPreview");
+    projectConfig.location = directory.path();
+    QString projectError;
+    QObject errorContext;
+    QObject::connect(&projects, &ProjectManager::errorOccurred, &errorContext,
+        [&](const QString& error) { projectError = error; });
+    ASSERT_TRUE(projects.createProject(projectConfig)) << projectError.toStdString();
+    auto* layer = projects.createItem(nullptr, QStringLiteral("Layer"), ProjectItem::Type::Layer);
+    ASSERT_NE(layer, nullptr);
+    auto* container = projects.createItem(layer, QStringLiteral("Footsteps"), ProjectItem::Type::Container);
+    ASSERT_NE(container, nullptr);
+    auto* selection = container->comp<VSelection>();
+    ASSERT_NE(selection, nullptr);
+    selection->mode = SelectionMode::Random;
+    selection->behavior.discipline = RandomDiscipline::Draw;
+    std::array<ProjectItem*, 2> sounds{};
+    const QDir sources(QDir(QFileInfo(projects.currentProject()->projectPath).absolutePath())
+        .filePath(QStringLiteral("AudioSources")));
+    for (unsigned i = 0; i != sounds.size(); ++i) {
+        const QString name = QStringLiteral("Footstep_%1").arg(i + 1);
+        const QString path = sources.filePath(name + QStringLiteral(".wav"));
+        QFile wav(path);
+        ASSERT_TRUE(wav.open(QIODevice::WriteOnly));
+        QDataStream stream(&wav);
+        stream.setByteOrder(QDataStream::LittleEndian);
+        constexpr quint32 frames = 4096;
+        stream.writeRawData("RIFF", 4);
+        stream << quint32(36 + frames * 2);
+        stream.writeRawData("WAVEfmt ", 8);
+        stream << quint32(16) << quint16(1) << quint16(1) << quint32(48000)
+               << quint32(96000) << quint16(2) << quint16(16);
+        stream.writeRawData("data", 4);
+        stream << quint32(frames * 2);
+        for (quint32 frame = 0; frame != frames; ++frame) stream << qint16(4096 * (i + 1));
+        ASSERT_EQ(QDataStream::Ok, stream.status());
+        wav.close();
+        AssetInfo asset;
+        asset.sourceID = 93001 + i;
+        asset.relativePath = QFileInfo(path).fileName();
+        asset.absolutePath = path;
+        ASSERT_TRUE(AssetRegistry::instance().registerAsset(asset));
+        sounds[i] = projects.createAudioItem(container, name, path, asset.sourceID);
+        ASSERT_NE(sounds[i], nullptr);
+    }
+    auto* track = projects.createItem(layer, QStringLiteral("Delayed"), ProjectItem::Type::Track);
+    ASSERT_NE(track, nullptr);
+    auto* delayedSound = projects.createAudioItem(track, QStringLiteral("Delayed Footstep"),
+        sources.filePath(QStringLiteral("Footstep_1.wav")), 93001);
+    ASSERT_NE(delayedSound, nullptr);
+    auto* timeline = track->comp<VTrack>();
+    ASSERT_NE(timeline, nullptr);
+    ASSERT_EQ(timeline->clips.items.size(), 1u);
+    timeline->clips.items.front().start = 32000000;
+    timeline->clips.items.front().duration = 85333333;
+    ProjectManager::syncProjectToRuntime(projects.currentProject());
+    auto* runtime = harken::detail::ActiveEngine();
+    ASSERT_NE(runtime, nullptr);
+    Monitor::EventCaptureController capture(nullptr);
+    capture.setLocalRuntimeAvailable(true);
+    capture.setProjectObjects(ProjectObjectIndex::fromProject(projects.currentProject()));
+    MonitorPanel panel;
+    panel.setCaptureController(&capture);
+    float peak = 0;
+    quint64 renderedFrames = 0;
+    const auto waitFor = [&](const auto& ready) -> ::testing::AssertionResult {
+        QElapsedTimer timeout;
+        timeout.start();
+        const auto firstFrame = renderedFrames;
+        while (!ready() && timeout.elapsed() < 3000) {
+            QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
+            const auto beforeRender = Vn_Update();
+            if (beforeRender != VN_OK) return ::testing::AssertionFailure() << "Vn_Update before render: " << beforeRender;
+            runtime->nullBackend.Pump(1);
+            renderedFrames += runtime->nullBackend.BlockFrames();
+            const auto* block = runtime->nullBackend.LastBlock();
+            const auto samples = runtime->nullBackend.BlockFrames() * runtime->nullBackend.Channels();
+            for (uint32_t sample = 0; sample != samples; ++sample) peak = std::max(peak, std::abs(block[sample]));
+            const auto afterRender = Vn_Update();
+            if (afterRender != VN_OK) return ::testing::AssertionFailure() << "Vn_Update after render: " << afterRender;
+            capture.pollLocal();
+            QApplication::processEvents();
+            QThread::msleep(1);
+        }
+        if (ready()) return ::testing::AssertionSuccess();
+        auto failure = ::testing::AssertionFailure();
+        failure << "Capture: " << capture.statusText().toStdString()
+                << "; rendered frames: " << renderedFrames - firstFrame
+                << "; visible records: " << panel.visibleRowCount();
+        for (int row = 0; row < capture.rowCount(); ++row) {
+            const auto& event = capture.eventAt(row);
+            if (!event.isExecution()) continue;
+            const auto& fact = event.execution;
+            if (fact.factKind != VN_MONITOR_FACT_PLAYABLE_RETIRED &&
+                fact.factKind != VN_MONITOR_FACT_PLAYABLE_CANCELED &&
+                fact.factKind != VN_MONITOR_FACT_VOICE_ENDED) continue;
+            failure << "\nFact " << fact.factKind << "; subject: " << fact.subjectNamespace
+                    << "; instance: " << event.header.instanceHandle << "; root: " << fact.root
+                    << "; voice: " << fact.logicalVoice << "; terminal: "
+                    << (Monitor::monitorFactHas(fact, VN_MONITOR_FACT_FIELD_TERMINAL_KIND)
+                        ? std::to_string(fact.terminalKind) : "not reported")
+                    << "; result: " << fact.result << "; description: " << event.playbackDescription.toStdString();
+        }
+        return failure;
+    };
+    auto& sync = engine.runtimeSyncCoordinator();
+    ASSERT_TRUE(waitFor([&] {
+        return sync.barrier(sync.currentAuthoringRevision()).state == RuntimeSyncCoordinator::RevisionBarrierState::Ready;
+    }));
+    capture.start();
+    ASSERT_EQ(Monitor::EventCaptureState::Capturing, capture.state());
+    std::array<quint64, 2> handles{};
+    for (auto& handle : handles) {
+        const auto started = engine.playPreviewPlayable(HarkenEditor::Bridge::kPreviewPlayableContainer, container->runtimeId());
+        ASSERT_EQ(HarkenEditor::Bridge::kPreviewOk, started.status);
+        handle = started.handle;
+        ASSERT_NE(handle, 0u);
+    }
+    ASSERT_NE(handles[0], handles[1]);
+    const auto voiceRows = [&] {
+        std::vector<int> rows;
+        for (int row = 0; row < capture.rowCount(); ++row) {
+            const auto& event = capture.eventAt(row);
+            if (event.isExecution() && event.execution.factKind == VN_MONITOR_FACT_VOICE_LIVE) rows.push_back(row);
+        }
+        return rows;
+    };
+    const auto playbackRows = [&](const QString& description, uint32_t contentKind = 0) {
+        std::vector<int> rows;
+        for (int row = 0; row < capture.rowCount(); ++row) {
+            const auto& event = capture.eventAt(row);
+            if (event.playbackDescription == description &&
+                (contentKind == 0 || event.execution.contentKind == contentKind)) rows.push_back(row);
+        }
+        return rows;
+    };
+    ASSERT_TRUE(waitFor([&] {
+        return voiceRows().size() >= handles.size() && playbackRows(QStringLiteral("Playing")).size() == handles.size() * 2
+            && peak > 0.01f;
+    }));
+    std::set<quint64> roots, voices;
+    std::vector<Monitor::CapturedEvent> liveVoices;
+    for (const int row : voiceRows()) {
+        const auto& event = capture.eventAt(row);
+        liveVoices.push_back(event);
+        const auto& fact = event.execution;
+        ASSERT_TRUE(Monitor::monitorFactHas(fact, VN_MONITOR_FACT_FIELD_ROOT));
+        ASSERT_TRUE(Monitor::monitorFactHas(fact, VN_MONITOR_FACT_FIELD_LOGICAL_VOICE));
+        ASSERT_TRUE(Monitor::monitorFactHas(fact, VN_MONITOR_FACT_FIELD_SERVICE_LEAF));
+        roots.insert(fact.root);
+        voices.insert(fact.logicalVoice);
+        const auto selected = std::find_if(sounds.begin(), sounds.end(), [&](const auto* sound) {
+            return sound->runtimeId() == event.header.stableId;
+        });
+        ASSERT_NE(sounds.end(), selected);
+        EXPECT_EQ((*selected)->name, event.objectName);
+        EXPECT_EQ(QUuid(projects.currentProject()->projectId), event.projectGuid);
+        EXPECT_EQ((*selected)->objectID, capture.matchingProjectObject(event));
+        bool parent = false, leaf = false;
+        for (int candidate = 0; candidate < capture.rowCount(); ++candidate) {
+            const auto& related = capture.eventAt(candidate);
+            if (!related.isExecution() || related.playbackDescription != QStringLiteral("Playing")) continue;
+            parent |= related.header.instanceHandle == fact.root && related.header.stableId == container->runtimeId();
+            leaf |= related.header.instanceHandle == fact.serviceLeaf
+                && related.header.playableInstanceHandle == fact.root
+                && related.header.stableId == event.header.stableId;
+            if (related.header.instanceHandle == fact.root || related.header.instanceHandle == fact.serviceLeaf)
+                EXPECT_EQ(related.playbackRequestId(), event.playbackRequestId());
+        }
+        EXPECT_TRUE(parent);
+        EXPECT_TRUE(leaf);
+    }
+    EXPECT_EQ(handles.size(), roots.size());
+    EXPECT_EQ(handles.size(), voices.size());
+    EXPECT_FALSE(roots.contains(0));
+    EXPECT_FALSE(voices.contains(0));
+    auto* proxy = qobject_cast<QAbstractProxyModel*>(panel.table()->model());
+    ASSERT_NE(proxy, nullptr);
+    for (const auto row : voiceRows())
+        EXPECT_FALSE(proxy->mapFromSource(proxy->sourceModel()->index(row, 0)).isValid());
+    const auto soundRows = playbackRows(QStringLiteral("Playing"), VN_MONITOR_CONTENT_SOUND);
+    ASSERT_EQ(soundRows.size(), handles.size());
+    const int soundRow = soundRows.front();
+    const auto visible = proxy->mapFromSource(proxy->sourceModel()->index(soundRow, 0));
+    ASSERT_TRUE(visible.isValid());
+    panel.table()->selectRow(visible.row());
+    harkenstudio::ObjectId located{};
+    panel.setJumpLocator([&](harkenstudio::ObjectId id) { located = id; });
+    ASSERT_TRUE(panel.jumpCurrentRow());
+    EXPECT_EQ(capture.eventAt(soundRow).header.stableId, located);
+    const auto originalSound = capture.eventAt(soundRow);
+    ASSERT_TRUE(waitFor([&] {
+        return playbackRows(QStringLiteral("Finished")).size() == handles.size() * 2 &&
+            std::all_of(liveVoices.begin(), liveVoices.end(), [&](const auto& live) {
+                for (int row = 0; row < capture.rowCount(); ++row) {
+                    const auto& event = capture.eventAt(row);
+                    if (event.isExecution() && event.execution.factKind == VN_MONITOR_FACT_VOICE_ENDED
+                        && event.header.engineMonitorInstanceId == live.header.engineMonitorInstanceId
+                        && event.execution.logicalVoice == live.execution.logicalVoice) return true;
+                }
+                return false;
+            });
+    }));
+    for (int row = 0; row < capture.rowCount(); ++row) {
+        const auto& event = capture.eventAt(row);
+        if (!event.isExecution() || event.execution.factKind != VN_MONITOR_FACT_VOICE_ENDED) continue;
+        const auto live = std::find_if(liveVoices.begin(), liveVoices.end(), [&](const auto& started) {
+            return started.header.engineMonitorInstanceId == event.header.engineMonitorInstanceId
+                && started.execution.logicalVoice == event.execution.logicalVoice;
+        });
+        if (live == liveVoices.end()) continue;
+        EXPECT_EQ(live->execution.root, event.execution.root);
+        EXPECT_EQ(live->objectId(), event.objectId());
+        EXPECT_EQ(live->projectGuid, event.projectGuid);
+        EXPECT_EQ(live->objectName, event.objectName);
+        EXPECT_EQ(capture.matchingProjectObject(*live), capture.matchingProjectObject(event));
+    }
+    std::set<quint64> playbackRequestIds;
+    for (const auto row : playbackRows(QStringLiteral("Playing"))) {
+        const auto& started = capture.eventAt(row);
+        EXPECT_NE(started.playbackRequestId(), 0u);
+        playbackRequestIds.insert(started.playbackRequestId());
+        EXPECT_EQ(started.gameObjectId(), VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID);
+        EXPECT_EQ(started.gameObjectName, QStringLiteral("Emitter"));
+        int matches = 0;
+        for (const auto finishedRow : playbackRows(QStringLiteral("Finished"))) {
+            const auto& finished = capture.eventAt(finishedRow);
+            if (finished.header.engineMonitorInstanceId != started.header.engineMonitorInstanceId ||
+                finished.header.instanceHandle != started.header.instanceHandle) continue;
+            ++matches;
+            EXPECT_EQ(started.playbackRequestId(), finished.playbackRequestId());
+            EXPECT_EQ(started.objectId(), finished.objectId());
+            EXPECT_EQ(started.objectName, finished.objectName);
+            EXPECT_EQ(started.gameObjectId(), finished.gameObjectId());
+            EXPECT_EQ(started.gameObjectName, finished.gameObjectName);
+            EXPECT_EQ(started.execution.root, finished.execution.root);
+            EXPECT_LE(started.timestampNs(), finished.timestampNs());
+        }
+        EXPECT_EQ(matches, 1);
+    }
+    EXPECT_EQ(playbackRequestIds.size(), handles.size());
+    EXPECT_EQ(panel.visibleRowCount(), static_cast<int>(handles.size() * 4));
+    capture.stop();
+    ASSERT_TRUE(waitFor([&] { return capture.state() == Monitor::EventCaptureState::Stopped; }));
+    const Monitor::CapturedEvent* retainedSound = nullptr;
+    for (int row = 0; row < capture.rowCount(); ++row) {
+        const auto& event = capture.eventAt(row);
+        if (event.header.engineMonitorInstanceId == originalSound.header.engineMonitorInstanceId
+            && event.header.producerId == originalSound.header.producerId
+            && event.header.sourceSequence == originalSound.header.sourceSequence) {
+            retainedSound = &event;
+            break;
+        }
+    }
+    ASSERT_NE(retainedSound, nullptr);
+    EXPECT_EQ(originalSound.objectName, retainedSound->objectName);
+    EXPECT_EQ(originalSound.objectId(), retainedSound->objectId());
+    EXPECT_EQ(originalSound.execution.root, retainedSound->execution.root);
+    EXPECT_EQ(originalSound.execution.logicalVoice, retainedSound->execution.logicalVoice);
+    EXPECT_FALSE(capture.incomplete());
+    const QString containerImagePath = qEnvironmentVariable("HARKEN_MONITOR_CONTAINER_CAPTURE_IMAGE");
+    if (!containerImagePath.isEmpty()) {
+        panel.table()->clearSelection();
+        panel.table()->setCurrentIndex({});
+        panel.table()->scrollToTop();
+        panel.resize(1400, 420);
+        panel.show();
+        QApplication::processEvents();
+        EXPECT_TRUE(panel.grab().save(containerImagePath));
+    }
+    capture.start();
+    ASSERT_EQ(Monitor::EventCaptureState::Capturing, capture.state());
+    const auto single = engine.playPreviewPlayable(HarkenEditor::Bridge::kPreviewPlayableSound, sounds.front()->runtimeId());
+    ASSERT_EQ(HarkenEditor::Bridge::kPreviewOk, single.status);
+    ASSERT_TRUE(waitFor([&] { return playbackRows(QStringLiteral("Finished")).size() == 1; }));
+    capture.stop();
+    ASSERT_TRUE(waitFor([&] { return capture.state() == Monitor::EventCaptureState::Stopped; }));
+    ASSERT_EQ(panel.visibleRowCount(), 2);
+    ASSERT_EQ(playbackRows(QStringLiteral("Playing")).size(), 1u);
+    const auto& playing = capture.eventAt(playbackRows(QStringLiteral("Playing")).front());
+    const auto& finished = capture.eventAt(playbackRows(QStringLiteral("Finished")).front());
+    const auto singleRoot = single.handle & ~(quint64{1} << 63);
+    EXPECT_EQ(playing.header.instanceHandle, singleRoot);
+    EXPECT_EQ(finished.header.instanceHandle, singleRoot);
+    EXPECT_EQ(playing.execution.root, singleRoot);
+    EXPECT_EQ(finished.execution.root, singleRoot);
+    EXPECT_EQ(playing.objectId(), sounds.front()->runtimeId());
+    EXPECT_EQ(playing.objectId(), finished.objectId());
+    ASSERT_NE(playing.playbackRequestId(), 0u);
+    EXPECT_FALSE(playbackRequestIds.contains(playing.playbackRequestId()));
+    EXPECT_EQ(playing.playbackRequestId(), finished.playbackRequestId());
+    EXPECT_EQ(playing.gameObjectId(), VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID);
+    EXPECT_EQ(playing.gameObjectId(), originalSound.gameObjectId());
+    EXPECT_EQ(playing.gameObjectId(), finished.gameObjectId());
+    EXPECT_EQ(playing.gameObjectName, QStringLiteral("Emitter"));
+    EXPECT_EQ(playing.gameObjectName, finished.gameObjectName);
+    const auto* tableModel = panel.table()->model();
+    EXPECT_EQ(tableModel->columnCount(), 9);
+    EXPECT_EQ(tableModel->index(0, MonitorCatalogModel::Description).data().toString(), QStringLiteral("Playing"));
+    EXPECT_EQ(tableModel->index(1, MonitorCatalogModel::Description).data().toString(), QStringLiteral("Finished"));
+    for (int row = 0; row < 2; ++row) {
+        EXPECT_EQ(tableModel->index(row, MonitorCatalogModel::RequestId).data().toString(), QString::number(playing.playbackRequestId()));
+        EXPECT_EQ(tableModel->index(row, MonitorCatalogModel::Object).data().toString(), sounds.front()->name);
+        EXPECT_EQ(tableModel->index(row, MonitorCatalogModel::ObjectId).data().toString(), objectIdString(playing.objectId()));
+        EXPECT_EQ(tableModel->index(row, MonitorCatalogModel::GameObject).data().toString(), QStringLiteral("Emitter"));
+        EXPECT_EQ(tableModel->index(row, MonitorCatalogModel::GameObjectId).data().toString(), QString::number(playing.gameObjectId()));
+    }
+    EXPECT_FALSE(capture.incomplete());
+    const QString imagePath = qEnvironmentVariable("HARKEN_MONITOR_CAPTURE_IMAGE");
+    if (!imagePath.isEmpty()) {
+        panel.resize(1400, 360);
+        panel.show();
+        QApplication::processEvents();
+        EXPECT_TRUE(panel.grab().save(imagePath));
+    }
+    capture.start();
+    ASSERT_EQ(Monitor::EventCaptureState::Capturing, capture.state());
+    const auto interrupted = engine.playPreviewPlayable(HarkenEditor::Bridge::kPreviewPlayableSound, sounds.front()->runtimeId());
+    ASSERT_EQ(HarkenEditor::Bridge::kPreviewOk, interrupted.status);
+    ASSERT_TRUE(waitFor([&] { return playbackRows(QStringLiteral("Playing")).size() == 1; }));
+    const auto playingToStop = capture.eventAt(playbackRows(QStringLiteral("Playing")).front());
+    ASSERT_NE(playingToStop.playbackRequestId(), 0u);
+    ASSERT_EQ(HarkenEditor::Bridge::kPreviewOk, engine.stopPreviewPlayable(interrupted.handle));
+    ASSERT_TRUE(waitFor([&] { return playbackRows(QStringLiteral("Stopped")).size() == 1; }));
+    capture.stop();
+    ASSERT_TRUE(waitFor([&] { return capture.state() == Monitor::EventCaptureState::Stopped; }));
+    ASSERT_EQ(panel.visibleRowCount(), 2);
+    EXPECT_TRUE(playbackRows(QStringLiteral("Finished")).empty());
+    const auto& stopped = capture.eventAt(playbackRows(QStringLiteral("Stopped")).front());
+    const auto interruptedRoot = interrupted.handle & ~(quint64{1} << 63);
+    EXPECT_EQ(playingToStop.header.instanceHandle, interruptedRoot);
+    EXPECT_EQ(stopped.header.instanceHandle, interruptedRoot);
+    EXPECT_EQ(playingToStop.playbackRequestId(), stopped.playbackRequestId());
+    EXPECT_EQ(playingToStop.objectId(), stopped.objectId());
+    EXPECT_EQ(playingToStop.objectName, stopped.objectName);
+    EXPECT_EQ(playingToStop.gameObjectId(), stopped.gameObjectId());
+    EXPECT_EQ(playingToStop.gameObjectName, stopped.gameObjectName);
+    EXPECT_EQ(stopped.gameObjectId(), VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID);
+    EXPECT_EQ(tableModel->index(0, MonitorCatalogModel::Description).data().toString(), QStringLiteral("Playing"));
+    EXPECT_EQ(tableModel->index(1, MonitorCatalogModel::Description).data().toString(), QStringLiteral("Stopped"));
+    for (int row = 0; row < 2; ++row)
+        EXPECT_EQ(tableModel->index(row, MonitorCatalogModel::RequestId).data().toString(), QString::number(playingToStop.playbackRequestId()));
+    EXPECT_FALSE(capture.incomplete());
+
+    capture.start();
+    ASSERT_EQ(Monitor::EventCaptureState::Capturing, capture.state());
+    peak = 0;
+    const auto beforeDelayed = renderedFrames;
+    const auto delayed = engine.playPreviewPlayable(HarkenEditor::Bridge::kPreviewPlayableTrack, track->runtimeId());
+    ASSERT_EQ(HarkenEditor::Bridge::kPreviewOk, delayed.status);
+    ASSERT_TRUE(waitFor([&] { return renderedFrames > beforeDelayed; }));
+    EXPECT_EQ(playbackRows(QStringLiteral("Playing"), VN_MONITOR_CONTENT_TRACK).size(), 1u);
+    EXPECT_TRUE(playbackRows(QStringLiteral("Playing"), VN_MONITOR_CONTENT_SOUND).empty());
+    EXPECT_EQ(peak, 0.0f);
+    ASSERT_TRUE(waitFor([&] { return playbackRows(QStringLiteral("Finished")).size() == 2; }));
+    ASSERT_EQ(playbackRows(QStringLiteral("Playing"), VN_MONITOR_CONTENT_SOUND).size(), 1u);
+    const auto& delayedPlaying = capture.eventAt(playbackRows(QStringLiteral("Playing"), VN_MONITOR_CONTENT_SOUND).front());
+    const auto& trackPlaying = capture.eventAt(playbackRows(QStringLiteral("Playing"), VN_MONITOR_CONTENT_TRACK).front());
+    EXPECT_EQ(delayedPlaying.objectId(), delayedSound->runtimeId());
+    EXPECT_EQ(delayedPlaying.playbackRequestId(), trackPlaying.playbackRequestId());
+    EXPECT_GT(delayedPlaying.timestampNs(), trackPlaying.timestampNs());
+    EXPECT_GT(peak, 0.01f);
+    capture.stop();
+    ASSERT_TRUE(waitFor([&] { return capture.state() == Monitor::EventCaptureState::Stopped; }));
+    EXPECT_EQ(panel.visibleRowCount(), 4);
+
+    capture.start();
+    ASSERT_EQ(Monitor::EventCaptureState::Capturing, capture.state());
+    const auto cancelled = engine.playPreviewPlayable(HarkenEditor::Bridge::kPreviewPlayableTrack, track->runtimeId());
+    ASSERT_EQ(HarkenEditor::Bridge::kPreviewOk, cancelled.status);
+    ASSERT_EQ(HarkenEditor::Bridge::kPreviewOk, engine.stopPreviewPlayable(cancelled.handle));
+    ASSERT_TRUE(waitFor([&] { return !playbackRows(QStringLiteral("Stopped"), VN_MONITOR_CONTENT_TRACK).empty(); }));
+    capture.stop();
+    ASSERT_TRUE(waitFor([&] { return capture.state() == Monitor::EventCaptureState::Stopped; }));
+    EXPECT_TRUE(playbackRows(QStringLiteral("Playing"), VN_MONITOR_CONTENT_SOUND).empty());
+    EXPECT_TRUE(playbackRows(QStringLiteral("Finished"), VN_MONITOR_CONTENT_SOUND).empty());
+    EXPECT_FALSE(capture.incomplete());
 }
 
 TEST(MonitorPanel, LiveParamsRestoreCategoryLevelAndScrolling)
@@ -257,8 +690,12 @@ TEST(MonitorPanel, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     EXPECT_FALSE(dock->isClosed());
     EXPECT_TRUE(panel->isVisible());
     EXPECT_FALSE(panel->visibleRegion().isEmpty());
-    EXPECT_EQ(panel->visibleRowCount(), capture->rowCount());
-    panel->table()->selectRow(row);
+    EXPECT_GT(panel->visibleRowCount(), 0);
+    auto* proxy = qobject_cast<QAbstractProxyModel*>(panel->table()->model());
+    ASSERT_NE(proxy, nullptr);
+    const auto visible = proxy->mapFromSource(proxy->sourceModel()->index(row, 0));
+    ASSERT_TRUE(visible.isValid());
+    panel->table()->selectRow(visible.row());
     EXPECT_TRUE(panel->jumpCurrentRow());
     ASSERT_TRUE(projects.renameItem(variable, QStringLiteral("Drive")));
     EXPECT_EQ(capture->eventAt(row).objectName, QStringLiteral("Intensity"));
@@ -274,7 +711,7 @@ TEST(MonitorPanel, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     EXPECT_FALSE(dock->isClosed());
     EXPECT_TRUE(panel->isVisible());
     EXPECT_EQ(panel->window()->frameGeometry(), savedFrame);
-    EXPECT_EQ(panel->visibleRowCount(), capture->rowCount());
+    EXPECT_GT(panel->visibleRowCount(), 0);
     EXPECT_EQ(capture->state(), Monitor::EventCaptureState::Capturing);
 
     button->click();

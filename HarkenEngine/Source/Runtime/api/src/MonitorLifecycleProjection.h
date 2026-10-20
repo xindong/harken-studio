@@ -10,6 +10,7 @@ constexpr unsigned LifecycleFactKind(MonitorLifecyclePhase phase) noexcept {
     switch (phase) {
     case MonitorLifecyclePhase::PreparedCandidate: return VN_MONITOR_FACT_PLAYABLE_PREPARED;
     case MonitorLifecyclePhase::PlayableStart: return VN_MONITOR_FACT_PLAYABLE_ACTIVE;
+    case MonitorLifecyclePhase::PlayableStarted: return VN_MONITOR_FACT_PLAYABLE_STARTED;
     case MonitorLifecyclePhase::PlayableLogicalComplete: return VN_MONITOR_FACT_PLAYABLE_LOGICAL_COMPLETE;
     case MonitorLifecyclePhase::PlayableAudibleRetiring: return VN_MONITOR_FACT_PLAYABLE_AUDIBLE_RETIRING;
     case MonitorLifecyclePhase::PlayableRetired: return VN_MONITOR_FACT_PLAYABLE_RETIRED;
@@ -111,6 +112,12 @@ inline MonitorExecutionFact CaptureEntityFact(unsigned kind, unsigned subject,
     SetSourceField(fact, VN_MONITOR_FACT_FIELD_LOGIC_COMMIT, source.logicCommitSequence != 0);
     SetSourceField(fact, VN_MONITOR_FACT_FIELD_ARRANGING, source.arrangingInstance != 0);
     SetSourceField(fact, VN_MONITOR_FACT_FIELD_OWNER_EPOCH, source.ownerEpoch != 0);
+    if (source.startedAudioBlock != 0) {
+        body.position.audioBlock = source.startedAudioBlock;
+        body.position.frame = source.startedFrame;
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_AUDIO_BLOCK);
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_EXECUTE_FRAME);
+    }
     const auto& occurrence = source.occurrenceIdentity;
     if (occurrence.valid) {
         body.position.clip = occurrence.clipId;
@@ -126,6 +133,14 @@ inline MonitorExecutionFact CaptureEntityFact(unsigned kind, unsigned subject,
     }
     fact.reason = source.reasonKnown ? reason : 0;
     SetSourceField(fact, VN_MONITOR_FACT_FIELD_REASON, source.reasonKnown);
+    if (source.terminalKind != 0) {
+        fact.terminalKind = source.terminalKind;
+        fact.result = source.terminalResult;
+        fact.reason = source.terminalReason;
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_TERMINAL_KIND);
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_RESULT);
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_REASON);
+    }
     if (source.controlObservationIncomplete) fact.flags |= kMonitorFactControlIncomplete;
     if (source.identityObservationIncomplete) fact.flags |= kMonitorFactIdentityIncomplete;
     return fact;

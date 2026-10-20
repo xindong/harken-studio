@@ -8,10 +8,52 @@
 
 namespace VNX {
 namespace {
+using namespace Monitor;
 
 QString unknownToken(std::uint32_t value)
 {
     return QStringLiteral("Unknown(%1)").arg(value);
+}
+
+QString operationName(std::uint32_t operation)
+{
+    switch (operation) {
+    case kMonitorOperationPlayPreview: return MonitorCatalogModel::tr("Play");
+    case kMonitorOperationPlayRawPreview: return MonitorCatalogModel::tr("Play audio");
+    case kMonitorOperationResetPreview: return MonitorCatalogModel::tr("Reset playback");
+    case kMonitorOperationStopPreview: return MonitorCatalogModel::tr("Stop playback");
+    case kMonitorOperationPostAction:
+    case kMonitorOperationPostActionByName:
+    case kMonitorOperationPostActionPinned:
+    case kMonitorOperationPostActionResolved: return MonitorCatalogModel::tr("Action");
+    case kMonitorOperationStopVoice: return MonitorCatalogModel::tr("Stop playback");
+    case kMonitorOperationStopAction: return MonitorCatalogModel::tr("Stop Action");
+    case kMonitorOperationStopAll: return MonitorCatalogModel::tr("Stop all");
+    case kMonitorOperationStopEmitter: return MonitorCatalogModel::tr("Stop emitter");
+    default: return MonitorCatalogModel::tr("Operation %1").arg(operation);
+    }
+}
+
+QString executionDescription(const CapturedEvent& event)
+{
+    const auto& fact = event.execution;
+    const auto operation = monitorFactHas(fact, kMonitorFactFieldRequestOperation)
+        ? operationName(fact.request.operation) : MonitorCatalogModel::tr("Request");
+    switch (fact.factKind) {
+    case kMonitorFactRequestReturned:
+        if (monitorFactHas(fact, kMonitorFactFieldResult) && fact.result != kOk)
+            return MonitorCatalogModel::tr("%1 failed (%2)").arg(operation).arg(fact.result);
+        return {};
+    case kMonitorFactActionAccepted: return MonitorCatalogModel::tr("Action triggered");
+    case kMonitorFactActionStopped: return MonitorCatalogModel::tr("Action stopping");
+    case kMonitorFactActionRejected: return MonitorCatalogModel::tr("Action rejected");
+    case kMonitorFactTransitionStarted: return MonitorCatalogModel::tr("Transition started");
+    case kMonitorFactTransitionStopped: return MonitorCatalogModel::tr("Transition stopped");
+    case kMonitorFactTransitionRejected: return MonitorCatalogModel::tr("Transition rejected");
+    case kMonitorFactSourceApplied: return MonitorCatalogModel::tr("Playback source changed");
+    case kMonitorFactSeekApplied: return MonitorCatalogModel::tr("Playback position changed");
+    default: return {};
+    }
 }
 
 } // namespace
@@ -49,11 +91,15 @@ QVariant MonitorCatalogModel::headerData(int section, Qt::Orientation orientatio
 {
     if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
     switch (section) {
-    case Time: return tr("Time (s)");
+    case Time: return tr("Time");
     case Level: return tr("Level");
-    case Category: return tr("Category");
-    case Object: return tr("Object");
+    case Type: return tr("Type");
     case Description: return tr("Description");
+    case RequestId: return tr("Request ID");
+    case Object: return tr("Object");
+    case ObjectId: return tr("Object ID");
+    case GameObject: return tr("Game Object");
+    case GameObjectId: return tr("Game Object ID");
     default: return {};
     }
 }
@@ -61,46 +107,59 @@ QVariant MonitorCatalogModel::headerData(int section, Qt::Orientation orientatio
 QVariant MonitorCatalogModel::data(const QModelIndex& index, int role) const
 {
     const auto* event = index.isValid() ? eventAt(index.row()) : nullptr;
-    if (!event) return {};
+    if (!event || !event->isDesignerEvent()) return {};
     if (role == Qt::ToolTipRole) return details(index.row());
     if (role != Qt::DisplayRole) return {};
     switch (index.column()) {
-    case Time: return QString::number(static_cast<double>(event->detail.timestampNs -
-        capture_->startedTimestampNs()) / 1e9, 'f', 6);
+    case Time: {
+        if (event->isExecution() && !monitorFactHas(event->execution, kMonitorFactFieldTimestamp)) return {};
+        const auto timestamp = event->timestampNs();
+        const auto start = capture_->startedTimestampNs();
+        const double elapsed = timestamp >= start ? static_cast<double>(timestamp - start) : -static_cast<double>(start - timestamp);
+        return QString::number(elapsed / 1e9, 'f', 6);
+    }
     case Level: return levelText(*event);
-    case Category: return categoryText(*event);
-    case Object:
-        if (!event->objectName.isEmpty()) return event->objectName;
-        if (!harkenstudio::IsNull(event->header.stableId)) return objectIdString(event->header.stableId);
-        if (event->header.instanceHandle) return tr("Instance %1").arg(event->header.instanceHandle);
-        return {};
+    case Type: return categoryText(*event);
     case Description: return description(*event);
+    case RequestId:
+        if (event->playbackRequestId()) return QString::number(event->playbackRequestId());
+        return {};
+    case Object: return event->objectName;
+    case ObjectId:
+        if (!harkenstudio::IsNull(event->objectId())) return objectIdString(event->objectId());
+        return {};
+    case GameObject: return event->gameObjectName;
+    case GameObjectId:
+        if (event->gameObjectId()) return QString::number(event->gameObjectId());
+        return {};
     default: return {};
     }
 }
 
 QString MonitorCatalogModel::levelText(const Monitor::CapturedEvent& event)
 {
-    switch (event.detail.level) {
+    switch (event.level()) {
     case VNX::Monitor::kLogInfo: return tr("Info");
     case VNX::Monitor::kLogWarn: return tr("Warning");
     case VNX::Monitor::kLogError: return tr("Error");
-    default: return unknownToken(event.detail.level);
+    default: return unknownToken(event.level());
     }
 }
 
 QString MonitorCatalogModel::categoryText(const Monitor::CapturedEvent& event)
 {
-    switch (event.detail.category) {
+    switch (event.category()) {
     case VNX::Monitor::kMonitorEventCategoryOperation: return tr("Operation");
     case VNX::Monitor::kMonitorEventCategoryLifecycle: return tr("Playback");
     case VNX::Monitor::kMonitorEventCategoryDiagnostic: return tr("Diagnostic");
-    default: return unknownToken(event.detail.category);
+    default: return unknownToken(event.category());
     }
 }
 
 QString MonitorCatalogModel::description(const Monitor::CapturedEvent& event)
 {
+    if (!event.playbackDescription.isEmpty()) return event.playbackDescription;
+    if (event.isExecution()) return executionDescription(event);
     const auto& detail = event.detail;
     const QString text = QString::fromUtf8(detail.text, detail.textBytes);
     if (detail.category == VNX::Monitor::kMonitorEventCategoryDiagnostic)
@@ -108,27 +167,13 @@ QString MonitorCatalogModel::description(const Monitor::CapturedEvent& event)
     if (detail.category == VNX::Monitor::kMonitorEventCategoryLifecycle) {
         QString phase;
         switch (detail.code) {
-        case VNX::Monitor::kMonitorLifecyclePlayableStart: phase = tr("Playable started"); break;
-        case VNX::Monitor::kMonitorLifecyclePlayableLogicalComplete: phase = tr("Playable logically complete"); break;
-        case VNX::Monitor::kMonitorLifecyclePlayableAudibleRetiring: phase = tr("Playable finishing audio"); break;
-        case VNX::Monitor::kMonitorLifecyclePlayableRetired: phase = tr("Playable retired"); break;
-        case VNX::Monitor::kMonitorLifecyclePlayableCancel: phase = tr("Playable cancelled"); break;
-        case VNX::Monitor::kMonitorLifecycleActionAccept: phase = tr("Action accepted"); break;
-        case VNX::Monitor::kMonitorLifecycleActionStop: phase = tr("Action stopped"); break;
-        case VNX::Monitor::kMonitorLifecycleActionResult: phase = tr("Action result"); break;
+        case VNX::Monitor::kMonitorLifecycleActionAccept: phase = tr("Action triggered"); break;
+        case VNX::Monitor::kMonitorLifecycleActionStop: phase = tr("Action stopping"); break;
         case VNX::Monitor::kMonitorLifecycleActionReject: phase = tr("Action rejected"); break;
-        case VNX::Monitor::kMonitorLifecycleQueueAdvance: phase = tr("Queue advanced"); break;
-        case VNX::Monitor::kMonitorLifecycleQueueFail: phase = tr("Queue failed"); break;
         case VNX::Monitor::kMonitorLifecycleTransitionStart: phase = tr("Transition started"); break;
         case VNX::Monitor::kMonitorLifecycleTransitionStop: phase = tr("Transition stopped"); break;
         case VNX::Monitor::kMonitorLifecycleTransitionReject: phase = tr("Transition rejected"); break;
-        case VNX::Monitor::kMonitorLifecycleVoicePending: phase = tr("Voice pending"); break;
-        case VNX::Monitor::kMonitorLifecycleVoiceLive: phase = tr("Voice live"); break;
-        case VNX::Monitor::kMonitorLifecycleVoicePark: phase = tr("Voice parked"); break;
-        case VNX::Monitor::kMonitorLifecycleVoiceEnd: phase = tr("Voice ended"); break;
-        case VNX::Monitor::kMonitorLifecycleEffectInstalled: phase = tr("Effect installed"); break;
-        case VNX::Monitor::kMonitorLifecycleEffectReleased: phase = tr("Effect released"); break;
-        default: phase = tr("Playback phase %1").arg(detail.code); break;
+        default: return {};
         }
         if (detail.result) phase += tr("; reason %1").arg(detail.result);
         return phase;
@@ -141,7 +186,7 @@ QString MonitorCatalogModel::description(const Monitor::CapturedEvent& event)
     case VNX::Monitor::kMonitorOperationPostActionResolved: operation = tr("Post resolved Action"); break;
     case VNX::Monitor::kMonitorOperationPlayPreview: operation = tr("Play preview"); break;
     case VNX::Monitor::kMonitorOperationStopPreview: operation = tr("Stop preview"); break;
-    case VNX::Monitor::kMonitorOperationStopVoice: operation = tr("Stop voice"); break;
+    case VNX::Monitor::kMonitorOperationStopVoice: operation = tr("Stop playback"); break;
     case VNX::Monitor::kMonitorOperationStopAction: operation = tr("Stop Action"); break;
     case VNX::Monitor::kMonitorOperationStopAll: operation = tr("Stop all"); break;
     case VNX::Monitor::kMonitorOperationStopEmitter: operation = tr("Stop emitter"); break;
@@ -187,27 +232,17 @@ QString MonitorCatalogModel::description(const Monitor::CapturedEvent& event)
 QString MonitorCatalogModel::details(int row) const
 {
     const auto* event = eventAt(row);
-    if (!event) return {};
-    const auto& h = event->header;
-    const auto& d = event->detail;
-    return QStringList{
-        description(*event),
-        tr("Object: %1").arg(event->objectName.isEmpty() ? tr("Unresolved") : event->objectName),
-        tr("Target: %1").arg(capture_->targetText()),
-        tr("Level: %1 | Category: %2 | Code: %3 | Result / reason: %4")
-            .arg(levelText(*event), categoryText(*event)).arg(d.code).arg(d.result),
-        tr("Timestamp: %1 ns | Execute quantum: %2").arg(d.timestampNs).arg(h.executeFrame),
-        tr("Engine: %1 | Session: %2 | World: %3").arg(h.engineMonitorInstanceId)
-            .arg(h.monitorSessionEpoch).arg(h.worldGeneration),
-        tr("Object ID: %1 | Instance: %2 | Generation: %3").arg(objectIdString(h.stableId))
-            .arg(h.instanceHandle).arg(h.instanceGeneration),
-        tr("Project: %1 | Object GUID: %2").arg(event->projectGuid.toString(QUuid::WithoutBraces),
-                                               event->objectGuid.toString(QUuid::WithoutBraces)),
-        tr("Action instance: %1 | Playable instance: %2").arg(h.actionInstanceHandle).arg(h.playableInstanceHandle),
-        tr("Producer: %1 | Sequence: %2 | Fingerprint: %3").arg(h.producerId).arg(h.sourceSequence)
-            .arg(h.programSemanticFingerprint, 0, 16),
-        tr("Argument 0: %1 | Argument 1: %2 | Value bits: %3").arg(d.arg0).arg(d.arg1).arg(d.valueBits, 0, 16)
-    }.join(QLatin1Char('\n'));
+    if (!event || !event->isDesignerEvent()) return {};
+    QStringList lines;
+    for (int column = 0; column < ColumnCount; ++column) {
+        const auto value = data(index(row, column)).toString();
+        if (!value.isEmpty())
+            lines << tr("%1: %2").arg(headerData(column, Qt::Horizontal).toString(), value);
+    }
+    if (event->isExecution() && monitorFactHas(event->execution, kMonitorFactFieldResult) &&
+        event->execution.result != kOk)
+        lines << tr("Error code: %1").arg(event->execution.result);
+    return lines.join(QLatin1Char('\n'));
 }
 
 } // namespace VNX

@@ -6727,7 +6727,11 @@ TEST(ActionFiringApi, QuantizedPlayUsesStrictlyNextBeatAfterDelayedFrame) {
     pieceDesc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle pieceFiring = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&pieceDesc, &pieceFiring));
-    ASSERT_EQ(1u, engine->playableInstances.LiveCount());
+    VnActionStepResult pieceStep{};
+    pieceStep.structSize = sizeof(pieceStep);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(pieceFiring, 0, &pieceStep));
+    ASSERT_EQ(VN_ACTION_STEP_ACTIVE, pieceStep.state);
+    ASSERT_NE(0u, pieceStep.producedPlayableInstance);
     const std::uint64_t entryFrame = engine->playableServices[0].startFrame;
     const std::uint64_t delayedFrame = entryFrame;
     const std::uint64_t expected =
@@ -7032,7 +7036,12 @@ TEST(ActionFiringApi, QuantizedStopUsesStrictlyNextBeatAfterDelayedFrame) {
     playDesc.actionId = image.actions[10].actionStableId;
     VnActionFiringHandle playFiring = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&playDesc, &playFiring));
-    ASSERT_EQ(2u, engine->playableInstances.LiveCount());
+    VnActionStepResult playStep{};
+    playStep.structSize = sizeof(playStep);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(playFiring, 0, &playStep));
+    ASSERT_EQ(VN_ACTION_STEP_ACTIVE, playStep.state);
+    ASSERT_NE(0u, playStep.producedPlayableInstance);
+    const auto liveBeforeStop = engine->playableInstances.LiveCount();
     const std::uint64_t entryFrame = engine->playableServices[0].startFrame;
     const std::uint64_t expected =
         MusicalBoundaryFrameAfter(entryFrame, 0, 960, 1);
@@ -7055,7 +7064,7 @@ TEST(ActionFiringApi, QuantizedStopUsesStrictlyNextBeatAfterDelayedFrame) {
         step.structSize = sizeof(step);
         ASSERT_EQ(VN_OK, Vn_QueryActionStep(stopFiring, 0, &step));
         EXPECT_EQ(VN_ACTION_STEP_AWAITING_MATERIALIZATION, step.state);
-        EXPECT_EQ(2u, engine->playableInstances.LiveCount());
+        EXPECT_EQ(liveBeforeStop, engine->playableInstances.LiveCount());
     } else {
         EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
         VnActionStepResult step{};
@@ -10858,6 +10867,7 @@ TEST(ActionFiringApi, QuantizedStopFadeStartsBeforeTheBoundary) {
         MusicalBoundaryFrameAfter(entryFrame, 0, 960, 1);
     const std::uint64_t fadeFrames =
         (10000000ull * 48000ull + 999999999ull) / 1000000000ull;
+    const auto liveBeforeStop = engine->playableInstances.LiveCount();
 
     VnPostActionDesc stopDesc = ValidPostDesc();
     stopDesc.actionId = image.actions[11].actionStableId;
@@ -10875,7 +10885,7 @@ TEST(ActionFiringApi, QuantizedStopFadeStartsBeforeTheBoundary) {
         EXPECT_EQ(expected - fadeFrames, record.firstRowFrame);
     } else {
         EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
-        EXPECT_EQ(2u, engine->playableInstances.LiveCount());
+        EXPECT_EQ(liveBeforeStop, engine->playableInstances.LiveCount());
         EXPECT_NE(harken::PlayableControlLifecycle::Cancelling,
                   engine->playableServices[1].controlLifecycle);
     }
@@ -32568,6 +32578,57 @@ VnActionFiringInfo EmitterFiringInfo(VnActionFiringHandle firing) {
     return info;
 }
 
+void ExpectCompositeSoundLifecycle(
+    const std::vector<harkentest::monitor::IdentityRecord>& records,
+    std::uint64_t root, unsigned terminalKind) {
+    std::uint64_t previousInstance = 0;
+    for (const auto sound : {CanonicalActionWorld::kFirstSound, CanonicalActionWorld::kSecondSound}) {
+        const auto active = std::find_if(records.begin(), records.end(), [&](const auto& record) {
+            return record.fact.root == root && record.header.stableId == sound &&
+                record.fact.subjectNamespace == VN_MONITOR_SUBJECT_PLAYABLE &&
+                record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_ACTIVE;
+        });
+        ASSERT_NE(records.end(), active);
+        const auto instance = active->header.instanceHandle;
+        EXPECT_NE(0u, instance);
+        EXPECT_NE(root, instance);
+        EXPECT_NE(previousInstance, instance);
+        previousInstance = instance;
+        EXPECT_NE(0u, active->header.engineMonitorInstanceId);
+        EXPECT_NE(0u, active->fact.playbackRequest.sequence);
+        unsigned activeCount = 0, startedCount = 0, retiredCount = 0, voiceCount = 0;
+        for (const auto& record : records) {
+            if (record.fact.root != root || record.header.stableId != sound) continue;
+            const auto kind = record.fact.factKind;
+            if (kind != VN_MONITOR_FACT_PLAYABLE_ACTIVE && kind != VN_MONITOR_FACT_PLAYABLE_STARTED &&
+                kind != VN_MONITOR_FACT_PLAYABLE_RETIRED && kind != VN_MONITOR_FACT_VOICE_LIVE) continue;
+            EXPECT_EQ(active->header.engineMonitorInstanceId, record.header.engineMonitorInstanceId);
+            EXPECT_EQ(active->fact.playbackRequest.sequence, record.fact.playbackRequest.sequence);
+            EXPECT_EQ(VN_MONITOR_CONTENT_SOUND, record.fact.contentKind);
+            if (kind == VN_MONITOR_FACT_VOICE_LIVE) {
+                ++voiceCount;
+                EXPECT_EQ(VN_MONITOR_SUBJECT_LOGICAL_VOICE, record.fact.subjectNamespace);
+                EXPECT_EQ(instance, record.fact.serviceLeaf);
+                continue;
+            }
+            EXPECT_EQ(VN_MONITOR_SUBJECT_PLAYABLE, record.fact.subjectNamespace);
+            EXPECT_EQ(instance, record.header.instanceHandle);
+            EXPECT_EQ(root, record.header.playableInstanceHandle);
+            if (kind == VN_MONITOR_FACT_PLAYABLE_ACTIVE) ++activeCount;
+            else if (kind == VN_MONITOR_FACT_PLAYABLE_STARTED) ++startedCount;
+            else {
+                ++retiredCount;
+                EXPECT_EQ(1u, startedCount);
+                EXPECT_EQ(terminalKind, record.fact.terminalKind);
+            }
+        }
+        EXPECT_EQ(1u, activeCount);
+        EXPECT_EQ(1u, startedCount);
+        EXPECT_EQ(1u, retiredCount);
+        EXPECT_EQ(1u, voiceCount);
+    }
+}
+
 void ExpectEmitterStopsPlayable(int kind) {
     harkentest::EngineSession session(harkentest::MakeNullConfig(16, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -32596,7 +32657,11 @@ void ExpectEmitterStopsPlayable(int kind) {
     desc.actionId = image.actions[9].actionStableId;
     desc.emitter = emitter;
     VnActionFiringHandle firing = 0;
+    const auto capture = kind == 1 || kind == 2 ? harkentest::monitor::OpenIdentityEvents() : 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    VnActionStepResult play{};
+    play.structSize = sizeof(play);
+    if (capture != 0) ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
     PumpEmitterTest(engine, 8);
     ASSERT_GT(EmitterTestPeak(engine), 0.01f);
     ASSERT_GT(engine.voices.ActiveCount(), 0u);
@@ -32607,6 +32672,15 @@ void ExpectEmitterStopsPlayable(int kind) {
     EXPECT_EQ(0u, engine.voices.ActiveCount());
     EXPECT_EQ(0u, engine.playableInstances.LiveCount());
     EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, EmitterFiringInfo(firing).state);
+    if (capture != 0) {
+        const auto records = harkentest::monitor::ReadIdentityEvents(capture);
+        ExpectCompositeSoundLifecycle(records, play.producedPlayableInstance, VN_MONITOR_TERMINAL_REQUESTED_STOP);
+        for (const auto& record : records)
+            if (record.fact.root == play.producedPlayableInstance &&
+                record.fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED)
+                EXPECT_EQ(emitter, record.fact.originEmitter);
+        EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
+    }
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
     // Cross the Queue's original child boundary after cancellation.
     PumpEmitterTest(engine, 64);
@@ -33989,8 +34063,12 @@ TEST(ActionFiringApi, ImmediateTrackPlayCompletesAfterEveryLeafRetires) {
                      .Classify(play.producedPlayableInstance)
                      .live);
     EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    auto records = preparedRecords;
+    harkentest::monitor::CollectIdentityEvents(capture, records);
+    ExpectCompositeSoundLifecycle(records, play.producedPlayableInstance, VN_MONITOR_TERMINAL_NATURAL_COMPLETION);
     std::vector<harkentest::monitor::IdentityRecord> selected;
-    for (const auto& record : harkentest::monitor::ReadIdentityEvents(capture))
+    for (const auto& record : records)
         if (record.fact.factKind == VN_MONITOR_FACT_SELECTION_COMMITTED) selected.push_back(record);
     ASSERT_EQ(2u, selected.size());
     EXPECT_NE(selected[0].fact.logicalVoice, selected[1].fact.logicalVoice);
@@ -34844,10 +34922,26 @@ TEST(ActionFiringApi,
     VnActionFiringInfo info{};
     info.structSize = sizeof(info);
     ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+    unsigned retirementAudioBlocks = 0;
+    for (; retirementAudioBlocks < 16 &&
+           info.state != VN_ACTION_FIRING_TERMINAL_RETAINED;
+         ++retirementAudioBlocks) {
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+    }
+    testing::Test::RecordProperty("retirement_audio_blocks", retirementAudioBlocks);
     EXPECT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
     EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
     EXPECT_EQ(VN_ACTION_TERMINAL_NATURAL, info.terminalReason);
     EXPECT_EQ(0u, info.livePlayableCount);
+    unsigned remainingSources = 0;
+    for (std::uint32_t slot = 0; slot < engine->sourceTerminals.Capacity(); ++slot)
+        remainingSources += engine->sourceTerminals.At(slot)->occupied;
+    EXPECT_EQ(0u, remainingSources);
+    EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    EXPECT_FALSE(engine->playableInstances.Classify(play.producedPlayableInstance).live);
+    EXPECT_EQ(0u, engine->voices.ActiveCount());
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
@@ -35092,8 +35186,12 @@ TEST(ActionFiringApi, ImmediatePiecePlayCompletesAfterEveryLeafRetires) {
                      .Classify(play.producedPlayableInstance)
                      .live);
     EXPECT_EQ(0u, engine->voices.ActiveCount());
+    EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    auto records = preparedRecords;
+    harkentest::monitor::CollectIdentityEvents(capture, records);
+    ExpectCompositeSoundLifecycle(records, play.producedPlayableInstance, VN_MONITOR_TERMINAL_NATURAL_COMPLETION);
     std::vector<harkentest::monitor::IdentityRecord> selected;
-    for (const auto& record : harkentest::monitor::ReadIdentityEvents(capture))
+    for (const auto& record : records)
         if (record.fact.factKind == VN_MONITOR_FACT_SELECTION_COMMITTED) selected.push_back(record);
     ASSERT_EQ(2u, selected.size());
     EXPECT_NE(selected[0].fact.logicalVoice, selected[1].fact.logicalVoice);

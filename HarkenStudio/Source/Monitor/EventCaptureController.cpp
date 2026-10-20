@@ -15,14 +15,118 @@ using HarkenEditor::Bridge::RemoteEventCaptureState;
 
 bool before(const CapturedEvent& a, const CapturedEvent& b)
 {
-    return std::tie(a.detail.timestampNs, a.header.producerId, a.header.sourceSequence) <
-           std::tie(b.detail.timestampNs, b.header.producerId, b.header.sourceSequence);
+    return std::make_tuple(a.timestampNs(), a.header.producerId, a.header.sourceSequence) <
+           std::make_tuple(b.timestampNs(), b.header.producerId, b.header.sourceSequence);
 }
 
 std::size_t eventBytes(const CapturedEvent& event)
 {
-    return sizeof(CapturedEvent) + static_cast<std::size_t>(event.objectName.size()) * sizeof(QChar);
+    return sizeof(CapturedEvent) + static_cast<std::size_t>(
+        event.objectName.size() + event.gameObjectName.size() + event.playbackDescription.size()) * sizeof(QChar);
 }
+
+QString playableDescription(const CapturedEvent& event)
+{
+    const auto& fact = event.execution;
+    if (fact.subjectNamespace != kMonitorSubjectPlayable ||
+        !monitorFactHas(fact, kMonitorFactFieldContentObject) || harkenstudio::IsNull(event.objectId())) return {};
+    switch (fact.contentKind) {
+    case kMonitorContentSound:
+    case kMonitorContentContainer:
+    case kMonitorContentTrack:
+    case kMonitorContentPiece:
+        break;
+    default:
+        return {};
+    }
+    const auto startKind = fact.contentKind == kMonitorContentSound
+        ? kMonitorFactPlayableStarted : kMonitorFactPlayableActive;
+    if (fact.factKind == startKind) return EventCaptureController::tr("Playing");
+    if (fact.factKind != kMonitorFactPlayableRetired) return {};
+    if (monitorFactHas(fact, kMonitorFactFieldTerminalKind)) {
+        switch (fact.terminalKind) {
+        case kMonitorTerminalRequestedStop: return EventCaptureController::tr("Stopped");
+        case kMonitorTerminalParentCancellation:
+        case kMonitorTerminalReplacementReset: return EventCaptureController::tr("Cancelled");
+        case kMonitorTerminalFailure: return EventCaptureController::tr("Playback failed");
+        default: break;
+        }
+    }
+    return EventCaptureController::tr("Finished");
+}
+}
+
+quint64 CapturedEvent::timestampNs() const
+{
+    return isExecution() ? execution.timestampNs : detail.timestampNs;
+}
+
+int CapturedEvent::level() const
+{
+    if (!isExecution()) return detail.level;
+    if ((monitorFactHas(execution, kMonitorFactFieldResult) && execution.result != kOk) ||
+        (monitorFactHas(execution, kMonitorFactFieldTerminalKind) &&
+         execution.subjectNamespace == kMonitorSubjectPlayable && execution.terminalKind == kMonitorTerminalFailure) ||
+        execution.factKind == kMonitorFactActionRejected || execution.factKind == kMonitorFactQueueFailed ||
+        execution.factKind == kMonitorFactTransitionRejected) return kLogError;
+    return kLogInfo;
+}
+
+int CapturedEvent::category() const
+{
+    if (!isExecution()) return detail.category;
+    if (execution.factKind == kMonitorFactRequestSubmitted || execution.factKind == kMonitorFactRequestReturned ||
+        execution.factKind == kMonitorFactRequestTerminal) return kMonitorEventCategoryOperation;
+    return kMonitorEventCategoryLifecycle;
+}
+
+bool CapturedEvent::isDesignerEvent() const
+{
+    if (!playbackDescription.isEmpty()) return true;
+    if (!isExecution()) {
+        if (detail.category == kMonitorEventCategoryDiagnostic) return detail.level >= kLogWarn;
+        if (detail.category != kMonitorEventCategoryOperation) return false;
+        if (detail.result != kOk) return true;
+        switch (detail.code) {
+        case kMonitorOperationSetValue:
+        case kMonitorOperationSetEmitterValue:
+        case kMonitorOperationSetValues:
+        case kMonitorOperationSetEmitterValues:
+        case kMonitorOperationLoadPack:
+        case kMonitorOperationUnloadPack:
+            return true;
+        default:
+            return false;
+        }
+    }
+    switch (execution.factKind) {
+    case kMonitorFactRequestReturned:
+        return monitorFactHas(execution, kMonitorFactFieldResult) && execution.result != kOk;
+    case kMonitorFactActionAccepted:
+    case kMonitorFactActionStopped:
+    case kMonitorFactActionRejected:
+    case kMonitorFactTransitionStarted:
+    case kMonitorFactTransitionStopped:
+    case kMonitorFactTransitionRejected:
+    case kMonitorFactSourceApplied:
+    case kMonitorFactSeekApplied:
+        return true;
+    default:
+        return false;
+    }
+}
+
+harkenstudio::ObjectId CapturedEvent::objectId() const
+{
+    if (!isExecution() || monitorFactHas(execution, kMonitorFactFieldContentObject)) return header.stableId;
+    return monitorFactHas(execution, kMonitorFactFieldTargetObject) ? execution.target.objectId : harkenstudio::ObjectId{};
+}
+
+MonitorFactRequest CapturedEvent::request() const
+{
+    if (!isExecution()) return {};
+    if (monitorFactHas(execution, kMonitorFactFieldPlaybackRequest)) return execution.playbackRequest;
+    return monitorFactHas(execution, kMonitorFactFieldRequest) ? execution.request : MonitorFactRequest{};
 }
 
 EventCaptureController::EventCaptureController(HarkenEditor::Bridge::RemoteConnection* remote,
@@ -138,6 +242,7 @@ void EventCaptureController::start()
     desc.requestedStreamKindMask = kMonitorStreamEvent;
     desc.requestedPermissionMask = kMonitorPermObserveEvents;
     desc.consumerQueueBytes = 1048576;
+    desc.requestedExecutionFactVersion = 1;
     const auto opened = HarkenEditor::Bridge::Monitoring::openEventSession(&desc, &localSession_);
     MonitorEventSessionStatus status{};
 
@@ -146,17 +251,18 @@ void EventCaptureController::start()
         fail(tr("Could not start local capture (%1)").arg(queried));
         return;
     }
-    begin(status.monitorSessionEpoch, status.startedTimestampNs);
+    begin(status.monitorSessionEpoch, status.startedTimestampNs, status.identityUnavailableCount);
 }
 
-void EventCaptureController::begin(quint64 epoch, quint64 timestamp)
+void EventCaptureController::begin(quint64 epoch, quint64 timestamp, quint64 identityUnavailable)
 {
     clear();
     sessionEpoch_ = epoch;
     startedNs_ = timestamp;
     targetText_ = pendingTargetText_;
-    lastSourceSequence_ = 0;
+    sourceSequences_.clear();
     sourceDropped_ = deliveryDropped_ = transportDropped_ = trimmed_ = 0;
+    identityUnavailable_ = identityUnavailable;
     interrupted_ = false;
     startedThisAttempt_ = true;
     state_ = EventCaptureState::Capturing;
@@ -225,6 +331,7 @@ void EventCaptureController::pollLocal()
     }
     sourceDropped_ = status.sourceDroppedRecords;
     deliveryDropped_ = status.deliveryDroppedRecords;
+    identityUnavailable_ = status.identityUnavailableCount;
     if (status.state == kMonitorEventSessionDrained) {
         closeLocal();
         state_ = EventCaptureState::Stopped;
@@ -252,17 +359,19 @@ void EventCaptureController::remoteCaptureChanged()
         sourceDropped_ = current.sourceDroppedRecords;
         deliveryDropped_ = current.deliveryDroppedRecords;
         transportDropped_ = current.transportDroppedRecords;
+        identityUnavailable_ = current.identityUnavailableCount;
     }
     if (current.state == RemoteEventCaptureState::Failed) {
         fail(current.error);
         return;
     }
     if (state_ == EventCaptureState::Starting && current.state == RemoteEventCaptureState::Capturing)
-        begin(current.sessionEpoch, current.startedTimestampNs);
+        begin(current.sessionEpoch, current.startedTimestampNs, current.identityUnavailableCount);
     if (!startedThisAttempt_ || current.sessionEpoch != sessionEpoch_) return;
     sourceDropped_ = current.sourceDroppedRecords;
     deliveryDropped_ = current.deliveryDroppedRecords;
     transportDropped_ = current.transportDroppedRecords;
+    identityUnavailable_ = current.identityUnavailableCount;
     if (current.state == RemoteEventCaptureState::Stopped) state_ = EventCaptureState::Stopped;
     emit stateChanged();
 }
@@ -287,29 +396,69 @@ void EventCaptureController::consume(const QByteArray& bytes, quint32 count, qui
         return;
     }
     std::vector<CapturedEvent> incoming;
-    auto lastSequence = lastSourceSequence_;
+    auto sequences = sourceSequences_;
     for (const auto& record : batch.records) {
-        if (record.unknownOptional || record.header.recordKind != kMonitorRecordEventDetail) continue;
+        if (record.unknownOptional || (record.header.recordKind != kMonitorRecordEventDetail &&
+                                      record.header.recordKind != kMonitorRecordExecutionFact)) continue;
         CapturedEvent event;
         event.header = record.header;
-        MonitorEventDetailV2 identity{};
-        if (!decodeEventDetail(record, &event.detail, &identity) || event.header.monitorSessionEpoch != epoch ||
-            event.header.sourceSequence <= lastSequence || event.detail.timestampNs < startedNs_) {
+        auto& sequence = sequences[{event.header.engineMonitorInstanceId, event.header.producerId}];
+        if (event.header.monitorSessionEpoch != epoch || event.header.sourceSequence <= sequence) {
             fail(tr("Invalid event identity or payload"));
             return;
         }
-        event.projectGuid = QUuid::fromRfc4122(QByteArrayView(
-            reinterpret_cast<const char*>(identity.projectGuid), sizeof(identity.projectGuid)));
-        event.objectGuid = authoringUuid(event.header.stableId);
+        if (event.isExecution()) {
+            if (!decodeExecutionFact(record, &event.execution)) {
+                fail(tr("Invalid execution record"));
+                return;
+            }
+            const auto& fact = event.execution;
+            event.playbackDescription = playableDescription(event);
+            if (monitorFactHas(fact, kMonitorFactFieldPlaybackRequest))
+                event.playbackRequestSequence = fact.playbackRequest.sequence;
+            if (monitorFactHas(fact, kMonitorFactFieldOriginEmitter))
+                event.emitterObjectId = fact.originEmitter;
+            if (monitorFactHas(fact, kMonitorFactFieldOriginEmitter) &&
+                monitorFactHas(fact, kMonitorFactFieldHostKey) &&
+                monitorFactHas(fact, kMonitorFactFieldHostRevision) &&
+                monitorFactHas(fact, kMonitorFactFieldHostOwnership) &&
+                fact.hostOwnership == kMonitorHostStudioDefaultEmitter) {
+                event.emitterObjectId = kMonitorStudioDefaultGameObjectId;
+                event.gameObjectName = QStringLiteral("Emitter");
+            }
+            if (fact.factKind == kMonitorFactRequestReturned &&
+                monitorFactHas(fact, kMonitorFactFieldResult) && fact.result == kOk &&
+                monitorFactHas(fact, kMonitorFactFieldRequestOperation)) {
+                switch (fact.request.operation) {
+                case kMonitorOperationStopAll: event.playbackDescription = tr("Stop all"); break;
+                case kMonitorOperationStopEmitter: event.playbackDescription = tr("Stop emitter"); break;
+                default: break;
+                }
+            }
+            if (monitorFactHas(fact, kMonitorFactFieldContentObject)) {
+                if (monitorFactHas(fact, kMonitorFactFieldProject)) event.projectGuid = authoringUuid(fact.projectId);
+            } else if (monitorFactHas(fact, kMonitorFactFieldTargetProject)) {
+                event.projectGuid = authoringUuid(fact.target.projectId);
+            }
+        } else {
+            MonitorEventDetailV2 identity{};
+            if (!decodeEventDetail(record, &event.detail, &identity)) {
+                fail(tr("Invalid event identity or payload"));
+                return;
+            }
+            event.projectGuid = QUuid::fromRfc4122(QByteArrayView(
+                reinterpret_cast<const char*>(identity.projectGuid), sizeof(identity.projectGuid)));
+        }
+        event.objectGuid = authoringUuid(event.objectId());
         if (!event.projectGuid.isNull() && event.projectGuid == projectObjects_.projectGuid()) {
-            if (const auto* found = projectObjects_.find(event.header.stableId)) {
+            if (const auto* found = projectObjects_.find(event.objectId())) {
                 event.objectName = found->name;
             }
         }
-        lastSequence = event.header.sourceSequence;
+        sequence = event.header.sourceSequence;
         incoming.push_back(event);
     }
-    lastSourceSequence_ = lastSequence;
+    sourceSequences_ = std::move(sequences);
     append(std::move(incoming));
 }
 
@@ -352,8 +501,8 @@ void EventCaptureController::setProjectObjects(ProjectObjectIndex objects)
 quint32 EventCaptureController::matchingProjectObject(const CapturedEvent& event) const
 {
     if (event.projectGuid.isNull() || event.projectGuid != projectObjects_.projectGuid() ||
-        event.objectGuid.isNull() || runtimeObjectId(event.objectGuid) != event.header.stableId) return 0;
-    const auto* found = projectObjects_.find(event.header.stableId);
+        event.objectGuid.isNull() || runtimeObjectId(event.objectGuid) != event.objectId()) return 0;
+    const auto* found = projectObjects_.find(event.objectId());
     return found ? found->ownerObjectId : 0;
 }
 

@@ -167,6 +167,64 @@ TEST(MonitorHostDescription, DestroyReuseAndHostRestartNeverReuseOldDescriptions
     EXPECT_EQ(later.sdkSession, origin.host.sdkSession);
 }
 
+TEST(MonitorHostDescription, DefaultHostIsUniqueWithinSessionAndRetainsHistoricalOwnership) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto session = OpenIdentityEvents();
+    const auto host = BeginHost();
+    VnEmitterHandle first = 0, other = 0, replacement = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&first));
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&other));
+    auto registration = HostDescription(host, first);
+    registration.ownershipKind = VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER;
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    registration.registrationRevision = 2;
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+
+    auto duplicate = HostDescription(host, other);
+    duplicate.ownershipKind = VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER;
+    duplicate.localSequence = 2;
+    EXPECT_EQ(VN_INVALID_ARG, Vn_MonitorRegisterHostV2(&duplicate));
+    auto legacyDuplicate = HostRegistration(host, other, 2);
+    legacyDuplicate.ownershipKind = VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER;
+    EXPECT_EQ(VN_INVALID_ARG, Vn_MonitorRegisterHost(&legacyDuplicate));
+    EXPECT_FALSE(engine.Engine()->monitorEmitters.CaptureOrigin(other).host.Valid());
+    duplicate.ownershipKind = VN_MONITOR_HOST_UNITY_EMITTER;
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&duplicate));
+
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(first));
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&replacement));
+    ASSERT_NE(first, replacement);
+    ASSERT_EQ(static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(replacement));
+    registration.emitter = replacement;
+    registration.localSequence = 3;
+    registration.registrationRevision = 1;
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    EXPECT_NE(VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID, first);
+    EXPECT_NE(VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID, replacement);
+    const auto records = ReadIdentityEvents(session);
+    const auto retired = std::find_if(records.begin(), records.end(), [first](const auto& row) {
+        return row.fact.factKind == VN_MONITOR_FACT_EMITTER_DESTROYED &&
+            row.fact.originEmitter == first;
+    });
+    ASSERT_NE(records.end(), retired);
+    EXPECT_EQ(VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER, retired->fact.hostOwnership);
+    EXPECT_EQ(host.sdkSession, retired->fact.hostSession);
+    EXPECT_EQ(1u, retired->fact.hostLocalSequence);
+    EXPECT_EQ(2u, retired->fact.originHostRevision);
+
+    const auto later = BeginHost();
+    EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorRegisterHostV2(&registration));
+    registration.sdkSession = later.sdkSession;
+    registration.localSequence = 1;
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    duplicate.sdkSession = later.sdkSession;
+    duplicate.ownershipKind = VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER;
+    EXPECT_EQ(VN_INVALID_ARG, Vn_MonitorRegisterHostV2(&duplicate));
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(session));
+}
+
 TEST(MonitorExecutionIdentity, EmitterDestroyRetainsHostAndGenerationBeforeSlotReuse) {
     harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
@@ -540,7 +598,13 @@ TEST(MonitorExecutionLifecycle, RetiredChildKeepsItsContentAndActualParentAcross
     metadata.actionExecutionOrdinal = 3;
     ASSERT_TRUE(table.SetPreparedRootMetadata(parent, metadata));
     ASSERT_TRUE(table.CommitPrepared(&parent));
-    std::array<std::uint64_t, 2> children{};
+    const std::array<PlayableTerminalOutcome, 5> outcomes{{
+        {PlayableTerminalKind::NaturalCompletion, VN_OK, 0},
+        {PlayableTerminalKind::RequestedStop, VN_OK, 11},
+        {PlayableTerminalKind::ParentCancellation, VN_OK, 12},
+        {PlayableTerminalKind::ReplacementReset, VN_OK, 13},
+        {PlayableTerminalKind::Failure, VN_BAD_STREAM_FILE, 14}}};
+    std::array<std::uint64_t, outcomes.size()> children{};
     for (unsigned i = 0; i != children.size(); ++i) {
         PreparedPlayableInstance child;
         ASSERT_TRUE(table.PrepareAcquire(PlayableKind::Sound, parent.Handle(), &child));
@@ -548,6 +612,7 @@ TEST(MonitorExecutionLifecycle, RetiredChildKeepsItsContentAndActualParentAcross
         ASSERT_TRUE(table.SetPreparedContentIdentity(child,
             {metadata.projectId, harkentest::ObjectId(90100 + i), 17, 200 + i, 300 + i}));
         ASSERT_TRUE(table.CommitPrepared(&child));
+        ASSERT_TRUE(table.SetTerminalOutcome(child.Handle(), outcomes[i]));
         ASSERT_TRUE(table.AdvanceLifecycle(child.Handle(), PlayableLifecycle::Retired));
     }
     const auto rows = ReadIdentityEvents(session);
@@ -557,8 +622,20 @@ TEST(MonitorExecutionLifecycle, RetiredChildKeepsItsContentAndActualParentAcross
             if (row.header.instanceHandle != children[i]) continue;
             if (row.fact.factKind == VN_MONITOR_FACT_PLAYABLE_PREPARED) ++phases[0];
             else if (row.fact.factKind == VN_MONITOR_FACT_PLAYABLE_ACTIVE) ++phases[1];
-            else if (row.fact.factKind == VN_MONITOR_FACT_PLAYABLE_RETIRED) ++phases[2];
+            else if (row.fact.factKind == VN_MONITOR_FACT_PLAYABLE_RETIRED) {
+                ++phases[2];
+                EXPECT_TRUE(FactHas(row.fact, VN_MONITOR_FACT_FIELD_TERMINAL_KIND));
+                EXPECT_TRUE(FactHas(row.fact, VN_MONITOR_FACT_FIELD_RESULT));
+                EXPECT_TRUE(FactHas(row.fact, VN_MONITOR_FACT_FIELD_REASON));
+                EXPECT_EQ(static_cast<unsigned>(outcomes[i].kind), row.fact.terminalKind);
+                EXPECT_EQ(outcomes[i].resultCode, row.fact.result);
+                EXPECT_EQ(outcomes[i].reasonCode, row.header.reason);
+            }
             else ADD_FAILURE() << "Unexpected child fact " << row.fact.factKind;
+            if (row.fact.factKind != VN_MONITOR_FACT_PLAYABLE_RETIRED) {
+                EXPECT_FALSE(FactHas(row.fact, VN_MONITOR_FACT_FIELD_TERMINAL_KIND));
+                EXPECT_FALSE(FactHas(row.fact, VN_MONITOR_FACT_FIELD_RESULT));
+            }
             EXPECT_EQ(harkentest::ObjectId(90100 + i), row.header.stableId);
             EXPECT_EQ(300 + i, row.fact.contentRevision);
             EXPECT_EQ(parent.Handle(), row.header.playableInstanceHandle);
