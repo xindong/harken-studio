@@ -18578,6 +18578,60 @@ TEST(PackComposition, QueueRoleCounterCombinesAlternativesAndConcurrentOccurrenc
     ExpectQueueRoleCounter(fixture.Count(combined), 6, 3);
 }
 
+TEST(PackComposition, QueueRoleCounterKeepsMaximumSingleGroupShape) {
+    QueueRoleCounterFixture fixture;
+    using Mode = QueueRoleCounterFixture::Mode;
+    std::array<harken::ScheduleClipPlacementV1, 3> placements{};
+    for (auto& placement : placements) placement.content = fixture.Sound();
+    fixture.track.placements = placements.data();
+    fixture.track.placementCount = static_cast<std::uint32_t>(placements.size());
+    const auto small = fixture.Set(0, Mode::SequenceQueue, {fixture.Sound()});
+    const auto large = fixture.Set(1, Mode::SequenceQueue, {fixture.track.rootDefinition});
+    const auto alternatives = fixture.Set(2, Mode::Sequence, {small, large});
+    const auto concurrent = fixture.Set(3, Mode::VariableControl, {small, large});
+    fixture.Rows(3, {}, {0, 1});
+    const auto flags = harken::native_backing::UnprunedSchedule;
+    for (const auto root : {alternatives, concurrent}) {
+        const auto result = fixture.Count(root);
+        ExpectQueueRoleCounter(result, root.stableId == alternatives.stableId ? 1u : 2u,
+            root.stableId == alternatives.stableId ? 3u : 4u, 0, flags);
+        EXPECT_EQ(6u, result.profile.queue.programs);
+        EXPECT_EQ(12u, result.profile.queue.events);
+    }
+    const auto plain = fixture.Count(fixture.track.rootDefinition);
+    EXPECT_EQ(0u, plain.profile.queue.programs);
+    EXPECT_EQ(0u, plain.profile.queue.events);
+}
+
+TEST(PackComposition, QueueRoleCounterIncludesResetShapeWithoutChangingFutureAdmission) {
+    QueueRoleCounterFixture fixture;
+    using namespace harken::native_backing;
+    std::array<harken::ScheduleClipPlacementV1, 3> placements{};
+    for (auto& placement : placements) placement.content = fixture.Sound();
+    fixture.track.placements = placements.data();
+    fixture.track.placementCount = static_cast<std::uint32_t>(placements.size());
+    const auto root = fixture.Set(0, QueueRoleCounterFixture::Mode::SequenceQueue,
+        {fixture.track.rootDefinition, fixture.Sound()});
+    fixture.children[0][0].timingHint = harken::MakeScheduleReferenceTimingHint(
+        harken::PlayableKindV1::Track, fixture.track.rootDefinition.stableId,
+        fixture.track.scheduleSemanticFingerprint);
+    auto limits = fixture.Limits();
+    limits.propertyPrefixCount = 63;
+    const auto flags = UnprunedSchedule | OmittedPathBranch | IndependentFutureEnvelope;
+    const auto check = [&]() {
+        const auto result = fixture.Count(root, limits);
+        ExpectQueueRoleCounter(result, 1, 1, 1, flags);
+        EXPECT_EQ(6u, result.profile.queue.programs);
+        EXPECT_EQ(12u, result.profile.queue.events);
+    };
+    check();
+    ++fixture.children[0][0].timingHint.payload.schedule.scheduleSemanticFingerprint;
+    check();
+    std::swap(fixture.children[0][0].playable, fixture.children[0][1].playable);
+    std::swap(fixture.children[0][0].timingHint, fixture.children[0][1].timingHint);
+    EXPECT_EQ(Status::FingerprintMismatch, fixture.Count(root, limits).status);
+}
+
 TEST(PackComposition, QueueRoleCounterUsesIndependentLogicalCapacity) {
     QueueRoleCounterFixture fixture;
     const auto five = fixture.Chain(0, 5, fixture.track.rootDefinition);
@@ -18695,6 +18749,43 @@ TEST(PackComposition, QueueRoleCounterExecutesActualFrozenPackAndWorldAdapters) 
     ExpectFrozenPackQueueRoleCounter(scheduled.world, scheduled.rootRef, 1, 1, 1,
         UnprunedSchedule | IndependentFutureEnvelope,
         UnprunedSchedule | IndependentFutureEnvelope);
+}
+
+TEST(PackComposition, QueueRoleCounterUsesResetAuthorityScheduleDepth) {
+    using namespace harken::native_backing;
+    ContainerMatrixWorld image(ContainerModeV1::SequenceQueue,
+        ContainerMatrixChild::Piece, 1, 1);
+    harken::PackComposition composition(1);
+    const auto bytes = BuildCanonicalPartitionPack(22, 1, 7,
+        WrapWorldPartition(22, 7, image.world, 0));
+    ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, UINT64_C(1) << 32, 8));
+    const auto lookup = composition.Lookup(image.rootRef.stableId);
+    ASSERT_EQ(VN_OK, lookup.result);
+    harken::PackPlaybackView packView;
+    ASSERT_TRUE(composition.PlaybackViewAtLease(lookup.lease, &packView));
+    harken::PlayableWorldViewV1 worldView;
+    ASSERT_TRUE(composition.PlayableWorldAtLease(lookup.lease, &worldView));
+    auto limits = QueueRoleCounterFixture::Limits();
+    limits.currentScheduleDepth = limits.directFutureScheduleDepth = 1;
+    const auto count = [&](const auto& content) {
+        std::vector<MemoEntry> entries(512);
+        MemoWorkspace memo(entries.data(), entries.size());
+        return Counter(content, limits, memo).Count(image.rootRef, content.Authority());
+    };
+    const PackContent packContent(packView);
+    const auto pack = count(packContent);
+    ExpectQueueRoleCounter(pack, 1, 0, 0, UnprunedSchedule | OmittedDepthBranch);
+    EXPECT_EQ(2u, pack.profile.queue.programs);
+    EXPECT_EQ(4u, pack.profile.queue.events);
+    EXPECT_EQ(kPathCapacity, packContent.QueueResetScheduleDepth());
+    for (const auto depth : {1u, 2u}) {
+        worldView.maxTrackPieceScheduleDepth = depth;
+        const auto world = count(WorldContent(worldView));
+        ExpectQueueRoleCounter(world, 1, 0, 0, UnprunedSchedule | OmittedDepthBranch);
+        EXPECT_EQ(depth == 1u ? 0u : 2u, world.profile.queue.programs);
+        EXPECT_EQ(depth == 1u ? 0u : 4u, world.profile.queue.events);
+    }
+    EXPECT_EQ(VN_OK, composition.ReleaseLease(lookup.lease));
 }
 
 struct OriginalDeferredOperationFixture {

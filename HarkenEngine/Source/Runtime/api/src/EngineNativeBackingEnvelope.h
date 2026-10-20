@@ -66,12 +66,23 @@ struct VoiceColumns {
     }
 };
 
+struct QueueColumns {
+    std::uint32_t programs = 0;
+    std::uint32_t events = 0;
+
+    void Include(const QueueColumns& other) noexcept {
+        programs = std::max(programs, other.programs);
+        events = std::max(events, other.events);
+    }
+};
+
 struct Profile {
     std::uint32_t current = 0;
     std::array<std::uint32_t, kLeafCapacity + 1u> H{};
     std::uint32_t Q = 0;
     std::uint32_t controlSides = 0;
     VoiceColumns voice{};
+    QueueColumns queue{};
 };
 
 struct Result {
@@ -114,6 +125,7 @@ public:
         return {view_.generation, view_.identity.runtimeSemanticFingerprint};
     }
     static constexpr bool kDirectNestedContainer = true;
+    std::uint32_t QueueResetScheduleDepth() const noexcept { return view_.maxTrackPieceScheduleDepth; }
     const PlayablePropertyProgramViewV1* Property(const PlayableRefV1& ref) const noexcept {
         for (std::uint32_t i = 0; view_.properties != nullptr && i < view_.propertyCount; ++i)
             if (view_.properties[i].stableId == ref.stableId &&
@@ -155,6 +167,7 @@ public:
         return {view_.CompositeGeneration(), view_.WorldSemanticFingerprint()};
     }
     static constexpr bool kDirectNestedContainer = false;
+    std::uint32_t QueueResetScheduleDepth() const noexcept { return kPathCapacity; }
     const PlayablePropertyProgramViewV1* Property(const PlayableRefV1& ref) const noexcept {
         using Kind = playableproperties::ContentPropertyKindV1;
         const auto kind = ref.kind == PlayableKindV1::Sound ? Kind::Sound
@@ -210,6 +223,7 @@ inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexce
     a.profile.controlSides = SaturatingAdd(a.profile.controlSides, b.profile.controlSides,
         kControlSideCapacity, a.flags);
     a.profile.voice.Include(b.profile.voice);
+    a.profile.queue.Include(b.profile.queue);
     for (std::uint32_t t = 1; t <= kLeafCapacity; ++t)
         a.profile.H[t] = SaturatingAdd(a.profile.H[t], b.profile.H[t], limits.immediateFutureSides, a.flags);
     return a;
@@ -223,6 +237,7 @@ inline Result Alternative(Result a, const Result& b) noexcept {
     a.profile.Q = std::max(a.profile.Q, b.profile.Q);
     a.profile.controlSides = std::max(a.profile.controlSides, b.profile.controlSides);
     a.profile.voice.Include(b.profile.voice);
+    a.profile.queue.Include(b.profile.queue);
     for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) a.profile.H[t] = std::max(a.profile.H[t], b.profile.H[t]);
     return a;
 }
@@ -644,13 +659,27 @@ private:
         return Omitted(ExistingDirectRefusal);
     }
 
+    Result QueueResetShape(const ContainerChildProgramViewV2& child) noexcept {
+        const auto depth = content_.QueueResetScheduleDepth();
+        if (depth == 0 || depth > kPathCapacity) return {};
+        const Budget fresh{kPathCapacity, depth, kPathCapacity - 1u, 0, Domain::DirectFuture};
+        if (child.playable.kind == PlayableKindV1::Container) {
+            if constexpr (Content::kDirectNestedContainer) return Visit(child.playable, Mode::DirectNested, fresh);
+            else return {};
+        }
+        return Visit(child.playable, Mode::StaticSchedule, fresh);
+    }
+
     Result Queue(const ContainerProgramViewV3& program, Budget budget) noexcept {
         if (program.queueCycle != QueueCycleV1::Once && program.queueCycle != QueueCycleV1::Loop)
             return Failure(Status::UnsupportedMode);
         Result result{};
+        std::uint32_t currentCapacity = 0;
+        std::uint32_t targetCapacity = 0;
         for (std::uint32_t i = 0; i < program.childCount; ++i) {
             auto current = Visit(program.children[i].playable, Mode::Frontier, budget);
             if (!current) return current;
+            currentCapacity = std::max(currentCapacity, current.profile.current);
             current.profile.Q = SaturatingAdd(current.profile.Q, 1, limits_.queueRoleCapacity, current.flags);
             std::uint32_t capacity = 0;
             for (std::uint32_t j = 0; j < program.childCount; ++j) {
@@ -662,10 +691,19 @@ private:
                 capacity = std::max(capacity, next.profile.current);
                 current.flags |= next.flags;
             }
+            targetCapacity = std::max(targetCapacity, capacity);
             AddFuture(current, capacity, limits_);
             result = Alternative(result, current);
             if (!result) return result;
         }
+        for (std::uint32_t i = 0; i < program.childCount; ++i) {
+            const auto reset = QueueResetShape(program.children[i]);
+            if (reset.status == Status::WorkspaceExhausted) return reset;
+            if (reset) targetCapacity = std::max(targetCapacity, reset.profile.current);
+        }
+        currentCapacity = std::max(currentCapacity, targetCapacity);
+        const auto programs = currentCapacity + targetCapacity;
+        result.profile.queue.Include({programs, 2u * programs});
         return result;
     }
 
