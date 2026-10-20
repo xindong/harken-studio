@@ -137,6 +137,7 @@ public:
     void zoomToFit();
 
 signals:
+    void auditionTargetRequested(uint32_t objectID);
     void nodeSelected(uint32_t anchorId);
     void nodeDoubleClicked(uint32_t anchorId);
     void selectionCleared();
@@ -320,6 +321,8 @@ private:
     QString connectHintText_;
     NodeItem* nodeDragOrigin_ = nullptr;
     QPoint nodeDragStart_;
+    uint32_t auditionClickObjectID_ = 0;
+    QPoint auditionClickStart_;
     std::vector<SignalPathEndpoint> nodeDragSources_;
 
     bool evaluateConnect_(NodePin* source, NodePin* target, QString& reason, bool addSend = false) const;

@@ -26,6 +26,7 @@ public:
     ProjectItem* boundItem() const { return boundItem_; }
 
 signals:
+    void auditionTargetRequested(const QUuid& target);
     void drillRequested(const QUuid& target);
     void navigateToItem(uint32_t objectID);
     void locateItem(uint32_t objectID);

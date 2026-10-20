@@ -3,6 +3,7 @@
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/TableColumnLayout.h"
 #include "Widgets/Common/TableItemDelegate.h"
+#include "Widgets/Common/SourceRangeThumb.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/MatrixTableWidget.h"
 #include "Widgets/Common/ResizableTableView.h"
@@ -35,6 +36,7 @@
 #include <QLabel>
 #include <QImage>
 #include <QKeyEvent>
+#include <QKeySequenceEdit>
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QMouseEvent>
@@ -132,8 +134,9 @@ class TableWidgetTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        const auto applicationStyleSheet = VNX::QtControlSkin::current().applicationStyleSheet();
         style_ = qApp->styleSheet();
-        qApp->setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
+        qApp->setStyleSheet(applicationStyleSheet);
         VNX::columnShareStore().clear();
     }
 
@@ -705,6 +708,83 @@ TEST_F(TableWidgetTest, MatrixHeaderAndRowSelectionsAreExclusiveAndPreserveCellB
     EXPECT_EQ(matrix.selectedColumn(), -1);
 }
 
+TEST_F(TableWidgetTest, HandleCellsShareHeaderLayoutAndKeepSelectionLocal)
+{
+    VNX::TableWidget table;
+    table.setColumns("HandleCells", {{"reference", "Reference"}, {"other", "Other"}});
+    auto* row = new QWidget(table.rowsWidget());
+    auto* layout = new QHBoxLayout(row);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    auto* cell = table.createCell(row);
+    auto* handle = table.createRowHandle(cell, 0);
+    auto* ref = new VNX::ObjectRefWidget(cell);
+    cell->addWidget(ref);
+    auto* other = table.createCell(row);
+    auto* editor = new QLineEdit(QStringLiteral("draft"), other);
+    other->addWidget(editor);
+    layout->addWidget(cell);
+    layout->addWidget(other);
+    table.registerRow(row, {cell, other});
+    table.rowsLayout()->addWidget(row);
+    table.setSelectionClearHandler([&] {
+        VNX::QtControlSkin::setSemanticProperty(row, "selected", false);
+    });
+    VNX::MatrixTableWidget matrix;
+    matrix.table()->setColumnCount(2);
+    matrix.setViewColumns("HandleHeaders", {{"a", ""}, {"b", ""}});
+    matrix.setColumnsReorderable(true);
+    matrix.setHeaderWidget(0, new VNX::ObjectRefWidget);
+    matrix.setHeaderWidget(1, new VNX::ObjectRefWidget);
+    matrix.resize(600, 150);
+    matrix.show();
+    table.show();
+    auto* header = matrix.table()->horizontalHeader();
+    auto* headerRef = matrix.headerWidget(0);
+    for (int width : {600, 240, 120, 600}) {
+        SCOPED_TRACE(width);
+        table.resize(width, 150);
+        settle(table);
+        settle(matrix);
+        matrix.resize(matrix.width() + cell->width() * 2 - header->length(), matrix.height());
+        header->setFixedHeight(cell->height() + 1);
+        settle(matrix);
+        EXPECT_EQ(header->sectionSize(0), cell->width());
+        EXPECT_EQ(ref->geometry(), QRect(headerRef->mapTo(header->viewport(), QPoint()), headerRef->size()));
+        EXPECT_TRUE(cell->rect().contains(handle->geometry()));
+        EXPECT_LT(handle->geometry().right(), ref->x());
+        EXPECT_EQ(handle->geometry().center().y(), ref->geometry().center().y());
+        for (bool selected : {false, true, false}) {
+            if (selected) VNX::QtControlSkin::setSemanticProperty(row, "selected", true);
+            else table.clearSelection();
+            matrix.setSelectedColumn(selected ? 0 : -1);
+            settle(table);
+            settle(matrix);
+            const auto cellImage = cell->grab().toImage();
+            const auto otherImage = other->grab().toImage();
+            const auto& colors = VNX::ThemeManager::instance().colors();
+            EXPECT_EQ(cellImage.pixelColor(3, 1), selected ? colors.bgSelected : colors.bgPrimary);
+            EXPECT_EQ(cellImage.pixelColor(0, 1), selected ? colors.accent : colors.bgPrimary);
+            EXPECT_EQ(otherImage.pixelColor(3, 1), colors.bgPrimary);
+            EXPECT_EQ(otherImage.pixelColor(0, 1), colors.bgPrimary);
+            EXPECT_EQ(editor->text(), QStringLiteral("draft"));
+            if (selected) {
+                const auto headerImage = header->viewport()->grab().toImage();
+                EXPECT_EQ(cellImage.copy(0, 0, ref->x(), cell->height()),
+                          headerImage.copy(0, 0, ref->x(), cell->height()));
+            }
+        }
+        table.setColumnVisible(0, false);
+        settle(table);
+        EXPECT_FALSE(handle->isVisible());
+        table.setColumnVisible(0, true);
+        settle(table);
+        EXPECT_TRUE(handle->isVisible());
+        EXPECT_EQ(ref->geometry(), QRect(headerRef->mapTo(header->viewport(), QPoint()), headerRef->size()));
+        ASSERT_TRUE(VNX::ThemeManager::instance().reloadTheme().ok());
+    }
+}
+
 TEST_F(TableWidgetTest, MatrixColumnsFillTheViewportAndHeadersStayFixedWhileRowsScroll)
 {
     VNX::MatrixTableWidget matrix;
@@ -927,6 +1007,68 @@ TEST_F(TableWidgetTest, CellEditorsShareSpaceThroughResizingHidingAndMovingColum
         EXPECT_TRUE(cell->isHidden());
         table.setColumnVisible(0, true);
         check();
+    }
+}
+
+TEST_F(TableWidgetTest, EmbeddedFieldsRemainFullyVisibleAcrossBodiesAndResizes)
+{
+    for (int body : {0, 1, 2}) {
+        SCOPED_TRACE(body);
+        VNX::TableWidget table;
+        auto* choice = new QComboBox;
+        choice->addItem(QStringLiteral("A long choice that must shrink with its column"));
+        auto* editableChoice = new QComboBox;
+        editableChoice->setEditable(true);
+        editableChoice->addItem(QStringLiteral("Draft"));
+        const QList<QWidget*> fields{
+            new VNX::ObjectRefWidget, new VNX::SourceRangeThumb,
+            new QLineEdit(QStringLiteral("Draft")), new QDoubleSpinBox,
+            choice, editableChoice, new QKeySequenceEdit(QKeySequence("Ctrl+Shift+P"))
+        };
+        QAbstractItemView* view = nullptr;
+        if (body == 0) {
+            table.setColumns("VisibleWidgetFields", {{"name", "Name"}, {"value", "Value"}});
+            for (int i = 0; i < fields.size(); ++i) {
+                auto* row = new QWidget(table.rowsWidget());
+                auto* layout = new QHBoxLayout(row);
+                layout->setContentsMargins(0, 0, 0, 0);
+                layout->setSpacing(0);
+                auto* label = new QLabel(QString::number(i), row);
+                auto* cell = table.createCell(row);
+                cell->addWidget(fields[i]);
+                layout->addWidget(label);
+                layout->addWidget(cell);
+                table.registerRow(row, {label, cell});
+                table.rowsLayout()->addWidget(row);
+            }
+        } else if (body == 1) {
+            view = table.createModelView("VisibleModelFields",
+                new QStandardItemModel(fields.size(), 2, &table));
+        } else {
+            auto* tree = table.createItemView("VisibleTreeFields", {"Name", "Value"}, {1, 1});
+            for (int i = 0; i < fields.size(); ++i)
+                new QTreeWidgetItem(tree, {QString::number(i)});
+            view = tree;
+        }
+        if (view)
+            for (int i = 0; i < fields.size(); ++i)
+                view->setIndexWidget(view->model()->index(i, 1), fields[i]);
+        table.show();
+        for (int width : {600, 160, 600}) {
+            SCOPED_TRACE(width);
+            table.resize(width, 350);
+            ASSERT_TRUE(VNX::ThemeManager::instance().reloadTheme().ok());
+            settle(table);
+            for (auto* field : fields) {
+                SCOPED_TRACE(field->metaObject()->className());
+                EXPECT_EQ(field->height(), VNX::QtControlSkin::current().fieldHeight());
+                EXPECT_EQ(field->visibleRegion().boundingRect(), field->rect());
+                for (auto* editor : field->findChildren<QLineEdit*>()) {
+                    EXPECT_EQ(editor->visibleRegion().boundingRect(), editor->rect());
+                    EXPECT_GE(editor->height(), editor->fontMetrics().height());
+                }
+            }
+        }
     }
 }
 
@@ -1922,62 +2064,82 @@ TEST_F(TableWidgetTest, HidingAColumnAndExpandingDetailsPreservesRowContent)
 
 TEST_F(TableWidgetTest, RowMovementUsesVisibleRowsAndRejectsCanceledOrStaleDrags)
 {
-    VNX::TableWidget table;
-    table.setColumns(QStringLiteral("MovingRows"), {{"order", "#", 0}, {"value", "Value", 1}});
-    QList<QLabel*> numbers;
-    for (int i = 0; i < 3; ++i) {
-        auto* row = new QWidget(table.rowsWidget());
-        auto* layout = new QHBoxLayout(row);
-        layout->setContentsMargins(0, 0, 0, 0);
-        auto* number = table.createRowNumber(row, i);
-        auto* value = new QLabel(QString::number(i), row);
-        layout->addWidget(number);
-        layout->addWidget(value);
-        table.registerRow(row, {number, value});
-        table.rowsLayout()->addWidget(row);
-        numbers.append(number);
-    }
-    QList<QPair<int, int>> moves;
-    bool editable = true;
-    table.setRowMoveHandler([&](int from, int to) { moves.append({from, to}); },
-                            [&](int, int) { return editable; });
-    table.resize(360, 200);
-    table.show();
-    settle(table);
-    numbers[1]->parentWidget()->hide();
-    settle(table);
-    const auto drag = [&](const QPoint& destination, bool cancel, bool hide) {
-        auto* number = numbers.front();
-        const QPoint local = number->rect().center();
-        QMouseEvent press(QEvent::MouseButtonPress, local, number->mapToGlobal(local),
-                          Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(number, &press);
-        if (cancel) {
-            QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-            QApplication::sendEvent(number, &escape);
+    for (const bool numbered : {true, false}) {
+        SCOPED_TRACE(numbered);
+        VNX::TableWidget table;
+        table.setColumns(QStringLiteral("MovingRows"), numbered
+            ? QList<VNX::TableColumn>{{"order", "#", 0}, {"value", "Value", 1}}
+            : QList<VNX::TableColumn>{{"value", "Value", 1}});
+        QList<QWidget*> handles;
+        for (int i = 0; i < 3; ++i) {
+            auto* row = new QWidget(table.rowsWidget());
+            auto* layout = new QHBoxLayout(row);
+            layout->setContentsMargins(0, 0, 0, 0);
+            auto* cell = table.createCell(row);
+            auto* handle = numbered ? table.createRowNumber(row, i) : table.createRowHandle(cell, i);
+            auto* value = new QLabel(QString::number(i), cell);
+            if (numbered) layout->addWidget(handle);
+            cell->addWidget(value);
+            layout->addWidget(cell);
+            table.registerRow(row, numbered ? QList<QWidget*>{handle, cell} : QList<QWidget*>{cell});
+            table.rowsLayout()->addWidget(row);
+            handles.append(handle);
         }
-        if (hide) number->parentWidget()->hide();
-        QMouseEvent release(QEvent::MouseButtonRelease, table.mapFromGlobal(destination), destination,
-                            Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-        QApplication::sendEvent(&table, &release);
+        QList<QPair<int, int>> moves;
+        bool editable = true;
+        table.setRowMoveHandler([&](int from, int to) { moves.append({from, to}); },
+                                [&](int, int) { return editable; });
+        table.resize(360, 200);
+        table.show();
         settle(table);
-    };
-    const QPoint target = numbers.back()->mapToGlobal(numbers.back()->rect().center());
-    drag(target, false, false);
-    ASSERT_EQ(moves.size(), 1);
-    EXPECT_EQ(moves.front(), qMakePair(0, 2));
-    EXPECT_FALSE(table.canMoveRow(0, 1));
-    drag(target, true, false);
-    drag(table.mapToGlobal(QPoint(-20, -20)), false, false);
-    editable = false;
-    drag(target, false, false);
-    EXPECT_EQ(moves.size(), 1);
-    editable = true;
-    QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::AltModifier);
-    QApplication::sendEvent(numbers.front(), &down);
-    EXPECT_EQ(moves.size(), 2);
-    drag(target, false, true);
-    EXPECT_EQ(moves.size(), 2);
+        table.rowForWidget(handles[1])->hide();
+        settle(table);
+        const auto drag = [&](const QPoint& destination, bool cancel, bool hide) {
+            auto* handle = handles.front();
+            const QPoint local = handle->rect().center();
+            QMouseEvent press(QEvent::MouseButtonPress, local, handle->mapToGlobal(local),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(handle, &press);
+            if (cancel) {
+                QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+                QApplication::sendEvent(handle, &escape);
+            }
+            if (hide) table.rowForWidget(handle)->hide();
+            QMouseEvent move(QEvent::MouseMove, table.mapFromGlobal(destination), destination,
+                            Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(&table, &move);
+            auto* indicator = table.findChild<QFrame*>(QStringLiteral("tableRowInsertion"));
+            if (!cancel && !hide && editable && table.rect().contains(table.mapFromGlobal(destination))) {
+                ASSERT_NE(indicator, nullptr);
+                EXPECT_TRUE(indicator->isVisible());
+                EXPECT_EQ(indicator->geometry().bottom(),
+                          table.rowForWidget(handles.back())->geometry().bottom());
+            } else if (indicator) {
+                EXPECT_FALSE(indicator->isVisible());
+            }
+            QMouseEvent release(QEvent::MouseButtonRelease, table.mapFromGlobal(destination), destination,
+                                Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+            QApplication::sendEvent(&table, &release);
+            settle(table);
+        };
+        auto* targetRow = table.rowForWidget(handles.back());
+        const QPoint target = targetRow->mapToGlobal(QPoint(targetRow->width() / 2, targetRow->height() - 2));
+        drag(target, false, false);
+        ASSERT_EQ(moves.size(), 1);
+        EXPECT_EQ(moves.front(), qMakePair(0, 2));
+        EXPECT_FALSE(table.canMoveRow(0, 1));
+        drag(target, true, false);
+        drag(table.mapToGlobal(QPoint(-20, -20)), false, false);
+        editable = false;
+        drag(target, false, false);
+        EXPECT_EQ(moves.size(), 1);
+        editable = true;
+        QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::AltModifier);
+        QApplication::sendEvent(handles.front(), &down);
+        EXPECT_EQ(moves.size(), 2);
+        drag(target, false, true);
+        EXPECT_EQ(moves.size(), 2);
+    }
 }
 
 TEST_F(TableWidgetTest, NativeRowMovementUsesNumberHandlesAndConfigFeedback)

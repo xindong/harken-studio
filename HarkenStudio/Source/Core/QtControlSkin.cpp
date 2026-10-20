@@ -184,6 +184,46 @@ void QtControlSkin::setSemanticProperty(QWidget* widget, const char* name,
     widget->update();
 }
 
+int QtControlSkin::tableResizeGripWidth(const QWidget* widget) const
+{
+    return std::max(metrics().table.resizeHandleRadius,
+        widget->style()->pixelMetric(QStyle::PM_HeaderGripMargin, nullptr, widget));
+}
+
+QtControlSkin::TableHandleLayout QtControlSkin::tableHandleLayout(
+    const QRect& rect, const QWidget* widget, bool hasHandle) const
+{
+    const auto& table = metrics().table;
+    const int grip = tableResizeGripWidth(widget);
+    const int handle = hasHandle
+        ? std::min(table.compactColumnWidth, std::max(0, rect.width() - grip * 2)) : 0;
+    const int padding = std::max(table.cellPaddingX, grip);
+    return {
+        QRect(rect.x() + grip, rect.y(), handle, rect.height()),
+        QRect(rect.x() + padding + handle, rect.y() + table.cellPaddingY,
+              std::max(0, rect.width() - padding * 2 - handle),
+              std::max(0, rect.height() - table.cellPaddingY * 2))};
+}
+
+void QtControlSkin::paintDragHandle(QPainter& painter, const QRect& rect, bool enabled) const
+{
+    if (rect.width() < 6) return;
+    painter.save();
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(enabled ? colors().textMuted : colors().textDisabled);
+    const auto center = rect.center();
+    for (int x : {-2, 2})
+        for (int y : {-4, 0, 4})
+            painter.drawEllipse(QPointF(center.x() + x, center.y() + y), 1, 1);
+    painter.restore();
+}
+
+void QtControlSkin::paintTableCellSelection(QPainter& painter, const QRect& rect) const
+{
+    painter.fillRect(rect, colors().bgSelected);
+    painter.fillRect(QRect(rect.left(), rect.top(), 2, rect.height()), colors().accent);
+}
+
 void QtControlSkin::paintFieldFrame(QPainter& painter, const QWidget* widget)
 {
     QStyleOption option;

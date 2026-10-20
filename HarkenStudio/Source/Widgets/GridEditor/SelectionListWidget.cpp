@@ -47,9 +47,13 @@ SelectionListWidget::SelectionListWidget(QWidget* parent)
     root->setSpacing(0);
 
     box_ = new TableWidget(TableOptions{TableKind::Config, TableBodySizing::Expanding}, this);
-    box_->setSelectionClearHandler([this] { selectRow(-1); });
+    box_->setSelectionClearHandler([this] {
+        selectRow(-1);
+        if (boundItem_) emit auditionTargetRequested(boundItem_->guid);
+    });
     box_->setRowSelectionHandler([this](QWidget* row) {
         selectRow(row->property("rowIndex").toInt());
+        emit auditionTargetRequested(QUuid(row->property("childGuid").toString()));
     });
     root->addWidget(box_, 1);
     buildHeader();
@@ -67,6 +71,7 @@ SelectionListWidget::SelectionListWidget(QWidget* parent)
     qApp->installEventFilter(this);
     connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
             this, [this](const PlatformContext&) {
+        const QSignalBlocker blocker(this);
         box_->clearSelection();
         rebuildRows();
     });
@@ -140,6 +145,7 @@ void SelectionListWidget::setBoundItem(ProjectItem* item)
 {
     if (selfWriting_)
         return;
+    const QSignalBlocker blocker(this);
     if (boundItem_ != item) box_->clearSelection();
     boundItem_ = item;
     const auto* selection = item ? item->comp<VSelection>() : nullptr;
@@ -176,10 +182,7 @@ bool SelectionListWidget::eventFilter(QObject* watched, QEvent* event)
             row = row->parentWidget();
         if (row && row->property("rowIndex").isValid()) {
             selectRow(row->property("rowIndex").toInt());
-        } else if (selected_ >= 0 && widget != this && !isAncestorOf(widget)
-                   && !widget->isAncestorOf(this)
-                   && widget->window() == window()) {
-            selectRow(-1);
+            emit auditionTargetRequested(QUuid(row->property("childGuid").toString()));
         }
     }
     return QWidget::eventFilter(watched, event);
