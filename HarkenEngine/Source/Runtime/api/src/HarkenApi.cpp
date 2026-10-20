@@ -271,8 +271,11 @@ std::size_t Engine::PendingSelectionStorageBytes() const noexcept {
             }
             // Member payload stays charged to its native issuer, including prepared allowances.
             if (group.nativeRuntimeBacking) {
-                bytes += sizeof(NativeRuntimeBacking) + group.nativeRuntimeBacking->groups.DirectoryBytes() +
-                    group.nativeRuntimeBacking->laneGroups.DirectoryBytes();
+                const auto& backing = *group.nativeRuntimeBacking;
+                bytes += sizeof(NativeRuntimeBacking) + backing.groups.DirectoryBytes() +
+                    backing.laneGroups.DirectoryBytes() + column(backing.reprepareProducers) +
+                    column(backing.selections) + column(backing.publicationProducers) +
+                    column(backing.publicationChildren) + column(backing.publicationOwners);
             }
         }
     };
@@ -321,7 +324,14 @@ std::size_t Engine::CapturedVoiceStorageBytes() const noexcept {
 }
 
 std::size_t Engine::PreparationStorageBytes() const noexcept {
+    const auto column = [](const auto& storage) noexcept {
+        return storage.capacity() * sizeof(typename std::decay_t<decltype(storage)>::value_type);
+    };
     return ActionPlayStorageBytes() + ActionPlayDirectoryBytes() + ActionPlayDynamicBytes() +
+        column(actionFiringPlanScratch) + column(actionStepPlanScratch) + column(actionVariableWriteScratch) +
+        column(actionSelectionResetScratch) + column(actionFixedSelectionCommitInputs) + column(actionQueueResetScratch) +
+        column(actionQueueCheckpointResetScratch) + column(actionPlayAttemptTokens) +
+        column(initialPendingVariableOwnerScratch) +
         ImmediateEntryAttemptStorageBytes() + PendingSelectionStorageBytes() + CapturedVoiceStorageBytes() +
         queueProgramBanks.RequestedBytes() + queueProgramBanks.DirectoryBytes() +
         originalSourceSubmissions.StorageBytes() + originalSinglePreparationHolders.RequestedBytes() +
@@ -34147,7 +34157,8 @@ void PublishMonitorPendingCensusSelections(harken::Engine& engine,
 }
 
 harken::EngineImmediateEntryAttempt* AcquireImmediateEntryAttempt(
-    harken::Engine& engine, harken::ActionFiringHandle root) noexcept {
+    harken::Engine& engine, harken::ActionFiringHandle root,
+    std::uint32_t selectionCapacity = 0) noexcept {
     for (std::uint32_t index = 0;
          index < engine.immediateEntryAttempts.Capacity(); ++index) {
         if (!engine.EnsureImmediateEntryAttempt(index)) return nullptr;
@@ -34169,6 +34180,8 @@ harken::EngineImmediateEntryAttempt* AcquireImmediateEntryAttempt(
             attempt.queueContinuationCoordinator.Valid() ||
             attempt.queueContinuationCoordinatorArmGroup.Valid() ||
             attempt.queueContinuationPrimaryGroup.Exact()) continue;
+        if (selectionCapacity != 0 && !engine.PrepareImmediateEntrySelectionStorage(attempt, selectionCapacity))
+            return nullptr;
         const auto generation = attempt.generation + 1u;
         if (!engine.ResetInitialSoundQueueCohort(attempt) ||
             !attempt.gate.Prepare(generation)) continue;
@@ -39358,20 +39371,6 @@ bool PendingVariableGroupSelectionChanged(const harken::EnginePlayableServiceRow
     return false;
 }
 
-struct PendingVariableGroupSelectionSnapshot {
-    std::array<harken::ContinuousGridWeight, 64> weights{};
-    harken::DiscreteGridSelection discrete{};
-    std::uint32_t weightCount = 0;
-    bool discreteMatched = false;
-
-    void Capture(const SharedVariableControlDecisionPlan& selected) noexcept {
-        weights = selected.weights;
-        discrete = selected.discrete;
-        weightCount = selected.weightCount;
-        discreteMatched = selected.discreteMatched;
-    }
-};
-
 template <typename Selection>
 bool PendingVariableGroupSelectionsMatch(const Selection& left,
     const SharedVariableControlDecisionPlan& right) noexcept {
@@ -39474,15 +39473,15 @@ PendingVariableGroupSelectionResult ServiceRegisteredPendingVariableGroupSelecti
     harken::Engine& engine, harken::EngineImmediateEntryAttempt& attempt) noexcept {
     using Result = PendingVariableGroupSelectionResult;
     auto* head = FindFrontierAttempt(engine, attempt.privateVcProducerHead);
-    if (head == nullptr || attempt.privateVcProducerCount > harken::kMaxActionSteps ||
+    if (head == nullptr ||
         !engine.MatchesRegisteredPendingVariableCohortReprepare(*head, attempt)) return Result::Refused;
     auto& backingOwner = engine.acceptedPendingVariableGroups[head->row->identity.slot];
     if (!backingOwner.nativeRuntimeBacking) return Result::Refused;
     harken::Engine::NativeRuntimeBackingUse preparedBacking(engine, backingOwner.nativeRuntimeBacking.get());
-    std::array<harken::EngineActionPlayScratch*, harken::kMaxActionSteps> producers{};
-    // Later placement compares membership and weights, not the temporary variable IDs.
-    std::array<PendingVariableGroupSelectionSnapshot, harken::kMaxActionSteps> selections{};
+    auto& producers = backingOwner.nativeRuntimeBacking->reprepareProducers;
+    auto& selections = backingOwner.nativeRuntimeBacking->selections;
     const auto count = attempt.privateVcProducerCount;
+    if (count > producers.size() || count > selections.size()) return Result::Refused;
     auto token = attempt.privateVcProducerHead;
     auto anchor = ActionImmediateStartFrame(engine);
     for (std::uint32_t index = 0; index < count; ++index) {
@@ -39534,7 +39533,7 @@ PendingVariableGroupSelectionResult ServiceRegisteredPendingVariableGroupSelecti
             !PreparePendingVariableGroupSelection(engine, row, *program, reader, anchor, selected, leaves, leafCount,
                 &tops, &topCount, &producer, &attempt))
             return withdraw(Result::Refused);
-        selections[index].Capture(selected);
+        selections[index] = {selected.weights, selected.discrete, selected.weightCount, selected.discreteMatched};
         const std::array<bool, 2> sides{program->discreteRowCount != 0, program->continuousRowCount != 0};
         std::array<harken::PreparedDecisionReservation*, 2> replacements{};
         for (std::uint32_t side = 0; side < sides.size(); ++side) {
@@ -41548,19 +41547,20 @@ class PendingSelectionCensusPublication {
 public:
     PendingSelectionCensusPublication(harken::Engine& engine,
         harken::EngineImmediateEntryAttempt& attempt) noexcept
-        : engine_(engine), attempt_(attempt), generation_(attempt.generation),
+        : engine_(engine), attempt_(attempt), cells_(attempt.selectionPublicationCells), generation_(attempt.generation),
           root_(attempt.selectionCensusRoot), producerCount_(attempt.selectionProducerCount) {}
     PendingSelectionCensusPublication(const PendingSelectionCensusPublication&) = delete;
     PendingSelectionCensusPublication& operator=(const PendingSelectionCensusPublication&) = delete;
 
     bool Prepare() noexcept {
-        if (prepared_ || producerCount_ > owners_.size()) return false;
+        if (prepared_ || producerCount_ > cells_.size()) return false;
         if (producerCount_ == 0) {
             prepared_ = root_ == 0 && attempt_.selectionCensusGeneration == 0;
             return prepared_;
         }
         if (!engine_.PreparePendingSelectionCensusCommitInputs(attempt_, &count_) || count_ == 0)
             return false;
+        std::fill_n(cells_.begin(), producerCount_, harken::EngineSelectionPublicationCell{});
         std::uint32_t captured = 0;
         for (std::uint32_t index = 0; index < producerCount_; ++index) {
             const auto& cell = attempt_.selectionProducers[index];
@@ -41568,17 +41568,17 @@ public:
             auto* owner = engine_.ResolvePendingSelectionCensusProducer(cell);
             if (owner == nullptr || captured == count_) return false;
             for (std::uint32_t previous = 0; previous < captured; ++previous)
-                if (owners_[previous] == owner) return false;
+                if (cells_[previous].owner == owner) return false;
             if (!cell.variableControl) {
                 auto& storage = engine_.actionPlayStorage[cell.token.slot];
                 if (storage.initialSelection.preparation.mode == harken::EngineSelectionPreparationMode::PendingInitial) {
                     if (storage.initialVariableService != &engine_.variables ||
                         !engine_.variables.CanTransferReadCutToTimelineUses(storage.initialVariableCut)) return false;
-                    cutStorage_[captured] = &storage;
-                    cuts_[captured] = storage.initialVariableCut;
+                    cells_[captured].cutStorage = &storage;
+                    cells_[captured].cut = storage.initialVariableCut;
                 }
             }
-            owners_[captured++] = owner;
+            cells_[captured++].owner = owner;
         }
         prepared_ = captured == count_ && ValidateInputs();
         return prepared_;
@@ -41592,12 +41592,13 @@ public:
                 harken::SelectionMemoryStatusV1::Ok) return false;
         // Core invalidates the tokens; the original wrappers must be captured before that happens.
         for (std::uint32_t index = 0; index < count_; ++index)
-            if (!owners_[index]->ReturnAfterCommit()) return false;
+            if (!cells_[index].owner->ReturnAfterCommit()) return false;
         for (std::uint32_t index = 0; index < count_; ++index) {
-            if (cutStorage_[index] == nullptr) continue;
-            if (!engine_.variables.TransferReadCutToTimelineUses(cuts_[index])) return false;
-            cutStorage_[index]->initialVariableCut = {};
-            cutStorage_[index]->initialVariableService = nullptr;
+            auto& cell = cells_[index];
+            if (cell.cutStorage == nullptr) continue;
+            if (!engine_.variables.TransferReadCutToTimelineUses(cell.cut)) return false;
+            cell.cutStorage->initialVariableCut = {};
+            cell.cutStorage->initialVariableService = nullptr;
         }
         for (auto& input : attempt_.selectionCommitInputs) input = {};
         prepared_ = false;
@@ -41615,14 +41616,15 @@ private:
         for (std::uint32_t index = 0; index < producerCount_; ++index) {
             const auto& cell = attempt_.selectionProducers[index];
             if (cell.returned) continue;
-            if (captured == count_ || engine_.ResolvePendingSelectionCensusProducer(cell) != owners_[captured])
+            if (captured == count_ || engine_.ResolvePendingSelectionCensusProducer(cell) != cells_[captured].owner)
                 return false;
-            const auto current = owners_[captured]->CommitInput();
-            if (cutStorage_[captured] != nullptr &&
-                (cutStorage_[captured] != &engine_.actionPlayStorage[cell.token.slot] ||
-                 cutStorage_[captured]->initialVariableService != &engine_.variables ||
-                 cutStorage_[captured]->initialVariableCut != cuts_[captured] ||
-                 !engine_.variables.CanTransferReadCutToTimelineUses(cuts_[captured]))) return false;
+            const auto& saved = cells_[captured];
+            const auto current = saved.owner->CommitInput();
+            if (saved.cutStorage != nullptr &&
+                (saved.cutStorage != &engine_.actionPlayStorage[cell.token.slot] ||
+                 saved.cutStorage->initialVariableService != &engine_.variables ||
+                 saved.cutStorage->initialVariableCut != saved.cut ||
+                 !engine_.variables.CanTransferReadCutToTimelineUses(saved.cut))) return false;
             const auto& original = attempt_.selectionCommitInputs[captured++];
             if (current.batch == nullptr || current.batch != original.batch ||
                 current.revision != original.revision) return false;
@@ -41633,9 +41635,7 @@ private:
 
     harken::Engine& engine_;
     harken::EngineImmediateEntryAttempt& attempt_;
-    std::array<harken::EnginePendingSelectionBatch*, harken::kMaxActionSteps> owners_{};
-    std::array<harken::EngineActionPlayStorage*, harken::kMaxActionSteps> cutStorage_{};
-    std::array<harken::VariableReadCutRef, harken::kMaxActionSteps> cuts_{};
+    std::span<harken::EngineSelectionPublicationCell> cells_;
     std::uint64_t generation_ = 0;
     harken::ActionFiringHandle root_ = 0;
     std::uint32_t producerCount_ = 0;
@@ -42236,7 +42236,7 @@ bool ProvePendingVariableReplacementPublication(harken::Engine& engine,
     harken::EngineImmediateEntryAttempt& attempt,
     harken::EngineActionPlayScratch* const* children, std::uint32_t count,
     PendingPrivateVcRootPublicationProof& proof) noexcept {
-    if (&proof.engine != &engine || children == nullptr || count == 0 || count > harken::kMaxActionSteps ||
+    if (&proof.engine != &engine || children == nullptr || count == 0 ||
         count > engine.initialRootActivationPublicationProofs.size() || proof.lane.Valid() ||
         proof.arms.Valid() || proof.gate.Valid() || proof.groups.Valid() || proof.activationCount != 0 ||
         !engine.immediateActionLane.ProvePrivatePublication(attempt.lane, attempt.root, &proof.lane)) return false;
@@ -42297,7 +42297,7 @@ bool BindPendingPrivateVcRoot(harken::Engine& engine,
     harken::EngineImmediateEntryAttempt& attempt, std::uint64_t anchor,
     std::size_t queueMemberCount, std::size_t queueProgramCount, std::size_t queueGroupCount) noexcept {
     const auto count = attempt.privateVcProducerCount;
-    std::array<harken::Engine::OriginalPendingVariableGroupHolder*, harken::kMaxActionSteps> nativeOwners{};
+    auto& nativeOwners = engine.initialPendingVariableOwnerScratch;
     if (count == 0 ||
         count > nativeOwners.size() ||
         attempt.initialQueueCoordinator.Valid() || engine.config.blockFrames == 0 ||
@@ -52443,6 +52443,16 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             queueControls > UINT32_MAX - nativeVoices) return false;
         if (!AllowNativeBackingAllocation()) return shortage();
         auto nativeCandidate = std::make_unique<NativeRuntimeBacking>();
+        if (!AllowNativeBackingAllocation()) return shortage();
+        nativeCandidate->reprepareProducers.resize(producerCount);
+        if (!AllowNativeBackingAllocation()) return shortage();
+        nativeCandidate->selections.resize(producerCount);
+        if (!AllowNativeBackingAllocation()) return shortage();
+        nativeCandidate->publicationProducers.resize(producerCount);
+        if (!AllowNativeBackingAllocation()) return shortage();
+        nativeCandidate->publicationChildren.resize(producerCount);
+        if (!AllowNativeBackingAllocation()) return shortage();
+        nativeCandidate->publicationOwners.resize(producerCount);
         // Queue futures acquire a slot even when their selected schedule has no leaves.
         if (!PrepareActionPlayBacking(producerCount, static_cast<std::uint32_t>(queueControls),
                 &nativeCandidate->actionPlays) ||
@@ -57764,16 +57774,21 @@ bool Engine::PublishRegisteredPendingVariableCohortReplacement(EngineImmediateEn
     PrivateImmediateLanePlacementProof& placement) noexcept {
     using Initial = OriginalPendingVariableGroupHolder::InitialReprepare;
     auto* head = FindFrontierAttempt(*this, attempt.privateVcProducerHead);
-    if (head == nullptr || attempt.privateVcProducerCount > kMaxActionSteps ||
+    if (head == nullptr ||
         !MatchesRegisteredPendingVariableCohortReprepare(*head, attempt)) return false;
-    auto& root = acceptedPendingVariableGroups[head->row->identity.slot].reprepare_;
+    auto& owner = acceptedPendingVariableGroups[head->row->identity.slot];
+    if (!owner.nativeRuntimeBacking) return false;
+    auto& root = owner.reprepare_;
     if (root.replacementCommandCount == 0 ? root.replacementCommandsReserved || preparedVoiceCommandBatchProof.Valid()
         : !root.replacementCommandsReserved || !commands.PreparedBatchMatches(preparedVoiceCommandBatchProof,
             &root.replacementCommandReservation, root.replacementCommandCount)) return false;
     const auto count = attempt.privateVcProducerCount;
     const auto eventCount = root.replacementDemand.events;
-    std::array<EngineActionPlayScratch*, kMaxActionSteps> producers{}, children{};
-    std::array<OriginalPendingVariableGroupHolder*, kMaxActionSteps> groups{};
+    auto& producers = owner.nativeRuntimeBacking->publicationProducers;
+    auto& children = owner.nativeRuntimeBacking->publicationChildren;
+    auto& groups = owner.nativeRuntimeBacking->publicationOwners;
+    if (count > producers.size() || count > children.size() || count > groups.size()) return false;
+    std::fill_n(children.begin(), count, nullptr);
     auto token = attempt.privateVcProducerHead;
     std::uint64_t anchor = 0;
     std::uint32_t active = 0;
@@ -74091,8 +74106,6 @@ bool ExpandImmediateAction(ImmediateActionPlan* plan,
         }
     }
 
-    const std::uint32_t firingStart = plan->firingCount;
-    const std::uint32_t stepStart = plan->stepCount;
     auto& firing = plan->engine->actionFiringPlanScratch[plan->firingCount];
     if (firing.originalPackLease.Valid() ||
         (original != nullptr && !plan->engine->OriginalPackIdentityLeaseMatches(*original, owner.pack))) {
@@ -74456,27 +74469,6 @@ bool ExpandImmediateAction(ImmediateActionPlan* plan,
             (void)releaseUnconsumedChildLease();
             return false;
         }
-    }
-    std::uint32_t expectedSteps = action->stepCount;
-    std::uint32_t expectedFirings = 1;
-    for (std::uint32_t index = stepStart; index < plan->stepCount; ++index) {
-        const auto& planned = plan->engine->actionStepPlanScratch[index];
-        if (planned.firingIndex != firingIndex ||
-            planned.step->opcode != harken::ActionOpcodeV1::PostAction ||
-            planned.deferred || planned.cooldownSuppressed ||
-            planned.quantizeSuppressed ||
-            planned.childFiringIndex == UINT32_MAX) {
-            continue;
-        }
-        const auto& child =
-            plan->engine->actionFiringPlanScratch[planned.childFiringIndex];
-        expectedSteps += child.action->expandedStepOccurrenceCount;
-        expectedFirings += child.action->expandedFiringCount;
-    }
-    if (plan->stepCount - stepStart != expectedSteps ||
-        plan->firingCount - firingStart != expectedFirings) {
-        plan->result = VN_BAD_CURRENT_WORLD;
-        return false;
     }
     return true;
 }
@@ -86213,7 +86205,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
             laneDemandComputed = true;
         }
         plan->reservedCohortAttempt = AcquireImmediateEntryAttempt(
-            engine, plan->rootHandle);
+            engine, plan->rootHandle, preparedCount);
         if (plan->reservedCohortAttempt != nullptr) {
             plan->reservedCohortAttempt->initialService = play->row->identity;
             plan->reservedCohortAttempt->initialInvocationGeneration =
@@ -92030,6 +92022,11 @@ TimelineDeferredMaterializeStatus MaterializeActionDeferredPostAction(
             : ActionFiringOwnerStamp::DirectWorld(
                   engine.variables.CurrentWorldGeneration(), firing.owner.projectId);
     std::uint32_t childIndex = UINT32_MAX;
+    if (!engine.ActionPlanWorkspaceFits(child->expandedStepOccurrenceCount, child->expandedFiringCount)) {
+        engine.runtimeRecreateRequired = true;
+        return finish(ActionStepState::Failed, VN_RUNTIME_RECREATE_REQUIRED,
+                      ActionTerminalReason::GenerationExhausted);
+    }
     if (!ExpandImmediateAction(&plan, child, childOwner, false, UINT32_MAX, 1,
                                &childIndex) ||
         childIndex != 0) {
@@ -101693,6 +101690,8 @@ VnResult harken::detail::PostActionWithValidation(
                               engine->variables.CurrentWorldGeneration(),
                               engine->variables.CurrentPlayableWorld().identity.projectId);
                 std::uint32_t rootIndex = UINT32_MAX;
+                if (!engine->PrepareActionPlanWorkspace(action->expandedStepOccurrenceCount, action->expandedFiringCount))
+                    return VN_BACKPRESSURE;
                 if (!ExpandImmediateAction(&plan, action, owner, false,
                                            UINT32_MAX, 1, &rootIndex,
                                            originalDefinitionAcquired ? &engine->originalActionFiringPreparation : nullptr)) {

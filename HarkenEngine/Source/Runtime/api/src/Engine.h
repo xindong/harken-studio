@@ -46,6 +46,7 @@
 #include "harken/core/ContainerPlaybackTable.h"
 #include "harken/core/QueueRuntime.h"
 #include "harken/core/VariableControlRuntime.h"
+#include "harken/core/VariableControlGrid.h"
 #include "harken/core/PlayablePropertyCut.h"
 #include "harken/core/ProgramGenerationRegistry.h"
 #include "harken/core/ScheduledTransactionPool.h"
@@ -2390,10 +2391,16 @@ struct EngineInitialSelectionProducer {
     bool returned = false;
 };
 
+struct EngineSelectionPublicationCell {
+    EnginePendingSelectionBatch* owner = nullptr;
+    EngineActionPlayStorage* cutStorage = nullptr;
+    VariableReadCutRef cut{};
+};
+
 struct EngineImmediateEntryAttempt {
     EngineImmediateEntryAttempt() = default;
     EngineImmediateEntryAttempt(std::uint32_t voices, std::uint32_t events, std::uint32_t producers)
-        : selectionProducers(producers), selectionCommitInputs(producers),
+        : selectionProducers(producers), selectionCommitInputs(producers), selectionPublicationCells(producers),
           plainSources(events), plainStops(events), privateVoices(voices) {}
     ImmediateLaneHandle lane{};
     // Only the same native Reserve can fill this fixed baseline. It is not
@@ -2435,6 +2442,7 @@ struct EngineImmediateEntryAttempt {
     // Their identity survives Lane retirement until every original owner exits.
     std::vector<EngineInitialSelectionProducer> selectionProducers;
     std::vector<PendingSelectionBatchCommitV1> selectionCommitInputs;
+    std::vector<EngineSelectionPublicationCell> selectionPublicationCells;
     ActionFiringHandle selectionCensusRoot = 0;
     std::uint64_t selectionCensusGeneration = 0;
     std::uint32_t selectionProducerCount = 0;
@@ -4571,7 +4579,7 @@ struct EngineActionQueueReplacementScratch {
     bool prepared = false;
 };
 
-inline std::size_t ActionPlanScratchCapacity(
+inline std::size_t ActionPreparationSlotCapacity(
     const EngineConfig& config) noexcept {
     return static_cast<std::size_t>(kMaxActionSteps) *
            config.maxTriggerDepth;
@@ -4815,7 +4823,18 @@ struct Engine {
     };
 
     struct OriginalPendingVariableGroupHolder;
+    struct PendingVariableSelectionSnapshot {
+        std::array<ContinuousGridWeight, 64> weights{};
+        DiscreteGridSelection discrete{};
+        std::uint32_t weightCount = 0;
+        bool discreteMatched = false;
+    };
     struct NativeRuntimeBacking {
+        std::vector<EngineActionPlayScratch*> reprepareProducers;
+        std::vector<PendingVariableSelectionSnapshot> selections;
+        std::vector<EngineActionPlayScratch*> publicationProducers;
+        std::vector<EngineActionPlayScratch*> publicationChildren;
+        std::vector<OriginalPendingVariableGroupHolder*> publicationOwners;
         DecisionTable::BackingPreparation decisions;
         CompositeCompletionOwnerPool::BackingPreparation completions;
         StableStoragePreparation voices;
@@ -5563,16 +5582,15 @@ public:
                          resolved.voiceCapacity.Logical() +
                          resolved.maxDeferredIntents,
                      voices.Capacity(), resolved.maxBuses),
-          actionFiringPlanScratch(ActionPlanScratchCapacity(resolved)),
+          actionFiringPlanScratch(1),
           actionFiringOwnerReleaseScratch(resolved.maxActionFirings),
           originalActionFiringPackHolders(resolved.maxActionFirings),
-          actionStepPlanScratch(ActionPlanScratchCapacity(resolved)),
-          actionVariableWriteScratch(ActionPlanScratchCapacity(resolved)),
-          actionSelectionResetScratch(ActionPlanScratchCapacity(resolved)),
-          actionFixedSelectionCommitInputs(ActionPlanScratchCapacity(resolved)),
-          actionQueueResetScratch(ActionPlanScratchCapacity(resolved)),
-           actionQueueCheckpointResetScratch(
-               ActionPlanScratchCapacity(resolved)),
+          actionStepPlanScratch(1),
+          actionVariableWriteScratch(1),
+          actionSelectionResetScratch(1),
+          actionFixedSelectionCommitInputs(1),
+          actionQueueResetScratch(1),
+           actionQueueCheckpointResetScratch(1),
            actionDeferredScratch(resolved.maxDeferredIntents),
            originalDeferredPackHolders(resolved.maxDeferredIntents),
           playableInstances(resolved.maxPlayableInstances),
@@ -5586,7 +5604,8 @@ public:
                  2 * (static_cast<std::size_t>(TimelineArmCapacity(resolved)) +
                       resolved.voiceCapacity.Logical())),
           playablePartitions(resolved.maxPlayableInstances),
-           actionPlayAttemptTokens(ActionPlanScratchCapacity(resolved)),
+           actionPlayAttemptTokens(1),
+           initialPendingVariableOwnerScratch(1),
            initialQueueEntryDecisionOwnersScratch(
                resolved.maxPlayableInstances),
            initialQueueCoordinatorParticipantsScratch(
@@ -5793,7 +5812,7 @@ public:
             playableStarts[index].slot = static_cast<std::uint32_t>(index);
         }
         if (!playableServices.Reserve(resolved.maxPlayableInstances)) throw std::bad_alloc{};
-        const auto playSlotCapacity = ActionPlanScratchCapacity(resolved);
+        const auto playSlotCapacity = ActionPreparationSlotCapacity(resolved);
         const auto queueBankCapacity = QueueProgramBankCapacity(resolved);
         const auto privateLaneMetadataCapacity = std::max(resolved.maxTransactionEvents,
             resolved.maxKnownScheduleLeaves * 4u);
@@ -6739,11 +6758,47 @@ public:
             OriginalDeferredPackLease(storage->originalDeferredPackRecord) != nullptr;
     }
 
+    bool ActionPlanWorkspaceFits(std::uint32_t steps, std::uint32_t firings) const noexcept {
+        const auto plays = std::min<std::size_t>(steps, actionPlayScratch.size());
+        return firings <= actionFiringPlanScratch.size() && steps <= actionStepPlanScratch.size() &&
+            steps <= actionVariableWriteScratch.size() && steps <= actionSelectionResetScratch.size() &&
+            steps <= actionFixedSelectionCommitInputs.size() && steps <= actionQueueResetScratch.size() &&
+            steps <= actionQueueCheckpointResetScratch.size() && plays <= actionPlayAttemptTokens.size() &&
+            plays <= initialPendingVariableOwnerScratch.size();
+    }
+    bool PrepareActionPlanWorkspace(std::uint32_t steps, std::uint32_t firings) noexcept {
+        if (steps > kHardActionExpandedWorkCapacity || firings > kHardActionExpandedWorkCapacity ||
+            memguard::IsAudioTagged()) return false;
+        const auto grow = [](auto& column, std::size_t count) {
+            if (column.size() < count) column.resize(count);
+        };
+        try {
+            grow(actionFiringPlanScratch, firings);
+            grow(actionStepPlanScratch, steps);
+            grow(actionVariableWriteScratch, steps);
+            grow(actionSelectionResetScratch, steps);
+            grow(actionFixedSelectionCommitInputs, steps);
+            grow(actionQueueResetScratch, steps);
+            grow(actionQueueCheckpointResetScratch, steps);
+            grow(actionPlayAttemptTokens, std::min<std::size_t>(steps, actionPlayScratch.size()));
+            grow(initialPendingVariableOwnerScratch, std::min<std::size_t>(steps, actionPlayScratch.size()));
+            return true;
+        } catch (...) { return false; }
+    }
+    bool PrepareImmediateEntrySelectionStorage(EngineImmediateEntryAttempt& attempt, std::uint32_t count) noexcept {
+        if (attempt.active || attempt.selectionProducerCount != 0 || attempt.selectionCensusRoot != 0 ||
+            attempt.selectionCensusGeneration != 0 || memguard::IsAudioTagged()) return false;
+        try {
+            if (attempt.selectionProducers.size() < count) attempt.selectionProducers.resize(count);
+            if (attempt.selectionCommitInputs.size() < count) attempt.selectionCommitInputs.resize(count);
+            if (attempt.selectionPublicationCells.size() < count) attempt.selectionPublicationCells.resize(count);
+            return true;
+        } catch (...) { return false; }
+    }
     bool EnsureImmediateEntryAttempt(std::uint32_t slot) noexcept {
         if (slot < immediateEntryAttempts.size()) return true;
         if (slot != immediateEntryAttempts.size()) return false;
-        return immediateEntryAttempts.EmplaceBack(voices.Capacity(), immediateActionLane.EventsPerAttempt(),
-            static_cast<std::uint32_t>(actionPlayAttemptTokens.size()));
+        return immediateEntryAttempts.EmplaceBack(voices.Capacity(), immediateActionLane.EventsPerAttempt(), 0u);
     }
     std::size_t ImmediateEntryAttemptStorageBytes() const noexcept {
         auto bytes = immediateEntryAttempts.RequestedBytes();
@@ -6752,6 +6807,7 @@ public:
         };
         for (const auto& attempt : immediateEntryAttempts)
             bytes += column(attempt.selectionProducers) + column(attempt.selectionCommitInputs) +
+                column(attempt.selectionPublicationCells) +
                 column(attempt.plainSources) + column(attempt.plainStops) + column(attempt.privateVoices);
         return bytes;
     }
@@ -11999,6 +12055,7 @@ public:
     StableSlotStorage<EngineActionPlayStorage> actionPlayStorage;
     StableSlotStorage<EngineActionPlayScratch> actionPlayScratch;
     std::vector<EngineFrontierAttemptToken> actionPlayAttemptTokens;
+    std::vector<OriginalPendingVariableGroupHolder*> initialPendingVariableOwnerScratch;
     std::vector<EngineInitialQueueEntryDecisionOwner>
         initialQueueEntryDecisionOwnersScratch;
     std::vector<DecisionParticipantRef>

@@ -6795,6 +6795,48 @@ TEST(ActionFiringApi, DelayedNestedPostActionMaterializesImmediateChildTree) {
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
+TEST(ActionFiringApi, ImmediateParentRetainsDelayedGrandchildUntilMaterialization) {
+    (void)Vn_Term();
+    harkentest::EngineSession session(harkentest::MakeNullConfig(2, 256, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    CanonicalActionWorld image;
+    image.steps[14] = image.steps[2];
+    image.steps[14].target.stableId = image.actions[1].actionStableId;
+    image.steps[14].target.expectedProgramSemanticFingerprint = image.actions[1].programSemanticFingerprint;
+    auto& parent = image.actions[10];
+    parent.actionStableId = harkentest::ObjectId(51);
+    parent.steps = &image.steps[14];
+    parent.stepCount = 1;
+    parent.transitiveFeatureMask = 1;
+    parent.expandedStepOccurrenceCount = parent.expandedFiringCount = 3;
+    parent.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(parent);
+    image.world.actionCount = 11;
+    image.world.capacity.maxActionTriggerDepth = 3;
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, image.world).status);
+
+    auto desc = ValidPostDesc();
+    desc.actionId = parent.actionStableId;
+    VnActionFiringHandle root = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &root));
+    VnActionStepResult step{};
+    step.structSize = sizeof(step);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(root, 0, &step));
+    ASSERT_NE(0u, step.childFiring);
+    const auto child = step.childFiring;
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(child, 0, &step));
+    EXPECT_EQ(VN_ACTION_STEP_AWAITING_MATERIALIZATION, step.state);
+    EXPECT_EQ(0u, step.childFiring);
+    DrainActionDeferred(engine);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(child, 0, &step));
+    ASSERT_NE(0u, step.childFiring);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(step.childFiring, 0, &step));
+    EXPECT_EQ(VN_ACTION_STEP_SUCCEEDED, step.state);
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(root));
+}
+
 TEST(ActionFiringApi, DelayedSetValueMaterializesThroughTimelineService) {
     (void)Vn_Term();
     harkentest::EngineSession session(harkentest::MakeNullConfig());
@@ -43267,6 +43309,54 @@ TEST(ActionFiringApi, PostExpandsNestedActionsDepthFirstUnderOneSequence) {
     childInfo.structSize = sizeof(childInfo);
     EXPECT_EQ(VN_STALE_HANDLE,
               Vn_QueryActionFiring(post.childFiring, &childInfo));
+}
+
+TEST(ActionFiringApi, TenThousandStepsPreserveCompletePublicResults) {
+    (void)Vn_Term();
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    CanonicalActionWorld image;
+    std::vector<harken::ActionStepProgramViewV1> steps(10000, image.steps[0]);
+    for (std::uint32_t index = 0; index < steps.size(); ++index) {
+        auto& step = steps[index];
+        step.opcode = harken::ActionOpcodeV1::Stop;
+        step.target.kind = harken::ActionTargetKindV1::Sound;
+        step.target.stableId = image.properties[0].stableId;
+        step.target.expectedProgramSemanticFingerprint = image.properties[0].programSemanticFingerprint;
+        step.authoredEventIndex = index;
+        step.valueBits = 0;
+    }
+    auto& action = image.actions[0];
+    action.steps = steps.data();
+    action.stepCount = action.expandedStepOccurrenceCount = static_cast<std::uint32_t>(steps.size());
+    action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+    image.world.actionCount = 1;
+    image.world.capacity.maxActionStepsPerDefinition = action.stepCount;
+    image.world.capacity.maxActionStepsTotal = action.stepCount;
+    image.world.capacity.maxActionExpandedWork = action.stepCount;
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, image.world).status);
+
+    auto desc = ValidPostDesc();
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    VnActionFiringInfo info{};
+    info.structSize = sizeof(info);
+    ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+    EXPECT_EQ(action.stepCount, info.directStepCount);
+    EXPECT_EQ(action.stepCount, info.directStepTerminalCount);
+    EXPECT_EQ(VN_ACTION_OUTCOME_SUCCEEDED, info.outcome);
+    VnActionStepResult step{};
+    step.structSize = sizeof(step);
+    for (std::uint32_t index = 0; index < action.stepCount; ++index) {
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, index, &step));
+        ASSERT_EQ(VN_ACTION_STEP_SUCCEEDED, step.state);
+        EXPECT_EQ(index, step.authoredEventIndex);
+        EXPECT_EQ(index, step.executionOrdinal);
+    }
+    ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_QueryActionStep(firing, 0, &step));
 }
 
 TEST(ActionFiringApi, PostOrdersMultipleSetValuesWithinOneSequence) {

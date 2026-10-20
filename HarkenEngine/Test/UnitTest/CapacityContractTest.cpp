@@ -111,6 +111,7 @@ TEST(StableBackingPreparation, SplitCheckpointAllowanceSurvivesClearAndPreserves
     key.world = 1;
     key.containerStableId = harkentest::ObjectId(2);
     key.programSemanticFingerprint = 3;
+    key.resetEpoch = 1;
     harken::QueueCheckpointImage image{};
     image.effective.version = 1;
     image.replayCurrent = true;
