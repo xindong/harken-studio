@@ -371,7 +371,7 @@ struct FrontierTrace {
                 for (std::size_t logical = 0; leafHandle == 0 && logical < engine.playableMemberReferences.size(); ++logical) {
                     std::size_t physical = 0;
                     if (engine.ResolvePlayableMemberSlot(logical, &physical) &&
-                        matches(engine.playableScheduleArms[physical]))
+                        matches(engine.ReadPlayableMember(physical).arm))
                         leafHandle = engine.playableMemberReferences[logical].leaf;
                 }
                 for (const auto& service : engine.playableServices) {

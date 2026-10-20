@@ -805,19 +805,11 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(engine->config.maxContainerInstances, engine->queueInstances.Capacity());
     EXPECT_EQ(engine->config.maxContainerInstances, engine->variableControlInstances.Capacity());
 
-    EXPECT_EQ(layout.memberCount, engine->playableScheduleVoices.size());
-    EXPECT_EQ(layout.memberCount, engine->playableScheduleLeaves.size());
-    EXPECT_EQ(layout.memberCount, engine->playableScheduleArms.size());
-    EXPECT_EQ(layout.memberCount,
-              engine->playableScheduleRenderHandles.size());
-    EXPECT_EQ(layout.memberCount, engine->playableScheduleReleaseObservers.size());
-    EXPECT_EQ(layout.memberCount, engine->variableControlMemberCompletions.size());
-    EXPECT_EQ(layout.memberCount, engine->playableScheduleSelections.size());
+    EXPECT_EQ(layout.memberCount, engine->playableMemberRecords.size());
+    EXPECT_EQ(0u, engine->playableMemberRecords.ConstructedCount());
+    EXPECT_EQ(0u, engine->playableMemberRecords.RequestedBytes());
     EXPECT_EQ(layout.memberCount, engine->playableMemberReferences.size());
     EXPECT_EQ(engine->config.maxPlayableInstances, engine->sourceTerminals.Capacity());
-    EXPECT_EQ(layout.memberCount, engine->playableScheduleStartFrames.size());
-    EXPECT_EQ(layout.memberCount,
-              engine->variableControlDynamicMembers.size());
 
     EXPECT_EQ(layout.pairedCount,
               engine->playableScheduleCompletions.size());
@@ -860,17 +852,12 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(layout.continuousCount,
               engine->variableControlRetargetMemberKinds.size());
 
-    const std::uint64_t memberBytesPerSlot =
-        sizeof(engine->playableScheduleVoices[0]) +
-        sizeof(engine->playableScheduleLeaves[0]) +
-        sizeof(engine->playableScheduleArms[0]) +
-        sizeof(engine->playableScheduleRenderHandles[0]) +
-        sizeof(engine->playableScheduleReleaseObservers[0]) +
-        sizeof(engine->variableControlMemberCompletions[0]) +
-        sizeof(engine->playableScheduleSelections[0]) +
-        sizeof(engine->playableMemberReferences[0]) +
-        sizeof(engine->playableScheduleStartFrames[0]) +
-        sizeof(engine->variableControlDynamicMembers[0]);
+    const std::uint64_t memberBytesPerSlot = sizeof(engine->playableMemberReferences[0]);
+    const std::uint64_t removedMemberBytesPerSlot =
+        sizeof(harken::CapturedTimelineVoiceInstall) + sizeof(harken::PlayableRefV1) +
+        sizeof(harken::TimelineArmToken) + sizeof(VnVoiceHandle) + sizeof(harken::VoiceReleaseObserver) +
+        sizeof(harken::VariableControlMemberCompletion) + 2u * sizeof(harken::EngineMonitorSelection) +
+        sizeof(std::uint64_t) + sizeof(std::uint8_t);
     const std::uint64_t pairedBytesPerSlot =
         sizeof(engine->playableScheduleCompletions[0]) +
         sizeof(engine->playableSchedulePostSourceTailFrames[0]);
@@ -921,7 +908,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         sizeof(harken::TimelineVoiceBindingInstall) *
         harken::kMaxVoiceBindingInstanceSlots;
     EXPECT_EQ(sizeof(harken::CapturedTimelineVoiceInstall),
-              sizeof(engine->playableScheduleVoices[0]));
+              sizeof(engine->ReadPlayableMember(0).voice));
     EXPECT_EQ(sizeof(harken::CapturedTimelineVoiceInstall),
               sizeof(engine->playableSuccessorVoices[0]));
     EXPECT_EQ(2'636u + 2u * sizeof(float) + sizeof(harken::PcmLoopRegion) +
@@ -947,16 +934,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
               static_cast<std::uint64_t>(engine->sourceTerminals.Capacity()) * sizeof(harken::SourceTerminalRecord));
 
     EXPECT_EQ(layout.memberCount * memberBytesPerSlot,
-              StorageBytes(engine->playableScheduleVoices) +
-                  StorageBytes(engine->playableScheduleLeaves) +
-                  StorageBytes(engine->playableScheduleArms) +
-                  StorageBytes(engine->playableScheduleRenderHandles) +
-                  StorageBytes(engine->playableScheduleReleaseObservers) +
-                  StorageBytes(engine->variableControlMemberCompletions) +
-                  StorageBytes(engine->playableScheduleSelections) +
-                  StorageBytes(engine->playableMemberReferences) +
-                  StorageBytes(engine->playableScheduleStartFrames) +
-                  StorageBytes(engine->variableControlDynamicMembers));
+              StorageBytes(engine->playableMemberReferences));
     EXPECT_EQ(layout.pairedCount * pairedBytesPerSlot,
               StorageBytes(engine->playableScheduleCompletions) +
                   StorageBytes(engine->playableSchedulePostSourceTailFrames));
@@ -981,6 +959,9 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
                   StorageBytes(engine->variableControlRetargetArms) +
                   StorageBytes(engine->variableControlRetargetMemberKinds));
     testing::Test::RecordProperty("seven_family_capacity_bytes", std::to_string(totalBytes));
+    testing::Test::RecordProperty("removed_prebuilt_member_bytes",
+        std::to_string(layout.memberCount * removedMemberBytesPerSlot));
+    testing::Test::RecordProperty("playable_member_record_bytes", std::to_string(sizeof(harken::EnginePlayableMemberRecord)));
     testing::Test::RecordProperty("removed_prebuilt_program_bytes", std::to_string(
         layout.currentEventCount * currentEventBytesPerSlot +
         layout.initialProgramCount * initialProgramBytesPerSlot));
@@ -1012,6 +993,8 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         engine->ActionPlayCommittedBytes(), engine->ActionPlayReservedBytes());
     recordStableRows("member_program_rows", engine->memberProgramRecords.RequestedBytes(),
         engine->memberProgramRecords.CommittedBytes(), engine->memberProgramRecords.ReservedBytes());
+    recordStableRows("playable_member_rows", engine->playableMemberRecords.RequestedBytes(),
+        engine->playableMemberRecords.CommittedBytes(), engine->playableMemberRecords.ReservedBytes());
     recordStableRows("control_program_rows", engine->variableControlRetargetPrograms.RequestedBytes(),
         engine->variableControlRetargetPrograms.CommittedBytes(), engine->variableControlRetargetPrograms.ReservedBytes());
     testing::Test::RecordProperty("action_play_directory_bytes", std::to_string(engine->ActionPlayDirectoryBytes()));
@@ -1052,7 +1035,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("monitor_selection_pool_capacity",
         std::to_string(engine->ledger.MonitorSelectionCapacity()));
     testing::Test::RecordProperty("monitor_selection_vector_bytes",
-        std::to_string(StorageBytes(engine->playableScheduleSelections) + StorageBytes(engine->playableSuccessorSelections)));
+        std::to_string(StorageBytes(engine->playableSuccessorSelections)));
     testing::Test::RecordProperty("source_terminal_row_bytes", std::to_string(sizeof(harken::SourceTerminalRecord)));
     testing::Test::RecordProperty("timeline_arm_row_bytes", std::to_string(sizeof(harken::TimelineArmTable::Row)));
     testing::Test::RecordProperty("authored_control_metadata_row_bytes",
@@ -1068,9 +1051,9 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("member_completion_onset_offset",
         std::to_string(offsetof(harken::VariableControlMemberCompletion, sourceStartedBlockSequence)));
     testing::Test::RecordProperty("member_completion_capacity_bytes",
-        std::to_string(StorageBytes(engine->variableControlMemberCompletions)));
+        std::to_string(engine->playableMemberRecords.ConstructedCount() * sizeof(harken::VariableControlMemberCompletion)));
     testing::Test::RecordProperty("member_completion_onset_capacity_bytes",
-        std::to_string(engine->variableControlMemberCompletions.size() * sizeof(std::uint64_t)));
+        std::to_string(engine->playableMemberRecords.ConstructedCount() * sizeof(std::uint64_t)));
     testing::Test::RecordProperty("invocation_row_bytes", std::to_string(sizeof(harken::EnginePlayableStartRow)));
     testing::Test::RecordProperty("invocation_pending_stop_bytes", std::to_string(sizeof(harken::PlayableRetirementObserver)));
     testing::Test::RecordProperty("invocation_pending_stop_capacity_bytes",

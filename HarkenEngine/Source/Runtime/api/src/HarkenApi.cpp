@@ -231,7 +231,7 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
             column(scratch.sourceLeafEventCounts) + column(scratch.replacementGroupArms);
     }
     for (const auto& row : playableServices) {
-        bytes += column(row.memberPrograms) + column(row.variableControlDiscreteRetargetPayloads) +
+        bytes += column(row.memberPrograms) + column(row.members) + column(row.variableControlDiscreteRetargetPayloads) +
             column(row.variableControlDiscreteRetargetEnteringPayloads) +
             column(row.variableControlDiscreteRetargetEvents) +
             column(row.variableControlDiscreteRetargetEnteringEvents) +
@@ -240,7 +240,8 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
             column(row.variableControlDiscreteRetargetSchedules) +
             column(row.variableControlDiscreteRetargetEnteringSchedules);
     }
-    return bytes + memberProgramRecords.RequestedBytes() + memberProgramRecords.DirectoryBytes() +
+    return bytes + memberProgramRecords.RequestedBytes() +
+        playableMemberRecords.RequestedBytes() +
         variableControlRetargetPrograms.RequestedBytes();
 }
 
@@ -301,7 +302,7 @@ std::size_t Engine::CapturedVoiceStorageBytes() const noexcept {
             service.capturedScheduleVoices.capacity() * sizeof(CapturedTimelineVoiceInstall);
         for (const auto& voice : service.capturedScheduleVoices) bytes += charge(voice);
     }
-    for (const auto& voice : playableScheduleVoices) bytes += charge(voice);
+    for (const auto& member : playableMemberRecords) bytes += charge(member.voice);
     for (const auto& voice : playableSuccessorVoices) bytes += charge(voice);
     for (const auto& scratch : actionPlayScratch)
         bytes += sideBytes(scratch.voiceStarts) + sideBytes(scratch.queueSuccessorVoiceStarts);
@@ -328,6 +329,7 @@ std::size_t Engine::PreparationStorageBytes() const noexcept {
     for (const auto& pending : pendingStarts) bindingBytes += column(pending.preparedBindings);
     for (const auto& parked : parkRecords) bindingBytes += column(parked.preparedBindings);
     return ActionPlayStorageBytes() + ActionPlayDirectoryBytes() + ActionPlayDynamicBytes() +
+        memberProgramRecords.DirectoryBytes() + playableMemberRecords.DirectoryBytes() +
         column(actionFiringPlanScratch) + column(actionStepPlanScratch) + column(actionVariableWriteScratch) +
         column(actionSelectionResetScratch) + column(actionFixedSelectionCommitInputs) + column(actionQueueResetScratch) +
         column(actionQueueCheckpointResetScratch) + column(actionPlayAttemptTokens) +
@@ -6428,6 +6430,13 @@ void PublishMonitorSelection(harken::Engine& engine,
     engine.ledger.PublishMonitorSelection(selection.observation, &cause);
 }
 
+void PublishMonitorMemberSelection(harken::Engine& engine, std::size_t physicalSlot,
+    const harken::MonitorControlCause& cause) noexcept {
+    auto* member = engine.FindPlayableMember(physicalSlot);
+    if (member != nullptr)
+        PublishMonitorSelection(engine, member->monitorSelection, member->arm, member->render, cause);
+}
+
 harken::MonitorControlCause MonitorInitialSelectionCause(
     const harken::EnginePlayableServiceRow& row, bool initial) noexcept {
     harken::MonitorControlCause cause{};
@@ -10729,8 +10738,8 @@ harken::EnginePlayableServiceRow* ResolvePlainInitialForwardedResource(
             const auto slot = child->queueCurrentScheduleBase;
             const auto base = engine.playableStorage.MemberBase(child->partition.slot);
             if (slot < base || slot - base >= engine.playableStorage.memberStride ||
-                slot >= engine.variableControlMemberCompletions.size()) return nullptr;
-            const auto& physical = engine.variableControlMemberCompletions[slot];
+                slot >= engine.playableStorage.memberCount) return nullptr;
+            const auto& physical = engine.ReadPlayableMember(slot).completion;
             const auto* retired = engine.sourceTerminals.At(physical.source.slot);
             const auto leaf = engine.playableInstances.Classify(physical.leafInstance);
             harken::CompletionOwnerRef completionOwner{};
@@ -10819,8 +10828,12 @@ bool PreparePlayableMemberStorage(
         if (privateReference != nullptr && (offset >= engine.playableStorage.currentEventStride ||
                 offset >= engine.playableStorage.initialProgramStride)) continue;
         const auto slot = base + offset;
-        auto& member = engine.variableControlMemberCompletions[slot];
-        if (member.leafInstance != 0) continue;
+        if (offset >= owner.members.size()) return false;
+        if (owner.members[offset].Valid()) {
+            if (engine.FindPlayableMember(owner, offset) == nullptr) return false;
+            continue;
+        }
+        if (engine.AcquirePlayableMember(owner, offset) == nullptr) return false;
         engine.SetPlayableMemberCompletion(slot, {leaf, epoch, {}});
         const harken::EnginePlayableMemberReference reference{
             PlayableServiceReference(owner), owner.partition.generation, offset, leaf, epoch};
@@ -10832,22 +10845,55 @@ bool PreparePlayableMemberStorage(
     return false;
 }
 
+struct PreparedPlayableMemberRecords {
+    harken::Engine& engine;
+    harken::EnginePlayableServiceRow& owner;
+    std::array<std::uint32_t, harken::kMaxKnownScheduleLeaves> offsets{};
+    std::array<harken::EnginePlayableMemberToken, harken::kMaxKnownScheduleLeaves> tokens{};
+    std::uint32_t count = 0;
+    bool retained = false;
+
+    bool Acquire(std::uint32_t offset) noexcept {
+        if (offset >= owner.members.size()) return false;
+        const bool existing = owner.members[offset].Valid();
+        if ((!existing && count == offsets.size()) || engine.AcquirePlayableMember(owner, offset) == nullptr)
+            return false;
+        if (!existing) {
+            offsets[count] = offset;
+            tokens[count++] = owner.members[offset];
+        }
+        return true;
+    }
+    ~PreparedPlayableMemberRecords() {
+        if (retained) return;
+        for (std::uint32_t index = 0; index < count; ++index) {
+            const auto offset = offsets[index];
+            const auto token = owner.members[offset];
+            if (token.slot != tokens[index].slot || token.generation != tokens[index].generation) continue;
+            if (!engine.ReleasePlayableMember(owner, offset)) engine.runtimeRecreateRequired = true;
+        }
+    }
+};
+
 template <std::size_t Capacity>
-void CancelPreparedMemberStorage(
-    harken::Engine& engine, std::size_t logicalBase, std::uint32_t count,
+bool CancelPreparedMemberStorage(
+    harken::Engine& engine, std::size_t logicalBase, std::uint32_t& count,
     const std::array<std::size_t, Capacity>& physicalSlots,
     const std::array<harken::EnginePlayableMemberReference, Capacity>& priorReferences) noexcept {
-    for (std::uint32_t index = 0; index < count; ++index) {
+    while (count != 0) {
+        const auto index = count - 1u;
         const auto slot = physicalSlots[index];
-        engine.playableScheduleVoices[slot] = {};
-        engine.SetPlayableMemberCompletion(slot, {});
-        engine.playableScheduleSelections[slot] = {};
-        engine.playableScheduleArms[slot] = {};
-        engine.playableScheduleRenderHandles[slot] = 0;
-        engine.playableScheduleReleaseObservers[slot] = {};
-        engine.variableControlDynamicMembers[slot] = 0;
+        const auto& reference = engine.playableMemberReferences[logicalBase + index];
+        harken::EnginePlayableServiceRow* owner = nullptr;
+        std::size_t resolved = 0;
+        if (!engine.ResolvePlayableMember(reference, &owner, &resolved) || resolved != slot) return false;
+        if (reference.memberOffset < owner->memberPrograms.size() &&
+            !engine.ReleaseMemberProgram(*owner, reference.memberOffset)) return false;
+        if (!engine.ReleasePlayableMember(*owner, reference.memberOffset)) return false;
         engine.playableMemberReferences[logicalBase + index] = priorReferences[index];
+        --count;
     }
+    return true;
 }
 
 PlayableStorageBases StorageBasesForRow(
@@ -10876,7 +10922,7 @@ harken::ProgramView* ResolveInitialMemberProgram(
 std::uint32_t VariableControlMemberOrdinal(const harken::Engine& engine,
     std::size_t logicalSlot, std::size_t resourceSlot) noexcept {
     const auto ordinal = engine.playableMemberReferences[logicalSlot].authoredChildOrdinal;
-    return ordinal != 0 ? ordinal : engine.playableScheduleVoices[resourceSlot].Facts().target.occurrenceOrdinal;
+    return ordinal != 0 ? ordinal : engine.ReadPlayableMember(resourceSlot).voice.Facts().target.occurrenceOrdinal;
 }
 
 bool TimelineArmHasStorageReaders(harken::Engine& engine,
@@ -10929,10 +10975,10 @@ bool PlayableMemberStorageHasReaders(
     if (engine.VariableControlRetargetProgramsHaveReaders(row.identity)) return true;
     for (std::size_t index = 0; index < engine.playableStorage.memberStride; ++index) {
         const auto slot = bases.member + index;
-        if (engine.variableControlMemberCompletions[slot].leafInstance == 0) continue;
-        const auto& release = engine.playableScheduleReleaseObservers[slot];
+        if (engine.ReadPlayableMember(slot).completion.leafInstance == 0) continue;
+        const auto& release = engine.ReadPlayableMember(slot).release;
         if (release.Valid() && !engine.voices.ReleaseObserved(release)) return true;
-        if (TimelineArmHasStorageReaders(engine, engine.playableScheduleArms[slot])) return true;
+        if (TimelineArmHasStorageReaders(engine, engine.ReadPlayableMember(slot).arm)) return true;
     }
     return false;
 }
@@ -11175,11 +11221,11 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
             &cursor, [&](std::uint32_t slot) noexcept { return engine.PlayableMemberOnsetIdentity(slot); });
         if (!identity.Valid()) break;
         const auto slot = identity.slot;
-        auto& member = engine.variableControlMemberCompletions[slot];
+        auto& member = engine.MutablePlayableMember(slot).completion;
         if (member.resourcesRetired || member.sourceStartedBlockSequence != 0) continue;
         const auto* source = engine.sourceTerminals.Resolve(member.source);
-        const auto arm = engine.playableScheduleArms[slot];
-        const auto render = engine.playableScheduleRenderHandles[slot];
+        const auto arm = engine.ReadPlayableMember(slot).arm;
+        const auto render = engine.ReadPlayableMember(slot).render;
         if (source == nullptr || source->leaf != member.leafInstance ||
             source->acceptedEpoch != member.leafEpoch || source->render != render ||
             render != ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot)) continue;
@@ -12585,7 +12631,7 @@ PlayableStartResetResult ResetPlayableStartRow(
     for (std::size_t index = 0; index <= engine.playableStorage.memberStride;
          ++index) {
         const auto render = index == 0 ? row.renderHandle :
-            engine.playableScheduleRenderHandles[bases.member + index - 1u];
+            engine.ReadPlayableMember(bases.member + index - 1u).render;
         harken::EngineTimelineVoiceInstallIdentity installation{};
         if (engine.CaptureTimelineVoiceInstallIdentity(render, &installation) &&
             !engine.voices.ReleaseObserved(installation.releaseObserver)) {
@@ -12661,18 +12707,22 @@ PlayableStartResetResult ResetPlayableStartRow(
     }
     for (std::uint32_t index = 0; index < row.memberPrograms.size(); ++index)
         if (!engine.ReleaseMemberProgram(row, index)) return PlayableStartResetResult::Deferred;
+    (void)engine.ClearTimelineVoiceInstallIdentity(row.renderHandle);
+    for (std::size_t index = 0; index < engine.playableStorage.memberStride;
+         ++index) {
+        const auto render =
+            engine.ReadPlayableMember(bases.member + index).render;
+        (void)engine.ClearTimelineVoiceInstallIdentity(render);
+        if (!engine.ReleasePlayableMember(row, static_cast<std::uint32_t>(index))) {
+            engine.runtimeRecreateRequired = true;
+            return PlayableStartResetResult::Fault;
+        }
+    }
     const bool released = engine.ReclaimOriginalPlayableServiceStorage(
         row, completedSequence, published);
     if (!released) {
         engine.runtimeRecreateRequired = true;
         return PlayableStartResetResult::Fault;
-    }
-    (void)engine.ClearTimelineVoiceInstallIdentity(row.renderHandle);
-    for (std::size_t index = 0; index < engine.playableStorage.memberStride;
-         ++index) {
-        const auto render =
-            engine.playableScheduleRenderHandles[bases.member + index];
-        (void)engine.ClearTimelineVoiceInstallIdentity(render);
     }
     const auto clear = [](auto& storage, std::size_t base,
                           std::size_t span) noexcept {
@@ -12680,30 +12730,12 @@ PlayableStartResetResult ResetPlayableStartRow(
             storage[base + index] = {};
         }
     };
-    clear(engine.playableScheduleVoices, bases.member,
-          engine.playableStorage.memberStride);
-    clear(engine.playableScheduleLeaves, bases.member,
-          engine.playableStorage.memberStride);
-    clear(engine.playableScheduleArms, bases.member,
-          engine.playableStorage.memberStride);
-    clear(engine.playableScheduleSelections, bases.member,
-          engine.playableStorage.memberStride);
-    clear(engine.playableScheduleRenderHandles, bases.member,
-          engine.playableStorage.memberStride);
-    clear(engine.playableScheduleReleaseObservers, bases.member,
-          engine.playableStorage.memberStride);
-    for (std::size_t index = 0; index < engine.playableStorage.memberStride;
-         ++index) {
-        engine.SetPlayableMemberCompletion(bases.member + index, {});
-    }
     clear(engine.playableMemberReferences, bases.member,
           engine.playableStorage.memberStride);
     clear(engine.playableScheduleOccurrences, bases.endpoint,
           engine.playableStorage.endpointStride);
     clear(engine.playableScheduleCompletions, bases.paired,
           engine.playableStorage.pairedStride);
-    clear(engine.playableScheduleStartFrames, bases.member,
-          engine.playableStorage.memberStride);
     clear(engine.playableSchedulePostSourceTailFrames, bases.paired,
           engine.playableStorage.pairedStride);
     clear(engine.variableControlWeightSegments, bases.weight,
@@ -12712,8 +12744,6 @@ PlayableStartResetResult ResetPlayableStartRow(
           engine.playableStorage.continuousStride);
     clear(engine.variableControlInitialContinuousArms, bases.continuous,
           engine.playableStorage.continuousStride);
-    clear(engine.variableControlDynamicMembers, bases.member,
-          engine.playableStorage.memberStride);
     for (auto& record : engine.variableControlRetargetPrograms)
         if (record.service == row.identity) record = {};
     clear(engine.variableControlRetargetArms, bases.continuous,
@@ -12804,8 +12834,8 @@ bool ObserveRetiredRetrySource(harken::Engine& engine,
     if (!row.partition.Valid() || !engine.playablePartitions.Owns(row.partition, row.identity) ||
         row.queueCurrentScheduleLeafCount != 1 || row.queueCurrentScheduleBase < base ||
         row.queueCurrentScheduleBase - base >= engine.playableStorage.memberStride ||
-        row.queueCurrentScheduleBase >= engine.variableControlMemberCompletions.size()) return false;
-    const auto& physical = engine.variableControlMemberCompletions[row.queueCurrentScheduleBase];
+        row.queueCurrentScheduleBase >= engine.playableStorage.memberCount) return false;
+    const auto& physical = engine.ReadPlayableMember(row.queueCurrentScheduleBase).completion;
     const auto* source = engine.sourceTerminals.At(held.source.slot);
     const bool generationRetired = source != nullptr &&
         (held.source.generation == UINT32_MAX
@@ -13038,7 +13068,7 @@ bool ReleaseQueueStopNativeOccupancy(
     if (row.parentService.Valid() && row.queueMode) {
         const auto base = StorageBasesForRow(engine, row).member;
         for (std::uint32_t index = 0; index < engine.playableStorage.memberStride; ++index) {
-            const auto& member = engine.variableControlMemberCompletions[base + index];
+            const auto& member = engine.ReadPlayableMember(base + index).completion;
             const auto* source = engine.sourceTerminals.Resolve(member.source);
             if (source != nullptr && engine.ResolveSourceResourceOwner(source->resourceOwner) == &row &&
                 !engine.voices.ReleaseObserved(source->release)) {
@@ -13060,30 +13090,29 @@ bool ReleaseQueueStopPhysicalArms(
         DropTimelineArm(engine, token, observedAudioSequence);
     };
     const auto dropStoredArms =
-        [&](const std::vector<harken::TimelineArmToken>& storage,
-            std::uint32_t base, std::uint32_t count) {
+        [&](bool successor, std::uint32_t base, std::uint32_t count) {
+            const auto capacity = successor ? engine.playableSuccessorArms.size() : engine.playableStorage.memberCount;
             if (count == 0 ||
-                static_cast<std::size_t>(base) + count > storage.size()) {
+                static_cast<std::size_t>(base) + count > capacity) {
                 return;
             }
             for (std::uint32_t index = 0; index < count; ++index) {
-                dropArm(storage[base + index]);
+                dropArm(successor ? engine.playableSuccessorArms[base + index]
+                    : engine.ReadPlayableMember(base + index).arm);
             }
         };
     dropArm(row.arm);
-    dropStoredArms(engine.playableScheduleArms, row.scheduleStorageBase,
+    dropStoredArms(false, row.scheduleStorageBase,
                    row.scheduleLeafCount);
-    dropStoredArms(engine.playableScheduleArms, row.queueCurrentScheduleBase,
+    dropStoredArms(false, row.queueCurrentScheduleBase,
                    row.queueCurrentScheduleLeafCount);
-    dropStoredArms(engine.playableSuccessorArms,
+    dropStoredArms(true,
                    row.queueSuccessorScheduleBase,
                    row.queueSuccessorScheduleLeafCount);
-    dropStoredArms(engine.playableSuccessorArms,
+    dropStoredArms(true,
                    row.queueRetiringScheduleBase,
                    row.queueRetiringScheduleLeafCount);
-    dropStoredArms(row.queueArrivalUsesSuccessorStorage
-                       ? engine.playableSuccessorArms
-                       : engine.playableScheduleArms,
+    dropStoredArms(row.queueArrivalUsesSuccessorStorage,
                    row.queueArrivalScheduleBase,
                    row.queueArrivalScheduleLeafCount);
     dropArm(row.queueArrivalArm);
@@ -13406,12 +13435,12 @@ harken::PlayableInstanceHandle OrdinaryOutgoingSubtree(
         for (std::uint32_t index = 0; index < row.scheduleLeafCount; ++index) {
             std::size_t slot = 0;
             if (!engine.ResolvePlayableMemberSlot(row.scheduleStorageBase + index, &slot)) break;
-            const auto& member = engine.variableControlMemberCompletions[slot];
-            const auto arm = engine.playableScheduleArms[slot];
+            const auto& member = engine.ReadPlayableMember(slot).completion;
+            const auto arm = engine.ReadPlayableMember(slot).arm;
             if (member.leafInstance == row.activeLeafInstance && member.leafEpoch != 0 &&
                 (!parentView.live || playback.activeChildEpoch == member.leafEpoch) &&
                 member.resourcesRetired && member.completedSource.kind != harken::SourceTerminalKind::None &&
-                member.sourceRender != 0 && member.sourceRender == engine.playableScheduleRenderHandles[slot] &&
+                member.sourceRender != 0 && member.sourceRender == engine.ReadPlayableMember(slot).render &&
                 member.sourceStartArm.Valid() && member.sourceStartArm.slot == arm.slot &&
                 member.sourceStartArm.generation == arm.generation &&
                 member.sourceStartArm.renderSlot == arm.renderSlot &&
@@ -13473,7 +13502,7 @@ struct OrdinaryRetirementReservation {
         const bool members = row.scheduleLeafCount != 0;
         if (members &&
             (row.scheduleStorageBase + count >
-                 engine.playableScheduleReleaseObservers.size() ||
+                 engine.playableStorage.memberCount ||
              bases.endpoint + count > engine.playableScheduleOccurrences.size() ||
              bases.paired + count > engine.playableScheduleCompletions.size())) {
             return false;
@@ -13492,11 +13521,11 @@ struct OrdinaryRetirementReservation {
             previous = resource;
             ++source.leafCount;
             const auto member = row.scheduleStorageBase + index;
-            leaf.arm = members ? engine.playableScheduleArms[member] : row.arm;
-            leaf.render = members ? engine.playableScheduleRenderHandles[member]
+            leaf.arm = members ? engine.ReadPlayableMember(member).arm : row.arm;
+            leaf.render = members ? engine.ReadPlayableMember(member).render
                                   : row.renderHandle;
             leaf.releaseObserver = members
-                ? engine.playableScheduleReleaseObservers[member]
+                ? engine.ReadPlayableMember(member).release
                 : row.releaseObserver;
             if (!leaf.releaseObserver.Valid()) return false;
             if (source.ownsScheduleResources) {
@@ -13678,7 +13707,7 @@ bool OrdinaryOwnsCompletionBinding(
     if (row.containerLoopOwnsScheduleResources) {
         const auto bases = StorageBasesForRow(engine, row);
         for (std::uint32_t index = 0; index < row.scheduleLeafCount; ++index) {
-            if (matches(engine.playableScheduleRenderHandles[row.scheduleStorageBase + index],
+            if (matches(engine.ReadPlayableMember(row.scheduleStorageBase + index).render,
                         engine.playableScheduleOccurrences[bases.endpoint + index],
                         engine.playableScheduleCompletions[bases.paired + index])) return true;
         }
@@ -13710,9 +13739,7 @@ bool ReleaseContainerLoopScheduleResources(
     const std::size_t endpointBase = bases.endpoint;
     const std::size_t pairedBase = bases.paired;
     const std::uint32_t count = row.scheduleLeafCount;
-    if (count == 0 || memberBase + count >
-                          engine.playableScheduleRenderHandles.size() ||
-        memberBase + count > engine.playableScheduleArms.size() ||
+    if (count == 0 || memberBase + count > engine.playableStorage.memberCount ||
         endpointBase + count >
             engine.playableScheduleOccurrences.size() ||
         pairedBase + count > engine.playableScheduleCompletions.size()) {
@@ -13725,7 +13752,7 @@ engine.runtimeRecreateRequired = true;
         const std::size_t endpointSlot = endpointBase + index;
         const std::size_t pairedSlot = pairedBase + index;
         const auto renderOwner = engine.ledger.OwnerForRender(
-            engine.playableScheduleRenderHandles[memberSlot]);
+            engine.ReadPlayableMember(memberSlot).render);
         auto& completion =
             engine.playableScheduleCompletions[pairedSlot];
         if (completion.owner.kind == harken::CompletionOwnerKind::None) continue;
@@ -13749,9 +13776,9 @@ engine.runtimeRecreateRequired = true;
     row.containerLoopCompositeOwner = {};
     for (std::uint32_t index = 0; index < count; ++index) {
         (void)engine.timelinePlanner.CompleteRollingAbort(
-            engine.playableScheduleArms[memberBase + index]);
+            engine.ReadPlayableMember(memberBase + index).arm);
         (void)DropTimelineArm(
-            engine, engine.playableScheduleArms[memberBase + index],
+            engine, engine.ReadPlayableMember(memberBase + index).arm,
             observedAudioSequence);
     }
     bool occurrencesReleased = true;
@@ -14126,12 +14153,12 @@ void ReclaimSilentStartOccupancy(harken::Engine& engine) noexcept {
                                 row.variableControlContinuousMemberCount)
                 : row.scheduleLeafCount;
         for (std::uint32_t index = 0; !voiceLive && index < span; ++index) {
-            if (base + index >= engine.playableScheduleRenderHandles.size()) {
+            if (base + index >= engine.playableStorage.memberCount) {
                 break;
             }
             voiceLive =
                 engine.voices.Resolve(
-                    engine.playableScheduleRenderHandles[base + index]) !=
+                    engine.ReadPlayableMember(base + index).render) !=
                 nullptr;
         }
         if (voiceLive) {
@@ -18627,8 +18654,8 @@ bool CancelQueueFutureAttempt(
     if (!CancelPreparedOccurrenceOwner(&scratch->queueSuccessorOccurrenceOwnerContext) ||
         !CancelPreparedDecisionOwner(&scratch->queueSuccessorDecisionOwnerContext) ||
         !scratch->storage.ownerLedger.Cancel(scratch->storage.generation)) return false;
-    CancelPreparedMemberStorage(engine, scratch->queueFutureMemberBase, scratch->queueFutureMemberCount,
-        scratch->queueFutureMemberSlots, scratch->queueFuturePriorMemberReferences);
+    if (!CancelPreparedMemberStorage(engine, scratch->queueFutureMemberBase, scratch->queueFutureMemberCount,
+            scratch->queueFutureMemberSlots, scratch->queueFuturePriorMemberReferences)) return false;
     scratch->queueFutureMemberCount = 0;
     scratch->pendingVariableReplacementTopology.ReturnOriginalLifetimes();
     if (!scratch->playableTreeExecutor.RollbackCommitted(engine.playableInstances) ||
@@ -18945,12 +18972,12 @@ bool VariableControlRollbackHasMappingReaders(
     if (engine.VariableControlRetargetProgramsHaveReaders(row.identity)) return true;
     for (std::size_t index = 0; index < engine.playableStorage.memberStride; ++index) {
         const auto slot = bases.member + index;
-        if (engine.variableControlMemberCompletions[slot].leafInstance == 0) continue;
-        const auto& release = engine.playableScheduleReleaseObservers[slot];
+        if (engine.ReadPlayableMember(slot).completion.leafInstance == 0) continue;
+        const auto& release = engine.ReadPlayableMember(slot).release;
         if (release.Valid() && !engine.voices.ReleaseObserved(release)) {
             return true;
         }
-        if (TimelineArmHasStorageReaders(engine, engine.playableScheduleArms[slot])) return true;
+        if (TimelineArmHasStorageReaders(engine, engine.ReadPlayableMember(slot).arm)) return true;
     }
     return false;
 }
@@ -19275,13 +19302,12 @@ bool RetirePrivateUnboundInitialVariableControlArms(
         for (std::uint32_t leaf = 0; leaf < service->scheduleLeafCount; ++leaf) {
             std::size_t logical = 0, physical = 0;
             if (!ResolveImmediateInitialMemberSlots(engine, *service, leaf, &logical, &physical) ||
-                physical >= engine.playableScheduleArms.size() ||
-                physical >= engine.playableScheduleStartFrames.size()) return false;
-            if (!sameArm(engine.playableScheduleArms[physical], arms[i])) continue;
+                physical >= engine.playableStorage.memberCount) return false;
+            if (!sameArm(engine.ReadPlayableMember(physical).arm, arms[i])) continue;
             if (foundSlot != SIZE_MAX) return false;
             foundSlot = physical;
         }
-        if (foundSlot == SIZE_MAX || engine.playableScheduleStartFrames[foundSlot] != held.frame)
+        if (foundSlot == SIZE_MAX || engine.ReadPlayableMember(foundSlot).startFrame != held.frame)
             return false;
     }
     std::array<bool, 2> matched{};
@@ -19404,10 +19430,9 @@ bool PreparePrivateInitialVariableControlArmRetirement(
                 std::size_t physicalSlot = 0;
                 if (!ResolveImmediateInitialMemberSlots(engine, *service, leaf,
                         &logicalSlot, &physicalSlot) ||
-                    physicalSlot >= engine.playableScheduleArms.size() ||
-                    physicalSlot >= engine.playableScheduleStartFrames.size())
+                    physicalSlot >= engine.playableStorage.memberCount)
                     return false;
-                if (!sameArm(engine.playableScheduleArms[physicalSlot], arm))
+                if (!sameArm(engine.ReadPlayableMember(physicalSlot).arm, arm))
                     continue;
                 if (foundSlot != SIZE_MAX) return false;
                 foundSlot = physicalSlot;
@@ -19455,7 +19480,7 @@ bool PreparePrivateInitialVariableControlArmRetirement(
             if (matchingPlay != 1) return false;
             storage.pendingInitialVcRetirement[memberCount++] = {
                 arm, {side.decision}, member,
-                engine.playableScheduleStartFrames[foundSlot],
+                engine.ReadPlayableMember(foundSlot).startFrame,
                 group.frontier, group.lease, &owned.pin};
         }
     }
@@ -21476,7 +21501,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     const std::size_t base = bases.member;
     if (base > UINT32_MAX ||
         base + engine.playableStorage.memberStride >
-            engine.playableScheduleVoices.size() ||
+            engine.playableStorage.memberCount ||
         bases.weight + engine.playableStorage.weightStride >
             engine.variableControlWeightSegments.size() ||
         bases.continuous + engine.playableStorage.continuousStride >
@@ -21899,14 +21924,14 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             !engine.voices.PrepareVariableWeightControls(installed.renderHandle,
                 inheritedWeights.data(), inheritedWeightCount)) break;
         const std::size_t weightSlot = bases.weight + logicalOffset;
-        captured->Stage(engine.playableScheduleVoices[slot]);
-        engine.playableScheduleLeaves[slot] = source.leaf;
-        engine.playableScheduleArms[slot] = installed.armToken;
-        engine.playableScheduleReleaseObservers[slot] = installed.releaseObserver;
+        captured->Stage(engine.MutablePlayableMember(slot).voice);
+        engine.MutablePlayableMember(slot).leaf = source.leaf;
+        engine.MutablePlayableMember(slot).arm = installed.armToken;
+        engine.MutablePlayableMember(slot).release = installed.releaseObserver;
         engine.SetPlayableMemberCompletion(slot,
             {childInstance, row.variableControlLeafEpochs[installedCount], installed.sourceTerminal});
-        engine.variableControlMemberCompletions[slot].monitorSelection = installed.monitorSelection;
-        engine.variableControlDynamicMembers[slot] = 0;
+        engine.MutablePlayableMember(slot).monitorSelection = installed.monitorSelection;
+        engine.MutablePlayableMember(slot).dynamic = 0;
         if (controlDiscrete) {
             controlOwner->variableControlInitialDiscreteArms[memberIndex] =
                 installed.armToken;
@@ -21936,9 +21961,9 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
                 controlOwner->renderHandle = installed.renderHandle;
             }
         }
-        engine.playableScheduleRenderHandles[slot] =
+        engine.MutablePlayableMember(slot).render =
             installed.renderHandle;
-        engine.playableScheduleStartFrames[slot] = leafStartFrame;
+        engine.MutablePlayableMember(slot).startFrame = leafStartFrame;
         engine.variableControlWeightSegments[weightSlot] =
             variableWeight;
         harken::TimelineEventPayload& payload =
@@ -22036,10 +22061,10 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             result.status = harken::PlayableStartStatus::Capacity;
             return result;
         }
-        row.leaf = engine.playableScheduleLeaves[firstMemberSlot];
-        row.arm = engine.playableScheduleArms[firstMemberSlot];
-        row.renderHandle = engine.playableScheduleRenderHandles[
-            firstMemberSlot];
+        row.leaf = engine.ReadPlayableMember(firstMemberSlot).leaf;
+        row.arm = engine.ReadPlayableMember(firstMemberSlot).arm;
+        row.renderHandle = engine.ReadPlayableMember(
+            firstMemberSlot).render;
     }
     // Transfer every prepared playable/container reservation into the shared
     // executor. Root starts expose their root through the executor's external
@@ -24280,9 +24305,7 @@ bool ResolveQueueTransitionSources(
         const std::size_t pairedBase = bases.paired;
         const std::uint32_t count = row.queueCurrentScheduleLeafCount;
         if (count > harken::kMaxKnownScheduleLeaves ||
-            memberBase + count > engine.playableScheduleVoices.size() ||
-            memberBase + count >
-                engine.playableScheduleRenderHandles.size() ||
+            memberBase + count > engine.playableStorage.memberCount ||
             pairedBase + count >
                 engine.playableScheduleCompletions.size() ||
             pairedBase + count >
@@ -24300,9 +24323,9 @@ bool ResolveQueueTransitionSources(
             if (!participates) continue;
             const std::uint32_t target = out->count++;
             out->renderHandles[target] =
-                engine.playableScheduleRenderHandles[memberSlot];
+                engine.ReadPlayableMember(memberSlot).render;
             out->targets[target] =
-                engine.playableScheduleVoices[memberSlot].Facts().target;
+                engine.ReadPlayableMember(memberSlot).voice.Facts().target;
         }
         return true;
     }
@@ -24334,10 +24357,10 @@ struct PreparedQueueContinuationTree {
         if (published) {
             released = scratch->playableTreeExecutor.ReleasePublishedOwnership();
         } else {
-            CancelPreparedMemberStorage(engine, scratch->queueFutureMemberBase,
+            released = CancelPreparedMemberStorage(engine, scratch->queueFutureMemberBase,
                 scratch->queueFutureMemberCount, scratch->queueFutureMemberSlots,
                 scratch->queueFuturePriorMemberReferences);
-            released = scratch->playableTreeExecutor.RollbackCommitted(engine.playableInstances);
+            released = released && scratch->playableTreeExecutor.RollbackCommitted(engine.playableInstances);
             row.variableControlNestedQueueSuccessorInstance = 0;
             row.variableControlNestedQueueSuccessorEpoch = 0;
             row.variableControlNestedQueueSuccessorOrdinal = 0;
@@ -24386,9 +24409,7 @@ struct PreparedQueueContinuationTree {
         return true;
     }
 
-    bool BindMember(const TimelineVoiceInstallResult& installed,
-                    const harken::CapturedTimelineVoiceInstall& voice,
-                    const decltype(harken::EnginePlayableServiceRow::leaf)& leaf, std::uint64_t startFrame) noexcept {
+    bool PrepareMember() noexcept {
         if (scratch == nullptr) return true;
         const auto index = scratch->queueFutureMemberCount;
         const auto logicalSlot = scratch->queueFutureMemberBase + index;
@@ -24403,14 +24424,26 @@ struct PreparedQueueContinuationTree {
         scratch->queueFutureMemberSlots[index] = slot;
         ++scratch->queueFutureMemberCount;
         engine.playableMemberReferences[logicalSlot].authoredChildOrdinal = row.variableControlNestedQueueSuccessorOrdinal;
-        engine.playableScheduleVoices[slot] = voice.Share();
-        engine.playableScheduleLeaves[slot] = leaf;
-        engine.playableScheduleArms[slot] = installed.armToken;
-        engine.playableScheduleRenderHandles[slot] = installed.renderHandle;
-        engine.playableScheduleStartFrames[slot] = startFrame;
-        engine.playableScheduleReleaseObservers[slot] = installed.releaseObserver;
+        return true;
+    }
+
+    bool BindMember(const TimelineVoiceInstallResult& installed,
+                    const harken::CapturedTimelineVoiceInstall& voice,
+                    const decltype(harken::EnginePlayableServiceRow::leaf)& leaf, std::uint64_t startFrame) noexcept {
+        if (scratch == nullptr) return true;
+        if (scratch->queueFutureMemberCount == 0) return false;
+        const auto index = scratch->queueFutureMemberCount - 1u;
+        const auto slot = scratch->queueFutureMemberSlots[index];
+        const auto instance = leaves[index] != 0 ? leaves[index] : row.variableControlNestedQueueSuccessorInstance;
+        const auto epoch = leaves[index] != 0 ? epochs[index] : row.variableControlNestedQueueSuccessorEpoch;
+        engine.MutablePlayableMember(slot).voice = voice.Share();
+        engine.MutablePlayableMember(slot).leaf = leaf;
+        engine.MutablePlayableMember(slot).arm = installed.armToken;
+        engine.MutablePlayableMember(slot).render = installed.renderHandle;
+        engine.MutablePlayableMember(slot).startFrame = startFrame;
+        engine.MutablePlayableMember(slot).release = installed.releaseObserver;
         engine.SetPlayableMemberCompletion(slot, {instance, epoch, installed.sourceTerminal});
-        engine.variableControlMemberCompletions[slot].monitorSelection = installed.monitorSelection;
+        engine.MutablePlayableMember(slot).monitorSelection = installed.monitorSelection;
         return true;
     }
 };
@@ -24670,6 +24703,11 @@ bool PrepareCompositeQueueContinuation(
           engine.transitionInstances.FreeCount() == 0)) {
         return false;
     }
+    PreparedPlayableMemberRecords currentMembers{engine, row};
+    if (!row.parentService.Valid() && materialized.leafCount > 1u) {
+        for (std::uint32_t index = 0; index < materialized.leafCount; ++index)
+            if (!currentMembers.Acquire(index)) return false;
+    }
     PreparedTimelineStarts starts(engine);
     preparedTree.Attach(starts);
     if (!(packQueue ? preparedTree.PrepareLeaves(row.Invocation().packPlaybackView, prepared.data(), materialized.leafCount)
@@ -24739,6 +24777,10 @@ bool PrepareCompositeQueueContinuation(
         harken::CapturedTimelineVoiceInstall captured;
         if (CaptureTimelineVoiceInstall(prepared[index].voice, &captured) !=
                 harken::PlayableStartStatus::Accepted) {
+            abortPrepared();
+            return false;
+        }
+        if (!preparedTree.PrepareMember()) {
             abortPrepared();
             return false;
         }
@@ -25248,6 +25290,7 @@ engine.runtimeRecreateRequired = true;
     row.queueContinuationPrepared = true;
     row.queueTransitionEndFrame = transitionEndFrame;
     ++row.pendingFutureCount;
+    currentMembers.retained = true;
     return true;
 }
 
@@ -26028,6 +26071,10 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
     };
     harken::CapturedTimelineVoiceInstall captured;
     if (CaptureTimelineVoiceInstall(voice, &captured) != harken::PlayableStartStatus::Accepted) {
+        abortPrepared();
+        return QueueContinuationPrepareStatus::Failed;
+    }
+    if (!preparedTree.PrepareMember()) {
         abortPrepared();
         return QueueContinuationPrepareStatus::Failed;
     }
@@ -28840,11 +28887,18 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         const std::size_t pairedBase = bases.paired;
         if (memberBase > UINT32_MAX ||
             memberBase + scheduleLeafCount >
-                engine.playableScheduleVoices.size() ||
+                engine.playableStorage.memberCount ||
             pairedBase + scheduleLeafCount >
                 engine.playableScheduleCompletions.size()) {
             rollbackCreated();
             return ContainerLoopSuccessorStatus::Refused;
+        }
+        PreparedPlayableMemberRecords memberReservations{engine, scheduleRow};
+        for (std::uint32_t index = 0; index < scheduleLeafCount; ++index) {
+            if (!memberReservations.Acquire(index)) {
+                rollbackCreated();
+                return ContainerLoopSuccessorStatus::Refused;
+            }
         }
         scratch.frontierProgramBank = ReserveQueueProgramBank(engine,
             {scheduleLeafCount, scheduleLeafCount});
@@ -29218,21 +29272,22 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         }
         if (!childAlreadyRetired) retiring.Commit(row);
         ClearOrdinaryCurrentProgram(row);
+        memberReservations.retained = true;
         for (std::uint32_t index = 0; index < scheduleLeafCount; ++index) {
             const std::size_t memberSlot = memberBase + index;
             const std::size_t endpointSlot = endpointBase + index;
             const std::size_t pairedSlot = pairedBase + index;
-            engine.playableScheduleVoices[memberSlot] =
+            engine.MutablePlayableMember(memberSlot).voice =
                 std::move(capturedLeaves[index]);
-            engine.playableScheduleLeaves[memberSlot] =
+            engine.MutablePlayableMember(memberSlot).leaf =
                 preparedScheduleLeaves[index].leaf;
-            engine.playableScheduleArms[memberSlot] =
+            engine.MutablePlayableMember(memberSlot).arm =
                 installedLeaves[index].armToken;
-            engine.playableScheduleRenderHandles[memberSlot] =
+            engine.MutablePlayableMember(memberSlot).render =
                 installedLeaves[index].renderHandle;
-            engine.playableScheduleReleaseObservers[memberSlot] =
+            engine.MutablePlayableMember(memberSlot).release =
                 installedLeaves[index].releaseObserver;
-            engine.playableScheduleStartFrames[memberSlot] =
+            engine.MutablePlayableMember(memberSlot).startFrame =
                 baseStartFrame +
                 preparedScheduleLeaves[index].startOffsetFrames;
             engine.playableSchedulePostSourceTailFrames[pairedSlot] =
@@ -29266,11 +29321,11 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         scheduleRow.startFrame = firstStartFrame;
         scheduleRow.capturedVoice = {};
         scheduleRow.usesCapturedVoice = false;
-        scheduleRow.leaf = engine.playableScheduleLeaves[memberBase];
-        scheduleRow.arm = engine.playableScheduleArms[memberBase];
+        scheduleRow.leaf = engine.ReadPlayableMember(memberBase).leaf;
+        scheduleRow.arm = engine.ReadPlayableMember(memberBase).arm;
         scheduleRow.renderHandle =
-            engine.playableScheduleRenderHandles[memberBase];
-        scheduleRow.releaseObserver = engine.playableScheduleReleaseObservers[memberBase];
+            engine.ReadPlayableMember(memberBase).render;
+        scheduleRow.releaseObserver = engine.ReadPlayableMember(memberBase).release;
         scheduleRow.queueCurrentProgramBank = std::exchange(scratch.frontierProgramBank, nullptr);
         scheduleRow.queueCurrentPrograms = {0, scheduleLeafCount};
         scheduleRow.queueCurrentScheduleBase = static_cast<std::uint32_t>(memberBase);
@@ -29857,9 +29912,9 @@ bool CompleteVariableControlNestedQueueChild(
             for (std::uint32_t index = 0; index < row.scheduleLeafCount; ++index) {
                 std::size_t slot = 0;
                 if (!engine.ResolvePlayableMemberSlot(row.scheduleStorageBase + index, &slot)) return false;
-                const auto& member = engine.variableControlMemberCompletions[slot];
+                const auto& member = engine.ReadPlayableMember(slot).completion;
                 if (member.leafInstance == observedLeaf && member.leafEpoch == observedEpoch &&
-                    engine.playableScheduleRenderHandles[slot] == observedRender) observedMember = true;
+                    engine.ReadPlayableMember(slot).render == observedRender) observedMember = true;
                 if (member.completedSource.kind != harken::SourceTerminalKind::Natural ||
                     member.sourceCompletionSequence == 0) return true;
             }
@@ -29890,12 +29945,12 @@ bool CompleteVariableControlNestedQueueChild(
     if (ownsQueue && !singleFrontierLeaf && !engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &memberSlot))
         return false;
     const auto leaf = singleFrontierLeaf ? row.activeLeafInstance : ownsQueue
-        ? engine.variableControlMemberCompletions[memberSlot].leafInstance
+        ? engine.ReadPlayableMember(memberSlot).completion.leafInstance
         : row.variableControlLeafInstances[0];
     if (observedLeaf != 0 && (leaf != observedLeaf ||
         (singleFrontierLeaf ? row.schedule.ownerInstanceScheduleEpoch :
-         engine.variableControlMemberCompletions[memberSlot].leafEpoch) != observedEpoch ||
-        (singleFrontierLeaf ? row.renderHandle : engine.playableScheduleRenderHandles[memberSlot]) != observedRender)) return true;
+         engine.ReadPlayableMember(memberSlot).completion.leafEpoch) != observedEpoch ||
+        (singleFrontierLeaf ? row.renderHandle : engine.ReadPlayableMember(memberSlot).render) != observedRender)) return true;
     const auto nestedView = engine.playableInstances.Classify(nested);
     auto leafView = engine.playableInstances.Classify(leaf);
     if (!nestedView.live || nestedView.scheduleEpoch != nestedEpoch ||
@@ -29905,7 +29960,7 @@ bool CompleteVariableControlNestedQueueChild(
         // conditional settles. Match both retained native receipts before
         // forwarding that completion to the still-live parent.
         if (!ownsQueue || singleFrontierLeaf || !row.queueNaturalEnd) return true;
-        const auto& member = engine.variableControlMemberCompletions[memberSlot];
+        const auto& member = engine.ReadPlayableMember(memberSlot).completion;
         harken::ContainerPlaybackRow playback{};
         if (member.completedSource.kind != harken::SourceTerminalKind::Natural ||
             member.sourceCompletionSequence != outcomeOrdinal ||
@@ -30060,35 +30115,37 @@ bool ActivateVariableControlNestedQueueSuccessor(
     if (ownsQueue && !engine.ResolvePlayableMemberSlot(
             bases.member + std::max(1u, row.scheduleLeafCount), &memberSlot))
         return false;
-    if (memberSlot >= engine.playableScheduleArms.size() ||
-        memberSlot >= engine.playableScheduleRenderHandles.size() ||
-        memberSlot >= engine.playableScheduleVoices.size() ||
-        memberSlot >= engine.playableScheduleLeaves.size()) return false;
+    if (memberSlot >= engine.playableStorage.memberCount) return false;
+    const auto* captured = successorPending ? &engine.playableSuccessorVoices[bases.endpoint]
+        : engine.ResolvePlayableServiceVoice(row);
+    if (captured == nullptr || !captured->Valid() || captured->Facts().soundId !=
+            (successorPending ? row.queueSuccessorLeaf.stableId : row.leaf.stableId)) return false;
+    const bool existingMember = engine.FindPlayableMember(memberSlot) != nullptr;
+    if (ownsQueue) {
+        if (!existingMember) return false;
+    } else if (engine.AcquirePlayableMember(row, 0) == nullptr) return false;
     harken::ContainerPlaybackRow nestedPlayback{};
     const bool nestedCaptured = engine.containerPlayback.Capture(
         nested, &nestedPlayback);
     if (nestedCaptured && nestedPlayback.phase ==
             harken::ContainerPlaybackPhase::WaitingForChild &&
         !engine.containerPlayback.BeginWaitingForNextFrontier(nested)) {
+        if (!existingMember) (void)engine.ReleasePlayableMember(row, 0);
         return false;
     }
     if (!harken::PlayableTreeExecutor::ServiceActiveChild(
             engine.playableInstances, engine.containerPlayback, nested,
             successor)) {
+        if (!existingMember) (void)engine.ReleasePlayableMember(row, 0);
         return false;
     }
-    engine.playableScheduleArms[memberSlot] = successorPending ? row.queueSuccessorArm : row.arm;
-    engine.playableScheduleRenderHandles[memberSlot] = source->render;
-    engine.playableScheduleStartFrames[memberSlot] = successorPending
+    engine.MutablePlayableMember(memberSlot).arm = successorPending ? row.queueSuccessorArm : row.arm;
+    engine.MutablePlayableMember(memberSlot).render = source->render;
+    engine.MutablePlayableMember(memberSlot).startFrame = successorPending
         ? row.queueSuccessorSchedule.entryAnchorFrame : row.startFrame;
-    const auto* captured = successorPending ? &engine.playableSuccessorVoices[bases.endpoint]
-        : engine.ResolvePlayableServiceVoice(row);
-    if (captured == nullptr || !captured->Valid() || captured->Facts().soundId !=
-            (successorPending ? row.queueSuccessorLeaf.stableId : row.leaf.stableId))
-        return false;
-    engine.playableScheduleVoices[memberSlot] = captured->Share();
-    engine.playableScheduleLeaves[memberSlot] = successorPending ? row.queueSuccessorLeaf : row.leaf;
-    engine.playableScheduleReleaseObservers[memberSlot] = source->release;
+    engine.MutablePlayableMember(memberSlot).voice = captured->Share();
+    engine.MutablePlayableMember(memberSlot).leaf = successorPending ? row.queueSuccessorLeaf : row.leaf;
+    engine.MutablePlayableMember(memberSlot).release = source->release;
     engine.SetPlayableMemberCompletion(memberSlot,
         {successor, view.scheduleEpoch,
          {sourceSlot, source->generation}});
@@ -30116,9 +30173,9 @@ bool VariableControlDiscreteTargetStarted(
         (row.variableControlDiscreteRetargetReplacement
             ? row.variableControlDiscreteTransitionOffset : 0u);
     if (!engine.ResolvePlayableMemberSlot(logicalSlot, &slot)) return false;
-    const auto render = engine.playableScheduleRenderHandles[slot];
-    const auto arm = engine.playableScheduleArms[slot];
-    const auto& member = engine.variableControlMemberCompletions[slot];
+    const auto render = engine.ReadPlayableMember(slot).render;
+    const auto arm = engine.ReadPlayableMember(slot).arm;
+    const auto& member = engine.ReadPlayableMember(slot).completion;
     if (!arm.Valid() || member.leafInstance == 0 || member.leafEpoch == 0 ||
         member.leafInstance != row.variableControlDiscreteRetargetIncomingLeaves[index] ||
         member.leafEpoch != row.variableControlDiscreteRetargetIncomingLeafEpochs[index]) return false;
@@ -30127,7 +30184,7 @@ bool VariableControlDiscreteTargetStarted(
     return member.completedSource.kind == harken::SourceTerminalKind::Natural &&
         member.sourceCompletionSequence != 0 &&
         member.sourceCompletionSequence <= observedAudioSequence &&
-        member.completedSource.frame >= engine.playableScheduleStartFrames[slot] &&
+        member.completedSource.frame >= engine.ReadPlayableMember(slot).startFrame &&
         member.sourceRender == render && member.sourceStartArm.slot == arm.slot &&
         member.sourceStartArm.generation == arm.generation &&
         member.sourceStartArm.renderSlot == arm.renderSlot &&
@@ -30169,7 +30226,7 @@ bool PromoteVariableControlDiscreteRetargetSubtree(
                     ? row.variableControlDiscreteTransitionOffset : 0u);
             if (!engine.ResolvePlayableMemberSlot(logicalSlot, &slot) ||
                 !VariableControlDiscreteTargetStarted(engine, row, index, engine.mixer.BlocksRendered()) ||
-                !engine.variableControlMemberCompletions[slot].resourcesRetired ||
+                !engine.ReadPlayableMember(slot).completion.resourcesRetired ||
                 engine.playableInstances.Classify(
                     row.variableControlDiscreteRetargetIncomingLeaves[index]).live) return false;
         }
@@ -30582,9 +30639,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteExit(
     std::array<std::size_t, harken::kMaxKnownScheduleLeaves> sourceSlots{};
     if (!engine.ResolvePlayableMemberSlots(base, sourceMemberCount, sourceSlots))
         return VariableRetargetPrepareStatus::Fatal;
-    if (base + sourceMemberCount >
-            engine.playableScheduleRenderHandles.size() ||
-        base + sourceMemberCount > engine.playableScheduleVoices.size()) {
+    if (base + sourceMemberCount > engine.playableStorage.memberCount) {
         return VariableRetargetPrepareStatus::Fatal;
     }
     const std::uint32_t currentOrdinal =
@@ -30608,7 +30663,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteExit(
     }
     const bool sourceAudioRetired = std::all_of(
         sourceSlots.begin(), sourceSlots.begin() + sourceMemberCount,
-        [&](const auto slot) { return engine.variableControlMemberCompletions[slot].resourcesRetired; });
+        [&](const auto slot) { return engine.ReadPlayableMember(slot).completion.resourcesRetired; });
     if (sourceAudioRetired) {
         const auto advanced = engine.variableControlInstances.AdvanceCommittedSideBank(
             row.variableControlInstance, harken::VariableControlSide::Discrete,
@@ -30631,7 +30686,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteExit(
     }
     for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
         exitingHandles[index] =
-            engine.playableScheduleRenderHandles[sourceSlots[index]];
+            engine.ReadPlayableMember(sourceSlots[index]).render;
         if (engine.voices.Resolve(exitingHandles[index]) == nullptr) {
             return VariableRetargetPrepareStatus::Retry;
         }
@@ -30755,8 +30810,8 @@ engine.runtimeRecreateRequired = true;
                 static_cast<std::uint32_t>(render),
                 static_cast<std::uint32_t>(render >> 32), decisionFrame,
                 armDeadline, row.rootInstance,
-                engine.playableScheduleVoices[
-                    sourceSlots[exitingArmCount]].Facts().target,
+                engine.ReadPlayableMember(
+                    sourceSlots[exitingArmCount]).voice.Facts().target,
                 harken::ParentAudioGroupRef{decision},
                 static_cast<std::uint16_t>(exitingArmCount),
                 &exitingArms[exitingArmCount])) {
@@ -30788,7 +30843,7 @@ engine.runtimeRecreateRequired = true;
         auto& stop = row.variableControlDiscreteRetargetPayloads[index];
         stop.kind = harken::TimelineEventKind::Stop;
         stop.reserved = harken::kTimelineEventTransientControlArm;
-        stop.target = engine.playableScheduleVoices[sourceSlots[index]].Facts().target;
+        stop.target = engine.ReadPlayableMember(sourceSlots[index]).voice.Facts().target;
         stop.envelopeEndFrame = decisionFrame;
         auto& event = row.variableControlDiscreteRetargetEvents[index];
         event.logicCommitSequence = ticket;
@@ -31186,8 +31241,11 @@ engine.runtimeRecreateRequired = true;
     };
     const auto cancelIncomingPrepared = [&]() noexcept {
         starts.Cancel();
-        CancelPreparedMemberStorage(engine, row.scheduleStorageBase, targetStorageCount,
-            targetSlots, priorReferences);
+        if (!CancelPreparedMemberStorage(engine, row.scheduleStorageBase, targetStorageCount,
+                targetSlots, priorReferences)) {
+            engine.runtimeRecreateRequired = true;
+            return;
+        }
         targetStorageCount = 0;
         if (incomingChildCommitted && incomingChild != 0) {
             RetirePlayableInstanceTree(
@@ -31544,18 +31602,18 @@ engine.runtimeRecreateRequired = true;
     for (std::uint32_t index = 0; index < targetSchedule.leafCount;
          ++index) {
         const std::size_t slot = targetSlots[index];
-        engine.playableScheduleVoices[slot] = std::move(capturedTargets[index]);
-        engine.playableScheduleLeaves[slot] = targetSchedule.leaves[index].leaf;
-        engine.playableScheduleArms[slot] = installedTargets[index].armToken;
-        engine.playableScheduleReleaseObservers[slot] = installedTargets[index].releaseObserver;
+        engine.MutablePlayableMember(slot).voice = std::move(capturedTargets[index]);
+        engine.MutablePlayableMember(slot).leaf = targetSchedule.leaves[index].leaf;
+        engine.MutablePlayableMember(slot).arm = installedTargets[index].armToken;
+        engine.MutablePlayableMember(slot).release = installedTargets[index].releaseObserver;
         engine.SetPlayableMemberCompletion(slot,
             {incomingLeaves[index], incomingLeafEpochs[index], installedTargets[index].sourceTerminal});
-        engine.variableControlMemberCompletions[slot].monitorSelection = installedTargets[index].monitorSelection;
-        engine.playableScheduleRenderHandles[slot] =
+        engine.MutablePlayableMember(slot).monitorSelection = installedTargets[index].monitorSelection;
+        engine.MutablePlayableMember(slot).render =
             installedTargets[index].renderHandle;
-        engine.playableScheduleStartFrames[slot] =
+        engine.MutablePlayableMember(slot).startFrame =
             decisionFrame + targetSchedule.leaves[index].startOffsetFrames;
-        engine.variableControlDynamicMembers[slot] = 1;
+        engine.MutablePlayableMember(slot).dynamic = 1;
     }
     row.scheduleLeafCount =
         targetSchedule.leafCount + row.variableControlContinuousMemberCount;
@@ -31694,25 +31752,23 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         row.variableControlDiscreteMissedBank.generation == bank.generation &&
         row.variableControlDiscreteMissedOrdinal == row.variableControlDiscreteCurrentChildOrdinal &&
         sourceMemberCount != 0 &&
-        row.variableControlDiscreteMissedSource == engine.variableControlMemberCompletions[sourceSlots[0]].leafInstance)
+        row.variableControlDiscreteMissedSource == engine.ReadPlayableMember(sourceSlots[0]).completion.leafInstance)
         return VariableRetargetPrepareStatus::Retry;
     if (program.discreteTiming != 1 || !selected.matched ||
         sourceMemberCount > engine.config.maxKnownScheduleLeaves ||
         row.variableControlDiscreteSilent ||
-        base + sourceMemberCount >
-            engine.playableScheduleRenderHandles.size() ||
-        base + sourceMemberCount > engine.playableScheduleVoices.size()) {
+        base + sourceMemberCount > engine.playableStorage.memberCount) {
         return VariableRetargetPrepareStatus::Retry;
     }
     std::array<VnVoiceHandle, harken::kMaxKnownScheduleLeaves>
         exitingHandles{};
     const bool sourceAudioRetired = std::all_of(
         sourceSlots.begin(), sourceSlots.begin() + sourceMemberCount,
-        [&](const auto slot) { return engine.variableControlMemberCompletions[slot].resourcesRetired; });
+        [&](const auto slot) { return engine.ReadPlayableMember(slot).completion.resourcesRetired; });
     if (sourceAudioRetired) sourceMemberCount = 0;
     for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
         exitingHandles[index] =
-            engine.playableScheduleRenderHandles[sourceSlots[index]];
+            engine.ReadPlayableMember(sourceSlots[index]).render;
         if (engine.voices.Resolve(exitingHandles[index]) == nullptr) {
             return VariableRetargetPrepareStatus::Retry;
         }
@@ -31760,10 +31816,10 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     }
     if (base + row.variableControlDiscreteTransitionOffset +
             targetSchedule.leafCount >
-            engine.playableScheduleRenderHandles.size() ||
+            engine.playableStorage.memberCount ||
         base + row.variableControlDiscreteTransitionOffset +
             targetSchedule.leafCount >
-            engine.playableScheduleVoices.size()) {
+            engine.playableStorage.memberCount) {
         return VariableRetargetPrepareStatus::Retry;
     }
     if (targetSchedule.leafCount > capturedTargets.size()) return VariableRetargetPrepareStatus::Retry;
@@ -31886,9 +31942,9 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         sourceStopFrame = 0;
         for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
             const std::size_t sourceSlot = sourceSlots[index];
-            const auto& currentVoice = engine.playableScheduleVoices[sourceSlot].Facts();
+            const auto& currentVoice = engine.ReadPlayableMember(sourceSlot).voice.Facts();
             const harken::PlayableRefV1& currentLeaf =
-                engine.playableScheduleLeaves[sourceSlot];
+                engine.ReadPlayableMember(sourceSlot).leaf;
             harken::PCMView currentMedia{};
             if (row.Invocation().packLease.leaseToken != 0) {
                 if (engine.packs.LookupExactClosure(row.Invocation().packLease.resourceClosureToken,
@@ -31896,7 +31952,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
                     return VariableRetargetPrepareStatus::Retry;
             } else currentMedia = engine.registry.Lookup(currentVoice.soundId);
             const std::uint64_t currentStartFrame =
-                engine.playableScheduleStartFrames[sourceSlot];
+                engine.ReadPlayableMember(sourceSlot).startFrame;
             if (!currentMedia.Valid() ||
                 currentMedia.contentRevision != currentLeaf.contentRevision ||
                 currentMedia.sampleRate !=
@@ -31926,7 +31982,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         }
         if (audibleFrame < decisionFrame || audibleFrame < firstOpen) {
             row.variableControlDiscreteMissedBank = bank;
-            row.variableControlDiscreteMissedSource = engine.variableControlMemberCompletions[sourceSlots[0]].leafInstance;
+            row.variableControlDiscreteMissedSource = engine.ReadPlayableMember(sourceSlots[0]).completion.leafInstance;
             row.variableControlDiscreteMissedOrdinal = row.variableControlDiscreteCurrentChildOrdinal;
             return VariableRetargetPrepareStatus::Retry;
         }
@@ -32121,8 +32177,11 @@ engine.runtimeRecreateRequired = true;
     PreparedTimelineStarts starts(engine);
     const auto rollbackBeforeInstall = [&]() {
         starts.Cancel();
-        CancelPreparedMemberStorage(engine, base + row.variableControlDiscreteTransitionOffset,
-            targetStorageCount, targetSlots, priorReferences);
+        if (!CancelPreparedMemberStorage(engine, base + row.variableControlDiscreteTransitionOffset,
+                targetStorageCount, targetSlots, priorReferences)) {
+            engine.runtimeRecreateRequired = true;
+            return;
+        }
         targetStorageCount = 0;
         if (decision.Valid()) {
             (void)engine.decisions.Cancel(decision);
@@ -32266,8 +32325,8 @@ engine.runtimeRecreateRequired = true;
                 static_cast<std::uint32_t>(exiting),
                 static_cast<std::uint32_t>(exiting >> 32), audibleFrame,
                 armDeadline, row.rootInstance,
-                engine.playableScheduleVoices[
-                    sourceSlots[exitingArmCount]].Facts().target,
+                engine.ReadPlayableMember(
+                    sourceSlots[exitingArmCount]).voice.Facts().target,
                 harken::ParentAudioGroupRef{decision},
                 static_cast<std::uint16_t>(exitingArmCount),
                 &exitingArms[exitingArmCount])) {
@@ -32351,20 +32410,20 @@ engine.runtimeRecreateRequired = true;
             targetStartFrame + targetSchedule.leaves[index].startOffsetFrames;
         const TimelineVoiceInstallResult& installed =
             installedTargets[index];
-        engine.playableScheduleVoices[enteringSlot] =
+        engine.MutablePlayableMember(enteringSlot).voice =
             std::move(capturedTargets[index]);
-        engine.playableScheduleLeaves[enteringSlot] =
+        engine.MutablePlayableMember(enteringSlot).leaf =
             targetSchedule.leaves[index].leaf;
-        engine.playableScheduleArms[enteringSlot] = installed.armToken;
-        engine.playableScheduleReleaseObservers[enteringSlot] = installed.releaseObserver;
+        engine.MutablePlayableMember(enteringSlot).arm = installed.armToken;
+        engine.MutablePlayableMember(enteringSlot).release = installed.releaseObserver;
         engine.SetPlayableMemberCompletion(enteringSlot,
             {incomingLeaves[index], incomingLeafEpochs[index], installed.sourceTerminal});
-        engine.variableControlMemberCompletions[enteringSlot].monitorSelection = installed.monitorSelection;
-        engine.playableScheduleRenderHandles[enteringSlot] =
+        engine.MutablePlayableMember(enteringSlot).monitorSelection = installed.monitorSelection;
+        engine.MutablePlayableMember(enteringSlot).render =
             installed.renderHandle;
-        engine.playableScheduleStartFrames[enteringSlot] =
+        engine.MutablePlayableMember(enteringSlot).startFrame =
             leafStartFrame;
-        engine.variableControlDynamicMembers[enteringSlot] = 1;
+        engine.MutablePlayableMember(enteringSlot).dynamic = 1;
 
         auto& resourceOwner = *targetOwners[index];
         auto* record = &resourceOwner == &row ? nullptr : engine.AcquireMemberProgram(resourceOwner,
@@ -32383,7 +32442,7 @@ engine.runtimeRecreateRequired = true;
         start = {};
         start.kind = harken::TimelineEventKind::Start;
         start.reserved = harken::kTimelineEventTransientStartArm;
-        start.target = engine.playableScheduleVoices[enteringSlot].Facts().target;
+        start.target = engine.ReadPlayableMember(enteringSlot).voice.Facts().target;
         auto& startEvent = events[0];
         startEvent = {};
         startEvent.logicCommitSequence = ticket;
@@ -32399,7 +32458,7 @@ engine.runtimeRecreateRequired = true;
                 harken::TimelineEnvelopeDirection::FadeIn;
             fade.reserved = harken::kTimelineEventTransientStartArm;
             fade.envelopeIndex = 0;
-            fade.target = engine.playableScheduleVoices[enteringSlot].Facts().target;
+            fade.target = engine.ReadPlayableMember(enteringSlot).voice.Facts().target;
             fade.envelopeStartFrame = leafStartFrame;
             fade.envelopeEndFrame = leafStartFrame + targetFadeFrames;
             fade.envelopeCurve = &row.transitionTargetFadeCurve;
@@ -32476,7 +32535,7 @@ engine.runtimeRecreateRequired = true;
         const std::uint32_t sourceEventBase = exitingEventCount;
         const harken::TimelineArmToken arm = exitingArms[sourceIndex];
         const harken::TimelineSemanticTarget& sourceTarget =
-            engine.playableScheduleVoices[sourceSlots[sourceIndex]].Facts().target;
+            engine.ReadPlayableMember(sourceSlots[sourceIndex]).voice.Facts().target;
         if (sourceFadeActive) {
             const std::uint32_t fadeIndex = exitingEventCount++;
             auto& fade =
@@ -32841,7 +32900,7 @@ bool CaptureCurrentContinuousMembers(harken::Engine& engine, harken::EnginePlaya
             if (ordinal == 0) {
                 std::size_t physical = 0;
                 if (!engine.ResolvePlayableMemberSlot(logical, &physical)) return false;
-                ordinal = engine.playableScheduleVoices[physical].Facts().target.occurrenceOrdinal;
+                ordinal = engine.ReadPlayableMember(physical).voice.Facts().target.occurrenceOrdinal;
             }
             if (!append(reference, ordinal, weight)) return false;
         }
@@ -32964,7 +33023,7 @@ VariableRetargetPrepareStatus PrepareVariableControlRetarget(
         return VariableRetargetPrepareStatus::Capacity;
     }
     if (transitionBase + engine.config.maxVariableControlLiveRows >
-            engine.playableScheduleRenderHandles.size() ||
+            engine.playableStorage.memberCount ||
         transitionWeightBase + engine.config.maxVariableControlLiveRows >
             engine.variableControlWeightSegments.size() ||
         continuousBase + engine.config.maxVariableControlLiveRows >
@@ -32984,10 +33043,10 @@ VariableRetargetPrepareStatus PrepareVariableControlRetarget(
     }
     for (std::uint32_t index = 0; index < priorMemberCount; ++index) {
         const std::uint32_t ordinal = currentReferences[index].authoredChildOrdinal;
-        if (!engine.variableControlMemberCompletions[currentMemberSlots[index]].resourcesRetired &&
+        if (!engine.ReadPlayableMember(currentMemberSlots[index]).completion.resourcesRetired &&
              engine.voices.Resolve(
-                engine.playableScheduleRenderHandles[
-                    currentMemberSlots[index]]) ==
+                engine.ReadPlayableMember(
+                    currentMemberSlots[index]).render) ==
                 nullptr) {
             return VariableRetargetPrepareStatus::Retry;
         }
@@ -33051,7 +33110,7 @@ VariableRetargetPrepareStatus PrepareVariableControlRetarget(
     }
     std::uint32_t livePriorMemberCount = 0;
     for (std::uint32_t index = 0; index < priorMemberCount; ++index) {
-        livePriorMemberCount += !engine.variableControlMemberCompletions[currentMemberSlots[index]].resourcesRetired;
+        livePriorMemberCount += !engine.ReadPlayableMember(currentMemberSlots[index]).completion.resourcesRetired;
         desiredEquivalent = desiredEquivalent && targetWeights[index] == currentWeights[index].endWeight;
     }
     if (desiredEquivalent) return advanceUnchangedBank();
@@ -33133,7 +33192,7 @@ VariableRetargetPrepareStatus PrepareVariableControlRetarget(
         }
     } programs;
     for (std::uint32_t index = 0; index < priorMemberCount; ++index) {
-        if (engine.variableControlMemberCompletions[currentMemberSlots[index]].resourcesRetired) continue;
+        if (engine.ReadPlayableMember(currentMemberSlots[index]).completion.resourcesRetired) continue;
         programs.records[index] = engine.AcquireVariableControlRetargetProgram(row.identity);
         if (programs.records[index] == nullptr) return VariableRetargetPrepareStatus::Retry;
     }
@@ -33211,7 +33270,7 @@ engine.runtimeRecreateRequired = true;
         memberSlot = currentSlot;
         engine.variableControlWeightSegments[weightSlot] =
             currentWeights[reservedArmCount];
-        if (engine.variableControlMemberCompletions[currentSlot].resourcesRetired) {
+        if (engine.ReadPlayableMember(currentSlot).completion.resourcesRetired) {
             engine.variableControlRetargetArms[continuousSlot] = {};
             if (harken::RetargetWeightSegment(&engine.variableControlWeightSegments[weightSlot],
                     decisionFrame, envelopeFrames, targetWeights[reservedArmCount], decision, bank,
@@ -33223,12 +33282,12 @@ engine.runtimeRecreateRequired = true;
             continue;
         }
         const VnVoiceHandle render =
-            engine.playableScheduleRenderHandles[memberSlot];
+            engine.ReadPlayableMember(memberSlot).render;
         if (!starts.PrepareControlArm(
                 static_cast<std::uint32_t>(render),
                 static_cast<std::uint32_t>(render >> 32),
                 decisionFrame, armDeadline, row.rootInstance,
-                engine.playableScheduleVoices[memberSlot].Facts().target,
+                engine.ReadPlayableMember(memberSlot).voice.Facts().target,
                 harken::ParentAudioGroupRef{decision},
                 audioArmCount,
                 &engine.variableControlRetargetArms[continuousSlot]) ||
@@ -33276,7 +33335,7 @@ engine.runtimeRecreateRequired = true;
         auto& payload = controlProgram.payload;
         payload = {};
         payload.kind = harken::TimelineEventKind::VariableWeight;
-        payload.target = engine.playableScheduleVoices[memberSlot].Facts().target;
+        payload.target = engine.ReadPlayableMember(memberSlot).voice.Facts().target;
         payload.variableWeight = engine.variableControlPendingWeightSegments[continuousSlot];
         if (row.variableControlIndependentFrontier)
             payload.variableWeightOwner = {row.ownerInstance, row.ownerEpoch, 1};
@@ -33348,9 +33407,9 @@ engine.runtimeRecreateRequired = true;
             (static_cast<std::uint64_t>(arm.generation) << 32) |
             arm.slot;
         command.payload.play.handle =
-            engine.playableScheduleRenderHandles[memberSlot];
+            engine.ReadPlayableMember(memberSlot).render;
         command.payload.play.sourceIdentity =
-            engine.playableScheduleRenderHandles[memberSlot];
+            engine.ReadPlayableMember(memberSlot).render;
     }
     for (std::uint32_t index = 0; index < priorMemberCount; ++index) {
         if (!engine.variableControlRetargetArms[continuousBase + index].Valid()) continue;
@@ -33445,14 +33504,14 @@ engine.runtimeRecreateRequired = true;
 }
 
 bool HasPlayableMemberSource(const harken::Engine& engine, std::size_t slot) noexcept {
-    const auto& member = engine.variableControlMemberCompletions[slot];
-    const auto render = engine.playableScheduleRenderHandles[slot];
+    const auto& member = engine.ReadPlayableMember(slot).completion;
+    const auto render = engine.ReadPlayableMember(slot).render;
     if (member.leafInstance == 0 || member.leafEpoch == 0 || render == 0) return false;
     const auto* source = engine.sourceTerminals.Resolve(member.source);
     if (source != nullptr)
         return source->leaf == member.leafInstance && source->acceptedEpoch == member.leafEpoch &&
             source->render == render;
-    const auto arm = engine.playableScheduleArms[slot];
+    const auto arm = engine.ReadPlayableMember(slot).arm;
     return member.resourcesRetired && member.completedSource.kind != harken::SourceTerminalKind::None &&
         member.sourceRender == render && member.sourceStartArm.slot == arm.slot &&
         member.sourceStartArm.generation == arm.generation &&
@@ -33462,11 +33521,11 @@ bool HasPlayableMemberSource(const harken::Engine& engine, std::size_t slot) noe
 
 std::uint64_t PlayableMemberStartSequence(const harken::Engine& engine, std::size_t slot) noexcept {
     if (!HasPlayableMemberSource(engine, slot)) return 0;
-    const auto arm = engine.playableScheduleArms[slot];
+    const auto arm = engine.ReadPlayableMember(slot).arm;
     harken::TimelineArmObservation observed{};
     if (engine.timelineArms.Observe(arm, &observed)) return observed.startedBlockSequence;
-    const auto& member = engine.variableControlMemberCompletions[slot];
-    return member.sourceRender == engine.playableScheduleRenderHandles[slot] &&
+    const auto& member = engine.ReadPlayableMember(slot).completion;
+    return member.sourceRender == engine.ReadPlayableMember(slot).render &&
         member.sourceStartArm.slot == arm.slot && member.sourceStartArm.generation == arm.generation &&
         member.sourceStartArm.renderSlot == arm.renderSlot && member.sourceStartArm.renderGeneration == arm.renderGeneration
         ? member.sourceStartedBlockSequence : 0;
@@ -33480,12 +33539,12 @@ bool ObservePlayableSourceLifecycle(const harken::Engine& engine,
     std::size_t slot = 0;
     if (!engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &slot) ||
         !HasPlayableMemberSource(engine, slot)) return armObserved;
-    const auto arm = engine.playableScheduleArms[slot];
-    if (engine.playableScheduleRenderHandles[slot] != row.renderHandle ||
+    const auto arm = engine.ReadPlayableMember(slot).arm;
+    if (engine.ReadPlayableMember(slot).render != row.renderHandle ||
         arm.slot != row.arm.slot || arm.generation != row.arm.generation ||
         arm.renderSlot != row.arm.renderSlot || arm.renderGeneration != row.arm.renderGeneration)
         return armObserved;
-    const auto& member = engine.variableControlMemberCompletions[slot];
+    const auto& member = engine.ReadPlayableMember(slot).completion;
     const bool retainedStart = member.sourceRender == row.renderHandle &&
         member.sourceStartArm.slot == arm.slot && member.sourceStartArm.generation == arm.generation &&
         member.sourceStartArm.renderSlot == arm.renderSlot &&
@@ -33598,16 +33657,16 @@ void RefreshPlayableChildObservation(
          index < row.variableControlDiscreteMemberCount; ++index) {
         std::size_t slot = 0;
         if (!engine.ResolvePlayableMemberSlot(base + index, &slot)) break;
-        add(engine.playableScheduleArms[slot],
-            engine.playableScheduleRenderHandles[slot], &engine.variableControlMemberCompletions[slot]);
+        add(engine.ReadPlayableMember(slot).arm,
+            engine.ReadPlayableMember(slot).render, &engine.ReadPlayableMember(slot).completion);
     }
     for (std::uint32_t index = 0;
          index < row.variableControlContinuousMemberCount; ++index) {
         std::size_t slot = 0;
         if (!engine.ResolvePlayableMemberSlot(base +
                 row.variableControlContinuousMemberOffset + index, &slot)) break;
-        add(engine.playableScheduleArms[slot],
-            engine.playableScheduleRenderHandles[slot], &engine.variableControlMemberCompletions[slot]);
+        add(engine.ReadPlayableMember(slot).arm,
+            engine.ReadPlayableMember(slot).render, &engine.ReadPlayableMember(slot).completion);
     }
     for (std::uint32_t index = 0;
          index < row.variableControlInitialContinuousMemberCount; ++index) {
@@ -33623,8 +33682,8 @@ void RefreshPlayableChildObservation(
             if (!engine.ResolvePlayableMemberSlot(base + index +
                     (row.variableControlDiscreteRetargetReplacement ? row.variableControlDiscreteTransitionOffset : 0u),
                     &slot)) break;
-            add(engine.playableScheduleArms[slot], engine.playableScheduleRenderHandles[slot],
-                &engine.variableControlMemberCompletions[slot]);
+            add(engine.ReadPlayableMember(slot).arm, engine.ReadPlayableMember(slot).render,
+                &engine.ReadPlayableMember(slot).completion);
         }
     }
     const std::size_t transitionBase = storageBases.continuous;
@@ -33641,7 +33700,7 @@ void RefreshPlayableChildObservation(
         std::size_t memberSlot = 0;
         if (!engine.ResolvePlayableMemberSlot(base + row.variableControlContinuousTransitionOffset + index,
                 &memberSlot)) break;
-        add(arm, renderForArm(arm), &engine.variableControlMemberCompletions[memberSlot]);
+        add(arm, renderForArm(arm), &engine.ReadPlayableMember(memberSlot).completion);
     }
     row.childLiveCount = liveCount;
     row.childAudibleRetiringCount = retiringCount;
@@ -33720,15 +33779,17 @@ void ObserveVariableControlMemberCompletion(
         const auto memberBase = StorageBasesForRow(engine, row).member;
         for (std::uint32_t memberIndex = 0; memberIndex < engine.playableStorage.memberStride; ++memberIndex) {
             const auto slot = memberBase + memberIndex;
-            auto& member = engine.variableControlMemberCompletions[slot];
+            auto* record = engine.FindPlayableMember(slot);
+            if (record == nullptr) continue;
+            auto& member = record->completion;
             if (member.source.slot != token.slot || member.source.generation != token.generation ||
                 member.leafInstance != source.leaf || member.leafEpoch != source.acceptedEpoch ||
-                engine.playableScheduleRenderHandles[slot] != source.render) continue;
+                engine.ReadPlayableMember(slot).render != source.render) continue;
             member.completedSource = {result, completed ? payload.frame : 0};
             member.sourceCompletionSequence = completed
                 ? source.completedSequence.load(std::memory_order_relaxed) : 0;
             member.sourceRender = source.render;
-            member.sourceStartArm = engine.playableScheduleArms[slot];
+            member.sourceStartArm = engine.ReadPlayableMember(slot).arm;
         }
         const VnResult terminalResult = terminal != harken::PlayableTerminalKind::Failure
             ? VN_OK : result == harken::SourceTerminalKind::IntegrityAbort
@@ -33768,7 +33829,9 @@ engine.runtimeRecreateRequired = true;
         // Drop every membership reference before releasing the original leaf
         // hold. Accepted selection descriptors remain available for retarget.
         for (std::uint32_t memberIndex = 0; memberIndex < engine.playableStorage.memberStride; ++memberIndex) {
-            auto& member = engine.variableControlMemberCompletions[memberBase + memberIndex];
+            auto* record = engine.FindPlayableMember(row, memberIndex);
+            if (record == nullptr) continue;
+            auto& member = record->completion;
             if (member.source.slot == token.slot && member.source.generation == token.generation) {
                 member.source = {};
                 member.resourcesRetired = true;
@@ -33809,8 +33872,8 @@ bool RestoreDeferredQueueSourceObservation(
     if (observation != nullptr && row.queueMode && row.queueDeferredNeedsFullPreparation &&
         engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &sourceSlot) &&
         HasPlayableMemberSource(engine, sourceSlot)) {
-        const auto& source = engine.variableControlMemberCompletions[sourceSlot];
-        const auto arm = engine.playableScheduleArms[sourceSlot];
+        const auto& source = engine.ReadPlayableMember(sourceSlot).completion;
+        const auto arm = engine.ReadPlayableMember(sourceSlot).arm;
         if (source.resourcesRetired && source.completedSource.kind == harken::SourceTerminalKind::Natural &&
             source.sourceCompletionSequence != 0 && source.sourceReleaseSequence != 0 &&
             source.sourceReleaseSequence < engine.mixer.BlocksRendered() &&
@@ -33947,8 +34010,8 @@ bool CaptureInitialRootQueueCurrentMutation(harken::Engine& engine,
     *out = {leaf.occurrence, leaf.predicate.owner};
     if (outLeaf != nullptr) {
         const auto base = StorageBasesForRow(engine, row).member;
-        if (base >= engine.variableControlMemberCompletions.size()) return false;
-        *outLeaf = engine.variableControlMemberCompletions[base].leafInstance;
+        if (base >= engine.playableStorage.memberCount) return false;
+        *outLeaf = engine.ReadPlayableMember(base).completion.leafInstance;
     }
     return true;
 }
@@ -33990,7 +34053,7 @@ bool ValidateInitialRootQueueMixedCurrent(harken::Engine& engine,
     const auto* currentProgram = ResolveQueueCurrentProgram(row, 0);
     if (!row.queueCurrentCompositeOwner.Valid() || row.scheduleLeafCount != 1 ||
         row.queueCurrentScheduleLeafCount != 1 || row.queueCurrentScheduleBase != bases.member ||
-        bases.member >= engine.variableControlMemberCompletions.size() ||
+        bases.member >= engine.playableStorage.memberCount ||
         currentProgram == nullptr ||
         bases.endpoint >= engine.playableScheduleOccurrences.size() ||
         bases.paired >= engine.playableScheduleCompletions.size()) return false;
@@ -34012,7 +34075,7 @@ bool ValidateInitialRootQueueMixedCurrent(harken::Engine& engine,
         leaf.predicate.absoluteLogicalCompleteFrame != info.absoluteLogicalCompleteFrame ||
         leaf.predicate.absoluteLogicalCompleteFrame >= row.zeroWorkCompletionFrame ||
         row.zeroWorkCompletionFrame != row.queueCompletionFrame) return false;
-    const auto& physical = engine.variableControlMemberCompletions[bases.member];
+    const auto& physical = engine.ReadPlayableMember(bases.member).completion;
     const auto* source = engine.sourceTerminals.Resolve(physical.source);
     const auto* arm = engine.timelineArms.Resolve(row.arm);
     const auto* voice = engine.voices.Resolve(row.renderHandle);
@@ -34048,8 +34111,8 @@ bool ValidateInitialRootQueueMixedCurrent(harken::Engine& engine,
         source->leaf == physical.leafInstance && source->acceptedEpoch == physical.leafEpoch &&
         source->controller == row.rootInstance && source->render == row.renderHandle &&
         engine.ResolveSourceResourceOwner(source->resourceOwner) == &row &&
-        engine.playableScheduleRenderHandles[bases.member] == row.renderHandle &&
-        sameArm(engine.playableScheduleArms[bases.member]) &&
+        engine.ReadPlayableMember(bases.member).render == row.renderHandle &&
+        sameArm(engine.ReadPlayableMember(bases.member).arm) &&
         arm->programGeneration == physical.leafInstance && arm->pendingImmediateStart &&
         arm->frontierAdmission == nullptr && !arm->parentGroup.Valid() &&
         engine.CaptureTimelineVoiceInstallIdentity(row.renderHandle, &install) &&
@@ -34213,9 +34276,7 @@ void PublishMonitorPendingInitialSelections(harken::Engine& engine,
     for (std::uint32_t leaf = 0; leaf < row.scheduleLeafCount; ++leaf) {
         std::size_t logical = 0, physical = 0;
         if (!ResolveImmediateInitialMemberSlots(engine, row, leaf, &logical, &physical)) continue;
-        auto& saved = engine.variableControlMemberCompletions[physical].monitorSelection;
-        PublishMonitorSelection(engine, saved, engine.playableScheduleArms[physical],
-            engine.playableScheduleRenderHandles[physical], cause);
+        PublishMonitorMemberSelection(engine, physical, cause);
     }
 }
 
@@ -37212,12 +37273,12 @@ bool ProvePlainInitialQueueCurrentStart(
         current.immediateLane.generation != attempt.lane.generation ||
         !engine.playablePartitions.Owns(current.partition, current.identity) ||
         engine.config.blockFrames == 0 ||
-        current.queueCurrentScheduleBase >= engine.variableControlMemberCompletions.size())
+        current.queueCurrentScheduleBase >= engine.playableStorage.memberCount)
         return false;
     const auto slot = current.queueCurrentScheduleBase;
     const auto base = engine.playableStorage.MemberBase(current.partition.slot);
     if (slot < base || slot - base >= engine.playableStorage.memberStride) return false;
-    const auto& physical = engine.variableControlMemberCompletions[slot];
+    const auto& physical = engine.ReadPlayableMember(slot).completion;
     const auto* source = engine.sourceTerminals.Resolve(physical.source);
     const auto leaf = engine.playableInstances.Classify(physical.leafInstance);
     const auto owner = engine.playableInstances.Classify(current.ownerInstance);
@@ -37246,8 +37307,8 @@ bool ProvePlainInitialQueueCurrentStart(
         engine.ResolveSourceResourceOwner(source->resourceOwner) != &current ||
         source->release.slot != current.releaseObserver.slot ||
         source->release.targetSequence != current.releaseObserver.targetSequence ||
-        engine.playableScheduleRenderHandles[slot] != current.renderHandle ||
-        !sameArm(engine.playableScheduleArms[slot]) ||
+        engine.ReadPlayableMember(slot).render != current.renderHandle ||
+        !sameArm(engine.ReadPlayableMember(slot).arm) ||
         program.eventCount != 1 || program.events == nullptr ||
         program.events[0].frameOffsetFromEntry != 0 ||
         !sameArm(program.armToken) || !sameArm(program.events[0].armToken) ||
@@ -38076,9 +38137,9 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                         continue;
                     }
                     const auto arm = member.scheduleLeafCount > 1u
-                        ? engine.playableScheduleArms[physicalSlot] : member.arm;
+                        ? engine.ReadPlayableMember(physicalSlot).arm : member.arm;
                     const auto render = member.scheduleLeafCount > 1u
-                        ? engine.playableScheduleRenderHandles[physicalSlot] : member.renderHandle;
+                        ? engine.ReadPlayableMember(physicalSlot).render : member.renderHandle;
                     (void)AbortTimelineArm(engine, arm);
                     for (std::uint32_t sourceIndex = 0; sourceIndex < engine.sourceTerminals.Capacity(); ++sourceIndex) {
                         auto* source = engine.sourceTerminals.At(sourceIndex);
@@ -38237,8 +38298,8 @@ void ServiceImmediateLaneReceipts(harken::Engine& engine,
                     resource->queueNaturalEnd && !resource->queueSignalOnlyNoOverlap &&
                     resource->queueCurrentScheduleLeafCount == 1 &&
                     harken::IsBoundKnownCompletionPredicate(resource->queueCurrentCompletion) &&
-                    resource->queueCurrentScheduleBase < engine.variableControlMemberCompletions.size()) {
-                    const auto& physical = engine.variableControlMemberCompletions[resource->queueCurrentScheduleBase];
+                    resource->queueCurrentScheduleBase < engine.playableStorage.memberCount) {
+                    const auto& physical = engine.ReadPlayableMember(resource->queueCurrentScheduleBase).completion;
                     retiredPlain = {attempt.lane, PlayableServiceReference(*plainRoot),
                         PlayableServiceReference(*resource), attempt.root, resource->arm,
                         resource->queueCurrentOccurrence, physical.source,
@@ -40710,7 +40771,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
             installation.startArm.slot != program->armToken.slot ||
             installation.startArm.generation != program->armToken.generation ||
             installation.onsetFrame !=
-                engine.playableScheduleStartFrames[physicalSlot]) return false;
+                engine.ReadPlayableMember(physicalSlot).startFrame) return false;
         const auto entryOrdinal = scratch.privateInitialVcPageCohort.laneEntryOrdinal;
         const auto failureOrdinal = entryOrdinal == UINT32_MAX ? leaf : entryOrdinal * 2u + leaf;
         if (engine.forceImmediateLaneBindLeafFailureForTest == failureOrdinal) {
@@ -40720,7 +40781,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
         if (!engine.timelineArms.BindPendingImmediateStart(
                 program->armToken, actual, actual)) return false;
         program->entryAnchorFrame = anchor;
-        engine.playableScheduleStartFrames[physicalSlot] = actual;
+        engine.MutablePlayableMember(physicalSlot).startFrame = actual;
         installation.onsetFrame = actual;
     }
     if (!engine.decisions.PrepareFrontierActivation(
@@ -40845,7 +40906,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
             &holder.Invocation() != &row.Invocation()) return false;
         if (holder.queueCurrentScheduleLeafCount != 1 ||
             holder.queueCurrentScheduleBase >=
-                engine.playableScheduleArms.size() ||
+                engine.playableStorage.memberCount ||
             holder.queueCurrentScheduleBase >=
                 engine.playableMemberReferences.size()) return false;
         const std::size_t currentSlot =
@@ -40863,7 +40924,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
         if (!currentLeaf.live ||
             currentLeaf.scheduleEpoch != currentMember.leafEpoch ||
             currentLeaf.parent != holder.ownerInstance) return false;
-        const auto currentArm = engine.playableScheduleArms[currentSlot];
+        const auto currentArm = engine.ReadPlayableMember(currentSlot).arm;
         harken::TimelineArmObservation arm{};
         if (!currentArm.Valid() ||
             !engine.timelineArms.Observe(currentArm, &arm) ||
@@ -43914,7 +43975,7 @@ void ServicePendingImmediateEntries(
             const auto bases = StorageBasesForRow(engine, member);
             const auto renderAt = [&](std::uint32_t leaf) {
                 return member.scheduleLeafCount > 1u
-                    ? engine.playableScheduleRenderHandles[bases.member + leaf]
+                    ? engine.ReadPlayableMember(bases.member + leaf).render
                     : member.renderHandle;
             };
             if (!member.pendingImmediateRetryStopIssued) {
@@ -43936,7 +43997,7 @@ void ServicePendingImmediateEntries(
             for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
                 const auto render = renderAt(leaf);
                 const auto observer = member.scheduleLeafCount > 1u
-                    ? engine.playableScheduleReleaseObservers[bases.member + leaf]
+                    ? engine.ReadPlayableMember(bases.member + leaf).release
                     : member.releaseObserver;
                 memberGenerationLive =
                     engine.voices.Resolve(render) != nullptr ||
@@ -43983,10 +44044,10 @@ void ServicePendingImmediateEntries(
             const auto bases = StorageBasesForRow(engine, member);
             for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
                 const auto arm = member.scheduleLeafCount > 1u
-                    ? engine.playableScheduleArms[bases.member + leaf]
+                    ? engine.ReadPlayableMember(bases.member + leaf).arm
                     : member.arm;
                 const auto render = member.scheduleLeafCount > 1u
-                    ? engine.playableScheduleRenderHandles[bases.member + leaf]
+                    ? engine.ReadPlayableMember(bases.member + leaf).render
                     : member.renderHandle;
                 if (member.queueNaturalEnd && !member.queueSignalOnlyNoOverlap &&
                     member.queueCurrentScheduleLeafCount == 1 && member.frontierArmPin.Valid()) continue;
@@ -44028,7 +44089,7 @@ void ServicePendingImmediateEntries(
                         const auto slot = bases.member + leaf;
                         const RetainedTimelineVoiceInstallBorrow voice{engine, member,
                             !member.usesCapturedScheduleVoices && member.scheduleLeafCount > 1u
-                                ? &engine.playableScheduleVoices[slot] : nullptr, leaf};
+                                ? &engine.ReadPlayableMember(slot).voice : nullptr, leaf};
                         if (voice.Status() != VN_OK) {
                             replaced = false;
                             break;
@@ -44038,7 +44099,7 @@ void ServicePendingImmediateEntries(
                             harken::IsBoundKnownCompletionPredicate(member.queueCurrentCompletion);
                         const auto physicalSlot = terminalCurrent ? member.queueCurrentScheduleBase : slot;
                         const auto leafInstance = member.scheduleLeafCount > 1u || terminalCurrent
-                            ? engine.variableControlMemberCompletions[physicalSlot].leafInstance : 0;
+                            ? engine.ReadPlayableMember(physicalSlot).completion.leafInstance : 0;
                         auto* publicRoot = serviceByToken(member.Invocation().rootService);
                         if (publicRoot != nullptr &&
                             (publicRoot->invocation != member.invocation ||
@@ -44075,8 +44136,8 @@ void ServicePendingImmediateEntries(
                             retired.arm.renderGeneration == member.arm.renderGeneration &&
                             retired.occurrence.slot == member.queueCurrentOccurrence.slot &&
                             retired.occurrence.generation == member.queueCurrentOccurrence.generation &&
-                            retired.source.slot == engine.variableControlMemberCompletions[physicalSlot].source.slot &&
-                            retired.source.generation == engine.variableControlMemberCompletions[physicalSlot].source.generation &&
+                            retired.source.slot == engine.ReadPlayableMember(physicalSlot).completion.source.slot &&
+                            retired.source.generation == engine.ReadPlayableMember(physicalSlot).completion.source.generation &&
                             harken::SameCompletionOwner(retired.owner, member.queueCurrentCompletion.owner) &&
                             harken::SamePlayableProgramKey(retired.program, member.queueCurrentCompletion.program);
                         if (terminalCurrent && (!uniquePlainRetry || (publicRoot == nullptr || member.immediateLane.Valid() ||
@@ -44228,15 +44289,13 @@ void ServicePendingImmediateEntries(
                             const auto* installed = starts.At(index++);
                             if (member.scheduleLeafCount > 1u || member.usesCapturedScheduleVoices) {
                                 const auto slot = bases.member + leaf;
-                                engine.playableScheduleArms[slot] =
+                                engine.MutablePlayableMember(slot).arm =
                                     installed->arm;
-                                engine.playableScheduleRenderHandles[slot] =
+                                engine.MutablePlayableMember(slot).render =
                                     installed->renderHandle;
-                                engine.playableScheduleReleaseObservers[slot] =
+                                engine.MutablePlayableMember(slot).release =
                                     installed->releaseObserver;
-                                if (engine.variableControlMemberCompletions[slot].leafInstance != 0)
-                                    engine.variableControlMemberCompletions[slot].monitorSelection = installed->monitorSelection;
-                                else engine.playableScheduleSelections[slot] = installed->monitorSelection;
+                                engine.MutablePlayableMember(slot).monitorSelection = installed->monitorSelection;
                             }
                             if (auto* program = leafProgram(member, leaf)) {
                                 program->armToken = installed->arm;
@@ -44261,12 +44320,12 @@ void ServicePendingImmediateEntries(
                                 }
                                 member.queueCurrentCompletion = rebound;
                                 const auto slot = member.queueCurrentScheduleBase;
-                                engine.variableControlMemberCompletions[slot].source = installed->sourceTerminal;
-                                engine.variableControlMemberCompletions[slot].monitorSelection = installed->monitorSelection;
+                                engine.MutablePlayableMember(slot).completion.source = installed->sourceTerminal;
+                                engine.MutablePlayableMember(slot).monitorSelection = installed->monitorSelection;
                                 engine.RefreshPlayableMemberOnset(slot);
-                                engine.playableScheduleArms[slot] = installed->arm;
-                                engine.playableScheduleRenderHandles[slot] = installed->renderHandle;
-                                engine.playableScheduleReleaseObservers[slot] = installed->releaseObserver;
+                                engine.MutablePlayableMember(slot).arm = installed->arm;
+                                engine.MutablePlayableMember(slot).render = installed->renderHandle;
+                                engine.MutablePlayableMember(slot).release = installed->releaseObserver;
                             }
                             if (leaf == 0) {
                                 member.arm = installed->arm;
@@ -44374,9 +44433,9 @@ void ServicePendingImmediateEntries(
                         ResolveImmediateInitialMemberSlots(engine, member, leaf, &logicalSlot, &physicalSlot);
                     const RetainedTimelineVoiceInstallBorrow voice{engine, member,
                         member.usesCapturedScheduleVoices ? nullptr :
-                            memberSlot ? &engine.playableScheduleVoices[physicalSlot] :
+                            memberSlot ? &engine.ReadPlayableMember(physicalSlot).voice :
                             member.scheduleLeafCount > 1u
-                                ? &engine.playableScheduleVoices[bases.member + leaf] : nullptr, leaf};
+                                ? &engine.ReadPlayableMember(bases.member + leaf).voice : nullptr, leaf};
                     if (voice.Status() != VN_OK) {
                         invalidTiming = true;
                         break;
@@ -44705,7 +44764,7 @@ void ServicePendingImmediateEntries(
                 const auto bases = StorageBasesForRow(engine, holder);
                 if (holder.queueInitialCurrentMemberLeafCount != leafCount(holder) ||
                     bases.member + holder.queueInitialCurrentMemberLeafCount >
-                        engine.variableControlMemberCompletions.size()) continue;
+                        engine.playableStorage.memberCount) continue;
                 for (std::uint32_t leaf = 0;
                      leaf < holder.queueInitialCurrentMemberLeafCount; ++leaf) {
                     const auto ordinal = holder.queueInitialCurrentMemberIndices[leaf];
@@ -44720,7 +44779,7 @@ void ServicePendingImmediateEntries(
                         program->ownerInstance != lane.event.ownerInstanceHandle ||
                         program->ownerInstanceScheduleEpoch != lane.event.ownerInstanceScheduleEpoch ||
                         program->events[0].eventIndex != lane.event.eventIndex) continue;
-                    const auto& physical = engine.variableControlMemberCompletions[bases.member + leaf];
+                    const auto& physical = engine.ReadPlayableMember(bases.member + leaf).completion;
                     if (physical.leafInstance == 0 || physical.leafEpoch == 0) continue;
                     result = {&holder, leaf, physical.leafInstance};
                     ++matches;
@@ -45365,7 +45424,7 @@ void ServicePendingImmediateEntries(
                         frozen.immediateEntry = program->immediateEntry;
                     }
                     if (member.scheduleLeafCount > 1u || member.queueCurrentCompositeOwner.Valid()) {
-                        engine.playableScheduleStartFrames[bases.member + leaf] =
+                        engine.MutablePlayableMember(bases.member + leaf).startFrame =
                             actual;
                     }
                 }
@@ -45956,12 +46015,10 @@ void ServicePendingImmediateEntries(
                         PublishMonitorSelection(engine, member.monitorSelection, arm, member.renderHandle, cause);
                     } else {
                         const auto slot = bases.member + leaf;
-                        if (slot >= engine.playableScheduleSelections.size()) continue;
-                        auto& physical = engine.variableControlMemberCompletions[slot];
-                        auto& selection = physical.leafInstance != 0 ? physical.monitorSelection :
-                            engine.playableScheduleSelections[slot];
-                        PublishMonitorSelection(engine, selection, arm,
-                            engine.playableScheduleRenderHandles[slot], cause);
+                        if (slot >= engine.playableStorage.memberCount) continue;
+                        if (auto* memberRecord = engine.FindPlayableMember(slot))
+                            PublishMonitorSelection(engine, memberRecord->monitorSelection,
+                                arm, memberRecord->render, cause);
                     }
                 }
             }
@@ -46288,8 +46345,8 @@ bool ServiceStartedRootSound(harken::Engine& engine,
     std::size_t member = 0;
     const bool plainMember = row.scheduleLeafCount == 0 ||
         (engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &member) &&
-         member < engine.variableControlDynamicMembers.size() &&
-         engine.variableControlDynamicMembers[member] == 0);
+         member < engine.playableStorage.memberCount &&
+         engine.ReadPlayableMember(member).dynamic == 0);
     harken::TimelineArmObservation source{};
     if (!plainMember || !ObservePlayableSourceLifecycle(engine, row, &source) ||
         source.state != harken::ArmState::Started || source.startedBlockSequence == 0 ||
@@ -47295,7 +47352,7 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
                     break;
                 }
-                requirePublication(engine.playableScheduleStartFrames[slot]);
+                requirePublication(engine.ReadPlayableMember(slot).startFrame);
             }
             const bool discreteAlreadySuperseded =
                 row.variableControlDiscreteRetargetSuperseded;
@@ -47489,7 +47546,7 @@ engine.runtimeRecreateRequired = true;
                         }
                         const VnVoiceHandle render =
                             row.variableControlDiscreteRetargetEntering
-                            ? engine.playableScheduleRenderHandles[physicalSlot]
+                            ? engine.ReadPlayableMember(physicalSlot).render
                             : 0;
                         if (render != 0) {
                             (void)engine.voices.CancelTimelineBinding(
@@ -47696,9 +47753,7 @@ engine.runtimeRecreateRequired = true;
                                     ? row.variableControlDiscreteTransitionOffset : 0u);
                             std::size_t physical = 0;
                             if (!engine.ResolvePlayableMemberSlot(logical, &physical)) continue;
-                            auto& saved = engine.variableControlMemberCompletions[physical].monitorSelection;
-                            PublishMonitorSelection(engine, saved, engine.playableScheduleArms[physical],
-                                engine.playableScheduleRenderHandles[physical], cause);
+                            PublishMonitorMemberSelection(engine, physical, cause);
                         }
                     }
                     row.variableControlDiscreteRetargetApplied = true;
@@ -47786,8 +47841,8 @@ engine.runtimeRecreateRequired = true;
                          ++index) {
                         allSourcesExited = allSourcesExited &&
                             engine.voices.Resolve(
-                                engine.playableScheduleRenderHandles[
-                                    sourceSlots[index]]) == nullptr;
+                                engine.ReadPlayableMember(
+                                    sourceSlots[index]).render) == nullptr;
                     }
                     const auto incomingView = engine.playableInstances.Classify(
                         row.variableControlDiscreteRetargetIncomingChild);
@@ -47842,10 +47897,10 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
                                 continue;
                             }
-                            row.leaf = engine.playableScheduleLeaves[firstSlot];
-                            row.arm = engine.playableScheduleArms[firstSlot];
+                            row.leaf = engine.ReadPlayableMember(firstSlot).leaf;
+                            row.arm = engine.ReadPlayableMember(firstSlot).arm;
                             row.renderHandle =
-                                engine.playableScheduleRenderHandles[firstSlot];
+                                engine.ReadPlayableMember(firstSlot).render;
                             row.variableControlDiscreteSilent = false;
                             row.variableControlDiscreteRetargetSourceExited = true;
                         }
@@ -47893,10 +47948,10 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
                                 continue;
                             }
-                            row.leaf = engine.playableScheduleLeaves[firstSlot];
-                            row.arm = engine.playableScheduleArms[firstSlot];
+                            row.leaf = engine.ReadPlayableMember(firstSlot).leaf;
+                            row.arm = engine.ReadPlayableMember(firstSlot).arm;
                             row.renderHandle =
-                                engine.playableScheduleRenderHandles[firstSlot];
+                                engine.ReadPlayableMember(firstSlot).render;
                             row.variableControlDiscreteSilent = false;
                             row.variableControlDiscreteRetargetSourceExited = true;
                         }
@@ -47918,8 +47973,8 @@ engine.runtimeRecreateRequired = true;
                          ++index) {
                         allSourcesExited = allSourcesExited &&
                             engine.voices.Resolve(
-                                engine.playableScheduleRenderHandles[
-                                    sourceSlots[index]]) == nullptr;
+                                engine.ReadPlayableMember(
+                                    sourceSlots[index]).render) == nullptr;
                     }
                     if (allSourcesExited) {
                         row.variableControlDiscreteMemberCount = 0;
@@ -48197,14 +48252,14 @@ engine.runtimeRecreateRequired = true;
                 bool completedControlSource = false;
                 for (std::uint32_t index = 0; index < memberCount && !row.variableControlRetargetApplied; ++index) {
                     const auto physical = retargetMemberSlots[index];
-                    const auto& source = engine.variableControlMemberCompletions[physical];
+                    const auto& source = engine.ReadPlayableMember(physical).completion;
                     if (engine.variableControlRetargetMemberKinds[retargetBase + index] != 0 ||
                         !engine.variableControlRetargetArms[retargetBase + index].Valid() ||
                         source.completedSource.kind != harken::SourceTerminalKind::Natural ||
                         source.completedSource.frame > row.variableControlRetargetFrame ||
                         source.sourceCompletionSequence == 0 || source.sourceCompletionSequence > observedAudioSequence ||
-                        source.sourceRender != engine.playableScheduleRenderHandles[physical] ||
-                        !harken::Engine::SameOriginalSingleArm(source.sourceStartArm, engine.playableScheduleArms[physical]) ||
+                        source.sourceRender != engine.ReadPlayableMember(physical).render ||
+                        !harken::Engine::SameOriginalSingleArm(source.sourceStartArm, engine.ReadPlayableMember(physical).arm) ||
                         !HasPlayableMemberSource(engine, physical)) continue;
                     completedControlSource = true;
                 }
@@ -48285,8 +48340,8 @@ engine.runtimeRecreateRequired = true;
                     (void)AbortTimelineArm(engine, member);
                     if (engine.variableControlRetargetMemberKinds[slot] == 2) {
                         const VnVoiceHandle render =
-                            engine.playableScheduleRenderHandles[
-                                retargetMemberSlots[index]];
+                            engine.ReadPlayableMember(
+                                retargetMemberSlots[index]).render;
                         const harken::VoiceRenderContext* voice =
                             engine.voices.Resolve(render);
                         if (voice != nullptr && voice->timelineGated) {
@@ -48978,7 +49033,7 @@ engine.runtimeRecreateRequired = true;
             const std::uint32_t count = row.queueCurrentScheduleLeafCount;
             if (count == 0 ||
                 memberBase + count >
-                    engine.playableScheduleRenderHandles.size() ||
+                    engine.playableStorage.memberCount ||
                 endpointBase + count >
                     engine.playableScheduleOccurrences.size() ||
                 pairedBase + count >
@@ -49001,7 +49056,7 @@ engine.runtimeRecreateRequired = true;
                         engine.playableScheduleCompletions[pairedSlot];
                     const harken::VoiceLedger::RenderOwner renderOwner =
                         engine.ledger.OwnerForRender(
-                            engine.playableScheduleRenderHandles[memberSlot]);
+                            engine.ReadPlayableMember(memberSlot).render);
                     cleared =
                         (!renderOwner.live ||
                          engine.ledger.ClearCompletionMutationExact(
@@ -49215,7 +49270,7 @@ engine.runtimeRecreateRequired = true;
                     if (!row.queueCompositeMirrorsCleared) {
                         bool mirrorsCleared =
                             memberBase + row.queueCurrentScheduleLeafCount <=
-                                engine.playableScheduleRenderHandles.size() &&
+                                engine.playableStorage.memberCount &&
                             endpointBase + row.queueCurrentScheduleLeafCount <=
                                 engine.playableScheduleOccurrences.size() &&
                             pairedBase + row.queueCurrentScheduleLeafCount <=
@@ -49236,8 +49291,8 @@ engine.runtimeRecreateRequired = true;
                                 engine.playableScheduleCompletions[pairedSlot];
                             const harken::VoiceLedger::RenderOwner renderOwner =
                                 engine.ledger.OwnerForRender(
-                                    engine.playableScheduleRenderHandles[
-                                        memberSlot]);
+                                    engine.ReadPlayableMember(
+                                        memberSlot).render);
                             mirrorsCleared =
                                 !renderOwner.live ||
                                 engine.ledger.ClearCompletionMutationExact(
@@ -49414,19 +49469,19 @@ engine.runtimeRecreateRequired = true;
                         const std::size_t currentPaired =
                             currentPairedBase + index;
                         const std::size_t successor = successorBase + index;
-                        engine.playableScheduleVoices[currentMember] =
+                        engine.MutablePlayableMember(currentMember).voice =
                             std::move(engine.playableSuccessorVoices[successor]);
-                        engine.playableScheduleLeaves[currentMember] =
+                        engine.MutablePlayableMember(currentMember).leaf =
                             engine.playableSuccessorLeaves[successor];
-                        engine.playableScheduleArms[currentMember] =
+                        engine.MutablePlayableMember(currentMember).arm =
                             engine.playableSuccessorArms[successor];
-                        engine.playableScheduleRenderHandles[currentMember] =
+                        engine.MutablePlayableMember(currentMember).render =
                             engine.playableSuccessorRenderHandles[successor];
                         engine.playableScheduleOccurrences[currentEndpoint] =
                             engine.playableSuccessorOccurrences[successor];
                         engine.playableScheduleCompletions[currentPaired] =
                             engine.playableSuccessorCompletions[successor];
-                        engine.playableScheduleStartFrames[currentMember] =
+                        engine.MutablePlayableMember(currentMember).startFrame =
                             engine.playableSuccessorStartFrames[successor];
                         engine.playableSchedulePostSourceTailFrames[
                             currentPaired] =
@@ -49466,15 +49521,15 @@ engine.runtimeRecreateRequired = true;
                         continue;
                     }
                     row.arm =
-                        engine.playableScheduleArms[firstMember];
+                        engine.ReadPlayableMember(firstMember).arm;
                     row.renderHandle =
-                        engine.playableScheduleRenderHandles[
-                            firstMember];
+                        engine.ReadPlayableMember(
+                            firstMember).render;
                     row.capturedVoice = {};
                     row.usesCapturedVoice = false;
                     row.leaf =
-                        engine.playableScheduleLeaves[firstMember];
-                    row.startFrame = engine.playableScheduleStartFrames[firstMember];
+                        engine.ReadPlayableMember(firstMember).leaf;
+                    row.startFrame = engine.ReadPlayableMember(firstMember).startFrame;
                     if (row.parentService.Valid())
                         row.activeLeafInstance = engine.playableMemberReferences[currentMemberBase].leaf;
                 } else if (!sameProgramKey &&
@@ -49701,12 +49756,12 @@ engine.runtimeRecreateRequired = true;
         }
         bool hasDynamicVariableMember = false;
         if (variableBase + memberStorageSpan <=
-            engine.variableControlDynamicMembers.size()) {
+            engine.playableStorage.memberCount) {
             for (std::uint32_t index = 0;
                  index < memberStorageSpan; ++index) {
                 hasDynamicVariableMember = hasDynamicVariableMember ||
-                    engine.variableControlDynamicMembers[
-                        observedMemberSlots[index]] != 0;
+                    engine.ReadPlayableMember(
+                        observedMemberSlots[index]).dynamic != 0;
             }
         }
         if (row.scheduleLeafCount > 1 ||
@@ -49718,7 +49773,7 @@ engine.runtimeRecreateRequired = true;
             const std::size_t base = variableBase;
             if (memberStorageSpan > kMaxObservedMemberSpan ||
                 base + memberStorageSpan >
-                    engine.playableScheduleArms.size()) {
+                    engine.playableStorage.memberCount) {
 engine.runtimeRecreateRequired = true;
                 row.controlLifecycle = harken::PlayableControlLifecycle::
                     FailingSourceActive;
@@ -49756,8 +49811,8 @@ engine.runtimeRecreateRequired = true;
                      index < memberStorageSpan; ++index) {
                     if (!memberPresent(index)) continue;
                     if (engine.voices.Resolve(
-                            engine.playableScheduleRenderHandles[
-                                observedMemberSlots[index]]) != nullptr) {
+                            engine.ReadPlayableMember(
+                                observedMemberSlots[index]).render) != nullptr) {
                         voiceLive = true;
                         break;
                     }
@@ -49775,7 +49830,7 @@ engine.runtimeRecreateRequired = true;
                 if (!memberPresent(index)) continue;
                 latestScheduledStart = std::max(
                     latestScheduledStart,
-                    engine.playableScheduleStartFrames[observedMemberSlots[index]]);
+                    engine.ReadPlayableMember(observedMemberSlots[index]).startFrame);
             }
             requirePublication(latestScheduledStart);
             std::array<harken::TimelineArmObservation,
@@ -49786,7 +49841,7 @@ engine.runtimeRecreateRequired = true;
                 if (!memberPresent(index)) continue;
                 allObserved =
                     engine.timelineArms.Observe(
-                        engine.playableScheduleArms[observedMemberSlots[index]],
+                        engine.ReadPlayableMember(observedMemberSlots[index]).arm,
                         &arms[index]) &&
                     allObserved;
             }
@@ -49799,7 +49854,7 @@ engine.runtimeRecreateRequired = true;
                     const auto& arm = arms[index];
                     harken::DecisionCommittedSnapshot decision{};
                     harken::ArmGroupMemberSnapshot member{};
-                    const auto token = engine.playableScheduleArms[observedMemberSlots[index]];
+                    const auto token = engine.ReadPlayableMember(observedMemberSlots[index]).arm;
                     const auto started = PlayableMemberStartSequence(engine, observedMemberSlots[index]);
                     if (started != 0 && started <= observedAudioSequence) continue;
                     if (HasPlayableMemberSource(engine, observedMemberSlots[index]) && !arm.parentGroup.Valid()) {
@@ -49954,7 +50009,7 @@ engine.runtimeRecreateRequired = true;
                      index < memberStorageSpan && allObserved; ++index) {
                     if (!memberPresent(index)) continue;
                     const std::uint64_t startQuantum =
-                        engine.playableScheduleStartFrames[observedMemberSlots[index]] /
+                        engine.ReadPlayableMember(observedMemberSlots[index]).startFrame /
                         blockFrames;
                     const bool timely = IsTimelyTimelineArmAck(
                         arms[index].state,
@@ -49963,7 +50018,7 @@ engine.runtimeRecreateRequired = true;
                     const bool publicationFresh =
                         IsActionTimelineArmPublicationFresh(
                             row.Invocation().actionFiring,
-                            engine.playableScheduleStartFrames[observedMemberSlots[index]],
+                            engine.ReadPlayableMember(observedMemberSlots[index]).startFrame,
                             blockFrames, observedAudioSequence);
                     allTimely = allTimely && timely;
                     deadlineMissed = deadlineMissed || !publicationFresh ||
@@ -49983,7 +50038,7 @@ engine.runtimeRecreateRequired = true;
                         if (!memberPresent(index)) continue;
                         (void)AbortTimelineArm(
                             engine,
-                            engine.playableScheduleArms[observedMemberSlots[index]]);
+                            engine.ReadPlayableMember(observedMemberSlots[index]).arm);
                     }
                     row.phase =
                         harken::EnginePlayableStartPhase::Cancelling;
@@ -50012,8 +50067,8 @@ engine.runtimeRecreateRequired = true;
                             acknowledged =
                                 engine.armGroups.Acknowledge(
                                     group,
-                                    engine.playableScheduleArms[
-                                        observedMemberSlots[offset + index]],
+                                    engine.ReadPlayableMember(
+                                        observedMemberSlots[offset + index]).arm,
                                     arms[offset + index].
                                         armedCompletionSequence) &&
                                 acknowledged;
@@ -50051,7 +50106,7 @@ engine.runtimeRecreateRequired = true;
                      index < memberStorageSpan; ++index) {
                     if (!memberPresent(index)) continue;
                     const std::uint64_t startFrame =
-                        engine.playableScheduleStartFrames[observedMemberSlots[index]];
+                        engine.ReadPlayableMember(observedMemberSlots[index]).startFrame;
                     publishFresh =
                         startFrame >= engine.timelinePool.PublishCutoffFrame() &&
                         publishFresh;
@@ -50069,7 +50124,7 @@ engine.runtimeRecreateRequired = true;
                         if (!memberPresent(index)) continue;
                         (void)AbortTimelineArm(
                             engine,
-                            engine.playableScheduleArms[observedMemberSlots[index]]);
+                            engine.ReadPlayableMember(observedMemberSlots[index]).arm);
                     }
                     row.phase = harken::EnginePlayableStartPhase::Cancelling;
                     row.controlLifecycle = harken::
@@ -50084,14 +50139,14 @@ engine.runtimeRecreateRequired = true;
                      index < memberStorageSpan; ++index) {
                     if (!memberPresent(index)) continue;
                     const std::uint64_t startFrame =
-                        engine.playableScheduleStartFrames[observedMemberSlots[index]];
+                        engine.ReadPlayableMember(observedMemberSlots[index]).startFrame;
                     if (startFrame < engine.timelinePool.PublishCutoffFrame()) {
                         publicationDeadlineMissed = true;
                         published = false;
                         break;
                     }
                     published = engine.timelineArms.Publish(
-                                    engine.playableScheduleArms[observedMemberSlots[index]]) &&
+                                    engine.ReadPlayableMember(observedMemberSlots[index]).arm) &&
                                 published;
                 }
                 if (!published) {
@@ -50107,7 +50162,7 @@ engine.runtimeRecreateRequired = true;
                         if (!memberPresent(index)) continue;
                         (void)AbortTimelineArm(
                             engine,
-                            engine.playableScheduleArms[observedMemberSlots[index]]);
+                            engine.ReadPlayableMember(observedMemberSlots[index]).arm);
                     }
                     row.phase =
                         harken::EnginePlayableStartPhase::Cancelling;
@@ -50180,12 +50235,12 @@ engine.runtimeRecreateRequired = true;
                  ++index) {
                 if (!memberPresent(index)) continue;
                 const std::size_t slot = observedMemberSlots[index];
-                if (engine.variableControlDynamicMembers[slot] != 0 || HasPlayableMemberSource(engine, slot)) {
+                if (engine.ReadPlayableMember(slot).dynamic != 0 || HasPlayableMemberSource(engine, slot)) {
                     const VnVoiceHandle render =
-                        engine.playableScheduleRenderHandles[slot];
+                        engine.ReadPlayableMember(slot).render;
                     const bool active =
                         engine.voices.Resolve(render) != nullptr;
-                    const auto& member = engine.variableControlMemberCompletions[slot];
+                    const auto& member = engine.ReadPlayableMember(slot).completion;
                     harken::SourceTerminalPayload sourceResult{};
                     const bool terminal = member.resourcesRetired || engine.sourceTerminals.Capture(
                         member.source, observedAudioSequence, &sourceResult);
@@ -50201,7 +50256,7 @@ engine.runtimeRecreateRequired = true;
                     allTombstoned = allTombstoned && member.resourcesRetired;
                     continue;
                 }
-                const auto arm = engine.playableScheduleArms[slot];
+                const auto arm = engine.ReadPlayableMember(slot).arm;
                 harken::TimelineArmObservation observation{};
                 if (!engine.timelineArms.Observe(arm, &observation)) {
                     continue;
@@ -50219,8 +50274,8 @@ engine.runtimeRecreateRequired = true;
                     const auto* bank = row.queueCurrentProgramBank;
                     const auto programs = row.queueCurrentPrograms.Resolve(row.queueCurrentProgramBank);
                     const auto programIndex = row.queueCurrentPrograms.first + index;
-                    const auto render = engine.playableScheduleRenderHandles[slot];
-                    const auto release = engine.playableScheduleReleaseObservers[slot];
+                    const auto render = engine.ReadPlayableMember(slot).render;
+                    const auto release = engine.ReadPlayableMember(slot).release;
                     harken::ArmGroupSnapshot originalGroup{};
                     harken::ArmGroupMemberSnapshot originalMember{};
                     if (source != nullptr &&
@@ -50282,7 +50337,7 @@ engine.runtimeRecreateRequired = true;
                 anyActiveVoice =
                     anyActiveVoice ||
                     engine.voices.Resolve(
-                        engine.playableScheduleRenderHandles[slot]) !=
+                        engine.ReadPlayableMember(slot).render) !=
                         nullptr;
                 if (observation.startedBlockSequence != 0 &&
                     (row.lastAppliedBlockSequence == 0 ||
@@ -50311,7 +50366,7 @@ engine.runtimeRecreateRequired = true;
                     observation.state == harken::ArmState::Tombstoned;
                 if (observation.state == harken::ArmState::Tombstoned &&
                     !recordQueueArrivalTombstone(
-                        engine.playableScheduleArms[slot], observation)) {
+                        engine.ReadPlayableMember(slot).arm, observation)) {
 engine.runtimeRecreateRequired = true;
                 }
             }
@@ -52452,6 +52507,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 &nativeCandidate->queueBanks) ||
             !PrepareMemberProgramBacking(static_cast<std::uint32_t>(nativeVoices),
                 &nativeCandidate->memberPrograms) ||
+            !PreparePlayableMemberBacking(static_cast<std::uint32_t>(nativeVoices),
+                &nativeCandidate->members) ||
             !queueInstances.PrepareBacking(static_cast<std::uint32_t>(queueControls),
                 static_cast<std::uint32_t>(queueControls), &nativeCandidate->queues) ||
             !queueCheckpoints.PrepareBacking(static_cast<std::uint32_t>(queueControls), &nativeCandidate->checkpoints) ||
@@ -52519,6 +52576,7 @@ bool Engine::MatchesPendingVariableNativeBacking(OriginalPendingVariableGroupHol
         owner.queueRoleReservations.size() != producerCount || !owner.nativeRuntimeBacking ||
         !owner.nativeRuntimeBacking->groups.Valid() || !owner.nativeRuntimeBacking->actionPlays.Valid() ||
         !owner.nativeRuntimeBacking->memberPrograms.Valid() ||
+        !owner.nativeRuntimeBacking->members.Valid() ||
         !owner.nativeRuntimeBacking->queueBanks.Valid() ||
         !owner.nativeRuntimeBacking->queues.instances.Valid() ||
         !owner.nativeRuntimeBacking->queues.conditionals.Valid() || !owner.nativeRuntimeBacking->checkpoints.Valid() ||
@@ -53003,6 +53061,10 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
         auto& variablesCut = producer->storage.initialVariableCut;
         if (!variables.PreparePendingOrdinarySelectionReadCut(*this, *producer, attempt, anchor))
             return Result::Waiting;
+        const auto logicalSlot = resource == &row ? 0u : playableStorage.MemberBase(resource->partition.slot);
+        std::size_t memberSlot = 0;
+        if (resource != &row && !PreparePlayableMemberStorage(*this, *resource,
+                logicalSlot, newLeaf, newLeafEpoch, &memberSlot)) return Result::Waiting;
         const auto installed = InstallTimelineVoiceStart(*this, holder->replacementVoice.Input(), newLeaf, anchor, row.rootInstance,
             row.rootInstance, nullptr, nullptr, {}, UINT16_MAX, nullptr, &start, nullptr,
             resource == &row ? nullptr : resource, nullptr,
@@ -53013,19 +53075,17 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
         if (installed.status != VN_OK) return temporary(installed.status) ? Result::Waiting : reject(installed.status);
         if (resource != &row) {
             const auto* terminal = sourceTerminals.Resolve(installed.sourceTerminal);
-            const auto logicalSlot = playableStorage.MemberBase(resource->partition.slot);
-            std::size_t slot = 0;
-            if (terminal == nullptr || ResolveSourceResourceOwner(terminal->resourceOwner) != resource ||
-                !PreparePlayableMemberStorage(*this, *resource, logicalSlot, newLeaf, newLeafEpoch, &slot)) return Result::Waiting;
-            playableScheduleVoices[slot] = holder->replacementVoice.Share();
-            playableScheduleLeaves[slot] = actualLeaf;
-            playableScheduleArms[slot] = start.arm;
-            playableScheduleRenderHandles[slot] = start.renderHandle;
-            playableScheduleReleaseObservers[slot] = start.releaseObserver;
-            playableScheduleStartFrames[slot] = anchor;
+            const auto slot = memberSlot;
+            if (terminal == nullptr || ResolveSourceResourceOwner(terminal->resourceOwner) != resource) return Result::Waiting;
+            MutablePlayableMember(slot).voice = holder->replacementVoice.Share();
+            MutablePlayableMember(slot).leaf = actualLeaf;
+            MutablePlayableMember(slot).arm = start.arm;
+            MutablePlayableMember(slot).render = start.renderHandle;
+            MutablePlayableMember(slot).release = start.releaseObserver;
+            MutablePlayableMember(slot).startFrame = anchor;
             SetPlayableMemberCompletion(slot, {newLeaf, newLeafEpoch, installed.sourceTerminal});
-            variableControlMemberCompletions[slot].monitorSelection = installed.monitorSelection;
-            variableControlDynamicMembers[slot] = 0;
+            MutablePlayableMember(slot).monitorSelection = installed.monitorSelection;
+            MutablePlayableMember(slot).dynamic = 0;
             resource->scheduleStorageBase = static_cast<std::uint32_t>(logicalSlot);
             resource->scheduleLeafCount = 1;
         }
@@ -53762,8 +53822,8 @@ bool Engine::BindPendingVariableGroupQueueFutureSources(EngineActionPlayScratch&
                 member.leaf != staged.programGeneration || member.leafEpoch != original->ScheduleEpoch() ||
                 member.memberOffset >= playableStorage.memberStride ||
                 slot != playableStorage.MemberBase(future->continuationPartition.slot) + member.memberOffset ||
-                slot >= playableScheduleArms.size() || !OriginalSourceSubmissionRegistry::SameToken(
-                    playableScheduleArms[slot], start.arm) || playableScheduleRenderHandles[slot] != start.renderHandle)
+                slot >= playableStorage.memberCount || !OriginalSourceSubmissionRegistry::SameToken(
+                    ReadPlayableMember(slot).arm, start.arm) || ReadPlayableMember(slot).render != start.renderHandle)
                 return false;
             if (!SameOriginalSingleArm(row.queueTransitionGroupArms[controlCount + index], start.arm) ||
                 !SameCanonicalDecision(nativeParent, start.armPreparation.parentGroup.decision) ||
@@ -54246,10 +54306,10 @@ bool Engine::CapturePendingVariableGroupRetiredMemberStorage(OriginalPendingVari
             member.reference.memberOffset >= playableStorage.currentEventStride ||
             member.reference.memberOffset >= playableStorage.initialProgramStride) return false;
         const auto slot = member.physicalSlot;
-        member.arm = playableScheduleArms[slot];
-        member.render = playableScheduleRenderHandles[slot];
-        member.release = playableScheduleReleaseObservers[slot];
-        member.source = variableControlMemberCompletions[slot].source;
+        member.arm = ReadPlayableMember(slot).arm;
+        member.render = ReadPlayableMember(slot).render;
+        member.release = ReadPlayableMember(slot).release;
+        member.source = ReadPlayableMember(slot).completion.source;
         const auto* record = ResolveMemberProgram(member.reference);
         if (record == nullptr) return false;
         member.program = owner->memberPrograms[member.reference.memberOffset];
@@ -54266,7 +54326,7 @@ bool Engine::CapturePendingVariableGroupRetiredMemberStorage(OriginalPendingVari
                 source->release.slot != member.release.slot ||
                 source->release.targetSequence != member.release.targetSequence || source->controller != owner->rootInstance ||
                 ResolveSourceResourceOwner(source->resourceOwner) != owner ||
-                variableControlMemberCompletions[slot].resourcesRetired) return false;
+                ReadPlayableMember(slot).completion.resourcesRetired) return false;
         }
         for (std::uint32_t prior = 0; prior < index; ++prior)
             if (members[prior].logicalSlot == member.logicalSlot || members[prior].physicalSlot == slot) return false;
@@ -54296,7 +54356,7 @@ bool Engine::MatchesPendingVariableGroupRetiredMemberStorage(const OriginalPendi
         !IsPlayableServiceDescendant(*this, *owner, row) || slot != original.physicalSlot)
         return false;
     const auto& reference = playableMemberReferences[original.logicalSlot];
-    const auto& member = variableControlMemberCompletions[slot];
+    const auto& member = ReadPlayableMember(slot).completion;
     const auto offset = original.reference.memberOffset;
     const auto* record = ResolveMemberProgram(original.reference);
     if (record == nullptr || owner->memberPrograms[offset] != original.program) return false;
@@ -54315,11 +54375,11 @@ bool Engine::MatchesPendingVariableGroupRetiredMemberStorage(const OriginalPendi
             group.topology_.nodes[group.topology_.topNodes[group.topology_.leafTops[index]]].epoch &&
         group.topology_.nodes[group.topology_.leafNodes[index]].handle == original.reference.leaf &&
         group.topology_.nodes[group.topology_.leafNodes[index]].epoch == original.reference.leafEpoch &&
-        SameOriginalSingleArm(playableScheduleArms[slot], original.arm) &&
+        SameOriginalSingleArm(ReadPlayableMember(slot).arm, original.arm) &&
         SameOriginalSingleArm(original.arm, group.leafArms[index]) &&
-        playableScheduleRenderHandles[slot] == original.render &&
-        playableScheduleReleaseObservers[slot].slot == original.release.slot &&
-        playableScheduleReleaseObservers[slot].targetSequence == original.release.targetSequence &&
+        ReadPlayableMember(slot).render == original.render &&
+        ReadPlayableMember(slot).release.slot == original.release.slot &&
+        ReadPlayableMember(slot).release.targetSequence == original.release.targetSequence &&
         schedule.ownerInstance == original.reference.leaf && schedule.ownerInstanceScheduleEpoch == original.reference.leafEpoch &&
         schedule.runtimeProgram.program == &runtime && schedule.runtimeProgram.programGeneration == runtime.generation &&
         runtime.generation == original.reference.leaf && runtime.payloadCount == 1 &&
@@ -55142,15 +55202,15 @@ bool Engine::PreparePendingVariableGroupChildren(EngineActionPlayScratch& produc
         schedule.eventCount = 1;
         schedule.runtimeProgram = mirror.program;
         schedule.armToken = start.arm;
-        child->voiceStarts.Captures()[index].Stage(playableScheduleVoices[slot]);
-        playableScheduleLeaves[slot] = mirror.leaf;
-        playableScheduleArms[slot] = start.arm;
-        playableScheduleRenderHandles[slot] = start.renderHandle;
-        playableScheduleReleaseObservers[slot] = start.releaseObserver;
-        playableScheduleStartFrames[slot] = anchor + leaf.authoredOffset;
+        child->voiceStarts.Captures()[index].Stage(MutablePlayableMember(slot).voice);
+        MutablePlayableMember(slot).leaf = mirror.leaf;
+        MutablePlayableMember(slot).arm = start.arm;
+        MutablePlayableMember(slot).render = start.renderHandle;
+        MutablePlayableMember(slot).release = start.releaseObserver;
+        MutablePlayableMember(slot).startFrame = anchor + leaf.authoredOffset;
         SetPlayableMemberCompletion(slot, {instance, epoch, start.sourceTerminal});
-        variableControlMemberCompletions[slot].monitorSelection = start.monitorSelection;
-        variableControlDynamicMembers[slot] = 0;
+        MutablePlayableMember(slot).monitorSelection = start.monitorSelection;
+        MutablePlayableMember(slot).dynamic = 0;
         if (resource != producer.row && !resource->variableControlIndependentFrontier) {
             const auto member = resource->scheduleLeafCount;
             if (member >= playableStorage.memberStride) return refuse();
@@ -55493,7 +55553,7 @@ bool Engine::MatchesPendingVariableReplacementMemberStorage(const EngineActionPl
     const auto& event = record->events[0];
     const auto& runtime = record->runtime;
     const auto& schedule = record->schedule;
-    const auto& completion = variableControlMemberCompletions[slot];
+    const auto& completion = ReadPlayableMember(slot).completion;
     return leaf.program.program == &runtime && leaf.program.programGeneration == leaf.storageReference.leaf &&
         runtime.payloads == &payload && runtime.payloadCount == 1 &&
         runtime.generation == leaf.storageReference.leaf &&
@@ -55506,18 +55566,18 @@ bool Engine::MatchesPendingVariableReplacementMemberStorage(const EngineActionPl
         schedule.transactionId == leaf.sequence &&
         SameOriginalSingleArm(schedule.armToken, start.arm) &&
         SameOriginalSingleArm(event.armToken, start.arm) &&
-        SameOriginalSingleArm(playableScheduleArms[slot], start.arm) &&
+        SameOriginalSingleArm(ReadPlayableMember(slot).arm, start.arm) &&
         event.logicCommitSequence == leaf.sequence &&
         event.executionOrdinal == controller->Invocation().actionExecutionOrdinal && event.eventIndex == index &&
         event.transactionOrdinal == index && event.subeventPhase == 20 &&
         event.frameOffsetFromEntry == static_cast<std::int64_t>(leaf.authoredOffset) && event.payload == 0 &&
         payload.kind == TimelineEventKind::Start && payload.reserved == kTimelineEventTransientStartArm &&
         payload.target == leaf.target &&
-        playableScheduleVoices[slot].Facts().target == leaf.target &&
-        playableScheduleVoices[slot].Facts().soundId == leaf.leaf.stableId &&
-        playableScheduleRenderHandles[slot] == start.renderHandle &&
-        playableScheduleReleaseObservers[slot].slot == start.releaseObserver.slot &&
-        playableScheduleReleaseObservers[slot].targetSequence == start.releaseObserver.targetSequence &&
+        ReadPlayableMember(slot).voice.Facts().target == leaf.target &&
+        ReadPlayableMember(slot).voice.Facts().soundId == leaf.leaf.stableId &&
+        ReadPlayableMember(slot).render == start.renderHandle &&
+        ReadPlayableMember(slot).release.slot == start.releaseObserver.slot &&
+        ReadPlayableMember(slot).release.targetSequence == start.releaseObserver.targetSequence &&
         completion.source.slot == start.sourceTerminal.slot &&
         completion.source.generation == start.sourceTerminal.generation && !completion.resourcesRetired;
 }
@@ -57618,7 +57678,7 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
             runtimeRecreateRequired = true;
             return false;
         }
-        playableScheduleLeaves[physicalSlot] = leaf.leaf;
+        MutablePlayableMember(physicalSlot).leaf = leaf.leaf;
         variableControlWeightSegments[bases.weight + logicalOffset] = leaf.weight;
         row.variableControlLeafInstances[index] = reference.leaf;
         row.variableControlLeafEpochs[index] = reference.leafEpoch;
@@ -59384,14 +59444,7 @@ bool Engine::CancelPendingVariableGroupChildren(OriginalPendingVariableGroupHold
             timelinePool.HasProgramReference(leaf.program) ||
             timelinePlanner.HasProgramReference(leaf.program)) return false;
         if (!ReleaseMemberProgram(*owner, offset)) return false;
-        SetPlayableMemberCompletion(slot, {});
-        playableScheduleVoices[slot] = {};
-        playableScheduleLeaves[slot] = {};
-        playableScheduleArms[slot] = {};
-        playableScheduleRenderHandles[slot] = 0;
-        playableScheduleReleaseObservers[slot] = {};
-        playableScheduleStartFrames[slot] = 0;
-        variableControlDynamicMembers[slot] = 0;
+        if (!ReleasePlayableMember(*owner, offset)) return false;
         leaf.storageReference = {};
     }
     if (!ReleaseCancelledFrontierServices(*this, *child)) return false;
@@ -60420,7 +60473,7 @@ bool Engine::ServicePendingVariableGroupReprepare(EngineActionPlayScratch& scrat
                 !IsPlayableServiceDescendant(*this, *owner, row) ||
                 slot != original.physicalSlot) return false;
             const auto& reference = playableMemberReferences[original.logicalSlot];
-            const auto& member = variableControlMemberCompletions[slot];
+            const auto& member = ReadPlayableMember(slot).completion;
             const auto* record = ResolveMemberProgram(original.reference);
             if (record == nullptr || owner->memberPrograms[original.reference.memberOffset] != original.program)
                 return false;
@@ -60434,10 +60487,10 @@ bool Engine::ServicePendingVariableGroupReprepare(EngineActionPlayScratch& scrat
                 reference.memberOffset != original.reference.memberOffset || reference.leaf != original.reference.leaf ||
                 reference.leafEpoch != original.reference.leafEpoch ||
                 reference.authoredChildOrdinal != original.reference.authoredChildOrdinal ||
-                !SameOriginalSingleArm(playableScheduleArms[slot], original.arm) ||
-                playableScheduleRenderHandles[slot] != original.render ||
-                playableScheduleReleaseObservers[slot].slot != original.release.slot ||
-                playableScheduleReleaseObservers[slot].targetSequence != original.release.targetSequence ||
+                !SameOriginalSingleArm(ReadPlayableMember(slot).arm, original.arm) ||
+                ReadPlayableMember(slot).render != original.render ||
+                ReadPlayableMember(slot).release.slot != original.release.slot ||
+                ReadPlayableMember(slot).release.targetSequence != original.release.targetSequence ||
                 member.source.Valid() || !member.resourcesRetired ||
                 sourceTerminals.Resolve(original.source) != nullptr || !voices.ReleaseObserved(original.release) ||
                 timelineArms.Observe(original.arm, &arm) || playableInstances.Classify(original.reference.leaf).live ||
@@ -60519,14 +60572,7 @@ bool Engine::ServicePendingVariableGroupReprepare(EngineActionPlayScratch& scrat
             if (offset >= owner->memberPrograms.size() || owner->memberPrograms[offset] != original.program)
                 return false;
             if (!ReleaseMemberProgram(*owner, offset)) return false;
-            SetPlayableMemberCompletion(slot, {});
-            playableScheduleVoices[slot] = {};
-            playableScheduleLeaves[slot] = {};
-            playableScheduleArms[slot] = {};
-            playableScheduleRenderHandles[slot] = 0;
-            playableScheduleReleaseObservers[slot] = {};
-            playableScheduleStartFrames[slot] = 0;
-            variableControlDynamicMembers[slot] = 0;
+            if (!ReleasePlayableMember(*owner, offset)) return false;
             playableMemberReferences[original.logicalSlot] = {};
             const auto logicalOffset = original.logicalSlot - bases.member;
             if (logicalOffset < playableStorage.weightStride)
@@ -70321,7 +70367,7 @@ engine.runtimeRecreateRequired = true;
         const std::size_t pairedBase = bases.paired;
         if (memberBase > UINT32_MAX ||
             memberBase + initialSchedule.leafCount >
-                engine.playableScheduleVoices.size() ||
+                engine.playableStorage.memberCount ||
             pairedBase + initialSchedule.leafCount >
                 engine.playableScheduleCompletions.size() ||
             directScratch.frontierProgramBank == nullptr) {
@@ -70446,19 +70492,19 @@ engine.runtimeRecreateRequired = true;
                     installFailed = true;
                     break;
                 }
-                captured->Stage(engine.playableScheduleVoices[memberSlot]);
-                engine.playableScheduleLeaves[memberSlot] = source.leaf;
-                engine.playableScheduleArms[memberSlot] =
+                captured->Stage(engine.MutablePlayableMember(memberSlot).voice);
+                engine.MutablePlayableMember(memberSlot).leaf = source.leaf;
+                engine.MutablePlayableMember(memberSlot).arm =
                     leafInstalled.armToken;
-                engine.playableScheduleRenderHandles[memberSlot] =
+                engine.MutablePlayableMember(memberSlot).render =
                     leafInstalled.renderHandle;
-                engine.playableScheduleReleaseObservers[memberSlot] =
+                engine.MutablePlayableMember(memberSlot).release =
                     leafInstalled.releaseObserver;
-                engine.variableControlMemberCompletions[memberSlot].source =
+                engine.MutablePlayableMember(memberSlot).completion.source =
                     leafInstalled.sourceTerminal;
-                engine.variableControlMemberCompletions[memberSlot].monitorSelection = leafInstalled.monitorSelection;
+                engine.MutablePlayableMember(memberSlot).monitorSelection = leafInstalled.monitorSelection;
                 engine.RefreshPlayableMemberOnset(memberSlot);
-                engine.playableScheduleStartFrames[memberSlot] = leafStart;
+                engine.MutablePlayableMember(memberSlot).startFrame = leafStart;
                 engine.playableSchedulePostSourceTailFrames[pairedSlot] =
                     leafInstalled.postSourceTailFrames;
                 engine.playableScheduleCompletions[pairedSlot] =
@@ -70579,11 +70625,11 @@ engine.runtimeRecreateRequired = true;
                     }
                 }
             }
-            row.leaf = engine.playableScheduleLeaves[memberBase];
-            row.arm = engine.playableScheduleArms[memberBase];
+            row.leaf = engine.ReadPlayableMember(memberBase).leaf;
+            row.arm = engine.ReadPlayableMember(memberBase).arm;
             row.renderHandle =
-                engine.playableScheduleRenderHandles[memberBase];
-            row.releaseObserver = engine.playableScheduleReleaseObservers[memberBase];
+                engine.ReadPlayableMember(memberBase).render;
+            row.releaseObserver = engine.ReadPlayableMember(memberBase).release;
         }
     } else {
         installFailed = CaptureTimelineVoiceInstall(voice, &row.capturedVoice) != PlayableStartStatus::Accepted;
@@ -71964,13 +72010,13 @@ engine.runtimeRecreateRequired = true;
     if (row->scheduleLeafCount > 1 &&
         static_cast<std::size_t>(row->scheduleStorageBase) +
                 row->scheduleLeafCount <=
-            engine.playableScheduleArms.size()) {
+            engine.playableStorage.memberCount) {
         aborted = true;
         for (std::uint32_t index = 0;
              index < row->scheduleLeafCount; ++index) {
             aborted = abortTimelineArm(
-                          engine.playableScheduleArms[
-                              row->scheduleStorageBase + index]) &&
+                          engine.ReadPlayableMember(
+                              row->scheduleStorageBase + index).arm) &&
                       aborted;
         }
     } else {
@@ -77616,6 +77662,17 @@ bool PrepareImmediateActionSingleLeafPlay(
     }
     harken::CapturedTimelineVoiceInstall memberVoice;
     if (frontierChild != nullptr) memberVoice = row->capturedVoice.Share();
+    const auto memberEpoch = frontierChild == nullptr ? 0u :
+        scratch->playableTreeExecutor.PreparedInstanceEpoch(selectionCount - 1u);
+    const auto memberLogicalSlot = frontierChild == nullptr ? 0u :
+        engine.playableStorage.MemberBase(frontierChild->partition.slot);
+    std::size_t memberSlot = 0;
+    if (frontierChild != nullptr && !PreparePlayableMemberStorage(engine, *frontierChild,
+            memberLogicalSlot, row->activeLeafInstance, memberEpoch, &memberSlot)) {
+        (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
+        plan.result = VN_BACKPRESSURE;
+        return false;
+    }
     const TimelineVoiceInstallResult installed =
         InstallTimelineVoiceStart(
             engine, retainedVoice.Input(), row->runtimeProgram.generation, startFrame,
@@ -77644,25 +77701,24 @@ bool PrepareImmediateActionSingleLeafPlay(
     row->schedule.armToken = installed.armToken;
     if (frontierChild != nullptr) {
         const auto* source = engine.sourceTerminals.Resolve(installed.sourceTerminal);
-        const auto epoch = scratch->playableTreeExecutor.PreparedInstanceEpoch(selectionCount - 1u);
-        const auto logicalSlot = engine.playableStorage.MemberBase(frontierChild->partition.slot);
-        std::size_t slot = 0;
-        if (source == nullptr || engine.ResolveSourceResourceOwner(source->resourceOwner) != frontierChild ||
-            !PreparePlayableMemberStorage(engine, *frontierChild, logicalSlot, row->activeLeafInstance, epoch, &slot)) {
+        const auto epoch = memberEpoch;
+        const auto logicalSlot = memberLogicalSlot;
+        const auto slot = memberSlot;
+        if (source == nullptr || engine.ResolveSourceResourceOwner(source->resourceOwner) != frontierChild) {
             (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
             plan.result = VN_NO_VOICE;
             return false;
         }
         // Record the original prepared leaf in its actual Source owner partition.
-        engine.playableScheduleVoices[slot] = std::move(memberVoice);
-        engine.playableScheduleLeaves[slot] = row->leaf;
-        engine.playableScheduleArms[slot] = installed.armToken;
-        engine.playableScheduleRenderHandles[slot] = installed.renderHandle;
-        engine.playableScheduleReleaseObservers[slot] = installed.releaseObserver;
-        engine.playableScheduleStartFrames[slot] = startFrame;
+        engine.MutablePlayableMember(slot).voice = std::move(memberVoice);
+        engine.MutablePlayableMember(slot).leaf = row->leaf;
+        engine.MutablePlayableMember(slot).arm = installed.armToken;
+        engine.MutablePlayableMember(slot).render = installed.renderHandle;
+        engine.MutablePlayableMember(slot).release = installed.releaseObserver;
+        engine.MutablePlayableMember(slot).startFrame = startFrame;
         engine.SetPlayableMemberCompletion(slot, {row->activeLeafInstance, epoch, installed.sourceTerminal});
-        engine.variableControlMemberCompletions[slot].monitorSelection = installed.monitorSelection;
-        engine.variableControlDynamicMembers[slot] = 0;
+        engine.MutablePlayableMember(slot).monitorSelection = installed.monitorSelection;
+        engine.MutablePlayableMember(slot).dynamic = 0;
         frontierChild->scheduleStorageBase = static_cast<std::uint32_t>(logicalSlot);
         frontierChild->scheduleLeafCount = 1;
     }
@@ -78627,6 +78683,15 @@ bool PrepareQueueTransitionContinuation(
     std::array<harken::TransactionRequest,
                2u * harken::kMaxKnownScheduleLeaves> transactions{};
     std::uint64_t transitionEndFrame = sourceStopFrame;
+    PreparedPlayableMemberRecords currentMembers{engine, row};
+    if (!row.parentService.Valid() && leafCount > 1u) {
+        for (std::uint32_t index = 0; index < leafCount; ++index) {
+            if (!currentMembers.Acquire(index)) {
+                (void)entry.ReleasePrefix(scratch);
+                return false;
+            }
+        }
+    }
     for (std::uint32_t index = 0; index < leafCount; ++index) {
         const auto capturedInput = captures[index].voice.Input();
         if (leaves[index].startOffsetFrames >
@@ -78668,6 +78733,27 @@ bool PrepareQueueTransitionContinuation(
             completionProgram.runtimeSemanticFingerprint =
                 leaves[index].leaf.expectedProgramSemanticFingerprint;
         }
+        std::size_t memberSlot = 0;
+        const bool prepareMember = scratch->queueFutureExecution && row.parentService.Valid();
+        if (prepareMember) {
+            scratch->queueFutureMemberBase = engine.playableStorage.MemberBase(row.partition.slot) +
+                std::max(1u, row.scheduleLeafCount);
+            const auto logicalSlot = scratch->queueFutureMemberBase + index;
+            if (index >= scratch->queueFutureMemberSlots.size() ||
+                index + std::max(1u, row.scheduleLeafCount) >= engine.playableStorage.memberStride ||
+                logicalSlot >= engine.playableMemberReferences.size()) {
+                (void)entry.ReleasePrefix(scratch);
+                return false;
+            }
+            scratch->queueFuturePriorMemberReferences[index] = engine.playableMemberReferences[logicalSlot];
+            if (!PreparePlayableMemberStorage(engine, row, logicalSlot, successorInstance, successorEpoch, &memberSlot)) {
+                (void)entry.ReleasePrefix(scratch);
+                return false;
+            }
+            scratch->queueFutureMemberSlots[index] = memberSlot;
+            scratch->queueFutureMemberCount = index + 1u;
+            engine.playableMemberReferences[logicalSlot].authoredChildOrdinal = next.currentChildOrdinal;
+        }
         const TimelineVoiceInstallResult installed =
             InstallTimelineVoiceStart(
                 engine, capturedInput, successorInstance,
@@ -78692,33 +78778,15 @@ bool PrepareQueueTransitionContinuation(
             (void)entry.ReleasePrefix(scratch);
             return false;
         }
-        if (scratch->queueFutureExecution && row.parentService.Valid()) {
-            scratch->queueFutureMemberBase = engine.playableStorage.MemberBase(row.partition.slot) +
-                std::max(1u, row.scheduleLeafCount);
-            const auto logicalSlot = scratch->queueFutureMemberBase + index;
-            if (index >= scratch->queueFutureMemberSlots.size() ||
-                index + std::max(1u, row.scheduleLeafCount) >= engine.playableStorage.memberStride ||
-                logicalSlot >= engine.playableMemberReferences.size()) {
-                (void)entry.ReleasePrefix(scratch);
-                return false;
-            }
-            scratch->queueFuturePriorMemberReferences[index] = engine.playableMemberReferences[logicalSlot];
-            std::size_t memberSlot = 0;
-            if (!PreparePlayableMemberStorage(engine, row, logicalSlot, successorInstance, successorEpoch, &memberSlot)) {
-                (void)entry.ReleasePrefix(scratch);
-                return false;
-            }
-            scratch->queueFutureMemberSlots[index] = memberSlot;
-            scratch->queueFutureMemberCount = index + 1u;
-            engine.playableMemberReferences[logicalSlot].authoredChildOrdinal = next.currentChildOrdinal;
-            captures[index].Stage(engine.playableScheduleVoices[memberSlot]);
-            engine.playableScheduleLeaves[memberSlot] = leaves[index].leaf;
-            engine.playableScheduleArms[memberSlot] = installed.armToken;
-            engine.playableScheduleRenderHandles[memberSlot] = installed.renderHandle;
-            engine.playableScheduleStartFrames[memberSlot] = startFrame;
-            engine.playableScheduleReleaseObservers[memberSlot] = installed.releaseObserver;
+        if (prepareMember) {
+            captures[index].Stage(engine.MutablePlayableMember(memberSlot).voice);
+            engine.MutablePlayableMember(memberSlot).leaf = leaves[index].leaf;
+            engine.MutablePlayableMember(memberSlot).arm = installed.armToken;
+            engine.MutablePlayableMember(memberSlot).render = installed.renderHandle;
+            engine.MutablePlayableMember(memberSlot).startFrame = startFrame;
+            engine.MutablePlayableMember(memberSlot).release = installed.releaseObserver;
             engine.SetPlayableMemberCompletion(memberSlot, {successorInstance, successorEpoch, installed.sourceTerminal});
-            engine.variableControlMemberCompletions[memberSlot].monitorSelection = installed.monitorSelection;
+            engine.MutablePlayableMember(memberSlot).monitorSelection = installed.monitorSelection;
         }
         const std::size_t slot = successorBase + index;
         captures[index].Stage(engine.playableSuccessorVoices[slot]);
@@ -79323,6 +79391,7 @@ bool PrepareQueueTransitionContinuation(
             static_cast<std::uint32_t>(header->pageGeneration)};
     row.queueTransitionEndFrame = transitionEndFrame;
     scratch->queueHasContinuation = false;
+    currentMembers.retained = true;
     return true;
 }
 
@@ -79631,10 +79700,7 @@ bool ValidatePreparedQueueCurrentCompositeCore(
     const auto fits = [](std::size_t base, std::size_t count, std::size_t capacity) noexcept {
         return base <= capacity && count <= capacity - base;
     };
-    if (!fits(bases.member, info.leafCount, engine.playableScheduleArms.size()) ||
-        !fits(bases.member, info.leafCount, engine.playableScheduleRenderHandles.size()) ||
-        !fits(bases.member, info.leafCount, engine.playableScheduleStartFrames.size()) ||
-        !fits(bases.member, info.leafCount, engine.variableControlMemberCompletions.size()) ||
+    if (!fits(bases.member, info.leafCount, engine.playableStorage.memberCount) ||
         !fits(bases.endpoint, info.leafCount, engine.playableScheduleOccurrences.size()) ||
         !fits(bases.paired, info.leafCount, engine.playableScheduleCompletions.size()) ||
         !fits(bases.paired, info.leafCount, engine.playableSchedulePostSourceTailFrames.size())) return false;
@@ -79677,11 +79743,11 @@ bool ValidatePreparedQueueCurrentCompositeCore(
             leaf.absoluteLeafStartFrame != leaf.predicate.absoluteLogicalStartFrame ||
             !SameC1PreparedCompletionFacts(start.completionPredicate, leaf.predicate)) return false;
         const auto member = bases.member + index;
-        const auto& physical = engine.variableControlMemberCompletions[member];
+        const auto& physical = engine.ReadPlayableMember(member).completion;
         const auto& stored = engine.playableScheduleCompletions[bases.paired + index];
-        if (engine.playableScheduleRenderHandles[member] != start.renderHandle ||
-            !SameC1PreparedArm(engine.playableScheduleArms[member], start.arm) ||
-            engine.playableScheduleStartFrames[member] != leaf.absoluteLeafStartFrame ||
+        if (engine.ReadPlayableMember(member).render != start.renderHandle ||
+            !SameC1PreparedArm(engine.ReadPlayableMember(member).arm, start.arm) ||
+            engine.ReadPlayableMember(member).startFrame != leaf.absoluteLeafStartFrame ||
             physical.source.slot != start.sourceTerminal.slot ||
             physical.source.generation != start.sourceTerminal.generation ||
             physical.leafInstance != start.armPreparation.programGeneration ||
@@ -80392,6 +80458,15 @@ bool PrepareQueueContinuation(
     std::array<harken::TransactionRequest,
                harken::kMaxKnownScheduleLeaves> transactions{};
     std::uint64_t successorEntryFrame = row.queueCompletionFrame;
+    PreparedPlayableMemberRecords currentMembers{engine, row};
+    if (!row.parentService.Valid() && leafCount > 1u) {
+        for (std::uint32_t index = 0; index < leafCount; ++index) {
+            if (!currentMembers.Acquire(index)) {
+                (void)entry.ReleasePrefix(scratch);
+                return false;
+            }
+        }
+    }
     for (std::uint32_t index = 0; index < leafCount; ++index) {
         const auto capturedInput = captures[index].voice.Input();
         if (leaves[index].startOffsetFrames >
@@ -80433,6 +80508,27 @@ bool PrepareQueueContinuation(
             completionProgram.runtimeSemanticFingerprint =
                 leaves[index].leaf.expectedProgramSemanticFingerprint;
         }
+        std::size_t memberSlot = 0;
+        const bool prepareMember = scratch->queueFutureExecution && actualChild;
+        if (prepareMember) {
+            scratch->queueFutureMemberBase = engine.playableStorage.MemberBase(row.partition.slot) +
+                std::max(1u, row.scheduleLeafCount);
+            const auto logicalSlot = scratch->queueFutureMemberBase + index;
+            if (index >= scratch->queueFutureMemberSlots.size() ||
+                index + std::max(1u, row.scheduleLeafCount) >= engine.playableStorage.memberStride ||
+                logicalSlot >= engine.playableMemberReferences.size()) {
+                (void)entry.ReleasePrefix(scratch);
+                return false;
+            }
+            scratch->queueFuturePriorMemberReferences[index] = engine.playableMemberReferences[logicalSlot];
+            if (!PreparePlayableMemberStorage(engine, row, logicalSlot, successorInstance, successorEpoch, &memberSlot)) {
+                (void)entry.ReleasePrefix(scratch);
+                return false;
+            }
+            scratch->queueFutureMemberSlots[index] = memberSlot;
+            scratch->queueFutureMemberCount = index + 1u;
+            engine.playableMemberReferences[logicalSlot].authoredChildOrdinal = nextState.currentChildOrdinal;
+        }
         const TimelineVoiceInstallResult installed =
             InstallTimelineVoiceStart(
                 engine, capturedInput, successorInstance,
@@ -80459,33 +80555,15 @@ bool PrepareQueueContinuation(
             (void)entry.ReleasePrefix(scratch);
             return false;
         }
-        if (scratch->queueFutureExecution && actualChild) {
-            scratch->queueFutureMemberBase = engine.playableStorage.MemberBase(row.partition.slot) +
-                std::max(1u, row.scheduleLeafCount);
-            const auto logicalSlot = scratch->queueFutureMemberBase + index;
-            if (index >= scratch->queueFutureMemberSlots.size() ||
-                index + std::max(1u, row.scheduleLeafCount) >= engine.playableStorage.memberStride ||
-                logicalSlot >= engine.playableMemberReferences.size()) {
-                (void)entry.ReleasePrefix(scratch);
-                return false;
-            }
-            scratch->queueFuturePriorMemberReferences[index] = engine.playableMemberReferences[logicalSlot];
-            std::size_t memberSlot = 0;
-            if (!PreparePlayableMemberStorage(engine, row, logicalSlot, successorInstance, successorEpoch, &memberSlot)) {
-                (void)entry.ReleasePrefix(scratch);
-                return false;
-            }
-            scratch->queueFutureMemberSlots[index] = memberSlot;
-            scratch->queueFutureMemberCount = index + 1u;
-            engine.playableMemberReferences[logicalSlot].authoredChildOrdinal = nextState.currentChildOrdinal;
-            captures[index].Stage(engine.playableScheduleVoices[memberSlot]);
-            engine.playableScheduleLeaves[memberSlot] = leaves[index].leaf;
-            engine.playableScheduleArms[memberSlot] = installed.armToken;
-            engine.playableScheduleRenderHandles[memberSlot] = installed.renderHandle;
-            engine.playableScheduleStartFrames[memberSlot] = startFrame;
-            engine.playableScheduleReleaseObservers[memberSlot] = installed.releaseObserver;
+        if (prepareMember) {
+            captures[index].Stage(engine.MutablePlayableMember(memberSlot).voice);
+            engine.MutablePlayableMember(memberSlot).leaf = leaves[index].leaf;
+            engine.MutablePlayableMember(memberSlot).arm = installed.armToken;
+            engine.MutablePlayableMember(memberSlot).render = installed.renderHandle;
+            engine.MutablePlayableMember(memberSlot).startFrame = startFrame;
+            engine.MutablePlayableMember(memberSlot).release = installed.releaseObserver;
             engine.SetPlayableMemberCompletion(memberSlot, {successorInstance, successorEpoch, installed.sourceTerminal});
-            engine.variableControlMemberCompletions[memberSlot].monitorSelection = installed.monitorSelection;
+            engine.MutablePlayableMember(memberSlot).monitorSelection = installed.monitorSelection;
         }
         groupMembers[index] = installed.armToken;
         const std::size_t slot = successorBase + index;
@@ -80820,6 +80898,7 @@ bool PrepareQueueContinuation(
     row.queueSuccessorZeroWorkCompletionFrame =
         successorZeroWorkCompletionFrame;
     scratch->queueHasContinuation = false;
+    currentMembers.retained = true;
     return true;
 }
 
@@ -81109,10 +81188,10 @@ bool PrepareQueueCurrentCore(harken::Engine& engine,
         auto& voice = parent.voiceStarts[voiceIndex];
         for (std::uint32_t offset = 0; offset < engine.playableStorage.memberStride; ++offset) {
             const auto slot = base + offset;
-            if (voice.renderHandle == 0 || engine.playableScheduleRenderHandles[slot] != voice.renderHandle) continue;
+            if (voice.renderHandle == 0 || engine.ReadPlayableMember(slot).render != voice.renderHandle) continue;
             if (count == slots.size()) return false;
-            const auto& source = engine.playableScheduleVoices[slot].Facts();
-            const auto& leaf = engine.playableScheduleLeaves[slot];
+            const auto& source = engine.ReadPlayableMember(slot).voice.Facts();
+            const auto& leaf = engine.ReadPlayableMember(slot).leaf;
             if (parent.packLeaseOwned || parent.packLeaseBorrowed) {
                 if (engine.packs.LookupExactClosure(parent.packLease.resourceClosureToken,
                         leaf.stableId, engine.registry, &media[count]) != VN_OK) return false;
@@ -81299,8 +81378,8 @@ bool PrepareQueueCurrentCore(harken::Engine& engine,
     for (std::uint32_t index = 0; index < count; ++index) {
         auto& voice = *current.voices[index];
         const auto slot = slots[index];
-        const auto& source = engine.playableScheduleVoices[slot].Facts();
-        const auto& leaf = engine.playableScheduleLeaves[slot];
+        const auto& source = engine.ReadPlayableMember(slot).voice.Facts();
+        const auto& leaf = engine.ReadPlayableMember(slot).leaf;
         auto occurrence = current.occurrence;
         if (count != 1) {
             auto leafKey = key;
@@ -81324,7 +81403,7 @@ bool PrepareQueueCurrentCore(harken::Engine& engine,
         facts.pitchRatio = source.pitchRatio;
         facts.pitchFixed = true;
         facts.serialRender = true;
-        facts.absoluteLogicalStartFrame = engine.playableScheduleStartFrames[slot];
+        facts.absoluteLogicalStartFrame = engine.ReadPlayableMember(slot).startFrame;
         facts.progressBaselineCompletedThroughBlockSequence = engine.mixer.BlocksRendered();
         facts.playbackFactsRevision = engine.timelineOccurrences.ScheduleEpochOf(occurrence);
         facts.program = {harken::PlayableKindV1::Sound, leaf.stableId,
@@ -81888,7 +81967,7 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
     const std::size_t pairedBase = bases.paired;
     if (memberBase > UINT32_MAX ||
         memberBase + materialized.leafCount >
-            engine.playableScheduleVoices.size() ||
+            engine.playableStorage.memberCount ||
         pairedBase + materialized.leafCount >
             engine.playableScheduleCompletions.size()) {
         scratch->playableTreeExecutor.Cancel(engine.playableInstances);
@@ -82176,15 +82255,15 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
         if (initialMember != UINT16_MAX)
             row->queueInitialCurrentDelayedArms[initialMember] = installed.armToken;
         scratch->voiceStartCount = index + 1u;
-        captured->Stage(engine.playableScheduleVoices[memberSlot]);
-        engine.playableScheduleLeaves[memberSlot] = source.leaf;
-        engine.playableScheduleArms[memberSlot] = installed.armToken;
-        engine.playableScheduleRenderHandles[memberSlot] =
+        captured->Stage(engine.MutablePlayableMember(memberSlot).voice);
+        engine.MutablePlayableMember(memberSlot).leaf = source.leaf;
+        engine.MutablePlayableMember(memberSlot).arm = installed.armToken;
+        engine.MutablePlayableMember(memberSlot).render =
             installed.renderHandle;
-        engine.playableScheduleStartFrames[memberSlot] = startFrame;
-        engine.playableScheduleReleaseObservers[memberSlot] = installed.releaseObserver;
-        engine.variableControlMemberCompletions[memberSlot].source = installed.sourceTerminal;
-        engine.variableControlMemberCompletions[memberSlot].monitorSelection = installed.monitorSelection;
+        engine.MutablePlayableMember(memberSlot).startFrame = startFrame;
+        engine.MutablePlayableMember(memberSlot).release = installed.releaseObserver;
+        engine.MutablePlayableMember(memberSlot).completion.source = installed.sourceTerminal;
+        engine.MutablePlayableMember(memberSlot).monitorSelection = installed.monitorSelection;
         engine.RefreshPlayableMemberOnset(memberSlot);
         engine.playableSchedulePostSourceTailFrames[pairedSlot] =
             installed.postSourceTailFrames;
@@ -82250,15 +82329,15 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
         }
     }
     if (!markerOnly) {
-        row->leaf = engine.playableScheduleLeaves[memberBase];
-        row->arm = engine.playableScheduleArms[memberBase];
+        row->leaf = engine.ReadPlayableMember(memberBase).leaf;
+        row->arm = engine.ReadPlayableMember(memberBase).arm;
         row->renderHandle =
-            engine.playableScheduleRenderHandles[memberBase];
+            engine.ReadPlayableMember(memberBase).render;
         row->queueCurrentTailFrames =
             scratch->voiceStarts[0].postSourceTailFrames;
         row->releaseObserver =
-            engine.playableScheduleReleaseObservers[memberBase];
-        row->monitorSelection = engine.variableControlMemberCompletions[memberBase].monitorSelection;
+            engine.ReadPlayableMember(memberBase).release;
+        row->monitorSelection = engine.ReadPlayableMember(memberBase).monitorSelection;
     } else {
         row->leaf = selected.playable;
         row->queueCompletionFrame = zeroWorkCompletionFrame;
@@ -84445,7 +84524,7 @@ bool PrepareImmediateActionCompositePlay(
         captures.size() != materialized.leafCount ||
         materialized.leafCount > harken::kMaxKnownScheduleLeaves ||
         memberBase + materialized.leafCount >
-            engine.playableScheduleLeaves.size()) {
+            engine.playableStorage.memberCount) {
         scratch->playableTreeExecutor.Cancel(engine.playableInstances);
         const auto reset = ResetPlayableStartRow(engine, *row);
         if (reset == PlayableStartResetResult::Released)
@@ -84548,6 +84627,11 @@ bool PrepareImmediateActionCompositePlay(
         const auto voice = row->capturedScheduleVoices[index].Input();
         const std::uint64_t startFrame =
             baseStartFrame + source.startOffsetFrames;
+        if (engine.AcquirePlayableMember(*row, index) == nullptr) {
+            plan.result = VN_BACKPRESSURE;
+            (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
+            return false;
+        }
         const TimelineVoiceInstallResult installed =
             InstallTimelineVoiceStart(
                 engine, voice, row->rootInstance, startFrame,
@@ -84561,14 +84645,14 @@ bool PrepareImmediateActionCompositePlay(
             (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
             return false;
         }
-        engine.playableScheduleVoices[memberSlot] = row->capturedScheduleVoices[index].Share();
-        engine.playableScheduleLeaves[memberSlot] = source.leaf;
-        engine.playableScheduleArms[memberSlot] = installed.armToken;
-        engine.playableScheduleRenderHandles[memberSlot] =
+        engine.MutablePlayableMember(memberSlot).voice = row->capturedScheduleVoices[index].Share();
+        engine.MutablePlayableMember(memberSlot).leaf = source.leaf;
+        engine.MutablePlayableMember(memberSlot).arm = installed.armToken;
+        engine.MutablePlayableMember(memberSlot).render =
             installed.renderHandle;
-        engine.playableScheduleStartFrames[memberSlot] = startFrame;
-        engine.playableScheduleReleaseObservers[memberSlot] = installed.releaseObserver;
-        engine.playableScheduleSelections[memberSlot] = installed.monitorSelection;
+        engine.MutablePlayableMember(memberSlot).startFrame = startFrame;
+        engine.MutablePlayableMember(memberSlot).release = installed.releaseObserver;
+        engine.MutablePlayableMember(memberSlot).monitorSelection = installed.monitorSelection;
         auto& payload = payloads[index];
         payload = {};
         payload.kind = harken::TimelineEventKind::Start;
@@ -84612,16 +84696,16 @@ bool PrepareImmediateActionCompositePlay(
         return false;
     }
     if (!markerOnly) {
-        row->leaf = engine.playableScheduleLeaves[memberBase];
-        row->arm = engine.playableScheduleArms[memberBase];
+        row->leaf = engine.ReadPlayableMember(memberBase).leaf;
+        row->arm = engine.ReadPlayableMember(memberBase).arm;
         if (materialized.leafCount == 1u) {
             row->schedule.armToken = row->arm;
         }
         row->renderHandle =
-            engine.playableScheduleRenderHandles[memberBase];
+            engine.ReadPlayableMember(memberBase).render;
         row->releaseObserver =
-            engine.playableScheduleReleaseObservers[memberBase];
-        row->monitorSelection = engine.playableScheduleSelections[memberBase];
+            engine.ReadPlayableMember(memberBase).release;
+        row->monitorSelection = engine.ReadPlayableMember(memberBase).monitorSelection;
     } else {
         row->leaf = root;
         row->activeLeafInstance = row->rootInstance;
@@ -84943,10 +85027,10 @@ bool AuthoredStopOwnsCompletionBinding(
     }
     const auto bases = StorageBasesForRow(engine, row);
     for (std::uint32_t index = 0; index < engine.playableStorage.memberStride; ++index) {
-        if (bases.member + index < engine.playableScheduleRenderHandles.size() &&
+        if (bases.member + index < engine.playableStorage.memberCount &&
             bases.endpoint + index < engine.playableScheduleOccurrences.size() &&
             bases.paired + index < engine.playableScheduleCompletions.size() &&
-            matches(engine.playableScheduleRenderHandles[bases.member + index],
+            matches(engine.ReadPlayableMember(bases.member + index).render,
                     engine.playableScheduleOccurrences[bases.endpoint + index],
                     engine.playableScheduleCompletions[bases.paired + index])) return true;
     }
@@ -85343,14 +85427,14 @@ bool PrepareImmediateActionStop(
             if (row.scheduleLeafCount != 0) {
                 const std::size_t base = row.scheduleStorageBase;
                 if (base + row.scheduleLeafCount >
-                    engine.playableScheduleRenderHandles.size()) {
+                    engine.playableStorage.memberCount) {
                     plan.result = VN_DEVICE_ERROR;
                     captured = false;
                 } else {
                     for (std::uint32_t index = 0;
                          captured && index < row.scheduleLeafCount; ++index) {
                         captured = captureStop(
-                            engine.playableScheduleRenderHandles[base + index]);
+                            engine.ReadPlayableMember(base + index).render);
                     }
                 }
             } else {
@@ -85382,7 +85466,7 @@ bool PrepareImmediateActionStop(
         } else if (row.scheduleLeafCount != 0) {
             const std::size_t base = row.scheduleStorageBase;
             if (base + row.scheduleLeafCount >
-                engine.playableScheduleRenderHandles.size()) {
+                engine.playableStorage.memberCount) {
                 plan.result = VN_DEVICE_ERROR;
                 (void)ReleaseImmediateActionStops(plan);
                 return false;
@@ -85390,7 +85474,7 @@ bool PrepareImmediateActionStop(
             for (std::uint32_t index = 0;
                  index < row.scheduleLeafCount; ++index) {
                 const VnVoiceHandle handle =
-                    engine.playableScheduleRenderHandles[base + index];
+                    engine.ReadPlayableMember(base + index).render;
                 if (handle != 0 && engine.voices.Resolve(handle) != nullptr) {
                     ++commandCount;
                 }
@@ -85446,7 +85530,7 @@ bool PrepareImmediateActionStop(
                 for (std::uint32_t index = 0;
                      index < row.scheduleLeafCount; ++index) {
                     const VnVoiceHandle handle =
-                        engine.playableScheduleRenderHandles[base + index];
+                        engine.ReadPlayableMember(base + index).render;
                     if (handle != 0 &&
                         engine.voices.Resolve(handle) != nullptr) {
                         appendStop(handle);
@@ -85538,7 +85622,7 @@ bool ValidatePreparedTerminalQueueCurrent(
     const auto slot = row.queueCurrentScheduleBase;
     const auto base = engine.playableStorage.MemberBase(row.partition.slot);
     if (slot < base || slot - base >= engine.playableStorage.memberStride) return false;
-    const auto& physical = engine.variableControlMemberCompletions[slot];
+    const auto& physical = engine.ReadPlayableMember(slot).completion;
     const auto* terminal = engine.sourceTerminals.Resolve(physical.source);
     const auto* arm = engine.timelineArms.Resolve(prepared->arm);
     const auto* voice = engine.voices.Resolve(prepared->renderHandle);
@@ -85558,8 +85642,8 @@ bool ValidatePreparedTerminalQueueCurrent(
         engine.ResolveSourceResourceOwner(terminal->resourceOwner) != &row ||
         physical.source.slot != prepared->sourceTerminal.slot ||
         physical.source.generation != prepared->sourceTerminal.generation ||
-        engine.playableScheduleRenderHandles[slot] != prepared->renderHandle ||
-        !sameArm(engine.playableScheduleArms[slot]) ||
+        engine.ReadPlayableMember(slot).render != prepared->renderHandle ||
+        !sameArm(engine.ReadPlayableMember(slot).arm) ||
         terminal->release.slot != prepared->releaseObserver.slot ||
         terminal->release.targetSequence != prepared->releaseObserver.targetSequence ||
         arm == nullptr || arm->programGeneration != physical.leafInstance ||
@@ -86174,8 +86258,8 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
             if (usesPage)
                 engine.actionPlayFrameScratch[plan->playFrameCount++] =
                     row.scheduleLeafCount > 1
-                        ? engine.playableScheduleStartFrames[
-                              row.scheduleStorageBase + leafIndex]
+                        ? engine.ReadPlayableMember(
+                              row.scheduleStorageBase + leafIndex).startFrame
                         : row.startFrame;
         }
         nextScratch.initialCommandCount = plan->playCommandCount - nextScratch.initialCommandBase;
@@ -88095,23 +88179,19 @@ bool MatchesPendingInitialVariableLeafMembers(harken::Engine& engine,
         const auto& start = scratch.voiceStarts[index];
         std::size_t logical = 0, physical = 0;
         if (!ResolveImmediateInitialMemberSlots(engine, row, index, &logical, &physical) ||
-            physical >= engine.playableScheduleArms.size() ||
-            physical >= engine.playableScheduleRenderHandles.size() ||
-            physical >= engine.playableScheduleStartFrames.size() ||
-            physical >= engine.playableScheduleReleaseObservers.size() ||
-            physical >= engine.variableControlMemberCompletions.size() ||
+            physical >= engine.playableStorage.memberCount ||
             start.arm.slot >= engine.pendingVariableLeafSources.size()) return false;
         const auto* program = ResolveInitialMemberProgram(engine, logical);
         const auto* arm = engine.timelineArms.Resolve(start.arm);
         const auto& source = engine.pendingVariableLeafSources[start.arm.slot];
-        const auto& completion = engine.variableControlMemberCompletions[physical];
-        const auto& release = engine.playableScheduleReleaseObservers[physical];
+        const auto& completion = engine.ReadPlayableMember(physical).completion;
+        const auto& release = engine.ReadPlayableMember(physical).release;
         if (program == nullptr || arm == nullptr ||
-            !harken::OriginalSourceSubmissionRegistry::SameToken(engine.playableScheduleArms[physical], start.arm) ||
-            engine.playableScheduleRenderHandles[physical] != start.renderHandle ||
+            !harken::OriginalSourceSubmissionRegistry::SameToken(engine.ReadPlayableMember(physical).arm, start.arm) ||
+            engine.ReadPlayableMember(physical).render != start.renderHandle ||
             !harken::OriginalSourceSubmissionRegistry::SameToken(program->armToken, start.arm) ||
             program->runtimeProgram.programGeneration != start.armPreparation.programGeneration ||
-            source.preparedStartFrame != engine.playableScheduleStartFrames[physical] ||
+            source.preparedStartFrame != engine.ReadPlayableMember(physical).startFrame ||
             release.slot != start.releaseObserver.slot || release.targetSequence != start.releaseObserver.targetSequence ||
             completion.leafInstance != row.variableControlLeafInstances[index] ||
             completion.leafEpoch != row.variableControlLeafEpochs[index] ||
@@ -88863,15 +88943,15 @@ engine.runtimeRecreateRequired = true;
             const PlayableStorageBases bases =
                 StorageBasesForRow(engine, row);
             if (bases.member + row.scheduleLeafCount >
-                engine.playableScheduleArms.size()) {
+                engine.playableStorage.memberCount) {
                 ok = false;
             } else {
                 for (std::uint32_t leafIndex = 0;
                      leafIndex < row.scheduleLeafCount; ++leafIndex) {
                     (void)AbortTimelineArm(
                         engine,
-                        engine.playableScheduleArms[
-                            bases.member + leafIndex]);
+                        engine.ReadPlayableMember(
+                            bases.member + leafIndex).arm);
                 }
             }
         } else {

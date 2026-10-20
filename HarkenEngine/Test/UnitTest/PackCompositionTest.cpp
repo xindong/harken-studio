@@ -17552,7 +17552,7 @@ TEST(PackComposition, PackActionRejectsStaleMultiLeafArmPublication) {
     for (std::uint32_t index = 0; index < row->scheduleLeafCount; ++index) {
         latestStart = std::max(
             latestStart,
-            session.Engine()->playableScheduleStartFrames[base + index]);
+            session.Engine()->ReadPlayableMember(base + index).startFrame);
     }
     session.Engine()->timelinePool.Publish(
         latestStart + 1u, &session.Engine()->playableInstances,
@@ -19837,13 +19837,13 @@ void ExpectVariableControlNaturalCompletion(ContainerMatrixEntry entry, bool con
     EXPECT_EQ(0u, controllerExecution.activeChild);
     EXPECT_EQ(containers + (nested ? 2u : 1u), engine.containerPlayback.LiveCount());
     const auto member = row->scheduleStorageBase + (continuous ? row->variableControlContinuousMemberOffset : 0);
-    const auto initialArm = engine.playableScheduleArms[member];
+    const auto initialArm = engine.ReadPlayableMember(member).arm;
     const auto initialChild = row->variableControlChildInstances[0];
     EnginePlayableMemberReference memberReference{
         {serviceToken, controller, controllerEpoch, row->invocationGeneration},
         partitionToken.generation, static_cast<std::uint32_t>(member - row->scheduleStorageBase),
-        engine.variableControlMemberCompletions[member].leafInstance,
-        engine.variableControlMemberCompletions[member].leafEpoch};
+        engine.ReadPlayableMember(member).completion.leafInstance,
+        engine.ReadPlayableMember(member).completion.leafEpoch};
     EnginePlayableServiceRow* memberOwner = nullptr;
     std::size_t memberSlot = SIZE_MAX;
     ASSERT_TRUE(engine.ResolvePlayableMember(memberReference, &memberOwner, &memberSlot));
@@ -19862,7 +19862,7 @@ void ExpectVariableControlNaturalCompletion(ContainerMatrixEntry entry, bool con
         EXPECT_EQ(SIZE_MAX, memberSlot);
     }
     VoiceReleaseObserver released{};
-    ASSERT_TRUE(engine.voices.CaptureReleaseObserver(engine.playableScheduleRenderHandles[member], &released));
+    ASSERT_TRUE(engine.voices.CaptureReleaseObserver(engine.ReadPlayableMember(member).render, &released));
     bool started = false, completed = false;
     bool sameBlockReleaseChecked = false;
     bool delayedReleaseChecked = false;
@@ -19877,7 +19877,7 @@ void ExpectVariableControlNaturalCompletion(ContainerMatrixEntry entry, bool con
                 !engine.voices.ReleaseObserved(released)) {
                 EXPECT_TRUE(engine.playableInstances.Classify(initialChild).live);
                 EXPECT_EQ(delays + 1u, engine.effectBank.DelayInUse());
-                EXPECT_FALSE(engine.variableControlMemberCompletions[member].resourcesRetired);
+                EXPECT_FALSE(engine.ReadPlayableMember(member).completion.resourcesRetired);
                 delayedReleaseChecked = true;
             }
         }
@@ -19889,7 +19889,7 @@ void ExpectVariableControlNaturalCompletion(ContainerMatrixEntry entry, bool con
             EXPECT_EQ(releaseBlock, engine.mixer.BlocksRendered());
             EXPECT_TRUE(engine.playableInstances.Classify(initialChild).live);
             const auto* source = engine.sourceTerminals.Resolve(
-                engine.variableControlMemberCompletions[member].source);
+                engine.ReadPlayableMember(member).completion.source);
             ASSERT_NE(nullptr, source);
             EXPECT_EQ(&*row, engine.ResolveSourceResourceOwner(source->resourceOwner));
             auto staleSourceOwner = source->resourceOwner;
@@ -20101,7 +20101,7 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
     auto& engine = *session.Engine();
     ASSERT_EQ(workers, engine.voices.RenderWorkerCount());
     ::testing::Test::RecordProperty("member_completion_bytes", std::to_string(sizeof(VariableControlMemberCompletion)));
-    ::testing::Test::RecordProperty("member_completion_count", std::to_string(engine.variableControlMemberCompletions.size()));
+    ::testing::Test::RecordProperty("member_completion_count", std::to_string(engine.playableStorage.memberCount));
     if (entry == ContainerMatrixEntry::PackAction) {
         ImageBuilder builder(kPackKindCanonicalContent);
         builder.AddEntry(kPackEntryKindPackRequirementBlock, 22, RequirementPayload(22, 1, 1));
@@ -20201,17 +20201,17 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
             for (std::uint32_t index = 0; index < engine.playableStorage.memberStride; ++index) {
                 const auto slot = row->scheduleStorageBase + index;
                 if (staggered && target == 0) {
-                    if (engine.playableScheduleVoices[slot].Facts().soundId != ContainerMatrixWorld::kSecondSound) continue;
-                } else if (engine.playableScheduleVoices[slot].Facts().target.occurrenceOrdinal != ordinal) continue;
-                const auto arm = engine.playableScheduleArms[slot];
+                    if (engine.ReadPlayableMember(slot).voice.Facts().soundId != ContainerMatrixWorld::kSecondSound) continue;
+                } else if (engine.ReadPlayableMember(slot).voice.Facts().target.occurrenceOrdinal != ordinal) continue;
+                const auto arm = engine.ReadPlayableMember(slot).arm;
                 TimelineArmObservation onset{};
-                const auto render = engine.playableScheduleRenderHandles[slot];
+                const auto render = engine.ReadPlayableMember(slot).render;
                 if (engine.timelineArms.Observe(arm, &onset) && onset.startedBlockSequence != 0) {
                     startSequence = onset.startedBlockSequence;
                     if (std::find(onsets[target].begin(), onsets[target].end(), render) == onsets[target].end())
                         onsets[target].push_back(render);
                 }
-                const auto& member = engine.variableControlMemberCompletions[slot];
+                const auto& member = engine.ReadPlayableMember(slot).completion;
                 if (member.resourcesRetired && row->variableControlDiscreteRetargetPrepared &&
                     !row->variableControlDiscreteRetargetSourceExited) {
                     EXPECT_EQ(SourceTerminalKind::Natural, member.completedSource.kind);
@@ -20341,9 +20341,9 @@ TEST(PackComposition, VariableControlPartialCompletionKeepsSurvivorsWithoutResta
     ASSERT_NE(engine.playableServices.end(), row);
     ASSERT_EQ(2u, row->variableControlContinuousMemberCount);
     const auto base = row->scheduleStorageBase + row->variableControlContinuousMemberOffset;
-    const auto firstArm = engine.playableScheduleArms[base];
-    const auto secondArm = engine.playableScheduleArms[base + 1];
-    const auto secondRender = engine.playableScheduleRenderHandles[base + 1];
+    const auto firstArm = engine.ReadPlayableMember(base).arm;
+    const auto secondArm = engine.ReadPlayableMember(base + 1).arm;
+    const auto secondRender = engine.ReadPlayableMember(base + 1).render;
     bool firstStarted = false, secondStarted = false;
     for (unsigned block = 0; block < 48; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -20355,11 +20355,11 @@ TEST(PackComposition, VariableControlPartialCompletionKeepsSurvivorsWithoutResta
     }
     ASSERT_TRUE(firstStarted);
     ASSERT_TRUE(secondStarted);
-    ASSERT_TRUE(engine.variableControlMemberCompletions[base].resourcesRetired);
-    ASSERT_FALSE(engine.variableControlMemberCompletions[base + 1].resourcesRetired);
+    ASSERT_TRUE(engine.ReadPlayableMember(base).completion.resourcesRetired);
+    ASSERT_FALSE(engine.ReadPlayableMember(base + 1).completion.resourcesRetired);
     ASSERT_NE(nullptr, engine.voices.Resolve(secondRender));
     ASSERT_EQ(1u, engine.voices.ActiveCount());
-    const auto secondChild = engine.variableControlMemberCompletions[base + 1].leafInstance;
+    const auto secondChild = engine.ReadPlayableMember(base + 1).completion.leafInstance;
     const auto secondEpoch = engine.playableInstances.Classify(secondChild).scheduleEpoch;
     ASSERT_EQ(VN_OK, Vn_SetValue(ContainerMatrixWorld::kVariable, 2.0f));
     for (unsigned block = 0; block < 128; ++block) {
@@ -20380,9 +20380,9 @@ TEST(PackComposition, VariableControlPartialCompletionKeepsSurvivorsWithoutResta
     std::size_t retainedSlot = 0;
     ASSERT_TRUE(engine.ResolvePlayableMemberSlot(base + 1u, &retainedSlot));
     EXPECT_EQ(base + 1u, retainedSlot);
-    EXPECT_EQ(secondRender, engine.playableScheduleRenderHandles[retainedSlot]);
-    EXPECT_EQ(firstArm.slot, engine.playableScheduleArms[base].slot);
-    EXPECT_EQ(firstArm.generation, engine.playableScheduleArms[base].generation);
+    EXPECT_EQ(secondRender, engine.ReadPlayableMember(retainedSlot).render);
+    EXPECT_EQ(firstArm.slot, engine.ReadPlayableMember(base).arm.slot);
+    EXPECT_EQ(firstArm.generation, engine.ReadPlayableMember(base).arm.generation);
     EXPECT_EQ(secondEpoch, engine.playableInstances.Classify(secondChild).scheduleEpoch);
     const auto reentryBaseline = engine.mixer.BlocksRendered();
     ASSERT_EQ(VN_OK, Vn_SetValue(ContainerMatrixWorld::kVariable, 0.0f));
@@ -20392,8 +20392,8 @@ TEST(PackComposition, VariableControlPartialCompletionKeepsSurvivorsWithoutResta
         engine.nullBackend.Pump(1);
         for (std::uint32_t index = 0; index < engine.playableStorage.memberStride; ++index) {
             const auto slot = row->scheduleStorageBase + index;
-            if (engine.playableScheduleVoices[slot].Facts().soundId != ContainerMatrixWorld::kFirstSound) continue;
-            const auto arm = engine.playableScheduleArms[slot];
+            if (engine.ReadPlayableMember(slot).voice.Facts().soundId != ContainerMatrixWorld::kFirstSound) continue;
+            const auto arm = engine.ReadPlayableMember(slot).arm;
             if (arm.slot == firstArm.slot && arm.generation == firstArm.generation) continue;
             TimelineArmObservation observed{};
             if (!engine.timelineArms.Observe(arm, &observed) || observed.startedBlockSequence == 0) continue;
@@ -21351,10 +21351,10 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
                 const auto& heard = actual.heard[checkedPropertyVoices++];
                 if (laterControl ? heard.subject == harkentest::ObjectId(2300u) : heard.subject >= harkentest::ObjectId(2302u)) continue;
                 bool found = false;
-                for (std::size_t slot = 0; slot < engine.playableScheduleArms.size(); ++slot) {
-                    const auto& arm = engine.playableScheduleArms[slot];
+                for (std::size_t slot = 0; slot < engine.playableStorage.memberCount; ++slot) {
+                    const auto& arm = engine.ReadPlayableMember(slot).arm;
                     if (arm.slot != heard.token.slot || arm.generation != heard.token.generation) continue;
-                    EXPECT_FLOAT_EQ(-6.0f, engine.playableScheduleVoices[slot].Facts().volumeDb);
+                    EXPECT_FLOAT_EQ(-6.0f, engine.ReadPlayableMember(slot).voice.Facts().volumeDb);
                     found = true;
                 }
                 EXPECT_TRUE(found);
@@ -22267,17 +22267,17 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
         }
         for (std::uint32_t i = 0; i < run.leafCount; ++i) {
             run.arms[i] = currentMultiLeaf
-                ? engine->playableScheduleArms[resource->scheduleStorageBase + i]
+                ? engine->ReadPlayableMember(resource->scheduleStorageBase + i).arm
                 : resource->arm;
             run.renderHandles[i] = currentMultiLeaf
-                ? engine->playableScheduleRenderHandles[resource->scheduleStorageBase + i]
+                ? engine->ReadPlayableMember(resource->scheduleStorageBase + i).render
                 : resource->renderHandle;
             run.releaseObservers[i] = currentMultiLeaf
-                ? engine->playableScheduleReleaseObservers[resource->scheduleStorageBase + i]
+                ? engine->ReadPlayableMember(resource->scheduleStorageBase + i).release
                 : resource->releaseObserver;
             run.occurrences[i] = engine->playableScheduleOccurrences[endpointBase + i];
             run.startFrames[i] = currentMultiLeaf
-                ? engine->playableScheduleStartFrames[resource->scheduleStorageBase + i]
+                ? engine->ReadPlayableMember(resource->scheduleStorageBase + i).startFrame
                 : resource->startFrame;
             EngineTimelineVoiceInstallIdentity identity{};
             ASSERT_TRUE(engine->CaptureTimelineVoiceInstallIdentity(run.renderHandles[i], &identity));
