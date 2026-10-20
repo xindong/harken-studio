@@ -9875,7 +9875,7 @@ public:
         ownsScratch_ = false;
     }
 
-    void Cancel(bool retainStartFailure = false) noexcept {
+    void Cancel(bool retainStartFailure = false, bool retainQueuePrograms = false) noexcept {
         if (!ownsScratch_ || committed_) return;
         if (!ReleaseVariableFrontier()) {
             engine_.runtimeRecreateRequired = true;
@@ -9926,6 +9926,7 @@ public:
         }
         controlCount_ = 0;
         committedControlCount_ = 0;
+        if (retainQueuePrograms) return;
         // The stable Engine holder owns the factory baseline and reservation.
         // Unpublished cleanup rejects external loans before consuming those originals.
         assert(queueBank_ == nullptr || !engine_.OriginalQueueBankHasExternalOwners(*queueBank_));
@@ -12859,16 +12860,6 @@ PlayableStartResetResult ResetPlayableStartRow(
           engine.playableStorage.continuousStride);
     clear(engine.variableControlRetargetMemberKinds, bases.continuous,
           engine.playableStorage.continuousStride);
-    clear(engine.playableSuccessorArms, bases.endpoint,
-          engine.playableStorage.endpointStride);
-    clear(engine.playableSuccessorRenderHandles, bases.endpoint,
-          engine.playableStorage.endpointStride);
-    clear(engine.playableSuccessorOccurrences, bases.endpoint,
-          engine.playableStorage.endpointStride);
-    clear(engine.playableSuccessorCompletions, bases.endpoint,
-          engine.playableStorage.endpointStride);
-    clear(engine.playableSuccessorStartFrames, bases.endpoint,
-          engine.playableStorage.endpointStride);
     auto& invocation = row.Invocation();
     assert(invocation.serviceCount != 0);
     if (--invocation.serviceCount == 0) {
@@ -12998,15 +12989,10 @@ bool ClearQueueSuccessorInstallationAfterNativeEnd(
         return ClearTimelineVoiceInstallationAfterNativeEnd(engine, render, arm, observedAudioSequence);
     };
     if (!clear(row.queueSuccessorRenderHandle, row.queueSuccessorArm)) return false;
-    const auto base = static_cast<std::size_t>(row.queueSuccessorScheduleBase);
-    const auto count = static_cast<std::size_t>(row.queueSuccessorScheduleLeafCount);
-    if (base > engine.playableSuccessorArms.size() ||
-        count > engine.playableSuccessorArms.size() - base ||
-        base > engine.playableSuccessorRenderHandles.size() ||
-        count > engine.playableSuccessorRenderHandles.size() - base) return false;
-    for (std::size_t index = 0; index < count; ++index)
-        if (!clear(engine.playableSuccessorRenderHandles[base + index],
-                   engine.playableSuccessorArms[base + index])) return false;
+    for (std::uint32_t index = 0; index < row.queueSuccessorScheduleLeafCount; ++index) {
+        const auto* member = engine.FindQueueSuccessorMember(row, index);
+        if (member == nullptr || !clear(member->render, member->arm)) return false;
+    }
     return true;
 }
 
@@ -13161,31 +13147,23 @@ bool ReleaseQueueStopPhysicalArms(
         DropTimelineArm(engine, token, observedAudioSequence);
     };
     const auto dropStoredArms =
-        [&](bool successor, std::uint32_t base, std::uint32_t count) {
-            const auto capacity = successor ? engine.playableSuccessorArms.size() : engine.playableStorage.memberCount;
+        [&](std::uint32_t base, std::uint32_t count) {
+            const auto capacity = engine.playableStorage.memberCount;
             if (count == 0 ||
                 static_cast<std::size_t>(base) + count > capacity) {
                 return;
             }
             for (std::uint32_t index = 0; index < count; ++index) {
-                dropArm(successor ? engine.playableSuccessorArms[base + index]
-                    : engine.ReadPlayableMember(base + index).arm);
+                dropArm(engine.ReadPlayableMember(base + index).arm);
             }
         };
     dropArm(row.arm);
-    dropStoredArms(false, row.scheduleStorageBase,
+    dropStoredArms(row.scheduleStorageBase,
                    row.scheduleLeafCount);
-    dropStoredArms(false, row.queueCurrentScheduleBase,
+    dropStoredArms(row.queueCurrentScheduleBase,
                    row.queueCurrentScheduleLeafCount);
-    dropStoredArms(true,
-                   row.queueSuccessorScheduleBase,
-                   row.queueSuccessorScheduleLeafCount);
-    dropStoredArms(true,
-                   row.queueRetiringScheduleBase,
-                   row.queueRetiringScheduleLeafCount);
-    dropStoredArms(row.queueArrivalUsesSuccessorStorage,
-                   row.queueArrivalScheduleBase,
-                   row.queueArrivalScheduleLeafCount);
+    if (!row.queueArrivalUsesSuccessorStorage)
+        dropStoredArms(row.queueArrivalScheduleBase, row.queueArrivalScheduleLeafCount);
     dropArm(row.queueArrivalArm);
     dropArm(row.queueArrivalSourceArm);
     for (std::uint32_t index = 0;
@@ -14299,24 +14277,28 @@ bool ReserveQueueDecision(
 void BeginQueueSuccessorAbort(
     harken::Engine& engine,
     harken::EnginePlayableServiceRow& row,
-    const harken::MonitorControlCause* cause = nullptr) noexcept {
+    const harken::MonitorControlCause* cause = nullptr,
+    const harken::EngineQueueProgramBank* privateBank = nullptr) noexcept {
+    const auto* bank = privateBank != nullptr ? privateBank : row.queueSuccessorProgramBank;
+    const auto first = privateBank != nullptr ? 0u : row.queueSuccessorPrograms.first;
     if (row.queueSuccessorCompositeOwner.Valid()) {
         bool mirrorsCleared = true;
-        const std::size_t base = row.queueSuccessorScheduleBase;
         for (std::uint32_t index = 0;
              index < row.queueSuccessorScheduleLeafCount; ++index) {
-            const std::size_t slot = base + index;
+            const auto* member = engine.FindQueueProgramMember(bank, first + index);
+            if (member == nullptr) {
+                mirrorsCleared = false;
+                continue;
+            }
             const harken::KnownCompletionPredicateV1& completion =
-                engine.playableSuccessorCompletions[slot];
+                member->nativeCompletion;
             const harken::VoiceLedger::RenderOwner renderOwner =
-                engine.ledger.OwnerForRender(
-                    engine.playableSuccessorRenderHandles[slot]);
+                engine.ledger.OwnerForRender(member->render);
             mirrorsCleared =
                 (!renderOwner.live ||
                  engine.ledger.ClearCompletionMutationExact(
                      renderOwner.ledgerSlot,
-                     {engine.playableSuccessorOccurrences[slot],
-                      completion.owner})) &&
+                      {member->occurrence, completion.owner})) &&
                 mirrorsCleared;
         }
         if (!mirrorsCleared ||
@@ -14360,14 +14342,15 @@ engine.runtimeRecreateRequired = true;
     row.queueSuccessorCompletion = {};
     row.queueSuccessorOwner = {};
     if (row.queueSuccessorScheduleLeafCount > 1) {
-        const std::size_t base = row.queueSuccessorScheduleBase;
         for (std::uint32_t index = 0;
              index < row.queueSuccessorScheduleLeafCount; ++index) {
-            (void)AbortTimelineArm(
-                engine, engine.playableSuccessorArms[base + index], cause);
-            harken::OccurrenceToken& occurrence =
-                engine.playableSuccessorOccurrences[base + index];
-            (void)TryReleaseOccurrenceAfterFence(engine, occurrence, 0);
+            auto* member = engine.FindQueueProgramMember(bank, first + index);
+            if (member == nullptr) {
+                engine.runtimeRecreateRequired = true;
+                continue;
+            }
+            (void)AbortTimelineArm(engine, member->arm, cause);
+            (void)TryReleaseOccurrenceAfterFence(engine, member->occurrence, 0);
         }
     } else if (row.queueSuccessorArm.Valid()) {
         (void)AbortTimelineArm(engine, row.queueSuccessorArm, row.queueSameProgramKey ? nullptr : cause);
@@ -20346,16 +20329,9 @@ bool RollbackCommittedVariableControlInitial(
             if (member != nullptr) ok = releaseOccurrence(member->occurrence) && ok;
         }
     }
-    if (queueRow.queueSuccessorScheduleLeafCount != 0 &&
-        queueRow.queueSuccessorScheduleBase +
-                queueRow.queueSuccessorScheduleLeafCount <=
-            engine.playableSuccessorOccurrences.size()) {
-        for (std::uint32_t index = queueRow.queueSuccessorScheduleLeafCount;
-             index-- > 0;) {
-            ok = releaseOccurrence(engine.playableSuccessorOccurrences[
-                                      queueRow.queueSuccessorScheduleBase + index]) &&
-                 ok;
-        }
+    for (std::uint32_t index = queueRow.queueSuccessorScheduleLeafCount; index-- > 0;) {
+        auto* member = engine.FindQueueSuccessorMember(queueRow, index);
+        if (member != nullptr) ok = releaseOccurrence(member->occurrence) && ok;
     }
     if (queueRow.queueMode) {
         if (!ReleaseQueueStopOccupancy(engine, queueRow, observedAudioSequence)) return false;
@@ -24861,13 +24837,15 @@ bool PrepareCompositeQueueContinuation(
     auto& successorRuntimeStorage = starts.QueueBank()->runtimes;
     auto& successorScheduleStorage = starts.QueueBank()->schedules;
     constexpr std::size_t successorEventBase = 0;
-    const auto abortPrepared = [&]() {
-        starts.Cancel();
-        BeginQueueSuccessorAbort(engine, row);
-    };
     std::array<harken::KnownScheduleLeafV1, 64> knownLeaves{};
+    const auto abortPrepared = [&]() {
+        starts.Cancel(false, true);
+        BeginQueueSuccessorAbort(engine, row, nullptr, starts.QueueBank());
+        for (auto& leaf : knownLeaves)
+            (void)TryReleaseOccurrenceAfterFence(engine, leaf.occurrence, 0);
+        row.queueSuccessorScheduleLeafCount = 0;
+    };
     for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
-        const std::size_t slot = base + index;
         const std::uint64_t startFrame =
             completionFrame + prepared[index].startOffsetFrames;
         harken::OccurrenceToken* progressOccurrence = nullptr;
@@ -24878,13 +24856,11 @@ bool PrepareCompositeQueueContinuation(
             leafKey.clipId = prepared[index].leaf.stableId;
             leafKey.occurrenceOrdinal = prepared[index].occurrenceOrdinal;
             if (!engine.timelineOccurrences.Acquire(
-                    leafKey,
-                    &engine.playableSuccessorOccurrences[slot])) {
+                    leafKey, &knownLeaves[index].occurrence)) {
                 abortPrepared();
                 return false;
             }
-            progressOccurrence =
-                &engine.playableSuccessorOccurrences[slot];
+            progressOccurrence = &knownLeaves[index].occurrence;
             programKey.kind = harken::PlayableKindV1::Sound;
             programKey.stableId = prepared[index].leaf.stableId;
             programKey.world = world.generation;
@@ -24922,16 +24898,10 @@ bool PrepareCompositeQueueContinuation(
         }
         if (!preparedTree.BindMember(*starts.QueueBank(), index, installed, captured,
                 prepared[index].leaf, startFrame, successorHasContinuation
-                    ? engine.playableSuccessorOccurrences[slot] : row.queueSuccessorOccurrence)) {
+                    ? knownLeaves[index].occurrence : row.queueSuccessorOccurrence)) {
             abortPrepared();
             return false;
         }
-        engine.playableSuccessorArms[slot] = installed.armToken;
-        engine.playableSuccessorRenderHandles[slot] =
-            installed.renderHandle;
-        engine.playableSuccessorStartFrames[slot] = startFrame;
-        engine.playableSuccessorCompletions[slot] =
-            installed.completionPredicate;
         const std::size_t eventBase = targetFadeActive
             ? static_cast<std::size_t>(2u * index)
             : static_cast<std::size_t>(index);
@@ -25009,8 +24979,6 @@ bool PrepareCompositeQueueContinuation(
             known.authoredOffset.numerator = static_cast<std::int64_t>(
                 prepared[index].startOffsetFrames);
             known.authoredOffset.denominator = 1;
-            known.occurrence =
-                engine.playableSuccessorOccurrences[slot];
             known.renderGeneration = static_cast<std::uint32_t>(
                 installed.renderHandle >> 32);
             known.absoluteLeafStartFrame = startFrame;
@@ -25031,7 +24999,6 @@ bool PrepareCompositeQueueContinuation(
         row.queueSuccessorCompositeOwner = composite;
         for (std::uint32_t index = 0; index < materialized.leafCount;
              ++index) {
-            const std::size_t slot = base + index;
             harken::KnownScheduleLeafV1 bound{};
 
             if (!engine.compositeCompletionOwners.CaptureLeaf(
@@ -25042,7 +25009,6 @@ bool PrepareCompositeQueueContinuation(
                 abortPrepared();
                 return false;
             }
-            engine.playableSuccessorCompletions[slot] = bound.predicate;
             if (auto* member = engine.FindQueueProgramMember(starts.QueueBank(), index))
                 member->nativeCompletion = bound.predicate;
         }
@@ -25050,10 +25016,9 @@ bool PrepareCompositeQueueContinuation(
     if (materialized.leafCount != 0) {
         const auto& member = *engine.FindQueueProgramMember(starts.QueueBank(), 0);
         row.queueSuccessorLeaf = member.leaf;
-        row.queueSuccessorArm = engine.playableSuccessorArms[base];
-        row.queueMonitorSelection = engine.FindQueueProgramMember(starts.QueueBank(), 0)->monitorSelection;
-        row.queueSuccessorRenderHandle =
-            engine.playableSuccessorRenderHandles[base];
+        row.queueSuccessorArm = member.arm;
+        row.queueMonitorSelection = member.monitorSelection;
+        row.queueSuccessorRenderHandle = member.render;
         row.queueSuccessorTailFrames = member.postSourceTailFrames;
     } else {
         row.queueSuccessorLeaf = {};
@@ -25062,7 +25027,6 @@ bool PrepareCompositeQueueContinuation(
         row.queueSuccessorTailFrames = 0;
     }
     const auto rollbackUnpublishedTransition = [&]() {
-        starts.Cancel();
         row.queueSourceArm = {};
         row.queueSourceControlArmCount = 0;
         row.ClearQueueSourcePrograms();
@@ -25122,7 +25086,7 @@ engine.runtimeRecreateRequired = true;
     for (std::uint32_t index = 0;
          index < materialized.leafCount; ++index) {
         row.queueTransitionGroupArms[sourceControlCount + index] =
-            engine.playableSuccessorArms[base + index];
+            engine.FindQueueProgramMember(starts.QueueBank(), index)->arm;
     }
     row.queueTransitionGroupArmCount =
         sourceControlCount + materialized.leafCount;
@@ -40183,43 +40147,35 @@ bool StageInitialQueueSuccessorStartMirrors(harken::Engine& engine,
             const auto leafCount = engine.InitialQueueFilingFuture(*holder).queueSuccessorScheduleLeafCount != 0
                 ? engine.InitialQueueFilingFuture(*holder).queueSuccessorScheduleLeafCount
                 : (engine.InitialQueueFilingFuture(*holder).queueSuccessorArm.Valid() ? 1u : 0u);
-            const auto base = static_cast<std::size_t>(
-                engine.InitialQueueFilingFuture(*holder).queueSuccessorScheduleBase);
+            const auto first = engine.InitialQueueFilingFuture(*holder).queueSuccessorPrograms.first;
             if (leafCount == 0 || programs.size() != leafCount ||
-                base > engine.playableSuccessorArms.size() ||
-                base > engine.playableSuccessorStartFrames.size() ||
-                base > engine.playableSuccessorRenderHandles.size() ||
-                base > engine.playableSuccessorCompletions.size() ||
-                leafCount > engine.playableSuccessorArms.size() - base ||
-                leafCount > engine.playableSuccessorStartFrames.size() - base ||
-                leafCount > engine.playableSuccessorRenderHandles.size() - base ||
-                leafCount > engine.playableSuccessorCompletions.size() - base ||
                 aggregate.events == nullptr ||
                 aggregate.runtimeProgram.program == nullptr) return false;
-            std::size_t matched = retainedOriginal ? base : SIZE_MAX;
-            for (std::size_t leaf = 0; !retainedOriginal && leaf < leafCount; ++leaf) {
-                const auto slot = base + leaf;
-                if (!sameArm(engine.playableSuccessorArms[slot],
-                        staged.arm)) continue;
-                if (matched != SIZE_MAX) return false;
-                matched = slot;
+            std::uint32_t matched = UINT32_MAX;
+            for (std::uint32_t leaf = 0; leaf < leafCount; ++leaf) {
+                const auto* member = engine.FindQueueProgramMember(bank, first + leaf);
+                if (member == nullptr) return false;
+                if (!sameArm(member->arm, staged.arm)) continue;
+                if (matched != UINT32_MAX) return false;
+                matched = first + leaf;
             }
-            if (matched == SIZE_MAX ||
+            if (matched == UINT32_MAX ||
                 staged.arm.renderSlot >=
                     engine.timelineVoiceInstallIdentities.size()) return false;
             for (std::size_t earlier = 0; earlier <
                     staged.firstEvent + offset; ++earlier)
-                if (engine.initialQueueTimingEventsScratch[earlier].
-                        successorMirrorSlot == matched) return false;
+                if (engine.initialQueueTimingEventsScratch[earlier].holder == holder->identity &&
+                    engine.initialQueueTimingEventsScratch[earlier].successorProgramIndex == matched) return false;
             const auto& installation = engine.timelineVoiceInstallIdentities[
                 staged.arm.renderSlot];
             const auto render =
                 (static_cast<std::uint64_t>(staged.arm.renderGeneration) << 32) |
                 staged.arm.renderSlot;
             const auto& release = bank->releaseObservers[frozenIndex];
-            const auto& copied = programs[matched - base];
+            const auto& copied = programs[matched - first];
+            const auto& member = *engine.FindQueueProgramMember(bank, matched);
             if (&copied != frozen || copied.eventCount <= offset) return false;
-            if ((!retainedOriginal && engine.playableSuccessorRenderHandles[matched] != render) ||
+            if (member.render != render ||
                 installation.renderHandle != render ||
                 !sameArm(installation.startArm, staged.arm) ||
                 installation.rootInstance != holder->rootInstance ||
@@ -40227,7 +40183,7 @@ bool StageInitialQueueSuccessorStartMirrors(harken::Engine& engine,
                 installation.releaseObserver.slot != release.slot ||
                 installation.releaseObserver.targetSequence !=
                     release.targetSequence ||
-                (!retainedOriginal && engine.playableSuccessorStartFrames[matched] != oldStart) ||
+                member.startFrame != oldStart ||
                 installation.onsetFrame != oldStart)
                 return false;
             for (std::size_t event = 0; event < frozen->eventCount; ++event) {
@@ -40340,7 +40296,7 @@ bool StageInitialQueueSuccessorStartMirrors(harken::Engine& engine,
                     voice->timelineParentGroup.decision.slot != core->parentGroup.decision.slot ||
                     voice->timelineParentGroup.decision.generation != core->parentGroup.decision.generation ||
                     voice->timelineGroupMemberIndex != core->memberIndex ||
-                    core->memberIndex != engine.InitialQueueFilingFuture(*holder).queueSourceControlArmCount + matched - base)
+                    core->memberIndex != engine.InitialQueueFilingFuture(*holder).queueSourceControlArmCount + matched - first)
                     return false;
                 if (source == nullptr) {
                     if (needsTerminal || voice->sourceTerminalToken.Valid() ||
@@ -40354,7 +40310,7 @@ bool StageInitialQueueSuccessorStartMirrors(harken::Engine& engine,
                     engine.ResolveSourceResourceOwner(source->resourceOwner) != holder) return false;
             }
             timing.retainedOriginalSuccessor = retainedOriginal;
-            timing.successorMirrorSlot = matched;
+            timing.successorProgramIndex = matched;
             timing.successorMirrorPlane = plane;
             timing.successorBankAggregate =
                 static_cast<std::uint32_t>(bankAggregate);
@@ -40376,7 +40332,7 @@ bool StageInitialQueueSuccessorStartMirrors(harken::Engine& engine,
                     staged.firstEvent + offset; ++earlier) {
                 const auto& previous =
                     engine.initialQueueTimingEventsScratch[earlier];
-                if (previous.successorMirrorSlot == SIZE_MAX ||
+                if (previous.successorProgramIndex == UINT32_MAX ||
                     previous.holder != timing.holder) continue;
                 if (previous.successorMirrorPlane != plane ||
                     previous.oldAggregateAnchorFrame !=
@@ -40391,7 +40347,7 @@ bool StageInitialQueueSuccessorStartMirrors(harken::Engine& engine,
             }
             const auto& completion = retainedOriginal
                 ? engine.InitialQueueFilingFuture(*holder).queueSuccessorCompletion
-                : engine.playableSuccessorCompletions[matched];
+                : member.nativeCompletion;
             timing.physicalCompletionBound =
                 harken::IsBoundKnownCompletionPredicate(completion);
             if (timing.physicalCompletionBound) {
@@ -40453,20 +40409,18 @@ void ApplyInitialQueueSuccessorStartMirrors(harken::Engine& engine,
                 const auto& timing =
                     engine.initialQueueTimingEventsScratch[
                         staged.firstEvent + offset];
-                if (timing.successorMirrorSlot == SIZE_MAX) continue;
+                if (timing.successorProgramIndex == UINT32_MAX) continue;
                 auto* holder = findTimingHolder(timing.holder);
                 if (timing.retainedOriginalSuccessor) {
                     applyRetained(staged, timing, *holder);
                     continue;
                 }
-                const auto slot = timing.successorMirrorSlot;
+                const auto programIndex = timing.successorProgramIndex;
                 auto& future = engine.InitialQueueFilingFuture(*holder);
-                auto* copied = ResolveQueueSuccessorProgram(future, slot - future.queueSuccessorScheduleBase);
+                auto* copied = ResolveQueueSuccessorProgram(future, programIndex - future.queueSuccessorPrograms.first);
                 assert(copied != nullptr);
                 auto& aggregate = timing.successorMirrorPlane == 0
                     ? holder->schedule : engine.InitialQueueFilingFuture(*holder).queueSuccessorSchedule;
-                engine.playableSuccessorStartFrames[slot] =
-                    timing.oldPhysicalStartFrame;
                 engine.timelineVoiceInstallIdentities[
                     staged.arm.renderSlot].onsetFrame =
                         timing.oldPhysicalStartFrame;
@@ -40476,11 +40430,8 @@ void ApplyInitialQueueSuccessorStartMirrors(harken::Engine& engine,
                 engine.InitialQueueFilingFuture(*holder).queueSuccessorProgramBank->aggregateSchedules[
                     timing.successorBankAggregate].entryAnchorFrame =
                         timing.oldBankAggregateAnchorFrame;
-                if (timing.physicalCompletionBound)
-                    engine.playableSuccessorCompletions[slot] =
-                        timing.oldPhysicalCompletion;
                 if (auto* member = engine.FindQueueProgramMember(future.queueSuccessorProgramBank,
-                        future.queueSuccessorPrograms.first + slot - future.queueSuccessorScheduleBase)) {
+                        programIndex)) {
                     member->startFrame = timing.oldPhysicalStartFrame;
                     if (timing.physicalCompletionBound) member->nativeCompletion = timing.oldPhysicalCompletion;
                 }
@@ -40495,20 +40446,18 @@ void ApplyInitialQueueSuccessorStartMirrors(harken::Engine& engine,
         for (std::uint32_t offset = 0; offset < staged.eventCount; ++offset) {
             const auto& timing = engine.initialQueueTimingEventsScratch[
                 staged.firstEvent + offset];
-            if (timing.successorMirrorSlot == SIZE_MAX) continue;
+            if (timing.successorProgramIndex == UINT32_MAX) continue;
             auto* holder = findTimingHolder(timing.holder);
             if (timing.retainedOriginalSuccessor) {
                 applyRetained(staged, timing, *holder);
                 continue;
             }
-            const auto slot = timing.successorMirrorSlot;
+            const auto programIndex = timing.successorProgramIndex;
             auto& future = engine.InitialQueueFilingFuture(*holder);
-            auto* copied = ResolveQueueSuccessorProgram(future, slot - future.queueSuccessorScheduleBase);
+            auto* copied = ResolveQueueSuccessorProgram(future, programIndex - future.queueSuccessorPrograms.first);
             assert(copied != nullptr);
             auto& aggregate = timing.successorMirrorPlane == 0
                 ? holder->schedule : engine.InitialQueueFilingFuture(*holder).queueSuccessorSchedule;
-            engine.playableSuccessorStartFrames[slot] =
-                timing.newExecuteFrame;
             engine.timelineVoiceInstallIdentities[
                 staged.arm.renderSlot].onsetFrame = timing.newExecuteFrame;
             copied->entryAnchorFrame = timing.newCopiedAnchorFrame;
@@ -40516,11 +40465,8 @@ void ApplyInitialQueueSuccessorStartMirrors(harken::Engine& engine,
             engine.InitialQueueFilingFuture(*holder).queueSuccessorProgramBank->aggregateSchedules[
                 timing.successorBankAggregate].entryAnchorFrame =
                     timing.newBankAggregateAnchorFrame;
-            if (timing.physicalCompletionBound)
-                engine.playableSuccessorCompletions[slot] =
-                    timing.newPhysicalCompletion;
             if (auto* member = engine.FindQueueProgramMember(future.queueSuccessorProgramBank,
-                    future.queueSuccessorPrograms.first + slot - future.queueSuccessorScheduleBase)) {
+                    programIndex)) {
                 member->startFrame = timing.newExecuteFrame;
                 if (timing.physicalCompletionBound) member->nativeCompletion = timing.newPhysicalCompletion;
             }
@@ -71505,25 +71451,13 @@ static PlayableControlStatus BeginPlayableCancellation(
     };
     const auto bindingOwnedByComposite = [&engine](
         const CompletionMutationBinding& binding,
-        CompositeCompletionOwnerToken composite,
-        std::size_t base,
-        std::uint32_t count, bool successorStorage) {
-        if (!composite.Valid() || count <= 1) return false;
-        const auto capacity = successorStorage ? engine.playableSuccessorOccurrences.size()
-                                               : engine.playableStorage.memberCount;
-        if (base > capacity || count > capacity - base) {
-            return false;
-        }
-        for (std::uint32_t index = 0; index < count; ++index) {
-            const auto occurrence = successorStorage ? engine.playableSuccessorOccurrences[base + index]
-                : engine.ReadLogicalPlayableMember(base + index).occurrence;
-            const auto& completion = successorStorage ? engine.playableSuccessorCompletions[base + index]
-                : engine.ReadLogicalPlayableMember(base + index).nativeCompletion;
-            if (SameCompletionMutationBinding(
-                    binding,
-                    {occurrence, completion.owner})) {
-                return true;
-            }
+        CompositeCompletionOwnerToken composite) {
+        CompositeCompletionOwnerInfo info{};
+        if (!engine.compositeCompletionOwners.Capture(composite, &info)) return false;
+        for (std::uint32_t index = 0; index < info.leafCount; ++index) {
+            KnownScheduleLeafV1 leaf{};
+            if (!engine.compositeCompletionOwners.CaptureLeaf(composite, index, &leaf)) return false;
+            if (SameCompletionMutationBinding(binding, {leaf.occurrence, leaf.predicate.owner})) return true;
         }
         return false;
     };
@@ -71577,13 +71511,9 @@ static PlayableControlStatus BeginPlayableCancellation(
                           {row->queueSuccessorOccurrence,
                             row->queueSuccessorCompletion.owner})) ||
                      bindingOwnedByComposite(
-                         binding, row->queueCurrentCompositeOwner,
-                         row->queueCurrentScheduleBase,
-                         row->queueCurrentScheduleLeafCount, false) ||
+                         binding, row->queueCurrentCompositeOwner) ||
                      bindingOwnedByComposite(
-                         binding, row->queueSuccessorCompositeOwner,
-                         row->queueSuccessorScheduleBase,
-                         row->queueSuccessorScheduleLeafCount, true));
+                         binding, row->queueSuccessorCompositeOwner));
                 guardedChild =
                     guardedChild ||
                     (!ownedByQueue && !ownedByRetainedNativeFuture &&
@@ -78975,18 +78905,6 @@ bool PrepareQueueTransitionContinuation(
                 installed, startFrame, successorHasContinuation
                     ? scratch->queueSuccessorLeafOccurrences[index] : scratch->queueSuccessorOccurrence);
         }
-        const std::size_t slot = successorBase + index;
-        engine.playableSuccessorArms[slot] = installed.armToken;
-        engine.playableSuccessorRenderHandles[slot] =
-            installed.renderHandle;
-        engine.playableSuccessorOccurrences[slot] =
-            successorHasContinuation
-                ? scratch->queueSuccessorLeafOccurrences[index]
-                : scratch->queueSuccessorOccurrence;
-        engine.playableSuccessorCompletions[slot] =
-            installed.completionPredicate;
-        engine.playableSuccessorStartFrames[slot] = startFrame;
-
         const std::uint32_t eventBase = targetFadeActive
             ? 2u * index : index;
         auto& startPayload =
@@ -79068,7 +78986,7 @@ bool PrepareQueueTransitionContinuation(
         schedule.runtimeProgram = {successorInstance, &runtime};
         schedule.occurrence.present = true;
         schedule.occurrence.token =
-            engine.playableSuccessorOccurrences[slot];
+            retained->occurrence;
         schedule.occurrence.occurrenceScheduleEpoch =
             engine.timelineOccurrences.ScheduleEpochOf(
                 schedule.occurrence.token);
@@ -79127,8 +79045,6 @@ bool PrepareQueueTransitionContinuation(
                 return false;
             }
             scratch->queueSuccessorCompletionMutationCount = index + 1u;
-            engine.playableSuccessorCompletions[
-                successorBase + index] = bound.predicate;
             if (auto* member = engine.FindQueueProgramMember(&bank, index))
                 member->nativeCompletion = bound.predicate;
         }
@@ -79140,7 +79056,7 @@ bool PrepareQueueTransitionContinuation(
         scratch->queueSuccessorOwner =
             harken::CompletionOwnerRef::Single(
                 scratch->queueSuccessorDecision.Token(),
-                engine.playableSuccessorCompletions[successorBase].
+                engine.FindQueueProgramMember(&bank, 0)->nativeCompletion.
                     playbackFactsRevision);
         if (!engine.timelineOccurrences.TryPinCompletionOwner(
                 scratch->queueSuccessorOccurrence,
@@ -79157,7 +79073,7 @@ bool PrepareQueueTransitionContinuation(
             leaves[0].leaf.expectedProgramSemanticFingerprint;
         harken::KnownCompletionPredicateV1 bound{};
         if (!BindKnownCompletionPredicate(
-                engine.playableSuccessorCompletions[successorBase],
+                engine.FindQueueProgramMember(&bank, 0)->nativeCompletion,
                 successorProgram, scratch->queueSuccessorOwner, &bound) ||
             !engine.ledger.BindCompletionMutation(
                 scratch->queueSuccessorVoiceStarts[0].ledgerSlot,
@@ -79167,7 +79083,7 @@ bool PrepareQueueTransitionContinuation(
             return false;
         }
         scratch->queueSuccessorCompletionMutationCount = 1;
-        engine.playableSuccessorCompletions[successorBase] = bound;
+        engine.FindQueueProgramMember(&bank, 0)->nativeCompletion = bound;
         row.queueSuccessorOwner = scratch->queueSuccessorOwner;
         row.queueSuccessorCompletion = bound;
     }
@@ -79176,11 +79092,9 @@ bool PrepareQueueTransitionContinuation(
 
     const auto& firstMember = *engine.FindQueueProgramMember(&bank, 0);
     row.queueSuccessorLeaf = firstMember.leaf;
-    row.queueSuccessorArm =
-        engine.playableSuccessorArms[successorBase];
-    row.queueMonitorSelection = engine.FindQueueProgramMember(&bank, 0)->monitorSelection;
-    row.queueSuccessorRenderHandle =
-        engine.playableSuccessorRenderHandles[successorBase];
+    row.queueSuccessorArm = firstMember.arm;
+    row.queueMonitorSelection = firstMember.monitorSelection;
+    row.queueSuccessorRenderHandle = firstMember.render;
     row.queueSuccessorTailFrames = firstMember.postSourceTailFrames;
 
     const std::uint64_t audibleFrame = sourceControlRequired
@@ -79274,7 +79188,7 @@ bool PrepareQueueTransitionContinuation(
         : row.queueTransitionGroupArms[0];
     for (std::uint32_t index = 0; index < leafCount; ++index) {
         row.queueTransitionGroupArms[sourceControlCount + index] =
-            engine.playableSuccessorArms[successorBase + index];
+            engine.FindQueueProgramMember(&bank, index)->arm;
     }
     row.queueTransitionGroupArmCount = sourceControlCount + leafCount;
     if (!engine.armGroups.Prepare(
@@ -79326,7 +79240,7 @@ bool PrepareQueueTransitionContinuation(
             scratch->queueSuccessorOccurrence);
     successorSchedule.occurrence.arrangingInstanceScheduleEpoch = arrangingEpoch;
     successorSchedule.armToken =
-        engine.playableSuccessorArms[successorBase];
+        engine.FindQueueProgramMember(&bank, 0)->arm;
 
     if (!PrepareQueueSourcePrograms(row, bank, leafCount, targetEventCount, sourceControlCount,
             sourceControlCount * (static_cast<std::uint32_t>(sourceFadeActive) + !naturalEnd))) {
@@ -80778,17 +80692,6 @@ bool PrepareQueueContinuation(
                     ? scratch->queueSuccessorLeafOccurrences[index] : scratch->queueSuccessorOccurrence);
         }
         groupMembers[index] = installed.armToken;
-        const std::size_t slot = successorBase + index;
-        engine.playableSuccessorArms[slot] = installed.armToken;
-        engine.playableSuccessorRenderHandles[slot] =
-            installed.renderHandle;
-        engine.playableSuccessorOccurrences[slot] =
-            successorHasContinuation
-                ? scratch->queueSuccessorLeafOccurrences[index]
-                : scratch->queueSuccessorOccurrence;
-        engine.playableSuccessorCompletions[slot] =
-            installed.completionPredicate;
-        engine.playableSuccessorStartFrames[slot] = startFrame;
         auto& payload =
             successorPayloadStorage[successorEventBase + index];
         payload = {};
@@ -80820,7 +80723,7 @@ bool PrepareQueueContinuation(
         schedule.runtimeProgram = {successorInstance, &runtime};
         schedule.occurrence.present = true;
         schedule.occurrence.token =
-            engine.playableSuccessorOccurrences[slot];
+            retained->occurrence;
         schedule.occurrence.occurrenceScheduleEpoch =
             engine.timelineOccurrences.ScheduleEpochOf(
                 schedule.occurrence.token);
@@ -80885,8 +80788,6 @@ bool PrepareQueueContinuation(
                 return false;
             }
             scratch->queueSuccessorCompletionMutationCount = index + 1u;
-            engine.playableSuccessorCompletions[
-                successorBase + index] = bound.predicate;
             if (auto* member = engine.FindQueueProgramMember(&bank, index))
                 member->nativeCompletion = bound.predicate;
         }
@@ -80898,7 +80799,7 @@ bool PrepareQueueContinuation(
         scratch->queueSuccessorOwner =
             harken::CompletionOwnerRef::Single(
                 scratch->queueSuccessorDecision.Token(),
-                engine.playableSuccessorCompletions[successorBase].
+                engine.FindQueueProgramMember(&bank, 0)->nativeCompletion.
                     playbackFactsRevision);
         if (!engine.timelineOccurrences.TryPinCompletionOwner(
                 scratch->queueSuccessorOccurrence,
@@ -80915,7 +80816,7 @@ bool PrepareQueueContinuation(
             leaves[0].leaf.expectedProgramSemanticFingerprint;
         harken::KnownCompletionPredicateV1 bound{};
         if (!BindKnownCompletionPredicate(
-                engine.playableSuccessorCompletions[successorBase],
+                engine.FindQueueProgramMember(&bank, 0)->nativeCompletion,
                 successorProgram, scratch->queueSuccessorOwner, &bound) ||
             !engine.ledger.BindCompletionMutation(
                 scratch->queueSuccessorVoiceStarts[0].ledgerSlot,
@@ -80925,7 +80826,7 @@ bool PrepareQueueContinuation(
             return false;
         }
         scratch->queueSuccessorCompletionMutationCount = 1;
-        engine.playableSuccessorCompletions[successorBase] = bound;
+        engine.FindQueueProgramMember(&bank, 0)->nativeCompletion = bound;
         row.queueSuccessorOwner = scratch->queueSuccessorOwner;
         row.queueSuccessorCompletion = bound;
     }
@@ -80936,11 +80837,9 @@ bool PrepareQueueContinuation(
     if (leafCount != 0) {
         const auto& firstMember = *engine.FindQueueProgramMember(&bank, 0);
         row.queueSuccessorLeaf = firstMember.leaf;
-        row.queueSuccessorArm =
-            engine.playableSuccessorArms[successorBase];
-        row.queueMonitorSelection = engine.FindQueueProgramMember(&bank, 0)->monitorSelection;
-        row.queueSuccessorRenderHandle =
-            engine.playableSuccessorRenderHandles[successorBase];
+        row.queueSuccessorArm = firstMember.arm;
+        row.queueMonitorSelection = firstMember.monitorSelection;
+        row.queueSuccessorRenderHandle = firstMember.render;
         row.queueSuccessorTailFrames = firstMember.postSourceTailFrames;
     } else {
         row.queueSuccessorLeaf = {};
@@ -85244,11 +85143,16 @@ bool AuthoredStopOwnsCompletionBinding(
                     engine.ReadPlayableMember(bases.member + index).occurrence,
                     engine.ReadPlayableMember(bases.member + index).nativeCompletion)) return true;
     }
-    for (std::uint32_t index = 0; index < engine.playableStorage.endpointStride; ++index) {
-        if (matches(engine.playableSuccessorRenderHandles[bases.endpoint + index],
-                    engine.playableSuccessorOccurrences[bases.endpoint + index],
-                    engine.playableSuccessorCompletions[bases.endpoint + index])) return true;
-    }
+    const auto matchesProgram = [&](const harken::EngineQueueProgramBank* bank,
+                                   harken::EngineQueueProgramRange range) {
+        for (std::uint32_t index = 0; index < range.count; ++index) {
+            const auto* member = engine.FindQueueProgramMember(bank, range.first + index);
+            if (member != nullptr && matches(member->render, member->occurrence, member->nativeCompletion)) return true;
+        }
+        return false;
+    };
+    if (matchesProgram(row.queueCurrentProgramBank, row.queueCurrentPrograms) ||
+        matchesProgram(row.queueSuccessorProgramBank, row.queueSuccessorPrograms)) return true;
     harken::EngineTimelineVoiceInstallIdentity installed{};
     if (!engine.CaptureTimelineVoiceInstallIdentity(render, &installed) ||
         installed.renderHandle != render || installed.rootInstance != row.rootInstance ||
@@ -90255,17 +90159,12 @@ bool PrepareImmediateActionQueueReplacement(
         } else {
             std::uint64_t targetStartFrame = row.queueCompletionFrame;
             if (row.queueSuccessorScheduleLeafCount > 1) {
-                const std::size_t base = row.queueSuccessorScheduleBase;
-                const std::size_t count =
-                    row.queueSuccessorScheduleLeafCount;
-                if (base + count >
-                    engine.playableSuccessorStartFrames.size()) {
-                    return false;
+                targetStartFrame = UINT64_MAX;
+                for (std::uint32_t index = 0; index < row.queueSuccessorScheduleLeafCount; ++index) {
+                    const auto* member = engine.FindQueueSuccessorMember(row, index);
+                    if (member == nullptr) return false;
+                    targetStartFrame = std::min(targetStartFrame, member->startFrame);
                 }
-                targetStartFrame = *std::min_element(
-                    engine.playableSuccessorStartFrames.begin() + base,
-                    engine.playableSuccessorStartFrames.begin() +
-                        base + count);
             } else if (row.queueSuccessorArm.Valid()) {
                 targetStartFrame = row.queueSuccessorProgramPlane == 0
                     ? row.schedule.entryAnchorFrame
@@ -91720,19 +91619,8 @@ void CommitImmediateActionQueueReplacements(
                     for (std::uint32_t leafIndex = 0;
                          leafIndex < scratch.successorLeafCount;
                          ++leafIndex) {
-                        const std::size_t slot = endpointBase + leafIndex;
-                        engine.playableSuccessorArms[slot] =
-                            scratch.successorStarts[leafIndex].arm;
                         engine.FindQueueProgramMember(&bank, scratch.sourceControlCount + leafIndex)->
                             monitorSelection = scratch.successorStarts[leafIndex].monitorSelection;
-                        engine.playableSuccessorRenderHandles[slot] =
-                            scratch.successorStarts[leafIndex].renderHandle;
-                        engine.playableSuccessorOccurrences[slot] =
-                            scratch.successorLeafOccurrences[leafIndex];
-                        engine.playableSuccessorCompletions[slot] =
-                            scratch.successorLeafCompletions[leafIndex];
-                        engine.playableSuccessorStartFrames[slot] =
-                            scratch.successorStartFrames[leafIndex];
                     }
                     row.queueSuccessorScheduleBase =
                         static_cast<std::uint32_t>(endpointBase);

@@ -19427,11 +19427,11 @@ TEST(PlayableStart,
         EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeIn,
                   successor.payloads[2u * index + 1u].envelopeDirection);
     }
-    const std::size_t successorBase =
-        prepared->queueSuccessorScheduleBase;
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*prepared, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*prepared, 1));
     const std::array<VnVoiceHandle, 2> targets{
-        engine->playableSuccessorRenderHandles[successorBase],
-        engine->playableSuccessorRenderHandles[successorBase + 1u]};
+        engine->FindQueueSuccessorMember(*prepared, 0)->render,
+        engine->FindQueueSuccessorMember(*prepared, 1)->render};
 
     std::array<bool, 2> fadeObserved{};
     for (std::uint32_t block = 0; block < 64; ++block) {
@@ -19592,11 +19592,11 @@ TEST(PlayableStart,
         EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeIn,
                   successor.payloads[2u * index + 1u].envelopeDirection);
     }
-    const std::size_t successorBase =
-        prepared->queueSuccessorScheduleBase;
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*prepared, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*prepared, 1));
     const std::array<VnVoiceHandle, 2> targets{
-        engine->playableSuccessorRenderHandles[successorBase],
-        engine->playableSuccessorRenderHandles[successorBase + 1u]};
+        engine->FindQueueSuccessorMember(*prepared, 0)->render,
+        engine->FindQueueSuccessorMember(*prepared, 1)->render};
 
     std::array<bool, 2> fadeObserved{};
     for (std::uint32_t block = 0; block < 64; ++block) {

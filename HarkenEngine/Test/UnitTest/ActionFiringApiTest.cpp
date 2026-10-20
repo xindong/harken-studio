@@ -5021,10 +5021,10 @@ void ExpectScheduleCapacityQueueTransitionCompletes() {
     }
 
     for (std::uint32_t index = 0; index < 64; ++index) {
-        const auto slot = row->queueSuccessorScheduleBase + index;
+        const auto* member = engine->FindQueueSuccessorMember(*row, index);
+        ASSERT_NE(nullptr, member);
         EXPECT_EQ(row->queueCompletionFrame + index + 1u,
-                  row->queueSuccessorProgramPlane == 0 ? engine->ReadPlayableMember(slot).startFrame
-                      : engine->playableSuccessorStartFrames[slot]);
+                  member->startFrame);
     }
     EXPECT_EQ(128u, engine->timelinePool.IngressHighWater());
     EXPECT_EQ(66u, engine->timelinePool.FrameBatchHighWater());
@@ -13671,11 +13671,8 @@ TEST(ActionFiringApi, OriginalInitialFilingRetainsFactoryFutureAcrossSelectedAli
     row.invocationGeneration = generation;
 
     engine.nullBackend.Pump(1);
-    const auto mirrorSlot = selected.queueSuccessorScheduleBase;
-    const auto savedArm = engine.playableSuccessorArms[mirrorSlot];
-    const auto savedRender = engine.playableSuccessorRenderHandles[mirrorSlot];
-    const auto savedStart = engine.playableSuccessorStartFrames[mirrorSlot];
-    const auto savedCompletion = engine.playableSuccessorCompletions[mirrorSlot];
+    ASSERT_NE(nullptr, engine.FindQueueSuccessorMember(selected, 0));
+    const auto savedArm = engine.FindQueueSuccessorMember(selected, 0)->arm;
     harken::TimelineArmObservation acknowledged{};
     ASSERT_TRUE(engine.timelineArms.Observe(savedArm, &acknowledged));
     ASSERT_NE(0u, acknowledged.armedCompletionSequence);
@@ -13688,10 +13685,6 @@ TEST(ActionFiringApi, OriginalInitialFilingRetainsFactoryFutureAcrossSelectedAli
     row.queueTransitionGroupArms = {};
     row.queueTransitionGroupArmCount = 0;
     row.queueSuccessorCompletion = {};
-    engine.playableSuccessorArms[mirrorSlot] = {};
-    engine.playableSuccessorRenderHandles[mirrorSlot] = 0;
-    engine.playableSuccessorStartFrames[mirrorSlot] = 0;
-    engine.playableSuccessorCompletions[mirrorSlot] = {};
     std::size_t members = 0, programs = 0, events = 0, leaves = 0, groups = 0, holders = 0;
     const bool collected = harken::test::CollectInitialQueueTimingMembersForTest(
         engine, firing, row.startFrame + 128u, &members, &programs,
@@ -13726,10 +13719,6 @@ TEST(ActionFiringApi, OriginalInitialFilingRetainsFactoryFutureAcrossSelectedAli
     EXPECT_EQ(nullptr, row.queueSuccessorProgramBank);
     EXPECT_TRUE(original->initialFutureBank.Valid());
     static_cast<harken::EngineQueueFutureFilingLayout&>(row) = selected;
-    engine.playableSuccessorArms[mirrorSlot] = savedArm;
-    engine.playableSuccessorRenderHandles[mirrorSlot] = savedRender;
-    engine.playableSuccessorStartFrames[mirrorSlot] = savedStart;
-    engine.playableSuccessorCompletions[mirrorSlot] = savedCompletion;
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_FALSE(engine.runtimeRecreateRequired);
     EXPECT_TRUE(row.queueDecisionCommitted);
@@ -22930,8 +22919,8 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
                         static_cast<std::uint64_t>(event.frameOffsetFromEntry);
                 }
             }
-            futureMirroredStartFrame = engine->playableSuccessorStartFrames[
-                queueService->queueSuccessorScheduleBase];
+            ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*queueService, 0));
+            futureMirroredStartFrame = engine->FindQueueSuccessorMember(*queueService, 0)->startFrame;
             const auto& aggregate = queueService->queueSuccessorProgramPlane == 0
                 ? queueService->schedule : queueService->queueSuccessorSchedule;
             ASSERT_NE(nullptr, aggregate.events);
@@ -23865,9 +23854,10 @@ void ExpectImmediateShortQueueMirrorFaultRejected(std::uint32_t fault,
     const auto queueDecision = holder->queueDecision;
     auto& aggregate = holder->queueSuccessorProgramPlane == 0
         ? holder->schedule : holder->queueSuccessorSchedule;
-    const auto mirrorSlot = holder->queueSuccessorScheduleBase;
-    const auto oldPhysicalStart =
-        engine->playableSuccessorStartFrames[mirrorSlot];
+    const auto* successorMember = engine->FindQueueSuccessorMember(*holder, 0);
+    ASSERT_NE(nullptr, successorMember);
+    const auto successorMemberToken = holder->queueSuccessorProgramBank->members[holder->queueSuccessorPrograms.first];
+    const auto oldPhysicalStart = successorMember->startFrame;
     const auto oldAggregateAnchor = aggregate.entryAnchorFrame;
     const auto oldInstallOnset = engine->timelineVoiceInstallIdentities[
         holder->queueSuccessorArm.renderSlot].onsetFrame;
@@ -24082,7 +24072,9 @@ void ExpectImmediateShortQueueMirrorFaultRejected(std::uint32_t fault,
             engine->forceImmediateQueueArmPublishFailureAtForTest != UINT32_MAX)
             return;
         publishFailureObserved = true;
-        const auto physical = engine->playableSuccessorStartFrames[mirrorSlot];
+        const auto* member = engine->FindPlayableMember(successorMemberToken);
+        ASSERT_NE(nullptr, member);
+        const auto physical = member->startFrame;
         const auto onset = engine->timelineVoiceInstallIdentities[
             holder->queueSuccessorArm.renderSlot].onsetFrame;
         if (fault == 5) {
@@ -41375,12 +41367,11 @@ void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
     ASSERT_EQ(2u, row->queueTransitionGroupArmCount);
     EXPECT_EQ(info.acceptedLogicSequence, row->ticket);
     EXPECT_EQ(info.acceptedLogicSequence, row->queueTicket);
-    const std::uint32_t successorBase = row->queueSuccessorScheduleBase;
-    ASSERT_LT(successorBase + 1u,
-              engine->playableSuccessorRenderHandles.size());
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     const std::array<VnVoiceHandle, 2> successorHandles = {
-        engine->playableSuccessorRenderHandles[successorBase],
-        engine->playableSuccessorRenderHandles[successorBase + 1u]};
+        engine->FindQueueSuccessorMember(*row, 0)->render,
+        engine->FindQueueSuccessorMember(*row, 1)->render};
     ASSERT_NE(0u, successorHandles[0]);
     ASSERT_NE(0u, successorHandles[1]);
     ASSERT_NE(successorHandles[0], successorHandles[1]);
@@ -41757,7 +41748,6 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
     const auto savedSuccessorBankGeneration = savedSuccessorBank == nullptr
         ? 0u : savedSuccessorBank->Generation();
     const auto savedSuccessorPlane = row->queueSuccessorProgramPlane;
-    const auto savedSuccessorMirrorSlot = static_cast<std::size_t>(row->queueSuccessorScheduleBase);
     const auto* savedSuccessorMember = engine->FindQueueProgramMember(
         savedSuccessorBank, row->queueSuccessorPrograms.first);
     const auto savedSuccessorSoundId = savedSuccessorMember == nullptr
@@ -42029,14 +42019,11 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
             installation.releaseObserver.targetSequence);
         EXPECT_EQ(boundary, installation.onsetFrame);
         if (!promoted) {
-            ASSERT_LT(savedSuccessorMirrorSlot, engine->playableSuccessorStartFrames.size());
-            ASSERT_LT(savedSuccessorMirrorSlot, engine->playableSuccessorArms.size());
-            ASSERT_LT(savedSuccessorMirrorSlot, engine->playableSuccessorRenderHandles.size());
-            EXPECT_EQ(boundary, engine->playableSuccessorStartFrames[savedSuccessorMirrorSlot]);
-            EXPECT_TRUE(sameArm(savedSuccessorArm,
-                engine->playableSuccessorArms[savedSuccessorMirrorSlot]));
-            EXPECT_EQ(savedSuccessorRender,
-                engine->playableSuccessorRenderHandles[savedSuccessorMirrorSlot]);
+            const auto* member = engine->FindQueueSuccessorMember(observed, 0);
+            ASSERT_NE(nullptr, member);
+            EXPECT_EQ(boundary, member->startFrame);
+            EXPECT_TRUE(sameArm(savedSuccessorArm, member->arm));
+            EXPECT_EQ(savedSuccessorRender, member->render);
         } else {
             EXPECT_TRUE(sameArm(savedSuccessorArm, observed.arm));
             EXPECT_EQ(savedSuccessorRender, observed.renderHandle);
@@ -57469,10 +57456,11 @@ TEST(ActionFiringApi,
     ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
     ASSERT_TRUE(row->queueSuccessorCompositeOwner.Valid());
     const VnVoiceHandle current = row->renderHandle;
-    const std::uint32_t oldBase = row->queueSuccessorScheduleBase;
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     const std::array<VnVoiceHandle, 2> oldSuccessors = {
-        engine->playableSuccessorRenderHandles[oldBase],
-        engine->playableSuccessorRenderHandles[oldBase + 1u]};
+        engine->FindQueueSuccessorMember(*row, 0)->render,
+        engine->FindQueueSuccessorMember(*row, 1)->render};
     ASSERT_NE(0u, oldSuccessors[0]);
     ASSERT_NE(0u, oldSuccessors[1]);
 
@@ -57489,10 +57477,11 @@ TEST(ActionFiringApi,
               row->queueNextState.currentChildOrdinal);
     ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
     EXPECT_TRUE(row->queueSuccessorCompositeOwner.Valid());
-    const std::uint32_t newBase = row->queueSuccessorScheduleBase;
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     const std::array<VnVoiceHandle, 2> newSuccessors = {
-        engine->playableSuccessorRenderHandles[newBase],
-        engine->playableSuccessorRenderHandles[newBase + 1u]};
+        engine->FindQueueSuccessorMember(*row, 0)->render,
+        engine->FindQueueSuccessorMember(*row, 1)->render};
     EXPECT_NE(0u, newSuccessors[0]);
     EXPECT_NE(0u, newSuccessors[1]);
     EXPECT_NE(oldSuccessors[0], newSuccessors[0]);
@@ -57809,10 +57798,11 @@ TEST(ActionFiringApi,
               row->queueCurrentCompletion.program.stableId);
     ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
     const VnVoiceHandle current = row->renderHandle;
-    const std::uint32_t oldBase = row->queueSuccessorScheduleBase;
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     const std::array<VnVoiceHandle, 2> oldSuccessors = {
-        engine->playableSuccessorRenderHandles[oldBase],
-        engine->playableSuccessorRenderHandles[oldBase + 1u]};
+        engine->FindQueueSuccessorMember(*row, 0)->render,
+        engine->FindQueueSuccessorMember(*row, 1)->render};
 
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = harkentest::ObjectId(49);
@@ -57823,11 +57813,12 @@ TEST(ActionFiringApi,
     EXPECT_FALSE(row->queueSameProgramKey);
     ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
     EXPECT_TRUE(row->queueSuccessorCompositeOwner.Valid());
-    const std::uint32_t newBase = row->queueSuccessorScheduleBase;
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     EXPECT_NE(oldSuccessors[0],
-              engine->playableSuccessorRenderHandles[newBase]);
+              engine->FindQueueSuccessorMember(*row, 0)->render);
     EXPECT_NE(oldSuccessors[1],
-              engine->playableSuccessorRenderHandles[newBase + 1u]);
+              engine->FindQueueSuccessorMember(*row, 1)->render);
     const auto* firstSuccessor = engine->FindQueueProgramMember(
         row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
     const auto* secondSuccessor = engine->FindQueueProgramMember(
@@ -58165,10 +58156,11 @@ TEST(ActionFiringApi,
     const std::uint64_t sourceFrame =
         row->queueSourceSchedule.entryAnchorFrame;
     const std::uint64_t targetFrame = row->queueCompletionFrame;
-    const std::uint32_t oldBase = row->queueSuccessorScheduleBase;
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     const std::array<VnVoiceHandle, 2> oldSuccessors = {
-        engine->playableSuccessorRenderHandles[oldBase],
-        engine->playableSuccessorRenderHandles[oldBase + 1u]};
+        engine->FindQueueSuccessorMember(*row, 0)->render,
+        engine->FindQueueSuccessorMember(*row, 1)->render};
 
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = harkentest::ObjectId(49);
@@ -58180,11 +58172,12 @@ TEST(ActionFiringApi,
     EXPECT_EQ(3u, row->queueTransitionGroupArmCount);
     ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
     EXPECT_TRUE(row->queueSuccessorCompositeOwner.Valid());
-    const std::uint32_t newBase = row->queueSuccessorScheduleBase;
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     EXPECT_NE(oldSuccessors[0],
-              engine->playableSuccessorRenderHandles[newBase]);
+              engine->FindQueueSuccessorMember(*row, 0)->render);
     EXPECT_NE(oldSuccessors[1],
-              engine->playableSuccessorRenderHandles[newBase + 1u]);
+              engine->FindQueueSuccessorMember(*row, 1)->render);
     EXPECT_EQ(sourceFrame, row->queueSourceSchedule.entryAnchorFrame);
     ASSERT_EQ(1u, row->queueSourceSchedule.eventCount);
     EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeOut,
@@ -58313,10 +58306,11 @@ TEST(ActionFiringApi,
     const harken::CompositeCompletionOwnerToken composite =
         row->queueSuccessorCompositeOwner;
     const auto groupArms = row->queueTransitionGroupArms;
-    const std::uint32_t base = row->queueSuccessorScheduleBase;
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     const std::array<VnVoiceHandle, 2> successors = {
-        engine->playableSuccessorRenderHandles[base],
-        engine->playableSuccessorRenderHandles[base + 1u]};
+        engine->FindQueueSuccessorMember(*row, 0)->render,
+        engine->FindQueueSuccessorMember(*row, 1)->render};
     const std::uint32_t voicesBefore = engine->voices.ActiveCount();
     const std::uint32_t voiceHighWaterBefore =
         engine->voices.HighWaterVoices();
@@ -58363,10 +58357,10 @@ TEST(ActionFiringApi,
         EXPECT_EQ(groupArms[index].generation,
                   row->queueTransitionGroupArms[index].generation);
     }
-    EXPECT_EQ(successors[0],
-              engine->playableSuccessorRenderHandles[base]);
-    EXPECT_EQ(successors[1],
-              engine->playableSuccessorRenderHandles[base + 1u]);
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
+    EXPECT_EQ(successors[0], engine->FindQueueSuccessorMember(*row, 0)->render);
+    EXPECT_EQ(successors[1], engine->FindQueueSuccessorMember(*row, 1)->render);
     EXPECT_NE(nullptr, engine->voices.Resolve(current));
     EXPECT_NE(nullptr, engine->voices.Resolve(successors[0]));
     EXPECT_NE(nullptr, engine->voices.Resolve(successors[1]));
@@ -58812,11 +58806,12 @@ TEST(ActionFiringApi,
     const VnVoiceHandle current = row->renderHandle;
     const harken::TransitionInstanceToken oldTransition =
         row->queueTransition;
-    const std::uint32_t oldScheduleBase =
-        row->queueSuccessorScheduleBase;
+    const std::uint32_t oldScheduleBase = row->queueSuccessorScheduleBase;
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 0));
+    ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, 1));
     const std::array<VnVoiceHandle, 2> oldTargets = {
-        engine->playableSuccessorRenderHandles[oldScheduleBase],
-        engine->playableSuccessorRenderHandles[oldScheduleBase + 1u]};
+        engine->FindQueueSuccessorMember(*row, 0)->render,
+        engine->FindQueueSuccessorMember(*row, 1)->render};
     ASSERT_NE(0u, oldTargets[0]);
     ASSERT_NE(0u, oldTargets[1]);
     ASSERT_NE(oldTargets[0], oldTargets[1]);
@@ -58853,7 +58848,8 @@ TEST(ActionFiringApi,
         EXPECT_EQ(oldArms[index].generation, oldMember.token.generation);
         EXPECT_EQ(oldTargets[index], (static_cast<VnVoiceHandle>(oldMember.token.renderGeneration) << 32) |
             oldMember.token.renderSlot);
-        EXPECT_NE(oldTargets[index], engine->playableSuccessorRenderHandles[oldScheduleBase + index]);
+        ASSERT_NE(nullptr, engine->FindQueueSuccessorMember(*row, index));
+        EXPECT_NE(oldTargets[index], engine->FindQueueSuccessorMember(*row, index)->render);
     }
     const harken::Plan03GroupSliceIdentity replacementSlice{
         row->queueCompletionFrame / engine->config.blockFrames,

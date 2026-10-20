@@ -945,7 +945,7 @@ struct EngineInitialQueueTimingEvent {
     std::uint64_t newExecuteFrame = 0;
     std::uint64_t newEnvelopeStartFrame = 0;
     std::uint64_t newEnvelopeEndFrame = 0;
-    std::size_t successorMirrorSlot = SIZE_MAX;
+    std::uint32_t successorProgramIndex = UINT32_MAX;
     std::uint8_t successorMirrorPlane = 0;
     std::uint32_t successorBankAggregate = UINT32_MAX;
     std::uint64_t oldPhysicalStartFrame = 0;
@@ -5743,11 +5743,6 @@ public:
           variableControlRetargetArms(playableStorage.continuousCount),
           variableControlRetargetMemberKinds(
               playableStorage.continuousCount),
-          playableSuccessorArms(playableStorage.endpointCount),
-          playableSuccessorRenderHandles(playableStorage.endpointCount),
-          playableSuccessorOccurrences(playableStorage.endpointCount),
-          playableSuccessorCompletions(playableStorage.endpointCount),
-          playableSuccessorStartFrames(playableStorage.endpointCount),
           queueSelectionChildScratch(resolved.maxQueueChildren),
           queueRemainingScratch(resolved.maxQueueChildren),
           queuePermutationScratch(resolved.maxQueueChildren),
@@ -12334,6 +12329,12 @@ public:
         return bank != nullptr && bank->occupied && index < bank->members.size()
             ? FindPlayableMember(bank->members[index]) : nullptr;
     }
+    EnginePlayableMemberRecord* FindQueueSuccessorMember(const EngineQueueFutureFilingLayout& future,
+        std::uint32_t offset) noexcept {
+        return offset < future.queueSuccessorPrograms.count
+            ? FindQueueProgramMember(future.queueSuccessorProgramBank, future.queueSuccessorPrograms.first + offset)
+            : nullptr;
+    }
     bool RetainQueueProgramMember(EngineQueueProgramBank& bank, std::uint32_t index,
         EnginePlayableMemberToken token) noexcept {
         if (!bank.occupied || bank.published || index >= bank.members.size()) return false;
@@ -12794,11 +12795,6 @@ public:
     }
     std::vector<TimelineArmToken> variableControlRetargetArms;
     std::vector<std::uint8_t> variableControlRetargetMemberKinds;
-    std::vector<TimelineArmToken> playableSuccessorArms;
-    std::vector<VnVoiceHandle> playableSuccessorRenderHandles;
-    std::vector<OccurrenceToken> playableSuccessorOccurrences;
-    std::vector<KnownCompletionPredicateV1> playableSuccessorCompletions;
-    std::vector<std::uint64_t> playableSuccessorStartFrames;
     std::vector<SelectionChildV1> queueSelectionChildScratch;
     std::vector<std::uint32_t> queueRemainingScratch;
     std::vector<std::uint32_t> queuePermutationScratch;

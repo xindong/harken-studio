@@ -816,16 +816,6 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(0u, engine->memberProgramRecords.ConstructedCount());
     EXPECT_EQ(0u, engine->memberProgramRecords.RequestedBytes());
 
-    EXPECT_EQ(layout.endpointCount, engine->playableSuccessorArms.size());
-    EXPECT_EQ(layout.endpointCount,
-              engine->playableSuccessorRenderHandles.size());
-    EXPECT_EQ(layout.endpointCount,
-              engine->playableSuccessorOccurrences.size());
-    EXPECT_EQ(layout.endpointCount,
-              engine->playableSuccessorCompletions.size());
-    EXPECT_EQ(layout.endpointCount,
-              engine->playableSuccessorStartFrames.size());
-
     EXPECT_EQ(layout.weightCount,
               engine->variableControlWeightSegments.size());
 
@@ -853,15 +843,10 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         sizeof(harken::TimelineEventPayload) + sizeof(harken::EventTemplate);
     const std::uint64_t initialProgramBytesPerSlot =
         sizeof(harken::TimelineProgramView) + sizeof(harken::ProgramView);
-    const std::uint64_t endpointBytesPerSlot =
-        sizeof(engine->playableSuccessorArms[0]) +
-        sizeof(engine->playableSuccessorRenderHandles[0]) +
-        sizeof(engine->playableSuccessorOccurrences[0]) +
-        sizeof(engine->playableSuccessorCompletions[0]) +
-        sizeof(engine->playableSuccessorStartFrames[0]);
     const std::uint64_t removedSuccessorBytesPerSlot =
         sizeof(harken::CapturedTimelineVoiceInstall) + sizeof(harken::PlayableRefV1) +
-        sizeof(std::uint32_t);
+        sizeof(std::uint32_t) + sizeof(harken::TimelineArmToken) + sizeof(VnVoiceHandle) +
+        sizeof(harken::OccurrenceToken) + sizeof(harken::KnownCompletionPredicateV1) + sizeof(std::uint64_t);
     const std::uint64_t weightBytesPerSlot =
         sizeof(engine->variableControlWeightSegments[0]);
     const std::uint64_t continuousBytesPerSlot =
@@ -889,20 +874,8 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(192u + immediateEntryBytes + programFenceBytes, initialProgramBytesPerSlot);
     const auto playbackPathBytes = sizeof(harken::PlaybackPath);
     EXPECT_EQ(1'544u, playbackPathBytes);
-    const auto voiceBindingStorageBytes =
-        sizeof(harken::TimelineVoiceBindingInstall) *
-        harken::kMaxVoiceBindingInstanceSlots;
     EXPECT_EQ(sizeof(harken::CapturedTimelineVoiceInstall),
               sizeof(engine->ReadPlayableMember(0).voice));
-    EXPECT_EQ(2'636u + 2u * sizeof(float) + sizeof(harken::PcmLoopRegion) +
-                  playbackPathBytes + voiceBindingStorageBytes -
-                  sizeof(void*) * harken::kMaxVoiceBindingInstanceSlots +
-                  2u * immediateEntryBytes + 2u * programFenceBytes +
-                  2u * monitorControlBytes + monitorSelectionBytes -
-                  sizeof(harken::TimelineVoiceInstallDesc) + sizeof(harken::CapturedTimelineVoiceInstall) -
-                  2u * initialProgramBytesPerSlot - sizeof(harken::OccurrenceToken) -
-                  sizeof(harken::EngineMonitorSelection) - removedSuccessorBytesPerSlot,
-              endpointBytesPerSlot);
     EXPECT_EQ(48u, weightBytesPerSlot);
     EXPECT_EQ(537u + frontierEventBytes + immediateEntryBytes + programFenceBytes +
                   monitorControlBytes - currentEventBytesPerSlot - initialProgramBytesPerSlot,
@@ -910,7 +883,6 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
 
     const std::uint64_t totalBytes =
         layout.memberCount * memberBytesPerSlot +
-        layout.endpointCount * endpointBytesPerSlot +
         layout.weightCount * weightBytesPerSlot +
         layout.continuousCount * continuousBytesPerSlot;
     EXPECT_EQ(static_cast<std::uint64_t>(engine->config.maxPlayableInstances) * sizeof(harken::SourceTerminalRecord),
@@ -918,12 +890,6 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
 
     EXPECT_EQ(layout.memberCount * memberBytesPerSlot,
               StorageBytes(engine->playableMemberReferences));
-    EXPECT_EQ(layout.endpointCount * endpointBytesPerSlot,
-              StorageBytes(engine->playableSuccessorArms) +
-                  StorageBytes(engine->playableSuccessorRenderHandles) +
-                  StorageBytes(engine->playableSuccessorOccurrences) +
-                  StorageBytes(engine->playableSuccessorCompletions) +
-                  StorageBytes(engine->playableSuccessorStartFrames));
     EXPECT_EQ(layout.weightCount * weightBytesPerSlot,
               StorageBytes(engine->variableControlWeightSegments));
     EXPECT_EQ(layout.continuousCount * continuousBytesPerSlot,
