@@ -477,6 +477,7 @@ public:
             offsets[i] = events[i].effectiveOffset;
             orders[i] = events[i].order;
         }
+        if (applyHook != nullptr) applyHook(applyContext);
         return true;
     }
     bool CancelBinding(std::uint32_t,
@@ -518,6 +519,8 @@ public:
     bool hookPrecededEnd = false;
     bool bindingValid = true;
     bool accept = true;
+    void (*applyHook)(void*) = nullptr;
+    void* applyContext = nullptr;
     bool applied = false;
     std::uint32_t count = 0;
     std::uint32_t cancelCount = 0;
@@ -2873,6 +2876,52 @@ TEST(TimelineExecutor, AppliesImpulseOffsetsAtQuantumEdges) {
         EXPECT_EQ(sink.offsets[0], frame);
         EXPECT_EQ(executor.Stats().protocolViolation, 0u);
         (void)filed;
+    }
+}
+
+TEST(TimelineExecutor, ProgramReadFenceSurvivesFrontierAdvanceAndPoolReclamation) {
+    for (const bool stale : {false, true}) {
+        SCOPED_TRACE(stale);
+        harken::ScheduledTransactionPool pool;
+        ASSERT_TRUE(pool.Reset(PoolConfig(), 0, 1));
+        harken::TimelineArmTable arms(1);
+        FiledTimeline filed;
+        FileTimeline(filed, pool, arms, 1, 0);
+        harken::TimelineProgramReadFence fence;
+        filed.program.readFence = &fence;
+        if (stale) ++filed.program.generation;
+        pool.Publish(512);
+        Sink sink;
+        struct Probe {
+            harken::ScheduledTransactionPool* pool;
+            harken::TimelineProgramReadFence* fence;
+            harken::TimelineTransactionProgramRef program;
+            bool visited = false;
+        } probe{&pool, &fence, {1, &filed.program}};
+        sink.applyContext = &probe;
+        sink.applyHook = [](void* context) {
+            auto& current = *static_cast<Probe*>(context);
+            current.visited = true;
+            EXPECT_EQ(2u, current.pool->ConsumerFrontier().load());
+            EXPECT_EQ(2u, current.pool->Advance());
+            EXPECT_FALSE(current.pool->HasProgramReference(current.program));
+            EXPECT_FALSE(current.fence->ReadCompleted(1));
+        };
+        harken::TimelineExecutor executor;
+        ASSERT_TRUE(executor.Reset(256, 16, &pool, &arms, &sink));
+        sink.admit = false;
+        executor.ExecuteQuantum(1);
+        EXPECT_TRUE(fence.ReadCompleted(0));
+        EXPECT_EQ(0u, pool.ConsumerFrontier().load());
+        sink.admit = true;
+        executor.ExecuteQuantum(1);
+        EXPECT_EQ(!stale, probe.visited);
+        EXPECT_FALSE(fence.ReadCompleted(1));
+        EXPECT_TRUE(fence.ReadCompleted(2));
+        (void)pool.Advance();
+        EXPECT_FALSE(pool.HasProgramReference(probe.program));
+        fence.ResetAfterSafeRetirement();
+        EXPECT_TRUE(fence.ReadCompleted(0));
     }
 }
 

@@ -316,9 +316,16 @@ TimelineExecutionResult TimelineExecutor::ExecuteQuantum(
             ++counters_.protocolViolation;
             break;
         }
+        const auto firstDecoded = decodedCount;
         decodedCount += pool_->ConsumePageRt(
             next, decoded_.data() + decodedCount,
             decoded_.size() - decodedCount);
+        // Reclaiming a consumed page does not finish its copied program reads.
+        for (auto index = firstDecoded; index < decodedCount; ++index) {
+            const auto* program = decoded_[index].program.program;
+            if (program != nullptr && program->readFence != nullptr)
+                program->readFence->RecordRead(absoluteQuantum);
+        }
         ++next;
         ++pages;
         pool_->ConsumerFrontier().store(next, std::memory_order_release);
