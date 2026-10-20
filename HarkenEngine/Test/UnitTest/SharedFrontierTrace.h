@@ -353,9 +353,8 @@ struct FrontierTrace {
                         classify(service.variableControlDiscreteRetargetEvents[index].armToken,
                             service.variableControlDiscreteRetargetPayloads[index]);
                 }
-                for (std::size_t index = 0; index < engine.variableControlRetargetEvents.size(); ++index)
-                    classify(engine.variableControlRetargetEvents[index].armToken,
-                        engine.variableControlRetargetPayloads[index]);
+                for (const auto& program : engine.variableControlRetargetPrograms)
+                    classify(program.event.armToken, program.payload);
                 control = std::find_if(controls.begin(), controls.end(),
                     [&](const auto& item) { return matches(item.token); });
             }

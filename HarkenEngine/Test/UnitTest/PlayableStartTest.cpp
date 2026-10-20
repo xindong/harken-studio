@@ -26709,6 +26709,9 @@ TEST(PlayableStart, BlendChangesWeightsWithoutReplacingMembersAndThenCompletes) 
     const auto root = engine->playableInstances.Classify(started.instance);
     const auto leaf = root.firstChild;
     ASSERT_NE(0u, leaf);
+    const auto* service = FindPlayableRow(*engine, started.instance);
+    ASSERT_NE(nullptr, service);
+    ASSERT_EQ(2u, service->variableControlChildWeightCount);
     const auto pump = [&]() {
         for (unsigned block = 0; block < 32; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
@@ -26716,15 +26719,36 @@ TEST(PlayableStart, BlendChangesWeightsWithoutReplacingMembersAndThenCompletes) 
             ASSERT_FALSE(engine->runtimeRecreateRequired);
         }
     };
+    EXPECT_EQ(0u, engine->variableControlRetargetPrograms.ConstructedCount());
+    engine->variableControlRetargetPrograms.SetCommitPageLimitForTests(0);
     ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 7.0f));
+    for (unsigned block = 0; block < 4; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+    }
+    EXPECT_EQ(0u, engine->variableControlRetargetPrograms.ConstructedCount());
+    EXPECT_TRUE(engine->playableInstances.Classify(leaf).live);
+    EXPECT_EQ(2u, engine->voices.ActiveCount());
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
+    EXPECT_FLOAT_EQ(1.0f, service->variableControlChildWeights[0].current.endWeight);
+    EXPECT_FLOAT_EQ(0.0f, service->variableControlChildWeights[1].current.endWeight);
+    engine->variableControlRetargetPrograms.SetCommitPageLimitForTests(SIZE_MAX);
     pump();
+    EXPECT_FLOAT_EQ(0.0f, service->variableControlChildWeights[0].current.endWeight);
+    EXPECT_FLOAT_EQ(1.0f, service->variableControlChildWeights[1].current.endWeight);
     ASSERT_TRUE(engine->playableInstances.Classify(leaf).live);
     EXPECT_EQ(leaf, engine->playableInstances.Classify(started.instance).firstChild);
     EXPECT_EQ(2u, engine->voices.ActiveCount());
     EXPECT_GT(harkentest::Peak(engine->nullBackend.LastBlock(),
         engine->nullBackend.BlockFrames() * engine->nullBackend.Channels()), 0.001f);
+    const auto controlRecords = engine->variableControlRetargetPrograms.ConstructedCount();
+    EXPECT_NE(0u, controlRecords);
+    engine->variableControlRetargetPrograms.SetCommitPageLimitForTests(0);
     ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 3.0f));
     pump();
+    EXPECT_EQ(controlRecords, engine->variableControlRetargetPrograms.ConstructedCount());
+    EXPECT_FLOAT_EQ(1.0f, service->variableControlChildWeights[0].current.endWeight);
+    EXPECT_FLOAT_EQ(0.0f, service->variableControlChildWeights[1].current.endWeight);
     ASSERT_TRUE(engine->playableInstances.Classify(leaf).live);
     EXPECT_EQ(leaf, engine->playableInstances.Classify(started.instance).firstChild);
     EXPECT_EQ(2u, engine->voices.ActiveCount());

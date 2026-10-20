@@ -240,7 +240,8 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
             column(row.variableControlDiscreteRetargetSchedules) +
             column(row.variableControlDiscreteRetargetEnteringSchedules);
     }
-    return bytes + memberProgramRecords.RequestedBytes() + memberProgramRecords.DirectoryBytes();
+    return bytes + memberProgramRecords.RequestedBytes() + memberProgramRecords.DirectoryBytes() +
+        variableControlRetargetPrograms.RequestedBytes();
 }
 
 std::size_t Engine::PendingSelectionStorageBytes() const noexcept {
@@ -10925,6 +10926,7 @@ bool PlayableMemberStorageHasReaders(
         if (record == nullptr || engine.timelinePool.HasProgramReference(record->schedule.runtimeProgram) ||
             engine.timelinePlanner.HasProgramReference(record->schedule.runtimeProgram)) return true;
     }
+    if (engine.VariableControlRetargetProgramsHaveReaders(row.identity)) return true;
     for (std::size_t index = 0; index < engine.playableStorage.memberStride; ++index) {
         const auto slot = bases.member + index;
         if (engine.variableControlMemberCompletions[slot].leafInstance == 0) continue;
@@ -12712,14 +12714,8 @@ PlayableStartResetResult ResetPlayableStartRow(
           engine.playableStorage.continuousStride);
     clear(engine.variableControlDynamicMembers, bases.member,
           engine.playableStorage.memberStride);
-    clear(engine.variableControlRetargetPayloads, bases.continuous,
-          engine.playableStorage.continuousStride);
-    clear(engine.variableControlRetargetEvents, bases.continuous,
-          engine.playableStorage.continuousStride);
-    clear(engine.variableControlRetargetRuntimePrograms, bases.continuous,
-          engine.playableStorage.continuousStride);
-    clear(engine.variableControlRetargetSchedules, bases.continuous,
-          engine.playableStorage.continuousStride);
+    for (auto& record : engine.variableControlRetargetPrograms)
+        if (record.service == row.identity) record = {};
     clear(engine.variableControlRetargetArms, bases.continuous,
           engine.playableStorage.continuousStride);
     clear(engine.variableControlRetargetMemberKinds, bases.continuous,
@@ -18946,6 +18942,7 @@ bool VariableControlRollbackHasMappingReaders(
             return true;
         }
     }
+    if (engine.VariableControlRetargetProgramsHaveReaders(row.identity)) return true;
     for (std::size_t index = 0; index < engine.playableStorage.memberStride; ++index) {
         const auto slot = bases.member + index;
         if (engine.variableControlMemberCompletions[slot].leafInstance == 0) continue;
@@ -33129,6 +33126,18 @@ VariableRetargetPrepareStatus PrepareVariableControlRetarget(
         return VariableRetargetPrepareStatus::Retry;
     }
 
+    struct ControlProgramReservations {
+        std::array<harken::EngineControlProgramRecord*, 64> records{};
+        ~ControlProgramReservations() {
+            for (auto* record : records) if (record != nullptr) record->reserved = false;
+        }
+    } programs;
+    for (std::uint32_t index = 0; index < priorMemberCount; ++index) {
+        if (engine.variableControlMemberCompletions[currentMemberSlots[index]].resourcesRetired) continue;
+        programs.records[index] = engine.AcquireVariableControlRetargetProgram(row.identity);
+        if (programs.records[index] == nullptr) return VariableRetargetPrepareStatus::Retry;
+    }
+
     PreparedTimelineStarts starts(engine);
     harken::DecisionToken decision{};
     harken::LogicCommitSequence ticket = 0;
@@ -33263,14 +33272,15 @@ engine.runtimeRecreateRequired = true;
             rollback();
             return VariableRetargetPrepareStatus::Fatal;
         }
-        auto& payload = engine.variableControlRetargetPayloads[continuousSlot];
+        auto& controlProgram = *programs.records[index];
+        auto& payload = controlProgram.payload;
         payload = {};
         payload.kind = harken::TimelineEventKind::VariableWeight;
         payload.target = engine.playableScheduleVoices[memberSlot].Facts().target;
         payload.variableWeight = engine.variableControlPendingWeightSegments[continuousSlot];
         if (row.variableControlIndependentFrontier)
             payload.variableWeightOwner = {row.ownerInstance, row.ownerEpoch, 1};
-        auto& event = engine.variableControlRetargetEvents[continuousSlot];
+        auto& event = controlProgram.event;
         event = {};
         event.logicCommitSequence = ticket;
         event.eventIndex = index;
@@ -33278,12 +33288,12 @@ engine.runtimeRecreateRequired = true;
         event.subeventPhase = 30u;
         event.payload = 0;
         event.armToken = engine.variableControlRetargetArms[continuousSlot];
-        auto& runtime = engine.variableControlRetargetRuntimePrograms[continuousSlot];
+        auto& runtime = controlProgram.runtime;
         runtime = {};
         runtime.generation = row.rootInstance;
         runtime.payloads = &payload;
         runtime.payloadCount = 1;
-        auto& schedule = engine.variableControlRetargetSchedules[continuousSlot];
+        auto& schedule = controlProgram.schedule;
         schedule = {};
         schedule.ownerInstance = row.rootInstance;
         schedule.ownerInstanceScheduleEpoch = instance.scheduleEpoch;

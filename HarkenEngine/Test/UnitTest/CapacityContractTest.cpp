@@ -852,14 +852,9 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
               engine->variableControlPendingWeightSegments.size());
     EXPECT_EQ(layout.continuousCount,
               engine->variableControlInitialContinuousArms.size());
-    EXPECT_EQ(layout.continuousCount,
-              engine->variableControlRetargetPayloads.size());
-    EXPECT_EQ(layout.continuousCount,
-              engine->variableControlRetargetEvents.size());
-    EXPECT_EQ(layout.continuousCount,
-              engine->variableControlRetargetRuntimePrograms.size());
-    EXPECT_EQ(layout.continuousCount,
-              engine->variableControlRetargetSchedules.size());
+    EXPECT_EQ(engine->config.maxScheduledTransactions, engine->variableControlRetargetPrograms.Capacity());
+    EXPECT_EQ(0u, engine->variableControlRetargetPrograms.ConstructedCount());
+    EXPECT_EQ(0u, engine->variableControlRetargetPrograms.RequestedBytes());
     EXPECT_EQ(layout.continuousCount,
               engine->variableControlRetargetArms.size());
     EXPECT_EQ(layout.continuousCount,
@@ -899,10 +894,6 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     const std::uint64_t continuousBytesPerSlot =
         sizeof(engine->variableControlPendingWeightSegments[0]) +
         sizeof(engine->variableControlInitialContinuousArms[0]) +
-        sizeof(engine->variableControlRetargetPayloads[0]) +
-        sizeof(engine->variableControlRetargetEvents[0]) +
-        sizeof(engine->variableControlRetargetRuntimePrograms[0]) +
-        sizeof(engine->variableControlRetargetSchedules[0]) +
         sizeof(engine->variableControlRetargetArms[0]) +
         sizeof(engine->variableControlRetargetMemberKinds[0]);
 
@@ -943,7 +934,8 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
               endpointBytesPerSlot);
     EXPECT_EQ(48u, weightBytesPerSlot);
     EXPECT_EQ(537u + frontierEventBytes + immediateEntryBytes + programFenceBytes +
-                  monitorControlBytes, continuousBytesPerSlot);
+                  monitorControlBytes - currentEventBytesPerSlot - initialProgramBytesPerSlot,
+              continuousBytesPerSlot);
 
     const std::uint64_t totalBytes =
         layout.memberCount * memberBytesPerSlot +
@@ -986,11 +978,6 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
               StorageBytes(engine->variableControlPendingWeightSegments) +
                   StorageBytes(
                       engine->variableControlInitialContinuousArms) +
-                  StorageBytes(engine->variableControlRetargetPayloads) +
-                  StorageBytes(engine->variableControlRetargetEvents) +
-                  StorageBytes(
-                      engine->variableControlRetargetRuntimePrograms) +
-                  StorageBytes(engine->variableControlRetargetSchedules) +
                   StorageBytes(engine->variableControlRetargetArms) +
                   StorageBytes(engine->variableControlRetargetMemberKinds));
     testing::Test::RecordProperty("seven_family_capacity_bytes", std::to_string(totalBytes));
@@ -998,6 +985,9 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         layout.currentEventCount * currentEventBytesPerSlot +
         layout.initialProgramCount * initialProgramBytesPerSlot));
     testing::Test::RecordProperty("member_program_record_bytes", std::to_string(sizeof(harken::EngineMemberProgramRecord)));
+    testing::Test::RecordProperty("removed_prebuilt_control_program_bytes", std::to_string(
+        layout.continuousCount * (currentEventBytesPerSlot + initialProgramBytesPerSlot)));
+    testing::Test::RecordProperty("control_program_record_bytes", std::to_string(sizeof(harken::EngineControlProgramRecord)));
     testing::Test::RecordProperty("member_reference_capacity_bytes",
         std::to_string(StorageBytes(engine->playableMemberReferences)));
     testing::Test::RecordProperty("facade_capacity_bytes", std::to_string(StorageBytes(engine->playableStarts)));
@@ -1022,6 +1012,8 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         engine->ActionPlayCommittedBytes(), engine->ActionPlayReservedBytes());
     recordStableRows("member_program_rows", engine->memberProgramRecords.RequestedBytes(),
         engine->memberProgramRecords.CommittedBytes(), engine->memberProgramRecords.ReservedBytes());
+    recordStableRows("control_program_rows", engine->variableControlRetargetPrograms.RequestedBytes(),
+        engine->variableControlRetargetPrograms.CommittedBytes(), engine->variableControlRetargetPrograms.ReservedBytes());
     testing::Test::RecordProperty("action_play_directory_bytes", std::to_string(engine->ActionPlayDirectoryBytes()));
     testing::Test::RecordProperty("action_play_dynamic_bytes", std::to_string(engine->ActionPlayDynamicBytes()));
     testing::Test::RecordProperty("pending_selection_owned_bytes", std::to_string(engine->PendingSelectionStorageBytes()));

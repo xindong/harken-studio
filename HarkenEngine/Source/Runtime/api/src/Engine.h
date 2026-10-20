@@ -1015,6 +1015,15 @@ struct EngineMemberProgramRecord {
     bool occupied = false;
 };
 
+struct EngineControlProgramRecord {
+    TimelineEventPayload payload{};
+    EventTemplate event{};
+    TimelineProgramView runtime{};
+    ProgramView schedule{};
+    EnginePlayableServiceToken service{};
+    bool reserved = false;
+};
+
 struct EngineQueueDeferredSourceObservation {
     EnginePlayableMemberReference member{};
     TimelineArmToken arm{};
@@ -5701,11 +5710,6 @@ public:
           variableControlInitialContinuousArms(
               playableStorage.continuousCount),
           variableControlDynamicMembers(playableStorage.memberCount),
-          variableControlRetargetPayloads(playableStorage.continuousCount),
-          variableControlRetargetEvents(playableStorage.continuousCount),
-          variableControlRetargetRuntimePrograms(
-              playableStorage.continuousCount),
-          variableControlRetargetSchedules(playableStorage.continuousCount),
           variableControlRetargetArms(playableStorage.continuousCount),
           variableControlRetargetMemberKinds(
               playableStorage.continuousCount),
@@ -5855,7 +5859,9 @@ public:
             !preparedPendingVariableGroups.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !actionPlayScratch.Reserve(static_cast<std::uint32_t>(playSlotCapacity))) throw std::bad_alloc{};
         if (playableStorage.memberCount > UINT32_MAX || playableStorage.initialProgramCount > UINT32_MAX ||
+            playableStorage.continuousCount > UINT32_MAX ||
             !memberProgramRecords.Reserve(static_cast<std::uint32_t>(playableStorage.initialProgramCount)) ||
+            !variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions) ||
             !memberOnsets.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
             !playableServiceWork.Reserve(resolved.maxPlayableInstances) ||
             !originalSinglePreparationHolders.Reserve(timelineArms.Capacity()) ||
@@ -12536,10 +12542,31 @@ public:
     std::vector<WeightSegmentV1> variableControlPendingWeightSegments;
     std::vector<TimelineArmToken> variableControlInitialContinuousArms;
     std::vector<std::uint8_t> variableControlDynamicMembers;
-    std::vector<TimelineEventPayload> variableControlRetargetPayloads;
-    std::vector<EventTemplate> variableControlRetargetEvents;
-    std::vector<TimelineProgramView> variableControlRetargetRuntimePrograms;
-    std::vector<ProgramView> variableControlRetargetSchedules;
+    StableRowStorage<EngineControlProgramRecord> variableControlRetargetPrograms;
+    bool VariableControlRetargetProgramHasReaders(const EngineControlProgramRecord& record) const noexcept {
+        const auto program = record.schedule.runtimeProgram;
+        return record.reserved || timelinePool.HasProgramReference(program) || timelinePlanner.HasProgramReference(program);
+    }
+    bool VariableControlRetargetProgramsHaveReaders(EnginePlayableServiceToken service) const noexcept {
+        for (const auto& record : variableControlRetargetPrograms)
+            if (record.service == service && VariableControlRetargetProgramHasReaders(record)) return true;
+        return false;
+    }
+    EngineControlProgramRecord* AcquireVariableControlRetargetProgram(EnginePlayableServiceToken service) noexcept {
+        if (!service.Valid()) return nullptr;
+        for (auto& record : variableControlRetargetPrograms) {
+            if (VariableControlRetargetProgramHasReaders(record)) continue;
+            record = {};
+            record.service = service;
+            record.reserved = true;
+            return &record;
+        }
+        if (!variableControlRetargetPrograms.EmplaceBack()) return nullptr;
+        auto& record = variableControlRetargetPrograms[variableControlRetargetPrograms.size() - 1u];
+        record.service = service;
+        record.reserved = true;
+        return &record;
+    }
     std::vector<TimelineArmToken> variableControlRetargetArms;
     std::vector<std::uint8_t> variableControlRetargetMemberKinds;
     std::vector<CapturedTimelineVoiceInstall> playableSuccessorVoices;
