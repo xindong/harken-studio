@@ -922,6 +922,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         sizeof(harken::VariableWeightControlIdentity) + sizeof(harken::AuthoredStopOperationIdentity);
     const auto stopFrameBytes = sizeof(harken::AuthoredStopOperationIdentity::stopFrame);
     const auto immediateEntryBytes = sizeof(harken::ProgramView::immediateEntry);
+    const auto programFenceBytes = sizeof(harken::TimelineProgramView::readFence);
     const auto monitorControlBytes = sizeof(harken::MonitorControlCause);
     const auto monitorSelectionBytes = sizeof(harken::EngineMonitorSelection);
     EXPECT_EQ(8u, stopFrameBytes);
@@ -934,7 +935,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(320u + stopFrameBytes, frontierEventBytes);
     EXPECT_EQ(sizeof(harken::KnownCompletionPredicateV1) + sizeof(std::uint32_t), pairedBytesPerSlot);
     EXPECT_EQ(264u + frontierEventBytes + monitorControlBytes, currentEventBytesPerSlot);
-    EXPECT_EQ(192u + immediateEntryBytes, initialProgramBytesPerSlot);
+    EXPECT_EQ(192u + immediateEntryBytes + programFenceBytes, initialProgramBytesPerSlot);
     const auto playbackPathBytes = sizeof(harken::PlaybackPath);
     EXPECT_EQ(1'544u, playbackPathBytes);
     const auto voiceBindingStorageBytes =
@@ -947,12 +948,14 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(2'636u + 2u * sizeof(float) + sizeof(harken::PcmLoopRegion) +
                   playbackPathBytes + voiceBindingStorageBytes -
                   sizeof(void*) * harken::kMaxVoiceBindingInstanceSlots +
-                  2u * immediateEntryBytes + 2u * monitorControlBytes + monitorSelectionBytes -
+                  2u * immediateEntryBytes + 2u * programFenceBytes +
+                  2u * monitorControlBytes + monitorSelectionBytes -
                   sizeof(harken::TimelineVoiceInstallDesc) + sizeof(harken::CapturedTimelineVoiceInstall) -
                   initialProgramBytesPerSlot,
               endpointBytesPerSlot);
     EXPECT_EQ(48u, weightBytesPerSlot);
-    EXPECT_EQ(537u + frontierEventBytes + immediateEntryBytes + monitorControlBytes, continuousBytesPerSlot);
+    EXPECT_EQ(537u + frontierEventBytes + immediateEntryBytes + programFenceBytes +
+                  monitorControlBytes, continuousBytesPerSlot);
 
     const std::uint64_t totalBytes =
         layout.memberCount * memberBytesPerSlot +
