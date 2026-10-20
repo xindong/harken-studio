@@ -9762,7 +9762,6 @@ TEST(VariableCurrentSlice, TimelineReadUseCapacityRefusalReturnsPinsAndAllowsFre
     EXPECT_EQ(e.voices.Capacity(), e.variables.TimelineReadUseCapacity());
     harken::VariableReadCutRef cut{};
     ASSERT_TRUE(e.variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &cut));
-    const auto storage = e.variables.ReadCutStorageBytes();
     ASSERT_EQ(harken::VariableReadCutStatus::Applied, e.variables.PublishReadCut(cut, 4 * kBlockFrames));
     harken::TimelineArmTable::PreparedCommitInput input{};
     input.programGeneration = 7;
@@ -9773,6 +9772,7 @@ TEST(VariableCurrentSlice, TimelineReadUseCapacityRefusalReturnsPinsAndAllowsFre
     std::vector<harken::VariableTimelineReadUseRef> uses(e.variables.TimelineReadUseCapacity());
     for (auto& use : uses)
         ASSERT_TRUE(e.variables.PrepareTimelineReadUse(cut, std::uint64_t{9} << 32, e.timelineArms, proof, &use));
+    const auto storage = e.variables.ReadCutStorageBytes();
     harken::VariableTimelineReadUseRef refused{};
     EXPECT_FALSE(e.variables.PrepareTimelineReadUse(cut, std::uint64_t{9} << 32, e.timelineArms, proof, &refused));
     EXPECT_FALSE(refused.Valid());

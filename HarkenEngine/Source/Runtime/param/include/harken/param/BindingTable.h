@@ -28,6 +28,7 @@
 #include <harken/Harken.h>
 
 #include "harken/core/LogRing.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/param/BusTargetStore.h"
 #include "harken/param/Curve.h"
 #include "harken/param/EffectParamTargetStore.h"
@@ -56,6 +57,127 @@ enum class BindingSourceKind : std::uint8_t {
 // definitions, attachments, or a voice's instance slots — is exhausted;
 // the log record names which.
 inline constexpr VnResult kResultNoBinding = VN_NO_BINDING;
+
+enum class BindingDependencyKind : std::uint32_t { Global, Local, Definition, Probe, Target };
+
+struct BindingDependencyIdentity {
+    VnObjectId source{};
+    std::uint64_t object = 0;
+    std::uint32_t scope = 0;
+    std::uint32_t target = 0;
+    std::uint32_t generation = 0;
+    std::uint32_t detail = 0;
+    bool operator==(const BindingDependencyIdentity&) const = default;
+};
+static_assert(sizeof(BindingDependencyIdentity) == 40);
+
+struct BindingDependencyToken {
+    std::uint32_t slot = UINT32_MAX;
+    std::uint32_t generation = 0;
+    bool Valid() const noexcept { return slot != UINT32_MAX && generation != 0; }
+};
+
+struct BindingDirtyTarget {
+    std::uint32_t slot = UINT32_MAX;
+    std::uint64_t generation = 0;
+    bool Valid() const noexcept { return slot != UINT32_MAX && generation != 0; }
+};
+
+// Serialized logic-side index. Facts and their original contribution order stay with their owner.
+class BindingDependencyIndex {
+public:
+    BindingDependencyIndex() = default;
+    BindingDependencyIndex(const BindingDependencyIndex& other);
+    using ReadIdentity = BindingDependencyIdentity (*)(const void*, BindingDependencyKind) noexcept;
+    bool Reset(std::uint32_t bindingCapacity, std::uint32_t targetCapacity,
+               std::uint32_t keyCapacity = 0) noexcept;
+    bool PrepareBinding(std::uint32_t slot) noexcept;
+    bool HasBindingPreparation(std::uint32_t slot) const noexcept;
+    void CancelBindingPreparation(std::uint32_t slot) noexcept;
+    bool Register(std::uint32_t slot, const void* fact, ReadIdentity read, std::uint32_t order,
+                  bool local, bool liveDefinition, bool probe, BindingDependencyToken* out) noexcept;
+    bool Relocate(BindingDependencyToken token, const void* fact, ReadIdentity read) noexcept;
+    bool Remove(BindingDependencyToken token) noexcept;
+    void Notify(BindingDependencyKind kind, const BindingDependencyIdentity& identity) noexcept;
+    void NotifyVariable(VnVariableId variable, VnEmitterHandle emitter = 0) noexcept;
+    void NotifyDefinition(BindingId definition) noexcept;
+    void Mark(BindingDependencyToken token) noexcept;
+    bool TargetOf(BindingDependencyToken token, BindingDirtyTarget* out) const noexcept;
+    std::uint64_t TargetVersion(BindingDirtyTarget target) const noexcept;
+    bool DirtyTargetAt(std::uint32_t index, BindingDirtyTarget* out) const noexcept;
+    bool TargetIdentity(BindingDirtyTarget target, BindingDependencyIdentity* out) const noexcept;
+    BindingDependencyToken FirstContribution(BindingDirtyTarget target) const noexcept;
+    BindingDependencyToken NextContribution(BindingDependencyToken token) const noexcept;
+    const void* Fact(BindingDependencyToken token) const noexcept;
+    bool CommitTarget(BindingDirtyTarget target, std::uint64_t version) noexcept;
+    std::size_t StorageBytes() const noexcept;
+    std::uint32_t BindingCapacity() const noexcept { return bindingCapacity_; }
+
+private:
+    struct InputNode {
+        const void* fact = nullptr;
+        ReadIdentity read = nullptr;
+        std::uint32_t key = UINT32_MAX;
+        std::uint32_t nextSource = UINT32_MAX;
+        std::uint32_t nextTarget = UINT32_MAX;
+        std::uint32_t target = UINT32_MAX;
+        std::uint32_t generation = 1;
+        std::uint32_t order = 0;
+    };
+    static_assert(sizeof(InputNode) == 40);
+    struct Locator {
+        const void* fact = nullptr;
+        ReadIdentity read = nullptr;
+        std::uint64_t factVersion = 0;
+        std::uint32_t representative = UINT32_MAX;
+        std::uint32_t targetRow = UINT32_MAX;
+        std::uint64_t order = 0;
+    };
+    struct Key {
+        union { Locator locator; BindingDependencyIdentity retired; };
+        std::uint32_t head = UINT32_MAX;
+        std::uint32_t count = 0;
+        std::uint32_t left = UINT32_MAX;
+        std::uint32_t right = UINT32_MAX;
+        std::uint32_t parent = UINT32_MAX;
+        std::uint32_t kindHeight = 1;
+        Key() noexcept : locator{} {}
+    };
+    static_assert(sizeof(Key) == 64);
+    struct DirtyRow {
+        std::uint64_t generation = 1;
+        std::uint64_t version = 0;
+        std::uint32_t key = UINT32_MAX;
+        std::uint32_t membership = UINT32_MAX;
+    };
+    static_assert(sizeof(DirtyRow) == 24);
+    const InputNode* Resolve(BindingDependencyToken token) const noexcept;
+    const DirtyRow* Resolve(BindingDirtyTarget target) const noexcept;
+    BindingDependencyIdentity Identity(const Key& key) const noexcept;
+    static BindingDependencyKind Kind(const Key& key) noexcept;
+    std::uint32_t Find(BindingDependencyKind kind, const BindingDependencyIdentity& identity) const noexcept;
+    std::uint32_t EnsureKey(BindingDependencyKind kind, std::uint32_t node) noexcept;
+    void LinkSource(std::uint32_t node, std::uint32_t key) noexcept;
+    void UnlinkSource(std::uint32_t node) noexcept;
+    void MarkTarget(std::uint32_t key) noexcept;
+    void Reanchor(Key& key, std::uint32_t node) noexcept;
+    void EraseKey(std::uint32_t key) noexcept;
+    void Rebalance(std::uint32_t key) noexcept;
+    std::uint32_t Rotate(std::uint32_t key, bool left) noexcept;
+    std::uint32_t Height(std::uint32_t key) const noexcept;
+    void UpdateHeight(std::uint32_t key) noexcept;
+    std::uint32_t bindingCapacity_ = 0;
+    std::uint32_t targetCapacity_ = 0;
+    std::uint32_t keyCapacity_ = 0;
+    std::uint32_t root_ = UINT32_MAX;
+    std::uint64_t version_ = 0;
+    StableRowStorage<InputNode> inputs_;
+    StableRowStorage<Key> keys_;
+    StableRowStorage<DirtyRow> targets_;
+    std::vector<std::uint32_t> freeKeys_, freeTargets_, dirtyTargets_;
+    std::vector<std::uint64_t> preparedBindings_;
+    std::uint32_t preparedBindingCount_ = 0;
+};
 
 class BindingTable {
 public:
@@ -118,8 +240,8 @@ public:
         VnObjectId objectId = {};
         VnVoiceHandle instanceHandle = 0;
         std::uint32_t busIndex = 0;
-        // MeterProbe-kind attachments: the exact target generation captured
-        // at attach time (0 for Variable-kind rows). A recycled bus or
+        // The exact target generation captured at attach time (0 for
+        // legacy callers without generation identity). A recycled bus or
         // voice slot never matches an old probe attachment.
         std::uint32_t targetGeneration = 0;
         float lastContribution = 0.0f;
@@ -132,6 +254,8 @@ public:
         // existence probe alone cannot distinguish that rebirth from the
         // pack's own, but the imprint can.
         std::uint64_t ownerCookie = 0;
+        const Definition* dependencyDefinition = nullptr;
+        BindingDependencyToken dependency{};
     };
 
     struct PreparedDefinitionToken {
@@ -188,10 +312,17 @@ public:
         std::uint32_t definitionIndex = 0;
         VnVoiceHandle publicHandle = 0;
         VnVoiceHandle renderHandle = 0;
+        const Definition* dependencyDefinition = nullptr;
+        VnEmitterHandle dependencyEmitter = 0;
+        BindingDependencyToken dependency{};
     };
 
     BindingTable(std::uint32_t maxDefinitions, std::uint32_t maxAttachments,
-                 std::uint32_t maxBuses);
+                 std::uint32_t maxBuses, std::uint32_t renderBindingCapacity = 0,
+                 std::uint32_t targetCapacity = 0);
+    BindingTable(const BindingTable& other);
+    BindingDependencyIndex& Dependencies() noexcept { return m_dependencies; }
+    const BindingDependencyIndex& Dependencies() const noexcept { return m_dependencies; }
 
     // Registers a definition. Validates exhaustively before touching pool
     // state: the curve through the Curve::SetPoints rules (finiteness,
@@ -285,6 +416,7 @@ public:
             def.transitionMs = def.pendingTransitionMs;
             def.pendingInstall = false;
             ++def.revision;
+            m_dependencies.NotifyDefinition(def.id);
             onInstalled(def.id);
         }
     }
@@ -311,7 +443,8 @@ public:
     // pack handle for pack-applied triples); identity metadata only.
     VnResult Attach(BindingId id, std::uint32_t scopeKind,
                     VnObjectId objectId, std::uint32_t busIndex,
-                    LogRing* log, std::uint64_t ownerCookie = 0);
+                    LogRing* log, std::uint64_t ownerCookie = 0,
+                    std::uint32_t targetGeneration = 0);
 
     // Deactivates one attachment. VN_UNKNOWN_ID when no such attachment
     // exists. The engine seam neutralizes the live instances born from a
@@ -332,7 +465,8 @@ public:
                                0xFFFFFFFFu,
                            bool definitionWillBeAdded = false,
                            bool slotWillBeVacant = false,
-                           bool duplicateWillBeDetached = false);
+                           bool duplicateWillBeDetached = false,
+                           std::uint32_t targetGeneration = 0);
     VnResult PrepareDetach(BindingId id, std::uint32_t scopeKind,
                            VnObjectId objectId,
                            PreparedAttachmentToken* out);
@@ -518,7 +652,8 @@ public:
     VnResult ApplyVoiceEffectInstance(BindingId id,
                                       VnVoiceHandle publicHandle,
                                       VnVoiceHandle renderHandle,
-                                      LogRing* log);
+                                      LogRing* log,
+                                      VnEmitterHandle emitter = 0);
     VnResult CanApplyVoiceEffectInstance(BindingId id,
                                          VnVoiceHandle publicHandle,
                                          VnVoiceHandle renderHandle) const;
@@ -537,7 +672,8 @@ public:
     // Activates a pending batch, or confirms an already-retargeted live batch
     // for the same public/render identity during audibility return.
     bool ActivateReservedVoiceEffectInstances(VnVoiceHandle publicHandle,
-                                              VnVoiceHandle renderHandle);
+                                              VnVoiceHandle renderHandle,
+                                              VnEmitterHandle emitter = 0);
     void CancelReservedVoiceEffectInstances(VnVoiceHandle publicHandle);
 
     // Removes one voice's apply instance of a definition. False when none.
@@ -554,13 +690,16 @@ public:
     // capacity stays booked while the voice is parked and the return cannot be
     // refused. No-op for an already-parked handle.
     void ParkVoiceEffectInstances(VnVoiceHandle renderHandle);
+    bool PrepareVoiceEffectInstancePark(VnVoiceHandle renderHandle) noexcept;
+    void CancelVoiceEffectInstancePark(VnVoiceHandle renderHandle) noexcept;
 
     // Audibility return: retargets every parked apply instance of oldRender to
     // newRender and clears the parked mark. A pure field rewrite over already-
     // held slots — never allocates, so it cannot fail (all-or-nothing by
     // construction).
     void ReturnVoiceEffectInstances(VnVoiceHandle oldRender,
-                                    VnVoiceHandle newRender);
+                                    VnVoiceHandle newRender,
+                                    VnEmitterHandle emitter = 0);
 
     // Voice-effect apply instances of a definition, live or parked, for the
     // section-5.4 unregister reference scan and the pack-unload gate. Because a
@@ -676,6 +815,9 @@ public:
     void EvaluateEffectParamBindings(const ParamSystem& params,
                                      EffectParamTargetStore& store,
                                      const EmitterTable* emitters);
+    void EvaluateDirtyEffectParamBindings(const ParamSystem& params,
+                                         EffectParamTargetStore& store,
+                                         const EmitterTable* emitters);
 
     // Evaluates every BUS-scope attachment into the store's public Variable
     // slot: per bus target the contributions accumulate
@@ -693,6 +835,7 @@ public:
     // pass IS the evaluation those marks await).
     void EvaluateBusAttachments(const ParamSystem& params,
                                 BusTargetStore& store);
+    void EvaluateDirtyBusAttachments(const ParamSystem& params, BusTargetStore& store);
 
     bool BeginVariableProjection() noexcept;
     void RestoreVariableProjection() noexcept;
@@ -780,7 +923,9 @@ public:
             if (a.used && a.scopeKind == kTargetScopeBus &&
                 m_definitions[a.definitionIndex].sourceKind ==
                     BindingSourceKind::Variable) {
+                const bool frozen = a.meterFrozen;
                 fn(a, m_definitions[a.definitionIndex]);
+                if (a.meterFrozen != frozen) m_dependencies.Mark(a.dependency);
             }
         }
     }
@@ -836,6 +981,17 @@ public:
     }
 
 private:
+    static BindingDependencyIdentity ReadAttachmentDependency(const void* fact, BindingDependencyKind kind) noexcept;
+    static BindingDependencyIdentity ReadEffectDependency(const void* fact, BindingDependencyKind kind) noexcept;
+    bool PrepareAttachmentDependency(std::uint32_t slot, std::uint32_t scope) noexcept;
+    void RegisterAttachmentDependency(Attachment& attachment) noexcept;
+    bool PrepareEffectDependency(std::uint32_t slot) noexcept;
+    std::uint32_t EffectDependencySlot(const VoiceEffectInstance& instance) const noexcept;
+    void RegisterEffectDependency(VoiceEffectInstance& instance) noexcept;
+    void RemoveEffectDependency(VoiceEffectInstance& instance) noexcept;
+    bool RefreshEffectDependencyEmitter(VoiceEffectInstance& instance, VnEmitterHandle emitter) noexcept;
+    BindingDependencyIndex m_dependencies;
+    std::uint32_t m_renderBindingCapacity = 0;
     Definition* FindMutable(BindingId id);
     const Attachment* FindAttachment(BindingId id, std::uint32_t scopeKind,
                                      VnObjectId objectId) const;
@@ -867,11 +1023,6 @@ private:
     std::uint64_t m_definitionRefusedCount = 0;
     std::uint64_t m_attachmentHighWater = 0;
     std::uint64_t m_attachmentRefusedCount = 0;
-    // Preallocated scratch for the bus evaluation: one accumulator per
-    // bus x bus target, rebuilt each tick with zero allocation.
-    std::vector<float> m_busAccum;
-    std::vector<bool> m_busAccumActive;
-    std::vector<bool> m_busAccumAccepted;
 };
 
 struct Engine;

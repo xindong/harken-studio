@@ -8,6 +8,7 @@
 #include "harken/core/PlayableInstanceTable.h"
 #include "harken/core/WeightSegment.h"
 #include "harken/core/FrontierActivation.h"
+#include "harken/core/StableRowStorage.h"
 
 #include <atomic>
 #include <array>
@@ -232,6 +233,8 @@ public:
     void ApplyFrontierSide(FrontierSideProof& proof) noexcept;
     explicit VariableControlInstanceTable(std::uint32_t capacity);
     std::uint32_t Capacity() const noexcept { return capacity_; }
+    std::uint32_t ConstructedCount() const noexcept { return entries_.ConstructedCount(); }
+    std::size_t StorageBytes() const noexcept { return entries_.RequestedBytes(); }
 
     std::uint32_t LiveCount() const noexcept {
         return liveCount_.load(std::memory_order_acquire);
@@ -391,7 +394,7 @@ private:
     static void ResetEntry(Entry& entry) noexcept;
     static bool MayMutateSide(SideRow& side) noexcept;
 
-    std::unique_ptr<Entry[]> entries_;
+    StableRowStorage<Entry> entries_;
     std::uint32_t capacity_ = 0;
     std::atomic<std::uint32_t> liveCount_{0};
     std::atomic<std::uint32_t> highWater_{0};

@@ -20,10 +20,14 @@
 #include "Common/TestUtil.h"
 
 #include "harken/param/BindingTable.h"
+#include "harken/param/EffectParamLocator.h"
 #include "harken/param/ParamTargets.h"
+#include "harken/render/BuiltinEffects.h"
 
 #include <cmath>
 #include <cstdint>
+#include <array>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -354,6 +358,349 @@ TEST(BindingLiveness, AcceptanceRefusesWhenPinnedCapacityCannotReserve) {
                                RenderHandle(engine, handle),
                                harken::kTargetVoiceVolume));
     EXPECT_EQ(0u, engine->bindingInstanceOnsetFailCount);
+}
+
+struct DependencyFact {
+    harken::BindingDependencyIdentity global{}, local{}, definition{}, probe{}, target{};
+};
+
+harken::BindingDependencyIdentity ReadDependency(const void* pointer, harken::BindingDependencyKind kind) noexcept {
+    const auto& fact = *static_cast<const DependencyFact*>(pointer);
+    switch (kind) {
+    case harken::BindingDependencyKind::Global: return fact.global;
+    case harken::BindingDependencyKind::Local: return fact.local;
+    case harken::BindingDependencyKind::Definition: return fact.definition;
+    case harken::BindingDependencyKind::Probe: return fact.probe;
+    case harken::BindingDependencyKind::Target: return fact.target;
+    }
+    return {};
+}
+
+DependencyFact MakeDependencyFact(std::uint64_t variable, std::uint64_t emitter, std::uint64_t target) {
+    DependencyFact fact;
+    fact.global.source = harkentest::ObjectId(variable);
+    fact.local = fact.global;
+    fact.local.object = emitter;
+    fact.definition.source = harkentest::ObjectId(variable + 1000);
+    fact.probe.source = harkentest::ObjectId(variable + 2000);
+    fact.probe.generation = 7;
+    fact.target.object = target;
+    fact.target.scope = harken::kTargetScopeVoice;
+    return fact;
+}
+
+std::uint32_t CountDirtyTargets(const harken::BindingDependencyIndex& index) {
+    std::uint32_t count = 0;
+    harken::BindingDirtyTarget target;
+    while (index.DirtyTargetAt(count, &target)) ++count;
+    return count;
+}
+
+void CommitDirtyTargets(harken::BindingDependencyIndex& index) {
+    harken::BindingDirtyTarget target;
+    while (index.DirtyTargetAt(0, &target))
+        ASSERT_TRUE(index.CommitTarget(target, index.TargetVersion(target)));
+}
+
+TEST(BindingDependencyIndex, LocalFallbackAndLiveDefinitionHaveExactIndependentWakeups) {
+    harken::BindingDependencyIndex index;
+    ASSERT_TRUE(index.Reset(2, 4));
+    auto live = MakeDependencyFact(7, 101, 1);
+    auto snapshot = MakeDependencyFact(7, 202, 2);
+    std::array<harken::BindingDependencyToken, 2> tokens;
+    ASSERT_TRUE(index.PrepareBinding(0));
+    ASSERT_TRUE(index.PrepareBinding(1));
+    const auto preparedBytes = index.StorageBytes();
+    ASSERT_TRUE(index.Register(0, &live, ReadDependency, 0, true, true, false, &tokens[0]));
+    ASSERT_TRUE(index.Register(1, &snapshot, ReadDependency, 1, true, false, false, &tokens[1]));
+    EXPECT_EQ(preparedBytes, index.StorageBytes());
+    CommitDirtyTargets(index);
+    index.NotifyVariable(live.global.source, 303);
+    EXPECT_EQ(0u, CountDirtyTargets(index));
+    index.NotifyVariable(live.global.source, 101);
+    EXPECT_EQ(1u, CountDirtyTargets(index));
+    CommitDirtyTargets(index);
+    index.NotifyDefinition(live.definition.source);
+    EXPECT_EQ(1u, CountDirtyTargets(index));
+    CommitDirtyTargets(index);
+    index.NotifyVariable(live.global.source);
+    EXPECT_EQ(2u, CountDirtyTargets(index));
+    CommitDirtyTargets(index);
+    ASSERT_TRUE(index.Remove(tokens[0]));
+    ASSERT_TRUE(index.Remove(tokens[1]));
+    CommitDirtyTargets(index);
+}
+
+TEST(BindingDependencyIndex, ReanchorsOriginalFactsAndRetainsDeparturesUntilVersionCommits) {
+    harken::BindingDependencyIndex index;
+    ASSERT_TRUE(index.Reset(3, 8));
+    std::array<DependencyFact, 3> facts{MakeDependencyFact(7, 101, 1),
+        MakeDependencyFact(8, 101, 1), MakeDependencyFact(9, 101, 1)};
+    std::array<harken::BindingDependencyToken, 3> tokens;
+    const std::uint32_t orders[] = {30, 10, 20};
+    for (std::uint32_t slot = 0; slot < facts.size(); ++slot) {
+        ASSERT_TRUE(index.PrepareBinding(slot));
+        ASSERT_TRUE(index.Register(slot, &facts[slot], ReadDependency, orders[slot], true, true, false, &tokens[slot]));
+    }
+    harken::BindingDirtyTarget target;
+    ASSERT_TRUE(index.TargetOf(tokens[0], &target));
+    auto first = index.FirstContribution(target);
+    EXPECT_EQ(&facts[1], index.Fact(first));
+    first = index.NextContribution(first);
+    EXPECT_EQ(&facts[2], index.Fact(first));
+    first = index.NextContribution(first);
+    EXPECT_EQ(&facts[0], index.Fact(first));
+    EXPECT_FALSE(index.NextContribution(first).Valid());
+    auto moved = facts[0];
+    ASSERT_TRUE(index.Relocate(tokens[0], &moved, ReadDependency));
+    facts[0] = {};
+    CommitDirtyTargets(index);
+    index.NotifyVariable(moved.global.source);
+    const auto version = index.TargetVersion(target);
+    index.NotifyVariable(moved.global.source, moved.local.object);
+    EXPECT_FALSE(index.CommitTarget(target, version));
+    EXPECT_EQ(1u, CountDirtyTargets(index));
+    ASSERT_TRUE(index.Remove(tokens[0]));
+    moved = {};
+    ASSERT_TRUE(index.Remove(tokens[1]));
+    facts[1] = {};
+    CommitDirtyTargets(index);
+    index.NotifyVariable(facts[2].global.source);
+    EXPECT_EQ(1u, CountDirtyTargets(index));
+    const auto identity = facts[2].target;
+    ASSERT_TRUE(index.Remove(tokens[2]));
+    facts[2] = {};
+    harken::BindingDependencyIdentity retired;
+    ASSERT_TRUE(index.TargetIdentity(target, &retired));
+    EXPECT_EQ(identity, retired);
+    auto replacement = MakeDependencyFact(10, 101, 1);
+    harken::BindingDependencyToken replacementToken;
+    ASSERT_TRUE(index.PrepareBinding(2));
+    ASSERT_TRUE(index.Register(2, &replacement, ReadDependency, 20, true, true, false, &replacementToken));
+    EXPECT_EQ(&replacement, index.Fact(index.FirstContribution(target)));
+    EXPECT_FALSE(index.Remove(tokens[2]));
+    ASSERT_TRUE(index.Remove(replacementToken));
+    CommitDirtyTargets(index);
+    EXPECT_FALSE(index.TargetIdentity(target, &retired));
+}
+
+TEST(BindingDependencyIndex, ExactProbeIdentityAndCanceledPreparationsRemainIsolated) {
+    harken::BindingDependencyIndex index;
+    ASSERT_TRUE(index.Reset(3, 3, 12));
+    auto first = MakeDependencyFact(7, 0, 1);
+    auto second = first;
+    second.probe.generation += 0x10000;
+    second.target.object = 2;
+    harken::BindingDependencyToken one, two;
+    ASSERT_TRUE(index.PrepareBinding(0));
+    ASSERT_TRUE(index.PrepareBinding(1));
+    index.CancelBindingPreparation(1);
+    EXPECT_FALSE(index.HasBindingPreparation(1));
+    ASSERT_TRUE(index.PrepareBinding(1));
+    const auto preparedBytes = index.StorageBytes();
+    ASSERT_TRUE(index.Register(0, &first, ReadDependency, 0, false, true, true, &one));
+    ASSERT_TRUE(index.Register(1, &second, ReadDependency, 1, false, true, true, &two));
+    EXPECT_EQ(preparedBytes, index.StorageBytes());
+    CommitDirtyTargets(index);
+    index.Notify(harken::BindingDependencyKind::Probe, first.probe);
+    EXPECT_EQ(1u, CountDirtyTargets(index));
+    CommitDirtyTargets(index);
+    auto stale = second.probe;
+    ++stale.object;
+    index.Notify(harken::BindingDependencyKind::Probe, stale);
+    EXPECT_EQ(0u, CountDirtyTargets(index));
+    index.Notify(harken::BindingDependencyKind::Probe, second.probe);
+    EXPECT_EQ(1u, CountDirtyTargets(index));
+    ASSERT_TRUE(index.Remove(one));
+    ASSERT_TRUE(index.Remove(two));
+    CommitDirtyTargets(index);
+}
+
+TEST(BindingDependencyIndex, RemovingManyKeysPreservesAllSurvivingIdentities) {
+    constexpr std::uint32_t count = 65;
+    harken::BindingDependencyIndex index;
+    ASSERT_TRUE(index.Reset(count, count * 2));
+    std::array<DependencyFact, count> facts;
+    std::array<harken::BindingDependencyToken, count> tokens;
+    std::array<bool, count> removed{};
+    for (std::uint32_t slot = 0; slot < count; ++slot) {
+        facts[slot] = MakeDependencyFact(slot + 1, slot + 100, slot + 1);
+        ASSERT_TRUE(index.PrepareBinding(slot));
+    }
+    const auto preparedBytes = index.StorageBytes();
+    for (std::uint32_t slot = 0; slot < count; ++slot)
+        ASSERT_TRUE(index.Register(slot, &facts[slot], ReadDependency, slot, true, true, false, &tokens[slot]));
+    EXPECT_EQ(preparedBytes, index.StorageBytes());
+    CommitDirtyTargets(index);
+    for (std::uint32_t step = 0; step < count; ++step) {
+        const auto slot = (step * 17u) % count;
+        ASSERT_TRUE(index.Remove(tokens[slot]));
+        removed[slot] = true;
+        CommitDirtyTargets(index);
+        for (std::uint32_t live = 0; live < count; ++live)
+            if (!removed[live]) index.NotifyVariable(facts[live].global.source, facts[live].local.object);
+        EXPECT_EQ(count - step - 1, CountDirtyTargets(index));
+        CommitDirtyTargets(index);
+    }
+}
+
+TEST(BindingLiveness, DirtyBusTargetRebuildsEveryContributionAndDepartureInOriginalOrder) {
+    harken::BindingTable table(2, 2, 1);
+    harken::BusTargetStore store(1);
+    harken::ParamSystem params(harken::EngineConfig{});
+    const harken::CurvePoint points[] = {{0, 0}, {1, -6}};
+    const harken::CurveHandlePair handles[] = {{0, 0, 1, -6}};
+    for (std::uint32_t id = 1; id <= 2; ++id) {
+        ASSERT_EQ(VN_OK, table.RegisterBinding(harkentest::ObjectId(id), harkentest::ObjectId(id + 10),
+            harken::kTargetScopeBus, harken::kBusTargetBusVolume, points, handles, 2, id * 10, nullptr));
+        ASSERT_EQ(VN_OK, table.Attach(harkentest::ObjectId(id), harken::kTargetScopeBus,
+            harkentest::ObjectId(50), 0, nullptr));
+        ASSERT_EQ(VN_OK, params.SetValue(harkentest::ObjectId(id + 10), 1));
+    }
+    table.EvaluateDirtyBusAttachments(params, store);
+    EXPECT_FLOAT_EQ(-12, store.Reduce(0, harken::kBusTargetBusVolume));
+    ASSERT_EQ(VN_OK, params.SetValue(harkentest::ObjectId(11), 0.5f));
+    table.NoteBusVariableWrite(harkentest::ObjectId(11), store);
+    table.EvaluateDirtyBusAttachments(params, store);
+    const float halfContributionDb = 20.0f * std::log10(0.5f * (1.0f + std::pow(10.0f, -6.0f / 20.0f)));
+    EXPECT_NEAR(halfContributionDb - 6.0f, store.Reduce(0, harken::kBusTargetBusVolume), 1e-5f);
+    ASSERT_EQ(VN_OK, table.Detach(harkentest::ObjectId(1), harken::kTargetScopeBus, harkentest::ObjectId(50), &store));
+    table.EvaluateDirtyBusAttachments(params, store);
+    EXPECT_FLOAT_EQ(-6, store.Reduce(0, harken::kBusTargetBusVolume));
+    ASSERT_EQ(VN_OK, table.Detach(harkentest::ObjectId(2), harken::kTargetScopeBus, harkentest::ObjectId(50), &store));
+    table.EvaluateDirtyBusAttachments(params, store);
+    EXPECT_FALSE(store.HasVariableContributions());
+    EXPECT_FLOAT_EQ(0, store.Reduce(0, harken::kBusTargetBusVolume));
+}
+
+TEST(BindingLiveness, ReusedBusGenerationRejectsOldInputsAndDepartures) {
+    for (bool preparedDetach : {false, true}) {
+        harken::BindingTable table(2, 2, 1);
+        harken::BusTargetStore store(1);
+        harken::ParamSystem params(harken::EngineConfig{});
+        const harken::CurvePoint points[] = {{0, 0}, {1, -6}};
+        const harken::CurveHandlePair handles[] = {{0, 0, 1, -6}};
+        for (std::uint32_t id = 1; id <= 2; ++id) {
+            ASSERT_EQ(VN_OK, table.RegisterBinding(harkentest::ObjectId(id), harkentest::ObjectId(id + 10),
+                harken::kTargetScopeBus, harken::kBusTargetBusVolume, points, handles, 2, id * 10, nullptr));
+            ASSERT_EQ(VN_OK, params.SetValue(harkentest::ObjectId(id + 10), 1));
+        }
+        store.InitializeBusGeneration(0, 1);
+        ASSERT_EQ(VN_OK, table.Attach(harkentest::ObjectId(1), harken::kTargetScopeBus,
+            harkentest::ObjectId(50), 0, nullptr, 0, 1));
+        table.EvaluateDirtyBusAttachments(params, store);
+        EXPECT_FLOAT_EQ(-6, store.Reduce(0, harken::kBusTargetBusVolume));
+
+        store.InitializeBusGeneration(0, 2);
+        table.NoteBusVariableWrite(harkentest::ObjectId(11), store);
+        EXPECT_EQ(0u, store.DemandCount());
+        table.EvaluateDirtyBusAttachments(params, store);
+        EXPECT_FALSE(store.HasVariableContributions());
+        harken::BindingTable::PreparedAttachmentToken add;
+        ASSERT_EQ(VN_OK, table.PrepareAttach(harkentest::ObjectId(2), harken::kTargetScopeBus,
+            harkentest::ObjectId(51), 0, 1, 0, &add, UINT32_MAX, false, false, false, 2));
+        table.CommitPreparedAttachment(&add, &store);
+        table.EvaluateDirtyBusAttachments(params, store);
+        store.MarkCommitted(0, harken::kBusTargetBusVolume, -6);
+
+        if (preparedDetach) {
+            harken::BindingTable::PreparedAttachmentToken remove;
+            ASSERT_EQ(VN_OK, table.PrepareDetach(harkentest::ObjectId(1), harken::kTargetScopeBus,
+                harkentest::ObjectId(50), &remove));
+            table.CommitPreparedAttachment(&remove, &store);
+        } else {
+            ASSERT_EQ(VN_OK, table.Detach(harkentest::ObjectId(1), harken::kTargetScopeBus,
+                harkentest::ObjectId(50), &store));
+        }
+        table.EvaluateDirtyBusAttachments(params, store);
+        EXPECT_EQ(0u, store.DemandCount());
+        EXPECT_EQ(0u, store.PendingRampMs(0, harken::kBusTargetBusVolume));
+        EXPECT_FLOAT_EQ(-6, store.Reduce(0, harken::kBusTargetBusVolume));
+    }
+}
+
+TEST(BindingLiveness, EffectParkPreparationAndReturnKeepExactEmitterWithoutGrowth) {
+    harken::BindingTable table(1, 2, 1);
+    const auto target = harken::PackEffectParamLocator(VN_EFFECT_GAIN, 0, harken::kGainParamGainDb);
+    const harken::CurvePoint points[] = {{0, 0}, {1, 6}};
+    const harken::CurveHandlePair handles[] = {{0, 0, 1, 6}};
+    ASSERT_EQ(VN_OK, table.RegisterBinding(harkentest::ObjectId(1), harkentest::ObjectId(11),
+        VN_TARGET_SCOPE_VOICE_EFFECT_PARAM, target, points, handles, 2, 0, nullptr));
+    ASSERT_EQ(VN_OK, table.ApplyVoiceEffectInstance(harkentest::ObjectId(1), 1, 1, nullptr, 101));
+    auto& index = table.Dependencies();
+    CommitDirtyTargets(index);
+    index.NotifyVariable(harkentest::ObjectId(11), 202);
+    EXPECT_EQ(0u, CountDirtyTargets(index));
+    index.NotifyVariable(harkentest::ObjectId(11), 101);
+    EXPECT_EQ(1u, CountDirtyTargets(index));
+    CommitDirtyTargets(index);
+    ASSERT_TRUE(table.PrepareVoiceEffectInstancePark(1));
+    EXPECT_TRUE(index.HasBindingPreparation(2));
+    table.CancelVoiceEffectInstancePark(1);
+    EXPECT_FALSE(index.HasBindingPreparation(2));
+    ASSERT_TRUE(table.PrepareVoiceEffectInstancePark(1));
+    const auto preparedBytes = index.StorageBytes();
+    table.ParkVoiceEffectInstances(1);
+    table.ReturnVoiceEffectInstances(1, 2, 202);
+    EXPECT_EQ(preparedBytes, index.StorageBytes());
+    CommitDirtyTargets(index);
+    index.NotifyVariable(harkentest::ObjectId(11), 101);
+    EXPECT_EQ(0u, CountDirtyTargets(index));
+    index.NotifyVariable(harkentest::ObjectId(11), 202);
+    EXPECT_EQ(1u, CountDirtyTargets(index));
+}
+
+TEST(BindingLiveness, CopiedBindingProjectionOwnsItsFactsAndPreparedAdds) {
+    harken::ParamSystem params(harken::EngineConfig{});
+    harken::BusTargetStore store(1);
+    std::unique_ptr<harken::BindingTable> copy;
+    harken::BindingTable::PreparedAttachmentToken add;
+    const harken::CurvePoint points[] = {{0, 0}, {1, -6}};
+    const harken::CurveHandlePair handles[] = {{0, 0, 1, -6}};
+    {
+        harken::BindingTable original(2, 2, 1);
+        ASSERT_EQ(VN_OK, original.RegisterBinding(harkentest::ObjectId(1), harkentest::ObjectId(11),
+            harken::kTargetScopeBus, harken::kBusTargetBusVolume, points, handles, 2, 0, nullptr));
+        ASSERT_EQ(VN_OK, original.Attach(harkentest::ObjectId(1), harken::kTargetScopeBus,
+            harkentest::ObjectId(50), 0, nullptr));
+        ASSERT_EQ(VN_OK, original.PrepareAttach(harkentest::ObjectId(1), harken::kTargetScopeBus,
+            harkentest::ObjectId(51), 0, 1, 0, &add));
+        copy = std::make_unique<harken::BindingTable>(original);
+        original.CancelPreparedAttachment(&add);
+        ASSERT_EQ(VN_OK, copy->PrepareAttach(harkentest::ObjectId(1), harken::kTargetScopeBus,
+            harkentest::ObjectId(51), 0, 1, 0, &add));
+    }
+    copy->CommitPreparedAttachment(&add, &store);
+    ASSERT_EQ(VN_OK, params.SetValue(harkentest::ObjectId(11), 1));
+    copy->EvaluateDirtyBusAttachments(params, store);
+    EXPECT_FLOAT_EQ(-12, store.Reduce(0, harken::kBusTargetBusVolume));
+}
+
+TEST(BindingLiveness, DirtyEffectTargetKeepsOtherContributorsAndReturnsToBase) {
+    harken::BindingTable table(2, 2, 1);
+    harken::ParamSystem params(harken::EngineConfig{});
+    harken::EffectParamTargetStore store(kRate, 4);
+    const auto target = harken::PackEffectParamLocator(VN_EFFECT_GAIN, 0, harken::kGainParamGainDb);
+    const harken::CurvePoint points[] = {{0, 0}, {1, 6}};
+    const harken::CurveHandlePair handles[] = {{0, 0, 1, 6}};
+    const float base = -24;
+    ASSERT_TRUE(store.SeedInstalledEffect(harken::EffectParamTargetStore::Scope::Voice, 1, 0,
+        VN_EFFECT_GAIN, &base, harken::kGainParamCount));
+    for (std::uint32_t id = 1; id <= 2; ++id) {
+        ASSERT_EQ(VN_OK, table.RegisterBinding(harkentest::ObjectId(id), harkentest::ObjectId(id + 10),
+            VN_TARGET_SCOPE_VOICE_EFFECT_PARAM, target, points, handles, 2, 0, nullptr));
+        ASSERT_EQ(VN_OK, table.ApplyVoiceEffectInstance(harkentest::ObjectId(id), 1, nullptr));
+        ASSERT_EQ(VN_OK, params.SetValue(harkentest::ObjectId(id + 10), 1));
+    }
+    table.EvaluateDirtyEffectParamBindings(params, store, nullptr);
+    EXPECT_FLOAT_EQ(-12, store.Reduce(harken::EffectParamTargetStore::Scope::Voice, 1, 0, harken::kGainParamGainDb));
+    ASSERT_EQ(VN_OK, params.SetValue(harkentest::ObjectId(11), 0));
+    table.Dependencies().NotifyVariable(harkentest::ObjectId(11));
+    table.EvaluateDirtyEffectParamBindings(params, store, nullptr);
+    EXPECT_FLOAT_EQ(-18, store.Reduce(harken::EffectParamTargetStore::Scope::Voice, 1, 0, harken::kGainParamGainDb));
+    table.RemoveVoiceEffectInstances(1);
+    table.EvaluateDirtyEffectParamBindings(params, store, nullptr);
+    EXPECT_FLOAT_EQ(base, store.Reduce(harken::EffectParamTargetStore::Scope::Voice, 1, 0, harken::kGainParamGainDb));
 }
 
 } // namespace

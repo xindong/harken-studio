@@ -142,6 +142,10 @@ public:
     bool RetainSource(const VariableSliceSource& source) noexcept;
     bool ReleaseSource(const VariableSliceSource& source) noexcept;
     bool SourceApplied(const VariableSliceSource& source) const noexcept;
+    bool SubscribeSource(const VariableSliceSource& source, VariableSourceSubscription& subscription) noexcept;
+    bool UnsubscribeSource(const VariableSliceSource& source, VariableSourceSubscription& subscription) noexcept;
+    void DispatchSourceChanges() noexcept;
+    std::uint32_t SourceSubscriptionCount(const VariableSliceSource& source) const noexcept;
     bool AddSource(VariableSliceRef ref, const VariableSliceSource& source) noexcept;
     const VariableSliceSource* Source(VariableSliceRef ref, std::uint32_t index) const noexcept;
     const VariableSliceSource* NextSource(VariableSliceRef ref, std::uint32_t* cursor) const noexcept;
@@ -154,6 +158,7 @@ public:
     std::uint32_t SourceObserverCount(VariableSliceRef ref) const noexcept;
     std::uint32_t InvalidationReasons(VariableSliceRef ref) const noexcept;
     std::size_t StorageBytes() const noexcept;
+    std::size_t PayloadStorageBytes() const noexcept;
     std::size_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
     std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
     std::size_t RowReservedBytes() const noexcept { return rows_.ReservedBytes(); }
@@ -219,7 +224,10 @@ private:
         std::uint64_t requiredInitialSourceFrontier = 0;
         std::uint32_t payload = UINT32_MAX;
         std::uint32_t sourceObservers = 0;
+        VariableSourceSubscription* sourceHead = nullptr;
+        std::uint32_t subscriptionCount = 0;
         bool logicAcknowledged = false;
+        std::atomic<bool> sourceChanged{false};
         std::atomic<std::uint64_t> appliedBlockSequence{0};
         std::atomic<std::uint32_t> pendingInvalidationReasons{0};
     };
@@ -229,6 +237,8 @@ private:
         std::uint32_t targetSpanCapacity = 0;
         std::uint32_t targetCount = 0;
         std::uint32_t sourceCount = 0;
+        std::vector<VariableSliceTarget> targets;
+        std::vector<std::uint64_t> sourceBits;
     };
 
     struct FreeRange {
@@ -250,11 +260,10 @@ private:
     std::uint32_t maxTargetsPerSlice_ = 0;
     std::uint32_t targetPoolCapacity_ = 0;
     StableRowStorage<Row> rows_;
-    std::vector<Payload> payloads_;
+    StableRowStorage<Payload> payloads_;
     std::vector<std::uint32_t> freeRows_;
     std::vector<std::uint32_t> freePayloads_;
-    std::vector<VariableSliceTarget> targets_;
-    std::vector<std::uint64_t> sourceBits_;
+    std::vector<std::uint32_t> subscribedSources_;
     std::uint32_t sourceWords_ = 0;
     std::uint32_t payloadCapacity_ = 0;
     std::vector<FreeRange> freeRanges_;
