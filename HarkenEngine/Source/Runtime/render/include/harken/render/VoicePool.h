@@ -203,6 +203,8 @@ public:
     void ApplyTimelineVariableInitializer(VariableTimelineInitializerProof& proof) noexcept;
     VariableReadCutStatus TimelineVariableSourcesStatus(std::uint32_t renderSlot,
         std::uint32_t renderGeneration) const noexcept;
+    VariableReadCutStatus TimelineStartSourcesStatus(const TimelineArmTable& arms,
+        TimelineArmToken arm, bool* waitingPublication = nullptr) const noexcept;
     VariableReadCutStatus TimelineEntryVariableSourcesStatus(
         const FrontierActivationDescriptor& descriptor) const noexcept;
     bool PendingTimelineVariableReadMatchesArm(TimelineArmToken arm) const noexcept;

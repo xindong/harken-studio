@@ -806,6 +806,10 @@ bool BindingTable::AnyAttachmentOf(BindingId id) const {
 
 void BindingTable::EvaluateBusAttachments(const ParamSystem& params,
                                           BusTargetStore& store) {
+    if (m_attachmentCount == 0 && !store.HasVariableContributions()) {
+        store.ConsumePendingInput();
+        return;
+    }
     // Rebuild from scratch: reset the scratch accumulators, fold every
     // attachment's contribution in-domain, then write the store's
     // Variable slots. A (bus, target) no attachment feeds ends the tick
@@ -1181,6 +1185,10 @@ void BindingTable::EvaluateEffectParamBindings(const ParamSystem& params,
                                                EffectParamTargetStore& store,
                                                const EmitterTable* emitters) {
     store.BeginContributionSweep();
+    if (m_attachmentCount == 0 && m_voiceEffectInstanceCount == 0) {
+        store.EndContributionSweep();
+        return;
+    }
     // Bus-effect attachments resolve at global scope (a bus has no emitter).
     for (const Attachment& a : m_attachments) {
         if (!a.used || a.scopeKind != VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {

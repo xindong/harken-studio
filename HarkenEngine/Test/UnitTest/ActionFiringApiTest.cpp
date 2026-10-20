@@ -13079,7 +13079,7 @@ TEST(ActionFiringApi, ImmediateEntryAttemptPoolExhaustionIsCapacity) {
          index < engine->immediateEntryAttempts.Capacity(); ++index) {
         ASSERT_TRUE(engine->EnsureImmediateEntryAttempt(index));
         auto& attempt = engine->immediateEntryAttempts[index];
-        attempt.active = true;
+        engine->SetImmediateEntryAttemptActive(attempt, true);
         attempt.root = UINT64_MAX;
         attempt.entryQuantum = UINT64_MAX;
     }
@@ -13091,7 +13091,7 @@ TEST(ActionFiringApi, ImmediateEntryAttemptPoolExhaustionIsCapacity) {
     EXPECT_FALSE(engine->runtimeRecreateRequired);
     for (std::uint32_t index = 0;
          index < engine->immediateEntryAttempts.size(); ++index)
-        engine->immediateEntryAttempts[index].active = false;
+        engine->SetImmediateEntryAttemptActive(engine->immediateEntryAttempts[index], false);
     VnActionFiringHandle recovered = 0;
     EXPECT_EQ(VN_OK, Vn_PostAction(&desc, &recovered));
     EXPECT_NE(0u, recovered);
@@ -43100,14 +43100,17 @@ TEST(ActionFiringApi, MixedActionPublishesCommandsAfterVariableAndDeferredOwners
 
     struct Observation {
         std::uint64_t head = 0;
+        std::uint64_t initialHead = 0;
         std::uint32_t calls = 0;
         VnObjectId variable{};
-    } observation{engine->commands.PublishedHead(), 0, image.variables[0].variableId};
+    } observation{engine->commands.PublishedHead(), engine->commands.InitialSourcePublishedHead(),
+        0, image.variables[0].variableId};
     engine->voiceCommandBatchPublishHookContextForTest = &observation;
     engine->voiceCommandBatchPublishHookForTest = [](harken::Engine& current, void* opaque) {
         auto& observed = *static_cast<Observation*>(opaque);
         ++observed.calls;
         EXPECT_EQ(observed.head, current.commands.PublishedHead());
+        EXPECT_EQ(observed.initialHead, current.commands.InitialSourcePublishedHead());
         EXPECT_EQ(0u, current.actionDeferredRecords.PreparedCount());
         EXPECT_EQ(1u, current.actionDeferredRecords.LiveCount());
         VnVariableQueryDescV1 query{};
@@ -43122,6 +43125,7 @@ TEST(ActionFiringApi, MixedActionPublishesCommandsAfterVariableAndDeferredOwners
         current.nullBackend.Pump(1);
         EXPECT_EQ(before + 1u, current.mixer.BlocksRendered());
         EXPECT_EQ(observed.head, current.commands.PublishedHead());
+        EXPECT_EQ(observed.initialHead, current.commands.InitialSourcePublishedHead());
         EXPECT_FLOAT_EQ(0.0f, harkentest::Peak(current.nullBackend.LastBlock(),
             current.nullBackend.BlockFrames() * current.nullBackend.Channels()));
     };
@@ -43134,7 +43138,8 @@ TEST(ActionFiringApi, MixedActionPublishesCommandsAfterVariableAndDeferredOwners
     ASSERT_EQ(VN_OK, posted);
     ASSERT_NE(0u, firing);
     EXPECT_EQ(1u, observation.calls);
-    EXPECT_GT(engine->commands.PublishedHead(), observation.head);
+    EXPECT_TRUE(engine->commands.PublishedHead() > observation.head ||
+        engine->commands.InitialSourcePublishedHead() > observation.initialHead);
     bool heardNewBlock = false;
     for (unsigned block = 0; block < 12; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -44142,12 +44147,22 @@ static void CheckPendingVariableNativeShapeRetries(harken::Engine& engine,
             engine.immediateActionLane.SetPrivateEntryCommitPageLimitForTests(SIZE_MAX);
             engine.immediateActionLane.SetPayloadCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX);
 #endif
+            engine.timelineArms.SetRowCommitPageLimitForTests(SIZE_MAX);
+            engine.timelineArms.SetScopeCommitPageLimitForTests(SIZE_MAX);
+            engine.originalSourceSubmissions.SetCommitPageLimitForTests(SIZE_MAX);
+            engine.originalSinglePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
+            engine.originalQueueSourcePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
             engine.nativeBackingAllocationFailureCountdownForTest = countdown;
             engine.deferRegisteredPendingVariableSelectionReplacementForTest = false;
             engine.deferPendingImmediateEntriesForTest = entryDeferral;
         }
     } restore{engine, engine.nativeBackingAllocationFailureCountdownForTest, false};
     engine.nativeBackingAllocationFailureCountdownForTest = 0;
+    engine.timelineArms.SetRowCommitPageLimitForTests(0);
+    engine.timelineArms.SetScopeCommitPageLimitForTests(0);
+    engine.originalSourceSubmissions.SetCommitPageLimitForTests(0);
+    engine.originalSinglePreparationHolders.SetCommitPageLimitForTests(0);
+    engine.originalQueueSourcePreparationHolders.SetCommitPageLimitForTests(0);
 #if !defined(HARKEN_RT_QUALIFICATION)
     const auto privateEntryCommit = engine.immediateActionLane.PrivateEntryCommittedBytes();
     const auto lanePayloadCommit = engine.immediateActionLane.PayloadCommittedBytes();
@@ -45439,6 +45454,7 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                                 }
                                 EXPECT_FALSE(engine.PublishRegisteredPendingVariableCohortReplacement(attempt, empty));
                                 ASSERT_TRUE(engine.PublishRegisteredPendingVariableCohortReplacement(attempt, entryPlacement));
+                                engine.AcceptSourceCommandPublications();
                                 EXPECT_FALSE(entryPlacement.Valid());
                                 EXPECT_GT(engine.commands.PublishedHead(), headBefore);
                                 EXPECT_EQ(harken::EnginePlayableStartPhase::Filed, row->phase);
@@ -47762,6 +47778,11 @@ struct PendingQueueNativeBackingProbe {
         engine.actionPlayStorage.SetCommitPageLimitForTests(SIZE_MAX);
         engine.actionPlayScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.pendingVariableQueueNativeOrigins.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.timelineArms.SetRowCommitPageLimitForTests(SIZE_MAX);
+        engine.timelineArms.SetScopeCommitPageLimitForTests(SIZE_MAX);
+        engine.originalSourceSubmissions.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.originalSinglePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.originalQueueSourcePreparationHolders.SetCommitPageLimitForTests(SIZE_MAX);
         retainedReader.Release();
         harken::detail::SetPendingVariablePrepareRefusalHookForTest(nullptr, nullptr);
         engine.pendingVariableGroupPlacementHookForTest = nullptr;
@@ -47821,6 +47842,11 @@ struct PendingQueueNativeBackingProbe {
         engine.actionPlayStorage.SetCommitPageLimitForTests(0);
         engine.actionPlayScratch.SetCommitPageLimitForTests(0);
         engine.pendingVariableQueueNativeOrigins.SetCommitPageLimitForTests(0);
+        engine.timelineArms.SetRowCommitPageLimitForTests(0);
+        engine.timelineArms.SetScopeCommitPageLimitForTests(0);
+        engine.originalSourceSubmissions.SetCommitPageLimitForTests(0);
+        engine.originalSinglePreparationHolders.SetCommitPageLimitForTests(0);
+        engine.originalQueueSourcePreparationHolders.SetCommitPageLimitForTests(0);
 #if !defined(HARKEN_RT_QUALIFICATION)
         engine.immediateActionLane.SetPayloadCommitPageLimitsForTests(0, 0);
 #endif
@@ -55909,8 +55935,10 @@ static void CheckPendingVariableGroupLifetime(unsigned exit, bool silent = false
             auto& staged = actual.pendingVariableLeafSources[start.arm.slot];
             ASSERT_FALSE(staged.Empty());
             ASSERT_EQ(nullptr, staged.group);
+            ASSERT_NE(0u, actual.pendingVariableLeafSourceCount);
             auto original = std::move(staged);
             staged = {};
+            --actual.pendingVariableLeafSourceCount;
             harken::TimelineArmTable::PreparedCommitProof arm;
             harken::VoicePool::PreparedCommitProof voice;
             ASSERT_TRUE(actual.timelineArms.ProvePreparedCommit(start.armPreparation, &arm));
@@ -59841,7 +59869,7 @@ TEST(ActionFiringApi,
               Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
     CanonicalActionWorld image(
         engine->registry.Lookup(CanonicalActionWorld::kFirstSound)
-            .contentRevision);
+            .contentRevision, 1, true);
     image.MakeImmediateSoundPlayAction();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, image.world).status);
@@ -65138,7 +65166,13 @@ TEST(ActionFiringApi, OriginalSourcePrivatePageDispositionSurvivesOwnerRefusalAn
     VnActionFiringHandle independentFiring = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &independentFiring));
     harken::CommandRecord independentHeader{};
-    ASSERT_TRUE(engine.commands.Peek(independentHeader));
+    const auto independentCut = engine.commands.CaptureBlockInputCut();
+    if (const auto* initial = engine.commands.InitialSourceAtFront(independentCut.initialHead)) {
+        ASSERT_NE(nullptr, initial->facts);
+        independentHeader = initial->facts[0];
+    } else {
+        ASSERT_TRUE(engine.commands.Peek(independentHeader));
+    }
     ASSERT_EQ(harken::kOpcodePlay, independentHeader.opcode);
     const auto independentArm = harken::OriginalSourceSubmissionRegistry::TokenOf(independentHeader);
     struct Probe {

@@ -205,6 +205,7 @@ struct VoiceRenderContext {
     // be released and reused, and a parked voice can return in another slot,
     // without changing this route-facing identity.
     VnVoiceHandle dynamicSourceIdentity = 0;
+    bool dynamicVoiceTapActive = false;
     // Source: immutable registered PCM plus the read cursor.
     PCMView pcm;
     std::uint64_t srcCursor = 0;
@@ -503,6 +504,9 @@ struct VoiceRenderContext {
     // In serial rendering the three run back-to-back for one voice
     // (RenderVoiceBlock), reproducing the pre-split single-pass arithmetic.
     struct CascadeScratch {
+        ResamplerUnitySpan borrowed{};
+        std::uint32_t plainPcmFeedFrames = 0;
+        bool plainPcmCandidate = false;
         float* scratch[kMaxChannels] = {}; // per-source-channel cascade output
         float* dry[kMaxChannels] = {};     // blend planes (only when needBlend)
         // Send-scatter tap (mix-layout wide): the post-pan/post-width image each

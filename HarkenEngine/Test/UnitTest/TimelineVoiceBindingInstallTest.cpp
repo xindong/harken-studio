@@ -1810,13 +1810,13 @@ namespace {
 using SourceRegistry = harken::OriginalSourceSubmissionRegistry;
 std::vector<harken::TimelineArmToken> PublishedSourceTokens(harken::Engine& engine) {
     std::vector<harken::TimelineArmToken> tokens;
-    const auto count = engine.commands.PublishedHead() - engine.commands.ConsumedCount();
-    for (std::uint32_t i = 0; i < count; ++i) {
-        harken::CommandRecord command{};
-        if (!engine.commands.PeekAt(i, command)) break;
-        if (command.opcode == harken::kOpcodePlay &&
-            command.payload.play.batch.batchKind == harken::PlayLedBatchKind::TimelineArm)
-            tokens.push_back(SourceRegistry::TokenOf(command));
+    for (std::uint32_t i = 0; i < engine.timelineArms.Capacity(); ++i) {
+        const auto* arm = engine.timelineArms.RowAt(i);
+        if (arm == nullptr) continue;
+        const harken::TimelineArmToken token{i, arm->generation, arm->renderSlot, arm->renderGeneration};
+        const auto* source = engine.originalSourceSubmissions.Find(token);
+        if (source != nullptr && source->State() == SourceRegistry::Phase::Published)
+            tokens.push_back(token);
     }
     return tokens;
 }
@@ -1880,6 +1880,89 @@ TEST(TimelineVoiceInstall, OriginalSourceActualTwoPlayPublicationCompletesBothBo
     EXPECT_EQ(0u, harken::detail::VoicePoolReleaseTestAccess::OriginalOwnerCount(engine.voices));
     EXPECT_GT(FreshSourcePeak(engine), 0.4f);
     EXPECT_FALSE(engine.runtimeRecreateRequired);
+}
+
+TEST(TimelineVoiceInstall, SingleSourcePacedAndBurstKeepInstallationAndFirstOutputBoundary) {
+    constexpr std::uint32_t frames = 256;
+    std::array<float, frames * 2u> firstOutput{};
+    std::uint32_t firstOutputDelay = 0;
+    for (const bool paced : {false, true}) {
+        for (const auto count : {1u, 64u, 128u, 256u}) {
+            SCOPED_TRACE(::testing::Message() << "paced=" << paced << " count=" << count);
+            EngineSession session(TimelineInstallConfig(256, frames, kRate));
+            ASSERT_EQ(VN_OK, session.InitResult());
+            auto& engine = *session.Engine();
+            const auto samples = MakeDC((count + 1u) * 8u * frames, 0.001f);
+            const auto pcm = MonoDesc(samples, kRate);
+            ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+            DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+            ASSERT_EQ(harken::WorldInstallStatus::Ok,
+                harken::InstallContainerWorldV1(engine, image.world).status);
+            VnEmitterHandle emitter = 0;
+            ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+            VnPostActionDesc post{};
+            post.structSize = sizeof(post);
+            post.actionId = kAction;
+            post.emitter = emitter;
+            const auto before = engine.mixer.BlocksRendered();
+            const auto checkBlock = [&](std::uint32_t playing) {
+                const auto tokens = PublishedSourceTokens(engine);
+                EXPECT_EQ(paced ? 1u : playing, tokens.size());
+                const auto completion = engine.mixer.BlocksRendered() + 1u;
+                const auto pump = [&] {
+                    EXPECT_EQ(VN_OK, Vn_Update());
+                    engine.nullBackend.Pump(1);
+                };
+                pump();
+                for (const auto token : tokens) {
+                    EXPECT_EQ(completion,
+                        engine.timelineArms.RowAt(token.slot)->armedCompletionSequence.load());
+                    EXPECT_EQ(SourceRegistry::Phase::Disposed,
+                        engine.originalSourceSubmissions.Find(token)->State());
+                }
+                std::uint32_t outputDelay = UINT32_MAX;
+                for (std::uint32_t step = 0; step < 7u; ++step) {
+                    const auto* block = engine.nullBackend.LastBlock();
+                    const bool audible = std::any_of(block, block + frames * 2u,
+                        [](float sample) { return sample != 0.0f; });
+                    if (audible && outputDelay == UINT32_MAX) {
+                        outputDelay = step;
+                        if (!paced) {
+                            if (count == 1u) {
+                                firstOutputDelay = step;
+                                std::copy_n(block, firstOutput.size(), firstOutput.data());
+                            }
+                            EXPECT_EQ(firstOutputDelay, step);
+                            float error = 0.0f;
+                            for (std::uint32_t i = 0; i < firstOutput.size(); ++i)
+                                error = std::max(error, std::abs(count * firstOutput[i] - block[i]));
+                            EXPECT_LT(error, 0.000002f);
+                        }
+                    }
+                    if (step != 6u) pump();
+                }
+                EXPECT_NE(UINT32_MAX, outputDelay);
+                EXPECT_EQ(playing, engine.voices.ActiveCount());
+                const auto* block = engine.nullBackend.LastBlock();
+                float maximumError = 0.0f;
+                for (std::uint32_t i = 0; i < frames * engine.nullBackend.Channels(); ++i)
+                    maximumError = std::max(maximumError,
+                        std::abs(playing * 0.001f - block[i]));
+                EXPECT_LT(maximumError, 0.000002f);
+                EXPECT_FALSE(engine.runtimeRecreateRequired);
+            };
+            for (std::uint32_t i = 0; i < count; ++i) {
+                VnActionFiringHandle firing = 0;
+                ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing)) << "source=" << i;
+                ASSERT_NE(0u, firing);
+                if (paced) checkBlock(i + 1u);
+            }
+            if (!paced) {
+                EXPECT_EQ(before, engine.mixer.BlocksRendered());
+                checkBlock(count);
+            }
+        }
+    }
 }
 
 TEST(TimelineVoiceInstall, OriginalSourceBusyRealRowLeavesWholeQueueAndAcknowledgesFreshBlock) {
@@ -1956,6 +2039,7 @@ TEST(TimelineVoiceInstall, OriginalSourceCorruptWireCountUsesOriginalRangeAndKee
     ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
     DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
     ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_NO_FATAL_FAILURE(AttachVoiceVolume(0.0f));
     ASSERT_EQ(VN_OK, PostSourceAction());
     ASSERT_EQ(VN_OK, PostSourceAction());
     const auto tokens = PublishedSourceTokens(engine);

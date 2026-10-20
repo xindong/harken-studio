@@ -276,6 +276,7 @@ public:
     template <typename CanInstall, typename OnInstalled>
     void InstallPendingRevisions(CanInstall&& canInstall,
                                  OnInstalled&& onInstalled) {
+        if (m_definitionCount == 0) return;
         for (Definition& def : m_definitions) {
             if (!def.used || !def.pendingInstall || !canInstall(def)) {
                 continue;

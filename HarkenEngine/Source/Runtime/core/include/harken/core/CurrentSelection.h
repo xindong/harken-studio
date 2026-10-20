@@ -688,6 +688,7 @@ private:
     std::vector<SelectionChildV1> childScratch_;
     std::vector<std::uint32_t> remainingScratch_;
     std::uint32_t rowCount_ = 0;
+    std::uint32_t occupiedRowCount_ = 0;
     std::uint32_t pendingCount_ = 0;
     std::uint32_t quarantinedDeltaCount_ = 0;
     std::uint64_t tableLifetime_ = 0;

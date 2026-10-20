@@ -2141,6 +2141,25 @@ void Resampler::UpdateRatio(double newRatio, std::uint32_t rampFrames) {
     rampRemaining = rampFrames;
 }
 
+bool Resampler::BorrowLinearUnity(std::uint32_t frames,
+                                  ResamplerUnitySpan& out) noexcept {
+    if (frames == 0 ||
+        resampleProfile != ResampleProfile::LegacyCompatibility ||
+        quality != ResampleQuality::Linear || ratio != 1.0 ||
+        targetRatio != 1.0 || rampRemaining != 0 || readFraction != 0.0 ||
+        inputEnded || highRatioFilterActive || readIndex >= writeIndex ||
+        writeIndex - readIndex > kResampleFifoFrames ||
+        frames >= writeIndex - readIndex || frames > UINT64_MAX - readIndex) {
+        return false;
+    }
+    const std::uint32_t offset = readIndex & kRingMask;
+    out = {offset, std::min(frames, kResampleFifoFrames - offset), frames};
+    readIndex += frames;
+    readFraction = 0.0;
+    readPos = static_cast<double>(readIndex);
+    return true;
+}
+
 std::uint32_t Resampler::Produce(float* const* dst, std::uint32_t dstOffset,
                                  std::uint32_t maxFrames) {
     if (resampleProfile == ResampleProfile::Professional44148) {

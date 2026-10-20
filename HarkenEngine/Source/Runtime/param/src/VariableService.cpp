@@ -2268,6 +2268,7 @@ void VariableServiceV1::SyncBatchState(WriteRow& leader) noexcept {
         member->slice = leader.slice;
         member->frontierCaptured = leader.frontierCaptured;
         member->requiredCommandFrontier = leader.requiredCommandFrontier;
+        member->requiredInitialSourceFrontier = leader.requiredInitialSourceFrontier;
         member->committedFrame = leader.committedFrame;
         member->emitterDestroyedBeforeApplied = leader.emitterDestroyedBeforeApplied;
     }
@@ -3074,8 +3075,10 @@ bool VariableServiceV1::PrepareCurrentSlice(Engine& engine, WriteRow& row) {
         if (row.used && row.requestedFrame < timeline_.WindowEndFrame() &&
             CensusCanClaim(engine, row, count)) {
             // Freeze the first allocator wait; later commands cannot move this eligibility frontier.
-            if (!row.poolBlocked && !row.frontierCaptured)
+            if (!row.poolBlocked && !row.frontierCaptured) {
                 row.requiredCommandFrontier = engine.commands.PublishedHead();
+                row.requiredInitialSourceFrontier = engine.commands.InitialSourcePublishedHead();
+            }
             row.poolBlocked = true;
             row.poolBlockReason = availability;
         }
@@ -3159,8 +3162,10 @@ bool VariableServiceV1::PrepareCurrentSlice(Engine& engine, WriteRow& row) {
         ResetPreparedRow(engine, row);
         return false;
     }
-    if (!row.frontierCaptured || count != 0)
+    if (!row.frontierCaptured || count != 0) {
         row.requiredCommandFrontier = engine.commands.PublishedHead();
+        row.requiredInitialSourceFrontier = engine.commands.InitialSourcePublishedHead();
+    }
     row.frontierCaptured = true;
     row.state = RowState::WaitingFrontier;
     return true;
@@ -3337,7 +3342,6 @@ VariableServiceV1::WorkSpan VariableServiceV1::BuildWorkSet(Engine& engine,
     const auto nextOpenFrame = EarliestReadCutFrame(engine);
     const auto world = cut != nullptr ? cut->world : worldGeneration_;
     const auto transport = cut != nullptr ? cut->transport : transport_.Current();
-    std::fill(serviceCandidates_.begin(), serviceCandidates_.end(), 0);
     std::size_t count = 0;
     for (std::uint32_t i = 0; i < scheduledGroupCount_; ++i) {
         auto& row = history_[scheduledGroups_[i]];
@@ -3417,6 +3421,7 @@ void VariableServiceV1::RefreshOrdinaryDebt(Engine& engine) noexcept {
         if (!row.poolBlocked || !row.used || row.state != RowState::Pending ||
             row.world != worldGeneration_ || row.transport != transport_.Current() ||
             engine.commands.SettledFrontier() < row.requiredCommandFrontier ||
+            engine.commands.InitialSourceSettledFrontier() < row.requiredInitialSourceFrontier ||
             row.requestedFrame >= timeline_.WindowEndFrame() ||
             (earliest != nullptr && !ExpectedPrecedes(row, *earliest, nextOpenFrame))) continue;
         bool blocked = false;
@@ -3478,9 +3483,11 @@ void VariableServiceV1::ReleaseOrdinaryReservations(Engine& engine) noexcept {
         if (row.used && row.placementHeld && row.state != RowState::PageCommitted) {
             const bool bankOnlyFrontier = row.frontierCaptured && slices_.TargetCount(row.slice) == 0;
             const auto frontier = row.requiredCommandFrontier;
+            const auto initialSourceFrontier = row.requiredInitialSourceFrontier;
             ResetPreparedRow(engine, row);
             if (bankOnlyFrontier) {
                 row.requiredCommandFrontier = frontier;
+                row.requiredInitialSourceFrontier = initialSourceFrontier;
                 row.frontierCaptured = true;
                 SyncBatchState(row);
             }
@@ -3598,7 +3605,9 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
             if (row.state == RowState::Pending && !PrepareCurrentSlice(engine, row)) continue;
             if (!row.slice.Valid() || (row.state != RowState::WaitingFrontier &&
                 row.state != RowState::SlicePrepared)) continue;
-            if (!allowUnsettledFrontier && engine.commands.SettledFrontier() < row.requiredCommandFrontier) continue;
+            if (!allowUnsettledFrontier &&
+                (engine.commands.SettledFrontier() < row.requiredCommandFrontier ||
+                 engine.commands.InitialSourceSettledFrontier() < row.requiredInitialSourceFrontier)) continue;
             if (!RecensusMatches(engine, row)) { ResetPreparedRow(engine, row); continue; }
             (void)slices_.ClearPreparedSources(row.slice);
             if (!row.placementHeld) {
@@ -3675,7 +3684,8 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
             row.state = RowState::SlicePrepared;
             SyncBatchState(row);
         }
-        if (!slices_.SetPreparedCommandFrontier(row.slice, row.requiredCommandFrontier) ||
+        if (!slices_.SetPreparedCommandFrontier(row.slice, row.requiredCommandFrontier,
+                row.requiredInitialSourceFrontier) ||
             !PinHistorySlice(row) || (row.used && !slices_.Publish(row.slice))) {
             cancelPlacement();
             ResetPreparedRow(engine, row);
@@ -3724,7 +3734,8 @@ void VariableServiceV1::EndService(Engine& engine) {
     const std::uint64_t blocksRendered = engine.mixer.BlocksRendered();
     auto& rows = settledRows_;
     std::size_t rowCount = 0;
-    for (WriteRow& row : history_) {
+    for (std::uint32_t index = 0; index < scheduledGroupCount_; ++index) {
+        WriteRow& row = history_[scheduledGroups_[index]];
         if (!row.used || !row.batchLeader) {
             continue;
         }
@@ -4416,7 +4427,8 @@ bool VariableServiceV1::RecycleHistoryRow(std::uint32_t slot) noexcept {
 
 void VariableServiceV1::ReclaimHistoryRows() noexcept {
     slices_.ReclaimSettled(observedBlock_);
-    for (std::uint32_t slot = 0; slot < history_.size(); ++slot) {
+    for (std::uint32_t slot = 0;
+         occupiedRevisions_ != 0 && slot < history_.size(); ++slot) {
         auto& row = history_[slot];
         if (row.state != RowState::Terminal || row.observers != 0) continue;
         if (row.historySlicePin && slices_.SourceObserverCount(row.slice) > 1) continue;
@@ -5078,15 +5090,13 @@ bool VariableServiceV1::AcknowledgeNativeReadCut(const VariableNativeStartIdenti
 }
 
 void VariableServiceV1::AcknowledgeFinishedNativeReadCuts() noexcept {
-    for (std::uint32_t index = 0; index < readCutCapacity_; ++index) {
-        if (!readCuts_.IsConstructed(index)) continue;
-        auto& cut = readCuts_[index];
+    for (auto& cut : readCuts_) {
         const auto state = cut.state.load(std::memory_order_acquire);
         if (state != ReadCutState::Published) continue;
         const auto receipt = cut.nativeReceipt.load(std::memory_order_acquire);
         if (receipt != VariableNativeStartReceipt::Activated && receipt != VariableNativeStartReceipt::Failed)
             continue;
-        const VariableNativeStartIdentity identity{{index, cut.generation.load(std::memory_order_relaxed)},
+        const VariableNativeStartIdentity identity{{readCuts_.IndexOf(cut), cut.generation.load(std::memory_order_relaxed)},
             cut.nativeHandle, cut.world, cut.transport, cut.executeFrame, cut.sequence, cut.executionOrdinalExclusive};
         (void)AcknowledgeNativeReadCut(identity);
     }

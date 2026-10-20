@@ -934,6 +934,20 @@ public:
         }
     }
 
+    bool HasVoiceTap(VnVoiceHandle sourceIdentity) const {
+        const DynamicRoutePlanView plan = View(m_currentPlanIndex);
+        for (std::uint32_t i = 0; i < plan.rowCount; ++i) {
+            const auto& row = plan.rows[i];
+            if (row.sourceKind == VN_DYNAMIC_SOURCE_VOICE &&
+                row.sourceIndex == static_cast<std::uint32_t>(sourceIdentity) &&
+                row.sourceGeneration == static_cast<std::uint32_t>(sourceIdentity >> 32) &&
+                row.tapSlot < m_voiceTapCapacity) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     void PublishVoiceTap(VnVoiceHandle sourceIdentity,
                          float* const* channels,
                          std::uint32_t channelCount,

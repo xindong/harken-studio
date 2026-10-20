@@ -220,6 +220,15 @@ void ProcessFixedToneSection(
     std::uint32_t& tailFrames, BiquadParameterGlide& glide,
     float* const* channels, std::uint32_t channelCount, std::uint32_t offset,
     std::uint32_t frames) {
+    if (!enabled && !transition.transitioning && !glide.active) {
+        if (frames != 0) {
+            const auto count = std::min(channelCount, kMaxChannels);
+            for (std::uint32_t ch = 0; ch < count; ++ch) {
+                transition.lastInput[ch] = channels[ch][offset + frames - 1u];
+            }
+        }
+        return;
+    }
     if (transition.transitioning || !glide.active ||
         ctx.biquadTrig == nullptr) {
         BiquadProcessSmoothed(transition, enabled, coeffs, state, tailFrames,
@@ -407,6 +416,157 @@ bool NeedsBlendScratch(const VoiceRenderContext& ctx) noexcept {
     return false;
 }
 
+bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
+                     std::uint32_t offset, std::uint32_t& feedFrames) noexcept {
+#if HARKEN_STAGE_TAPS_ACTIVE
+    return false;
+#else
+    const auto& rs = ctx.resampler;
+    if (offset >= blockFrames || ctx.pcm.channelCount == 0 ||
+        ctx.pcm.channelCount > 2 || ctx.phase != SourcePhase::Active ||
+        ctx.streamRing != nullptr || ctx.streamParkActive ||
+        ctx.voiceSendActiveCount != 0 || ctx.dynamicVoiceTapActive ||
+        ctx.tailStarted || ctx.tailRemaining != 0 ||
+        ctx.tailRearmPosition != kNoTailRearmPosition ||
+        ctx.lpfEnabled || ctx.lpfTransition.transitioning || ctx.lpfGlide.active ||
+        ctx.hpfEnabled || ctx.hpfTransition.transitioning || ctx.hpfGlide.active ||
+        ctx.shelfEnabled || ctx.shelfTransition.transitioning || ctx.shelfGlide.active ||
+        ctx.highShelfEnabled || ctx.highShelfTransition.transitioning || ctx.highShelfGlide.active ||
+        ctx.fading || ctx.timelineStopPending || ctx.timelineFallbackStopActive ||
+        ctx.authoredRootStopApplied || ctx.timelineEvents.eventCount != 0 ||
+        ctx.timelineEnvelopes[0].active || ctx.timelineEnvelopes[1].active ||
+        ctx.variableWeightActive || ctx.variableWeightControlCount != 0 ||
+        ctx.gain.remainingFrames != 0 || ctx.outputGain.remainingFrames != 0 ||
+        ctx.spatialMatrixDirty || !ctx.spatialMatrix.Settled() ||
+        rs.resampleProfile != ResampleProfile::LegacyCompatibility ||
+        rs.quality != ResampleQuality::Linear || rs.ratio != 1.0 ||
+        rs.targetRatio != 1.0 || rs.rampRemaining != 0 || rs.readFraction != 0.0 ||
+        rs.inputEnded || rs.highRatioFilterActive || rs.readIndex > rs.writeIndex ||
+        rs.writeIndex - rs.readIndex > kResampleFifoFrames) {
+        return false;
+    }
+    for (std::uint32_t slot = 0; slot < ctx.fxSlotCount; ++slot) {
+        if (ctx.fxSlots[slot].process != nullptr) return false;
+    }
+    const std::uint64_t blockStart = ctx.timelineEvents.quantumIndex * blockFrames;
+    if (blockFrames > UINT64_MAX - blockStart ||
+        ctx.authoredSourceDeadlineFrame <= blockStart + blockFrames ||
+        ctx.authoredRootStopFrame < blockStart + blockFrames) return false;
+
+    const std::uint64_t frames = blockFrames - offset;
+    const std::uint64_t available = rs.writeIndex - rs.readIndex;
+    const std::uint64_t needed = frames + 1 > available ? frames + 1 - available : 0;
+    const std::uint64_t extra =
+        ((needed + kResampleChunkFrames - 1) / kResampleChunkFrames) * kResampleChunkFrames;
+    const std::uint64_t limit = ctx.loopInfinite || ctx.loopPassesRemaining > 1
+        ? ctx.loopEndFrame : ctx.pcm.frames;
+    // Every feed stays a complete chunk, matching the interleaved source pass.
+    if (frames > UINT64_MAX - rs.readIndex || extra > rs.FreeFrames() ||
+        extra > UINT64_MAX - rs.writeIndex || ctx.srcCursor >= limit ||
+        extra >= limit - ctx.srcCursor) return false;
+    feedFrames = static_cast<std::uint32_t>(extra);
+    return true;
+#endif
+}
+
+void CopyPlainPcm(const VoiceRenderContext& ctx, float* const* planes,
+                  std::uint32_t offset) {
+    const auto span = ctx.cascade.borrowed;
+    for (std::uint32_t ch = 0; ch < ctx.pcm.channelCount; ++ch) {
+        if (planes[ch] == nullptr) break;
+        std::memcpy(planes[ch] + offset, ctx.resampler.ring[ch] + span.ringOffset,
+                    span.firstFrames * sizeof(float));
+        std::memcpy(planes[ch] + offset + span.firstFrames, ctx.resampler.ring[ch],
+                    (span.frames - span.firstFrames) * sizeof(float));
+    }
+}
+
+bool RunPlainPcm(VoiceRenderContext& ctx, std::uint32_t frames) {
+    for (std::uint32_t fed = 0; fed < ctx.cascade.plainPcmFeedFrames;
+         fed += kResampleChunkFrames) {
+        if (!FeedResampler(ctx)) return false;
+    }
+    if (!ctx.resampler.BorrowLinearUnity(frames, ctx.cascade.borrowed)) return false;
+    ctx.monitorPreChainFrames = 0;
+    if (ctx.monitorPreChain[0] != nullptr && harken::monitor::AudioLiveArmed()) {
+        CopyPlainPcm(ctx, ctx.monitorPreChain, 0);
+        ctx.monitorPreChainFrames = frames;
+    }
+    const auto last = (ctx.cascade.borrowed.ringOffset + frames - 1) &
+                      (kResampleFifoFrames - 1);
+    for (std::uint32_t ch = 0; ch < ctx.pcm.channelCount; ++ch) {
+        const float input = ctx.resampler.ring[ch][last];
+        ctx.lpfTransition.lastInput[ch] = input;
+        ctx.hpfTransition.lastInput[ch] = input;
+        ctx.shelfTransition.lastInput[ch] = input;
+        ctx.highShelfTransition.lastInput[ch] = input;
+    }
+    ctx.logicalSourceOutputFramesThisBlock = frames;
+    ctx.cascade.produced = frames;
+    ctx.phase = SourcePhase::Active;
+    ctx.lastResult = {frames, SourcePhase::Active};
+    return true;
+}
+
+void MaterializePlainPcm(VoiceRenderContext& ctx) {
+    const auto span = ctx.cascade.borrowed;
+    CopyPlainPcm(ctx, ctx.cascade.scratch, ctx.cascade.offset);
+    output_gain_detail::MulConstant(ctx.cascade.scratch, ctx.pcm.channelCount,
+                                    ctx.cascade.offset, span.frames, ctx.gain.target);
+    ctx.cascade.borrowed = {};
+}
+
+void MixPlainPcm(const float* src, float* dst, std::uint32_t frames,
+                 float voiceGain, float scale) noexcept {
+    if (voiceGain == 1.0f) {
+        output_gain_detail::MixScaled(src, dst, frames, scale);
+        return;
+    }
+    std::uint32_t i = 0;
+#if defined(HARKEN_OUTPUT_GAIN_SSE2)
+    const __m128 gain = _mm_set1_ps(voiceGain);
+    const __m128 output = _mm_set1_ps(scale);
+    for (; i + 4 <= frames; i += 4) {
+        const __m128 value = _mm_mul_ps(_mm_loadu_ps(src + i), gain);
+        _mm_storeu_ps(dst + i, _mm_add_ps(_mm_loadu_ps(dst + i),
+                                       _mm_mul_ps(value, output)));
+    }
+#endif
+    for (; i < frames; ++i) {
+        const float value = src[i] * voiceGain;
+        dst[i] += value * scale;
+    }
+}
+
+void FoldPlainPcm(VoiceRenderContext& ctx, float* const* busPlanes,
+                  std::uint32_t mixChannels) {
+    const auto span = ctx.cascade.borrowed;
+    float* const* bus = busPlanes + ctx.busIndex * mixChannels;
+    for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
+        const auto mix = [&](std::uint32_t source, float matrixGain) {
+            if (source >= ctx.pcm.channelCount) return;
+            const float scale = matrixGain * ctx.outputGain.target;
+            float* dst = bus[ch] + ctx.cascade.offset;
+            MixPlainPcm(ctx.resampler.ring[source] + span.ringOffset, dst,
+                         span.firstFrames, ctx.gain.target, scale);
+            MixPlainPcm(ctx.resampler.ring[source], dst + span.firstFrames,
+                         span.frames - span.firstFrames, ctx.gain.target, scale);
+        };
+        const float a = ctx.spatialMatrix.target.gain[0][ch];
+        const float b = ctx.spatialMatrix.target.gain[1][ch];
+        if (b == 0.0f) {
+            if (a != 0.0f) mix(0, a);
+        } else if (a == 0.0f) {
+            mix(1, b);
+        } else {
+            mix(0, a);
+            mix(1, b);
+        }
+    }
+    ctx.spatialMatrixHasRendered = true;
+    ctx.outputGain.Advance(span.frames);
+}
+
 void ApplyPendingTailRearm(VoiceRenderContext& ctx,
                            const TailFrameAggregate& aggregate) {
     if (ctx.tailRearmPosition == kNoTailRearmPosition) {
@@ -452,6 +612,8 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
                          std::uint32_t blockFrames, std::uint32_t mixChannels) {
     const std::uint32_t channels = ctx.pcm.channelCount;
     ctx.cascade.runnable = false;
+    ctx.cascade.borrowed = {};
+    ctx.cascade.plainPcmCandidate = false;
     ctx.logicalSourceOutputFramesThisBlock = 0;
     ctx.stagedSourceTerminal = SourceTerminalKind::None;
     ctx.stagedSourceTerminalOffset = 0;
@@ -624,9 +786,12 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     // the next block retries identically (sample-accurate start included);
     // only the observational taps update, to report the silence. The
     // arena's overflow counter records the event.
+    ctx.cascade.plainPcmCandidate =
+        PreparePlainPcm(ctx, blockFrames, offset, ctx.cascade.plainPcmFeedFrames);
     float* scratch[kMaxChannels] = {};
     for (std::uint32_t ch = 0; ch < channels; ++ch) {
-        scratch[ch] = arena.AllocFloatsHigh(blockFrames);
+        scratch[ch] = ctx.cascade.plainPcmCandidate
+            ? arena.ReserveFloatsHigh(blockFrames) : arena.AllocFloatsHigh(blockFrames);
         if (scratch[ch] == nullptr) {
             // Like the taps, the starvation flag is a per-block
             // observation, not render state: a degrade-silence block saw
@@ -757,6 +922,12 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     }
     float** scratch = ctx.cascade.scratch;
     float** dry = ctx.cascade.dry;
+
+    if (ctx.cascade.plainPcmCandidate) {
+        if (RunPlainPcm(ctx, sourceTarget)) return;
+        for (std::uint32_t ch = 0; ch < channels; ++ch)
+            std::memset(scratch[ch], 0, blockFrames * sizeof(float));
+    }
 
     // --- source decode + resample (single forward pass) ---
     std::uint32_t produced = 0;
@@ -1249,7 +1420,9 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
     const std::uint32_t channels = ctx.pcm.channelCount;
     const std::uint32_t offset = ctx.cascade.offset;
     const std::uint32_t produced = ctx.cascade.produced;
-    if (produced > 0 && harken::monitor::AudioLiveArmed()) {
+    const bool monitorArmed = produced > 0 && harken::monitor::AudioLiveArmed();
+    if (monitorArmed && ctx.cascade.borrowed.frames != 0) MaterializePlainPcm(ctx);
+    if (monitorArmed) {
         const std::uint64_t voiceHandle = ctx.dynamicSourceIdentity;
         if (voiceHandle != 0) {
             const std::uint64_t voiceGeneration = static_cast<std::uint64_t>(
@@ -1267,6 +1440,10 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
                 ctx.cascade.scratch, produced, channels, offset, 0,
                 ctx.engineSampleRate, frameBegin);
         }
+    }
+    if (ctx.cascade.borrowed.frames != 0) {
+        FoldPlainPcm(ctx, busPlanes, mixChannels);
+        return;
     }
     float** scratch = ctx.cascade.scratch;
     (void)blockFrames; // scratch was sized in the pre-pass; nothing to reserve

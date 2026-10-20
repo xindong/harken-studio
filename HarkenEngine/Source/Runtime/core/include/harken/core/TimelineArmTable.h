@@ -189,6 +189,7 @@ public:
         std::atomic_flag reservation = ATOMIC_FLAG_INIT;
         std::atomic<std::uint64_t> tombstoneAudioSequence{0};
         std::atomic<std::uint64_t> armedCompletionSequence{0};
+        std::uint64_t sourcePublicationSequence = 0;
         std::atomic<std::uint64_t> startedBlockSequence{0};
         std::atomic<std::uint64_t> logicalCompletionSequence{0};
         TimelineArmReaderPin pendingControlSourceReader{};
@@ -304,7 +305,8 @@ public:
         SourceCommandRowProof* out, const void* originalSubmission = nullptr) noexcept;
     // Keep the row held until the actual physical installation is published.
     static void AcknowledgeSourceCommand(SourceCommandRowProof& proof,
-        std::uint64_t completionSequence) noexcept;
+        std::uint64_t completionSequence, std::uint64_t publicationSequence = 0) noexcept;
+    bool SourcePublicationAccepted(TimelineArmToken token) const noexcept;
 
     // Issued by the real fixed Source factory; the original owner retains its row.
     class PublicationAfterInstallation {
@@ -750,6 +752,9 @@ public:
     std::size_t ScopeStorageBytes() const noexcept { return groupMemberScopes_.RequestedBytes(); }
     std::size_t ScopeCommittedBytes() const noexcept { return groupMemberScopes_.CommittedBytes(); }
     std::size_t ScopeReservedBytes() const noexcept { return groupMemberScopes_.ReservedBytes(); }
+    bool AttachRowStoragePreparation(void* context,
+        bool (*prepare)(void*, std::uint32_t) noexcept) noexcept;
+    bool PrepareBacking(std::uint32_t count, StableStoragePreparation* out) noexcept;
     bool SetFreeGenerationForTests(std::uint32_t slot, std::uint32_t generation) noexcept;
     void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
         rows_.SetCommitPageLimitForTests(pages);
@@ -1212,6 +1217,11 @@ private:
     mutable std::uint64_t nextGroupMemberSerial_ = 0;
 
     mutable StableRowStorage<Row> rows_;
+    bool PrepareRowDependencies(std::uint32_t count) noexcept;
+    bool ConstructRowsThrough(std::uint32_t count) noexcept;
+    void* rowStorageContext_ = nullptr;
+    bool (*prepareRowStorage_)(void*, std::uint32_t) noexcept = nullptr;
+    std::uint64_t acceptedSourceTail_ = 0;
     std::uint32_t capacity_ = 0;
     std::uint64_t incarnation_ = 0;
     std::atomic<std::uint32_t> liveSourceCommandProofs_{0};

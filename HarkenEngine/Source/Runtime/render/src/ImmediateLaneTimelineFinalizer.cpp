@@ -307,8 +307,12 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
             ? state.frontier->VariableSourcesStatus(waitingEntries, state.eventCapacity,
                 &receipt.waitingEntryCount) : VariableReadCutStatus::Applied;
         bool waitingShape = valid;
+        bool publicationWaiting = false;
+        bool relativePublication = !grouped && !futureOnly;
         for (std::uint32_t i = 0; events != nullptr && i < bucket->eventCount; ++i) {
             if (!state.lane->IsEventAdmitted(slot, bucket, bucket->firstEvent + i)) continue;
+            relativePublication = relativePublication &&
+                events[i].timeDomain == ImmediateLaneTimeDomain::RelativeToAnchor;
             const auto& event = events[i].event;
             const auto* program = event.program.program;
             const auto* payload = program != nullptr && program->payloads != nullptr &&
@@ -336,8 +340,10 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                     sources = timing;
             }
             if (program->role != TimelineProgramRole::Voice || payload->kind != TimelineEventKind::Start) continue;
-            const auto status = voices_.TimelineVariableSourcesStatus(event.armToken.renderSlot,
-                event.armToken.renderGeneration);
+            bool waitForPublication = false;
+            const auto status = voices_.TimelineStartSourcesStatus(arms_,
+                event.armToken, &waitForPublication);
+            publicationWaiting = publicationWaiting || waitForPublication;
             if (status == VariableReadCutStatus::Failed) sources = status;
             else if (status == VariableReadCutStatus::Waiting) {
                 if (!recordWaiting(event.frontier.entry)) sources = VariableReadCutStatus::Failed;
@@ -351,6 +357,10 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 sources = VariableReadCutStatus::Failed;
             const auto effective = quantumStart + outputOffset;
             if (voice == nullptr || effective >= voice->authoredRootStopFrame) sources = VariableReadCutStatus::Failed;
+        }
+        if (publicationWaiting && !relativePublication) {
+            (void)state.lane->RejectCapturedBucket({slot, bucket->attemptGeneration}, bucket);
+            continue;
         }
         if (waitingShape && sources == VariableReadCutStatus::Waiting) {
             receipt.sourceWaiting = true;
@@ -521,8 +531,7 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 }
             }
             if (!control) {
-                const auto source = voices_.TimelineVariableSourcesStatus(event.armToken.renderSlot,
-                    event.armToken.renderGeneration);
+                const auto source = voices_.TimelineStartSourcesStatus(arms_, event.armToken);
                 if (source != VariableReadCutStatus::Applied) {
                     sourcesWaiting = source == VariableReadCutStatus::Waiting;
                     valid = false;

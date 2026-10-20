@@ -85,7 +85,10 @@ void BusTargetStore::RestoreVariableProjection() noexcept {
             const auto index = PubIndexOf(bus, t);
             auto& state = m_publish[index];
             const auto& saved = m_projection[index];
-            m_slots[IndexOf(bus, t, kSlotVariableIndex)] = saved.variable;
+            auto& variable = m_slots[IndexOf(bus, t, kSlotVariableIndex)];
+            m_variableSlotCount -= variable.active;
+            variable = saved.variable;
+            m_variableSlotCount += variable.active;
             state.pendingRampMs = saved.pendingRampMs;
             state.dirty = saved.dirty;
             state.pendingInput = saved.pendingInput;
@@ -121,6 +124,7 @@ void BusTargetStore::SetSlot(std::uint32_t busIndex, std::uint32_t targetId,
         return;
     }
     Slot& s = m_slots[IndexOf(busIndex, targetId, slot)];
+    if (!s.active && slot == kSlotVariableIndex) ++m_variableSlotCount;
     s.value = domainValue;
     s.active = true;
 }
@@ -130,7 +134,9 @@ void BusTargetStore::ClearSlot(std::uint32_t busIndex, std::uint32_t targetId,
     if (!InRange(busIndex, targetId, slot)) {
         return;
     }
-    m_slots[IndexOf(busIndex, targetId, slot)] = Slot{};
+    auto& current = m_slots[IndexOf(busIndex, targetId, slot)];
+    if (current.active && slot == kSlotVariableIndex) --m_variableSlotCount;
+    current = Slot{};
 }
 
 void BusTargetStore::BeginMeterProbeSweep() noexcept {
@@ -283,7 +289,7 @@ void BusTargetStore::ResetActiveRows(std::uint32_t busIndex) noexcept {
     }
     for (std::uint32_t t = 0; t < kBusTargetCount; ++t) {
         for (std::uint32_t slot = 0; slot < kSlotCountPerTarget; ++slot) {
-            m_slots[IndexOf(busIndex, t, slot)] = Slot{};
+            ClearSlot(busIndex, t, slot);
         }
         PublishState& state = m_publish[PubIndexOf(busIndex, t)];
         if (state.dirty || state.pendingInput) {

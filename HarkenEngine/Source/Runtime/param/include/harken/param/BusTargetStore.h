@@ -81,6 +81,7 @@ public:
                          std::uint32_t slot, float domainValue) const;
 
     std::uint32_t MaxBuses() const { return m_maxBuses; }
+    bool HasVariableContributions() const noexcept { return m_variableSlotCount != 0; }
 
     // --- publication bookkeeping (sections 9.2 / 10) ---
 
@@ -124,6 +125,10 @@ public:
     // value cleans quietly and publishes nothing.
     template <typename Fn>
     void FlushDirty(Fn&& fn) {
+        if (m_demandCount == 0) {
+            ++m_flushTick;
+            return;
+        }
         const std::size_t targetCount =
             static_cast<std::size_t>(m_maxBuses) * kBusTargetCount;
         std::size_t nextCursor = m_flushCursor;
@@ -382,6 +387,7 @@ private:
     std::vector<std::uint32_t> m_meterProbeDepartureRampMs;
     std::vector<std::uint8_t> m_meterProbeSeen;
     std::uint32_t m_demandCount = 0;
+    std::uint32_t m_variableSlotCount = 0;
     std::uint32_t m_pendingInputMarks = 0;
     // Starts above the PublishState default so a never-stamped target can
     // never alias the first tick (the voice-side m_flushTick precedent).

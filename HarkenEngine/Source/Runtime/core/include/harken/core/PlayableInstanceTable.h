@@ -282,6 +282,9 @@ public:
         PlayableInstanceHandle handle) const noexcept;
     bool TryFinishOriginalLifetimeDisposition(OriginalLifetimePin& originalBaseline) noexcept;
     bool HasRequestedOriginalLifetimeDisposition(const OriginalLifetimePin& original) const noexcept;
+    bool HasRequestedOriginalLifetimeDispositions() const noexcept {
+        return m_originalDispositionCount != 0;
+    }
     using OriginalLifetimeBaselineResolver = OriginalLifetimePin* (*)(
         void*, PlayableInstanceTable&, PlayableInstanceHandle) noexcept;
     using OriginalLifetimeDispositionFn = void (*)(
@@ -632,6 +635,7 @@ private:
     void ReturnOriginalLifetime(OriginalLifetimePin& original) noexcept;
     void ReturnOriginalLifetimeRetirementHold(OriginalLifetimeRetirementHold& original) noexcept;
     std::vector<Entry> m_entries;
+    std::uint32_t m_originalDispositionCount = 0;
     std::uint64_t m_nextOriginalLifetimeMarker = 1;
     bool m_originalLifetimeMarkerExhausted = false;
     void* m_originalLifetimeBaselineContext = nullptr;

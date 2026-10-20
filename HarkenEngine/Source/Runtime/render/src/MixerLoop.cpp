@@ -488,6 +488,7 @@ void MixerLoop::InitializeVariableSliceConsumptionStorage() {
     const auto capacity = m_variableSlices == nullptr ? 0u : m_variableSlices->Capacity();
     m_pendingSliceConsumptions.resize(capacity);
     m_pendingSliceOrder.resize(capacity);
+    m_pendingSliceCount = 0;
 }
 
 std::size_t MixerLoop::VariableSliceConsumptionStorageBytes() const noexcept {
@@ -521,13 +522,13 @@ void MixerLoop::ApplyStagedCurrentSlices(
         assert(!pending.active || pending.consumed.slice.generation == consumed.slice.generation ||
             m_variableSlices->State({pending.consumed.slice.slot, pending.consumed.slice.generation}) ==
                 VariableSliceState::Free);
+        if (!pending.active) {
+            assert(m_pendingSliceCount < m_pendingSliceOrder.size());
+            m_pendingSliceOrder[m_pendingSliceCount++] = consumed.slice.slot;
+        }
         pending = {true, consumed};
     }
-    std::size_t pendingCount = 0;
-    for (std::uint32_t i = 0; i < m_pendingSliceConsumptions.size(); ++i) {
-        if (m_pendingSliceConsumptions[i].active) m_pendingSliceOrder[pendingCount++] = i;
-    }
-    std::sort(m_pendingSliceOrder.begin(), m_pendingSliceOrder.begin() + pendingCount,
+    std::sort(m_pendingSliceOrder.begin(), m_pendingSliceOrder.begin() + m_pendingSliceCount,
         [&](std::uint32_t a, std::uint32_t b) {
             const auto& lhs = m_pendingSliceConsumptions[a].consumed;
             const auto& rhs = m_pendingSliceConsumptions[b].consumed;
@@ -536,7 +537,8 @@ void MixerLoop::ApplyStagedCurrentSlices(
                 return lhs.logicCommitSequence < rhs.logicCommitSequence;
             return lhs.executionOrdinal < rhs.executionOrdinal;
         });
-    for (std::size_t i = 0; i < pendingCount; ++i) {
+    std::size_t retainedCount = 0;
+    for (std::size_t i = 0; i < m_pendingSliceCount; ++i) {
         auto& pending = m_pendingSliceConsumptions[m_pendingSliceOrder[i]];
         const auto& consumed = pending.consumed;
         const VariableSliceRef ref{consumed.slice.slot, consumed.slice.generation};
@@ -585,11 +587,14 @@ void MixerLoop::ApplyStagedCurrentSlices(
                             target.toneBand)) return;
                     mixer->ApplyCommandRecord(target.command, 0);
                 }
-            }, m_commands.SettledFrontier());
+            }, m_commands.SettledFrontier(), m_commands.InitialSourceSettledFrontier());
         const auto state = m_variableSlices->State(ref);
         if (state != VariableSliceState::PageCommitted && state != VariableSliceState::AudioClaimed)
             pending.active = false;
+        else
+            m_pendingSliceOrder[retainedCount++] = m_pendingSliceOrder[i];
     }
+    m_pendingSliceCount = retainedCount;
     m_stagedCurrentSliceCount = 0;
 }
 
@@ -672,12 +677,13 @@ void MixerLoop::FinishControlHeaderAckAfterQuiescence() noexcept {
 }
 
 bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owed,
-    std::uint32_t& applied, std::uint32_t remaining) noexcept {
+    std::uint32_t& applied, std::uint32_t remaining,
+    const CommandQueue::InitialSourceEntry* initial) noexcept {
     using Registry = OriginalSourceSubmissionRegistry;
     auto& registry = *m_originalSources;
     auto* row = registry.pending_;
     if (row == nullptr) {
-        row = registry.BorrowFront();
+        row = initial != nullptr ? registry.BorrowInitialFront(*initial) : registry.BorrowFront();
         if (row == nullptr || blockIndex == UINT64_MAX || row->count_ > remaining ||
             row->count_ > owed) return false;
         // This is the actual frozen front range. Acquire before disposition,
@@ -687,8 +693,9 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
         bool intact = true;
         for (std::uint32_t i = 0; i < row->count_; ++i) {
             CommandRecord wire{};
-            if (!m_commands.PeekAt(i, wire) ||
-                std::memcmp(&wire, &row->body_[i], sizeof(wire)) != 0) intact = false;
+            if (initial != nullptr) wire = initial->facts[i];
+            else if (!m_commands.PeekAt(i, wire)) intact = false;
+            if (std::memcmp(&wire, &row->body_[i], sizeof(wire)) != 0) intact = false;
         }
         row->disposition_ = intact ? Registry::Disposition::Apply : Registry::Disposition::Invalid;
         if (intact && !m_voices.OriginalVoiceReleased(row->voice_)) {
@@ -779,10 +786,12 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
                     command.payload.clearVoiceEffect.slot)) return defer();
         } else if (applyMetadata) ApplyCommandRecord(command, blockIndex);
         access.Release();
-        CommandRecord discarded{};
-        const bool popped = m_commands.TryPop(discarded);
-        assert(popped);
-        if (!popped) return defer();
+        if (initial == nullptr) {
+            CommandRecord discarded{};
+            const bool popped = m_commands.TryPop(discarded);
+            assert(popped);
+            if (!popped) return defer();
+        }
         ++row->progress_;
         --owed;
         ++applied;
@@ -793,7 +802,8 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
         row->incomingDone_[i] = true;
     }
     if (row->disposition_ == Registry::Disposition::Apply) {
-        TimelineArmTable::AcknowledgeSourceCommand(row->rowProof_, row->completion_);
+        TimelineArmTable::AcknowledgeSourceCommand(row->rowProof_, row->completion_,
+            row->range_.PublicationSequence());
         VoicePool::FinishSourceCommandInstallation(row->installProof_);
         row->originalInstallationCompleted_.store(true, std::memory_order_release);
         if (row->groupInstallPublication_.Valid()) {
@@ -823,6 +833,11 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
         TimelineArmTable::TombstoneOriginalSourceCommand(row->rowProof_, blockIndex + 1u);
     }
     row->rowProof_.Release();
+    if (initial != nullptr) {
+        const bool popped = m_commands.PopInitialSource(row->range_);
+        assert(popped);
+        if (!popped) return defer();
+    }
     const bool complete = m_commands.CompleteOriginalRange(row->range_);
     assert(complete);
     (void)complete;
@@ -836,7 +851,36 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
 }
 
 std::uint32_t MixerLoop::DrainCommands(std::uint64_t blockIndex,
-                                       std::uint64_t publishedHead) {
+    const CommandQueue::BlockInputCut& cut) {
+    // Both transports share these counters for this entire block, including
+    // every raw prefix before an initial-installation barrier.
+    std::uint32_t rawApplied = 0;
+    std::uint32_t initialApplied = 0;
+    const auto initialBudget = static_cast<std::uint64_t>(m_voices.Capacity()) * 3u;
+    while (const auto* entry = m_commands.InitialSourceAtFront(cut.initialHead)) {
+        const auto rawLimit = std::min(cut.rawHead, entry->rawBefore);
+        (void)DrainRawCommands(blockIndex, rawLimit, rawApplied);
+        if (m_commands.ConsumedCount() != entry->rawBefore ||
+            m_pendingControlAck.owner != nullptr || m_originalSources == nullptr ||
+            (m_originalSources->pending_ != nullptr &&
+                m_originalSources->pending_->range_.Kind() != CommandQueue::OriginalRangeKind::InitialSource) ||
+            initialBudget - initialApplied < 3u) break;
+        std::uint64_t owed = 3;
+        if (!DrainOriginalSource(blockIndex, owed, initialApplied, 3, entry)) break;
+    }
+    // A waiting initial source is also a barrier for every raw record after it.
+    if (m_commands.InitialSourcesConsumed() == cut.initialHead)
+        (void)DrainRawCommands(blockIndex, cut.rawHead, rawApplied);
+    const auto owed = cut.rawHead - m_commands.ConsumedCount() +
+        (cut.initialHead - m_commands.InitialSourcesConsumed()) * 3u +
+        (m_pendingControlAck.owner != nullptr ? 1u : 0u) +
+        (m_originalSources != nullptr && m_originalSources->pending_ != nullptr &&
+            m_originalSources->pending_->range_.Kind() != CommandQueue::OriginalRangeKind::InitialSource ? 1u : 0u);
+    return static_cast<std::uint32_t>(std::min<std::uint64_t>(owed, UINT32_MAX));
+}
+
+std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
+    std::uint64_t publishedHead, std::uint32_t& applied) {
     CommandRecord command;
     std::uint64_t pendingBatchRevision = 0;
     std::uint32_t pendingBatchCommands = 0;
@@ -856,9 +900,10 @@ std::uint32_t MixerLoop::DrainCommands(std::uint64_t blockIndex,
         return static_cast<std::uint32_t>(total > 0xffffffffull ? 0xffffffffull : total);
     };
     if (!RetryPendingControlAck(blockIndex)) return deferredCount();
-    std::uint32_t applied = 0;
+    const auto remainingAtEntry = m_maxCommandsPerQuantum > applied ? m_maxCommandsPerQuantum - applied : 0;
     if (m_originalSources != nullptr && m_originalSources->pending_ != nullptr &&
-        !DrainOriginalSource(blockIndex, owed, applied, m_maxCommandsPerQuantum)) return deferredCount();
+        m_originalSources->pending_->range_.Kind() != CommandQueue::OriginalRangeKind::InitialSource &&
+        !DrainOriginalSource(blockIndex, owed, applied, remainingAtEntry)) return deferredCount();
     while (owed != 0) {
         const std::uint32_t remaining =
             m_maxCommandsPerQuantum > applied
@@ -1605,7 +1650,7 @@ void MixerLoop::DrainQueuedCommands(std::uint32_t quantumCount) {
         m_notifications.BeginQuantum();
         m_voices.BeginAudioBlock(m_blocksRendered.load(std::memory_order_relaxed));
         (void)DrainCommands(m_blocksRendered.load(std::memory_order_relaxed),
-                            m_commands.PublishedHead());
+                            m_commands.CaptureBlockInputCut());
         // Serialized drain returns its real readers without an audio fence.
         m_voices.EndAudioBlock();
     }
@@ -1653,8 +1698,9 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
     // Fix the producer's position before draining: anything pushed from here on
     // is this block's business no longer, so the pass cannot be extended by a
     // producer that keeps writing while it runs.
-    const std::uint64_t publishedHead = m_commands.PublishedHead();
-    m_commandsDeferred = DrainCommands(blockIndex, publishedHead);
+    const auto inputCut = m_commands.CaptureBlockInputCut();
+    if (m_timelineArms != nullptr) m_timelineArms->acceptedSourceTail_ = inputCut.acceptedTail;
+    m_commandsDeferred = DrainCommands(blockIndex, inputCut);
     if (m_commandsDeferred > m_commandsDeferredHighWater) {
         m_commandsDeferredHighWater = m_commandsDeferred;
     }

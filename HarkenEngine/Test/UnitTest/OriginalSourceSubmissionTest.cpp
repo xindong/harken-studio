@@ -81,7 +81,9 @@ void StartIndependent(harken::Engine& engine, SourceBody& body,
 void PublishSourceBody(harken::Engine& engine, SourceBody& body,
     bool withEffect, bool crossTargetEffect,
     Registry::OriginalSourceLifetimePin* original = nullptr,
-    bool finalSource = false) {
+    bool finalSource = false, bool initialSource = false,
+    harken::VoicePool::OriginalSourceBodyLifetimePin* originalBody = nullptr) {
+    ASSERT_FALSE(initialSource && withEffect);
     const auto pcm = engine.registry.Lookup(kSound);
     ASSERT_TRUE(pcm.Valid());
     ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0.0f, 1.0, 0, false, 0, 0, 0,
@@ -124,7 +126,7 @@ void PublishSourceBody(harken::Engine& engine, SourceBody& body,
         ASSERT_TRUE(engine.effectBank.ProvePreparedCommit(body.incoming, {}, &effectProofs[0]));
     }
     std::array<harken::CommandRecord, 3> commands{};
-    body.commandCount = 2u + effectCount;
+    body.commandCount = initialSource ? 3u : 2u + effectCount;
     auto& header = commands[0];
     header.opcode = harken::kOpcodePlay;
     header.payload.play.handle = body.source;
@@ -137,6 +139,23 @@ void PublishSourceBody(harken::Engine& engine, SourceBody& body,
     commands[1].opcode = harken::kOpcodeSetVoiceVolume;
     commands[1].payload.setVoiceVolume.handle = body.independent;
     commands[1].payload.setVoiceVolume.volumeDb = -6.0205999f;
+    if (initialSource) {
+        commands[1] = {};
+        commands[1].opcode = harken::kOpcodeSetVoicePan;
+        auto& pan = commands[1].payload.setVoicePan;
+        pan.handle = body.source;
+        pan.pan = 0.25f;
+        pan.pan2d = 0.25f;
+        const auto gains = harken::ResolvePanGains(engine.config.mixChannelLayout, pan.pan);
+        pan.gain0 = gains.gain0;
+        pan.gain1 = gains.gain1;
+        pan.channel0 = gains.channel0;
+        pan.channel1 = gains.channel1;
+        commands[2].opcode = harken::kOpcodeSetVoiceSpatialScalar;
+        commands[2].payload.setVoiceSpatialScalar.handle = body.source;
+        commands[2].payload.setVoiceSpatialScalar.kind = harken::kSpatialScalarKindWidth;
+        commands[2].payload.setVoiceSpatialScalar.value = 0.4f;
+    }
     if (withEffect) {
         commands[2].opcode = harken::kOpcodeSetVoiceEffect;
         auto& payload = commands[2].payload.setVoiceEffect;
@@ -148,17 +167,18 @@ void PublishSourceBody(harken::Engine& engine, SourceBody& body,
     }
     if (finalSource) {
         ASSERT_TRUE(engine.originalSourceSubmissions.CapturePreparedFinalSource(header,
-            armProof, voiceProof, std::span(effectProofs.data(), effectCount), original));
+            armProof, voiceProof, std::span(effectProofs.data(), effectCount), original, originalBody));
         EXPECT_FALSE(engine.originalSourceSubmissions.CapturePreparedFinalSource(header,
             armProof, voiceProof, std::span(effectProofs.data(), effectCount)));
         EXPECT_FALSE(engine.originalSourceSubmissions.CapturePreparedSource(header,
             armProof, voiceProof, std::span(effectProofs.data(), effectCount)));
     } else {
         ASSERT_TRUE(engine.originalSourceSubmissions.CapturePreparedSource(header,
-            armProof, voiceProof, std::span(effectProofs.data(), effectCount), original));
+            armProof, voiceProof, std::span(effectProofs.data(), effectCount), original, originalBody));
     }
     harken::CommandQueue::BatchReservation reservation{};
-    ASSERT_TRUE(engine.commands.ReserveBatch(body.commandCount, &reservation));
+    ASSERT_TRUE(initialSource ? engine.commands.ReserveInitialSource(&reservation) :
+        engine.commands.ReserveBatch(body.commandCount, &reservation));
     harken::CommandQueue::PreparedBatchProof batch;
     ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, commands.data(), body.commandCount, &batch));
     ASSERT_TRUE(engine.originalSourceSubmissions.BindPreparedChild(batch, 0, body.commandCount));
@@ -204,7 +224,8 @@ void RecycleExactRetirement(harken::Engine& engine, const SourceBody& body) {
     EXPECT_FALSE(engine.effectBank.RetireQueue().TryPop(retired));
 }
 
-void RetireSource(harken::Engine& engine, const SourceBody& body, bool cancelled) {
+void RetireSource(harken::Engine& engine, const SourceBody& body, bool cancelled,
+    std::uint32_t expectedFree = UINT32_MAX) {
     std::uint64_t stopBlock = 0;
     if (!cancelled) {
         ASSERT_TRUE(engine.timelineArms.RequestCancel(body.arm));
@@ -236,7 +257,8 @@ void RetireSource(harken::Engine& engine, const SourceBody& body, bool cancelled
     ASSERT_GT(engine.mixer.BlocksRendered(), terminal.tombstoneAudioSequence);
     ASSERT_TRUE(engine.timelineArms.Reclaim(body.arm, engine.mixer.BlocksRendered()));
     EXPECT_FALSE(engine.timelineArms.Observe(body.arm, &terminal));
-    EXPECT_EQ(body.armFreeBefore, engine.timelineArms.FreeCount());
+    EXPECT_EQ(expectedFree == UINT32_MAX ? body.armFreeBefore : expectedFree,
+        engine.timelineArms.FreeCount());
 }
 
 void RetireIndependent(harken::Engine& engine, const SourceBody& body) {
@@ -253,6 +275,94 @@ void RetireIndependent(harken::Engine& engine, const SourceBody& body) {
     EXPECT_EQ(0u, engine.voices.ActiveCount());
     EXPECT_EQ(0u, engine.registry.Lookup(kSound).useCount->load());
 }
+}
+
+TEST(OriginalSourceSubmission, InitialEntryReuseKeepsActualBodyReaderAndInstallationAlive) {
+    auto config = SourceBodyConfig();
+    config.commandQueueDepth = 1;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const std::vector<float> samples(kRate, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+    EXPECT_EQ(0u, engine.commands.InitialSourceCommittedBytes());
+    SourceBody first, second;
+    Registry::OriginalSourceLifetimePin source;
+    harken::VoicePool::OriginalSourceBodyLifetimePin body;
+    ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, first, false, false, &source, false, true, &body));
+    const auto cut = engine.commands.CaptureBlockInputCut();
+    ASSERT_NE(nullptr, engine.commands.InitialSourceAtFront(cut.initialHead));
+    EXPECT_EQ(1u, engine.commands.InitialSourceAtFront(cut.initialHead)->range->Count());
+    EXPECT_EQ(3u, engine.commands.InitialSourceAtFront(cut.initialHead)->range->FactCount());
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(Registry::Phase::Disposed, engine.originalSourceSubmissions.Find(first.arm)->State());
+    EXPECT_EQ(1u, engine.timelineArms.RowAt(first.arm.slot)->armedCompletionSequence.load());
+    EXPECT_EQ(0.0f, CurrentPeak(engine));
+    EXPECT_EQ(1u, engine.commands.InitialSourcesConsumed());
+    EXPECT_TRUE(engine.voices.IsOriginalSourceBodyLifetimePinFor(body, first.arm, first.source));
+    ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, second, false, false, nullptr, false, true));
+    ASSERT_NO_FATAL_FAILURE(CheckCompletedDisposition(engine, second, false, 1.0f));
+    EXPECT_EQ(2u, engine.commands.InitialSourcesConsumed());
+    EXPECT_EQ(0u, engine.commands.ConsumedCount());
+    EXPECT_TRUE(engine.voices.IsOriginalSourceBodyLifetimePinFor(body, first.arm, first.source));
+    body.Release();
+    source.Release();
+    ASSERT_NO_FATAL_FAILURE(RetireSource(engine, first, false, first.armFreeBefore - 1u));
+    ASSERT_NO_FATAL_FAILURE(RetireSource(engine, second, false, first.armFreeBefore));
+}
+
+TEST(OriginalSourceSubmission, InitialBarriersShareRawBudgetAndPreserveFollowingSetter) {
+    harkentest::EngineSession session(SourceBodyConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    engine.mixer.SetMaxCommandsPerQuantumForTest(2);
+    const std::vector<float> samples(kRate, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+    SourceBody first, second;
+    ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, first, false, false, nullptr, false, true));
+    const auto setter = [&](float volumeDb) {
+        harken::CommandRecord record{};
+        record.opcode = harken::kOpcodeSetVoiceVolume;
+        record.payload.setVoiceVolume.handle = first.source;
+        record.payload.setVoiceVolume.volumeDb = volumeDb;
+        return engine.commands.TryPush(record);
+    };
+    ASSERT_TRUE(setter(-6.0205999f));
+    ASSERT_TRUE(setter(-12.0411998f));
+    ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, second, false, false, nullptr, false, true));
+    ASSERT_TRUE(setter(-18.0617997f));
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(2u, engine.commands.InitialSourcesConsumed());
+    EXPECT_EQ(2u, engine.commands.ConsumedCount());
+    EXPECT_EQ(1u, engine.mixer.CommandsDeferredLastBlock());
+    ASSERT_NE(nullptr, engine.voices.Resolve(first.source));
+    EXPECT_NEAR(0.25f, engine.voices.Resolve(first.source)->gain.current, 0.00001f);
+    EXPECT_FALSE(engine.timelineArms.SourcePublicationAccepted(first.arm));
+    EXPECT_FALSE(engine.timelineArms.SourcePublicationAccepted(second.arm));
+    engine.AcceptSourceCommandPublications();
+    EXPECT_FALSE(engine.timelineArms.SourcePublicationAccepted(first.arm));
+    engine.nullBackend.Pump(1);
+    EXPECT_TRUE(engine.timelineArms.SourcePublicationAccepted(first.arm));
+    EXPECT_TRUE(engine.timelineArms.SourcePublicationAccepted(second.arm));
+    EXPECT_EQ(3u, engine.commands.ConsumedCount());
+    EXPECT_EQ(0u, engine.mixer.CommandsDeferredLastBlock());
+    EXPECT_NEAR(0.125f, engine.voices.Resolve(first.source)->gain.current, 0.00001f);
+    ASSERT_NO_FATAL_FAILURE(RetireSource(engine, first, false, first.armFreeBefore - 1u));
+    ASSERT_NO_FATAL_FAILURE(RetireSource(engine, second, false, first.armFreeBefore));
+    SourceBody reused;
+    ASSERT_NO_FATAL_FAILURE(PublishSourceBody(engine, reused, false, false));
+    ASSERT_NE(nullptr, engine.commands.OriginalRangeAtFront());
+    EXPECT_EQ(harken::CommandQueue::OriginalRangeKind::Source,
+        engine.commands.OriginalRangeAtFront()->Kind());
+    ASSERT_NO_FATAL_FAILURE(CheckCompletedDisposition(engine, reused, false, 1.0f));
+    EXPECT_FALSE(engine.timelineArms.SourcePublicationAccepted(reused.arm));
+    engine.AcceptSourceCommandPublications();
+    EXPECT_FALSE(engine.timelineArms.SourcePublicationAccepted(reused.arm));
+    engine.nullBackend.Pump(1);
+    EXPECT_TRUE(engine.timelineArms.SourcePublicationAccepted(reused.arm));
+    ASSERT_NO_FATAL_FAILURE(RetireSource(engine, reused, false));
 }
 
 TEST(OriginalSourceSubmission, ApplyPreservesLegalIndependentTargetSetterAndFreshPcm) {
@@ -4241,6 +4351,7 @@ struct HiddenBoundNativeFuture {
         }
         ASSERT_TRUE(engine.timelinePool.PublishImmediateLaneGroups(old.cohort));
         ASSERT_TRUE(engine.immediateActionLane.Publish(old.lane));
+        engine.AcceptSourceCommandPublications();
     }
     void ReconcileOriginalAudioEntries() {
         auto& engine = old.engine;
@@ -5364,6 +5475,7 @@ void PublishRegisteredVariableWorkerSource(harken::Engine& engine,
     engine.originalSourceSubmissions.PublishPreparedChild(header);
     (void)engine.commands.ConsumePreparedBatch(std::move(batch));
     episode.body.acceptedHead = engine.commands.PublishedHead();
+    engine.AcceptSourceCommandPublications();
     ASSERT_EQ(Registry::Phase::Published,
         engine.originalSourceSubmissions.Find(episode.body.arm)->State());
 }
@@ -6514,6 +6626,7 @@ void CheckAcceptedQueueSelectionKeepsOriginalClock(bool bindBeforeSelection, boo
         if (scheduledStop) harken::TimelineArmTable::ConsumePreparedCommit(std::move(stop.commit));
         engine.originalSourceSubmissions.PublishPreparedChild(newSource.commands[0]);
         (void)engine.commands.ConsumePreparedBatch(std::move(newSource.batch));
+        engine.AcceptSourceCommandPublications();
         ASSERT_EQ(head + (scheduledStop ? 2u : 1u), engine.commands.PublishedHead());
         engine.nullBackend.Pump(1);
         harken::TimelineArmObservation fresh{};
@@ -7586,7 +7699,7 @@ void PrepareEngineOriginalLaneAttempt(harken::Engine& engine,
     ASSERT_TRUE(attempt.gate.Prepare(generation));
     attempt.root = root;
     attempt.generation = generation;
-    attempt.active = true;
+    engine.SetImmediateEntryAttemptActive(attempt, true);
 }
 void FinishEngineOriginalLaneAttempt(harken::Engine& engine,
     harken::EngineImmediateEntryAttempt& attempt) {
@@ -7597,7 +7710,7 @@ void FinishEngineOriginalLaneAttempt(harken::Engine& engine,
     attempt.lane = {};
     ASSERT_TRUE(attempt.gate.Abort(attempt.generation));
     ASSERT_TRUE(attempt.gate.Retire(attempt.generation));
-    attempt.active = false;
+    engine.SetImmediateEntryAttemptActive(attempt, false);
     attempt.root = 0;
 }
 } // namespace
@@ -7967,13 +8080,13 @@ struct NativeUnpublishedDispositionSource {
     harken::CommandQueue::BatchReservation reservation{};
     harken::CommandQueue::PreparedBatchDispositionReceipt cancellation;
     harken::CommandQueue::PreparedBatchProof batch;
-    std::array<harken::CommandRecord, 1> body{};
+    std::array<harken::CommandRecord, 3> body{};
 
     void Prepare(harken::Engine& engine, bool bindRange, bool commit = true,
         bool identifySource = true, bool expectCapture = true,
         harken::ParentAudioGroupRef parent = {}, bool captureBody = false,
         std::uint64_t startFrame = 0, bool pendingImmediate = false,
-        bool finalSource = false, Registry* receiver = nullptr) {
+        bool finalSource = false, Registry* receiver = nullptr, bool initialSource = false) {
         const auto pcm = engine.registry.Lookup(kSound);
         ASSERT_TRUE(pcm.Valid());
         ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0.0f, 1.0, 0, false, 0, 0, 0,
@@ -8011,8 +8124,16 @@ struct NativeUnpublishedDispositionSource {
         header.payload.play.sourceIdentity = identifySource ? render : 0;
         header.payload.play.batch.batchVersion = harken::kPlayLedBatchVersion;
         header.payload.play.batch.batchKind = harken::PlayLedBatchKind::TimelineArm;
-        header.payload.play.batch.batchCommandCount = 1;
+        const auto count = initialSource ? 3u : 1u;
+        header.payload.play.batch.batchCommandCount = count;
         header.payload.play.batch.armToken = (static_cast<std::uint64_t>(arm.generation) << 32) | arm.slot;
+        if (initialSource) {
+            body[1].opcode = harken::kOpcodeSetVoicePan;
+            body[1].payload.setVoicePan.handle = render;
+            body[2].opcode = harken::kOpcodeSetVoiceSpatialScalar;
+            body[2].payload.setVoiceSpatialScalar.handle = render;
+            body[2].payload.setVoiceSpatialScalar.kind = harken::kSpatialScalarKindWidth;
+        }
         auto& sources = receiver == nullptr ? engine.originalSourceSubmissions : *receiver;
         const bool captured = finalSource
             ? sources.CapturePreparedFinalSource(header, armProof,
@@ -8022,9 +8143,10 @@ struct NativeUnpublishedDispositionSource {
         if (!expectCapture) { ASSERT_FALSE(captured); return; }
         ASSERT_TRUE(captured);
         if (bindRange) {
-            ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
-            ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, body.data(), 1, &batch, &cancellation));
-            ASSERT_TRUE(engine.originalSourceSubmissions.BindPreparedChild(batch, 0, 1));
+            ASSERT_TRUE(initialSource ? engine.commands.ReserveInitialSource(&reservation)
+                : engine.commands.ReserveBatch(count, &reservation));
+            ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, body.data(), count, &batch, &cancellation));
+            ASSERT_TRUE(engine.originalSourceSubmissions.BindPreparedChild(batch, 0, count));
         }
         if (commit) {
             harken::VoicePool::ConsumePreparedCommit(std::move(voiceProof));
@@ -8184,10 +8306,12 @@ TEST(OriginalSourceSubmission, NativeUnpublishedDispositionAcceptsTrueNeverBound
 }
 
 TEST(OriginalSourceSubmission, UnpublishedStorageWaitsForBothLoansAcrossPreparationAndCommit) {
-    for (const bool bound : {false, true}) {
+    for (const auto transport : {0u, 1u, 2u}) {
+        const bool bound = transport != 0;
+        const bool initialSource = transport == 2;
         for (const bool committed : {false, true}) {
             for (const bool bodyFirst : {false, true}) {
-                SCOPED_TRACE(testing::Message() << "bound=" << bound << " committed=" << committed
+                SCOPED_TRACE(testing::Message() << "transport=" << transport << " committed=" << committed
                     << " bodyFirst=" << bodyFirst);
                 harkentest::EngineSession session(SourceBodyConfig());
                 ASSERT_EQ(VN_OK, session.InitResult());
@@ -8195,7 +8319,8 @@ TEST(OriginalSourceSubmission, UnpublishedStorageWaitsForBothLoansAcrossPreparat
                 ASSERT_NO_FATAL_FAILURE(RegisterNativeDispositionPcm());
                 const auto free = engine.timelineArms.FreeCount();
                 NativeUnpublishedDispositionSource source;
-                ASSERT_NO_FATAL_FAILURE(source.Prepare(engine, bound, committed, true, true, {}, true));
+                ASSERT_NO_FATAL_FAILURE(source.Prepare(engine, bound, committed, true, true, {}, true,
+                    0, false, false, nullptr, initialSource));
                 Registry::OriginalSourceLifetimePin sourceLoan;
                 harken::VoicePool::OriginalSourceBodyLifetimePin bodyLoan;
                 ASSERT_TRUE(source.original.Borrow(&sourceLoan));

@@ -14407,6 +14407,7 @@ TEST(PackComposition, PackActionDelayedVariableControlRetagPendingCleanupRetries
     }
     ASSERT_GT(engine->packComposition.RetagBackpressureCountForTests(), retagBefore);
     ASSERT_FALSE(engine->forceActionVariableControlDeferredCleanupPendingOnceForTest);
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
     ASSERT_EQ(ActionDeferredRecordState::Claimed,
               engine->actionDeferredRecords.State(fixture.token));
     ASSERT_EQ(VN_OK, engine->packComposition.ValidateLease(

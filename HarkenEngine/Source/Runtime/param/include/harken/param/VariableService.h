@@ -1099,6 +1099,7 @@ private:
         LogicCommitTicket ticket{};
         std::uint32_t executionOrdinal = 0;
         std::uint64_t requiredCommandFrontier = 0;
+        std::uint64_t requiredInitialSourceFrontier = 0;
         std::uint64_t committedFrame = 0;
         std::uint64_t bankOrdinal = 0;
         VariableSliceRef slice{};

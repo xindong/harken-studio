@@ -4121,6 +4121,8 @@ const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
     std::uint32_t slot, std::uint64_t quantum) noexcept {
     if (!valid_ || slot >= config_.attempts || quantum == UINT64_MAX) return nullptr;
     auto& attempt = attempts_[slot];
+    if (attempt.state.load(std::memory_order_acquire) == ImmediateLaneAttemptState::Free)
+        return nullptr;
     for (std::uint32_t scanned = 0; scanned < config_.eventsPerAttempt; ++scanned) {
         AttemptReadAccess access(attempt);
         if (!access) return nullptr;

@@ -147,7 +147,8 @@ public:
     const VariableSliceSource* NextSource(VariableSliceRef ref, std::uint32_t* cursor) const noexcept;
     bool ClearPreparedSources(VariableSliceRef ref) noexcept;
     bool SetPreparedEffectiveFrame(VariableSliceRef ref, std::uint64_t frame) noexcept;
-    bool SetPreparedCommandFrontier(VariableSliceRef ref, std::uint64_t frontier) noexcept;
+    bool SetPreparedCommandFrontier(VariableSliceRef ref, std::uint64_t frontier,
+                                   std::uint64_t initialSourceFrontier = 0) noexcept;
     std::uint64_t EffectiveFrame(VariableSliceRef ref) const noexcept;
     std::uint32_t SourceCount(VariableSliceRef ref) const noexcept;
     std::uint32_t SourceObserverCount(VariableSliceRef ref) const noexcept;
@@ -169,7 +170,8 @@ public:
                bool (*validate)(void*, const VariableSliceTarget&) noexcept,
                void (*apply)(void*,
                              const VariableSliceTarget&) noexcept,
-               std::uint64_t settledCommandFrontier = UINT64_MAX) noexcept;
+               std::uint64_t settledCommandFrontier = UINT64_MAX,
+               std::uint64_t settledInitialSourceFrontier = UINT64_MAX) noexcept;
     VariableSliceState State(VariableSliceRef ref) const noexcept;
     std::uint64_t AppliedBlockSequence(VariableSliceRef ref) const noexcept;
     std::uint32_t TargetCount(VariableSliceRef ref) const noexcept;
@@ -214,6 +216,7 @@ private:
         VariableSliceSource source{};
         std::uint64_t effectiveFrame = 0;
         std::uint64_t requiredCommandFrontier = 0;
+        std::uint64_t requiredInitialSourceFrontier = 0;
         std::uint32_t payload = UINT32_MAX;
         std::uint32_t sourceObservers = 0;
         bool logicAcknowledged = false;

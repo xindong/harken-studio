@@ -1910,6 +1910,18 @@ VariableReadCutStatus VoicePool::TimelineVariableSourcesStatus(std::uint32_t ren
         slot.timelineVariableReadUse, nativeHandle);
 }
 
+VariableReadCutStatus VoicePool::TimelineStartSourcesStatus(const TimelineArmTable& arms,
+    TimelineArmToken arm, bool* waitingPublication) const noexcept {
+    if (waitingPublication != nullptr) *waitingPublication = false;
+    const auto variables = TimelineVariableSourcesStatus(arm.renderSlot, arm.renderGeneration);
+    if (variables == VariableReadCutStatus::Failed) return variables;
+    if (!arms.SourcePublicationAccepted(arm)) {
+        if (waitingPublication != nullptr) *waitingPublication = true;
+        return VariableReadCutStatus::Waiting;
+    }
+    return variables;
+}
+
 bool VoicePool::PendingTimelineVariableReadMatchesArm(TimelineArmToken arm) const noexcept {
     if (!arm.Valid() || arm.renderSlot >= m_slots.size() ||
         m_timelineVariableStartAuthority.pendingArm == nullptr) return false;
@@ -4163,6 +4175,8 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                     : nullptr;
             }
             slot.render.monitorPreChainFrames = 0;
+            slot.render.dynamicVoiceTapActive =
+                m_dynamicRoutes.HasVoiceTap(slot.render.dynamicSourceIdentity);
             // Pass the full bus-major plane base: the cascade folds into the
             // voice's own bus and scatters its sends into their target buses
             // from the same base.
@@ -4228,6 +4242,8 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                 : nullptr;
         }
         slot.render.monitorPreChainFrames = 0;
+        slot.render.dynamicVoiceTapActive =
+            m_dynamicRoutes.HasVoiceTap(slot.render.dynamicSourceIdentity);
         PrepareVoiceCascade(slot.render, arena, blockFrames, m_mixChannels);
         m_jobSlots[jobCount] = i;
         m_jobGenerations[jobCount] =

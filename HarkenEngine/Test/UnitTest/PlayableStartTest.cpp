@@ -4452,6 +4452,7 @@ void ExpectContainerStartsThroughM2(
     const std::uint32_t freeInstances = engine->playableInstances.FreeCount();
     const std::uint64_t issued = engine->logicCommits.Current();
     const std::uint64_t commandHead = engine->commands.PublishedHead();
+    const std::uint64_t initialSourceHead = engine->commands.InitialSourcePublishedHead();
     const std::uint32_t activeVoices = engine->voices.ActiveCount();
     const std::uint32_t liveArms = engine->timelineArms.LiveCount();
     const std::uint32_t liveTransactions =
@@ -4467,7 +4468,8 @@ void ExpectContainerStartsThroughM2(
     EXPECT_EQ(started.ticket, issued + 1u);
     EXPECT_EQ(engine->selectionMemory.FreeDeltaCount(), freeDeltas - 1u);
     EXPECT_EQ(engine->playableInstances.FreeCount(), freeInstances - 2u);
-    EXPECT_EQ(engine->commands.PublishedHead(), commandHead + 3u);
+    EXPECT_EQ(engine->commands.PublishedHead(), commandHead);
+    EXPECT_EQ(engine->commands.InitialSourcePublishedHead(), initialSourceHead + 1u);
     EXPECT_EQ(engine->voices.ActiveCount(), activeVoices + 1u);
     EXPECT_EQ(engine->timelineArms.LiveCount(), liveArms + 1u);
     EXPECT_EQ(engine->timelinePool.LiveTransactionCount(),

@@ -157,6 +157,8 @@ void PlayableInstanceTable::ReturnOriginalLifetime(OriginalLifetimePin& original
     if (entry.originalLifetimeCount == 0) {
         entry.originalLifetimeMarker = 0;
         entry.originalLifetimeInput = {};
+        if (entry.originalDisposition != Entry::OriginalDisposition::None)
+            --m_originalDispositionCount;
         entry.originalDisposition = Entry::OriginalDisposition::None;
         entry.originalDispositionPrepared = {};
         entry.originalLifetimeEnding = false;
@@ -231,6 +233,8 @@ bool PlayableInstanceTable::RequestOriginalLifetimeDisposition(Entry& entry, Pla
         return true;
     if (entry.originalDisposition != Entry::OriginalDisposition::None && entry.originalDisposition != requested)
         return false;
+    if (entry.originalDisposition == Entry::OriginalDisposition::None)
+        ++m_originalDispositionCount;
     entry.originalDisposition = requested;
     if (prepared != nullptr) entry.originalDispositionPrepared = *prepared;
     return true;
@@ -304,6 +308,8 @@ bool PlayableInstanceTable::BeginOriginalLifetimeRetirement(OriginalLifetimePin&
     OriginalLifetimePin hold;
     if (!originalBaseline.Borrow(&hold)) return false;
     // No fallible operation follows: the actual row remains live and reserved.
+    if (entry.originalDisposition == Entry::OriginalDisposition::None)
+        ++m_originalDispositionCount;
     entry.originalDisposition = Entry::OriginalDisposition::Retired;
     entry.originalLifetimeRetirementHeld = true;
     out->loan_ = std::move(hold);
@@ -1269,6 +1275,8 @@ bool PlayableInstanceTable::RollbackCommitted(
     }
     // A successful native rollback supersedes a not-yet-ending Retired request.
     // Failed Source/child/unlink preflights leave that authentic request intact.
+    if (entry->originalDisposition != Entry::OriginalDisposition::None)
+        --m_originalDispositionCount;
     entry->originalDisposition = Entry::OriginalDisposition::None;
     entry->originalDispositionPrepared = {};
     entry->prepared = true;

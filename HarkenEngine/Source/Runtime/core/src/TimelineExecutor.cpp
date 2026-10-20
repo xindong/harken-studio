@@ -211,7 +211,8 @@ void TimelineExecutor::FoldEvent(
 
 void TimelineExecutor::CleanupCancelledArms(
     std::uint64_t audioSequence) noexcept {
-    for (std::uint32_t slot = 0; slot < armTable_->Capacity(); ++slot) {
+    const auto rowCount = armTable_->ConstructedRowCount();
+    for (std::uint32_t slot = 0; slot < rowCount; ++slot) {
         TimelineArmTable::Row* row = armTable_->RowAt(slot);
         if (row == nullptr ||
             row->state.load(std::memory_order_acquire) !=

@@ -123,10 +123,10 @@ public:
     }
     void DrainCommandsForTest() {
         (void)DrainCommands(m_blocksRendered.load(std::memory_order_relaxed),
-                            m_commands.PublishedHead());
+                            m_commands.CaptureBlockInputCut());
     }
     std::uint32_t DrainCommandsForTest(std::uint64_t blockIndex) {
-        return DrainCommands(blockIndex, m_commands.PublishedHead());
+        return DrainCommands(blockIndex, m_commands.CaptureBlockInputCut());
     }
     // Applies queued control, including opcode 15, without rendering.
     void DrainQueuedCommands(std::uint32_t quantumCount);
@@ -212,9 +212,12 @@ private:
     static constexpr std::uint64_t kJobDeadlineBlockPeriodPercent = 50;
 
     std::uint32_t DrainCommands(std::uint64_t blockIndex,
-                                std::uint64_t publishedHead);
+                                const CommandQueue::BlockInputCut& cut);
+    std::uint32_t DrainRawCommands(std::uint64_t blockIndex,
+        std::uint64_t publishedHead, std::uint32_t& applied);
     bool DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owed,
-        std::uint32_t& applied, std::uint32_t remaining) noexcept;
+        std::uint32_t& applied, std::uint32_t remaining,
+        const CommandQueue::InitialSourceEntry* initial = nullptr) noexcept;
     void ApplyCommandRecord(const CommandRecord& command,
                             std::uint64_t blockIndex) noexcept;
     struct CurrentSliceStagePlan {
@@ -320,6 +323,7 @@ private:
     };
     std::vector<PendingSliceConsumption> m_pendingSliceConsumptions;
     std::vector<std::uint32_t> m_pendingSliceOrder;
+    std::size_t m_pendingSliceCount = 0;
     std::size_t m_stagedCurrentSliceCount = 0;
     std::size_t m_currentSliceScratchLimitForTest = 0;
     CurrentSliceFrontierHookForTest m_currentSliceFrontierHookForTest = nullptr;

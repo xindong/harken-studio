@@ -49,6 +49,10 @@ public:
     // changing usage, high-water, or overflow state.
     float* AllocFloatsHigh(std::size_t count);
 
+    // Same reservation and accounting, without initializing the contents.
+    // Callers must fill or clear the span before exposing it to a reader.
+    float* ReserveFloatsHigh(std::size_t count);
+
     // Rewinds both bump pointers. Called once per rendered block. The
     // descending end rewinds to the retired floor rather than to zero, so a
     // quarantined span is never handed out again.

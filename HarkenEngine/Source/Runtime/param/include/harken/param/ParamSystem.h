@@ -497,6 +497,10 @@ public:
         for (VoiceState& state : m_voiceStates) {
             state.anyDirty = false;
         }
+        if (m_dirtyTargetCount == 0) {
+            ++m_flushTick;
+            return;
+        }
         const std::size_t targetCount =
             m_voiceStates.size() * kBuiltinTargetCount;
         std::size_t nextCursor = m_flushCursor;

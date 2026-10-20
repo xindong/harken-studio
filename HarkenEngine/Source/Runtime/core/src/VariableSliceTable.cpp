@@ -156,6 +156,7 @@ bool VariableSliceTable::Reserve(std::uint64_t world, std::uint64_t transport,
     row.source = {ref, world, transport, ticket, bankOrdinal};
     row.effectiveFrame = effectiveFrame;
     row.requiredCommandFrontier = 0;
+    row.requiredInitialSourceFrontier = 0;
     payload = {spanOffset, exactTargetCount, 0, 0};
     row.sourceObservers = 0;
     row.logicAcknowledged = false;
@@ -307,11 +308,12 @@ std::uint64_t VariableSliceTable::EffectiveFrame(VariableSliceRef ref) const noe
 }
 
 bool VariableSliceTable::SetPreparedCommandFrontier(VariableSliceRef ref,
-                                                    std::uint64_t frontier) noexcept {
+    std::uint64_t frontier, std::uint64_t initialSourceFrontier) noexcept {
     auto* row = Resolve(ref);
     if (row == nullptr || row->state.load(std::memory_order_acquire) != VariableSliceState::Prepared)
         return false;
     row->requiredCommandFrontier = frontier;
+    row->requiredInitialSourceFrontier = initialSourceFrontier;
     return true;
 }
 
@@ -397,13 +399,15 @@ bool VariableSliceTable::Apply(
     VariableSliceRef ref, std::uint64_t blockSequence, void* context,
     bool (*validate)(void*, const VariableSliceTarget&) noexcept,
     void (*apply)(void*, const VariableSliceTarget&) noexcept,
-    std::uint64_t settledCommandFrontier) noexcept {
+    std::uint64_t settledCommandFrontier,
+    std::uint64_t settledInitialSourceFrontier) noexcept {
     Row* row = Resolve(ref);
     if (row == nullptr || blockSequence == 0 || validate == nullptr || apply == nullptr) {
         return false;
     }
     if (row->state.load(std::memory_order_acquire) == VariableSliceState::PageCommitted) {
-        if (row->requiredCommandFrontier > settledCommandFrontier) return false;
+        if (row->requiredCommandFrontier > settledCommandFrontier ||
+            row->requiredInitialSourceFrontier > settledInitialSourceFrontier) return false;
         // A consumed page can precede a FIFO batch. Keep valid dependencies waiting.
         bool waiting = false;
         bool failed = false;

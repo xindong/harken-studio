@@ -281,6 +281,12 @@ static_assert(sizeof(ResamplerParkState) <= 32u * 1024u,
 
 // Per-voice state borrows prepared ring and optional profile storage from its
 // caller. All methods are audio-thread safe after reset.
+struct ResamplerUnitySpan {
+    std::uint32_t ringOffset = 0;
+    std::uint32_t firstFrames = 0;
+    std::uint32_t frames = 0;
+};
+
 struct Resampler {
     float* ring[kMaxChannels] = {};  // kResampleFifoFrames floats each
     const ResampleTables* tables = nullptr;
@@ -346,6 +352,11 @@ struct Resampler {
     // starved (push more input or silence) or the input is exhausted.
     std::uint32_t Produce(float* const* dst, std::uint32_t dstOffset,
                           std::uint32_t maxFrames);
+
+    // Consumes a complete live unity span without copying. Ring storage stays
+    // read-only until the borrower finishes; no refill/reset may intervene.
+    bool BorrowLinearUnity(std::uint32_t frames,
+                           ResamplerUnitySpan& out) noexcept;
 
     // Runtime rate change at a block boundary. The read position, ring
     // contents, and accumulated kernel history are preserved while the

@@ -582,8 +582,10 @@ public:
         bool hasStart = false;
         for (std::uint32_t i = 0; i < eventCount; ++i)
             hasStart = hasStart || events[i].payload->kind == TimelineEventKind::Start;
+        const bool publicationRefused = hasStart && !arms_.SourcePublicationAccepted(armToken);
         if (renderSlot < pendingVariableStarts_.size() &&
             (pendingVariableStarts_[renderSlot].count != 0 ||
+             publicationRefused ||
              (hasStart && voices_.HasTimelineVariableSourceRead(renderSlot, renderGeneration)))) {
             auto& pending = pendingVariableStarts_[renderSlot];
             if (pending.count != 0 && pending.arm.renderGeneration != renderGeneration) return false;
@@ -634,6 +636,14 @@ public:
                         (payload.reserved & kTimelineEventTransientStartArm) != 0);
             }
             pending.count += eventCount;
+            if (publicationRefused) {
+                // Scheduled pages retain their absolute time; a missed permit
+                // is a normal start failure, never a protocol error or re-anchor.
+                pending.failed = true;
+                RecordPlainResult(armToken, pending.failureDisposition);
+                (void)CancelBinding(renderSlot, renderGeneration);
+                return true;
+            }
             RecordPlainResult(armToken, kTimelineDispositionArmPending);
             return true;
         }
@@ -872,7 +882,7 @@ private:
             const auto source = voices_.TimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration);
             const auto status = source.Valid() && source.slot == pending.source.slot &&
                 source.generation == pending.source.generation
-                ? voices_.TimelineVariableSourcesStatus(arm.renderSlot, arm.renderGeneration)
+                ? voices_.TimelineStartSourcesStatus(arms_, arm)
                 : VariableReadCutStatus::Failed;
             const bool canStart = observed && (observation.state == ArmState::Published ||
                 observation.state == ArmState::AudioClaimed);

@@ -76,6 +76,7 @@ bool DeferredIntentPool::SetTokenGenerationForTests(
 
 std::uint64_t DeferredIntentPool::EarliestHeldDueBefore(
     std::uint64_t cutoffFrame) const {
+    if (m_count == 0) return UINT64_MAX;
     std::uint64_t earliest = UINT64_MAX;
     for (const Entry& entry : m_entries) {
         if (entry.state == DeferredIntentEntryState::Held &&
@@ -180,6 +181,7 @@ std::uint32_t DeferredIntentPool::ClaimDue(
     std::uint32_t claimed = 0;
     std::uint32_t dropped = 0;
     std::uint32_t due = 0;
+    const auto scanCapacity = m_count == 0 ? std::size_t{0} : m_entries.size();
     const auto precedes = [](const DeferredIntent& a,
                              const DeferredIntent& b) {
         if (a.dueFrame != b.dueFrame) {
@@ -193,7 +195,7 @@ std::uint32_t DeferredIntentPool::ClaimDue(
         }
         return a.payload < b.payload;
     };
-    for (std::uint32_t slot = 0; slot < m_entries.size(); ++slot) {
+    for (std::uint32_t slot = 0; slot < scanCapacity; ++slot) {
         Entry& entry = m_entries[slot];
         if (entry.state != DeferredIntentEntryState::Held ||
             entry.intent.dueFrame >= windowEndFrame) {
@@ -388,6 +390,7 @@ std::uint32_t DeferredIntentPool::Materialize(
 std::uint32_t DeferredIntentPool::DropStale(
     const PlayableInstanceTable& instances,
     std::vector<std::uint64_t>* droppedPayloads) {
+    if (m_count == 0) return 0;
     std::uint32_t dropped = 0;
     for (Entry& entry : m_entries) {
         if (entry.state != DeferredIntentEntryState::Held) {

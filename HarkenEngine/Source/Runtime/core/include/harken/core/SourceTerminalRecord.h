@@ -69,6 +69,7 @@ public:
     std::uint32_t Capacity() const noexcept {
         return static_cast<std::uint32_t>(records_.size());
     }
+    std::uint32_t OccupiedCount() const noexcept { return occupiedCount_; }
     SourceTerminalRecord* At(std::uint32_t slot) noexcept {
         return slot < records_.size() ? &records_[slot] : nullptr;
     }
@@ -105,12 +106,14 @@ public:
         record->retiring = false;
         record->retryAfterMissedEntry = false;
         record->occupied = true;
+        ++occupiedCount_;
         return {slot, record->generation};
     }
     bool Release(SourceTerminalToken token) noexcept {
         auto* record = Resolve(token);
         if (record == nullptr) return false;
         record->occupied = false;
+        --occupiedCount_;
         if (record->generation == UINT32_MAX) record->quarantined = true;
         else ++record->generation;
         return true;
@@ -126,6 +129,7 @@ public:
     }
 private:
     std::vector<SourceTerminalRecord> records_;
+    std::uint32_t occupiedCount_ = 0;
 };
 
 } // namespace harken

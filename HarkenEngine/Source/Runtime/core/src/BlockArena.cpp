@@ -71,11 +71,16 @@ float* BlockArena::AllocFloats(std::size_t count) {
 }
 
 float* BlockArena::AllocFloatsHigh(std::size_t count) {
-    void* p = Alloc(count * sizeof(float), alignof(float), true);
+    float* p = ReserveFloatsHigh(count);
     if (p != nullptr) {
         std::memset(p, 0, count * sizeof(float));
     }
     return static_cast<float*>(p);
+}
+
+float* BlockArena::ReserveFloatsHigh(std::size_t count) {
+    return static_cast<float*>(
+        Alloc(count * sizeof(float), alignof(float), true));
 }
 
 void BlockArena::Reset() {

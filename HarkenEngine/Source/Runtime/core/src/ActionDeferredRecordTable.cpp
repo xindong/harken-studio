@@ -310,6 +310,7 @@ FixedPlayClaimStatus ActionDeferredRecordTable::ClaimFixedPlayPair(
     if (pool == nullptr || outClaim == nullptr || blockFrames == 0) {
         return FixedPlayClaimStatus::ProtocolViolation;
     }
+    if (liveCount_ == 0) return FixedPlayClaimStatus::None;
     DeferredIntentPool::Entry* selected = nullptr;
     DeferredIntentToken selectedToken{};
     for (std::uint32_t slot = 0; slot < rows_.size(); ++slot) {

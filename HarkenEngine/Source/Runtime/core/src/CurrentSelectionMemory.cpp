@@ -114,6 +114,7 @@ bool SelectionMemoryTableV1::Reset(
     ++tableLifetime_;
     mutationEpoch_ = 1;
     rowCount_ = 0;
+    occupiedRowCount_ = 0;
     pendingCount_ = 0;
     quarantinedDeltaCount_ = 0;
     return true;
@@ -708,6 +709,7 @@ bool SelectionMemoryTableV1::DropScheduledThrough(
 }
 
 void SelectionMemoryTableV1::ApplyDue(std::uint64_t now) noexcept {
+    if (occupiedRowCount_ == 0) return;
     for (std::uint32_t rowIndex = 0; rowIndex < rows_.size(); ++rowIndex) {
         Row& row = rows_[rowIndex];
         if (!row.used) {
@@ -851,6 +853,7 @@ SelectionAppendResultV1 SelectionMemoryTableV1::AppendPlay(
     }
     if (newRow) {
         row.used = true;
+        ++occupiedRowCount_;
         row.committed = false;
         row.counted = true;
         row.key = preparedRow.key;
@@ -1055,6 +1058,7 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PreparePlayImpl(
 
     if (newRow) {
         row.used = true;
+        ++occupiedRowCount_;
         row.committed = false;
         row.counted = false;
     }
@@ -1598,7 +1602,10 @@ SelectionMemoryStatusV1 SelectionMemoryTableV1::PrepareReplacementPlay(
         delta.seedProbe = {};
         return status;
     }
-    row.used = true;
+    if (!row.used) {
+        row.used = true;
+        ++occupiedRowCount_;
+    }
     ++row.candidateCount;
     delta.replacementCandidate = true;
     delta.nativePendingPreparation = true;
@@ -2621,6 +2628,7 @@ void SelectionMemoryTableV1::ReleaseRow(std::uint32_t rowIndex) noexcept {
         if (deltas_[index].row == rowIndex && (deltas_[index].used || deltas_[index].prepared))
             RecycleDelta(index);
     row.used = false;
+    --occupiedRowCount_;
     row.committed = false;
     row.counted = false;
     row.key = {};
@@ -2957,7 +2965,7 @@ void SelectionMemoryTableV1::RetireWorld(WorldGeneration world) noexcept {
 void SelectionMemoryTableV1::RetireUnusedWorldsBefore(WorldGeneration current,
     bool (*hasReaders)(const void*, WorldGeneration) noexcept,
     const void* context) noexcept {
-    if (current == 0 || hasReaders == nullptr) return;
+    if (current == 0 || hasReaders == nullptr || occupiedRowCount_ == 0) return;
     for (std::uint32_t i = 0; i < rows_.size(); ++i) {
         const auto& row = rows_[i];
         if (!row.used || row.key.world >= current || row.pendingCount != 0 ||

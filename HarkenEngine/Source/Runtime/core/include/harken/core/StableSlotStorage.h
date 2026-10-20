@@ -3,6 +3,7 @@
 
 #include "harken/core/StableRowStorage.h"
 
+#include <bit>
 #include <iterator>
 
 namespace harken {
@@ -169,7 +170,20 @@ public:
         Iterator operator++(int) noexcept { auto old = *this; ++*this; return old; }
         bool operator==(const Iterator& other) const noexcept { return owner_ == other.owner_ && slot_ == other.slot_; }
     private:
-        void Skip() noexcept { while (slot_ < owner_->size() && !owner_->IsConstructed(slot_)) ++slot_; }
+        void Skip() noexcept {
+            while (slot_ < owner_->capacity_) {
+                const auto word = slot_ / 64u;
+                const auto bits = owner_->directory_[word].load(std::memory_order_acquire) &
+                    (UINT64_MAX << (slot_ % 64u));
+                if (bits != 0) {
+                    slot_ = word * 64u + static_cast<std::uint32_t>(std::countr_zero(bits));
+                    return;
+                }
+                if (word + 1u == owner_->directoryWords_) break;
+                slot_ = (word + 1u) * 64u;
+            }
+            slot_ = owner_->capacity_;
+        }
         Owner* owner_ = nullptr;
         std::uint32_t slot_ = 0;
     };
