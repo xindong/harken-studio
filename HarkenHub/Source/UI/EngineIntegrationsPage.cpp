@@ -628,7 +628,7 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     engineField->setSpacing(8);
     engineProjectEdit_ = new QLineEdit(engineFieldWidget);
     engineProjectEdit_->setPlaceholderText(
-        QCoreApplication::translate("HarkenHub", "Select a Unity or Unreal project"));
+        QCoreApplication::translate("HarkenHub", "Select a Unity project"));
     engineProjectEdit_->setObjectName(QStringLiteral("engineProjectPath"));
     engineBrowseButton_ = new QPushButton(
         QCoreApplication::translate("HarkenHub", "Select Game Project"), engineFieldWidget);
@@ -1301,24 +1301,6 @@ void EngineIntegrationsPage::browseEngineProject()
                        | QFileDialog::DontUseCustomDirectoryIcons);
     dialog->setFileMode(QFileDialog::Directory);
     connect(dialog, &QFileDialog::fileSelected, this, [this](const QString& path) {
-        const QDir directory(path);
-        const auto descriptors = directory.entryList({QStringLiteral("*.uproject")}, QDir::Files);
-        const bool unity = directory.exists(QStringLiteral("Assets"))
-            && directory.exists(QStringLiteral("Packages")) && directory.exists(QStringLiteral("ProjectSettings"));
-        if (descriptors.size() > 1 || (unity && !descriptors.isEmpty())) {
-            auto* descriptorDialog = new QFileDialog(this,
-                QCoreApplication::translate("HarkenHub", "Select Unreal Project"), path,
-                QCoreApplication::translate("HarkenHub", "Unreal Project (*.uproject)"));
-            descriptorDialog->setObjectName(QStringLiteral("unrealProjectSelection"));
-            descriptorDialog->setAttribute(Qt::WA_DeleteOnClose);
-            descriptorDialog->setOptions(QFileDialog::DontUseCustomDirectoryIcons);
-            descriptorDialog->setFileMode(QFileDialog::ExistingFile);
-            connect(descriptorDialog, &QFileDialog::fileSelected, this, [this](const QString& descriptor) {
-                acceptEngineTarget(descriptor, true);
-            });
-            descriptorDialog->open();
-            return;
-        }
         acceptEngineTarget(path, true);
     });
     dialog->open();
@@ -1491,7 +1473,7 @@ bool EngineIntegrationsPage::acceptEngineTarget(
     if (redirectOnConflict && !conflict.isEmpty()) {
         showConflict(
             conflict,
-            QCoreApplication::translate("HarkenHub", "This Unity or Unreal project already belongs to an engine integration."));
+            QCoreApplication::translate("HarkenHub", "This Unity project already belongs to an engine integration."));
         return false;
     }
     selectedEngineTargetId_ = selected.targetId;
@@ -1548,7 +1530,7 @@ bool EngineIntegrationsPage::resolveSelection(
     if (engineInput.isEmpty()) {
         QMessageBox::warning(
             this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
-            QCoreApplication::translate("HarkenHub", "Select a Unity or Unreal project before checking integration."));
+            QCoreApplication::translate("HarkenHub", "Select a Unity project before checking integration."));
         return false;
     }
     auto targets = targets_->list();
@@ -1563,7 +1545,7 @@ bool EngineIntegrationsPage::resolveSelection(
             if (!registerTarget) {
                 QMessageBox::warning(
                     this, QCoreApplication::translate("HarkenHub", "Edit Integration"),
-                    QCoreApplication::translate("HarkenHub", "Select a valid Unity project folder or Unreal .uproject file."));
+                    QCoreApplication::translate("HarkenHub", "Select a valid Unity project folder."));
             }
             return false;
         }
@@ -2180,7 +2162,7 @@ void EngineIntegrationsPage::runCheck()
                 QStringLiteral("verify"));
             return;
         }
-        setSummaryText(QCoreApplication::translate("HarkenHub", "Select a Unity or Unreal project before checking integration."));
+        setSummaryText(QCoreApplication::translate("HarkenHub", "Select a Unity project before checking integration."));
         return;
     }
     ProjectRecord project;

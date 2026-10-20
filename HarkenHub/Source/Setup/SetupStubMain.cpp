@@ -71,7 +71,7 @@ void launchInstalledHub()
         directory.pop_back();
     if (directory.empty())
         return;
-    const std::wstring hubPath = directory + L"\\HarkenHub.exe";
+    const std::wstring hubPath = directory + L"\\HarkenStudioHub.exe";
     std::wstring arguments = L"\"" + hubPath + L"\"";
 
     HWND shellWindow = GetShellWindow();
@@ -146,7 +146,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int)
     std::wstring stagingDir;
     bool created = false;
     for (unsigned attempt = 0; attempt < 16 && !created; ++attempt) {
-        stagingDir = std::wstring(tempDir) + L"HarkenHubSetup-" +
+        stagingDir = std::wstring(tempDir) + L"HarkenStudioHubSetup-" +
                      std::to_wstring(GetCurrentProcessId()) + L"-" +
                      std::to_wstring(GetTickCount64() + attempt);
         created = CreateDirectoryW(stagingDir.c_str(), &security) != FALSE;
@@ -164,7 +164,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int)
         return failStaging(L"The installer staging area could not be locked.",
                            quiet, stagingGuard, std::wstring(), stagingDir);
 
-    const std::wstring msiPath = stagingDir + L"\\HarkenHub.msi";
+    const std::wstring msiPath = stagingDir + L"\\HarkenStudioHub.msi";
     HANDLE file = CreateFileW(msiPath.c_str(), GENERIC_WRITE, 0, nullptr,
                               CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE)

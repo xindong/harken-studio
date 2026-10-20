@@ -1049,30 +1049,55 @@ TEST_F(EngineIntegrationsPageTest, CustomLocationPersistsAfterInstallAndSurvives
     EXPECT_TRUE(integrations.list().empty());
 }
 
-TEST_F(EngineIntegrationsPageTest, AmbiguousGameFolderOffersAnUnrealDescriptorPicker)
+TEST_F(EngineIntegrationsPageTest, AmbiguousGameFolderPreservesSelectionAndCanRecover)
 {
     for (const bool mixedEngines : {false, true}) {
-        const QString root = mixedEngines ? unityPath : dir.filePath("MultipleUnrealProjects");
+        const QString root = dir.filePath(mixedEngines ? "MixedProjects" : "MultipleUnrealProjects");
         const QString descriptor = QDir(root).filePath("Chosen.uproject");
         writeFile(descriptor, R"({"EngineAssociation":"5.6"})");
         if (!mixedEngines) writeFile(QDir(root).filePath("Other.uproject"), "{}");
-        page->beginEditForProject(harkenPath);
+        else {
+            for (const auto* folder : {"Assets", "Packages", "ProjectSettings"})
+                ASSERT_TRUE(QDir().mkpath(QDir(root).filePath(folder)));
+        }
+        page->beginEditForProject(harkenPath, executablePath, unityPath);
         ASSERT_TRUE(waitForVersion());
+        const auto targetCount = targets.list().size();
+        const QString selectedPath = page->findChild<QLineEdit*>("engineProjectPath")->text();
+        int warnings = 0;
+        QTimer dismiss;
+        QObject::connect(&dismiss, &QTimer::timeout, page.get(), [&]() {
+            auto* warning = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+            if (!warning) return;
+            ++warnings;
+            warning->accept();
+        });
+        dismiss.start(10);
         button("Select Game Project")->click();
         auto* folderPicker = page->findChild<QFileDialog*>();
         ASSERT_NE(folderPicker, nullptr);
         emit folderPicker->fileSelected(root);
         folderPicker->reject();
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-        auto* descriptorPicker = page->findChild<QFileDialog*>("unrealProjectSelection");
-        ASSERT_NE(descriptorPicker, nullptr);
-        EXPECT_EQ(descriptorPicker->fileMode(), QFileDialog::ExistingFile);
-        EXPECT_TRUE(descriptorPicker->nameFilters().join(' ').contains("*.uproject"));
-        emit descriptorPicker->fileSelected(descriptor);
-        descriptorPicker->reject();
+        EXPECT_EQ(warnings, 1);
+        EXPECT_EQ(targets.list().size(), targetCount);
+        EXPECT_EQ(page->findChild<QLineEdit*>("engineProjectPath")->text(), selectedPath);
+        ASSERT_TRUE(QFile::remove(descriptor));
+        if (!mixedEngines) {
+            ASSERT_TRUE(QFile::remove(QDir(root).filePath("Other.uproject")));
+            for (const auto* folder : {"Assets", "Packages", "ProjectSettings"})
+                ASSERT_TRUE(QDir().mkpath(QDir(root).filePath(folder)));
+        }
+        button("Select Game Project")->click();
+        folderPicker = page->findChild<QFileDialog*>();
+        ASSERT_NE(folderPicker, nullptr);
+        emit folderPicker->fileSelected(root);
+        folderPicker->reject();
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
         ASSERT_TRUE(waitForVersion());
-        EXPECT_EQ(page->findChild<QLineEdit*>("engineProjectPath")->text(), descriptor);
+        EXPECT_EQ(warnings, 1);
+        EXPECT_EQ(targets.list().size(), targetCount + 1);
+        EXPECT_EQ(page->findChild<QLineEdit*>("engineProjectPath")->text(), root);
     }
 }
 
@@ -1641,7 +1666,7 @@ TEST_F(EngineIntegrationsPageTest, InstallUpdateUnlinkAndRelinkKeepSdkIdentity)
     EXPECT_TRUE(integrations.list().empty());
     EXPECT_EQ(page->findChild<QStackedWidget*>()->currentIndex(), 1);
     EXPECT_FALSE(field("Select a .hsp project file")->isReadOnly());
-    EXPECT_FALSE(field("Select a Unity or Unreal project")->isReadOnly());
+    EXPECT_FALSE(field("Select a Unity project")->isReadOnly());
     EXPECT_EQ(field("Select a .hsp project file")->text(), harkenPath);
     EXPECT_FALSE(primary()->isVisible());
     EXPECT_TRUE(page->findChild<QPushButton*>(QStringLiteral("linkProjects"))->isEnabled());

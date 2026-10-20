@@ -7,6 +7,26 @@
   },
   "releases": [
     {
+      "version": "0.1.60",
+      "date": "2026-10-20",
+      "pullRequests": [],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "On Windows, new installations default to HarkenStudioHub directly under Program Files, and the main application and setup use the HarkenStudioHub name. Existing installation locations and older Studio launchers remain supported."
+        },
+        {
+          "category": "improved",
+          "text": "Windows desktop shortcuts and taskbar icons now display the H logo with crisp images for different icon sizes."
+        },
+        {
+          "category": "improved",
+          "text": "Project association prompts in Engine Integrations now refer only to Unity projects."
+        }
+      ]
+    },
+    {
       "version": "0.1.59",
       "date": "2026-10-19",
       "pullRequests": [49, 56, 59, 61],

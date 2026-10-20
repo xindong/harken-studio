@@ -16,7 +16,7 @@ TEST(HubLauncherTest, PrefersConfiguredInstallDirectory)
         QStringLiteral("HarkenHub.app/Contents/MacOS/HarkenHub"));
 #else
     const QString executable =
-        QDir(directory.path()).filePath(QStringLiteral("HarkenHub.exe"));
+        QDir(directory.path()).filePath(QStringLiteral("HarkenStudioHub.exe"));
 #endif
     ASSERT_TRUE(QDir().mkpath(QFileInfo(executable).absolutePath()));
     QFile file(executable);
@@ -27,6 +27,17 @@ TEST(HubLauncherTest, PrefersConfiguredInstallDirectory)
     qputenv("HARKEN_HUB_INSTALL_DIR", directory.path().toUtf8());
     EXPECT_EQ(VNX::HubLauncher::executablePath(),
               QFileInfo(executable).absoluteFilePath());
+#ifdef Q_OS_WIN
+    const QString legacy = directory.filePath(QStringLiteral("HarkenHub.exe"));
+    QFile legacyFile(legacy);
+    ASSERT_TRUE(legacyFile.open(QIODevice::WriteOnly));
+    legacyFile.close();
+    EXPECT_EQ(VNX::HubLauncher::executablePath(),
+              QFileInfo(executable).absoluteFilePath());
+    ASSERT_TRUE(file.remove());
+    EXPECT_EQ(VNX::HubLauncher::executablePath(),
+              QFileInfo(legacy).absoluteFilePath());
+#endif
     if (previous.isNull())
         qunsetenv("HARKEN_HUB_INSTALL_DIR");
     else
