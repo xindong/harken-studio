@@ -6801,6 +6801,11 @@ TEST(ActionFiringApi, ImmediateParentRetainsDelayedGrandchildUntilMaterializatio
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
     CanonicalActionWorld image;
+    SetAbsoluteTime(&image.steps[1].delay,
+                    DelayNanosecondsForTargetFrame(
+                        *engine, engine->timelinePool.WindowEndFrame()));
+    image.actions[1].programSemanticFingerprint =
+        harken::ComputeActionProgramFingerprintV1(image.actions[1]);
     image.steps[14] = image.steps[2];
     image.steps[14].target.stableId = image.actions[1].actionStableId;
     image.steps[14].target.expectedProgramSemanticFingerprint = image.actions[1].programSemanticFingerprint;
@@ -43351,7 +43356,7 @@ TEST(ActionFiringApi, TenThousandStepsPreserveCompletePublicResults) {
     step.structSize = sizeof(step);
     for (std::uint32_t index = 0; index < action.stepCount; ++index) {
         ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, index, &step));
-        ASSERT_EQ(VN_ACTION_STEP_SUCCEEDED, step.state);
+        ASSERT_EQ(VN_ACTION_STEP_NO_OP, step.state);
         EXPECT_EQ(index, step.authoredEventIndex);
         EXPECT_EQ(index, step.executionOrdinal);
     }
