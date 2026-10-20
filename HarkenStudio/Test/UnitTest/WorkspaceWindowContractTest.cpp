@@ -1,4 +1,5 @@
 #include "WorkspaceWindowTypes.h"
+#include "Core/WindowPlacement.h"
 #include "WorkspaceWindowManager.h"
 #include "PanelInstanceRegistry.h"
 #include "Widgets/SourceEditor/SourceEditorPanel.h"
@@ -166,4 +167,60 @@ TEST(EditorWorkspaceWindowContract, SourceEditorPrefixIsUnambiguousAmongPanelTyp
         EXPECT_FALSE(prefix.startsWith(SourceEditorPanel::dockObjectPrefix()));
         EXPECT_FALSE(SourceEditorPanel::dockObjectPrefix().startsWith(prefix));
     }
+}
+
+TEST(EditorWorkspaceWindowContract, UnreachableFramesReturnToARealScreenWorkArea)
+{
+    const QList<QRect> screens{{0, 0, 1920, 1040}, {-1920, 0, 1920, 1040}};
+    const QList<QRect> frames{
+        {1919, 100, 1200, 800},
+        {6000, 100, 1200, 800},
+        {-6000, 100, 1200, 800},
+        {300, -790, 1200, 800},
+        {300, 1039, 1200, 800}};
+    for (const QRect& frame : frames) {
+        const auto placed = visibleWindowPlacement(frame, screens, 0);
+        EXPECT_TRUE(placed.available.contains(placed.frame));
+        EXPECT_EQ(visibleWindowPlacement(placed.frame, screens, 0).frame, placed.frame);
+    }
+}
+
+TEST(EditorWorkspaceWindowContract, ValidSecondaryAndReachableSpanningPositionsArePreserved)
+{
+    const QList<QRect> screens{{0, 0, 1920, 1040}, {-1920, 0, 1920, 1040}};
+    const QList<QRect> frames{
+        {-1800, 80, 1200, 800},
+        {200, 80, 1200, 800},
+        {-600, 80, 1200, 800}};
+    for (const QRect& frame : frames)
+        EXPECT_EQ(visibleWindowPlacement(frame, screens, 0).frame, frame);
+}
+
+TEST(EditorWorkspaceWindowContract, GapsBetweenScaledScreensAreNotVisibleDesktop)
+{
+    const QList<QRect> screens{{0, 0, 1280, 680}, {1920, 0, 1536, 824}};
+    const auto placed = visibleWindowPlacement({1400, 50, 300, 500}, screens, 0);
+    EXPECT_EQ(placed.available, screens[0]);
+    EXPECT_TRUE(screens[0].contains(placed.frame));
+    const QRect secondary(2100, 80, 1100, 700);
+    EXPECT_EQ(visibleWindowPlacement(secondary, screens, 0).frame, secondary);
+}
+
+TEST(EditorWorkspaceWindowContract, OversizedFramesFitAvailableAreaAndRemainStable)
+{
+    const QList<QRect> screens{{0, 40, 1312, 734}};
+    const auto placed = visibleWindowPlacement({300, 100, 1800, 1100}, screens, 0);
+    EXPECT_EQ(placed.frame, screens[0]);
+    EXPECT_EQ(visibleWindowPlacement(placed.frame, screens, 0).frame, placed.frame);
+    EXPECT_EQ(boundedWindowPosition(QRect(placed.frame.topLeft(), QSize(1800, 1100)),
+                                   screens[0]), screens[0].topLeft());
+}
+
+TEST(EditorWorkspaceWindowContract, InvalidScreenEntriesHaveDeterministicFallback)
+{
+    const QRect frame(6000, 100, 1000, 700);
+    EXPECT_EQ(visibleWindowPlacement(frame, {}, -1).frame, frame);
+    const QList<QRect> screens{{}, {-1920, 0, 1920, 1040}, {0, 0, 1920, 1040}};
+    EXPECT_EQ(visibleWindowPlacement(frame, screens, 0).available, screens[1]);
+    EXPECT_EQ(visibleWindowPlacement(frame, screens, 2).available, screens[2]);
 }

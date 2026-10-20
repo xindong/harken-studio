@@ -34,6 +34,7 @@
 #include "Core/PanelInstanceRegistry.h"
 #include "Core/EditorShellRegistry.h"
 #include "Core/LayoutController.h"
+#include "Core/WindowPlacement.h"
 #include "Core/BuiltinLayouts.h"
 #include "Core/NamedLayoutStore.h"
 #include "Core/SelectionRouter.h"
@@ -3709,11 +3710,13 @@ void MainWindow::showEvent(QShowEvent* event)
     if (layoutController_->firstShowDone())
         return;
     layoutController_->setFirstShowDone(true);
+    ensureWindowVisible(this);
 
     dockManager_->setFocus(Qt::OtherFocusReason);
     layoutController_->relayoutDockSplitters(false);
     QTimer::singleShot(0, this, [this]() {
         layoutController_->relayoutDockSplitters(!layoutController_->currentLayoutFromCache());
+        ensureWindowVisible(this);
     });
 }
 

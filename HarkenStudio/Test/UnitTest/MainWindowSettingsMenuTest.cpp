@@ -16,6 +16,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScopeGuard>
+#include <QScreen>
 #include <QTemporaryDir>
 #include <QTimer>
 
@@ -142,4 +143,32 @@ TEST(MainWindowSettingsMenu, ExternalChangeChoiceKeepsOrDiscardsTheWholePendingP
     EXPECT_EQ(manager.findItemByGuid(actionGuid), nullptr);
     EXPECT_EQ(manager.currentProject()->findFolderByPath(QStringLiteral("Actions"), QStringLiteral("Pending")), nullptr);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
+}
+
+TEST(MainWindowPlacement, FirstShowRecoversAnUnreachableFrameAfterChromeSetup)
+{
+    TestSupport::ensureApp();
+    ActionManager::instance().clearAllForTesting();
+    auto window = std::make_unique<MainWindow>();
+    auto cleanup = qScopeGuard([&] {
+        QObject::disconnect(&UndoRedoManager::instance(), nullptr, window.get(), nullptr);
+        window.reset();
+        ActionManager::instance().setTransactionCallbacks({});
+        ActionManager::instance().clearAllForTesting();
+        UndoRedoManager::instance().clear();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QApplication::processEvents();
+    });
+    const QRect available = QGuiApplication::primaryScreen()->availableGeometry();
+    window->setWindowState(Qt::WindowNoState);
+    window->resize(1200, 800);
+    window->move(available.right(), available.top() + 50);
+    window->show();
+    QApplication::processEvents();
+    const QRect frame = window->frameGeometry();
+    EXPECT_TRUE(available.contains(frame.topLeft()));
+    EXPECT_GE(available.intersected(frame).width(), qMin(160, frame.width()));
+    window->showMaximized();
+    QApplication::processEvents();
+    EXPECT_TRUE(window->isMaximized());
 }
