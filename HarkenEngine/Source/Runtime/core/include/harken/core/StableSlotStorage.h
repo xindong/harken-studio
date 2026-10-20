@@ -121,6 +121,9 @@ public:
     }
 
     bool PreparedUseActive() const noexcept { return preparedUsers_ != 0; }
+    bool HasPreparedBacking() const noexcept {
+        return heldLow_ != 0 || heldHigh_ != 0 || preparedUsers_ != 0;
+    }
     bool IsConstructed(std::uint32_t slot) const noexcept {
         return slot < capacity_ && (directory_[slot / 64u].load(std::memory_order_acquire) &
             (std::uint64_t{1} << (slot % 64u))) != 0;
