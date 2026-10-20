@@ -28,6 +28,11 @@ auto StorageIdentity(const harken::StableSlotStorage<T>& rows) {
     return std::pair<const void*, std::size_t>{rows.BackingAddress(), rows.size()};
 }
 
+template <typename T>
+auto StorageIdentity(const harken::StableRowStorage<T>& rows) {
+    return std::pair<const void*, std::size_t>{rows.data(), rows.Capacity()};
+}
+
 inline auto CapturePlayableStorage(const harken::Engine& engine) {
     return std::array{
         StorageIdentity(engine.playableStarts),
@@ -73,7 +78,6 @@ inline auto CapturePlayableStorage(const harken::Engine& engine) {
         StorageIdentity(engine.variableControlRetargetSchedules),
         StorageIdentity(engine.variableControlRetargetArms),
         StorageIdentity(engine.variableControlRetargetMemberKinds),
-        StorageIdentity(engine.variableControlRetargetDesiredOrdinals),
         StorageIdentity(engine.queueProgramBanks)};
 }
 

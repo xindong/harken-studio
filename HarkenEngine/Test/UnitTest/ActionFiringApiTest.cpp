@@ -8977,7 +8977,9 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
             ASSERT_TRUE(oldBank->occupied);
             EXPECT_FALSE(engine->timelinePool.HasProgramReference({oldRuntime.generation, oldProgram}));
             if (inspectOwners) {
-                auto& owner = engine->playableServices.back();
+                auto* freeOwner = engine->PrepareFreePlayableService();
+                ASSERT_NE(nullptr, freeOwner);
+                auto& owner = *freeOwner;
                 ASSERT_EQ(harken::EnginePlayableStartPhase::Free, owner.phase);
                 ASSERT_EQ(nullptr, owner.queueCurrentProgramBank);
                 owner.queueCurrentProgramBank = oldBank;
@@ -21946,7 +21948,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
 #if defined(_DEBUG) && defined(_MSC_VER)
         ASSERT_TRUE(harken::memguard::IsArmed());
 #endif
-        EXPECT_EQ(playableCapacity, engine->playableServices.size());
+        EXPECT_EQ(playableCapacity, engine->playableServices.Capacity());
         EXPECT_EQ(playableCapacity, engine->playablePartitions.Capacity());
         EXPECT_EQ(modeCapacity, engine->queueInstances.Capacity());
         EXPECT_EQ(modeCapacity, engine->variableControlInstances.Capacity());
@@ -36062,6 +36064,58 @@ TEST(ActionFiringApi, InitialQueueTimingCandidateRetainsCompositeOffsetsAndPriva
     ASSERT_GE(leafCount, 2u);
     ASSERT_GE(groupCount, 1u);
     ASSERT_GE(holderCount, 1u);
+    std::vector<harken::TransactionRequest> requests;
+    std::vector<harken::ScheduledEventInput> scheduledEvents;
+    std::vector<harken::UnplacedBatchCohortMember> cohort;
+    const auto buildMaterializationInputs = [&] {
+        requests.assign(programCount, {});
+        scheduledEvents.assign(eventCount, {});
+        cohort.clear();
+        for (std::size_t index = 0; index < eventCount; ++index) {
+            const auto& staged = engine->initialQueueTimingEventsScratch[index];
+            const auto& source = *staged.frozen;
+            auto& scheduled = scheduledEvents[index];
+            scheduled.executeFrame = staged.newExecuteFrame;
+            scheduled.logicCommitSequence = source.logicCommitSequence;
+            scheduled.executionOrdinal = source.executionOrdinal;
+            scheduled.eventIndex = source.eventIndex;
+            scheduled.transactionOrdinal = source.transactionOrdinal;
+            scheduled.subeventPhase = source.subeventPhase;
+            scheduled.payload = source.payload;
+            scheduled.authoredFadeOutCandidate = source.authoredFadeOutCandidate;
+            scheduled.armToken = source.armToken;
+            scheduled.frontier = source.frontier;
+        }
+        for (std::size_t index = 0; index < programCount; ++index) {
+            const auto& staged = engine->initialQueueTimingProgramsScratch[index];
+            const auto& frozen = *staged.frozen;
+            auto& request = requests[index];
+            request.transactionId = frozen.transactionId;
+            request.transportEpoch = engine->timelinePool.Epoch();
+            request.ownerInstanceHandle = frozen.ownerInstance;
+            request.ownerInstanceScheduleEpoch = frozen.ownerInstanceScheduleEpoch;
+            request.occurrence = frozen.occurrence;
+            request.program = frozen.runtimeProgram;
+            request.armToken = frozen.armToken;
+            request.events = &scheduledEvents[staged.firstEvent];
+            request.eventCount = staged.eventCount;
+        }
+        for (std::size_t index = 0; index < memberCount; ++index) {
+            const auto& candidate = engine->initialQueueTimingMembersScratch[index];
+            if (!candidate.credit.Valid()) continue;
+            harken::UnplacedBatchCohortMember holder{};
+            holder.credit = &engine->playableServices[candidate.service.slot].queueUnplacedCredit;
+            holder.requests = candidate.transactionCount == 0 ? nullptr
+                : &requests[candidate.firstProgram];
+            holder.requestCount = candidate.transactionCount;
+            holder.groups = candidate.groupCount == 0 ? nullptr
+                : &engine->initialQueueTimingGroupsScratch[candidate.firstGroup];
+            holder.groupCount = candidate.groupCount;
+            cohort.push_back(holder);
+        }
+        EXPECT_EQ(holderCount, cohort.size());
+    };
+    buildMaterializationInputs();
     const auto composite = std::find_if(
         engine->initialQueueTimingMembersScratch.begin(),
         engine->initialQueueTimingMembersScratch.begin() + memberCount,
@@ -36104,10 +36158,8 @@ TEST(ActionFiringApi, InitialQueueTimingCandidateRetainsCompositeOffsetsAndPriva
     ASSERT_LT(stagedProgram.firstEvent, eventCount);
     const auto& staged = engine->initialQueueTimingEventsScratch[
         stagedProgram.firstEvent];
-    const auto& request = engine->initialQueueTimingRequestsScratch[
-        composite->firstProgram];
-    const auto& scheduled = engine->initialQueueTimingScheduledEventsScratch[
-        stagedProgram.firstEvent];
+    const auto& request = requests[composite->firstProgram];
+    const auto& scheduled = scheduledEvents[stagedProgram.firstEvent];
     ASSERT_EQ(stagedProgram.eventCount, request.eventCount);
     ASSERT_EQ(&scheduled, request.events);
     EXPECT_EQ(staged.newExecuteFrame, scheduled.executeFrame);
@@ -36160,16 +36212,14 @@ TEST(ActionFiringApi, InitialQueueTimingCandidateRetainsCompositeOffsetsAndPriva
     const auto& group = engine->initialQueueTimingGroupsScratch[
         composite->firstGroup];
     const auto holder = std::find_if(
-        engine->initialQueueTimingCohortScratch.begin(),
-        engine->initialQueueTimingCohortScratch.begin() + holderCount,
+        cohort.begin(), cohort.end(),
         [composite](const auto& candidate) {
             return candidate.credit != nullptr &&
                 candidate.credit->slot == composite->credit.slot &&
                 candidate.credit->generation ==
                     composite->credit.generation;
         });
-    ASSERT_NE(engine->initialQueueTimingCohortScratch.begin() +
-                  holderCount, holder);
+    ASSERT_NE(cohort.end(), holder);
     EXPECT_EQ(composite->transactionCount, holder->requestCount);
     EXPECT_EQ(composite->groupCount, holder->groupCount);
     EXPECT_EQ(&request, holder->requests);
@@ -36187,7 +36237,7 @@ TEST(ActionFiringApi, InitialQueueTimingCandidateRetainsCompositeOffsetsAndPriva
             harken::Plan03GroupReserveStatus::Committed;
         engine->timelinePool.SetPrivateMaterializationFaultStepForTest(2u);
         EXPECT_FALSE(engine->timelinePool.TryMaterializeUnplacedCohort(
-            engine->initialQueueTimingCohortScratch.data(), holderCount,
+            cohort.data(), cohort.size(),
             engine->timelineArms, engine->timelinePool.PublishCutoffFrame(),
             &failedPage, &transactionRefusal, &groupStatus));
         EXPECT_FALSE(failedPage.Valid());
@@ -36205,7 +36255,7 @@ TEST(ActionFiringApi, InitialQueueTimingCandidateRetainsCompositeOffsetsAndPriva
         harken::Plan03GroupReserveStatus groupStatus =
             harken::Plan03GroupReserveStatus::Committed;
         ASSERT_TRUE(engine->timelinePool.TryMaterializeUnplacedCohort(
-            engine->initialQueueTimingCohortScratch.data(), holderCount,
+            cohort.data(), cohort.size(),
             engine->timelineArms, engine->timelinePool.PublishCutoffFrame(),
             &privatePage, &transactionRefusal, &groupStatus));
         ASSERT_TRUE(privatePage.Valid());
@@ -36242,14 +36292,13 @@ TEST(ActionFiringApi, InitialQueueTimingCandidateRetainsCompositeOffsetsAndPriva
         *engine, firing, attempt->initialEntryFrame + 64u,
         &memberCount, &programCount, &eventCount, &leafCount,
         &groupCount, &holderCount));
+    buildMaterializationInputs();
     const auto groupOnly = std::find_if(
-        engine->initialQueueTimingCohortScratch.begin(),
-        engine->initialQueueTimingCohortScratch.begin() + holderCount,
+        cohort.begin(), cohort.end(),
         [&groupOnlyRow](const auto& candidate) {
             return candidate.credit == &groupOnlyRow.queueUnplacedCredit;
         });
-    ASSERT_NE(engine->initialQueueTimingCohortScratch.begin() +
-                  holderCount, groupOnly);
+    ASSERT_NE(cohort.end(), groupOnly);
     EXPECT_EQ(0u, groupOnly->requestCount);
     EXPECT_EQ(nullptr, groupOnly->requests);
     EXPECT_EQ(groupOnlyDemand.groupHeaders, groupOnly->groupCount);

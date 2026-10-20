@@ -10331,12 +10331,8 @@ harken::EnginePlayableServiceRow* PrepareNestedPlayableService(
     harken::PlayableInstanceHandle owner, std::uint64_t epoch,
     const harken::ContainerProgramViewV3& program) noexcept {
     if (!parent.InvocationValid()) return nullptr;
-    const auto free = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
-        [](const auto& service) {
-            return service.phase == harken::EnginePlayableStartPhase::Free &&
-                !service.actionPrepared && !service.partition.Valid() && !service.quarantined;
-        });
-    if (free == engine.playableServices.end() ||
+    auto* free = engine.PrepareFreePlayableService();
+    if (free == nullptr ||
         !PreparePlayableServiceRow(engine, *free, owner, epoch, &parent.Invocation(),
             nullptr, nullptr, &parent)) return nullptr;
     auto& service = *free;
@@ -12600,8 +12596,6 @@ PlayableStartResetResult ResetPlayableStartRow(
     clear(engine.variableControlRetargetArms, bases.continuous,
           engine.playableStorage.continuousStride);
     clear(engine.variableControlRetargetMemberKinds, bases.continuous,
-          engine.playableStorage.continuousStride);
-    clear(engine.variableControlRetargetDesiredOrdinals, bases.continuous,
           engine.playableStorage.continuousStride);
     clear(engine.playableSuccessorVoices, bases.endpoint,
           engine.playableStorage.endpointStride);
@@ -28372,10 +28366,8 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             : PrepareSharedVariableControlDecision(engine, *world, *selectedControl,
                 values.data(), decision.variableCount, &decision);
         if (evaluated != harken::GridEvaluationStatus::Ok) return ContainerLoopSuccessorStatus::Refused;
-        auto service = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
-            [](const auto& candidate) { return candidate.phase == harken::EnginePlayableStartPhase::Free &&
-                !candidate.actionPrepared && !candidate.partition.Valid() && !candidate.quarantined; });
-        if (service == engine.playableServices.end()) return ContainerLoopSuccessorStatus::Refused;
+        auto* service = engine.PrepareFreePlayableService();
+        if (service == nullptr) return ContainerLoopSuccessorStatus::Refused;
         scratch.directExecution = false;
         scratch.variableControlParentInstance = controlParentInstance;
         scratch.variableControlParentEpoch = controlParentEpoch;
@@ -33353,9 +33345,7 @@ engine.runtimeRecreateRequired = true;
     PublishPlayableServiceOwnership(engine, &row);
     for (std::uint32_t index = 0; index < priorMemberCount; ++index) {
         engine.variableControlRetargetMemberKinds[continuousBase + index] = 0;
-        engine.variableControlRetargetDesiredOrdinals[
-            continuousBase + row.variableControlRetargetDesiredMemberCount++] =
-            currentReferences[index].authoredChildOrdinal;
+        ++row.variableControlRetargetDesiredMemberCount;
     }
     row.scheduleLeafCount = row.variableControlDiscreteMemberCount +
         priorMemberCount;
@@ -42573,11 +42563,8 @@ bool MatchesPrivateCommittedInitialQueueTimingMember(harken::Engine& engine,
     *outGroupCount = 0;
     *outHolderCount = 0;
     auto& candidates = engine.initialQueueTimingMembersScratch;
-    auto& cohort = engine.initialQueueTimingCohortScratch;
     auto& programs = engine.initialQueueTimingProgramsScratch;
-    auto& requests = engine.initialQueueTimingRequestsScratch;
     auto& events = engine.initialQueueTimingEventsScratch;
-    auto& scheduledEvents = engine.initialQueueTimingScheduledEventsScratch;
     auto& leaves = engine.initialQueueTimingLeavesScratch;
     auto& groups = engine.initialQueueTimingGroupsScratch;
     for (auto& member : engine.playableServices) {
@@ -42785,8 +42772,8 @@ bool MatchesPrivateCommittedInitialQueueTimingMember(harken::Engine& engine,
                 bool prior = false;
                 for (std::size_t earlier = firstEvent;
                      earlier < index; ++earlier)
-                    if (scheduledEvents[earlier].executeFrame ==
-                        scheduledEvents[index].executeFrame) {
+                    if (events[earlier].newExecuteFrame ==
+                        events[index].newExecuteFrame) {
                         prior = true;
                         break;
                     }
@@ -42798,16 +42785,8 @@ bool MatchesPrivateCommittedInitialQueueTimingMember(harken::Engine& engine,
                 demand.events != eventCount ||
                 demand.frameBatches != distinctFrames ||
                 demand.groupHeaders != candidate.groupCount ||
-                *outHolderCount == cohort.size()) return false;
-            auto& holder = cohort[(*outHolderCount)++];
-            holder = {};
-            holder.credit = &member.queueUnplacedCredit;
-            holder.requests = candidate.transactionCount == 0 ? nullptr
-                : &requests[candidate.firstProgram];
-            holder.requestCount = candidate.transactionCount;
-            holder.groups = candidate.groupCount == 0 ? nullptr
-                : &groups[candidate.firstGroup];
-            holder.groupCount = candidate.groupCount;
+                *outHolderCount == candidates.size()) return false;
+            ++*outHolderCount;
             return true;
         };
         if (candidate.transactionCount == 0) {
@@ -42816,11 +42795,7 @@ bool MatchesPrivateCommittedInitialQueueTimingMember(harken::Engine& engine,
         }
         if (bank->eventCount > events.size() - *outEventCount ||
             candidate.transactionCount > programs.size() -
-                *outProgramCount ||
-            candidate.transactionCount > requests.size() -
-                *outProgramCount ||
-            bank->eventCount > scheduledEvents.size() -
-                *outEventCount) return false;
+                *outProgramCount) return false;
         for (std::uint32_t programIndex = 0;
              programIndex < candidate.transactionCount; ++programIndex) {
             const auto& frozen = bank->schedules[programIndex];
@@ -42888,19 +42863,6 @@ bool MatchesPrivateCommittedInitialQueueTimingMember(harken::Engine& engine,
                     event.newExecuteFrame < finalEntryFrame) return false;
                 event.relativeFrame =
                     event.newExecuteFrame - finalEntryFrame;
-                auto& scheduled = scheduledEvents[*outEventCount - 1u];
-                scheduled = {};
-                scheduled.executeFrame = event.newExecuteFrame;
-                scheduled.logicCommitSequence = source.logicCommitSequence;
-                scheduled.executionOrdinal = source.executionOrdinal;
-                scheduled.eventIndex = source.eventIndex;
-                scheduled.transactionOrdinal = source.transactionOrdinal;
-                scheduled.subeventPhase = source.subeventPhase;
-                scheduled.payload = source.payload;
-                scheduled.authoredFadeOutCandidate =
-                    source.authoredFadeOutCandidate;
-                scheduled.armToken = source.armToken;
-                scheduled.frontier = source.frontier;
                 if (eventIndex == 0 ||
                     event.newExecuteFrame < staged.newArmStartFrame)
                     staged.newArmStartFrame = event.newExecuteFrame;
@@ -42923,18 +42885,6 @@ bool MatchesPrivateCommittedInitialQueueTimingMember(harken::Engine& engine,
             staged.newArmDeadline =
                 (staged.newArmStartFrame / engine.config.blockFrames) *
                 engine.config.blockFrames;
-            auto& request = requests[*outProgramCount - 1u];
-            request = {};
-            request.transactionId = frozen.transactionId;
-            request.transportEpoch = engine.timelinePool.Epoch();
-            request.ownerInstanceHandle = frozen.ownerInstance;
-            request.ownerInstanceScheduleEpoch =
-                frozen.ownerInstanceScheduleEpoch;
-            request.occurrence = frozen.occurrence;
-            request.program = frozen.runtimeProgram;
-            request.armToken = frozen.armToken;
-            request.events = &scheduledEvents[staged.firstEvent];
-            request.eventCount = frozen.eventCount;
         }
         if (!appendHolder()) return false;
     }
@@ -52463,6 +52413,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             !immediateActionLane.PreparePrivateEntryBacking(static_cast<std::uint32_t>(nativeGroups),
                 &nativeCandidate->laneEntries) ||
             !immediateActionLane.PrepareAttemptBacking(&nativeCandidate->laneAttempts) ||
+            !PreparePlayableServiceBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(
+                nativeGroups, playableServices.Capacity())), &nativeCandidate->services) ||
             !PreparePendingVariableQueueOriginBacking(static_cast<std::uint32_t>(nativeGroups),
                 &nativeCandidate->queueOrigins) ||
             !effectBank.PrepareBacking(effectInstances, &nativeCandidate->effects)) return shortage();
@@ -68825,14 +68777,7 @@ PlayableStartResult PrepareDirectPlayableExecution(
         result.status = PlayableStartStatus::Backpressure;
         return result;
     }
-    EnginePlayableServiceRow* targetRow = nullptr;
-    for (EnginePlayableServiceRow& row : engine.playableServices) {
-        if (row.phase == EnginePlayableStartPhase::Free &&
-            !row.actionPrepared && !row.quarantined) {
-            targetRow = &row;
-            break;
-        }
-    }
+    EnginePlayableServiceRow* targetRow = engine.PrepareFreePlayableService();
     if (targetRow == nullptr || engine.playableInstances.FreeCount() == 0) {
         result.status = PlayableStartStatus::Capacity;
         return result;
@@ -77256,14 +77201,7 @@ bool PrepareImmediateActionSingleLeafPlay(
     assert(voiceBorrow.Status() == VN_OK);
     const auto& voice = voiceBorrow.Input();
 
-    harken::EnginePlayableServiceRow* row = nullptr;
-    for (auto& candidate : engine.playableServices) {
-        if (candidate.phase == harken::EnginePlayableStartPhase::Free &&
-            !candidate.actionPrepared && !candidate.quarantined) {
-            row = &candidate;
-            break;
-        }
-    }
+    auto* row = engine.PrepareFreePlayableService();
     if (row == nullptr ||
         !PreparePlayableExecution(
             engine, scratch, instanceKind, plan.playbackRequest, plan.emitterOrigin)) {
@@ -81784,14 +81722,7 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
         return false;
     }
 
-    harken::EnginePlayableServiceRow* row = nullptr;
-    for (auto& candidate : engine.playableServices) {
-        if (candidate.phase == harken::EnginePlayableStartPhase::Free &&
-            !candidate.actionPrepared && !candidate.quarantined) {
-            row = &candidate;
-            break;
-        }
-    }
+    auto* row = engine.PrepareFreePlayableService();
     if (row == nullptr ||
         (!reusePreparedTree &&
          !PreparePlayableExecution(
@@ -82667,14 +82598,7 @@ bool PrepareImmediateActionNestedVariableControlPlay(
     const harken::DiscreteGridSelection* selectedPtr =
         decision.discreteMatched ? &decision.discrete : nullptr;
 
-    harken::EnginePlayableServiceRow* row = nullptr;
-    for (auto& candidate : engine.playableServices) {
-        if (candidate.phase == harken::EnginePlayableStartPhase::Free &&
-            !candidate.actionPrepared && !candidate.quarantined) {
-            row = &candidate;
-            break;
-        }
-    }
+    auto* row = engine.PrepareFreePlayableService();
     if (row == nullptr) {
         return fail(VN_NO_VOICE);
     }
@@ -83105,14 +83029,8 @@ bool PrepareImmediateActionContainerPlay(
         if (currentSequence == UINT64_MAX) {
             return failVariableControl(VN_RUNTIME_RECREATE_REQUIRED);
         }
-        auto row = std::find_if(
-            engine.playableServices.begin(), engine.playableServices.end(),
-            [](const harken::EnginePlayableServiceRow& candidate) {
-                return candidate.phase ==
-                           harken::EnginePlayableStartPhase::Free &&
-                       !candidate.actionPrepared;
-            });
-        if (row == engine.playableServices.end()) {
+        auto* row = engine.PrepareFreePlayableService();
+        if (row == nullptr) {
             return failVariableControl(VN_NO_VOICE);
         }
         if (captureInitialVariables) {
@@ -84387,14 +84305,7 @@ bool PrepareImmediateActionCompositePlay(
         return false;
     }
 
-    harken::EnginePlayableServiceRow* row = nullptr;
-    for (auto& candidate : engine.playableServices) {
-        if (candidate.phase == harken::EnginePlayableStartPhase::Free &&
-            !candidate.actionPrepared && !candidate.quarantined) {
-            row = &candidate;
-            break;
-        }
-    }
+    auto* row = engine.PrepareFreePlayableService();
     const harken::PlayableKind instanceKind =
         rootKind == harken::PlayableKindV1::Track
             ? harken::PlayableKind::Track

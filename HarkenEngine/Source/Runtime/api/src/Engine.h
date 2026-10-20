@@ -4819,6 +4819,7 @@ struct Engine {
         ScheduledTransactionPool::ImmediateLaneBackingPreparation laneGroups;
         StableStoragePreparation laneEntries;
         StableStoragePreparation laneAttempts;
+        StableStoragePreparation services;
         StableSlotStorage<EngineActionPlayScratch>::Preparation actionPlays;
         StableSlotStorage<EngineQueueProgramBank>::Preparation queueBanks;
         VariableServiceV1::ReadCutBackingPreparation readCuts;
@@ -4826,7 +4827,7 @@ struct Engine {
         EffectPoolBank::BackingPreparation effects;
     };
     struct NativeRuntimeBackingUse {
-        std::array<StableStoragePreparedUse, 12> columns;
+        std::array<StableStoragePreparedUse, 13> columns;
         ArmGroupTable::PreparedUse groups;
         ScheduledTransactionPool::ImmediateLaneBackingUse laneGroups;
         StableSlotStorage<EngineActionPlayScratch>::PreparedUse actionPlays;
@@ -4836,7 +4837,7 @@ struct Engine {
         NativeRuntimeBackingUse(Engine& engine, NativeRuntimeBacking* backing) noexcept
             : columns{Use(backing, 0), Use(backing, 1), Use(backing, 2), Use(backing, 3),
                       Use(backing, 4), Use(backing, 5), Use(backing, 6), Use(backing, 7), Use(backing, 8),
-                      Use(backing, 9), Use(backing, 10), Use(backing, 11)},
+                      Use(backing, 9), Use(backing, 10), Use(backing, 11), Use(backing, 12)},
               groups(engine.armGroups, backing == nullptr ? nullptr : &backing->groups),
               laneGroups(engine.timelinePool, backing == nullptr ? nullptr : &backing->laneGroups),
               actionPlays(backing == nullptr ? StableSlotStorage<EngineActionPlayScratch>::PreparedUse{}
@@ -4855,6 +4856,7 @@ struct Engine {
             if (index == 8u) return backing->queueOrigins.Use();
             if (index == 9u) return backing->laneEntries.Use();
             if (index == 10u) return backing->laneAttempts.Use();
+            if (index == 12u) return backing->services.Use();
             return backing->arms.Use();
         }
     };
@@ -5591,7 +5593,6 @@ public:
           initialQueueConditionalTimingProofsScratch(resolved.maxPlayableInstances),
           initialQueueCurrentCompositeProofsScratch(resolved.maxPlayableInstances),
           initialQueueSuccessorCompositeProofsScratch(resolved.maxPlayableInstances),
-          initialQueueTimingCohortScratch(resolved.maxPlayableInstances),
           pendingImmediateFutureRequestsScratch(resolved.maxPlayableInstances),
           pendingImmediateFutureEventsScratch(resolved.maxPlayableInstances),
           queueContinuationRecords(
@@ -5600,7 +5601,6 @@ public:
           actionQueueReplacementScratch(resolved.maxPlayableInstances),
           decisionRetirements(decisions.Capacity()),
           playableStarts(resolved.maxPlayableInstances),
-          playableServices(resolved.maxPlayableInstances),
           originalPlayableServiceLifetimeHolders(resolved.maxPlayableInstances),
           acceptedPendingVariableGroups(resolved.maxPlayableInstances),
           pendingVariableLeafSources(timelineArms.Capacity()),
@@ -5640,8 +5640,6 @@ public:
           variableControlRetargetSchedules(playableStorage.continuousCount),
           variableControlRetargetArms(playableStorage.continuousCount),
           variableControlRetargetMemberKinds(
-              playableStorage.continuousCount),
-          variableControlRetargetDesiredOrdinals(
               playableStorage.continuousCount),
           playableSuccessorVoices(playableStorage.endpointCount),
           playableSuccessorLeaves(playableStorage.endpointCount),
@@ -5778,12 +5776,10 @@ public:
             [](void* context, const ConsumedCurrentSlice& consumed) noexcept {
                 return static_cast<VariableServiceV1*>(context)->ConsumeNativeReadCutCalendar(consumed);
             });
-        for (std::size_t index = 0; index < playableServices.size(); ++index) {
+        for (std::size_t index = 0; index < playableStarts.size(); ++index) {
             playableStarts[index].slot = static_cast<std::uint32_t>(index);
-            playableServices[index].identity = {static_cast<std::uint32_t>(index), 1};
-            playableServices[index].invocation = &playableStarts[index];
-            playableServices[index].invocationGeneration = playableStarts[index].generation;
         }
+        if (!playableServices.Reserve(resolved.maxPlayableInstances)) throw std::bad_alloc{};
         const auto playSlotCapacity = ActionPlanScratchCapacity(resolved);
         const auto queueBankCapacity = QueueProgramBankCapacity(resolved);
         const auto privateLaneMetadataCapacity = std::max(resolved.maxTransactionEvents,
@@ -5953,11 +5949,7 @@ public:
             throw std::bad_alloc{};
         initialQueueTimingProgramsScratch.resize(
             resolved.maxScheduledTransactions);
-        initialQueueTimingRequestsScratch.resize(
-            resolved.maxScheduledTransactions);
         initialQueueTimingEventsScratch.resize(
-            static_cast<std::size_t>(queueEventCapacity));
-        initialQueueTimingScheduledEventsScratch.resize(
             static_cast<std::size_t>(queueEventCapacity));
         const auto queueLeafCapacity =
             static_cast<std::uint64_t>(
@@ -5976,7 +5968,7 @@ public:
                 sizeof(ImmediateLaneEvent));
         pendingImmediateLaneEventsScratch.resize(
             immediateActionLane.EventsPerAttempt());
-        const auto receiverCells = static_cast<std::uint64_t>(playableServices.size()) *
+        const auto receiverCells = static_cast<std::uint64_t>(playableServices.Capacity()) *
             immediateActionLane.EventsPerAttempt();
         if (receiverCells > SIZE_MAX / sizeof(ImmediateLanePrivateEntryResultCell))
             throw std::bad_alloc{};
@@ -8701,7 +8693,7 @@ public:
                 sizeof(PreparedDecisionReservation) +
                 2u * sizeof(OriginalDecisionLifetimePin)) +
             actionPlayScratch.ConstructedCount() * sizeof(EngineActionPlayScratch::PrivateInitialVcPageCohort) +
-            playableServices.capacity() * sizeof(EnginePlayableServiceRow::PrivateImmediateEntryReceiver) +
+            playableServices.size() * sizeof(EnginePlayableServiceRow::PrivateImmediateEntryReceiver) +
             privateImmediateEntryResults.capacity() * sizeof(ImmediateLanePrivateEntryResultCell) +
             immediateActionLane.PrivateEntryStorageBytes() + censusBytes;
     }
@@ -11959,16 +11951,10 @@ public:
         initialQueueCurrentCompositeProofsScratch;
     std::vector<CompositeCompletionOwnerPool::PrivateReanchorProof>
         initialQueueSuccessorCompositeProofsScratch;
-    std::vector<UnplacedBatchCohortMember>
-        initialQueueTimingCohortScratch;
     std::vector<EngineInitialQueueTimingProgram>
         initialQueueTimingProgramsScratch;
-    std::vector<TransactionRequest>
-        initialQueueTimingRequestsScratch;
     std::vector<EngineInitialQueueTimingEvent>
         initialQueueTimingEventsScratch;
-    std::vector<ScheduledEventInput>
-        initialQueueTimingScheduledEventsScratch;
     std::vector<KnownScheduleLeafV1>
         initialQueueTimingLeavesScratch;
     std::vector<Plan03GroupSliceInput>
@@ -12001,7 +11987,37 @@ public:
     // Tokens and descriptor pins must be destroyed before their owning tables.
     std::vector<EngineDecisionRetirement> decisionRetirements;
     std::vector<EnginePlayableStartRow> playableStarts;
-    std::vector<EnginePlayableServiceRow> playableServices;
+    StableRowStorage<EnginePlayableServiceRow> playableServices;
+    static bool PlayableServiceReusable(const EnginePlayableServiceRow& row) noexcept {
+        return row.phase == EnginePlayableStartPhase::Free && !row.actionPrepared &&
+            !row.partition.Valid() && !row.quarantined;
+    }
+    void InitializePlayableServiceRows(std::uint32_t previous) noexcept {
+        for (auto slot = previous; slot < playableServices.size(); ++slot) {
+            auto& row = playableServices[slot];
+            row.identity = {slot, 1};
+            row.invocation = &playableStarts[slot];
+            row.invocationGeneration = playableStarts[slot].generation;
+        }
+    }
+    EnginePlayableServiceRow* PrepareFreePlayableService() noexcept {
+        const auto free = std::find_if(playableServices.begin(), playableServices.end(), PlayableServiceReusable);
+        const auto slot = free == playableServices.end() ? playableServices.size() : free->identity.slot;
+        if (slot >= playableServices.Capacity()) return nullptr;
+        const auto previous = playableServices.size();
+        if (!playableServices.ConstructThrough(slot + 1u)) return nullptr;
+        InitializePlayableServiceRows(previous);
+        return &playableServices[slot];
+    }
+    bool PreparePlayableServiceBacking(std::uint32_t count, StableStoragePreparation* out) noexcept {
+        std::uint32_t occupiedPrefix = 0;
+        for (const auto& row : playableServices)
+            if (!PlayableServiceReusable(row)) occupiedPrefix = row.identity.slot + 1u;
+        const auto previous = playableServices.size();
+        if (!playableServices.PrepareBacking(count, occupiedPrefix, out)) return false;
+        InitializePlayableServiceRows(previous);
+        return true;
+    }
     struct PlayableServiceWorkFamily {};
     using PlayableServiceWorkIdentity = RuntimeIndexIdentity<PlayableServiceWorkFamily>;
     RuntimeActivityIndex<PlayableServiceWorkFamily> playableServiceWork;
@@ -12273,7 +12289,6 @@ public:
     std::vector<ProgramView> variableControlRetargetSchedules;
     std::vector<TimelineArmToken> variableControlRetargetArms;
     std::vector<std::uint8_t> variableControlRetargetMemberKinds;
-    std::vector<std::uint32_t> variableControlRetargetDesiredOrdinals;
     std::vector<CapturedTimelineVoiceInstall> playableSuccessorVoices;
     std::vector<PlayableRefV1> playableSuccessorLeaves;
     std::vector<TimelineEventPayload> playableSuccessorPayloads;

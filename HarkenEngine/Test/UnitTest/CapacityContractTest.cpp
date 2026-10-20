@@ -610,7 +610,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     ASSERT_NE(nullptr, engine);
     const harken::PlayableStorageLayout& layout = engine->playableStorage;
     EXPECT_EQ(engine->config.maxPlayableInstances, engine->playableStarts.size());
-    EXPECT_EQ(engine->config.maxPlayableInstances, engine->playableServices.size());
+    EXPECT_EQ(engine->config.maxPlayableInstances, engine->playableServices.Capacity());
     EXPECT_EQ(engine->config.maxPlayableInstances, engine->playablePartitions.Capacity());
     EXPECT_EQ(engine->config.maxContainerInstances, engine->queueInstances.Capacity());
     EXPECT_EQ(engine->config.maxContainerInstances, engine->variableControlInstances.Capacity());
@@ -687,8 +687,6 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
               engine->variableControlRetargetArms.size());
     EXPECT_EQ(layout.continuousCount,
               engine->variableControlRetargetMemberKinds.size());
-    EXPECT_EQ(layout.continuousCount,
-              engine->variableControlRetargetDesiredOrdinals.size());
 
     const std::uint64_t memberBytesPerSlot =
         sizeof(engine->playableScheduleVoices[0]) +
@@ -737,8 +735,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         sizeof(engine->variableControlRetargetRuntimePrograms[0]) +
         sizeof(engine->variableControlRetargetSchedules[0]) +
         sizeof(engine->variableControlRetargetArms[0]) +
-        sizeof(engine->variableControlRetargetMemberKinds[0]) +
-        sizeof(engine->variableControlRetargetDesiredOrdinals[0]);
+        sizeof(engine->variableControlRetargetMemberKinds[0]);
 
     const auto frontierEventBytes = sizeof(harken::FrontierEventBinding) +
         sizeof(harken::VariableWeightControlIdentity) + sizeof(harken::AuthoredStopOperationIdentity);
@@ -773,7 +770,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
                   sizeof(harken::TimelineVoiceInstallDesc) + sizeof(harken::CapturedTimelineVoiceInstall),
               endpointBytesPerSlot);
     EXPECT_EQ(48u, weightBytesPerSlot);
-    EXPECT_EQ(541u + frontierEventBytes + immediateEntryBytes + monitorControlBytes, continuousBytesPerSlot);
+    EXPECT_EQ(537u + frontierEventBytes + immediateEntryBytes + monitorControlBytes, continuousBytesPerSlot);
 
     const std::uint64_t totalBytes =
         layout.memberCount * memberBytesPerSlot +
@@ -836,14 +833,12 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
                       engine->variableControlRetargetRuntimePrograms) +
                   StorageBytes(engine->variableControlRetargetSchedules) +
                   StorageBytes(engine->variableControlRetargetArms) +
-                  StorageBytes(engine->variableControlRetargetMemberKinds) +
-                  StorageBytes(
-                      engine->variableControlRetargetDesiredOrdinals));
+                  StorageBytes(engine->variableControlRetargetMemberKinds));
     testing::Test::RecordProperty("seven_family_capacity_bytes", std::to_string(totalBytes));
     testing::Test::RecordProperty("member_reference_capacity_bytes",
         std::to_string(StorageBytes(engine->playableMemberReferences)));
     testing::Test::RecordProperty("facade_capacity_bytes", std::to_string(StorageBytes(engine->playableStarts)));
-    testing::Test::RecordProperty("service_capacity_bytes", std::to_string(StorageBytes(engine->playableServices)));
+    testing::Test::RecordProperty("service_capacity_bytes", std::to_string(engine->playableServices.RequestedBytes()));
     testing::Test::RecordProperty("partition_capacity_bytes", std::to_string(engine->playablePartitions.StorageBytes()));
     testing::Test::RecordProperty("published_empty_page_stamp_bytes",
         std::to_string(engine->timelinePool.PublishedEmptyStampStorageBytes()));
