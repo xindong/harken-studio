@@ -669,6 +669,15 @@ void EffectParamTargetStore::BeginContributionSweep() {
     }
 }
 
+void EffectParamTargetStore::BeginTargetContribution(
+    Scope scope, std::uint64_t objectId, std::uint32_t slot,
+    std::uint32_t paramIndex, std::uint32_t effectType) {
+    Record* record = Find(scope, objectId, slot, paramIndex);
+    if (record != nullptr && record->effectType == effectType) {
+        record->foldedThisSweep = false;
+    }
+}
+
 void EffectParamTargetStore::AccumulateBinding(Scope scope,
                                                std::uint64_t objectId,
                                                std::uint32_t slot,
@@ -755,19 +764,28 @@ void EffectParamTargetStore::ClearMeterProbeContribution(
 
 void EffectParamTargetStore::EndContributionSweep() {
     for (Record& r : m_records) {
-        if (r.lifecycle != Lifecycle::Live) {
-            continue;
+        if (r.lifecycle == Lifecycle::Live) {
+            EndRecordContribution(r);
         }
-        // A record folded this sweep takes its accumulation; one whose bindings
-        // all detached (or whose variables have no value) returns to the domain
-        // neutral, so its resolved value returns to the base alone.
-        const float folded =
-            r.foldedThisSweep ? r.rebuildAccum : NeutralOf(r.combine);
-        r.bindingActive = r.foldedThisSweep;
-        if (r.contribution != folded) {
-            r.contribution = folded;
-            SetDirty(r);
-        }
+    }
+}
+
+void EffectParamTargetStore::EndTargetContribution(
+    Scope scope, std::uint64_t objectId, std::uint32_t slot,
+    std::uint32_t paramIndex, std::uint32_t effectType) {
+    Record* record = Find(scope, objectId, slot, paramIndex);
+    if (record != nullptr && record->effectType == effectType) {
+        EndRecordContribution(*record);
+    }
+}
+
+void EffectParamTargetStore::EndRecordContribution(Record& r) {
+    const float folded =
+        r.foldedThisSweep ? r.rebuildAccum : NeutralOf(r.combine);
+    r.bindingActive = r.foldedThisSweep;
+    if (r.contribution != folded) {
+        r.contribution = folded;
+        SetDirty(r);
     }
 }
 

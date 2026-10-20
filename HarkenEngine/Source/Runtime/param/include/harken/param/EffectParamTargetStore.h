@@ -193,6 +193,9 @@ public:
     // dirty if it changed) and returns any record whose bindings all detached to
     // the neutral contribution (the detach edge -> resolved returns to base).
     void BeginContributionSweep();
+    void BeginTargetContribution(Scope scope, std::uint64_t objectId,
+                                 std::uint32_t slot, std::uint32_t paramIndex,
+                                 std::uint32_t effectType);
     // Folds one binding's curve output into the located record. effectType is
     // the locator's EXPECTED type: if the installed effect at the slot is a
     // different type (a stale/replaced slot), the contribution is skipped, so a
@@ -201,6 +204,9 @@ public:
                            std::uint32_t slot, std::uint32_t paramIndex,
                            std::uint32_t effectType, float curveOutput);
     void EndContributionSweep();
+    void EndTargetContribution(Scope scope, std::uint64_t objectId,
+                               std::uint32_t slot, std::uint32_t paramIndex,
+                               std::uint32_t effectType);
     void BeginMeterProbeSweep();
     void AccumulateMeterProbe(Scope scope, std::uint64_t objectId,
                               std::uint32_t slot, std::uint32_t paramIndex,
@@ -393,6 +399,7 @@ private:
                       std::uint32_t objectGeneration,
                       std::uint32_t slot) const noexcept;
     bool AllocateRevision(std::uint32_t* out) noexcept;
+    void EndRecordContribution(Record& r);
     float ReduceRecord(const Record& r) const;
     float NeutralOf(EffectParamCombine combine) const {
         return combine == EffectParamCombine::Multiply ? 1.0f : 0.0f;
