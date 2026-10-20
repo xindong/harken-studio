@@ -11071,7 +11071,7 @@ bool FreezeInitialQueuePrograms(harken::Engine& engine, harken::EnginePlayableSe
             if (!include(&row.schedule)) return false;
         } else {
             for (std::uint32_t index = 0; index < count; ++index)
-                if (!include(&engine.playableSchedules[bases.endpoint + index])) return false;
+                if (!include(ResolveInitialMemberProgram(engine, bases.member + index))) return false;
         }
     }
     auto*& bank = row.queueCurrentProgramBank;
@@ -11096,7 +11096,8 @@ bool FreezeInitialQueuePrograms(harken::Engine& engine, harken::EnginePlayableSe
     if (count <= 1 && !row.queueCurrentCompositeOwner.Valid())
         return FreezeQueueProgram(engine, *bank, row.schedule) != nullptr;
     for (std::uint32_t index = 0; index < count; ++index) {
-        if (FreezeQueueProgram(engine, *bank, engine.playableSchedules[bases.endpoint + index]) == nullptr) return false;
+        auto* program = ResolveInitialMemberProgram(engine, bases.member + index);
+        if (program == nullptr || FreezeQueueProgram(engine, *bank, *program) == nullptr) return false;
     }
     return FreezeQueueAggregate(*bank, row.schedule, 0, count);
 }
@@ -12686,10 +12687,6 @@ PlayableStartResetResult ResetPlayableStartRow(
           engine.playableStorage.currentEventStride);
     clear(engine.playableScheduleEvents, bases.currentEvent,
           engine.playableStorage.currentEventStride);
-    clear(engine.playableScheduleRuntimePrograms, bases.endpoint,
-          engine.playableStorage.endpointStride);
-    clear(engine.playableSchedules, bases.endpoint,
-          engine.playableStorage.endpointStride);
     clear(engine.playableScheduleArms, bases.member,
           engine.playableStorage.memberStride);
     clear(engine.playableScheduleSelections, bases.member,
@@ -28861,16 +28858,11 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         auto& scheduleRow = nestedModeService != nullptr ? *nestedModeService : row;
         const PlayableStorageBases bases = StorageBasesForRow(engine, scheduleRow);
         const std::size_t memberBase = bases.member;
-        const std::size_t eventBase = bases.currentEvent;
         const std::size_t endpointBase = bases.endpoint;
         const std::size_t pairedBase = bases.paired;
         if (memberBase > UINT32_MAX ||
             memberBase + scheduleLeafCount >
                 engine.playableScheduleVoices.size() ||
-            eventBase + scheduleLeafCount >
-                engine.playableSchedulePayloads.size() ||
-            endpointBase + scheduleLeafCount >
-                engine.playableSchedules.size() ||
             pairedBase + scheduleLeafCount >
                 engine.playableScheduleCompletions.size()) {
             rollbackCreated();
@@ -29080,9 +29072,11 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
              !installFailed && index < scheduleLeafCount; ++index) {
             const std::uint64_t leafStartFrame = baseStartFrame +
                 preparedScheduleLeaves[index].startOffsetFrames;
+            payloads[index] = {};
             payloads[index].kind = harken::TimelineEventKind::Start;
             payloads[index].target =
                 preparedScheduleLeaves[index].voice.target;
+            events[index] = {};
             events[index].frameOffsetFromEntry = static_cast<std::int64_t>(
                 leafStartFrame - firstStartFrame);
             events[index].logicCommitSequence = ticket;
@@ -29091,9 +29085,11 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             events[index].transactionOrdinal = index;
             events[index].subeventPhase = 20;
             events[index].armToken = installedLeaves[index].armToken;
+            runtimePrograms[index] = {};
             runtimePrograms[index].generation = scheduleLeafInstances[index];
             runtimePrograms[index].payloads = &payloads[index];
             runtimePrograms[index].payloadCount = 1;
+            schedules[index] = {};
             schedules[index].ownerInstance = selectedTreeRoot;
             for (std::uint32_t preparedIndex = 0;
                  preparedIndex < treeStep.InstanceReservationCount();
@@ -43746,11 +43742,9 @@ void ServicePendingImmediateEntries(
         if (member.scheduleLeafCount <= 1u &&
             !member.queueCurrentCompositeOwner.Valid())
             return leaf == 0 ? &member.schedule : nullptr;
+        if (leaf >= member.scheduleLeafCount) return nullptr;
         const auto bases = StorageBasesForRow(engine, member);
-        if (leaf >= member.scheduleLeafCount ||
-            bases.endpoint + leaf >= engine.playableSchedules.size())
-            return nullptr;
-        return &engine.playableSchedules[bases.endpoint + leaf];
+        return ResolveInitialMemberProgram(engine, bases.member + leaf);
     };
     for (std::uint32_t serviceCursor = 0;
          auto* service = NextPendingImmediateEntryService(engine, &serviceCursor);) {
@@ -44255,11 +44249,6 @@ void ServicePendingImmediateEntries(
                                 if (engine.variableControlMemberCompletions[slot].leafInstance != 0)
                                     engine.variableControlMemberCompletions[slot].monitorSelection = installed->monitorSelection;
                                 else engine.playableScheduleSelections[slot] = installed->monitorSelection;
-                                if (member.queueCurrentProgramBank == nullptr) {
-                                    engine.playableScheduleEvents[
-                                        bases.currentEvent + leaf].armToken = installed->arm;
-                                    engine.playableSchedules[bases.endpoint + leaf].armToken = installed->arm;
-                                }
                             }
                             if (auto* program = leafProgram(member, leaf)) {
                                 program->armToken = installed->arm;
@@ -45388,8 +45377,6 @@ void ServicePendingImmediateEntries(
                         frozen.immediateEntry = program->immediateEntry;
                     }
                     if (member.scheduleLeafCount > 1u || member.queueCurrentCompositeOwner.Valid()) {
-                        if (member.queueCurrentProgramBank == nullptr)
-                            engine.playableSchedules[bases.endpoint + leaf].entryAnchorFrame = startFrame;
                         engine.playableScheduleStartFrames[bases.member + leaf] =
                             actual;
                     }
@@ -70339,31 +70326,23 @@ engine.runtimeRecreateRequired = true;
     } else if (initialSchedule.leafCount > 1) {
         const PlayableStorageBases bases = StorageBasesForRow(engine, row);
         const std::size_t memberBase = bases.member;
-        const std::size_t eventBase = bases.currentEvent;
         const std::size_t endpointBase = bases.endpoint;
         const std::size_t pairedBase = bases.paired;
         if (memberBase > UINT32_MAX ||
             memberBase + initialSchedule.leafCount >
                 engine.playableScheduleVoices.size() ||
-            eventBase + initialSchedule.leafCount >
-                engine.playableSchedulePayloads.size() ||
-            endpointBase + initialSchedule.leafCount >
-                engine.playableSchedules.size() ||
             pairedBase + initialSchedule.leafCount >
-                engine.playableScheduleCompletions.size()) {
+                engine.playableScheduleCompletions.size() ||
+            directScratch.frontierProgramBank == nullptr) {
             installFailed = true;
         } else {
             row.queueCurrentProgramBank = std::exchange(directScratch.frontierProgramBank, nullptr);
             row.queueCurrentPrograms = {0, initialSchedule.leafCount};
             auto* const currentBank = row.queueCurrentProgramBank;
-            auto* const payloads = currentBank != nullptr ? currentBank->payloads.data()
-                : engine.playableSchedulePayloads.data() + eventBase;
-            auto* const events = currentBank != nullptr ? currentBank->events.data()
-                : engine.playableScheduleEvents.data() + eventBase;
-            auto* const runtimes = currentBank != nullptr ? currentBank->runtimes.data()
-                : engine.playableScheduleRuntimePrograms.data() + endpointBase;
-            auto* const schedules = currentBank != nullptr ? currentBank->schedules.data()
-                : engine.playableSchedules.data() + endpointBase;
+            auto* const payloads = currentBank->payloads.data();
+            auto* const events = currentBank->events.data();
+            auto* const runtimes = currentBank->runtimes.data();
+            auto* const schedules = currentBank->schedules.data();
             row.queueCurrentScheduleBase =
                 static_cast<std::uint32_t>(memberBase);
             row.queueCurrentScheduleLeafCount = initialSchedule.leafCount;
@@ -70693,13 +70672,8 @@ engine.runtimeRecreateRequired = true;
         const std::uint32_t scheduleCount = row.queueCurrentScheduleLeafCount > 1u
             ? row.queueCurrentScheduleLeafCount
             : 1u;
-        const PlayableStorageBases transactionStorage =
-            StorageBasesForRow(engine, row);
         if (scheduleCount == 0u ||
-            scheduleCount > directTransactionRequests.size() ||
-            (row.queueCurrentScheduleLeafCount > 1u &&
-              transactionStorage.endpoint + scheduleCount >
-                  engine.playableSchedules.size())) {
+            scheduleCount > directTransactionRequests.size()) {
             installFailed = true;
         }
         for (std::uint32_t index = 0;
@@ -70707,7 +70681,7 @@ engine.runtimeRecreateRequired = true;
             const auto* program = row.queueCurrentProgramBank != nullptr
                 ? ResolveQueueCurrentProgram(row, index)
                 : row.queueCurrentScheduleLeafCount > 1u
-                    ? &engine.playableSchedules[transactionStorage.endpoint + index]
+                    ? nullptr
                     : &row.schedule;
             if (program == nullptr) {
                 installFailed = true;
@@ -81923,16 +81897,11 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
     const PlayableStorageBases bases =
         StorageBasesForRow(engine, *row);
     const std::size_t memberBase = bases.member;
-    const std::size_t eventBase = bases.currentEvent;
     const std::size_t endpointBase = bases.endpoint;
     const std::size_t pairedBase = bases.paired;
     if (memberBase > UINT32_MAX ||
         memberBase + materialized.leafCount >
             engine.playableScheduleVoices.size() ||
-        eventBase + materialized.leafCount >
-            engine.playableSchedulePayloads.size() ||
-        endpointBase + materialized.leafCount >
-            engine.playableSchedules.size() ||
         pairedBase + materialized.leafCount >
             engine.playableScheduleCompletions.size()) {
         scratch->playableTreeExecutor.Cancel(engine.playableInstances);
@@ -82025,14 +81994,10 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
     }
     row->queueCurrentPrograms = {0, materialized.leafCount};
     auto* const currentBank = row->queueCurrentProgramBank;
-    auto* const payloads = currentBank != nullptr ? currentBank->payloads.data()
-        : engine.playableSchedulePayloads.data() + eventBase;
-    auto* const events = currentBank != nullptr ? currentBank->events.data()
-        : engine.playableScheduleEvents.data() + eventBase;
-    auto* const runtimes = currentBank != nullptr ? currentBank->runtimes.data()
-        : engine.playableScheduleRuntimePrograms.data() + endpointBase;
-    auto* const schedules = currentBank != nullptr ? currentBank->schedules.data()
-        : engine.playableSchedules.data() + endpointBase;
+    auto* const payloads = currentBank->payloads.data();
+    auto* const events = currentBank->events.data();
+    auto* const runtimes = currentBank->runtimes.data();
+    auto* const schedules = currentBank->schedules.data();
     row->runtimeProgram.payloads = payloads;
     row->schedule.events = events;
 
@@ -84489,17 +84454,11 @@ bool PrepareImmediateActionCompositePlay(
     const PlayableStorageBases bases =
         StorageBasesForRow(engine, *row);
     const std::size_t memberBase = bases.member;
-    const std::size_t eventBase = bases.currentEvent;
-    const std::size_t endpointBase = bases.endpoint;
     if (memberBase > UINT32_MAX ||
         captures.size() != materialized.leafCount ||
         materialized.leafCount > harken::kMaxKnownScheduleLeaves ||
         memberBase + materialized.leafCount >
-            engine.playableScheduleLeaves.size() ||
-        eventBase + materialized.leafCount >
-            engine.playableSchedulePayloads.size() ||
-        endpointBase + materialized.leafCount >
-            engine.playableSchedules.size()) {
+            engine.playableScheduleLeaves.size()) {
         scratch->playableTreeExecutor.Cancel(engine.playableInstances);
         const auto reset = ResetPlayableStartRow(engine, *row);
         if (reset == PlayableStartResetResult::Released)
@@ -84554,16 +84513,14 @@ bool PrepareImmediateActionCompositePlay(
     row->zeroWorkCompletionFrame =
         markerOnly ? 0 : zeroWorkCompletionFrame;
     row->runtimeProgram.generation = row->rootInstance;
-    row->runtimeProgram.payloads =
-        engine.playableSchedulePayloads.data() + eventBase;
+    row->runtimeProgram.payloads = &row->payload;
     row->runtimeProgram.payloadCount = materialized.leafCount;
     row->schedule.ownerInstance = row->rootInstance;
     row->schedule.ownerInstanceScheduleEpoch =
         scratch->instance.ScheduleEpoch();
     row->schedule.transactionId = provisionalSequence;
     row->schedule.entryAnchorFrame = row->startFrame;
-    row->schedule.events =
-        engine.playableScheduleEvents.data() + eventBase;
+    row->schedule.events = &row->event;
     row->schedule.eventCount = materialized.leafCount;
     row->schedule.runtimeProgram = {row->rootInstance,
                                     &row->runtimeProgram};
@@ -84588,13 +84545,13 @@ bool PrepareImmediateActionCompositePlay(
     }
     auto* const currentBank = row->queueCurrentProgramBank;
     auto* const payloads = currentBank != nullptr ? currentBank->payloads.data()
-        : engine.playableSchedulePayloads.data() + eventBase;
+        : &row->payload;
     auto* const events = currentBank != nullptr ? currentBank->events.data()
-        : engine.playableScheduleEvents.data() + eventBase;
+        : &row->event;
     auto* const runtimes = currentBank != nullptr ? currentBank->runtimes.data()
-        : engine.playableScheduleRuntimePrograms.data() + endpointBase;
+        : &row->runtimeProgram;
     auto* const schedules = currentBank != nullptr ? currentBank->schedules.data()
-        : engine.playableSchedules.data() + endpointBase;
+        : &row->schedule;
     row->runtimeProgram.payloads = payloads;
     row->schedule.events = events;
     for (std::uint32_t index = 0;
@@ -85680,7 +85637,6 @@ bool ComputeInitialActionLaneDemand(
         if (play == nullptr || play->row == nullptr ||
             !play->row->pendingImmediateEntry) continue;
         const auto& row = *play->row;
-        const auto bases = StorageBasesForRow(engine, row);
         const auto leaves = row.variableControlIndependentFrontier
             ? row.scheduleLeafCount : std::max(1u, row.scheduleLeafCount);
         for (std::uint32_t leaf = 0; leaf < leaves; ++leaf) {
@@ -85697,9 +85653,8 @@ bool ComputeInitialActionLaneDemand(
             } else if (row.scheduleLeafCount <= 1u) {
                 program = &row.schedule;
             } else {
-                if (bases.endpoint + leaf >= engine.playableSchedules.size())
-                    return false;
-                program = &engine.playableSchedules[bases.endpoint + leaf];
+                const auto bases = StorageBasesForRow(engine, row);
+                program = ResolveInitialMemberProgram(engine, bases.member + leaf);
             }
             std::uint64_t base = 0, due = 0;
             if (program == nullptr || !ResolvePendingImmediateLeafFrame(row, *program, 0, &base, &due) ||
@@ -88564,17 +88519,9 @@ engine.runtimeRecreateRequired = true;
           } else if (row.pendingImmediateEntry) {
             postedAll = true;
           } else if (row.scheduleLeafCount > 1) {
-            const PlayableStorageBases bases =
-                StorageBasesForRow(engine, row);
             for (std::uint32_t leafIndex = 0;
                  leafIndex < row.scheduleLeafCount; ++leafIndex) {
-                if (row.queueCurrentProgramBank == nullptr) {
-                    engine.playableScheduleEvents[bases.currentEvent + leafIndex].logicCommitSequence = sequence;
-                    engine.playableSchedules[bases.endpoint + leafIndex].transactionId = sequence;
-                }
-                const auto* program = row.queueCurrentProgramBank != nullptr
-                    ? ResolveQueueCurrentProgram(row, leafIndex)
-                    : &engine.playableSchedules[bases.endpoint + leafIndex];
+                const auto* program = ResolveQueueCurrentProgram(row, leafIndex);
                 if (program == nullptr) {
                     postedAll = false;
                     break;

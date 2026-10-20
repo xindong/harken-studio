@@ -5660,8 +5660,6 @@ public:
           playableScheduleLeaves(playableStorage.memberCount),
           playableSchedulePayloads(playableStorage.currentEventCount),
           playableScheduleEvents(playableStorage.currentEventCount),
-          playableScheduleRuntimePrograms(playableStorage.endpointCount),
-          playableSchedules(playableStorage.endpointCount),
           playableScheduleArms(playableStorage.memberCount),
           playableScheduleSelections(playableStorage.memberCount),
           playableScheduleRenderHandles(playableStorage.memberCount),
@@ -12378,8 +12376,6 @@ public:
     std::vector<PlayableRefV1> playableScheduleLeaves;
     std::vector<TimelineEventPayload> playableSchedulePayloads;
     std::vector<EventTemplate> playableScheduleEvents;
-    std::vector<TimelineProgramView> playableScheduleRuntimePrograms;
-    std::vector<ProgramView> playableSchedules;
     std::vector<TimelineArmToken> playableScheduleArms;
     std::vector<EngineMonitorSelection> playableScheduleSelections;
     std::vector<VnVoiceHandle> playableScheduleRenderHandles;

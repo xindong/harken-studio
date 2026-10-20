@@ -40660,9 +40660,6 @@ std::string StaggeredCurrentActualCleanupDiagnostic(harken::Engine& engine, VnAc
         if (bank != nullptr)
             out << " generation=" << bank->Generation() << " occupied=" << bank->occupied
                 << " published=" << bank->published << " programs=" << bank->programCount;
-        const bool originalPartition = engine.playablePartitions.Owns(row.partition, row.identity);
-        const auto endpointBase = originalPartition
-            ? engine.playableStorage.EndpointBase(row.partition.slot) : engine.playableSchedules.size();
         const auto currentCount = std::max(row.scheduleLeafCount, row.queueCurrentScheduleLeafCount);
         for (std::uint32_t leaf = 0; leaf < currentCount; ++leaf) {
             const auto slot = static_cast<std::size_t>(row.scheduleStorageBase) + leaf;
@@ -40670,11 +40667,6 @@ std::string StaggeredCurrentActualCleanupDiagnostic(harken::Engine& engine, VnAc
             const auto token = engine.playableScheduleArms[slot];
             out << "\nactualCurrentArm[" << leaf << "]=" << token.slot << ":" << token.generation
                 << "/" << token.renderSlot << ":" << token.renderGeneration;
-            if (originalPartition && endpointBase + leaf < engine.playableSchedules.size()) {
-                const auto mirror = engine.playableSchedules[endpointBase + leaf].armToken;
-                out << " mutableProgramArm=" << mirror.slot << ":" << mirror.generation
-                    << "/" << mirror.renderSlot << ":" << mirror.renderGeneration;
-            }
             if (leaf == 0u)
                 out << " rowScheduleArm=" << row.schedule.armToken.slot << ":" << row.schedule.armToken.generation
                     << "/" << row.schedule.armToken.renderSlot << ":" << row.schedule.armToken.renderGeneration;

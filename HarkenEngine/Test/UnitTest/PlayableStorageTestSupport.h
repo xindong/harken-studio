@@ -54,8 +54,6 @@ inline auto CapturePlayableStorage(const harken::Engine& engine) {
         StorageIdentity(engine.playableScheduleEvents),
         StorageIdentity(engine.variableControlRuntimePrograms),
         StorageIdentity(engine.variableControlSchedules),
-        StorageIdentity(engine.playableScheduleRuntimePrograms),
-        StorageIdentity(engine.playableSchedules),
         StorageIdentity(engine.playableScheduleOccurrences),
         StorageIdentity(engine.playableSuccessorVoices),
         StorageIdentity(engine.playableSuccessorLeaves),

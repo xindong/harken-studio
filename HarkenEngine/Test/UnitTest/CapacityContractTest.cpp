@@ -834,9 +834,6 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
               engine->variableControlSchedules.size());
 
     EXPECT_EQ(layout.endpointCount,
-              engine->playableScheduleRuntimePrograms.size());
-    EXPECT_EQ(layout.endpointCount, engine->playableSchedules.size());
-    EXPECT_EQ(layout.endpointCount,
               engine->playableScheduleOccurrences.size());
     EXPECT_EQ(layout.endpointCount, engine->playableSuccessorVoices.size());
     EXPECT_EQ(layout.endpointCount, engine->playableSuccessorLeaves.size());
@@ -894,8 +891,6 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         sizeof(engine->variableControlRuntimePrograms[0]) +
         sizeof(engine->variableControlSchedules[0]);
     const std::uint64_t endpointBytesPerSlot =
-        sizeof(engine->playableScheduleRuntimePrograms[0]) +
-        sizeof(engine->playableSchedules[0]) +
         sizeof(engine->playableScheduleOccurrences[0]) +
         sizeof(engine->playableSuccessorVoices[0]) +
         sizeof(engine->playableSuccessorLeaves[0]) +
@@ -951,7 +946,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
                   2u * immediateEntryBytes + 2u * programFenceBytes +
                   2u * monitorControlBytes + monitorSelectionBytes -
                   sizeof(harken::TimelineVoiceInstallDesc) + sizeof(harken::CapturedTimelineVoiceInstall) -
-                  initialProgramBytesPerSlot,
+                  2u * initialProgramBytesPerSlot,
               endpointBytesPerSlot);
     EXPECT_EQ(48u, weightBytesPerSlot);
     EXPECT_EQ(537u + frontierEventBytes + immediateEntryBytes + programFenceBytes +
@@ -989,9 +984,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
               StorageBytes(engine->variableControlRuntimePrograms) +
                   StorageBytes(engine->variableControlSchedules));
     EXPECT_EQ(layout.endpointCount * endpointBytesPerSlot,
-              StorageBytes(engine->playableScheduleRuntimePrograms) +
-                  StorageBytes(engine->playableSchedules) +
-                  StorageBytes(engine->playableScheduleOccurrences) +
+              StorageBytes(engine->playableScheduleOccurrences) +
                   StorageBytes(engine->playableSuccessorVoices) +
                   StorageBytes(engine->playableSuccessorLeaves) +
                   StorageBytes(engine->playableSuccessorArms) +

@@ -22221,7 +22221,6 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
                 return run.leaf == resource->activeLeafInstance;
             })) return;
         const auto endpointBase = engine->playableStorage.EndpointBase(resource->partition.slot);
-        const auto eventBase = engine->playableStorage.CurrentEventBase(resource->partition.slot);
         ASSERT_LT(runs.size(), loopCount * (nestedLoopCount == 0 ? 1u : nestedLoopCount));
         ContainerPlaybackRow rootPlayback{};
         ASSERT_TRUE(engine->containerPlayback.Capture(produced, &rootPlayback));
@@ -22291,25 +22290,29 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
             harkentest::ExpectTimelineInstallIdentity(*engine, run.renderHandles[i],
                 identityOwner, currentInstall->Facts().target,
                 run.startFrames[i], run.arms[i]);
-            run.programs[i] = currentMultiLeaf
-                ? &engine->playableScheduleRuntimePrograms[endpointBase + i] : &resource->runtimeProgram;
-            run.payloads[i] = currentMultiLeaf
-                ? &engine->playableSchedulePayloads[eventBase + i] : &resource->payload;
+            const auto programs = resource->queueCurrentPrograms.Resolve(resource->queueCurrentProgramBank);
+            const ProgramView* schedule = &resource->schedule;
+            if (currentMultiLeaf) {
+                ASSERT_LT(i, programs.size());
+                schedule = &programs[i];
+            }
+            run.programs[i] = schedule->runtimeProgram.program;
+            ASSERT_NE(nullptr, run.programs[i]);
+            run.payloads[i] = run.programs[i]->payloads;
             EXPECT_EQ(run.releaseObservers[i].slot, identity.releaseObserver.slot);
             EXPECT_EQ(run.releaseObservers[i].targetSequence, identity.releaseObserver.targetSequence);
             if (currentMultiLeaf && resource->containerLoopOwnsScheduleResources) {
-                const auto& schedule = engine->playableSchedules[endpointBase + i];
                 const auto* occurrence = engine->timelineOccurrences.KeyOf(run.occurrences[i]);
                 ASSERT_NE(nullptr, occurrence);
                 const auto arranging = engine->playableInstances.Classify(
                     occurrence->arrangingInstance);
                 ASSERT_TRUE(arranging.live);
-                EXPECT_EQ(arranging.scheduleEpoch, schedule.ownerInstanceScheduleEpoch)
+                EXPECT_EQ(arranging.scheduleEpoch, schedule->ownerInstanceScheduleEpoch)
                     << "arranging=" << occurrence->arrangingInstance
-                    << " scheduleOwner=" << schedule.ownerInstance;
+                    << " scheduleOwner=" << schedule->ownerInstance;
                 EXPECT_TRUE(engine->timelineOccurrences.ValidateTransaction(
-                    run.occurrences[i], schedule.occurrence.occurrenceScheduleEpoch,
-                    schedule.ownerInstanceScheduleEpoch, engine->playableInstances));
+                    run.occurrences[i], schedule->occurrence.occurrenceScheduleEpoch,
+                    schedule->ownerInstanceScheduleEpoch, engine->playableInstances));
             }
             TimelineArmObservation observed{};
             ASSERT_TRUE(engine->timelineArms.Observe(run.arms[i], &observed));
@@ -23199,9 +23202,13 @@ void RunContainerMatrixEntry(ContainerModeV1 mode, ContainerMatrixChild childKin
     if (observedSchedule->events == nullptr ||
         observedSchedule->eventCount == 0) {
         ASSERT_NE(0u, row->scheduleLeafCount);
-        observedSchedule = mode == ContainerModeV1::VariableControl
-            ? &engine->variableControlSchedules[row->scheduleStorageBase]
-            : &engine->playableSchedules[row->scheduleStorageBase];
+        if (mode == ContainerModeV1::VariableControl) {
+            observedSchedule = &engine->variableControlSchedules[row->scheduleStorageBase];
+        } else {
+            const auto programs = row->queueCurrentPrograms.Resolve(row->queueCurrentProgramBank);
+            ASSERT_FALSE(programs.empty());
+            observedSchedule = &programs[0];
+        }
     }
     ASSERT_NE(nullptr, observedSchedule->events);
     ASSERT_NE(0u, observedSchedule->eventCount);
