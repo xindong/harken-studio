@@ -166,11 +166,13 @@ void WorkspaceWindowManager::restoreSingletonStates(const QVariantMap& states)
         const auto factory = singletonFactories_.constFind(typeId);
         if (factory == singletonFactories_.constEnd() || !factory->restoreState)
             continue;
+        const QString stateTypeId = typeId == QLatin1String("Control") && !states.contains(typeId)
+            ? QStringLiteral("Preview") : typeId;
         QWidget* content = singletonContent(typeId);
-        if (!content && states.contains(typeId))
+        if (!content && states.contains(stateTypeId))
             content = materializeSingletonContent(typeId);
         if (content)
-            factory->restoreState(content, states.value(typeId).toMap());
+            factory->restoreState(content, states.value(stateTypeId).toMap());
     }
 }
 

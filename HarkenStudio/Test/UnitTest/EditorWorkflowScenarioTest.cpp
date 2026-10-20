@@ -163,8 +163,8 @@ TEST_F(EditorWorkflowScenarioTest,
 
     const WorkspaceWindowCatalog windows = defaultWorkspaceWindowCatalog();
     for (const QString& id : {QStringLiteral("Explorer"),
-                              QStringLiteral("BlueprintCanvas"),
-                              QStringLiteral("ExportPacksManager")})
+                              QStringLiteral("Blueprint"),
+                              QStringLiteral("Publisher")})
         ASSERT_NE(windows.find(id), nullptr) << id.toStdString();
 
     auto& manager = ProjectManager::instance();

@@ -1,6 +1,6 @@
 #include <harken/Harken.h>
 #include "UnitTest/StudioObjectIdTestSupport.h"
-#include "Widgets/Monitor/MonitorCatalogPanel.h"
+#include "Widgets/Monitor/MonitorPanel.h"
 #include "ActionManager.h"
 #include "Core/AudioEngine.h"
 #include "Core/ProjectManager.h"
@@ -45,7 +45,7 @@ void ensureApp()
 }
 } // namespace
 
-TEST(MonitorCatalog, LocalCaptureKeepsHistoryAcrossPanelLifetime)
+TEST(MonitorPanel, LocalCaptureKeepsHistoryAcrossPanelLifetime)
 {
     ensureApp();
     VnConfig config{};
@@ -55,7 +55,7 @@ TEST(MonitorCatalog, LocalCaptureKeepsHistoryAcrossPanelLifetime)
     const auto terminate = qScopeGuard([] { Vn_Term(); });
     Monitor::EventCaptureController capture(nullptr);
     capture.setLocalRuntimeAvailable(true);
-    auto panel = std::make_unique<MonitorCatalogPanel>();
+    auto panel = std::make_unique<MonitorPanel>();
     panel->setCaptureController(&capture);
     capture.start();
     ASSERT_EQ(Monitor::EventCaptureState::Capturing, capture.state());
@@ -85,7 +85,7 @@ TEST(MonitorCatalog, LocalCaptureKeepsHistoryAcrossPanelLifetime)
     panel.reset();
     ASSERT_EQ(VN_OK, Vn_StopAll(31));
     ASSERT_TRUE(waitFor([&] { return capture.rowCount() == 3; }));
-    panel = std::make_unique<MonitorCatalogPanel>();
+    panel = std::make_unique<MonitorPanel>();
     panel->setCaptureController(&capture);
     EXPECT_EQ(panel->visibleRowCount(), 3);
     capture.stop();
@@ -99,7 +99,7 @@ TEST(MonitorCatalog, LocalCaptureKeepsHistoryAcrossPanelLifetime)
     EXPECT_EQ(panel->visibleRowCount(), 0);
     ASSERT_EQ(VN_OK, Vn_StopAll(41));
     ASSERT_TRUE(waitFor([&] { return panel->visibleRowCount() == 1; }));
-    panel->findChild<QToolButton*>(QStringLiteral("MonitorCatalogClear"))->click();
+    panel->findChild<QToolButton*>(QStringLiteral("MonitorClear"))->click();
     EXPECT_EQ(capture.state(), Monitor::EventCaptureState::Capturing);
     EXPECT_EQ(capture.rowCount(), 0);
     ASSERT_EQ(VN_OK, Vn_StopAll(43));
@@ -107,11 +107,11 @@ TEST(MonitorCatalog, LocalCaptureKeepsHistoryAcrossPanelLifetime)
     EXPECT_TRUE(panel->table()->model()->index(0, 4).data().toString().contains(QStringLiteral("43 ms")));
 }
 
-TEST(MonitorCatalog, LiveParamsRestoreCategoryLevelAndScrolling)
+TEST(MonitorPanel, LiveParamsRestoreCategoryLevelAndScrolling)
 {
     ensureApp();
     Monitor::EventCaptureController capture(nullptr);
-    MonitorCatalogPanel panel;
+    MonitorPanel panel;
     panel.setCaptureController(&capture);
     QVariantMap params{
         {QStringLiteral("filterCategory"), VN_MONITOR_EVENT_CATEGORY_DIAGNOSTIC},
@@ -122,7 +122,7 @@ TEST(MonitorCatalog, LiveParamsRestoreCategoryLevelAndScrolling)
     panel.restoreParams(params);
     const auto restored = panel.snapshotParams();
     for (auto it = params.cbegin(); it != params.cend(); ++it) EXPECT_EQ(restored.value(it.key()), it.value());
-    auto* category = panel.findChild<QComboBox*>(QStringLiteral("MonitorCatalogCategoryFilter"));
+    auto* category = panel.findChild<QComboBox*>(QStringLiteral("MonitorCategoryFilter"));
     ASSERT_NE(category, nullptr);
     EXPECT_EQ(category->currentData().toInt(), VN_MONITOR_EVENT_CATEGORY_DIAGNOSTIC);
     panel.restoreParams({{QStringLiteral("filterType"), QStringLiteral("All")}});
@@ -131,7 +131,7 @@ TEST(MonitorCatalog, LiveParamsRestoreCategoryLevelAndScrolling)
     EXPECT_EQ(category->currentIndex(), 0);
 }
 
-TEST(MonitorCatalog, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
+TEST(MonitorPanel, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
 {
     ensureApp();
     ActionManager::instance().clearAllForTesting();
@@ -162,7 +162,7 @@ TEST(MonitorCatalog, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     window->move(available.topLeft() + QPoint(20, 20));
     window->show();
     auto* toolbar = window->findChild<PlatformBar*>(QStringLiteral("platformBar"));
-    auto* button = window->findChild<QToolButton*>(QStringLiteral("monitorCaptureButton"));
+    auto* button = window->findChild<QToolButton*>(QStringLiteral("captureButton"));
     auto* capture = window->eventCaptureController();
     ASSERT_NE(toolbar, nullptr);
     ASSERT_NE(button, nullptr);
@@ -177,7 +177,7 @@ TEST(MonitorCatalog, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     ASSERT_NE(view, nullptr);
     view->popup(window->mapToGlobal(QPoint(20, 40)));
     QApplication::processEvents();
-    auto* catalog = view->findChild<QAction*>(QStringLiteral("viewToggle_MonitorCatalogDock"));
+    auto* catalog = view->findChild<QAction*>(QStringLiteral("viewToggle_MonitorDock"));
     ASSERT_NE(catalog, nullptr);
     EXPECT_TRUE(catalog->isEnabled());
     const auto clickMenuAction = [view](QAction* action) {
@@ -191,7 +191,7 @@ TEST(MonitorCatalog, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     };
     clickMenuAction(catalog);
     QApplication::processEvents();
-    auto* idlePanel = window->findChild<MonitorCatalogPanel*>();
+    auto* idlePanel = window->findChild<MonitorPanel*>();
     ASSERT_NE(idlePanel, nullptr);
     EXPECT_TRUE(idlePanel->isVisible());
     EXPECT_TRUE(idlePanel->window()->isVisible());
@@ -225,7 +225,7 @@ TEST(MonitorCatalog, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     ASSERT_TRUE(waitFor([&] {
         return sync.barrier(sync.currentAuthoringRevision()).state == RuntimeSyncCoordinator::RevisionBarrierState::Ready;
     }));
-    auto* dock = window->findChild<ads::CDockWidget*>(QStringLiteral("MonitorCatalogDock"));
+    auto* dock = window->findChild<ads::CDockWidget*>(QStringLiteral("MonitorDock"));
     ASSERT_NE(dock, nullptr);
     dock->toggleView(false);
     QApplication::processEvents();
@@ -235,7 +235,7 @@ TEST(MonitorCatalog, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     QApplication::processEvents();
     ASSERT_EQ(capture->state(), Monitor::EventCaptureState::Capturing);
     EXPECT_TRUE(button->isChecked());
-    auto* panel = window->findChild<MonitorCatalogPanel*>();
+    auto* panel = window->findChild<MonitorPanel*>();
     ASSERT_NE(panel, nullptr);
     EXPECT_TRUE(dock->isClosed());
     EXPECT_FALSE(panel->isVisible());
@@ -252,7 +252,7 @@ TEST(MonitorCatalog, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     EXPECT_EQ(capture->matchingProjectObject(capture->eventAt(row)), variable->objectID);
     EXPECT_TRUE(dock->isClosed());
     EXPECT_FALSE(panel->isVisible());
-    ASSERT_TRUE(window->setWorkspaceWindowVisible(QStringLiteral("MonitorCatalog"), true));
+    ASSERT_TRUE(window->setWorkspaceWindowVisible(QStringLiteral("Monitor"), true));
     QApplication::processEvents();
     EXPECT_FALSE(dock->isClosed());
     EXPECT_TRUE(panel->isVisible());
@@ -264,13 +264,13 @@ TEST(MonitorCatalog, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     EXPECT_EQ(capture->eventAt(row).objectName, QStringLiteral("Intensity"));
 
     const QRect savedFrame = panel->window()->frameGeometry();
-    ASSERT_TRUE(window->saveNamedLayout(QStringLiteral("MonitorCatalogTest")));
+    ASSERT_TRUE(window->saveNamedLayout(QStringLiteral("MonitorPanelTest")));
     dock->toggleView(false);
     EXPECT_EQ(capture->state(), Monitor::EventCaptureState::Capturing);
     const auto count = capture->rowCount();
     ASSERT_EQ(VN_OK, Vn_StopAll(17));
     ASSERT_TRUE(waitFor([&] { return capture->rowCount() > count; }));
-    ASSERT_TRUE(window->loadNamedLayout(QStringLiteral("MonitorCatalogTest")));
+    ASSERT_TRUE(window->loadNamedLayout(QStringLiteral("MonitorPanelTest")));
     EXPECT_FALSE(dock->isClosed());
     EXPECT_TRUE(panel->isVisible());
     EXPECT_EQ(panel->window()->frameGeometry(), savedFrame);
@@ -288,14 +288,14 @@ TEST(MonitorCatalog, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     const QRect userFrame = panel->window()->frameGeometry();
     ASSERT_TRUE(available.contains(userFrame));
     dock->toggleView(false);
-    ASSERT_TRUE(window->setWorkspaceWindowVisible(QStringLiteral("MonitorCatalog"), true));
+    ASSERT_TRUE(window->setWorkspaceWindowVisible(QStringLiteral("Monitor"), true));
     QApplication::processEvents();
     EXPECT_EQ(panel->window()->frameGeometry(), userFrame);
     panel->window()->move(available.bottomRight() + QPoint(100, 100));
     dock->toggleView(false);
     view->popup(window->mapToGlobal(QPoint(20, 40)));
     QApplication::processEvents();
-    catalog = view->findChild<QAction*>(QStringLiteral("viewToggle_MonitorCatalogDock"));
+    catalog = view->findChild<QAction*>(QStringLiteral("viewToggle_MonitorDock"));
     ASSERT_NE(catalog, nullptr);
     EXPECT_FALSE(catalog->isChecked());
     clickMenuAction(catalog);
@@ -320,7 +320,7 @@ TEST(MonitorCatalog, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     EXPECT_FALSE(button->isChecked());
 }
 
-TEST(MonitorCatalog, RestoredCatalogIsVisibleBeforeCaptureAndCanReopen)
+TEST(MonitorPanel, RestoredPanelIsVisibleBeforeCaptureAndCanReopen)
 {
     ensureApp();
     for (const bool floating : {false, true}) {
@@ -333,13 +333,13 @@ TEST(MonitorCatalog, RestoredCatalogIsVisibleBeforeCaptureAndCanReopen)
             auto* docks = new ads::CDockManager(&window);
             WorkspaceWindowManager workspace(defaultWorkspaceWindowCatalog(), QtAdsWindowAdapter(docks, {}));
             Monitor::EventCaptureController capture(nullptr);
-            workspace.registerSingletonFactory(QStringLiteral("MonitorCatalog"), {
+            workspace.registerSingletonFactory(QStringLiteral("Monitor"), {
                 [&]() -> QWidget* {
-                    auto* panel = new MonitorCatalogPanel();
+                    auto* panel = new MonitorPanel();
                     panel->setCaptureController(&capture);
                     return panel;
                 }, {}, {}});
-            auto* dock = workspace.ensureSingleton(QStringLiteral("MonitorCatalog"));
+            auto* dock = workspace.ensureSingleton(QStringLiteral("Monitor"));
             ASSERT_NE(dock, nullptr);
             window.show();
             QApplication::processEvents();
@@ -347,7 +347,7 @@ TEST(MonitorCatalog, RestoredCatalogIsVisibleBeforeCaptureAndCanReopen)
                 ASSERT_TRUE(docks->restoreState(savedState));
                 EXPECT_EQ(workspace.materializeVisibleSingletons(), 1);
             } else {
-                ASSERT_TRUE(workspace.showSingleton(QStringLiteral("MonitorCatalog")));
+                ASSERT_TRUE(workspace.showSingleton(QStringLiteral("Monitor")));
                 if (floating) docks->addDockWidgetFloating(dock);
                 savedState = docks->saveState();
             }
@@ -358,11 +358,11 @@ TEST(MonitorCatalog, RestoredCatalogIsVisibleBeforeCaptureAndCanReopen)
             EXPECT_FALSE(dock->widget()->visibleRegion().isEmpty());
             EXPECT_FALSE(capture.canStop());
             EXPECT_FALSE(capture.canStart());
-            ASSERT_TRUE(workspace.showSingleton(QStringLiteral("MonitorCatalog")));
+            ASSERT_TRUE(workspace.showSingleton(QStringLiteral("Monitor")));
             QApplication::processEvents();
             EXPECT_TRUE(dock->widget()->isVisible());
-            ASSERT_TRUE(workspace.hideSingleton(QStringLiteral("MonitorCatalog")));
-            ASSERT_TRUE(workspace.showSingleton(QStringLiteral("MonitorCatalog")));
+            ASSERT_TRUE(workspace.hideSingleton(QStringLiteral("Monitor")));
+            ASSERT_TRUE(workspace.showSingleton(QStringLiteral("Monitor")));
             QApplication::processEvents();
             EXPECT_TRUE(dock->widget()->isVisible());
         }

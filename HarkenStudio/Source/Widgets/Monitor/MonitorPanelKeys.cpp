@@ -6,7 +6,7 @@ QStringList monitorPanelTypeIds()
 {
     return {
         QStringLiteral("MonitorPerformance"),
-        QStringLiteral("MonitorCatalog"),
+        QStringLiteral("Monitor"),
         QStringLiteral("MonitorVoices"),
         QStringLiteral("MonitorPlayables"),
         QStringLiteral("MonitorEffects"),
@@ -30,7 +30,7 @@ QStringList monitorPanelTitles()
 {
     return {
         QStringLiteral("Performance Monitor"),
-        QStringLiteral("Monitor Catalog"),
+        QStringLiteral("Monitor"),
         QStringLiteral("Voices"),
         QStringLiteral("Playables & Actions"),
         QStringLiteral("Effects"),
@@ -54,7 +54,7 @@ QStringList monitorPanelDockObjectNames()
 {
     return {
         QStringLiteral("MonitorPerformanceDock"),
-        QStringLiteral("MonitorCatalogDock"),
+        QStringLiteral("MonitorDock"),
         QStringLiteral("MonitorVoicesDock"),
         QStringLiteral("MonitorPlayablesDock"),
         QStringLiteral("MonitorEffectsDock"),

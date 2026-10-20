@@ -23,12 +23,12 @@ class TableWidget;
 
 using MonitorJumpLocator = std::function<void(harkenstudio::ObjectId stableId)>;
 
-class MonitorCatalogPanel : public QWidget
+class MonitorPanel : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit MonitorCatalogPanel(QWidget* parent = nullptr);
+    explicit MonitorPanel(QWidget* parent = nullptr);
 
     QTableView* table() const { return table_; }
     void setCaptureController(Monitor::EventCaptureController* capture);

@@ -545,7 +545,7 @@ TEST(QtControlSkin, ApplicationStyleSheetIsDerivedFromSnapshot)
     EXPECT_TRUE(styleSheet.contains(QStringLiteral("QLabel[settingsRole=\"statusWarning\"] { color: #ffaa6611; }")));
     EXPECT_TRUE(styleSheet.contains(QStringLiteral("#ff564738")));
     EXPECT_TRUE(styleSheet.contains(QStringLiteral("QLabel[textRole=\"muted\"] { color: #ff887766; }")));
-    EXPECT_TRUE(styleSheet.contains(QStringLiteral("#AIAssistantPanel QFrame#aiInputFrame[focused=\"true\"]")));
+    EXPECT_TRUE(styleSheet.contains(QStringLiteral("#AssistantPanel QFrame#aiInputFrame[focused=\"true\"]")));
     EXPECT_TRUE(styleSheet.contains(QStringLiteral("#ff663399")));
     EXPECT_TRUE(styleSheet.contains(QStringLiteral("QFrame#listBox")));
     EXPECT_TRUE(styleSheet.contains(QStringLiteral("QWidget#inspectorTabBar[sideBar=\"true\"]")));

@@ -61,13 +61,13 @@ private:
     int fontSize_ = 13;
 };
 
-class AIAssistantPanel : public QWidget
+class AssistantPanel : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit AIAssistantPanel(QWidget* parent = nullptr);
-    ~AIAssistantPanel() override;
+    explicit AssistantPanel(QWidget* parent = nullptr);
+    ~AssistantPanel() override;
 
     void addMessage(const QString& text, bool isUser);
     void setAssistantService(AIAssistantService* service);

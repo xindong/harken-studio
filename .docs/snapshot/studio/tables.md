@@ -40,7 +40,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 
 两种高度策略共用空表时的 4 像素表体留白。`Expanding` 的最小高度完整包含当前可见表头、该留白及横向滚动槽，再由外层布局计入 footer 和边框；有数据时也不能将表体压缩到这一留白以下。控件行、原生模型表、树形表及 Matrix 共用高度计算，表头增高或显隐时同步更新，不能只依赖控件行的最小尺寸提示补偿表头。
 
-停靠宿主按内容当前的最小尺寸计算约束，并计入停靠标题栏和外框；不能缓存表格首次加入时的尺寸，也不能由 Preview 单独补偿边框。拖动停靠分隔条、缩小主窗口或浮动窗口、恢复布局后，都必须保留表头、完整留白和表格底边，验证时须检查父容器裁切后的实际可见范围。
+停靠宿主按内容当前的最小尺寸计算约束，并计入停靠标题栏和外框；不能缓存表格首次加入时的尺寸，也不能由 Control 单独补偿边框。拖动停靠分隔条、缩小主窗口或浮动窗口、恢复布局后，都必须保留表头、完整留白和表格底边，验证时须检查父容器裁切后的实际可见范围。
 
 ## 共同外观与样式可替换性
 
@@ -74,7 +74,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 
 ## 全量清单
 
-普通功能表格按用途去重共 25 项：配置表 12 项、展示表 13 项。Sends 在六类对象中的使用展开后，共 30 个页面/对象类型展示位置。不同对象实例、Binding 字段地址或同一对话框的打开位置不重复计数；Monitor Catalog 采用运行记录模型。
+普通功能表格按用途去重共 25 项：配置表 12 项、展示表 13 项。Sends 在六类对象中的使用展开后，共 30 个页面/对象类型展示位置。不同对象实例、Binding 字段地址或同一对话框的打开位置不重复计数；Monitor 采用运行记录模型。
 
 | ID | 分类 | 位置 / 用途 | 当前入口 |
 |---|---|---|---|
@@ -92,9 +92,9 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 | C12 | config | Project Platform / Resample Policies | ProjectPlatformDialog |
 | D01 | display | Bus Inspector / Inputs | ListFieldDrawer |
 | D02 | display | Bus Inspector / Receives | ListFieldDrawer |
-| D03 | display | Audition / Variables | RehearsalTable |
-| D04 | display | Audition / Variable Bindings | VariableBindingTable |
-| D05 | display | Pack Manager / Pack | PackManagerPanel |
+| D03 | display | Control / Variables | RehearsalTable |
+| D04 | display | Control / Variable Bindings | VariableBindingTable |
+| D05 | display | Publisher / Pack | PublisherPanel |
 | D06 | display | Pack Structure | PackStructureDialog |
 | D07 | display | Remote Connect / Targets | RemoteConnectDialog |
 | D08 | display | Settings / Shortcuts | ShortcutsPage |
@@ -102,7 +102,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 | D10 | display | Monitor / Voices | MonitorVoicesPanel |
 | D11 | display | Monitor / Buses | MonitorBusesPanel |
 | D12 | display | Monitor / Effects | MonitorEffectsPanel |
-| D13 | display | Monitor / Monitor Catalog | MonitorCatalogPanel |
+| D13 | display | Monitor / Events | MonitorPanel |
 
 Inputs/Receives 是路由反向查询，不再适用“所有 Inspector 表都带 #”的旧约定。Shortcuts 枚举命令目录；Layout 枚举已有布局资源，重命名与删除不改变其展示表职责。
 
@@ -136,19 +136,19 @@ Child 选择器仅展示当前 Container 及类型匹配的直属孩子，父级
 
 矩阵使用原生行选择，选中底色与左侧强调线只显示在真实 `#` 序号列。序号列接入公共 `setRowMoveHandler`：悬停显示上下移动光标，拖动期间显示主题强调色的整行插入线，松开提交一次整行移动，Esc 取消；右键 Move Up / Move Down 和 Alt＋上下方向键使用同一命令。Target 和全部条件作为一行移动，支持撤销；同等匹配优先级下，行顺序决定胜者。移动反馈与匹配预览各自独立。首次打开不自动选择，空白、Esc 或 Ctrl 点选已选行可取消选择，编辑器优先处理自身 Esc；删除行沿用 Config Table 的相邻行选择规则。刷新按变量 GUID 保留列宽比例和当前单元格，同一行结构中的编辑保留行选择。
 
-匹配结果预览读取 Preview 的变量覆盖值，未覆盖时读取变量默认值，并应用变量范围与离散读取规则；它不依赖播放开始，也不追踪引擎内已经播放的实例。当前胜出行的条件单元格显示预览底色。条件与更早行完全相同的行，其行号显示警告色：Target 相同为重复行，Target 不同为无法胜出的行。单元格和 Target 提示显示具体原因与阻挡行号，并保留原有值与引用信息；编辑消除冲突后清除警告，撤销后恢复。预览与诊断不改变用户选择、未提交的编辑值或项目数据。
+匹配结果预览读取 Control 的变量覆盖值，未覆盖时读取变量默认值，并应用变量范围与离散读取规则；它不依赖播放开始，也不追踪引擎内已经播放的实例。当前胜出行的条件单元格显示预览底色。条件与更早行完全相同的行，其行号显示警告色：Target 相同为重复行，Target 不同为无法胜出的行。单元格和 Target 提示显示具体原因与阻挡行号，并保留原有值与引用信息；编辑消除冲突后清除警告，撤销后恢复。预览与诊断不改变用户选择、未提交的编辑值或项目数据。
 
 Blend 模式的 Selection Editor 使用无表头的混合表，结构为 `# | Variable 与 Child 副表 | 混合曲线画布`。每行（row）对应一个可选的 Variable；控制区上方是可编辑的 Variable ObjectRef，下方是公共 `# | Child` 副表。画布横轴与 Variable Binding 共用 Variable 轴配置：Smooth 使用数值刻度与连续曲线，Step 使用整数刻度、Label 和阶梯预览；Kind、Label、Range 变化自动刷新，保留曲线原始坐标。纵轴显示 0–100% 混合比例。公共 `ResizableTableView` 承载跨行统一的比例分区宽度及独立行高，控制区与画布的边界、每行底边分别拖动调宽和调高；`#` 为固定宽度。画布不叠加外框，边界由宿主统一绘制；坐标轴保持 1px。分区边线止于最后一行，表格行外空白区与 Child 副表统一使用公共表体的深色主背景 `bgPrimary`，与其他模式一致。嵌套对象继续使用同一编辑器与返回路径。
 
 右下角标准加减号管理混合行：加号菜单为 Add Mixing，添加一行后通过该行的 Variable 引用控件选择变量；减号为 Remove Mixing，移除当前行；外层 `#` 接入公共整行选中、拖动排序、插入位置提示、右键上下移动与键盘操作。整行选中高亮仅限外层 `#`，不覆盖 Variable、Child 副表和画布。每行的 Child 副表在 Child 右侧显示 Waveform，默认比例为 40% / 60%，使用独立的右下角加减号、序号选择与拖动排序，整条曲线随成员移动。标准 ObjectRef 支持更换引用、定位和进入对象。更换 Variable 保留曲线数值坐标。所有业务写入通过 `selections` 命令形成撤销步骤；混合行是统一条目中混合曲线的编辑视图，存档字段 `blendAxes` 保存混合行身份、Variable 引用和行顺序，不另存成员名单。删除曲线保留条目的其他策略数据；调宽、调高属于编辑器布局状态。
 
-child 的多条曲线叠加显示，未选中统一为暗青色，所选 child 的曲线为亮青色，色彩来自主题的曲线强调色。每条曲线有带 child 名称的容器，标题区横向拖动整个区间，首尾点可单独移动；曲线下方至 0% 的区域使用渐变填充。容器不绘制贯穿全高的左右边框，首尾曲线点到 0% 轴的辅助线使用 1px 虚线。Step 的实际阶梯结果为实线，原始连续曲线作为淡色虚线辅助编辑；选中与未选中曲线、渐变填充和命中检测均采用相同的离散读取规则。点选标题或曲线与 Child 副表选择联动，编辑继续复用公共点与贝塞尔手柄交互。成员列表和曲线区按比例适应宽度，无横向滚动；多行与较长成员列表使用纵向滚动。试听游标读取 Preview 的变量覆盖值，各行增益及跨行相乘后的结果通过 Child 提示查看，试听状态不占用序号选择高亮。
+child 的多条曲线叠加显示，未选中统一为暗青色，所选 child 的曲线为亮青色，色彩来自主题的曲线强调色。每条曲线有带 child 名称的容器，标题区横向拖动整个区间，首尾点可单独移动；曲线下方至 0% 的区域使用渐变填充。容器不绘制贯穿全高的左右边框，首尾曲线点到 0% 轴的辅助线使用 1px 虚线。Step 的实际阶梯结果为实线，原始连续曲线作为淡色虚线辅助编辑；选中与未选中曲线、渐变填充和命中检测均采用相同的离散读取规则。点选标题或曲线与 Child 副表选择联动，编辑继续复用公共点与贝塞尔手柄交互。成员列表和曲线区按比例适应宽度，无横向滚动；多行与较长成员列表使用纵向滚动。试听游标读取 Control 的变量覆盖值，各行增益及跨行相乘后的结果通过 Child 提示查看，试听状态不占用序号选择高亮。
 
 曲线支持公共点坐标编辑、插入删除、手柄塑形、复制粘贴与撤销。精确数值输入使用公共 `DecimalSpinBox`，百分比在保存和 Pack 编译时转换为线性增益；未改动的坐标保持原有精度。拖动松开提交一步撤销，取消或切换对象丢弃未提交预览。同一行中的同一 child 只允许一条曲线，跨行引用共用播放、增益相乘，成员之间不自动归一化。
 
 混合表、Curve Editor、Timeline 是领域画布，不套用普通功能表格模板。
 
-Hierarchy、Explorer、Sources、Selector 及 Template Chooser 预览属于导航或选择树。普通 Log 使用文本控件，不算 Monitor Catalog 的另一张表。不得通过全局 QTreeView 样式修改这些导航语义。
+Hierarchy、Explorer、Sources、Selector 及 Template Chooser 预览属于导航或选择树。普通 Log 使用文本控件，不算 Monitor 的另一张表。不得通过全局 QTreeView 样式修改这些导航语义。
 
 ## 实施与验收
 
@@ -162,7 +162,7 @@ Hierarchy、Explorer、Sources、Selector 及 Template Chooser 预览属于导�
 - [x] Monitor 通过公共选项保留原生列宽调整、横向滚动和现有表头状态恢复。
 - [x] Sources、Pack、Shortcuts 使用公共分组；原生表头、行背景、分隔线和语义文字状态收敛。
 - [x] 删除 Settings 表格专用皮肤、Binding 专用表框、Pack 专用输入框皮肤及 Audition 对 ObjectRef 内部标签的修改。
-- [x] Remote 使用公共左侧刷新入口；Monitor Catalog 使用公共 footer 动作与状态位置。
+- [x] Remote 使用公共左侧刷新入口；Monitor 使用公共 footer 动作与状态位置。
 - [x] ListField 混合值提示使用公共表体消息位置，Pack 移除旧文字颜色覆盖。
 - [x] 默认编辑器及测试目标构建通过，累计 534 项不同的相关回归通过（整体验证 468 项，收尾针对性复验 110 项，含重复项）。
 
@@ -178,7 +178,7 @@ Hierarchy、Explorer、Sources、Selector 及 Template Chooser 预览属于导�
 
 公共创建 API 补充：4 个 Monitor 模型表体、6 个项目设置/Remote/Pack Structure 条目表体均改由 Table 创建；Pack 的特殊子类通过显式工厂接入，控件行表格沿用既有托管表体。移除公开 `setView`，Catalog 模型切换改走公共 `setModel`。默认编辑器及测试目标构建通过，411 项相关离屏回归全部通过，包含模型替换后的编辑与行高更新、列宽恢复、表体所有权及特殊工厂主题传递；本轮未新增原生控件使用门禁或测试框架。
 
-高度与滚动槽复核：随宿主高度变化的表格共 14 类，包括 Preview 两表、Monitor 四表、Pack Manager、Pack Structure、Remote Targets、Settings Shortcuts、Settings Layout、Match 矩阵、混合主表及 Child 子表。Preview 两表和混合 Child 原先将表头放在滚动区外，槽位起点与 Layout 的原生视图不同；公共 Table 已改为在滚动区内部预留表头视口边距，并统一两种表体的实际最小高度约束。槽底色已移除，原有分隔线保留；控件行的宽泛后代样式已收窄，滚动条使用公共皮肤。14 类表格已逐类离屏渲染核对槽位起点、透明绘制、分隔线，以及压缩至最小尺寸后的表头和表体留白；编辑器及测试目标构建通过，267 项相关回归通过，局部 QSS 所有权检查通过。
+高度与滚动槽复核：随宿主高度变化的表格共 14 类，包括 Control 两表、Monitor 四表、Publisher、Pack Structure、Remote Targets、Settings Shortcuts、Settings Layout、Match 矩阵、混合主表及 Child 子表。Control 两表和混合 Child 原先将表头放在滚动区外，槽位起点与 Layout 的原生视图不同；公共 Table 已改为在滚动区内部预留表头视口边距，并统一两种表体的实际最小高度约束。槽底色已移除，原有分隔线保留；控件行的宽泛后代样式已收窄，滚动条使用公共皮肤。14 类表格已逐类离屏渲染核对槽位起点、透明绘制、分隔线，以及压缩至最小尺寸后的表头和表体留白；编辑器及测试目标构建通过，267 项相关回归通过，局部 QSS 所有权检查通过。
 
 ## 当前公共入口
 
@@ -252,7 +252,7 @@ auto* items = table->createItemView(QStringLiteral("Platforms"),
 auto* table = new TableWidget(TableOptions::display(), parent);
 auto* view = table->createCustomView(QStringLiteral("Packs"),
     [](QWidget* owner, ThemeManager* themeManager) {
-        return new PackManagerTree({280, 70, 90, 150, 80, 80, 120, 60}, owner, themeManager);
+        return new PublisherTree({280, 70, 90, 150, 80, 80, 120, 60}, owner, themeManager);
     });
 ```
 
@@ -262,13 +262,13 @@ auto* view = table->createCustomView(QStringLiteral("Packs"),
 
 公共分组不增加子条目的视觉缩进：Init、General 和语言分区中的直接条目，以及 Shortcuts 分类下的命令，仍从对应列的正常留白起排。真正的业务父子层级保留内容缩进，绘制、编辑器和点击命中使用同一内容区域；分隔线和选择背景不随内容缩进。未创建公共分组的普通树继续使用原生层级布局。
 
-Pack Exporter 的 General 和语言分区使用实际父子关系，并按语言 ID 恢复折叠状态；Action 行选择同时包含 Action ID 和语言。Init 独立显示且始终包含在发布中，未变化时可复用；各分区同时启用勾选和折叠，聚合当前编辑平台上的可操作包状态。批量操作包含搜索过滤隐藏的包，沿用平台 targeting 命令写入本地缓存，不进入工程撤销栈；不改变导出平台选择。没有可操作包或编辑平台时，勾选框禁用，折叠仍可使用。
+Publisher 的 General 和语言分区使用实际父子关系，并按语言 ID 恢复折叠状态；Action 行选择同时包含 Action ID 和语言。Init 独立显示且始终包含在发布中，未变化时可复用；各分区同时启用勾选和折叠，聚合当前编辑平台上的可操作包状态。批量操作包含搜索过滤隐藏的包，沿用平台 targeting 命令写入本地缓存，不进入工程撤销栈；不改变导出平台选择。没有可操作包或编辑平台时，勾选框禁用，折叠仍可使用。
 
-Pack Exporter 数据归属：Name 和语言分区由当前工程 Action 及其语言依赖派生。勾选与 Export Platforms 存于 `.cache/pack-export-selection.json`，Built、Size、Modified、File、Version 存于 `.cache/pack-artifacts.json`；产物缓存由成功发布更新，面板刷新不读取产物或 manifest。Built 表示最近成功发布的快照，外部删除或替换产物不会自动同步；Self Cleaning 的已知删除会同步清缓存。CRC32 列已移除。Result 与 Cost 共用会话内结果存储，GUI/IPC 导出按稳定身份更新，工程关闭后清空，不写入缓存或工程文件。两列按 Result、Cost 顺序固定在最右侧，Result 左侧以公共表格竖线分隔表头、数据行和空白区域，遇到整行分组时断开；两列通过公共列强调样式使用略有区别的表头颜色和整列背景（包括表体空白区域），选中态保持整行一致；其他列可在前方移动，所有列仍可调整宽度，开发者列显隐不改变末尾顺序。Cost 为每包资源准备与写包耗时，不包含共享编译和发布阶段。清缓存后默认全选，产物列留空；Build 配置、平台与语言定义仍是工程数据。隐藏面板延后刷新，可见时合并更新，并用共享语言投影代替完整构建计划。
+Publisher 数据归属：Name 和语言分区由当前工程 Action 及其语言依赖派生。勾选与 Export Platforms 存于 `.cache/pack-export-selection.json`，Built、Size、Modified、File、Version 存于 `.cache/pack-artifacts.json`；产物缓存由成功发布更新，面板刷新不读取产物或 manifest。Built 表示最近成功发布的快照，外部删除或替换产物不会自动同步；Self Cleaning 的已知删除会同步清缓存。CRC32 列已移除。Result 与 Cost 共用会话内结果存储，GUI/IPC 导出按稳定身份更新，工程关闭后清空，不写入缓存或工程文件。两列按 Result、Cost 顺序固定在最右侧，Result 左侧以公共表格竖线分隔表头、数据行和空白区域，遇到整行分组时断开；两列通过公共列强调样式使用略有区别的表头颜色和整列背景（包括表体空白区域），选中态保持整行一致；其他列可在前方移动，所有列仍可调整宽度，开发者列显隐不改变末尾顺序。Cost 为每包资源准备与写包耗时，不包含共享编译和发布阶段。清缓存后默认全选，产物列留空；Build 配置、平台与语言定义仍是工程数据。隐藏面板延后刷新，可见时合并更新，并用共享语言投影代替完整构建计划。
 
-Pack Exporter 的 Init 与 Action 行通过公共 `TableRowProgressRole` / `TableRowProgressStateRole` 和 `ProportionalTreeWidget::setRowProgressEndColumn` 绘制连续背景进度，范围从行左边到 Result 左侧，适应前方列换位、调宽及开发者列显隐；分组不填充，Result/Cost 保持独立区域。进度与结果遵循主 toolbar 的 primary 平台、语言和稳定 unitKey，不聚合导出平台。进度仅在当前工程会话内保存，关闭工程或重启即清空；本轮参与打包的行从零开始并清除旧 Result/Cost，未参与的行保留。准备、编译、写入、发布按阶段推进，仅发布成功到 100%；失败及取消冻结当前位置。GUI 与 IPC 共用会话任务身份隔离迟到事件，进度通知仅更新对应行，不重建整表。面板导出在后台执行，取消入口位于原 Export 主按钮，不再显示独立进度弹窗。
+Publisher 的 Init 与 Action 行通过公共 `TableRowProgressRole` / `TableRowProgressStateRole` 和 `ProportionalTreeWidget::setRowProgressEndColumn` 绘制连续背景进度，范围从行左边到 Result 左侧，适应前方列换位、调宽及开发者列显隐；分组不填充，Result/Cost 保持独立区域。进度与结果遵循主 toolbar 的 primary 平台、语言和稳定 unitKey，不聚合导出平台。进度仅在当前工程会话内保存，关闭工程或重启即清空；本轮参与打包的行从零开始并清除旧 Result/Cost，未参与的行保留。准备、编译、写入、发布按阶段推进，仅发布成功到 100%；失败及取消冻结当前位置。GUI 与 IPC 共用会话任务身份隔离迟到事件，进度通知仅更新对应行，不重建整表。面板导出在后台执行，取消入口位于原 Export 主按钮，不再显示独立进度弹窗。
 
-Pack Exporter 不再提供行右键 Export Settings 弹窗；打包输出目录统一在 Project Settings > Build 设置。媒体转换失败固定尝试默认处理参数或原始文件回退，成功后继续并记录首次失败原因；源文件缺失、变更或回退失败仍报错。旧工程的 `conversionFailurePolicy` 字段允许加载，但不再参与导出，保存时不再写入。
+Publisher 不再提供行右键 Export Settings 弹窗；打包输出目录统一在 Project Settings > Build 设置。媒体转换失败固定尝试默认处理参数或原始文件回退，成功后继续并记录首次失败原因；源文件缺失、变更或回退失败仍报错。旧工程的 `conversionFailurePolicy` 字段允许加载，但不再参与导出，保存时不再写入。
 
 控件行通过 `registerRow(row, cells, details)` 将同属 `rowsWidget()` 的主行和展开容器登记为一条逻辑行，`details` 可省略。字段先放入 `createCell` 创建的共享单元格，再登记单元格；不把裸字段控件作为补边距的容器。展开容器提供自己的内容布局；公共表格负责同步选中状态、行号列宽度、内容缩进及主行与详情之间的分隔线，删除主行时一并清理详情。业务用 `rowForWidget(widget)` 将展开区及其子控件的交互归属到主行，不再复制详情的行号或选中状态。
 

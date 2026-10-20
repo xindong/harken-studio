@@ -11,11 +11,11 @@ class VariableBindingTable;
 struct ProjectItem;
 }
 
-class PreviewPanel : public QWidget
+class ControlPanel : public QWidget
 {
     Q_OBJECT
 public:
-    explicit PreviewPanel(QWidget* parent = nullptr);
+    explicit ControlPanel(QWidget* parent = nullptr);
 
     void setItem(VNX::ProjectItem* item);
     VNX::ProjectItem* boundItem() const;

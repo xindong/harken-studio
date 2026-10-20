@@ -1,5 +1,5 @@
 
-#include "AIAssistantPanel.h"
+#include "AssistantPanel.h"
 #include "../../Core/AI/AIAssistantService.h"
 #include "../../Core/AI/AIMarkdownRenderer.h"
 #include "../../Core/AppSettings.h"
@@ -274,11 +274,11 @@ void UserMessageWidget::setFontSize(int fontSize)
     applyMessageLabelStyle(contentLabel_, true, fontSize);
 }
 
-AIAssistantPanel::AIAssistantPanel(QWidget* parent)
+AssistantPanel::AssistantPanel(QWidget* parent)
     : QWidget(parent)
 {
-    setObjectName("AIAssistantPanel");
-    currentFontSize_ = AppSettings::instance().panelFontSize(PanelId::AIAssistant);
+    setObjectName("AssistantPanel");
+    currentFontSize_ = AppSettings::instance().panelFontSize(PanelId::Assistant);
     
     setupUI();
     statusClearTimer_ = new QTimer(this);
@@ -288,7 +288,7 @@ AIAssistantPanel::AIAssistantPanel(QWidget* parent)
     });
     
     connect(&AppSettings::instance(), &AppSettings::fontSizeChanged,
-            this, &AIAssistantPanel::onFontSettingsChanged);
+            this, &AssistantPanel::onFontSettingsChanged);
 
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             this, [this]() {
@@ -297,9 +297,9 @@ AIAssistantPanel::AIAssistantPanel(QWidget* parent)
             });
 }
 
-AIAssistantPanel::~AIAssistantPanel() = default;
+AssistantPanel::~AssistantPanel() = default;
 
-void AIAssistantPanel::setupUI()
+void AssistantPanel::setupUI()
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(8, 8, 8, 8);
@@ -318,17 +318,17 @@ void AIAssistantPanel::setupUI()
         conversationSelector_,
         qOverload<int>(&QComboBox::currentIndexChanged),
         this,
-        &AIAssistantPanel::onConversationSelectionChanged);
+        &AssistantPanel::onConversationSelectionChanged);
     conversationActions->addWidget(conversationSelector_, 1);
     newConversationBtn_ = new QPushButton();
-    newConversationBtn_->setObjectName(QStringLiteral("aiAssistantNewConversation"));
+    newConversationBtn_->setObjectName(QStringLiteral("assistantNewConversation"));
     newConversationBtn_->setFixedSize(28, 28);
     newConversationBtn_->setIconSize(QSize(20, 20));
     newConversationBtn_->setProperty("flatIconButton", true);
     newConversationBtn_->setCursor(Qt::PointingHandCursor);
     newConversationBtn_->setToolTip(tr("Start a new conversation"));
     connect(newConversationBtn_, &QPushButton::clicked,
-            this, &AIAssistantPanel::onNewConversationClicked);
+            this, &AssistantPanel::onNewConversationClicked);
     conversationActions->addWidget(newConversationBtn_);
     mainLayout->addLayout(conversationActions);
 
@@ -379,19 +379,19 @@ void AIAssistantPanel::setupUI()
     frameLayout->setSpacing(6);
 
     inputEdit_ = new QLineEdit();
-    inputEdit_->setObjectName("aiAssistantInput");
+    inputEdit_->setObjectName("assistantInput");
     inputEdit_->setPlaceholderText(tr("Ask Harken AI..."));
     inputEdit_->installEventFilter(this);
-    connect(inputEdit_, &QLineEdit::returnPressed, this, &AIAssistantPanel::onSendClicked);
+    connect(inputEdit_, &QLineEdit::returnPressed, this, &AssistantPanel::onSendClicked);
     frameLayout->addWidget(inputEdit_, 1);
 
     sendBtn_ = new QPushButton();
-    sendBtn_->setObjectName("aiAssistantSend");
+    sendBtn_->setObjectName("assistantSend");
     sendBtn_->setProperty("flatIconButton", true);
     sendBtn_->setFixedSize(32, 32);
     sendBtn_->setIconSize(QSize(20, 20));
     sendBtn_->setCursor(Qt::PointingHandCursor);
-    connect(sendBtn_, &QPushButton::clicked, this, &AIAssistantPanel::onSendClicked);
+    connect(sendBtn_, &QPushButton::clicked, this, &AssistantPanel::onSendClicked);
     frameLayout->addWidget(sendBtn_);
 
     QHBoxLayout* inputLayout = new QHBoxLayout();
@@ -408,7 +408,7 @@ void AIAssistantPanel::setupUI()
     updateEmptyState();
 }
 
-void AIAssistantPanel::setAssistantService(AIAssistantService* service)
+void AssistantPanel::setAssistantService(AIAssistantService* service)
 {
     if (aiService_ == service)
         return;
@@ -427,24 +427,24 @@ void AIAssistantPanel::setAssistantService(AIAssistantService* service)
         resetServiceUiState();
     }));
     serviceConnections_.append(connect(aiService_, &AIAssistantService::responseReady,
-                                       this, &AIAssistantPanel::onResponseReady));
+                                       this, &AssistantPanel::onResponseReady));
     serviceConnections_.append(connect(aiService_, &AIAssistantService::failed,
-                                       this, &AIAssistantPanel::onTurnFailed));
+                                       this, &AssistantPanel::onTurnFailed));
     serviceConnections_.append(connect(aiService_, &AIAssistantService::confirmationRequired,
-                                       this, &AIAssistantPanel::onConfirmationRequired));
+                                       this, &AssistantPanel::onConfirmationRequired));
     serviceConnections_.append(connect(aiService_, &AIAssistantService::stepEventReady,
-                                       this, &AIAssistantPanel::onServiceEvent));
+                                       this, &AssistantPanel::onServiceEvent));
     serviceConnections_.append(connect(aiService_, &AIAssistantService::diagnosticReady,
-                                       this, &AIAssistantPanel::onServiceDiagnostic));
+                                       this, &AssistantPanel::onServiceDiagnostic));
     serviceConnections_.append(connect(aiService_, &AIAssistantService::conversationCleared,
-                                       this, &AIAssistantPanel::onConversationCleared));
+                                       this, &AssistantPanel::onConversationCleared));
     serviceConnections_.append(connect(aiService_, &AIAssistantService::conversationRestored,
-                                       this, &AIAssistantPanel::onConversationRestored));
+                                       this, &AssistantPanel::onConversationRestored));
     serviceConnections_.append(connect(
         aiService_,
         &AIAssistantService::conversationSessionsChanged,
         this,
-        &AIAssistantPanel::onConversationSessionsChanged));
+        &AssistantPanel::onConversationSessionsChanged));
     onConversationSessionsChanged(
         aiService_->conversationSessions(),
         aiService_->activeConversationSessionId());
@@ -453,14 +453,14 @@ void AIAssistantPanel::setAssistantService(AIAssistantService* service)
         onConversationRestored(restored);
 }
 
-void AIAssistantPanel::updateEmptyState()
+void AssistantPanel::updateEmptyState()
 {
     const bool empty = messageHistory_.isEmpty() && liveConfirmationCards_.isEmpty();
     emptyState_->setVisible(empty);
     chatList_->setVisible(!empty);
 }
 
-void AIAssistantPanel::applyEmptyLabelStyle()
+void AssistantPanel::applyEmptyLabelStyle()
 {
     const auto& tc = ThemeManager::instance().colors();
     emptyIcon_->setPixmap(ThemeManager::instance().resolveIcon(
@@ -470,12 +470,12 @@ void AIAssistantPanel::applyEmptyLabelStyle()
     emptyLabel_->setText(tr("Chat with Harken AI..."));
 }
 
-void AIAssistantPanel::updateInputFrameStyle(bool focused)
+void AssistantPanel::updateInputFrameStyle(bool focused)
 {
     QtControlSkin::setSemanticProperty(inputFrame_, "focused", focused);
 }
 
-void AIAssistantPanel::addMessage(const QString& text, bool isUser)
+void AssistantPanel::addMessage(const QString& text, bool isUser)
 {
     messageHistory_.append({text, isUser});
     updateEmptyState();
@@ -506,7 +506,7 @@ void AIAssistantPanel::addMessage(const QString& text, bool isUser)
         scheduleMessageRelayout();
 }
 
-void AIAssistantPanel::scheduleMessageRelayout()
+void AssistantPanel::scheduleMessageRelayout()
 {
     QTimer::singleShot(50, this, [this]() {
         relayoutMessages();
@@ -515,7 +515,7 @@ void AIAssistantPanel::scheduleMessageRelayout()
     });
 }
 
-void AIAssistantPanel::onSendClicked()
+void AssistantPanel::onSendClicked()
 {
     if (turnActive_)
     {
@@ -543,7 +543,7 @@ void AIAssistantPanel::onSendClicked()
     }
 }
 
-void AIAssistantPanel::onStopClicked()
+void AssistantPanel::onStopClicked()
 {
     if (!aiService_ || !turnActive_)
         return;
@@ -556,7 +556,7 @@ void AIAssistantPanel::onStopClicked()
     addMessage(boundedStatus(tr("[Aborted] The current AI operation has stopped.")), false);
 }
 
-void AIAssistantPanel::onNewConversationClicked()
+void AssistantPanel::onNewConversationClicked()
 {
     if (aiService_)
     {
@@ -566,7 +566,7 @@ void AIAssistantPanel::onNewConversationClicked()
     }
     onConversationCleared();
 }
-void AIAssistantPanel::onConversationSelectionChanged(int index)
+void AssistantPanel::onConversationSelectionChanged(int index)
 {
     if (updatingConversationSelector_ || !aiService_
         || index < 0)
@@ -585,7 +585,7 @@ void AIAssistantPanel::onConversationSelectionChanged(int index)
     aiService_->switchConversationSession(sessionId);
 }
 
-void AIAssistantPanel::onConversationCleared()
+void AssistantPanel::onConversationCleared()
 {
     resetServiceUiState();
     messageHistory_.clear();
@@ -594,7 +594,7 @@ void AIAssistantPanel::onConversationCleared()
     updateEmptyState();
 }
 
-void AIAssistantPanel::onConversationRestored(const QJsonArray& messages)
+void AssistantPanel::onConversationRestored(const QJsonArray& messages)
 {
     onConversationCleared();
     batchingMessages_ = true;
@@ -609,7 +609,7 @@ void AIAssistantPanel::onConversationRestored(const QJsonArray& messages)
     scheduleMessageRelayout();
     updateEmptyState();
 }
-void AIAssistantPanel::onConversationSessionsChanged(
+void AssistantPanel::onConversationSessionsChanged(
     const QJsonArray& sessions,
     const QString& activeSessionId)
 {
@@ -634,7 +634,7 @@ void AIAssistantPanel::onConversationSessionsChanged(
         !turnActive_ && conversationSelector_->count() > 0);
 }
 
-void AIAssistantPanel::setTurnActive(bool active)
+void AssistantPanel::setTurnActive(bool active)
 {
     turnActive_ = active;
     const auto& tc = ThemeManager::instance().colors();
@@ -653,7 +653,7 @@ void AIAssistantPanel::setTurnActive(bool active)
         : tr("Ask Harken AI..."));
 }
 
-void AIAssistantPanel::removeThinkingPlaceholder()
+void AssistantPanel::removeThinkingPlaceholder()
 {
     for (int i = messageHistory_.size() - 1; i >= 0; --i)
     {
@@ -667,7 +667,7 @@ void AIAssistantPanel::removeThinkingPlaceholder()
     }
 }
 
-void AIAssistantPanel::onResponseReady(const QString& requestId, const QString& response)
+void AssistantPanel::onResponseReady(const QString& requestId, const QString& response)
 {
     if (trackedRequestId_.isEmpty() ? !inServiceCall_ : requestId != trackedRequestId_)
         return;
@@ -681,7 +681,7 @@ void AIAssistantPanel::onResponseReady(const QString& requestId, const QString& 
     addMessage(response, false);
 }
 
-void AIAssistantPanel::onTurnFailed(const QString& requestId, const QString& code,
+void AssistantPanel::onTurnFailed(const QString& requestId, const QString& code,
                                     const QString& message)
 {
     const bool accepted = trackedRequestId_.isEmpty()
@@ -699,7 +699,7 @@ void AIAssistantPanel::onTurnFailed(const QString& requestId, const QString& cod
     addMessage(boundedStatus(tr("[Error] %1: %2").arg(code, message)), false);
 }
 
-void AIAssistantPanel::clearStepStatus(const QString& expectedText)
+void AssistantPanel::clearStepStatus(const QString& expectedText)
 {
     if (stepStatusLabel_ && stepStatusLabel_->text() == expectedText)
     {
@@ -708,7 +708,7 @@ void AIAssistantPanel::clearStepStatus(const QString& expectedText)
     }
 }
 
-void AIAssistantPanel::onServiceEvent(const AIStepEvent& event)
+void AssistantPanel::onServiceEvent(const AIStepEvent& event)
 {
     if (trackedRequestId_.isEmpty())
     {
@@ -782,7 +782,7 @@ void AIAssistantPanel::onServiceEvent(const AIStepEvent& event)
         statusClearTimer_->start(4000);
 }
 
-void AIAssistantPanel::onServiceDiagnostic(const AIServiceDiagnostic& diagnostic)
+void AssistantPanel::onServiceDiagnostic(const AIServiceDiagnostic& diagnostic)
 {
     if (!stepStatusLabel_)
         return;
@@ -792,7 +792,7 @@ void AIAssistantPanel::onServiceDiagnostic(const AIServiceDiagnostic& diagnostic
         statusClearTimer_->start(4000);
 }
 
-void AIAssistantPanel::renderConfirmationCard(const QString& requestId,
+void AssistantPanel::renderConfirmationCard(const QString& requestId,
                                                const QJsonObject& command)
 {
     emptyState_->setVisible(false);
@@ -809,7 +809,7 @@ void AIAssistantPanel::renderConfirmationCard(const QString& requestId,
     chatList_->setItemWidget(item, card);
 }
 
-void AIAssistantPanel::resolveConfirmation(const QString& requestId, bool approved)
+void AssistantPanel::resolveConfirmation(const QString& requestId, bool approved)
 {
     if (!liveConfirmationCards_.remove(requestId))
         return;
@@ -821,13 +821,13 @@ void AIAssistantPanel::resolveConfirmation(const QString& requestId, bool approv
     }
 }
 
-void AIAssistantPanel::clearConfirmationCards(const QString& requestId)
+void AssistantPanel::clearConfirmationCards(const QString& requestId)
 {
     if (liveConfirmationCards_.remove(requestId))
         refreshMessages();
 }
 
-void AIAssistantPanel::resetServiceUiState()
+void AssistantPanel::resetServiceUiState()
 {
     trackedRequestId_.clear();
     failedStepSeen_ = false;
@@ -848,7 +848,7 @@ void AIAssistantPanel::resetServiceUiState()
     }
 }
 
-void AIAssistantPanel::onConfirmationRequired(const QString& requestId,
+void AssistantPanel::onConfirmationRequired(const QString& requestId,
                                                const QJsonObject& command)
 {
     trackedRequestId_ = requestId;
@@ -860,16 +860,16 @@ void AIAssistantPanel::onConfirmationRequired(const QString& requestId,
     chatList_->scrollToBottom();
 }
 
-void AIAssistantPanel::onFontSettingsChanged(PanelId panelId, int size)
+void AssistantPanel::onFontSettingsChanged(PanelId panelId, int size)
 {
-    if (panelId == PanelId::AIAssistant)
+    if (panelId == PanelId::Assistant)
     {
         currentFontSize_ = size;
         applyFontSettings();
     }
 }
 
-void AIAssistantPanel::applyFontSettings()
+void AssistantPanel::applyFontSettings()
 {
     QFont inputFont(FontManager::instance().sansFamily());
     inputFont.setPixelSize(currentFontSize_);
@@ -882,7 +882,7 @@ void AIAssistantPanel::applyFontSettings()
     refreshMessages();
 }
 
-void AIAssistantPanel::applyNewConversationButtonStyle()
+void AssistantPanel::applyNewConversationButtonStyle()
 {
     const auto& tc = ThemeManager::instance().colors();
     newConversationBtn_->setIcon(ThemeManager::instance().resolveIcon(
@@ -890,7 +890,7 @@ void AIAssistantPanel::applyNewConversationButtonStyle()
         ThemeAssetVariant{QSize(), 1.0, 0, tc.textSecondary}).icon);
 }
 
-void AIAssistantPanel::refreshMessages()
+void AssistantPanel::refreshMessages()
 {
     QVector<MessageData> messages = messageHistory_;
     batchingMessages_ = true;
@@ -908,7 +908,7 @@ void AIAssistantPanel::refreshMessages()
     updateEmptyState();
 }
 
-bool AIAssistantPanel::eventFilter(QObject* watched, QEvent* event)
+bool AssistantPanel::eventFilter(QObject* watched, QEvent* event)
 {
     if (chatList_ && watched == chatList_->viewport()
         && event->type() == QEvent::Resize) {
@@ -923,7 +923,7 @@ bool AIAssistantPanel::eventFilter(QObject* watched, QEvent* event)
     return QWidget::eventFilter(watched, event);
 }
 
-void AIAssistantPanel::relayoutMessages()
+void AssistantPanel::relayoutMessages()
 {
     if (!chatList_)
         return;

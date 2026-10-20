@@ -144,7 +144,7 @@ add_executable(harken_editor_tests
     UnitTest/MonitorPanelModuleTest.cpp
     UnitTest/MonitorPerformancePanelTest.cpp
     UnitTest/MonitorPerformanceLiveTest.cpp
-    UnitTest/MonitorCatalogTest.cpp
+    UnitTest/MonitorPanelTest.cpp
     UnitTest/MonitorVoicesTest.cpp
     UnitTest/MonitorPlayablesTest.cpp
     UnitTest/MonitorEffectsTest.cpp
@@ -225,7 +225,7 @@ add_executable(harken_editor_tests
     UnitTest/ActionStepTargetResolveTest.cpp
     UnitTest/ActionClosureSemanticsTest.cpp
     UnitTest/PackBuildPlanTest.cpp
-    UnitTest/PackManagerLanguageTest.cpp
+    UnitTest/PublisherLanguageTest.cpp
     UnitTest/PackGenerationRecordTest.cpp
     UnitTest/RoutingInspectorSchemaTest.cpp
     UnitTest/DispatcherReentryTest.cpp
@@ -274,7 +274,7 @@ add_executable(harken_editor_tests
     UnitTest/BindingRuntimeLoweringTest.cpp
     UnitTest/VariableConsumerSemanticsTest.cpp
     UnitTest/VariableImpactSemanticsTest.cpp
-    UnitTest/PreviewPanelTest.cpp
+    UnitTest/ControlPanelTest.cpp
     UnitTest/InspectorSlotStripTest.cpp
     UnitTest/GridPropertyRouteTest.cpp
     UnitTest/ContainerGridCopyTest.cpp
@@ -336,7 +336,7 @@ add_executable(harken_editor_tests
     UnitTest/OpenAICompatibleLLMProviderTest.cpp
     UnitTest/AIAssistantServiceTest.cpp
     UnitTest/AIConversationPersistenceTest.cpp
-    UnitTest/AIAssistantPanelWiringTest.cpp
+    UnitTest/AssistantPanelWiringTest.cpp
     UnitTest/AIUnrestrictedModeTest.cpp
 )
 set_target_properties(harken_editor_tests PROPERTIES

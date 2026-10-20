@@ -47,9 +47,9 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
 {
     return {
         {
-            QStringLiteral("BlueprintCanvas"),
-            QStringLiteral("Blueprint Canvas"),
-            QStringLiteral("BlueprintCanvasDock"),
+            QStringLiteral("Blueprint"),
+            QStringLiteral("Blueprint"),
+            QStringLiteral("BlueprintDock"),
             WindowKind::Singleton,
             {DefaultDockArea::Top, QString(), true},
             MaterializationPolicy::Eager,
@@ -57,9 +57,9 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
             AvailabilityPolicy::Always
         },
         {
-            QStringLiteral("AIAssistant"),
-            QStringLiteral("AI Assistant"),
-            QStringLiteral("AIDock"),
+            QStringLiteral("Assistant"),
+            QStringLiteral("Assistant"),
+            QStringLiteral("AssistantDock"),
             WindowKind::Singleton,
             {DefaultDockArea::Right, QString(), true},
             MaterializationPolicy::Eager,
@@ -87,9 +87,9 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
             AvailabilityPolicy::Always
         },
         {
-            QStringLiteral("Preview"),
-            QStringLiteral("Preview"),
-            QStringLiteral("PreviewDock"),
+            QStringLiteral("Control"),
+            QStringLiteral("Control"),
+            QStringLiteral("ControlDock"),
             WindowKind::Singleton,
             {DefaultDockArea::Bottom, QString(), true},
             MaterializationPolicy::Eager,
@@ -108,9 +108,9 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
             AvailabilityPolicy::Always
         },
         {
-            QStringLiteral("ExportPacksManager"),
-            QStringLiteral("Pack Exporter"),
-            QStringLiteral("PackManagerDock"),
+            QStringLiteral("Publisher"),
+            QStringLiteral("Publisher"),
+            QStringLiteral("PublisherDock"),
             WindowKind::Singleton,
             {DefaultDockArea::Floating, QString(), false},
             // Pack generation still reads panel options and appends build output directly.
@@ -149,9 +149,9 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
             AvailabilityPolicy::FeatureDisabled
         },
         {
-            QStringLiteral("MonitorCatalog"),
-            QStringLiteral("Monitor Catalog"),
-            QStringLiteral("MonitorCatalogDock"),
+            QStringLiteral("Monitor"),
+            QStringLiteral("Monitor"),
+            QStringLiteral("MonitorDock"),
             WindowKind::Singleton,
             {DefaultDockArea::Bottom, QString(), false},
             MaterializationPolicy::ShellEagerContentLazy,
@@ -336,13 +336,13 @@ QStringList ipcKnownPanelObjectNames()
     return {
         QStringLiteral("Explorer"),
         QStringLiteral("InspectorPanel"),
-        QStringLiteral("BlueprintCanvasWidget"),
-        QStringLiteral("PreviewPanel"),
-        QStringLiteral("PackManagerPanel"),
+        QStringLiteral("BlueprintPanel"),
+        QStringLiteral("ControlPanel"),
+        QStringLiteral("PublisherPanel"),
         QStringLiteral("LogPanel"),
         QStringLiteral("MeterPanel"),
         QStringLiteral("MonitorPerformanceDock"),
-        QStringLiteral("MonitorCatalogDock"),
+        QStringLiteral("MonitorDock"),
         QStringLiteral("MonitorVoicesDock"),
         QStringLiteral("MonitorPlayablesDock"),
         QStringLiteral("MonitorEffectsDock"),

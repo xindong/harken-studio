@@ -1,5 +1,5 @@
 
-#include "PackManagerPanel.h"
+#include "PublisherPanel.h"
 #include "PackStructureDialog.h"
 #include "RuntimeBridge/PackagingBridge.h"
 #include "../../Core/ActionManager.h"
@@ -142,7 +142,7 @@ public:
 
 };
 
-class PackManagerTree : public ProportionalTreeWidget
+class PublisherTree : public ProportionalTreeWidget
 {
 public:
     using ProportionalTreeWidget::ProportionalTreeWidget;
@@ -242,23 +242,23 @@ private:
 
 }
 
-PackManagerPanel::PackManagerPanel(QWidget* parent)
+PublisherPanel::PublisherPanel(QWidget* parent)
     : QWidget(parent)
 {
-    setObjectName("PackManagerPanel");
+    setObjectName("PublisherPanel");
     setupUI();
 
     connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::changed,
-            this, &PackManagerPanel::requestPackTableRefresh);
+            this, &PublisherPanel::requestPackTableRefresh);
     connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::progressChanged,
-            this, &PackManagerPanel::updatePackProgress);
+            this, &PublisherPanel::updatePackProgress);
     connect(&PackGenerationRecordStore::instance(), &PackGenerationRecordStore::exportActivityChanged,
             this, [this](bool) {
         cancelRequested_ = false;
         updateExportButton();
     });
     connect(&PackArtifactCache::instance(), &PackArtifactCache::changed,
-            this, &PackManagerPanel::requestPackTableRefresh);
+            this, &PublisherPanel::requestPackTableRefresh);
     auto& pm = ProjectManager::instance();
     openedProject_ = pm.currentProject();
     connect(&ProjectPlatformActivity::instance(), &ProjectPlatformActivity::busyChanged,
@@ -331,9 +331,9 @@ PackManagerPanel::PackManagerPanel(QWidget* parent)
     requestPackTableRefresh();
 }
 
-PackManagerPanel::~PackManagerPanel() = default;
+PublisherPanel::~PublisherPanel() = default;
 
-void PackManagerPanel::setupUI()
+void PublisherPanel::setupUI()
 {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -355,13 +355,13 @@ void PackManagerPanel::setupUI()
     searchEdit_ = new SearchField();
     searchEdit_->setObjectName("packSearchEdit");
     connect(searchEdit_, &QLineEdit::textChanged,
-            this, &PackManagerPanel::applyNameFilter);
+            this, &PublisherPanel::applyNameFilter);
     contentLayout->addWidget(searchEdit_);
 
     auto* table = new TableWidget(TableOptions::display(), content);
     packTree_ = table->createCustomView(QStringLiteral("packTree"),
         [](QWidget* parent, ThemeManager* themeManager) {
-            return new PackManagerTree({280, 70, 90, 150, 80, 80, 120, 60}, parent, themeManager);
+            return new PublisherTree({280, 70, 90, 150, 80, 80, 120, 60}, parent, themeManager);
         });
     packTree_->setHeaderLabels(
         {tr("Name"), tr("Built"), tr("Size"), tr("Modified"),
@@ -375,9 +375,9 @@ void PackManagerPanel::setupUI()
     packTree_->setItemDelegate(new PackTreeDelegate(packTree_));
     packTree_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(packTree_, &QTreeWidget::customContextMenuRequested,
-            this, &PackManagerPanel::onPackTreeContextMenu);
+            this, &PublisherPanel::onPackTreeContextMenu);
     connect(packTree_, &QTreeWidget::itemChanged,
-            this, &PackManagerPanel::onPackItemChanged);
+            this, &PublisherPanel::onPackItemChanged);
     connect(packTree_, &ProportionalTreeWidget::groupCheckStateRequested, this,
         [this](QTreeWidgetItem* group, Qt::CheckState state) {
             QList<QTreeWidgetItem*> items;
@@ -397,7 +397,7 @@ void PackManagerPanel::setupUI()
     updateExportButton();
 }
 
-QWidget* PackManagerPanel::createToolbar()
+QWidget* PublisherPanel::createToolbar()
 {
     auto* toolbar = new QWidget();
     toolbar->setObjectName("packToolbar");
@@ -448,18 +448,18 @@ QWidget* PackManagerPanel::createToolbar()
             requestExport({}, true, forceReexportBox_->isChecked(), selfCleaningBox_->isChecked());
         });
     connect(primaryButton, &QPushButton::clicked,
-            this, &PackManagerPanel::onExportClicked);
+            this, &PublisherPanel::onExportClicked);
     row->addWidget(exportBtn_);
 
     return toolbar;
 }
 
-void PackManagerPanel::refreshPackList()
+void PublisherPanel::refreshPackList()
 {
     populateProjectPackTable();
 }
 
-void PackManagerPanel::requestPackTableRefresh()
+void PublisherPanel::requestPackTableRefresh()
 {
     packTableDirty_ = true;
     if (!isVisible() || packTableRefreshQueued_) return;
@@ -470,7 +470,7 @@ void PackManagerPanel::requestPackTableRefresh()
     });
 }
 
-void PackManagerPanel::updatePackProgress(const QString& platform, const QString& language,
+void PublisherPanel::updatePackProgress(const QString& platform, const QString& language,
                                         const QString& unitKey)
 {
     if (!openedProject_ || openedProject_ != ProjectManager::instance().currentProject()) return;
@@ -485,7 +485,7 @@ void PackManagerPanel::updatePackProgress(const QString& platform, const QString
         packTree_->viewport()->update(QRect(0, row.top(), packTree_->viewport()->width(), row.height()));
 }
 
-void PackManagerPanel::applyGenerationState(QTreeWidgetItem* item, const QString& platform,
+void PublisherPanel::applyGenerationState(QTreeWidgetItem* item, const QString& platform,
                                           const QString& language, const QString& unitKey)
 {
     auto& store = PackGenerationRecordStore::instance();
@@ -549,13 +549,13 @@ void PackManagerPanel::applyGenerationState(QTreeWidgetItem* item, const QString
         item->setData(kColResult, TableTextRole, static_cast<int>(TableTextState::Disabled));
 }
 
-void PackManagerPanel::showEvent(QShowEvent* event)
+void PublisherPanel::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
     if (packTableDirty_) populateProjectPackTable();
 }
 
-void PackManagerPanel::populatePlatformControls()
+void PublisherPanel::populatePlatformControls()
 {
     if (!platformCombo_)
         return;
@@ -584,7 +584,7 @@ void PackManagerPanel::populatePlatformControls()
     updateExportButton();
 }
 
-void PackManagerPanel::applyNameFilter()
+void PublisherPanel::applyNameFilter()
 {
     if (!packTree_)
         return;
@@ -611,7 +611,7 @@ void PackManagerPanel::applyNameFilter()
         filterItem(packTree_->topLevelItem(i), false);
 }
 
-void PackManagerPanel::commitSelectedPlatforms(const QStringList& platforms)
+void PublisherPanel::commitSelectedPlatforms(const QStringList& platforms)
 {
     if (platforms == ProjectManager::instance().getPackExportSelectedPlatforms()) {
         populatePlatformControls();
@@ -626,12 +626,12 @@ void PackManagerPanel::commitSelectedPlatforms(const QStringList& platforms)
         ActionSource::GUI);
 }
 
-QStringList PackManagerPanel::effectivePlatforms(const ProjectData* project)
+QStringList PublisherPanel::effectivePlatforms(const ProjectData* project)
 {
     return project ? project->platformIds() : QStringList();
 }
 
-QStringList PackManagerPanel::effectiveSelectedPlatforms(const ProjectData* project,
+QStringList PublisherPanel::effectiveSelectedPlatforms(const ProjectData* project,
                                                          const QStringList& selectedPlatforms)
 {
     const QStringList avail = effectivePlatforms(project);
@@ -644,20 +644,20 @@ QStringList PackManagerPanel::effectiveSelectedPlatforms(const ProjectData* proj
     return out;
 }
 
-QStringList PackManagerPanel::generationPlatforms() const
+QStringList PublisherPanel::generationPlatforms() const
 {
     const auto& manager = ProjectManager::instance();
     return effectiveSelectedPlatforms(manager.currentProject(), manager.getPackExportSelectedPlatforms());
 }
 
-QString PackManagerPanel::platformName(const QString& id)
+QString PublisherPanel::platformName(const QString& id)
 {
     const auto* project = ProjectManager::instance().currentProject();
     const auto* platform = project ? ProjectPlatformSemantics::find(project->platforms, QUuid(id)) : nullptr;
     return platform ? platform->name : tr("Removed platform");
 }
 
-QString PackManagerPanel::platformOutputDirFor(const QString& platform) const
+QString PublisherPanel::platformOutputDirFor(const QString& platform) const
 {
     auto* project = ProjectManager::instance().currentProject();
     if (!project || platform.isEmpty())
@@ -669,7 +669,7 @@ QString PackManagerPanel::platformOutputDirFor(const QString& platform) const
         *definition);
 }
 
-void PackManagerPanel::populateProjectPackTable()
+void PublisherPanel::populateProjectPackTable()
 {
     if (!packTree_ || packTreeUpdating_)
         return;
@@ -855,13 +855,13 @@ void PackManagerPanel::populateProjectPackTable()
     updateExportButton();
 }
 
-void PackManagerPanel::applyDeveloperColumns()
+void PublisherPanel::applyDeveloperColumns()
 {
     if (packTree_)
         packTree_->setColumnsHidden({kColFile, kColVersion}, !AppSettings::instance().developerMode());
 }
 
-QString PackManagerPanel::humanBytes(qint64 bytes)
+QString PublisherPanel::humanBytes(qint64 bytes)
 {
     const bool neg = bytes < 0;
     const qint64 v = neg ? -bytes : bytes;
@@ -877,12 +877,12 @@ QString PackManagerPanel::humanBytes(qint64 bytes)
     return neg ? (QLatin1Char('-') + out) : out;
 }
 
-void PackManagerPanel::addGenerationResult(const PackGenerationResult& result)
+void PublisherPanel::addGenerationResult(const PackGenerationResult& result)
 {
     PackGenerationRecordStore::instance().add(result);
 }
 
-void PackManagerPanel::onExportClicked()
+void PublisherPanel::onExportClicked()
 {
     if (PackGenerationRecordStore::instance().isExporting()) {
         cancelRequested_ = true;
@@ -893,7 +893,7 @@ void PackManagerPanel::onExportClicked()
     requestExport({}, false, forceReexportBox_->isChecked(), selfCleaningBox_->isChecked());
 }
 
-void PackManagerPanel::requestExport(const QStringList& packPaths, bool includeUnchecked,
+void PublisherPanel::requestExport(const QStringList& packPaths, bool includeUnchecked,
                                      bool forceReexport, bool selfCleaning)
 {
     const auto* project = ProjectManager::instance().currentProject();
@@ -911,7 +911,7 @@ void PackManagerPanel::requestExport(const QStringList& packPaths, bool includeU
                          forceReexport, selfCleaning);
 }
 
-QStringList PackManagerPanel::selectedPackPaths() const
+QStringList PublisherPanel::selectedPackPaths() const
 {
     QStringList out;
     if (!packTree_)
@@ -925,7 +925,7 @@ QStringList PackManagerPanel::selectedPackPaths() const
     return out;
 }
 
-void PackManagerPanel::updateExportButton()
+void PublisherPanel::updateExportButton()
 {
     if (!exportBtn_)
         return;
@@ -972,7 +972,7 @@ void PackManagerPanel::updateExportButton()
     selfCleaningBox_->setEnabled(enabled);
 }
 
-void PackManagerPanel::onPackItemChanged(QTreeWidgetItem* item, int column)
+void PublisherPanel::onPackItemChanged(QTreeWidgetItem* item, int column)
 {
     if (packTreeUpdating_ || !item || column != kColName)
         return;
@@ -983,7 +983,7 @@ void PackManagerPanel::onPackItemChanged(QTreeWidgetItem* item, int column)
         toggleUnitPlatforms({item}, checkData.toInt() == Qt::Checked);
 }
 
-void PackManagerPanel::toggleUnitPlatforms(const QList<QTreeWidgetItem*>& items, bool include)
+void PublisherPanel::toggleUnitPlatforms(const QList<QTreeWidgetItem*>& items, bool include)
 {
     const auto project = ProjectManager::instance().currentProjectLease();
     const auto& editPlatforms = PlatformContextService::instance().context().selected;
@@ -1040,12 +1040,12 @@ void PackManagerPanel::toggleUnitPlatforms(const QList<QTreeWidgetItem*>& items,
     });
 }
 
-void PackManagerPanel::clearGenerationResults()
+void PublisherPanel::clearGenerationResults()
 {
     PackGenerationRecordStore::instance().clear();
 }
 
-void PackManagerPanel::showFileInExplorer(const QString& path)
+void PublisherPanel::showFileInExplorer(const QString& path)
 {
     if (path.isEmpty())
         return;
@@ -1067,7 +1067,7 @@ void PackManagerPanel::showFileInExplorer(const QString& path)
 #endif
 }
 
-void PackManagerPanel::onPackTreeContextMenu(const QPoint& pos)
+void PublisherPanel::onPackTreeContextMenu(const QPoint& pos)
 {
     if (!packTree_)
         return;

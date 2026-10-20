@@ -1480,7 +1480,7 @@ ContextTopic BlueprintCanvasWidget::contentFieldTopic_(NodeContentField field,
     case NodeContentField::Waveform:
         break;
     }
-    return item ? ContextTopic::forObject(guid, type, name) : ContextTopic::forPanel(QStringLiteral("BlueprintCanvas"));
+    return item ? ContextTopic::forObject(guid, type, name) : ContextTopic::forPanel(QStringLiteral("Blueprint"));
 }
 
 void BlueprintCanvasWidget::tagContentEditor_(NodeContentEditor* editor, ProjectItem* item)
@@ -1576,7 +1576,7 @@ ContextTopic BlueprintCanvasWidget::contextTopicAt(const QPoint& pos) const
         }
     }
 
-    return ContextTopic::forPanel(QStringLiteral("BlueprintCanvas"));
+    return ContextTopic::forPanel(QStringLiteral("Blueprint"));
 }
 
 void BlueprintCanvasWidget::populateContextMenu(QMenu& menu, QContextMenuEvent* event)

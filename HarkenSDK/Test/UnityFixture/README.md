@@ -107,7 +107,7 @@ authoritative inputs; save and export from the copies. Existing author projects
 can be reexported the same way, preserving their project, Action, Pack and
 Variable identities.
 
-In the Pack Exporter, select the platforms below, include all Actions and language
+In the Publisher, select the platforms below, include all Actions and language
 rows, and use **Export All**. The projects use `BuildPacks` as the output directory;
 Studio writes each platform under `BuildPacks/<platformName>` and the platform
 index at `BuildPacks/HarkenPackIndex.json`.
@@ -165,7 +165,7 @@ $build = (& .scripts/studio/harken_ipc.ps1 get_pack_build_status -AsObject).resu
 `export_pack` starts asynchronously. Repeat the last command until
 `$build.in_progress` is false, then require `$build.result.status` to be `ok` and
 `$build.result.result.success` to be true before copying files or issuing another
-build. It uses the Pack Exporter's current
+build. It uses the Publisher's current
 selection; select all Actions, languages and the required platforms first.
 `get_project_info` lists platform IDs, and `set_pack_export_selected_platforms`
 accepts them in its `platform_ids` array. After copying U4Original and moving

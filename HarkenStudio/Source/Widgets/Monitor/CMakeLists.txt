@@ -1,8 +1,8 @@
 add_library(harken_editor_monitor STATIC
     MonitorCatalogModel.cpp
     MonitorCatalogModel.h
-    MonitorCatalogPanel.cpp
-    MonitorCatalogPanel.h
+    MonitorPanel.cpp
+    MonitorPanel.h
     MonitorPlayablesPanel.cpp
     MonitorPlayablesPanel.h
     MonitorPlayablesSource.cpp

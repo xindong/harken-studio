@@ -28,7 +28,7 @@ void BusController::setViews(const Views& v)
 {
     blueprintCanvas_     = v.blueprintCanvas;
     projectExplorer_     = v.projectExplorer;
-    blueprintCanvasDock_ = v.blueprintCanvasDock;
+    blueprintDock_ = v.blueprintDock;
 }
 
 void BusController::clearSelection()
@@ -90,8 +90,8 @@ void BusController::loadBusSignalChain(uint32_t busID)
 void BusController::focusBusInBlueprint(uint32_t busID)
 {
     if (!blueprintCanvas_) return;
-    if (host_ && blueprintCanvasDock_)
-        host_->revealDock(blueprintCanvasDock_);
+    if (host_ && blueprintDock_)
+        host_->revealDock(blueprintDock_);
     blueprintCanvas_->focusItem(ProjectManager::instance().findBusItem(busID));
 }
 

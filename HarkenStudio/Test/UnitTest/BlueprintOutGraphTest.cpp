@@ -178,7 +178,7 @@ TEST_F(BlueprintOutGraphTest, MainWindowVisibilityMenuPreservesCanvasAndDoesNotS
         VNX::UndoRedoManager::instance().clear();
         drainEvents();
     });
-    auto* dock = window->findChild<ads::CDockWidget*>(QStringLiteral("BlueprintCanvasDock"));
+    auto* dock = window->findChild<ads::CDockWidget*>(QStringLiteral("BlueprintDock"));
     ASSERT_NE(dock, nullptr);
     auto* panel = qobject_cast<VNX::BlueprintPanel*>(dock->widget());
     ASSERT_NE(panel, nullptr);

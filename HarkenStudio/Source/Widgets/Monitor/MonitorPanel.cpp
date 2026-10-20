@@ -1,4 +1,4 @@
-#include "Monitor/MonitorCatalogPanel.h"
+#include "Monitor/MonitorPanel.h"
 #include "Monitor/MonitorTypes.h"
 #include "Common/TableWidget.h"
 #include "Common/ListFooter.h"
@@ -53,30 +53,30 @@ protected:
     }
 };
 
-MonitorCatalogPanel::MonitorCatalogPanel(QWidget* parent)
+MonitorPanel::MonitorPanel(QWidget* parent)
     : QWidget(parent)
 {
-    setObjectName(QStringLiteral("MonitorCatalogPanel"));
+    setObjectName(QStringLiteral("MonitorPanel"));
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(8, 8, 8, 8);
     root->setSpacing(6);
 
     gapLabel_ = new QLabel(this);
-    gapLabel_->setObjectName(QStringLiteral("MonitorCatalogGap"));
+    gapLabel_->setObjectName(QStringLiteral("MonitorGap"));
     gapLabel_->setWordWrap(true);
     root->addWidget(gapLabel_);
 
     auto* filters = new QHBoxLayout();
     levelFilter_ = new QComboBox(this);
-    levelFilter_->setObjectName(QStringLiteral("MonitorCatalogLevelFilter"));
+    levelFilter_->setObjectName(QStringLiteral("MonitorLevelFilter"));
     levelFilter_->addItem(tr("All levels"), -1);
     levelFilter_->addItem(tr("Info"), VNX::Monitor::kLogInfo);
     levelFilter_->addItem(tr("Warning"), VNX::Monitor::kLogWarn);
     levelFilter_->addItem(tr("Error"), VNX::Monitor::kLogError);
     filters->addWidget(levelFilter_);
     categoryFilter_ = new QComboBox(this);
-    categoryFilter_->setObjectName(QStringLiteral("MonitorCatalogCategoryFilter"));
+    categoryFilter_->setObjectName(QStringLiteral("MonitorCategoryFilter"));
     categoryFilter_->addItem(tr("All categories"), 0);
     categoryFilter_->addItem(tr("Operation"), VNX::Monitor::kMonitorEventCategoryOperation);
     categoryFilter_->addItem(tr("Playback"), VNX::Monitor::kMonitorEventCategoryLifecycle);
@@ -84,27 +84,27 @@ MonitorCatalogPanel::MonitorCatalogPanel(QWidget* parent)
     filters->addWidget(categoryFilter_);
 
     textFilter_ = new QLineEdit(this);
-    textFilter_->setObjectName(QStringLiteral("MonitorCatalogTextFilter"));
+    textFilter_->setObjectName(QStringLiteral("MonitorTextFilter"));
     textFilter_->setPlaceholderText(tr("Search"));
     textFilter_->setMinimumWidth(0);
     textFilter_->setClearButtonEnabled(true);
     filters->addWidget(textFilter_);
     jumpButton_ = new QPushButton(QStringLiteral("Jump"), this);
-    jumpButton_->setObjectName(QStringLiteral("MonitorCatalogJumpButton"));
+    jumpButton_->setObjectName(QStringLiteral("MonitorJumpButton"));
     jumpButton_->setEnabled(false);
     filters->addWidget(jumpButton_);
     root->addLayout(filters);
 
     tableFrame_ = new TableWidget(TableOptions::display(), this);
     tableFrame_->setColumnSizing(TableColumnSizing::Scrollable);
-    table_ = tableFrame_->createModelView(QStringLiteral("MonitorCatalogTable"), nullptr);
+    table_ = tableFrame_->createModelView(QStringLiteral("MonitorTable"), nullptr);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     root->addWidget(tableFrame_, 1);
 
     details_ = new QTextBrowser(this);
-    details_->setObjectName(QStringLiteral("MonitorCatalogDetails"));
+    details_->setObjectName(QStringLiteral("MonitorDetails"));
     details_->setMaximumHeight(170);
     details_->setMinimumHeight(70);
     details_->setOpenLinks(false);
@@ -112,7 +112,7 @@ MonitorCatalogPanel::MonitorCatalogPanel(QWidget* parent)
     root->addWidget(details_);
     auto* footer = tableFrame_->footer(false);
     status_ = new ElidedLabel(footer);
-    status_->setObjectName(QStringLiteral("MonitorCatalogStatus"));
+    status_->setObjectName(QStringLiteral("MonitorStatus"));
     footer->addStatusWidget(status_);
     const auto tool = [footer](const QString& name, const QString& tip, const char* asset) {
         auto* action = new QAction(tip, footer);
@@ -123,35 +123,35 @@ MonitorCatalogPanel::MonitorCatalogPanel(QWidget* parent)
         button->hide();
         return button;
     };
-    autoScroll_ = tool(QStringLiteral("MonitorCatalogAutoScroll"), tr("Auto-scroll"), ThemeAssetIds::LogScrollToBottom);
+    autoScroll_ = tool(QStringLiteral("MonitorAutoScroll"), tr("Auto-scroll"), ThemeAssetIds::LogScrollToBottom);
     autoScroll_->defaultAction()->setCheckable(true);
     autoScroll_->defaultAction()->setChecked(true);
-    copy_ = tool(QStringLiteral("MonitorCatalogCopy"), tr("Copy selected records"), ThemeAssetIds::LogCopy);
-    clear_ = tool(QStringLiteral("MonitorCatalogClear"), tr("Clear records"), ThemeAssetIds::LogClear);
+    copy_ = tool(QStringLiteral("MonitorCopy"), tr("Copy selected records"), ThemeAssetIds::LogCopy);
+    clear_ = tool(QStringLiteral("MonitorClear"), tr("Clear records"), ThemeAssetIds::LogClear);
     connect(levelFilter_, &QComboBox::currentIndexChanged, this, [this] { rebuildVisibleRows(); });
-    connect(copy_, &QToolButton::clicked, this, &MonitorCatalogPanel::copySelected);
+    connect(copy_, &QToolButton::clicked, this, &MonitorPanel::copySelected);
     connect(clear_, &QToolButton::clicked, this, [this] { if (capture_) capture_->clear(); });
     connect(autoScroll_, &QToolButton::toggled, this, [this](bool checked) {
         if (checked) table_->scrollToBottom();
     });
     auto* copyShortcut = new QShortcut(QKeySequence::Copy, table_);
     copyShortcut->setContext(Qt::WidgetShortcut);
-    connect(copyShortcut, &QShortcut::activated, this, &MonitorCatalogPanel::copySelected);
+    connect(copyShortcut, &QShortcut::activated, this, &MonitorPanel::copySelected);
 
     connect(categoryFilter_, &QComboBox::currentIndexChanged, this, [this] { rebuildVisibleRows(); });
     connect(textFilter_, &QLineEdit::textChanged, this, [this] { rebuildVisibleRows(); });
-    connect(jumpButton_, &QPushButton::clicked, this, &MonitorCatalogPanel::onJumpClicked);
+    connect(jumpButton_, &QPushButton::clicked, this, &MonitorPanel::onJumpClicked);
 
     gapLabel_->hide();
     refreshJumpButton();
 }
 
-QString MonitorCatalogPanel::gapMessage() const
+QString MonitorPanel::gapMessage() const
 {
     return gapLabel_ ? gapLabel_->text() : QString();
 }
 
-QVariantMap MonitorCatalogPanel::snapshotParams() const
+QVariantMap MonitorPanel::snapshotParams() const
 {
     QVariantMap params;
     params.insert(QStringLiteral("filterText"), textFilter_->text());
@@ -161,7 +161,7 @@ QVariantMap MonitorCatalogPanel::snapshotParams() const
     return params;
 }
 
-void MonitorCatalogPanel::restoreParams(const QVariantMap& params)
+void MonitorPanel::restoreParams(const QVariantMap& params)
 {
     const QSignalBlocker categoryBlocker(categoryFilter_);
     const QSignalBlocker levelBlocker(levelFilter_);
@@ -173,12 +173,12 @@ void MonitorCatalogPanel::restoreParams(const QVariantMap& params)
     rebuildVisibleRows();
 }
 
-int MonitorCatalogPanel::visibleRowCount() const
+int MonitorPanel::visibleRowCount() const
 {
     return filter_ ? filter_->rowCount() : 0;
 }
 
-void MonitorCatalogPanel::rebuildVisibleRows()
+void MonitorPanel::rebuildVisibleRows()
 {
     if (!filter_) return;
     filter_->category = categoryFilter_->currentData().toInt();
@@ -188,13 +188,13 @@ void MonitorCatalogPanel::rebuildVisibleRows()
     refreshCaptureView();
 }
 
-void MonitorCatalogPanel::setJumpLocator(MonitorJumpLocator locator)
+void MonitorPanel::setJumpLocator(MonitorJumpLocator locator)
 {
     locator_ = std::move(locator);
     refreshJumpButton();
 }
 
-void MonitorCatalogPanel::refreshJumpButton()
+void MonitorPanel::refreshJumpButton()
 {
     if (!jumpButton_ || !capture_ || !filter_) return;
     const auto index = filter_->mapToSource(table_->currentIndex());
@@ -205,7 +205,7 @@ void MonitorCatalogPanel::refreshJumpButton()
         : tr("No matching object in the current project"));
 }
 
-bool MonitorCatalogPanel::jumpCurrentRow()
+bool MonitorPanel::jumpCurrentRow()
 {
     if (!capture_ || !filter_ || !table_->currentIndex().isValid()) return false;
     const auto index = filter_->mapToSource(table_->currentIndex());
@@ -215,12 +215,12 @@ bool MonitorCatalogPanel::jumpCurrentRow()
     return true;
 }
 
-void MonitorCatalogPanel::onJumpClicked()
+void MonitorPanel::onJumpClicked()
 {
     jumpCurrentRow();
 }
 
-void MonitorCatalogPanel::setCaptureController(Monitor::EventCaptureController* capture)
+void MonitorPanel::setCaptureController(Monitor::EventCaptureController* capture)
 {
     if (!capture || capture_ == capture) return;
     Q_ASSERT(!capture_);
@@ -247,20 +247,20 @@ void MonitorCatalogPanel::setCaptureController(Monitor::EventCaptureController* 
     autoScroll_->show();
     copy_->show();
     clear_->show();
-    connect(capture, &Monitor::EventCaptureController::stateChanged, this, &MonitorCatalogPanel::refreshCaptureView);
-    connect(capture, &Monitor::EventCaptureController::projectObjectsChanged, this, &MonitorCatalogPanel::refreshJumpButton);
+    connect(capture, &Monitor::EventCaptureController::stateChanged, this, &MonitorPanel::refreshCaptureView);
+    connect(capture, &Monitor::EventCaptureController::projectObjectsChanged, this, &MonitorPanel::refreshJumpButton);
     connect(filter_, &QAbstractItemModel::rowsInserted, this, [this] {
         refreshCaptureView();
         if (autoScroll_->isChecked()) table_->scrollToBottom();
     });
-    connect(filter_, &QAbstractItemModel::rowsRemoved, this, &MonitorCatalogPanel::refreshCaptureView);
-    connect(filter_, &QAbstractItemModel::modelReset, this, &MonitorCatalogPanel::refreshCaptureView);
-    connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, this, &MonitorCatalogPanel::refreshDetails);
-    connect(table_->selectionModel(), &QItemSelectionModel::currentChanged, this, &MonitorCatalogPanel::refreshDetails);
+    connect(filter_, &QAbstractItemModel::rowsRemoved, this, &MonitorPanel::refreshCaptureView);
+    connect(filter_, &QAbstractItemModel::modelReset, this, &MonitorPanel::refreshCaptureView);
+    connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, this, &MonitorPanel::refreshDetails);
+    connect(table_->selectionModel(), &QItemSelectionModel::currentChanged, this, &MonitorPanel::refreshDetails);
     rebuildVisibleRows();
 }
 
-void MonitorCatalogPanel::refreshCaptureView()
+void MonitorPanel::refreshCaptureView()
 {
     if (!capture_) return;
     QStringList status{capture_->statusText(), tr("%1 / %2 records").arg(visibleRowCount()).arg(capture_->rowCount())};
@@ -287,7 +287,7 @@ void MonitorCatalogPanel::refreshCaptureView()
     refreshDetails();
 }
 
-void MonitorCatalogPanel::refreshDetails()
+void MonitorPanel::refreshDetails()
 {
     if (!filter_) return;
     const auto index = filter_->mapToSource(table_->currentIndex());
@@ -299,7 +299,7 @@ void MonitorCatalogPanel::refreshDetails()
     refreshJumpButton();
 }
 
-void MonitorCatalogPanel::copySelected()
+void MonitorPanel::copySelected()
 {
     if (!filter_) return;
     auto selected = table_->selectionModel()->selectedRows();

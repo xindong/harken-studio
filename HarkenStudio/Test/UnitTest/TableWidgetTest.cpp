@@ -9,7 +9,7 @@
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
-#include "Widgets/PreviewPanel/PreviewPanel.h"
+#include "Widgets/ControlPanel/ControlPanel.h"
 
 #include <DockAreaWidget.h>
 #include <DockManager.h>
@@ -2475,7 +2475,7 @@ TEST_F(TableWidgetTest, DockedAndFloatingTablesKeepTheirMinimumContentsVisible)
         QWidget* content = nullptr;
         QList<VNX::TableWidget*> tables;
         if (body == 0) {
-            content = new PreviewPanel;
+            content = new ControlPanel;
             tables = content->findChildren<VNX::TableWidget*>();
         } else {
             auto* table = body == 3 ? new VNX::MatrixTableWidget

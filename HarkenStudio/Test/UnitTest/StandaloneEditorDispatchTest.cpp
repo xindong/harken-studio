@@ -31,7 +31,7 @@
 #include "Widgets/Inspector/InspectorPanel.h"
 #include "Widgets/ProjectExplorer/ProjectExplorer.h"
 #include "Widgets/PlatformBar/PlaybackControls.h"
-#include "Widgets/PreviewPanel/PreviewPanel.h"
+#include "Widgets/ControlPanel/ControlPanel.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
 #include "Widgets/Timeline/TimelineEditorPanel.h"
 #include "Widgets/TransitionEditor/TransitionEditorPanel.h"
@@ -241,7 +241,7 @@ protected:
     {
         auto* area = target->dockAreaWidget();
         auto* splitter = area->parentSplitter();
-        QWidget* center = dock(QStringLiteral("BlueprintCanvasDock"))->dockAreaWidget();
+        QWidget* center = dock(QStringLiteral("BlueprintDock"))->dockAreaWidget();
         while (center && center->parentWidget() != splitter)
             center = center->parentWidget();
         ASSERT_NE(center, nullptr);
@@ -287,7 +287,7 @@ TEST_P(ObjectRefStudioNavigationTest, LocatesOnClickAndOpensOnDoubleClickWithout
     ASSERT_TRUE(VNX::AssetRegistry::instance().registerAsset(asset));
 
     auto* containerDock = addContent(QStringLiteral("ObjectReferenceContainer"),
-        ads::RightDockWidgetArea, dock(QStringLiteral("BlueprintCanvasDock")));
+        ads::RightDockWidgetArea, dock(QStringLiteral("BlueprintDock")));
     auto* layout = new QVBoxLayout(containerDock->widget());
     auto* nestedContainer = new QWidget(containerDock->widget());
     layout->addWidget(nestedContainer);
@@ -304,7 +304,7 @@ TEST_P(ObjectRefStudioNavigationTest, LocatesOnClickAndOpensOnDoubleClickWithout
     auto* router = window_->findChild<VNX::SelectionRouter*>();
     auto* explorer = window_->findChild<VNX::ProjectExplorer*>();
     auto* explorerDock = dock(QStringLiteral("ExplorerDock"));
-    auto* blueprintDock = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprintDock = dock(QStringLiteral("BlueprintDock"));
     auto* canvas = window_->findChild<VNX::BlueprintCanvasWidget*>();
     auto* hierarchy = window_->createHierarchyPanel();
     ASSERT_NE(router, nullptr);
@@ -397,22 +397,22 @@ INSTANTIATE_TEST_SUITE_P(Containers, ObjectRefStudioNavigationTest,
         std::make_tuple(VNX::RefDomain::ProjectObject, false, false, false, true),
         std::make_tuple(VNX::RefDomain::AudioAsset, false, false, true, true)));
 
-TEST_F(EditorDockLayoutTest, PlaybackControlsFollowSelectionWithPreviewHiddenOrFloating)
+TEST_F(EditorDockLayoutTest, PlaybackControlsFollowSelectionWithControlHiddenOrFloating)
 {
-    auto* preview = dock(QStringLiteral("PreviewDock"));
+    auto* control = dock(QStringLiteral("ControlDock"));
     auto* toolbar = window_->findChild<QToolBar*>(QStringLiteral("platformBar"));
     auto* controls = window_->findChild<VNX::PlaybackControls*>();
     auto* router = window_->findChild<VNX::SelectionRouter*>();
     auto* status = window_->findChild<QLabel*>(QStringLiteral("statusLabel"));
     auto* audition = window_->findChild<HarkenEditor::AuditionManager*>();
-    ASSERT_NE(preview, nullptr);
+    ASSERT_NE(control, nullptr);
     ASSERT_NE(toolbar, nullptr);
     ASSERT_NE(controls, nullptr);
     ASSERT_NE(router, nullptr);
     ASSERT_NE(status, nullptr);
     ASSERT_NE(audition, nullptr);
-    ASSERT_NE(qobject_cast<PreviewPanel*>(preview->widget()), nullptr);
-    EXPECT_FALSE(preview->isAncestorOf(controls));
+    ASSERT_NE(qobject_cast<ControlPanel*>(control->widget()), nullptr);
+    EXPECT_FALSE(control->isAncestorOf(controls));
     EXPECT_TRUE(toolbar->isAncestorOf(controls));
     auto* play = controls->findChild<QToolButton*>(QStringLiteral("playBtn"));
     auto* stop = controls->findChild<QToolButton*>(QStringLiteral("stopBtn"));
@@ -429,15 +429,15 @@ TEST_F(EditorDockLayoutTest, PlaybackControlsFollowSelectionWithPreviewHiddenOrF
     auto& manager = VNX::ProjectManager::instance();
     for (const bool floating : {false, true}) {
         if (floating) {
-            preview->toggleView(true);
-            preview->setFloating();
+            control->toggleView(true);
+            control->setFloating();
         } else {
-            preview->toggleView(false);
+            control->toggleView(false);
         }
         drainEvents();
         EXPECT_TRUE(controls->isVisible());
         EXPECT_EQ(controls->window(), window_.get());
-        EXPECT_EQ(preview->isInFloatingContainer(), floating);
+        EXPECT_EQ(control->isInFloatingContainer(), floating);
         auto* selected = manager.createItem(nullptr, floating ? QStringLiteral("FloatingSelection")
             : QStringLiteral("HiddenSelection"), VNX::ProjectItem::Type::Container);
         ASSERT_NE(selected, nullptr);
@@ -475,7 +475,7 @@ TEST_F(EditorDockLayoutTest, DoubleClickTrackAndPieceOpensBoundTimeline)
 {
     auto* router = window_->findChild<VNX::SelectionRouter*>();
     ASSERT_NE(router, nullptr);
-    const QRect original = areaRect(dock(QStringLiteral("BlueprintCanvasDock")));
+    const QRect original = areaRect(dock(QStringLiteral("BlueprintDock")));
     for (auto* item : {track_, piece_}) {
         router->onProjectItemDoubleClicked(item);
         drainEvents();
@@ -494,7 +494,7 @@ TEST_F(EditorDockLayoutTest, DoubleClickTrackAndPieceOpensBoundTimeline)
         expectThirdOf(window_->activeInspectorDock(), original);
         expectThirdOf(timelineDock, original);
         EXPECT_EQ(window_->allTimelineEditorPanels().size(), 1);
-        auto* blueprintArea = dock(QStringLiteral("BlueprintCanvasDock"))->dockAreaWidget();
+        auto* blueprintArea = dock(QStringLiteral("BlueprintDock"))->dockAreaWidget();
         auto* timelineArea = timelineDock->dockAreaWidget();
         auto* inspectorArea = window_->activeInspectorDock()->dockAreaWidget();
         auto* column = timelineArea->parentSplitter();
@@ -581,7 +581,7 @@ TEST_F(EditorDockLayoutTest, ContainerActivationOpensSelectionEditorRespectingPi
     EXPECT_FALSE(selectionDock->isClosed());
     EXPECT_TRUE(selectionDock->windowTitle().contains(QStringLiteral("Selection Editor")));
     EXPECT_TRUE(selectionDock->windowTitle().contains(firstItem->name));
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     EXPECT_GT(areaRect(selectionDock).top(), areaRect(blueprint).bottom());
 
     first->setPinned(true);
@@ -840,9 +840,9 @@ TEST_F(EditorDockLayoutTest, TimelineInternalSelectionPreservesBindingAndDrillPa
 TEST_F(EditorDockLayoutTest, InspectorThenTimelineSplitsTheWholeRemainderByThirds)
 {
     auto* explorer = dock(QStringLiteral("ExplorerDock"));
-    auto* ai = dock(QStringLiteral("AIDock"));
+    auto* ai = dock(QStringLiteral("AssistantDock"));
     auto* information = dock(QStringLiteral("InformationDock"));
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     ASSERT_NE(explorer, nullptr);
     ASSERT_NE(ai, nullptr);
     ASSERT_NE(information, nullptr);
@@ -891,7 +891,7 @@ TEST_F(EditorDockLayoutTest, InspectorOpenedAfterTimelineKeepsTheTimelineHeight)
     auto* timelineDock = dock(QStringLiteral("TimelineEditorDock_%1").arg(timeline->panelId()));
     const int height = timelineDock->dockAreaWidget()->height();
     const QRect original = areaRect(timelineDock).united(
-        areaRect(dock(QStringLiteral("BlueprintCanvasDock"))));
+        areaRect(dock(QStringLiteral("BlueprintDock"))));
     window_->openOrFocusInspectorForItem(track_);
     drainEvents();
     ASSERT_NE(window_->activeInspectorDock(), nullptr);
@@ -901,7 +901,7 @@ TEST_F(EditorDockLayoutTest, InspectorOpenedAfterTimelineKeepsTheTimelineHeight)
 
 TEST_F(EditorDockLayoutTest, EditorsUseTheWholeSplitContent)
 {
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     auto* right = addContent(QStringLiteral("DocumentA"), ads::RightDockWidgetArea, blueprint);
     auto* lower = addContent(QStringLiteral("DocumentB"), ads::BottomDockWidgetArea, blueprint);
     const QRect before = areaRect(blueprint).united(areaRect(right)).united(areaRect(lower));
@@ -929,7 +929,7 @@ TEST_F(EditorDockLayoutTest, EditorsUseTheWholeSplitContent)
 
 TEST_F(EditorDockLayoutTest, InspectorWrapsContentAndAnExistingTimeline)
 {
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     auto* lower = addContent(QStringLiteral("DocumentA"), ads::BottomDockWidgetArea, blueprint);
     auto* right = addContent(QStringLiteral("DocumentB"), ads::RightDockWidgetArea, blueprint);
     ASSERT_NE(window_->openStandaloneEditor(QStringLiteral("TimelineEditor"), track_), nullptr);
@@ -955,7 +955,7 @@ TEST_F(EditorDockLayoutTest, InspectorWrapsContentAndAnExistingTimeline)
 
 TEST_F(EditorDockLayoutTest, ClosedBlueprintDoesNotReopenOrChooseTheAnchor)
 {
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     auto* document = addContent(QStringLiteral("DocumentA"), ads::RightDockWidgetArea, blueprint);
     blueprint->toggleView(false);
     drainEvents();
@@ -979,7 +979,7 @@ TEST_F(EditorDockLayoutTest, ClosedBlueprintDoesNotReopenOrChooseTheAnchor)
 
 TEST_F(EditorDockLayoutTest, FloatingBlueprintDoesNotPullNewEditorsOutOfTheMainWindow)
 {
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     auto* document = addContent(QStringLiteral("DocumentA"), ads::RightDockWidgetArea, blueprint);
     blueprint->setFloating();
     drainEvents();
@@ -1000,7 +1000,7 @@ TEST_F(EditorDockLayoutTest, FloatingBlueprintDoesNotPullNewEditorsOutOfTheMainW
 
 TEST_F(EditorDockLayoutTest, EmptyRemainderFillsThenSplitsInCreationOrder)
 {
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     blueprint->toggleView(false);
     drainEvents();
     ASSERT_NE(window_->openStandaloneEditor(QStringLiteral("TimelineEditor"), track_), nullptr);
@@ -1013,7 +1013,7 @@ TEST_F(EditorDockLayoutTest, EmptyRemainderFillsThenSplitsInCreationOrder)
     EXPECT_EQ(full.top(), areaRect(dock(QStringLiteral("ExplorerDock"))).top());
     EXPECT_EQ(full.bottom(), areaRect(dock(QStringLiteral("InformationDock"))).bottom());
     EXPECT_NEAR(areaRect(dock(QStringLiteral("ExplorerDock"))).width(), 320, 2);
-    EXPECT_NEAR(areaRect(dock(QStringLiteral("AIDock"))).width(), 320, 2);
+    EXPECT_NEAR(areaRect(dock(QStringLiteral("AssistantDock"))).width(), 320, 2);
     window_->openOrFocusInspectorForItem(track_);
     drainEvents();
     auto* inspector = window_->activeInspectorDock();
@@ -1027,7 +1027,7 @@ TEST_F(EditorDockLayoutTest, EmptyRemainderFillsThenSplitsInCreationOrder)
 
 TEST_F(EditorDockLayoutTest, EmptyRemainderAlsoSupportsInspectorThenTimeline)
 {
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     blueprint->toggleView(false);
     drainEvents();
     window_->openOrFocusInspectorForItem(track_);
@@ -1050,7 +1050,7 @@ TEST_F(EditorDockLayoutTest, EmptyRemainderAlsoSupportsInspectorThenTimeline)
 
 TEST_F(EditorDockLayoutTest, NoDockedContentUsesTheGapBetweenZones)
 {
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     blueprint->setFloating();
     drainEvents();
     window_->findChild<VNX::SelectionRouter*>()->onProjectItemDoubleClicked(track_);
@@ -1064,14 +1064,14 @@ TEST_F(EditorDockLayoutTest, NoDockedContentUsesTheGapBetweenZones)
     EXPECT_FALSE(inspector->isInFloatingContainer());
     const QRect combined = areaRect(timeline).united(areaRect(inspector));
     EXPECT_GT(combined.left(), areaRect(dock(QStringLiteral("ExplorerDock"))).right());
-    EXPECT_LT(combined.right(), areaRect(dock(QStringLiteral("AIDock"))).left());
+    EXPECT_LT(combined.right(), areaRect(dock(QStringLiteral("AssistantDock"))).left());
     EXPECT_EQ(combined.top(), areaRect(dock(QStringLiteral("ExplorerDock"))).top());
     expectThirdOf(inspector, combined);
 }
 
 TEST_F(EditorDockLayoutTest, ClosedSplitContentDoesNotReserveBlankSpace)
 {
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     auto* document = addContent(QStringLiteral("DocumentA"), ads::RightDockWidgetArea, blueprint);
     auto* lower = addContent(QStringLiteral("DocumentB"), ads::BottomDockWidgetArea, blueprint);
     for (auto* content : {blueprint, document, lower})
@@ -1086,7 +1086,7 @@ TEST_F(EditorDockLayoutTest, ClosedSplitContentDoesNotReserveBlankSpace)
     EXPECT_TRUE(lower->isClosed());
     EXPECT_EQ(areaRect(timeline).top(), areaRect(dock(QStringLiteral("ExplorerDock"))).top());
     EXPECT_EQ(areaRect(timeline).bottom(), areaRect(dock(QStringLiteral("InformationDock"))).bottom());
-    auto* ai = dock(QStringLiteral("AIDock"));
+    auto* ai = dock(QStringLiteral("AssistantDock"));
     const int gap = ai->dockAreaWidget()->parentSplitter()->handleWidth() + 1;
     EXPECT_EQ(areaRect(timeline).left(), areaRect(dock(QStringLiteral("ExplorerDock"))).right() + gap);
     EXPECT_EQ(areaRect(ai).left(), areaRect(timeline).right() + gap);
@@ -1095,9 +1095,9 @@ TEST_F(EditorDockLayoutTest, ClosedSplitContentDoesNotReserveBlankSpace)
 TEST_F(EditorDockLayoutTest, ClosedContentAndFloatingZonesLeaveNoBlankDockTree)
 {
     for (const QString& name : {QStringLiteral("ExplorerDock"), QStringLiteral("InformationDock"),
-                               QStringLiteral("AIDock"), QStringLiteral("PreviewDock")})
+                               QStringLiteral("AssistantDock"), QStringLiteral("ControlDock")})
         dock(name)->setFloating();
-    dock(QStringLiteral("BlueprintCanvasDock"))->toggleView(false);
+    dock(QStringLiteral("BlueprintDock"))->toggleView(false);
     drainEvents();
     ASSERT_NE(window_->openStandaloneEditor(QStringLiteral("TimelineEditor"), track_), nullptr);
     drainEvents();
@@ -1105,7 +1105,7 @@ TEST_F(EditorDockLayoutTest, ClosedContentAndFloatingZonesLeaveNoBlankDockTree)
     ASSERT_NE(timeline, nullptr);
     auto* manager = window_->findChild<ads::CDockManager*>();
     EXPECT_EQ(areaRect(timeline), QRect(manager->mapTo(window_.get(), QPoint()), manager->size()));
-    EXPECT_TRUE(dock(QStringLiteral("BlueprintCanvasDock"))->isClosed());
+    EXPECT_TRUE(dock(QStringLiteral("BlueprintDock"))->isClosed());
 }
 
 TEST_F(EditorDockLayoutTest, CrossingContentIsLeftOutsideTheZoneBoundaries)
@@ -1122,14 +1122,14 @@ TEST_F(EditorDockLayoutTest, CrossingContentIsLeftOutsideTheZoneBoundaries)
     EXPECT_LT(areaRect(timeline).bottom(), before.top());
     EXPECT_LT(areaRect(inspector).bottom(), before.top());
     EXPECT_GT(areaRect(timeline).left(), areaRect(dock(QStringLiteral("ExplorerDock"))).right());
-    EXPECT_LT(areaRect(inspector).right(), areaRect(dock(QStringLiteral("AIDock"))).left());
+    EXPECT_LT(areaRect(inspector).right(), areaRect(dock(QStringLiteral("AssistantDock"))).left());
 }
 
 TEST_F(EditorDockLayoutTest, ClosedCrossingContentDoesNotBecomeTheEmptyRemainder)
 {
     auto* outside = addContent(QStringLiteral("DocumentA"), ads::BottomDockWidgetArea, nullptr);
     outside->toggleView(false);
-    dock(QStringLiteral("BlueprintCanvasDock"))->setFloating();
+    dock(QStringLiteral("BlueprintDock"))->setFloating();
     drainEvents();
     window_->findChild<VNX::SelectionRouter*>()->onProjectItemDoubleClicked(track_);
     drainEvents();
@@ -1139,7 +1139,7 @@ TEST_F(EditorDockLayoutTest, ClosedCrossingContentDoesNotBecomeTheEmptyRemainder
     ASSERT_NE(inspector, nullptr);
     EXPECT_TRUE(outside->isClosed());
     EXPECT_GT(areaRect(timeline).left(), areaRect(dock(QStringLiteral("ExplorerDock"))).right());
-    EXPECT_LT(areaRect(inspector).right(), areaRect(dock(QStringLiteral("AIDock"))).left());
+    EXPECT_LT(areaRect(inspector).right(), areaRect(dock(QStringLiteral("AssistantDock"))).left());
     EXPECT_EQ(areaRect(timeline).top(), areaRect(dock(QStringLiteral("ExplorerDock"))).top());
     EXPECT_EQ(areaRect(inspector).top(), areaRect(timeline).top());
 }
@@ -1147,8 +1147,8 @@ TEST_F(EditorDockLayoutTest, ClosedCrossingContentDoesNotBecomeTheEmptyRemainder
 TEST_F(EditorDockLayoutTest, ZoneContentsAndCollapsedZonesRemainOutsideNewEditors)
 {
     auto* explorer = dock(QStringLiteral("ExplorerDock"));
-    auto* ai = dock(QStringLiteral("AIDock"));
-    auto* audition = dock(QStringLiteral("PreviewDock"));
+    auto* ai = dock(QStringLiteral("AssistantDock"));
+    auto* audition = dock(QStringLiteral("ControlDock"));
     auto* sideContent = addContent(QStringLiteral("DocumentA"), ads::BottomDockWidgetArea, ai);
     controller_->setZoneCollapsed(explorer, true);
     controller_->setZoneCollapsed(ai, true);
@@ -1179,10 +1179,10 @@ TEST_F(EditorDockLayoutTest, ZoneContentsAndCollapsedZonesRemainOutsideNewEditor
 TEST_F(EditorDockLayoutTest, FloatingZonesLeaveTheRemainingDockTreeAsTheAnchor)
 {
     for (const QString& name : {QStringLiteral("ExplorerDock"), QStringLiteral("InformationDock"),
-                               QStringLiteral("AIDock"), QStringLiteral("PreviewDock")})
+                               QStringLiteral("AssistantDock"), QStringLiteral("ControlDock")})
         dock(name)->setFloating();
     drainEvents();
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     const QRect original = areaRect(blueprint);
     window_->findChild<VNX::SelectionRouter*>()->onProjectItemDoubleClicked(track_);
     drainEvents();
@@ -1203,7 +1203,7 @@ TEST_F(EditorDockLayoutTest, FloatingZonesLeaveTheRemainingDockTreeAsTheAnchor)
 
 TEST_F(EditorDockLayoutTest, ConsecutiveInspectorAndTimelineCreationKeepsBothRatios)
 {
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     const QRect original = areaRect(blueprint);
     window_->openOrFocusInspectorForItem(track_);
     window_->openStandaloneEditor(QStringLiteral("TimelineEditor"), track_);
@@ -1245,7 +1245,7 @@ TEST_F(EditorDockLayoutTest, NewObjectsShareAreasAndRelaunchKeepsUserSizes)
 
 TEST_F(EditorDockLayoutTest, CachedPanelsKeepTheirSizesAfterRestoreAndRelaunch)
 {
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     addContent(QStringLiteral("DocumentA"), ads::RightDockWidgetArea, blueprint);
     addContent(QStringLiteral("DocumentB"), ads::BottomDockWidgetArea, blueprint);
     auto* timeline = launchTimeline(track_);
@@ -1286,7 +1286,7 @@ TEST_F(EditorDockLayoutTest, RelaunchPreservesACachedCentralTabPlacement)
     const QString name = QStringLiteral("TimelineEditorDock_%1").arg(timeline->panelId());
     auto* manager = window_->findChild<ads::CDockManager*>();
     manager->addDockWidget(ads::CenterDockWidgetArea, dock(name),
-                          dock(QStringLiteral("BlueprintCanvasDock"))->dockAreaWidget());
+                          dock(QStringLiteral("BlueprintDock"))->dockAreaWidget());
     drainEvents();
     controller_->saveProjectLayout();
     dock(name)->closeDockWidget();
@@ -1299,7 +1299,7 @@ TEST_F(EditorDockLayoutTest, RelaunchPreservesACachedCentralTabPlacement)
     router->onProjectItemDoubleClicked(track_);
     drainEvents();
     EXPECT_EQ(dock(name)->dockAreaWidget(),
-              dock(QStringLiteral("BlueprintCanvasDock"))->dockAreaWidget());
+              dock(QStringLiteral("BlueprintDock"))->dockAreaWidget());
     EXPECT_EQ(dock(name)->dockAreaWidget()->currentDockWidget(), dock(name));
     EXPECT_EQ(window_->allTimelineEditorPanels().size(), 1);
 }
@@ -1393,7 +1393,7 @@ TEST_F(EditorDockLayoutTest, BlueprintPeakResizesAsOverlayAndRestoresWidthAfterC
 TEST_F(EditorDockLayoutTest, LegacySingletonLayoutsRestoreThroughTheInstanceRegistry)
 {
     auto* manager = window_->findChild<ads::CDockManager*>();
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     for (const auto& oldName : {QStringLiteral("MeterDock"), QStringLiteral("MonitorMeterDock")}) {
         for (bool visible : {false, true}) {
             SCOPED_TRACE(oldName.toStdString());
@@ -1427,7 +1427,7 @@ TEST_F(EditorDockLayoutTest, LegacySingletonLayoutsRestoreThroughTheInstanceRegi
 
 TEST_F(EditorDockLayoutTest, DetachedMetersHaveIndependentStateAndRestoreTheirLayout)
 {
-    auto* blueprint = dock(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprint = dock(QStringLiteral("BlueprintDock"));
     auto* manager = window_->findChild<ads::CDockManager*>();
     auto* registry = window_->findChild<VNX::PanelInstanceRegistry*>();
     ASSERT_NE(registry, nullptr);
@@ -1524,7 +1524,7 @@ TEST_F(EditorDockLayoutTest, CachedLayoutWithoutEditorsStillSeedsNewPanels)
     controller_->loadProjectLayout();
     drainEvents();
     ASSERT_TRUE(controller_->currentLayoutFromCache());
-    const QRect original = areaRect(dock(QStringLiteral("BlueprintCanvasDock")));
+    const QRect original = areaRect(dock(QStringLiteral("BlueprintDock")));
     auto* timeline = launchTimeline(piece_);
     ASSERT_NE(timeline, nullptr);
     EXPECT_EQ(timeline->viewKind(), VNX::TimelineEditorPanel::ViewKind::Piece);
@@ -1534,7 +1534,7 @@ TEST_F(EditorDockLayoutTest, CachedLayoutWithoutEditorsStillSeedsNewPanels)
 
 TEST_F(EditorDockLayoutTest, ViewAndIpcUseTheRightAreaWhileExplicitWindowsFloat)
 {
-    const QRect original = areaRect(dock(QStringLiteral("BlueprintCanvasDock")));
+    const QRect original = areaRect(dock(QStringLiteral("BlueprintDock")));
     window_->openItemInNewInspector(track_, VNX::MainWindow::PreferredOpenArea::Float);
     drainEvents();
     ASSERT_NE(window_->activeInspectorDock(), nullptr);
@@ -1547,7 +1547,7 @@ TEST_F(EditorDockLayoutTest, ViewAndIpcUseTheRightAreaWhileExplicitWindowsFloat)
     expectThirdOf(inspectorDock, original);
     const int width = inspectorDock->dockAreaWidget()->width();
     auto* row = inspectorDock->dockAreaWidget()->parentSplitter();
-    auto* center = splitChildContaining(dock(QStringLiteral("BlueprintCanvasDock"))->dockAreaWidget(), row);
+    auto* center = splitChildContaining(dock(QStringLiteral("BlueprintDock"))->dockAreaWidget(), row);
     ASSERT_NE(center, nullptr);
     EXPECT_EQ(row->orientation(), Qt::Horizontal);
     EXPECT_GT(row->indexOf(inspectorDock->dockAreaWidget()), row->indexOf(center));
