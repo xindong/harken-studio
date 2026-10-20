@@ -638,7 +638,7 @@ bool TimelinePlanner::HasProgramReference(
             candidate->runtimeProgram.programGeneration == program.programGeneration;
     };
     for (std::size_t index = 0; index < deferredProgram_.size(); ++index) {
-        if (deferredSlotUsed_[index] == 1 && matches(deferredProgram_[index])) return true;
+        if (deferredSlotUsed_[index] != 0 && matches(deferredProgram_[index])) return true;
     }
     for (const auto& cursor : rolling_) {
         if (cursor.state != RollingState::Free && matches(cursor.program)) return true;
