@@ -10592,14 +10592,19 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         const auto held = CaptureRootQueueOwners(*session.Engine());
         const auto phase = row->phase;
         const auto owner = row->queueCurrentCompletion.owner;
-        const auto eventArm = row->event.armToken;
         const auto occurrence = row->queueCurrentOccurrence;
         const auto partition = row->partition;
         auto* bank = row->queueCurrentProgramBank;
+        const auto programs = row->queueCurrentPrograms.Resolve(bank);
+        ASSERT_EQ(1u, programs.size());
+        ASSERT_EQ(1u, programs[0].eventCount);
+        ASSERT_NE(nullptr, programs[0].events);
+        auto& event = const_cast<harken::EventTemplate&>(programs[0].events[0]);
+        const auto eventArm = event.armToken;
         const auto bankAnchor = bank->schedules[0].entryAnchorFrame;
         const auto ticket = row->ticket;
         const auto transaction = row->schedule.transactionId;
-        const auto sequence = row->event.logicCommitSequence;
+        const auto sequence = event.logicCommitSequence;
         const auto attempt = std::find_if(session.Engine()->immediateEntryAttempts.data(),
             session.Engine()->immediateEntryAttempts.data() + session.Engine()->immediateEntryAttempts.size(),
             [firing](const auto& attempt) { return attempt.active && attempt.root == firing; });
@@ -10608,26 +10613,26 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         for (unsigned identity = 0; identity < 8u; ++identity) {
             SCOPED_TRACE(identity);
             if (identity == 0) row->queueCurrentCompletion.owner.singleDecision = attempt->initialQueueCoordinator;
-            if (identity == 1) ++row->event.armToken.generation;
+            if (identity == 1) ++event.armToken.generation;
             if (identity == 2) ++bank->schedules[0].entryAnchorFrame;
             if (identity == 3) ++row->queueCurrentOccurrence.generation;
             if (identity == 4) ++row->partition.generation;
             if (identity == 5) ++row->ticket;
             if (identity == 6) ++row->schedule.transactionId;
-            if (identity == 7) ++row->event.logicCommitSequence;
+            if (identity == 7) ++event.logicCommitSequence;
             ASSERT_EQ(VN_OK, Vn_Update());
             EXPECT_EQ(phase, row->phase);
             EXPECT_TRUE(row->pendingImmediateEntry);
             EXPECT_FALSE(row->pendingImmediateRetry);
             EXPECT_EQ(held, CaptureRootQueueOwners(*session.Engine()));
             row->queueCurrentCompletion.owner = owner;
-            row->event.armToken = eventArm;
+            event.armToken = eventArm;
             bank->schedules[0].entryAnchorFrame = bankAnchor;
             row->queueCurrentOccurrence = occurrence;
             row->partition = partition;
             row->ticket = ticket;
             row->schedule.transactionId = transaction;
-            row->event.logicCommitSequence = sequence;
+            event.logicCommitSequence = sequence;
         }
     }
     harken::Plan03GroupReaderPin heldPrivateReader{};

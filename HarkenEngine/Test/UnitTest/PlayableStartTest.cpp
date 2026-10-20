@@ -18059,8 +18059,10 @@ TEST(PlayableStart,
     ASSERT_TRUE(engine->transitionInstances.Capture(
         delayedTransition, &transition));
     ASSERT_EQ(delayedStartFrame, transition.audibleFrame);
+    ASSERT_NE(nullptr, delayedSchedule.runtimeProgram.program);
+    ASSERT_EQ(2u, delayedSchedule.runtimeProgram.program->payloadCount);
     const harken::CurveLUT* delayedCurve =
-        row->queueProgramPayloads[delayedPlane][1].envelopeCurve;
+        delayedSchedule.runtimeProgram.program->payloads[1].envelopeCurve;
     ASSERT_NE(nullptr, delayedCurve);
     const float preparedMidpoint = delayedCurve->Eval(0.5f);
     ASSERT_LT(preparedMidpoint, 0.25f);

@@ -8856,6 +8856,8 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
         }
         const auto before = CaptureActionPreparationOwners(*engine);
         const auto beforeCaptureBytes = engine->CapturedVoiceStorageBytes();
+        if (refuseVoiceCapture) ASSERT_TRUE(engine->queueScheduleStorage.CollectUnused());
+        const auto coldScheduleBytes = engine->queueScheduleStorage.StorageBytes();
         if (refuseSourceSeal) engine->forceTimelineVoiceCommitRollbackForTest = true;
         if (refuseVoiceCapture) harken::detail::ArmLogicAllocFaultForTests(
             1, harken::detail::LogicAllocSite::CapturedVoiceInstall);
@@ -8875,13 +8877,17 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
         EXPECT_FALSE(engine->runtimeRecreateRequired);
         if (refuseVoiceCapture) {
             const auto allocationCount = engine->nativeBackingAllocationCountForTest - allocationsBefore;
+            ASSERT_TRUE(engine->queueScheduleStorage.CollectUnused());
+            EXPECT_EQ(coldScheduleBytes, engine->queueScheduleStorage.StorageBytes());
             for (std::uint64_t ordinal = 0; ordinal < allocationCount; ++ordinal) {
                 SCOPED_TRACE(::testing::Message() << "replacement allocation refusal " << ordinal);
                 engine->nativeBackingAllocationFailureCountdownForTest = static_cast<std::int32_t>(ordinal);
                 const auto refused = Vn_PostAction(&command, &firing);
                 engine->nativeBackingAllocationFailureCountdownForTest = -1;
-                EXPECT_EQ(VN_BACKPRESSURE, refused);
-                EXPECT_EQ(0u, firing);
+                ASSERT_EQ(VN_BACKPRESSURE, refused);
+                ASSERT_EQ(0u, firing);
+                ASSERT_TRUE(engine->queueScheduleStorage.CollectUnused());
+                EXPECT_EQ(coldScheduleBytes, engine->queueScheduleStorage.StorageBytes());
                 ExpectActionPreparationOwnersUnchanged(*engine, before);
                 EXPECT_EQ(beforeCaptureBytes, engine->CapturedVoiceStorageBytes());
                 EXPECT_EQ(oldSuccessor, row.queueSuccessorRenderHandle);
@@ -9486,6 +9492,10 @@ static void CheckQueueBankAcrossRealRowReuse(bool transportReset, bool continuou
     auto* const replacementBank = row.queueCurrentProgramBank;
     ASSERT_NE(nullptr, replacementBank);
     ASSERT_NE(oldBank, replacementBank);
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_FALSE(row.pendingImmediateEntry);
+    ExpectFrozenQueueBank(*oldBank, *originalBank);
     const auto replacementBody = std::make_unique<harken::EngineQueueProgramBankBody>(*replacementBank);
     for (std::uint32_t block = 0; block < 3; ++block) {
         engine->nullBackend.Pump(1);
@@ -13612,9 +13622,6 @@ TEST(ActionFiringApi, OriginalInitialFilingRetainsFactoryFutureAcrossSelectedAli
     const auto savedRender = engine.playableSuccessorRenderHandles[mirrorSlot];
     const auto savedStart = engine.playableSuccessorStartFrames[mirrorSlot];
     const auto savedCompletion = engine.playableSuccessorCompletions[mirrorSlot];
-    auto& mirror = selected.queueSuccessorProgramPlane == 0
-        ? engine.playableSchedules[mirrorSlot] : engine.playableSuccessorSchedules[mirrorSlot];
-    const auto savedMirror = mirror;
     harken::TimelineArmObservation acknowledged{};
     ASSERT_TRUE(engine.timelineArms.Observe(savedArm, &acknowledged));
     ASSERT_NE(0u, acknowledged.armedCompletionSequence);
@@ -13631,7 +13638,6 @@ TEST(ActionFiringApi, OriginalInitialFilingRetainsFactoryFutureAcrossSelectedAli
     engine.playableSuccessorRenderHandles[mirrorSlot] = 0;
     engine.playableSuccessorStartFrames[mirrorSlot] = 0;
     engine.playableSuccessorCompletions[mirrorSlot] = {};
-    mirror = {};
     std::size_t members = 0, programs = 0, events = 0, leaves = 0, groups = 0, holders = 0;
     const bool collected = harken::test::CollectInitialQueueTimingMembersForTest(
         engine, firing, row.startFrame + 128u, &members, &programs,
@@ -13670,7 +13676,6 @@ TEST(ActionFiringApi, OriginalInitialFilingRetainsFactoryFutureAcrossSelectedAli
     engine.playableSuccessorRenderHandles[mirrorSlot] = savedRender;
     engine.playableSuccessorStartFrames[mirrorSlot] = savedStart;
     engine.playableSuccessorCompletions[mirrorSlot] = savedCompletion;
-    mirror = savedMirror;
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_FALSE(engine.runtimeRecreateRequired);
     EXPECT_TRUE(row.queueDecisionCommitted);
@@ -22657,7 +22662,6 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
     std::uint64_t futureFrozenStartFrame = UINT64_MAX;
     std::uint64_t futureMirroredStartFrame = UINT64_MAX;
     std::uint64_t futureInstallOnset = UINT64_MAX;
-    std::uint64_t futureCopiedStartFrame = UINT64_MAX;
     std::uint64_t futureAggregateStartFrame = UINT64_MAX;
     std::uint64_t futureDueStartFrame = UINT64_MAX;
     std::uint64_t futureDueQuantum = UINT64_MAX;
@@ -22735,19 +22739,9 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
             }
             futureMirroredStartFrame = engine->playableSuccessorStartFrames[
                 queueService->queueSuccessorScheduleBase];
-            const auto& copied = queueService->queueSuccessorProgramPlane == 0
-                ? engine->playableSchedules[
-                    queueService->queueSuccessorScheduleBase]
-                : engine->playableSuccessorSchedules[
-                    queueService->queueSuccessorScheduleBase];
             const auto& aggregate = queueService->queueSuccessorProgramPlane == 0
                 ? queueService->schedule : queueService->queueSuccessorSchedule;
-            ASSERT_NE(nullptr, copied.events);
             ASSERT_NE(nullptr, aggregate.events);
-            ASSERT_GE(copied.events[0].frameOffsetFromEntry, 0);
-            futureCopiedStartFrame = copied.entryAnchorFrame +
-                static_cast<std::uint64_t>(
-                    copied.events[0].frameOffsetFromEntry);
             for (std::size_t event = 0; event < aggregate.eventCount; ++event)
                 if (aggregate.events[event].armToken.slot ==
                         queueService->queueSuccessorArm.slot &&
@@ -22960,8 +22954,6 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
         std::to_string(futureMirroredStartFrame));
     testing::Test::RecordProperty("future_install_onset",
         std::to_string(futureInstallOnset));
-    testing::Test::RecordProperty("future_copied_start_frame",
-        std::to_string(futureCopiedStartFrame));
     testing::Test::RecordProperty("future_aggregate_start_frame",
         std::to_string(futureAggregateStartFrame));
     testing::Test::RecordProperty("future_due_start_frame",
@@ -22982,7 +22974,6 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
     if (!deferred) {
         EXPECT_EQ(futureFrozenStartFrame, futureMirroredStartFrame);
         EXPECT_EQ(futureFrozenStartFrame, futureInstallOnset);
-        EXPECT_EQ(futureFrozenStartFrame, futureCopiedStartFrame);
         EXPECT_EQ(futureFrozenStartFrame, futureAggregateStartFrame);
         EXPECT_EQ(futureFrozenStartFrame, futureDueStartFrame);
         EXPECT_EQ(futureDueStartFrame / config.blockFrames,
@@ -23874,16 +23865,11 @@ void ExpectImmediateShortQueueMirrorFaultRejected(std::uint32_t fault,
         holder->queueSuccessorProgramPlane = holder->queueCurrentProgramPlane;
         break;
     case 4: {
-        auto& schedules = holder->queueSuccessorProgramPlane == 0
-            ? engine->playableSchedules : engine->playableSuccessorSchedules;
-        auto& eventStorage = holder->queueSuccessorProgramPlane == 0
-            ? engine->playableScheduleEvents : engine->playableSuccessorEvents;
-        const auto& copied = schedules[holder->queueSuccessorScheduleBase];
-        ASSERT_NE(nullptr, copied.events);
-        const auto base = static_cast<std::size_t>(
-            copied.events - eventStorage.data());
-        ASSERT_LT(base + 1u, eventStorage.size());
-        aggregate.events = &eventStorage[base + 1u];
+        const auto programs = holder->queueSuccessorPrograms.Resolve(holder->queueSuccessorProgramBank);
+        ASSERT_EQ(1u, programs.size());
+        ASSERT_NE(nullptr, programs[0].events);
+        ASSERT_GT(programs[0].eventCount, 0u);
+        aggregate.events = programs[0].events + programs[0].eventCount;
         break;
     }
     case 5:
@@ -39392,27 +39378,14 @@ TEST(ActionFiringApi,
     EXPECT_EQ(acceptedSequence, row->schedule.transactionId);
     ASSERT_EQ(1u, row->queueSourceControlArmCount);
     ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
-    const std::size_t rowIndex = row->partition.slot;
-    const std::size_t targetEventBase =
-        row->queueSuccessorProgramPlane == 0
-            ? engine->playableStorage.CurrentEventBase(rowIndex)
-            : engine->playableStorage.PairedBase(rowIndex);
-    auto& targetEvents = row->queueSuccessorProgramPlane == 0
-        ? engine->playableScheduleEvents
-        : engine->playableSuccessorEvents;
-    auto& targetSchedules = row->queueSuccessorProgramPlane == 0
-        ? engine->playableSchedules
-        : engine->playableSuccessorSchedules;
-    for (std::uint32_t index = 0; index < 4; ++index) {
-        EXPECT_EQ(acceptedSequence,
-                  targetEvents[targetEventBase + index].
-                      logicCommitSequence);
-    }
-    for (std::uint32_t index = 0; index < 2; ++index) {
-        EXPECT_EQ(acceptedSequence,
-                  targetSchedules[
-                      row->queueSuccessorScheduleBase + index].
-                      transactionId);
+    const auto targetPrograms = row->queueSuccessorPrograms.Resolve(row->queueSuccessorProgramBank);
+    ASSERT_EQ(2u, targetPrograms.size());
+    for (const auto& program : targetPrograms) {
+        ASSERT_EQ(2u, program.eventCount);
+        ASSERT_NE(nullptr, program.events);
+        EXPECT_EQ(acceptedSequence, program.transactionId);
+        for (std::size_t index = 0; index < program.eventCount; ++index)
+            EXPECT_EQ(acceptedSequence, program.events[index].logicCommitSequence);
     }
     ASSERT_EQ(1u, row->queueSourceSchedule.eventCount);
     for (std::uint32_t index = 0;
@@ -41222,21 +41195,15 @@ void ExpectImmediateSequenceQueueCompositeSuccessorCompletes(bool pieceChild,
     ASSERT_NE(0u, successorHandles[0]);
     ASSERT_NE(0u, successorHandles[1]);
     ASSERT_NE(successorHandles[0], successorHandles[1]);
-    auto& successorEvents = row->queueSuccessorProgramPlane == 0
-        ? engine->playableScheduleEvents
-        : engine->playableSuccessorEvents;
-    auto& successorSchedules = row->queueSuccessorProgramPlane == 0
-        ? engine->playableSchedules
-        : engine->playableSuccessorSchedules;
-    const std::size_t rowIndex = row->partition.slot;
-    const std::size_t eventBase = row->queueSuccessorProgramPlane == 0
-        ? engine->playableStorage.CurrentEventBase(rowIndex)
-        : engine->playableStorage.PairedBase(rowIndex);
+    const auto successorPrograms = row->queueSuccessorPrograms.Resolve(row->queueSuccessorProgramBank);
+    ASSERT_EQ(2u, successorPrograms.size());
     for (std::uint32_t index = 0; index < 2; ++index) {
+        ASSERT_EQ(1u, successorPrograms[index].eventCount);
+        ASSERT_NE(nullptr, successorPrograms[index].events);
         EXPECT_EQ(info.acceptedLogicSequence,
-                  successorEvents[eventBase + index].logicCommitSequence);
+                  successorPrograms[index].events[0].logicCommitSequence);
         EXPECT_EQ(info.acceptedLogicSequence,
-                  successorSchedules[successorBase + index].transactionId);
+                  successorPrograms[index].transactionId);
     }
 
     bool observedOnlyLongLeaf = false;
@@ -41771,19 +41738,8 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
             frozen = &bank.schedules[index];
         }
         ASSERT_NE(nullptr, frozen);
-        const auto& schedules = savedSuccessorPlane == 0
-            ? engine->playableSchedules : engine->playableSuccessorSchedules;
-        ASSERT_LT(savedSuccessorMirrorSlot, schedules.size());
-        const auto& copied = schedules[savedSuccessorMirrorSlot];
         const auto& aggregate = savedSuccessorPlane == 0
             ? observed.schedule : observed.queueSuccessorSchedule;
-        EXPECT_TRUE(sameArm(copied.armToken, savedSuccessorArm));
-        EXPECT_EQ(frozen->ownerInstance, copied.ownerInstance);
-        EXPECT_EQ(frozen->ownerInstanceScheduleEpoch, copied.ownerInstanceScheduleEpoch);
-        EXPECT_EQ(frozen->transactionId, copied.transactionId);
-        EXPECT_EQ(frozen->runtimeProgram.program, copied.runtimeProgram.program);
-        EXPECT_EQ(frozen->runtimeProgram.programGeneration, copied.runtimeProgram.programGeneration);
-        EXPECT_EQ(boundary, copied.entryAnchorFrame);
         EXPECT_EQ(boundary, frozen->entryAnchorFrame);
         EXPECT_EQ(boundary, aggregate.entryAnchorFrame);
         const auto checkStart = [&](const harken::ProgramView& program) {
@@ -41808,7 +41764,6 @@ void CheckImmediateSameProgramQueue(bool restartCycle, bool requireTerminalC1 = 
             ASSERT_EQ(1u, matches);
         };
         ASSERT_NO_FATAL_FAILURE(checkStart(*frozen));
-        ASSERT_NO_FATAL_FAILURE(checkStart(copied));
         ASSERT_NO_FATAL_FAILURE(checkStart(aggregate));
         const harken::ProgramView* frozenAggregate = nullptr;
         for (std::size_t index = 0; index < bank.aggregateCount; ++index) {
@@ -42245,30 +42200,14 @@ void ExpectImmediateActionQueueTransitionPrepared(
             row->queueDecision, &decision));
         EXPECT_FALSE(row->queueDecisionCommitted);
 
-        const std::size_t rowIndex = row->partition.slot;
-        const std::size_t targetEventBase =
-            row->queueSuccessorProgramPlane == 0
-                ? engine->playableStorage.CurrentEventBase(rowIndex)
-                : engine->playableStorage.PairedBase(rowIndex);
-        auto& targetEvents = row->queueSuccessorProgramPlane == 0
-            ? engine->playableScheduleEvents
-            : engine->playableSuccessorEvents;
-        auto& targetSchedules = row->queueSuccessorProgramPlane == 0
-            ? engine->playableSchedules
-            : engine->playableSuccessorSchedules;
-        const std::size_t targetScheduleBase =
-            row->queueSuccessorScheduleBase;
-        for (std::uint32_t index = 0;
-             index < (targetFade ? 2u : 1u) * expectedTargetCount; ++index) {
-            EXPECT_EQ(info.acceptedLogicSequence,
-                      targetEvents[targetEventBase + index].
-                          logicCommitSequence);
-        }
-        for (std::uint32_t index = 0;
-             index < expectedTargetCount; ++index) {
-            EXPECT_EQ(info.acceptedLogicSequence,
-                      targetSchedules[targetScheduleBase + index].
-                          transactionId);
+        const auto targetPrograms = row->queueSuccessorPrograms.Resolve(row->queueSuccessorProgramBank);
+        ASSERT_EQ(expectedTargetCount, targetPrograms.size());
+        for (const auto& program : targetPrograms) {
+            ASSERT_EQ(targetFade ? 2u : 1u, program.eventCount);
+            ASSERT_NE(nullptr, program.events);
+            EXPECT_EQ(info.acceptedLogicSequence, program.transactionId);
+            for (std::size_t index = 0; index < program.eventCount; ++index)
+                EXPECT_EQ(info.acceptedLogicSequence, program.events[index].logicCommitSequence);
         }
         const std::uint32_t sourceEventsPerLeaf = naturalEnd ? 1u : 2u;
         EXPECT_EQ(sourceEventsPerLeaf * expectedSourceCount,
@@ -44146,6 +44085,8 @@ static void CheckNativeBackingReservationFailures(harken::Engine& engine,
     const auto queueBytes = QueuePreparationBackingBytes(engine);
     RecordNativeBackingInventory(engine, "reservation_old");
     const auto publishedHead = engine.commands.PublishedHead();
+    ASSERT_TRUE(engine.queueScheduleStorage.CollectUnused());
+    const auto coldScheduleBytes = engine.queueScheduleStorage.StorageBytes();
     const auto allocationsBefore = engine.nativeBackingAllocationCountForTest;
     {
         std::vector<harken::Engine::NativeReplacementSlot> candidate;
@@ -44200,25 +44141,28 @@ static void CheckNativeBackingReservationFailures(harken::Engine& engine,
     ASSERT_GT(allocationCount, 0u);
     ASSERT_LE(allocationCount, static_cast<std::uint64_t>(INT32_MAX));
     ::testing::Test::RecordProperty("native_reservation_allocation_gates", std::to_string(allocationCount));
+    ASSERT_TRUE(engine.queueScheduleStorage.CollectUnused());
+    EXPECT_EQ(coldScheduleBytes, engine.queueScheduleStorage.StorageBytes());
     for (std::uint64_t ordinal = 0; ordinal < allocationCount; ++ordinal) {
         SCOPED_TRACE(ordinal);
         engine.nativeBackingAllocationFailureCountdownForTest = static_cast<std::int32_t>(ordinal);
         const auto before = engine.nativeBackingAllocationCountForTest;
         if (attempt.privateVcProducerCount == 0) {
-            EXPECT_EQ(Result::Waiting,
+            ASSERT_EQ(Result::Waiting,
                 engine.RequestPendingVariableGroupLeafRetirement(producer, attempt, placement));
         } else {
             bool waiting = false;
-            EXPECT_FALSE(engine.BeginRegisteredPendingVariableCohortReprepare(attempt, placement, true, &waiting));
-            EXPECT_TRUE(waiting);
+            ASSERT_FALSE(engine.BeginRegisteredPendingVariableCohortReprepare(attempt, placement, true, &waiting));
+            ASSERT_TRUE(waiting);
         }
-        EXPECT_EQ(ordinal + 1u, engine.nativeBackingAllocationCountForTest - before);
+        ASSERT_EQ(ordinal + 1u, engine.nativeBackingAllocationCountForTest - before);
+        ASSERT_EQ(0, engine.nativeBackingAllocationFailureCountdownForTest);
         EXPECT_EQ(owners, CaptureActionReclaimableOwners(engine));
         EXPECT_EQ(backingBytes, NativePreparationBackingBytes(engine));
         EXPECT_EQ(queueBytes, QueuePreparationBackingBytes(engine));
         EXPECT_EQ(publishedHead, engine.commands.PublishedHead());
         for (const auto* group : groups) {
-            EXPECT_EQ(Phase::None, group->leafRetirement);
+            ASSERT_EQ(Phase::None, group->leafRetirement);
             EXPECT_FALSE(group->RepreparePending());
             EXPECT_TRUE(group->nativeReplacementSlots.empty());
             EXPECT_EQ(0u, group->nativeReplacementSlots.capacity());
@@ -44234,6 +44178,8 @@ static void CheckNativeBackingReservationFailures(harken::Engine& engine,
                 EXPECT_EQ(0u, arm.startedBlockSequence);
             }
         }
+        ASSERT_TRUE(engine.queueScheduleStorage.CollectUnused());
+        EXPECT_EQ(coldScheduleBytes, engine.queueScheduleStorage.StorageBytes());
     }
 }
 
@@ -57703,30 +57649,37 @@ TEST(ActionFiringApi,
                     row->queueTransition.generation);
     EXPECT_EQ(2u, row->queueTransitionGroupArmCount);
     ASSERT_EQ(2u, row->queueSuccessorScheduleLeafCount);
-    const std::uint32_t base = row->queueSuccessorScheduleBase;
-    auto& payloads = row->queueSuccessorProgramPlane == 0
-        ? engine->playableSchedulePayloads
-        : engine->playableSuccessorPayloads;
-    auto& events = row->queueSuccessorProgramPlane == 0
-        ? engine->playableScheduleEvents
-        : engine->playableSuccessorEvents;
-    const harken::CurveLUT* stableCurve =
-        &row->queueTransitionTargetFadeCurves[
-            row->queueSuccessorProgramPlane];
+    auto* const bank = row->queueSuccessorProgramBank;
+    const auto programs = row->queueSuccessorPrograms.Resolve(bank);
+    ASSERT_EQ(2u, programs.size());
+    ASSERT_NE(nullptr, programs[0].runtimeProgram.program);
+    ASSERT_EQ(2u, programs[0].runtimeProgram.program->payloadCount);
+    const auto* stableCurve = programs[0].runtimeProgram.program->payloads[1].envelopeCurve;
+    ASSERT_NE(nullptr, stableCurve);
+    ASSERT_NE(bank->curves.begin() + bank->curveCount,
+        std::find_if(bank->curves.begin(), bank->curves.begin() + bank->curveCount,
+            [&](const auto& curve) { return &curve == stableCurve; }));
+    EXPECT_FLOAT_EQ(row->queueTransitionTargetFadeCurves[row->queueSuccessorProgramPlane].Eval(0.5f),
+                    stableCurve->Eval(0.5f));
     for (std::uint32_t leafIndex = 0; leafIndex < 2; ++leafIndex) {
-        const std::uint32_t eventBase = base + 2u * leafIndex;
+        const auto& program = programs[leafIndex];
+        ASSERT_NE(nullptr, program.runtimeProgram.program);
+        ASSERT_EQ(2u, program.runtimeProgram.program->payloadCount);
+        ASSERT_EQ(2u, program.eventCount);
+        ASSERT_NE(nullptr, program.events);
+        const auto* payloads = program.runtimeProgram.program->payloads;
         EXPECT_EQ(harken::TimelineEventKind::Start,
-                  payloads[eventBase].kind);
+                  payloads[0].kind);
         EXPECT_EQ(harken::TimelineEventKind::Envelope,
-                  payloads[eventBase + 1u].kind);
+                  payloads[1].kind);
         EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeIn,
-                  payloads[eventBase + 1u].envelopeDirection);
+                  payloads[1].envelopeDirection);
         EXPECT_EQ(stableCurve,
-                  payloads[eventBase + 1u].envelopeCurve);
+                  payloads[1].envelopeCurve);
         EXPECT_EQ(row->queueTransitionGroupArms[leafIndex].slot,
-                  events[eventBase].armToken.slot);
+                  program.events[0].armToken.slot);
         EXPECT_EQ(row->queueTransitionGroupArms[leafIndex].slot,
-                  events[eventBase + 1u].armToken.slot);
+                  program.events[1].armToken.slot);
     }
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
@@ -57959,14 +57912,23 @@ TEST(ActionFiringApi,
     ASSERT_EQ(1u, row->queueSourceSchedule.eventCount);
     EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeOut,
               row->queueSourcePayloads[0].envelopeDirection);
-    auto& payloads = row->queueSuccessorProgramPlane == 0
-        ? engine->playableSchedulePayloads
-        : engine->playableSuccessorPayloads;
-    const harken::CurveLUT* targetCurve =
-        &row->queueTransitionTargetFadeCurves[
-            row->queueSuccessorProgramPlane];
-    EXPECT_EQ(targetCurve, payloads[newBase + 1u].envelopeCurve);
-    EXPECT_EQ(targetCurve, payloads[newBase + 3u].envelopeCurve);
+    auto* const bank = row->queueSuccessorProgramBank;
+    const auto programs = row->queueSuccessorPrograms.Resolve(bank);
+    ASSERT_EQ(2u, programs.size());
+    const harken::CurveLUT* targetCurve = nullptr;
+    for (const auto& program : programs) {
+        ASSERT_NE(nullptr, program.runtimeProgram.program);
+        ASSERT_EQ(2u, program.runtimeProgram.program->payloadCount);
+        const auto* curve = program.runtimeProgram.program->payloads[1].envelopeCurve;
+        ASSERT_NE(nullptr, curve);
+        ASSERT_NE(bank->curves.begin() + bank->curveCount,
+            std::find_if(bank->curves.begin(), bank->curves.begin() + bank->curveCount,
+                [&](const auto& owned) { return &owned == curve; }));
+        if (targetCurve == nullptr) targetCurve = curve;
+        EXPECT_EQ(targetCurve, curve);
+        EXPECT_FLOAT_EQ(row->queueTransitionTargetFadeCurves[row->queueSuccessorProgramPlane].Eval(0.5f),
+                        curve->Eval(0.5f));
+    }
     const std::array<std::uint64_t, 2> sliceFrames = {
         sourceFrame, targetFrame};
     for (std::uint16_t index = 0; index < sliceFrames.size(); ++index) {

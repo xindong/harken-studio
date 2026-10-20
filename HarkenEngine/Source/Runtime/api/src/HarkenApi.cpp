@@ -9323,7 +9323,7 @@ harken::ProgramView* FreezeQueueProgram(
     if (!arm.Valid() || !engine.CaptureTimelineVoiceInstallIdentity(render, &installation)) return nullptr;
     bank.releaseObservers[bank.programCount] = installation.releaseObserver;
     const auto base = bank.eventCount;
-    // Source controls are built directly in their final bank range.
+    // Programs already built in their final range need only bind their readers.
     if (source.events != bank.events.data() + base)
         std::copy_n(source.events, source.eventCount, bank.events.begin() + base);
     if (runtime->payloads != bank.payloads.data() + base)
@@ -9395,20 +9395,26 @@ harken::ProgramView* ResolveQueueCurrentProgram(
     return index < programs.size() ? &programs[index] : nullptr;
 }
 
+bool StampQueueProgramBank(harken::EngineQueueProgramBank& bank,
+    harken::LogicCommitSequence sequence) noexcept {
+    if (bank.published || bank.programCount > bank.schedules.size() ||
+        bank.eventCount > bank.events.size() ||
+        bank.aggregateCount > bank.aggregateSchedules.size()) return false;
+    for (std::uint32_t index = 0; index < bank.eventCount; ++index)
+        bank.events[index].logicCommitSequence = sequence;
+    for (std::uint32_t index = 0; index < bank.programCount; ++index)
+        bank.schedules[index].transactionId = sequence;
+    for (std::uint32_t index = 0; index < bank.aggregateCount; ++index)
+        bank.aggregateSchedules[index].transactionId = sequence;
+    return true;
+}
+
 bool StampQueueSuccessorPrograms(const harken::EngineQueueFutureFilingLayout& future,
     std::uint32_t targetCount, harken::LogicCommitSequence sequence) noexcept {
     auto* bank = future.queueSuccessorProgramBank;
     if (bank == nullptr) return targetCount == 0;
-    if (bank->published || future.queueSuccessorPrograms.Resolve(bank).size() != targetCount ||
-        bank->eventCount > bank->events.size() ||
-        bank->aggregateCount > bank->aggregateSchedules.size()) return false;
-    for (std::uint32_t index = 0; index < bank->eventCount; ++index)
-        bank->events[index].logicCommitSequence = sequence;
-    for (std::uint32_t index = 0; index < bank->programCount; ++index)
-        bank->schedules[index].transactionId = sequence;
-    for (std::uint32_t index = 0; index < bank->aggregateCount; ++index)
-        bank->aggregateSchedules[index].transactionId = sequence;
-    return true;
+    return future.queueSuccessorPrograms.Resolve(bank).size() == targetCount &&
+        StampQueueProgramBank(*bank, sequence);
 }
 
 bool CanonicalQueueBankHasReaders(const harken::Engine& engine,
@@ -12737,14 +12743,6 @@ PlayableStartResetResult ResetPlayableStartRow(
     clear(engine.playableSuccessorVoices, bases.endpoint,
           engine.playableStorage.endpointStride);
     clear(engine.playableSuccessorLeaves, bases.endpoint,
-          engine.playableStorage.endpointStride);
-    clear(engine.playableSuccessorPayloads, bases.paired,
-          engine.playableStorage.pairedStride);
-    clear(engine.playableSuccessorEvents, bases.paired,
-          engine.playableStorage.pairedStride);
-    clear(engine.playableSuccessorRuntimePrograms, bases.endpoint,
-          engine.playableStorage.endpointStride);
-    clear(engine.playableSuccessorSchedules, bases.endpoint,
           engine.playableStorage.endpointStride);
     clear(engine.playableSuccessorArms, bases.endpoint,
           engine.playableStorage.endpointStride);
@@ -18661,7 +18659,10 @@ bool CancelQueueFutureAttempt(
         auto& current = *scratch->queueFutureCanonicalCurrent;
         if (current.canonicalResourceBank != bank) return false;
         // The parent owns the bank until source and Decision exit complete.
-    } else if (!CancelQueueProgramBank(engine, bank)) return false;
+    } else {
+        if (!CancelQueueProgramBank(engine, bank)) return false;
+        scratch->row->queueSuccessorPrograms = {};
+    }
     scratch->queueFutureProgramBank = nullptr;
     return ResetImmediateActionPlayScratch(engine, scratch);
 }
@@ -24728,29 +24729,11 @@ bool PrepareCompositeQueueContinuation(
     }
     row.queueSuccessorScheduleBase = static_cast<std::uint32_t>(base);
     row.queueSuccessorScheduleLeafCount = 0;
-    auto& successorPayloadStorage = successorProgramPlane == 0
-        ? engine.playableSchedulePayloads
-        : engine.playableSuccessorPayloads;
-    auto& successorEventStorage = successorProgramPlane == 0
-        ? engine.playableScheduleEvents
-        : engine.playableSuccessorEvents;
-    auto& successorRuntimeStorage = successorProgramPlane == 0
-        ? engine.playableScheduleRuntimePrograms
-        : engine.playableSuccessorRuntimePrograms;
-    auto& successorScheduleStorage = successorProgramPlane == 0
-        ? engine.playableSchedules
-        : engine.playableSuccessorSchedules;
-    const std::size_t successorEventBase = successorProgramPlane == 0
-        ? bases.currentEvent : bases.paired;
-    if (successorEventBase + 2u * materialized.leafCount >
-            successorPayloadStorage.size() ||
-        successorEventBase + 2u * materialized.leafCount >
-            successorEventStorage.size() ||
-        base + materialized.leafCount > successorRuntimeStorage.size() ||
-        base + materialized.leafCount > successorScheduleStorage.size()) {
-        BeginQueueSuccessorAbort(engine, row);
-        return false;
-    }
+    auto& successorPayloadStorage = starts.QueueBank()->payloads;
+    auto& successorEventStorage = starts.QueueBank()->events;
+    auto& successorRuntimeStorage = starts.QueueBank()->runtimes;
+    auto& successorScheduleStorage = starts.QueueBank()->schedules;
+    constexpr std::size_t successorEventBase = 0;
     const auto abortPrepared = [&]() {
         starts.Cancel();
         BeginQueueSuccessorAbort(engine, row);
@@ -24874,12 +24857,12 @@ bool PrepareCompositeQueueContinuation(
             leafEventCount = 2;
         }
         harken::TimelineProgramView& runtime =
-            successorRuntimeStorage[slot];
+            successorRuntimeStorage[index];
         runtime = {};
         runtime.generation = row.rootInstance;
         runtime.payloads = successorPayloadStorage.data() + successorEventBase + eventBase;
         runtime.payloadCount = leafEventCount;
-        harken::ProgramView& schedule = successorScheduleStorage[slot];
+        harken::ProgramView& schedule = successorScheduleStorage[index];
         schedule = {};
         schedule.ownerInstance = row.rootInstance;
         schedule.ownerInstanceScheduleEpoch =
@@ -25149,7 +25132,7 @@ engine.runtimeRecreateRequired = true;
         row.queueSourceSchedule.armToken = row.queueSourceArm;
     }
     for (std::uint32_t index = 0; index < materialized.leafCount; ++index) {
-        if (!starts.PrepareQueueProgram(successorScheduleStorage[base + index])) {
+        if (!starts.PrepareQueueProgram(successorScheduleStorage[index])) {
             rollbackUnpublishedTransition();
             abortPrepared();
             return false;
@@ -26223,14 +26206,13 @@ engine.runtimeRecreateRequired = true;
         row.queueSuccessorProgramPlane == 0
             ? row.schedule
             : row.queueSuccessorSchedule;
-    auto& successorPayloads =
-        row.queueProgramPayloads[row.queueSuccessorProgramPlane];
-    auto& successorEvents =
-        row.queueProgramEvents[row.queueSuccessorProgramPlane];
-    successorPayloads = {};
+    const auto targetEventCount = 1u + static_cast<std::uint32_t>(targetFadeActive);
+    auto successorPayloads = std::span{starts.QueueBank()->payloads}.first(targetEventCount);
+    auto successorEvents = std::span{starts.QueueBank()->events}.first(targetEventCount);
+    std::fill(successorPayloads.begin(), successorPayloads.end(), harken::TimelineEventPayload{});
     successorPayloads[0].kind = harken::TimelineEventKind::Start;
     successorPayloads[0].target = voice.target;
-    successorEvents = {};
+    std::fill(successorEvents.begin(), successorEvents.end(), harken::EventTemplate{});
     successorEvents[0].logicCommitSequence = row.queueTicket;
     successorEvents[0].eventIndex = 0;
     successorEvents[0].transactionOrdinal = 0;
@@ -44281,12 +44263,16 @@ void ServicePendingImmediateEntries(
                                     installed->arm;
                                 engine.playableSchedules[bases.endpoint + leaf]
                                     .armToken = installed->arm;
-                                if (auto* program = leafProgram(member, leaf)) {
-                                    program->armToken = installed->arm;
-                                    if (program->events != nullptr)
-                                        const_cast<harken::EventTemplate*>(
-                                            program->events)[0].armToken =
-                                            installed->arm;
+                            }
+                            if (auto* program = leafProgram(member, leaf)) {
+                                program->armToken = installed->arm;
+                                if (program->events != nullptr)
+                                    const_cast<harken::EventTemplate*>(program->events)[0].armToken = installed->arm;
+                                if (member.queueCurrentProgramBank != nullptr) {
+                                    auto& bank = *member.queueCurrentProgramBank;
+                                    const auto programIndex = member.queueCurrentPrograms.first + leaf;
+                                    assert(programIndex < bank.programCount);
+                                    bank.releaseObservers[programIndex] = installed->releaseObserver;
                                 }
                             }
                             if (leaf == 0 && member.queueNaturalEnd &&
@@ -78598,33 +78584,28 @@ bool PrepareQueueTransitionContinuation(
 
     const PlayableStorageBases bases = StorageBasesForRow(engine, row);
     const std::size_t successorBase = bases.endpoint;
-    const std::size_t successorEventBase = successorPlane == 0
-        ? bases.currentEvent : bases.paired;
-    auto& successorPayloadStorage = successorPlane == 0
-        ? engine.playableSchedulePayloads
-        : engine.playableSuccessorPayloads;
-    auto& successorEventStorage = successorPlane == 0
-        ? engine.playableScheduleEvents
-        : engine.playableSuccessorEvents;
-    auto& successorRuntimeStorage = successorPlane == 0
-        ? engine.playableScheduleRuntimePrograms
-        : engine.playableSuccessorRuntimePrograms;
-    auto& successorScheduleStorage = successorPlane == 0
-        ? engine.playableSchedules
-        : engine.playableSuccessorSchedules;
     const std::uint32_t targetEventCount = targetFadeActive
         ? 2u * leafCount : leafCount;
     if (successorBase > UINT32_MAX ||
         successorBase + leafCount >
-            engine.playableSuccessorVoices.size() ||
-        successorBase + leafCount > successorRuntimeStorage.size() ||
-        successorBase + leafCount > successorScheduleStorage.size() ||
-        successorEventBase + targetEventCount >
-            successorPayloadStorage.size() ||
-        successorEventBase + targetEventCount >
-            successorEventStorage.size()) {
+            engine.playableSuccessorVoices.size()) {
         return false;
     }
+    row.queueSuccessorProgramBank = ReserveQueueProgramBank(engine,
+        {sourceControlCount + leafCount, targetEventCount +
+            sourceControlCount * (static_cast<std::uint32_t>(sourceFadeActive) + !naturalEnd)});
+    if (row.queueSuccessorProgramBank == nullptr) {
+        entry.MarkProgramCapacityRefused();
+        entry.Result() = VN_BACKPRESSURE;
+        (void)entry.ReleasePrefix(scratch);
+        return false;
+    }
+    auto& bank = *row.queueSuccessorProgramBank;
+    auto& successorPayloadStorage = bank.payloads;
+    auto& successorEventStorage = bank.events;
+    auto& successorRuntimeStorage = bank.runtimes;
+    auto& successorScheduleStorage = bank.schedules;
+    constexpr std::size_t successorEventBase = 0;
 
     if (successorHasContinuation) {
         harken::DecisionReserveRequest decision{};
@@ -78635,6 +78616,7 @@ bool PrepareQueueTransitionContinuation(
         decision.sliceCount = 1;
         if (!engine.PrepareOriginalQueueDecisionReservation(
                 decision, &scratch->queueSuccessorDecision)) {
+            (void)entry.ReleasePrefix(scratch);
             return false;
         }
         row.queueSuccessorDecision =
@@ -78735,11 +78717,16 @@ bool PrepareQueueTransitionContinuation(
             const auto logicalSlot = scratch->queueFutureMemberBase + index;
             if (index >= scratch->queueFutureMemberSlots.size() ||
                 index + std::max(1u, row.scheduleLeafCount) >= engine.playableStorage.memberStride ||
-                logicalSlot >= engine.playableMemberReferences.size()) return false;
+                logicalSlot >= engine.playableMemberReferences.size()) {
+                (void)entry.ReleasePrefix(scratch);
+                return false;
+            }
             scratch->queueFuturePriorMemberReferences[index] = engine.playableMemberReferences[logicalSlot];
             std::size_t memberSlot = 0;
-            if (!PreparePlayableMemberStorage(engine, row, logicalSlot, successorInstance, successorEpoch, &memberSlot))
+            if (!PreparePlayableMemberStorage(engine, row, logicalSlot, successorInstance, successorEpoch, &memberSlot)) {
+                (void)entry.ReleasePrefix(scratch);
                 return false;
+            }
             scratch->queueFutureMemberSlots[index] = memberSlot;
             scratch->queueFutureMemberCount = index + 1u;
             engine.playableMemberReferences[logicalSlot].authoredChildOrdinal = next.currentChildOrdinal;
@@ -78833,12 +78820,12 @@ bool PrepareQueueTransitionContinuation(
             transitionEndFrame = std::max(
                 transitionEndFrame, startFrame + targetFadeFrames);
         }
-        auto& runtime = successorRuntimeStorage[slot];
+        auto& runtime = successorRuntimeStorage[index];
         runtime = {};
         runtime.generation = successorInstance;
         runtime.payloads = successorPayloadStorage.data() + successorEventBase + eventBase;
         runtime.payloadCount = leafEventCount;
-        auto& schedule = successorScheduleStorage[slot];
+        auto& schedule = successorScheduleStorage[index];
         schedule = {};
         schedule.ownerInstance = successorInstance;
         schedule.ownerInstanceScheduleEpoch =
@@ -79107,16 +79094,6 @@ bool PrepareQueueTransitionContinuation(
     successorSchedule.armToken =
         engine.playableSuccessorArms[successorBase];
 
-    row.queueSuccessorProgramBank = ReserveQueueProgramBank(engine,
-        {sourceControlCount + leafCount, targetEventCount +
-            sourceControlCount * (static_cast<std::uint32_t>(sourceFadeActive) + !naturalEnd)});
-    if (row.queueSuccessorProgramBank == nullptr) {
-        entry.MarkProgramCapacityRefused();
-        entry.Result() = VN_BACKPRESSURE;
-        (void)entry.ReleasePrefix(scratch);
-        return false;
-    }
-    auto& bank = *row.queueSuccessorProgramBank;
     if (!PrepareQueueSourcePrograms(row, bank, leafCount, targetEventCount, sourceControlCount,
             sourceControlCount * (static_cast<std::uint32_t>(sourceFadeActive) + !naturalEnd))) {
         (void)entry.ReleasePrefix(scratch);
@@ -79250,7 +79227,7 @@ bool PrepareQueueTransitionContinuation(
 
     for (std::uint32_t index = 0; index < leafCount + sourceControlCount; ++index) {
         auto& schedule = index < leafCount
-            ? successorScheduleStorage[successorBase + index]
+            ? successorScheduleStorage[index]
             : row.queueSourceSchedules[index - leafCount];
         const auto* frozen = FreezeQueueProgram(engine, bank, schedule);
         if (frozen == nullptr) {
@@ -80352,28 +80329,9 @@ bool PrepareQueueContinuation(
     const std::size_t successorBase = bases.endpoint;
     const std::uint8_t successorPlane =
         row.queueCurrentProgramPlane == 0 ? 1 : 0;
-    auto& successorPayloadStorage = successorPlane == 0
-        ? engine.playableSchedulePayloads
-        : engine.playableSuccessorPayloads;
-    auto& successorEventStorage = successorPlane == 0
-        ? engine.playableScheduleEvents
-        : engine.playableSuccessorEvents;
-    auto& successorRuntimeStorage = successorPlane == 0
-        ? engine.playableScheduleRuntimePrograms
-        : engine.playableSuccessorRuntimePrograms;
-    auto& successorScheduleStorage = successorPlane == 0
-        ? engine.playableSchedules
-        : engine.playableSuccessorSchedules;
-    const std::size_t successorEventBase = successorPlane == 0
-        ? bases.currentEvent : bases.paired;
     if (successorBase > UINT32_MAX ||
         successorBase + leafCount >
-            engine.playableSuccessorVoices.size() ||
-        successorBase + leafCount > successorRuntimeStorage.size() ||
-        successorBase + leafCount > successorScheduleStorage.size() ||
-        successorEventBase + leafCount >
-            successorPayloadStorage.size() ||
-        successorEventBase + leafCount > successorEventStorage.size()) {
+            engine.playableSuccessorVoices.size()) {
         return false;
     }
 
@@ -80399,6 +80357,20 @@ bool PrepareQueueContinuation(
          (leafCount == 0u && materialized.hasZeroWorkCompletion)) && knownCurrent &&
         row.queueCompletionFrame > row.startFrame;
 
+    row.queueSuccessorProgramBank = ReserveQueueProgramBank(engine, {leafCount, leafCount});
+    if (row.queueSuccessorProgramBank == nullptr) {
+        entry.MarkProgramCapacityRefused();
+        entry.Result() = VN_BACKPRESSURE;
+        (void)entry.ReleasePrefix(scratch);
+        return false;
+    }
+    auto& bank = *row.queueSuccessorProgramBank;
+    auto& successorPayloadStorage = bank.payloads;
+    auto& successorEventStorage = bank.events;
+    auto& successorRuntimeStorage = bank.runtimes;
+    auto& successorScheduleStorage = bank.schedules;
+    constexpr std::size_t successorEventBase = 0;
+
     if (successorHasContinuation) {
         harken::DecisionReserveRequest decision{};
         decision.world = queueWorldGeneration;
@@ -80408,6 +80380,7 @@ bool PrepareQueueContinuation(
         decision.sliceCount = 1;
         if (!engine.PrepareOriginalQueueDecisionReservation(
                 decision, &scratch->queueSuccessorDecision)) {
+            (void)entry.ReleasePrefix(scratch);
             return false;
         }
         row.queueSuccessorDecision =
@@ -80511,11 +80484,16 @@ bool PrepareQueueContinuation(
             const auto logicalSlot = scratch->queueFutureMemberBase + index;
             if (index >= scratch->queueFutureMemberSlots.size() ||
                 index + std::max(1u, row.scheduleLeafCount) >= engine.playableStorage.memberStride ||
-                logicalSlot >= engine.playableMemberReferences.size()) return false;
+                logicalSlot >= engine.playableMemberReferences.size()) {
+                (void)entry.ReleasePrefix(scratch);
+                return false;
+            }
             scratch->queueFuturePriorMemberReferences[index] = engine.playableMemberReferences[logicalSlot];
             std::size_t memberSlot = 0;
-            if (!PreparePlayableMemberStorage(engine, row, logicalSlot, successorInstance, successorEpoch, &memberSlot))
+            if (!PreparePlayableMemberStorage(engine, row, logicalSlot, successorInstance, successorEpoch, &memberSlot)) {
+                (void)entry.ReleasePrefix(scratch);
                 return false;
+            }
             scratch->queueFutureMemberSlots[index] = memberSlot;
             scratch->queueFutureMemberCount = index + 1u;
             engine.playableMemberReferences[logicalSlot].authoredChildOrdinal = nextState.currentChildOrdinal;
@@ -80559,12 +80537,12 @@ bool PrepareQueueContinuation(
         event.transactionOrdinal = index;
         event.subeventPhase = 20;
         event.armToken = installed.armToken;
-        auto& runtime = successorRuntimeStorage[slot];
+        auto& runtime = successorRuntimeStorage[index];
         runtime = {};
         runtime.generation = successorInstance;
         runtime.payloads = &payload;
         runtime.payloadCount = 1;
-        auto& schedule = successorScheduleStorage[slot];
+        auto& schedule = successorScheduleStorage[index];
         schedule = {};
         schedule.ownerInstance = successorInstance;
         schedule.ownerInstanceScheduleEpoch =
@@ -80760,16 +80738,8 @@ bool PrepareQueueContinuation(
         row.queueInitialLaneArmGroup = scratch->queueInitialLaneArmGroup;
     }
 
-    row.queueSuccessorProgramBank = ReserveQueueProgramBank(engine, {leafCount, leafCount});
-    if (row.queueSuccessorProgramBank == nullptr) {
-        entry.MarkProgramCapacityRefused();
-        entry.Result() = VN_BACKPRESSURE;
-        (void)entry.ReleasePrefix(scratch);
-        return false;
-    }
-    auto& bank = *row.queueSuccessorProgramBank;
     for (std::uint32_t index = 0; index < leafCount; ++index) {
-        const auto* frozen = FreezeQueueProgram(engine, bank, successorScheduleStorage[successorBase + index]);
+        const auto* frozen = FreezeQueueProgram(engine, bank, successorScheduleStorage[index]);
         if (frozen == nullptr) {
             (void)entry.ReleasePrefix(scratch);
             return false;
@@ -91265,79 +91235,25 @@ void CommitImmediateActionQueueReplacements(
 
             row.queueSuccessorProgramPlane =
                 scratch.successorProgramPlane;
-            for (std::uint32_t eventIndex = 0;
-                 eventIndex < scratch.successorEventCount;
-                 ++eventIndex) {
-                scratch.successorEvents[eventIndex].logicCommitSequence =
-                    sequence;
-            }
+            auto& bank = *scratch.programBank;
+            ok = StampQueueProgramBank(bank, sequence) && ok;
             if (scratch.transition.Valid()) {
                 row.queueTransitionTargetFadeCurves[
                     row.queueSuccessorProgramPlane] =
                         scratch.successorTargetFadeCurve;
             }
-            std::array<harken::ProgramView*,
-                       harken::kMaxKnownScheduleLeaves> schedules{};
-            if (scratch.successorLeafCount > 1) {
+            const auto targetPrograms = harken::EngineQueueProgramRange{
+                scratch.sourceControlCount, scratch.successorLeafCount}.Resolve(&bank);
+            if (targetPrograms.size() != scratch.successorLeafCount) {
+                ok = false;
+            } else if (scratch.successorLeafCount > 1) {
                 const PlayableStorageBases bases = StorageBasesForRow(engine, row);
                 const std::size_t endpointBase = bases.endpoint;
-                const std::size_t eventBase =
-                    row.queueSuccessorProgramPlane == 0
-                        ? bases.currentEvent
-                        : bases.paired;
-                auto& payloadStorage =
-                    row.queueSuccessorProgramPlane == 0
-                        ? engine.playableSchedulePayloads
-                        : engine.playableSuccessorPayloads;
-                auto& eventStorage =
-                    row.queueSuccessorProgramPlane == 0
-                        ? engine.playableScheduleEvents
-                        : engine.playableSuccessorEvents;
-                auto& runtimeStorage =
-                    row.queueSuccessorProgramPlane == 0
-                        ? engine.playableScheduleRuntimePrograms
-                        : engine.playableSuccessorRuntimePrograms;
-                auto& scheduleStorage =
-                    row.queueSuccessorProgramPlane == 0
-                        ? engine.playableSchedules
-                        : engine.playableSuccessorSchedules;
                 if (endpointBase > UINT32_MAX ||
                     endpointBase + scratch.successorLeafCount >
-                        engine.playableSuccessorVoices.size() ||
-                    endpointBase + scratch.successorLeafCount >
-                        runtimeStorage.size() ||
-                    endpointBase + scratch.successorLeafCount >
-                        scheduleStorage.size() ||
-                    eventBase + scratch.successorEventCount >
-                        payloadStorage.size() ||
-                    eventBase + scratch.successorEventCount >
-                        eventStorage.size()) {
+                        engine.playableSuccessorVoices.size()) {
                     ok = false;
                 } else {
-                    std::copy_n(scratch.successorPayloads.begin(),
-                                scratch.successorEventCount,
-                                payloadStorage.begin() + eventBase);
-                    std::copy_n(scratch.successorEvents.begin(),
-                                scratch.successorEventCount,
-                                eventStorage.begin() + eventBase);
-                    if (scratch.transition.Valid()) {
-                        for (std::uint32_t eventIndex = 0;
-                             eventIndex < scratch.successorEventCount;
-                             ++eventIndex) {
-                            auto& payload =
-                                payloadStorage[eventBase + eventIndex];
-                            if (payload.kind ==
-                                    harken::TimelineEventKind::Envelope &&
-                                payload.envelopeDirection ==
-                                    harken::TimelineEnvelopeDirection::
-                                        FadeIn) {
-                                payload.envelopeCurve =
-                                    &row.queueTransitionTargetFadeCurves[
-                                        row.queueSuccessorProgramPlane];
-                            }
-                        }
-                    }
-                    std::uint32_t eventOffset = 0;
                     for (std::uint32_t leafIndex = 0;
                          leafIndex < scratch.successorLeafCount;
                          ++leafIndex) {
@@ -91361,34 +91277,6 @@ void CommitImmediateActionQueueReplacements(
                         engine.playableSuccessorPostSourceTailFrames[slot] =
                             scratch.successorStarts[leafIndex].
                                 postSourceTailFrames;
-                        runtimeStorage[slot] = {};
-                        runtimeStorage[slot].generation = row.rootInstance;
-                        runtimeStorage[slot].payloads =
-                            payloadStorage.data() + eventBase + eventOffset;
-                        runtimeStorage[slot].payloadCount =
-                            scratch.successorLeafEventCounts[leafIndex];
-                        scheduleStorage[slot] = {};
-                        scheduleStorage[slot].ownerInstance =
-                            row.rootInstance;
-                        scheduleStorage[slot].
-                            ownerInstanceScheduleEpoch =
-                            scratch.successorSchedules[leafIndex].
-                                ownerInstanceScheduleEpoch;
-                        scheduleStorage[slot].transactionId = sequence;
-                        scheduleStorage[slot].entryAnchorFrame =
-                            scratch.successorSchedules[leafIndex].
-                                entryAnchorFrame;
-                        scheduleStorage[slot].events =
-                            eventStorage.data() + eventBase + eventOffset;
-                        scheduleStorage[slot].eventCount =
-                            scratch.successorLeafEventCounts[leafIndex];
-                        scheduleStorage[slot].runtimeProgram = {
-                            row.rootInstance, &runtimeStorage[slot]};
-                        scheduleStorage[slot].armToken =
-                            scratch.successorStarts[leafIndex].arm;
-                        schedules[leafIndex] = &scheduleStorage[slot];
-                        eventOffset +=
-                            scratch.successorLeafEventCounts[leafIndex];
                     }
                     row.queueSuccessorScheduleBase =
                         static_cast<std::uint32_t>(endpointBase);
@@ -91397,53 +91285,9 @@ void CommitImmediateActionQueueReplacements(
                     row.queueSuccessorCompositeOwner =
                         scratch.successorCompositeOwner;
                     scratch.successorCompositeOwner = {};
-                    harken::TimelineProgramView& aggregateRuntime =
-                        row.queueSuccessorProgramPlane == 0
-                            ? row.runtimeProgram
-                            : row.queueSuccessorRuntimeProgram;
-                    harken::ProgramView& aggregateSchedule =
-                        row.queueSuccessorProgramPlane == 0
-                            ? row.schedule
-                            : row.queueSuccessorSchedule;
-                    aggregateRuntime = {};
-                    aggregateRuntime.generation = row.rootInstance;
-                    aggregateRuntime.payloads =
-                        payloadStorage.data() + eventBase;
-                    aggregateRuntime.payloadCount =
-                        scratch.successorEventCount;
-                    aggregateSchedule = {};
-                    aggregateSchedule.ownerInstance = row.rootInstance;
-                    aggregateSchedule.ownerInstanceScheduleEpoch =
-                        scratch.successorSchedules[0].
-                            ownerInstanceScheduleEpoch;
-                    aggregateSchedule.transactionId = sequence;
-                    aggregateSchedule.entryAnchorFrame =
-                        scratch.successorSchedules[0].entryAnchorFrame;
-                    aggregateSchedule.events =
-                        eventStorage.data() + eventBase;
-                    aggregateSchedule.eventCount =
-                        scratch.successorEventCount;
-                    aggregateSchedule.runtimeProgram = {
-                        row.rootInstance, &aggregateRuntime};
                 }
-            } else if (scratch.successorLeafCount != 0) {
-                auto& successorPayloads = row.queueProgramPayloads[
-                    row.queueSuccessorProgramPlane];
-                auto& successorEvents = row.queueProgramEvents[
-                    row.queueSuccessorProgramPlane];
-                successorPayloads = {};
-                successorEvents = {};
-                std::copy_n(scratch.successorPayloads.begin(),
-                            scratch.successorEventCount,
-                            successorPayloads.begin());
-                std::copy_n(scratch.successorEvents.begin(),
-                            scratch.successorEventCount,
-                            successorEvents.begin());
-                if (scratch.successorEventCount > 1) {
-                    successorPayloads[1].envelopeCurve =
-                        &row.queueTransitionTargetFadeCurves[
-                            row.queueSuccessorProgramPlane];
-                }
+            }
+            if (scratch.successorLeafCount != 0 && !targetPrograms.empty()) {
                 harken::TimelineProgramView& successorRuntime =
                     row.queueSuccessorProgramPlane == 0
                         ? row.runtimeProgram
@@ -91452,27 +91296,9 @@ void CommitImmediateActionQueueReplacements(
                     row.queueSuccessorProgramPlane == 0
                         ? row.schedule
                         : row.queueSuccessorSchedule;
-                successorRuntime = {};
-                successorRuntime.generation = row.rootInstance;
-                successorRuntime.payloads = successorPayloads.data();
-                successorRuntime.payloadCount =
-                    scratch.successorEventCount;
-                successorSchedule = {};
-                successorSchedule.ownerInstance = row.rootInstance;
-                successorSchedule.ownerInstanceScheduleEpoch =
-                    scratch.successorSchedules[0].
-                        ownerInstanceScheduleEpoch;
-                successorSchedule.transactionId = sequence;
-                successorSchedule.entryAnchorFrame =
-                    scratch.successorSchedules[0].entryAnchorFrame;
-                successorSchedule.events = successorEvents.data();
-                successorSchedule.eventCount =
-                    scratch.successorEventCount;
-                successorSchedule.runtimeProgram = {
-                    row.rootInstance, &successorRuntime};
-                successorSchedule.armToken =
-                    scratch.successorStarts[0].arm;
-                schedules[0] = &successorSchedule;
+                successorSchedule = scratch.successorLeafCount == 1
+                    ? targetPrograms[0] : bank.aggregateSchedules[0];
+                successorRuntime = *successorSchedule.runtimeProgram.program;
             }
 
             row.queueSuccessorOccurrence = scratch.successorOccurrence;
@@ -91497,19 +91323,14 @@ void CommitImmediateActionQueueReplacements(
                 row.queueTransitionSourceFadeCurves[
                     row.queueSuccessorProgramPlane] =
                         scratch.sourceFadeCurve;
-                auto& bank = *scratch.programBank;
                 if (BindQueueSourcePrograms(row, bank, 0, 0,
                         scratch.sourceControlCount, scratch.sourceEventCount)) {
-                    for (auto& event : row.queueSourceEvents)
-                        event.logicCommitSequence = sequence;
                     for (std::uint32_t sourceIndex = 0;
                          sourceIndex < scratch.sourceControlCount; ++sourceIndex) {
-                        row.queueSourceSchedules[sourceIndex].transactionId = sequence;
                         row.queueTransitionGroupArms[sourceIndex] = scratch.sourceArms[sourceIndex];
                     }
                     const auto aggregateIndex = scratch.successorLeafCount != 0 ? 1u : 0u;
                     row.queueSourceSchedule = bank.aggregateSchedules[aggregateIndex];
-                    row.queueSourceSchedule.transactionId = sequence;
                     row.queueSourceRuntimeProgram = *row.queueSourceSchedule.runtimeProgram.program;
                     row.queueSourceArm = scratch.sourceArms[0];
                 } else {
@@ -91533,23 +91354,8 @@ void CommitImmediateActionQueueReplacements(
                 : 0;
             scratch.transition = {};
 
-            auto& bank = *scratch.programBank;
             bank.groups[0] = row.queueArmGroup;
             bank.transition = row.queueTransition;
-            for (std::uint32_t leafIndex = 0;
-                 leafIndex < scratch.successorLeafCount; ++leafIndex) {
-                if (schedules[leafIndex] == nullptr) {
-                    ok = false;
-                    continue;
-                }
-                schedules[leafIndex]->runtimeProgram =
-                    bank.schedules[scratch.sourceControlCount + leafIndex].runtimeProgram;
-            }
-            if (scratch.successorLeafCount > 1) {
-                auto& aggregate = row.queueSuccessorProgramPlane == 0
-                    ? row.schedule : row.queueSuccessorSchedule;
-                aggregate.runtimeProgram = bank.aggregateSchedules[0].runtimeProgram;
-            }
             if (scratch.sourceControlCount + scratch.successorLeafCount != 0) {
                 ok = engine.timelinePool.CommitPreparedTransactionBatch(
                          &scratch.transactions, sequence) &&

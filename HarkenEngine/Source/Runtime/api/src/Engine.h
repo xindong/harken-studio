@@ -1925,9 +1925,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         queueSourceRuntimeProgram = {};
         queueSourceSchedule = {};
     }
-    std::array<std::array<TimelineEventPayload, 2>, 2>
-        queueProgramPayloads{};
-    std::array<std::array<EventTemplate, 2>, 2> queueProgramEvents{};
     std::array<CurveLUT, 2> queueTransitionSourceFadeCurves{};
     std::array<CurveLUT, 2> queueTransitionTargetFadeCurves{};
     TimelineEventPayload queueSuccessorPayload{};
@@ -5696,10 +5693,6 @@ public:
               playableStorage.continuousCount),
           playableSuccessorVoices(playableStorage.endpointCount),
           playableSuccessorLeaves(playableStorage.endpointCount),
-          playableSuccessorPayloads(playableStorage.pairedCount),
-          playableSuccessorEvents(playableStorage.pairedCount),
-          playableSuccessorRuntimePrograms(playableStorage.endpointCount),
-          playableSuccessorSchedules(playableStorage.endpointCount),
           playableSuccessorArms(playableStorage.endpointCount),
           playableSuccessorRenderHandles(playableStorage.endpointCount),
           playableSuccessorSelections(playableStorage.endpointCount),
@@ -12449,10 +12442,6 @@ public:
     std::vector<std::uint8_t> variableControlRetargetMemberKinds;
     std::vector<CapturedTimelineVoiceInstall> playableSuccessorVoices;
     std::vector<PlayableRefV1> playableSuccessorLeaves;
-    std::vector<TimelineEventPayload> playableSuccessorPayloads;
-    std::vector<EventTemplate> playableSuccessorEvents;
-    std::vector<TimelineProgramView> playableSuccessorRuntimePrograms;
-    std::vector<ProgramView> playableSuccessorSchedules;
     std::vector<TimelineArmToken> playableSuccessorArms;
     std::vector<VnVoiceHandle> playableSuccessorRenderHandles;
     std::vector<EngineMonitorSelection> playableSuccessorSelections;

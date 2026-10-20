@@ -823,8 +823,6 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
               engine->playableScheduleCompletions.size());
     EXPECT_EQ(layout.pairedCount,
               engine->playableSchedulePostSourceTailFrames.size());
-    EXPECT_EQ(layout.pairedCount, engine->playableSuccessorPayloads.size());
-    EXPECT_EQ(layout.pairedCount, engine->playableSuccessorEvents.size());
 
     EXPECT_EQ(layout.currentEventCount,
               engine->playableSchedulePayloads.size());
@@ -842,9 +840,6 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
               engine->playableScheduleOccurrences.size());
     EXPECT_EQ(layout.endpointCount, engine->playableSuccessorVoices.size());
     EXPECT_EQ(layout.endpointCount, engine->playableSuccessorLeaves.size());
-    EXPECT_EQ(layout.endpointCount,
-              engine->playableSuccessorRuntimePrograms.size());
-    EXPECT_EQ(layout.endpointCount, engine->playableSuccessorSchedules.size());
     EXPECT_EQ(layout.endpointCount, engine->playableSuccessorArms.size());
     EXPECT_EQ(layout.endpointCount, engine->playableSuccessorSelections.size());
     EXPECT_EQ(layout.endpointCount,
@@ -891,9 +886,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         sizeof(engine->variableControlDynamicMembers[0]);
     const std::uint64_t pairedBytesPerSlot =
         sizeof(engine->playableScheduleCompletions[0]) +
-        sizeof(engine->playableSchedulePostSourceTailFrames[0]) +
-        sizeof(engine->playableSuccessorPayloads[0]) +
-        sizeof(engine->playableSuccessorEvents[0]);
+        sizeof(engine->playableSchedulePostSourceTailFrames[0]);
     const std::uint64_t currentEventBytesPerSlot =
         sizeof(engine->playableSchedulePayloads[0]) +
         sizeof(engine->playableScheduleEvents[0]);
@@ -906,8 +899,6 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         sizeof(engine->playableScheduleOccurrences[0]) +
         sizeof(engine->playableSuccessorVoices[0]) +
         sizeof(engine->playableSuccessorLeaves[0]) +
-        sizeof(engine->playableSuccessorRuntimePrograms[0]) +
-        sizeof(engine->playableSuccessorSchedules[0]) +
         sizeof(engine->playableSuccessorArms[0]) +
         sizeof(engine->playableSuccessorSelections[0]) +
         sizeof(engine->playableSuccessorRenderHandles[0]) +
@@ -941,7 +932,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     // The frozen stop frame extends each event identity; each schedule owns
     // a full immediate-entry gate reference independently of its runtime view.
     EXPECT_EQ(320u + stopFrameBytes, frontierEventBytes);
-    EXPECT_EQ(428u + frontierEventBytes + monitorControlBytes, pairedBytesPerSlot);
+    EXPECT_EQ(sizeof(harken::KnownCompletionPredicateV1) + sizeof(std::uint32_t), pairedBytesPerSlot);
     EXPECT_EQ(264u + frontierEventBytes + monitorControlBytes, currentEventBytesPerSlot);
     EXPECT_EQ(192u + immediateEntryBytes, initialProgramBytesPerSlot);
     const auto playbackPathBytes = sizeof(harken::PlaybackPath);
@@ -957,7 +948,8 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
                   playbackPathBytes + voiceBindingStorageBytes -
                   sizeof(void*) * harken::kMaxVoiceBindingInstanceSlots +
                   2u * immediateEntryBytes + 2u * monitorControlBytes + monitorSelectionBytes -
-                  sizeof(harken::TimelineVoiceInstallDesc) + sizeof(harken::CapturedTimelineVoiceInstall),
+                  sizeof(harken::TimelineVoiceInstallDesc) + sizeof(harken::CapturedTimelineVoiceInstall) -
+                  initialProgramBytesPerSlot,
               endpointBytesPerSlot);
     EXPECT_EQ(48u, weightBytesPerSlot);
     EXPECT_EQ(537u + frontierEventBytes + immediateEntryBytes + monitorControlBytes, continuousBytesPerSlot);
@@ -986,9 +978,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
                   StorageBytes(engine->variableControlDynamicMembers));
     EXPECT_EQ(layout.pairedCount * pairedBytesPerSlot,
               StorageBytes(engine->playableScheduleCompletions) +
-                  StorageBytes(engine->playableSchedulePostSourceTailFrames) +
-                  StorageBytes(engine->playableSuccessorPayloads) +
-                  StorageBytes(engine->playableSuccessorEvents));
+                  StorageBytes(engine->playableSchedulePostSourceTailFrames));
     EXPECT_EQ(layout.currentEventCount * currentEventBytesPerSlot,
               StorageBytes(engine->playableSchedulePayloads) +
                   StorageBytes(engine->playableScheduleEvents));
@@ -1001,8 +991,6 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
                   StorageBytes(engine->playableScheduleOccurrences) +
                   StorageBytes(engine->playableSuccessorVoices) +
                   StorageBytes(engine->playableSuccessorLeaves) +
-                  StorageBytes(engine->playableSuccessorRuntimePrograms) +
-                  StorageBytes(engine->playableSuccessorSchedules) +
                   StorageBytes(engine->playableSuccessorArms) +
                   StorageBytes(engine->playableSuccessorSelections) +
                   StorageBytes(engine->playableSuccessorRenderHandles) +
