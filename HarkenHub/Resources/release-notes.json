@@ -14,6 +14,10 @@
       "changes": [
         {
           "category": "improved",
+          "text": "On Windows, new installations default to the HarkenStudioHub folder, and the main application and setup use the HarkenStudioHub name. Existing installation locations and older Studio launchers remain supported."
+        },
+        {
+          "category": "improved",
           "text": "Windows desktop shortcuts and taskbar icons now display the H logo with crisp images for different icon sizes."
         },
         {

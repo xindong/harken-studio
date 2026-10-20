@@ -269,12 +269,16 @@ else()
         "Qt Simplified Chinese translation is unavailable; Qt-provided UI will remain in English")
 endif()
 
-set_target_properties(harken_hub PROPERTIES OUTPUT_NAME "HarkenHub")
+if(WIN32)
+    set_target_properties(harken_hub PROPERTIES OUTPUT_NAME "HarkenStudioHub")
+else()
+    set_target_properties(harken_hub PROPERTIES OUTPUT_NAME "HarkenHub")
+endif()
 
 harken_attach_version_resource(
     harken_hub
     "Harken Studio Hub"
-    "HarkenHub.exe"
+    "HarkenStudioHub.exe"
     hub)
 
 if(APPLE)
@@ -315,7 +319,7 @@ if(WIN32)
     add_executable(harken_hub_setup WIN32
         Source/Setup/SetupStubMain.cpp "HarkenHub.rc")
     set_target_properties(harken_hub_setup PROPERTIES
-        OUTPUT_NAME "HarkenHubSetup"
+        OUTPUT_NAME "HarkenStudioHubSetup"
         AUTOMOC OFF
         AUTORCC OFF
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
@@ -325,8 +329,22 @@ if(WIN32)
     harken_attach_version_resource(
         harken_hub_setup
         "Harken Studio Hub Setup"
-        "HarkenHubSetup.exe"
+        "HarkenStudioHubSetup.exe"
         hub)
+
+    add_executable(harken_hub_legacy_launcher WIN32
+        Source/App/LegacyLauncherMain.cpp "HarkenHub.rc")
+    set_target_properties(harken_hub_legacy_launcher PROPERTIES
+        OUTPUT_NAME "HarkenHub"
+        AUTOMOC OFF
+        AUTORCC OFF
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    harken_attach_version_resource(
+        harken_hub_legacy_launcher
+        "Harken Studio Hub Compatibility Launcher"
+        "HarkenHub.exe"
+        hub)
+    add_dependencies(harken_hub harken_hub_legacy_launcher)
 
     if(NOT TARGET harken_editor)
         file(GENERATE

@@ -31,7 +31,7 @@
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="HarkenSoundDir" Name="HarkenSound">
-        <Directory Id="INSTALLFOLDER" Name="HarkenHub" />
+        <Directory Id="INSTALLFOLDER" Name="HarkenStudioHub" />
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
@@ -83,7 +83,7 @@
     <Component Id="StartMenuShortcut" Directory="ProgramMenuFolder"
                Guid="3455F7BE-53E0-4D87-8C57-3DC57710C8F9">
       <Shortcut Id="HarkenHubShortcut" Name="Harken Studio Hub"
-                Target="[INSTALLFOLDER]HarkenHub.exe"
+                Target="[INSTALLFOLDER]HarkenStudioHub.exe"
                 WorkingDirectory="INSTALLFOLDER" />
       <RegistryValue Root="HKLM" Key="Software\HarkenSound\HarkenHub"
                      Name="StartMenuShortcut" Type="integer" Value="1"
@@ -93,7 +93,7 @@
     <Component Id="DesktopShortcut" Directory="DesktopFolder"
                Guid="4682FB52-D840-44F7-9356-E524137D4CE3">
       <Shortcut Id="HarkenHubDesktopShortcut" Name="Harken Studio Hub"
-                Target="[INSTALLFOLDER]HarkenHub.exe"
+                Target="[INSTALLFOLDER]HarkenStudioHub.exe"
                 WorkingDirectory="INSTALLFOLDER" />
       <RegistryValue Root="HKLM" Key="Software\HarkenSound\HarkenHub"
                      Name="DesktopShortcut" Type="integer" Value="1"

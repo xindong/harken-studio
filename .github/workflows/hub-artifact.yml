@@ -99,7 +99,7 @@ jobs:
             --output-dir .temp/hub-installer \
             --version "$version" \
             --build-id "$build_id" \
-            --stub-exe build/setup/Release/HarkenHubSetup.exe
+            --stub-exe build/setup/Release/HarkenStudioHubSetup.exe
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

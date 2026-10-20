@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Build the Harken Studio Hub MSI installer (WiX v4+) and, when a setup stub is
-supplied, the self-contained HarkenHubSetup EXE from a deployed hub
+supplied, the self-contained HarkenStudioHubSetup EXE from a deployed hub
 directory."""
 
 from __future__ import annotations
@@ -21,12 +21,14 @@ from xml.sax.saxutils import quoteattr
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from release import collect_legal_texts, product_legal, release_evidence
 
-HUB_BINARY = "HarkenHub.exe"
+HUB_BINARY = "HarkenStudioHub.exe"
+LEGACY_HUB_BINARY = "HarkenHub.exe"
 BRIDGE_BINARY = "Updater/HarkenHubUpdateBridge.exe"
 FOREIGN_BINARIES = (
     "HarkenStudio.exe",
     "HarkenEditor.exe",
     "HarkenHubSetup.exe",
+    "HarkenStudioHubSetup.exe",
 )
 PAYLOAD_RESOURCE_NAME = "HARKENHUBMSI"
 RT_RCDATA = 10
@@ -56,16 +58,12 @@ def collect_payload(input_dir: Path) -> list[Path]:
     if not files:
         raise SystemExit(f"error: input directory is empty: {input_dir}")
     rel_names = {path.relative_to(input_dir).as_posix() for path in files}
-    if HUB_BINARY not in rel_names:
-        raise SystemExit(
-            f"error: input directory does not contain {HUB_BINARY} at "
-            f"its root: {input_dir}"
-        )
-    if BRIDGE_BINARY not in rel_names:
-        raise SystemExit(
-            f"error: input directory does not contain {BRIDGE_BINARY}: "
-            f"{input_dir}"
-        )
+    for required in (HUB_BINARY, LEGACY_HUB_BINARY, BRIDGE_BINARY):
+        if required not in rel_names:
+            raise SystemExit(
+                f"error: input directory does not contain {required}: "
+                f"{input_dir}"
+            )
     foreign = sorted(
         name
         for name in rel_names
@@ -299,7 +297,7 @@ def build_installer(
 
         product_version = msi_version(args.version)
         msi_path = (
-            staging / f"HarkenHubSetup-{args.version}-{args.build_id}.msi"
+            staging / f"HarkenStudioHubSetup-{args.version}-{args.build_id}.msi"
         )
 
         command = wix_command(
@@ -339,7 +337,7 @@ def build_installer(
 
         if stub_exe is not None:
             exe_path = (
-                staging / f"HarkenHubSetup-{args.version}-{args.build_id}.exe"
+                staging / f"HarkenStudioHubSetup-{args.version}-{args.build_id}.exe"
             )
             embed(stub_exe, msi_path, exe_path)
             if not exe_path.is_file():

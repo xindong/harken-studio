@@ -54,6 +54,7 @@ class BuildHubInstallerTest(unittest.TestCase):
         )
         (self.input_dir / "platforms").mkdir(parents=True)
         if with_binary:
+            (self.input_dir / "HarkenStudioHub.exe").write_bytes(b"stub-binary")
             (self.input_dir / "HarkenHub.exe").write_bytes(b"stub-binary")
         (self.input_dir / "Qt6Core.dll").write_bytes(b"qt-core")
         (self.input_dir / "platforms" / "qwindows.dll").write_bytes(b"plugin")
@@ -85,9 +86,9 @@ class BuildHubInstallerTest(unittest.TestCase):
         components = root.findall(
             f".//{{{WXS_NS}}}ComponentGroup/{{{WXS_NS}}}Component"
         )
-        self.assertEqual(len(components), 5 + len(self.legal_files))
+        self.assertEqual(len(components), 6 + len(self.legal_files))
         guids = {component.get("Guid") for component in components}
-        self.assertEqual(len(guids), 5 + len(self.legal_files))
+        self.assertEqual(len(guids), 6 + len(self.legal_files))
         for component in components:
             files = component.findall(f"{{{WXS_NS}}}File")
             self.assertEqual(len(files), 1)
@@ -113,9 +114,15 @@ class BuildHubInstallerTest(unittest.TestCase):
         self.assertIn("Updater", names)
 
     def test_missing_hub_binary_is_rejected(self):
-        self.make_input(with_binary=False)
-        with self.assertRaises(SystemExit):
-            self.module.collect_payload(self.input_dir)
+        self.make_input()
+        for name in (self.module.HUB_BINARY, self.module.LEGACY_HUB_BINARY):
+            with self.subTest(binary=name):
+                binary = self.input_dir / name
+                content = binary.read_bytes()
+                binary.unlink()
+                with self.assertRaises(SystemExit):
+                    self.module.collect_payload(self.input_dir)
+                binary.write_bytes(content)
 
     def test_incomplete_legal_directory_is_rejected(self):
         self.make_input()
@@ -135,7 +142,7 @@ class BuildHubInstallerTest(unittest.TestCase):
 
     def test_setup_stub_in_payload_is_rejected(self):
         self.make_input()
-        (self.input_dir / "HarkenHubSetup.exe").write_bytes(b"stub")
+        (self.input_dir / "HarkenStudioHubSetup.exe").write_bytes(b"stub")
         with self.assertRaises(SystemExit):
             self.module.collect_payload(self.input_dir)
 
@@ -203,10 +210,10 @@ class BuildHubInstallerTest(unittest.TestCase):
         package = Path(summary["package"])
         self.assertTrue(package.exists())
         self.assertEqual(
-            package.name, "HarkenHubSetup-0.1.0-dev-run12.abcd1234.msi"
+            package.name, "HarkenStudioHubSetup-0.1.0-dev-run12.abcd1234.msi"
         )
         self.assertEqual(summary["msiVersion"], "0.1.0")
-        self.assertEqual(summary["fileCount"], 5 + len(self.legal_files))
+        self.assertEqual(summary["fileCount"], 6 + len(self.legal_files))
         self.assertFalse(summary["signed"])
         self.assertNotIn("setupExe", summary)
         self.evidence.finalize.assert_called_once()
@@ -239,7 +246,7 @@ class BuildHubInstallerTest(unittest.TestCase):
 
     def test_build_with_stub_produces_setup_exe(self):
         self.make_input()
-        stub = self.root / "HarkenHubSetup.exe"
+        stub = self.root / "HarkenStudioHubSetup.exe"
         stub.write_bytes(b"stub-image")
         embeds = []
 
@@ -269,7 +276,7 @@ class BuildHubInstallerTest(unittest.TestCase):
         exe = Path(summary["setupExe"])
         self.assertTrue(exe.exists())
         self.assertEqual(
-            exe.name, "HarkenHubSetup-0.1.0-dev-run12.abcd1234.exe"
+            exe.name, "HarkenStudioHubSetup-0.1.0-dev-run12.abcd1234.exe"
         )
         self.assertEqual(len(embeds), 1)
         self.assertEqual(embeds[0][0], stub.resolve())
@@ -294,7 +301,7 @@ class BuildHubInstallerTest(unittest.TestCase):
 
     def test_signing_covers_msi_and_setup_exe(self):
         self.make_input()
-        stub = self.root / "HarkenHubSetup.exe"
+        stub = self.root / "HarkenStudioHubSetup.exe"
         stub.write_bytes(b"stub-image")
         commands = []
 
