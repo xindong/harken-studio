@@ -1,7 +1,7 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
-    QT_TRANSLATE_NOOP("HubReleaseNotes", "On Windows, new installations default to the HarkenStudioHub folder, and the main application and setup use the HarkenStudioHub name. Existing installation locations and older Studio launchers remain supported."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "On Windows, new installations default to HarkenStudioHub directly under Program Files, and the main application and setup use the HarkenStudioHub name. Existing installation locations and older Studio launchers remain supported."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Windows desktop shortcuts and taskbar icons now display the H logo with crisp images for different icon sizes."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Project association prompts in Engine Integrations now refer only to Unity projects."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub uses the gradient Harken Studio logo and matching H window and tray icons, and consistently displays Harken Studio Hub in menus, notifications, dialogs, and installer details."),

@@ -14,7 +14,7 @@
       "changes": [
         {
           "category": "improved",
-          "text": "On Windows, new installations default to the HarkenStudioHub folder, and the main application and setup use the HarkenStudioHub name. Existing installation locations and older Studio launchers remain supported."
+          "text": "On Windows, new installations default to HarkenStudioHub directly under Program Files, and the main application and setup use the HarkenStudioHub name. Existing installation locations and older Studio launchers remain supported."
         },
         {
           "category": "improved",

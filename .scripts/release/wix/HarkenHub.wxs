@@ -30,9 +30,7 @@
     </Property>
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="HarkenSoundDir" Name="HarkenSound">
-        <Directory Id="INSTALLFOLDER" Name="HarkenStudioHub" />
-      </Directory>
+      <Directory Id="INSTALLFOLDER" Name="HarkenStudioHub" />
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
     <StandardDirectory Id="DesktopFolder" />
