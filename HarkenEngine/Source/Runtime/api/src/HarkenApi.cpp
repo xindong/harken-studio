@@ -90123,6 +90123,14 @@ bool PrepareImmediateActionQueueReplacement(
             return false;
         }
         auto& programBank = *scratch.programBank;
+        std::fill_n(programBank.payloads.begin(), sourceEventCount + successorEventCount,
+            harken::TimelineEventPayload{});
+        std::fill_n(programBank.events.begin(), sourceEventCount + successorEventCount,
+            harken::EventTemplate{});
+        std::fill_n(programBank.runtimes.begin(), sourceSet.count + successorLeafCount,
+            harken::TimelineProgramView{});
+        std::fill_n(programBank.schedules.begin(), sourceSet.count + successorLeafCount,
+            harken::ProgramView{});
         scratch.sourcePayloads = std::span{programBank.payloads}.first(sourceEventCount);
         scratch.sourceEvents = std::span{programBank.events}.first(sourceEventCount);
         scratch.sourceRuntimes = std::span{programBank.runtimes}.first(sourceSet.count);

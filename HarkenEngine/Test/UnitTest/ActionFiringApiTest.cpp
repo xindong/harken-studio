@@ -58623,6 +58623,13 @@ TEST(ActionFiringApi,
     for (std::uint32_t index = 0; index < oldBank->programCount; ++index) {
         ASSERT_TRUE(engine->timelinePool.HasProgramReference(oldBank->schedules[index].runtimeProgram));
     }
+    harken::CurveLUT retiredCurve{};
+    harken::EngineQueueScheduleColumns recycledColumns;
+    harken::EngineQueueScheduleStorage::Loan recycledLoan;
+    ASSERT_TRUE(engine->queueScheduleStorage.Acquire(recycledColumns, {3, 5}, &recycledLoan));
+    for (auto& payload : recycledColumns.payloads) payload.envelopeCurve = &retiredCurve;
+    for (auto& event : recycledColumns.events) event.frameOffsetFromEntry = 1;
+    recycledLoan.Reset();
     const VnVoiceHandle current = row->renderHandle;
     const harken::DecisionToken oldDecision = row->queueDecision;
     const harken::TransitionInstanceToken oldTransition =
