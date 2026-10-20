@@ -22275,7 +22275,7 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
             run.releaseObservers[i] = currentMultiLeaf
                 ? engine->ReadPlayableMember(resource->scheduleStorageBase + i).release
                 : resource->releaseObserver;
-            run.occurrences[i] = engine->playableScheduleOccurrences[endpointBase + i];
+            run.occurrences[i] = engine->ReadLogicalPlayableMember(resource->scheduleStorageBase + i).occurrence;
             run.startFrames[i] = currentMultiLeaf
                 ? engine->ReadPlayableMember(resource->scheduleStorageBase + i).startFrame
                 : resource->startFrame;

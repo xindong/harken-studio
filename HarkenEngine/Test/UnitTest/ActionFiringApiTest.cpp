@@ -4904,13 +4904,13 @@ void ExpectScheduleCapacityQueueTransitionCompletes() {
     ASSERT_TRUE(row->queueTransition.Valid());
     ASSERT_TRUE(row->queueArmGroup.Valid());
     ASSERT_LE(row->scheduleStorageBase + 64u,
-              engine->playableSchedulePostSourceTailFrames.size());
+              engine->playableStorage.memberCount);
     ASSERT_FALSE(row->queueArrivalDecision.Valid());
     ASSERT_TRUE(engine->playableInstances.Classify(started.instance).live);
     for (std::uint32_t index = 0; index < 64; ++index) {
         ASSERT_NE(0u,
-                  engine->playableSchedulePostSourceTailFrames[
-                      row->scheduleStorageBase + index]);
+                  engine->ReadLogicalPlayableMember(
+                      row->scheduleStorageBase + index).postSourceTailFrames);
     }
     engine->nullBackend.Pump(1);
     ASSERT_TRUE(engine->timelinePlanner.ReclaimConsumedQuantum());
@@ -4953,8 +4953,8 @@ void ExpectScheduleCapacityQueueTransitionCompletes() {
                   row->scheduleStorageBase).leaf.stableId);
     for (std::uint32_t index = 0; index < 64; ++index) {
         ASSERT_NE(0u,
-                  engine->playableSchedulePostSourceTailFrames[
-                      row->scheduleStorageBase + index]);
+                  engine->ReadLogicalPlayableMember(
+                      row->scheduleStorageBase + index).postSourceTailFrames);
     }
     ASSERT_TRUE(row->queueContinuationPrepared);
     ASSERT_EQ(64u, row->queueSuccessorScheduleLeafCount);
@@ -13544,7 +13544,42 @@ static void CheckOriginalResetBodyUsesRealEngineOwners(bool afterBinding, bool m
             EXPECT_FALSE(engine.CancelOriginalQueueReplacementBody(scratch));
             EXPECT_TRUE(held->executionPrepared);
             ASSERT_TRUE(foreignFuture.Release());
-            ASSERT_TRUE(harken::test::CancelNativeQueueResetResourcesForTest(engine, 0));
+            auto* coordinatorBaseline = harken::Engine::ResolveOriginalSingleDecisionBaseline(
+                &engine, engine.decisions, held->decisions[0]);
+            ASSERT_NE(nullptr, coordinatorBaseline);
+            harken::OriginalDecisionLifetimePin coordinatorReader;
+            ASSERT_TRUE(coordinatorBaseline->Borrow(&coordinatorReader));
+            EXPECT_FALSE(harken::test::CancelNativeQueueResetResourcesForTest(engine, 0));
+            EXPECT_FALSE(held->selected.Valid());
+            EXPECT_TRUE(held->decisions[0].Valid());
+            EXPECT_TRUE(scratch.nativeReplacement.Valid());
+            EXPECT_EQ(1u, engine.originalQueueReplacementAbandonCount);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            EXPECT_TRUE(scratch.nativeReplacement.Valid());
+            EXPECT_EQ(1u, engine.originalQueueReplacementAbandonCount);
+            ASSERT_TRUE(coordinatorReader.Release());
+            harken::TimelineArmReaderPin sourceReader;
+            ASSERT_TRUE(engine.timelineArms.PinFrontierReader(scratch.successorStarts[0].arm, &sourceReader));
+            auto* const programBank = scratch.programBank;
+            ASSERT_NE(nullptr, programBank);
+            EXPECT_FALSE(harken::test::CancelNativeQueueResetResourcesForTest(engine, 0));
+            EXPECT_EQ(1u, engine.originalQueueReplacementAbandonCount);
+            EXPECT_TRUE(scratch.prepared);
+            EXPECT_FALSE(scratch.nativeReplacement.Valid());
+            EXPECT_TRUE(scratch.successorStarts[0].prepared);
+            EXPECT_EQ(programBank, scratch.programBank);
+            EXPECT_TRUE(programBank->occupied);
+            EXPECT_FALSE(engine.runtimeRecreateRequired);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            EXPECT_EQ(1u, engine.originalQueueReplacementAbandonCount);
+            EXPECT_TRUE(scratch.successorStarts[0].prepared);
+            EXPECT_EQ(programBank, scratch.programBank);
+            ASSERT_TRUE(sourceReader.Release(0));
+            ASSERT_EQ(VN_OK, Vn_Update());
+            EXPECT_EQ(0u, engine.originalQueueReplacementAbandonCount);
+            EXPECT_FALSE(scratch.prepared);
+            EXPECT_EQ(nullptr, scratch.programBank);
+            EXPECT_FALSE(programBank->occupied);
         }
     } else
 #endif

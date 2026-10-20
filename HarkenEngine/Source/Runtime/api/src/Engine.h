@@ -1037,7 +1037,10 @@ struct EnginePlayableMemberRecord {
     VnVoiceHandle render = 0;
     VoiceReleaseObserver release{};
     VariableControlMemberCompletion completion{};
+    OccurrenceToken occurrence{};
+    KnownCompletionPredicateV1 nativeCompletion{};
     std::uint64_t startFrame = 0;
+    std::uint32_t postSourceTailFrames = 0;
     EnginePlayableServiceToken service{};
     std::uint64_t partitionGeneration = 0;
     std::uint64_t generation = 0;
@@ -5729,9 +5732,6 @@ public:
           ordinaryRetiringSources(resolved.maxPlayableInstances),
           ordinaryRetiringLeaves(resolved.maxPlayableInstances),
           playableMemberReferences(playableStorage.memberCount),
-          playableScheduleOccurrences(playableStorage.endpointCount),
-          playableScheduleCompletions(playableStorage.pairedCount),
-          playableSchedulePostSourceTailFrames(playableStorage.pairedCount),
           variableControlWeightSegments(playableStorage.weightCount),
           variableControlPendingWeightSegments(
               playableStorage.continuousCount),
@@ -11309,7 +11309,7 @@ public:
         holder.sourceVoiceCommit.Release();
         for (auto& proof : holder.sourceEffectCommits) proof.Release();
         holder.physicalPrepared = false;
-        if (holder.ticketsConsumed &&
+        if (holder.ticketsConsumed && holder.selected.Valid() &&
             !originalQueueReplacementSpans->RollbackUnselectedDecisionCommits(holder.selected, holder.domain))
             return false;
         if (!holder.calendar.Abort(mixer.BlocksRendered()) || !holder.conditionalReader.Release()) return false;
@@ -11320,8 +11320,12 @@ public:
         if (holder.domain.Valid() && (!holder.domain.CancelGroups(mixer.BlocksRendered(),
                 originalQueueGroupHolders.get(), originalQueueGroupCapacity) || !holder.domain.Return())) return false;
         if (holder.coordinator.Valid() && !decisions.CancelPreparedReservation(&holder.coordinator)) return false;
-        if (holder.ticketsConsumed && (!decisions.Cancel(holder.decisions[0]) ||
-                !decisions.ReclaimCancelled(holder.decisions[0]))) return false;
+        if (holder.ticketsConsumed && holder.decisions[0].Valid()) {
+            if (!decisions.ReclaimCancelled(holder.decisions[0]) &&
+                (!decisions.Cancel(holder.decisions[0]) ||
+                    !decisions.ReclaimCancelled(holder.decisions[0]))) return false;
+            holder.decisions[0] = {};
+        }
         if (holder.coordinatorArms.Valid() && !armGroups.CancelBeforePublication(holder.coordinatorArms)) return false;
         holder.coordinatorArms = {};
         holder.entry = {};
@@ -12535,6 +12539,24 @@ public:
         return const_cast<Engine*>(this)->ResolvePlayableMemberSlot(logicalSlot, physicalSlot);
     }
 
+    EnginePlayableMemberRecord* FindLogicalPlayableMember(std::size_t logicalSlot) noexcept {
+        std::size_t physicalSlot = 0;
+        return ResolvePlayableMemberSlot(logicalSlot, &physicalSlot) ? FindPlayableMember(physicalSlot) : nullptr;
+    }
+
+    const EnginePlayableMemberRecord& ReadLogicalPlayableMember(std::size_t logicalSlot) const noexcept {
+        const auto* record = const_cast<Engine*>(this)->FindLogicalPlayableMember(logicalSlot);
+        static const EnginePlayableMemberRecord empty{};
+        return record == nullptr ? empty : *record;
+    }
+
+    EnginePlayableMemberRecord& MutableLogicalPlayableMember(std::size_t logicalSlot) noexcept {
+        auto* record = FindLogicalPlayableMember(logicalSlot);
+        assert(record != nullptr);
+        if (record == nullptr) std::terminate();
+        return *record;
+    }
+
     const CapturedTimelineVoiceInstall* ResolvePlayableServiceVoice(
         const EnginePlayableServiceRow& row, std::uint32_t index = 0) const noexcept {
         if (row.usesCapturedScheduleVoices) {
@@ -12645,9 +12667,6 @@ public:
         RefreshPlayableMemberOnset(slot);
     }
     std::vector<EnginePlayableMemberReference> playableMemberReferences;
-    std::vector<OccurrenceToken> playableScheduleOccurrences;
-    std::vector<KnownCompletionPredicateV1> playableScheduleCompletions;
-    std::vector<std::uint32_t> playableSchedulePostSourceTailFrames;
     std::vector<WeightSegmentV1> variableControlWeightSegments;
     std::vector<WeightSegmentV1> variableControlPendingWeightSegments;
     std::vector<TimelineArmToken> variableControlInitialContinuousArms;
