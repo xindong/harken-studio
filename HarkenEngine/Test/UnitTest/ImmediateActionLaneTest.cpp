@@ -23,7 +23,9 @@ TEST(ImmediateActionLane, FutureBucketsAreDueWithoutAnotherLogicService) {
     ASSERT_TRUE(lane.Reset({2, 4, 2, 64}));
     harken::ImmediateLaneHandle handle{};
     ASSERT_TRUE(lane.Reserve(1, 2, &handle));
-    const harken::TimelineProgramView program{};
+    harken::TimelineProgramReadFence fence;
+    harken::TimelineProgramView program{};
+    program.readFence = &fence;
     const harken::ImmediateLaneEvent events[] = {
         Event(0, &program, 0), Event(128, &program, 1)};
     ASSERT_TRUE(lane.Prepare(handle, events, 2));
@@ -32,14 +34,20 @@ TEST(ImmediateActionLane, FutureBucketsAreDueWithoutAnotherLogicService) {
     EXPECT_EQ(9u * 64u, anchor);
     ASSERT_TRUE(lane.Publish(handle));
     EXPECT_EQ(nullptr, lane.CaptureDue(handle.slot, 8));
+    EXPECT_FALSE(fence.WasRead());
     const auto* first = lane.CaptureDue(handle.slot, 9);
     ASSERT_NE(nullptr, first);
+    EXPECT_TRUE(fence.WasRead());
+    EXPECT_FALSE(fence.ReadCompleted(9));
+    EXPECT_TRUE(fence.ReadCompleted(10));
     ASSERT_EQ(1u, first->eventCount);
     ASSERT_TRUE(lane.Claim(handle, first));
     ASSERT_TRUE(lane.Finish(handle.slot, first, true));
     EXPECT_EQ(nullptr, lane.CaptureDue(handle.slot, 10));
     const auto* second = lane.CaptureDue(handle.slot, 11);
     ASSERT_NE(nullptr, second);
+    EXPECT_FALSE(fence.ReadCompleted(11));
+    EXPECT_TRUE(fence.ReadCompleted(12));
     ASSERT_EQ(1u, second->eventCount);
     ASSERT_NE(nullptr, lane.Events(handle.slot, second));
     EXPECT_EQ(11u * 64u, lane.Events(handle.slot, second)[0].event.executeFrame);

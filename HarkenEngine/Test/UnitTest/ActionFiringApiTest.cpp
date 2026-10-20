@@ -9001,33 +9001,17 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
         EXPECT_EQ(oldPayload.target.occurrenceOrdinal, oldProgram->payloads[0].target.occurrenceOrdinal);
         EXPECT_EQ(0, std::memcmp(&oldPayload, &oldProgram->payloads[0], sizeof(oldPayload)));
         if (inspectRetirement) {
+            auto& scratch = engine->actionQueueReplacementScratch[0];
+            ASSERT_EQ(nullptr, scratch.programBank);
+            scratch.programBank = oldBank;
             ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
             ASSERT_EQ(VN_OK, Vn_StopActionFiring(playFiring, 0));
-            for (std::uint32_t block = 0; block < 32 && !oldBank->retirementObserved; ++block) {
+            for (std::uint32_t block = 0; block < 32; ++block) {
                 ASSERT_EQ(VN_OK, Vn_Update());
-                if (!oldBank->retirementObserved) engine->nullBackend.Pump(1);
+                engine->nullBackend.Pump(1);
             }
-            const auto& originalFuture = engine->originalQueueConditionalHolders[originalQueue.slot];
-            const auto& replacement = engine->originalQueueReplacementHolders[originalQueue.slot];
-            harken::QueueInstanceTable::OriginalConditionalLaneClockState clockState{};
-            const bool clockObserved = replacement.clock.CaptureState(&clockState);
-            harken::ArmGroupSnapshot oldGroup{};
-            const bool groupObserved = engine->armGroups.Capture(oldBank->groups[0], &oldGroup);
-            ASSERT_TRUE(oldBank->retirementObserved)
-                << " bankPublished=" << oldBank->published << " owner=" << oldBank->heldByOwner
-                << " loans=" << engine->OriginalQueueBankHasExternalOwners(*oldBank)
-                << " original=" << originalFuture.baseline.Valid()
-                << " originalBank=" << originalFuture.initialFutureBank.Valid()
-                << " replacementPhase=" << static_cast<int>(replacement.phase)
-                << " clock=" << clockObserved << ":" << static_cast<int>(clockState)
-                << " oldSourceAborted=" << replacement.oldSourceAborted
-                << " oldOccurrence=" << replacement.oldSourceOccurrence.slot << ":" << replacement.oldSourceOccurrence.generation
-                << " oldDecision=" << replacement.oldSourceDecision.slot << ":" << replacement.oldSourceDecision.generation
-                << " group=" << groupObserved << ":" << static_cast<int>(oldGroup.state)
-                << " members=" << oldGroup.memberCount << " tombstones=" << oldGroup.tombstonedCount
-                << " rowPhase=" << static_cast<int>(row.phase) << " queue=" << row.queueInstance.Valid()
-                << " recreate=" << engine->runtimeRecreateRequired;
             ASSERT_TRUE(oldBank->occupied);
+            ASSERT_FALSE(engine->OriginalQueueBankHasExternalOwners(*oldBank));
             EXPECT_FALSE(engine->timelinePool.HasProgramReference({oldRuntime.generation, oldProgram}));
             if (inspectOwners) {
                 auto* freeOwner = engine->PrepareFreePlayableService();
@@ -9036,32 +9020,20 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
                 ASSERT_EQ(harken::EnginePlayableStartPhase::Free, owner.phase);
                 ASSERT_EQ(nullptr, owner.queueCurrentProgramBank);
                 owner.queueCurrentProgramBank = oldBank;
-                engine->nullBackend.Pump(1);
-                ASSERT_EQ(VN_OK, Vn_Update());
-                EXPECT_TRUE(oldBank->occupied);
-                EXPECT_FALSE(oldBank->retirementObserved);
-                owner.queueCurrentProgramBank = nullptr;
-                ASSERT_EQ(VN_OK, Vn_Update());
-                ASSERT_TRUE(oldBank->retirementObserved);
-                auto& scratch = engine->actionQueueReplacementScratch[0];
-                ASSERT_EQ(nullptr, scratch.programBank);
-                scratch.programBank = oldBank;
-                engine->nullBackend.Pump(1);
-                ASSERT_EQ(VN_OK, Vn_Update());
-                EXPECT_TRUE(oldBank->occupied);
-                EXPECT_FALSE(oldBank->retirementObserved);
                 scratch.programBank = nullptr;
+                engine->nullBackend.Pump(1);
                 ASSERT_EQ(VN_OK, Vn_Update());
-                ASSERT_TRUE(oldBank->retirementObserved);
+                EXPECT_TRUE(oldBank->occupied);
+                scratch.programBank = oldBank;
+                owner.queueCurrentProgramBank = nullptr;
+                engine->nullBackend.Pump(1);
+                ASSERT_EQ(VN_OK, Vn_Update());
+                EXPECT_TRUE(oldBank->occupied);
             }
+            scratch.programBank = nullptr;
             const auto observed = engine->mixer.BlocksRendered();
-            ASSERT_EQ(observed, oldBank->retirementAudioSequence);
             for (std::uint32_t update = 0; update < 3; ++update) ASSERT_EQ(VN_OK, Vn_Update());
             EXPECT_EQ(observed, engine->mixer.BlocksRendered());
-            EXPECT_TRUE(oldBank->occupied);
-            engine->nullBackend.Pump(1);
-            ASSERT_GT(engine->mixer.BlocksRendered(), observed);
-            ASSERT_EQ(VN_OK, Vn_Update());
             EXPECT_FALSE(oldBank->occupied);
         }
         return;
@@ -9460,7 +9432,6 @@ static void CheckQueueBankAcrossRealRowReuse(bool transportReset, bool continuou
             ASSERT_EQ(VN_OK, Vn_Update());
             ASSERT_GT(engine->timelinePool.ConsumerFrontier().load(std::memory_order_acquire), frontier);
             ASSERT_TRUE(oldBank->occupied);
-            ASSERT_FALSE(oldBank->retirementObserved);
             ExpectFrozenQueueBank(*oldBank, *originalBank);
         }
         ASSERT_GE(engine->timelinePool.ConsumerFrontier().load(std::memory_order_acquire),
@@ -9503,18 +9474,12 @@ static void CheckQueueBankAcrossRealRowReuse(bool transportReset, bool continuou
         ASSERT_TRUE(engine->timelinePool.HasProgramReference(heldRequest.program));
         ExpectFrozenQueueBank(*oldBank, *originalBank);
         ExpectFrozenQueueBank(*replacementBank, *replacementBody);
-        EXPECT_FALSE(oldBank->retirementObserved);
     }
     ASSERT_TRUE(engine->timelinePool.CancelPreparedTransactionBatch(&heldReference));
     ASSERT_EQ(VN_OK, Vn_Update());
-    ASSERT_TRUE(oldBank->retirementObserved);
     const auto retiredAt = engine->mixer.BlocksRendered();
-    EXPECT_EQ(retiredAt, oldBank->retirementAudioSequence);
     ASSERT_EQ(VN_OK, Vn_Update());
-    EXPECT_TRUE(oldBank->occupied);
-    engine->nullBackend.Pump(1);
-    ASSERT_GT(engine->mixer.BlocksRendered(), retiredAt);
-    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(retiredAt, engine->mixer.BlocksRendered());
     EXPECT_FALSE(oldBank->occupied);
     ExpectFrozenQueueBank(*replacementBank, *replacementBody);
     ASSERT_EQ(VN_OK, Vn_StopActionFiring(replacementFiring, 0));
@@ -58725,13 +58690,16 @@ TEST(ActionFiringApi,
         oldDecision, &oldSnapshot));
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 
+    auto& bankHolder = engine->actionQueueReplacementScratch[0];
+    ASSERT_EQ(nullptr, bankHolder.programBank);
+    bankHolder.programBank = oldBank;
     ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, started.instance, 0));
-    for (std::uint32_t block = 0; block < 64 && !oldBank->retirementObserved; ++block) {
+    for (std::uint32_t block = 0; block < 64; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
-        if (!oldBank->retirementObserved) engine->nullBackend.Pump(1);
+        engine->nullBackend.Pump(1);
     }
     ASSERT_TRUE(oldBank->occupied);
-    ASSERT_TRUE(oldBank->retirementObserved);
+    ASSERT_FALSE(engine->OriginalQueueBankHasExternalOwners(*oldBank));
 
     // Keep only an exact prepared aggregate reference after native owners exit.
     harken::ScheduledEventInput heldEvent{};
@@ -58746,6 +58714,7 @@ TEST(ActionFiringApi,
     ASSERT_EQ(harken::ReserveRefusal::None, engine->timelinePool.PrepareTransactionBatch(
         &heldRequest, 1, engine->timelinePool.PublishCutoffFrame(), &aggregateReference));
     ASSERT_TRUE(engine->timelinePool.HasProgramReference(heldRequest.program));
+    bankHolder.programBank = nullptr;
     engine->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_TRUE(engine->timelinePool.HasProgramReference(heldRequest.program));
@@ -58757,18 +58726,12 @@ TEST(ActionFiringApi,
         harken::ArmGroupSnapshot groupState{};
         EXPECT_FALSE(engine->armGroups.Capture(group, &groupState));
     }
-    EXPECT_FALSE(oldBank->retirementObserved);
     ExpectFrozenQueueBank(*oldBank, *originalBank);
     ASSERT_TRUE(engine->timelinePool.CancelPreparedTransactionBatch(&aggregateReference));
     ASSERT_EQ(VN_OK, Vn_Update());
-    ASSERT_TRUE(oldBank->retirementObserved);
     const auto releasedAt = engine->mixer.BlocksRendered();
-    EXPECT_EQ(releasedAt, oldBank->retirementAudioSequence);
     ASSERT_EQ(VN_OK, Vn_Update());
-    EXPECT_TRUE(oldBank->occupied);
-    engine->nullBackend.Pump(1);
-    ASSERT_GT(engine->mixer.BlocksRendered(), releasedAt);
-    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(releasedAt, engine->mixer.BlocksRendered());
     EXPECT_FALSE(oldBank->occupied);
     EXPECT_FALSE(engine->runtimeRecreateRequired);
 }

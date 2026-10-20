@@ -9430,7 +9430,8 @@ bool CanonicalQueueBankHasReaders(const harken::Engine& engine,
             engine.timelinePlanner.HasProgramReference(schedule.runtimeProgram)) return true;
         const auto& runtime = bank.runtimes[index];
         for (std::uint32_t event = 0; event < runtime.payloadCount; ++event)
-            if (runtime.payloads[event].kind == harken::TimelineEventKind::Start &&
+            if ((runtime.payloads[event].kind == harken::TimelineEventKind::Start ||
+                 (bank.readFence.WasRead() && runtime.payloads[event].envelopeCurve != nullptr)) &&
                 !engine.voices.ReleaseObserved(bank.releaseObservers[index])) return true;
     }
     for (std::uint32_t index = 0; index < bank.aggregateCount; ++index) {
@@ -9469,7 +9470,8 @@ void ServiceQueueProgramBanks(harken::Engine& engine) noexcept {
                 engine.timelinePlanner.HasProgramReference(schedule.runtimeProgram);
             const auto& runtime = bank.runtimes[index];
             for (std::uint32_t event = 0; event < runtime.payloadCount && !retained; ++event) {
-                if (runtime.payloads[event].kind == harken::TimelineEventKind::Start) {
+                if (runtime.payloads[event].kind == harken::TimelineEventKind::Start ||
+                    (bank.readFence.WasRead() && runtime.payloads[event].envelopeCurve != nullptr)) {
                     retained = !engine.voices.ReleaseObserved(bank.releaseObservers[index]);
                 }
             }

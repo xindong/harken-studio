@@ -2676,6 +2676,11 @@ void ImmediateActionLane::BeginEventAdmission(std::uint32_t slot,
             scopeLastCaptureSequence_[offset + scope] == attempts_[slot].capturedAudioSequence;
         assert(admitted || (expected & kEventWithdrawalRequested) != 0);
         capturedEventAdmission_[offset + index] = admitted ? 1u : 0u;
+        if (admitted) {
+            const auto* program = EventBase(slot)[index].event.program.program;
+            if (program != nullptr && program->readFence != nullptr)
+                program->readFence->RecordRead(attempts_[slot].capturedAudioSequence - 1u);
+        }
     }
 }
 
