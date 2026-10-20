@@ -4583,6 +4583,26 @@ void ExpectDirectScheduleRootBuildsAndReclaims(
         const auto sequence = engine->logicCommits.IssuedCount();
         ASSERT_TRUE(engine->queueScheduleStorage.CollectUnused());
         const auto scheduleBytes = engine->queueScheduleStorage.StorageBytes();
+        for (const auto allocation : {1u, 2u}) {
+            SCOPED_TRACE(::testing::Message() << "direct captured voice refusal " << allocation);
+            harken::detail::ArmLogicAllocFaultForTests(
+                allocation, harken::detail::LogicAllocSite::CapturedVoiceInstall);
+            const auto refusedCapture = harken::StartCurrentPlayableByIdentity(
+                definition.kind, definition.stableId, emitter);
+            EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
+            harken::detail::DisarmLogicAllocFaultForTests();
+            EXPECT_EQ(harken::PlayableStartStatus::Capacity, refusedCapture.status);
+            EXPECT_EQ(0u, refusedCapture.instance);
+            EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+            EXPECT_EQ(sequence, engine->logicCommits.IssuedCount());
+            EXPECT_EQ(playableBefore, engine->playableInstances.LiveCount());
+            EXPECT_EQ(voicesBefore, engine->voices.ActiveCount());
+            EXPECT_EQ(ledgerAvailableBefore, engine->ledger.AvailableEntryCount());
+            EXPECT_EQ(armsBefore, engine->timelineArms.LiveCount());
+            EXPECT_EQ(0u, NativePreparationBackingBytes(*engine));
+            EXPECT_EQ(scheduleBytes, engine->queueScheduleStorage.StorageBytes());
+            EXPECT_FALSE(engine->runtimeRecreateRequired);
+        }
         for (std::int32_t countdown = 0; started.instance == 0; ++countdown) {
             SCOPED_TRACE(::testing::Message() << "direct schedule allocation refusal " << countdown);
             engine->nativeBackingAllocationFailureCountdownForTest = countdown;

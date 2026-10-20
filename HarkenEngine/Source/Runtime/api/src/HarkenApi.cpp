@@ -28148,6 +28148,26 @@ enum class ContainerLoopSuccessorStatus : std::uint8_t {
     RetryAtMarkerBoundary,
 };
 
+void ClearOrdinaryCurrentProgram(harken::EnginePlayableServiceRow& row) noexcept {
+    // Published storage remains alive until its actual readers have returned.
+    row.queueCurrentProgramBank = nullptr;
+    row.queueCurrentPrograms = {};
+    row.queueCurrentScheduleBase = 0;
+    row.queueCurrentScheduleLeafCount = 0;
+    row.scheduleStorageBase = 0;
+    row.scheduleLeafCount = 0;
+    row.capturedVoice = {};
+    row.usesCapturedVoice = false;
+    row.leaf = {};
+    row.arm = {};
+    row.renderHandle = 0;
+    row.releaseObserver = {};
+    row.payload = {};
+    row.event = {};
+    row.runtimeProgram = {};
+    row.schedule = {};
+}
+
 ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
     harken::Engine& engine,
     harken::EnginePlayableServiceRow& row,
@@ -28508,7 +28528,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         const auto committed = CommitVariableControlInitialStart(engine, &scratch, ticket, true);
         if (committed.status != harken::PlayableStartStatus::Accepted) return ContainerLoopSuccessorStatus::Refused;
         if (!childAlreadyRetired) retiring.Commit(row);
-        row.releaseObserver = {};
+        ClearOrdinaryCurrentProgram(row);
         row.selectionPath = nextPath;
         row.selectedChildOrdinals = nextSelectedChildOrdinals;
         row.selectionCount = nextSelectionCount;
@@ -28800,16 +28820,8 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             }
         }
         if (!childAlreadyRetired) retiring.Commit(row);
-        row.capturedVoice = {};
-        row.usesCapturedVoice = false;
+        ClearOrdinaryCurrentProgram(row);
         row.leaf = selectedLeaf->playable;
-        row.arm = {};
-        row.renderHandle = 0;
-        row.releaseObserver = {};
-        row.payload = {};
-        row.event = {};
-        row.runtimeProgram = {};
-        row.schedule = {};
         for (std::uint32_t index = frame.pathPrefixCount;
              index < nextSelectionCount; ++index) {
             row.selectionPath[index] = nextPath[index];
@@ -28864,6 +28876,13 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             rollbackCreated();
             return ContainerLoopSuccessorStatus::Refused;
         }
+        scratch.frontierProgramBank = ReserveQueueProgramBank(engine,
+            {scheduleLeafCount, scheduleLeafCount});
+        if (scratch.frontierProgramBank == nullptr) {
+            rollbackCreated();
+            return ContainerLoopSuccessorStatus::Refused;
+        }
+        auto& programBank = *scratch.frontierProgramBank;
         const std::uint64_t baseStartFrame = scratch.continuationOrder.executeFrame;
         if (PreflightScheduleLeafStarts(
                 engine, preparedScheduleLeaves.data(), scheduleLeafCount,
@@ -29045,18 +29064,10 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         }
         if (!installFailed && !engine.PrepareOriginalCompositeLeafCompletionCommits(scratch.queueCurrentOriginalComposite))
             installFailed = true;
-        std::array<harken::TimelineEventPayload,
-                   harken::kMaxKnownScheduleLeaves>
-            payloads{};
-        std::array<harken::EventTemplate,
-                   harken::kMaxKnownScheduleLeaves>
-            events{};
-        std::array<harken::TimelineProgramView,
-                   harken::kMaxKnownScheduleLeaves>
-            runtimePrograms{};
-        std::array<harken::ProgramView,
-                   harken::kMaxKnownScheduleLeaves>
-            schedules{};
+        auto* const payloads = programBank.payloads.data();
+        auto* const events = programBank.events.data();
+        auto* const runtimePrograms = programBank.runtimes.data();
+        auto* const schedules = programBank.schedules.data();
         std::array<harken::ScheduledEventInput,
                    harken::kMaxKnownScheduleLeaves>
             transactionEvents{};
@@ -29115,6 +29126,10 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
                 break;
             }
             schedules[index].armToken = installedLeaves[index].armToken;
+            if (FreezeQueueProgram(engine, programBank, schedules[index]) == nullptr) {
+                installFailed = true;
+                break;
+            }
             transactionEvents[index].executeFrame = leafStartFrame;
             transactionEvents[index].logicCommitSequence = ticket;
             transactionEvents[index].executionOrdinal = events[index].executionOrdinal;
@@ -29133,10 +29148,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
                 schedules[index].ownerInstanceScheduleEpoch;
             transactionRequests[index].occurrence =
                 schedules[index].occurrence;
-            // The committed transaction outlives this preparation stack.
-            transactionRequests[index].program = {
-                scheduleLeafInstances[index],
-                &engine.playableScheduleRuntimePrograms[endpointBase + index]};
+            transactionRequests[index].program = schedules[index].runtimeProgram;
             transactionRequests[index].armToken =
                 installedLeaves[index].armToken;
             transactionRequests[index].events = &transactionEvents[index];
@@ -29145,6 +29157,14 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
                 schedules[index].ownerInstanceScheduleEpoch == 0 ||
                 schedules[index].occurrence.occurrenceScheduleEpoch == 0;
         }
+        harken::ProgramView aggregate{};
+        aggregate.ownerInstance = selectedTreeRoot;
+        aggregate.ownerInstanceScheduleEpoch = schedules[0].ownerInstanceScheduleEpoch;
+        aggregate.transactionId = ticket;
+        aggregate.entryAnchorFrame = firstStartFrame;
+        aggregate.eventCount = scheduleLeafCount;
+        if (!installFailed && !FreezeQueueAggregate(programBank, aggregate, 0, scheduleLeafCount))
+            installFailed = true;
         auto& transactionBatch = scratch.queueTransactions;
         if (!installFailed &&
             engine.timelinePool.PrepareTransactionBatch(
@@ -29223,9 +29243,9 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             return ContainerLoopSuccessorStatus::Refused;
         }
         if (!childAlreadyRetired) retiring.Commit(row);
+        ClearOrdinaryCurrentProgram(row);
         for (std::uint32_t index = 0; index < scheduleLeafCount; ++index) {
             const std::size_t memberSlot = memberBase + index;
-            const std::size_t eventSlot = eventBase + index;
             const std::size_t endpointSlot = endpointBase + index;
             const std::size_t pairedSlot = pairedBase + index;
             engine.playableScheduleVoices[memberSlot] =
@@ -29247,18 +29267,6 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
                 leafOccurrences[index];
             engine.playableScheduleCompletions[pairedSlot] =
                 boundCompletions[index];
-            engine.playableSchedulePayloads[eventSlot] = payloads[index];
-            engine.playableScheduleEvents[eventSlot] = events[index];
-            engine.playableScheduleRuntimePrograms[endpointSlot] =
-                runtimePrograms[index];
-            engine.playableScheduleRuntimePrograms[endpointSlot].payloads =
-                &engine.playableSchedulePayloads[eventSlot];
-            engine.playableSchedules[endpointSlot] = schedules[index];
-            engine.playableSchedules[endpointSlot].events =
-                &engine.playableScheduleEvents[eventSlot];
-            engine.playableSchedules[endpointSlot].runtimeProgram = {
-                scheduleLeafInstances[index],
-                &engine.playableScheduleRuntimePrograms[endpointSlot]};
         }
         for (std::uint32_t index = frame.pathPrefixCount;
              index < nextSelectionCount; ++index) {
@@ -29289,21 +29297,13 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         scheduleRow.renderHandle =
             engine.playableScheduleRenderHandles[memberBase];
         scheduleRow.releaseObserver = engine.playableScheduleReleaseObservers[memberBase];
-        scheduleRow.runtimeProgram.generation = selectedTreeRoot;
-        scheduleRow.runtimeProgram.payloads =
-            engine.playableSchedulePayloads.data() + eventBase;
-        scheduleRow.runtimeProgram.payloadCount = scheduleLeafCount;
-        scheduleRow.schedule.ownerInstance = selectedTreeRoot;
-        scheduleRow.schedule.ownerInstanceScheduleEpoch =
-            engine.playableInstances.Classify(selectedTreeRoot).scheduleEpoch;
-        scheduleRow.schedule.transactionId = ticket;
-        scheduleRow.schedule.entryAnchorFrame = firstStartFrame;
-        scheduleRow.schedule.events =
-            engine.playableScheduleEvents.data() + eventBase;
-        scheduleRow.schedule.eventCount = scheduleLeafCount;
-        scheduleRow.schedule.runtimeProgram = {
-            selectedTreeRoot, &scheduleRow.runtimeProgram};
-        scheduleRow.schedule.armToken = {};
+        scheduleRow.queueCurrentProgramBank = std::exchange(scratch.frontierProgramBank, nullptr);
+        scheduleRow.queueCurrentPrograms = {0, scheduleLeafCount};
+        scheduleRow.queueCurrentScheduleBase = static_cast<std::uint32_t>(memberBase);
+        scheduleRow.queueCurrentScheduleLeafCount = scheduleLeafCount;
+        scheduleRow.schedule = aggregate;
+        scheduleRow.runtimeProgram = *aggregate.runtimeProgram.program;
+        programBank.published = true;
         scheduleRow.containerLoopOccurrence = parentOccurrence;
         scheduleRow.containerLoopCompositeOwner = compositeOwner;
         scheduleRow.containerLoopOwnsScheduleResources = true;
@@ -29495,6 +29495,7 @@ engine.runtimeRecreateRequired = true;
         return ContainerLoopSuccessorStatus::Refused;
     }
     if (!childAlreadyRetired) retiring.Commit(row);
+    ClearOrdinaryCurrentProgram(row);
     row.capturedVoice = std::move(captured);
     row.usesCapturedVoice = true;
     row.leaf = cut.leaf;
@@ -69811,16 +69812,19 @@ engine.runtimeRecreateRequired = true;
         result.status = PlayableStartStatus::Backpressure;
         return result;
     }
-    if (directNativeCount > 1u &&
-        !directScratch.voiceStarts.ConstructCaptures([&]() noexcept {
-            return !directScratch.currentNativeBorrowed && engine.AllowNativeBackingAllocation();
-        })) {
-        result.status = PlayableStartStatus::Backpressure;
-        return result;
-    }
-    if (directNativeCount > 1u &&
-        (queueProgram != nullptr || request.root.kind == PlayableKindV1::Track ||
-         request.root.kind == PlayableKindV1::Piece)) {
+    if (directNativeCount > 1u) {
+        for (std::uint32_t index = 0; index < directNativeCount; ++index) {
+            auto& source = (directCompositeScheduleActive
+                ? directCompositePrepared->data() : queuePreparedLeaves.get())[index];
+            source.voice.target.programSemanticFingerprint = queueProgram != nullptr
+                ? queueProgram->programSemanticFingerprint : request.root.expectedProgramSemanticFingerprint;
+            source.voice.target.subjectId = source.leaf.stableId;
+            source.voice.target.occurrenceOrdinal = source.occurrenceOrdinal;
+            EngineActionPlayScratch::NativeVoiceSide::CapturedInput* captured = nullptr;
+            result.status = PrepareNativeVoiceCapture(engine, directScratch, false,
+                index, source.voice, &captured);
+            if (result.status != PlayableStartStatus::Accepted) return result;
+        }
         directScratch.frontierProgramBank = ReserveQueueProgramBank(engine,
             {directNativeCount, directNativeCount});
         if (directScratch.frontierProgramBank == nullptr) {
@@ -70349,11 +70353,8 @@ engine.runtimeRecreateRequired = true;
                 engine.playableScheduleCompletions.size()) {
             installFailed = true;
         } else {
-            if (row.queueMode || request.root.kind == PlayableKindV1::Track ||
-                request.root.kind == PlayableKindV1::Piece) {
-                row.queueCurrentProgramBank = std::exchange(directScratch.frontierProgramBank, nullptr);
-                row.queueCurrentPrograms = {0, initialSchedule.leafCount};
-            }
+            row.queueCurrentProgramBank = std::exchange(directScratch.frontierProgramBank, nullptr);
+            row.queueCurrentPrograms = {0, initialSchedule.leafCount};
             auto* const currentBank = row.queueCurrentProgramBank;
             auto* const payloads = currentBank != nullptr ? currentBank->payloads.data()
                 : engine.playableSchedulePayloads.data() + eventBase;
@@ -70403,13 +70404,6 @@ engine.runtimeRecreateRequired = true;
                     (directCompositeScheduleActive
                          ? directCompositePrepared->data()
                          : queuePreparedLeaves.get())[installedCount];
-                source.voice.target.programSemanticFingerprint =
-                    queueProgram != nullptr
-                        ? queueProgram->programSemanticFingerprint
-                        : request.root.expectedProgramSemanticFingerprint;
-                source.voice.target.subjectId = source.leaf.stableId;
-                source.voice.target.occurrenceOrdinal =
-                    source.occurrenceOrdinal;
                 OccurrenceToken* leafOccurrence = nullptr;
                 PlayableProgramKey program{};
                 if (queueInitialHasContinuation) {
@@ -70450,14 +70444,7 @@ engine.runtimeRecreateRequired = true;
                 }
                 const std::uint64_t leafStart =
                     startFrame + source.startOffsetFrames;
-                EngineActionPlayScratch::NativeVoiceSide::CapturedInput* captured = nullptr;
-                const auto captureStatus = PrepareNativeVoiceCapture(engine, directScratch, false,
-                    installedCount, source.voice, &captured);
-                if (captureStatus != PlayableStartStatus::Accepted) {
-                    rollbackDirectStart();
-                    result.status = captureStatus;
-                    return result;
-                }
+                auto* const captured = &directScratch.voiceStarts.Captures()[installedCount];
                 const TimelineVoiceInstallResult leafInstalled =
                     InstallTimelineVoiceStart(
                         engine, captured->voice.Input(), leafInstance, leafStart,
@@ -82028,17 +82015,15 @@ bool PrepareImmediateActionCompositeQueueChildPlay(
     row->queueRandomSeed = randomSeed;
     row->queueRandomSeedValid = randomQueue;
 
-    if (row->queueMode) {
-        row->queueCurrentProgramBank = ReserveQueueProgramBank(engine,
-            {materialized.leafCount, materialized.leafCount});
-        if (row->queueCurrentProgramBank == nullptr) {
-            plan.queueProgramCapacityRefused = true;
-            plan.result = VN_BACKPRESSURE;
-            (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
-            return false;
-        }
-        row->queueCurrentPrograms = {0, materialized.leafCount};
+    row->queueCurrentProgramBank = ReserveQueueProgramBank(engine,
+        {materialized.leafCount, materialized.leafCount});
+    if (row->queueCurrentProgramBank == nullptr) {
+        plan.queueProgramCapacityRefused = true;
+        plan.result = VN_BACKPRESSURE;
+        (void)ReleaseImmediateActionPlay(engine, scratch, &plan);
+        return false;
     }
+    row->queueCurrentPrograms = {0, materialized.leafCount};
     auto* const currentBank = row->queueCurrentProgramBank;
     auto* const payloads = currentBank != nullptr ? currentBank->payloads.data()
         : engine.playableSchedulePayloads.data() + eventBase;

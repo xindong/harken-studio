@@ -25033,6 +25033,26 @@ TEST(PlayableStart, SequenceLoopSuccessorRefusalFailsWithoutRetry) {
     EXPECT_FALSE(engine->runtimeRecreateRequired);
 }
 
+void ConfigureOrdinaryCompositeLoop(
+    SequenceQueueCompositeTrackWorldImage& image, std::uint32_t loopCount) {
+    image.container.mode = harken::ContainerModeV1::Sequence;
+    image.container.childCount = 1;
+    image.world.identity.capabilityMask =
+        harken::kWorldCapabilityPlayableProperties | harken::kWorldCapabilitySequence;
+    const auto loopIndex = static_cast<std::uint32_t>(
+        harken::playableproperties::PlayablePropertyIdV1::LoopCount) - 1u;
+    image.properties[3].payload.presentMask |= UINT64_C(1) << loopIndex;
+    image.properties[3].payload.values[loopIndex].bits = loopCount;
+    image.properties[3].programSemanticFingerprint =
+        harken::ComputePlayablePropertyFingerprintV1(image.properties[3]);
+    image.container.programSemanticFingerprint = image.properties[3].programSemanticFingerprint;
+    for (std::uint32_t index = 0; index < 2; ++index) {
+        image.occurrences[index].parentProgramSemanticFingerprint = image.container.programSemanticFingerprint;
+        image.occurrences[index].occurrenceSemanticFingerprint =
+            harken::ComputePlayableOccurrenceFingerprintV1(image.occurrences[index]);
+    }
+}
+
 void ExpectSequenceLoopPostFailureRetention(bool composite, bool stopWhileRetained = false) {
     auto config = harkentest::MakeNullConfig(4, 64, 48000);
     harkentest::EngineSession session(config);
@@ -25050,24 +25070,7 @@ void ExpectSequenceLoopPostFailureRetention(bool composite, bool stopWhileRetain
     SequenceQueueCompositeTrackWorldImage compositeImage(
         engine.registry.Lookup(kSound).contentRevision,
         engine.registry.Lookup(kSecondSound).contentRevision);
-    compositeImage.container.mode = harken::ContainerModeV1::Sequence;
-    compositeImage.container.childCount = 1;
-    compositeImage.world.identity.capabilityMask =
-        harken::kWorldCapabilityPlayableProperties | harken::kWorldCapabilitySequence;
-    const auto loopIndex = static_cast<std::uint32_t>(
-        harken::playableproperties::PlayablePropertyIdV1::LoopCount) - 1u;
-    compositeImage.properties[3].payload.presentMask |= UINT64_C(1) << loopIndex;
-    compositeImage.properties[3].payload.values[loopIndex].bits = 2;
-    compositeImage.properties[3].programSemanticFingerprint =
-        harken::ComputePlayablePropertyFingerprintV1(compositeImage.properties[3]);
-    compositeImage.container.programSemanticFingerprint =
-        compositeImage.properties[3].programSemanticFingerprint;
-    for (std::uint32_t index = 0; index < 2; ++index) {
-        compositeImage.occurrences[index].parentProgramSemanticFingerprint =
-            compositeImage.container.programSemanticFingerprint;
-        compositeImage.occurrences[index].occurrenceSemanticFingerprint =
-            harken::ComputePlayableOccurrenceFingerprintV1(compositeImage.occurrences[index]);
-    }
+    ConfigureOrdinaryCompositeLoop(compositeImage, 2);
     harken::PlayableStartRequest request{};
     request.root = composite ? compositeImage.Root() : image.Root();
     const auto started = composite
@@ -25104,6 +25107,10 @@ void ExpectSequenceLoopPostFailureRetention(bool composite, bool stopWhileRetain
             if (composite) {
                 EXPECT_GT(engine.timelineOccurrences.OccupiedCount(), 0u);
                 EXPECT_TRUE(retained->queueCurrentCompositeOwner.Valid());
+                ASSERT_NE(nullptr, retained->frontierProgramBank);
+                EXPECT_TRUE(retained->frontierProgramBank->occupied);
+                EXPECT_FALSE(retained->frontierProgramBank->published);
+                EXPECT_EQ(2u, retained->frontierProgramBank->programCount);
             }
             const auto generation = retained->storage.generation;
             if (stopWhileRetained) {
@@ -25124,6 +25131,7 @@ void ExpectSequenceLoopPostFailureRetention(bool composite, bool stopWhileRetain
             EXPECT_EQ(generation, retained->storage.generation);
             EXPECT_EQ(harken::EngineFrontierAttemptPhase::Free, retained->storage.phase);
             EXPECT_TRUE(retained->storage.ownerLedger.Empty());
+            EXPECT_EQ(nullptr, retained->frontierProgramBank);
             break;
         }
         engine.nullBackend.Pump(1);
@@ -25142,6 +25150,71 @@ TEST(PlayableStart, SequenceLoopPostFailureRetainsAttemptUntilVoiceRollbackSucce
 
 TEST(PlayableStart, SequenceLoopCompositePostFailureRetainsAttemptUntilUnbindSucceeds) {
     ExpectSequenceLoopPostFailureRetention(true);
+}
+
+TEST(PlayableStart, SequenceLoopCompositeProgramsSurviveOldReaderAndReclaimAfterReturn) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::vector<float> samples(64, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &pcm));
+    SequenceQueueCompositeTrackWorldImage image(
+        engine.registry.Lookup(kSound).contentRevision,
+        engine.registry.Lookup(kSecondSound).contentRevision);
+    ConfigureOrdinaryCompositeLoop(image, 3);
+    harken::PlayableStartRequest request{};
+    request.root = image.Root();
+    const auto started = harken::StartPlayable(engine, image.world, request);
+    ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+    auto* row = FindPlayableRow(engine, started.instance);
+    ASSERT_NE(nullptr, row);
+    auto* const initial = row->queueCurrentProgramBank;
+    ASSERT_NE(nullptr, initial);
+    ASSERT_EQ(2u, initial->programCount);
+    const auto initialGeneration = initial->Generation();
+    const auto initialOwner = initial->schedules[0].ownerInstance;
+    const auto* const initialPayloads = initial->runtimes[0].payloads;
+    auto* const original = engine.OriginalQueueBankHolderFor(initial);
+    ASSERT_NE(nullptr, original);
+    harken::EngineQueueProgramBank::OriginalLifetimePin reader;
+    ASSERT_TRUE(original->baseline.Borrow(&reader));
+    std::uint32_t observedPrograms = 1;
+    auto* previous = initial;
+    bool completed = false;
+    for (unsigned block = 0; block < 128 && !completed; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        row = FindPlayableRow(engine, started.instance);
+        if (row != nullptr && row->queueCurrentProgramBank != previous) {
+            ASSERT_NE(nullptr, row->queueCurrentProgramBank);
+            ASSERT_EQ(2u, row->queueCurrentProgramBank->programCount);
+            EXPECT_NE(initial, row->queueCurrentProgramBank);
+            previous = row->queueCurrentProgramBank;
+            ++observedPrograms;
+        }
+        EXPECT_TRUE(reader.Valid());
+        EXPECT_TRUE(initial->occupied);
+        EXPECT_EQ(initialGeneration, initial->Generation());
+        EXPECT_EQ(initialOwner, initial->schedules[0].ownerInstance);
+        EXPECT_EQ(initialPayloads, initial->runtimes[0].payloads);
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+        engine.nullBackend.Pump(1);
+        completed = !engine.playableInstances.Classify(started.instance).live;
+    }
+    ASSERT_TRUE(completed);
+    EXPECT_EQ(3u, observedPrograms);
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_TRUE(initial->occupied);
+    reader.Release();
+    ASSERT_TRUE(PumpBlocks(engine, 8));
+    EXPECT_FALSE(initial->occupied);
+    for (const auto& bank : engine.queueProgramBanks) EXPECT_FALSE(bank.occupied);
+    ASSERT_TRUE(engine.queueScheduleStorage.CollectUnused());
+    EXPECT_EQ(0u, engine.timelinePool.LiveTransactionCount());
+    EXPECT_EQ(0u, engine.timelineOccurrences.OccupiedCount());
+    EXPECT_EQ(0u, engine.playableInstances.LiveCount());
+    EXPECT_EQ(0u, engine.compositeCompletionOwners.OccupiedCount());
 }
 
 TEST(PlayableStart, SequenceLoopPendingRollbackPinsOriginalServiceThroughStop) {
