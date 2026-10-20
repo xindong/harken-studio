@@ -57497,10 +57497,14 @@ TEST(ActionFiringApi,
     EXPECT_NE(0u, newSuccessors[1]);
     EXPECT_NE(oldSuccessors[0], newSuccessors[0]);
     EXPECT_NE(oldSuccessors[1], newSuccessors[1]);
-    EXPECT_EQ(CanonicalActionWorld::kFirstSound,
-              engine->playableSuccessorLeaves[newBase].stableId);
-    EXPECT_EQ(CanonicalActionWorld::kSecondSound,
-              engine->playableSuccessorLeaves[newBase + 1u].stableId);
+    const auto* firstSuccessor = engine->FindQueueProgramMember(
+        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+    const auto* secondSuccessor = engine->FindQueueProgramMember(
+        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first + 1u);
+    ASSERT_NE(nullptr, firstSuccessor);
+    ASSERT_NE(nullptr, secondSuccessor);
+    EXPECT_EQ(CanonicalActionWorld::kFirstSound, firstSuccessor->leaf.stableId);
+    EXPECT_EQ(CanonicalActionWorld::kSecondSound, secondSuccessor->leaf.stableId);
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
@@ -57824,10 +57828,14 @@ TEST(ActionFiringApi,
               engine->playableSuccessorRenderHandles[newBase]);
     EXPECT_NE(oldSuccessors[1],
               engine->playableSuccessorRenderHandles[newBase + 1u]);
-    EXPECT_EQ(CanonicalActionWorld::kFirstSound,
-              engine->playableSuccessorLeaves[newBase].stableId);
-    EXPECT_EQ(CanonicalActionWorld::kSecondSound,
-              engine->playableSuccessorLeaves[newBase + 1u].stableId);
+    const auto* firstSuccessor = engine->FindQueueProgramMember(
+        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first);
+    const auto* secondSuccessor = engine->FindQueueProgramMember(
+        row->queueSuccessorProgramBank, row->queueSuccessorPrograms.first + 1u);
+    ASSERT_NE(nullptr, firstSuccessor);
+    ASSERT_NE(nullptr, secondSuccessor);
+    EXPECT_EQ(CanonicalActionWorld::kFirstSound, firstSuccessor->leaf.stableId);
+    EXPECT_EQ(CanonicalActionWorld::kSecondSound, secondSuccessor->leaf.stableId);
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 

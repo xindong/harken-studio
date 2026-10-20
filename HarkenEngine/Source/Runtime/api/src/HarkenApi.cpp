@@ -303,7 +303,6 @@ std::size_t Engine::CapturedVoiceStorageBytes() const noexcept {
         for (const auto& voice : service.capturedScheduleVoices) bytes += charge(voice);
     }
     for (const auto& member : playableMemberRecords) bytes += charge(member.voice);
-    for (const auto& voice : playableSuccessorVoices) bytes += charge(voice);
     for (const auto& scratch : actionPlayScratch)
         bytes += sideBytes(scratch.voiceStarts) + sideBytes(scratch.queueSuccessorVoiceStarts);
     for (const auto& replacement : actionQueueReplacementScratch) {
@@ -12860,10 +12859,6 @@ PlayableStartResetResult ResetPlayableStartRow(
           engine.playableStorage.continuousStride);
     clear(engine.variableControlRetargetMemberKinds, bases.continuous,
           engine.playableStorage.continuousStride);
-    clear(engine.playableSuccessorVoices, bases.endpoint,
-          engine.playableStorage.endpointStride);
-    clear(engine.playableSuccessorLeaves, bases.endpoint,
-          engine.playableStorage.endpointStride);
     clear(engine.playableSuccessorArms, bases.endpoint,
           engine.playableStorage.endpointStride);
     clear(engine.playableSuccessorRenderHandles, bases.endpoint,
@@ -12873,8 +12868,6 @@ PlayableStartResetResult ResetPlayableStartRow(
     clear(engine.playableSuccessorCompletions, bases.endpoint,
           engine.playableStorage.endpointStride);
     clear(engine.playableSuccessorStartFrames, bases.endpoint,
-          engine.playableStorage.endpointStride);
-    clear(engine.playableSuccessorPostSourceTailFrames, bases.endpoint,
           engine.playableStorage.endpointStride);
     auto& invocation = row.Invocation();
     assert(invocation.serviceCount != 0);
@@ -16128,7 +16121,8 @@ ScheduleMaterializeStatus MaterializeVariableControlNestedSchedule(
         leaf.selectedOrdinals[0] = childStableOrdinal;
         ++leaf.selectionCount;
     }
-    return ScheduleMaterializeStatus::Ok;
+    return out->leafCount == 0 && out->hasZeroWorkCompletion
+        ? ScheduleMaterializeStatus::ZeroWork : ScheduleMaterializeStatus::Ok;
 }
 
 VnObjectId PlayableWorldProjectId(const harken::PlayableWorldViewV1& world) noexcept {
@@ -24606,7 +24600,7 @@ bool PrepareCompositeQueueContinuation(
     const std::size_t base = bases.endpoint;
     if (base > UINT32_MAX ||
         base + materialized.leafCount >
-            engine.playableSuccessorVoices.size()) {
+            engine.playableStorage.endpointCount) {
         return false;
     }
     auto preparedStorage = AllocatePreparedScheduleLeaves(engine);
@@ -24932,13 +24926,10 @@ bool PrepareCompositeQueueContinuation(
             abortPrepared();
             return false;
         }
-        engine.playableSuccessorLeaves[slot] = prepared[index].leaf;
         engine.playableSuccessorArms[slot] = installed.armToken;
         engine.playableSuccessorRenderHandles[slot] =
             installed.renderHandle;
         engine.playableSuccessorStartFrames[slot] = startFrame;
-        engine.playableSuccessorPostSourceTailFrames[slot] =
-            installed.postSourceTailFrames;
         engine.playableSuccessorCompletions[slot] =
             installed.completionPredicate;
         const std::size_t eventBase = targetFadeActive
@@ -25057,13 +25048,13 @@ bool PrepareCompositeQueueContinuation(
         }
     }
     if (materialized.leafCount != 0) {
-        row.queueSuccessorLeaf = engine.playableSuccessorLeaves[base];
+        const auto& member = *engine.FindQueueProgramMember(starts.QueueBank(), 0);
+        row.queueSuccessorLeaf = member.leaf;
         row.queueSuccessorArm = engine.playableSuccessorArms[base];
         row.queueMonitorSelection = engine.FindQueueProgramMember(starts.QueueBank(), 0)->monitorSelection;
         row.queueSuccessorRenderHandle =
             engine.playableSuccessorRenderHandles[base];
-        row.queueSuccessorTailFrames =
-            engine.playableSuccessorPostSourceTailFrames[base];
+        row.queueSuccessorTailFrames = member.postSourceTailFrames;
     } else {
         row.queueSuccessorLeaf = {};
         row.queueSuccessorArm = {};
@@ -30271,7 +30262,7 @@ bool ActivateVariableControlNestedQueueSuccessor(
     const auto* successorMember = successorPending ? engine.FindQueueProgramMember(
         row.queueSuccessorProgramBank, row.queueSuccessorPrograms.first) : nullptr;
     const auto* captured = successorPending
-        ? successorMember != nullptr ? &successorMember->voice : &engine.playableSuccessorVoices[bases.endpoint]
+        ? successorMember != nullptr ? &successorMember->voice : nullptr
         : engine.ResolvePlayableServiceVoice(row);
     if (captured == nullptr || !captured->Valid() || captured->Facts().soundId !=
             (successorPending ? row.queueSuccessorLeaf.stableId : row.leaf.stableId)) return false;
@@ -49614,7 +49605,7 @@ engine.runtimeRecreateRequired = true;
                         successorAggregate == nullptr || successorAggregateSchedule.events == nullptr ||
                         currentEndpointBase + programs.size() > engine.playableStorage.endpointCount ||
                         currentPairedBase + programs.size() > engine.playableStorage.pairedCount ||
-                        successorBase + programs.size() > engine.playableSuccessorVoices.size()) {
+                        successorBase + programs.size() > engine.playableStorage.endpointCount) {
                         row.controlLifecycle = harken::
                             PlayableControlLifecycle::FailingSourceActive;
                         row.controlReason =
@@ -49633,11 +49624,6 @@ engine.runtimeRecreateRequired = true;
                             engine.runtimeRecreateRequired = true;
                             break;
                         }
-                        const std::size_t currentEndpoint =
-                            currentEndpointBase + index;
-                        const std::size_t currentPaired =
-                            currentPairedBase + index;
-                        const std::size_t successor = successorBase + index;
                         const auto programIndex = row.queueSuccessorPrograms.first + index;
                         if (!row.parentService.Valid()) {
                             if (!engine.BindPlayableMember(row, index,
@@ -49648,32 +49634,12 @@ engine.runtimeRecreateRequired = true;
                             eventOffset += static_cast<std::uint32_t>(programs[index].eventCount);
                             continue;
                         }
-                        if (auto* retained = engine.FindQueueProgramMember(row.queueSuccessorProgramBank, programIndex);
-                            retained != nullptr && retained->primaryOwned) {
-                            if (engine.FindPlayableMember(currentMember) != retained) {
-                                engine.runtimeRecreateRequired = true;
-                                break;
-                            }
-                            eventOffset += static_cast<std::uint32_t>(programs[index].eventCount);
-                            continue;
+                        auto* retained = engine.FindQueueProgramMember(row.queueSuccessorProgramBank, programIndex);
+                        if (retained == nullptr || !retained->primaryOwned ||
+                            engine.FindPlayableMember(currentMember) != retained) {
+                            engine.runtimeRecreateRequired = true;
+                            break;
                         }
-                        engine.MutablePlayableMember(currentMember).voice =
-                            std::move(engine.playableSuccessorVoices[successor]);
-                        engine.MutablePlayableMember(currentMember).leaf =
-                            engine.playableSuccessorLeaves[successor];
-                        engine.MutablePlayableMember(currentMember).arm =
-                            engine.playableSuccessorArms[successor];
-                        engine.MutablePlayableMember(currentMember).render =
-                            engine.playableSuccessorRenderHandles[successor];
-                        engine.MutablePlayableMember(currentMember).occurrence =
-                            engine.playableSuccessorOccurrences[successor];
-                        engine.MutablePlayableMember(currentMember).nativeCompletion =
-                            engine.playableSuccessorCompletions[successor];
-                        engine.MutablePlayableMember(currentMember).startFrame =
-                            engine.playableSuccessorStartFrames[successor];
-                        engine.MutablePlayableMember(currentMember).postSourceTailFrames =
-                            engine.playableSuccessorPostSourceTailFrames[
-                                successor];
                         eventOffset += static_cast<std::uint32_t>(programs[index].eventCount);
                     }
                     if (eventOffset != successorAggregate->payloadCount ||
@@ -49728,23 +49694,14 @@ engine.runtimeRecreateRequired = true;
                     }
                     const auto memberIndex = row.queueSuccessorPrograms.first;
                     auto* retained = engine.FindQueueProgramMember(row.queueSuccessorProgramBank, memberIndex);
-                    if (retained != nullptr && (!row.parentService.Valid() || retained->primaryOwned)) {
-                        if (row.parentService.Valid()
-                                ? engine.FindLogicalPlayableMember(storageBases.member) != retained
-                                : !engine.BindPlayableMember(row, 0, row.queueSuccessorProgramBank->members[memberIndex])) {
-                            engine.runtimeRecreateRequired = true;
-                            continue;
-                        }
-                        row.capturedVoice = {};
-                        row.usesCapturedVoice = false;
-                    } else {
-                        if (!row.parentService.Valid() && !engine.ReleasePlayableMember(row, 0)) {
-                            engine.runtimeRecreateRequired = true;
-                            continue;
-                        }
-                        row.capturedVoice = std::move(engine.playableSuccessorVoices[storageBases.endpoint]);
-                        row.usesCapturedVoice = row.capturedVoice.Valid();
+                    if (retained == nullptr || (row.parentService.Valid()
+                            ? !retained->primaryOwned || engine.FindLogicalPlayableMember(storageBases.member) != retained
+                            : !engine.BindPlayableMember(row, 0, row.queueSuccessorProgramBank->members[memberIndex]))) {
+                        engine.runtimeRecreateRequired = true;
+                        continue;
                     }
+                    row.capturedVoice = {};
+                    row.usesCapturedVoice = false;
                     row.arm = row.queueSuccessorArm;
                     row.renderHandle = row.queueSuccessorRenderHandle;
                     row.leaf = row.queueSuccessorLeaf;
@@ -78834,7 +78791,7 @@ bool PrepareQueueTransitionContinuation(
         ? 2u * leafCount : leafCount;
     if (successorBase > UINT32_MAX ||
         successorBase + leafCount >
-            engine.playableSuccessorVoices.size()) {
+            engine.playableStorage.endpointCount) {
         return false;
     }
     row.queueSuccessorProgramBank = ReserveQueueProgramBank(engine,
@@ -79019,7 +78976,6 @@ bool PrepareQueueTransitionContinuation(
                     ? scratch->queueSuccessorLeafOccurrences[index] : scratch->queueSuccessorOccurrence);
         }
         const std::size_t slot = successorBase + index;
-        engine.playableSuccessorLeaves[slot] = leaves[index].leaf;
         engine.playableSuccessorArms[slot] = installed.armToken;
         engine.playableSuccessorRenderHandles[slot] =
             installed.renderHandle;
@@ -79030,8 +78986,6 @@ bool PrepareQueueTransitionContinuation(
         engine.playableSuccessorCompletions[slot] =
             installed.completionPredicate;
         engine.playableSuccessorStartFrames[slot] = startFrame;
-        engine.playableSuccessorPostSourceTailFrames[slot] =
-            installed.postSourceTailFrames;
 
         const std::uint32_t eventBase = targetFadeActive
             ? 2u * index : index;
@@ -79220,15 +79174,14 @@ bool PrepareQueueTransitionContinuation(
     if (leafCount == 1u)
         engine.FindQueueProgramMember(&bank, 0)->nativeCompletion = row.queueSuccessorCompletion;
 
-    row.queueSuccessorLeaf =
-        engine.playableSuccessorLeaves[successorBase];
+    const auto& firstMember = *engine.FindQueueProgramMember(&bank, 0);
+    row.queueSuccessorLeaf = firstMember.leaf;
     row.queueSuccessorArm =
         engine.playableSuccessorArms[successorBase];
     row.queueMonitorSelection = engine.FindQueueProgramMember(&bank, 0)->monitorSelection;
     row.queueSuccessorRenderHandle =
         engine.playableSuccessorRenderHandles[successorBase];
-    row.queueSuccessorTailFrames =
-        engine.playableSuccessorPostSourceTailFrames[successorBase];
+    row.queueSuccessorTailFrames = firstMember.postSourceTailFrames;
 
     const std::uint64_t audibleFrame = sourceControlRequired
         ? sourcePhaseFrame : successorEntryFrame;
@@ -80610,7 +80563,7 @@ bool PrepareQueueContinuation(
         row.queueCurrentProgramPlane == 0 ? 1 : 0;
     if (successorBase > UINT32_MAX ||
         successorBase + leafCount >
-            engine.playableSuccessorVoices.size()) {
+            engine.playableStorage.endpointCount) {
         return false;
     }
 
@@ -80826,7 +80779,6 @@ bool PrepareQueueContinuation(
         }
         groupMembers[index] = installed.armToken;
         const std::size_t slot = successorBase + index;
-        engine.playableSuccessorLeaves[slot] = leaves[index].leaf;
         engine.playableSuccessorArms[slot] = installed.armToken;
         engine.playableSuccessorRenderHandles[slot] =
             installed.renderHandle;
@@ -80837,8 +80789,6 @@ bool PrepareQueueContinuation(
         engine.playableSuccessorCompletions[slot] =
             installed.completionPredicate;
         engine.playableSuccessorStartFrames[slot] = startFrame;
-        engine.playableSuccessorPostSourceTailFrames[slot] =
-            installed.postSourceTailFrames;
         auto& payload =
             successorPayloadStorage[successorEventBase + index];
         payload = {};
@@ -80984,15 +80934,14 @@ bool PrepareQueueContinuation(
         engine.FindQueueProgramMember(&bank, 0)->nativeCompletion = row.queueSuccessorCompletion;
     row.queueSuccessorOccurrence = scratch->queueSuccessorOccurrence;
     if (leafCount != 0) {
-        row.queueSuccessorLeaf =
-            engine.playableSuccessorLeaves[successorBase];
+        const auto& firstMember = *engine.FindQueueProgramMember(&bank, 0);
+        row.queueSuccessorLeaf = firstMember.leaf;
         row.queueSuccessorArm =
             engine.playableSuccessorArms[successorBase];
         row.queueMonitorSelection = engine.FindQueueProgramMember(&bank, 0)->monitorSelection;
         row.queueSuccessorRenderHandle =
             engine.playableSuccessorRenderHandles[successorBase];
-        row.queueSuccessorTailFrames =
-            engine.playableSuccessorPostSourceTailFrames[successorBase];
+        row.queueSuccessorTailFrames = firstMember.postSourceTailFrames;
     } else {
         row.queueSuccessorLeaf = {};
         row.queueSuccessorArm = {};
@@ -91765,17 +91714,13 @@ void CommitImmediateActionQueueReplacements(
                 const std::size_t endpointBase = bases.endpoint;
                 if (endpointBase > UINT32_MAX ||
                     endpointBase + scratch.successorLeafCount >
-                        engine.playableSuccessorVoices.size()) {
+                        engine.playableStorage.endpointCount) {
                     ok = false;
                 } else {
                     for (std::uint32_t leafIndex = 0;
                          leafIndex < scratch.successorLeafCount;
                          ++leafIndex) {
                         const std::size_t slot = endpointBase + leafIndex;
-                        if (row.parentService.Valid())
-                            engine.playableSuccessorVoices[slot] = scratch.successorVoices[leafIndex].Share();
-                        engine.playableSuccessorLeaves[slot] =
-                            scratch.successorLeaves[leafIndex];
                         engine.playableSuccessorArms[slot] =
                             scratch.successorStarts[leafIndex].arm;
                         engine.FindQueueProgramMember(&bank, scratch.sourceControlCount + leafIndex)->
@@ -91788,9 +91733,6 @@ void CommitImmediateActionQueueReplacements(
                             scratch.successorLeafCompletions[leafIndex];
                         engine.playableSuccessorStartFrames[slot] =
                             scratch.successorStartFrames[leafIndex];
-                        engine.playableSuccessorPostSourceTailFrames[slot] =
-                            scratch.successorStarts[leafIndex].
-                                postSourceTailFrames;
                     }
                     row.queueSuccessorScheduleBase =
                         static_cast<std::uint32_t>(endpointBase);
@@ -91817,9 +91759,6 @@ void CommitImmediateActionQueueReplacements(
 
             row.queueSuccessorOccurrence = scratch.successorOccurrence;
             if (scratch.successorLeafCount != 0) {
-                if (scratch.successorLeafCount == 1 && row.parentService.Valid())
-                    engine.playableSuccessorVoices[StorageBasesForRow(engine, row).endpoint] =
-                        scratch.successorVoices[0].Share();
                 row.queueSuccessorLeaf = scratch.successorLeaves[0];
                 row.queueSuccessorArm = scratch.successorStarts[0].arm;
                 row.queueMonitorSelection = scratch.successorStarts[0].monitorSelection;

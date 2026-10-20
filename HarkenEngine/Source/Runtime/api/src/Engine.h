@@ -5743,15 +5743,11 @@ public:
           variableControlRetargetArms(playableStorage.continuousCount),
           variableControlRetargetMemberKinds(
               playableStorage.continuousCount),
-          playableSuccessorVoices(playableStorage.endpointCount),
-          playableSuccessorLeaves(playableStorage.endpointCount),
           playableSuccessorArms(playableStorage.endpointCount),
           playableSuccessorRenderHandles(playableStorage.endpointCount),
           playableSuccessorOccurrences(playableStorage.endpointCount),
           playableSuccessorCompletions(playableStorage.endpointCount),
           playableSuccessorStartFrames(playableStorage.endpointCount),
-          playableSuccessorPostSourceTailFrames(
-              playableStorage.endpointCount),
           queueSelectionChildScratch(resolved.maxQueueChildren),
           queueRemainingScratch(resolved.maxQueueChildren),
           queuePermutationScratch(resolved.maxQueueChildren),
@@ -12798,14 +12794,11 @@ public:
     }
     std::vector<TimelineArmToken> variableControlRetargetArms;
     std::vector<std::uint8_t> variableControlRetargetMemberKinds;
-    std::vector<CapturedTimelineVoiceInstall> playableSuccessorVoices;
-    std::vector<PlayableRefV1> playableSuccessorLeaves;
     std::vector<TimelineArmToken> playableSuccessorArms;
     std::vector<VnVoiceHandle> playableSuccessorRenderHandles;
     std::vector<OccurrenceToken> playableSuccessorOccurrences;
     std::vector<KnownCompletionPredicateV1> playableSuccessorCompletions;
     std::vector<std::uint64_t> playableSuccessorStartFrames;
-    std::vector<std::uint32_t> playableSuccessorPostSourceTailFrames;
     std::vector<SelectionChildV1> queueSelectionChildScratch;
     std::vector<std::uint32_t> queueRemainingScratch;
     std::vector<std::uint32_t> queuePermutationScratch;
