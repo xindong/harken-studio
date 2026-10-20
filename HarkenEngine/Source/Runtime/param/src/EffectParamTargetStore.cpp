@@ -1,4 +1,5 @@
 #include "harken/param/EffectParamTargetStore.h"
+#include "harken/param/BindingTable.h"
 
 #include <algorithm>
 #include <cassert>
@@ -412,6 +413,22 @@ void EffectParamTargetStore::CommitPreparedInstalledEffectSeed(
         record.meterProbeRebuild = record.meterProbeContribution;
         record.lastCommitted = ReduceRecord(record);
         record.revision = token->m_revision;
+        if (m_dependencies != nullptr) {
+            BindingDependencyIdentity identity{};
+            identity.object = record.objectId;
+            identity.scope = record.scope == Scope::Bus
+                ? VN_TARGET_SCOPE_BUS_EFFECT_PARAM : VN_TARGET_SCOPE_VOICE_EFFECT_PARAM;
+            identity.target = PackEffectParamLocator(record.effectType, record.slot, record.paramIndex);
+            for (const auto source : {BindingSourceKind::Variable, BindingSourceKind::MeterProbe}) {
+                identity.detail = static_cast<std::uint32_t>(source);
+                identity.generation = record.objectGeneration;
+                m_dependencies->Notify(BindingDependencyKind::Target, identity);
+                if (record.scope == Scope::Voice && identity.generation != 0) {
+                    identity.generation = 0;
+                    m_dependencies->Notify(BindingDependencyKind::Target, identity);
+                }
+            }
+        }
     }
     for (std::uint32_t i = 0; i < token->m_slotRecordCount; ++i) {
         const std::uint32_t index = token->m_slotRecordIndices[i];

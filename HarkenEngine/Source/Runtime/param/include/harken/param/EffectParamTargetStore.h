@@ -38,6 +38,8 @@
 
 namespace harken {
 
+class BindingDependencyIndex;
+
 class EffectParamTargetStore {
 public:
     // Object scope of a record: which host namespace objectId lives in. Kept
@@ -73,6 +75,10 @@ public:
     // records (preallocated, never grown after construction).
     EffectParamTargetStore(std::uint32_t sampleRate, std::uint32_t capacity,
                            std::uint32_t retiringCapacity = 0);
+
+    void AttachBindingDependencies(BindingDependencyIndex* dependencies) noexcept {
+        m_dependencies = dependencies;
+    }
 
     // --- effect lifecycle (install / clear) ---
 
@@ -422,6 +428,7 @@ private:
     std::uint32_t m_sampleRate = 0;
     std::uint32_t m_activeCapacity = 0;
     std::uint32_t m_totalCapacity = 0;
+    BindingDependencyIndex* m_dependencies = nullptr;
     std::vector<Record> m_records;
     std::vector<VariableEvaluation> m_projection;
     bool m_projectionActive = false;

@@ -654,10 +654,13 @@ TEST(QueueProgramBank, OriginalStorageLoansKeepActualDataAndCancelAliasUntilRetu
     static_assert(!std::is_constructible_v<Bank, const harken::EngineQueueProgramBankBody&>);
     static_assert(!std::is_copy_constructible_v<Bank::OriginalReservation>);
     static_assert(!std::is_copy_constructible_v<Bank::OriginalLifetimePin>);
+    harken::EngineQueueScheduleStorage storage;
+    ASSERT_TRUE(storage.Configure(2));
     std::vector<Bank> banks(2);
     auto& bank = banks[0];
     Bank::OriginalReservation original;
     ASSERT_TRUE(bank.TryReserve(&original));
+    ASSERT_TRUE(storage.Acquire(bank, {1, 1}, &bank.scheduleStorageLoan));
     ASSERT_TRUE(original.Valid());
     const auto generation = original.Generation();
     bank.programCount = 1; bank.eventCount = 1;
@@ -678,6 +681,7 @@ TEST(QueueProgramBank, OriginalStorageLoansKeepActualDataAndCancelAliasUntilRetu
     EXPECT_FALSE(bank.TryCancelAlias(alias));
     pin.Release();
     EXPECT_FALSE(bank.TryResetStorage());
+    EXPECT_TRUE(bank.scheduleStorageLoan.Valid());
     EXPECT_EQ(body->programCount, bank.programCount);
     EXPECT_EQ(body->eventCount, bank.eventCount);
     EXPECT_EQ(body->payloads[0].kind, bank.payloads[0].kind);
@@ -685,6 +689,7 @@ TEST(QueueProgramBank, OriginalStorageLoansKeepActualDataAndCancelAliasUntilRetu
     EXPECT_EQ(body->groups[0].generation, bank.groups[0].generation);
     borrowed.Release();
     EXPECT_TRUE(bank.TryCancelAlias(alias));
+    EXPECT_FALSE(bank.scheduleStorageLoan.Valid());
     EXPECT_EQ(nullptr, alias);
     EXPECT_FALSE(bank.occupied);
     EXPECT_EQ(generation, bank.Generation());

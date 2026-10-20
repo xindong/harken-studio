@@ -327,6 +327,9 @@ std::size_t Engine::PreparationStorageBytes() const noexcept {
     const auto column = [](const auto& storage) noexcept {
         return storage.capacity() * sizeof(typename std::decay_t<decltype(storage)>::value_type);
     };
+    std::size_t bindingBytes = 0;
+    for (const auto& pending : pendingStarts) bindingBytes += column(pending.preparedBindings);
+    for (const auto& parked : parkRecords) bindingBytes += column(parked.preparedBindings);
     return ActionPlayStorageBytes() + ActionPlayDirectoryBytes() + ActionPlayDynamicBytes() +
         column(actionFiringPlanScratch) + column(actionStepPlanScratch) + column(actionVariableWriteScratch) +
         column(actionSelectionResetScratch) + column(actionFixedSelectionCommitInputs) + column(actionQueueResetScratch) +
@@ -334,6 +337,7 @@ std::size_t Engine::PreparationStorageBytes() const noexcept {
         column(initialPendingVariableOwnerScratch) +
         ImmediateEntryAttemptStorageBytes() + PendingSelectionStorageBytes() + CapturedVoiceStorageBytes() +
         queueProgramBanks.RequestedBytes() + queueProgramBanks.DirectoryBytes() +
+        queueScheduleStorage.StorageBytes() + bindingBytes +
         originalSourceSubmissions.StorageBytes() + originalSinglePreparationHolders.RequestedBytes() +
         originalSinglePreparationHolders.DirectoryBytes() + originalQueueSourcePreparationHolders.RequestedBytes() +
         originalQueueSourcePreparationHolders.DirectoryBytes();
@@ -4248,6 +4252,21 @@ VnResult DetachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
     return VN_OK;
 }
 
+bool PrepareVoiceBindings(Engine& engine,
+    std::vector<ParamSystem::PreparedBindingToken>& preparations, std::size_t count) noexcept {
+    try {
+        if (count > preparations.capacity() && !engine.AllowNativeBackingAllocation()) return false;
+        preparations.resize(count);
+        for (auto& preparation : preparations)
+            if (!preparation.IsPrepared() && !engine.params.PrepareBinding(&preparation)) return false;
+        return true;
+    } catch (const std::bad_alloc&) {
+        return false;
+    } catch (const std::length_error&) {
+        return false;
+    }
+}
+
 VnResult ApplyVoiceBinding(Engine& engine, VnVoiceHandle publicHandle,
                            BindingId id) {
     const BindingTable::Definition* def = engine.bindings.Find(id);
@@ -4440,6 +4459,8 @@ VnResult ApplyVoiceBinding(Engine& engine, VnVoiceHandle publicHandle,
         engine.commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
+    ParamSystem::PreparedBindingToken preparation;
+    if (!engine.params.PrepareBinding(&preparation)) return VN_BACKPRESSURE;
     if (def->targetId == kTargetVoicePitch &&
         ::GuardCompletionMutation(engine, publicHandle) != VN_OK) {
         return VN_BACKPRESSURE;
@@ -4447,7 +4468,7 @@ VnResult ApplyVoiceBinding(Engine& engine, VnVoiceHandle publicHandle,
     switch (engine.params.BindVoiceInstance(view,
                                             resolved.renderHandle,
                                             /*attachmentObjectId=*/{},
-                                            /*viaApply=*/true)) {
+                                            /*viaApply=*/true, &preparation)) {
     case ParamSystem::InstanceBindResult::Ok:
         return VN_OK;
     case ParamSystem::InstanceBindResult::Duplicate:
@@ -7206,7 +7227,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         definition.transitionMs = &binding.transitionMs;
         definition.revision = &binding.revision;
         definition.snapshotOwned = true;
-        if (engine.params.BindVoiceInstance(definition, render, binding.objectId, false) !=
+        if (engine.params.StageOwnedVoiceInstance(definition, render, binding.objectId, false) !=
             harken::ParamSystem::InstanceBindResult::Ok) {
             return rollback(VN_BACKPRESSURE);
         }
@@ -7650,6 +7671,7 @@ engine.runtimeRecreateRequired = true;
             std::move(originalEffectProofs[i]).Consume();
         harken::VoicePool::ConsumePreparedCommit(std::move(originalVoiceProof));
         harken::TimelineArmTable::ConsumePreparedCommit(std::move(originalArmProof));
+        engine.params.CommitStagedVoiceBindings(render);
         engine.ledger.BindRender(ledgerSlot, render, 128);
         PublishVoiceCommandBatch(engine,
             &engine.timelineBatchReservation,
@@ -7971,6 +7993,7 @@ bool CommitPreparedTimelineVoiceStart(
         return false;
     }
     prepared->inheritedStopCommitted = prepared->inheritedStop.resourceCount != 0;
+    engine.params.CommitStagedVoiceBindings(prepared->renderHandle);
     prepared->prepared = false;
     return true;
 }
@@ -9156,6 +9179,24 @@ harken::EngineQueueProgramBank* ReserveQueueProgramBank(harken::Engine& engine) 
     return engine.ReserveOriginalQueueBank();
 }
 
+bool PrepareQueueProgramColumns(harken::Engine& engine, harken::EngineQueueProgramBank& bank,
+    harken::QueueScheduleShape shape) noexcept {
+    if (bank.scheduleStorageLoan.Valid()) return bank.Shape().Covers(shape);
+    return engine.queueScheduleStorage.Acquire(bank, shape, &bank.scheduleStorageLoan,
+        [&]() noexcept { return engine.AllowNativeBackingAllocation(); });
+}
+
+harken::EngineQueueProgramBank* ReserveQueueProgramBank(harken::Engine& engine,
+    harken::QueueScheduleShape shape) noexcept {
+    auto* bank = engine.ReserveOriginalQueueBank();
+    if (bank == nullptr) return nullptr;
+    if (PrepareQueueProgramColumns(engine, *bank, shape)) return bank;
+    const bool returned = engine.ResetOriginalQueueBank(*bank);
+    assert(returned);
+    (void)returned;
+    return nullptr;
+}
+
 bool ResetQueueProgramBank(harken::Engine& engine,
     harken::EngineQueueProgramBank& bank) noexcept {
     return engine.ResetOriginalQueueBank(bank);
@@ -9357,7 +9398,10 @@ bool CanonicalQueueBankHasReaders(const harken::Engine& engine,
 }
 
 void ServiceQueueProgramBanks(harken::Engine& engine) noexcept {
-    if (engine.queueProgramBanks.ConstructedCount() == 0) return;
+    if (engine.queueProgramBanks.ConstructedCount() == 0) {
+        (void)engine.queueScheduleStorage.CollectUnused();
+        return;
+    }
     for (auto& bank : engine.queueProgramBanks) bank.heldByOwner = false;
     for (const auto& row : engine.playableServices) {
         if (row.queueCurrentProgramBank != nullptr) row.queueCurrentProgramBank->heldByOwner = true;
@@ -9416,6 +9460,7 @@ void ServiceQueueProgramBanks(harken::Engine& engine) noexcept {
             (void)reset;
         }
     }
+    (void)engine.queueScheduleStorage.CollectUnused();
 }
 
 class PreparedTimelineStarts {
@@ -9446,9 +9491,10 @@ public:
         return ownsScratch_ && index < starts_.size() ? &starts_[index] : nullptr;
     }
 
-    bool ReserveQueuePrograms(harken::EnginePlayableServiceRow& row) noexcept {
+    bool ReserveQueuePrograms(harken::EnginePlayableServiceRow& row,
+        harken::QueueScheduleShape shape) noexcept {
         if (!ownsScratch_) return false;
-        queueBank_ = ReserveQueueProgramBank(engine_);
+        queueBank_ = ReserveQueueProgramBank(engine_, shape);
         if (queueBank_ != nullptr) return true;
         row.Invocation().actionTerminalResult = VN_BACKPRESSURE;
         row.Invocation().actionTerminalReason = harken::ActionTerminalReason::Capacity;
@@ -10965,10 +11011,32 @@ bool ServiceOrdinaryUnpublishedStartExit(
 
 bool FreezeInitialQueuePrograms(harken::Engine& engine, harken::EnginePlayableServiceRow& row) noexcept {
     if (!row.queueMode || row.queueCurrentProgramBank != nullptr) return true;
-    auto*& bank = row.queueCurrentProgramBank;
-    bank = ReserveQueueProgramBank(engine);
-    if (bank == nullptr) return false;
     const auto bases = StorageBasesForRow(engine, row);
+    harken::QueueScheduleShape shape{};
+    const auto include = [&](const harken::ProgramView* program) noexcept {
+        if (program == nullptr || program->eventCount > UINT32_MAX - shape.events) return false;
+        ++shape.programs;
+        shape.events += static_cast<std::uint32_t>(program->eventCount);
+        return true;
+    };
+    const auto count = std::max(row.scheduleLeafCount, row.queueCurrentScheduleLeafCount);
+    if (row.variableControlInstance.Valid()) {
+        for (std::uint32_t index = 0; index < row.variableControlDiscreteMemberCount; ++index)
+            if (!include(ResolveInitialMemberProgram(engine, bases.member + index))) return false;
+        for (std::uint32_t index = 0; index < row.variableControlContinuousMemberCount; ++index)
+            if (!include(ResolveInitialMemberProgram(engine,
+                    bases.member + row.variableControlContinuousMemberOffset + index))) return false;
+    } else if (count != 0 || !(row.zeroWorkMarker || row.hasZeroWorkCompletion)) {
+        if (count <= 1 && !row.queueCurrentCompositeOwner.Valid()) {
+            if (!include(&row.schedule)) return false;
+        } else {
+            for (std::uint32_t index = 0; index < count; ++index)
+                if (!include(&engine.playableSchedules[bases.endpoint + index])) return false;
+        }
+    }
+    auto*& bank = row.queueCurrentProgramBank;
+    bank = ReserveQueueProgramBank(engine, shape);
+    if (bank == nullptr) return false;
     if (row.variableControlInstance.Valid()) {
         const auto freezeMembers = [&](std::uint32_t offset, std::uint32_t count) {
             for (std::uint32_t index = 0; index < count; ++index) {
@@ -10980,7 +11048,6 @@ bool FreezeInitialQueuePrograms(harken::Engine& engine, harken::EnginePlayableSe
         return freezeMembers(0, row.variableControlDiscreteMemberCount) &&
             freezeMembers(row.variableControlContinuousMemberOffset, row.variableControlContinuousMemberCount);
     }
-    const auto count = std::max(row.scheduleLeafCount, row.queueCurrentScheduleLeafCount);
     if (count == 0 &&
         (row.zeroWorkMarker || row.hasZeroWorkCompletion)) {
         return true;
@@ -24606,7 +24673,9 @@ bool PrepareCompositeQueueContinuation(
     preparedTree.Attach(starts);
     if (!(packQueue ? preparedTree.PrepareLeaves(row.Invocation().packPlaybackView, prepared.data(), materialized.leafCount)
                     : preparedTree.PrepareLeaves(world, prepared.data(), materialized.leafCount))) return false;
-    if (!starts.ReserveQueuePrograms(row)) return false;
+    if (!starts.ReserveQueuePrograms(row, {sourceControlCount + materialized.leafCount,
+            sourceControlCount * (static_cast<std::uint32_t>(sourceFadeActive) + !naturalEnd) +
+                materialized.leafCount * (1u + static_cast<std::uint32_t>(targetFadeActive))})) return false;
     if (successorHasContinuation &&
         !ReserveQueueDecision(
             engine, row, &row.queueSuccessorDecision,
@@ -25932,7 +26001,9 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
 
     PreparedTimelineStarts starts(engine);
     preparedTree.Attach(starts);
-    if (!starts.ReserveQueuePrograms(row)) return QueueContinuationPrepareStatus::Failed;
+    if (!starts.ReserveQueuePrograms(row, {sourceControlCount + 1u,
+            sourceControlCount * (static_cast<std::uint32_t>(sourceFadeActive) + !naturalEnd) +
+                1u + static_cast<std::uint32_t>(targetFadeActive)})) return QueueContinuationPrepareStatus::Failed;
     if (successorHasContinuation &&
         !ReserveQueueDecision(
             engine, row, &row.queueSuccessorDecision,
@@ -27642,7 +27713,7 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
 
     if (!engine.PrepareNativeVoiceSide(scratch, false, 1))
         return QueueContinuationPrepareStatus::Deferred;
-    scratch.frontierProgramBank = ReserveQueueProgramBank(engine);
+    scratch.frontierProgramBank = ReserveQueueProgramBank(engine, {1u, 1u});
     if (scratch.frontierProgramBank == nullptr) return QueueContinuationPrepareStatus::Failed;
     harken::OccurrenceKey occurrenceKey{};
     occurrenceKey.arrangingInstance = queueOwnerInstance;
@@ -52307,6 +52378,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         std::uint64_t nativeCompletions = 0;
         std::uint64_t nativeGroups = 0;
         std::uint64_t nativeLaneMembers = 0;
+        std::uint64_t nativeBindingRows = 0;
         std::uint64_t queueControls = 0;
         EffectPoolBank::BackingDemand effectInstances{};
         auto token = firstToken();
@@ -52375,7 +52447,13 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 row.Invocation().packPlaybackView.WorldSemanticFingerprint() != stamp.semanticFingerprint) return false;
             profiles[ordinal] = result.profile;
             futures.voice.Include(result.profile.voice);
+            futures.queue.Include(result.profile.queue);
             const auto voiceRows = backing::ReservedRows(result.profile);
+            const auto bindingsPerVoice = std::min({result.profile.voice.bindings,
+                config.voiceBindingInstanceSlots, kMaxVoiceBindingInstanceSlots});
+            const auto bindingRows = voiceRows * bindingsPerVoice;
+            if (nativeBindingRows > UINT64_MAX - bindingRows) return false;
+            nativeBindingRows += bindingRows;
             for (std::uint32_t type = 0; type < effectInstances.size(); ++type) {
                 const auto count = voiceRows * result.profile.voice.effectInstances[type];
                 if (effectInstances[type] > UINT64_MAX - count) return false;
@@ -52460,11 +52538,14 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         nativeCandidate->publicationChildren.resize(producerCount);
         if (!AllowNativeBackingAllocation()) return shortage();
         nativeCandidate->publicationOwners.resize(producerCount);
+        if (queueControls != 0 && !queueScheduleStorage.Prepare(
+                {futures.queue.programs, futures.queue.events}, &nativeCandidate->queueSchedules,
+                [&]() noexcept { return AllowNativeBackingAllocation(); })) return shortage();
         // Queue futures acquire a slot even when their selected schedule has no leaves.
         if (!PrepareActionPlayBacking(producerCount, static_cast<std::uint32_t>(queueControls),
                 &nativeCandidate->actionPlays) ||
-            !PrepareQueueProgramBankBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(
-                2u * queueControls, queueProgramBanks.size())), &nativeCandidate->queueBanks) ||
+            !PrepareQueueProgramBankBacking(queueControls == 0 ? 0u : queueProgramBanks.size(),
+                &nativeCandidate->queueBanks) ||
             !queueInstances.PrepareBacking(static_cast<std::uint32_t>(queueControls),
                 static_cast<std::uint32_t>(queueControls), &nativeCandidate->queues) ||
             !queueCheckpoints.PrepareBacking(static_cast<std::uint32_t>(queueControls), &nativeCandidate->checkpoints) ||
@@ -52487,7 +52568,9 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 nativeGroups, playableServices.Capacity())), &nativeCandidate->services) ||
             !PreparePendingVariableQueueOriginBacking(static_cast<std::uint32_t>(nativeGroups),
                 &nativeCandidate->queueOrigins) ||
-            !effectBank.PrepareBacking(effectInstances, &nativeCandidate->effects)) return shortage();
+            !effectBank.PrepareBacking(effectInstances, &nativeCandidate->effects) ||
+            !params.PrepareBindingBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(
+                nativeBindingRows, params.PreparationCapacity())), &nativeCandidate->bindings)) return shortage();
         for (std::uint32_t ordinal = 0; ordinal < producerCount; ++ordinal)
             if (!nativeCandidate->checkpoints.Split(profiles[ordinal].Q, 0, &queueCandidate[ordinal].checkpoints))
                 return false;
@@ -52533,7 +52616,10 @@ bool Engine::MatchesPendingVariableNativeBacking(OriginalPendingVariableGroupHol
         !owner.nativeRuntimeBacking->queues.instances.Valid() ||
         !owner.nativeRuntimeBacking->queues.conditionals.Valid() || !owner.nativeRuntimeBacking->checkpoints.Valid() ||
         !owner.nativeRuntimeBacking->arms.Valid() ||
+        !owner.nativeRuntimeBacking->bindings.Valid() ||
         !owner.nativeRuntimeBacking->laneAttempts.Valid()) return false;
+    for (const auto& slot : owner.queueRoleReservations)
+        if (slot.capacity != 0 && !owner.nativeRuntimeBacking->queueSchedules.Valid()) return false;
     for (std::size_t index = 0; index < owner.nativeReplacementSlots.size(); ++index) {
         const auto& slot = owner.nativeReplacementSlots[index];
         if (slot.producerOrdinal != (index < producerCount ? index : UINT32_MAX) ||
@@ -63120,8 +63206,10 @@ template <typename Writer>
 bool InstantiatePinnedAndPrimeWith(
     harken::Engine& engine, VnVoiceHandle render,
     const harken::PendingStartRecord::PinnedBinding* pinned,
-    std::uint32_t count, std::uint32_t reservedTargets, Writer& writer,
+    std::uint32_t count, std::uint32_t reservedTargets,
+    std::span<harken::ParamSystem::PreparedBindingToken> preparations, Writer& writer,
     const harken::VariableReadCutReader* reader = nullptr) {
+    if (preparations.size() < count) return false;
     if (reservedTargets > 0) {
         engine.propertyPublisher.ShrinkWorstCase(reservedTargets);
     }
@@ -63134,9 +63222,10 @@ bool InstantiatePinnedAndPrimeWith(
         }
         if (engine.params.BindVoiceInstance(
                 engine.bindings.ViewOf(*def), render,
-                pinned[i].attachmentObjectId, /*viaApply=*/false) !=
+                pinned[i].attachmentObjectId, /*viaApply=*/false, &preparations[i], true) !=
             harken::ParamSystem::InstanceBindResult::Ok) {
             NoteOnsetBindFailure(engine);
+            return false;
         }
     }
     return PushPrimedInitialValuesWith(engine, render, writer, reader);
@@ -63145,20 +63234,22 @@ bool InstantiatePinnedAndPrimeWith(
 bool InstantiatePinnedAndPrime(
     harken::Engine& engine, VnVoiceHandle render,
     const harken::PendingStartRecord::PinnedBinding* pinned,
-    std::uint32_t count, std::uint32_t reservedTargets) {
+    std::uint32_t count, std::uint32_t reservedTargets,
+    std::span<harken::ParamSystem::PreparedBindingToken> preparations) {
     CommandQueueWriter writer(engine);
     return InstantiatePinnedAndPrimeWith(engine, render, pinned, count,
-                                         reservedTargets, writer);
+                                         reservedTargets, preparations, writer);
 }
 
 bool InstantiatePinnedAndPrime(
     harken::Engine& engine, VnVoiceHandle render,
     const harken::PendingStartRecord::PinnedBinding* pinned,
     std::uint32_t count, std::uint32_t reservedTargets,
+    std::span<harken::ParamSystem::PreparedBindingToken> preparations,
     AdmittedCommandWriter& writer,
     const harken::VariableReadCutReader* reader = nullptr) {
     return InstantiatePinnedAndPrimeWith(engine, render, pinned, count,
-                                         reservedTargets, writer, reader);
+                                         reservedTargets, preparations, writer, reader);
 }
 
 const harken::PackLogicImage::VoiceRecipe* FindPlayVoiceRecipe(
@@ -63925,6 +64016,7 @@ void FinalizeParkedVoice(harken::Engine& engine, std::uint32_t ledgerSlot,
     // were already cleared at park.
     engine.bindings.RemoveVoiceEffectInstances(rec.parkedRenderHandle);
     engine.bindings.CancelReservedVoiceEffectInstances(publicHandle);
+    rec.preparedBindings.clear();
     rec.streamResumeFrame = 0;
     rec.active = false;
     engine.ledger.EndParked(ledgerSlot, cause);
@@ -64268,6 +64360,7 @@ DirectParkPendingResult CommitDirectParkPending(
         prec.bindingInstances.push_back(inst);
     }
     prec.instanceReservedTargets = rec.pinnedReservedTargets;
+    prec.preparedBindings = std::move(rec.preparedBindings);
     prec.spatial.spatialized = rec.spatialized;
     prec.spatial.posX = px;
     prec.spatial.posY = py;
@@ -64949,12 +65042,13 @@ PendingStartOutcome StartDeferredVoice(
     preparationGuard.pinnedTransferred = true;
     if (!InstantiatePinnedAndPrime(engine, render, rec.pinnedBindings.data(),
                                    rec.pinnedBindingCount,
-                                   rec.pinnedReservedTargets, commands, initialReader)) {
+                                   rec.pinnedReservedTargets, rec.preparedBindings, commands, initialReader)) {
         return PendingStartOutcome::InvalidInput;
     }
     if (commands.Overflowed()) return PendingStartOutcome::BatchTooLarge;
     if (!variableCut.BindVoice(render)) return PendingStartOutcome::BankBlocked;
     if (!engine.voices.CommitPreparedVoice(render)) return PendingStartOutcome::DeviceError;
+    engine.params.CommitStagedVoiceBindings(render);
     variableCut.Commit();
     engine.ledger.StartPending(ledgerSlot, render);
     engine.voiceManager.ReleaseClaim(rec.publicHandle);
@@ -66196,6 +66290,8 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         rec.state != harken::ParkRecord::State::StreamResumeReady) {
         return false;
     }
+    if (!harken::PrepareVoiceBindings(engine, rec.preparedBindings,
+            rec.bindings.size() + rec.bindingInstances.size())) return false;
     const auto recyclePreparedEffects = [&]() {
         CancelPreparedParkReturn(engine, rec);
     };
@@ -66514,8 +66610,10 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     // that landed while the voice was parked is what the returned voice
     // evaluates. Their resolved values are primed into this same batch
     // below, so the first rendered block already carries them.
+    std::size_t bindingIndex = 0;
     for (const harken::ParamSystem::BindingState& b : rec.bindings) {
-        if (!engine.params.BindVoiceTarget(b.variableId, newRender, b.targetId, b.curve)) {
+        if (!engine.params.BindVoiceTarget(b.variableId, newRender, b.targetId, b.curve,
+                &rec.preparedBindings[bindingIndex++], true)) {
             NoteOnsetBindFailure(engine);
             return false;
         }
@@ -66530,6 +66628,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     }
     for (const harken::ParamSystem::InstanceState& inst :
          rec.bindingInstances) {
+        auto& preparation = rec.preparedBindings[bindingIndex++];
         const harken::BindingTable::Definition* def =
             engine.bindings.Find(inst.definitionId);
         if (def == nullptr || def->scopeKind != harken::kTargetScopeVoice) {
@@ -66538,7 +66637,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         if (engine.params.BindVoiceInstance(engine.bindings.ViewOf(*def),
                                             newRender,
                                             inst.attachmentObjectId,
-                                            inst.viaApply) !=
+                                            inst.viaApply, &preparation, true) !=
             harken::ParamSystem::InstanceBindResult::Ok) {
             NoteOnsetBindFailure(engine);
             return false;
@@ -66662,6 +66761,8 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     }
     if (commands.Overflowed() || !variableCut.BindVoice(newRender) ||
         !engine.voices.CommitPreparedVoice(newRender)) return false;
+    engine.params.CommitStagedVoiceBindings(newRender);
+    rec.preparedBindings.clear();
     variableCut.Commit();
     engine.bindings.ReturnVoiceEffectInstances(rec.parkedRenderHandle, newRender, em);
     if (rec.recipeBindingCount != 0) {
@@ -67221,6 +67322,7 @@ void RunAudibilityPass(harken::Engine& engine) {
             engine.bindings.CancelReservedVoiceEffectInstances(
                 publicHandle);
             engine.params.RetireVoiceTargets(rec.parkedRenderHandle);
+            rec.preparedBindings.clear();
             engine.effectParamTargets.ClearObject(
                 harken::EffectParamTargetStore::Scope::Voice,
                 static_cast<std::uint64_t>(rec.parkedRenderHandle),
@@ -79059,7 +79161,9 @@ bool PrepareQueueTransitionContinuation(
     successorSchedule.armToken =
         engine.playableSuccessorArms[successorBase];
 
-    row.queueSuccessorProgramBank = ReserveQueueProgramBank(engine);
+    row.queueSuccessorProgramBank = ReserveQueueProgramBank(engine,
+        {sourceControlCount + leafCount, targetEventCount +
+            sourceControlCount * (static_cast<std::uint32_t>(sourceFadeActive) + !naturalEnd)});
     if (row.queueSuccessorProgramBank == nullptr) {
         entry.MarkProgramCapacityRefused();
         entry.Result() = VN_BACKPRESSURE;
@@ -80709,7 +80813,7 @@ bool PrepareQueueContinuation(
         row.queueInitialLaneArmGroup = scratch->queueInitialLaneArmGroup;
     }
 
-    row.queueSuccessorProgramBank = ReserveQueueProgramBank(engine);
+    row.queueSuccessorProgramBank = ReserveQueueProgramBank(engine, {leafCount, leafCount});
     if (row.queueSuccessorProgramBank == nullptr) {
         entry.MarkProgramCapacityRefused();
         entry.Result() = VN_BACKPRESSURE;
@@ -90071,6 +90175,13 @@ bool PrepareImmediateActionQueueReplacement(
             (static_cast<std::uint32_t>(sourceFadeActive) +
              static_cast<std::uint32_t>(!naturalEnd));
         const auto successorEventCount = successorLeafCount * (targetFadeActive ? 2u : 1u);
+        if (!PrepareQueueProgramColumns(engine, *scratch.programBank,
+                {sourceSet.count + successorLeafCount, sourceEventCount + successorEventCount})) {
+            plan.queueProgramCapacityRefused = true;
+            plan.result = VN_BACKPRESSURE;
+            (void)ReleaseImmediateActionQueueReplacement(engine, scratch);
+            return false;
+        }
         try {
             const auto resizeColumn = [&](auto& column, std::size_t count) {
                 if (count != 0 && !engine.AllowNativeBackingAllocation()) throw std::bad_alloc{};
@@ -94327,6 +94438,9 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     }
     const std::uint32_t pinnedTargets = UniquePinnedTargetCount(
         *engine, pinnedBindings, matchedBindingCount);
+    std::vector<harken::ParamSystem::PreparedBindingToken> preparedBindings;
+    if (!harken::PrepareVoiceBindings(*engine, preparedBindings, matchedBindingCount))
+        return VN_BACKPRESSURE;
     const auto initialVolumeResult = [&](const harken::VariableReadCutReader* reader = nullptr) {
         float volumeDb = desc->volumeDb;
         for (std::uint32_t i = 0; i < matchedBindingCount; ++i) {
@@ -94531,6 +94645,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         }
         rec.pinnedBindingCount = matchedBindingCount;
         rec.pinnedReservedTargets = pinnedTargets;
+        rec.preparedBindings = std::move(preparedBindings);
         AdoptVoiceRecipe(*engine, rec, voiceRecipe, recipeEffects, recipeBypass);
         recipeGuard.armed = false;
         pinGuard.armed = false;
@@ -94618,6 +94733,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         }
         rec.pinnedBindingCount = matchedBindingCount;
         rec.pinnedReservedTargets = pinnedTargets;
+        rec.preparedBindings = std::move(preparedBindings);
         AdoptVoiceRecipe(*engine, rec, voiceRecipe, recipeEffects, recipeBypass);
         recipeGuard.armed = false;
         pinGuard.armed = false;
@@ -94763,6 +94879,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         }
         rec.pinnedBindingCount = matchedBindingCount;
         rec.pinnedReservedTargets = pinnedTargets;
+        rec.preparedBindings = std::move(preparedBindings);
         AdoptVoiceRecipe(*engine, rec, voiceRecipe, recipeEffects, recipeBypass);
         recipeGuard.armed = false;
         pinGuard.armed = false;
@@ -95151,7 +95268,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     if (matchedBindingCount > 0) {
         pinGuard.armed = false;
         if (!InstantiatePinnedAndPrime(*engine, renderHandle, pinnedBindings,
-                                       matchedBindingCount, pinnedTargets, writer, initialReader)) {
+                                       matchedBindingCount, pinnedTargets, preparedBindings, writer, initialReader)) {
             return writer.Overflowed() ? VN_INVALID_CONFIG : VN_INVALID_ARG;
         }
     }
@@ -95171,6 +95288,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     }
     if (!variableCut.BindVoice(renderHandle)) return VN_BACKPRESSURE;
     if (!engine->voices.CommitPreparedVoice(renderHandle)) return VN_DEVICE_ERROR;
+    engine->params.CommitStagedVoiceBindings(renderHandle);
     variableCut.Commit();
     for (auto& proof : recipeProofs) if (proof.Valid()) std::move(proof).Consume();
     engine->ledger.BindRender(ledgerSlot, renderHandle, priority);

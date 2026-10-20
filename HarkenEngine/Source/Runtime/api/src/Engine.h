@@ -10,6 +10,7 @@
 #include "EngineFrontierOwnerLedger.h"
 #include "EnginePendingSelectionBatch.h"
 #include "EngineNativeVoiceSide.h"
+#include "EngineQueueScheduleStorage.h"
 #include "PlayableRuntime.h"
 #include "ProjectGenerationTransaction.h"
 #include "TraceCodec.h"
@@ -461,6 +462,7 @@ struct PendingStartRecord {
     };
     std::array<PinnedBinding, kMaxVoiceBindingInstanceSlots> pinnedBindings{};
     std::uint32_t pinnedBindingCount = 0;
+    std::vector<ParamSystem::PreparedBindingToken> preparedBindings;
     std::array<VnBindingId, kPackV2VoiceRecipeMaxBindings>
         recipeBindingIds{};
     std::uint32_t recipeBindingCount = 0;
@@ -574,6 +576,7 @@ struct ParkRecord {
     // copy shape. Return re-applies them by identity, so a replaced
     // curve is live on the returned voice's first block.
     std::vector<ParamSystem::InstanceState> bindingInstances;
+    std::vector<ParamSystem::PreparedBindingToken> preparedBindings;
     // Section-10.4 worst-case demand HELD while parked: the instance
     // entries leave the parameter table at park (their identities live
     // above), but a parked logical voice still owns its instances, so
@@ -665,14 +668,9 @@ struct EngineOrdinaryRetiringSource {
     bool resourcesReleased = false;
 };
 
-struct EngineQueueProgramBankBody {
+struct EngineQueueProgramBankBody : EngineQueueScheduleColumns {
     static constexpr std::size_t kProgramCapacity = 2u * kMaxKnownScheduleLeaves;
     static constexpr std::size_t kEventCapacity = 2u * kProgramCapacity;
-    std::array<TimelineEventPayload, kEventCapacity> payloads{};
-    std::array<EventTemplate, kEventCapacity> events{};
-    std::array<TimelineProgramView, kProgramCapacity> runtimes{};
-    std::array<ProgramView, kProgramCapacity> schedules{};
-    std::array<VoiceReleaseObserver, kProgramCapacity> releaseObservers{};
     std::array<TimelineProgramView, 2> aggregateRuntimes{};
     std::array<ProgramView, 2> aggregateSchedules{};
     std::array<CurveLUT, 2> curves{};
@@ -693,6 +691,7 @@ struct EngineQueueProgramBankBody {
 // Lifetime issuance and return belong to the serialized logic producer.
 // Bank storage stays at its original fixed Engine address for every loan.
 struct EngineQueueProgramBank : EngineQueueProgramBankBody {
+    EngineQueueScheduleStorage::Loan scheduleStorageLoan;
     class OriginalReservation {
     public:
         OriginalReservation() noexcept = default;
@@ -809,6 +808,7 @@ struct EngineQueueProgramBank : EngineQueueProgramBankBody {
     // Callers still own the actual program/observer/read-fence qualification.
     bool TryResetStorage() noexcept {
         if (HasOriginalLifetimeOwners()) return false;
+        scheduleStorageLoan.Reset();
         programCount = 0; eventCount = 0; curveCount = 0; aggregateCount = 0;
         groups = {}; transition = {}; retirementAudioSequence = 0;
         occupied = false; published = false; retirementObserved = false; heldByOwner = false;
@@ -4846,11 +4846,13 @@ struct Engine {
         StableStoragePreparation services;
         StableSlotStorage<EngineActionPlayScratch>::Preparation actionPlays;
         StableSlotStorage<EngineQueueProgramBank>::Preparation queueBanks;
+        EngineQueueScheduleStorage::Preparation queueSchedules;
         QueueInstanceTable::BackingPreparation queues;
         QueueCheckpointTable::BackingPreparation checkpoints;
         VariableServiceV1::ReadCutBackingPreparation readCuts;
         StableStoragePreparation queueOrigins;
         EffectPoolBank::BackingPreparation effects;
+        ParamSystem::BackingPreparation bindings;
     };
     struct NativeRuntimeBackingUse {
         std::array<StableStoragePreparedUse, 13> columns;
@@ -4858,10 +4860,12 @@ struct Engine {
         ScheduledTransactionPool::ImmediateLaneBackingUse laneGroups;
         StableSlotStorage<EngineActionPlayScratch>::PreparedUse actionPlays;
         StableSlotStorage<EngineQueueProgramBank>::PreparedUse queueBanks;
+        EngineQueueScheduleStorage::PreparedUse queueSchedules;
         QueueInstanceTable::BackingUse queues;
         QueueCheckpointTable::BackingUse checkpoints;
         VariableServiceV1::ReadCutBackingUse readCuts;
         EffectPoolBank::BackingUse effects;
+        ParamSystem::PreparedUse bindings;
         NativeRuntimeBackingUse(Engine& engine, NativeRuntimeBacking* backing) noexcept
             : columns{Use(backing, 0), Use(backing, 1), Use(backing, 2), Use(backing, 3),
                       Use(backing, 4), Use(backing, 5), Use(backing, 6), Use(backing, 7), Use(backing, 8),
@@ -4872,11 +4876,14 @@ struct Engine {
                   : backing->actionPlays.Use()),
               queueBanks(backing == nullptr ? StableSlotStorage<EngineQueueProgramBank>::PreparedUse{}
                   : backing->queueBanks.Use()),
+              queueSchedules(backing == nullptr ? EngineQueueScheduleStorage::PreparedUse{}
+                  : backing->queueSchedules.Use()),
               queues(backing == nullptr ? nullptr : &backing->queues),
               checkpoints(backing == nullptr ? QueueCheckpointTable::BackingUse{} : backing->checkpoints.Use()),
               readCuts(backing == nullptr ? VariableServiceV1::ReadCutBackingUse{}
                   : backing->readCuts.Use()),
-              effects(EffectPoolBank::UseBacking(backing == nullptr ? nullptr : &backing->effects)) {}
+              effects(EffectPoolBank::UseBacking(backing == nullptr ? nullptr : &backing->effects)),
+              bindings(engine.params, backing == nullptr ? nullptr : &backing->bindings) {}
     private:
         static StableStoragePreparedUse Use(NativeRuntimeBacking* backing, std::uint32_t index) noexcept {
             if (backing == nullptr) return {};
@@ -5693,7 +5700,7 @@ public:
           queuePermutationScratch(resolved.maxQueueChildren),
           queueProjectionScratch(static_cast<std::size_t>(resolved.maxQueueChildren) + 1u),
           bindings(resolved.maxBindings, resolved.maxBindingAttachments,
-                   resolved.maxBuses, params.BindingCapacity()),
+                   resolved.maxBuses, params.PreparationCapacity()),
           busTargets(resolved.maxBuses,
                      resolved.maxVariableSliceTargetsTotal),
           effectParamTargets(
@@ -5817,6 +5824,7 @@ public:
         const auto privateLaneMetadataCapacity = std::max(resolved.maxTransactionEvents,
             resolved.maxKnownScheduleLeaves * 4u);
         if (playSlotCapacity > UINT32_MAX || queueBankCapacity > UINT32_MAX ||
+            !queueScheduleStorage.Configure(static_cast<std::uint32_t>(queueBankCapacity)) ||
             !queueProgramBanks.Reserve(static_cast<std::uint32_t>(queueBankCapacity)) ||
             !actionPlayStorage.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
             !pendingOrdinarySelections.Reserve(static_cast<std::uint32_t>(playSlotCapacity)) ||
@@ -5924,6 +5932,7 @@ public:
             throw std::bad_alloc{};
         }
         if (!params.AttachBindingDependencies(&bindings.Dependencies())) throw std::bad_alloc{};
+        effectParamTargets.AttachBindingDependencies(&bindings.Dependencies());
         emitters.SetVariableChangeObserver(this,
             [](void* context, VnEmitterHandle emitter, VnVariableId variable) noexcept {
                 static_cast<Engine*>(context)->params.NoteVariableWrite(variable, emitter);
@@ -6142,8 +6151,7 @@ public:
         effectSlotConfig.assign(resolved.voiceCapacity.Render(), emptyConfig);
         // One staging record per Logical Voice entry, indexed by ledger slot;
         // only deferred starts are active.
-        pendingStarts.assign(resolved.voiceCapacity.Logical(),
-                             PendingStartRecord{});
+        pendingStarts.resize(resolved.voiceCapacity.Logical());
         voiceBindingCatalogScratch.reserve(resolved.maxBindingAttachments);
         // Per-render-slot origin playable id (0 = none), reset at each play.
         voiceOriginPlayable.assign(resolved.voiceCapacity.Render(), VnObjectId{});
@@ -6152,7 +6160,7 @@ public:
         playbackPaths.resize(resolved.voiceCapacity.Render());
         // One park record per Logical Voice entry, indexed by ledger slot; only
         // Virtual Voices are active.
-        parkRecords.assign(resolved.voiceCapacity.Logical(), ParkRecord{});
+        parkRecords.resize(resolved.voiceCapacity.Logical());
         {
             const std::uint64_t logicalVoices = resolved.voiceCapacity.Logical();
             const std::uint64_t planSlots =
@@ -11968,6 +11976,7 @@ public:
     std::vector<TimelineArmTable::Row*> initialRootArmPublicationRows;
     std::vector<DecisionTable::FrontierPublicationProof> initialRootActivationPublicationProofs;
     // Original bank storage outlives every genuine Engine-held loan.
+    EngineQueueScheduleStorage queueScheduleStorage;
     StableSlotStorage<EngineQueueProgramBank> queueProgramBanks;
     // Original Queue storage outlives every genuine Engine-held loan.
     QueueInstanceTable queueInstances;

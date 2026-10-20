@@ -2711,6 +2711,7 @@ void VariableServiceV1::ProjectCandidate(Engine& engine,
         row.scope.emitterSlot;
     (void)engine.emitters.SetLocalValue(emitter, row.variableId, row.value);
     engine.params.NoteVariableWrite(row.variableId, emitter);
+    engine.bindings.Dependencies().NotifyVariable(row.variableId, emitter);
 }
 
 void VariableServiceV1::ProjectCurrentApplied(Engine& engine,
