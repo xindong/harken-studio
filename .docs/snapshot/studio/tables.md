@@ -125,7 +125,7 @@ Sources 仅在同语言组内移动；Binding 仅编辑本地贡献；Clips 移�
 
 ## 专用编辑面边界
 
-Random、Sequence、Match 的 Selection Editor 行选择可将该行引用的 Child 设为试听目标；编辑器与 Inspector 继续显示当前 Container，不经过全局对象导航。选中只设置目标，播放按钮和播放快捷键使用该目标；Child 本身为 Container 时正常播放该对象自身。工具栏只保留播放控制，不显示目标对象；Control 未固定时同步显示该目标的试听参数，固定时保留原绑定，Reset 跟随试听目标。
+Random、Sequence、Match 的 Selection Editor 行选择可将该行引用的 Child 设为试听目标；编辑器与 Inspector 继续显示当前 Container，不经过全局对象导航。选中只设置目标，播放按钮和播放快捷键使用该目标；Child 本身为 Container 时正常播放该对象自身。用户成功替换已选行的 Child 引用后，试听目标同步为新对象；替换失败、编辑其他行或后台刷新不改变当前试听目标。工具栏只保留播放控制，不显示目标对象；Control 未固定时同步显示该目标的试听参数，固定时保留原绑定，Reset 跟随试听目标。
 
 表内空白、Esc、Match 中 Ctrl 点击已选行或改选 Variable 列等解除行选择的操作，将试听目标恢复为当前编辑器显示的 Container；钻入嵌套对象后恢复的是当前层级，不是最外层绑定对象。点击工具栏、Control 或切换焦点遵循公有表格规则，保留行选择和 Child 试听目标。Hierarchy 中重复点击已选对象也可重新指定目标。绑定、重建、属性刷新和布局恢复不自行取得试听目标；显式进入或返回嵌套 Container 时载入当前显示对象。目标对象或其所属子树删除、工程关闭时清除目标。试听不改变公有选择与拖动规则，选中高亮仍仅出现在 `#` 或承载 handle 的单元格。
 

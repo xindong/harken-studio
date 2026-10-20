@@ -400,8 +400,12 @@ bool SelectionListWidget::replaceOccurrence(uint32_t stableOccurrenceOrdinal, ui
             *boundItem_, candidate.shared,
             stableOccurrenceOrdinal, child->guid))
         return false;
+    const bool updateAudition = selected_ >= 0
+        && selected_ < static_cast<int>(rowWidgets_.size())
+        && rowWidgets_[selected_]->property("stableOccurrenceOrdinal").toUInt() == stableOccurrenceOrdinal;
     if (!commitOccurrences(candidate)) return false;
     rebuildRows();
+    if (updateAudition) emit auditionTargetRequested(child->guid);
     return true;
 }
 

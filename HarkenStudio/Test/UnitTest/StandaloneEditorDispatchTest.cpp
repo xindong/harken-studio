@@ -568,8 +568,11 @@ TEST_F(EditorDockLayoutTest, ChildAuditionIsIndependentOfEditingAndFollowsExplic
         ASSERT_NE(parent, nullptr);
         auto* first = manager.createItem(parent, QStringLiteral("FirstChild"), VNX::ProjectItem::Type::Sound);
         auto* second = manager.createItem(parent, QStringLiteral("SecondChild"), VNX::ProjectItem::Type::Sound);
+        auto* replacement = manager.createItem(parent, QStringLiteral("ReplacementChild"),
+            VNX::ProjectItem::Type::Container);
         ASSERT_NE(first, nullptr);
         ASSERT_NE(second, nullptr);
+        ASSERT_NE(replacement, nullptr);
         auto* selection = parent->comp<VNX::VSelection>();
         selection->mode = mode;
         ASSERT_TRUE(selection->selections.shared.setOccurrenceRows({{first->guid, 0, 50}, {second->guid, 1, 50}}));
@@ -609,8 +612,61 @@ TEST_F(EditorDockLayoutTest, ChildAuditionIsIndependentOfEditingAndFollowsExplic
         EXPECT_EQ(panel->displayedItemGuid(), parent->guid);
         EXPECT_TRUE(panel->isShowingGrid());
         EXPECT_FALSE(reset->isEnabled());
+
+        const auto replaceRowTarget = [&](int row, VNX::ProjectItem* target) {
+            const auto references = mode == VNX::SelectionMode::Match
+                ? panel->discreteGrid()->findChildren<VNX::ObjectRefWidget*>(QStringLiteral("gridTargetRef"))
+                : panel->findChild<VNX::SelectionListWidget*>()->findChildren<VNX::ObjectRefWidget*>(
+                    QStringLiteral("selectionChildObject"));
+            ASSERT_LT(row, references.size());
+            auto* reference = references.at(row);
+            reference->setCurrentObjectID(target->objectID);
+            emit reference->objectChanged(target->objectID);
+            drainEvents();
+        };
+        replaceRowTarget(0, backgroundItem);
+        EXPECT_EQ(window_->auditionTarget(), first);
+        EXPECT_FALSE(reset->isEnabled());
+
+        replaceRowTarget(0, replacement);
+        EXPECT_EQ(window_->auditionTarget(), replacement);
+        EXPECT_EQ(control->boundItem(), parent);
+        EXPECT_TRUE(reset->isEnabled());
         control->setPinned(false);
+        EXPECT_EQ(control->boundItem(), replacement);
+        clickWidget(play, play->rect().center());
+        if (!VNX::AudioEngine::instance().isSimulationMode())
+            EXPECT_TRUE(status->text().contains(replacement->name)) << qPrintable(status->text());
+        EXPECT_EQ(window_->auditionTarget(), replacement);
+        EXPECT_EQ(explorer->selectedItem(), parent);
+        EXPECT_EQ(hierarchy->selectedItem(), parent);
+        EXPECT_EQ(inspector->currentContextItem(), parent);
+        EXPECT_EQ(panel->boundItem(), parent);
+        EXPECT_EQ(panel->displayedItemGuid(), parent->guid);
+
+        replaceRowTarget(1, first);
+        EXPECT_EQ(window_->auditionTarget(), replacement);
+        EXPECT_EQ(control->boundItem(), replacement);
+        clearChildRow(panel);
+        replaceRowTarget(1, second);
+        EXPECT_EQ(window_->auditionTarget(), parent);
+        EXPECT_EQ(control->boundItem(), parent);
+
+        selectChildRow(panel, 0);
+        panel->setPinned(true);
+        router->selectItem(parent, false);
+        emit manager.itemPropertyChanged(parent, QStringLiteral("selections"), nullptr);
+        drainEvents();
+        EXPECT_EQ(window_->auditionTarget(), parent);
+        EXPECT_EQ(control->boundItem(), parent);
+        panel->setPinned(false);
+        drainEvents();
+        selectChildRow(panel, 0);
+        EXPECT_EQ(window_->auditionTarget(), replacement);
+        replaceRowTarget(0, first);
+        EXPECT_EQ(window_->auditionTarget(), first);
         EXPECT_EQ(control->boundItem(), first);
+        EXPECT_FALSE(reset->isEnabled());
 
         clickWidget(play, play->rect().center());
         if (!VNX::AudioEngine::instance().isSimulationMode())

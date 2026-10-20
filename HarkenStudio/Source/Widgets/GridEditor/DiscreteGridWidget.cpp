@@ -698,8 +698,10 @@ bool DiscreteGridWidget::commitReplaceRow(int row, const QUuid& target)
     if (grid_.rows[row].target == target) return true;
     DiscreteGridDef next = grid_;
     next.rows[row].target = target;
+    const bool updateAudition = table_->selectionModel()->isRowSelected(row, {});
     if (!commitGrid(next, tr("Replace Match Child"))) return false;
     requestedSelection_ = std::pair{row, (table_->currentColumn() - kFirstAxisColumn)};
+    if (updateAudition) emit auditionTargetRequested(target);
     return true;
 }
 
