@@ -129,6 +129,8 @@ enum class FlushOutcome : std::uint8_t {
 };
 
 class ParamSystem {
+    struct Binding;
+
 public:
     explicit ParamSystem(const EngineConfig& config);
     ParamSystem(const ParamSystem& other);
@@ -288,6 +290,7 @@ public:
         friend class ParamSystem;
         ParamSystem* m_owner = nullptr;
         std::uint32_t m_slot = UINT32_MAX;
+        Binding* m_stagedBinding = nullptr;
     };
 
     // Attach before creating bindings. A preparation reserves backing only;
@@ -295,9 +298,13 @@ public:
     bool AttachBindingDependencies(BindingDependencyIndex* dependencies) noexcept;
     bool PrepareBinding(PreparedBindingToken* out) noexcept;
     void CancelPreparedBinding(PreparedBindingToken* token) noexcept;
+    // Staging borrows an already prepared, stable token until commit or discard.
+    // The token must not move or be canceled while borrowed. Discard preserves it.
     bool BindVoiceTarget(VnVariableId variableId, VnVoiceHandle handle,
                          std::uint32_t targetId, const Curve& curve,
-                         PreparedBindingToken* preparation = nullptr);
+                         PreparedBindingToken* preparation = nullptr,
+                         bool staged = false);
+    void CommitStagedVoiceBindings(VnVoiceHandle handle) noexcept;
 
     // --- definition-backed binding instances: the M1 mechanism above
     // evolved to reference a
@@ -331,7 +338,8 @@ public:
                                          VnVoiceHandle handle,
                                          VnObjectId attachmentObjectId,
                                          bool viaApply,
-                                         PreparedBindingToken* preparation = nullptr);
+                                         PreparedBindingToken* preparation = nullptr,
+                                         bool staged = false);
     InstanceBindResult CanBindVoiceInstance(
         const BindingDefinitionView& view, VnVoiceHandle handle,
         VnObjectId attachmentObjectId, bool viaApply) const;
@@ -378,6 +386,7 @@ public:
     std::uint32_t BindingCapacity() const {
         return static_cast<std::uint32_t>(m_bindings.size());
     }
+    std::uint32_t PreparationCapacity() const noexcept { return m_preparationCapacity; }
 
     // Removes ALL definition-backed instances of one voice WITHOUT
     // releasing their worst-case demand, returning the unique-target
@@ -887,6 +896,7 @@ private:
         VnEmitterHandle dependencyEmitter = 0;
         std::uint32_t dependencySlot = UINT32_MAX;
         std::uint32_t dependencyGeneration = 0;
+        PreparedBindingToken* preparation = nullptr;
         // Raw (definition-less) and snapshotOwned instances copy their
         // curve here. Live definition-backed instances leave it empty
         // and evaluate through liveCurve instead. snapshotOwned must
@@ -1140,6 +1150,7 @@ private:
     std::vector<std::uint32_t> m_freeDependencySlots;
     std::uint32_t m_dependencySlotCount = 0;
     std::uint32_t m_preparedBindingCount = 0;
+    std::uint32_t m_preparationCapacity = 0;
     std::vector<PrimingInput> m_primingInputs;
     std::vector<Variable> m_projectionVariables;
     std::vector<BindingEvaluation> m_projectionBindings;

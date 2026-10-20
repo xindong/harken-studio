@@ -82,7 +82,7 @@ std::vector<ParamCommit> FlushAll(ParamSystem& params) {
 }
 
 void AttachIndex(ParamSystem& params, harken::BindingDependencyIndex& index) {
-    ASSERT_TRUE(index.Reset(params.BindingCapacity(), params.BindingCapacity() + 2u));
+    ASSERT_TRUE(index.Reset(params.PreparationCapacity(), params.PreparationCapacity() + 2u));
     ASSERT_TRUE(params.AttachBindingDependencies(&index));
 }
 
@@ -129,6 +129,126 @@ TEST(ParamCombine, IndexedPreparationCancelsRefusalsAndConsumesWithoutGrowth) {
     bytes = index.StorageBytes();
     ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice1, harken::kTargetVoiceVolume, curve, &prepared));
     EXPECT_EQ(bytes, index.StorageBytes());
+}
+
+TEST(ParamCombine, IndexedActiveAndLogicalPreparationUseSeparateBounds) {
+    auto config = DefaultConfig();
+    ASSERT_TRUE(harken::VoiceCapacityModel::TryCreate(1, 1, &config.voiceCapacity));
+    config.voiceBindingInstanceSlots = 1;
+    harken::BindingDependencyIndex index;
+    ParamSystem params(config);
+    EXPECT_EQ(1u, params.BindingCapacity());
+    EXPECT_EQ(3u, params.PreparationCapacity());
+    ASSERT_TRUE(index.Reset(params.BindingCapacity(), 3));
+    EXPECT_FALSE(params.AttachBindingDependencies(&index));
+    AttachIndex(params, index);
+    params.OnVoiceStarted(kVoice0, 0, 1);
+    const auto variable = harkentest::ObjectId(7);
+    const Curve curve = LinearCurve(0, 0, 1, -6);
+    ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0, harken::kTargetVoiceVolume, curve));
+    ParamSystem::PreparedBindingToken pending, parked, excess;
+    ASSERT_TRUE(params.PrepareBinding(&pending));
+    ASSERT_TRUE(params.PrepareBinding(&parked));
+    EXPECT_FALSE(params.PrepareBinding(&excess));
+    const auto bytes = index.StorageBytes();
+    EXPECT_FALSE(params.BindVoiceTarget(variable, kVoice1, harken::kTargetVoiceVolume, curve, &pending, true));
+    EXPECT_TRUE(pending.IsPrepared());
+    EXPECT_EQ(0u, params.VoiceBindingCount(kVoice1));
+    EXPECT_EQ(1u, params.BindingCapacity());
+    EXPECT_EQ(bytes, index.StorageBytes());
+    params.CancelPreparedBinding(&pending);
+    ASSERT_TRUE(params.PrepareBinding(&excess));
+    EXPECT_EQ(bytes, index.StorageBytes());
+}
+
+TEST(ParamCombine, IndexedStagedRetryKeepsAcceptedBackingUntilFinalCommit) {
+    static_assert(noexcept(std::declval<ParamSystem&>().CommitStagedVoiceBindings(kVoice0)));
+    auto config = DefaultConfig();
+    ASSERT_TRUE(harken::VoiceCapacityModel::TryCreate(1, 1, &config.voiceCapacity));
+    config.voiceBindingInstanceSlots = 2;
+    harken::BindingDependencyIndex index;
+    ParamSystem params(config);
+    AttachIndex(params, index);
+    const auto variable = harkentest::ObjectId(7);
+    const Curve raw = LinearCurve(0, 0, 1, -6);
+    const Curve instance = LinearCurve(0, 0, 1, -3);
+    const harken::BindingDefinitionView view{harkentest::ObjectId(100), variable,
+        harken::kTargetVoiceVolume, &instance, nullptr, nullptr, true};
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 1));
+    ParamSystem::PreparedBindingToken rawToken, instanceToken;
+    ASSERT_TRUE(params.PrepareBinding(&rawToken));
+    ASSERT_TRUE(params.PrepareBinding(&instanceToken));
+    const auto bytes = index.StorageBytes();
+    for (std::uint32_t generation = 1; generation <= 8; ++generation) {
+        const VnVoiceHandle render = static_cast<VnVoiceHandle>(generation) << 32u;
+        params.OnVoiceStarted(render, -3, 1);
+        ASSERT_TRUE(params.BindVoiceTarget(variable, render, harken::kTargetVoiceVolume, raw, &rawToken, true));
+        ASSERT_EQ(ParamSystem::InstanceBindResult::Ok,
+            params.BindVoiceInstance(view, render, {}, true, &instanceToken, true));
+        EXPECT_TRUE(rawToken.IsPrepared());
+        EXPECT_TRUE(instanceToken.IsPrepared());
+        float volume = 0;
+        ASSERT_TRUE(params.TryPeekResolvedVolume(render, nullptr, &volume));
+        EXPECT_FLOAT_EQ(-12, volume);
+        params.EvaluateDirtyBindings(nullptr);
+        EXPECT_EQ(0u, DirtyDependencyCount(index));
+        params.DiscardPreparedVoice(render);
+        EXPECT_TRUE(rawToken.IsPrepared());
+        EXPECT_TRUE(instanceToken.IsPrepared());
+        EXPECT_EQ(0u, params.VoiceBindingCount(render));
+        EXPECT_EQ(0u, DirtyDependencyCount(index));
+        EXPECT_EQ(bytes, index.StorageBytes());
+    }
+    constexpr VnVoiceHandle committed = 9ULL << 32u;
+    params.OnVoiceStarted(committed, -3, 1);
+    ASSERT_TRUE(params.BindVoiceTarget(variable, committed, harken::kTargetVoiceVolume, raw, &rawToken, true));
+    ASSERT_EQ(ParamSystem::InstanceBindResult::Ok,
+        params.BindVoiceInstance(view, committed, {}, true, &instanceToken, true));
+    params.CommitStagedVoiceBindings(committed);
+    EXPECT_FALSE(rawToken.IsPrepared());
+    EXPECT_FALSE(instanceToken.IsPrepared());
+    EXPECT_EQ(bytes, index.StorageBytes());
+    EXPECT_EQ(1u, DirtyDependencyCount(index));
+    params.EvaluateDirtyBindings(nullptr);
+    EXPECT_FLOAT_EQ(-12, params.ResolvedValue(committed, harken::kTargetVoiceVolume));
+    EXPECT_EQ(0u, DirtyDependencyCount(index));
+}
+
+TEST(ParamCombine, IndexedStagedAssociationsSurviveCompactionAndPrivateCopy) {
+    auto config = DefaultConfig();
+    ASSERT_TRUE(harken::VoiceCapacityModel::TryCreate(2, 0, &config.voiceCapacity));
+    config.voiceBindingInstanceSlots = 2;
+    harken::BindingDependencyIndex index;
+    ParamSystem params(config);
+    AttachIndex(params, index);
+    const auto variable = harkentest::ObjectId(7);
+    const Curve curve = LinearCurve(0, 0, 1, -3);
+    harken::BindingDefinitionView view{harkentest::ObjectId(100), variable,
+        harken::kTargetVoiceVolume, &curve, nullptr, nullptr, true};
+    params.OnVoiceStarted(kVoice0, 0, 1);
+    params.OnVoiceStarted(kVoice1, 0, 1);
+    ASSERT_EQ(ParamSystem::InstanceBindResult::Ok, params.BindVoiceInstance(view, kVoice0, {}, true));
+    ParamSystem::PreparedBindingToken rawToken, instanceToken;
+    ASSERT_TRUE(params.PrepareBinding(&rawToken));
+    ASSERT_TRUE(params.PrepareBinding(&instanceToken));
+    ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice1, harken::kTargetVoiceVolume, curve, &rawToken, true));
+    view.definitionId = harkentest::ObjectId(101);
+    ASSERT_EQ(ParamSystem::InstanceBindResult::Ok,
+        params.BindVoiceInstance(view, kVoice1, {}, true, &instanceToken, true));
+    params.PurgeInstancesOf(harkentest::ObjectId(100));
+    ParamSystem copy(params);
+    copy.DiscardPreparedVoice(kVoice1);
+    EXPECT_TRUE(rawToken.IsPrepared());
+    EXPECT_TRUE(instanceToken.IsPrepared());
+    const auto bytes = index.StorageBytes();
+    params.CommitStagedVoiceBindings(kVoice1);
+    EXPECT_FALSE(rawToken.IsPrepared());
+    EXPECT_FALSE(instanceToken.IsPrepared());
+    EXPECT_EQ(bytes, index.StorageBytes());
+    ASSERT_EQ(VN_OK, params.SetInstalledValue(variable, 1));
+    params.EvaluateDirtyBindings(nullptr);
+    EXPECT_FLOAT_EQ(-6, params.ResolvedValue(kVoice1, harken::kTargetVoiceVolume));
+    EXPECT_EQ(0u, DirtyDependencyCount(index));
 }
 
 TEST(ParamCombine, IndexedCompactionAndAppendRetainFloatingPointContributorOrder) {
@@ -256,7 +376,7 @@ TEST(ParamCombine, IndexedPrivateCopyAndCompactionOwnTheirPendingExits) {
 
 TEST(ParamCombine, IndexedEvaluationLeavesOtherOwnersAndRetiredGenerationsIsolated) {
     ParamSystem params(DefaultConfig());
-    harken::BindingTable bindings(2, 2, 2, params.BindingCapacity(), params.BindingCapacity() + 2u);
+    harken::BindingTable bindings(2, 2, 2, params.PreparationCapacity(), params.PreparationCapacity() + 2u);
     auto& index = bindings.Dependencies();
     ASSERT_TRUE(params.AttachBindingDependencies(&index));
     harken::BusTargetStore buses(2);
