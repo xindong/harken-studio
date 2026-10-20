@@ -44,6 +44,13 @@
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 namespace harken::detail {
 struct ScheduledTransactionPoolCancelTestAccess {
+    static void SetCurrentSliceCommitPageLimit(ScheduledTransactionPool& pool, std::size_t pages) {
+        for (std::uint32_t page = 0; page < pool.pageCount_; ++page) {
+            auto& storage = pool.pageCurrentSliceStorage_[page];
+            storage.rows.SetCommitPageLimitForTests(pages);
+            storage.order.SetCommitPageLimitForTests(pages);
+        }
+    }
     static void SetCurrentSliceSerial(ScheduledTransactionPool& pool, std::uint64_t serial) {
         pool.nextCurrentSliceSequence_ = serial;
     }
@@ -85,8 +92,8 @@ struct ScheduledTransactionPoolCancelTestAccess {
     }
     static bool SetFreeImmediateLaneGeneration(ScheduledTransactionPool& pool,
         std::uint32_t rowIndex, std::uint32_t generation) {
-        if (pool.immediateLaneGroups_ == nullptr ||
-            rowIndex >= pool.config_.maxImmediateLaneGroupRows) return false;
+        if (rowIndex >= pool.config_.maxImmediateLaneGroupRows ||
+            !pool.immediateLaneGroups_.ConstructThrough(rowIndex + 1u)) return false;
         auto& row = pool.immediateLaneGroups_[rowIndex];
         if (row.state.load(std::memory_order_acquire) !=
                 ScheduledTransactionPool::LaneGroupState::Free ||
@@ -5262,6 +5269,54 @@ TEST(ScheduledTransactionPool, NativeStartCalendarRejectsUnknownKindAndCapacityO
     input.kind = harken::CurrentSliceKind::NativeStartCalendar;
     EXPECT_EQ(ReserveRefusal::PageEventCapacity, pool.ReserveCurrentSlice(input, PrePublishLatePolicy::Refuse, 0).refusal);
     EXPECT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+}
+
+TEST(ScheduledTransactionPool, PreparedNativeCalendarBackingSurvivesPageCommitRefusalAndEpochReuse) {
+    auto config = MakeConfig();
+    config.maxCurrentSlicesPerQuantum = 1;
+    config.maxNativeStartCalendarsPerQuantum = 128;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    using Access = harken::detail::ScheduledTransactionPoolCancelTestAccess;
+    Access::SetCurrentSliceCommitPageLimit(pool, 0);
+    EXPECT_FALSE(pool.PrepareNativeStartCalendarBacking(128));
+    ASSERT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+    Access::SetCurrentSliceCommitPageLimit(pool, SIZE_MAX);
+    ASSERT_TRUE(pool.PrepareNativeStartCalendarBacking(128));
+    const auto committed = pool.CurrentSliceCommittedBytes();
+    Access::SetCurrentSliceCommitPageLimit(pool, 0);
+    for (std::uint32_t page = 0; page < pool.PageCount(); ++page) {
+        harken::ScheduledCurrentSliceInput input{};
+        input.executeFrame = static_cast<std::uint64_t>(page) * config.quantumFrames;
+        input.logicCommitSequence = 1;
+        input.slice = {0, 1};
+        ASSERT_EQ(ReserveStatus::Committed,
+            pool.ReserveCurrentSlice(input, PrePublishLatePolicy::Refuse, 0).status);
+        input.kind = harken::CurrentSliceKind::NativeStartCalendar;
+        for (std::uint32_t index = 0; index < 128; ++index) {
+            input.slice.slot = index;
+            harken::HeldCurrentSliceToken held;
+            ASSERT_EQ(ReserveStatus::Committed,
+                pool.ReserveHeldCurrentSlice(input, PrePublishLatePolicy::Refuse, 0, &held).status);
+            ASSERT_TRUE(pool.CancelHeldCurrentSlice(&held));
+            ASSERT_EQ(ReserveStatus::Committed,
+                pool.ReserveHeldCurrentSlice(input, PrePublishLatePolicy::Refuse, 0, &held).status);
+            ASSERT_TRUE(pool.ReleaseHeldCurrentSlice(&held));
+        }
+        EXPECT_EQ(ReserveRefusal::PageEventCapacity,
+            pool.ReserveCurrentSlice(input, PrePublishLatePolicy::Refuse, 0).refusal);
+    }
+    pool.Publish(config.scheduleHorizonFrames);
+    std::array<harken::ConsumedCurrentSlice, 129> consumed{};
+    for (std::uint32_t page = 0; page < pool.PageCount(); ++page) {
+        ASSERT_EQ(consumed.size(), pool.ConsumeCurrentSlicesRt(page, consumed.data(), consumed.size()));
+        EXPECT_EQ(harken::CurrentSliceKind::VariableBankCut, consumed.front().kind);
+        EXPECT_EQ(127u, consumed.back().slice.slot);
+    }
+    EXPECT_EQ(committed, pool.CurrentSliceCommittedBytes());
+    ASSERT_TRUE(pool.ResetForEpoch(0, kEpoch + 2));
+    EXPECT_TRUE(pool.PrepareNativeStartCalendarBacking(128));
+    EXPECT_EQ(committed, pool.CurrentSliceCommittedBytes());
 }
 
 TEST(ScheduledTransactionPool, HeldCurrentSliceCancelPreservesUnrelatedRowsAndHolds) {

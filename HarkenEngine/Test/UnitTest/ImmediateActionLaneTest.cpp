@@ -48,6 +48,88 @@ TEST(ImmediateActionLane, FutureBucketsAreDueWithoutAnotherLogicService) {
     EXPECT_TRUE(lane.Retire(handle));
 }
 
+#if !defined(HARKEN_RT_QUALIFICATION)
+TEST(ImmediateActionLane, SparsePayloadFailureRetainsNoIdentityAndOnlyActualHighSlotRows) {
+    harken::ImmediateActionLane lane;
+    ASSERT_TRUE(lane.Reset({8, 128, 8, 64}));
+    EXPECT_EQ(0u, lane.EventStorageBytes());
+    EXPECT_EQ(0u, lane.MemberStorageBytes());
+    EXPECT_EQ(0u, lane.PayloadCommittedBytes());
+    std::array<harken::ImmediateLaneHandle, 7> empty;
+    for (auto& handle : empty) ASSERT_TRUE(lane.Reserve(1, {0, 1, 0, 1}, &handle));
+    harken::ImmediateLaneHandle high;
+    lane.SetPayloadCommitPageLimitsForTests(0, 0);
+    EXPECT_FALSE(lane.Reserve(2, {1, 0, 1, 1}, &high));
+    EXPECT_FALSE(high.Valid());
+    EXPECT_EQ(0u, lane.EventStorageBytes());
+    lane.SetPayloadCommitPageLimitsForTests(SIZE_MAX, 0);
+    EXPECT_FALSE(lane.Reserve(2, {1, 0, 1, 1}, &high));
+    EXPECT_FALSE(high.Valid());
+    EXPECT_EQ(sizeof(harken::ImmediateLaneEvent), lane.EventStorageBytes());
+    EXPECT_EQ(0u, lane.MemberStorageBytes());
+    lane.SetPayloadCommitPageLimitsForTests(0, SIZE_MAX);
+    ASSERT_TRUE(lane.Reserve(2, {1, 0, 1, 1}, &high));
+    EXPECT_EQ(7u, high.slot);
+    EXPECT_EQ(1u, high.generation);
+    EXPECT_EQ(sizeof(harken::ImmediateLaneEvent), lane.EventStorageBytes());
+    EXPECT_EQ(sizeof(harken::ImmediateLaneMemberManifest), lane.MemberStorageBytes());
+    const harken::TimelineProgramView program{};
+    const auto event = Event(0, &program, 42);
+    ASSERT_TRUE(lane.Prepare(high, &event, 1));
+    std::uint64_t anchor = 0;
+    ASSERT_TRUE(lane.TryPlace(high, 64, 0, &anchor));
+    ASSERT_TRUE(lane.Publish(high));
+    const auto* bucket = lane.CaptureDue(high.slot, 1);
+    ASSERT_NE(nullptr, bucket);
+    ASSERT_NE(nullptr, lane.Events(high.slot, bucket));
+    EXPECT_EQ(42u, lane.Events(high.slot, bucket)[0].event.executionOrdinal);
+    ASSERT_TRUE(lane.Claim(high, bucket));
+    ASSERT_TRUE(lane.Finish(high.slot, bucket, true));
+    EXPECT_TRUE(lane.Retire(high));
+    for (const auto handle : empty) EXPECT_TRUE(lane.Retire(handle));
+}
+
+TEST(ImmediateActionLane, PreparedPayloadBackingProtectsFutureAcquireAndActiveContents) {
+    harken::ImmediateActionLane lane;
+    ASSERT_TRUE(lane.Reset({3, 128, 8, 64}));
+    harken::StableStoragePreparation backing;
+    ASSERT_TRUE(lane.PrepareAttemptBacking(&backing));
+    harken::ImmediateLaneHandle ordinary;
+    ASSERT_TRUE(lane.Reserve(1, {1, 0, 0, 1}, &ordinary));
+    EXPECT_EQ(2u * 128u * sizeof(harken::ImmediateLaneEvent), lane.EventStorageBytes());
+    EXPECT_EQ(2u * 128u * sizeof(harken::ImmediateLaneMemberManifest), lane.MemberStorageBytes());
+    const harken::TimelineProgramView program{};
+    const auto event = Event(0, &program, 42);
+    ASSERT_TRUE(lane.Prepare(ordinary, &event, 1));
+    std::uint64_t anchor = 0;
+    ASSERT_TRUE(lane.TryPlace(ordinary, 64, 0, &anchor));
+    ASSERT_TRUE(lane.Publish(ordinary));
+    harken::ImmediateLaneHandle native;
+    const auto committed = lane.PayloadCommittedBytes();
+    lane.SetPayloadCommitPageLimitsForTests(0, 0);
+    {
+        auto use = backing.Use();
+        ASSERT_TRUE(lane.Reserve(2, {128, 0, 128, 128}, &native));
+        EXPECT_NE(ordinary.slot, native.slot);
+    }
+    EXPECT_EQ(committed, lane.PayloadCommittedBytes());
+    harken::StableStoragePreparation secondBacking;
+    EXPECT_FALSE(lane.PrepareAttemptBacking(&secondBacking));
+    EXPECT_FALSE(secondBacking.Valid());
+    lane.SetPayloadCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX);
+    ASSERT_TRUE(lane.PrepareAttemptBacking(&secondBacking));
+    EXPECT_EQ(3u * 128u * sizeof(harken::ImmediateLaneEvent), lane.EventStorageBytes());
+    EXPECT_FALSE(lane.Reset({1, 1, 1, 64}));
+    const auto* bucket = lane.CaptureDue(ordinary.slot, 1);
+    ASSERT_NE(nullptr, bucket);
+    EXPECT_EQ(42u, lane.Events(ordinary.slot, bucket)[0].event.executionOrdinal);
+    ASSERT_TRUE(lane.Claim(ordinary, bucket));
+    ASSERT_TRUE(lane.Finish(ordinary.slot, bucket, true));
+    EXPECT_TRUE(lane.Retire(ordinary));
+    EXPECT_TRUE(lane.Retire(native));
+}
+#endif
+
 TEST(ImmediateActionLane, BucketClaimReceiptExistsOnlyWhileExactClaimIsOwned) {
     harken::ImmediateActionLane lane;
     ASSERT_TRUE(lane.Reset({1, 1, 1, 64}));

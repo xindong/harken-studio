@@ -7,6 +7,8 @@
 #include <harken/core/PackPlaybackView.h>
 #include <harken/core/CurrentSelection.h>
 #include <harken/core/EngineConfig.h>
+#include <harken/core/TimelineProgram.h>
+#include <harken/render/generated/harken_effect_registry.g.h>
 
 #include <algorithm>
 #include <array>
@@ -18,6 +20,7 @@ namespace harken::native_backing {
 
 inline constexpr std::uint32_t kLeafCapacity = kMaxKnownScheduleLeaves;
 inline constexpr std::uint32_t kPathCapacity = kSelectionPathNodeCapacity;
+inline constexpr std::uint32_t kControlSideCapacity = 2u * (kLeafCapacity + kPathCapacity + 1u);
 static_assert(kLeafCapacity == 64 && kPathCapacity == 64);
 
 enum class Status : std::uint8_t {
@@ -42,9 +45,33 @@ enum Flag : std::uint32_t {
     IndependentFutureEnvelope = 1u << 7,
 };
 
+struct VoiceColumns {
+    std::uint32_t bindings = 0;
+    std::uint32_t path = 0;
+    std::uint32_t sends = 0;
+    std::uint32_t effects = 0;
+    std::array<std::uint32_t, kEffectRegistryRowCount> effectInstances{};
+
+    void Include(const VoiceColumns& other) noexcept {
+        bindings = std::max(bindings, other.bindings);
+        path = std::max(path, other.path);
+        sends = std::max(sends, other.sends);
+        effects = std::max(effects, other.effects);
+        for (std::size_t type = 0; type < effectInstances.size(); ++type)
+            effectInstances[type] = std::max(effectInstances[type], other.effectInstances[type]);
+    }
+    void AddPathPrefix(std::uint32_t rows) noexcept {
+        if (path != 0) path = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+            kPlaybackPathRowCapacity, static_cast<std::uint64_t>(path) + rows));
+    }
+};
+
 struct Profile {
     std::uint32_t current = 0;
     std::array<std::uint32_t, kLeafCapacity + 1u> H{};
+    std::uint32_t Q = 0;
+    std::uint32_t controlSides = 0;
+    VoiceColumns voice{};
 };
 
 struct Result {
@@ -56,6 +83,7 @@ struct Result {
 
 struct Limits {
     std::uint32_t immediateFutureSides = 0;
+    std::uint32_t queueRoleCapacity = 0;
     std::uint32_t currentScheduleDepth = 0;
     std::uint32_t directFutureScheduleDepth = 0;
     std::uint32_t propertyPrefixCount = 0;
@@ -79,11 +107,21 @@ inline bool SameRef(const PlayableRefV1& a, const PlayableRefV1& b) noexcept {
 
 class WorldContent {
 public:
-    explicit WorldContent(const PlayableWorldViewV1& view) noexcept : view_(view) {}
+    explicit WorldContent(const PlayableWorldViewV1& view,
+        std::uint32_t liveBindingCapacity = kMaxVoiceBindingInstanceSlots) noexcept
+        : view_(view), liveBindingCapacity_(liveBindingCapacity) {}
     AuthorityStamp Authority() const noexcept {
         return {view_.generation, view_.identity.runtimeSemanticFingerprint};
     }
     static constexpr bool kDirectNestedContainer = true;
+    const PlayablePropertyProgramViewV1* Property(const PlayableRefV1& ref) const noexcept {
+        for (std::uint32_t i = 0; view_.properties != nullptr && i < view_.propertyCount; ++i)
+            if (view_.properties[i].stableId == ref.stableId &&
+                view_.properties[i].programSemanticFingerprint == ref.expectedProgramSemanticFingerprint)
+                return &view_.properties[i];
+        return nullptr;
+    }
+    std::uint32_t BindingCount(VnObjectId) const noexcept { return liveBindingCapacity_; }
     const ContainerProgramViewV3* Container(const PlayableRefV1& ref) const noexcept {
         if (view_.containers == nullptr) return nullptr;
         for (std::uint32_t i = 0; i < view_.containerCount; ++i) {
@@ -107,6 +145,7 @@ public:
     }
 private:
     const PlayableWorldViewV1& view_;
+    std::uint32_t liveBindingCapacity_ = 0;
 };
 
 class PackContent {
@@ -116,6 +155,16 @@ public:
         return {view_.CompositeGeneration(), view_.WorldSemanticFingerprint()};
     }
     static constexpr bool kDirectNestedContainer = false;
+    const PlayablePropertyProgramViewV1* Property(const PlayableRefV1& ref) const noexcept {
+        using Kind = playableproperties::ContentPropertyKindV1;
+        const auto kind = ref.kind == PlayableKindV1::Sound ? Kind::Sound
+            : ref.kind == PlayableKindV1::Container ? Kind::Container
+            : ref.kind == PlayableKindV1::Track ? Kind::Track : Kind::Piece;
+        return view_.ResolveProperty(kind, ref.stableId);
+    }
+    std::uint32_t BindingCount(VnObjectId object) const noexcept {
+        return view_.ResolveVoiceBindings(object, nullptr, 0);
+    }
     const ContainerProgramViewV3* Container(const PlayableRefV1& ref) const noexcept {
         return view_.ResolveContainer(ref.stableId, ref.expectedProgramSemanticFingerprint);
     }
@@ -157,6 +206,10 @@ inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexce
     if (!b) return b;
     a.flags |= b.flags;
     a.profile.current = SaturatingAdd(a.profile.current, b.profile.current, kLeafCapacity, a.flags);
+    a.profile.Q = SaturatingAdd(a.profile.Q, b.profile.Q, limits.queueRoleCapacity, a.flags);
+    a.profile.controlSides = SaturatingAdd(a.profile.controlSides, b.profile.controlSides,
+        kControlSideCapacity, a.flags);
+    a.profile.voice.Include(b.profile.voice);
     for (std::uint32_t t = 1; t <= kLeafCapacity; ++t)
         a.profile.H[t] = SaturatingAdd(a.profile.H[t], b.profile.H[t], limits.immediateFutureSides, a.flags);
     return a;
@@ -167,6 +220,9 @@ inline Result Alternative(Result a, const Result& b) noexcept {
     if (!b) return b;
     a.flags |= b.flags;
     a.profile.current = std::max(a.profile.current, b.profile.current);
+    a.profile.Q = std::max(a.profile.Q, b.profile.Q);
+    a.profile.controlSides = std::max(a.profile.controlSides, b.profile.controlSides);
+    a.profile.voice.Include(b.profile.voice);
     for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) a.profile.H[t] = std::max(a.profile.H[t], b.profile.H[t]);
     return a;
 }
@@ -321,6 +377,24 @@ public:
         memo_.Clear();
         result = Visit(root, Mode::Frontier, {kPathCapacity, limits_.currentScheduleDepth,
             kPathCapacity - limits_.propertyPrefixCount, 0, Domain::Current});
+        if (result && result.profile.voice.path != 0) {
+            const auto* property = content_.Property(root);
+            if (property != nullptr) {
+                const bool structural = property->structuralAncestorCount != 0;
+                const auto count = structural ? property->structuralAncestorCount : property->organizationLayerAncestorCount;
+                result.profile.voice.AddPathPrefix(count);
+                for (std::uint32_t i = 0; i < count; ++i) {
+                    if ((structural && property->structuralAncestors == nullptr) ||
+                        (!structural && property->organizationLayerAncestors == nullptr))
+                        return Failure(Status::InvalidInput);
+                    const auto id = structural ? property->structuralAncestors[i].stableId
+                        : property->organizationLayerAncestors[i].layerStableId;
+                    result.profile.voice.bindings = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+                        kMaxVoiceBindingInstanceSlots,
+                        static_cast<std::uint64_t>(result.profile.voice.bindings) + content_.BindingCount(id)));
+                }
+            }
+        }
         if (!(content_.Authority() == expected)) return Failure(Status::AuthorityMismatch);
         return result;
     }
@@ -407,6 +481,13 @@ private:
         if (!inserted) return entry->state == MemoState::Visiting
             ? Failure(Status::InvalidInput) : entry->result;
         entry->result = Compute(ref, mode, budget);
+        if (entry->result && entry->result.profile.voice.path != 0) {
+            auto& voice = entry->result.profile.voice;
+            if (ref.kind != PlayableKindV1::Sound)
+                voice.AddPathPrefix(ref.kind == PlayableKindV1::Piece ? 1u : 2u);
+            voice.bindings = static_cast<std::uint32_t>(std::min<std::uint64_t>(kMaxVoiceBindingInstanceSlots,
+                static_cast<std::uint64_t>(voice.bindings) + content_.BindingCount(ref.stableId)));
+        }
         entry->state = MemoState::Ready;
         return entry->result;
     }
@@ -415,6 +496,20 @@ private:
         if (ref.kind == PlayableKindV1::Sound) {
             Result result{};
             result.profile.current = 1;
+            result.profile.voice.path = 1;
+            const auto* property = content_.Property(ref);
+            if (property != nullptr) {
+                result.profile.voice.sends = property->payload.sendCount;
+                result.profile.voice.effects = property->payload.effectNodeCount;
+                if (property->payload.effectNodeCount != 0 && property->payload.effectNodes == nullptr)
+                    return Failure(Status::InvalidInput);
+                for (std::uint32_t index = 0; index < std::min(property->payload.effectNodeCount,
+                        kTimelineMaxVoiceEffects); ++index) {
+                    for (std::uint32_t type = 0; type < kEffectRegistryRowCount; ++type)
+                        if (kEffectRegistry[type].effectType == property->payload.effectNodes[index].effectType)
+                            ++result.profile.voice.effectInstances[type];
+                }
+            }
             return result;
         }
         if (ref.kind == PlayableKindV1::Track || ref.kind == PlayableKindV1::Piece) return Schedule(ref, budget);
@@ -512,7 +607,10 @@ private:
             continuous = Concurrent(continuous, Visit(child->playable, Mode::Frontier, budget), limits_);
             if (!continuous) return continuous;
         }
-        return Concurrent(discrete, continuous, limits_);
+        auto result = Concurrent(discrete, continuous, limits_);
+        result.profile.controlSides = SaturatingAdd(result.profile.controlSides, 2u,
+            kControlSideCapacity, result.flags);
+        return result;
     }
 
     bool CanWrap(const ContainerProgramViewV3& program) const noexcept {
@@ -553,6 +651,7 @@ private:
         for (std::uint32_t i = 0; i < program.childCount; ++i) {
             auto current = Visit(program.children[i].playable, Mode::Frontier, budget);
             if (!current) return current;
+            current.profile.Q = SaturatingAdd(current.profile.Q, 1, limits_.queueRoleCapacity, current.flags);
             std::uint32_t capacity = 0;
             for (std::uint32_t j = 0; j < program.childCount; ++j) {
                 const bool possible = program.mode == ContainerModeV1::SequenceQueue

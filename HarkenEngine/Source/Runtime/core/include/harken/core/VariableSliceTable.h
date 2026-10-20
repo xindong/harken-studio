@@ -4,6 +4,8 @@
 #include "harken/core/CommandQueue.h"
 #include "harken/core/VariableReadCut.h"
 
+#include "harken/core/StableRowStorage.h"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -151,6 +153,13 @@ public:
     std::uint32_t SourceObserverCount(VariableSliceRef ref) const noexcept;
     std::uint32_t InvalidationReasons(VariableSliceRef ref) const noexcept;
     std::size_t StorageBytes() const noexcept;
+    std::size_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
+    std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
+    std::size_t RowReservedBytes() const noexcept { return rows_.ReservedBytes(); }
+    std::uint32_t ConstructedRowCount() const noexcept { return rows_.ConstructedCount(); }
+    void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
+        rows_.SetCommitPageLimitForTests(pages);
+    }
     bool Publish(VariableSliceRef ref) noexcept;
     bool CanPublishPrepared(VariableSliceRef ref, bool allowPreparedSources = false) const noexcept;
     VariableSliceInvalidationResult Invalidate(
@@ -225,6 +234,7 @@ private:
     };
 
     Row* Resolve(VariableSliceRef ref) noexcept;
+    bool PrepareRow(std::uint32_t slot) noexcept;
     const Row* Resolve(VariableSliceRef ref) const noexcept;
     bool ReleaseSpan(std::uint32_t offset, std::uint32_t count) noexcept;
     bool RecycleRow(Row& row, VariableSliceRef ref) noexcept;
@@ -236,7 +246,7 @@ private:
     std::uint32_t capacity_ = 0;
     std::uint32_t maxTargetsPerSlice_ = 0;
     std::uint32_t targetPoolCapacity_ = 0;
-    std::unique_ptr<Row[]> rows_;
+    StableRowStorage<Row> rows_;
     std::vector<Payload> payloads_;
     std::vector<std::uint32_t> freeRows_;
     std::vector<std::uint32_t> freePayloads_;

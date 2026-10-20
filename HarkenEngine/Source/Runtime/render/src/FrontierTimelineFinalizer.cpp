@@ -94,9 +94,7 @@ struct FrontierTimelineFinalizer::Impl {
     struct PendingEvent {
         std::uint64_t work = 0;
         ConsumedEvent source{};
-        VoiceTimelineEvent voice{};
         bool controller = false;
-        bool completesControl = false;
     };
     struct PendingGroup {
         std::uint64_t work = 0;
@@ -229,6 +227,28 @@ struct FrontierTimelineFinalizer::Impl {
     std::uint64_t laneOriginalQuantum = 0;
 
     Impl(VoicePool& v, TimelineArmTable& a) : voices(v), arms(a) {}
+    static void DecodeVoiceEvent(Event& event, const TimelineEventPayload& payload,
+        std::uint16_t offset) noexcept {
+        event.controller = payload.kind == TimelineEventKind::ControllerActivation;
+        event.completesControl = payload.kind == TimelineEventKind::VariableWeight ||
+            (payload.kind == TimelineEventKind::Start && (payload.reserved & kTimelineEventTransientStartArm) != 0) ||
+            (payload.kind == TimelineEventKind::Stop && (payload.reserved & kTimelineEventTransientControlArm) != 0);
+        event.voice.kind = payload.kind;
+        event.voice.offset = offset;
+        event.voice.envelopeDirection = payload.envelopeDirection;
+        event.voice.authoredFadeOutCandidate = event.source.authoredFadeOutCandidate;
+        event.voice.authoredRootStop = payload.kind == TimelineEventKind::Stop &&
+            (payload.reserved & kTimelineEventAuthoredRootStop) != 0;
+        event.voice.frame = payload.envelopeStartFrame;
+        event.voice.endFrame = payload.envelopeEndFrame;
+        event.voice.value = payload.sourceStartFrame;
+        event.voice.variableWeight = payload.variableWeight;
+        event.voice.variableWeightOwner = payload.variableWeightOwner;
+        event.voice.envelopeCurve = payload.envelopeCurve;
+        event.voice.order = event.order;
+        event.voice.authoredStopOperation = payload.authoredStopOperation;
+        event.voice.controlCause = payload.controlCause;
+    }
     std::uint64_t DueQuantum() const noexcept { return laneSourceResumed ? laneOriginalQuantum : quantum; }
     QueueFrontierSourceWaitContext SourceWaitContext() const noexcept {
         return {immediateLane, immediateLaneBucket, decisions, immediateLaneSlot};
@@ -632,8 +652,7 @@ struct FrontierTimelineFinalizer::Impl {
         for (std::uint32_t i = 0; i < eventCount; ++i) {
             auto& event = events[i];
             if (!includesEvent(event)) continue;
-            pendingEvents[pendingEventCount++] = {work, event.source, event.voice,
-                event.controller, event.completesControl};
+            pendingEvents[pendingEventCount++] = {work, event.source, event.controller};
             Reject(event, kTimelineDispositionArmPending);
         }
         for (std::uint32_t i = 0; i < groupCount; ++i)
@@ -673,9 +692,21 @@ struct FrontierTimelineFinalizer::Impl {
                 const auto& pending = pendingEvents[i];
                 if (pending.work != work) continue;
                 ++eventTotal;
-                if (pending.controller) continue;
-                const auto* arm = arms.Resolve(pending.source.armToken);
-                valid = arm != nullptr && arm->programGeneration == pending.source.program.programGeneration && valid;
+                if (pending.controller) {
+                    TimelineTransactionProgramRef original{};
+                    valid = decisions->CaptureFrontierControlProgram(pending.source.frontier.group.decision, &original) &&
+                        original.program == pending.source.program.program &&
+                        original.programGeneration == pending.source.program.programGeneration && valid;
+                } else {
+                    const auto* arm = arms.Resolve(pending.source.armToken);
+                    valid = arm != nullptr && arm->programGeneration == pending.source.program.programGeneration && valid;
+                }
+                if (!valid) continue;
+                const auto* program = pending.source.program.program;
+                valid = program != nullptr && program->generation == pending.source.program.programGeneration &&
+                    program->payloads != nullptr && pending.source.payload < program->payloadCount &&
+                    (program->payloads[pending.source.payload].kind == TimelineEventKind::ControllerActivation) ==
+                        pending.controller;
             }
             if (!valid) { RemovePending(work); continue; }
             if (eventTotal > pool->MaxEventsPerQuantum() - eventCount ||
@@ -708,10 +739,7 @@ struct FrontierTimelineFinalizer::Impl {
                 auto& event = events[eventCount++];
                 event.source = pending.source;
                 event.order = OrderOf(event.source);
-                event.voice = pending.voice;
-                event.voice.offset = 0;
-                event.controller = pending.controller;
-                event.completesControl = pending.completesControl;
+                DecodeVoiceEvent(event, event.source.program.program->payloads[event.source.payload], 0);
                 event.resumed = true;
             }
             RemovePending(work);
@@ -3188,28 +3216,11 @@ bool FrontierTimelineFinalizer::CollectEvent(const ConsumedEvent& source,
         event.disposition = kTimelineDispositionProtocolViolation;
         return true;
     }
-    event.controller = payload->kind == TimelineEventKind::ControllerActivation;
-    event.completesControl = payload->kind == TimelineEventKind::VariableWeight ||
-        (payload->kind == TimelineEventKind::Start && (payload->reserved & kTimelineEventTransientStartArm) != 0) ||
-        (payload->kind == TimelineEventKind::Stop && (payload->reserved & kTimelineEventTransientControlArm) != 0);
-    event.voice.kind = payload->kind;
     event.resumed = self.laneSourceResumed;
-    event.voice.offset = static_cast<std::uint16_t>(source.executeFrame - self.DueQuantum() * self.frames);
+    self.DecodeVoiceEvent(event, *payload,
+        static_cast<std::uint16_t>(source.executeFrame - self.DueQuantum() * self.frames));
     if (laneSource != nullptr && !self.LaneEventOffset(source, &event.voice.offset))
         event.disposition = kTimelineDispositionProtocolViolation;
-    event.voice.envelopeDirection = payload->envelopeDirection;
-    event.voice.authoredFadeOutCandidate = source.authoredFadeOutCandidate;
-    event.voice.authoredRootStop = payload->kind == TimelineEventKind::Stop &&
-        (payload->reserved & kTimelineEventAuthoredRootStop) != 0;
-    event.voice.frame = payload->envelopeStartFrame;
-    event.voice.endFrame = payload->envelopeEndFrame;
-    event.voice.value = payload->sourceStartFrame;
-    event.voice.variableWeight = payload->variableWeight;
-    event.voice.variableWeightOwner = payload->variableWeightOwner;
-    event.voice.envelopeCurve = payload->envelopeCurve;
-    event.voice.order = event.order;
-    event.voice.authoredStopOperation = payload->authoredStopOperation;
-    event.voice.controlCause = payload->controlCause;
     return true;
 }
 

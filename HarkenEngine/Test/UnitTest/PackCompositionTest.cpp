@@ -8,6 +8,7 @@
 #include "TestSupport/OrdinaryTransactionProbe.h"
 #include "ActionAdmission.h"
 #include "PackVariablePublication.h"
+#include "EngineNativeBackingEnvelope.h"
 #include <harken/HarkenVariables.h>
 
 #include "harken/core/CurrentWorld.h"
@@ -10455,11 +10456,11 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
     } publicationReset{session.Engine()};
     if (failAfterC0Publication) {
         if (holdPublishedReaderThroughRelease) {
-            const auto attempts = session.Engine()->immediateEntryAttempts.get();
+            const auto attempts = session.Engine()->immediateEntryAttempts.data();
             const auto held = std::find_if(attempts,
-                attempts + session.Engine()->immediateEntryAttemptCapacity,
+                attempts + session.Engine()->immediateEntryAttempts.size(),
                 [firing](const auto& attempt) { return attempt.active && attempt.root == firing; });
-            ASSERT_NE(attempts + session.Engine()->immediateEntryAttemptCapacity, held);
+            ASSERT_NE(attempts + session.Engine()->immediateEntryAttempts.size(), held);
             publication.coordinator = held->initialQueueCoordinator;
             publication.primary = held->initialQueuePrimaryGroup;
             publication.attempt = held;
@@ -10511,10 +10512,10 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
         const auto ticket = row->ticket;
         const auto transaction = row->schedule.transactionId;
         const auto sequence = row->event.logicCommitSequence;
-        const auto attempt = std::find_if(session.Engine()->immediateEntryAttempts.get(),
-            session.Engine()->immediateEntryAttempts.get() + session.Engine()->immediateEntryAttemptCapacity,
+        const auto attempt = std::find_if(session.Engine()->immediateEntryAttempts.data(),
+            session.Engine()->immediateEntryAttempts.data() + session.Engine()->immediateEntryAttempts.size(),
             [firing](const auto& attempt) { return attempt.active && attempt.root == firing; });
-        ASSERT_NE(session.Engine()->immediateEntryAttempts.get() + session.Engine()->immediateEntryAttemptCapacity, attempt);
+        ASSERT_NE(session.Engine()->immediateEntryAttempts.data() + session.Engine()->immediateEntryAttempts.size(), attempt);
         ASSERT_TRUE(attempt->initialQueueCoordinator.Valid());
         for (unsigned identity = 0; identity < 8u; ++identity) {
             SCOPED_TRACE(identity);
@@ -10546,8 +10547,8 @@ static void CheckPackQueueSuccessorOutsideWindow(bool lateFirstUpdate,
     harken::DecisionToken heldCoordinator{};
     harken::Plan03GroupSliceIdentity heldPrimary{};
     if (holdPrivateReaderThroughRelease) {
-        const auto attempts = session.Engine()->immediateEntryAttempts.get();
-        const auto end = attempts + session.Engine()->immediateEntryAttemptCapacity;
+        const auto attempts = session.Engine()->immediateEntryAttempts.data();
+        const auto end = attempts + session.Engine()->immediateEntryAttempts.size();
         heldAttempt = std::find_if(attempts, end,
             [firing](const auto& candidate) { return candidate.active && candidate.root == firing; });
         ASSERT_NE(end, heldAttempt);
@@ -11853,13 +11854,12 @@ void VerifyPackActionDelayedGenericContainerCommit(
                   << " pool=" << hasPool << ':' << poolToken.slot << '/'
                   << poolToken.generation << " firing=" << fixture.firing
                   << " attempt=" << (attempt == engine->actionPlayStorage.end()
-                         ? UINT32_MAX : static_cast<std::uint32_t>(
-                               attempt - engine->actionPlayStorage.begin()))
+                         ? UINT32_MAX : engine->actionPlayStorage.IndexOf(*attempt))
                   << " phase=" << (attempt == engine->actionPlayStorage.end()
                          ? -1 : static_cast<int>(attempt->phase))
                   << " row=" << (attempt == engine->actionPlayStorage.end()
                          ? nullptr : engine->actionPlayScratch[
-                               attempt - engine->actionPlayStorage.begin()].row)
+                               engine->actionPlayStorage.IndexOf(*attempt)].row)
                   << " leaseToken=" << fixture.record.targetPackLease.leaseToken
                   << '\n';
     }
@@ -12243,7 +12243,7 @@ void DiagnoseDeferredPackVariableControlHandoffPartial(
     EXPECT_EQ(EngineFrontierAttemptPhase::PublishedStopping, scratch.storage.phase);
     EXPECT_EQ(scratch.storage.generation,
               parent->publishedDeferredStoppingGeneration);
-    EXPECT_EQ(&scratch - engine->actionPlayScratch.data(),
+    EXPECT_EQ(engine->actionPlayScratch.IndexOf(scratch),
               parent->publishedDeferredStoppingSlot);
     EXPECT_TRUE(engine->playablePartitions.Published(
         parent->partition, parent->identity));
@@ -14324,7 +14324,7 @@ TEST(PackComposition, PackActionDelayedPlayableSliceFullRetriesWithoutRetag) {
                   fixture.token, fixture.record.targetPackLease));
     EXPECT_EQ(nullptr, fixture.LiveStartRow());
     EXPECT_EQ(0u, fixture.session.Engine()->playableInstances.LiveCount());
-    EXPECT_FALSE(fixture.session.Engine()->actionPlayScratch[0].prepared);
+    for (const auto& scratch : fixture.session.Engine()->actionPlayScratch) EXPECT_FALSE(scratch.prepared);
     for (const auto& lease : occupying) {
         EXPECT_EQ(VN_OK, fixture.session.Engine()->ReleasePackIdentityLease(lease));
     }
@@ -14998,7 +14998,7 @@ TEST(PackComposition, PackActionDelayedAdmissionRecheckRejectsPastTarget) {
     EXPECT_EQ(nullptr, fixture.LiveStartRow());
     EXPECT_EQ(0u, engine->voices.ActiveCount());
     EXPECT_EQ(0u, engine->playableInstances.LiveCount());
-    EXPECT_FALSE(engine->actionPlayScratch[0].prepared);
+    for (const auto& scratch : engine->actionPlayScratch) EXPECT_FALSE(scratch.prepared);
     if (engine->actionDeferredRecords.LiveCount() != 0) {
         EXPECT_EQ(VN_OK,
                   engine->packComposition.ValidateLease(
@@ -15876,8 +15876,7 @@ void VerifyPackActionDelayedRetainedClaimAcrossCancelRequest(
             return attempt.ordinaryDeferredRollback.active;
         });
     ASSERT_NE(engine->actionPlayStorage.end(), retained);
-    const auto attemptSlot = static_cast<std::uint32_t>(
-        retained - engine->actionPlayStorage.begin());
+    const auto attemptSlot = engine->actionPlayStorage.IndexOf(*retained);
     DeferredIntentToken poolToken{};
     ASSERT_TRUE(engine->actionDeferredRecords.PoolToken(
         fixture.token, &poolToken));
@@ -17211,7 +17210,10 @@ TEST(PackComposition,
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_TRUE(row->queueContinuationPrepared);
     EXPECT_FALSE(row->queueSameProgramKey);
-    EXPECT_EQ(480u, row->queueSuccessorVoice.authoredDurationFrames);
+    const auto& successorVoice = engine->playableSuccessorVoices[
+        engine->playableStorage.EndpointBase(row->partition.slot)];
+    ASSERT_TRUE(successorVoice.Valid());
+    EXPECT_EQ(480u, successorVoice.Facts().authoredDurationFrames);
     EXPECT_EQ(row->queueCompletionFrame + 240u,
               row->queueSuccessorSchedule.entryAnchorFrame);
 
@@ -18342,6 +18344,269 @@ struct ContainerMatrixWorld {
             ComputeCurrentWorldFingerprintV4(world);
     }
 };
+
+struct QueueRoleCounterFixture {
+    using Ref = harken::PlayableRefV1;
+    using Mode = harken::ContainerModeV1;
+    std::array<harken::ContainerProgramViewV3, 16> programs{};
+    std::array<std::vector<harken::ContainerChildProgramViewV2>, 16> children;
+    std::array<std::vector<harken::DiscreteGridRowViewV1>, 16> discrete;
+    std::array<std::vector<harken::ContinuousGridRowViewV1>, 16> continuous;
+    harken::TrackScheduleProgramViewV1 track{};
+
+    QueueRoleCounterFixture() {
+        track.rootDefinition = MakeRef(harken::PlayableKindV1::Track, 99001);
+        track.scheduleSemanticFingerprint = 1;
+    }
+    static Ref MakeRef(harken::PlayableKindV1 kind, std::uint32_t id) {
+        Ref ref{};
+        ref.kind = kind;
+        ref.stableId = harkentest::ObjectId(id);
+        ref.expectedProgramSemanticFingerprint = id;
+        ref.contentRevision = 1;
+        ref.routeStableId = VN_BUS_MASTER;
+        ref.compatibilityFingerprint = 1;
+        return ref;
+    }
+    static Ref Sound() { return MakeRef(harken::PlayableKindV1::Sound, 99000); }
+    Ref Container(std::uint32_t index) const {
+        return MakeRef(harken::PlayableKindV1::Container, 99100 + index);
+    }
+    Ref Set(std::uint32_t index, Mode mode, const std::vector<Ref>& refs) {
+        auto& rows = children[index];
+        rows.clear();
+        for (std::uint32_t ordinal = 0; ordinal < refs.size(); ++ordinal) {
+            harken::ContainerChildProgramViewV2 child{};
+            child.playable = refs[ordinal];
+            child.stableChildOrdinal = ordinal;
+            child.authoredStableOrder = ordinal;
+            rows.push_back(child);
+        }
+        auto& program = programs[index];
+        program = {};
+        const auto ref = Container(index);
+        program.containerStableId = ref.stableId;
+        program.programSemanticFingerprint = ref.expectedProgramSemanticFingerprint;
+        program.mode = mode;
+        program.queueCycle = harken::QueueCycleV1::Once;
+        program.childCount = static_cast<std::uint32_t>(rows.size());
+        program.children = rows.data();
+        return ref;
+    }
+    Ref Chain(std::uint32_t first, std::uint32_t count, Ref leaf) {
+        for (auto remaining = count; remaining != 0; --remaining)
+            leaf = Set(first + remaining - 1, Mode::SequenceQueue, {leaf});
+        return leaf;
+    }
+    void Rows(std::uint32_t index, const std::vector<std::uint32_t>& discreteOrdinals,
+        const std::vector<std::uint32_t>& continuousOrdinals) {
+        discrete[index].clear();
+        for (auto ordinal : discreteOrdinals) {
+            harken::DiscreteGridRowViewV1 row{};
+            row.stableRowOrdinal = static_cast<std::uint32_t>(discrete[index].size());
+            row.childStableOrdinal = ordinal;
+            discrete[index].push_back(row);
+        }
+        continuous[index].clear();
+        for (auto ordinal : continuousOrdinals) {
+            harken::ContinuousGridRowViewV1 row{};
+            row.stableRowOrdinal = static_cast<std::uint32_t>(continuous[index].size());
+            row.childStableOrdinal = ordinal;
+            continuous[index].push_back(row);
+        }
+        auto& program = programs[index];
+        program.discreteRowCount = static_cast<std::uint32_t>(discrete[index].size());
+        program.discreteRows = discrete[index].data();
+        program.continuousRowCount = static_cast<std::uint32_t>(continuous[index].size());
+        program.continuousRows = continuous[index].data();
+    }
+    static harken::native_backing::Limits Limits() {
+        harken::native_backing::Limits limits{};
+        limits.queueRoleCapacity = 128;
+        limits.immediateFutureSides = 4;
+        limits.currentScheduleDepth = 8;
+        limits.directFutureScheduleDepth = 8;
+        return limits;
+    }
+    harken::native_backing::Result Count(Ref root,
+        harken::native_backing::Limits limits = Limits()) const {
+        harken::PlayableWorldViewV1 view{};
+        view.generation = 1;
+        view.identity.runtimeSemanticFingerprint = 1;
+        view.containers = programs.data();
+        view.containerCount = static_cast<std::uint32_t>(programs.size());
+        view.trackSchedules = &track;
+        view.trackScheduleCount = 1;
+        const harken::native_backing::WorldContent content(view);
+        std::vector<harken::native_backing::MemoEntry> entries(512);
+        harken::native_backing::MemoWorkspace memo(entries.data(), entries.size());
+        harken::native_backing::Counter counter(content, limits, memo);
+        return counter.Count(root, content.Authority());
+    }
+};
+
+void ExpectQueueRoleCounter(const harken::native_backing::Result& result,
+    std::uint32_t queues, std::uint32_t current, std::uint32_t future = 0,
+    std::uint32_t flags = 0) {
+    ASSERT_EQ(harken::native_backing::Status::Ok, result.status);
+    EXPECT_EQ(queues, result.profile.Q);
+    EXPECT_EQ(current, result.profile.current);
+    for (std::uint32_t threshold = 1; threshold <= harken::native_backing::kLeafCapacity; ++threshold)
+        EXPECT_EQ(threshold == 1 ? future : 0, result.profile.H[threshold]);
+    EXPECT_EQ(flags, result.flags);
+    EXPECT_EQ(static_cast<std::uint64_t>(current) + future,
+        harken::native_backing::ReservedRows(result.profile));
+}
+
+TEST(PackComposition, QueueRoleCounterCountsTerminalAndEmptyNative) {
+    QueueRoleCounterFixture fixture;
+    using Mode = QueueRoleCounterFixture::Mode;
+    ExpectQueueRoleCounter(fixture.Count(fixture.Sound()), 0, 1);
+    const auto empty = fixture.Set(0, Mode::SequenceQueue, {});
+    ExpectQueueRoleCounter(fixture.Count(empty), 0, 0);
+    const auto terminal = fixture.Chain(1, 1, fixture.Sound());
+    ExpectQueueRoleCounter(fixture.Count(terminal), 1, 1);
+    const auto nativeZero = fixture.Chain(2, 1, fixture.track.rootDefinition);
+    ExpectQueueRoleCounter(fixture.Count(nativeZero), 1, 0, 0,
+        harken::native_backing::UnprunedSchedule);
+    const auto nested = fixture.Chain(3, 1, terminal);
+    ExpectQueueRoleCounter(fixture.Count(nested), 2, 1);
+}
+
+TEST(PackComposition, QueueRoleCounterCombinesAlternativesAndConcurrentOccurrences) {
+    QueueRoleCounterFixture fixture;
+    using Mode = QueueRoleCounterFixture::Mode;
+    const auto three = fixture.Chain(0, 3, fixture.Sound());
+    const auto one = fixture.Chain(3, 1, fixture.Sound());
+    const auto alternatives = fixture.Set(4, Mode::Sequence, {one, three});
+    ExpectQueueRoleCounter(fixture.Count(alternatives), 3, 1);
+    const auto repeated = fixture.Set(5, Mode::VariableControl, {one, one});
+    fixture.Rows(5, {}, {0, 1, 1});
+    ExpectQueueRoleCounter(fixture.Count(repeated), 2, 2);
+    const auto two = fixture.Chain(7, 2, fixture.Sound());
+    const auto combined = fixture.Set(6, Mode::VariableControl, {two, one, three});
+    fixture.Rows(6, {0, 1}, {1, 2, 2});
+    ExpectQueueRoleCounter(fixture.Count(combined), 6, 3);
+}
+
+TEST(PackComposition, QueueRoleCounterUsesIndependentLogicalCapacity) {
+    QueueRoleCounterFixture fixture;
+    const auto five = fixture.Chain(0, 5, fixture.track.rootDefinition);
+    const auto root = fixture.Set(5, QueueRoleCounterFixture::Mode::VariableControl,
+        std::vector<harken::PlayableRefV1>(16, five));
+    std::vector<std::uint32_t> ordinals;
+    for (std::uint32_t ordinal = 0; ordinal < 16; ++ordinal) ordinals.push_back(ordinal);
+    fixture.Rows(5, {}, ordinals);
+    auto limits = fixture.Limits();
+    limits.immediateFutureSides = 0;
+    ExpectQueueRoleCounter(fixture.Count(root, limits), 80, 0, 0,
+        harken::native_backing::UnprunedSchedule);
+    limits.queueRoleCapacity = 7;
+    ExpectQueueRoleCounter(fixture.Count(root, limits), 7, 0, 0,
+        harken::native_backing::UnprunedSchedule | harken::native_backing::SaturatedLegalBound);
+}
+
+TEST(PackComposition, QueueRoleCounterKeepsOnlyPreparedGuardPrefix) {
+    QueueRoleCounterFixture fixture;
+    using Mode = QueueRoleCounterFixture::Mode;
+    const auto root = fixture.Chain(0, 2, fixture.Sound());
+    auto limits = fixture.Limits();
+    limits.propertyPrefixCount = 63;
+    ExpectQueueRoleCounter(fixture.Count(root, limits), 1, 0, 0,
+        harken::native_backing::OmittedPathBranch);
+    limits.propertyPrefixCount = 64;
+    ExpectQueueRoleCounter(fixture.Count(root, limits), 0, 0, 0,
+        harken::native_backing::OmittedPathBranch);
+    const auto ordinary = fixture.Set(3, Mode::Sequence, {fixture.Container(1)});
+    const auto seeded = fixture.Set(2, Mode::SequenceQueue, {ordinary});
+    limits = fixture.Limits();
+    limits.seedPrefixCount = 64;
+    ExpectQueueRoleCounter(fixture.Count(seeded, limits), 1, 0, 0,
+        harken::native_backing::OmittedSeedBranch);
+    const auto cycle = fixture.Set(4, Mode::SequenceQueue, {fixture.Container(4)});
+    ExpectQueueRoleCounter(fixture.Count(cycle), 64, 0, 0,
+        harken::native_backing::OmittedDepthBranch);
+}
+
+TEST(PackComposition, QueueRoleCounterPreservesWorldDirectAndStaticFutureModes) {
+    QueueRoleCounterFixture fixture;
+    using Mode = QueueRoleCounterFixture::Mode;
+    const auto terminal = fixture.Chain(0, 1, fixture.Sound());
+    const auto root = fixture.Set(1, Mode::SequenceQueue, {fixture.Sound(), terminal});
+    ExpectQueueRoleCounter(fixture.Count(root), 2, 1, 1,
+        harken::native_backing::IndependentFutureEnvelope);
+    std::array<harken::ScheduleClipPlacementV1, 2> placements{};
+    placements[0].content = terminal;
+    placements[1].content = fixture.Sound();
+    fixture.track.placementCount = static_cast<std::uint32_t>(placements.size());
+    fixture.track.placements = placements.data();
+    const auto staticFlags = harken::native_backing::UnprunedSchedule |
+        harken::native_backing::ExistingDynamicPath;
+    ExpectQueueRoleCounter(fixture.Count(fixture.track.rootDefinition), 0, 1, 0, staticFlags);
+    const auto withTrack = fixture.Set(2, Mode::SequenceQueue,
+        {fixture.Sound(), fixture.track.rootDefinition});
+    fixture.children[2][1].timingHint = harken::MakeScheduleReferenceTimingHint(
+        harken::PlayableKindV1::Track, fixture.track.rootDefinition.stableId,
+        fixture.track.scheduleSemanticFingerprint);
+    ExpectQueueRoleCounter(fixture.Count(withTrack), 1, 1, 1,
+        staticFlags | harken::native_backing::IndependentFutureEnvelope);
+}
+
+void ExpectFrozenPackQueueRoleCounter(const harken::ContainerWorldInstallViewV1& world,
+    const harken::PlayableRefV1& root, std::uint32_t queues, std::uint32_t current,
+    std::uint32_t future, std::uint32_t packFlags, std::uint32_t worldFlags) {
+    harken::PackComposition composition(1);
+    const auto bytes = BuildCanonicalPartitionPack(22, 1, 7,
+        WrapWorldPartition(22, 7, world, 0));
+    ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, UINT64_C(1) << 32, 8));
+    const auto lookup = composition.Lookup(root.stableId);
+    ASSERT_EQ(VN_OK, lookup.result);
+    harken::PackPlaybackView packView;
+    ASSERT_TRUE(composition.PlaybackViewAtLease(lookup.lease, &packView));
+    harken::PlayableWorldViewV1 worldView;
+    ASSERT_TRUE(composition.PlayableWorldAtLease(lookup.lease, &worldView));
+    std::vector<harken::native_backing::MemoEntry> entries(512);
+    harken::native_backing::MemoWorkspace memo(entries.data(), entries.size());
+    const auto limits = QueueRoleCounterFixture::Limits();
+    const harken::native_backing::PackContent packContent(packView);
+    harken::native_backing::Counter packCounter(packContent, limits, memo);
+    ExpectQueueRoleCounter(packCounter.Count(root, packContent.Authority()),
+        queues, current, future, packFlags);
+    const harken::native_backing::WorldContent worldContent(worldView);
+    harken::native_backing::Counter worldCounter(worldContent, limits, memo);
+    ExpectQueueRoleCounter(worldCounter.Count(root, worldContent.Authority()),
+        queues, current, future, worldFlags);
+    EXPECT_EQ(VN_OK, composition.ReleaseLease(lookup.lease));
+}
+
+TEST(PackComposition, QueueRoleCounterExecutesActualFrozenPackAndWorldAdapters) {
+    using namespace harken::native_backing;
+    ContainerMatrixWorld terminal(ContainerModeV1::SequenceQueue,
+        ContainerMatrixChild::Sound, 1, 1);
+    ExpectFrozenPackQueueRoleCounter(terminal.world, terminal.rootRef, 1, 1, 0, 0, 0);
+    QueueSequenceBranchesWorldImage nested({1, 1, 1, 1}, 1,
+        ContainerModeV1::SequenceQueue, ContainerModeV1::SequenceQueue);
+    ExpectFrozenPackQueueRoleCounter(nested.world, nested.Ref(6), 2, 1, 1,
+        ExistingDirectRefusal | IndependentFutureEnvelope,
+        ExistingDynamicPath | IndependentFutureEnvelope);
+    ContainerMatrixWorld scheduled(ContainerModeV1::SequenceQueue,
+        ContainerMatrixChild::Track, 1, 1);
+    scheduled.children[1] = scheduled.children[0];
+    scheduled.children[1].stableChildOrdinal = 8;
+    scheduled.children[1].authoredStableOrder = 2;
+    scheduled.containers[0].childCount = 2;
+    scheduled.occurrences[2] = scheduled.occurrences[1];
+    scheduled.occurrences[1] = scheduled.occurrences[0];
+    scheduled.occurrences[1].stableOccurrenceOrdinal = 8;
+    scheduled.occurrences[1].occurrenceSemanticFingerprint =
+        ComputePlayableOccurrenceFingerprintV1(scheduled.occurrences[1]);
+    scheduled.occurrenceCount = 3;
+    scheduled.world.playableOccurrenceCount = scheduled.occurrenceCount;
+    scheduled.world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(scheduled.world);
+    ExpectFrozenPackQueueRoleCounter(scheduled.world, scheduled.rootRef, 1, 1, 1,
+        UnprunedSchedule | IndependentFutureEnvelope,
+        UnprunedSchedule | IndependentFutureEnvelope);
+}
 
 struct OriginalDeferredOperationFixture {
     static constexpr std::uint32_t kSampleRate = 48000;
@@ -19751,8 +20016,8 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
             for (std::uint32_t index = 0; index < engine.playableStorage.memberStride; ++index) {
                 const auto slot = row->scheduleStorageBase + index;
                 if (staggered && target == 0) {
-                    if (engine.playableScheduleVoices[slot].soundId != ContainerMatrixWorld::kSecondSound) continue;
-                } else if (engine.playableScheduleVoices[slot].target.occurrenceOrdinal != ordinal) continue;
+                    if (engine.playableScheduleVoices[slot].Facts().soundId != ContainerMatrixWorld::kSecondSound) continue;
+                } else if (engine.playableScheduleVoices[slot].Facts().target.occurrenceOrdinal != ordinal) continue;
                 const auto arm = engine.playableScheduleArms[slot];
                 TimelineArmObservation onset{};
                 const auto render = engine.playableScheduleRenderHandles[slot];
@@ -19942,7 +20207,7 @@ TEST(PackComposition, VariableControlPartialCompletionKeepsSurvivorsWithoutResta
         engine.nullBackend.Pump(1);
         for (std::uint32_t index = 0; index < engine.playableStorage.memberStride; ++index) {
             const auto slot = row->scheduleStorageBase + index;
-            if (engine.playableScheduleVoices[slot].soundId != ContainerMatrixWorld::kFirstSound) continue;
+            if (engine.playableScheduleVoices[slot].Facts().soundId != ContainerMatrixWorld::kFirstSound) continue;
             const auto arm = engine.playableScheduleArms[slot];
             if (arm.slot == firstArm.slot && arm.generation == firstArm.generation) continue;
             TimelineArmObservation observed{};
@@ -20904,7 +21169,7 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
                 for (std::size_t slot = 0; slot < engine.playableScheduleArms.size(); ++slot) {
                     const auto& arm = engine.playableScheduleArms[slot];
                     if (arm.slot != heard.token.slot || arm.generation != heard.token.generation) continue;
-                    EXPECT_FLOAT_EQ(-6.0f, engine.playableScheduleVoices[slot].volumeDb);
+                    EXPECT_FLOAT_EQ(-6.0f, engine.playableScheduleVoices[slot].Facts().volumeDb);
                     found = true;
                 }
                 EXPECT_TRUE(found);
@@ -21798,11 +22063,13 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
         run.leafCount = selected.kind == PlayableKind::Sound ? 1u : 2u;
         const bool currentMultiLeaf = run.leafCount > 1u;
         if (!currentMultiLeaf) {
-            EXPECT_EQ(0u, resource->voice.sourceStartFrame);
-            EXPECT_EQ(harkentest::ObjectId(0u), resource->voice.target.clipId);
-            EXPECT_EQ(0u, resource->voice.target.clipGuidHigh);
-            EXPECT_EQ(0u, resource->voice.target.clipGuidLow);
-            EXPECT_EQ(harkentest::ObjectId(0u), resource->voice.target.trackId);
+            const auto* currentInstall = engine->ResolvePlayableServiceVoice(*resource);
+            ASSERT_NE(nullptr, currentInstall);
+            EXPECT_EQ(0u, currentInstall->Facts().sourceStartFrame);
+            EXPECT_EQ(harkentest::ObjectId(0u), currentInstall->Facts().target.clipId);
+            EXPECT_EQ(0u, currentInstall->Facts().target.clipGuidHigh);
+            EXPECT_EQ(0u, currentInstall->Facts().target.clipGuidLow);
+            EXPECT_EQ(harkentest::ObjectId(0u), currentInstall->Facts().target.trackId);
         }
         run.baseline = engine->mixer.BlocksRendered();
         if (availableInstances != 0 && !runs.empty()) {
@@ -21834,10 +22101,10 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
             while (identityOwner != 0 && identityOwner != identity.rootInstance)
                 identityOwner = engine->playableInstances.Classify(identityOwner).parent;
             EXPECT_EQ(identity.rootInstance, identityOwner);
+            const auto* currentInstall = engine->ResolvePlayableServiceVoice(*resource, i);
+            ASSERT_NE(nullptr, currentInstall);
             harkentest::ExpectTimelineInstallIdentity(*engine, run.renderHandles[i],
-                identityOwner, currentMultiLeaf
-                    ? engine->playableScheduleVoices[resource->scheduleStorageBase + i].target
-                    : resource->voice.target,
+                identityOwner, currentInstall->Facts().target,
                 run.startFrames[i], run.arms[i]);
             run.programs[i] = currentMultiLeaf
                 ? &engine->playableScheduleRuntimePrograms[endpointBase + i] : &resource->runtimeProgram;
@@ -24264,11 +24531,13 @@ TEST_P(QueueBusQualification, ReplacementPreservesPlaybackAndReclaimsForReplay) 
                 ASSERT_EQ(ArmState::Published, installation.state);
                 EXPECT_EQ(0u, installation.startedBlockSequence);
                 ASSERT_EQ(PlayableKindV1::Sound, resource->leaf.kind);
-                EXPECT_EQ(resource->leaf.stableId, resource->voice.soundId);
-                EXPECT_EQ(busId, resource->voice.outputBusId);
-                ASSERT_TRUE(resource->voice.soundId == firstId ||
-                            resource->voice.soundId == secondId);
-                startsPositive = resource->voice.soundId == firstId;
+                const auto* currentInstall = engine.ResolvePlayableServiceVoice(*resource);
+                ASSERT_NE(nullptr, currentInstall);
+                EXPECT_EQ(resource->leaf.stableId, currentInstall->Facts().soundId);
+                EXPECT_EQ(busId, currentInstall->Facts().outputBusId);
+                ASSERT_TRUE(currentInstall->Facts().soundId == firstId ||
+                            currentInstall->Facts().soundId == secondId);
+                startsPositive = currentInstall->Facts().soundId == firstId;
                 if (!random) EXPECT_TRUE(startsPositive);
                 ContainerPlaybackRow outer{};
                 ASSERT_TRUE(engine.containerPlayback.Capture(produced, &outer));

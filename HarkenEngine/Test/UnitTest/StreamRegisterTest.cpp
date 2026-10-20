@@ -21,6 +21,19 @@
 #error "HARKEN_TEMP_DIR must point at the repository's .temp directory"
 #endif
 
+namespace harken::detail {
+struct StreamManagerTestAccess {
+    static void SetCommitPageLimit(StreamManager& manager, std::size_t pages) {
+        for (auto& column : manager.m_ringStorage) column.SetCommitPageLimitForTests(pages);
+    }
+    static std::size_t CommittedBytes(const StreamManager& manager) {
+        std::size_t bytes = 0;
+        for (const auto& column : manager.m_ringStorage) bytes += column.CommittedBytes();
+        return bytes;
+    }
+};
+} // namespace harken::detail
+
 namespace {
 
 using harkentest::BuildStreamBytes;
@@ -84,6 +97,9 @@ std::vector<std::uint8_t> MakeValidImage(VnObjectId soundId,
 TEST(StreamRegister, RegisterExposesTocFactsThroughFindFile) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
+    auto& streams = session.Engine()->streams;
+    using RingAccess = harken::detail::StreamManagerTestAccess;
+    EXPECT_EQ(0u, RingAccess::CommittedBytes(streams));
 
     StreamSpec spec;
     spec.soundId = harkentest::ObjectId(7001);
@@ -103,9 +119,21 @@ TEST(StreamRegister, RegisterExposesTocFactsThroughFindFile) {
     const std::string path = TempPath("stream_reg_facts.stream");
     WriteFileBytes(path, BuildStreamBytes(spec, planar));
 
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7001), path.c_str()));
-
     harken::StreamManager::StreamFacts facts;
+    RingAccess::SetCommitPageLimit(streams, 1);
+    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(spec.soundId, path.c_str()));
+    EXPECT_EQ(0u, RingAccess::CommittedBytes(streams));
+    auto play = harkentest::MakePlayDesc(spec.soundId);
+    VnVoiceHandle voice = 0;
+    const auto freeSlots = streams.FreeSlotCount();
+    EXPECT_EQ(VN_NO_STREAM, harkentest::PlayRaw(&play, &voice));
+    EXPECT_EQ(0u, voice);
+    EXPECT_EQ(freeSlots, streams.FreeSlotCount());
+    EXPECT_EQ(0u, session.Engine()->voices.ActiveCount());
+    EXPECT_GT(RingAccess::CommittedBytes(streams), 0u);
+    RingAccess::SetCommitPageLimit(streams, SIZE_MAX);
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+
     ASSERT_TRUE(session.Engine()->streams.FindFile(harkentest::ObjectId(7001), &facts));
     EXPECT_EQ(44100u, facts.sampleRate);
     EXPECT_EQ(2u, facts.channelCount);
@@ -114,6 +142,62 @@ TEST(StreamRegister, RegisterExposesTocFactsThroughFindFile) {
     EXPECT_EQ(100u, facts.loopStartFrame);
     EXPECT_EQ(700u, facts.loopEndFrame);
     EXPECT_NE(0u, facts.contentRevision);
+
+    const auto originalRevision = facts.contentRevision;
+    spec.channelCount = 3;
+    planar.resize(800 * 3, 0.125f);
+    const auto widerPath = TempPath("stream_reg_wider.stream");
+    WriteFileBytes(widerPath, BuildStreamBytes(spec, planar));
+    const auto ringBytes = RingAccess::CommittedBytes(streams);
+    RingAccess::SetCommitPageLimit(streams, 0);
+    ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(spec.soundId, widerPath.c_str()));
+    ASSERT_TRUE(streams.FindFile(spec.soundId, &facts));
+    EXPECT_EQ(3u, facts.channelCount);
+    EXPECT_NE(originalRevision, facts.contentRevision);
+    EXPECT_EQ(ringBytes, RingAccess::CommittedBytes(streams));
+}
+
+TEST(StreamRegister, PendingReferencePreservesWideBackingThroughNarrowStartsAndRollback) {
+    auto config = MakeNullConfig(4, 256, kRate);
+    config.maxStreams = 4;
+    config.streamRingFrames = 1024;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& streams = session.Engine()->streams;
+    using RingAccess = harken::detail::StreamManagerTestAccess;
+    StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(7011);
+    spec.sampleRate = kRate;
+    spec.channelCount = 2;
+    spec.chunkFrames = 256;
+    const auto widePath = TempPath("stream_pending_wide.stream");
+    WriteFileBytes(widePath, BuildStreamBytes(spec, std::vector<float>(8192, 0.25f)));
+    const auto monoPath = TempPath("stream_pending_mono.stream");
+    WriteFileBytes(monoPath, MakeValidImage(harkentest::ObjectId(7012), 4096));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(spec.soundId, widePath.c_str()));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(harkentest::ObjectId(7012), monoPath.c_str()));
+    harken::StreamManager::StreamFacts wide{}, mono{};
+    ASSERT_TRUE(streams.FindFile(spec.soundId, &wide));
+    ASSERT_TRUE(streams.FindFile(harkentest::ObjectId(7012), &mono));
+    ASSERT_TRUE(streams.AcquirePendingRef(wide.fileIndex));
+    for (std::uint32_t slot = 0; slot < 2; ++slot) {
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(slot, 1));
+        ASSERT_EQ(VN_OK, streams.ActivateSlot(slot, mono.fileIndex, 0, 0, 4096, 1));
+    }
+    const auto bytes = RingAccess::CommittedBytes(streams);
+    RingAccess::SetCommitPageLimit(streams, 0);
+    for (std::uint32_t retry = 0; retry < 8; ++retry) {
+        std::uint32_t slot = UINT32_MAX;
+        ASSERT_TRUE(streams.PeekPreparedFreeSlot(2, &slot));
+        EXPECT_EQ(2u, slot);
+        std::uint64_t token = 0;
+        ASSERT_EQ(VN_OK, streams.ActivateSlot(slot, wide.fileIndex, 0, 0, 4096, 1, &token));
+        ASSERT_TRUE(streams.RetirePreparedSlot(streams.RingOf(slot), token));
+        EXPECT_EQ(bytes, RingAccess::CommittedBytes(streams));
+    }
+    streams.ReleasePendingRef(wide.fileIndex);
+    streams.SyncServe();
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
 }
 
 TEST(StreamRegister, ContentRevisionUsesSemanticHeaderAndChunkChecksums) {

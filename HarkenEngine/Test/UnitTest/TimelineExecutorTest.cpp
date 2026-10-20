@@ -4,9 +4,11 @@
 #include "Common/TestUtil.h"
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/TimelineExecutor.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/abi/TimelineStopContract.h"
 #include "harken/core/TimelineProgram.h"
 #include "harken/core/TimelineRuntimeInstall.h"
+#include "harken/param/ParamTargets.h"
 #include "PlayableRuntime.h"
 
 #include <gtest/gtest.h>
@@ -16,6 +18,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <mutex>
 #include <new>
 #include <thread>
@@ -3107,10 +3110,17 @@ TEST(TimelineExecutor, CallbackShapesKeepFixedQuantumCount) {
 
 TEST(TimelineExecutor, RepeatedUpdatePreparesOccurrenceExactlyOnce) {
     VnConfig config = TimelineConfig(2, 256, 48000);
+    config.voiceSendSlots = 1;
+    config.fxSlotsPerVoice = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
     ASSERT_NE(engine, nullptr);
+    const auto variable = harkentest::ObjectId(800);
+    const auto bindingId = harkentest::ObjectId(801);
+    const auto pathId = harkentest::ObjectId(802);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallSmoothDefinitions(engine, {variable}, 0.0f, 1.0f).status);
     const std::vector<float> dc(1024, 0.25f);
     const VnPCMDesc desc = harkentest::MonoDesc(dc, 48000);
     ASSERT_EQ(Vn_RegisterPCM(harkentest::ObjectId(1), &desc), VN_OK);
@@ -3138,12 +3148,35 @@ TEST(TimelineExecutor, RepeatedUpdatePreparesOccurrenceExactlyOnce) {
     occurrence.voice.soundId = harkentest::ObjectId(1);
     occurrence.voice.outputBusId = VN_BUS_MASTER;
     occurrence.voice.target = target;
+    occurrence.voice.bindingCount = 1;
+    auto& binding = occurrence.voice.bindingStorage[0];
+    binding.objectId = occurrence.voice.soundId;
+    binding.bindingId = bindingId;
+    binding.variableId = variable;
+    binding.targetId = harken::kTargetVoiceVolume;
+    const harken::CurvePoint points[] = {{0.0f, 0.0f}, {1.0f, -12.0f}};
+    const harken::CurveHandlePair handles[] = {{0.0f, 0.0f, 1.0f, -12.0f}};
+    ASSERT_TRUE(binding.curve.SetPoints(points, handles, 2));
+    occurrence.voice.playbackPath.rowCount = 1;
+    occurrence.voice.playbackPath.rows[0] = {pathId, 7};
+    occurrence.voice.sendCount = 1;
+    occurrence.voice.sends[0] = {VN_BUS_MASTER, -9.0f};
+    occurrence.voice.effectCount = 1;
+    auto& effect = occurrence.voice.effects[0];
+    effect.type = VN_EFFECT_GAIN;
+    effect.descriptorSize = sizeof(VnGainDesc);
+    VnGainDesc gain{};
+    gain.structSize = sizeof(gain);
+    gain.effectId = harkentest::ObjectId(803);
+    gain.gainDb = -6.0f;
+    std::memcpy(effect.descriptor, &gain, sizeof(gain));
     const harken::TimelineProgramInstallView install{&program, &occurrence, 1};
     const harken::TimelineRuntimeInstallResult installed =
         harken::InstallTimelineProgram(install);
     ASSERT_EQ(installed.status,
               harken::TimelineRuntimeInstallStatus::Installed);
 
+    occurrence.voice = {};
     ASSERT_EQ(Vn_Update(), VN_OK);
     ASSERT_EQ(Vn_Update(), VN_OK);
     harken::EngineTimelineOccurrence& live =
@@ -3153,6 +3186,25 @@ TEST(TimelineExecutor, RepeatedUpdatePreparesOccurrenceExactlyOnce) {
     EXPECT_EQ(live.phase,
               harken::EngineTimelineOccurrencePhase::AwaitingArmAck);
     EXPECT_EQ(engine->timelineArms.LiveCount(), 1u);
+    const auto render = (std::uint64_t{live.arm.renderGeneration} << 32) | live.arm.renderSlot;
+    ASSERT_NE(engine->voices.Resolve(render), nullptr);
+    const auto& observation = engine->playbackPaths[live.arm.renderSlot];
+    ASSERT_EQ(1u, observation.path.rowCount);
+    EXPECT_EQ(pathId, observation.path.rows[0].stableId);
+    EXPECT_EQ(7u, observation.path.rows[0].occurrenceOrdinal);
+    ASSERT_EQ(1u, observation.sendCount);
+    EXPECT_FLOAT_EQ(-9.0f, observation.sends[0].levelDb);
+    EXPECT_EQ(1u, engine->effectBank.InUseOf(VN_EFFECT_GAIN));
+    bool bindingFound = false;
+    engine->params.ForEachInstanceOf(bindingId, [&](VnVoiceHandle handle) {
+        bindingFound = bindingFound || handle == render;
+    });
+    EXPECT_TRUE(bindingFound);
+    EXPECT_EQ(target, engine->timelineArms.RowAt(live.arm.slot)->target);
+    RecordProperty("occurrence_inline_bytes", sizeof(harken::EngineTimelineOccurrence));
+    RecordProperty("occurrence_capture_bytes", live.voice.AllocationBytes());
+    RecordProperty("occurrence_vector_capacity",
+        engine->timelineProgramSets[installed.generation & 1u]->occurrences.capacity());
 }
 
 TEST(TimelineExecutor, ProductionServiceFollowsThePerCallStateTable) {
@@ -3280,6 +3332,25 @@ TEST(TimelineExecutor, ProgramInstallRejectsMixedValidAndMalformedAudibleRows) {
     EXPECT_EQ(engine->voices.ActiveCount(), 0u);
     EXPECT_EQ(engine->timelineProgramSets[0], nullptr);
     EXPECT_EQ(engine->timelineProgramSets[1], nullptr);
+
+    rows[1].schedule = &schedule;
+    rows[1].voice.target = target;
+    const auto instances = engine->playableInstances.LiveCount();
+    for (const auto failure : {1u, 2u}) {
+        harken::detail::ArmLogicAllocFaultForTests(
+            failure, harken::detail::LogicAllocSite::CapturedVoiceInstall);
+        const auto refused = harken::InstallTimelineProgram(install);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(harken::TimelineRuntimeInstallStatus::ProgramCapacity, refused.status);
+        EXPECT_EQ(instances, engine->playableInstances.LiveCount());
+        EXPECT_EQ(0u, engine->timelinePrograms.Current());
+        EXPECT_EQ(engine->timelineProgramSets[0], nullptr);
+        EXPECT_EQ(engine->timelineProgramSets[1], nullptr);
+        EXPECT_EQ(0u, engine->CapturedVoiceStorageBytes());
+    }
+    const auto retry = harken::InstallTimelineProgram(install);
+    EXPECT_EQ(harken::TimelineRuntimeInstallStatus::Installed, retry.status);
+    EXPECT_EQ(2u, retry.occurrenceCount);
 }
 
 TEST(TimelineExecutor, TwoVoiceCapacityNeverCreatesAnOrphanSecondArm) {

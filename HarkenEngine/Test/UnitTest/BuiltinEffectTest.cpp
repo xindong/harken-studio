@@ -10,6 +10,7 @@
 
 #include "Common/TestUtil.h"
 #include "harken/dsp/Biquad.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/BuiltinEffects.h"
 
 #include <cmath>
@@ -41,6 +42,13 @@ using harkentest::MonoDesc;
 
 constexpr std::uint32_t kBlock = 256;
 constexpr std::uint32_t kRate = 48000;
+
+struct EffectExtraAllocationFault {
+    EffectExtraAllocationFault() {
+        harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::EffectExtraStorage);
+    }
+    ~EffectExtraAllocationFault() { harken::detail::DisarmLogicAllocFaultForTests(); }
+};
 
 VnConfig EffectConfig(std::uint32_t slots = 1, std::uint32_t delayCap = 0,
                       std::uint32_t toneCap = 0) {
@@ -518,6 +526,14 @@ TEST(BuiltinEffectPool, ExhaustionRefusesWithNoEffect) {
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &b));
 
     const VnFeedbackDelayDesc d = DelayDesc(10.0f, 0.5f, 1.0f, 1.0f);
+    const auto publishedBefore = session.Engine()->commands.PublishedHead();
+    {
+        EffectExtraAllocationFault fault;
+        EXPECT_EQ(VN_NO_EFFECT, Vn_SetVoiceEffect(a, 0, VN_EFFECT_FEEDBACK_DELAY, AsBase(&d)));
+    }
+    EXPECT_EQ(publishedBefore, session.Engine()->commands.PublishedHead());
+    EXPECT_EQ(0u, session.Engine()->effectBank.InUseOf(VN_EFFECT_FEEDBACK_DELAY));
+    EXPECT_EQ(0u, session.Engine()->effectBank.HighWaterOf(VN_EFFECT_FEEDBACK_DELAY));
     EXPECT_EQ(VN_OK, Vn_SetVoiceEffect(a, 0, VN_EFFECT_FEEDBACK_DELAY,
                                        AsBase(&d)));
     // Second delay exhausts the one-instance pool.
@@ -528,6 +544,44 @@ TEST(BuiltinEffectPool, ExhaustionRefusesWithNoEffect) {
         ToneDesc(6.0f, 200.0f, 0.0f, 1000.0f, 1.0f, 0.0f, 6000.0f);
     EXPECT_EQ(VN_OK, Vn_SetVoiceEffect(b, 0, VN_EFFECT_THREE_BAND_TONE,
                                        AsBase(&t)));
+    EXPECT_EQ(0u, harken::memguard::HitCount());
+}
+
+TEST(BuiltinEffectPool, AcceptedExtraBackingSurvivesOrdinaryRefusalAndPreparedRetry) {
+    EngineSession session(EffectConfig(1, 2, 1));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& bank = session.Engine()->effectBank;
+    harken::EffectPoolBank::BackingDemand demand{};
+    demand[VN_EFFECT_FEEDBACK_DELAY] = 1;
+    harken::EffectPoolBank::BackingPreparation backing;
+    ASSERT_TRUE(bank.PrepareBacking(demand, &backing));
+    {
+        EffectExtraAllocationFault fault;
+        EXPECT_EQ(harken::kEffectTypeNone, bank.AcquirePrepared(VN_EFFECT_FEEDBACK_DELAY).type);
+    }
+    EXPECT_EQ(0u, bank.InUseOf(VN_EFFECT_FEEDBACK_DELAY));
+    EXPECT_EQ(0u, bank.HighWaterOf(VN_EFFECT_FEEDBACK_DELAY));
+    {
+        EffectExtraAllocationFault fault;
+        auto use = harken::EffectPoolBank::UseBacking(&backing);
+        const auto original = bank.AcquirePrepared(VN_EFFECT_FEEDBACK_DELAY);
+        ASSERT_EQ(VN_EFFECT_FEEDBACK_DELAY, original.type);
+        auto* state = static_cast<harken::DelayEffectState*>(bank.StateFor(original.type, original.poolIndex));
+        ASSERT_NE(nullptr, state);
+        ASSERT_NE(nullptr, state->lineBase);
+        EXPECT_NE(0u, state->lineFrames);
+        const auto* line = state->lineBase;
+        ASSERT_TRUE(bank.CancelPrepared(original));
+        const auto retry = bank.AcquirePrepared(VN_EFFECT_FEEDBACK_DELAY);
+        ASSERT_EQ(VN_EFFECT_FEEDBACK_DELAY, retry.type);
+        EXPECT_EQ(original.poolIndex, retry.poolIndex);
+        EXPECT_EQ(original.generation + 1u, retry.generation);
+        EXPECT_EQ(state, bank.StateFor(retry.type, retry.poolIndex));
+        EXPECT_EQ(line, static_cast<harken::DelayEffectState*>(bank.StateFor(retry.type, retry.poolIndex))->lineBase);
+        EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
+        EXPECT_TRUE(bank.CancelPrepared(retry));
+    }
+    EXPECT_EQ(0u, bank.InUseOf(VN_EFFECT_FEEDBACK_DELAY));
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 

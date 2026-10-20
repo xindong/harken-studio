@@ -6,6 +6,7 @@
 #include "Common/StreamBuilder.h"
 #include "harken/param/EffectParamLocator.h"
 #include "harken/render/BuiltinEffects.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <gtest/gtest.h>
 
@@ -36,6 +37,9 @@ struct VariableServiceTestAccess {
     }
     static bool ReadCutStorageAlive(const VariableServiceV1& service, VariableReadCutRef ref) {
         return service.ResolveReadCut(ref) != nullptr;
+    }
+    static void LimitReadCutCommit(VariableServiceV1& service, std::size_t pages) {
+        service.readCuts_.SetCommitPageLimitForTests(pages);
     }
     static bool TimelineReadUseStorageAlive(const VariableServiceV1& service, VariableTimelineReadUseRef ref) {
         return service.ResolveTimelineReadUse(ref) != nullptr;
@@ -7237,7 +7241,6 @@ TEST(VariableCurrentSlice, ReadCutCapacityRefusalAndCanceledPreparationReleaseEv
     auto& e = *session.Engine();
     InstallVariable(&e);
     const auto freeBefore = Access::OutcomeCapacity(e.variables)[2];
-    const auto storage = e.variables.ReadCutStorageBytes();
     const auto observed = harken::ObserveVariableCallAt(e.variables.CurrentWorldGeneration(),
         e.variables.CurrentTransportEpoch(), kBlockFrames, 0, 0);
     harken::PreparedVariableWriteToken prepared;
@@ -7252,6 +7255,7 @@ TEST(VariableCurrentSlice, ReadCutCapacityRefusalAndCanceledPreparationReleaseEv
         ASSERT_TRUE(e.variables.ReadCutValue(cut, kVariable, &value));
         EXPECT_FLOAT_EQ(0.5f, value);
     }
+    const auto storage = e.variables.ReadCutStorageBytes();
     harken::VariableReadCutRef refused{};
     EXPECT_FALSE(e.variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &refused));
     EXPECT_FALSE(refused.Valid());
@@ -7269,6 +7273,58 @@ TEST(VariableCurrentSlice, ReadCutCapacityRefusalAndCanceledPreparationReleaseEv
     EXPECT_FALSE(e.variables.ReleaseReadCut(cuts.front()));
     EXPECT_EQ(harken::VariableReadCutStatus::Applied, e.variables.PublishReadCut(reused, 4 * kBlockFrames));
     EXPECT_TRUE(e.variables.ReleaseReadCut(reused));
+}
+
+TEST(VariableCurrentSlice, ReadCutBackingRefusalPreservesReservedCapacityAndRecovers) {
+    using Access = harken::detail::VariableServiceTestAccess;
+    EngineSession session(CurrentSliceConfig(2, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& variables = session.Engine()->variables;
+    InstallVariable(session.Engine());
+    const auto emptyStorage = variables.ReadCutStorageBytes();
+    Access::LimitReadCutCommit(variables, 0);
+    harken::VariableReadCutRef refused{};
+    EXPECT_FALSE(variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &refused));
+    EXPECT_FALSE(refused.Valid());
+    harken::VariableServiceV1::ReadCutBackingPreparation backing;
+    EXPECT_FALSE(variables.PrepareReadCutBacking(2, &backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(emptyStorage, variables.ReadCutStorageBytes());
+    Access::LimitReadCutCommit(variables, SIZE_MAX);
+    harken::detail::ArmLogicAllocFaultForTests(2, harken::detail::LogicAllocSite::VariableReadCutColumns);
+    EXPECT_FALSE(variables.PrepareReadCutBacking(2, &backing));
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_FALSE(backing.Valid());
+    ASSERT_TRUE(variables.PrepareReadCutBacking(2, &backing));
+    Access::LimitReadCutCommit(variables, 0);
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::VariableReadCutColumns);
+    EXPECT_FALSE(variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &refused));
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_FALSE(refused.Valid());
+    const auto preparedStorage = variables.ReadCutStorageBytes();
+    std::array<harken::VariableReadCutRef, 2> cuts{};
+    {
+        const auto use = backing.Use();
+        for (auto& cut : cuts) {
+            ASSERT_TRUE(variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &cut));
+            float value = -1.0f;
+            ASSERT_TRUE(variables.ReadCutValue(cut, kVariable, &value));
+            EXPECT_FLOAT_EQ(0.0f, value);
+            EXPECT_EQ(harken::VariableReadCutStatus::Applied,
+                variables.PublishReadCut(cut, 4 * kBlockFrames));
+        }
+        EXPECT_FALSE(variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &refused));
+        EXPECT_FALSE(refused.Valid());
+    }
+    EXPECT_EQ(preparedStorage, variables.ReadCutStorageBytes());
+    backing.Release();
+    for (auto cut : cuts) ASSERT_TRUE(variables.ReleaseReadCut(cut));
+    Access::LimitReadCutCommit(variables, SIZE_MAX);
+    harken::VariableReadCutRef recovered{};
+    ASSERT_TRUE(variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &recovered));
+    EXPECT_NE(cuts.front().generation, recovered.generation);
+    EXPECT_FALSE(variables.ReleaseReadCut(cuts.front()));
+    EXPECT_TRUE(variables.ReleaseReadCut(recovered));
 }
 
 TEST(VariableCurrentSlice, ActionReadCutRequiresTheOriginalReservedWriteAndIssuer) {
@@ -9703,10 +9759,10 @@ TEST(VariableCurrentSlice, TimelineReadUseCapacityRefusalReturnsPinsAndAllowsFre
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& e = *session.Engine();
     InstallVariable(&e);
-    const auto storage = e.variables.ReadCutStorageBytes();
     EXPECT_EQ(e.voices.Capacity(), e.variables.TimelineReadUseCapacity());
     harken::VariableReadCutRef cut{};
     ASSERT_TRUE(e.variables.CaptureReadCut(0, 4 * kBlockFrames, 1, 1, &cut));
+    const auto storage = e.variables.ReadCutStorageBytes();
     ASSERT_EQ(harken::VariableReadCutStatus::Applied, e.variables.PublishReadCut(cut, 4 * kBlockFrames));
     harken::TimelineArmTable::PreparedCommitInput input{};
     input.programGeneration = 7;

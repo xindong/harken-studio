@@ -439,8 +439,7 @@ private:
              primaryRow.selectedFutureDomain == groups.immediateLaneGroups_[
                  old.clockGroups[1].Identity().committedRow].selectedFutureDomain)) return false;
         if (memberRow.memberCount != 0) {
-            const auto actualMember = groups.immediateLaneGroupMembers_[
-                newMember.Identity().committedRow * groups.config_.maxArmsPerGroup];
+            const auto actualMember = memberRow.MemberTokens()[0];
             Plan03GroupSliceInput expected{};
             expected.executeFrame = newMember.executeFrame_;
             expected.decision = newMember.Identity().decision;
@@ -486,8 +485,7 @@ private:
         value.relativeFrames = {primaryRow.relativeFrame, memberRow.relativeFrame};
         value.newMemberCount = memberRow.memberCount;
         if (memberRow.memberCount != 0)
-            value.newMember = groups.immediateLaneGroupMembers_[
-                newMember.Identity().committedRow * groups.config_.maxArmsPerGroup];
+            value.newMember = memberRow.MemberTokens()[0];
         value.reservedSequence = sequence.Sequence();
         Row& row = rows_[slot];
         const auto generation = row.generation;

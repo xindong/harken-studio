@@ -276,28 +276,56 @@ void DecisionTable::ConsumePreparedReservationCommit(PreparedTicketCommitProof&&
 
 DecisionTable::DecisionTable(std::uint32_t capacity,
                              std::uint32_t maxParticipantsPerDecision)
-    : rows_(ValidConfig(capacity, maxParticipantsPerDecision)
-                ? std::make_unique<Row[]>(capacity)
-                : nullptr),
-      participants_(!ValidConfig(capacity, maxParticipantsPerDecision)
-                        ? nullptr
-                        : std::make_unique<DecisionParticipantRef[]>(
-                              static_cast<std::size_t>(capacity) *
-                              maxParticipantsPerDecision)),
-      frontiers_(ValidConfig(capacity, maxParticipantsPerDecision)
-          ? std::make_unique<FrontierSidecar[]>(capacity) : nullptr),
-      capacity_(ValidConfig(capacity, maxParticipantsPerDecision)
+    : capacity_(ValidConfig(capacity, maxParticipantsPerDecision)
                     ? capacity
                     : 0),
       maxParticipantsPerDecision_(
           ValidConfig(capacity, maxParticipantsPerDecision)
               ? maxParticipantsPerDecision
-              : 0) {}
+              : 0) {
+    if (!participants_.Reserve(capacity_ * maxParticipantsPerDecision_) ||
+        !frontiers_.Reserve(capacity_) || !rows_.Reserve(capacity_))
+        throw std::bad_alloc{};
+}
+
+bool DecisionTable::PrepareSlotStorage(std::uint32_t slot) noexcept {
+    return slot < capacity_ &&
+        participants_.ConstructThrough((slot + 1u) * maxParticipantsPerDecision_) &&
+        frontiers_.ConstructThrough(slot + 1u) && rows_.ConstructThrough(slot + 1u);
+}
+
+bool DecisionTable::PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
+    if (out == nullptr) return false;
+    for (const auto& held : *out) if (held.Valid()) return false;
+    count = std::min(count, capacity_);
+    auto occupied = rows_.ConstructedCount();
+    while (occupied != 0 && rows_[occupied - 1u].slotState.load(std::memory_order_acquire) == SlotState::Free)
+        --occupied;
+    BackingPreparation candidate;
+    if (!participants_.PrepareBacking(count * maxParticipantsPerDecision_,
+            occupied * maxParticipantsPerDecision_, &candidate[0]) ||
+        !frontiers_.PrepareBacking(count, occupied, &candidate[1]) ||
+        !rows_.PrepareBacking(count, occupied, &candidate[2])) return false;
+    *out = std::move(candidate);
+    return true;
+}
+
+std::uint64_t DecisionTable::RowStorageBytes() const noexcept {
+    return rows_.RequestedBytes() + participants_.RequestedBytes() + frontiers_.RequestedBytes();
+}
+
+std::uint64_t DecisionTable::RowCommittedBytes() const noexcept {
+    return rows_.CommittedBytes() + participants_.CommittedBytes() + frontiers_.CommittedBytes();
+}
+
+std::uint64_t DecisionTable::RowReservedBytes() const noexcept {
+    return rows_.ReservedBytes() + participants_.ReservedBytes() + frontiers_.ReservedBytes();
+}
 
 DecisionTable::~DecisionTable() {
-    for (std::uint32_t index = 0; index < capacity_; ++index)
+    for (std::uint32_t index = 0; index < frontiers_.ConstructedCount(); ++index)
         if (frontiers_[index].publicationProof != nullptr) frontiers_[index].publicationProof->Release();
-    for (std::uint32_t index = 0; index < capacity_; ++index)
+    for (std::uint32_t index = 0; index < rows_.ConstructedCount(); ++index)
         assert(rows_[index].originalLifetimePinCount == 0);
 }
 
@@ -417,7 +445,7 @@ bool DecisionTable::ReleaseOriginalDecisionLifetime(
 bool DecisionTable::RegisterOriginalLifetimeBaselineResolver(void* context,
     OriginalLifetimeBaselineResolver resolver) noexcept {
     if (context == nullptr || resolver == nullptr || originalLifetimeBaselineResolver_ != nullptr) return false;
-    for (std::uint32_t i = 0; i < capacity_; ++i)
+    for (std::uint32_t i = 0; i < rows_.ConstructedCount(); ++i)
         if (rows_[i].originalLifetimePinCount != 0) return false;
     originalLifetimeBaselineContext_ = context;
     originalLifetimeBaselineResolver_ = resolver;
@@ -507,7 +535,7 @@ void DecisionTable::ResetFrontierStorage(std::uint32_t slot) noexcept {
 }
 
 std::uint64_t DecisionTable::FrontierStorageBytes() const noexcept {
-    return static_cast<std::uint64_t>(capacity_) * sizeof(FrontierSidecar);
+    return frontiers_.RequestedBytes();
 }
 
 bool DecisionTable::ValidateFrontierDecisionApply(DecisionToken token,
@@ -883,8 +911,7 @@ bool DecisionTable::ReconcileFrontierActivation(DecisionToken token,
 
 DecisionParticipantRef* DecisionTable::Participants(
     std::uint32_t slot) noexcept {
-    return participants_.get() +
-           static_cast<std::size_t>(slot) * maxParticipantsPerDecision_;
+    return &participants_[slot * maxParticipantsPerDecision_];
 }
 
 const DecisionParticipantRef* DecisionTable::Participants(
@@ -893,7 +920,7 @@ const DecisionParticipantRef* DecisionTable::Participants(
 }
 
 DecisionTable::Row* DecisionTable::Resolve(DecisionToken token) noexcept {
-    if (!token.Valid() || token.slot >= capacity_) {
+    if (!token.Valid() || token.slot >= rows_.ConstructedCount()) {
         return nullptr;
     }
     Row& row = rows_[token.slot];
@@ -912,7 +939,7 @@ const DecisionTable::Row* DecisionTable::Resolve(
 
 std::uint32_t DecisionTable::LiveCount() const noexcept {
     std::uint32_t count = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
         if (rows_[slot].slotState.load(std::memory_order_acquire) ==
             SlotState::Live) {
             ++count;
@@ -923,7 +950,7 @@ std::uint32_t DecisionTable::LiveCount() const noexcept {
 
 std::uint32_t DecisionTable::QuarantinedCount() const noexcept {
     std::uint32_t count = 0;
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
         if (rows_[slot].slotState.load(std::memory_order_acquire) ==
             SlotState::Quarantined) {
             ++count;
@@ -940,6 +967,7 @@ bool DecisionTable::Reserve(const DecisionReserveRequest& request,
         return false;
     }
     for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+        if (!PrepareSlotStorage(slot)) return false;
         Row& row = rows_[slot];
         if (row.slotState.load(std::memory_order_acquire) != SlotState::Free ||
             row.reservation.test_and_set(std::memory_order_acquire)) {
@@ -992,6 +1020,7 @@ bool DecisionTable::PrepareReservation(
         return false;
     }
     for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+        if (!PrepareSlotStorage(slot)) return false;
         Row& row = rows_[slot];
         if (row.slotState.load(std::memory_order_acquire) != SlotState::Free ||
             row.reservation.test_and_set(std::memory_order_acquire)) {
@@ -1708,7 +1737,7 @@ bool DecisionTable::CaptureCommittedParticipant(DecisionToken token, std::uint32
 
 bool DecisionTable::SetGenerationForTests(
     std::uint32_t slot, std::uint32_t generation) noexcept {
-    if (slot >= capacity_ || generation == 0 ||
+    if (slot >= capacity_ || generation == 0 || !PrepareSlotStorage(slot) ||
         rows_[slot].slotState.load(std::memory_order_acquire) !=
             SlotState::Free) {
         return false;

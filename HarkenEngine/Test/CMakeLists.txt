@@ -290,6 +290,7 @@ add_executable(harken_runtime_tests
     UnitTest/ResolvedSlotTicketTest.cpp
     UnitTest/LogicCommitBundleTest.cpp
     UnitTest/ActionFiringTableTest.cpp
+    UnitTest/RuntimeWorkIndexTest.cpp
     UnitTest/MonitorRequestTest.cpp
     UnitTest/ActionSeekTableTest.cpp
     UnitTest/ActionCooldownTableTest.cpp

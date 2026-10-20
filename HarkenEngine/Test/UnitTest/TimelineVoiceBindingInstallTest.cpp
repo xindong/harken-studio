@@ -1556,13 +1556,22 @@ TEST(TimelineVoiceInstall, PendingReadCutCapacityRefusalRollsBackAndKeepsAccepte
     const auto commandHead = engine.commands.PublishedHead();
     const auto freeRows = engine.variableSlices.FreeRowCount();
     const auto freeTargets = engine.variableSlices.FreeTargetCapacity();
-    std::vector<harken::VariableReadCutRef> held(engine.variables.ReadCutCapacity());
-    for (auto& cut : held) ASSERT_TRUE(engine.variables.CaptureReadCut(0, 8 * kBlock,
-        engine.logicCommits.Current() + 1u, 0, &cut));
     VnPostActionDesc desc{};
     desc.structSize = sizeof(desc);
     desc.actionId = kAction;
     VnActionFiringHandle firing = 0;
+    harken::detail::ArmLogicAllocFaultForTests(2, harken::detail::LogicAllocSite::VariableReadCutColumns);
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+    harken::detail::DisarmLogicAllocFaultForTests();
+    EXPECT_EQ(0u, firing);
+    EXPECT_EQ(commandHead, engine.commands.PublishedHead());
+    EXPECT_EQ(freeRows, engine.variableSlices.FreeRowCount());
+    EXPECT_EQ(freeTargets, engine.variableSlices.FreeTargetCapacity());
+    EXPECT_EQ(0u, BindingInstanceCount(&engine));
+    EXPECT_EQ(0u, harken::detail::VoicePoolReleaseTestAccess::OriginalOwnerCount(engine.voices));
+    std::vector<harken::VariableReadCutRef> held(engine.variables.ReadCutCapacity());
+    for (auto& cut : held) ASSERT_TRUE(engine.variables.CaptureReadCut(0, 8 * kBlock,
+        engine.logicCommits.Current() + 1u, 0, &cut));
     EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(0u, firing);
     EXPECT_EQ(commandHead, engine.commands.PublishedHead());

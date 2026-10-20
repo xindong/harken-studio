@@ -51,6 +51,9 @@ PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
     TimelineSemanticTarget finalTarget, CapturedTimelineVoiceInstall* out,
     const PackPartitionLease* leaseOrNull = nullptr) noexcept;
 
+TimelineVoiceInstallDesc ProjectTimelineVoiceInstall(
+    const CapturedTimelineVoiceInstall& captured) noexcept;
+
 VnResult PreflightTimelineVoiceStart(
     const Engine& engine, const TimelineVoiceInstallDesc& install) noexcept;
 

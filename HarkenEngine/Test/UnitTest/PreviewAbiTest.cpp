@@ -1183,7 +1183,7 @@ TEST(PreviewAbi,
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_EQ(1u, row->variableControlDiscreteMemberCount);
     EXPECT_EQ(2u, engine->playableScheduleVoices[
-                      row->scheduleStorageBase].target.occurrenceOrdinal);
+                      row->scheduleStorageBase].Facts().target.occurrenceOrdinal);
     EXPECT_FALSE(engine->runtimeRecreateRequired);
 }
 

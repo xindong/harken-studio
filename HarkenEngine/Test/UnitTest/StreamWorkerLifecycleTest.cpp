@@ -415,6 +415,7 @@ TEST(StreamWorkerLifecycle, ReclamationClosesASlotActivatedAfterTheFailure) {
     ASSERT_EQ(VN_OK, streams.RegisterFile(harkentest::ObjectId(9108), path.c_str()));
     harken::StreamManager::StreamFacts facts;
     ASSERT_TRUE(streams.FindFile(harkentest::ObjectId(9108), &facts));
+    ASSERT_TRUE(streams.PrepareSlotWorkingSet(0, facts.channelCount));
 
     {
         StreamRequestFaultGuard fault(harken::StreamRequestFault::WorkerLoop);

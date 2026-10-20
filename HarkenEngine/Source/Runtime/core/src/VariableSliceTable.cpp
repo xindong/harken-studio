@@ -13,6 +13,7 @@ bool VariableSliceTable::Reset(std::uint32_t capacity,
                                std::uint32_t maxTargetsPerSlice,
                                std::uint32_t targetPoolCapacity,
                                std::uint32_t payloadCapacity) {
+    if (memguard::IsAudioTagged()) return false;
     if (payloadCapacity == 0) payloadCapacity = capacity;
     if (capacity == 0 || capacity > kVariableSliceRowHardLimit ||
         payloadCapacity > capacity ||
@@ -24,7 +25,8 @@ bool VariableSliceTable::Reset(std::uint32_t capacity,
     if (sourceWords * payloadCapacity > std::numeric_limits<std::size_t>::max() / sizeof(std::uint64_t))
         return false;
     try {
-        auto rows = std::make_unique<Row[]>(capacity);
+        StableRowStorage<Row> rows;
+        if (!rows.Reserve(capacity)) return false;
         std::vector<Payload> payloads(payloadCapacity);
         std::vector<std::uint32_t> freeRows, freePayloads;
         freeRows.reserve(capacity);
@@ -37,14 +39,11 @@ bool VariableSliceTable::Reset(std::uint32_t capacity,
             freeRanges.push_back({0, targetPoolCapacity});
         }
         for (std::uint32_t slot = 0; slot < capacity; ++slot) {
-            rows[slot].identity.store(
-                (static_cast<std::uint64_t>(1) << 32) | slot,
-                std::memory_order_relaxed);
             freeRows.push_back(capacity - slot - 1u);
         }
         for (std::uint32_t slot = payloadCapacity; slot > 0; --slot)
             freePayloads.push_back(slot - 1u);
-        rows_ = std::move(rows);
+        rows_.Swap(rows);
         payloads_ = std::move(payloads);
         freeRows_ = std::move(freeRows);
         freePayloads_ = std::move(freePayloads);
@@ -66,7 +65,7 @@ bool VariableSliceTable::Reset(std::uint32_t capacity,
 
 VariableSliceTable::Row* VariableSliceTable::Resolve(
     VariableSliceRef ref) noexcept {
-    if (!ref.Valid() || ref.slot >= capacity_) {
+    if (!ref.Valid() || ref.slot >= rows_.ConstructedCount()) {
         return nullptr;
     }
     Row& row = rows_[ref.slot];
@@ -81,6 +80,14 @@ VariableSliceTable::Row* VariableSliceTable::Resolve(
 const VariableSliceTable::Row* VariableSliceTable::Resolve(
     VariableSliceRef ref) const noexcept {
     return const_cast<VariableSliceTable*>(this)->Resolve(ref);
+}
+
+bool VariableSliceTable::PrepareRow(std::uint32_t slot) noexcept {
+    const auto previous = rows_.ConstructedCount();
+    if (slot >= capacity_ || !rows_.ConstructThrough(slot + 1u)) return false;
+    for (auto index = previous; index <= slot; ++index)
+        rows_[index].identity.store((std::uint64_t{1} << 32) | index, std::memory_order_relaxed);
+    return true;
 }
 
 VariableSliceTable::Payload* VariableSliceTable::ResolvePayload(Row* row) noexcept {
@@ -127,6 +134,7 @@ bool VariableSliceTable::Reserve(std::uint64_t world, std::uint64_t transport,
     }
 
     const std::uint32_t spanOffset = exactTargetCount == 0 ? 0 : freeRanges_[rangeIndex].offset;
+    if (!PrepareRow(freeSlot)) return false;
     if (exactTargetCount == 0) {
         // Bank-only slices still own a row and an actual consumption receipt.
     } else if (freeRanges_[rangeIndex].count == exactTargetCount) {
@@ -318,7 +326,7 @@ std::uint32_t VariableSliceTable::InvalidationReasons(VariableSliceRef ref) cons
 }
 
 std::size_t VariableSliceTable::StorageBytes() const noexcept {
-    return static_cast<std::size_t>(capacity_) * sizeof(Row) +
+    return rows_.RequestedBytes() +
         payloads_.capacity() * sizeof(Payload) +
         (freeRows_.capacity() + freePayloads_.capacity()) * sizeof(std::uint32_t) +
         targets_.capacity() * sizeof(VariableSliceTarget) +
@@ -539,7 +547,7 @@ const VariableSliceTarget* VariableSliceTable::Target(
 
 void VariableSliceTable::ReclaimSettled(
     std::uint64_t observedBlockSequence) noexcept {
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
         Row& row = rows_[slot];
         const VariableSliceState state =
             row.state.load(std::memory_order_acquire);
@@ -559,7 +567,7 @@ void VariableSliceTable::ReclaimSettled(
 
 bool VariableSliceTable::HasUnreclaimedWorldRows(
     std::uint64_t world) const noexcept {
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
         const Row& row = rows_[slot];
         const VariableSliceState state =
             row.state.load(std::memory_order_acquire);
@@ -573,7 +581,7 @@ bool VariableSliceTable::HasUnreclaimedWorldRows(
 
 bool VariableSliceTable::HasUnreclaimedTransportRows(
     std::uint64_t transport) const noexcept {
-    for (std::uint32_t slot = 0; slot < capacity_; ++slot) {
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
         const Row& row = rows_[slot];
         const VariableSliceState state =
             row.state.load(std::memory_order_acquire);
@@ -754,7 +762,7 @@ std::uint32_t VariableSliceTable::FreeRowCount() const noexcept {
 
 bool VariableSliceTable::SetFreeRowGenerationForTest(
     std::uint32_t slot, std::uint32_t generation) noexcept {
-    if (slot >= capacity_ || generation == 0 ||
+    if (slot >= capacity_ || generation == 0 || !PrepareRow(slot) ||
         rows_[slot].state.load(std::memory_order_acquire) !=
             VariableSliceState::Free) {
         return false;

@@ -45,9 +45,9 @@
 // page slot is reopened at the far end of the window. A reference minted against
 // an old occupant of a ring slot therefore cannot be mistaken for the current one.
 //
-// Capacity is bounded and declared, never elastic. Every pool sizes its storage
-// once at Reset from a fixed set of ceilings and allocates nothing on the steady
-// path; a request over any ceiling is refused with a specific reason and counted,
+// Capacity is bounded and declared, never elastic. Control prepares stable backing
+// before publication within the fixed ceilings; readers never allocate. A request
+// over any ceiling is refused with a specific reason and counted,
 // and each ceiling has a high-water mark. A full pool refuses rather than evicting,
 // because evicting accepted work would silence it.
 //
@@ -74,6 +74,7 @@
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/AudioSliceLease.h"
 #include "harken/core/TimelineProgram.h"
+#include "harken/core/StableRowStorage.h"
 
 #include <array>
 #include <atomic>
@@ -1196,7 +1197,53 @@ struct ScheduledTransactionPoolOriginalTestAccess;
 }
 
 class ScheduledTransactionPool {
+    struct LaneGroupMembers;
 public:
+    class ImmediateLaneBackingPreparation {
+    public:
+        ImmediateLaneBackingPreparation() = default;
+        ~ImmediateLaneBackingPreparation();
+        ImmediateLaneBackingPreparation(const ImmediateLaneBackingPreparation&) = delete;
+        ImmediateLaneBackingPreparation& operator=(const ImmediateLaneBackingPreparation&) = delete;
+        ImmediateLaneBackingPreparation(ImmediateLaneBackingPreparation&& other) noexcept;
+        ImmediateLaneBackingPreparation& operator=(ImmediateLaneBackingPreparation&& other) noexcept;
+        bool Valid() const noexcept { return rows_.Valid(); }
+        std::size_t DirectoryBytes() const noexcept {
+            return members_.capacity() * sizeof(std::unique_ptr<LaneGroupMembers>);
+        }
+    private:
+        friend class ScheduledTransactionPool;
+        void Release() noexcept;
+        ScheduledTransactionPool* owner_ = nullptr;
+        StableStoragePreparation rows_;
+        std::vector<std::unique_ptr<LaneGroupMembers>> members_;
+    };
+    class ImmediateLaneBackingUse {
+    public:
+        ImmediateLaneBackingUse(ScheduledTransactionPool& owner,
+            ImmediateLaneBackingPreparation* backing) noexcept;
+        ~ImmediateLaneBackingUse();
+        ImmediateLaneBackingUse(const ImmediateLaneBackingUse&) = delete;
+        ImmediateLaneBackingUse& operator=(const ImmediateLaneBackingUse&) = delete;
+    private:
+        ScheduledTransactionPool& owner_;
+        ImmediateLaneBackingPreparation* previous_;
+        StableStoragePreparedUse rows_;
+    };
+    bool PrepareImmediateLaneBacking(std::uint32_t groupCount, std::uint64_t totalMembers,
+        ImmediateLaneBackingPreparation* out) noexcept;
+    std::size_t ImmediateLaneRowStorageBytes() const noexcept { return immediateLaneGroups_.RequestedBytes(); }
+    std::size_t ImmediateLaneRowCommittedBytes() const noexcept { return immediateLaneGroups_.CommittedBytes(); }
+    std::size_t ImmediateLaneRowReservedBytes() const noexcept { return immediateLaneGroups_.ReservedBytes(); }
+    std::size_t ImmediateLaneMemberStorageBytes() const noexcept;
+    std::size_t PageGroupMemberStorageBytes() const noexcept;
+    void SetImmediateLaneRowCommitPageLimitForTests(std::size_t pages) noexcept {
+        immediateLaneGroups_.SetCommitPageLimitForTests(pages);
+    }
+    void SetImmediateLaneMemberAllocationLimitForTests(std::uint16_t count) noexcept {
+        immediateMemberAllocationLimitForTests_ = count;
+    }
+
     class PrivateMaterializationTransaction {
     public:
         PrivateMaterializationTransaction() = default;
@@ -1304,11 +1351,10 @@ public:
     std::uint32_t MaxVariableCurrentSlicesPerQuantum() const {
         return config_.maxCurrentSlicesPerQuantum;
     }
-    std::uint64_t CurrentSliceStorageBytes() const noexcept {
-        return static_cast<std::uint64_t>(pageCurrentSlices_.capacity()) * sizeof(CurrentSliceRow) +
-            static_cast<std::uint64_t>(pageCurrentSliceOrder_.capacity()) * sizeof(std::uint32_t) +
-            static_cast<std::uint64_t>(pageCurrentSliceCount_.capacity()) * sizeof(std::uint32_t);
-    }
+    std::uint64_t CurrentSliceStorageBytes() const noexcept;
+    std::uint64_t CurrentSliceCommittedBytes() const noexcept;
+    std::uint64_t CurrentSliceReservedBytes() const noexcept;
+    bool PrepareNativeStartCalendarBacking(std::uint32_t count) noexcept;
     std::uint32_t MaxPlan03GroupHeadersPerPage() const {
         return config_.maxPlan03GroupHeadersPerPage;
     }
@@ -2041,7 +2087,7 @@ private:
         const Plan03GroupSliceIdentity& identity) const noexcept;
     struct Plan03GroupReaderState {
         std::atomic<std::uint32_t> pins{0};
-        std::atomic<std::uint64_t> lastAudioSequence{0};
+        mutable std::atomic<std::uint64_t> lastAudioSequence{0};
     };
     enum class LaneGroupState : std::uint8_t { Free, Private, Published, Retired };
     struct LaneFrontierGate {
@@ -2074,7 +2120,68 @@ private:
         bool audio = false) const noexcept;
     bool MatchesInitialSoundQueueCompanionPublished(
         const InitialSoundQueueCompanionAssociation& original) const noexcept;
+    struct LaneGroupMembers {
+        ScheduledTransactionPool* owner = nullptr;
+        std::unique_ptr<TimelineArmToken[]> tokens;
+        std::unique_ptr<TimelineArmTable::OriginalGroupMember[]> originals;
+        std::unique_ptr<std::uint16_t[]> indices;
+        std::uint16_t capacity = 0;
+        bool held = false;
+        bool inUse = false;
+        bool pageBacking = false;
+        ~LaneGroupMembers();
+        std::size_t RequestedBytes() const noexcept {
+            return sizeof(LaneGroupMembers) + static_cast<std::size_t>(capacity) *
+                (sizeof(TimelineArmToken) + sizeof(TimelineArmTable::OriginalGroupMember) +
+                    (indices == nullptr ? 0u : sizeof(std::uint16_t)));
+        }
+    };
+    struct PageGroupMemberSlot {
+        std::unique_ptr<LaneGroupMembers> owned;
+        std::unique_ptr<LaneGroupMembers> replacement;
+        LaneGroupMembers* borrowed = nullptr;
+        ~PageGroupMemberSlot();
+        PageGroupMemberSlot() = default;
+        PageGroupMemberSlot(PageGroupMemberSlot&& other) noexcept;
+        PageGroupMemberSlot(const PageGroupMemberSlot&) = delete;
+        LaneGroupMembers* Storage() const noexcept { return borrowed == nullptr ? owned.get() : borrowed; }
+        void ReturnBorrowed() noexcept;
+    };
+    struct PageGroupMemberBacking {
+        std::vector<std::unique_ptr<LaneGroupMembers>> members;
+        ~PageGroupMemberBacking();
+    };
+    TimelineArmToken* PageGroupTokens(std::size_t row) const noexcept;
+    TimelineArmTable::OriginalGroupMember* PageGroupOriginals(std::size_t row) const noexcept;
+    bool PreparePageGroupMembers(std::size_t row, std::uint16_t count) noexcept;
+    void ClearPageGroupMembers(std::size_t row, std::uint16_t count) noexcept;
+    std::unique_ptr<LaneGroupMembers> CreatePageGroupMembers(std::uint16_t count) noexcept;
+    std::unique_ptr<PageGroupMemberBacking> PreparePageGroupMemberBacking(std::uint32_t count) noexcept;
     struct LaneGroupRow {
+        ~LaneGroupRow() noexcept {
+            if (preparedMembers != nullptr) {
+                preparedMembers->inUse = false;
+                if (!preparedMembers->held) delete preparedMembers;
+            }
+        }
+        std::unique_ptr<LaneGroupMembers> members;
+        LaneGroupMembers* preparedMembers = nullptr;
+        TimelineArmTable::OriginalGroupIdentity originalIdentity{};
+        LaneGroupMembers* MemberStorage() const noexcept {
+            return preparedMembers != nullptr ? preparedMembers : members.get();
+        }
+        TimelineArmToken* MemberTokens() const noexcept {
+            const auto* storage = MemberStorage();
+            return storage == nullptr ? nullptr : storage->tokens.get();
+        }
+        TimelineArmTable::OriginalGroupMember* MemberOriginals() const noexcept {
+            const auto* storage = MemberStorage();
+            return storage == nullptr ? nullptr : storage->originals.get();
+        }
+        std::uint16_t* MemberIndices() const noexcept {
+            const auto* storage = MemberStorage();
+            return storage == nullptr ? nullptr : storage->indices.get();
+        }
         InitialSoundQueueCompanionAssociation initialSoundQueueCompanion{};
         // Logic-thread-only association and exclusion for the original transfer.
         PreparedPrivateImmediateLaneGroup* transferOriginal = nullptr;
@@ -2106,6 +2213,10 @@ private:
         AudioSliceLease lease{};
         Plan03GroupReaderState readers{};
     };
+    static bool CanReuseImmediateLaneRow(const LaneGroupRow& row) noexcept;
+    bool PrepareImmediateLaneMembers(LaneGroupRow& row, std::uint16_t count) noexcept;
+    void ReturnPreparedImmediateLaneMembers(LaneGroupRow& row) noexcept;
+    std::unique_ptr<LaneGroupMembers> CreateImmediateLaneMembers(std::uint16_t count) noexcept;
     friend class ImmediateActionLane;
     // Producer-only enumeration of the actual selected-domain Lane binding.
     // It does not issue a lifetime, admission, selector or audio read permission.
@@ -2210,6 +2321,11 @@ private:
         bool publicationHeld = false;
     };
 
+    struct CurrentSlicePage {
+        StableRowStorage<CurrentSliceRow> rows;
+        StableRowStorage<std::uint32_t> order;
+    };
+
     ReserveResult ReserveCurrentSliceImpl(
         const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
         std::uint64_t publicationFrontier, HeldCurrentSliceToken* held);
@@ -2299,8 +2415,8 @@ private:
     std::vector<EventRow> pageEvents_;     // pageCount_ * maxEventsPerQuantum
     std::vector<std::uint32_t> pageEventOrder_; // sorted indices, same size
     std::vector<std::uint32_t> pageCurrentSliceCount_;
-    std::vector<CurrentSliceRow> pageCurrentSlices_;
-    std::vector<std::uint32_t> pageCurrentSliceOrder_;
+    std::unique_ptr<CurrentSlicePage[]> pageCurrentSliceStorage_;
+    std::uint32_t nativeCalendarBackingCount_ = 0;
     std::vector<std::uint32_t> pagePlan03GroupCount_;
     std::vector<std::uint32_t> pagePreparedPlan03GroupCount_;
     std::vector<Plan03GroupSliceRow> pagePlan03Groups_;
@@ -2313,21 +2429,21 @@ private:
     void ReturnAllGroupMemberOriginals() noexcept;
     friend struct detail::OriginalGroupMemberTestAccess;
     TimelineArmTable::GroupMemberReceiver groupMemberReceiver_{};
-    std::unique_ptr<TimelineArmTable::OriginalGroupMember[]> pageGroupMemberOriginals_;
-    std::unique_ptr<TimelineArmTable::OriginalGroupMember[]> immediateGroupMemberOriginals_;
+    std::size_t pageMemberBytes_ = 0;
+    std::vector<PageGroupMemberSlot> pageGroupMemberStorage_;
     std::unique_ptr<TimelineArmTable::OriginalGroupMember[]> replacementGroupMemberOriginals_;
     std::unique_ptr<TimelineArmTable::OriginalGroupIdentity[]> pageGroupIdentities_;
-    std::unique_ptr<TimelineArmTable::OriginalGroupIdentity[]> immediateGroupIdentities_;
     TimelineArmTable::OriginalGroupIdentity replacementGroupIdentity_{};
-    std::vector<TimelineArmToken> pagePlan03GroupMembers_;
     std::vector<Plan03GroupRowState> pagePlan03GroupRowStates_;
     std::vector<std::uint32_t> pagePlan03GroupClaimGenerations_;
     std::unique_ptr<AudioSliceLease[]> pagePlan03GroupLeases_;
     std::unique_ptr<Plan03GroupReaderState[]> pagePlan03GroupReaders_;
     std::uint64_t nextOriginalLaneGroupFactoryMarker_ = 0;
-    std::unique_ptr<LaneGroupRow[]> immediateLaneGroups_;
-    std::unique_ptr<TimelineArmToken[]> immediateLaneGroupMembers_;
-    std::unique_ptr<std::uint16_t[]> immediateLaneGroupMemberIndices_;
+    std::size_t immediateMemberBytes_ = 0;
+    std::uint32_t immediateBackingHolds_ = 0;
+    std::uint16_t immediateMemberAllocationLimitForTests_ = UINT16_MAX;
+    ImmediateLaneBackingPreparation* activeImmediateLaneBacking_ = nullptr;
+    StableRowStorage<LaneGroupRow> immediateLaneGroups_;
     std::unique_ptr<LaneFrontierGate[]> immediateLaneOwnerGates_;
     std::unique_ptr<LaneFrontierGate[]> immediateLaneDecisionGates_;
     const TimelineArmTable* plan03ArmTable_ = nullptr;
@@ -2343,6 +2459,7 @@ private:
 
     struct UnplacedCreditRow {
         UnplacedBatchCreditRequest request{};
+        std::unique_ptr<PageGroupMemberBacking> memberBacking;
         std::uint64_t generation = 0;
         TransportEpoch epoch = kInvalidTransportEpoch;
         std::uint64_t chargedQuantum = UINT64_MAX;

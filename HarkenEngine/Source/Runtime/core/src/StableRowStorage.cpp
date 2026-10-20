@@ -35,7 +35,18 @@ StablePageReservation::~StablePageReservation() {
     if (!released) std::terminate();
 }
 
-bool StablePageReservation::Reserve(std::size_t bytes, std::size_t alignment) noexcept {
+std::size_t StablePageReservation::SystemPageBytes() noexcept {
+#if defined(_WIN32)
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    return info.dwPageSize;
+#else
+    const auto size = sysconf(_SC_PAGESIZE);
+    return size > 0 ? static_cast<std::size_t>(size) : 0;
+#endif
+}
+
+bool StablePageReservation::Reserve(std::size_t bytes, std::size_t alignment, bool sparse) noexcept {
     if (memguard::IsAudioTagged() || address_ != nullptr) return false;
     if (bytes == 0) return true;
     std::size_t pageBytes = 0, granularity = 0, reservedBytes = 0;
@@ -53,6 +64,13 @@ bool StablePageReservation::Reserve(std::size_t bytes, std::size_t alignment) no
     if (alignment == 0 || pageBytes % alignment != 0 ||
         !RoundUp(bytes, granularity, &reservedBytes))
         return false;
+    std::vector<std::uint64_t> committedPages;
+    if (sparse) {
+        try {
+            const auto count = reservedBytes / pageBytes;
+            committedPages.resize(count / 64u + (count % 64u != 0));
+        } catch (...) { return false; }
+    }
     if (std::exchange(failNextReservationForTests, false)) return false;
 #if defined(_WIN32)
     void* address = VirtualAlloc(nullptr, reservedBytes, MEM_RESERVE, PAGE_NOACCESS);
@@ -65,6 +83,7 @@ bool StablePageReservation::Reserve(std::size_t bytes, std::size_t alignment) no
     address_ = address;
     pageBytes_ = pageBytes;
     reservedBytes_ = reservedBytes;
+    committedPages_.swap(committedPages);
     return true;
 }
 
@@ -74,22 +93,45 @@ void StablePageReservation::FailNextReservationForTests() noexcept {
 
 bool StablePageReservation::CommitThrough(std::size_t bytes) noexcept {
     if (memguard::IsAudioTagged() || bytes > reservedBytes_) return false;
+    if (!committedPages_.empty()) return CommitRange(0, bytes);
     if (bytes <= committedBytes_) return true;
     std::size_t target = 0;
     if (!RoundUp(bytes, pageBytes_, &target) || target > reservedBytes_) return false;
     // Each successful page stays charged, including an unconstructed failure prefix.
     while (committedBytes_ < target) {
-        if (remainingPagesForTests_ == 0) return false;
-        auto* page = static_cast<std::byte*>(address_) + committedBytes_;
-#if defined(_WIN32)
-        if (VirtualAlloc(page, pageBytes_, MEM_COMMIT, PAGE_READWRITE) == nullptr)
-            return false;
-#else
-        if (mprotect(page, pageBytes_, PROT_READ | PROT_WRITE) != 0) return false;
-#endif
-        *reinterpret_cast<volatile unsigned char*>(page) = 0;
+        if (!CommitPage(committedBytes_)) return false;
         committedBytes_ += pageBytes_;
-        if (remainingPagesForTests_ != SIZE_MAX) --remainingPagesForTests_;
+    }
+    return true;
+}
+
+bool StablePageReservation::CommitPage(std::size_t offset) noexcept {
+    if (remainingPagesForTests_ == 0) return false;
+    auto* page = static_cast<std::byte*>(address_) + offset;
+#if defined(_WIN32)
+    if (VirtualAlloc(page, pageBytes_, MEM_COMMIT, PAGE_READWRITE) == nullptr) return false;
+#else
+    if (mprotect(page, pageBytes_, PROT_READ | PROT_WRITE) != 0) return false;
+#endif
+    *reinterpret_cast<volatile unsigned char*>(page) = 0;
+    if (remainingPagesForTests_ != SIZE_MAX) --remainingPagesForTests_;
+    return true;
+}
+
+bool StablePageReservation::CommitRange(std::size_t offset, std::size_t bytes) noexcept {
+    if (memguard::IsAudioTagged() || offset > reservedBytes_ || bytes > reservedBytes_ - offset)
+        return false;
+    if (bytes == 0) return true;
+    if (committedPages_.empty()) return false;
+    const auto first = offset / pageBytes_;
+    const auto last = (offset + bytes - 1u) / pageBytes_;
+    for (auto index = first; index <= last; ++index) {
+        const auto mask = std::uint64_t{1} << (index % 64u);
+        auto& word = committedPages_[index / 64u];
+        if ((word & mask) != 0) continue;
+        if (!CommitPage(index * pageBytes_)) return false;
+        word |= mask;
+        committedBytes_ += pageBytes_;
     }
     return true;
 }
@@ -100,6 +142,7 @@ void StablePageReservation::Swap(StablePageReservation& other) noexcept {
     std::swap(committedBytes_, other.committedBytes_);
     std::swap(pageBytes_, other.pageBytes_);
     std::swap(remainingPagesForTests_, other.remainingPagesForTests_);
+    committedPages_.swap(other.committedPages_);
 }
 
 } // namespace harken::detail

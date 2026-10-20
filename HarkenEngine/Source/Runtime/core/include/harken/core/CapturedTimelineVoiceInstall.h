@@ -6,6 +6,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <limits>
 #include <new>
 #include <type_traits>
 #include <utility>
@@ -34,7 +35,38 @@ public:
     CapturedTimelineVoiceInstall(const CapturedTimelineVoiceInstall&) = delete;
     CapturedTimelineVoiceInstall& operator=(const CapturedTimelineVoiceInstall&) = delete;
 
-    bool Valid() const noexcept { return allocation_ != nullptr; }
+    bool HasStorage() const noexcept { return allocation_ != nullptr; }
+    bool Valid() const noexcept { return HasStorage() && allocation_->populated; }
+
+    const TimelineVoiceInstallFacts& Facts() const noexcept {
+        static const TimelineVoiceInstallFacts empty{};
+        return Valid() ? allocation_->facts : empty;
+    }
+
+    bool ClearForReuse() noexcept {
+        assert(!memguard::IsAudioTagged());
+        if (ReferenceCount() > 1u) return false;
+        if (HasStorage()) allocation_->populated = false;
+        return true;
+    }
+
+    CapturedTimelineVoiceInstall Share() const noexcept {
+        assert(!memguard::IsAudioTagged());
+        CapturedTimelineVoiceInstall result;
+        if (!Valid()) return result;
+        assert(allocation_->references < (std::numeric_limits<std::size_t>::max)());
+        ++allocation_->references;
+        result.allocation_ = allocation_;
+        return result;
+    }
+
+    std::size_t ReferenceCount() const noexcept {
+        return HasStorage() ? allocation_->references : 0u;
+    }
+
+    bool SharesStorage(const CapturedTimelineVoiceInstall& other) const noexcept {
+        return allocation_ != nullptr && allocation_ == other.allocation_;
+    }
 
     TimelineVoiceInstallInput Input() const & noexcept {
         if (!Valid()) return {};
@@ -46,10 +78,14 @@ public:
     TimelineVoiceInstallInput Input() const && = delete;
 
     std::size_t AllocationBytes() const noexcept {
-        if (!Valid()) return 0;
-        const auto& last = allocation_->columns[3];
-        return last.offset + static_cast<std::size_t>(last.count) *
-            sizeof(TimelineVoiceEffectInstall);
+        return HasStorage() ? allocation_->allocationBytes : 0;
+    }
+
+    std::size_t AllocationBytesForAccounting(std::uint64_t epoch) const noexcept {
+        assert(!memguard::IsAudioTagged() && epoch != 0);
+        if (!HasStorage() || allocation_->accountedEpoch == epoch) return 0;
+        allocation_->accountedEpoch = epoch;
+        return allocation_->allocationBytes;
     }
 
     static constexpr std::size_t AllocationHeaderBytes() noexcept { return sizeof(Header); }
@@ -63,6 +99,10 @@ private:
     struct Header {
         TimelineVoiceInstallFacts facts{};
         ColumnRange columns[4]{};
+        std::size_t allocationBytes = 0;
+        std::size_t references = 1;
+        std::uint64_t accountedEpoch = 0;
+        bool populated = false;
     };
 
     static_assert(std::is_trivially_destructible_v<Header>);
@@ -83,8 +123,9 @@ private:
     void Release() noexcept {
         if (allocation_ == nullptr) return;
         assert(!memguard::IsAudioTagged());
-        ::operator delete(allocation_);
-        allocation_ = nullptr;
+        auto* allocation = std::exchange(allocation_, nullptr);
+        assert(allocation->references != 0);
+        if (--allocation->references == 0) ::operator delete(allocation);
     }
 
     friend class CapturedTimelineVoiceInstallBuilder;

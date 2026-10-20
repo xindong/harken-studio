@@ -2,6 +2,7 @@
 #include "harken/core/ImmediateActionLane.h"
 #include "harken/core/PrivateOriginalQueueGroupClockProof.h"
 #include "harken/core/PrivateSelectedQueueFutureSpan.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <algorithm>
 #include <cassert>
@@ -480,9 +481,8 @@ bool ScheduledTransactionPool::CompleteJointGroupMemberCoverage(
     for (std::size_t group = 0; group < proof.groups_.size(); ++group) {
         const auto& held = proof.groups_[group];
         const auto& row = pagePlan03Groups_[held.identity_.committedRow];
-        const auto base = held.identity_.committedRow * config_.maxArmsPerGroup;
         for (std::uint16_t member = 0; member < row.memberCount; ++member) {
-            const auto& original = pageGroupMemberOriginals_[base + member];
+            const auto& original = PageGroupOriginals(held.identity_.committedRow)[member];
             if (!SameJointArm(original.arm_, arm)) continue;
             if (original.serial_ == 0 || original.Receiver() != &groupMemberReceiver_ ||
                 groupMemberReceiver_.owner_ != &table || groupMemberReceiver_.pool_ != this ||
@@ -492,14 +492,13 @@ bool ScheduledTransactionPool::CompleteJointGroupMemberCoverage(
                 original.memberIndex_ != table.rows_[arm.slot].memberIndex ||
                 original.Group().decision.slot != table.rows_[arm.slot].parentGroup.decision.slot ||
                 original.Group().decision.generation != table.rows_[arm.slot].parentGroup.decision.generation ||
-                !SameJointArm(pagePlan03GroupMembers_[base + member], arm)) return false;
+                !SameJointArm(PageGroupTokens(held.identity_.committedRow)[member], arm)) return false;
             for (std::size_t priorGroup = 0; priorGroup <= group; ++priorGroup) {
                 const auto& priorHeld = proof.groups_[priorGroup];
-                const auto priorBase = priorHeld.identity_.committedRow * config_.maxArmsPerGroup;
                 const auto priorCount = priorGroup == group ? member :
                     pagePlan03Groups_[priorHeld.identity_.committedRow].memberCount;
                 for (std::uint16_t prior = 0; prior < priorCount; ++prior)
-                    if (pageGroupMemberOriginals_[priorBase + prior].serial_ == original.serial_) return false;
+                    if (PageGroupOriginals(priorHeld.identity_.committedRow)[prior].serial_ == original.serial_) return false;
             }
             ++count;
         }
@@ -550,9 +549,8 @@ UnpublishedGroupArmCancellationStatus ScheduledTransactionPool::BeginUnpublished
             return Status::Busy;
         auto& group = groupStorage[index];
         group.original_ = original; group.identity_ = identity; group.lease_ = &pagePlan03GroupLeases_[rowIndex];
-        const auto base = rowIndex * config_.maxArmsPerGroup;
         for (std::uint16_t member = 0; member < row.memberCount; ++member) {
-            const auto token = pagePlan03GroupMembers_[base + member];
+            const auto token = PageGroupTokens(rowIndex)[member];
             if (!token.Valid() || token.slot >= arms.capacity_) return Status::NotEligible;
             bool duplicate = false;
             for (std::size_t prior = 0; prior < armCount; ++prior) duplicate |= SameJointArm(armStorage[prior].token_, token);
@@ -688,11 +686,9 @@ void ScheduledTransactionPool::ConsumeHeldUnpublishedGroupArmCancellation(Unpubl
     for (auto& held : proof.groups_) {
         const auto index = held.identity_.committedRow;
         const auto ring = index / config_.maxPlan03GroupHeadersPerPage;
-        const auto base = index * config_.maxArmsPerGroup;
         const auto count = pagePlan03Groups_[index].memberCount;
         held.lease_->ReleasePrivateTransfer();
-        ReturnGroupMemberOriginals(pageGroupMemberOriginals_.get() + base, count);
-        std::fill(pagePlan03GroupMembers_.begin() + base, pagePlan03GroupMembers_.begin() + base + count, TimelineArmToken{});
+        ClearPageGroupMembers(index, count);
         --pagePlan03GroupCount_[ring]; --pagePublicationHolds_[ring]; pagePlan03Groups_[index] = {};
         if (pagePlan03GroupClaimGenerations_[index] == UINT32_MAX) pagePlan03GroupRowStates_[index] = Plan03GroupRowState::Retired;
         else { ++pagePlan03GroupClaimGenerations_[index]; pagePlan03GroupRowStates_[index] = Plan03GroupRowState::Free; }
@@ -805,14 +801,14 @@ bool ScheduledTransactionPool::ProvePrivateUnboundPageArmRetirement(
         const auto& page = pageHeaders_[ring];
         identities[i] = {page.absoluteQuantumIndex, page.pageGeneration, row.decision,
             row.sliceIndex, index, original.generation_, epoch_};
-        const auto& actual = pagePlan03GroupMembers_[index * config_.maxArmsPerGroup];
+        const auto* actual = PageGroupTokens(index);
         const auto& arm = members[i];
         const auto lease = pagePlan03GroupLeases_[index].Capture();
         if (!MatchesCommittedPlan03GroupSlice(original, identities[i]) ||
             executeFrame / quantumFrames_ != page.absoluteQuantumIndex ||
             !row.publicationHeld || row.privateUnboundArmRetirement != nullptr ||
             row.transferOriginal != nullptr || row.transferProof != nullptr ||
-            row.memberCount != 1 || row.sourceControlCount != 0 ||
+            row.memberCount != 1 || actual == nullptr || row.sourceControlCount != 0 ||
             row.immediateEntry.gate != nullptr || row.immediateEntry.generation != 0 ||
             row.frontier.role != FrontierGroupRole::Legacy || row.frontier.operation.Valid() ||
             row.frontierPinsOwned || row.frontierDependents != 0 || row.unpublishedRetirementStage != 0 ||
@@ -821,8 +817,8 @@ bool ScheduledTransactionPool::ProvePrivateUnboundPageArmRetirement(
             pageEmptyQuantumStamp_[ring].load(std::memory_order_acquire) != UINT64_MAX ||
             pagePlan03GroupReaders_[index].pins.load(std::memory_order_acquire) != 0 ||
             pagePlan03GroupReaders_[index].lastAudioSequence.load(std::memory_order_acquire) != 0 ||
-            actual.slot != arm.slot || actual.generation != arm.generation ||
-            actual.renderSlot != arm.renderSlot || actual.renderGeneration != arm.renderGeneration ||
+            actual->slot != arm.slot || actual->generation != arm.generation ||
+            actual->renderSlot != arm.renderSlot || actual->renderGeneration != arm.renderGeneration ||
             lease.state != AudioSliceState::Ready || lease.pendingReasonBits != 0 ||
             lease.invalidateAfterSlice) return false;
         leases[i] = &pagePlan03GroupLeases_[index];
@@ -1033,7 +1029,7 @@ bool ScheduledTransactionPool::ProvePreparedPageFrontierBindings(
                 row.transferArmTableIncarnation !=
                     pagePlan03Groups_[identities[0].committedRow].transferArmTableIncarnation)) return false;
         if (i < 2 && (row.transferMemberIndex != 0 || !row.transferMember.Valid() ||
-                !sameArm(pagePlan03GroupMembers_[identities[i].committedRow * config_.maxArmsPerGroup],
+                !sameArm(PageGroupTokens(identities[i].committedRow)[0],
                     row.transferMember) || !sameArm(batch.inputs_[3u + i].armToken, row.transferMember))) return false;
     }
     for (std::size_t event = 0; event < 5; ++event) {
@@ -1196,10 +1192,248 @@ void ScheduledTransactionPool::ReturnGroupMemberOriginals(
 }
 
 void ScheduledTransactionPool::ReturnAllGroupMemberOriginals() noexcept {
-    ReturnGroupMemberOriginals(pageGroupMemberOriginals_.get(), pagePlan03GroupMembers_.size());
-    ReturnGroupMemberOriginals(immediateGroupMemberOriginals_.get(),
-        static_cast<std::size_t>(config_.maxImmediateLaneGroupRows) * config_.maxArmsPerGroup);
+    for (std::size_t row = 0; row < pageGroupMemberStorage_.size(); ++row) {
+        const auto* storage = pageGroupMemberStorage_[row].Storage();
+        ClearPageGroupMembers(row, storage == nullptr ? 0u : storage->capacity);
+    }
+    for (auto& row : immediateLaneGroups_)
+        ReturnGroupMemberOriginals(row.MemberOriginals(), row.memberCount);
     ReturnGroupMemberOriginals(replacementGroupMemberOriginals_.get(), config_.maxArmsPerGroup);
+}
+
+ScheduledTransactionPool::LaneGroupMembers::~LaneGroupMembers() {
+    if (owner != nullptr)
+        (pageBacking ? owner->pageMemberBytes_ : owner->immediateMemberBytes_) -= RequestedBytes();
+}
+
+ScheduledTransactionPool::PageGroupMemberSlot::~PageGroupMemberSlot() { ReturnBorrowed(); }
+
+ScheduledTransactionPool::PageGroupMemberSlot::PageGroupMemberSlot(PageGroupMemberSlot&& other) noexcept
+    : owned(std::move(other.owned)), replacement(std::move(other.replacement)),
+      borrowed(std::exchange(other.borrowed, nullptr)) {}
+
+void ScheduledTransactionPool::PageGroupMemberSlot::ReturnBorrowed() noexcept {
+    auto* member = std::exchange(borrowed, nullptr);
+    if (member == nullptr) return;
+    member->inUse = false;
+    if (!member->held) delete member;
+}
+
+ScheduledTransactionPool::PageGroupMemberBacking::~PageGroupMemberBacking() {
+    for (auto& member : members) {
+        if (member != nullptr && member->inUse) {
+            member->held = false;
+            (void)member.release();
+        }
+    }
+}
+
+std::size_t ScheduledTransactionPool::PageGroupMemberStorageBytes() const noexcept {
+    auto bytes = pageMemberBytes_ + pageGroupMemberStorage_.capacity() * sizeof(PageGroupMemberSlot) +
+        unplacedCredits_.capacity() * sizeof(std::unique_ptr<PageGroupMemberBacking>);
+    for (const auto& credit : unplacedCredits_)
+        if (credit.memberBacking != nullptr)
+            bytes += sizeof(PageGroupMemberBacking) + credit.memberBacking->members.capacity() *
+                sizeof(std::unique_ptr<LaneGroupMembers>);
+    return bytes;
+}
+
+TimelineArmToken* ScheduledTransactionPool::PageGroupTokens(std::size_t row) const noexcept {
+    const auto* storage = pageGroupMemberStorage_[row].Storage();
+    return storage == nullptr ? nullptr : storage->tokens.get();
+}
+
+TimelineArmTable::OriginalGroupMember* ScheduledTransactionPool::PageGroupOriginals(std::size_t row) const noexcept {
+    const auto* storage = pageGroupMemberStorage_[row].Storage();
+    return storage == nullptr ? nullptr : storage->originals.get();
+}
+
+std::unique_ptr<ScheduledTransactionPool::LaneGroupMembers>
+ScheduledTransactionPool::CreatePageGroupMembers(std::uint16_t count) noexcept {
+    if (memguard::IsAudioTagged()) return nullptr;
+    try {
+        detail::LogicAllocCheckpoint(detail::LogicAllocSite::ScheduledGroupMembers);
+        auto member = std::make_unique<LaneGroupMembers>();
+        member->tokens = std::make_unique<TimelineArmToken[]>(count);
+        member->originals = std::make_unique<TimelineArmTable::OriginalGroupMember[]>(count);
+        member->capacity = count;
+        member->pageBacking = true;
+        if (member->RequestedBytes() > SIZE_MAX - pageMemberBytes_) return nullptr;
+        member->owner = this;
+        pageMemberBytes_ += member->RequestedBytes();
+        return member;
+    } catch (...) { return nullptr; }
+}
+
+std::unique_ptr<ScheduledTransactionPool::PageGroupMemberBacking>
+ScheduledTransactionPool::PreparePageGroupMemberBacking(std::uint32_t count) noexcept {
+    if (memguard::IsAudioTagged()) return nullptr;
+    try {
+        auto backing = std::make_unique<PageGroupMemberBacking>();
+        backing->members.reserve(count);
+        for (std::uint32_t index = 0; index < count; ++index) {
+            auto member = CreatePageGroupMembers(config_.maxArmsPerGroup);
+            if (member == nullptr) return nullptr;
+            member->held = true;
+            backing->members.push_back(std::move(member));
+        }
+        return backing;
+    } catch (...) { return nullptr; }
+}
+
+bool ScheduledTransactionPool::PreparePageGroupMembers(std::size_t row, std::uint16_t count) noexcept {
+    auto& slot = pageGroupMemberStorage_[row];
+    assert(slot.borrowed == nullptr);
+    if (count == 0 || (slot.owned != nullptr && slot.owned->capacity >= count)) return true;
+    if (privateMaterializationActive_) {
+        for (auto& credit : unplacedCredits_) {
+            if (!credit.materializing || credit.memberBacking == nullptr) continue;
+            for (auto& member : credit.memberBacking->members) {
+                if (member->inUse || member->capacity < count) continue;
+                member->inUse = true;
+                slot.borrowed = member.get();
+                return true;
+            }
+        }
+        return false;
+    }
+    auto candidate = CreatePageGroupMembers(count);
+    if (candidate == nullptr) return false;
+    slot.owned.swap(candidate);
+    return true;
+}
+
+void ScheduledTransactionPool::ClearPageGroupMembers(std::size_t row, std::uint16_t count) noexcept {
+    ReturnGroupMemberOriginals(PageGroupOriginals(row), count);
+    if (auto* tokens = PageGroupTokens(row); tokens != nullptr)
+        std::fill_n(tokens, count, TimelineArmToken{});
+    pageGroupMemberStorage_[row].ReturnBorrowed();
+    pageGroupMemberStorage_[row].replacement.reset();
+}
+
+ScheduledTransactionPool::ImmediateLaneBackingPreparation::~ImmediateLaneBackingPreparation() { Release(); }
+ScheduledTransactionPool::ImmediateLaneBackingPreparation::ImmediateLaneBackingPreparation(
+    ImmediateLaneBackingPreparation&& other) noexcept { *this = std::move(other); }
+ScheduledTransactionPool::ImmediateLaneBackingPreparation&
+ScheduledTransactionPool::ImmediateLaneBackingPreparation::operator=(ImmediateLaneBackingPreparation&& other) noexcept {
+    if (this != &other) {
+        Release();
+        owner_ = std::exchange(other.owner_, nullptr);
+        rows_ = std::move(other.rows_);
+        members_ = std::move(other.members_);
+    }
+    return *this;
+}
+
+void ScheduledTransactionPool::ImmediateLaneBackingPreparation::Release() noexcept {
+    for (auto& member : members_) {
+        if (member != nullptr && member->inUse) {
+            member->held = false;
+            (void)member.release();
+        }
+    }
+    members_.clear();
+    rows_.Release();
+    if (owner_ != nullptr) {
+        assert(owner_->immediateBackingHolds_ != 0);
+        --owner_->immediateBackingHolds_;
+        owner_ = nullptr;
+    }
+}
+
+ScheduledTransactionPool::ImmediateLaneBackingUse::ImmediateLaneBackingUse(
+    ScheduledTransactionPool& owner, ImmediateLaneBackingPreparation* backing) noexcept
+    : owner_(owner), previous_(owner.activeImmediateLaneBacking_),
+      rows_(backing == nullptr ? StableStoragePreparedUse{} : backing->rows_.Use()) {
+    assert(backing == nullptr || backing->owner_ == &owner);
+    owner_.activeImmediateLaneBacking_ = backing;
+}
+ScheduledTransactionPool::ImmediateLaneBackingUse::~ImmediateLaneBackingUse() {
+    owner_.activeImmediateLaneBacking_ = previous_;
+}
+
+std::size_t ScheduledTransactionPool::ImmediateLaneMemberStorageBytes() const noexcept {
+    return immediateMemberBytes_;
+}
+
+std::unique_ptr<ScheduledTransactionPool::LaneGroupMembers>
+ScheduledTransactionPool::CreateImmediateLaneMembers(std::uint16_t count) noexcept {
+    if (memguard::IsAudioTagged() || count > immediateMemberAllocationLimitForTests_) return nullptr;
+    try {
+        auto member = std::make_unique<LaneGroupMembers>();
+        member->tokens = std::make_unique<TimelineArmToken[]>(count);
+        member->originals = std::make_unique<TimelineArmTable::OriginalGroupMember[]>(count);
+        member->indices = std::make_unique<std::uint16_t[]>(count);
+        member->capacity = count;
+        if (member->RequestedBytes() > SIZE_MAX - immediateMemberBytes_) return nullptr;
+        member->owner = this;
+        immediateMemberBytes_ += member->RequestedBytes();
+        return member;
+    } catch (...) { return nullptr; }
+}
+
+bool ScheduledTransactionPool::CanReuseImmediateLaneRow(const LaneGroupRow& row) noexcept {
+    return row.state.load(std::memory_order_acquire) == LaneGroupState::Free &&
+        row.generation != UINT32_MAX && row.originalRegistrationPinCount == 0 &&
+        row.originalFactoryMarker == 0 && row.transferOriginal == nullptr &&
+        row.transferProof == nullptr && row.clockProof == nullptr && row.publicationProof == nullptr &&
+        row.readers.pins.load(std::memory_order_acquire) == 0 &&
+        row.lease.Capture().state == AudioSliceState::Ready;
+}
+
+bool ScheduledTransactionPool::PrepareImmediateLaneBacking(std::uint32_t groupCount,
+    std::uint64_t totalMembers, ImmediateLaneBackingPreparation* out) noexcept {
+    if (out == nullptr || out->Valid() || !Valid() || memguard::IsAudioTagged() ||
+        immediateBackingHolds_ == UINT32_MAX) return false;
+    groupCount = std::min(groupCount, config_.maxImmediateLaneGroupRows);
+    auto occupied = immediateLaneGroups_.ConstructedCount();
+    while (occupied != 0 && CanReuseImmediateLaneRow(immediateLaneGroups_[occupied - 1u])) --occupied;
+    ImmediateLaneBackingPreparation candidate;
+    if (!immediateLaneGroups_.PrepareBacking(groupCount, occupied, &candidate.rows_)) return false;
+    try {
+        const auto nonempty = static_cast<std::uint32_t>(std::min<std::uint64_t>(groupCount, totalMembers));
+        candidate.members_.reserve(nonempty);
+        // The i-th largest group has at most totalMembers / (i + 1) members.
+        for (std::uint32_t index = 0; index < nonempty; ++index) {
+            const auto count = static_cast<std::uint16_t>(std::min<std::uint64_t>(
+                config_.maxArmsPerGroup, totalMembers / (std::uint64_t{index} + 1u)));
+            auto member = CreateImmediateLaneMembers(count);
+            if (member == nullptr) return false;
+            member->held = true;
+            candidate.members_.push_back(std::move(member));
+        }
+    } catch (...) { return false; }
+    candidate.owner_ = this;
+    ++immediateBackingHolds_;
+    *out = std::move(candidate);
+    return true;
+}
+
+bool ScheduledTransactionPool::PrepareImmediateLaneMembers(LaneGroupRow& row, std::uint16_t count) noexcept {
+    assert(row.preparedMembers == nullptr);
+    if (count == 0 || (row.members != nullptr && count <= row.members->capacity)) return true;
+    if (activeImmediateLaneBacking_ != nullptr) {
+        LaneGroupMembers* best = nullptr;
+        for (const auto& candidate : activeImmediateLaneBacking_->members_) {
+            if (candidate == nullptr || candidate->inUse || candidate->capacity < count) continue;
+            if (best == nullptr || candidate->capacity < best->capacity) best = candidate.get();
+        }
+        if (best == nullptr) return false;
+        best->inUse = true;
+        row.preparedMembers = best;
+        return true;
+    }
+    auto candidate = CreateImmediateLaneMembers(count);
+    if (candidate == nullptr) return false;
+    row.members.swap(candidate);
+    return true;
+}
+
+void ScheduledTransactionPool::ReturnPreparedImmediateLaneMembers(LaneGroupRow& row) noexcept {
+    auto* member = std::exchange(row.preparedMembers, nullptr);
+    if (member == nullptr) return;
+    member->inUse = false;
+    if (!member->held) delete member;
 }
 
 PrivateImmediateLaneGroupsPublicationProof::PrivateImmediateLaneGroupsPublicationProof(
@@ -1236,7 +1470,7 @@ void ScheduledTransactionPool::MovePrivateImmediateLaneGroupsPublication(
     to.root_ = from.root_;
     to.next_ = from.next_;
     *link = &to;
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index)
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index)
         if (immediateLaneGroups_[index].publicationProof == &from)
             immediateLaneGroups_[index].publicationProof = &to;
     from.owner_ = nullptr;
@@ -1257,7 +1491,7 @@ void ScheduledTransactionPool::ReleasePrivateImmediateLaneGroupsPublication(
     proof.lane_ = nullptr;
     proof.root_ = 0;
     proof.next_ = nullptr;
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         auto& row = immediateLaneGroups_[index];
         if (row.publicationProof != &proof) continue;
         row.publicationProof = nullptr;
@@ -1281,7 +1515,7 @@ bool ScheduledTransactionPool::ProvePrivateImmediateLaneGroupsPublication(
         (pinCount != 0 && (!lane.attempt_->groupPinsInstalled || lane.attempt_->pinGroupPool != this)))
         return false;
     std::size_t count = 0;
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         const auto& row = immediateLaneGroups_[index];
         if (row.cohortRoot != root || row.selectedFutureDomain != 0) continue;
         if (row.state.load(std::memory_order_acquire) != LaneGroupState::Private ||
@@ -1318,7 +1552,7 @@ bool ScheduledTransactionPool::ProvePrivateImmediateLaneGroupsPublication(
     }
     if (count != pinCount) return false;
     // The complete census passed before any shared primary lease changes state.
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         auto& row = immediateLaneGroups_[index];
         if (row.cohortRoot != root || row.selectedFutureDomain != 0) continue;
         if (!row.lease.HoldPublication()) {
@@ -1367,6 +1601,7 @@ void ScheduledTransactionPool::ApplyPrivateImmediateLaneGroupsPublication(
 
 ScheduledTransactionPool::~ScheduledTransactionPool() {
     assert(selectedFutureDomains_ == 0);
+    assert(immediateBackingHolds_ == 0 && activeImmediateLaneBacking_ == nullptr);
     // Device and producer quiescence precedes pool destruction.
     while (laneGroupPublications_ != nullptr) laneGroupPublications_->Release();
     while (unpublishedGroupArmCancellations_ != nullptr)
@@ -1379,8 +1614,8 @@ ScheduledTransactionPool::~ScheduledTransactionPool() {
         row.cancellationOriginal = nullptr;
     }
     ReturnAllGroupMemberOriginals();
-    if (immediateLaneGroups_ != nullptr)
-        for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    if (immediateLaneGroups_.Capacity() != 0)
+        for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
             auto& row = immediateLaneGroups_[index];
             if (row.clockProof != nullptr) row.clockProof->Release();
             assert(row.originalRegistrationPinCount == 0);
@@ -1487,7 +1722,7 @@ bool ScheduledTransactionPool::MatchesPreparedPageGroupInput(
     if (input.members == nullptr) return false;
     const auto& token = input.members[0];
     const auto& saved = row.transferMember;
-    const auto& actual = pagePlan03GroupMembers_[original.rowIndex_ * config_.maxArmsPerGroup];
+    const auto& actual = PageGroupTokens(original.rowIndex_)[0];
     if (token.slot != saved.slot || token.generation != saved.generation ||
         token.renderSlot != saved.renderSlot || token.renderGeneration != saved.renderGeneration ||
         actual.slot != saved.slot || actual.generation != saved.generation ||
@@ -1710,10 +1945,9 @@ bool ScheduledTransactionPool::MatchesPrivateImmediateLaneGroupInput(
         original.immediateEntry_.gate != input.immediateEntry.gate ||
         original.immediateEntry_.generation != input.immediateEntry.generation ||
         (input.memberCount != 0 && input.members == nullptr)) return false;
-    const auto* actual = immediateLaneGroupMembers_.get() +
-        original.identity_.committedRow * config_.maxArmsPerGroup;
-    const auto* originalIndices = immediateLaneGroupMemberIndices_.get() +
-        original.identity_.committedRow * config_.maxArmsPerGroup;
+    const auto& row = immediateLaneGroups_[original.identity_.committedRow];
+    const auto* actual = row.MemberTokens();
+    const auto* originalIndices = row.MemberIndices();
     for (std::uint16_t index = 0; index < input.memberCount; ++index) {
         TimelineArmObservation expected{};
         if (armTable.Resolve(input.members[index]) == nullptr ||
@@ -1863,7 +2097,7 @@ void ScheduledTransactionPool::RetargetPrivateOriginalQueueGroupClockProof(
     for (std::uint32_t i = 0; i < from.rowCount_; ++i) {
         const auto& identity = from.rows_[i];
         assert(identity.transportEpoch == epoch_ &&
-            identity.committedRow < config_.maxImmediateLaneGroupRows);
+            identity.committedRow < immediateLaneGroups_.ConstructedCount());
         auto& row = immediateLaneGroups_[identity.committedRow];
         assert(row.clockProof == &from && row.generation == identity.rowClaimGeneration &&
             row.decision.slot == identity.decision.slot &&
@@ -1879,7 +2113,7 @@ void ScheduledTransactionPool::ReturnPrivateOriginalQueueGroupClockProof(
     for (std::uint32_t i = 0; i < proof.rowCount_; ++i) {
         const auto& identity = proof.rows_[i];
         assert(identity.transportEpoch == epoch_ &&
-            identity.committedRow < config_.maxImmediateLaneGroupRows);
+            identity.committedRow < immediateLaneGroups_.ConstructedCount());
         auto& row = immediateLaneGroups_[identity.committedRow];
         assert(row.clockProof == &proof && row.generation == identity.rowClaimGeneration &&
             row.decision.slot == identity.decision.slot &&
@@ -2234,7 +2468,7 @@ bool ScheduledTransactionPool::ReturnPrivateSelectedQueueFutureDomain(
     ImmediateLaneObservation laneObservation{};
     if (domain.laneSlot_ != UINT32_MAX && domain.lane_->Observe(
             {domain.laneSlot_, domain.laneGeneration_}, &laneObservation)) return false;
-    for (std::size_t i = 0; i < config_.maxImmediateLaneGroupRows; ++i) {
+    for (std::size_t i = 0; i < immediateLaneGroups_.ConstructedCount(); ++i) {
         const auto& row = immediateLaneGroups_[i];
         if (row.selectedFutureDomain == domain.marker_ &&
             row.state.load(std::memory_order_acquire) != LaneGroupState::Free) return false;
@@ -2426,8 +2660,7 @@ bool ScheduledTransactionPool::CaptureOriginalQueueFutureGroupScope(
     captured.input.memberCount = original.memberCount_;
     captured.input.sourceControlCount = original.sourceControlCount_;
     captured.input.immediateEntry = original.immediateEntry_;
-    captured.input.members = immediateLaneGroupMembers_.get() +
-        original.Identity().committedRow * config_.maxArmsPerGroup;
+    captured.input.members = immediateLaneGroups_[original.Identity().committedRow].MemberTokens();
     if (!MatchesOriginalQueueFutureGroupScope(original, captured.cohortRoot,
             captured.provisionalAnchorFrame, captured.input, armTable)) return false;
     *out = captured;
@@ -2440,8 +2673,8 @@ bool ScheduledTransactionPool::MatchesOriginalQueueFutureGroupLifetime(
     if (original.owner_ != this || original.marker_ == 0 || !identity.Exact() ||
         identity.backing != Plan03GroupBacking::ImmediateLane ||
         identity.transportEpoch != epoch_ || identity.absoluteQuantum != 0 ||
-        identity.pageGeneration != 1 || immediateLaneGroups_ == nullptr ||
-        identity.committedRow >= config_.maxImmediateLaneGroupRows) return false;
+        identity.pageGeneration != 1 || immediateLaneGroups_.Capacity() == 0 ||
+        identity.committedRow >= immediateLaneGroups_.ConstructedCount()) return false;
     const auto& row = immediateLaneGroups_[identity.committedRow];
     const auto state = row.state.load(std::memory_order_acquire);
     return (state == LaneGroupState::Private || state == LaneGroupState::Published) &&
@@ -2463,8 +2696,8 @@ bool ScheduledTransactionPool::ResolveRetainedHiddenConditionalGroup(
         if (original.owner_ != this || original.marker_ == 0 || !identity.Exact() ||
             identity.backing != Plan03GroupBacking::ImmediateLane ||
             identity.transportEpoch != epoch_ || identity.absoluteQuantum != 0 ||
-            identity.pageGeneration != 1 || immediateLaneGroups_ == nullptr ||
-            identity.committedRow >= config_.maxImmediateLaneGroupRows) return false;
+            identity.pageGeneration != 1 || immediateLaneGroups_.Capacity() == 0 ||
+            identity.committedRow >= immediateLaneGroups_.ConstructedCount()) return false;
         const auto& row = immediateLaneGroups_[identity.committedRow];
         // The supplied native loan keeps marker and immutable identity alive.
         // Its mutable producer-only registration count is not sampled by audio.
@@ -2611,9 +2844,8 @@ bool ScheduledTransactionPool::MatchesOriginalQueueFutureGroupScopeImpl(
         row.selectedFutureDomain != original.selectedFutureDomain_ ||
         row.memberCount != original.memberCount_ ||
         row.sourceControlCount != original.sourceControlCount_) return false;
-    const auto* actual = immediateLaneGroupMembers_.get() + rowIndex * config_.maxArmsPerGroup;
-    const auto* originalIndices = immediateLaneGroupMemberIndices_.get() +
-        rowIndex * config_.maxArmsPerGroup;
+    const auto* actual = row.MemberTokens();
+    const auto* originalIndices = row.MemberIndices();
     for (std::uint16_t index = 0; index < input.memberCount; ++index) {
         TimelineArmObservation expected{};
         if (!armTable.Observe(input.members[index], &expected) ||
@@ -2653,12 +2885,13 @@ std::uint32_t ScheduledTransactionPool::RingIndex(std::uint32_t page) const {
 bool ScheduledTransactionPool::Reset(const Config& config,
                                      std::uint64_t startFrame,
                                      TransportEpoch epoch) {
+    if (immediateBackingHolds_ != 0 || activeImmediateLaneBacking_ != nullptr) return false;
     if (laneGroupPublications_ != nullptr) return false;
     if (HasHeldCurrentSlices() || currentSliceIncarnation_ == UINT64_MAX) return false;
     if (selectedFutureDomains_ != 0 || preparedPageFrontierBindingHolds_ != 0 ||
         privateUnboundPageArmRetirements_ != nullptr || unpublishedGroupArmCancellations_ != nullptr || privateMaterializationActive_) return false;
-    if (immediateLaneGroups_ != nullptr)
-        for (std::size_t row = 0; row < config_.maxImmediateLaneGroupRows; ++row) {
+    if (immediateLaneGroups_.Capacity() != 0)
+        for (std::size_t row = 0; row < immediateLaneGroups_.ConstructedCount(); ++row) {
             const auto state = immediateLaneGroups_[row].state.load(std::memory_order_acquire);
             if (immediateLaneGroups_[row].clockProof != nullptr ||
                 immediateLaneGroups_[row].originalRegistrationPinCount != 0 ||
@@ -2753,6 +2986,18 @@ bool ScheduledTransactionPool::Reset(const Config& config,
         return false;
     }
 
+    auto currentSlices = std::make_unique<CurrentSlicePage[]>(static_cast<std::size_t>(pages));
+    const auto ordinarySlices = config.maxCurrentSlicesPerQuantum == 0
+        ? config.maxEventsPerQuantum : config.maxCurrentSlicesPerQuantum;
+    for (std::uint32_t page = 0; page < pages; ++page) {
+        auto& storage = currentSlices[page];
+        if (!storage.rows.Reserve(static_cast<std::uint32_t>(currentSliceCapacity)) ||
+            !storage.order.Reserve(static_cast<std::uint32_t>(currentSliceCapacity)) ||
+            !storage.rows.ConstructThrough(ordinarySlices) ||
+            !storage.order.ConstructThrough(ordinarySlices)) return false;
+    }
+    pageCurrentSliceStorage_ = std::move(currentSlices);
+    nativeCalendarBackingCount_ = 0;
     config_ = config;
     pageCount_ = static_cast<std::uint32_t>(pages);
     quantumFrames_ = config.quantumFrames;
@@ -2795,14 +3040,6 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     currentSliceStorageCapacity_ = static_cast<std::uint32_t>(currentSliceCapacity);
     ++currentSliceIncarnation_;
     pageCurrentSliceCount_.assign(pageCount_, 0);
-    pageCurrentSlices_.assign(
-        static_cast<std::size_t>(pageCount_) *
-            currentSliceStorageCapacity_,
-        CurrentSliceRow{});
-    pageCurrentSliceOrder_.assign(
-        static_cast<std::size_t>(pageCount_) *
-            currentSliceStorageCapacity_,
-        0);
     const std::size_t groupRows =
         static_cast<std::size_t>(pageCount_) *
         config_.maxPlan03GroupHeadersPerPage;
@@ -2819,12 +3056,10 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     pagePlan03GroupCount_.assign(pageCount_, 0);
     pagePreparedPlan03GroupCount_.assign(pageCount_, 0);
     pagePlan03Groups_.assign(groupRows, Plan03GroupSliceRow{});
-    pagePlan03GroupMembers_.assign(
-        groupRows * config_.maxArmsPerGroup, TimelineArmToken{});
+    pageGroupMemberStorage_.clear();
+    pageGroupMemberStorage_.resize(groupRows);
     pageGroupIdentities_ = groupRows == 0 ? nullptr :
         std::make_unique<TimelineArmTable::OriginalGroupIdentity[]>(groupRows);
-    pageGroupMemberOriginals_ = pagePlan03GroupMembers_.empty() ? nullptr :
-        std::make_unique<TimelineArmTable::OriginalGroupMember[]>(pagePlan03GroupMembers_.size());
     replacementGroupMemberOriginals_ = config_.maxArmsPerGroup == 0 ? nullptr :
         std::make_unique<TimelineArmTable::OriginalGroupMember[]>(config_.maxArmsPerGroup);
     pagePlan03GroupRowStates_.assign(
@@ -2838,16 +3073,9 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     const auto laneRows = static_cast<std::size_t>(config_.maxImmediateLaneGroupRows);
     if (config_.maxArmsPerGroup != 0 &&
         laneRows > SIZE_MAX / config_.maxArmsPerGroup) return false;
-    immediateGroupIdentities_ = laneRows == 0 ? nullptr :
-        std::make_unique<TimelineArmTable::OriginalGroupIdentity[]>(laneRows);
-    immediateLaneGroups_ = laneRows == 0 ? nullptr :
-        std::make_unique<LaneGroupRow[]>(laneRows);
-    immediateLaneGroupMembers_ = laneRows == 0 ? nullptr :
-        std::make_unique<TimelineArmToken[]>(laneRows * config_.maxArmsPerGroup);
-    immediateGroupMemberOriginals_ = laneRows == 0 ? nullptr :
-        std::make_unique<TimelineArmTable::OriginalGroupMember[]>(laneRows * config_.maxArmsPerGroup);
-    immediateLaneGroupMemberIndices_ = laneRows == 0 ? nullptr :
-        std::make_unique<std::uint16_t[]>(laneRows * config_.maxArmsPerGroup);
+    StableRowStorage<LaneGroupRow> laneCandidate;
+    if (!laneCandidate.Reserve(config_.maxImmediateLaneGroupRows)) return false;
+    immediateLaneGroups_.Swap(laneCandidate);
     immediateLaneOwnerGates_ = config_.maxImmediateLaneOwnerGates == 0 ? nullptr :
         std::make_unique<LaneFrontierGate[]>(config_.maxImmediateLaneOwnerGates);
     immediateLaneDecisionGates_ = config_.maxImmediateLaneDecisionGates == 0 ? nullptr :
@@ -2877,9 +3105,8 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     for (std::uint32_t i = config.maxScheduledTransactions; i > 0; --i) {
         freePreparedTransactionClaims_.push_back(i - 1);
     }
-    unplacedCredits_.assign(
-        static_cast<std::size_t>(config.maxScheduledTransactions) + groupRows,
-        UnplacedCreditRow{});
+    unplacedCredits_.clear();
+    unplacedCredits_.resize(static_cast<std::size_t>(config.maxScheduledTransactions) + groupRows);
     privatePreparedGroups_.clear();
     privatePreparedGroups_.resize(groupRows);
     privateCommittedGroups_.clear();
@@ -2921,7 +3148,7 @@ bool ScheduledTransactionPool::Reset(const Config& config,
 bool ScheduledTransactionPool::ReserveUnplacedBatchCredit(
     const UnplacedBatchCreditRequest& request,
     UnplacedBatchCredit* out) noexcept {
-    if (!Valid() || out == nullptr || out->Valid() ||
+    if (!Valid() || memguard::IsAudioTagged() || out == nullptr || out->Valid() ||
         (request.transactions == 0 && request.groupHeaders == 0) ||
         request.preparedClaims > request.transactions ||
         (request.transactions == 0 &&
@@ -2956,6 +3183,10 @@ bool ScheduledTransactionPool::ReserveUnplacedBatchCredit(
     for (std::size_t slot = 0; slot < unplacedCredits_.size(); ++slot) {
         auto& row = unplacedCredits_[slot];
         if (row.active) continue;
+        auto backing = request.groupHeaders == 0 || config_.maxArmsPerGroup == 0
+            ? nullptr : PreparePageGroupMemberBacking(request.groupHeaders);
+        if (request.groupHeaders != 0 && config_.maxArmsPerGroup != 0 && backing == nullptr) return false;
+        row.memberBacking = std::move(backing);
         row.request = request;
         row.generation = nextUnplacedCreditGeneration_++;
         row.epoch = epoch_;
@@ -2975,7 +3206,7 @@ bool ScheduledTransactionPool::ReserveUnplacedBatchCredit(
 
 bool ScheduledTransactionPool::CancelUnplacedBatchCredit(
     UnplacedBatchCredit* credit) noexcept {
-    if (credit == nullptr || !credit->Valid() || credit->epoch != epoch_ ||
+    if (memguard::IsAudioTagged() || credit == nullptr || !credit->Valid() || credit->epoch != epoch_ ||
         credit->slot >= unplacedCredits_.size()) return false;
     auto& row = unplacedCredits_[credit->slot];
     if (!row.active || row.materializing ||
@@ -3845,6 +4076,7 @@ bool ScheduledTransactionPool::HasUnplacedGroupBudget(
 
 bool ScheduledTransactionPool::CanResetForEpoch(
     std::uint64_t startFrame, TransportEpoch epoch) const noexcept {
+    if (immediateBackingHolds_ != 0 || activeImmediateLaneBacking_ != nullptr) return false;
     if (laneGroupPublications_ != nullptr) return false;
     if (selectedFutureDomains_ != 0 || preparedPageFrontierBindingHolds_ != 0 || privateUnboundPageArmRetirements_ != nullptr || unpublishedGroupArmCancellations_ != nullptr ||
         privateMaterializationActive_ || HasPlan03GroupReaders()) return false;
@@ -3855,7 +4087,7 @@ bool ScheduledTransactionPool::CanResetForEpoch(
         pageEmptyQuantumStamp_ == nullptr) {
         return false;
     }
-    for (std::size_t row = 0; row < config_.maxImmediateLaneGroupRows; ++row) {
+    for (std::size_t row = 0; row < immediateLaneGroups_.ConstructedCount(); ++row) {
         const auto state = immediateLaneGroups_[row].state.load(std::memory_order_acquire);
         if (immediateLaneGroups_[row].clockProof != nullptr ||
                 immediateLaneGroups_[row].originalRegistrationPinCount != 0 ||
@@ -3892,9 +4124,7 @@ bool ScheduledTransactionPool::CanResetForEpoch(
                       pageEvents_.size()) ||
         pageEventOrder_.size() != pageEvents_.size() ||
         pageCurrentSliceCount_.size() != pageCount ||
-        !exactProduct(pageCount, currentSliceStorageCapacity_,
-                      pageCurrentSlices_.size()) ||
-        pageCurrentSliceOrder_.size() != pageCurrentSlices_.size() ||
+        pageCurrentSliceStorage_ == nullptr ||
         pagePlan03GroupCount_.size() != pageCount ||
         pagePreparedPlan03GroupCount_.size() != pageCount ||
         !exactProduct(pageCount, config_.maxPlan03GroupHeadersPerPage,
@@ -3902,8 +4132,7 @@ bool ScheduledTransactionPool::CanResetForEpoch(
         pagePlan03GroupRowStates_.size() != pagePlan03Groups_.size() ||
         pagePlan03GroupClaimGenerations_.size() !=
             pagePlan03Groups_.size() ||
-        !exactProduct(groupRows, config_.maxArmsPerGroup,
-                      pagePlan03GroupMembers_.size()) ||
+        pageGroupMemberStorage_.size() != groupRows ||
         (groupRows == 0) != (pagePlan03GroupLeases_ == nullptr) ||
         pageBatchCount_.size() != pageCount ||
         pageBatchOccupiedCount_.size() != pageCount ||
@@ -3931,6 +4160,11 @@ bool ScheduledTransactionPool::CanResetForEpoch(
     }
 
     for (std::uint32_t page = 0; page < pageCount_; ++page) {
+        const auto& slices = pageCurrentSliceStorage_[page];
+        if (slices.rows.Capacity() != currentSliceStorageCapacity_ ||
+            slices.order.Capacity() != currentSliceStorageCapacity_ ||
+            slices.rows.ConstructedCount() < pageCurrentSliceCount_[page] ||
+            slices.order.ConstructedCount() < pageCurrentSliceCount_[page]) return false;
         if (pageHeaders_[page].pageGeneration == UINT64_MAX ||
             pageEventCount_[page] > config_.maxEventsPerQuantum ||
             pagePreparedEventCount_[page] != 0 ||
@@ -3969,12 +4203,10 @@ bool ScheduledTransactionPool::CanResetForEpoch(
             if (row.memberCount > config_.maxArmsPerGroup) {
                 return false;
             }
-            const std::size_t memberBase =
-                rowIndex * config_.maxArmsPerGroup;
             for (std::uint16_t member = 0; member < row.memberCount; ++member) {
                 TimelineArmObservation observation{};
                 if (plan03ArmTable_->Observe(
-                        pagePlan03GroupMembers_[memberBase + member],
+                        PageGroupTokens(rowIndex)[member],
                         &observation)) {
                     return false;
                 }
@@ -4042,16 +4274,16 @@ bool ScheduledTransactionPool::ResetForEpoch(
     std::fill(pageEvents_.begin(), pageEvents_.end(), EventRow{});
     std::fill(pageEventOrder_.begin(), pageEventOrder_.end(), 0);
     std::fill(pageCurrentSliceCount_.begin(), pageCurrentSliceCount_.end(), 0);
-    std::fill(pageCurrentSlices_.begin(), pageCurrentSlices_.end(),
-              CurrentSliceRow{});
-    std::fill(pageCurrentSliceOrder_.begin(), pageCurrentSliceOrder_.end(), 0);
+    for (std::uint32_t page = 0; page < pageCount_; ++page) {
+        auto& slices = pageCurrentSliceStorage_[page];
+        std::fill(slices.rows.begin(), slices.rows.end(), CurrentSliceRow{});
+        std::fill(slices.order.begin(), slices.order.end(), 0);
+    }
     std::fill(pagePlan03GroupCount_.begin(), pagePlan03GroupCount_.end(), 0);
     std::fill(pagePreparedPlan03GroupCount_.begin(),
               pagePreparedPlan03GroupCount_.end(), 0);
     std::fill(pagePlan03Groups_.begin(), pagePlan03Groups_.end(),
               Plan03GroupSliceRow{});
-    std::fill(pagePlan03GroupMembers_.begin(), pagePlan03GroupMembers_.end(),
-              TimelineArmToken{});
     std::fill(pagePlan03GroupRowStates_.begin(),
               pagePlan03GroupRowStates_.end(), Plan03GroupRowState::Free);
     std::fill(pagePlan03GroupClaimGenerations_.begin(),
@@ -4081,8 +4313,7 @@ bool ScheduledTransactionPool::ResetForEpoch(
         freePreparedTransactionClaims_[index] =
             config_.maxScheduledTransactions - index - 1;
     }
-    std::fill(unplacedCredits_.begin(), unplacedCredits_.end(),
-              UnplacedCreditRow{});
+    for (auto& credit : unplacedCredits_) credit = {};
     unplacedTransactions_ = 0;
     unplacedPreparedClaims_ = 0;
     unplacedEvents_ = 0;
@@ -4230,16 +4461,11 @@ void ScheduledTransactionPool::Publish(
                 SortPage(ring);
                 const std::uint32_t sliceCount =
                     pageCurrentSliceCount_[ring];
-                const std::size_t sliceBase =
-                    static_cast<std::size_t>(ring) *
-                    currentSliceStorageCapacity_;
-                std::uint32_t* sliceOrder =
-                    &pageCurrentSliceOrder_[sliceBase];
+                std::uint32_t* sliceOrder = pageCurrentSliceStorage_[ring].order.data();
                 for (std::uint32_t i = 0; i < sliceCount; ++i) {
                     sliceOrder[i] = i;
                 }
-                const CurrentSliceRow* sliceRows =
-                    &pageCurrentSlices_[sliceBase];
+                const CurrentSliceRow* sliceRows = pageCurrentSliceStorage_[ring].rows.data();
                 std::sort(sliceOrder, sliceOrder + sliceCount,
                           [sliceRows](std::uint32_t a, std::uint32_t b) {
                               const CurrentSliceRow& x = sliceRows[a];
@@ -4770,9 +4996,8 @@ ScheduledTransactionPool::CancelUnpublishedOrdinaryStartExact(
                 sameArm({operation.armSlot, operation.armGeneration,
                          operation.renderSlot, operation.renderGeneration}))
                 return OrdinaryStartCancelResult::NotEligible;
-            const std::size_t memberBase = rowIndex * config_.maxArmsPerGroup;
             for (std::uint16_t member = 0; member < group.memberCount; ++member)
-                if (sameArm(pagePlan03GroupMembers_[memberBase + member]))
+                if (sameArm(PageGroupTokens(rowIndex)[member]))
                     return OrdinaryStartCancelResult::NotEligible;
             if (group.publicationHeld) ++groupHolds;
         }
@@ -6393,6 +6618,53 @@ bool ScheduledTransactionPool::CancelPreparedTransactionBatch(
     return true;
 }
 
+std::uint64_t ScheduledTransactionPool::CurrentSliceStorageBytes() const noexcept {
+    std::uint64_t bytes = pageCurrentSliceCount_.capacity() * sizeof(std::uint32_t);
+    if (pageCurrentSliceStorage_ == nullptr) return bytes;
+    bytes += static_cast<std::uint64_t>(pageCount_) * sizeof(CurrentSlicePage);
+    for (std::uint32_t page = 0; page < pageCount_; ++page) {
+        const auto& storage = pageCurrentSliceStorage_[page];
+        bytes += storage.rows.RequestedBytes() + storage.order.RequestedBytes();
+    }
+    return bytes;
+}
+
+std::uint64_t ScheduledTransactionPool::CurrentSliceCommittedBytes() const noexcept {
+    std::uint64_t bytes = 0;
+    if (pageCurrentSliceStorage_ != nullptr)
+        for (std::uint32_t page = 0; page < pageCount_; ++page) {
+            const auto& storage = pageCurrentSliceStorage_[page];
+            bytes += storage.rows.CommittedBytes() + storage.order.CommittedBytes();
+        }
+    return bytes;
+}
+
+std::uint64_t ScheduledTransactionPool::CurrentSliceReservedBytes() const noexcept {
+    std::uint64_t bytes = 0;
+    if (pageCurrentSliceStorage_ != nullptr)
+        for (std::uint32_t page = 0; page < pageCount_; ++page) {
+            const auto& storage = pageCurrentSliceStorage_[page];
+            bytes += storage.rows.ReservedBytes() + storage.order.ReservedBytes();
+        }
+    return bytes;
+}
+
+bool ScheduledTransactionPool::PrepareNativeStartCalendarBacking(std::uint32_t count) noexcept {
+    count = std::min(count, config_.maxNativeStartCalendarsPerQuantum);
+    if (count <= nativeCalendarBackingCount_) return true;
+    if (!Valid() || memguard::IsAudioTagged() || pageCurrentSliceStorage_ == nullptr) return false;
+    const auto required = config_.maxCurrentSlicesPerQuantum + count;
+    // A captured read cut can land in any writable page. Keep ordinary writes
+    // and every physically prepared native cut backed before issuing that cut.
+    for (std::uint32_t page = 0; page < pageCount_; ++page) {
+        auto& storage = pageCurrentSliceStorage_[page];
+        if (!storage.rows.ConstructThrough(required) ||
+            !storage.order.ConstructThrough(required)) return false;
+    }
+    nativeCalendarBackingCount_ = count;
+    return true;
+}
+
 ReserveResult ScheduledTransactionPool::ReserveCurrentSlice(
     const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
     std::uint64_t publicationFrontier) {
@@ -6457,11 +6729,11 @@ ReserveResult ScheduledTransactionPool::PlanCurrentSlicePlacement(
         result.refusal = ReserveRefusal::Late;
         return result;
     }
-    const auto base = static_cast<std::size_t>(ring) * currentSliceStorageCapacity_;
+    const auto& rows = pageCurrentSliceStorage_[ring].rows;
     const bool native = input.kind == CurrentSliceKind::NativeStartCalendar;
     std::uint32_t quotaCount = 0;
     for (std::uint32_t i = 0; i < pageCurrentSliceCount_[ring]; ++i)
-        if ((pageCurrentSlices_[base + i].kind == CurrentSliceKind::NativeStartCalendar) == native) ++quotaCount;
+        if ((rows[i].kind == CurrentSliceKind::NativeStartCalendar) == native) ++quotaCount;
     const auto quota = native ? config_.maxNativeStartCalendarsPerQuantum : config_.maxCurrentSlicesPerQuantum;
     if (quotaCount >= quota || pageCurrentSliceCount_[ring] >= currentSliceStorageCapacity_ ||
         (publicationHeld && pagePublicationHolds_[ring] == UINT64_MAX)) {
@@ -6495,9 +6767,17 @@ ReserveResult ScheduledTransactionPool::ReserveCurrentSliceImpl(
     std::uint32_t page = 0;
     if (!PageForFrame(frame, &page)) return {};
     const auto ring = RingIndex(page);
-    const auto base = static_cast<std::size_t>(ring) * currentSliceStorageCapacity_;
-    CurrentSliceRow& row =
-        pageCurrentSlices_[base + pageCurrentSliceCount_[ring]++];
+    auto& rows = pageCurrentSliceStorage_[ring].rows;
+    if (input.kind == CurrentSliceKind::NativeStartCalendar) {
+        std::uint32_t nativeCount = 0;
+        for (std::uint32_t i = 0; i < pageCurrentSliceCount_[ring]; ++i)
+            nativeCount += rows[i].kind == CurrentSliceKind::NativeStartCalendar ? 1u : 0u;
+        if (!PrepareNativeStartCalendarBacking(nativeCount + 1u)) {
+            result.status = ReserveStatus::Refused;
+            return result;
+        }
+    }
+    CurrentSliceRow& row = rows[pageCurrentSliceCount_[ring]++];
     row.executeFrame = frame;
     row.logicCommitSequence = input.logicCommitSequence;
     row.kind = input.kind;
@@ -6524,8 +6804,11 @@ ReserveResult ScheduledTransactionPool::ReserveCurrentSliceImpl(
 }
 
 bool ScheduledTransactionPool::HasHeldCurrentSlices() const noexcept {
-    return std::any_of(pageCurrentSlices_.begin(), pageCurrentSlices_.end(),
-        [](const CurrentSliceRow& row) { return row.publicationHeld; });
+    if (pageCurrentSliceStorage_ != nullptr)
+        for (std::uint32_t page = 0; page < pageCount_; ++page)
+            for (std::uint32_t index = 0; index < pageCurrentSliceCount_[page]; ++index)
+                if (pageCurrentSliceStorage_[page].rows[index].publicationHeld) return true;
+    return false;
 }
 
 bool ScheduledTransactionPool::LocateHeldCurrentSlice(
@@ -6542,9 +6825,9 @@ bool ScheduledTransactionPool::LocateHeldCurrentSlice(
     if (header.frozen || header.absoluteQuantumIndex != token.absoluteQuantum_ ||
         header.pageGeneration != token.pageGeneration_ ||
         pagePublicationHolds_[rowRing] == 0) return false;
-    const auto base = static_cast<std::size_t>(rowRing) * currentSliceStorageCapacity_;
+    const auto& rows = pageCurrentSliceStorage_[rowRing].rows;
     for (std::uint32_t i = 0; i < pageCurrentSliceCount_[rowRing]; ++i) {
-        const auto& row = pageCurrentSlices_[base + i];
+        const auto& row = rows[i];
         if (row.publicationHeld && row.rowSequence == token.rowSequence_ &&
             row.executeFrame == token.executeFrame_ &&
             row.slice.slot == token.slice_.slot &&
@@ -6566,8 +6849,7 @@ bool ScheduledTransactionPool::CanReleaseHeldCurrentSlice(
 bool ScheduledTransactionPool::ReleaseHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept {
     std::uint32_t ring = 0, index = 0;
     if (!Valid() || token == nullptr || !LocateHeldCurrentSlice(*token, &ring, &index)) return false;
-    const auto base = static_cast<std::size_t>(ring) * currentSliceStorageCapacity_;
-    pageCurrentSlices_[base + index].publicationHeld = false;
+    pageCurrentSliceStorage_[ring].rows[index].publicationHeld = false;
     --pagePublicationHolds_[ring];
     token->owner_ = nullptr;
     return true;
@@ -6576,11 +6858,11 @@ bool ScheduledTransactionPool::ReleaseHeldCurrentSlice(HeldCurrentSliceToken* to
 bool ScheduledTransactionPool::CancelHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept {
     std::uint32_t ring = 0, index = 0;
     if (token == nullptr || !LocateHeldCurrentSlice(*token, &ring, &index)) return false;
-    const auto base = static_cast<std::size_t>(ring) * currentSliceStorageCapacity_;
+    auto& rows = pageCurrentSliceStorage_[ring].rows;
     auto& count = pageCurrentSliceCount_[ring];
     for (std::uint32_t i = index + 1; i < count; ++i)
-        pageCurrentSlices_[base + i - 1] = pageCurrentSlices_[base + i];
-    pageCurrentSlices_[base + --count] = {};
+        rows[i - 1] = rows[i];
+    rows[--count] = {};
     --pagePublicationHolds_[ring];
     token->owner_ = nullptr;
     return true;
@@ -6723,9 +7005,10 @@ Plan03GroupReserveStatus ScheduledTransactionPool::ReservePlan03GroupSlice(
     if (readers.pins.load(std::memory_order_acquire) != 0) {
         return Plan03GroupReserveStatus::Invalid;
     }
+    if (!PreparePageGroupMembers(groupRow, input.memberCount))
+        return Plan03GroupReserveStatus::MemberCapacity;
     readers.lastAudioSequence.store(0, std::memory_order_relaxed);
-    const std::size_t memberBase =
-        groupRow * config_.maxArmsPerGroup;
+    auto* members = PageGroupTokens(groupRow);
     for (std::uint16_t inputIndex = 0; inputIndex < input.memberCount;
          ++inputIndex) {
         TimelineArmObservation observation{};
@@ -6734,27 +7017,23 @@ Plan03GroupReserveStatus ScheduledTransactionPool::ReservePlan03GroupSlice(
         while (outputIndex > 0) {
             TimelineArmObservation priorObservation{};
             (void)armTable.Observe(
-                pagePlan03GroupMembers_[memberBase + outputIndex - 1],
+                members[outputIndex - 1],
                 &priorObservation);
             if (priorObservation.memberIndex < observation.memberIndex) {
                 break;
             }
-            pagePlan03GroupMembers_[memberBase + outputIndex] =
-                pagePlan03GroupMembers_[memberBase + outputIndex - 1];
+            members[outputIndex] = members[outputIndex - 1];
             --outputIndex;
         }
-        pagePlan03GroupMembers_[memberBase + outputIndex] =
-            input.members[inputIndex];
+        members[outputIndex] = input.members[inputIndex];
     }
     const Plan03GroupSliceIdentity memberOrigin{
         pageHeaders_[ring].absoluteQuantumIndex, pageHeaders_[ring].pageGeneration,
         input.decision, input.sliceIndex, groupRow,
         pagePlan03GroupClaimGenerations_[groupRow], epoch_};
     if (!IssueGroupMemberOriginals(memberOrigin, armTable,
-            pagePlan03GroupMembers_.data() + memberBase, input.memberCount,
-            pageGroupMemberOriginals_.get() + memberBase, pageGroupIdentities_[groupRow])) {
-        std::fill(pagePlan03GroupMembers_.begin() + memberBase,
-            pagePlan03GroupMembers_.begin() + memberBase + input.memberCount, TimelineArmToken{});
+            members, input.memberCount, PageGroupOriginals(groupRow), pageGroupIdentities_[groupRow])) {
+        ClearPageGroupMembers(groupRow, input.memberCount);
         return Plan03GroupReserveStatus::ArmIdentityMismatch;
     }
     Plan03GroupSliceRow& row = pagePlan03Groups_[groupRow];
@@ -6850,8 +7129,10 @@ Plan03GroupReserveStatus ScheduledTransactionPool::PreparePlan03GroupSlice(
     if (readers.pins.load(std::memory_order_acquire) != 0) {
         return Plan03GroupReserveStatus::Invalid;
     }
+    if (!PreparePageGroupMembers(rowIndex, input.memberCount))
+        return Plan03GroupReserveStatus::MemberCapacity;
     readers.lastAudioSequence.store(0, std::memory_order_relaxed);
-    const std::size_t memberBase = rowIndex * config_.maxArmsPerGroup;
+    auto* members = PageGroupTokens(rowIndex);
     for (std::uint16_t inputIndex = 0; inputIndex < input.memberCount;
          ++inputIndex) {
         TimelineArmObservation observation{};
@@ -6860,27 +7141,23 @@ Plan03GroupReserveStatus ScheduledTransactionPool::PreparePlan03GroupSlice(
         while (outputIndex > 0) {
             TimelineArmObservation priorObservation{};
             (void)armTable.Observe(
-                pagePlan03GroupMembers_[memberBase + outputIndex - 1],
+                members[outputIndex - 1],
                 &priorObservation);
             if (priorObservation.memberIndex < observation.memberIndex) {
                 break;
             }
-            pagePlan03GroupMembers_[memberBase + outputIndex] =
-                pagePlan03GroupMembers_[memberBase + outputIndex - 1];
+            members[outputIndex] = members[outputIndex - 1];
             --outputIndex;
         }
-        pagePlan03GroupMembers_[memberBase + outputIndex] =
-            input.members[inputIndex];
+        members[outputIndex] = input.members[inputIndex];
     }
     const Plan03GroupSliceIdentity memberOrigin{
         pageHeaders_[ring].absoluteQuantumIndex, pageHeaders_[ring].pageGeneration,
         input.decision, input.sliceIndex, rowIndex,
         pagePlan03GroupClaimGenerations_[rowIndex], epoch_};
     if (!IssueGroupMemberOriginals(memberOrigin, armTable,
-            pagePlan03GroupMembers_.data() + memberBase, input.memberCount,
-            pageGroupMemberOriginals_.get() + memberBase, pageGroupIdentities_[rowIndex])) {
-        std::fill(pagePlan03GroupMembers_.begin() + memberBase,
-            pagePlan03GroupMembers_.begin() + memberBase + input.memberCount, TimelineArmToken{});
+            members, input.memberCount, PageGroupOriginals(rowIndex), pageGroupIdentities_[rowIndex])) {
+        ClearPageGroupMembers(rowIndex, input.memberCount);
         return Plan03GroupReserveStatus::ArmIdentityMismatch;
     }
     Plan03GroupSliceRow& row = pagePlan03Groups_[rowIndex];
@@ -6946,11 +7223,7 @@ bool ScheduledTransactionPool::CancelPreparedPlan03GroupSlice(
     --pagePreparedPlan03GroupCount_[ring];
     const std::uint16_t memberCount =
         pagePlan03Groups_[rowIndex].memberCount;
-    const std::size_t memberBase = rowIndex * config_.maxArmsPerGroup;
-    ReturnGroupMemberOriginals(pageGroupMemberOriginals_.get() + memberBase, memberCount);
-    std::fill(pagePlan03GroupMembers_.begin() + memberBase,
-              pagePlan03GroupMembers_.begin() + memberBase + memberCount,
-              TimelineArmToken{});
+    ClearPageGroupMembers(rowIndex, memberCount);
     pagePlan03Groups_[rowIndex] = {};
     if (pagePlan03GroupClaimGenerations_[rowIndex] == UINT32_MAX) {
         pagePlan03GroupRowStates_[rowIndex] = Plan03GroupRowState::Retired;
@@ -7094,11 +7367,7 @@ bool ScheduledTransactionPool::RollbackCommittedPlan03GroupSlice(
     if (pagePlan03Groups_[rowIndex].publicationHeld) --pagePublicationHolds_[ring];
     const std::uint16_t memberCount =
         pagePlan03Groups_[rowIndex].memberCount;
-    const std::size_t memberBase = rowIndex * config_.maxArmsPerGroup;
-    ReturnGroupMemberOriginals(pageGroupMemberOriginals_.get() + memberBase, memberCount);
-    std::fill(pagePlan03GroupMembers_.begin() + memberBase,
-              pagePlan03GroupMembers_.begin() + memberBase + memberCount,
-              TimelineArmToken{});
+    ClearPageGroupMembers(rowIndex, memberCount);
     pagePlan03Groups_[rowIndex] = {};
     if (pagePlan03GroupClaimGenerations_[rowIndex] == UINT32_MAX) {
         pagePlan03GroupRowStates_[rowIndex] =
@@ -7206,10 +7475,18 @@ ScheduledTransactionPool::PreparePlan03GroupSliceReplacement(
             pageHeaders_[ring].absoluteQuantumIndex,
             pageHeaders_[ring].pageGeneration, row.decision, row.sliceIndex,
             rowIndex, pagePlan03GroupClaimGenerations_[rowIndex], epoch_};
+        auto& members = pageGroupMemberStorage_[rowIndex];
+        const auto* storage = members.Storage();
+        std::unique_ptr<LaneGroupMembers> candidate;
+        if (replacement.memberCount != 0 && (storage == nullptr || storage->capacity < replacement.memberCount)) {
+            candidate = CreatePageGroupMembers(replacement.memberCount);
+            if (candidate == nullptr) return Plan03GroupReserveStatus::MemberCapacity;
+        }
         if (IsUnpublishedRetirementParticipant(current) ||
             !pagePlan03GroupLeases_[rowIndex].PrepareReplacement()) {
             return Plan03GroupReserveStatus::PageFrozen;
         }
+        members.replacement = std::move(candidate);
         out->owner_ = this;
         out->rowIndex_ = rowIndex;
         out->expected_ = current;
@@ -7242,8 +7519,6 @@ bool ScheduledTransactionPool::CommitPreparedPlan03GroupSliceReplacement(
         !CaptureExactPlan03Group(prepared->expected_, &current) ||
         IsUnpublishedRetirementParticipant(prepared->expected_)) return false;
     const Plan03GroupSliceInput& replacement = prepared->replacement_;
-    const std::size_t memberBase =
-        prepared->rowIndex_ * config_.maxArmsPerGroup;
     auto replacementOrigin = prepared->expected_;
     replacementOrigin.decision = replacement.decision;
     replacementOrigin.sliceIndex = replacement.sliceIndex;
@@ -7255,15 +7530,20 @@ bool ScheduledTransactionPool::CommitPreparedPlan03GroupSliceReplacement(
         ReturnGroupMemberOriginals(replacementGroupMemberOriginals_.get(), replacement.memberCount);
         return false;
     }
-    ReturnGroupMemberOriginals(pageGroupMemberOriginals_.get() + memberBase, row.memberCount);
+    ReturnGroupMemberOriginals(PageGroupOriginals(prepared->rowIndex_), row.memberCount);
+    auto& storage = pageGroupMemberStorage_[prepared->rowIndex_];
+    if (storage.replacement != nullptr) {
+        storage.ReturnBorrowed();
+        storage.owned = std::move(storage.replacement);
+    }
     auto& pageIdentity = pageGroupIdentities_[prepared->rowIndex_];
     assert(pageIdentity.liveMembers == 0);
     // Move the shared origin out of reusable replacement scratch before releasing it.
     pageIdentity = replacementGroupIdentity_;
     for (std::uint16_t index = 0; index < replacement.memberCount; ++index) {
-        pagePlan03GroupMembers_[memberBase + index] = replacement.members[index];
-        pageGroupMemberOriginals_[memberBase + index] = replacementGroupMemberOriginals_[index];
-        pageGroupMemberOriginals_[memberBase + index].groupIdentity_ = &pageIdentity;
+        PageGroupTokens(prepared->rowIndex_)[index] = replacement.members[index];
+        PageGroupOriginals(prepared->rowIndex_)[index] = replacementGroupMemberOriginals_[index];
+        PageGroupOriginals(prepared->rowIndex_)[index].groupIdentity_ = &pageIdentity;
         replacementGroupMemberOriginals_[index] = {};
     }
     replacementGroupIdentity_ = {};
@@ -7293,6 +7573,7 @@ bool ScheduledTransactionPool::CancelPreparedPlan03GroupSliceReplacement(
              .CancelPreparedReplacement()) {
         return false;
     }
+    pageGroupMemberStorage_[prepared->rowIndex_].replacement.reset();
     prepared->owner_ = nullptr;
     prepared->rowIndex_ = 0;
     prepared->expected_ = {};
@@ -7512,12 +7793,10 @@ std::size_t ScheduledTransactionPool::ConsumeCurrentSlicesRt(
     if (count > outCapacity || (count != 0 && out == nullptr)) {
         return count;
     }
-    const std::size_t base =
-        static_cast<std::size_t>(ring) *
-        currentSliceStorageCapacity_;
-    const std::uint32_t* order = &pageCurrentSliceOrder_[base];
+    const auto& storage = pageCurrentSliceStorage_[ring];
+    const std::uint32_t* order = storage.order.data();
     for (std::uint32_t i = 0; i < count; ++i) {
-        const CurrentSliceRow& row = pageCurrentSlices_[base + order[i]];
+        const CurrentSliceRow& row = storage.rows[order[i]];
         out[i] = {row.executeFrame, row.logicCommitSequence, row.kind,
                   row.slice, row.executionOrdinal, row.rowSequence};
     }
@@ -7559,7 +7838,7 @@ std::size_t ScheduledTransactionPool::CapturePlan03PageGroupsRt(
         out[written].sourceControlCount = row.sourceControlCount;
         out[written].members = row.memberCount == 0
             ? nullptr
-            : &pagePlan03GroupMembers_[rowIndex * config_.maxArmsPerGroup];
+            : PageGroupTokens(rowIndex);
         out[written].lease = EffectivePlan03GroupLease(rowIndex);
         out[written].frontier = row.frontier.role == FrontierGroupRole::Legacy ? nullptr : &row.frontier;
         out[written].immediateEntry = row.immediateEntry;
@@ -7603,13 +7882,13 @@ std::size_t ScheduledTransactionPool::CaptureLivePlan03Groups(
             out[written].sourceControlCount = row.sourceControlCount;
             out[written].members = row.memberCount == 0
                 ? nullptr
-                : &pagePlan03GroupMembers_[rowIndex * config_.maxArmsPerGroup];
+                : PageGroupTokens(rowIndex);
             out[written].lease = EffectivePlan03GroupLease(rowIndex);
             out[written].frontier = row.frontier.role == FrontierGroupRole::Legacy ? nullptr : &row.frontier;
             ++written;
         }
     }
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         const auto& row = immediateLaneGroups_[index];
         const auto state = row.state.load(std::memory_order_acquire);
         if (state != LaneGroupState::Private && state != LaneGroupState::Published)
@@ -7841,11 +8120,7 @@ ScheduledTransactionPool::FinishUnpublishedFrontierRetirement(
         auto& lease = pagePlan03GroupLeases_[rowIndex];
         if (lease.Capture().state != AudioSliceState::Ready &&
             !lease.ResetForReuse()) return false;
-        const auto memberBase = rowIndex * config_.maxArmsPerGroup;
-        ReturnGroupMemberOriginals(pageGroupMemberOriginals_.get() + memberBase, row.memberCount);
-        std::fill(pagePlan03GroupMembers_.begin() + memberBase,
-                  pagePlan03GroupMembers_.begin() + memberBase + row.memberCount,
-                  TimelineArmToken{});
+        ClearPageGroupMembers(rowIndex, row.memberCount);
         --pagePlan03GroupCount_[ring];
         row = {};
         if (pagePlan03GroupClaimGenerations_[rowIndex] == UINT32_MAX)
@@ -7931,14 +8206,7 @@ void ScheduledTransactionPool::DropPreparedOccupancy() noexcept {
                 }
                 const std::uint16_t memberCount =
                     pagePlan03Groups_[rowIndex].memberCount;
-                const std::size_t memberBase =
-                    rowIndex * config_.maxArmsPerGroup;
-                ReturnGroupMemberOriginals(pageGroupMemberOriginals_.get() + memberBase, memberCount);
-                std::fill(
-                    pagePlan03GroupMembers_.begin() + memberBase,
-                    pagePlan03GroupMembers_.begin() + memberBase +
-                        memberCount,
-                    TimelineArmToken{});
+                ClearPageGroupMembers(rowIndex, memberCount);
                 pagePlan03Groups_[rowIndex] = {};
                 (void)pagePlan03GroupLeases_[rowIndex].ResetForReuse();
                 if (pagePlan03GroupClaimGenerations_[rowIndex] ==
@@ -8104,7 +8372,7 @@ bool ScheduledTransactionPool::ResolvePlan03GroupSliceRt(
         view.sourceControlCount = row.sourceControlCount;
         view.members = row.memberCount == 0
             ? nullptr
-            : &pagePlan03GroupMembers_[rowIndex * config_.maxArmsPerGroup];
+            : PageGroupTokens(rowIndex);
         view.lease = EffectivePlan03GroupLease(rowIndex);
         view.frontier = row.frontier.role == FrontierGroupRole::Legacy ? nullptr : &row.frontier;
         view.immediateEntry = row.immediateEntry;
@@ -8261,7 +8529,7 @@ bool ScheduledTransactionPool::InvalidateFrontierOwnerOperations(
     const FrontierOwnerIdentity& owner, DecisionToken decision, AudioSliceInvalidateReason reason) const noexcept {
     if (!owner.Valid()) return false;
     // Check all matching shared gates before changing even the first invalid bit.
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         const auto& row = immediateLaneGroups_[index];
         const auto& heldOwner = row.frontier.operation.owner;
         if (row.publicationProof != nullptr && row.frontierPinsOwned &&
@@ -8311,7 +8579,7 @@ void ScheduledTransactionPool::SettleInvalidatedImmediateLaneFrontiers(
     bool (*held)(void*, std::uint64_t, std::uint32_t,
                  std::uint32_t) noexcept,
     void* context) noexcept {
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         const auto& row = immediateLaneGroups_[index];
         const auto state = row.state.load(std::memory_order_acquire);
         if ((state != LaneGroupState::Private && state != LaneGroupState::Published) ||
@@ -8354,7 +8622,7 @@ void ScheduledTransactionPool::SettleInvalidatedImmediateLaneFrontiers(
 }
 
 bool ScheduledTransactionPool::HasFrontierOwnerOperations(const FrontierOwnerIdentity& owner, DecisionToken decision) const noexcept {
-    for (std::size_t i = 0; i < config_.maxImmediateLaneGroupRows; ++i) {
+    for (std::size_t i = 0; i < immediateLaneGroups_.ConstructedCount(); ++i) {
         const auto& row = immediateLaneGroups_[i];
         const auto state = row.state.load(std::memory_order_acquire);
         if ((state == LaneGroupState::Private || state == LaneGroupState::Published) &&
@@ -8596,8 +8864,8 @@ bool ScheduledTransactionPool::HasPlan03GroupReaders() const noexcept {
         for (std::size_t i = 0; i < pagePlan03Groups_.size(); ++i)
             if (pagePlan03GroupReaders_[i].pins.load(std::memory_order_acquire) != 0)
                 return true;
-    if (immediateLaneGroups_ != nullptr)
-        for (std::size_t i = 0; i < config_.maxImmediateLaneGroupRows; ++i)
+    if (immediateLaneGroups_.Capacity() != 0)
+        for (std::size_t i = 0; i < immediateLaneGroups_.ConstructedCount(); ++i)
             if (immediateLaneGroups_[i].readers.pins.load(std::memory_order_acquire) != 0)
                 return true;
     return false;
@@ -8733,7 +9001,7 @@ bool ScheduledTransactionPool::ResolvePlan03GroupSliceProducer(
         out->sourceControlCount = row.sourceControlCount;
         out->members = row.memberCount == 0
             ? nullptr
-            : &pagePlan03GroupMembers_[rowIndex * config_.maxArmsPerGroup];
+            : PageGroupTokens(rowIndex);
         out->lease = EffectivePlan03GroupLease(rowIndex);
         out->frontier = row.frontier.role == FrontierGroupRole::Legacy ? nullptr : &row.frontier;
         if (out->lease == nullptr) return false;
@@ -8809,8 +9077,8 @@ bool ScheduledTransactionPool::CancelPrivateImmediateLaneGroupInDomain(
         immediateLaneGroupDisposalObserver_(immediateLaneGroupDisposalContext_, identity,
             row.cohortRoot, row.selectedFutureDomain);
     if (originalBaseline != nullptr) originalBaseline->Release();
-    ReturnGroupMemberOriginals(immediateGroupMemberOriginals_.get() +
-        identity.committedRow * config_.maxArmsPerGroup, row.memberCount);
+    ReturnGroupMemberOriginals(row.MemberOriginals(), row.memberCount);
+    ReturnPreparedImmediateLaneMembers(row);
     row.cohortRoot = 0;
             row.selectedFutureDomain = 0;
     row.groupIndex = UINT32_MAX;
@@ -8846,7 +9114,7 @@ bool ScheduledTransactionPool::CancelImmediateLaneGroupsInDomain(
     // Entry members must dispose while their genuine primary is still alive.
     // A busy member keeps that primary for the next native retry.
     for (unsigned pass = 0; pass < 2u; ++pass) {
-        for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+        for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
             auto& row = immediateLaneGroups_[index];
             const auto state = row.state.load(std::memory_order_acquire);
             if ((state != LaneGroupState::Private && state != LaneGroupState::Published) ||
@@ -8858,7 +9126,7 @@ bool ScheduledTransactionPool::CancelImmediateLaneGroupsInDomain(
             if (coordinator) {
                 bool liveMember = false;
                 for (std::size_t memberIndex = 0;
-                     memberIndex < config_.maxImmediateLaneGroupRows; ++memberIndex) {
+                     memberIndex < immediateLaneGroups_.ConstructedCount(); ++memberIndex) {
                     const auto& member = immediateLaneGroups_[memberIndex];
                     const auto memberState = member.state.load(std::memory_order_acquire);
                     if ((memberState == LaneGroupState::Private ||
@@ -8904,8 +9172,8 @@ bool ScheduledTransactionPool::CancelImmediateLaneGroupsInDomain(
                 immediateLaneGroupDisposalObserver_(immediateLaneGroupDisposalContext_, identity,
                     row.cohortRoot, row.selectedFutureDomain);
             if (original != nullptr) original->Release();
-            ReturnGroupMemberOriginals(immediateGroupMemberOriginals_.get() +
-                index * config_.maxArmsPerGroup, row.memberCount);
+            ReturnGroupMemberOriginals(row.MemberOriginals(), row.memberCount);
+            ReturnPreparedImmediateLaneMembers(row);
             row.cohortRoot = 0;
             row.selectedFutureDomain = 0;
             row.laneOwner = nullptr;
@@ -8947,7 +9215,7 @@ bool ScheduledTransactionPool::ReserveImmediateLaneGroupInDomain(
         input.memberCount > config_.maxArmsPerGroup ||
         input.sourceControlCount > input.memberCount ||
         (input.memberCount != 0 && input.members == nullptr) ||
-        immediateLaneGroups_ == nullptr ||
+        immediateLaneGroups_.Capacity() == 0 ||
         (plan03ArmTable_ != nullptr && plan03ArmTable_ != &armTable)) return false;
     for (std::uint16_t member = 0; member < input.memberCount; ++member) {
         TimelineArmObservation observation{};
@@ -8966,26 +9234,27 @@ bool ScheduledTransactionPool::ReserveImmediateLaneGroupInDomain(
         }
     }
     std::size_t freeRow = config_.maxImmediateLaneGroupRows;
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         const auto& row = immediateLaneGroups_[index];
         const auto state = row.state.load(std::memory_order_acquire);
-        if (state == LaneGroupState::Free && freeRow == config_.maxImmediateLaneGroupRows &&
-            row.generation != UINT32_MAX && row.originalRegistrationPinCount == 0 &&
-            row.originalFactoryMarker == 0 && row.transferOriginal == nullptr &&
-            row.transferProof == nullptr && row.clockProof == nullptr &&
-            row.readers.pins.load(std::memory_order_acquire) == 0 &&
-            row.lease.Capture().state == AudioSliceState::Ready)
+        if (freeRow == config_.maxImmediateLaneGroupRows && CanReuseImmediateLaneRow(row))
             freeRow = index;
         if (state != LaneGroupState::Free && (row.cohortRoot == cohortRoot && row.selectedFutureDomain == domain) &&
             row.decision.slot == input.decision.slot &&
             row.decision.generation == input.decision.generation &&
             row.sliceIndex == input.sliceIndex) return false;
     }
-    if (freeRow == config_.maxImmediateLaneGroupRows) return false;
+    if (freeRow == config_.maxImmediateLaneGroupRows) {
+        const auto next = immediateLaneGroups_.ConstructedCount();
+        if (next == config_.maxImmediateLaneGroupRows) return false;
+        freeRow = next;
+    }
+    if (!immediateLaneGroups_.ConstructThrough(static_cast<std::uint32_t>(freeRow) + 1u)) return false;
     auto& row = immediateLaneGroups_[freeRow];
     if (row.generation == UINT32_MAX ||
         row.readers.pins.load(std::memory_order_acquire) != 0 ||
         row.lease.Capture().state != AudioSliceState::Ready) return false;
+    if (!PrepareImmediateLaneMembers(row, input.memberCount)) return false;
     ++row.generation;
     row.cohortRoot = cohortRoot;
     row.selectedFutureDomain = domain;
@@ -9007,10 +9276,8 @@ bool ScheduledTransactionPool::ReserveImmediateLaneGroupInDomain(
     row.frontierPinsOwned = false;
     row.frontierDependents = 0;
     row.readers.lastAudioSequence.store(0, std::memory_order_relaxed);
-    auto* members = immediateLaneGroupMembers_.get() +
-        freeRow * config_.maxArmsPerGroup;
-    auto* memberIndices = immediateLaneGroupMemberIndices_.get() +
-        freeRow * config_.maxArmsPerGroup;
+    auto* members = row.MemberTokens();
+    auto* memberIndices = row.MemberIndices();
     for (std::uint16_t inputIndex = 0; inputIndex < input.memberCount; ++inputIndex) {
         TimelineArmObservation observation{};
         (void)armTable.Observe(input.members[inputIndex], &observation);
@@ -9029,7 +9296,8 @@ bool ScheduledTransactionPool::ReserveImmediateLaneGroupInDomain(
     const Plan03GroupSliceIdentity memberOrigin{0, 1, input.decision, input.sliceIndex,
         freeRow, row.generation, epoch_, Plan03GroupBacking::ImmediateLane};
     if (!IssueGroupMemberOriginals(memberOrigin, armTable, members, input.memberCount,
-            immediateGroupMemberOriginals_.get() + freeRow * config_.maxArmsPerGroup, immediateGroupIdentities_[freeRow])) {
+            row.MemberOriginals(), row.originalIdentity)) {
+        ReturnPreparedImmediateLaneMembers(row);
         row.memberCount = 0;
         row.sourceControlCount = 0;
         row.cohortRoot = 0;
@@ -9119,13 +9387,13 @@ bool ScheduledTransactionPool::DeclareInitialSoundQueueCompanion(
 bool ScheduledTransactionPool::MatchesInitialSoundQueueCompanionRows(
     const InitialSoundQueueCompanionAssociation& original, bool audio) const noexcept {
     if (original.attempt == 0 || original.root == 0 || original.world == 0 || original.lane == nullptr ||
-        original.laneSlot == UINT32_MAX || original.laneGeneration == 0 || immediateLaneGroups_ == nullptr)
+        original.laneSlot == UINT32_MAX || original.laneGeneration == 0 || immediateLaneGroups_.Capacity() == 0)
         return false;
     for (std::size_t index = 0; index < original.groups.size(); ++index) {
         const auto& identity = original.groups[index];
         if (!identity.Exact() || identity.backing != Plan03GroupBacking::ImmediateLane ||
             identity.transportEpoch != epoch_ || identity.absoluteQuantum != 0 || identity.pageGeneration != 1 ||
-            identity.committedRow >= config_.maxImmediateLaneGroupRows || original.markers[index] == 0)
+            identity.committedRow >= immediateLaneGroups_.ConstructedCount() || original.markers[index] == 0)
             return false;
         const auto& row = immediateLaneGroups_[identity.committedRow];
         const auto state = row.state.load(std::memory_order_acquire);
@@ -9235,7 +9503,7 @@ bool ScheduledTransactionPool::IsInitialSoundQueueCompanionC0(
     const Plan03GroupSliceIdentity& primary, const Plan03GroupSliceIdentity& member,
     const FrontierOwnerIdentity& sound, const FrontierOwnerIdentity& queue) const noexcept {
     if (!primary.Exact() || primary.backing != Plan03GroupBacking::ImmediateLane ||
-        primary.committedRow >= config_.maxImmediateLaneGroupRows || immediateLaneGroups_ == nullptr) return false;
+        primary.committedRow >= immediateLaneGroups_.ConstructedCount() || immediateLaneGroups_.Capacity() == 0) return false;
     // The finalizer retains the actual Lane capture and group readers. Validate
     // the native Published full identity before reading its frozen association.
     Plan03PageGroupView actual{};
@@ -9251,7 +9519,7 @@ bool ScheduledTransactionPool::IsInitialSoundQueueCompanionC1(
     const Plan03GroupSliceIdentity& prerequisiteMember,
     const FrontierOwnerIdentity& sound, const FrontierOwnerIdentity& queue) const noexcept {
     if (!primary.Exact() || primary.backing != Plan03GroupBacking::ImmediateLane ||
-        primary.committedRow >= config_.maxImmediateLaneGroupRows || immediateLaneGroups_ == nullptr) return false;
+        primary.committedRow >= immediateLaneGroups_.ConstructedCount() || immediateLaneGroups_.Capacity() == 0) return false;
     // The finalizer retains the actual Lane capture and group readers. Validate
     // the native Published full identity before reading its frozen association.
     Plan03PageGroupView actual{};
@@ -9278,9 +9546,9 @@ bool ScheduledTransactionPool::BindImmediateLaneGroupOwnerInDomain(
         identity.backing != Plan03GroupBacking::ImmediateLane ||
         identity.transportEpoch != epoch_ ||
         identity.absoluteQuantum != 0 || identity.pageGeneration != 1 ||
-        identity.committedRow >= config_.maxImmediateLaneGroupRows ||
+        identity.committedRow >= immediateLaneGroups_.ConstructedCount() ||
         cohortRoot == 0 || laneSlot == UINT32_MAX ||
-        laneGeneration == 0 || immediateLaneGroups_ == nullptr ||
+        laneGeneration == 0 || immediateLaneGroups_.Capacity() == 0 ||
         !lane.OwnsPrivate({laneSlot, laneGeneration}, cohortRoot))
         return false;
     auto& row = immediateLaneGroups_[identity.committedRow];
@@ -9309,14 +9577,14 @@ bool ScheduledTransactionPool::RebaseImmediateLaneGroupsInDomain(
     std::uint64_t cohortRoot, std::uint64_t anchorFrame, std::uint64_t domain) noexcept {
     if (domain == 0 && InitialLaneCohortPublicationHeld(cohortRoot)) return false;
     if (cohortRoot == 0 || quantumFrames_ == 0) return false;
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         const auto& row = immediateLaneGroups_[index];
         if (row.state.load(std::memory_order_acquire) != LaneGroupState::Private ||
             (row.cohortRoot != cohortRoot || row.selectedFutureDomain != domain)) continue;
         if (row.transferProof != nullptr || row.clockProof != nullptr ||
             row.relativeFrame > UINT64_MAX - anchorFrame) return false;
     }
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         auto& row = immediateLaneGroups_[index];
         if (row.state.load(std::memory_order_acquire) == LaneGroupState::Private &&
             (row.cohortRoot == cohortRoot && row.selectedFutureDomain == domain)) {
@@ -9337,7 +9605,7 @@ bool ScheduledTransactionPool::PublishImmediateLaneGroupsInDomain(
     std::uint64_t cohortRoot, std::uint64_t domain) noexcept {
     if (domain == 0 && InitialLaneCohortPublicationHeld(cohortRoot)) return false;
     if (cohortRoot == 0) return false;
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         const auto& row = immediateLaneGroups_[index];
         if (row.state.load(std::memory_order_acquire) == LaneGroupState::Private &&
             (row.cohortRoot == cohortRoot && row.selectedFutureDomain == domain) &&
@@ -9350,7 +9618,7 @@ bool ScheduledTransactionPool::PublishImmediateLaneGroupsInDomain(
                  {row.laneSlot, row.laneGeneration}, cohortRoot)))
             return false;
     }
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         auto& row = immediateLaneGroups_[index];
         if (row.state.load(std::memory_order_acquire) == LaneGroupState::Private &&
             (row.cohortRoot == cohortRoot && row.selectedFutureDomain == domain))
@@ -9363,7 +9631,7 @@ bool ScheduledTransactionPool::BindImmediateLaneGroupBuckets(
     const Plan03ImmediateLaneGroupDescriptor* groups,
     std::uint32_t count, const ImmediateActionLane& lane,
     std::uint32_t laneSlot, std::uint32_t laneGeneration) noexcept {
-    if (groups == nullptr || count == 0 || immediateLaneGroups_ == nullptr ||
+    if (groups == nullptr || count == 0 || immediateLaneGroups_.Capacity() == 0 ||
         laneSlot == UINT32_MAX || laneGeneration == 0) return false;
     const ImmediateLaneHandle handle{laneSlot, laneGeneration};
     for (std::uint32_t index = 0; index < count; ++index) {
@@ -9373,7 +9641,7 @@ bool ScheduledTransactionPool::BindImmediateLaneGroupBuckets(
             identity.backing != Plan03GroupBacking::ImmediateLane ||
             identity.transportEpoch != epoch_ ||
             identity.absoluteQuantum != 0 || identity.pageGeneration != 1 ||
-            identity.committedRow >= config_.maxImmediateLaneGroupRows ||
+            identity.committedRow >= immediateLaneGroups_.ConstructedCount() ||
             group.laneSlot != laneSlot ||
             group.laneGeneration != laneGeneration ||
             group.bucketOrdinal == UINT32_MAX ||
@@ -9461,11 +9729,11 @@ std::size_t ScheduledTransactionPool::CapturePrivateSelectedLaneGroupsForPinning
     const ImmediateActionLane& lane, ImmediateLaneHandle handle,
     std::uint64_t cohortRoot, Plan03ImmediateLaneGroupDescriptor* out,
     std::size_t outCapacity) const noexcept {
-    if (cohortRoot == 0 || immediateLaneGroups_ == nullptr ||
+    if (cohortRoot == 0 || immediateLaneGroups_.Capacity() == 0 ||
         !lane.OwnsPrivate(handle, cohortRoot)) return 0;
     std::size_t count = 0;
     std::size_t ordinaryCount = 0;
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         const auto& row = immediateLaneGroups_[index];
         const auto state = row.state.load(std::memory_order_acquire);
         // A foreign or unbound domain sharing the numeric root does not belong
@@ -9503,8 +9771,8 @@ std::size_t ScheduledTransactionPool::CaptureImmediateLaneCohortGroupsImpl(
     std::uint64_t cohortRoot, Plan03ImmediateLaneGroupDescriptor* out,
     std::size_t outCapacity, bool includePublished) const noexcept {
     std::size_t count = 0;
-    if (cohortRoot == 0 || immediateLaneGroups_ == nullptr) return 0;
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    if (cohortRoot == 0 || immediateLaneGroups_.Capacity() == 0) return 0;
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         const auto& row = immediateLaneGroups_[index];
         const auto state = row.state.load(std::memory_order_acquire);
         if ((state != LaneGroupState::Private &&
@@ -9524,8 +9792,8 @@ std::size_t ScheduledTransactionPool::CaptureImmediateLaneGroupsRt(
     std::uint64_t absoluteQuantum, Plan03PageGroupView* out,
     std::size_t outCapacity) const noexcept {
     std::size_t count = 0;
-    if (immediateLaneGroups_ == nullptr) return 0;
-    for (std::size_t index = 0; index < config_.maxImmediateLaneGroupRows; ++index) {
+    if (immediateLaneGroups_.Capacity() == 0) return 0;
+    for (std::size_t index = 0; index < immediateLaneGroups_.ConstructedCount(); ++index) {
         const auto& row = immediateLaneGroups_[index];
         if (row.state.load(std::memory_order_acquire) != LaneGroupState::Published ||
             row.dueQuantum != absoluteQuantum) continue;
@@ -9543,13 +9811,13 @@ std::size_t ScheduledTransactionPool::CaptureImmediateLaneGroupsRt(
 
 AudioSliceLease* ScheduledTransactionPool::EffectiveImmediateLaneGroupLease(
     std::size_t rowIndex) const noexcept {
-    if (rowIndex >= config_.maxImmediateLaneGroupRows) return nullptr;
+    if (rowIndex >= immediateLaneGroups_.ConstructedCount()) return nullptr;
     const auto& row = immediateLaneGroups_[rowIndex];
     if (row.frontier.role != FrontierGroupRole::EntryMember)
         return const_cast<AudioSliceLease*>(&row.lease);
     const auto& primary = row.frontier.primary;
     if (primary.backing != Plan03GroupBacking::ImmediateLane ||
-        primary.committedRow >= config_.maxImmediateLaneGroupRows ||
+        primary.committedRow >= immediateLaneGroups_.ConstructedCount() ||
         primary.committedRow == rowIndex) return nullptr;
     const auto& coordinator = immediateLaneGroups_[primary.committedRow];
     if (coordinator.generation != primary.rowClaimGeneration ||
@@ -9583,8 +9851,8 @@ bool ScheduledTransactionPool::ResolveImmediateLaneGroup(
         identity.backing != Plan03GroupBacking::ImmediateLane ||
         identity.transportEpoch != epoch_ || identity.absoluteQuantum != 0 ||
         identity.pageGeneration != 1 ||
-        identity.committedRow >= config_.maxImmediateLaneGroupRows ||
-        immediateLaneGroups_ == nullptr) return false;
+        identity.committedRow >= immediateLaneGroups_.ConstructedCount() ||
+        immediateLaneGroups_.Capacity() == 0) return false;
     const auto& row = immediateLaneGroups_[identity.committedRow];
     const auto state = row.state.load(std::memory_order_acquire);
     if ((audio && state != LaneGroupState::Published) ||
@@ -9606,9 +9874,7 @@ bool ScheduledTransactionPool::ResolveImmediateLaneGroup(
     out->identity = exact;
     out->memberCount = row.memberCount;
     out->sourceControlCount = row.sourceControlCount;
-    out->members = row.memberCount == 0 ? nullptr :
-        immediateLaneGroupMembers_.get() +
-        exact.committedRow * config_.maxArmsPerGroup;
+    out->members = row.memberCount == 0 ? nullptr : row.MemberTokens();
     out->lease = EffectiveImmediateLaneGroupLease(exact.committedRow);
     out->frontier = row.frontier.role == FrontierGroupRole::Legacy ? nullptr :
         &row.frontier;
@@ -9815,13 +10081,11 @@ std::uint32_t ScheduledTransactionPool::Advance() {
         }
         const Plan03GroupSliceRow& row =
             pagePlan03Groups_[rowIndex];
-        const std::size_t memberBase =
-            rowIndex * config_.maxArmsPerGroup;
         bool memberLive = false;
         for (std::uint16_t member = 0; member < row.memberCount; ++member) {
             TimelineArmObservation observation{};
             if (plan03ArmTable_->Observe(
-                    pagePlan03GroupMembers_[memberBase + member],
+                    PageGroupTokens(rowIndex)[member],
                     &observation) &&
                 observation.state != ArmState::CancelRequested &&
                 observation.state != ArmState::Tombstoned) {
@@ -9892,11 +10156,7 @@ std::uint32_t ScheduledTransactionPool::Advance() {
         (void)pagePlan03GroupLeases_[rowIndex].ResetForReuse();
         const std::uint16_t memberCount =
             pagePlan03Groups_[rowIndex].memberCount;
-        const std::size_t memberBase = rowIndex * config_.maxArmsPerGroup;
-        ReturnGroupMemberOriginals(pageGroupMemberOriginals_.get() + memberBase, memberCount);
-        std::fill(pagePlan03GroupMembers_.begin() + memberBase,
-                  pagePlan03GroupMembers_.begin() + memberBase + memberCount,
-                  TimelineArmToken{});
+        ClearPageGroupMembers(rowIndex, memberCount);
         pagePlan03Groups_[rowIndex] = {};
         pagePlan03GroupRowStates_[rowIndex] =
             pagePlan03GroupClaimGenerations_[rowIndex] == UINT32_MAX

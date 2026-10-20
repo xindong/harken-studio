@@ -379,6 +379,8 @@ struct ImmediateLaneAttempt {
     std::uint32_t groupCredit = 0;
     std::uint32_t memberCredit = 0;
     std::uint32_t bucketCredit = 0;
+    std::uint32_t eventStorageCount = 0;
+    std::uint32_t memberStorageCount = 0;
     std::uint32_t eventCount = 0;
     std::uint32_t groupCount = 0;
     std::uint32_t pinGroupManifestCount = 0;
@@ -437,7 +439,7 @@ private:
     std::uint64_t root_ = 0, marker_ = 0;
 };
 
-// Fixed storage for initial Action cohort events. The logic producer prepares
+// Stable storage for initial Action cohort events. The logic producer prepares
 // immutable descriptors, then publishes a complete bank with a release store.
 // The audio reader scans one bucket head per attempt and never allocates.
 class ImmediateActionLane {
@@ -458,6 +460,9 @@ public:
     };
 
     bool Reset(Config config);
+    bool PreparePrivateEntryBacking(std::uint32_t count,
+        StableStoragePreparation* out) noexcept;
+    bool PrepareAttemptBacking(StableStoragePreparation* out) noexcept;
     bool IsOriginalAttemptLifetimePinFor(
         const OriginalImmediateLaneAttemptLifetimePin& original,
         ImmediateLaneHandle handle, std::uint64_t root) const noexcept;
@@ -481,10 +486,33 @@ public:
     std::uint32_t AttemptCapacity() const noexcept { return config_.attempts; }
     std::uint32_t EventsPerAttempt() const noexcept { return config_.eventsPerAttempt; }
     std::size_t PrivateEntryStorageBytes() const noexcept {
-        return static_cast<std::size_t>(config_.attempts) * config_.eventsPerAttempt *
-            (sizeof(PrivateEntryAssociation) + 2u * sizeof(PrivateEntryBucket) +
-             sizeof(ImmediateLaneDeclaredGroup) + 2u * sizeof(std::uint32_t));
+        return privateEntries_.RequestedBytes() +
+            static_cast<std::size_t>(config_.attempts) * config_.eventsPerAttempt *
+            (2u * sizeof(PrivateEntryBucket) + 4u * sizeof(std::uint32_t));
     }
+    std::size_t PrivateEntryCommittedBytes() const noexcept { return privateEntries_.CommittedBytes(); }
+    std::size_t PrivateEntryReservedBytes() const noexcept { return privateEntries_.ReservedBytes(); }
+    std::size_t EventStorageBytes() const noexcept { return eventStorageBytes_; }
+    std::size_t MemberStorageBytes() const noexcept { return memberStorageBytes_; }
+    std::size_t PayloadCommittedBytes() const noexcept {
+        return eventStorage_.CommittedBytes() + memberStorage_.CommittedBytes();
+    }
+    std::size_t PayloadReservedBytes() const noexcept {
+        return eventStorage_.ReservedBytes() + memberStorage_.ReservedBytes();
+    }
+    std::size_t PayloadDirectoryBytes() const noexcept {
+        return eventStorage_.DirectoryBytes() + memberStorage_.DirectoryBytes();
+    }
+#if !defined(HARKEN_RT_QUALIFICATION)
+    void SetPrivateEntryCommitPageLimitForTests(std::size_t pages) noexcept {
+        privateEntries_.SetCommitPageLimitForTests(pages);
+    }
+    void SetPayloadCommitPageLimitsForTests(std::size_t eventPages,
+        std::size_t memberPages) noexcept {
+        eventStorage_.SetCommitPageLimitForTests(eventPages);
+        memberStorage_.SetCommitPageLimitForTests(memberPages);
+    }
+#endif
     std::uint32_t MaxEventsPerQuantum() const noexcept { return config_.maxEventsPerQuantum; }
     bool OwnsPrivate(ImmediateLaneHandle handle,
                      std::uint64_t root) const noexcept;
@@ -857,7 +885,32 @@ private:
         PrivateEntryBucket* buckets = nullptr;
         std::uint32_t bucketCapacity = 0;
         std::uint32_t bucketCount = 0;
+        bool inUse = false;
     };
+    PrivateEntryAssociation& PrivateEntryAt(std::size_t logical) noexcept {
+        return privateEntries_[privateEntryDirectory_[logical]];
+    }
+    const PrivateEntryAssociation& PrivateEntryAt(std::size_t logical) const noexcept {
+        return privateEntries_[privateEntryDirectory_[logical]];
+    }
+    template<class Owner>
+    struct PrivateEntryView {
+        Owner* owner;
+        std::size_t base;
+        decltype(auto) operator[](std::size_t index) const noexcept {
+            return owner->PrivateEntryAt(base + index);
+        }
+    };
+    auto PrivateEntries(std::uint32_t slot) noexcept {
+        return PrivateEntryView<ImmediateActionLane>{this,
+            static_cast<std::size_t>(slot) * config_.eventsPerAttempt};
+    }
+    auto PrivateEntries(std::uint32_t slot) const noexcept {
+        return PrivateEntryView<const ImmediateActionLane>{this,
+            static_cast<std::size_t>(slot) * config_.eventsPerAttempt};
+    }
+    PrivateEntryAssociation* AcquirePrivateEntry(std::size_t logical) noexcept;
+    void ReleasePrivateEntries(std::uint32_t slot) noexcept;
     bool FreezePrivateEntryAdmission(ImmediateLaneHandle handle) noexcept;
     void BeginPrivateEntryAdmission(std::uint32_t slot,
                                     std::uint32_t bucketOrdinal) noexcept;
@@ -900,6 +953,12 @@ private:
     const ImmediateLaneAttempt* Resolve(ImmediateLaneHandle handle) const noexcept;
     ImmediateLaneEvent* EventBase(std::uint32_t slot) noexcept;
     const ImmediateLaneEvent* EventBase(std::uint32_t slot) const noexcept;
+    ImmediateLaneMemberManifest* MemberBase(std::uint32_t slot) noexcept;
+    const ImmediateLaneMemberManifest* MemberBase(std::uint32_t slot) const noexcept;
+    bool PrepareAttemptStorage(std::uint32_t slot, std::uint32_t events,
+        std::uint32_t members) noexcept;
+    bool EnsureAttemptBacking(std::uint64_t count,
+        std::uint32_t excluded = UINT32_MAX) noexcept;
     ImmediateLaneGroupRef* GroupBase(std::uint32_t slot) noexcept;
     const ImmediateLaneGroupRef* GroupBase(std::uint32_t slot) const noexcept;
     ImmediateLaneBucket* BucketBase(std::uint32_t slot) noexcept;
@@ -915,14 +974,20 @@ private:
     std::uint64_t nextOriginalLifetimeMarker_ = 0;
     Config config_{};
     std::unique_ptr<ImmediateLaneAttempt[]> attempts_;
-    std::unique_ptr<ImmediateLaneEvent[]> events_;
+    detail::StablePageReservation eventStorage_;
+    detail::StablePageReservation memberStorage_;
+    StableStorageGrowthState payloadGrowth_{};
+    std::size_t eventStorageBytes_ = 0;
+    std::size_t memberStorageBytes_ = 0;
+    ImmediateLaneEvent* events_ = nullptr;
     std::unique_ptr<ImmediateLaneGroupRef[]> groups_;
     std::unique_ptr<ImmediateLaneDeclaredGroup[]> declaredGroups_;
     std::unique_ptr<std::uint32_t[]> eventPlacementOrder_;
     std::unique_ptr<std::uint32_t[]> groupPlacementOrder_;
-    std::unique_ptr<ImmediateLaneMemberManifest[]> members_;
-    std::unique_ptr<PrivateEntryAssociation[]> privateEntries_;
-    std::unique_ptr<ImmediateLaneDeclaredGroup[]> privateOwnedGroups_;
+    ImmediateLaneMemberManifest* members_ = nullptr;
+    StableRowStorage<PrivateEntryAssociation> privateEntries_;
+    std::unique_ptr<std::uint32_t[]> privateEntryDirectory_;
+    std::unique_ptr<std::uint32_t[]> privateOwnedGroupIndices_;
     std::unique_ptr<PrivateEntryBucket[]> privateEntryBuckets_;
     std::unique_ptr<SourceWaitEntry[]> sourceWaitEntries_;
     std::unique_ptr<std::uint32_t[]> eventPrivateEntries_;

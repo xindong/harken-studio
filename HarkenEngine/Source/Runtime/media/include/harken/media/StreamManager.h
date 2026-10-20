@@ -17,9 +17,9 @@
 // thread detaches Retired slots (drops its cursor state, releases the
 // file's stream count) and returns them to Free.
 //
-// All ring storage is preallocated at construction from the resolved
-// config: maxStreams rings of streamRingFrames (rounded up to a power of
-// two) frames across kMaxChannels.
+// Ring addresses are reserved at construction. Logic prepares the required
+// slot/channel planes before accepting playback or a pending reference;
+// activation never grows storage and active planes never move.
 #ifndef HARKEN_MEDIA_STREAM_MANAGER_H
 #define HARKEN_MEDIA_STREAM_MANAGER_H
 
@@ -27,9 +27,11 @@
 #include <harken/Harken.h>
 
 #include "harken/core/EngineConfig.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/core/StreamRing.h"
 #include "harken/media/StreamFormat.h"
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -46,6 +48,8 @@
 #endif
 
 namespace harken {
+
+namespace detail { struct StreamManagerTestAccess; }
 
 // Deterministic streaming-thread failures for internal boundary tests.
 // Enqueue fails the request handoff itself; WorkerStartup makes the streaming
@@ -180,6 +184,12 @@ public:
     // only the logic thread claims, so a peeked slot stays Free until
     // ActivateSlot. Logic thread only.
     bool PeekFreeSlot(std::uint32_t* outSlot) const;
+
+    // Prepare actual channel planes before an unaccepted start publishes a slot.
+    bool PrepareSlotWorkingSet(std::uint32_t slot, std::uint32_t channels) noexcept;
+    // A pending reference already holds the backing. Reap private rollback
+    // rings if necessary, without growing storage after acceptance.
+    bool PeekPreparedFreeSlot(std::uint32_t channels, std::uint32_t* outSlot);
 
     // Number of currently Free stream slots. The admission paths compare this
     // against the outstanding pending-start reservations so promised capacity
@@ -336,6 +346,10 @@ private:
     // set): the whole RegisterFile validation chain, shared with replace.
     // Streaming thread only.
     VnResult OpenAndValidate(Request& request, StreamFile& record);
+    std::uint32_t OccupiedSlotPrefix() const noexcept;
+    bool PrepareRingStorage(std::uint32_t slotPrefix, std::uint32_t channels,
+                            bool pending = false) noexcept;
+    bool RingStorageReady(std::uint32_t slot, std::uint32_t channels) const noexcept;
     // Publishes a lifecycle transition and wakes both the constructor's
     // handshake and any request waiter, whose predicates both consult it.
     void PublishWorkerState(StreamWorkerState state) noexcept;
@@ -389,7 +403,10 @@ private:
     std::vector<std::unique_ptr<StreamFile>> m_files;
 
     std::vector<StreamSlot> m_slots;
-    std::vector<float> m_ringStorage; // all slots' planes, one block
+    friend struct detail::StreamManagerTestAccess;
+    std::array<StableRowStorage<float>, kMaxChannels> m_ringStorage;
+    // Logic-owned backing demand follows the existing file pending references.
+    std::array<std::uint32_t, kMaxChannels> m_pendingRingSlots{};
 
     // Request transport between the logic and streaming threads. The
     // audio thread never touches any of this.

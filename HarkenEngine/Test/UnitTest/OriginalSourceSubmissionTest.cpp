@@ -7605,7 +7605,8 @@ void FinishEngineOriginalLaneAttempt(harken::Engine& engine,
 TEST(OriginalSourceSubmission, EngineOriginalLaneSameReserveForeignBusyKeepsExactOwnerUntilRealReturnAndReuse) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig());
     auto& engine = *owned;
-    ASSERT_GT(engine.immediateEntryAttemptCapacity, 0u);
+    ASSERT_GT(engine.immediateEntryAttempts.Capacity(), 0u);
+    ASSERT_TRUE(engine.EnsureImmediateEntryAttempt(0));
     auto& attempt = engine.immediateEntryAttempts[0];
     ASSERT_NO_FATAL_FAILURE(PrepareEngineOriginalLaneAttempt(engine, attempt, 1201, 1));
     const harken::ImmediateLaneDemand demand{1, 0, 0, 1};
@@ -7655,6 +7656,8 @@ TEST(OriginalSourceSubmission, EngineOriginalLaneRejectsForeignReceiverAndChange
     auto secondOwner = std::make_unique<harken::Engine>(config);
     auto& first = *firstOwner;
     auto& second = *secondOwner;
+    ASSERT_TRUE(first.EnsureImmediateEntryAttempt(0));
+    ASSERT_TRUE(second.EnsureImmediateEntryAttempt(0));
     auto& a = first.immediateEntryAttempts[0];
     auto& b = second.immediateEntryAttempts[0];
     ASSERT_NO_FATAL_FAILURE(PrepareEngineOriginalLaneAttempt(first, a, 1301, 1));
@@ -7695,6 +7698,7 @@ TEST(OriginalSourceSubmission, EngineOriginalLaneRejectsForeignReceiverAndChange
 TEST(OriginalSourceSubmission, EngineOriginalLaneDefaultNoOutputRetainsLegacyNativeCancelAndRetire) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig());
     auto& engine = *owned;
+    ASSERT_TRUE(engine.EnsureImmediateEntryAttempt(0));
     auto& attempt = engine.immediateEntryAttempts[0];
     ASSERT_NO_FATAL_FAILURE(PrepareEngineOriginalLaneAttempt(engine, attempt, 1401, 1));
     ASSERT_TRUE(engine.ReserveOriginalImmediateEntryLane(attempt, 1u));
@@ -7711,6 +7715,7 @@ TEST(OriginalSourceSubmission, EngineOriginalLaneDefaultNoOutputRetainsLegacyNat
 TEST(OriginalSourceSubmission, EngineOriginalLaneJoinedTermReturnsOnlyOwnActualFactoryBaseline) {
     auto owned = std::make_unique<harken::Engine>(InitialSingleClockConfig());
     auto& engine = *owned;
+    ASSERT_TRUE(engine.EnsureImmediateEntryAttempt(0));
     auto& attempt = engine.immediateEntryAttempts[0];
     ASSERT_NO_FATAL_FAILURE(PrepareEngineOriginalLaneAttempt(engine, attempt, 1501, 1));
     ASSERT_TRUE(engine.ReserveOriginalImmediateEntryLane(attempt, 1u, true));

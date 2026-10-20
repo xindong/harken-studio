@@ -52,6 +52,7 @@ struct CompositeCompletionOwnerPoolTestAccess {
     static void SeedGeneration(CompositeCompletionOwnerPool& pool,
                                std::uint32_t slot,
                                std::uint32_t generation) {
+        ASSERT_TRUE(pool.PrepareSlotStorage(slot));
         pool.rows_[slot].generation = generation;
     }
     static void SeedNextOriginalMarker(CompositeCompletionOwnerPool& pool, std::uint64_t marker) {
@@ -127,6 +128,17 @@ protected:
 };
 
 TEST_F(OriginalCompositeStorageTest, SamePrepareLoanAllowsActualCommitAndPreservesEveryStrictFence) {
+    EXPECT_EQ(0u, pool.StorageBytes());
+    EXPECT_EQ(0u, pool.CommittedBytes());
+    EXPECT_GT(pool.ReservedBytes(), 0u);
+    pool.SetRowCommitPageLimitForTests(0);
+    EXPECT_EQ(harken::CompositeCompletionAcquireStatus::Capacity, Prepare(&original, &token));
+    EXPECT_FALSE(token.Valid());
+    EXPECT_FALSE(original.Valid());
+    EXPECT_EQ(1u, pool.FreeCount());
+    EXPECT_EQ(0u, pool.ConstructedRowCount());
+    EXPECT_GT(pool.CommittedBytes(), 0u);
+    pool.SetRowCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(harken::CompositeCompletionAcquireStatus::Ok, Prepare(&original, &token));
     EXPECT_FALSE(pool.IsOriginalLifetimePinned(original));
     harken::CompositeCompletionOwnerInfo retained{};

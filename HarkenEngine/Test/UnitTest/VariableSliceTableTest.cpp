@@ -81,6 +81,17 @@ TEST(VariableSliceTable, ReservationProbeSeparatesProofPayloadAndFragmentedSpan)
     using Status = harken::VariableSliceTable::ReservationStatus;
     harken::VariableSliceTable table;
     ASSERT_TRUE(table.Reset(8, 4, 8, 8));
+    EXPECT_EQ(0u, table.RowStorageBytes());
+    EXPECT_EQ(0u, table.RowCommittedBytes());
+    EXPECT_GT(table.RowReservedBytes(), 0u);
+    table.SetRowCommitPageLimitForTests(0);
+    harken::VariableSliceRef refused{};
+    EXPECT_FALSE(ReserveTargets(table, 2, 1, &refused));
+    EXPECT_FALSE(refused.Valid());
+    EXPECT_EQ(8u, table.FreeRowCount());
+    EXPECT_EQ(8u, table.FreePayloadCount());
+    EXPECT_EQ(8u, table.FreeTargetCapacity());
+    table.SetRowCommitPageLimitForTests(SIZE_MAX);
     std::array<harken::VariableSliceRef, 4> refs{};
     for (std::uint32_t i = 0; i < refs.size(); ++i) ASSERT_TRUE(ReserveTargets(table, 2, i + 1, &refs[i]));
     ASSERT_TRUE(table.AbandonPrepared(refs[0]));

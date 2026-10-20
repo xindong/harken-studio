@@ -62,6 +62,42 @@ static_assert(!std::is_copy_constructible_v<PartitionPool::PreparedCommitProof>)
 static_assert(!std::is_copy_constructible_v<PartitionPool::OriginalStoragePin>);
 static_assert(!std::is_aggregate_v<PartitionPool::OriginalStoragePin>);
 
+TEST(StableBackingPreparation, DependenciesPrecedePublicationAndPreparedUseCannotGrow) {
+    harken::StableRowStorage<std::uint64_t> rows, dependencies;
+    ASSERT_TRUE(rows.Reserve(8));
+    ASSERT_TRUE(dependencies.Reserve(8));
+    EXPECT_FALSE(rows.ConstructThrough(1, [](std::uint32_t) noexcept { return false; }));
+    EXPECT_EQ(0u, rows.ConstructedCount());
+    std::uint32_t calls = 0;
+    const auto prepare = [&](std::uint32_t count) noexcept {
+        ++calls;
+        EXPECT_LE(rows.ConstructedCount(), dependencies.ConstructedCount());
+        return dependencies.ConstructThrough(count);
+    };
+    harken::StableStoragePreparation hold;
+    ASSERT_TRUE(rows.PrepareBacking(2, 0, &hold, prepare));
+    ASSERT_EQ(2u, dependencies.ConstructedCount());
+    ASSERT_TRUE(rows.ConstructThrough(1, prepare));
+    EXPECT_EQ(3u, rows.ConstructedCount());
+    EXPECT_EQ(3u, dependencies.ConstructedCount());
+    EXPECT_EQ(2u, calls);
+    ASSERT_TRUE(rows.ConstructThrough(1, prepare));
+    EXPECT_EQ(3u, calls);
+    {
+        const auto use = hold.Use();
+        EXPECT_TRUE(rows.ConstructThrough(3, prepare));
+        EXPECT_FALSE(rows.ConstructThrough(4, prepare));
+        EXPECT_EQ(3u, calls);
+    }
+    {
+        harken::memguard::AudioThreadScope audio;
+        EXPECT_FALSE(rows.ConstructThrough(4, prepare));
+        EXPECT_EQ(3u, calls);
+    }
+    EXPECT_EQ(3u, rows.ConstructedCount());
+    EXPECT_EQ(3u, dependencies.ConstructedCount());
+}
+
 TEST(EnginePlayablePartitionStorage, RealStorageLoansLeaveNativeProgressAndFenceIndependent) {
     PartitionPool pool(1);
     const harken::EnginePlayableServiceToken owner{2, 7};
@@ -726,18 +762,15 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     const auto voiceBindingStorageBytes =
         sizeof(harken::TimelineVoiceBindingInstall) *
         harken::kMaxVoiceBindingInstanceSlots;
-    EXPECT_EQ(sizeof(harken::TimelineVoiceInstallDesc),
+    EXPECT_EQ(sizeof(harken::CapturedTimelineVoiceInstall),
               sizeof(engine->playableScheduleVoices[0]));
-    EXPECT_EQ(sizeof(harken::TimelineVoiceInstallDesc),
+    EXPECT_EQ(sizeof(harken::CapturedTimelineVoiceInstall),
               sizeof(engine->playableSuccessorVoices[0]));
-    EXPECT_EQ(voiceBindingStorageBytes,
-              sizeof(engine->playableScheduleVoices[0].bindingStorage));
-    EXPECT_EQ(voiceBindingStorageBytes,
-              sizeof(engine->playableSuccessorVoices[0].bindingStorage));
     EXPECT_EQ(2'636u + 2u * sizeof(float) + sizeof(harken::PcmLoopRegion) +
                   playbackPathBytes + voiceBindingStorageBytes -
                   sizeof(void*) * harken::kMaxVoiceBindingInstanceSlots +
-                  2u * immediateEntryBytes + 2u * monitorControlBytes + monitorSelectionBytes,
+                  2u * immediateEntryBytes + 2u * monitorControlBytes + monitorSelectionBytes -
+                  sizeof(harken::TimelineVoiceInstallDesc) + sizeof(harken::CapturedTimelineVoiceInstall),
               endpointBytesPerSlot);
     EXPECT_EQ(48u, weightBytesPerSlot);
     EXPECT_EQ(541u + frontierEventBytes + immediateEntryBytes + monitorControlBytes, continuousBytesPerSlot);
@@ -815,6 +848,49 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("published_empty_page_stamp_bytes",
         std::to_string(engine->timelinePool.PublishedEmptyStampStorageBytes()));
     testing::Test::RecordProperty("engine_inline_bytes", std::to_string(sizeof(harken::Engine)));
+    const auto recordStableRows = [](const char* family, std::uint64_t request,
+        std::uint64_t committed, std::uint64_t reserved) {
+        testing::Test::RecordProperty(std::string(family) + "_requested_bytes", std::to_string(request));
+        testing::Test::RecordProperty(std::string(family) + "_committed_bytes", std::to_string(committed));
+        testing::Test::RecordProperty(std::string(family) + "_reserved_bytes", std::to_string(reserved));
+    };
+    recordStableRows("decision_rows", engine->decisions.RowStorageBytes(),
+        engine->decisions.RowCommittedBytes(), engine->decisions.RowReservedBytes());
+    recordStableRows("immediate_entry_rows", engine->immediateEntryAttempts.RequestedBytes(),
+        engine->immediateEntryAttempts.CommittedBytes(), engine->immediateEntryAttempts.ReservedBytes());
+    testing::Test::RecordProperty("immediate_entry_payload_bytes",
+        std::to_string(engine->ImmediateEntryAttemptStorageBytes() - engine->immediateEntryAttempts.RequestedBytes()));
+    recordStableRows("action_play_rows", engine->ActionPlayStorageBytes(),
+        engine->ActionPlayCommittedBytes(), engine->ActionPlayReservedBytes());
+    testing::Test::RecordProperty("action_play_directory_bytes", std::to_string(engine->ActionPlayDirectoryBytes()));
+    testing::Test::RecordProperty("action_play_dynamic_bytes", std::to_string(engine->ActionPlayDynamicBytes()));
+    testing::Test::RecordProperty("pending_selection_owned_bytes", std::to_string(engine->PendingSelectionStorageBytes()));
+    testing::Test::RecordProperty("captured_voice_owned_bytes", std::to_string(engine->CapturedVoiceStorageBytes()));
+    testing::Test::RecordProperty("preparation_owned_bytes", std::to_string(engine->PreparationStorageBytes()));
+    recordStableRows("composite_rows", engine->compositeCompletionOwners.StorageBytes(),
+        engine->compositeCompletionOwners.CommittedBytes(), engine->compositeCompletionOwners.ReservedBytes());
+    recordStableRows("variable_slice_rows", engine->variableSlices.RowStorageBytes(),
+        engine->variableSlices.RowCommittedBytes(), engine->variableSlices.RowReservedBytes());
+    recordStableRows("render_voice_rows", engine->voices.SlotStorageBytes(),
+        engine->voices.SlotCommittedBytes(), engine->voices.SlotReservedBytes());
+    recordStableRows("arm_group_rows", engine->armGroups.RowStorageBytes(),
+        engine->armGroups.RowCommittedBytes(), engine->armGroups.RowReservedBytes());
+    testing::Test::RecordProperty("arm_group_members_requested_bytes",
+        std::to_string(engine->armGroups.MemberStorageBytes()));
+    recordStableRows("action_firing_rows", engine->actionFirings.RowStorageBytes(),
+        engine->actionFirings.RowCommittedBytes(), engine->actionFirings.RowReservedBytes());
+    testing::Test::RecordProperty("action_firing_results_requested_bytes",
+        std::to_string(engine->actionFirings.ResultStorageBytes()));
+    recordStableRows("timeline_arm_rows", engine->timelineArms.RowStorageBytes(),
+        engine->timelineArms.RowCommittedBytes(), engine->timelineArms.RowReservedBytes());
+    recordStableRows("timeline_arm_scopes", engine->timelineArms.ScopeStorageBytes(),
+        engine->timelineArms.ScopeCommittedBytes(), engine->timelineArms.ScopeReservedBytes());
+    recordStableRows("voice_ledger_rows", engine->ledger.EntryStorageBytes(),
+        engine->ledger.EntryCommittedBytes(), engine->ledger.EntryReservedBytes());
+    recordStableRows("voice_ledger_receipts", engine->ledger.MonitorReceiptStorageBytes(),
+        engine->ledger.MonitorReceiptCommittedBytes(), engine->ledger.MonitorReceiptReservedBytes());
+    testing::Test::RecordProperty("variable_slice_retained_legacy_bytes",
+        std::to_string(engine->variableSlices.StorageBytes() - engine->variableSlices.RowStorageBytes()));
     EXPECT_EQ(2u * (static_cast<std::size_t>(engine->timelineArms.Capacity()) + engine->ledger.Capacity()),
         engine->ledger.MonitorSelectionCapacity());
     testing::Test::RecordProperty("monitor_selection_handle_bytes",
@@ -876,6 +952,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("authored_stop_identity_bytes", std::to_string(sizeof(harken::AuthoredStopOperationIdentity)));
     testing::Test::RecordProperty("frontier_event_family_capacity_increase_bytes",
         std::to_string((layout.pairedCount + layout.currentEventCount + layout.continuousCount) * frontierEventBytes));
+
 }
 
 TEST(CapacityContract, CompositeActionStorageIncreaseMatchesBothBlockProfiles) {

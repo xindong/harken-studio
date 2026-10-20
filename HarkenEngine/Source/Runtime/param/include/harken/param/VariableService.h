@@ -14,6 +14,7 @@
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/DecisionTable.h"
 #include "harken/core/VariableLabel.h"
+#include "harken/core/StableSlotStorage.h"
 #include "harken/render/OriginalSourceMutationActor.h"
 #include "harken/param/ParamTargets.h"
 
@@ -261,7 +262,10 @@ private:
 };
 
 class VariableServiceV1 {
+    struct ReadCutRow;
 public:
+    using ReadCutBackingPreparation = StableSlotStorage<ReadCutRow>::Preparation;
+    using ReadCutBackingUse = StableSlotStorage<ReadCutRow>::PreparedUse;
     friend void test::SetSdkCatalogFingerprint(VariableServiceV1&,
                                                std::uint64_t) noexcept;
     friend bool test::SetDefinitionExecutionFingerprint(VariableServiceV1&,
@@ -675,6 +679,7 @@ public:
         VnVoiceHandle nativeHandle, TimelineArmToken arm) const noexcept;
     void AcknowledgeFinishedTimelineReadUses(std::uint64_t completedAudioSequence) noexcept;
     std::uint32_t ReadCutCapacity() const noexcept { return readCutCapacity_; }
+    bool PrepareReadCutBacking(std::uint32_t count, ReadCutBackingPreparation* out) noexcept;
     std::uint32_t TimelineReadUseCapacity() const noexcept { return timelineReadUseCapacity_; }
     std::size_t ReadCutStorageBytes() const noexcept;
     std::size_t StorageBytes() const noexcept;
@@ -1127,6 +1132,7 @@ private:
     struct ReadCutValueRow {
         VnVariableId variableId{};
         float value = 0.0f;
+        float baselineValue = 0.0f;
         HistoryRef source{};
         std::uint64_t baselineOrdinal = 0;
         bool read = false;
@@ -1159,7 +1165,6 @@ private:
         bool pendingPlacement = false;
         bool finalPlacementCaptured = false;
         bool actionOrderConsumed = false;
-        std::array<float, kVariableDefinitionCapacity> baselineValues{};
         // Each set bit owns an observer, so the slot cannot recycle while retained.
         CandidatePins candidatePins{};
         bool candidateAdmissionFailed = false;
@@ -1180,12 +1185,15 @@ private:
         DecisionTable* entryDecisions = nullptr;
         ScheduledTransactionPool* entryPool = nullptr;
         DecisionFuturePin entryPin;
-        std::array<ReadCutValueRow, kVariableDefinitionCapacity> values{};
-        std::array<HistoryRef, kVariableDefinitionCapacity> sources{};
-        std::array<VariableSliceSource, kVariableDefinitionCapacity> publishedSources{};
+        std::vector<ReadCutValueRow> values;
+        std::vector<HistoryRef> sources;
+        std::vector<VariableSliceSource> publishedSources;
     };
 
     ReadCutRow* ResolveReadCut(VariableReadCutRef cut) noexcept;
+    bool ConstructReadCut(std::uint32_t slot) noexcept;
+    bool PrepareReadCutColumns(ReadCutRow& cut) noexcept;
+    bool ReadCutBackingAvailable(const ReadCutRow& cut) const noexcept;
     bool CaptureReadCutImpl(VnEmitterHandle emitter, std::uint64_t executeFrame,
         LogicCommitSequence sequence, std::uint32_t executionOrdinalExclusive,
         VariableReadCutRef* out, const ActionOrderIdentity* privateIssue,
@@ -1436,7 +1444,7 @@ private:
     std::vector<std::size_t> serviceCandidates_;
     mutable std::vector<VariableSliceRef> dependencyVisited_;
     std::uint32_t readCutCapacity_ = 0;
-    std::unique_ptr<ReadCutRow[]> readCuts_;
+    StableSlotStorage<ReadCutRow> readCuts_;
     std::vector<std::uint64_t> candidatePinStorage_;
     std::uint32_t timelineReadUseCapacity_ = 0;
     std::unique_ptr<TimelineReadUseRow[]> timelineReadUses_;

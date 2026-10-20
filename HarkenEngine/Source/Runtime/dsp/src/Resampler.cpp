@@ -1,6 +1,7 @@
 #include "harken/dsp/Resampler.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cmath>
 #include <cstring>
@@ -1971,7 +1972,7 @@ void Resampler::Reset(float* const* ringStorage, std::uint32_t channels,
                       ResampleQuality q, double inRatio,
                       const ResampleTables* t) {
     resampleProfile = ResampleProfile::LegacyCompatibility;
-    professional = {};
+    professional = nullptr;
     channelCount = channels;
     quality = q;
     ratio = inRatio;
@@ -2003,10 +2004,13 @@ void Resampler::Reset(
     float* const* ringStorage, std::uint32_t channels,
     ResampleQuality q, double inRatio, const ResampleTables* t,
     ResampleProfile profile,
-    const MultirateResampleTables* multirateTables) {
+    const MultirateResampleTables* multirateTables,
+    MultirateResamplerCandidate* workspace) {
+    assert(profile != ResampleProfile::Professional44148 || workspace != nullptr);
     Reset(ringStorage, channels, q, inRatio, t);
     if (profile == ResampleProfile::Professional44148) {
-        professional.Reset(ringStorage, channels, inRatio,
+        professional = workspace;
+        professional->Reset(ringStorage, channels, inRatio,
                            multirateTables);
         resampleProfile = ResampleProfile::Professional44148;
     }
@@ -2014,7 +2018,7 @@ void Resampler::Reset(
 
 std::uint32_t Resampler::FreeFrames() const {
     if (resampleProfile == ResampleProfile::Professional44148)
-        return professional.FreeFrames();
+        return professional->FreeFrames();
 
     // Keep the quality tier's widest possible history even at ratio <= 1, so
     // a later UpdateRatio cannot widen into samples already overwritten. Near
@@ -2053,15 +2057,25 @@ std::uint32_t Resampler::FreeFrames() const {
 void Resampler::PushPCM(const PCMView& pcm, std::uint64_t startFrame,
                         std::uint32_t frames) {
     if (resampleProfile == ResampleProfile::Professional44148) {
-        professional.PushPCM(pcm, startFrame, frames);
+        professional->PushPCM(pcm, startFrame, frames);
         return;
     }
 
+    if (frames == 0)
+        return;
+    const std::uint32_t offset = writeIndex & kRingMask;
+    const std::uint32_t first =
+        std::min(frames, kResampleFifoFrames - offset);
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
         const float* src = pcm.SamplePtr(ch, startFrame);
         float* dst = ring[ch];
-        for (std::uint32_t i = 0; i < frames; ++i) {
-            dst[(writeIndex + i) & kRingMask] = src[i * pcm.stride];
+        if (pcm.stride == 1 && frames <= kResampleFifoFrames) {
+            std::memcpy(dst + offset, src, first * sizeof(float));
+            std::memcpy(dst, src + first, (frames - first) * sizeof(float));
+        } else {
+            for (std::uint32_t i = 0; i < frames; ++i) {
+                dst[(writeIndex + i) & kRingMask] = src[i * pcm.stride];
+            }
         }
     }
     writeIndex += frames;
@@ -2069,14 +2083,22 @@ void Resampler::PushPCM(const PCMView& pcm, std::uint64_t startFrame,
 
 void Resampler::PushSilence(std::uint32_t frames) {
     if (resampleProfile == ResampleProfile::Professional44148) {
-        professional.PushSilence(frames);
+        professional->PushSilence(frames);
         return;
     }
 
+    const std::uint32_t offset = writeIndex & kRingMask;
+    const std::uint32_t first =
+        std::min(frames, kResampleFifoFrames - offset);
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
         float* dst = ring[ch];
-        for (std::uint32_t i = 0; i < frames; ++i) {
-            dst[(writeIndex + i) & kRingMask] = 0.0f;
+        if (frames <= kResampleFifoFrames) {
+            std::memset(dst + offset, 0, first * sizeof(float));
+            std::memset(dst, 0, (frames - first) * sizeof(float));
+        } else {
+            for (std::uint32_t i = 0; i < frames; ++i) {
+                dst[(writeIndex + i) & kRingMask] = 0.0f;
+            }
         }
     }
     writeIndex += frames;
@@ -2084,7 +2106,7 @@ void Resampler::PushSilence(std::uint32_t frames) {
 
 void Resampler::MarkInputEnd() {
     if (resampleProfile == ResampleProfile::Professional44148) {
-        professional.MarkInputEnd();
+        professional->MarkInputEnd();
         return;
     }
     inputEndIndex = writeIndex;
@@ -2093,13 +2115,13 @@ void Resampler::MarkInputEnd() {
 
 bool Resampler::Exhausted() const {
     return resampleProfile == ResampleProfile::Professional44148
-               ? professional.Exhausted()
+               ? professional->Exhausted()
                : inputEnded && readIndex >= inputEndIndex;
 }
 
 void Resampler::UpdateRatio(double newRatio, std::uint32_t rampFrames) {
     if (resampleProfile == ResampleProfile::Professional44148) {
-        professional.UpdateRatio(newRatio, rampFrames);
+        professional->UpdateRatio(newRatio, rampFrames);
         return;
     }
 
@@ -2122,7 +2144,40 @@ void Resampler::UpdateRatio(double newRatio, std::uint32_t rampFrames) {
 std::uint32_t Resampler::Produce(float* const* dst, std::uint32_t dstOffset,
                                  std::uint32_t maxFrames) {
     if (resampleProfile == ResampleProfile::Professional44148) {
-        return professional.Produce(dst, dstOffset, maxFrames);
+        return professional->Produce(dst, dstOffset, maxFrames);
+    }
+
+    if (resampleProfile == ResampleProfile::LegacyCompatibility &&
+        quality == ResampleQuality::Linear && ratio == 1.0 &&
+        targetRatio == 1.0 && rampRemaining == 0 && readFraction == 0.0 &&
+        readIndex < writeIndex &&
+        writeIndex - readIndex <= kResampleFifoFrames &&
+        maxFrames <= UINT64_MAX - readIndex &&
+        maxFrames <= UINT32_MAX - dstOffset) {
+        std::uint64_t available = writeIndex - readIndex - 1;
+        if (inputEnded) {
+            available = readIndex < inputEndIndex
+                            ? std::min(available, inputEndIndex - readIndex)
+                            : 0;
+        }
+        const std::uint32_t frames = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(available, maxFrames));
+        if (frames == 0)
+            return 0;
+        const std::uint32_t offset = readIndex & kRingMask;
+        const std::uint32_t first =
+            std::min(frames, kResampleFifoFrames - offset);
+        for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
+            std::memcpy(dst[ch] + dstOffset, ring[ch] + offset,
+                        first * sizeof(float));
+            std::memcpy(dst[ch] + dstOffset + first, ring[ch],
+                        (frames - first) * sizeof(float));
+        }
+        highRatioFilterActive = false;
+        readIndex += frames;
+        readFraction = 0.0;
+        readPos = static_cast<double>(readIndex);
+        return frames;
     }
 
     // Linear/Hermite keep a bounded interpolator at every ratio. Pitch-up
@@ -2260,22 +2315,23 @@ bool Resampler::CaptureProfessional(
     ProfessionalResamplerState* out) const {
     if (out == nullptr ||
         resampleProfile != ResampleProfile::Professional44148 ||
-        professional.channelCount == 0 ||
-        professional.channelCount > kMaxChannels) {
+        professional == nullptr ||
+        professional->channelCount == 0 ||
+        professional->channelCount > kMaxChannels) {
         return false;
     }
     *out = {};
     std::uint64_t oldest =
-        professional.paths[professional.activePath].rawProcessIndex;
-    if ((professional.transitionPreparing ||
-         professional.transitionOverlapping) &&
-        professional.paths[professional.transitionPath].initialized) {
+        professional->paths[professional->activePath].rawProcessIndex;
+    if ((professional->transitionPreparing ||
+         professional->transitionOverlapping) &&
+        professional->paths[professional->transitionPath].initialized) {
         oldest = std::min(
             oldest,
-            professional.paths[professional.transitionPath].rawProcessIndex);
+            professional->paths[professional->transitionPath].rawProcessIndex);
     }
-    if (oldest > professional.rawWriteIndex ||
-        professional.rawWriteIndex - oldest > kResampleFifoFrames) {
+    if (oldest > professional->rawWriteIndex ||
+        professional->rawWriteIndex - oldest > kResampleFifoFrames) {
         return false;
     }
 
@@ -2283,38 +2339,38 @@ bool Resampler::CaptureProfessional(
         ProfessionalResamplerState::kFormatVersion;
     out->profile = ResampleProfile::Professional44148;
     out->quality = quality;
-    out->channelCount = professional.channelCount;
-    out->activeStages = professional.activeStages;
-    out->ratio = professional.ratio;
-    out->targetRatio = professional.targetRatio;
-    out->rampStep = professional.rampStep;
-    out->rampRemaining = professional.rampRemaining;
-    out->rawWriteIndex = professional.rawWriteIndex;
-    out->rawEndIndex = professional.rawEndIndex;
-    out->inputEnded = professional.inputEnded;
-    std::memcpy(out->paths, professional.paths,
+    out->channelCount = professional->channelCount;
+    out->activeStages = professional->activeStages;
+    out->ratio = professional->ratio;
+    out->targetRatio = professional->targetRatio;
+    out->rampStep = professional->rampStep;
+    out->rampRemaining = professional->rampRemaining;
+    out->rawWriteIndex = professional->rawWriteIndex;
+    out->rawEndIndex = professional->rawEndIndex;
+    out->inputEnded = professional->inputEnded;
+    std::memcpy(out->paths, professional->paths,
                 sizeof(out->paths));
-    out->sourceFrame = professional.sourceFrame;
-    out->sourceFraction = professional.sourceFraction;
+    out->sourceFrame = professional->sourceFrame;
+    out->sourceFraction = professional->sourceFraction;
     out->transitionOverlapSource =
-        professional.transitionOverlapSource;
-    out->activePath = professional.activePath;
-    out->transitionPath = professional.transitionPath;
+        professional->transitionOverlapSource;
+    out->activePath = professional->activePath;
+    out->transitionPath = professional->transitionPath;
     out->transitionTargetStages =
-        professional.transitionTargetStages;
-    out->overlapFrame = professional.overlapFrame;
-    out->transitionPreparing = professional.transitionPreparing;
-    out->transitionOverlapping = professional.transitionOverlapping;
+        professional->transitionTargetStages;
+    out->overlapFrame = professional->overlapFrame;
+    out->transitionPreparing = professional->transitionPreparing;
+    out->transitionOverlapping = professional->transitionOverlapping;
     out->topologyTransitionsEnabled =
-        professional.topologyTransitionsEnabled;
+        professional->topologyTransitionsEnabled;
     out->rawStartIndex = oldest;
     out->rawFrameCount = static_cast<std::uint32_t>(
-        professional.rawWriteIndex - oldest);
+        professional->rawWriteIndex - oldest);
     for (std::uint32_t ch = 0; ch < out->channelCount; ++ch) {
         for (std::uint32_t frame = 0;
              frame < out->rawFrameCount; ++frame) {
             out->rawFrames[ch][frame] =
-                professional.rawRing[ch][
+                professional->rawRing[ch][
                     (oldest + frame) & kCandidateRawRingMask];
         }
     }
@@ -2456,8 +2512,9 @@ bool Resampler::RestoreProfessional(
     const ProfessionalResamplerState& state,
     float* const* ringStorage, std::uint32_t channels,
     const ResampleTables* legacyTables,
-    const MultirateResampleTables* multirateTables) {
-    if (!ValidateProfessionalState(state) ||
+    const MultirateResampleTables* multirateTables,
+    MultirateResamplerCandidate* workspace) {
+    if (workspace == nullptr || !ValidateProfessionalState(state) ||
         ringStorage == nullptr ||
         multirateTables == nullptr ||
         channels != state.channelCount) {
@@ -2469,31 +2526,31 @@ bool Resampler::RestoreProfessional(
     }
     Reset(ringStorage, channels, state.quality,
           state.ratio, legacyTables,
-          ResampleProfile::Professional44148, multirateTables);
-    professional.activeStages = state.activeStages;
-    professional.ratio = state.ratio;
-    professional.targetRatio = state.targetRatio;
-    professional.rampStep = state.rampStep;
-    professional.rampRemaining = state.rampRemaining;
-    professional.rawWriteIndex = state.rawWriteIndex;
-    professional.rawEndIndex = state.rawEndIndex;
-    professional.inputEnded = state.inputEnded;
-    std::memcpy(professional.paths, state.paths,
-                sizeof(professional.paths));
-    professional.sourceFrame = state.sourceFrame;
-    professional.sourceFraction = state.sourceFraction;
-    professional.transitionOverlapSource =
+          ResampleProfile::Professional44148, multirateTables, workspace);
+    professional->activeStages = state.activeStages;
+    professional->ratio = state.ratio;
+    professional->targetRatio = state.targetRatio;
+    professional->rampStep = state.rampStep;
+    professional->rampRemaining = state.rampRemaining;
+    professional->rawWriteIndex = state.rawWriteIndex;
+    professional->rawEndIndex = state.rawEndIndex;
+    professional->inputEnded = state.inputEnded;
+    std::memcpy(professional->paths, state.paths,
+                sizeof(professional->paths));
+    professional->sourceFrame = state.sourceFrame;
+    professional->sourceFraction = state.sourceFraction;
+    professional->transitionOverlapSource =
         state.transitionOverlapSource;
-    professional.activePath = state.activePath;
-    professional.transitionPath = state.transitionPath;
-    professional.transitionTargetStages =
+    professional->activePath = state.activePath;
+    professional->transitionPath = state.transitionPath;
+    professional->transitionTargetStages =
         state.transitionTargetStages;
-    professional.overlapFrame = state.overlapFrame;
-    professional.transitionPreparing = state.transitionPreparing;
-    professional.transitionOverlapping = state.transitionOverlapping;
-    professional.topologyTransitionsEnabled =
+    professional->overlapFrame = state.overlapFrame;
+    professional->transitionPreparing = state.transitionPreparing;
+    professional->transitionOverlapping = state.transitionOverlapping;
+    professional->topologyTransitionsEnabled =
         state.topologyTransitionsEnabled;
-    professional.counters = {};
+    professional->counters = {};
     for (std::uint32_t ch = 0; ch < channels; ++ch) {
         std::memset(ringStorage[ch], 0,
                     kResampleFifoFrames * sizeof(float));
@@ -2504,9 +2561,9 @@ bool Resampler::RestoreProfessional(
                 kCandidateRawRingMask] =
                 state.rawFrames[ch][frame];
         }
-        professional.rawRing[ch] = ringStorage[ch];
+        professional->rawRing[ch] = ringStorage[ch];
     }
-    professional.tables = multirateTables;
+    professional->tables = multirateTables;
     return true;
 }
 
@@ -2623,10 +2680,11 @@ bool Resampler::RestoreParkState(
     const ResamplerParkState& state,
     float* const* ringStorage, std::uint32_t channels,
     const ResampleTables* legacyTables,
-    const MultirateResampleTables* multirateTables) {
+    const MultirateResampleTables* multirateTables,
+    MultirateResamplerCandidate* workspace) {
     if (state.profile == ResampleProfile::Professional44148) {
         return RestoreProfessional(state, ringStorage, channels,
-                                   legacyTables, multirateTables);
+                                   legacyTables, multirateTables, workspace);
     }
     if (!ValidateParkState(state) || ringStorage == nullptr ||
         legacyTables == nullptr || channels != state.channelCount) {
@@ -2638,7 +2696,7 @@ bool Resampler::RestoreParkState(
     }
 
     Reset(ringStorage, channels, state.quality, state.ratio, legacyTables,
-          ResampleProfile::LegacyCompatibility, multirateTables);
+          ResampleProfile::LegacyCompatibility, multirateTables, nullptr);
     ratio = state.ratio;
     targetRatio = state.targetRatio;
     rampStep = state.rampStep;

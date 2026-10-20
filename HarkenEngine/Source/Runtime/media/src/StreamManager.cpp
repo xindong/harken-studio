@@ -149,18 +149,18 @@ std::size_t StreamManager::PendingRequestCountForTest() const {
 StreamManager::StreamManager(const EngineConfig& config)
     : m_ringFrames(static_cast<std::uint32_t>(
           RoundUpPow2(config.streamRingFrames))),
-      m_slots(config.maxStreams),
-      m_ringStorage(static_cast<std::size_t>(config.maxStreams) *
-                    kMaxChannels *
-                    static_cast<std::size_t>(
-                        RoundUpPow2(config.streamRingFrames))) {
+      m_slots(config.maxStreams) {
+    const auto channelSamples = static_cast<std::uint64_t>(config.maxStreams) * m_ringFrames;
+    if (channelSamples > UINT32_MAX) throw std::bad_alloc();
+    for (auto& column : m_ringStorage) {
+        if (!column.Reserve(static_cast<std::uint32_t>(channelSamples)))
+            throw std::bad_alloc();
+    }
     for (std::uint32_t s = 0; s < config.maxStreams; ++s) {
         float* planes[kMaxChannels];
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-            planes[ch] =
-                m_ringStorage.data() +
-                (static_cast<std::size_t>(s) * kMaxChannels + ch) *
-                    m_ringFrames;
+            planes[ch] = m_ringStorage[ch].data() +
+                static_cast<std::size_t>(s) * m_ringFrames;
         }
         m_slots[s].ring.Wire(planes, m_ringFrames);
     }
@@ -381,6 +381,12 @@ bool StreamManager::AcquirePendingRef(std::uint32_t fileIndex) {
     if (fileIndex >= m_files.size() || m_files[fileIndex] == nullptr) {
         return false;
     }
+    const auto channels = m_files[fileIndex]->toc.channelCount;
+    for (std::uint32_t ch = 0; ch < channels; ++ch) {
+        if (m_pendingRingSlots[ch] == UINT32_MAX) return false;
+    }
+    if (!PrepareRingStorage(OccupiedSlotPrefix(), channels, true)) return false;
+    for (std::uint32_t ch = 0; ch < channels; ++ch) ++m_pendingRingSlots[ch];
     m_files[fileIndex]->pendingRefs.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -389,6 +395,11 @@ void StreamManager::ReleasePendingRef(std::uint32_t fileIndex) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (fileIndex >= m_files.size() || m_files[fileIndex] == nullptr) {
         return;
+    }
+    assert(m_files[fileIndex]->pendingRefs.load(std::memory_order_relaxed) != 0);
+    for (std::uint32_t ch = 0; ch < m_files[fileIndex]->toc.channelCount; ++ch) {
+        assert(m_pendingRingSlots[ch] != 0);
+        --m_pendingRingSlots[ch];
     }
     m_files[fileIndex]->pendingRefs.fetch_sub(1, std::memory_order_relaxed);
 }
@@ -419,6 +430,27 @@ StreamRing* StreamManager::RingOf(std::uint32_t slot) {
     return &m_slots[slot].ring;
 }
 
+bool StreamManager::PrepareSlotWorkingSet(
+    std::uint32_t slot, std::uint32_t channels) noexcept {
+    return slot < m_slots.size() &&
+        PrepareRingStorage(std::max(slot + 1u, OccupiedSlotPrefix()), channels);
+}
+
+bool StreamManager::PeekPreparedFreeSlot(
+    std::uint32_t channels, std::uint32_t* outSlot) {
+    if (!PeekFreeSlot(outSlot)) return false;
+    if (RingStorageReady(*outSlot, channels)) return true;
+    // A failed private installation may still occupy a retired ring. Finish
+    // that detach before reusing the pending reference's protected prefix.
+    Request request;
+    request.kind = Request::Kind::Serve;
+    if (PostAndWait(request) != VN_OK) {
+        ReclaimAfterWorkerFailure();
+        return false;
+    }
+    return PeekFreeSlot(outSlot) && RingStorageReady(*outSlot, channels);
+}
+
 VnResult StreamManager::ActivateSlot(std::uint32_t slot,
                                      std::uint32_t fileIndex,
                                      std::uint64_t startFrame,
@@ -429,6 +461,7 @@ VnResult StreamManager::ActivateSlot(std::uint32_t slot,
     if (outRingToken != nullptr) *outRingToken = 0;
     if (slot >= m_slots.size() || fileIndex >= m_files.size() ||
         m_files[fileIndex] == nullptr ||
+        !RingStorageReady(slot, m_files[fileIndex]->toc.channelCount) ||
         ((loopCount != 1u) && loopStartFrame >= loopEndFrame) ||
         m_slots[slot].ring.state.load(std::memory_order_acquire) !=
             StreamSlotState::Free) {
@@ -504,6 +537,7 @@ VnResult StreamManager::PrepareSeekSlot(
     }
     std::uint32_t slot = 0;
     if (!PeekFreeSlot(&slot)) return VN_BACKPRESSURE;
+    if (!PrepareSlotWorkingSet(slot, facts.channelCount)) return VN_BACKPRESSURE;
     std::uint64_t token = 0;
     const VnResult activated = ActivateSlot(
         slot, fileIndex, targetFrame, 0, facts.frameCount, 1, &token);
@@ -807,6 +841,38 @@ void StreamManager::HandleRegister(Request& request) {
         m_files.push_back(std::move(record));
     }
     request.result = VN_OK;
+}
+
+std::uint32_t StreamManager::OccupiedSlotPrefix() const noexcept {
+    auto count = static_cast<std::uint32_t>(m_slots.size());
+    while (count != 0 && m_slots[count - 1u].ring.state.load(
+               std::memory_order_acquire) == StreamSlotState::Free) --count;
+    return count;
+}
+
+bool StreamManager::PrepareRingStorage(
+    std::uint32_t slotPrefix, std::uint32_t channels, bool pending) noexcept {
+    if (memguard::IsAudioTagged() || slotPrefix > m_slots.size() ||
+        channels == 0 || channels > kMaxChannels) return false;
+    for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
+        if (ch >= channels && m_pendingRingSlots[ch] == 0) continue;
+        const auto required = std::min<std::uint64_t>(m_slots.size(),
+            static_cast<std::uint64_t>(slotPrefix) + m_pendingRingSlots[ch] +
+                (pending && ch < channels ? 1u : 0u));
+        if (!m_ringStorage[ch].ConstructThrough(
+                static_cast<std::uint32_t>(required * m_ringFrames))) return false;
+    }
+    return true;
+}
+
+bool StreamManager::RingStorageReady(
+    std::uint32_t slot, std::uint32_t channels) const noexcept {
+    if (slot >= m_slots.size() || channels == 0 || channels > kMaxChannels) return false;
+    const auto samples = (static_cast<std::uint64_t>(slot) + 1u) * m_ringFrames;
+    for (std::uint32_t ch = 0; ch < channels; ++ch) {
+        if (m_ringStorage[ch].ConstructedCount() < samples) return false;
+    }
+    return true;
 }
 
 VnResult StreamManager::OpenAndValidate(Request& request,
