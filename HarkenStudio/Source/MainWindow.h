@@ -67,9 +67,9 @@ namespace VNX {
     class GridEditorPanel;
     class MeterPanel;
     class LogPanel;
-    class PackManagerPanel;
+    class PublisherPanel;
     class BlueprintCanvasWidget;
-    class AIAssistantPanel;
+    class AssistantPanel;
     class AIAssistantService;
     class IPCServer;
     class PanelInstanceRegistry;
@@ -92,7 +92,7 @@ namespace VNX {
     }
 }
 
-class PreviewPanel;
+class ControlPanel;
 
 namespace HarkenEditor {
     class AuditionManager;
@@ -355,14 +355,14 @@ private:
     bool projectModified_ = false;
     bool projectOpenInProgress_ = false;
     
-    ads::CDockWidget* blueprintCanvasDock_ = nullptr;
+    ads::CDockWidget* blueprintDock_ = nullptr;
 
     BlueprintCanvasWidget* blueprintCanvas_ = nullptr;
 
     ads::CDockManager* dockManager_ = nullptr;
 
     ads::CDockWidget* projectExplorerDock_ = nullptr;
-    ads::CDockWidget* aiDock_ = nullptr;
+    ads::CDockWidget* assistantDock_ = nullptr;
 
     QPointer<PanelInstanceRegistry> panelRegistry_;
     std::unique_ptr<EditorShellRegistry> editorShellRegistry_;
@@ -392,7 +392,7 @@ private:
     void refreshVisibleMaterializedSingletons();
     bool applyWorkspacePanelRestoreSpec(const DockInstanceSpec& spec);
     LogPanel* logPanel() const;
-    PackManagerPanel* packManagerPanel() const;
+    PublisherPanel* publisherPanel() const;
 
     void wireInspectorDockCloseHandler(ads::CDockWidget* dock);
 
@@ -418,13 +418,13 @@ private:
     void wireHierarchyDockCloseHandler(ads::CDockWidget* dock);
 
     ProjectExplorer* projectExplorer_ = nullptr;
-    AIAssistantPanel* aiPanel_ = nullptr;
+    AssistantPanel* assistantPanel_ = nullptr;
     QList<QPointer<QThread>> packExportThreads_;
 
     HarkenEditor::AuditionManager* auditionManager_ = nullptr;
     PlaybackControls* playbackControls_ = nullptr;
-    PreviewPanel* previewPanel_ = nullptr;
-    ads::CDockWidget* previewDock_ = nullptr;
+    ControlPanel* controlPanel_ = nullptr;
+    ads::CDockWidget* controlDock_ = nullptr;
     ProjectItem* playbackResetItem_ = nullptr;
     
     QAction* undoAction_ = nullptr;

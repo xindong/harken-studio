@@ -334,7 +334,7 @@ void registerAssetActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "import_audio_to_canvas";
-        def.displayName = "Import Audio To Blueprint Canvas";
+        def.displayName = "Import Audio To Blueprint";
         def.category = "asset";
         def.paramSchema = QJsonObject{{"files", "array"}, {"drop_x", "float"}, {"drop_y", "float"}, {"target_container_id", "uint32"}};
         def.undoable = false;

@@ -1,6 +1,6 @@
 
 #include "PackStructureDialog.h"
-#include "PackManagerPanel.h"
+#include "PublisherPanel.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
 
@@ -81,7 +81,7 @@ void PackStructureDialog::populate(const QString& path)
     const QFileInfo fi(path);
     infoLabel_->setText(tr("Pack: %1 | Version: V%2 | Sections: %3 | Size: %4")
         .arg(fi.fileName()).arg(hdr.version).arg(hdr.sectionCount)
-        .arg(PackManagerPanel::humanBytes(fi.size())));
+        .arg(PublisherPanel::humanBytes(fi.size())));
 
     auto* headerItem = new QTreeWidgetItem(sectionTree_,
         {tr("Header"),
@@ -109,7 +109,7 @@ void PackStructureDialog::populate(const QString& path)
 
         auto* secItem = new QTreeWidgetItem(sectionTree_,
             {tr("Section: %1").arg(typeStr),
-             PackManagerPanel::humanBytes(chunkSize), ""});
+             PublisherPanel::humanBytes(chunkSize), ""});
 
         if (offset + 12 <= file.size()) {
             file.seek(offset + 8);

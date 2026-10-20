@@ -48,6 +48,25 @@ namespace {
 constexpr int kSidebarWidth = 320;
 constexpr double kInformationZoneShare = 0.3;
 
+const QList<QPair<QByteArray, QByteArray>> kDockRenames = {
+    {"AuditionDock", "ControlDock"},
+    {"PreviewDock", "ControlDock"},
+    {"BlueprintCanvasDock", "BlueprintDock"},
+    {"AIDock", "AssistantDock"},
+    {"MonitorCatalogDock", "MonitorDock"},
+    {"PackManagerDock", "PublisherDock"},
+    {"MonitorMeterDock", "MeterDock_1"},
+    {"MeterDock", "MeterDock_1"},
+};
+
+QString migrateDockName(const QString& name)
+{
+    for (const auto& rename : kDockRenames)
+        if (name == QLatin1String(rename.first))
+            return QString::fromLatin1(rename.second);
+    return name;
+}
+
 ads::CDockSplitter* rootSplitterFor(ads::CDockWidget* dock)
 {
     ads::CDockAreaWidget* area = dock ? dock->dockAreaWidget() : nullptr;
@@ -163,10 +182,10 @@ LayoutController::LayoutController(MainWindow* host)
 void LayoutController::setDocks(const Docks& d)
 {
     dockManager_          = d.dockManager;
-    blueprintCanvasDock_  = d.blueprintCanvasDock;
+    blueprintDock_        = d.blueprintDock;
     projectExplorerDock_  = d.projectExplorerDock;
-    aiDock_               = d.aiDock;
-    previewDock_ = d.previewDock;
+    assistantDock_        = d.assistantDock;
+    controlDock_          = d.controlDock;
 }
 
 void LayoutController::setWindowDockResolver(WindowDockResolver resolver)
@@ -222,8 +241,8 @@ LayoutController::PreferredOpenArea LayoutController::openPlacementFor(const QSt
 
 ads::CDockAreaWidget* LayoutController::centralTabArea() const
 {
-    if (blueprintCanvasDock_) {
-        if (auto* area = blueprintCanvasDock_->dockAreaWidget())
+    if (blueprintDock_) {
+        if (auto* area = blueprintDock_->dockAreaWidget())
             return area;
     }
     return nullptr;
@@ -314,14 +333,9 @@ bool LayoutController::revealPanel(const QString& objectName, bool visible)
 
 QByteArray migrateDockNames(const QByteArray& state)
 {
-    static const QList<QPair<QByteArray, QByteArray>> kRenames = {
-        {"\"AuditionDock\"", "\"PreviewDock\""},
-        {"\"MonitorMeterDock\"", "\"MeterDock_1\""},
-        {"\"MeterDock\"", "\"MeterDock_1\""},
-    };
     QByteArray migrated = state;
-    for (const auto& rename : kRenames)
-        migrated.replace(rename.first, rename.second);
+    for (const auto& rename : kDockRenames)
+        migrated.replace('"' + rename.first + '"', '"' + rename.second + '"');
     return migrated;
 }
 
@@ -349,7 +363,7 @@ void LayoutController::hideMonitorDocks()
 {
     const QStringList typeIds = monitorPanelTypeIds();
     for (const QString& typeId : typeIds) {
-        if (typeId == QLatin1String("MonitorCatalog")) continue;
+        if (typeId == QLatin1String("Monitor")) continue;
         if (ads::CDockWidget* dock = dockForWindow(typeId))
             dock->toggleView(false);
     }
@@ -358,10 +372,10 @@ void LayoutController::hideMonitorDocks()
 QList<LayoutController::ZoneSpec> LayoutController::defaultZoneSpecs() const
 {
     return {
-        { blueprintCanvasDock_,   ads::TopDockWidgetArea,    true  },
-        { aiDock_,                ads::RightDockWidgetArea,  true  },
+        { blueprintDock_,         ads::TopDockWidgetArea,    true  },
+        { assistantDock_,         ads::RightDockWidgetArea,  true  },
         { projectExplorerDock_,   ads::LeftDockWidgetArea,   true  },
-        { previewDock_,  ads::BottomDockWidgetArea, false },
+        { controlDock_,           ads::BottomDockWidgetArea, false },
     };
 }
 
@@ -390,7 +404,7 @@ void LayoutController::applyDefaultLayout()
                   projectExplorerDock_->dockAreaWidget(), true);
     }
 
-    if (blueprintCanvasDock_) blueprintCanvasDock_->setAsCurrentTab();
+    if (blueprintDock_) blueprintDock_->setAsCurrentTab();
 
     enforceDisabledDocks();
 
@@ -406,10 +420,10 @@ void LayoutController::applyDefaultLayout()
 bool LayoutController::isFixedSubtree(QWidget* w) const
 {
     static const QSet<QString> kPeripheral = {
-        QStringLiteral("AIDock"),
+        QStringLiteral("AssistantDock"),
         QStringLiteral("ExplorerDock"),
         QStringLiteral("InformationDock"),
-        QStringLiteral("PreviewDock"),
+        QStringLiteral("ControlDock"),
     };
     if (auto* area = qobject_cast<ads::CDockAreaWidget*>(w)) {
         const auto docks = area->dockWidgets();
@@ -444,7 +458,7 @@ int LayoutController::fixedZoneExtent(QWidget* child, bool horizontal, int total
             return qMax(60, qRound(total * kInformationZoneShare));
         if (name == QLatin1String("ExplorerDock"))
             return qMax(60, total - qRound(total * kInformationZoneShare));
-        if (name == QLatin1String("PreviewDock"))
+        if (name == QLatin1String("ControlDock"))
             return qMax(1, child->minimumSizeHint().height());
         return qMax(60, child->sizeHint().height());
     }
@@ -469,8 +483,8 @@ ads::CDockWidget* LayoutController::createEditorDock(WorkspaceDockCreateSpec spe
     }
 
     QWidget* left = zoneSubtree(projectExplorerDock_);
-    QWidget* right = zoneSubtree(aiDock_);
-    QWidget* bottom = zoneSubtree(previewDock_);
+    QWidget* right = zoneSubtree(assistantDock_);
+    QWidget* bottom = zoneSubtree(controlDock_);
     const QList<QPair<QWidget*, ads::DockWidgetArea>> boundaries{
         {left, ads::LeftDockWidgetArea},
         {zoneSubtree(dockForWindow(QStringLiteral("Information"))), ads::LeftDockWidgetArea},
@@ -700,7 +714,7 @@ void LayoutController::collapsedZonesFromJson(const QJsonArray& zones)
 
     for (const QJsonValue& value : zones) {
         const QJsonObject json = value.toObject();
-        const QString key = json.value(QLatin1String("key")).toString();
+        const QString key = migrateDockName(json.value(QLatin1String("key")).toString());
         ads::CDockSplitter* root = rootSplitterFor(dockManager_->findDockWidget(key));
         if (!root)
             continue;
@@ -708,7 +722,7 @@ void LayoutController::collapsedZonesFromJson(const QJsonArray& zones)
         ZoneCollapse state;
         state.restored = true;
         for (const QJsonValue& name : json.value(QLatin1String("hidden")).toArray())
-            if (ads::CDockWidget* dock = dockManager_->findDockWidget(name.toString()))
+            if (ads::CDockWidget* dock = dockManager_->findDockWidget(migrateDockName(name.toString())))
                 state.hidden.append(dock);
         if (state.hidden.isEmpty())
             continue;

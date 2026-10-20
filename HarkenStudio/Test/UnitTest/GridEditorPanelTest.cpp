@@ -2,8 +2,8 @@
 #include "Widgets/GridEditor/DiscreteGridWidget.h"
 #include "Widgets/GridEditor/MixingEditorWidget.h"
 #include "Widgets/GridEditor/GridEditorPanel.h"
-#include "Widgets/PreviewPanel/PreviewPanel.h"
-#include "Widgets/PreviewPanel/VariableRehearsalRow.h"
+#include "Widgets/ControlPanel/ControlPanel.h"
+#include "Widgets/ControlPanel/VariableRehearsalRow.h"
 #include "Widgets/Common/RehearsalSlider.h"
 #include "Widgets/Common/MatrixTableWidget.h"
 #include "Widgets/Common/TableItemDelegate.h"
@@ -1058,7 +1058,7 @@ TEST_F(GridEditorPanelTest, AuditionUpdatesWinnerWithoutInterruptingCellEdit)
     auto& rehearsal = VNX::ProjectManager::instance().variableRehearsal();
     EXPECT_EQ(grid->winnerRow(), 0);
     EXPECT_FALSE(rehearsal.overrideFor(varIntensity_->guid).has_value());
-    PreviewPanel drawer(nullptr);
+    ControlPanel drawer(nullptr);
     drawer.setItem(container_);
     VNX::VariableRehearsalRow* row = nullptr;
     for (auto* candidate : drawer.findChildren<VNX::VariableRehearsalRow*>())

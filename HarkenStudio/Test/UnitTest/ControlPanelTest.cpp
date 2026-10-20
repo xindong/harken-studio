@@ -13,10 +13,10 @@
 #include "ProjectTypes.h"
 #include "FieldGroupProjectAdapter.h"
 #include "UndoCommands.h"
-#include "Widgets/PreviewPanel/PreviewPanel.h"
-#include "Widgets/PreviewPanel/RehearsalTable.h"
-#include "Widgets/PreviewPanel/VariableBindingTable.h"
-#include "Widgets/PreviewPanel/VariableRehearsalRow.h"
+#include "Widgets/ControlPanel/ControlPanel.h"
+#include "Widgets/ControlPanel/RehearsalTable.h"
+#include "Widgets/ControlPanel/VariableBindingTable.h"
+#include "Widgets/ControlPanel/VariableRehearsalRow.h"
 #include "Widgets/Common/AxisRehearsalRow.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/ElidedLabel.h"
@@ -79,7 +79,7 @@ void drainEvents()
 
 }
 
-class PreviewPanelTest : public ::testing::Test
+class ControlPanelTest : public ::testing::Test
 {
 protected:
     void SetUp() override
@@ -157,9 +157,9 @@ protected:
     VNX::ProjectItem* step_ = nullptr;
 };
 
-TEST_F(PreviewPanelTest, SelectionShowsOnlyItsDependenciesAndClears)
+TEST_F(ControlPanelTest, SelectionShowsOnlyItsDependenciesAndClears)
 {
-    PreviewPanel bar(nullptr);
+    ControlPanel bar(nullptr);
     EXPECT_TRUE(bar.findChildren<VNX::VariableRehearsalRow*>().isEmpty());
     bar.setItem(sound_);
     EXPECT_NE(rowFor(bar.variableTable(), smooth_), nullptr);
@@ -198,7 +198,7 @@ TEST_F(PreviewPanelTest, SelectionShowsOnlyItsDependenciesAndClears)
     EXPECT_TRUE(bindingRows(bar.bindingTable()).isEmpty());
 }
 
-TEST_F(PreviewPanelTest, GridAxesAndBindingsShareVariablesAndRefreshOnKindChange)
+TEST_F(ControlPanelTest, GridAxesAndBindingsShareVariablesAndRefreshOnKindChange)
 {
     auto& manager = VNX::ProjectManager::instance();
     auto* container = manager.createItem(nullptr, QStringLiteral("Container"),
@@ -208,7 +208,7 @@ TEST_F(PreviewPanelTest, GridAxesAndBindingsShareVariablesAndRefreshOnKindChange
     selection->mode = VNX::SelectionMode::Match;
     selection->selections.shared.matchAxes.push_back(step_->guid);
     ASSERT_TRUE(bind(container, smooth_));
-    PreviewPanel bar(nullptr);
+    ControlPanel bar(nullptr);
     bar.setItem(container);
     auto* stepRow = rowFor(bar.variableTable(), step_);
     ASSERT_NE(stepRow, nullptr);
@@ -258,7 +258,7 @@ TEST_F(PreviewPanelTest, GridAxesAndBindingsShareVariablesAndRefreshOnKindChange
     EXPECT_EQ(bindingRows(bar.bindingTable()).size(), 1);
 }
 
-TEST_F(PreviewPanelTest, ActionClosureIncludesOutputParentAndSendBusesWithoutUnrelatedBuses)
+TEST_F(ControlPanelTest, ActionClosureIncludesOutputParentAndSendBusesWithoutUnrelatedBuses)
 {
     auto& manager = VNX::ProjectManager::instance();
     const auto busType = VNX::ProjectItem::Type::Bus;
@@ -298,7 +298,7 @@ TEST_F(PreviewPanelTest, ActionClosureIncludesOutputParentAndSendBusesWithoutUnr
     set.targetObjectID = step_->objectID;
     action->comp<VNX::VAction>()->steps = {post, set};
 
-    PreviewPanel bar(nullptr);
+    ControlPanel bar(nullptr);
     bar.setItem(action);
     EXPECT_NE(rowFor(&bar, smooth_), nullptr);
     EXPECT_NE(rowFor(&bar, step_), nullptr);
@@ -321,7 +321,7 @@ TEST_F(PreviewPanelTest, ActionClosureIncludesOutputParentAndSendBusesWithoutUnr
     EXPECT_EQ(bindingRows(bar.bindingTable()).size(), 2);
 }
 
-TEST_F(PreviewPanelTest, TrackClipsAndOwnedChildrenReachTheirVariables)
+TEST_F(ControlPanelTest, TrackClipsAndOwnedChildrenReachTheirVariables)
 {
     auto& manager = VNX::ProjectManager::instance();
     auto* piece = manager.createItem(nullptr, QStringLiteral("Piece"), VNX::ProjectItem::Type::Piece);
@@ -333,21 +333,21 @@ TEST_F(PreviewPanelTest, TrackClipsAndOwnedChildrenReachTheirVariables)
     clip.targetGuid = sound_->guid;
     track->comp<VNX::VTrack>()->clips.items.push_back(clip);
     ASSERT_TRUE(bind(track, step_));
-    PreviewPanel bar(nullptr);
+    ControlPanel bar(nullptr);
     bar.setItem(piece);
     EXPECT_NE(rowFor(&bar, smooth_), nullptr);
     EXPECT_NE(rowFor(&bar, step_), nullptr);
     EXPECT_EQ(bar.findChildren<VNX::VariableRehearsalRow*>().size(), 2);
 }
 
-TEST_F(PreviewPanelTest, RehearsalGestureStaysActiveAndDoesNotDirtyTheProject)
+TEST_F(ControlPanelTest, RehearsalGestureStaysActiveAndDoesNotDirtyTheProject)
 {
     auto& manager = VNX::ProjectManager::instance();
     auto* undo = VNX::UndoRedoManager::instance().undoStack();
     undo->setClean();
     smooth_->clearDirty();
     const int count = undo->count();
-    PreviewPanel bar(nullptr);
+    ControlPanel bar(nullptr);
     bar.setItem(sound_);
     auto* row = rowFor(&bar, smooth_);
     ASSERT_NE(row, nullptr);
@@ -370,10 +370,10 @@ TEST_F(PreviewPanelTest, RehearsalGestureStaysActiveAndDoesNotDirtyTheProject)
     EXPECT_FLOAT_EQ(slider->rawValue(), 10.0f);
 }
 
-TEST_F(PreviewPanelTest, DeclarationEditClampsDisplayWithoutRewritingOverride)
+TEST_F(ControlPanelTest, DeclarationEditClampsDisplayWithoutRewritingOverride)
 {
     auto& manager = VNX::ProjectManager::instance();
-    PreviewPanel bar(nullptr);
+    ControlPanel bar(nullptr);
     bar.setItem(sound_);
     manager.variableRehearsal().setOverride(smooth_->guid, 150.0f);
     smooth_->comp<VNX::VVariable>()->rangeMax = 50.0f;
@@ -385,7 +385,7 @@ TEST_F(PreviewPanelTest, DeclarationEditClampsDisplayWithoutRewritingOverride)
     EXPECT_FLOAT_EQ(row->findChild<VNX::RehearsalSlider*>()->rawValue(), 50.0f);
 }
 
-TEST_F(PreviewPanelTest, BindingContributionsStaySeparateAndFollowLiveEdits)
+TEST_F(ControlPanelTest, BindingContributionsStaySeparateAndFollowLiveEdits)
 {
     auto& manager = VNX::ProjectManager::instance();
     auto& rehearsal = manager.variableRehearsal();
@@ -411,7 +411,7 @@ TEST_F(PreviewPanelTest, BindingContributionsStaySeparateAndFollowLiveEdits)
     undo->setClean();
     const int undoCount = undo->count();
 
-    PreviewPanel bar(nullptr);
+    ControlPanel bar(nullptr);
     bar.setItem(sound_);
     ASSERT_EQ(bindingRows(bar.bindingTable()).size(), 3);
     EXPECT_EQ(bar.variableTable()->findChildren<VNX::VariableRehearsalRow*>().size(), 2);
@@ -471,9 +471,9 @@ TEST_F(PreviewPanelTest, BindingContributionsStaySeparateAndFollowLiveEdits)
     EXPECT_TRUE(bar.variableTable()->findChildren<VNX::VariableRehearsalRow*>().isEmpty());
 }
 
-TEST_F(PreviewPanelTest, DeletingTheSelectionClearsItsVariables)
+TEST_F(ControlPanelTest, DeletingTheSelectionClearsItsVariables)
 {
-    PreviewPanel bar(nullptr);
+    ControlPanel bar(nullptr);
     bar.setItem(sound_);
     auto& manager = VNX::ProjectManager::instance();
     ASSERT_TRUE(manager.deleteItem(sound_));
@@ -482,7 +482,7 @@ TEST_F(PreviewPanelTest, DeletingTheSelectionClearsItsVariables)
     EXPECT_TRUE(bindingRows(bar.bindingTable()).isEmpty());
 }
 
-TEST_F(PreviewPanelTest, ValueCellSharesSpaceAcrossSliderEditorAndScope)
+TEST_F(ControlPanelTest, ValueCellSharesSpaceAcrossSliderEditorAndScope)
 {
     VNX::RehearsalTable table;
     table.setVariables({smooth_});
@@ -526,7 +526,7 @@ TEST_F(PreviewPanelTest, ValueCellSharesSpaceAcrossSliderEditorAndScope)
     }
 }
 
-TEST_F(PreviewPanelTest, PushPathFollowsScope)
+TEST_F(ControlPanelTest, PushPathFollowsScope)
 {
     auto& rehearsal = VNX::ProjectManager::instance().variableRehearsal();
     auto& engine = VNX::AudioEngine::instance();
@@ -550,7 +550,7 @@ TEST_F(PreviewPanelTest, PushPathFollowsScope)
     EXPECT_TRUE(sawEmitter);
 }
 
-TEST_F(PreviewPanelTest, ClearingRehearsalResetsBothScopeSelectors)
+TEST_F(ControlPanelTest, ClearingRehearsalResetsBothScopeSelectors)
 {
     auto& rehearsal = VNX::ProjectManager::instance().variableRehearsal();
     VNX::RehearsalTable table;

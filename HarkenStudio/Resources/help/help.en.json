@@ -223,7 +223,7 @@
     },
     "settings.general.developer": {
       "title": "Developer Mode",
-      "body": "Show File, Version, CRC32, and Preview Pack Structure in Pack Exporter."
+      "body": "Show File, Version, CRC32, and Preview Pack Structure in Publisher."
     },
     "settings.layout": {
       "title": "Layout",
@@ -235,7 +235,7 @@
     },
     "settings.ai_agent": {
       "title": "AI Agent",
-      "body": "Configure AI Assistant's connection, permissions, and available tools."
+      "body": "Configure Assistant's connection, permissions, and available tools."
     },
     "settings.ai_agent.credentials": {
       "title": "Credentials",
@@ -269,8 +269,8 @@
       "title": "Pack Build Output",
       "body": "Use a path relative to the project; blank uses BuildPacks. The project root and object directories cannot be used."
     },
-    "BlueprintCanvas": {
-      "title": "Blueprint Canvas",
+    "Blueprint": {
+      "title": "Blueprint",
       "body": "View and edit object relationships and audio routes. Drag pins to connect objects; Volume nodes control the gain of an output or send."
     },
     "Explorer": {
@@ -285,24 +285,24 @@
       "title": "Information",
       "body": "Read help for the object or control under the pointer; use the title-bar lock to keep the current topic."
     },
-    "Preview": {
-      "title": "Preview",
+    "Control": {
+      "title": "Control",
       "body": "Adjust preview Variable values for the selected object and view their effects on bindings and selections. These values are temporary."
     },
     "Log": {
       "title": "Log",
       "body": "Review editor messages, warnings, and errors to diagnose problems."
     },
-    "ExportPacksManager": {
-      "title": "Pack Exporter",
+    "Publisher": {
+      "title": "Publisher",
       "body": "Manage pack contents and export runtime packs for the selected platforms."
     },
-    "MonitorCatalog": {
-      "title": "Monitor Catalog",
+    "Monitor": {
+      "title": "Monitor",
       "body": "Search and filter captured runtime events; select a record for details or jump to its project object."
     },
-    "AIAssistant": {
-      "title": "AI Assistant",
+    "Assistant": {
+      "title": "Assistant",
       "body": "Ask questions about the project or request edits through the enabled tools; writes require approval."
     },
     "blueprint.select": {

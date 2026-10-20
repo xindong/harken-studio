@@ -51,7 +51,7 @@ void SelectionRouter::setViews(const Views& v)
     blueprintCanvas_        = v.blueprintCanvas;
     projectExplorer_        = v.projectExplorer;
 
-    blueprintCanvasDock_    = v.blueprintCanvasDock;
+    blueprintDock_    = v.blueprintDock;
 }
 
 
@@ -304,9 +304,9 @@ void SelectionRouter::onProjectItemDoubleClicked(ProjectItem* item)
 {
     if (!item) return;
     routeSelection(item, false);
-    if (blueprintCanvas_ && blueprintCanvasDock_ && !blueprintCanvasDock_->isClosed()
+    if (blueprintCanvas_ && blueprintDock_ && !blueprintDock_->isClosed()
         && blueprintCanvas_->focusItem(item) && host_)
-        host_->revealDock(blueprintCanvasDock_);
+        host_->revealDock(blueprintDock_);
     activateItem(item);
 }
 

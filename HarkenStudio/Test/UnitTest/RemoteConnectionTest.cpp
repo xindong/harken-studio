@@ -7,7 +7,7 @@
 #include "ProjectTypes.h"
 #include "RuntimeBridge/RemoteConnection.h"
 #include "Monitor/EventCaptureController.h"
-#include "Widgets/Monitor/MonitorCatalogPanel.h"
+#include "Widgets/Monitor/MonitorPanel.h"
 #include "MonitorRecordPack.h"
 #include "UndoCommands.h"
 #include "Widgets/Common/ListFooter.h"
@@ -342,9 +342,9 @@ TEST(EventCaptureController, BoundsHistoryAndPreservesItOnMalformedPayload)
     EventCaptureController capture(&connection);
     connection.connectTarget(QStringLiteral("127.0.0.1"), peer.server.serverPort());
     ASSERT_TRUE(waitUntil([&] { return connection.canCaptureEvents(); }));
-    VNX::MonitorCatalogPanel panel;
+    VNX::MonitorPanel panel;
     panel.setCaptureController(&capture);
-    panel.findChild<QToolButton*>(QStringLiteral("MonitorCatalogAutoScroll"))->setChecked(false);
+    panel.findChild<QToolButton*>(QStringLiteral("MonitorAutoScroll"))->setChecked(false);
     peer.eventResponder = [&](const Wire::Frame& request) {
         Wire::EventCaptureStatus status;
         status.sessionEpoch = 99;
@@ -445,7 +445,7 @@ TEST(EventCaptureController, ProjectAndObjectIdentityGateNamesAndJumps)
     RemotePeer peer;
     RemoteConnection connection;
     EventCaptureController capture(&connection);
-    VNX::MonitorCatalogPanel panel;
+    VNX::MonitorPanel panel;
     panel.setCaptureController(&capture);
     const QUuid project = QUuid::createUuid();
     const QUuid object = VNX::authoringUuid(harkentest::StudioObjectId(7));
@@ -509,7 +509,7 @@ TEST(EventCaptureController, ProjectAndObjectIdentityGateNamesAndJumps)
     EXPECT_TRUE(capture.eventAt(1).objectName.isEmpty());
     EXPECT_EQ(capture.eventAt(2).objectName, QStringLiteral("Engine Start"));
     EXPECT_EQ(panel.table()->model()->index(0, 3).data().toString(), QStringLiteral("Engine Start"));
-    auto* search = panel.findChild<QLineEdit*>(QStringLiteral("MonitorCatalogTextFilter"));
+    auto* search = panel.findChild<QLineEdit*>(QStringLiteral("MonitorTextFilter"));
     search->setText(QStringLiteral("Engine Start"));
     EXPECT_EQ(panel.visibleRowCount(), 2);
     search->clear();

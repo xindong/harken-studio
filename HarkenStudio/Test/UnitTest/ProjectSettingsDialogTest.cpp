@@ -10,7 +10,7 @@
 #include "ProjectSerializer.h"
 #include "ProjectTypes.h"
 #include "UndoCommands.h"
-#include "Widgets/PackManager/PackManagerPanel.h"
+#include "Widgets/Publisher/PublisherPanel.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/PlatformBar/PlatformBar.h"
@@ -722,7 +722,7 @@ TEST_F(ProjectSettingsDialogTest, TwoAndroidDraftsApplyTogetherAndPersistTheirPr
     config.location = tempDir_.path();
     ASSERT_TRUE(manager.createProject(config));
     PlatformBar bar(PlatformContextService::instance());
-    PackManagerPanel packs;
+    PublisherPanel packs;
     ProjectSettingsDialog dialog;
     dialog.show();
     auto* list = dialog.findChild<QTreeWidget*>("projectPlatformList");

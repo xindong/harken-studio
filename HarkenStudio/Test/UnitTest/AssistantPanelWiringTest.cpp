@@ -3,7 +3,7 @@
 #include "AI/AIConversationStore.h"
 #include "Support/AITestSupport.h"
 #include "Support/MockLLMProvider.h"
-#include "Widgets/Assistant/AIAssistantPanel.h"
+#include "Widgets/Assistant/AssistantPanel.h"
 
 #include <gtest/gtest.h>
 
@@ -24,7 +24,7 @@ using namespace VNX;
 
 namespace {
 
-QStringList renderedMessages(AIAssistantPanel& panel)
+QStringList renderedMessages(AssistantPanel& panel)
 {
     QStringList messages;
     auto* list = panel.findChild<QListWidget*>();
@@ -43,7 +43,7 @@ QStringList renderedMessages(AIAssistantPanel& panel)
     return messages;
 }
 
-int visibleConfirmationCardCount(AIAssistantPanel& panel)
+int visibleConfirmationCardCount(AssistantPanel& panel)
 {
     auto* list = panel.findChild<QListWidget*>();
     if (!list)
@@ -59,7 +59,7 @@ int visibleConfirmationCardCount(AIAssistantPanel& panel)
     return count;
 }
 
-QPushButton* confirmationCardButton(AIAssistantPanel& panel, const QString& name)
+QPushButton* confirmationCardButton(AssistantPanel& panel, const QString& name)
 {
     auto* list = panel.findChild<QListWidget*>();
     if (!list)
@@ -83,7 +83,7 @@ QJsonObject setItemVolumeArguments()
     };
 }
 
-void wirePanel(AIAssistantPanel& panel, AIAssistantService& service)
+void wirePanel(AssistantPanel& panel, AIAssistantService& service)
 {
     panel.setAssistantService(&service);
 }
@@ -111,7 +111,7 @@ public:
 
     ~ScopedPanelFontSizeRestore()
     {
-        settings_.setPanelFontSize(PanelId::AIAssistant, originalSize_);
+        settings_.setPanelFontSize(PanelId::Assistant, originalSize_);
     }
 
 private:
@@ -119,7 +119,7 @@ private:
     int originalSize_;
 };
 
-class AIAssistantPanelWiringTest : public ::testing::Test
+class AssistantPanelWiringTest : public ::testing::Test
 {
 protected:
     void SetUp() override
@@ -130,12 +130,12 @@ protected:
 
 }
 
-TEST_F(AIAssistantPanelWiringTest, VisualStateUsesApplicationSkinProperties)
+TEST_F(AssistantPanelWiringTest, VisualStateUsesApplicationSkinProperties)
 {
-    AIAssistantPanel panel;
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
+    AssistantPanel panel;
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
     auto* frame = panel.findChild<QFrame*>(QStringLiteral("aiInputFrame"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     auto* list = panel.findChild<QListWidget*>(QStringLiteral("aiChatList"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(frame, nullptr);
@@ -174,11 +174,11 @@ TEST_F(AIAssistantPanelWiringTest, VisualStateUsesApplicationSkinProperties)
     EXPECT_TRUE(send->property("turnActive").toBool());
 }
 
-TEST_F(AIAssistantPanelWiringTest, MissingServiceShowsUnavailableMessage)
+TEST_F(AssistantPanelWiringTest, MissingServiceShowsUnavailableMessage)
 {
-    AIAssistantPanel panel;
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    AssistantPanel panel;
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -189,7 +189,7 @@ TEST_F(AIAssistantPanelWiringTest, MissingServiceShowsUnavailableMessage)
     EXPECT_TRUE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, RestoredConversationRendersWhenServiceIsAttached)
+TEST_F(AssistantPanelWiringTest, RestoredConversationRendersWhenServiceIsAttached)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
@@ -207,7 +207,7 @@ TEST_F(AIAssistantPanelWiringTest, RestoredConversationRendersWhenServiceIsAttac
     AIAssistantService service(nullptr);
     service.setConversationStore(store);
     service.setConversationScope(scope);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     wirePanel(panel, service);
 
     EXPECT_EQ(renderedMessages(panel),
@@ -215,7 +215,7 @@ TEST_F(AIAssistantPanelWiringTest, RestoredConversationRendersWhenServiceIsAttac
                            QStringLiteral("Stored answer")}));
 }
 
-TEST_F(AIAssistantPanelWiringTest, NewConversationButtonClearsPanelAndServiceContext)
+TEST_F(AssistantPanelWiringTest, NewConversationButtonClearsPanelAndServiceContext)
 {
     AIAssistantService service(nullptr);
     auto* provider = new MockLLMProvider;
@@ -224,12 +224,12 @@ TEST_F(AIAssistantPanelWiringTest, NewConversationButtonClearsPanelAndServiceCon
     provider->enqueueTextResponse(QStringLiteral("First answer"));
     provider->enqueueTextResponse(QStringLiteral("Fresh answer"));
 
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     wirePanel(panel, service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     auto* newConversation =
-        panel.findChild<QPushButton*>(QStringLiteral("aiAssistantNewConversation"));
+        panel.findChild<QPushButton*>(QStringLiteral("assistantNewConversation"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
     ASSERT_NE(newConversation, nullptr);
@@ -256,7 +256,7 @@ TEST_F(AIAssistantPanelWiringTest, NewConversationButtonClearsPanelAndServiceCon
               QStringLiteral("Fresh question"));
 }
 
-TEST_F(AIAssistantPanelWiringTest,
+TEST_F(AssistantPanelWiringTest,
        NewConversationButtonCreatesAndSelectorSwitchesSessions)
 {
     QTemporaryDir directory;
@@ -278,14 +278,14 @@ TEST_F(AIAssistantPanelWiringTest,
     service.setConversationScope(QStringLiteral("project:test"));
     configureValidSettings(service);
 
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     wirePanel(panel, service);
     auto* input = panel.findChild<QLineEdit*>(
-        QStringLiteral("aiAssistantInput"));
+        QStringLiteral("assistantInput"));
     auto* send = panel.findChild<QPushButton*>(
-        QStringLiteral("aiAssistantSend"));
+        QStringLiteral("assistantSend"));
     auto* create = panel.findChild<QPushButton*>(
-        QStringLiteral("aiAssistantNewConversation"));
+        QStringLiteral("assistantNewConversation"));
     auto* selector = panel.findChild<QComboBox*>(
         QStringLiteral("aiConversationSelector"));
     ASSERT_NE(input, nullptr);
@@ -328,13 +328,13 @@ TEST_F(AIAssistantPanelWiringTest,
             QStringLiteral("First answer")}));
 }
 
-TEST_F(AIAssistantPanelWiringTest, MissingProviderFailureResetsTurnSynchronously)
+TEST_F(AssistantPanelWiringTest, MissingProviderFailureResetsTurnSynchronously)
 {
     AIAssistantService service(nullptr);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     wirePanel(panel, service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -362,7 +362,7 @@ TEST_F(AIAssistantPanelWiringTest, MissingProviderFailureResetsTurnSynchronously
     EXPECT_TRUE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, InvalidConfigurationGuidesUserToAIAgentSettings)
+TEST_F(AssistantPanelWiringTest, InvalidConfigurationGuidesUserToAIAgentSettings)
 {
     AIAssistantService service(nullptr);
     auto* provider = new MockLLMProvider;
@@ -376,10 +376,10 @@ TEST_F(AIAssistantPanelWiringTest, InvalidConfigurationGuidesUserToAIAgentSettin
         return defaultValue;
     });
 
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     wirePanel(panel, service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -397,9 +397,9 @@ TEST_F(AIAssistantPanelWiringTest, InvalidConfigurationGuidesUserToAIAgentSettin
     EXPECT_TRUE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, AIMessageRendersMarkdownRichTextUserStaysPlain)
+TEST_F(AssistantPanelWiringTest, AIMessageRendersMarkdownRichTextUserStaysPlain)
 {
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     const QString raw = QStringLiteral("**bold** & <script>alert(1)</script>");
     panel.addMessage(raw, false);
     panel.addMessage(raw, true);
@@ -427,9 +427,9 @@ TEST_F(AIAssistantPanelWiringTest, AIMessageRendersMarkdownRichTextUserStaysPlai
     EXPECT_EQ(userLabel->text(), raw);
 }
 
-TEST_F(AIAssistantPanelWiringTest, RichMessageHeightGrowsWithContent)
+TEST_F(AssistantPanelWiringTest, RichMessageHeightGrowsWithContent)
 {
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     panel.addMessage(QStringLiteral("short"), false);
     panel.addMessage(QStringLiteral("# Heading\n- item one\n- item two\n\n"
                                     "paragraph line\n```\ncode\n```"), false);
@@ -448,17 +448,17 @@ TEST_F(AIAssistantPanelWiringTest, RichMessageHeightGrowsWithContent)
     EXPECT_GT(richHeight, shortHeight);
 }
 
-TEST_F(AIAssistantPanelWiringTest, MockTextResponseReplacesThinkingAndResetsTurn)
+TEST_F(AssistantPanelWiringTest, MockTextResponseReplacesThinkingAndResetsTurn)
 {
     AIAssistantService service(nullptr);
     auto* provider = new MockLLMProvider;
     provider->enqueueTextResponse(QStringLiteral("Mock response"));
     service.setProvider(provider);
     configureValidSettings(service);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     wirePanel(panel, service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -474,7 +474,7 @@ TEST_F(AIAssistantPanelWiringTest, MockTextResponseReplacesThinkingAndResetsTurn
     EXPECT_TRUE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, ServiceStepEventUpdatesBoundedStatusAndCompletionStillRenders)
+TEST_F(AssistantPanelWiringTest, ServiceStepEventUpdatesBoundedStatusAndCompletionStillRenders)
 {
     AIAssistantService service(nullptr);
     auto* provider = new MockLLMProvider;
@@ -482,11 +482,11 @@ TEST_F(AIAssistantPanelWiringTest, ServiceStepEventUpdatesBoundedStatusAndComple
     provider->enqueueTextResponse(QStringLiteral("Mock response"));
     service.setProvider(provider);
     configureValidSettings(service);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     wirePanel(panel, service);
 
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     auto* step = panel.findChild<QLabel*>(QStringLiteral("aiStepStatus"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
@@ -508,7 +508,7 @@ TEST_F(AIAssistantPanelWiringTest, ServiceStepEventUpdatesBoundedStatusAndComple
     EXPECT_TRUE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, AbortPendingTurnResetsImmediately)
+TEST_F(AssistantPanelWiringTest, AbortPendingTurnResetsImmediately)
 {
     AIAssistantService service(nullptr);
     auto* provider = new MockLLMProvider;
@@ -516,10 +516,10 @@ TEST_F(AIAssistantPanelWiringTest, AbortPendingTurnResetsImmediately)
     provider->enqueueTextResponse(QStringLiteral("Late response"));
     service.setProvider(provider);
     configureValidSettings(service);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     wirePanel(panel, service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -538,10 +538,10 @@ TEST_F(AIAssistantPanelWiringTest, AbortPendingTurnResetsImmediately)
     EXPECT_TRUE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, ConfirmationCardShowsCommandAndResolvesOnlyOnce)
+TEST_F(AssistantPanelWiringTest, ConfirmationCardShowsCommandAndResolvesOnlyOnce)
 {
     AIAssistantService service(nullptr);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     wirePanel(panel, service);
 
     const QJsonObject command{
@@ -585,10 +585,10 @@ TEST_F(AIAssistantPanelWiringTest, ConfirmationCardShowsCommandAndResolvesOnlyOn
         QStringLiteral("AI_CONFIRMATION_EXPIRED")));
 }
 
-TEST_F(AIAssistantPanelWiringTest, PendingConfirmationSurvivesFontRefreshAndStillResolves)
+TEST_F(AssistantPanelWiringTest, PendingConfirmationSurvivesFontRefreshAndStillResolves)
 {
     AIAssistantService service(nullptr);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     wirePanel(panel, service);
 
     const QJsonObject command{
@@ -602,10 +602,10 @@ TEST_F(AIAssistantPanelWiringTest, PendingConfirmationSurvivesFontRefreshAndStil
     };
     panel.onConfirmationRequired(QStringLiteral("ai-0001"), command);
     AppSettings& settings = AppSettings::instance();
-    const int originalFontSize = settings.panelFontSize(PanelId::AIAssistant);
+    const int originalFontSize = settings.panelFontSize(PanelId::Assistant);
     const ScopedPanelFontSizeRestore restoreFontSize(settings, originalFontSize);
     const int refreshedFontSize = originalFontSize == 15 ? 16 : 15;
-    settings.setPanelFontSize(PanelId::AIAssistant, refreshedFontSize);
+    settings.setPanelFontSize(PanelId::Assistant, refreshedFontSize);
 
     auto* list = panel.findChild<QListWidget*>();
     ASSERT_NE(list, nullptr);
@@ -637,24 +637,24 @@ TEST_F(AIAssistantPanelWiringTest, PendingConfirmationSurvivesFontRefreshAndStil
     ASSERT_EQ(outcome.size(), 1);
     EXPECT_TRUE(outcome.constFirst().contains(QStringLiteral("AI_CONFIRMATION_EXPIRED")));
 
-    settings.setPanelFontSize(PanelId::AIAssistant, originalFontSize);
+    settings.setPanelFontSize(PanelId::Assistant, originalFontSize);
     EXPECT_EQ(visibleConfirmationCardCount(panel), 0);
     EXPECT_EQ(list->count(), 1);
     EXPECT_EQ(renderedMessages(panel), outcome);
 }
 
-TEST_F(AIAssistantPanelWiringTest, RepeatedSetAssistantServiceDeliversTerminalSignalsOnce)
+TEST_F(AssistantPanelWiringTest, RepeatedSetAssistantServiceDeliversTerminalSignalsOnce)
 {
     AIAssistantService service(nullptr);
     auto* provider = new MockLLMProvider;
     provider->enqueueTextResponse(QStringLiteral("Mock response"));
     service.setProvider(provider);
     configureValidSettings(service);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     panel.setAssistantService(&service);
     panel.setAssistantService(&service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -679,11 +679,11 @@ TEST_F(AIAssistantPanelWiringTest, RepeatedSetAssistantServiceDeliversTerminalSi
     EXPECT_TRUE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, ReplacedOrClearedServiceNoLongerReachesPanel)
+TEST_F(AssistantPanelWiringTest, ReplacedOrClearedServiceNoLongerReachesPanel)
 {
     AIAssistantService first(nullptr);
     AIAssistantService second(nullptr);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     panel.setAssistantService(&first);
     panel.setAssistantService(&second);
 
@@ -695,19 +695,19 @@ TEST_F(AIAssistantPanelWiringTest, ReplacedOrClearedServiceNoLongerReachesPanel)
     EXPECT_TRUE(renderedMessages(panel).isEmpty());
 }
 
-TEST_F(AIAssistantPanelWiringTest, ReconnectCycleDeliversEventsExactlyOnce)
+TEST_F(AssistantPanelWiringTest, ReconnectCycleDeliversEventsExactlyOnce)
 {
     AIAssistantService service(nullptr);
     auto* provider = new MockLLMProvider;
     provider->enqueueTextResponse(QStringLiteral("Mock response"));
     service.setProvider(provider);
     configureValidSettings(service);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     panel.setAssistantService(&service);
     panel.setAssistantService(nullptr);
     panel.setAssistantService(&service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -721,7 +721,7 @@ TEST_F(AIAssistantPanelWiringTest, ReconnectCycleDeliversEventsExactlyOnce)
     EXPECT_TRUE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, ReplacingServiceMidTurnAbortsOldTurn)
+TEST_F(AssistantPanelWiringTest, ReplacingServiceMidTurnAbortsOldTurn)
 {
     AIAssistantService first(nullptr);
     auto* provider = new MockLLMProvider;
@@ -730,10 +730,10 @@ TEST_F(AIAssistantPanelWiringTest, ReplacingServiceMidTurnAbortsOldTurn)
     first.setProvider(provider);
     configureValidSettings(first);
     AIAssistantService second(nullptr);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     panel.setAssistantService(&first);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -752,7 +752,7 @@ TEST_F(AIAssistantPanelWiringTest, ReplacingServiceMidTurnAbortsOldTurn)
     EXPECT_TRUE(step->text().isEmpty());
 }
 
-TEST_F(AIAssistantPanelWiringTest, ServiceDestructionMidTurnResetsPanelSafely)
+TEST_F(AssistantPanelWiringTest, ServiceDestructionMidTurnResetsPanelSafely)
 {
     auto service = std::make_unique<AIAssistantService>(nullptr);
     auto* provider = new MockLLMProvider;
@@ -760,10 +760,10 @@ TEST_F(AIAssistantPanelWiringTest, ServiceDestructionMidTurnResetsPanelSafely)
     provider->enqueueTextResponse(QStringLiteral("Late response"));
     service->setProvider(provider);
     configureValidSettings(*service);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     panel.setAssistantService(service.get());
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -790,7 +790,7 @@ TEST_F(AIAssistantPanelWiringTest, ServiceDestructionMidTurnResetsPanelSafely)
     EXPECT_TRUE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, SameIdFailureWithoutFailedStepDoesNotEndLiveTurn)
+TEST_F(AssistantPanelWiringTest, SameIdFailureWithoutFailedStepDoesNotEndLiveTurn)
 {
     AIAssistantService service(nullptr);
     auto* provider = new MockLLMProvider;
@@ -798,10 +798,10 @@ TEST_F(AIAssistantPanelWiringTest, SameIdFailureWithoutFailedStepDoesNotEndLiveT
     provider->enqueueTextResponse(QStringLiteral("Mock response"));
     service.setProvider(provider);
     configureValidSettings(service);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     panel.setAssistantService(&service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -824,7 +824,7 @@ TEST_F(AIAssistantPanelWiringTest, SameIdFailureWithoutFailedStepDoesNotEndLiveT
     EXPECT_TRUE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, ConfirmationApprovalRearmsStopStateUntilCompletion)
+TEST_F(AssistantPanelWiringTest, ConfirmationApprovalRearmsStopStateUntilCompletion)
 {
     AIAssistantService service(nullptr);
     auto* provider = new MockLLMProvider;
@@ -835,11 +835,11 @@ TEST_F(AIAssistantPanelWiringTest, ConfirmationApprovalRearmsStopStateUntilCompl
     provider->enqueueTextResponse(QStringLiteral("Volume updated"));
     service.setProvider(provider);
     configureValidSettings(service);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     panel.setAssistantService(&service);
     panel.setAssistantService(&service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -864,7 +864,7 @@ TEST_F(AIAssistantPanelWiringTest, ConfirmationApprovalRearmsStopStateUntilCompl
     EXPECT_TRUE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, ConfirmationRejectionKeepsResumedTurnActive)
+TEST_F(AssistantPanelWiringTest, ConfirmationRejectionKeepsResumedTurnActive)
 {
     AIAssistantService service(nullptr);
     auto* provider = new MockLLMProvider;
@@ -875,10 +875,10 @@ TEST_F(AIAssistantPanelWiringTest, ConfirmationRejectionKeepsResumedTurnActive)
     provider->enqueueTextResponse(QStringLiteral("Understood"));
     service.setProvider(provider);
     configureValidSettings(service);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     panel.setAssistantService(&service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -901,7 +901,7 @@ TEST_F(AIAssistantPanelWiringTest, ConfirmationRejectionKeepsResumedTurnActive)
     EXPECT_TRUE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, StaleOrForeignFailureDoesNotResetLiveTurn)
+TEST_F(AssistantPanelWiringTest, StaleOrForeignFailureDoesNotResetLiveTurn)
 {
     AIAssistantService service(nullptr);
     auto* provider = new MockLLMProvider;
@@ -909,10 +909,10 @@ TEST_F(AIAssistantPanelWiringTest, StaleOrForeignFailureDoesNotResetLiveTurn)
     provider->enqueueTextResponse(QStringLiteral("Mock response"));
     service.setProvider(provider);
     configureValidSettings(service);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     panel.setAssistantService(&service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -938,10 +938,10 @@ TEST_F(AIAssistantPanelWiringTest, StaleOrForeignFailureDoesNotResetLiveTurn)
     EXPECT_TRUE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, TerminalResponseClearsStaleConfirmationCard)
+TEST_F(AssistantPanelWiringTest, TerminalResponseClearsStaleConfirmationCard)
 {
     AIAssistantService service(nullptr);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     panel.setAssistantService(&service);
 
     const QJsonObject command{
@@ -957,14 +957,14 @@ TEST_F(AIAssistantPanelWiringTest, TerminalResponseClearsStaleConfirmationCard)
     EXPECT_EQ(renderedMessages(panel), QStringList{QStringLiteral("All done.")});
 
     AppSettings& settings = AppSettings::instance();
-    const int originalFontSize = settings.panelFontSize(PanelId::AIAssistant);
+    const int originalFontSize = settings.panelFontSize(PanelId::Assistant);
     const ScopedPanelFontSizeRestore restoreFontSize(settings, originalFontSize);
-    settings.setPanelFontSize(PanelId::AIAssistant, originalFontSize == 15 ? 16 : 15);
+    settings.setPanelFontSize(PanelId::Assistant, originalFontSize == 15 ? 16 : 15);
     EXPECT_EQ(visibleConfirmationCardCount(panel), 0);
     EXPECT_EQ(renderedMessages(panel), QStringList{QStringLiteral("All done.")});
 }
 
-TEST_F(AIAssistantPanelWiringTest, NewSubmitAbortsPendingConfirmationAndClearsCard)
+TEST_F(AssistantPanelWiringTest, NewSubmitAbortsPendingConfirmationAndClearsCard)
 {
     AIAssistantService service(nullptr);
     auto* provider = new MockLLMProvider;
@@ -974,10 +974,10 @@ TEST_F(AIAssistantPanelWiringTest, NewSubmitAbortsPendingConfirmationAndClearsCa
         setItemVolumeArguments()}});
     service.setProvider(provider);
     configureValidSettings(service);
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     panel.setAssistantService(&service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);
 
@@ -993,7 +993,7 @@ TEST_F(AIAssistantPanelWiringTest, NewSubmitAbortsPendingConfirmationAndClearsCa
     EXPECT_FALSE(input->isEnabled());
 }
 
-TEST_F(AIAssistantPanelWiringTest, InvalidToolProfileDiagnosticShowsBoundedStatus)
+TEST_F(AssistantPanelWiringTest, InvalidToolProfileDiagnosticShowsBoundedStatus)
 {
     AIAssistantService service(nullptr);
     service.setUnrestrictedMode(false);
@@ -1011,10 +1011,10 @@ TEST_F(AIAssistantPanelWiringTest, InvalidToolProfileDiagnosticShowsBoundedStatu
             return QVariant(QStringLiteral("bogus"));
         return defaultValue;
     });
-    AIAssistantPanel panel;
+    AssistantPanel panel;
     panel.setAssistantService(&service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("aiAssistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("aiAssistantSend"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
     auto* step = panel.findChild<QLabel*>(QStringLiteral("aiStepStatus"));
     ASSERT_NE(input, nullptr);
     ASSERT_NE(send, nullptr);

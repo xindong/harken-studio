@@ -4,7 +4,7 @@
 #include "Monitor/EventCaptureController.h"
 #include "ProjectTypes.h"
 #include "Core/Components/VMixNode.h"
-#include "Widgets/Monitor/MonitorCatalogPanel.h"
+#include "Widgets/Monitor/MonitorPanel.h"
 #include "UnitTest/RemoteGameFixture.h"
 
 #include <gtest/gtest.h>
@@ -204,7 +204,7 @@ TEST(RemoteConnectionProcess, SharedDllDiscoveryAudioControlMonitorReconnectAndT
     EXPECT_TRUE(second.stop()) << second.process.readAllStandardError().toStdString();
 }
 
-TEST(MonitorCatalog, RemoteGameCallsFromSharedDllAppearInPanel) {
+TEST(MonitorPanel, RemoteGameCallsFromSharedDllAppearInPanel) {
     using namespace VNX::Monitor;
     ASSERT_NE(qApp, nullptr);
     QTemporaryDir directory(QStringLiteral(HARKEN_TEMP_DIR "/event-game-XXXXXX"));
@@ -242,7 +242,7 @@ TEST(MonitorCatalog, RemoteGameCallsFromSharedDllAppearInPanel) {
     effect.parameters = {0.0f};
     ASSERT_TRUE(project.root->comp<VNX::VMixNode>()->effects.replace({effect}));
     capture.setProjectObjects(VNX::ProjectObjectIndex::fromProject(&project));
-    VNX::MonitorCatalogPanel panel;
+    VNX::MonitorPanel panel;
     panel.setCaptureController(&capture);
     connection.connectTarget(QStringLiteral("127.0.0.1"),
         static_cast<quint16>(game.ready.value(QStringLiteral("port")).toInt()));
@@ -308,8 +308,8 @@ TEST(MonitorCatalog, RemoteGameCallsFromSharedDllAppearInPanel) {
     }
     EXPECT_TRUE(namedVariable && namedAction && namedSound && namedLifecycleAction);
     ASSERT_EQ(panel.visibleRowCount(), retained);
-    auto* level = panel.findChild<QComboBox*>(QStringLiteral("MonitorCatalogLevelFilter"));
-    auto* search = panel.findChild<QLineEdit*>(QStringLiteral("MonitorCatalogTextFilter"));
+    auto* level = panel.findChild<QComboBox*>(QStringLiteral("MonitorLevelFilter"));
+    auto* search = panel.findChild<QLineEdit*>(QStringLiteral("MonitorTextFilter"));
     ASSERT_NE(level, nullptr);
     ASSERT_NE(search, nullptr);
     level->setCurrentIndex(level->findData(VN_LOG_ERROR));

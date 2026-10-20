@@ -1,4 +1,4 @@
-#include "PreviewPanel.h"
+#include "ControlPanel.h"
 #include "RehearsalTable.h"
 #include "VariableBindingTable.h"
 #include "Core/PlatformContextService.h"
@@ -13,7 +13,7 @@
 
 #include <algorithm>
 
-PreviewPanel::PreviewPanel(QWidget* parent)
+ControlPanel::ControlPanel(QWidget* parent)
     : QWidget(parent)
 {
     setupUI();
@@ -25,21 +25,21 @@ PreviewPanel::PreviewPanel(QWidget* parent)
         setPinned(false);
     });
     connect(&manager, &VNX::ProjectManager::itemCreated,
-            this, &PreviewPanel::scheduleVariableRefresh);
+            this, &ControlPanel::scheduleVariableRefresh);
     connect(&manager, &VNX::ProjectManager::itemDeleted,
-            this, &PreviewPanel::scheduleVariableRefresh);
+            this, &ControlPanel::scheduleVariableRefresh);
     connect(&manager, &VNX::ProjectManager::itemMoved,
-            this, &PreviewPanel::scheduleVariableRefresh);
+            this, &ControlPanel::scheduleVariableRefresh);
     connect(&manager, &VNX::ProjectManager::itemRenamed,
-            this, &PreviewPanel::scheduleVariableRefresh);
+            this, &ControlPanel::scheduleVariableRefresh);
     connect(&manager, &VNX::ProjectManager::itemPropertyChanged,
-            this, &PreviewPanel::scheduleVariableRefresh);
+            this, &ControlPanel::scheduleVariableRefresh);
     connect(&VNX::PlatformContextService::instance(),
             &VNX::PlatformContextService::contextChanged,
-            this, &PreviewPanel::scheduleVariableRefresh);
+            this, &ControlPanel::scheduleVariableRefresh);
 }
 
-void PreviewPanel::setItem(VNX::ProjectItem* item)
+void ControlPanel::setItem(VNX::ProjectItem* item)
 {
     selectedItemId_ = item ? item->guid : QUuid();
     if (pinned_) return;
@@ -47,12 +47,12 @@ void PreviewPanel::setItem(VNX::ProjectItem* item)
     refreshVariables();
 }
 
-VNX::ProjectItem* PreviewPanel::boundItem() const
+VNX::ProjectItem* ControlPanel::boundItem() const
 {
     return VNX::ProjectManager::instance().findItemByGuid(boundItemId_);
 }
 
-void PreviewPanel::setPinned(bool pinned)
+void ControlPanel::setPinned(bool pinned)
 {
     if (pinned_ == pinned) return;
     pinned_ = pinned;
@@ -63,7 +63,7 @@ void PreviewPanel::setPinned(bool pinned)
     emit pinToggled(pinned_);
 }
 
-QVariantMap PreviewPanel::snapshotState() const
+QVariantMap ControlPanel::snapshotState() const
 {
     QVariantMap state;
     if (pinned_ && boundItem())
@@ -71,7 +71,7 @@ QVariantMap PreviewPanel::snapshotState() const
     return state;
 }
 
-void PreviewPanel::restoreState(const QVariantMap& state)
+void ControlPanel::restoreState(const QVariantMap& state)
 {
     const auto* item = VNX::ProjectManager::instance().findItemByGuid(
         QUuid(state.value(QStringLiteral("pinnedObjectGuid")).toString()));
@@ -84,12 +84,12 @@ void PreviewPanel::restoreState(const QVariantMap& state)
     refreshVariables();
 }
 
-QSize PreviewPanel::sizeHint() const
+QSize ControlPanel::sizeHint() const
 {
     return QSize(std::max(880, minimumSizeHint().width()), 140);
 }
 
-QSize PreviewPanel::minimumSizeHint() const
+QSize ControlPanel::minimumSizeHint() const
 {
     const int bodyWidth = std::max(variableTable_->rowsWidget()->minimumWidth(),
                                    bindingTable_->rowsWidget()->minimumWidth());
@@ -100,7 +100,7 @@ QSize PreviewPanel::minimumSizeHint() const
     return QSize(tableWidth * 2 + 32, tableHeight + 16);
 }
 
-void PreviewPanel::scheduleVariableRefresh()
+void ControlPanel::scheduleVariableRefresh()
 {
     if (variableRefreshPending_) return;
     variableRefreshPending_ = true;
@@ -110,7 +110,7 @@ void PreviewPanel::scheduleVariableRefresh()
     });
 }
 
-void PreviewPanel::refreshVariables()
+void ControlPanel::refreshVariables()
 {
     auto& manager = VNX::ProjectManager::instance();
     const auto* item = boundItem();
@@ -130,10 +130,10 @@ void PreviewPanel::refreshVariables()
     emit contextChanged();
 }
 
-void PreviewPanel::setupUI()
+void ControlPanel::setupUI()
 {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    setObjectName(QStringLiteral("PreviewPanel"));
+    setObjectName(QStringLiteral("ControlPanel"));
 
     auto* root = new QGridLayout(this);
     root->setContentsMargins(8, 8, 8, 8);

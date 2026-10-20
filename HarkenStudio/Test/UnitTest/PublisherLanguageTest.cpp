@@ -18,7 +18,7 @@
 #include "Widgets/Common/ProportionalTreeWidget.h"
 #include "Widgets/Common/TableGroupHeader.h"
 #include "Widgets/Common/TableItemDelegate.h"
-#include "Widgets/PackManager/PackManagerPanel.h"
+#include "Widgets/Publisher/PublisherPanel.h"
 
 #include <gtest/gtest.h>
 
@@ -46,7 +46,7 @@
 
 namespace {
 
-class PackManagerLanguageTest : public ::testing::Test
+class PublisherLanguageTest : public ::testing::Test
 {
 protected:
     void SetUp() override
@@ -55,7 +55,7 @@ protected:
         if (pm.isProjectOpen()) pm.closeProject();
         ASSERT_TRUE(temp_.isValid());
         VNX::ProjectConfig config;
-        config.name = QStringLiteral("PackManagerLanguages");
+        config.name = QStringLiteral("PublisherLanguages");
         config.location = temp_.path();
         config.platforms = HarkenTest::platforms({QStringLiteral("Windows")});
         ASSERT_TRUE(pm.createProject(config));
@@ -72,7 +72,7 @@ protected:
         previousDevMode_ = VNX::AppSettings::instance().developerMode();
         VNX::AppSettings::instance().setDeveloperMode(true);
         ASSERT_TRUE(pm.setPackBuildOutputDir(QStringLiteral("../Generated")));
-        panel_ = std::make_unique<VNX::PackManagerPanel>();
+        panel_ = std::make_unique<VNX::PublisherPanel>();
         panel_->show();
         QApplication::processEvents();
     }
@@ -150,10 +150,10 @@ protected:
     VNX::ProjectItem* sound_ = nullptr;
     VNX::ProjectItem* action_ = nullptr;
     bool previousDevMode_ = false;
-    std::unique_ptr<VNX::PackManagerPanel> panel_;
+    std::unique_ptr<VNX::PublisherPanel> panel_;
 };
 
-TEST_F(PackManagerLanguageTest, GroupCaptionsMatchSharedHeadersAcrossResizeAndColumnMovement)
+TEST_F(PublisherLanguageTest, GroupCaptionsMatchSharedHeadersAcrossResizeAndColumnMovement)
 {
     panel_->setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
     auto* tree = panel_->findChild<QTreeWidget*>();
@@ -200,7 +200,7 @@ TEST_F(PackManagerLanguageTest, GroupCaptionsMatchSharedHeadersAcrossResizeAndCo
     }
 }
 
-TEST_F(PackManagerLanguageTest, SectionSelectionKeepsPlatformScopeWithoutChangingProjectUndo)
+TEST_F(PublisherLanguageTest, SectionSelectionKeepsPlatformScopeWithoutChangingProjectUndo)
 {
     auto& pm = VNX::ProjectManager::instance();
     auto& actions = VNX::ActionManager::instance();
@@ -264,7 +264,7 @@ TEST_F(PackManagerLanguageTest, SectionSelectionKeepsPlatformScopeWithoutChangin
     EXPECT_FALSE(init->data(0, Qt::CheckStateRole).isValid());
 }
 
-TEST_F(PackManagerLanguageTest, CheckGesturesPreservePlatformScopeWithoutChangingProjectUndo)
+TEST_F(PublisherLanguageTest, CheckGesturesPreservePlatformScopeWithoutChangingProjectUndo)
 {
     auto& pm = VNX::ProjectManager::instance();
     auto& actions = VNX::ActionManager::instance();
@@ -361,7 +361,7 @@ TEST_F(PackManagerLanguageTest, CheckGesturesPreservePlatformScopeWithoutChangin
     EXPECT_FALSE(tree->topLevelItem(0)->data(0, Qt::CheckStateRole).isValid());
 }
 
-TEST_F(PackManagerLanguageTest, ContinuousColumnResizeIsStableWithDeveloperColumnsHiddenOrReordered)
+TEST_F(PublisherLanguageTest, ContinuousColumnResizeIsStableWithDeveloperColumnsHiddenOrReordered)
 {
     panel_->setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
     auto* tree = panel_->findChild<QTreeWidget*>();
@@ -412,7 +412,7 @@ TEST_F(PackManagerLanguageTest, ContinuousColumnResizeIsStableWithDeveloperColum
     }
 }
 
-TEST_F(PackManagerLanguageTest, ExportPlatformSelectorKeepsNamesAcrossResizeAndRefresh)
+TEST_F(PublisherLanguageTest, ExportPlatformSelectorKeepsNamesAcrossResizeAndRefresh)
 {
     panel_->setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
     auto& manager = VNX::ProjectManager::instance();
@@ -443,7 +443,7 @@ TEST_F(PackManagerLanguageTest, ExportPlatformSelectorKeepsNamesAcrossResizeAndR
     }
 }
 
-TEST_F(PackManagerLanguageTest, ExportPlatformSelectorCompressesAndRecoversWithoutChangingSelection)
+TEST_F(PublisherLanguageTest, ExportPlatformSelectorCompressesAndRecoversWithoutChangingSelection)
 {
     panel_->setStyleSheet(VNX::QtControlSkin::current().applicationStyleSheet());
     auto& manager = VNX::ProjectManager::instance();
@@ -468,7 +468,7 @@ TEST_F(PackManagerLanguageTest, ExportPlatformSelectorCompressesAndRecoversWitho
     }
 }
 
-TEST_F(PackManagerLanguageTest, CachedArtifactsAndSessionResultsHaveIndependentLifetimes)
+TEST_F(PublisherLanguageTest, CachedArtifactsAndSessionResultsHaveIndependentLifetimes)
 {
     auto& pm = VNX::ProjectManager::instance();
     ASSERT_TRUE(pm.saveProject());
@@ -534,7 +534,7 @@ TEST_F(PackManagerLanguageTest, CachedArtifactsAndSessionResultsHaveIndependentL
         EXPECT_TRUE(actionRow()->text(column).isEmpty());
 }
 
-TEST_F(PackManagerLanguageTest, SelectedUpdatesPreserveOtherArtifactsUntilTheirOutputRootIsCleaned)
+TEST_F(PublisherLanguageTest, SelectedUpdatesPreserveOtherArtifactsUntilTheirOutputRootIsCleaned)
 {
     auto& cache = VNX::PackArtifactCache::instance();
     const QString windows = HarkenTest::platformIdString("Windows");
@@ -560,7 +560,7 @@ TEST_F(PackManagerLanguageTest, SelectedUpdatesPreserveOtherArtifactsUntilTheirO
         cachedArtifacts_.first().unitKey, cachedArtifacts_.first().outputPath), nullptr);
 }
 
-TEST_F(PackManagerLanguageTest, LanguageChangesRefreshActualVariantPaths)
+TEST_F(PublisherLanguageTest, LanguageChangesRefreshActualVariantPaths)
 {
     writeArtifact(QStringLiteral("English"));
     panel_->refreshPackList();
@@ -584,7 +584,7 @@ TEST_F(PackManagerLanguageTest, LanguageChangesRefreshActualVariantPaths)
     EXPECT_TRUE(actionRow(nullptr, QStringLiteral("Japanese"))->text(1).isEmpty());
 }
 
-TEST_F(PackManagerLanguageTest, ToggleRefreshesBetweenFlatAndLocalizedArtifacts)
+TEST_F(PublisherLanguageTest, ToggleRefreshesBetweenFlatAndLocalizedArtifacts)
 {
     VNX::ProjectManager::instance().setProjectLanguagesInternal({QStringLiteral("English")});
     writeArtifact({});
@@ -601,7 +601,7 @@ TEST_F(PackManagerLanguageTest, ToggleRefreshesBetweenFlatAndLocalizedArtifacts)
     EXPECT_TRUE(actionRow()->text(6).isEmpty());
 }
 
-TEST_F(PackManagerLanguageTest, ReservedActionNameCannotReuseSystemPack)
+TEST_F(PublisherLanguageTest, ReservedActionNameCannotReuseSystemPack)
 {
     auto& pm = VNX::ProjectManager::instance();
     ASSERT_TRUE(pm.renameItem(action_, QStringLiteral("Init")));
@@ -621,7 +621,7 @@ TEST_F(PackManagerLanguageTest, ReservedActionNameCannotReuseSystemPack)
     EXPECT_TRUE(actionRow()->data(0, Qt::UserRole + 5).toString().isEmpty());
 }
 
-TEST_F(PackManagerLanguageTest, CachedArtifactsRequireStableActionIdentity)
+TEST_F(PublisherLanguageTest, CachedArtifactsRequireStableActionIdentity)
 {
     auto& pm = VNX::ProjectManager::instance();
     setLocalized(false);
@@ -651,7 +651,7 @@ TEST_F(PackManagerLanguageTest, CachedArtifactsRequireStableActionIdentity)
     EXPECT_TRUE(actionRow(other)->data(0, Qt::UserRole + 5).toString().isEmpty());
 }
 
-TEST_F(PackManagerLanguageTest, MissingLanguagesCannotReuseAnOldFlatArtifact)
+TEST_F(PublisherLanguageTest, MissingLanguagesCannotReuseAnOldFlatArtifact)
 {
     writeArtifact({});
     auto& pm = VNX::ProjectManager::instance();
@@ -663,7 +663,7 @@ TEST_F(PackManagerLanguageTest, MissingLanguagesCannotReuseAnOldFlatArtifact)
     EXPECT_TRUE(QFile::exists(actionRow()->data(0, Qt::UserRole + 5).toString()));
 }
 
-TEST_F(PackManagerLanguageTest, ActionTargetsAndDependenciesRefreshTheirLanguageDimensions)
+TEST_F(PublisherLanguageTest, ActionTargetsAndDependenciesRefreshTheirLanguageDimensions)
 {
     auto& pm = VNX::ProjectManager::instance();
     pm.setProjectLanguagesInternal({QStringLiteral("English")});
@@ -707,7 +707,7 @@ TEST_F(PackManagerLanguageTest, ActionTargetsAndDependenciesRefreshTheirLanguage
     EXPECT_TRUE(actionRow(trigger)->text(1).isEmpty());
 }
 
-TEST_F(PackManagerLanguageTest, MovingLocalizedSourcesRefreshesTheActionClosure)
+TEST_F(PublisherLanguageTest, MovingLocalizedSourcesRefreshesTheActionClosure)
 {
     auto& pm = VNX::ProjectManager::instance();
     pm.setProjectLanguagesInternal({QStringLiteral("English")});
@@ -733,7 +733,7 @@ TEST_F(PackManagerLanguageTest, MovingLocalizedSourcesRefreshesTheActionClosure)
     EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QString());
 }
 
-TEST_F(PackManagerLanguageTest, RenamingContentResolvesNameOnlyTargetsAndRefreshesVariants)
+TEST_F(PublisherLanguageTest, RenamingContentResolvesNameOnlyTargetsAndRefreshesVariants)
 {
     auto& pm = VNX::ProjectManager::instance();
     pm.setProjectLanguagesInternal({QStringLiteral("English")});
@@ -748,7 +748,7 @@ TEST_F(PackManagerLanguageTest, RenamingContentResolvesNameOnlyTargetsAndRefresh
     EXPECT_EQ(actionRow()->data(0, Qt::UserRole + 6).toString(), QStringLiteral("English"));
 }
 
-TEST_F(PackManagerLanguageTest, ExternalTransitionBridgesRefreshTheLanguageDimension)
+TEST_F(PublisherLanguageTest, ExternalTransitionBridgesRefreshTheLanguageDimension)
 {
     auto& pm = VNX::ProjectManager::instance();
     pm.setProjectLanguagesInternal({QStringLiteral("English")});

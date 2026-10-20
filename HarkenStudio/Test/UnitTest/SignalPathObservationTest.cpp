@@ -3134,7 +3134,7 @@ TEST_F(SignalPathObservationTest, DoubleClickReopensInspectorForSharedSoundWitho
     EXPECT_TRUE(window.allInspectorPanels().empty());
     auto* canvas = window.blueprintCanvas();
     ASSERT_NE(canvas, nullptr);
-    auto* blueprintDock = window.findChild<ads::CDockWidget*>(QStringLiteral("BlueprintCanvasDock"));
+    auto* blueprintDock = window.findChild<ads::CDockWidget*>(QStringLiteral("BlueprintDock"));
     ASSERT_NE(blueprintDock, nullptr);
     window.revealDock(blueprintDock);
     drainEvents();
@@ -3256,7 +3256,7 @@ TEST_F(SignalPathObservationTest, SelectedTitleSlowClickRenamesInPlaceAndSynchro
     for (auto* panel : window.allInspectorPanels()) window.closeInspectorPanel(panel->panelId());
     auto* canvas = window.blueprintCanvas();
     ASSERT_NE(canvas, nullptr);
-    auto* dock = window.findChild<ads::CDockWidget*>(QStringLiteral("BlueprintCanvasDock"));
+    auto* dock = window.findChild<ads::CDockWidget*>(QStringLiteral("BlueprintDock"));
     ASSERT_NE(dock, nullptr);
     window.revealDock(dock);
     canvas->setInteractionMode(BlueprintCanvasView::InteractionMode::Select);
@@ -3494,7 +3494,7 @@ TEST_F(SignalPathObservationTest, MainWindowConnectionSelectionFocusesPathsWitho
     window.openOrFocusInspectorForItem(s5);
     auto* canvas = window.blueprintCanvas();
     ASSERT_NE(canvas, nullptr);
-    auto* dock = window.findChild<ads::CDockWidget*>(QStringLiteral("BlueprintCanvasDock"));
+    auto* dock = window.findChild<ads::CDockWidget*>(QStringLiteral("BlueprintDock"));
     ASSERT_NE(dock, nullptr);
     window.revealDock(dock);
     canvas->setFlowDirection(CanvasFlowDirection::LR);

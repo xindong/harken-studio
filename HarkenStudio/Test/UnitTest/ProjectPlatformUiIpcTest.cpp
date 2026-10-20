@@ -15,7 +15,7 @@
 #include "RuntimeBridge/PackagingBridge.h"
 #include "Widgets/Common/MultiSelectComboBox.h"
 #include "Widgets/Common/SplitButton.h"
-#include "Widgets/PackManager/PackManagerPanel.h"
+#include "Widgets/Publisher/PublisherPanel.h"
 #include "Support/AITestSupport.h"
 
 #include <gtest/gtest.h>
@@ -209,7 +209,7 @@ TEST_F(ProjectPlatformUiIpc, NarrowPackSelectorExportsOnlyTheRequestedSiblingAnd
 {
     for (int i = 0; i < 6; ++i) create(QString("Android_Long_Quality_Preset_%1").arg(i));
     PlatformContextService::instance().setSelected({QUuid(low)}, QUuid(low), false);
-    PackManagerPanel panel;
+    PublisherPanel panel;
     panel.resize(380, 480);
     panel.show();
     QApplication::processEvents();
@@ -266,7 +266,7 @@ TEST_F(ProjectPlatformUiIpc, NarrowPackSelectorExportsOnlyTheRequestedSiblingAnd
     QApplication::processEvents();
     EXPECT_FALSE(view->isVisible());
     QStringList requested;
-    QObject::connect(&panel, &PackManagerPanel::exportRequested, &panel,
+    QObject::connect(&panel, &PublisherPanel::exportRequested, &panel,
         [&](const QStringList& ids, const QStringList&) {
             requested = ids;
             ASSERT_EQ(call("export_pack", {{"platform_id", ids.first()}, {"output_path", directory.filePath("Output")}}).value("status").toString(), QStringLiteral("ok"));
@@ -302,7 +302,7 @@ TEST_F(ProjectPlatformUiIpc, GlobalContextSeparatesObservationEditingAndExportSc
     auto& context = PlatformContextService::instance();
     context.setSelected({QUuid(low)}, QUuid(low), false);
     manager.setPackExportSelectedPlatformsInternal({high});
-    PackManagerPanel panel;
+    PublisherPanel panel;
     panel.show();
     QApplication::processEvents();
     auto* tree = panel.findChild<QTreeWidget*>();
@@ -369,7 +369,7 @@ TEST_F(ProjectPlatformUiIpc, GlobalContextSeparatesObservationEditingAndExportSc
     QStringList requestedPaths;
     bool forceRequested = false;
     bool cleaningRequested = false;
-    QObject::connect(&panel, &PackManagerPanel::exportRequested, &panel,
+    QObject::connect(&panel, &PublisherPanel::exportRequested, &panel,
         [&](const QStringList& ids, const QStringList& paths, bool, bool force, bool cleaning) {
             requested = ids;
             requestedPaths = paths;

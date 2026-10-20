@@ -15,8 +15,8 @@
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/ParameterSlider.h"
 #include "Widgets/Common/RangeField.h"
-#include "Widgets/PreviewPanel/PreviewPanel.h"
-#include "Widgets/PreviewPanel/RehearsalTable.h"
+#include "Widgets/ControlPanel/ControlPanel.h"
+#include "Widgets/ControlPanel/RehearsalTable.h"
 #include "Widgets/PlatformBar/PlaybackControls.h"
 #include "Widgets/PlatformBar/PlatformBar.h"
 #include "Widgets/Blueprint/BlueprintPanel.h"
@@ -72,7 +72,7 @@ TEST(ThemeWidgetMigration, UsesApplicationSkinWithoutLocalStyleSheets)
 
     VNX::BaseDialog dialog;
     VNX::StartupLoadingWindow loading;
-    PreviewPanel audition(nullptr);
+    ControlPanel audition(nullptr);
     VNX::PlaybackControls playback;
 
     EXPECT_TRUE(dialog.styleSheet().isEmpty());
@@ -166,7 +166,7 @@ TEST(ThemeWidgetMigration, IconButtonRolesCoverCommandsWithoutIncludingTextOrVal
         EXPECT_TRUE(widget->styleSheet().isEmpty()) << widget->objectName().toStdString();
 }
 
-TEST(ThemeWidgetMigration, PreviewPanelHeightMatchesContent)
+TEST(ThemeWidgetMigration, ControlPanelHeightMatchesContent)
 {
     ensureApp();
     auto& manager = VNX::ProjectManager::instance();
@@ -178,14 +178,14 @@ TEST(ThemeWidgetMigration, PreviewPanelHeightMatchesContent)
     QTemporaryDir temp;
     ASSERT_TRUE(temp.isValid());
     VNX::ProjectConfig config;
-    config.name = QStringLiteral("PreviewPanelHeight");
+    config.name = QStringLiteral("ControlPanelHeight");
     config.location = temp.path();
     ASSERT_TRUE(manager.createProject(config));
     ASSERT_NE(manager.createItem(nullptr, QStringLiteral("Drive"),
                                  VNX::ProjectItem::Type::Variable),
               nullptr);
 
-    PreviewPanel audition(nullptr);
+    ControlPanel audition(nullptr);
     ASSERT_NE(audition.variableTable(), nullptr);
     ASSERT_NE(audition.bindingTable(), nullptr);
     audition.ensurePolished();

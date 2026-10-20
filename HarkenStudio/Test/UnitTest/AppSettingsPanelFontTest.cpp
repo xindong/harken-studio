@@ -13,6 +13,7 @@ protected:
     void SetUp() override
     {
         auto& settings = AppSettings::instance();
+        savedAssistant_ = settings.panelFontSize(PanelId::Assistant);
         savedHierarchy_ = settings.panelFontSize(PanelId::Hierarchy);
         savedInformation_ = settings.panelFontSize(PanelId::Information);
     }
@@ -20,6 +21,7 @@ protected:
     void TearDown() override
     {
         restoreDefaultStorage();
+        AppSettings::instance().setPanelFontSize(PanelId::Assistant, savedAssistant_);
         AppSettings::instance().setPanelFontSize(PanelId::Hierarchy, savedHierarchy_);
         AppSettings::instance().setPanelFontSize(PanelId::Information, savedInformation_);
     }
@@ -39,6 +41,7 @@ protected:
             QStringLiteral("HarkenStudio")));
     }
 
+    int savedAssistant_ = 0;
     int savedHierarchy_ = 0;
     int savedInformation_ = 0;
 };
@@ -49,6 +52,7 @@ TEST_F(AppSettingsTest, AppearanceRoundTripKeepsStringKeysAndIgnoresMeterOrphan)
     storage->beginGroup(QStringLiteral("Appearance"));
     storage->setValue(QStringLiteral("PanelFontSize_hierarchy"), 18);
     storage->setValue(QStringLiteral("PanelFontSize_information"), 9);
+    storage->setValue(QStringLiteral("PanelFontSize_ai_assistant"), 19);
     storage->setValue(QStringLiteral("PanelFontSize_mixer"), 14);
     storage->setValue(QStringLiteral("PanelFontSize_meter"), 21);
     storage->endGroup();
@@ -58,6 +62,7 @@ TEST_F(AppSettingsTest, AppearanceRoundTripKeepsStringKeysAndIgnoresMeterOrphan)
     auto& settings = AppSettings::instance();
     EXPECT_EQ(settings.panelFontSize(PanelId::Hierarchy), 18);
     EXPECT_EQ(settings.panelFontSize(PanelId::Information), 9);
+    EXPECT_EQ(settings.panelFontSize(PanelId::Assistant), 19);
     EXPECT_EQ(settings.panelFontSize(QStringLiteral("hierarchy")), 18);
     EXPECT_EQ(settings.panelFontSize(QStringLiteral("mixer")), AppSettings::DEFAULT_FONT_SIZE);
     EXPECT_EQ(settings.panelFontSize(QStringLiteral("meter")), AppSettings::DEFAULT_FONT_SIZE);
@@ -73,9 +78,22 @@ TEST_F(AppSettingsTest, AppearanceRoundTripKeepsStringKeysAndIgnoresMeterOrphan)
     raw->beginGroup(QStringLiteral("Appearance"));
     EXPECT_EQ(raw->value(QStringLiteral("PanelFontSize_hierarchy")).toInt(), 18);
     EXPECT_EQ(raw->value(QStringLiteral("PanelFontSize_information")).toInt(), 9);
+    EXPECT_EQ(raw->value(QStringLiteral("PanelFontSize_assistant")).toInt(), 19);
     EXPECT_EQ(raw->value(QStringLiteral("PanelFontSize_mixer")).toInt(), 14);
     EXPECT_EQ(raw->value(QStringLiteral("PanelFontSize_meter")).toInt(), 21);
     raw->endGroup();
+}
+
+TEST_F(AppSettingsTest, CurrentAppearanceKeysOverrideLegacyValues)
+{
+    auto storage = std::make_unique<MemorySettingsStorage>();
+    storage->beginGroup(QStringLiteral("Appearance"));
+    storage->setValue(QStringLiteral("PanelFontSize_ai_assistant"), 19);
+    storage->setValue(QStringLiteral("PanelFontSize_assistant"), 14);
+    storage->endGroup();
+    installMemoryStorage(std::move(storage));
+
+    EXPECT_EQ(AppSettings::instance().panelFontSize(PanelId::Assistant), 14);
 }
 
 } // namespace VNX

@@ -1120,7 +1120,7 @@ QJsonObject IPCServer::handleGetPanelRect(const QJsonObject& args)
     {
         QWidget* panel = nullptr;
         
-        if ((panelName == "blueprint_canvas" || panelName == "node_graph") && mainWindow_)
+        if ((panelName == "blueprint" || panelName == "node_graph") && mainWindow_)
             panel = qobject_cast<QWidget*>(mainWindow_->blueprintCanvas());
         
         if (panel && panel->isVisible())

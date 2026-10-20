@@ -79,16 +79,16 @@
 #include "Widgets/Blueprint/BlueprintPanel.h"
 #include "Dialogs/NewProjectDialog.h"
 #include "Dialogs/AboutDialog.h"
-#include "Widgets/Assistant/AIAssistantPanel.h"
-#include "Widgets/PackManager/PackManagerPanel.h"
-#include "Widgets/PreviewPanel/PreviewPanel.h"
+#include "Widgets/Assistant/AssistantPanel.h"
+#include "Widgets/Publisher/PublisherPanel.h"
+#include "Widgets/ControlPanel/ControlPanel.h"
 #include "Widgets/PlatformBar/PlatformBar.h"
 #include "Widgets/PlatformBar/PlaybackControls.h"
 #include "Monitor/MonitorAdapter.h"
 #include "Monitor/MonitorCaptureControlHost.h"
 #include "Monitor/MonitorHostContext.h"
 #include "Monitor/MonitorPerformanceLiveHost.h"
-#include "Widgets/Monitor/MonitorCatalogPanel.h"
+#include "Widgets/Monitor/MonitorPanel.h"
 #include "Widgets/Monitor/MonitorPanelKeys.h"
 #include "Widgets/Monitor/MonitorPerformancePanel.h"
 #include "Widgets/Monitor/MonitorBusesPanel.h"
@@ -535,8 +535,8 @@ void MainWindow::initializeStructure(
             });
             connect(editor, &TimelineEditorPanel::blueprintRequested, this,
                     [this](ProjectItem* subject, const PlacementContext& context) {
-                if (blueprintCanvasDock_)
-                    revealDock(blueprintCanvasDock_);
+                if (blueprintDock_)
+                    revealDock(blueprintDock_);
                 if (selectionRouter_)
                     selectionRouter_->selectItem(subject, false, context);
             });
@@ -653,8 +653,8 @@ void MainWindow::initializeStructure(
                 }
             };
             syncZoneBtn("leftSidebarToggleBtn", projectExplorerDock_);
-            syncZoneBtn("bottomPanelToggleBtn", previewDock_);
-            syncZoneBtn("rightSidebarToggleBtn", aiDock_);
+            syncZoneBtn("bottomPanelToggleBtn", controlDock_);
+            syncZoneBtn("rightSidebarToggleBtn", assistantDock_);
         }, Qt::QueuedConnection);
     });
     connect(layoutController_, &LayoutController::statusMessage, this, [this](const QString& text) {
@@ -673,16 +673,16 @@ void MainWindow::initializeStructure(
         standaloneEditorSelection_ = item;
         pushSelectionToStandaloneEditors(item, StandaloneEditorPushReason::SelectionChanged);
         refreshPlaybackResetEnabled(item);
-        if (previewPanel_)
-            previewPanel_->setItem(item);
+        if (controlPanel_)
+            controlPanel_->setItem(item);
     });
     {
         LayoutController::Docks d;
         d.dockManager          = dockManager_;
-        d.blueprintCanvasDock  = blueprintCanvasDock_;
+        d.blueprintDock        = blueprintDock_;
         d.projectExplorerDock  = projectExplorerDock_;
-        d.aiDock               = aiDock_;
-        d.previewDock = previewDock_;
+        d.assistantDock        = assistantDock_;
+        d.controlDock          = controlDock_;
         layoutController_->setDocks(d);
         layoutController_->setWindowDockResolver([this](const QString& typeId) -> ads::CDockWidget* {
             return workspaceWindowManager_ ? workspaceWindowManager_->singletonDock(typeId) : nullptr;
@@ -692,14 +692,14 @@ void MainWindow::initializeStructure(
         SelectionRouter::Views v;
         v.blueprintCanvas        = blueprintCanvas_;
         v.projectExplorer        = projectExplorer_;
-        v.blueprintCanvasDock    = blueprintCanvasDock_;
+        v.blueprintDock          = blueprintDock_;
         selectionRouter_->setViews(v);
     }
     {
         BusController::Views v;
         v.blueprintCanvas    = blueprintCanvas_;
         v.projectExplorer    = projectExplorer_;
-        v.blueprintCanvasDock = blueprintCanvasDock_;
+        v.blueprintDock      = blueprintDock_;
         busController_->setViews(v);
     }
     layoutController_->setInstanceSnapshotProvider([this]() -> QList<VNX::DockInstanceSpec> {
@@ -931,8 +931,8 @@ void MainWindow::setupAudioEngine()
     aiService_->setDurableMemoryService(
         std::make_shared<AIDurableMemoryService>(
             std::make_shared<LocalAIDurableMemoryStore>()));
-    if (aiPanel_)
-        aiPanel_->setAssistantService(aiService_.get());
+    if (assistantPanel_)
+        assistantPanel_->setAssistantService(aiService_.get());
     connect(&ProjectManager::instance(), &ProjectManager::projectOpened,
             this, [this](ProjectData* project) {
         if (aiService_)
@@ -1104,7 +1104,7 @@ void MainWindow::setupMenuBar()
         auto sortKey = [](const QString& objName) -> int {
             static const QStringList editorKeys = {
                 "NodeGraph", "Inspector", "ExternalEditor", "GridEditor",
-                "PackManager"
+                "Publisher"
             };
             for (const QString& k : editorKeys)
                 if (objName.contains(k, Qt::CaseSensitive)) return 0;
@@ -1116,7 +1116,7 @@ void MainWindow::setupMenuBar()
             static const QStringList monitorKeys = monitorViewSortKeys();
             for (const QString& k : monitorKeys)
                 if (objName.contains(k, Qt::CaseSensitive)) return 2;
-            if (objName.contains("AI", Qt::CaseSensitive)) return 3;
+            if (objName.contains("Assistant", Qt::CaseSensitive)) return 3;
             return 4;
         };
 
@@ -1256,31 +1256,32 @@ void MainWindow::setupMainToolBar()
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, button, refresh);
     refresh();
 
-    auto* monitorAction = new QAction(tr("Monitor"), toolbar);
-    monitorAction->setObjectName(QStringLiteral("monitorCaptureAction"));
-    monitorAction->setCheckable(true);
-    auto* monitorButton = toolbar->addLeadingAction(monitorAction, QStringLiteral("monitorCaptureButton"));
-    const auto refreshMonitor = [this, monitorAction, monitorButton] {
+    auto* captureAction = new QAction(tr("Start Capture"), toolbar);
+    captureAction->setObjectName(QStringLiteral("captureAction"));
+    captureAction->setCheckable(true);
+    auto* captureButton = toolbar->addLeadingAction(captureAction, QStringLiteral("captureButton"));
+    const auto refreshCapture = [this, captureAction, captureButton] {
         const bool capturing = eventCaptureController_->canStop();
-        monitorAction->setChecked(capturing);
-        monitorAction->setEnabled(capturing || eventCaptureController_->canStart());
-        monitorAction->setIcon(ThemeManager::instance().resolveIcon(QString::fromLatin1(
+        captureAction->setChecked(capturing);
+        captureAction->setEnabled(capturing || eventCaptureController_->canStart());
+        captureAction->setIcon(ThemeManager::instance().resolveIcon(QString::fromLatin1(
             ThemeAssetIds::MonitorCapture)).icon);
-        const QString action = capturing ? tr("Stop Monitor") : tr("Start Monitor");
-        monitorAction->setToolTip(tr("%1\n%2\n%3").arg(action,
+        const QString action = capturing ? tr("Stop Capture") : tr("Start Capture");
+        captureAction->setText(action);
+        captureAction->setToolTip(tr("%1\n%2\n%3").arg(action,
             capturing ? eventCaptureController_->targetText() : eventCaptureController_->availableTargetText(),
             eventCaptureController_->statusText()));
-        monitorButton->setAccessibleName(action);
-        monitorButton->setAccessibleDescription(eventCaptureController_->statusText());
+        captureButton->setAccessibleName(action);
+        captureButton->setAccessibleDescription(eventCaptureController_->statusText());
     };
-    connect(monitorAction, &QAction::triggered, this, [this, refreshMonitor] {
+    connect(captureAction, &QAction::triggered, this, [this, refreshCapture] {
         if (eventCaptureController_->canStop()) eventCaptureController_->stop();
         else eventCaptureController_->start();
-        refreshMonitor();
+        refreshCapture();
     });
-    connect(eventCaptureController_, &Monitor::EventCaptureController::stateChanged, monitorButton, refreshMonitor);
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, monitorButton, refreshMonitor);
-    refreshMonitor();
+    connect(eventCaptureController_, &Monitor::EventCaptureController::stateChanged, captureButton, refreshCapture);
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, captureButton, refreshCapture);
+    refreshCapture();
 }
 
 void MainWindow::setupTitleBarToggles()
@@ -1324,12 +1325,12 @@ void MainWindow::setupTitleBarToggles()
         QString::fromLatin1(ThemeAssetIds::SidebarBottomOn),
         QString::fromLatin1(ThemeAssetIds::SidebarBottomOff),
         "bottomPanelToggleBtn",
-        tr("Toggle Bottom Panel (Preview)"), &previewDock_);
+        tr("Toggle Bottom Panel (Control)"), &controlDock_);
     auto* rightToggle = makeSidebarToggle(
         QString::fromLatin1(ThemeAssetIds::SidebarRightOn),
         QString::fromLatin1(ThemeAssetIds::SidebarRightOff),
         "rightSidebarToggleBtn",
-        tr("Toggle Right Sidebar (AI Assistant)"), &aiDock_);
+        tr("Toggle Right Sidebar (Assistant)"), &assistantDock_);
 
     QTimer::singleShot(0, this, [this, leftToggle, bottomToggle, rightToggle]() {
         auto syncBtn = [](QToolButton* btn, ads::CDockWidget* rep) {
@@ -1344,8 +1345,8 @@ void MainWindow::setupTitleBarToggles()
             btn->blockSignals(false);
         };
         syncBtn(leftToggle, projectExplorerDock_);
-        syncBtn(bottomToggle, previewDock_);
-        syncBtn(rightToggle, aiDock_);
+        syncBtn(bottomToggle, controlDock_);
+        syncBtn(rightToggle, assistantDock_);
     });
 #endif
 }
@@ -1400,11 +1401,11 @@ void MainWindow::setupCentralDocks()
             panel->restoreState(state);
         });
 
-    blueprintCanvasDock_ = new ads::CDockWidget(tr("Blueprint Canvas"));
-    blueprintCanvasDock_->setObjectName(QStringLiteral("BlueprintCanvasDock"));
-    blueprintCanvasDock_->setWidget(blueprintPanel, ads::CDockWidget::ForceNoScrollArea);
+    blueprintDock_ = new ads::CDockWidget(tr("Blueprint"));
+    blueprintDock_->setObjectName(QStringLiteral("BlueprintDock"));
+    blueprintDock_->setWidget(blueprintPanel, ads::CDockWidget::ForceNoScrollArea);
 
-    previewPanel_ = new PreviewPanel(this);
+    controlPanel_ = new ControlPanel(this);
 }
 
 void MainWindow::showRemoteConnect()
@@ -1422,7 +1423,7 @@ void MainWindow::setupDockWidgets()
     initializeWorkspaceWindowManager();
 
     registerWorkspaceSingletonFactories();
-    dockManager_->addDockWidget(ads::TopDockWidgetArea, blueprintCanvasDock_);
+    dockManager_->addDockWidget(ads::TopDockWidgetArea, blueprintDock_);
     createPrimaryWorkspaceDocks();
     ensureWorkspaceSingletonShells();
     connectWorkspaceWindowSignals();
@@ -1541,14 +1542,14 @@ void MainWindow::registerWorkspaceSingletonFactories()
     if (!workspaceWindowManager_)
         return;
 
-    WorkspaceWindowManager::SingletonFactory previewFactory;
-    previewFactory.snapshotState = [](QWidget* content) {
-        return qobject_cast<PreviewPanel*>(content)->snapshotState();
+    WorkspaceWindowManager::SingletonFactory controlFactory;
+    controlFactory.snapshotState = [](QWidget* content) {
+        return qobject_cast<ControlPanel*>(content)->snapshotState();
     };
-    previewFactory.restoreState = [](QWidget* content, const QVariantMap& state) {
-        qobject_cast<PreviewPanel*>(content)->restoreState(state);
+    controlFactory.restoreState = [](QWidget* content, const QVariantMap& state) {
+        qobject_cast<ControlPanel*>(content)->restoreState(state);
     };
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("Preview"), std::move(previewFactory));
+    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("Control"), std::move(controlFactory));
 
     workspaceWindowManager_->registerSingletonFactory(QStringLiteral("Log"), {
         []() -> QWidget* { return new LogPanel(); },
@@ -1579,17 +1580,17 @@ void MainWindow::registerWorkspaceSingletonFactories()
             });
         }
     });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("ExportPacksManager"), {
-        [this]() -> QWidget* { return new PackManagerPanel(this); },
+    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("Publisher"), {
+        [this]() -> QWidget* { return new PublisherPanel(this); },
         {},
         [this](QWidget* content) {
-            auto* panel = qobject_cast<PackManagerPanel*>(content);
+            auto* panel = qobject_cast<PublisherPanel*>(content);
             if (!panel)
                 return;
             panel->setAcceptDrops(true);
-            connect(panel, &PackManagerPanel::exportRequested,
+            connect(panel, &PublisherPanel::exportRequested,
                     this, &MainWindow::generateProjectPacks);
-            connect(panel, &PackManagerPanel::revealActionRequested,
+            connect(panel, &PublisherPanel::revealActionRequested,
                     this, [this](uint32_t objectID) {
                 if (auto* item =
                         ProjectManager::instance().findItemByObjectID(objectID))
@@ -1615,11 +1616,11 @@ void MainWindow::registerWorkspaceSingletonFactories()
             }
         }
     });
-    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("MonitorCatalog"), {
-        []() -> QWidget* { return new MonitorCatalogPanel(); },
+    workspaceWindowManager_->registerSingletonFactory(QStringLiteral("Monitor"), {
+        []() -> QWidget* { return new MonitorPanel(); },
         {},
         [this](QWidget* content) {
-            if (auto* panel = qobject_cast<MonitorCatalogPanel*>(content))
+            if (auto* panel = qobject_cast<MonitorPanel*>(content))
             {
                 panel->setCaptureController(eventCaptureController_);
                 panel->setJumpLocator([this](harkenstudio::ObjectId stableId) {
@@ -1770,9 +1771,9 @@ void MainWindow::ensureWorkspaceSingletonShells()
 
     workspaceWindowManager_->ensureSingletons({
         QStringLiteral("Log"),
-        QStringLiteral("ExportPacksManager"),
+        QStringLiteral("Publisher"),
         QStringLiteral("Information"),
-        QStringLiteral("MonitorCatalog")
+        QStringLiteral("Monitor")
     });
 }
 
@@ -2126,12 +2127,12 @@ const TimeSeriesChartModel& MainWindow::monitorPerformanceChartModel() const
 
 void MainWindow::createPrimaryWorkspaceDocks()
 {
-    aiDock_ = new ads::CDockWidget(tr("AI Assistant"));
-    aiDock_->setObjectName("AIDock");
-    aiDock_->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromContent);
-    aiPanel_ = new AIAssistantPanel();
-    aiDock_->setWidget(aiPanel_);
-    dockManager_->addDockWidget(ads::RightDockWidgetArea, aiDock_);
+    assistantDock_ = new ads::CDockWidget(tr("Assistant"));
+    assistantDock_->setObjectName("AssistantDock");
+    assistantDock_->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromContent);
+    assistantPanel_ = new AssistantPanel();
+    assistantDock_->setWidget(assistantPanel_);
+    dockManager_->addDockWidget(ads::RightDockWidgetArea, assistantDock_);
 
     projectExplorerDock_ = new ads::CDockWidget(tr("Explorer"));
     projectExplorerDock_->setObjectName("ExplorerDock");
@@ -2141,27 +2142,27 @@ void MainWindow::createPrimaryWorkspaceDocks()
     dockManager_->addDockWidget(ads::LeftDockWidgetArea, projectExplorerDock_);
 
 
-    previewDock_ = new ads::CDockWidget(tr("Preview"));
-    previewDock_->setObjectName("PreviewDock");
-    previewDock_->setFeature(ads::CDockWidget::DockWidgetClosable, true);
-    previewDock_->setFeature(ads::CDockWidget::DockWidgetMovable, true);
-    previewDock_->setFeature(ads::CDockWidget::DockWidgetFloatable, true);
-    previewDock_->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromContent);
-    if (previewPanel_) {
-        WorkspaceDockFactory::setContent(previewDock_, previewPanel_, ads::CDockWidget::ForceNoScrollArea);
-        connect(previewPanel_, &PreviewPanel::contextChanged, this, [this] {
-            refreshBoundEditorDockTitles(tr("Preview"), {previewPanel_},
-                [](QWidget* panel) { return static_cast<PreviewPanel*>(panel)->boundItem(); });
+    controlDock_ = new ads::CDockWidget(tr("Control"));
+    controlDock_->setObjectName("ControlDock");
+    controlDock_->setFeature(ads::CDockWidget::DockWidgetClosable, true);
+    controlDock_->setFeature(ads::CDockWidget::DockWidgetMovable, true);
+    controlDock_->setFeature(ads::CDockWidget::DockWidgetFloatable, true);
+    controlDock_->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromContent);
+    if (controlPanel_) {
+        WorkspaceDockFactory::setContent(controlDock_, controlPanel_, ads::CDockWidget::ForceNoScrollArea);
+        connect(controlPanel_, &ControlPanel::contextChanged, this, [this] {
+            refreshBoundEditorDockTitles(tr("Control"), {controlPanel_},
+                [](QWidget* panel) { return static_cast<ControlPanel*>(panel)->boundItem(); });
         });
     }
-    dockManager_->addDockWidget(ads::BottomDockWidgetArea, previewDock_);
+    dockManager_->addDockWidget(ads::BottomDockWidgetArea, controlDock_);
 
     if (workspaceWindowManager_) {
         workspaceWindowManager_->registerSingletons({
-            {QStringLiteral("BlueprintCanvas"), blueprintCanvasDock_},
-            {QStringLiteral("AIAssistant"), aiDock_},
+            {QStringLiteral("Blueprint"), blueprintDock_},
+            {QStringLiteral("Assistant"), assistantDock_},
             {QStringLiteral("Explorer"), projectExplorerDock_},
-            {QStringLiteral("Preview"), previewDock_}
+            {QStringLiteral("Control"), controlDock_}
         });
     }
 }
@@ -2238,19 +2239,19 @@ void MainWindow::connectWorkspaceWindowSignals()
 
 void MainWindow::configureWorkspaceDockPolicies()
 {
-    if (aiPanel_)
-        aiPanel_->setAcceptDrops(true);
+    if (assistantPanel_)
+        assistantPanel_->setAcceptDrops(true);
     for (auto* p : allInspectorPanels())
         if (p) p->setAcceptDrops(true);
 
-    if (blueprintCanvasDock_)
-        layoutController_->setPlacementHint(blueprintCanvasDock_->objectName(),
+    if (blueprintDock_)
+        layoutController_->setPlacementHint(blueprintDock_->objectName(),
                                             PreferredOpenArea::CentralTab);
 
     ads::CDockWidget* informationDock = workspaceWindowManager_
         ? workspaceWindowManager_->singletonDock(QStringLiteral("Information"))
         : nullptr;
-    for (ads::CDockWidget* dock : {aiDock_, projectExplorerDock_, previewDock_,
+    for (ads::CDockWidget* dock : {assistantDock_, projectExplorerDock_, controlDock_,
                                    informationDock})
         if (dock)
             layoutController_->setPlacementHint(dock->objectName(),
@@ -2475,10 +2476,10 @@ LogPanel* MainWindow::logPanel() const
     return qobject_cast<LogPanel*>(workspaceSingletonContent(QStringLiteral("Log"), true));
 }
 
-PackManagerPanel* MainWindow::packManagerPanel() const
+PublisherPanel* MainWindow::publisherPanel() const
 {
-    return qobject_cast<PackManagerPanel*>(
-        workspaceSingletonContent(QStringLiteral("ExportPacksManager"), true));
+    return qobject_cast<PublisherPanel*>(
+        workspaceSingletonContent(QStringLiteral("Publisher"), true));
 }
 
 
@@ -2698,9 +2699,9 @@ QWidget* MainWindow::createStandaloneEditorPanelWithId(const QString& type, int 
             area = ads::BottomDockWidgetArea;
             anchorArea = inspectorArea;
             seedBelowHeight = !deferShow;
-        } else if (blueprintCanvasDock_ && !blueprintCanvasDock_->isClosed()) {
+        } else if (blueprintDock_ && !blueprintDock_->isClosed()) {
             area = ads::BottomDockWidgetArea;
-            anchorArea = blueprintCanvasDock_->dockAreaWidget();
+            anchorArea = blueprintDock_->dockAreaWidget();
         }
         layoutController_->setPlacementHint(dockObjectName, PreferredOpenArea::RestoreSaved);
     }
@@ -3017,7 +3018,7 @@ void MainWindow::locateProjectItem(uint32_t objectID)
             hierarchy->pingProjectItem(item);
         }
     }
-    if (blueprintCanvas_ && blueprintCanvasDock_ && !blueprintCanvasDock_->isClosed())
+    if (blueprintCanvas_ && blueprintDock_ && !blueprintDock_->isClosed())
         blueprintCanvas_->pingProjectItem(item);
 }
 

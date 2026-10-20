@@ -26,13 +26,13 @@ class MultiSelectComboBox;
 class SplitButton;
 class ProportionalTreeWidget;
 
-class PackManagerPanel : public QWidget
+class PublisherPanel : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit PackManagerPanel(QWidget* parent = nullptr);
-    ~PackManagerPanel() override;
+    explicit PublisherPanel(QWidget* parent = nullptr);
+    ~PublisherPanel() override;
 
     void refreshPackList();
 
