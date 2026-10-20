@@ -337,18 +337,40 @@ bool BindingDependencyIndex::Register(std::uint32_t slot, const void* fact, Read
     return true;
 }
 
-bool BindingDependencyIndex::Relocate(BindingDependencyToken token, const void* fact, ReadIdentity read) noexcept {
+bool BindingDependencyIndex::Relocate(BindingDependencyToken token, const void* fact, ReadIdentity read,
+                                      std::uint32_t currentOrder) noexcept {
     if (Resolve(token) == nullptr || fact == nullptr || read == nullptr) return false;
+    const auto primaryIndex = token.slot * 3u;
+    auto& primary = inputs_[primaryIndex];
+    auto& target = keys_[primary.target];
+    const bool reordered = currentOrder != UINT32_MAX && currentOrder != primary.order;
+    if (reordered) {
+        auto* link = &target.head;
+        while (*link != primaryIndex) {
+            assert(*link != UINT32_MAX);
+            link = &inputs_[*link].nextTarget;
+        }
+        *link = primary.nextTarget;
+    }
     for (std::uint32_t i = 0; i < 3; ++i) {
-        const auto nodeIndex = token.slot * 3u + i;
+        const auto nodeIndex = primaryIndex + i;
         auto& node = inputs_[nodeIndex];
         node.fact = fact;
         node.read = read;
+        if (reordered) node.order = currentOrder;
         if (node.key != UINT32_MAX && keys_[node.key].locator.representative == nodeIndex)
             Reanchor(keys_[node.key], nodeIndex);
     }
-    auto& target = keys_[inputs_[token.slot * 3u].target];
-    if (target.locator.representative == token.slot * 3u) Reanchor(target, token.slot * 3u);
+    if (reordered) {
+        auto* link = &target.head;
+        while (*link != UINT32_MAX &&
+               std::tuple{inputs_[*link].order, *link} < std::tuple{currentOrder, primaryIndex})
+            link = &inputs_[*link].nextTarget;
+        primary.nextTarget = *link;
+        *link = primaryIndex;
+    }
+    if (target.locator.representative == primaryIndex) Reanchor(target, primaryIndex);
+    if (reordered) MarkTarget(primary.target);
     return true;
 }
 

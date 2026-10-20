@@ -96,7 +96,8 @@ public:
     void CancelBindingPreparation(std::uint32_t slot) noexcept;
     bool Register(std::uint32_t slot, const void* fact, ReadIdentity read, std::uint32_t order,
                   bool local, bool liveDefinition, bool probe, BindingDependencyToken* out) noexcept;
-    bool Relocate(BindingDependencyToken token, const void* fact, ReadIdentity read) noexcept;
+    bool Relocate(BindingDependencyToken token, const void* fact, ReadIdentity read,
+                  std::uint32_t currentOrder = UINT32_MAX) noexcept;
     bool Remove(BindingDependencyToken token) noexcept;
     void Notify(BindingDependencyKind kind, const BindingDependencyIdentity& identity) noexcept;
     void NotifyVariable(VnVariableId variable, VnEmitterHandle emitter = 0) noexcept;
