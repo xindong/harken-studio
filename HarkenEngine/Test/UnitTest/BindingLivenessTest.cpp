@@ -426,6 +426,14 @@ TEST(BindingDependencyIndex, LocalFallbackAndLiveDefinitionHaveExactIndependentW
     index.NotifyVariable(live.global.source);
     EXPECT_EQ(2u, CountDirtyTargets(index));
     CommitDirtyTargets(index);
+    ASSERT_TRUE(index.DetachLocal(tokens[0]));
+    live.local.object = 0;
+    CommitDirtyTargets(index);
+    index.NotifyVariable(live.global.source, 101);
+    EXPECT_EQ(0u, CountDirtyTargets(index));
+    index.NotifyVariable(live.global.source);
+    EXPECT_EQ(2u, CountDirtyTargets(index));
+    CommitDirtyTargets(index);
     ASSERT_TRUE(index.Remove(tokens[0]));
     ASSERT_TRUE(index.Remove(tokens[1]));
     CommitDirtyTargets(index);

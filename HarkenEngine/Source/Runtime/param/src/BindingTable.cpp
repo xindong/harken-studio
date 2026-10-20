@@ -374,6 +374,14 @@ bool BindingDependencyIndex::Relocate(BindingDependencyToken token, const void* 
     return true;
 }
 
+bool BindingDependencyIndex::DetachLocal(BindingDependencyToken token) noexcept {
+    const auto* primary = Resolve(token);
+    if (primary == nullptr) return false;
+    UnlinkSource(token.slot * 3u + 1u);
+    MarkTarget(primary->target);
+    return true;
+}
+
 void BindingDependencyIndex::MarkTarget(std::uint32_t key) noexcept {
     auto row = keys_[key].count == 0 ? UINT32_MAX : keys_[key].locator.targetRow;
     if (row == UINT32_MAX)

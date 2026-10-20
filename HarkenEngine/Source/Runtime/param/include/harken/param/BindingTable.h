@@ -98,6 +98,7 @@ public:
                   bool local, bool liveDefinition, bool probe, BindingDependencyToken* out) noexcept;
     bool Relocate(BindingDependencyToken token, const void* fact, ReadIdentity read,
                   std::uint32_t currentOrder = UINT32_MAX) noexcept;
+    bool DetachLocal(BindingDependencyToken token) noexcept;
     bool Remove(BindingDependencyToken token) noexcept;
     void Notify(BindingDependencyKind kind, const BindingDependencyIdentity& identity) noexcept;
     void NotifyVariable(VnVariableId variable, VnEmitterHandle emitter = 0) noexcept;
