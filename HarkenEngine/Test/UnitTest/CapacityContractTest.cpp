@@ -8,7 +8,9 @@
 #include <harken/Harken.h>
 
 #include "Common/TestUtil.h"
+#include "AllocationProbe.h"
 #include "Engine.h"
+#include "EngineQueueScheduleStorage.h"
 
 #include "harken/core/EngineConfig.h"
 #include "harken/core/LogRing.h"
@@ -61,6 +63,158 @@ static_assert(!std::is_copy_constructible_v<PartitionPool::PreparedCommitProof>)
 
 static_assert(!std::is_copy_constructible_v<PartitionPool::OriginalStoragePin>);
 static_assert(!std::is_aggregate_v<PartitionPool::OriginalStoragePin>);
+
+TEST(EngineQueueScheduleStorage, SharedEnvelopeSurvivesOwnerReleaseAndRetiredBorrower) {
+    using Storage = harken::EngineQueueScheduleStorage;
+    Storage storage;
+    ASSERT_TRUE(storage.Configure(3));
+    harken::EngineQueueScheduleColumns old;
+    Storage::Loan oldLoan;
+    ASSERT_TRUE(storage.Acquire(old, {1, 1}, &oldLoan));
+    old.events[0].payload = 42;
+    const auto* originalEvents = old.events.data();
+    Storage::Preparation first, second;
+    ASSERT_TRUE(storage.Prepare({2, 3}, &first));
+    const auto preparedBytes = storage.StorageBytes();
+    unsigned allocations = 0;
+    const auto refuseAllocation = [&]() noexcept { ++allocations; return false; };
+    ASSERT_TRUE(storage.Prepare({2, 3}, &second, refuseAllocation));
+    EXPECT_EQ(0u, allocations);
+    EXPECT_EQ(preparedBytes, storage.StorageBytes());
+    Storage::Preparation moved(std::move(first));
+    first = std::move(second);
+    auto use = moved.Use();
+    ASSERT_TRUE(use.Valid());
+    moved.Release();
+    first.Release();
+    EXPECT_FALSE(storage.CollectUnused());
+    Storage::Preparation refused;
+    EXPECT_FALSE(storage.Prepare({4, 6}, &refused, refuseAllocation));
+    std::array<harken::EngineQueueScheduleColumns, 3> columns;
+    std::array<Storage::Loan, 3> loans;
+    ASSERT_TRUE(storage.Acquire(columns[0], {2, 3}, &loans[0], refuseAllocation));
+    ASSERT_TRUE(storage.Acquire(columns[1], {2, 3}, &loans[1], refuseAllocation));
+    EXPECT_EQ(originalEvents, old.events.data());
+    EXPECT_EQ(42u, old.events[0].payload);
+    EXPECT_EQ(preparedBytes, storage.StorageBytes());
+    const auto allocationsBefore = allocation_probe::count;
+    allocation_probe::enabled = true;
+    oldLoan.Reset();
+    const bool acquired = storage.Acquire(columns[2], {2, 3}, &loans[2], refuseAllocation);
+    for (auto& loan : loans) loan.Reset();
+    allocation_probe::enabled = false;
+    ASSERT_TRUE(acquired);
+    EXPECT_EQ(allocationsBefore, allocation_probe::count);
+    EXPECT_EQ(0u, allocations);
+    EXPECT_EQ(preparedBytes, storage.StorageBytes());
+    for (const auto& column : columns) EXPECT_EQ(0u, column.StorageBytes());
+    use.Release();
+    ASSERT_TRUE(storage.CollectUnused());
+    EXPECT_EQ(0u, storage.StorageBytes());
+}
+
+TEST(EngineQueueScheduleStorage, FailedShapeRaisePreservesExistingSupplyAndPointers) {
+    using Storage = harken::EngineQueueScheduleStorage;
+    Storage storage;
+    ASSERT_TRUE(storage.Configure(3));
+    Storage::Preparation baseline;
+    ASSERT_TRUE(storage.Prepare({1, 2}, &baseline));
+    std::array<harken::EngineQueueScheduleColumns, 3> columns;
+    std::array<Storage::Loan, 3> loans;
+    ASSERT_TRUE(storage.Acquire(columns[0], {1, 2}, &loans[0]));
+    const auto* originalEvents = columns[0].events.data();
+    columns[0].events[0].payload = 73;
+    const auto originalBytes = storage.StorageBytes();
+    for (unsigned failure = 0; failure != 12; ++failure) {
+        unsigned remaining = failure;
+        const auto allowPrefix = [&]() noexcept {
+            if (remaining == 0) return false;
+            --remaining;
+            return true;
+        };
+        Storage::Preparation refused;
+        EXPECT_FALSE(storage.Prepare({4, 8}, &refused, allowPrefix));
+        EXPECT_FALSE(refused.Valid());
+        EXPECT_EQ(originalBytes, storage.StorageBytes());
+        EXPECT_EQ(originalEvents, columns[0].events.data());
+        EXPECT_EQ(73u, columns[0].events[0].payload);
+    }
+    auto use = baseline.Use();
+    const auto refuseAllocation = []() noexcept { return false; };
+    ASSERT_TRUE(storage.Acquire(columns[1], {1, 2}, &loans[1], refuseAllocation));
+    ASSERT_TRUE(storage.Acquire(columns[2], {1, 2}, &loans[2], refuseAllocation));
+    for (auto& loan : loans) loan.Reset();
+    EXPECT_EQ(originalBytes, storage.StorageBytes());
+    use.Release();
+    baseline.Release();
+    ASSERT_TRUE(storage.CollectUnused());
+    EXPECT_EQ(0u, storage.StorageBytes());
+}
+
+TEST(EngineQueueScheduleStorage, OrdinaryGrowthUpgradesOnlyOneGroupAndCleanupKeepsLoans) {
+    using Storage = harken::EngineQueueScheduleStorage;
+    Storage storage;
+    ASSERT_TRUE(storage.Configure(16));
+    harken::EngineQueueScheduleColumns columns;
+    Storage::Loan loan;
+    ASSERT_TRUE(storage.Acquire(columns, {1, 2}, &loan));
+    const auto smallBytes = columns.StorageBytes();
+    const auto metadataBytes = storage.StorageBytes() - smallBytes;
+    EXPECT_GT(metadataBytes, 0u);
+    EXPECT_LT(metadataBytes, smallBytes);
+    loan.Reset();
+    const auto retainedBytes = storage.StorageBytes();
+    unsigned allowance = 1;
+    const auto partialAllocation = [&]() noexcept {
+        if (allowance == 0) return false;
+        --allowance;
+        return true;
+    };
+    EXPECT_FALSE(storage.Acquire(columns, {8, 17}, &loan, partialAllocation));
+    EXPECT_FALSE(loan.Valid());
+    EXPECT_EQ(retainedBytes, storage.StorageBytes());
+    ASSERT_TRUE(storage.Acquire(columns, {8, 17}, &loan));
+    EXPECT_EQ(metadataBytes + columns.StorageBytes(), storage.StorageBytes());
+    const auto* originalEvents = columns.events.data();
+    columns.events[0].payload = 91;
+    harken::EngineQueueScheduleColumns snapshot(columns), assigned;
+    assigned = columns;
+    EXPECT_NE(originalEvents, snapshot.events.data());
+    EXPECT_EQ(91u, snapshot.events[0].payload);
+    EXPECT_EQ(91u, assigned.events[0].payload);
+    ASSERT_TRUE(storage.CollectUnused());
+    EXPECT_EQ(originalEvents, columns.events.data());
+    EXPECT_EQ(91u, columns.events[0].payload);
+    EXPECT_EQ(metadataBytes + columns.StorageBytes(), storage.StorageBytes());
+    loan.Reset();
+    ASSERT_TRUE(storage.CollectUnused());
+    EXPECT_EQ(0u, storage.StorageBytes());
+}
+
+TEST(EngineQueueScheduleStorage, ZeroShapeAndMovedLoansRespectGlobalCapacity) {
+    using Storage = harken::EngineQueueScheduleStorage;
+    Storage storage;
+    ASSERT_TRUE(storage.Configure(2));
+    Storage::Preparation preparation;
+    ASSERT_TRUE(storage.Prepare({}, &preparation));
+    const auto metadataBytes = storage.StorageBytes();
+    EXPECT_GT(metadataBytes, 0u);
+    std::array<harken::EngineQueueScheduleColumns, 3> columns;
+    std::array<Storage::Loan, 3> loans;
+    auto use = preparation.Use();
+    const auto refuseAllocation = []() noexcept { return false; };
+    ASSERT_TRUE(storage.Acquire(columns[0], {}, &loans[0], refuseAllocation));
+    EXPECT_FALSE(storage.Acquire(columns[0], {}, &loans[2], refuseAllocation));
+    ASSERT_TRUE(storage.Acquire(columns[1], {}, &loans[1], refuseAllocation));
+    EXPECT_FALSE(storage.Acquire(columns[2], {}, &loans[2], refuseAllocation));
+    loans[2] = std::move(loans[0]);
+    EXPECT_FALSE(loans[0].Valid());
+    loans[2].Reset();
+    EXPECT_FALSE(storage.Acquire(columns[2], {1, 1}, &loans[2], refuseAllocation));
+    ASSERT_TRUE(storage.Acquire(columns[2], {}, &loans[2], refuseAllocation));
+    EXPECT_EQ(metadataBytes, storage.StorageBytes());
+    for (const auto& column : columns) EXPECT_EQ(0u, column.StorageBytes());
+}
 
 TEST(StableBackingPreparation, DependenciesPrecedePublicationAndPreparedUseCannotGrow) {
     harken::StableRowStorage<std::uint64_t> rows, dependencies;
