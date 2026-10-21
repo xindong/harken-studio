@@ -47661,8 +47661,6 @@ static void CheckPendingVariableControlMultiPlaySequencePcm(PendingMultiPlaySequ
             ordinarySource.installation.startArm, ordinarySource.submission->Token()));
         EXPECT_EQ(ordinarySource.submission,
             engine.timelineArms.RowAt(ordinarySource.installation.startArm.slot)->originalSourceSubmission);
-        sources.push_back(ordinarySource);
-        ++sourceCounts[ordinarySiblingOrdinal];
         std::ostringstream sourceTrace;
         for (std::uint32_t slot = 0; slot < engine.sourceTerminals.Capacity(); ++slot) {
             const auto* terminal = engine.sourceTerminals.At(slot);
@@ -47681,7 +47679,14 @@ static void CheckPendingVariableControlMultiPlaySequencePcm(PendingMultiPlaySequ
             ASSERT_TRUE(engine.playableInstances.Classify(terminal->leaf).live);
             ASSERT_TRUE(terminal->release.Valid());
             ASSERT_NE(0u, terminal->render);
-            sources.push_back({{slot, terminal->generation}, terminal->render, terminal->leaf, ordinal});
+            if (ordinal == ordinarySiblingOrdinal) {
+                ASSERT_EQ(ordinarySource.render, terminal->render);
+                ASSERT_EQ(ordinarySource.leaf, terminal->leaf);
+                ordinarySource.token = {slot, terminal->generation};
+                sources.push_back(ordinarySource);
+            } else {
+                sources.push_back({{slot, terminal->generation}, terminal->render, terminal->leaf, ordinal});
+            }
             ++sourceCounts[ordinal];
         }
         testing::Test::RecordProperty("original_source_trace", sourceTrace.str());
@@ -47702,15 +47707,14 @@ static void CheckPendingVariableControlMultiPlaySequencePcm(PendingMultiPlaySequ
                 if (captured.checked || cancelPrivate) continue;
                 auto* voice = engine.voices.Resolve(captured.render);
                 if (voice == nullptr || voice->pcm.channels[0] == nullptr) continue;
-                if (captured.token.Valid()) {
-                    const auto* terminal = engine.sourceTerminals.Resolve(captured.token);
-                    ASSERT_NE(nullptr, terminal);
-                    EXPECT_EQ(captured.leaf, terminal->leaf);
-                    EXPECT_EQ(captured.render, terminal->render);
-                    EXPECT_EQ(terminal, voice->sourceTerminal);
-                    EXPECT_EQ(captured.token.slot, voice->sourceTerminalToken.slot);
-                    EXPECT_EQ(captured.token.generation, voice->sourceTerminalToken.generation);
-                } else {
+                const auto* terminal = engine.sourceTerminals.Resolve(captured.token);
+                ASSERT_NE(nullptr, terminal);
+                EXPECT_EQ(captured.leaf, terminal->leaf);
+                EXPECT_EQ(captured.render, terminal->render);
+                EXPECT_EQ(terminal, voice->sourceTerminal);
+                EXPECT_EQ(captured.token.slot, voice->sourceTerminalToken.slot);
+                EXPECT_EQ(captured.token.generation, voice->sourceTerminalToken.generation);
+                if (captured.submission != nullptr) {
                     harken::EngineTimelineVoiceInstallIdentity installation{};
                     ASSERT_TRUE(engine.CaptureTimelineVoiceInstallIdentity(captured.render, &installation));
                     EXPECT_EQ(captured.installation.renderHandle, installation.renderHandle);
@@ -47721,8 +47725,6 @@ static void CheckPendingVariableControlMultiPlaySequencePcm(PendingMultiPlaySequ
                     EXPECT_EQ(captured.installation.releaseObserver.targetSequence,
                         installation.releaseObserver.targetSequence);
                     EXPECT_EQ(captured.submission, engine.originalSourceSubmissions.Find(installation.startArm));
-                    EXPECT_EQ(nullptr, voice->sourceTerminal);
-                    EXPECT_FALSE(voice->sourceTerminalToken.Valid());
                 }
                 const float sample = voice->pcm.channels[0][0];
                 ASSERT_TRUE(sample == first[0] || sample == second[0]);
@@ -51903,11 +51905,7 @@ static void CheckPendingSequenceCancelledPredecessorPcm(bool variableControl, bo
     if (loanRecord != nullptr)
         EXPECT_TRUE(engine.originalSourceSubmissions.Find(loanArm) != loanRecord ||
             harken::detail::OriginalSourceOwnersReturnedForTest(engine.originalSourceSubmissions, loanArm));
-    if (variableControl) {
-        ASSERT_NO_FATAL_FAILURE(ExpectBoundSourcesReleased(engine, sources));
-    } else {
-        EXPECT_EQ(sources, CaptureSourceGenerations(engine));
-    }
+    ASSERT_NO_FATAL_FAILURE(ExpectBoundSourcesReleased(engine, sources));
     EXPECT_FALSE(engine.runtimeRecreateRequired);
 }
 

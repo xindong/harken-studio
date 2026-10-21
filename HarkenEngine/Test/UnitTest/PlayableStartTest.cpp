@@ -24445,6 +24445,20 @@ TEST(PlayableStart, SequenceLoopCountTwoPlaysTwoChildren) {
     ASSERT_TRUE(root.live);
     const auto firstSound = root.firstChild;
     ASSERT_NE(firstSound, 0u);
+    const auto service = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
+        [&](const auto& candidate) { return candidate.ownerInstance == started.instance; });
+    ASSERT_NE(engine->playableServices.end(), service);
+    auto* const initial = service->queueCurrentProgramBank;
+    ASSERT_NE(nullptr, initial);
+    auto* const original = engine->OriginalQueueBankHolderFor(initial);
+    ASSERT_NE(nullptr, original);
+    harken::EngineQueueProgramBank::OriginalLifetimePin reader;
+    ASSERT_TRUE(original->baseline.Borrow(&reader));
+    const auto initialMember = initial->members[0];
+    const auto* retained = engine->FindPlayableMember(initialMember);
+    ASSERT_NE(nullptr, retained);
+    const auto initialRender = retained->render;
+    const auto initialProgram = initial->schedules[0].runtimeProgram;
     bool observedSecondLeaf = false;
     bool heardPositive = false;
     bool heardNegative = false;
@@ -24473,6 +24487,15 @@ TEST(PlayableStart, SequenceLoopCountTwoPlaysTwoChildren) {
     EXPECT_TRUE(heardPositive);
     EXPECT_TRUE(heardNegative);
     EXPECT_FALSE(engine->runtimeRecreateRequired);
+    retained = engine->FindPlayableMember(initialMember);
+    ASSERT_NE(nullptr, retained);
+    EXPECT_EQ(initialRender, retained->render);
+    EXPECT_FALSE(retained->primaryOwned);
+    EXPECT_EQ(initialProgram.program, initial->schedules[0].runtimeProgram.program);
+    EXPECT_EQ(initialProgram.programGeneration, initial->schedules[0].runtimeProgram.programGeneration);
+    reader.Release();
+    ASSERT_TRUE(PumpBlocks(*engine, 4));
+    EXPECT_EQ(nullptr, engine->FindPlayableMember(initialMember));
     ASSERT_TRUE(StopUntilStale(*engine, started.instance));
     EXPECT_EQ(0u, engine->playableInstances.LiveCount());
     EXPECT_EQ(0u, engine->containerPlayback.LiveCount());

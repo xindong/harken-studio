@@ -4849,6 +4849,9 @@ struct Engine {
         CapturedTimelineVoiceInstall replacementVoice;
         StableStoragePreparation nativeVoiceBacking;
         StableSlotStorage<EngineActionPlayScratch>::Preparation nativePlayBacking;
+        StableSlotStorage<EnginePlayableMemberRecord>::Preparation nativeMemberBacking;
+        StableSlotStorage<EngineQueueProgramBank>::Preparation nativeProgramBacking;
+        EngineQueueScheduleStorage::Preparation nativeScheduleBacking;
         EngineFrontierAttemptToken replacement{};
         std::array<EnginePlayableServiceReference, kSelectionPathNodeCapacity> retiredServices{};
         std::uint32_t retiredServiceCount = 0;
@@ -4864,6 +4867,7 @@ struct Engine {
                 !body.Valid() && !arm.Valid() && !release.Valid() && !retirement.Valid() &&
                 nativeReplacement.Empty() && !replacementVoice.HasStorage() &&
                 !nativeVoiceBacking.Valid() && !nativePlayBacking.Valid() &&
+                !nativeMemberBacking.Valid() && !nativeProgramBacking.Valid() && !nativeScheduleBacking.Valid() &&
                 !replacement.Valid() && retiredServiceCount == 0 && retiredChild == 0 &&
                 retiredChildEpoch == 0 && !sourceRetired && !accepted;
         }
@@ -7510,6 +7514,9 @@ public:
         holder.replacementVoice = {};
         holder.nativeVoiceBacking.Release();
         holder.nativePlayBacking.Release();
+        holder.nativeMemberBacking.Release();
+        holder.nativeProgramBacking.Release();
+        holder.nativeScheduleBacking.Release();
         // Disposition may already be ending the root; its original loan still identifies it.
         holder.producer.Return();
         holder.service.Return();
@@ -12732,6 +12739,13 @@ public:
         }
         if (row.usesCapturedVoice)
             return index == 0 && row.capturedVoice.Valid() ? &row.capturedVoice : nullptr;
+        if (index < row.queueCurrentPrograms.count) {
+            const auto* member = const_cast<Engine*>(this)->FindQueueProgramMember(
+                row.queueCurrentProgramBank, row.queueCurrentPrograms.first + index);
+            if (member != nullptr && member->voice.Valid() &&
+                (row.scheduleLeafCount > 1 || SameOriginalSingleArm(member->arm, row.arm)))
+                return &member->voice;
+        }
         if (row.queueMode && index == 0) {
             const auto* member = const_cast<Engine*>(this)->FindPlayableMember(row, 0);
             if (member != nullptr && member->voice.Valid() && SameOriginalSingleArm(member->arm, row.arm))
