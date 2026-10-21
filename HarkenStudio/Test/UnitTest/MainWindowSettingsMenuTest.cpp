@@ -213,7 +213,7 @@ protected:
         seed(expected, mode);
         for (int cycle = 0; cycle < 2; ++cycle) {
             window_ = std::make_unique<MainWindow>();
-            window_->prepareWindowForStartup(false, target);
+            window_->prepareWindowForStartup(target);
             window_->show();
             settle();
             EXPECT_EQ(persistentWindowState(window_->windowState()), mode);
@@ -254,11 +254,10 @@ protected:
 
 }
 
-TEST_F(MainWindowPlacement, NewProjectStartsAtDefaultSizeWithoutInheritedState)
+TEST_F(MainWindowPlacement, NoSavedPresentationUsesDefaultSize)
 {
-    seed({900, 620}, Qt::WindowMaximized);
     window_ = std::make_unique<MainWindow>();
-    window_->prepareWindowForStartup(true, QGuiApplication::primaryScreen());
+    window_->prepareWindowForStartup(QGuiApplication::primaryScreen());
     window_->show();
     settle();
     const QRect available = window_->screen()->availableGeometry();
@@ -273,7 +272,7 @@ TEST_F(MainWindowPlacement, ReopenedWindowCentersAndDoesNotRecenterOnLaterShow)
 {
     seed({1100, 650}, Qt::WindowNoState);
     window_ = std::make_unique<MainWindow>();
-    window_->prepareWindowForStartup(false, QGuiApplication::primaryScreen());
+    window_->prepareWindowForStartup(QGuiApplication::primaryScreen());
     window_->show();
     settle();
     if (window_->isMaximized())
@@ -334,7 +333,7 @@ TEST_F(MainWindowPlacement, PresentationFinishesOnceAndLaterShowsDoNotRestartIt)
     seed({1100, 650}, Qt::WindowNoState);
     window_ = std::make_unique<MainWindow>();
     watchPresentation();
-    window_->prepareWindowForStartup(false, nullptr);
+    window_->prepareWindowForStartup(nullptr);
     window_->show();
     settle();
     EXPECT_EQ(presentations_, (QList<bool>{true}));
@@ -348,7 +347,7 @@ TEST_F(MainWindowPlacement, ClosingBeforeFirstExposureFinishesStartupAsCancelled
 {
     window_ = std::make_unique<MainWindow>();
     watchPresentation();
-    window_->prepareWindowForStartup(false, nullptr);
+    window_->prepareWindowForStartup(nullptr);
     ASSERT_TRUE(window_->close());
     settle();
     EXPECT_EQ(presentations_, (QList<bool>{false}));
@@ -358,7 +357,7 @@ TEST_F(MainWindowPlacement, HidingBeforePresentationDoesNotWaitForExposure)
 {
     window_ = std::make_unique<MainWindow>();
     watchPresentation();
-    window_->prepareWindowForStartup(false, nullptr);
+    window_->prepareWindowForStartup(nullptr);
     window_->show();
     window_->hide();
     settle();
@@ -369,7 +368,7 @@ TEST_F(MainWindowPlacement, UserMinimizingBeforeExposureKeepsTheirStateAndComple
 {
     window_ = std::make_unique<MainWindow>();
     watchPresentation();
-    window_->prepareWindowForStartup(false, nullptr);
+    window_->prepareWindowForStartup(nullptr);
     window_->showMinimized();
     settle();
     EXPECT_TRUE(window_->isMinimized());
@@ -385,7 +384,7 @@ TEST_F(MainWindowPlacement, MinimumSizeLargerThanWorkAreaUsesMaximizedPresentati
     const QRect available = screen->availableGeometry();
     window_->setMinimumSize(available.size() + QSize(100, 100));
     watchPresentation();
-    window_->prepareWindowForStartup(true, screen);
+    window_->prepareWindowForStartup(screen);
     window_->show();
     settle();
     EXPECT_TRUE(window_->isMaximized());

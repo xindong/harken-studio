@@ -320,7 +320,7 @@ void StartupCoordinator::finish()
             hubClient_->reportStage(QStringLiteral("ready"));
         }
     });
-    mainWindow_->prepareWindowForStartup(hubArguments_.createProject, loading_.screen());
+    mainWindow_->prepareWindowForStartup(loading_.screen());
     mainWindow_->show();
 }
 

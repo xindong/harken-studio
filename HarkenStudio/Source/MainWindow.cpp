@@ -3758,15 +3758,14 @@ void MainWindow::resizeEvent(QResizeEvent* event)
         normalWindowSize_ = size();
 }
 
-void MainWindow::prepareWindowForStartup(bool newProject, QScreen* screen)
+void MainWindow::prepareWindowForStartup(QScreen* screen)
 {
     if (startupPresentationPrepared_)
         return;
     startupScreen_ = startupTargetScreen(screen);
     QSettings settings;
     settings.beginGroup("MainWindow");
-    const WindowPresentation presentation = newProject
-        ? WindowPresentation{} : readWindowPresentation(settings);
+    const WindowPresentation presentation = readWindowPresentation(settings);
     startupNormalSize_ = presentation.normalSize;
     startupState_ = presentation.state;
     normalWindowSize_ = presentation.normalSize;
@@ -3786,7 +3785,7 @@ void MainWindow::showEvent(QShowEvent* event)
 {
     QMainWindow::showEvent(event);
     if (!startupPresentationPrepared_)
-        prepareWindowForStartup(false, screen());
+        prepareWindowForStartup(screen());
     if (!layoutController_->firstShowDone()) {
         layoutController_->setFirstShowDone(true);
         dockManager_->setFocus(Qt::OtherFocusReason);
