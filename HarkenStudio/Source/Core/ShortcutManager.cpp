@@ -1,15 +1,50 @@
 
 #include "ShortcutManager.h"
 
+#include <QAbstractItemView>
+#include <QApplication>
+#include <QClipboard>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QLineEdit>
+#include <QMenu>
+#include <QMenuBar>
+#include <QPlainTextEdit>
+#include <QTextEdit>
 #include <QWidget>
 
 #include <utility>
 
 namespace VNX {
+
+namespace {
+
+template<typename Edit>
+std::function<void()> textEditCommand(const QString& id, Edit* edit)
+{
+    const bool selected = edit->textCursor().hasSelection();
+    if (id == Shortcuts::Copy && selected)
+        return [edit]() { edit->copy(); };
+    if (id == Shortcuts::SelectAll && !edit->document()->isEmpty())
+        return [edit]() { edit->selectAll(); };
+    if (edit->isReadOnly())
+        return {};
+    if (id == Shortcuts::Cut && selected)
+        return [edit]() { edit->cut(); };
+    if (id == Shortcuts::Paste && edit->canPaste())
+        return [edit]() { edit->paste(); };
+    if (id == Shortcuts::Delete && selected)
+        return [edit]() {
+            auto cursor = edit->textCursor();
+            cursor.removeSelectedText();
+            edit->setTextCursor(cursor);
+        };
+    return {};
+}
+
+}
 
 ShortcutManager& ShortcutManager::instance()
 {
@@ -21,6 +56,11 @@ ShortcutManager::ShortcutManager()
 {
     setupDefaultShortcuts();
     loadShortcuts();
+    focusedWidget_ = QApplication::focusWidget();
+    connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget* focus) {
+        if (focus && !qobject_cast<QMenu*>(focus) && !qobject_cast<QMenuBar*>(focus))
+            focusedWidget_ = focus;
+    });
 }
 
 ShortcutManager::~ShortcutManager()
@@ -110,6 +150,98 @@ QAction* ShortcutManager::bindWidgetAction(const QString& id,
     widget->addAction(action);
     bindAction(id, action);
     return action;
+}
+
+QAction* ShortcutManager::createMenuAction(const QString& id, QMenu* menu)
+{
+    if (!shortcuts_.contains(id) || !menu)
+        return nullptr;
+
+    QAction* action = menu->addAction(shortcuts_[id].displayName);
+    action->setObjectName(id);
+    action->setMenuRole(QAction::NoRole);
+    const auto refresh = [this, id, action]() {
+        const auto& info = shortcuts_[id];
+        const auto command = menuCommand(id, menuTarget_);
+        const QString hint = command.shortcut.toString(QKeySequence::NativeText);
+        action->setText(hint.isEmpty() ? info.displayName
+                                      : info.displayName + QLatin1Char('\t') + hint);
+        action->setEnabled(bool(command.handler));
+    };
+    refresh();
+    connect(this, &ShortcutManager::shortcutChanged, action,
+            [id, refresh](const QString& changedId, const QKeySequence&) {
+        if (changedId == id)
+            refresh();
+    });
+    connect(this, &ShortcutManager::shortcutsReset, action, refresh);
+    connect(menu, &QMenu::aboutToShow, action, [this, refresh]() {
+        menuTarget_ = focusedWidget_;
+        refresh();
+    });
+    connect(action, &QAction::triggered, action, [this, id]() {
+        if (auto command = menuCommand(id, menuTarget_); command.handler)
+            command.handler();
+    });
+    return action;
+}
+
+ShortcutManager::MenuCommand ShortcutManager::menuCommand(const QString& id, QWidget* focus) const
+{
+    const auto& info = shortcuts_[id];
+    const MenuCommand unavailable{{}, info.currentShortcut};
+    if (!focus || !focus->isVisible() || !focus->isEnabled())
+        return unavailable;
+
+    const auto nativeCommand = [&info](std::function<void()> handler) -> MenuCommand {
+        return {std::move(handler), info.defaultShortcut};
+    };
+    for (QWidget* widget = focus; widget; widget = widget->parentWidget()) {
+        if (auto* edit = qobject_cast<QLineEdit*>(widget)) {
+            const bool selected = edit->hasSelectedText();
+            const bool canCopy = selected && edit->echoMode() == QLineEdit::Normal;
+            if (id == Shortcuts::Copy && canCopy)
+                return nativeCommand([edit]() { edit->copy(); });
+            if (id == Shortcuts::SelectAll && !edit->text().isEmpty())
+                return nativeCommand([edit]() { edit->selectAll(); });
+            if (edit->isReadOnly())
+                return unavailable;
+            if (id == Shortcuts::Cut && canCopy)
+                return nativeCommand([edit]() { edit->cut(); });
+            if (id == Shortcuts::Paste && !QApplication::clipboard()->text().isEmpty())
+                return nativeCommand([edit]() { edit->paste(); });
+            if (id == Shortcuts::Delete && selected)
+                return nativeCommand([edit]() { edit->del(); });
+            return unavailable;
+        }
+        if (auto* edit = qobject_cast<QTextEdit*>(widget))
+            return nativeCommand(textEditCommand(id, edit));
+        if (auto* edit = qobject_cast<QPlainTextEdit*>(widget))
+            return nativeCommand(textEditCommand(id, edit));
+
+        for (QAction* action : widget->actions()) {
+            if (!info.actions.contains(action))
+                continue;
+            if (action->shortcutContext() == Qt::WidgetShortcut
+                && widget != focus && widget->focusProxy() != focus)
+                continue;
+            if (!action->isEnabled() || !action->isVisible())
+                return unavailable;
+            return {[action]() { action->trigger(); }, action->shortcut()};
+        }
+        if (id == Shortcuts::SelectAll) {
+            if (auto* view = qobject_cast<QAbstractItemView*>(widget)) {
+                if (view->selectionMode() != QAbstractItemView::NoSelection
+                    && view->selectionMode() != QAbstractItemView::SingleSelection
+                    && view->model() && view->model()->rowCount(view->rootIndex()) > 0)
+                    return nativeCommand([view]() { view->selectAll(); });
+                return unavailable;
+            }
+        }
+        if (widget->isWindow())
+            break;
+    }
+    return unavailable;
 }
 
 void ShortcutManager::unbindAction(const QString& id, QAction* action)

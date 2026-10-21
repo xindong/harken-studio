@@ -97,6 +97,18 @@ SourcesTreeWidget::SourcesTreeWidget(QWidget* parent)
     });
 }
 
+bool SourcesTreeWidget::edit(const QModelIndex& index, EditTrigger trigger, QEvent* event)
+{
+    if (!QTreeWidget::edit(index, trigger, event)) return false;
+    if (!index.data(kSourceFolderRole).toBool()) {
+        if (auto* editor = qobject_cast<InlineRenameEdit*>(indexWidget(index))) {
+            const QString name = QFileInfo(index.data(kSourcePathRole).toString()).completeBaseName();
+            editor->setSelection(0, name.size());
+        }
+    }
+    return true;
+}
+
 QString SourcesTreeWidget::renameSource(const QString& path, const QString& name)
 {
     const int slash = path.lastIndexOf(QLatin1Char('/'));

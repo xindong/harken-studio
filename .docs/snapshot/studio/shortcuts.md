@@ -2,6 +2,8 @@
 
 最近核对：2026-09-10。源码基线：`main` / `66fe38d4f763b2816e7fb32b1e95e7d171d82498`。
 
+Edit 菜单补充核对：2026-10-21，当前工作区。
+
 本篇记录当前快捷键的注册、绑定、设置与验证边界，供后续修改时持续核对。以当前源码为准，行为变化时直接更新对应表项。对象树菜单与快捷键的选区规则见[对象右键菜单快照](object-context-menus.md)。
 
 路径缩写：`Source/` = `HarkenStudio/Source/`，`EditorTest/` = `HarkenStudio/Test/UnitTest/`。
@@ -48,13 +50,14 @@
 
 ## 管理与触发链路
 
-统一链路为 `ShortcutManager -> QAction -> 业务处理函数`。`QKeySequence` 负责表示按键，管理器负责键位状态和同步，QAction 与 Qt 负责触发；管理器不按当前选择或焦点自行分发命令。
+键盘链路为 `ShortcutManager -> QAction -> 业务处理函数`。`QKeySequence` 负责表示按键，管理器负责键位状态和同步，QAction 与 Qt 负责触发。Edit 菜单通过 `createMenuAction()` 根据打开菜单前的焦点查找已有控件动作，再调用同一业务入口。
 
 | 环节 | 当前实现 |
 |---|---|
 | 初始化 | 单例构造时先注册默认键，再从 QSettings 加载覆盖值 |
 | 绑定已有动作 | `bindAction()` 保存 QAction，立即设置当前键；动作所属菜单和作用域由调用方决定 |
 | 绑定控件动作 | `bindWidgetAction()` 创建由宿主控件持有的 QAction，设置作用域、连接 handler、调用 `widget->addAction()` 后交给管理器绑定；默认作用域为 `Qt::WidgetShortcut` |
+| 创建菜单入口 | `createMenuAction()` 展示注册名称与目标控件的有效键位，仅显示快捷键提示，不再注册按键；监听修改、重置和导入通知刷新提示。打开菜单时按焦点控件及祖先的动作作用域、启用和可见状态决定是否可用；点击时重新校验目标，目标销毁后不再执行 |
 | 修改与单项恢复 | `setShortcut()` / `resetToDefault()` 更新同 ID 的全部存活动作，并发出 `shortcutChanged` |
 | 全量恢复 | `resetAllToDefaults()` 更新全部动作，发出 `shortcutsReset` |
 | 生命周期 | QAction 销毁时自动从绑定集合移除；后创建的面板绑定时取得当前键位 |
@@ -80,6 +83,7 @@
 | MainWindow / File 菜单 | Save Project | `WindowShortcut` | `onSaveProject()` | 菜单 QAction |
 | MainWindow / File 菜单 | Preferences | `WindowShortcut` | `onOpenPreferences()` | 菜单 QAction；声明 `QAction::PreferencesRole` |
 | MainWindow / Edit 菜单 | Undo、Redo | `ApplicationShortcut` | `UndoRedoManager` 创建的动作，调用 `undo()` / `redo()` | 菜单 QAction，并跟随可撤销／重做项更新文字与启用状态 |
+| MainWindow / Edit 菜单 | Cut、Copy、Paste、Duplicate、Delete、Select All | 仅菜单入口，不增加快捷键绑定 | 按焦点复用已有控件动作；文本编辑和原生列表全选调用 Qt 控件接口 | 菜单文本中的 `NativeText` 有效键位；管理器绑定被清空后仍可点击菜单 |
 | MainWindow | Play/Stop | `ApplicationShortcut` | `onPlayPressed()` | AuditionBar Play 按钮 tooltip |
 | MainWindow | Reset Container | `ApplicationShortcut` | `onResetPressed()` → `audition_reset` action | AuditionBar Reset 按钮 tooltip |
 | ProjectTreePanel 的 `treeWidget_` | Cut、Copy、Paste、Delete、Duplicate | `WidgetWithChildrenShortcut` | `onCut()`、`onCopy()`、粘贴路由、`onDelete()`、`onDuplicate()` | 对象上下文菜单文本 |
@@ -99,10 +103,12 @@
 | Reset Container | 使用 `auditionResetItem_`，由选择路由及 Blueprint 选择更新。当前要求目标为 Container、有 `VSelection`、模式属于 Random / Sequence、`runtimeStableId != 0`；Single 按 Memory Scope 清选择记忆，Queue 清当前发声体的队列记忆；handler 再检查 Reset 按钮是否可用。默认无键，分配键位后才有键盘入口 |
 | Project Tree | Project Explorer 和 Hierarchy 继承同一 `ProjectTreePanel`，共用五个绑定。粘贴到分类根时走 `pasteClipboardAtBucketRoot()`，其他目标走 `pasteInto()`。树未绑定管理器的 Select All |
 | Curve | 操作曲线点而非工程对象；Delete/Cut 的可编辑点限制、粘贴载荷与点数限制由曲线函数处理。Select All 的管理器消费者仅在 CurveCanvas |
+| Edit 菜单 | 顺序为 Undo / Redo、分隔线、Cut / Copy / Paste / Duplicate / Delete、分隔线、Select All。操作作用于打开菜单前的焦点控件，菜单取得焦点不会改变目标；无对应动作时置灰，已有业务动作的选择与剪贴板限制仍由其 handler 校验 |
+| Edit 菜单中的文本与原生列表 | `QLineEdit`、`QTextEdit`、`QPlainTextEdit` 优先编辑文字，不向外层对象传播；按选区、只读状态和剪贴板内容启用，密码输入框不允许复制或剪切。原生多选列表支持 Select All。Qt 控件的内建键盘映射仍由 Qt 处理，不随管理器重绑；对应可用菜单项显示原生标准键，已绑定的业务控件显示配置键 |
 | Timeline | ruler 与 canvas 共用 `edit.delete`，按焦点删除 marker 或所选 clips；canvas 支持删除多选 clips，不只单个 clip |
-| 菜单与 tooltip | MainWindow 菜单直接展示 QAction 当前键；Project Tree 菜单用 `label + '\t' + NativeText` 展示键位，菜单动作自身不注册快捷键；Curve 菜单调用点编辑函数，但不持有快捷键或键位提示 |
+| 菜单与 tooltip | MainWindow 的 Save、Preferences、Undo、Redo 直接展示 QAction 当前键；Edit 新增的六个入口和 Project Tree 菜单用 `label + '\t' + NativeText` 展示键位，菜单动作自身不注册快捷键；Curve 上下文菜单调用点编辑函数，但不持有快捷键或键位提示 |
 
-提示刷新见 [ProjectItemMenuController.cpp](../../../../HarkenStudio/Source/Widgets/Shared/ProjectItemMenuController.cpp) 的 `refreshShortcutHints()` 与 [AuditionBar.cpp](../../../../HarkenStudio/Source/Widgets/AuditionBar/AuditionBar.cpp) 的 `refreshPlayShortcut()` / `refreshResetShortcut()`；二者均监听 `shortcutChanged` 和 `shortcutsReset`。Source Editor 切换见 [SourceEditorWidget.cpp](../../../../HarkenStudio/Source/Widgets/SourceEditor/SourceEditorWidget.cpp)；[AuditionManager.cpp](../../../../HarkenStudio/Source/Core/AuditionManager.cpp) 的 `stopAll()` 跳过 RawFile 试听。
+提示刷新见 [ShortcutManager.cpp](../../../../HarkenStudio/Source/Core/ShortcutManager.cpp) 的 `createMenuAction()`、[ProjectItemMenuController.cpp](../../../../HarkenStudio/Source/Widgets/Shared/ProjectItemMenuController.cpp) 的 `refreshShortcutHints()` 与 [AuditionBar.cpp](../../../../HarkenStudio/Source/Widgets/AuditionBar/AuditionBar.cpp) 的 `refreshPlayShortcut()` / `refreshResetShortcut()`；均监听 `shortcutChanged` 和 `shortcutsReset`。Source Editor 切换见 [SourceEditorWidget.cpp](../../../../HarkenStudio/Source/Widgets/SourceEditor/SourceEditorWidget.cpp)；[AuditionManager.cpp](../../../../HarkenStudio/Source/Core/AuditionManager.cpp) 的 `stopAll()` 跳过 RawFile 试听。
 
 ## 未经管理器的固定按键
 
