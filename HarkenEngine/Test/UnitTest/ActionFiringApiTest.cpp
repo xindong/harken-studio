@@ -22486,7 +22486,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
     EXPECT_EQ(innerLeaf, row->variableControlChildInstances[1]);
     ASSERT_EQ(1u, row->variableControlNestedContainerCount);
     EXPECT_EQ(root.firstChild,
-              row->variableControlNestedContainerInstances[0]);
+              row->variableControlContainers[0].handle);
     harken::PlayableInstanceHandle successor = 0;
     if (deferred) {
         EXPECT_EQ(0u, queueService->variableControlNestedQueueSuccessorInstance);
@@ -23732,7 +23732,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
     ASSERT_NE(engine->playableServices.end(), naturalRow);
     const auto naturalRoot = naturalRow->rootInstance;
     const auto naturalNested =
-        naturalRow->variableControlNestedContainerInstances[0];
+        naturalRow->variableControlContainers[0].handle;
     const auto naturalQueue = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
         [&](const auto& service) { return service.ownerInstance == naturalNested && service.queueMode; });
     ASSERT_NE(engine->playableServices.end(), naturalQueue);
@@ -24919,7 +24919,7 @@ TEST(ActionFiringApi,
         });
     ASSERT_NE(engine->playableServices.end(), row);
     ASSERT_EQ(3u, row->variableControlNestedContainerCount);
-    const auto deepest = row->variableControlNestedContainerInstances[2];
+    const auto deepest = row->variableControlContainers[2].handle;
     const auto queueService = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
         [&](const auto& service) { return service.ownerInstance == deepest && service.queueMode; });
     ASSERT_NE(engine->playableServices.end(), queueService);
@@ -24932,13 +24932,13 @@ TEST(ActionFiringApi,
     ASSERT_TRUE(deepestView.live);
     ASSERT_EQ(queueService->ownerEpoch,
               deepestView.scheduleEpoch);
-    ASSERT_EQ(row->variableControlNestedContainerInstances[1],
+    ASSERT_EQ(row->variableControlContainers[1].handle,
               deepestView.parent);
-    ASSERT_EQ(row->variableControlNestedContainerInstances[0],
+    ASSERT_EQ(row->variableControlContainers[0].handle,
               engine->playableInstances.Classify(deepestView.parent).parent);
     ASSERT_EQ(row->rootInstance,
               engine->playableInstances.Classify(
-                  row->variableControlNestedContainerInstances[0])
+                  row->variableControlContainers[0].handle)
                   .parent);
 
     harken::QueueInstanceSnapshot queueSnapshot{};
@@ -25618,6 +25618,7 @@ static void ExpectImmediateVariableControlNestedRetargetPromotesCompleteInstance
     EXPECT_EQ(record->events.data(), originalEvents);
     EXPECT_EQ(record->payloads.data(), originalPayloads);
 
+    const auto incomingContainerCount = row->variableControlDiscreteRetargetIncomingContainerCount;
     bool promoted = false;
     for (std::uint32_t block = 0; block < 96 && !promoted; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -25628,9 +25629,9 @@ static void ExpectImmediateVariableControlNestedRetargetPromotesCompleteInstance
     }
     ASSERT_TRUE(promoted);
     EXPECT_EQ(incomingRoot, row->variableControlChildInstances[0]);
-    EXPECT_EQ(row->variableControlDiscreteRetargetIncomingContainerCount,
-              row->variableControlNestedContainerCount);
-    EXPECT_EQ(incomingRoot, row->variableControlNestedContainerInstances[0]);
+    EXPECT_EQ(incomingContainerCount, row->variableControlNestedContainerCount);
+    EXPECT_EQ(0u, row->variableControlDiscreteRetargetIncomingContainerCount);
+    EXPECT_EQ(incomingRoot, row->variableControlContainers[0].handle);
     EXPECT_EQ(incomingLeaf, row->variableControlLeafInstances[0]);
     const auto promotedReference = engine->ReadPlayableMemberReference(row->scheduleStorageBase);
     EXPECT_EQ(incomingReference.service.token, promotedReference.service.token);
@@ -26725,9 +26726,9 @@ void ExpectVariableControlToVariableControlInitial(bool direct) {
     ASSERT_TRUE(row->variableControlInstance.Valid());
     ASSERT_EQ(1u, row->variableControlNestedVariableControlCount);
     EXPECT_EQ(image.containers[0].children[0].stableChildOrdinal,
-              row->variableControlNestedSelectedChildOrdinals[0]);
-    EXPECT_EQ(0u, row->variableControlNestedContinuationOrdinals[0]);
-    const auto innerToken = row->variableControlNestedVariableControls[0];
+              row->variableControlControllers[0].selectedOrdinal);
+    EXPECT_EQ(0u, row->variableControlControllers[0].continuationOrdinal);
+    const auto innerToken = row->variableControlControllers[0].instance;
     ASSERT_TRUE(innerToken.Valid());
     harken::VariableControlInstanceSnapshot innerSnapshot{};
     ASSERT_TRUE(engine->variableControlInstances.Capture(
@@ -26760,7 +26761,7 @@ void ExpectVariableControlToVariableControlInitial(bool direct) {
     EXPECT_EQ(CanonicalActionWorld::kFirstSound, row->leaf.stableId);
     EXPECT_EQ(2u, row->variableControlNestedChildCount);
 
-    auto* innerService = engine->ResolvePlayableService(row->variableControlNestedServices[0]);
+    auto* innerService = engine->ResolvePlayableService(row->variableControlControllers[0].service);
     ASSERT_NE(nullptr, innerService);
     EXPECT_EQ(innerRoot, innerService->ownerInstance);
     EXPECT_NE(row->identity, innerService->identity);
@@ -49006,7 +49007,7 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
         ASSERT_EQ(1u, root->variableControlDiscreteMemberCount);
         if (nested) {
             ASSERT_EQ(1u, root->variableControlNestedVariableControlCount);
-            const auto* inner = engine.ResolvePlayableService(root->variableControlNestedServices[0]);
+            const auto* inner = engine.ResolvePlayableService(root->variableControlControllers[0].service);
             ASSERT_NE(nullptr, inner);
             EXPECT_EQ(root->variableControlChildInstances[0], inner->ownerInstance);
         } else {
@@ -50493,7 +50494,7 @@ TEST(ActionFiringApi, OrderedVariableDoubleNestedPlayPreservesInitialPcmAndRetir
         original.publicControl = root->variableControlInstance;
         original.publicDecision = root->variableControlDiscreteDecision;
         original.publicGroup = root->variableControlDiscreteArmGroup;
-        original.service = root->variableControlNestedServices[0];
+        original.service = root->variableControlControllers[0].service;
         const auto* inner = engine.ResolvePlayableService(original.service);
         ASSERT_NE(nullptr, inner);
         original.control = inner->variableControlInstance;

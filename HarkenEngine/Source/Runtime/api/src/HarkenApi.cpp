@@ -234,6 +234,7 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
         bytes += column(row.memberPrograms) + column(row.members) + column(row.variableControlRetargetMembers) +
             row.variableControlMemberWeights.StorageBytes() + row.variableControlInitialArms.StorageBytes() +
             row.variableControlRetargetIncoming.StorageBytes() +
+            column(row.variableControlControllers) + column(row.variableControlContainers) +
             column(row.variableControlDiscreteRetargetGroupArms) +
             column(row.variableControlDiscreteRetargetPayloads) +
             column(row.variableControlDiscreteRetargetEnteringPayloads) +
@@ -1784,13 +1785,13 @@ bool CommitPreparedVariableControlOwner(void* opaque,
     if (context->nestedIndex != UINT32_MAX && context->row != nullptr &&
         context->nestedCount != nullptr) {
         const std::uint32_t index = context->nestedIndex;
-        context->row->variableControlNestedVariableControls[index] =
+        context->row->variableControlControllers[index].instance =
             *context->output;
-        context->row->variableControlNestedServices[index] =
+        context->row->variableControlControllers[index].service =
             {context->service->identity, context->service->ownerInstance,
              context->service->ownerEpoch, context->service->invocationGeneration};
-        context->row->variableControlNestedDecisions[index] = *context->activationDecision;
-        context->row->variableControlNestedDecisionContinuous[index] =
+        context->row->variableControlControllers[index].decision = *context->activationDecision;
+        context->row->variableControlControllers[index].continuous =
             context->activationSide == harken::VariableControlSide::Continuous;
         *context->nestedCount = std::max(*context->nestedCount, index + 1u);
     }
@@ -1881,8 +1882,8 @@ bool CancelPreparedVariableControlOwner(void* opaque) noexcept {
         if (context->nestedIndex != UINT32_MAX &&
             context->row != nullptr && context->nestedCount != nullptr &&
             *context->nestedCount > context->nestedIndex) {
-            context->row->variableControlNestedVariableControls[
-                context->nestedIndex] = {};
+            context->row->variableControlControllers[
+                context->nestedIndex].instance = {};
         }
     }
     return resolved && CancelPreparedServiceOwner(context->engine, context->service);
@@ -12807,35 +12808,35 @@ bool ReleaseVariableControlStart(
     const harken::EngineActionPlayScratch* privateVariableControlOwner = nullptr) noexcept {
     for (std::uint32_t index = 0;
          index < row.variableControlNestedVariableControlCount; ++index) {
-        if (row.variableControlNestedServices[index].Valid()) {
+        if (row.variableControlControllers[index].service.Valid()) {
             if (!RetireNestedVariableControlService(engine,
-                    row.variableControlNestedServices[index], false,
+                    row.variableControlControllers[index].service, false,
                     privateVariableControlOwner)) return false;
-            row.variableControlNestedVariableControls[index] = {};
-            row.variableControlNestedDecisions[index] = {};
+            row.variableControlControllers[index].instance = {};
+            row.variableControlControllers[index].decision = {};
             continue;
         }
-        if (row.variableControlNestedVariableControls[index].Valid() &&
-            row.variableControlNestedDecisions[index].Valid()) {
+        if (row.variableControlControllers[index].instance.Valid() &&
+            row.variableControlControllers[index].decision.Valid()) {
             (void)engine.variableControlInstances.CancelSide(
-                row.variableControlNestedVariableControls[index],
-                row.variableControlNestedDecisionContinuous[index]
+                row.variableControlControllers[index].instance,
+                row.variableControlControllers[index].continuous
                     ? harken::VariableControlSide::Continuous
                     : harken::VariableControlSide::Discrete,
-                row.variableControlNestedDecisions[index]);
+                row.variableControlControllers[index].decision);
         }
-        if (row.variableControlNestedDecisions[index].Valid()) {
+        if (row.variableControlControllers[index].decision.Valid()) {
             if (!RetireNestedVariableControlDecision(
-                    engine, row.variableControlNestedDecisions[index])) {
+                    engine, row.variableControlControllers[index].decision)) {
 engine.runtimeRecreateRequired = true;
                 return false;
             }
-            row.variableControlNestedDecisions[index] = {};
+            row.variableControlControllers[index].decision = {};
         }
-        if (row.variableControlNestedVariableControls[index].Valid()) {
+        if (row.variableControlControllers[index].instance.Valid()) {
             (void)engine.variableControlInstances.Release(
-                row.variableControlNestedVariableControls[index]);
-            row.variableControlNestedVariableControls[index] = {};
+                row.variableControlControllers[index].instance);
+            row.variableControlControllers[index].instance = {};
         }
     }
     row.variableControlNestedVariableControlCount = 0;
@@ -17659,7 +17660,7 @@ bool BindVariableControlRetargetFrontierLeaf(harken::Engine& engine,
 }
 
 bool ObserveRetargetNestedControllerEntry(harken::Engine& engine,
-    const harken::EngineVariableRetargetIncomingStorage::Controller* controllers, std::uint32_t count,
+    const harken::EngineVariableTreeStorage::Controller* controllers, std::uint32_t count,
     const harken::DecisionCommittedSnapshot& decision, std::uint64_t onset,
     std::uint64_t observedAudioSequence, harken::PlayableInstanceHandle enteringRoot) noexcept {
     if (decision.lastAudioSequence == 0 || decision.lastAudioSequence > observedAudioSequence ||
@@ -21787,6 +21788,14 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         result.status = harken::PlayableStartStatus::RuntimeRecreateRequired;
         return result;
     }
+    if (!engine.PrepareVariableControlOwners(row, scratch->variableControlNestedVariableControlCount,
+            scratch->variableControlContainerRowCount)) {
+        scratch->row = &row;
+        scratch->variableControl = true;
+        (void)CancelPreparedVariableControlInitial(engine, scratch);
+        result.status = harken::PlayableStartStatus::Backpressure;
+        return result;
+    }
     row.actionPrepared = true;
     row.rootInstance = instance;
     scratch->authorityOwnerContext.service = &row;
@@ -21849,14 +21858,14 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         scratch->variableControlContainerRowCount;
     for (std::uint32_t index = 0;
          index < scratch->variableControlContainerRowCount; ++index) {
-        row.variableControlNestedContainerInstances[index] =
+        row.variableControlContainers[index].handle =
             scratch->variableControlContainerRows[index].Instance();
-        row.variableControlNestedContainerEpochs[index] = 0;
+        row.variableControlContainers[index].epoch = 0;
         for (std::uint32_t childIndex = 0;
              childIndex < scratch->variableControlChildCount; ++childIndex) {
             if (scratch->variableControlChildren[childIndex].Handle() ==
-                row.variableControlNestedContainerInstances[index]) {
-                row.variableControlNestedContainerEpochs[index] =
+                row.variableControlContainers[index].handle) {
+                row.variableControlContainers[index].epoch =
                     scratch->variableControlChildren[childIndex].ScheduleEpoch();
                 break;
             }
@@ -23464,8 +23473,8 @@ engine.runtimeRecreateRequired = true;
                 &scratch->variableControlNestedDecisions[index], sequence,
                 &nestedDecision);
         if (decisionCommitted) {
-            row.variableControlNestedDecisions[index] = nestedDecision;
-            row.variableControlNestedDecisionContinuous[index] =
+            row.variableControlControllers[index].decision = nestedDecision;
+            row.variableControlControllers[index].continuous =
                 scratch->variableControlNestedDecisionContinuous[index];
             // Keep a partially published decision visible to the row-level
             // cleanup even when its matching VC token fails to commit below.
@@ -23480,19 +23489,19 @@ engine.runtimeRecreateRequired = true;
                 &scratch->variableControlNestedVariableControls[index],
                 &committed);
         if (committedControl) {
-            row.variableControlNestedVariableControls[index] = committed;
-            row.variableControlNestedSelectedChildOrdinals[index] =
+            row.variableControlControllers[index].instance = committed;
+            row.variableControlControllers[index].selectedOrdinal =
                 scratch->variableControlNestedSelectedChildOrdinals[index];
-            row.variableControlNestedContinuationOrdinals[index] =
+            row.variableControlControllers[index].continuationOrdinal =
                 scratch->variableControlNestedContinuationOrdinals[index];
             row.variableControlNestedVariableControlCount = index + 1u;
             if (!engine.variableControlInstances.ActivateSide(
                     committed,
-                    row.variableControlNestedDecisionContinuous[index]
+                    row.variableControlControllers[index].continuous
                         ? harken::VariableControlSide::Continuous
                         : harken::VariableControlSide::Discrete,
-                    row.variableControlNestedDecisions[index],
-                    row.variableControlNestedDecisionContinuous[index]
+                    row.variableControlControllers[index].decision,
+                    row.variableControlControllers[index].continuous
                         ? row.variableControlContinuousBank
                         : row.variableControlDiscreteBank)) {
                 ok = false;
@@ -23504,9 +23513,9 @@ engine.runtimeRecreateRequired = true;
         for (std::uint32_t index = 0;
              index < scratch->variableControlNestedVariableControlCount;
              ++index) {
-            row.variableControlNestedSelectedChildOrdinals[index] =
+            row.variableControlControllers[index].selectedOrdinal =
                 scratch->variableControlNestedSelectedChildOrdinals[index];
-            row.variableControlNestedContinuationOrdinals[index] =
+            row.variableControlControllers[index].continuationOrdinal =
                 scratch->variableControlNestedContinuationOrdinals[index];
         }
     }
@@ -23979,8 +23988,8 @@ engine.runtimeRecreateRequired = true;
         for (std::uint32_t index = 0; index < scratch->variableControlNestedVariableControlCount; ++index) {
             auto* service = engine.ResolvePlayableService(scratch->variableControlNestedServices[index]);
             if (service == nullptr) { ok = false; continue; }
-            service->variableControlInstance = row.variableControlNestedVariableControls[index];
-            row.variableControlNestedServices[index] = scratch->variableControlNestedServices[index];
+            service->variableControlInstance = row.variableControlControllers[index].instance;
+            row.variableControlControllers[index].service = scratch->variableControlNestedServices[index];
             ok = CommitPreparedServiceOwner(&engine, service) && ok;
         }
     }
@@ -25888,9 +25897,9 @@ bool ResolveVariableControlNestedQueueOwner(
     std::uint32_t ownerIndex = row.variableControlNestedQueueOwnerIndex;
     const auto matches = [&](std::uint32_t index) noexcept {
         if (index >= row.variableControlNestedContainerCount) return false;
-        const auto owner = row.variableControlNestedContainerInstances[index];
+        const auto owner = row.variableControlContainers[index].handle;
         const auto expectedEpoch =
-            row.variableControlNestedContainerEpochs[index];
+            row.variableControlContainers[index].epoch;
         if (owner == 0 || expectedEpoch == 0) return false;
         const auto view = engine.playableInstances.Classify(owner);
         if (!view.live || view.kind != harken::PlayableKind::Container ||
@@ -25931,7 +25940,7 @@ bool ResolveVariableControlNestedQueueOwner(
         if (ownerIndex == UINT32_MAX) return false;
         row.variableControlNestedQueueOwnerIndex = ownerIndex;
     }
-    const auto owner = row.variableControlNestedContainerInstances[ownerIndex];
+    const auto owner = row.variableControlContainers[ownerIndex].handle;
     const auto ownerView = engine.playableInstances.Classify(owner);
     if (!ownerView.live || ownerView.scheduleEpoch == 0) return false;
     row.variableControlNestedQueueOwnerInstance = owner;
@@ -30753,10 +30762,7 @@ bool PromoteVariableControlDiscreteRetargetSubtree(
         row.variableControlDiscreteRetargetIncomingNestedVariableControlCount > incoming.controllers.size() ||
         row.variableControlDiscreteRetargetIncomingSelectionCount > incoming.selectionPath.size() ||
         incomingLeafCount > row.variableControlLeafInstances.size() ||
-        incomingNestedCount > row.variableControlChildInstances.size() ||
-        incomingContainerCount > row.variableControlNestedContainerInstances.size() ||
-        row.variableControlDiscreteRetargetIncomingNestedVariableControlCount >
-            row.variableControlNestedVariableControls.size()) {
+        incomingNestedCount > row.variableControlChildInstances.size()) {
         return false;
     }
     const auto incomingView = engine.playableInstances.Classify(incomingRoot);
@@ -30795,24 +30801,24 @@ bool PromoteVariableControlDiscreteRetargetSubtree(
         row.variableControlNestedVariableControlCount;
     for (std::uint32_t index = 0;
          index < outgoingNestedVariableControlCount; ++index) {
-        if (row.variableControlNestedServices[index].Valid()) {
-            if (!RetireNestedVariableControlService(engine, row.variableControlNestedServices[index])) return false;
-            row.variableControlNestedVariableControls[index] = {};
-            row.variableControlNestedDecisions[index] = {};
+        if (row.variableControlControllers[index].service.Valid()) {
+            if (!RetireNestedVariableControlService(engine, row.variableControlControllers[index].service)) return false;
+            row.variableControlControllers[index].instance = {};
+            row.variableControlControllers[index].decision = {};
             continue;
         }
-        if (row.variableControlNestedVariableControls[index].Valid()) {
+        if (row.variableControlControllers[index].instance.Valid()) {
             (void)engine.variableControlInstances.Release(
-                row.variableControlNestedVariableControls[index]);
-            row.variableControlNestedVariableControls[index] = {};
+                row.variableControlControllers[index].instance);
+            row.variableControlControllers[index].instance = {};
         }
-        const auto decision = row.variableControlNestedDecisions[index];
+        const auto decision = row.variableControlControllers[index].decision;
         if (decision.Valid()) {
             if (!RetireNestedVariableControlDecision(engine, decision)) {
 engine.runtimeRecreateRequired = true;
                 return false;
             }
-            row.variableControlNestedDecisions[index] = {};
+            row.variableControlControllers[index].decision = {};
         }
     }
     if (row.variableControlChildCount == 0) {
@@ -30828,48 +30834,10 @@ engine.runtimeRecreateRequired = true;
         row.variableControlDiscreteRetargetIncomingNestedVariableControlCount;
     row.variableControlNestedVariableControlCount =
         incomingNestedVariableControlCount;
-    for (std::uint32_t index = 0; index < incomingNestedVariableControlCount;
-         ++index) {
-        row.variableControlNestedVariableControls[index] =
-            row.variableControlRetargetIncoming.controllers[index].instance;
-        row.variableControlNestedServices[index] =
-            row.variableControlRetargetIncoming.controllers[index].service;
-        row.variableControlNestedDecisions[index] =
-            row.variableControlRetargetIncoming.controllers[index].decision;
-        row.variableControlNestedDecisionContinuous[index] =
-            row.variableControlRetargetIncoming.controllers[index].continuous;
-        row.variableControlNestedSelectedChildOrdinals[index] =
-            row.variableControlRetargetIncoming.controllers[index].selectedOrdinal;
-        row.variableControlNestedContinuationOrdinals[index] =
-            row.variableControlRetargetIncoming.controllers[index].continuationOrdinal;
-    }
-    for (std::uint32_t index = incomingNestedVariableControlCount;
-         index < row.variableControlNestedVariableControls.size(); ++index) {
-        row.variableControlNestedVariableControls[index] = {};
-        row.variableControlNestedServices[index] = {};
-        row.variableControlNestedDecisions[index] = {};
-        row.variableControlNestedDecisionContinuous[index] = false;
-        row.variableControlNestedSelectedChildOrdinals[index] = 0;
-        row.variableControlNestedContinuationOrdinals[index] = 0;
-    }
-    for (std::uint32_t index = 0; index < incomingNestedVariableControlCount;
-         ++index) {
-        row.variableControlRetargetIncoming.controllers[index].instance = {};
-        row.variableControlRetargetIncoming.controllers[index].service = {};
-        row.variableControlRetargetIncoming.controllers[index].decision = {};
-    }
+    row.variableControlControllers.swap(row.variableControlRetargetIncoming.controllers);
+    row.variableControlContainers.swap(row.variableControlRetargetIncoming.containers);
     row.variableControlDiscreteRetargetIncomingNestedVariableControlCount = 0;
-    for (std::uint32_t index = 0; index < incomingContainerCount; ++index) {
-        row.variableControlNestedContainerInstances[index] =
-            row.variableControlRetargetIncoming.containers[index].handle;
-        row.variableControlNestedContainerEpochs[index] =
-            row.variableControlRetargetIncoming.containers[index].epoch;
-    }
-    for (std::uint32_t index = incomingContainerCount;
-         index < row.variableControlNestedContainerInstances.size(); ++index) {
-        row.variableControlNestedContainerInstances[index] = 0;
-        row.variableControlNestedContainerEpochs[index] = 0;
-    }
+    row.variableControlDiscreteRetargetIncomingContainerCount = 0;
     for (std::uint32_t index = 0; index < incomingLeafCount; ++index) {
         row.variableControlLeafInstances[index] =
             engine.playableInstances.Classify(
@@ -31110,8 +31078,6 @@ bool PrepareDiscreteRetargetStorage(harken::Engine& engine,
         sourceEvents > 2u * sourcePrograms || enteringEvents > 2u * enteringPrograms) return false;
     if (incoming != nullptr && (incomingLeafCount > row.variableControlLeafInstances.size() ||
         incoming->nestedCount > row.variableControlChildInstances.size() ||
-        incoming->nestedVariableControlCount > row.variableControlNestedVariableControls.size() ||
-        incoming->containerCount > row.variableControlNestedContainerInstances.size() ||
         incoming->selectionCount > row.selectionPath.size() ||
         incoming->nestedCount > incoming->nestedInstances.size() ||
         incoming->nestedVariableControlCount > incoming->nestedServices.size() ||
@@ -52785,7 +52751,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             if (group == nullptr || producer->row == nullptr || group->RepreparePending() ||
                 group->leafRetirement != OriginalPendingVariableGroupHolder::LeafRetirement::None ||
                 !group->nativeReplacementSlots.empty() || !group->queueRoleReservations.empty()) return false;
-            const auto& row = *producer->row;
+            auto& row = *producer->row;
             const auto* program = ResolveVariableControlProgram(*this, row);
             if (program == nullptr || program->mode != ContainerModeV1::VariableControl ||
                 row.root.kind != PlayableKindV1::Container || !row.InvocationValid()) return false;
@@ -52843,6 +52809,10 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 row.Invocation().packPlaybackView.CompositeGeneration() != stamp.generation ||
                 row.Invocation().packPlaybackView.WorldSemanticFingerprint() != stamp.semanticFingerprint) return false;
             profiles[ordinal] = result.profile;
+            if (result.profile.controlSides < 2u || result.profile.containerRows == 0) return false;
+            if (!PrepareVariableControlOwners(row,
+                    std::min(kMaxKnownScheduleLeaves + 64u, result.profile.controlSides / 2u - 1u),
+                    std::min(kMaxKnownScheduleLeaves + 64u, result.profile.containerRows - 1u))) return shortage();
             futures.voice.Include(result.profile.voice);
             futures.queue.Include(result.profile.queue);
             const auto voiceRows = backing::ReservedRows(result.profile);
@@ -57939,6 +57909,8 @@ bool Engine::PreparePendingVariableGroupInstallationPublication(EngineActionPlay
     if (row.frontierLifetimePin.Valid()) return false;
     if (row.privateImmediateEntry.Valid()) return false;
     if (child->voiceStartCount > row.variableControlChildInstances.size() ||
+        child->variableControlNestedVariableControlCount > row.variableControlControllers.size() ||
+        child->variableControlNestedFrontierCount > row.variableControlContainers.size() ||
         !canShift(row.variableControlDiscreteNextEvaluationFrame) ||
         !canShift(row.variableControlNextEvaluationFrame)) return false;
     for (std::uint32_t index = 0; index < child->voiceStartCount; ++index) {
@@ -58169,20 +58141,19 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
     row.variableControlChildWeightCount = 0;
     row.variableControlChildCount = child.pendingVariableReplacementTopCount;
     row.variableControlNestedChildCount = child.variableControlChildCount;
-    row.variableControlNestedContainerInstances = {};
-    row.variableControlNestedContainerEpochs = {};
+    std::ranges::fill(row.variableControlContainers, EngineVariableTreeStorage::Instance{});
     row.variableControlNestedContainerCount = child.variableControlNestedFrontierCount;
     row.variableControlNestedVariableControlCount = child.variableControlNestedVariableControlCount;
     for (std::uint32_t index = 0; index < child.variableControlNestedVariableControlCount; ++index) {
         auto* service = ResolvePlayableService(child.variableControlNestedServices[index]);
         if (service == nullptr) { runtimeRecreateRequired = true; return false; }
-        row.variableControlNestedServices[index] = child.variableControlNestedServices[index];
-        row.variableControlNestedVariableControls[index] = service->variableControlInstance;
-        row.variableControlNestedDecisions[index] = child.variableControlNestedDecisionContinuous[index]
+        row.variableControlControllers[index].service = child.variableControlNestedServices[index];
+        row.variableControlControllers[index].instance = service->variableControlInstance;
+        row.variableControlControllers[index].decision = child.variableControlNestedDecisionContinuous[index]
             ? service->variableControlContinuousDecision : service->variableControlDiscreteDecision;
-        row.variableControlNestedDecisionContinuous[index] = child.variableControlNestedDecisionContinuous[index];
-        row.variableControlNestedSelectedChildOrdinals[index] = child.variableControlNestedSelectedChildOrdinals[index];
-        row.variableControlNestedContinuationOrdinals[index] = child.variableControlNestedContinuationOrdinals[index];
+        row.variableControlControllers[index].continuous = child.variableControlNestedDecisionContinuous[index];
+        row.variableControlControllers[index].selectedOrdinal = child.variableControlNestedSelectedChildOrdinals[index];
+        row.variableControlControllers[index].continuationOrdinal = child.variableControlNestedContinuationOrdinals[index];
         service->immediateLane = attempt.lane;
         service->schedule.entryAnchorFrame = anchor;
     }
@@ -58215,8 +58186,8 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
     }
     for (std::uint32_t index = 0; index < child.variableControlNestedFrontierCount; ++index) {
         const auto& instance = child.variableControlChildren[child.variableControlNestedParentIndices[index]];
-        row.variableControlNestedContainerInstances[index] = instance.Handle();
-        row.variableControlNestedContainerEpochs[index] = instance.ScheduleEpoch();
+        row.variableControlContainers[index].handle = instance.Handle();
+        row.variableControlContainers[index].epoch = instance.ScheduleEpoch();
     }
     row.scheduleLeafCount = child.voiceStartCount;
     row.pendingFutureCount = child.voiceStartCount;
@@ -85935,7 +85906,7 @@ bool PrepareScheduledActionStop(
         if (OwnsTransferredQueueArrival(record, row) && !captureDecision(record.decision)) return false;
     }
     for (std::uint32_t index = 0; index < row.variableControlNestedVariableControlCount; ++index) {
-        if (!captureDecision(row.variableControlNestedDecisions[index])) return false;
+        if (!captureDecision(row.variableControlControllers[index].decision)) return false;
     }
     for (std::uint32_t index = 0; index < row.variableControlDiscreteRetargetIncomingNestedVariableControlCount; ++index) {
         if (!captureDecision(row.variableControlRetargetIncoming.controllers[index].decision)) return false;

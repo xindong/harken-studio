@@ -1563,7 +1563,7 @@ struct EngineQueueFutureFilingLayout {
     bool queueDecisionCommitted = false;
 };
 
-struct EngineVariableRetargetIncomingStorage {
+struct EngineVariableTreeStorage {
     struct Instance {
         PlayableInstanceHandle handle = 0;
         std::uint64_t epoch = 0;
@@ -1800,23 +1800,9 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     bool variableControlIndependentFrontier = false;
     // Internal owners for nested VariableControl containers. These tokens are
     // intentionally private to the start row and are released with its tree.
-    std::array<VariableControlInstanceToken, kMaxKnownScheduleLeaves + 64u>
-        variableControlNestedVariableControls{};
-    std::array<EnginePlayableServiceReference, kMaxKnownScheduleLeaves + 64u>
-        variableControlNestedServices{};
+    std::vector<EngineVariableTreeStorage::Controller> variableControlControllers;
     std::uint32_t variableControlNestedVariableControlCount = 0;
-    std::array<DecisionToken, kMaxKnownScheduleLeaves + 64u>
-        variableControlNestedDecisions{};
-    std::array<bool, kMaxKnownScheduleLeaves + 64u>
-        variableControlNestedDecisionContinuous{};
-    std::array<std::uint32_t, kMaxKnownScheduleLeaves + 64u>
-        variableControlNestedSelectedChildOrdinals{};
-    std::array<std::uint32_t, kMaxKnownScheduleLeaves + 64u>
-        variableControlNestedContinuationOrdinals{};
-    std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves + 64u>
-        variableControlNestedContainerInstances{};
-    std::array<std::uint64_t, kMaxKnownScheduleLeaves + 64u>
-        variableControlNestedContainerEpochs{};
+    std::vector<EngineVariableTreeStorage::Instance> variableControlContainers;
     std::uint32_t variableControlNestedContainerCount = 0;
     std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves>
         variableControlLeafInstances{};
@@ -1866,7 +1852,7 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint32_t variableControlDiscreteRetargetDesiredChildOrdinal = 0;
     PlayableInstanceHandle variableControlDiscreteRetargetIncomingChild = 0;
     std::uint64_t variableControlDiscreteRetargetIncomingChildEpoch = 0;
-    EngineVariableRetargetIncomingStorage variableControlRetargetIncoming;
+    EngineVariableTreeStorage variableControlRetargetIncoming;
     std::uint32_t variableControlDiscreteRetargetIncomingLeafCount = 0;
     std::uint32_t variableControlDiscreteRetargetIncomingNestedCount = 0;
     std::uint32_t variableControlDiscreteRetargetIncomingNestedVariableControlCount = 0;
@@ -5501,6 +5487,23 @@ struct Engine {
         }
         catch (...) { return false; }
         return true;
+    }
+    bool PrepareVariableControlOwners(EnginePlayableServiceRow& row,
+        std::uint32_t controllers, std::uint32_t containers) noexcept {
+        if (controllers > kMaxKnownScheduleLeaves + 64u || containers > kMaxKnownScheduleLeaves + 64u)
+            return false;
+        if (controllers <= row.variableControlControllers.size() && containers <= row.variableControlContainers.size())
+            return true;
+        if (memguard::IsAudioTagged() || nativeRuntimeBackingInUse != nullptr) return false;
+        try {
+            const auto grow = [&](auto& column, std::uint32_t count) {
+                if (count <= column.size()) return true;
+                if (count > column.capacity() && !AllowNativeBackingAllocation()) return false;
+                column.resize(count);
+                return true;
+            };
+            return grow(row.variableControlControllers, controllers) && grow(row.variableControlContainers, containers);
+        } catch (...) { return false; }
     }
     bool PrepareVariableControlMemberWeights(EnginePlayableServiceRow& row, std::uint32_t count) noexcept {
         return count <= config.maxVariableControlLiveRows &&

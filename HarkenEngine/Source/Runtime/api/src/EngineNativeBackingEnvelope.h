@@ -80,6 +80,7 @@ struct QueueColumns {
 struct Profile {
     std::uint32_t current = 0;
     std::uint32_t referenceRows = 0;
+    std::uint32_t containerRows = 0;
     std::array<std::uint32_t, kLeafCapacity + 1u> H{};
     std::array<std::uint32_t, kLeafCapacity + 1u> controllerWeights{};
     std::array<std::uint32_t, kLeafCapacity + 1u> controllerChildWeights{};
@@ -230,6 +231,7 @@ inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexce
     a.flags |= b.flags;
     a.profile.current = SaturatingAdd(a.profile.current, b.profile.current, kLeafCapacity, a.flags);
     a.profile.referenceRows = SaturatingAdd(a.profile.referenceRows, b.profile.referenceRows, UINT32_MAX, a.flags);
+    a.profile.containerRows = SaturatingAdd(a.profile.containerRows, b.profile.containerRows, UINT32_MAX, a.flags);
     a.profile.Q = SaturatingAdd(a.profile.Q, b.profile.Q, limits.queueRoleCapacity, a.flags);
     a.profile.controlSides = SaturatingAdd(a.profile.controlSides, b.profile.controlSides,
         kControlSideCapacity, a.flags);
@@ -258,6 +260,7 @@ inline Result Alternative(Result a, const Result& b) noexcept {
     a.flags |= b.flags;
     a.profile.current = std::max(a.profile.current, b.profile.current);
     a.profile.referenceRows = std::max(a.profile.referenceRows, b.profile.referenceRows);
+    a.profile.containerRows = std::max(a.profile.containerRows, b.profile.containerRows);
     a.profile.Q = std::max(a.profile.Q, b.profile.Q);
     a.profile.controlSides = std::max(a.profile.controlSides, b.profile.controlSides);
     a.profile.voice.Include(b.profile.voice);
@@ -586,18 +589,22 @@ private:
         --budget.containers;
         --budget.materializedPath;
         ++budget.frontierDepth;
+        Result result;
         if (mode == Mode::DirectNested) {
             if (program->childCount != 1u) return Omitted(ExistingDynamicPath);
-            return Visit(program->children[0].playable, Mode::DirectNested, budget);
+            result = Visit(program->children[0].playable, Mode::DirectNested, budget);
+        } else {
+            switch (program->mode) {
+            case ContainerModeV1::Random:
+            case ContainerModeV1::Sequence: result = Choices(*program, budget); break;
+            case ContainerModeV1::VariableControl: result = Variable(*program, budget); break;
+            case ContainerModeV1::RandomQueue:
+            case ContainerModeV1::SequenceQueue: result = Queue(*program, budget); break;
+            default: return Failure(Status::UnsupportedMode);
+            }
         }
-        switch (program->mode) {
-        case ContainerModeV1::Random:
-        case ContainerModeV1::Sequence: return Choices(*program, budget);
-        case ContainerModeV1::VariableControl: return Variable(*program, budget);
-        case ContainerModeV1::RandomQueue:
-        case ContainerModeV1::SequenceQueue: return Queue(*program, budget);
-        }
-        return Failure(Status::UnsupportedMode);
+        if (result) result.profile.containerRows = SaturatingAdd(result.profile.containerRows, 1u, UINT32_MAX, result.flags);
+        return result;
     }
 
     Result Schedule(const PlayableRefV1& ref, Budget budget) noexcept {
