@@ -1091,6 +1091,14 @@ void MainWindow::setupMenuBar()
     ShortcutManager::instance().bindAction(Shortcuts::Redo, redoAction_);
     editMenu->addAction(redoAction_);
 
+    editMenu->addSeparator();
+    auto& shortcuts = ShortcutManager::instance();
+    for (const QString& id : {Shortcuts::Cut, Shortcuts::Copy, Shortcuts::Paste,
+                              Shortcuts::Duplicate, Shortcuts::Delete})
+        shortcuts.createMenuAction(id, editMenu);
+    editMenu->addSeparator();
+    shortcuts.createMenuAction(Shortcuts::SelectAll, editMenu);
+
     QMenu* layoutsMenu = menuBar->addMenu(tr("&Layout"));
     layoutsMenu->setObjectName("layoutsMenu");
     layoutController_->setLayoutsMenu(layoutsMenu);

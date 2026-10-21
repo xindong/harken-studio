@@ -8,10 +8,12 @@
 #include <QMap>
 #include <QList>
 #include <QSettings>
+#include <QPointer>
 #include <functional>
 #include <memory>
 
 class QWidget;
+class QMenu;
 
 namespace VNX {
 
@@ -58,6 +60,7 @@ public:
                               QWidget* widget,
                               std::function<void()> handler,
                               Qt::ShortcutContext context = Qt::WidgetShortcut);
+    QAction* createMenuAction(const QString& id, QMenu* menu);
     void unbindAction(const QString& id, QAction* action);
 
     QKeySequence shortcut(const QString& id) const;
@@ -85,16 +88,25 @@ signals:
     void shortcutsReset();
 
 private:
+    struct MenuCommand
+    {
+        std::function<void()> handler;
+        QKeySequence shortcut;
+    };
+
     ShortcutManager();
     ~ShortcutManager() override;
     Q_DISABLE_COPY(ShortcutManager)
 
     void setupDefaultShortcuts();
     void applyShortcut(const QString& id);
+    MenuCommand menuCommand(const QString& id, QWidget* focus) const;
     static QString canonicalShortcutId(const QString& id);
 
 private:
     QMap<QString, ShortcutInfo> shortcuts_;
+    QPointer<QWidget> focusedWidget_;
+    QPointer<QWidget> menuTarget_;
 };
 
 namespace Shortcuts {

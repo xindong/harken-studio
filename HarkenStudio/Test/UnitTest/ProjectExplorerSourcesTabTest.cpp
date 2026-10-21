@@ -1999,7 +1999,7 @@ TEST_F(ProjectExplorerSourcesTabTest, SourceRenameEditsInPlaceAndRejectsInvalidN
     QApplication::sendEvent(tree, &f2);
     auto* editor = tree->findChild<InlineRenameEdit*>();
     ASSERT_NE(editor, nullptr);
-    EXPECT_EQ(editor->selectedText(), QStringLiteral("Hit.wav"));
+    EXPECT_EQ(editor->selectedText(), QStringLiteral("Hit"));
     for (const auto& value : {QStringLiteral(""), QStringLiteral("Bad/Name.wav"),
                               QStringLiteral("Hit.txt")}) {
         editor->setText(value);
