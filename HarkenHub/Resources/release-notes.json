@@ -9,9 +9,13 @@
     {
       "version": "0.1.61",
       "date": "2026-10-21",
-      "pullRequests": [],
+      "pullRequests": [76],
       "contributors": ["liuxin2-sys"],
       "changes": [
+        {
+          "category": "improved",
+          "text": "The project list shows elapsed time since the last launch in hours and minutes, adding days after 24 hours instead of using vague labels such as Yesterday."
+        },
         {
           "category": "improved",
           "text": "Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged."

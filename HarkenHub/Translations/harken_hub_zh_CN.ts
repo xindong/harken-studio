@@ -160,6 +160,10 @@
 <context>
     <name>HubReleaseNotes</name>
     <message>
+        <source>The project list shows elapsed time since the last launch in hours and minutes, adding days after 24 hours instead of using vague labels such as Yesterday.</source>
+        <translation>工程列表的上次启动时间统一显示为小时、分，满 24 小时后显示天、小时、分，不再使用“昨天”等模糊提示。</translation>
+    </message>
+    <message>
         <source>Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged.</source>
         <translation>Studio 安装记录保存失败时保留恢复信息，Hub 启动时会检查中断的安装。正在安装的版本不再被显示为已损坏。</translation>
     </message>
@@ -1321,39 +1325,12 @@ Error code: %1</source>
         <translation>此版本可以打开已有工程，但不支持从 Hub 创建工程。</translation>
     </message>
     <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="118"/>
-        <source>Just now</source>
-        <translation>刚刚</translation>
+        <source>%1d %2h %3m ago</source>
+        <translation>%1天%2小时%3分前</translation>
     </message>
     <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="121"/>
-        <source>1 minute ago</source>
-        <translation>1 分钟前</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="122"/>
-        <source>%1 minutes ago</source>
-        <translation>%1 分钟前</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="126"/>
-        <source>1 hour ago</source>
-        <translation>1 小时前</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="127"/>
-        <source>%1 hours ago</source>
-        <translation>%1 小时前</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="130"/>
-        <source>Yesterday</source>
-        <translation>昨天</translation>
-    </message>
-    <message>
-        <location filename="../Source/UI/ProjectsPage.cpp" line="134"/>
-        <source>%1 days ago</source>
-        <translation>%1 天前</translation>
+        <source>%1h %2m ago</source>
+        <translation>%1小时%2分前</translation>
     </message>
     <message>
         <location filename="../Source/UI/ProjectsPage.cpp" line="152"/>
