@@ -95,6 +95,7 @@ set(HARKEN_HUB_SOURCES
     Source/Templates/ProjectTemplateCatalog.cpp
     Source/UI/ButtonPulseAnimator.cpp
     Source/UI/NoHoverItemDelegate.cpp
+    Source/UI/TableSorting.cpp
     Source/Transactions/InstallExecutor.cpp
     Source/Transactions/InstallIndex.cpp
     Source/Transactions/InstallPackageCache.cpp

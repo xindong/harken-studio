@@ -148,6 +148,25 @@ bool HubSettings::setWindowPosition(const QPoint& position)
     return saveRoot(root);
 }
 
+TableSortPreference HubSettings::tableSort(const QString& table)
+{
+    const QJsonObject sort = loadRoot().value(QStringLiteral("tableSort"))
+        .toObject().value(table).toObject();
+    return {sort.value(QStringLiteral("column")).toInt(),
+            sort.value(QStringLiteral("descending")).toBool()
+                ? Qt::DescendingOrder : Qt::AscendingOrder};
+}
+
+bool HubSettings::setTableSort(const QString& table, const TableSortPreference& sort)
+{
+    QJsonObject root = loadRoot();
+    QJsonObject tables = root.value(QStringLiteral("tableSort")).toObject();
+    tables[table] = QJsonObject{{QStringLiteral("column"), sort.column},
+                              {QStringLiteral("descending"), sort.order == Qt::DescendingOrder}};
+    root[QStringLiteral("tableSort")] = tables;
+    return saveRoot(root);
+}
+
 QString HubSettings::pendingUpdateNotesVersion()
 {
     return loadRoot()

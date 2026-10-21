@@ -15,6 +15,7 @@
 #include "Transactions/InstallIndex.h"
 #include "UI/BoundedHeaderView.h"
 #include "UI/NoHoverItemDelegate.h"
+#include "UI/TableSorting.h"
 #include "Versions/VersionScanner.h"
 #include "Integrations/Unity/UnityInstallation.h"
 #include "Integrations/Unity/UnityIntegrationService.h"
@@ -507,7 +508,7 @@ EngineIntegrationsPage::EngineIntegrationsPage(
     boundedHeader->setFillSection(kSdkStatusColumn);
     table_->setHorizontalHeader(boundedHeader);
     table_->horizontalHeader()->setHighlightSections(false);
-    table_->horizontalHeader()->setSectionsClickable(false);
+    sorting_ = new TableSorting(table_, QStringLiteral("engineIntegrations"), kEngineColumn);
     table_->horizontalHeader()->setDefaultAlignment(
         Qt::AlignLeft | Qt::AlignVCenter);
     table_->horizontalHeader()->setSectionResizeMode(
@@ -992,7 +993,13 @@ bool EngineIntegrationsPage::eventFilter(QObject* watched, QEvent* event)
 
 void EngineIntegrationsPage::refresh()
 {
+    sorting_->beginRefresh();
     inspectionStopped_ = false;
+    const auto selectedRows = table_->selectionModel()->selectedRows(kHarkenProjectColumn);
+    const QString selectedId = selectedRows.isEmpty()
+        ? QString() : selectedRows.front().data(Qt::UserRole).toString();
+    const auto* currentItem = table_->item(table_->currentRow(), kHarkenProjectColumn);
+    const QString currentId = currentItem ? currentItem->data(Qt::UserRole).toString() : QString();
     const auto integrations = integrations_->list();
     const auto targets = targets_->list();
     const QString storageError = integrations_->lastError().isEmpty()
@@ -1002,6 +1009,7 @@ void EngineIntegrationsPage::refresh()
         : QCoreApplication::translate("HarkenHub", "Integration records could not be read.\n%1").arg(localizeIntegrationText(storageError)));
     const auto projects = projects_->listProjects();
     table_->clearContents();
+    table_->setCurrentCell(-1, -1);
     table_->setRowCount(static_cast<int>(integrations.size()));
     for (int row = 0; row < static_cast<int>(integrations.size()); ++row) {
         const IntegrationRecord& integration =
@@ -1018,13 +1026,13 @@ void EngineIntegrationsPage::refresh()
         const QString harkenName = project == projects.end()
             ? QFileInfo(integration.harkenProjectPath).completeBaseName()
             : project->displayName;
-        auto* harkenItem = new QTableWidgetItem(harkenName);
+        auto* harkenItem = new SortableTableItem(harkenName);
         harkenItem->setToolTip(integration.harkenProjectPath);
         harkenItem->setData(Qt::UserRole, integration.integrationId);
         table_->setItem(row, kHarkenProjectColumn, harkenItem);
         if (target == targets.end()) {
             table_->setItem(row, kEngineProjectColumn,
-                            new QTableWidgetItem());
+                            new SortableTableItem(QString()));
             table_->setItem(row, kEngineColumn, new QTableWidgetItem());
             table_->setItem(
                 row, kSdkStatusColumn,
@@ -1035,7 +1043,7 @@ void EngineIntegrationsPage::refresh()
                 observation.status = QCoreApplication::translate("HarkenHub", "SDK scan stopped");
             else
                 observation = observeTarget(*target);
-            auto* targetItem = new QTableWidgetItem(target->displayName);
+            auto* targetItem = new SortableTableItem(target->displayName);
             targetItem->setToolTip(targetInputPath(*target));
             targetItem->setData(Qt::UserRole, target->canonicalRoot);
             table_->setItem(row, kEngineProjectColumn, targetItem);
@@ -1061,7 +1069,9 @@ void EngineIntegrationsPage::refresh()
         menu->setIcon(HubIcons::moreIcon(holder->devicePixelRatioF()));
         menu->setIconSize(QSize(16, 16));
         menu->setFixedSize(34, 26);
-        connect(menu, &QToolButton::clicked, this, [this, row, menu]() {
+        const QString integrationId = integration.integrationId;
+        const QString engineRoot = target == targets.end() ? QString() : target->canonicalRoot;
+        connect(menu, &QToolButton::clicked, this, [this, integrationId, engineRoot, menu]() {
             QMenu popup;
             QAction* edit = popup.addAction(QCoreApplication::translate("HarkenHub", "Edit Integration"));
             QAction* open = popup.addAction(QCoreApplication::translate("HarkenHub", "Open Folder"));
@@ -1070,16 +1080,22 @@ void EngineIntegrationsPage::refresh()
             QAction* selected = popup.exec(
                 menu->mapToGlobal(QPoint(0, menu->height())));
             if (selected == edit)
-                editIntegration(row);
-            else if (selected == open)
-                openEngineFolder(row);
+                beginExistingEditor(integrationId);
+            else if (selected == open && !engineRoot.isEmpty())
+                QDesktopServices::openUrl(QUrl::fromLocalFile(engineRoot));
             else if (selected == remove)
-                removeIntegration(row);
+                unlinkProjects(integrationId);
         });
         actions->addWidget(menu);
         table_->setCellWidget(row, kActionColumn, holder);
+        if (integrationId == selectedId)
+            table_->selectRow(row);
+        if (integrationId == currentId)
+            table_->setCurrentCell(row, kHarkenProjectColumn, QItemSelectionModel::NoUpdate);
     }
-    applyHighlight();
+    sorting_->endRefresh();
+    if (!highlightedIntegrationId_.isEmpty())
+        applyHighlight();
 }
 
 void EngineIntegrationsPage::beginEditForProject(
@@ -1207,19 +1223,6 @@ void EngineIntegrationsPage::refreshStudioVersion()
         updateStudioVersionFields();
 }
 
-void EngineIntegrationsPage::editIntegration(int row)
-{
-    const QTableWidgetItem* item = table_->item(row, kHarkenProjectColumn);
-    if (item)
-        beginExistingEditor(item->data(Qt::UserRole).toString());
-}
-
-void EngineIntegrationsPage::removeIntegration(int row)
-{
-    const QTableWidgetItem* item = table_->item(row, kHarkenProjectColumn);
-    if (item) unlinkProjects(item->data(Qt::UserRole).toString());
-}
-
 void EngineIntegrationsPage::unlinkProjects(const QString& integrationId)
 {
     if (operationRunning_ || sdkSelection_ || integrationId.isEmpty()) return;
@@ -1267,14 +1270,6 @@ void EngineIntegrationsPage::linkProjects()
         setSummaryText(QCoreApplication::translate("HarkenHub", "Projects linked. SDK files were not changed."));
         refresh();
     }
-}
-
-void EngineIntegrationsPage::openEngineFolder(int row)
-{
-    const QTableWidgetItem* item = table_->item(row, kEngineProjectColumn);
-    if (item)
-        QDesktopServices::openUrl(
-            QUrl::fromLocalFile(item->data(Qt::UserRole).toString()));
 }
 
 void EngineIntegrationsPage::browseHarkenProject()
