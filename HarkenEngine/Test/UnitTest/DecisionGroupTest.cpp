@@ -43,8 +43,9 @@ struct OriginalGroupMemberTestAccess {
     }
     static Plan03GroupSliceIdentity ObservePreparedOrigin(const ScheduledTransactionPool& pool,
         DecisionToken decision, std::uint32_t slice) {
-        for (std::size_t row = 0; row < pool.pagePlan03Groups_.size(); ++row) {
-            if (pool.pagePlan03Groups_[row].memberCount == 0) continue;
+        for (std::size_t row = 0; row < pool.pageGroupSlots_.size(); ++row) {
+            if (!pool.HasPageGroupStorage(row)) continue;
+            if (pool.PageGroupData(row).value.memberCount == 0) continue;
             const auto& original = pool.PageGroupOriginals(row)[0];
             if (original.serial_ != 0 && original.Group().decision.slot == decision.slot &&
                 original.Group().decision.generation == decision.generation && original.Group().sliceIndex == slice)
@@ -6718,6 +6719,49 @@ TEST(DecisionGroup, AcceptedPageMemberBackingSurvivesAllocationRefusalAndRollbac
     }
     EXPECT_FALSE(credit.Valid());
     EXPECT_EQ(2u, MemberOriginAccess::Count(f.arms, f.arm));
+    f.pool.DropPreparedOccupancy();
+    EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
+}
+
+TEST(DecisionGroup, IndependentGroupCannotBorrowAnActiveCreditMemberBacking) {
+    NativeGroupOriginFixture f;
+    ASSERT_NO_FATAL_FAILURE(f.Init());
+    harken::UnplacedBatchCredit credit{};
+    ASSERT_TRUE(f.pool.ReserveUnplacedBatchCredit({0, 0, 0, 0, 1}, &credit));
+    auto empty = f.Input(0);
+    empty.members = nullptr;
+    empty.memberCount = 0;
+    harken::ReserveRefusal refusal{};
+    harken::Plan03GroupReserveStatus status{};
+    {
+        harken::ScheduledTransactionPool::PrivateMaterializationTransaction lease;
+        ASSERT_TRUE(f.pool.TryMaterializeUnplacedBatch(&credit, nullptr, 0,
+            &empty, 1, f.arms, 0, &lease, &refusal, &status));
+        harken::PreparedPlan03GroupSlice independent;
+        {
+            PageMemberAllocationFault fault;
+            EXPECT_EQ(harken::Plan03GroupReserveStatus::MemberCapacity,
+                f.pool.PreparePlan03GroupSlice(f.Input(1), f.arms, &independent));
+        }
+        {
+            PageMemberAllocationFault fault;
+            EXPECT_EQ(harken::Plan03GroupReserveStatus::MemberCapacity,
+                f.pool.ReservePlan03GroupSlice(f.Input(1), f.arms));
+        }
+        EXPECT_FALSE(independent.Valid());
+        EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
+    }
+    ASSERT_TRUE(credit.Valid());
+    auto withMember = f.Input(0);
+    {
+        PageMemberAllocationFault fault;
+        harken::ScheduledTransactionPool::PrivateMaterializationTransaction lease;
+        ASSERT_TRUE(f.pool.TryMaterializeUnplacedBatch(&credit, nullptr, 0,
+            &withMember, 1, f.arms, 0, &lease, &refusal, &status));
+        ASSERT_EQ(1u, MemberOriginAccess::Count(f.arms, f.arm));
+        ASSERT_TRUE(lease.Commit(1));
+        ASSERT_TRUE(lease.ReleasePublication());
+    }
     f.pool.DropPreparedOccupancy();
     EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
 }

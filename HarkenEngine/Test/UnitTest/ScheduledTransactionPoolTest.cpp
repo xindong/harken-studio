@@ -48,6 +48,10 @@ struct ScheduledTransactionPoolCancelTestAccess {
         pool.nativeEventRows_.SetCommitPageLimitForTests(pages);
     }
     static std::size_t NativeEventRowBytes() { return sizeof(ScheduledTransactionPool::EventRow); }
+    static void SetNativeGroupCommitPageLimit(ScheduledTransactionPool& pool, std::size_t pages) {
+        pool.nativeGroupRows_.SetCommitPageLimitForTests(pages);
+    }
+    static std::size_t NativeGroupRowBytes() { return sizeof(ScheduledTransactionPool::NativeGroupRow); }
     static void SetCurrentSliceCommitPageLimit(ScheduledTransactionPool& pool, std::size_t pages) {
         for (std::uint32_t page = 0; page < pool.pageCount_; ++page) {
             auto& storage = pool.pageCurrentSliceStorage_[page];
@@ -78,21 +82,18 @@ struct ScheduledTransactionPoolCancelTestAccess {
     }
     static bool SetFreePageGroupGeneration(ScheduledTransactionPool& pool,
         std::size_t index, std::uint32_t generation) {
-        if (generation == 0 || index >= pool.pagePlan03Groups_.size() ||
+        if (generation == 0 || index >= pool.pageGroupSlots_.size() ||
             pool.pagePlan03GroupRowStates_[index] != ScheduledTransactionPool::Plan03GroupRowState::Free ||
-            pool.pagePlan03Groups_[index].transferOriginal != nullptr ||
-            pool.pagePlan03Groups_[index].transferProof != nullptr ||
-            pool.pagePlan03GroupReaders_[index].pins.load(std::memory_order_acquire) != 0 ||
-            pool.pagePlan03GroupLeases_[index].Capture().state != AudioSliceState::Ready) return false;
+            pool.HasPageGroupStorage(index)) return false;
         pool.pagePlan03GroupClaimGenerations_[index] = generation;
         return true;
     }
     static AudioSliceLease* BorrowPageGroupLease(ScheduledTransactionPool& pool,
         const Plan03GroupSliceIdentity& identity) {
-        if (identity.committedRow >= pool.pagePlan03Groups_.size()) return nullptr;
-        const auto& row = pool.pagePlan03Groups_[identity.committedRow];
+        if (!pool.HasPageGroupStorage(identity.committedRow)) return nullptr;
+        const auto& row = pool.PageGroupData(identity.committedRow).value;
         if (!(row.transferProspectiveIdentity == identity)) return nullptr;
-        return &pool.pagePlan03GroupLeases_[identity.committedRow];
+        return &pool.PageGroupData(identity.committedRow).lease;
     }
     static bool SetFreeImmediateLaneGeneration(ScheduledTransactionPool& pool,
         std::uint32_t rowIndex, std::uint32_t generation) {
@@ -307,7 +308,8 @@ struct PrivateUnboundPageArmHarness {
             *arms, members, frame, proof.get());
     }
     harken::AudioSliceLease* Lease(std::size_t i) {
-        return harken::detail::ScheduledTransactionPoolCancelTestAccess::BorrowPageGroupLease(*pool, identities[i]);
+        harken::Plan03PageGroupView view{};
+        return pool->ResolvePlan03GroupSliceProducer(identities[i], &view) ? view.lease : nullptr;
     }
     void ConsumeAndReclaim() {
         ASSERT_TRUE(proof->Valid());
@@ -4486,6 +4488,74 @@ TEST(ScheduledTransactionPool, UnplacedCreditChargesSharedPoolAndReleasesOnCance
     EXPECT_TRUE(pool.CancelPreparedTransactionBatch(&prepared));
 }
 
+TEST(ScheduledTransactionPool, NativeGroupBackingFailurePreservesReadersAndReusesAcrossPages) {
+    using Access = harken::detail::ScheduledTransactionPoolCancelTestAccess;
+    auto config = MakeConfig();
+    const auto count = static_cast<std::uint32_t>(
+        harken::detail::StablePageReservation::SystemPageBytes() / Access::NativeGroupRowBytes());
+    ASSERT_GT(count, 0u);
+    config.maxPlan03GroupHeadersPerPage = count + 1;
+    config.maxArmsPerGroup = 1;
+    ScheduledTransactionPool pool;
+    harken::TimelineArmTable arms(1);
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    EXPECT_EQ(0u, pool.NativeGroupRowStorageBytes());
+    EXPECT_EQ(0u, pool.NativeGroupRowCommittedBytes());
+    std::vector<harken::PreparedPlan03GroupSlice> prepared(count);
+    harken::Plan03GroupSliceInput input{};
+    input.executeFrame = 10;
+    input.decision = {1, 1};
+    for (std::uint32_t index = 0; index < count; ++index) {
+        input.sliceIndex = static_cast<std::uint16_t>(index);
+        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
+            pool.PreparePlan03GroupSlice(input, arms, &prepared[index]));
+    }
+    const auto warmBytes = pool.NativeGroupRowStorageBytes();
+    Access::SetNativeGroupCommitPageLimit(pool, 0);
+    input.sliceIndex = static_cast<std::uint16_t>(count);
+    harken::PreparedPlan03GroupSlice extra;
+    EXPECT_EQ(harken::Plan03GroupReserveStatus::PageGroupCapacity,
+        pool.PreparePlan03GroupSlice(input, arms, &extra));
+    EXPECT_EQ(harken::Plan03GroupReserveStatus::PageGroupCapacity,
+        pool.ReservePlan03GroupSlice(input, arms));
+    harken::UnplacedBatchCredit credit{};
+    EXPECT_FALSE(pool.ReserveUnplacedBatchCredit({0, 0, 0, 0, 1}, &credit));
+    EXPECT_FALSE(credit.Valid());
+    EXPECT_EQ(count, pool.CapturePrivateMaterializationSnapshotForTest().preparedGroups);
+    EXPECT_EQ(warmBytes, pool.NativeGroupRowStorageBytes());
+    for (const auto& group : prepared) EXPECT_TRUE(group.Valid());
+
+    ASSERT_TRUE(pool.CancelPreparedPlan03GroupSlice(&prepared[0]));
+    input.executeFrame = 110;
+    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
+        pool.PreparePlan03GroupSlice(input, arms, &extra));
+    EXPECT_EQ(warmBytes, pool.NativeGroupRowStorageBytes());
+    for (auto& group : prepared)
+        if (group.Valid()) ASSERT_TRUE(pool.CancelPreparedPlan03GroupSlice(&group));
+    harken::CommittedPlan03GroupSlice committed;
+    ASSERT_TRUE(pool.CommitPreparedPlan03GroupSlice(&extra, &committed));
+    harken::Plan03PageGroupView view{};
+    ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&view, 1));
+    harken::Plan03GroupReaderPin reader;
+    ASSERT_TRUE(pool.AcquirePlan03GroupReader(view.identity, &reader));
+    EXPECT_FALSE(pool.RollbackCommittedPlan03GroupSlice(&committed));
+    harken::Plan03PageGroupView retained{};
+    EXPECT_TRUE(pool.ResolvePlan03GroupSliceProducer(view.identity, &retained));
+    EXPECT_EQ(view.lease, retained.lease);
+    ASSERT_TRUE(reader.Release(0));
+    ASSERT_TRUE(pool.RollbackCommittedPlan03GroupSlice(&committed));
+    EXPECT_FALSE(pool.ResolvePlan03GroupSliceProducer(view.identity, &retained));
+    EXPECT_EQ(0u, pool.CapturePrivateMaterializationSnapshotForTest().preparedGroups);
+    ASSERT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+    EXPECT_EQ(warmBytes, pool.NativeGroupRowStorageBytes());
+    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
+        pool.PreparePlan03GroupSlice(input, arms, &extra));
+    ASSERT_TRUE(pool.CancelPreparedPlan03GroupSlice(&extra));
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch + 2));
+    EXPECT_EQ(0u, pool.NativeGroupRowStorageBytes());
+    EXPECT_EQ(0u, pool.NativeGroupRowCommittedBytes());
+}
+
 TEST(ScheduledTransactionPool, NativeEventBackingFailurePreservesAcceptedWorkAndReusesAcrossPages) {
     using Access = harken::detail::ScheduledTransactionPoolCancelTestAccess;
     Harness h;
@@ -5319,6 +5389,7 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesThreeGroupsWithConfigur
         SCOPED_TRACE(fault);
         ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
         ASSERT_TRUE(pool.ReserveUnplacedBatchCredit(demand, &credit));
+        harken::detail::ScheduledTransactionPoolCancelTestAccess::SetNativeGroupCommitPageLimit(pool, 0);
         ASSERT_TRUE(pool.PreflightUnplacedBatchMaterialization(
             credit, nullptr, 0, groups.data(), groups.size(), arms, 0,
             &transactionRefusal, &groupStatus));
@@ -5340,6 +5411,7 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesThreeGroupsWithConfigur
     }
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     ASSERT_TRUE(pool.ReserveUnplacedBatchCredit(demand, &credit));
+    harken::detail::ScheduledTransactionPoolCancelTestAccess::SetNativeGroupCommitPageLimit(pool, 0);
 
     {
         ScheduledTransactionPool::PrivateMaterializationTransaction lease;

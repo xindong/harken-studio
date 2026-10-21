@@ -222,8 +222,8 @@ struct ScheduledTransactionPoolTestAccess {
             const auto state = pool.pagePlan03GroupRowStates_[rowIndex];
             if (state != ScheduledTransactionPool::Plan03GroupRowState::Live)
                 continue;
-            const auto& group = pool.pagePlan03Groups_[rowIndex];
-            const auto& readers = pool.pagePlan03GroupReaders_[rowIndex];
+            const auto& group = pool.PageGroupData(rowIndex).value;
+            const auto& readers = pool.PageGroupData(rowIndex).readers;
             std::cerr << "U1VC_TEMP group row=" << rowIndex
                       << " members=" << group.memberCount
                       << " held=" << group.publicationHeld

@@ -1391,6 +1391,14 @@ public:
     std::size_t NativeEventRowStorageBytes() const noexcept { return nativeEventRows_.RequestedBytes(); }
     std::size_t NativeEventRowReservedBytes() const noexcept { return nativeEventRows_.ReservedBytes(); }
     std::size_t NativeEventRowCommittedBytes() const noexcept { return nativeEventRows_.CommittedBytes(); }
+    std::size_t NativeGroupRowStorageBytes() const noexcept { return nativeGroupRows_.RequestedBytes(); }
+    std::size_t NativeGroupRowReservedBytes() const noexcept { return nativeGroupRows_.ReservedBytes(); }
+    std::size_t NativeGroupRowCommittedBytes() const noexcept { return nativeGroupRows_.CommittedBytes(); }
+    std::size_t GroupDirectoryStorageBytes() const noexcept {
+        return pageGroupSlots_.capacity() * sizeof(std::size_t) +
+            pagePlan03GroupRowStates_.capacity() * sizeof(Plan03GroupRowState) +
+            pagePlan03GroupClaimGenerations_.capacity() * sizeof(std::uint32_t);
+    }
     std::size_t PageEventDirectoryStorageBytes() const noexcept {
         return (pageEventSlots_.capacity() + pageEventOrder_.capacity() +
             freeEventSlots_.capacity()) * sizeof(std::size_t);
@@ -1966,6 +1974,12 @@ private:
     friend struct Engine;
     bool PrepareEventStorage(std::uint64_t additionalEvents,
         bool consumeAcceptedBacking = false) noexcept;
+    bool PrepareGroupStorage(std::size_t additionalGroups,
+        bool consumeAcceptedBacking = false) noexcept;
+    Plan03GroupReserveStatus PreparePlan03GroupSliceImpl(
+        const Plan03GroupSliceInput& input, const TimelineArmTable& armTable,
+        PreparedPlan03GroupSlice* out, const PreparedPageGroupTransferScope* transferScope,
+        bool consumeAcceptedBacking) noexcept;
     ReserveRefusal PrepareTransactionBatchImpl(
         const TransactionRequest* requests, std::size_t requestCount,
         std::uint64_t publicationFrontier, PreparedTransactionBatch* out,
@@ -2204,7 +2218,8 @@ private:
     };
     TimelineArmToken* PageGroupTokens(std::size_t row) const noexcept;
     TimelineArmTable::OriginalGroupMember* PageGroupOriginals(std::size_t row) const noexcept;
-    bool PreparePageGroupMembers(std::size_t row, std::uint16_t count) noexcept;
+    bool PreparePageGroupMembers(std::size_t row, std::uint16_t count,
+        bool consumeAcceptedBacking = false) noexcept;
     void ClearPageGroupMembers(std::size_t row, std::uint16_t count) noexcept;
     std::unique_ptr<LaneGroupMembers> CreatePageGroupMembers(std::uint16_t count) noexcept;
     std::unique_ptr<PageGroupMemberBacking> PreparePageGroupMemberBacking(std::uint32_t count) noexcept;
@@ -2425,6 +2440,29 @@ private:
         Retired = 3,
     };
 
+    struct NativeGroupRow {
+        Plan03GroupSliceRow value{};
+        mutable AudioSliceLease lease{};
+        Plan03GroupReaderState readers{};
+        TimelineArmTable::OriginalGroupIdentity identity{};
+        PageGroupMemberSlot members{};
+        std::size_t nextFree = SIZE_MAX;
+    };
+
+    bool HasPageGroupStorage(std::size_t index) const noexcept {
+        return index < pageGroupSlots_.size() && pageGroupSlots_[index] != SIZE_MAX;
+    }
+    NativeGroupRow& PageGroupData(std::size_t index) noexcept {
+        assert(HasPageGroupStorage(index));
+        return nativeGroupRows_[pageGroupSlots_[index]];
+    }
+    const NativeGroupRow& PageGroupData(std::size_t index) const noexcept {
+        assert(HasPageGroupStorage(index));
+        return nativeGroupRows_[pageGroupSlots_[index]];
+    }
+    void AcquirePageGroup(std::size_t index) noexcept;
+    void ReleasePageGroup(std::size_t index) noexcept;
+
     EventRow& PageEvent(std::size_t index) noexcept {
         return nativeEventRows_[pageEventSlots_[index]];
     }
@@ -2483,7 +2521,6 @@ private:
     std::uint32_t nativeCalendarBackingCount_ = 0;
     std::vector<std::uint32_t> pagePlan03GroupCount_;
     std::vector<std::uint32_t> pagePreparedPlan03GroupCount_;
-    std::vector<Plan03GroupSliceRow> pagePlan03Groups_;
     bool IssueGroupMemberOriginals(const Plan03GroupSliceIdentity& group,
         const TimelineArmTable& table, const TimelineArmToken* members,
         std::uint16_t count, TimelineArmTable::OriginalGroupMember* originals,
@@ -2494,14 +2531,15 @@ private:
     friend struct detail::OriginalGroupMemberTestAccess;
     TimelineArmTable::GroupMemberReceiver groupMemberReceiver_{};
     std::size_t pageMemberBytes_ = 0;
-    std::vector<PageGroupMemberSlot> pageGroupMemberStorage_;
+    StableRowStorage<NativeGroupRow, std::size_t> nativeGroupRows_;
+    std::vector<std::size_t> pageGroupSlots_;
+    std::size_t issuedGroupSlots_ = 0;
+    std::size_t occupiedGroupSlots_ = 0;
+    std::size_t freeGroupSlot_ = SIZE_MAX;
     std::unique_ptr<TimelineArmTable::OriginalGroupMember[]> replacementGroupMemberOriginals_;
-    std::unique_ptr<TimelineArmTable::OriginalGroupIdentity[]> pageGroupIdentities_;
     TimelineArmTable::OriginalGroupIdentity replacementGroupIdentity_{};
     std::vector<Plan03GroupRowState> pagePlan03GroupRowStates_;
     std::vector<std::uint32_t> pagePlan03GroupClaimGenerations_;
-    std::unique_ptr<AudioSliceLease[]> pagePlan03GroupLeases_;
-    std::unique_ptr<Plan03GroupReaderState[]> pagePlan03GroupReaders_;
     std::uint64_t nextOriginalLaneGroupFactoryMarker_ = 0;
     std::size_t immediateMemberBytes_ = 0;
     std::uint32_t immediateBackingHolds_ = 0;
