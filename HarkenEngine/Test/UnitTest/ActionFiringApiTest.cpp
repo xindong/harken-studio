@@ -1171,17 +1171,17 @@ void ExpectVariableControlRetargetTree(
               row.variableControlDiscreteRetargetIncomingLeafCount);
     for (std::uint32_t index = 0; index < incomingLeafCount; ++index) {
         const auto leaf = engine.playableInstances.Classify(
-            row.variableControlDiscreteRetargetIncomingLeaves[index]);
+            row.variableControlRetargetIncoming.leaves[index].handle);
         ASSERT_TRUE(leaf.live);
         if (incomingKind != harken::PlayableKind::Track &&
             incomingKind != harken::PlayableKind::Piece) {
-            EXPECT_EQ(row.variableControlDiscreteRetargetIncomingLeaves[index],
+            EXPECT_EQ(row.variableControlRetargetIncoming.leaves[index].handle,
                       row.variableControlDiscreteRetargetIncomingChild);
         } else {
-            EXPECT_NE(row.variableControlDiscreteRetargetIncomingLeaves[index],
+            EXPECT_NE(row.variableControlRetargetIncoming.leaves[index].handle,
                       row.variableControlDiscreteRetargetIncomingChild);
         }
-        EXPECT_EQ(row.variableControlDiscreteRetargetIncomingLeafEpochs[index],
+        EXPECT_EQ(row.variableControlRetargetIncoming.leaves[index].epoch,
                   leaf.scheduleEpoch);
         EXPECT_EQ(incomingKind == harken::PlayableKind::Track ||
                       incomingKind == harken::PlayableKind::Piece
@@ -1190,9 +1190,9 @@ void ExpectVariableControlRetargetTree(
                   leaf.parent);
         const auto& schedule =
             row.variableControlDiscreteRetargetEnteringSchedules[index];
-        EXPECT_EQ(row.variableControlDiscreteRetargetIncomingLeaves[index],
+        EXPECT_EQ(row.variableControlRetargetIncoming.leaves[index].handle,
                   schedule.ownerInstance);
-        EXPECT_EQ(row.variableControlDiscreteRetargetIncomingLeafEpochs[index],
+        EXPECT_EQ(row.variableControlRetargetIncoming.leaves[index].epoch,
                   schedule.ownerInstanceScheduleEpoch);
     }
 }
@@ -1209,7 +1209,7 @@ void ExpectVariableControlRetargetTreeRetired(
          index < row.variableControlDiscreteRetargetIncomingLeafCount;
          ++index) {
         EXPECT_FALSE(engine.playableInstances
-                         .Classify(row.variableControlDiscreteRetargetIncomingLeaves[index])
+                         .Classify(row.variableControlRetargetIncoming.leaves[index].handle)
                          .live);
     }
 }
@@ -8435,7 +8435,7 @@ static void CheckDelayedStopMatchEnteringNestedDecision(bool refuseLastArm) {
     for (std::uint32_t block = 0; block < 16 && !captured; ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         if (row.variableControlDiscreteRetargetIncomingNestedVariableControlCount != 0) {
-            incoming = row.variableControlDiscreteRetargetIncomingNestedVariableControlDecisions[0];
+            incoming = row.variableControlRetargetIncoming.controllers[0].decision;
             captured = incoming.Valid();
         }
         engine->nullBackend.Pump(1);
@@ -25534,6 +25534,19 @@ static void ExpectImmediateVariableControlNestedRetargetPromotesCompleteInstance
         }
         engine->nativeBackingAllocationFailureCountdownForTest = allocationCountdown;
         EXPECT_GT(engine->nativeBackingAllocationCountForTest, allocationCount);
+        const auto liveBeforeRefusal = engine->playableInstances.LiveCount();
+        harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::RetargetIncomingStorage);
+        const auto refusedUpdate = Vn_Update();
+        const auto remainingFault = harken::detail::g_logicAllocFault.remaining;
+        harken::detail::DisarmLogicAllocFaultForTests();
+        ASSERT_EQ(VN_OK, refusedUpdate);
+        EXPECT_EQ(0u, remainingFault);
+        EXPECT_FALSE(row->variableControlDiscreteRetargetPrepared);
+        EXPECT_EQ(outgoingChild, row->variableControlChildInstances[0]);
+        EXPECT_EQ(selectedOrdinal, row->variableControlDiscreteCurrentChildOrdinal);
+        EXPECT_EQ(liveBeforeRefusal, engine->playableInstances.LiveCount());
+        EXPECT_TRUE(engine->playableInstances.Classify(outgoingChild).live);
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
     }
     bool prepared = false;
     for (std::uint32_t block = 0; block < 64 && !prepared; ++block) {
@@ -25556,22 +25569,22 @@ static void ExpectImmediateVariableControlNestedRetargetPromotesCompleteInstance
               engine->playableInstances.LiveCount());
     const auto incomingRoot = row->variableControlDiscreteRetargetIncomingChild;
     const auto nestedRoot =
-        row->variableControlDiscreteRetargetIncomingContainers[0];
+        row->variableControlRetargetIncoming.containers[0].handle;
     const auto nestedChild =
-        row->variableControlDiscreteRetargetIncomingContainers[1];
+        row->variableControlRetargetIncoming.containers[1].handle;
     ASSERT_EQ(incomingRoot, nestedRoot);
     ASSERT_EQ(row->rootInstance,
               engine->playableInstances.Classify(nestedRoot).parent);
     ASSERT_EQ(nestedRoot,
               engine->playableInstances.Classify(nestedChild).parent);
     const auto incomingLeaf =
-        row->variableControlDiscreteRetargetIncomingLeaves[0];
+        row->variableControlRetargetIncoming.leaves[0].handle;
     ASSERT_EQ(nestedChild,
               engine->playableInstances.Classify(incomingLeaf).parent);
 
     ASSERT_EQ(1u, row->variableControlDiscreteRetargetIncomingNestedVariableControlCount);
     auto* nestedControlService = engine->ResolvePlayableService(
-        row->variableControlDiscreteRetargetIncomingNestedServices[0]);
+        row->variableControlRetargetIncoming.controllers[0].service);
     ASSERT_NE(nullptr, nestedControlService);
     EXPECT_EQ(nestedRoot, nestedControlService->ownerInstance);
     const auto resource = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
@@ -61481,8 +61494,8 @@ TEST(ActionFiringApi, PreinitPageFutureAOneGraphPublishedAndRetired) {
     const auto armGroup = row->variableControlDiscreteRetargetArmGroup;
     const auto targetArm = row->variableControlDiscreteRetargetGroupArms[0];
     const auto targetChild = row->variableControlDiscreteRetargetIncomingChild;
-    const auto targetLeaf = row->variableControlDiscreteRetargetIncomingLeaves[0];
-    const auto targetEpoch = row->variableControlDiscreteRetargetIncomingLeafEpochs[0];
+    const auto targetLeaf = row->variableControlRetargetIncoming.leaves[0].handle;
+    const auto targetEpoch = row->variableControlRetargetIncoming.leaves[0].epoch;
     ASSERT_TRUE(future.Exact());
     ASSERT_TRUE(memberDecision.Valid());
     ASSERT_TRUE(armGroup.Valid());
@@ -61974,8 +61987,8 @@ TEST(ActionFiringApi, PreinitPageFutureATwoGraphsSamePage) {
         graph.decision = row->variableControlDiscreteRetargetDecision;
         graph.armGroup = row->variableControlDiscreteRetargetArmGroup;
         graph.arm = row->variableControlDiscreteRetargetGroupArms[0];
-        graph.targetLeaf = row->variableControlDiscreteRetargetIncomingLeaves[0];
-        graph.targetEpoch = row->variableControlDiscreteRetargetIncomingLeafEpochs[0];
+        graph.targetLeaf = row->variableControlRetargetIncoming.leaves[0].handle;
+        graph.targetEpoch = row->variableControlRetargetIncoming.leaves[0].epoch;
         ASSERT_TRUE(graph.decision.Valid());
         ASSERT_TRUE(graph.armGroup.Valid());
         ASSERT_TRUE(graph.arm.Valid());
@@ -62541,8 +62554,8 @@ TEST(ActionFiringApi, PreinitPageFutureAFourGraphsTwoPages) {
             graph.decision = row->variableControlDiscreteRetargetDecision;
             graph.armGroup = row->variableControlDiscreteRetargetArmGroup;
             graph.arm = row->variableControlDiscreteRetargetGroupArms[0];
-            graph.targetLeaf = row->variableControlDiscreteRetargetIncomingLeaves[0];
-            graph.targetEpoch = row->variableControlDiscreteRetargetIncomingLeafEpochs[0];
+            graph.targetLeaf = row->variableControlRetargetIncoming.leaves[0].handle;
+            graph.targetEpoch = row->variableControlRetargetIncoming.leaves[0].epoch;
             ASSERT_TRUE(graph.decision.Valid());
             ASSERT_TRUE(graph.armGroup.Valid());
             ASSERT_TRUE(graph.arm.Valid());
@@ -63212,8 +63225,8 @@ TEST(ActionFiringApi, PreinitPageFutureAFourGraphsAdjacentF2Period144) {
         graph.decision = row->variableControlDiscreteRetargetDecision;
         graph.armGroup = row->variableControlDiscreteRetargetArmGroup;
         graph.arm = row->variableControlDiscreteRetargetGroupArms[0];
-        graph.targetLeaf = row->variableControlDiscreteRetargetIncomingLeaves[0];
-        graph.targetEpoch = row->variableControlDiscreteRetargetIncomingLeafEpochs[0];
+        graph.targetLeaf = row->variableControlRetargetIncoming.leaves[0].handle;
+        graph.targetEpoch = row->variableControlRetargetIncoming.leaves[0].epoch;
         ASSERT_TRUE(graph.decision.Valid());
         ASSERT_TRUE(graph.armGroup.Valid());
         ASSERT_TRUE(graph.arm.Valid());
@@ -64748,8 +64761,8 @@ static void RunP100FullLoadFixture(P100FullLoadArenaTrial* arenaTrial) {
         ASSERT_EQ(graph.emitter, row->variableControlEmitter);
         ASSERT_TRUE(row->frontierLifetimeEntry == graph.entry);
         ASSERT_TRUE(row->frontierLifetimePin.Valid());
-        graph.targetLeaf = row->variableControlDiscreteRetargetIncomingLeaves[0];
-        graph.targetEpoch = row->variableControlDiscreteRetargetIncomingLeafEpochs[0];
+        graph.targetLeaf = row->variableControlRetargetIncoming.leaves[0].handle;
+        graph.targetEpoch = row->variableControlRetargetIncoming.leaves[0].epoch;
         ASSERT_NE(0u, graph.targetLeaf);
         ASSERT_NE(0u, graph.targetEpoch);
         ASSERT_EQ(0u, row->variableControlDiscreteRetargetSourceMemberCount);

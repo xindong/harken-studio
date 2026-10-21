@@ -34,6 +34,7 @@ enum class LogicAllocSite : unsigned int {
     ScheduledGroupMembers,
     MonitorDerivedStorage,
     ImmediateEntryStorage,
+    RetargetIncomingStorage,
 };
 
 struct LogicAllocFaultState {

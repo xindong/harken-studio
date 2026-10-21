@@ -1563,6 +1563,32 @@ struct EngineQueueFutureFilingLayout {
     bool queueDecisionCommitted = false;
 };
 
+struct EngineVariableRetargetIncomingStorage {
+    struct Instance {
+        PlayableInstanceHandle handle = 0;
+        std::uint64_t epoch = 0;
+    };
+    struct Controller {
+        VariableControlInstanceToken instance{};
+        EnginePlayableServiceReference service{};
+        DecisionToken decision{};
+        std::uint32_t selectedOrdinal = 0;
+        std::uint32_t continuationOrdinal = 0;
+        bool continuous = false;
+    };
+    std::vector<Instance> leaves;
+    std::vector<PlayableInstanceHandle> nestedInstances;
+    std::vector<Controller> controllers;
+    std::vector<Instance> containers;
+    std::vector<SelectionPathNodeV1> selectionPath;
+
+    std::size_t StorageBytes() const noexcept {
+        return leaves.capacity() * sizeof(Instance) + nestedInstances.capacity() * sizeof(PlayableInstanceHandle) +
+            controllers.capacity() * sizeof(Controller) + containers.capacity() * sizeof(Instance) +
+            selectionPath.capacity() * sizeof(SelectionPathNodeV1);
+    }
+};
+
 struct EngineVariableMemberWeights {
     struct ChildWeight {
         std::uint32_t ordinal = 0;
@@ -1840,31 +1866,10 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint32_t variableControlDiscreteRetargetDesiredChildOrdinal = 0;
     PlayableInstanceHandle variableControlDiscreteRetargetIncomingChild = 0;
     std::uint64_t variableControlDiscreteRetargetIncomingChildEpoch = 0;
-    std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves>
-        variableControlDiscreteRetargetIncomingLeaves{};
-    std::array<std::uint64_t, kMaxKnownScheduleLeaves>
-        variableControlDiscreteRetargetIncomingLeafEpochs{};
+    EngineVariableRetargetIncomingStorage variableControlRetargetIncoming;
     std::uint32_t variableControlDiscreteRetargetIncomingLeafCount = 0;
-    std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves + 64u>
-        variableControlDiscreteRetargetIncomingNestedInstances{};
-    std::array<VariableControlInstanceToken, kMaxKnownScheduleLeaves + 64u>
-        variableControlDiscreteRetargetIncomingNestedVariableControls{};
-    std::array<EnginePlayableServiceReference, kMaxKnownScheduleLeaves + 64u>
-        variableControlDiscreteRetargetIncomingNestedServices{};
     std::uint32_t variableControlDiscreteRetargetIncomingNestedCount = 0;
     std::uint32_t variableControlDiscreteRetargetIncomingNestedVariableControlCount = 0;
-    std::array<DecisionToken, kMaxKnownScheduleLeaves + 64u>
-        variableControlDiscreteRetargetIncomingNestedVariableControlDecisions{};
-    std::array<bool, kMaxKnownScheduleLeaves + 64u>
-        variableControlDiscreteRetargetIncomingNestedVariableControlDecisionContinuous{};
-    std::array<std::uint32_t, kMaxKnownScheduleLeaves + 64u>
-        variableControlDiscreteRetargetIncomingNestedVariableControlSelectedChildOrdinals{};
-    std::array<std::uint32_t, kMaxKnownScheduleLeaves + 64u>
-        variableControlDiscreteRetargetIncomingNestedVariableControlContinuationOrdinals{};
-    std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves + 64u>
-        variableControlDiscreteRetargetIncomingContainers{};
-    std::array<std::uint64_t, kMaxKnownScheduleLeaves + 64u>
-        variableControlDiscreteRetargetIncomingContainerEpochs{};
     std::uint32_t variableControlDiscreteRetargetIncomingContainerCount = 0;
     PlayableInstanceHandle variableControlDiscreteRetargetIncomingQueueSuccessorInstance = 0;
     std::uint64_t variableControlDiscreteRetargetIncomingQueueSuccessorEpoch = 0;
@@ -1872,8 +1877,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     PlayableInstanceHandle variableControlDiscreteRetargetIncomingQueueOwnerInstance = 0;
     std::uint64_t variableControlDiscreteRetargetIncomingQueueOwnerEpoch = 0;
     std::uint32_t variableControlDiscreteRetargetIncomingQueueOwnerIndex = UINT32_MAX;
-    std::array<SelectionPathNodeV1, kSelectionPathNodeCapacity>
-        variableControlDiscreteRetargetIncomingSelectionPath{};
     std::uint32_t variableControlDiscreteRetargetIncomingSelectionCount = 0;
     ArmGroupToken variableControlDiscreteRetargetArmGroup{};
     PreparedGroupToken variableControlDiscreteRetargetPages{};
