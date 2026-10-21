@@ -1394,6 +1394,21 @@ public:
     std::size_t NativeGroupRowStorageBytes() const noexcept { return nativeGroupRows_.RequestedBytes(); }
     std::size_t NativeGroupRowReservedBytes() const noexcept { return nativeGroupRows_.ReservedBytes(); }
     std::size_t NativeGroupRowCommittedBytes() const noexcept { return nativeGroupRows_.CommittedBytes(); }
+    std::size_t PrivateMaterializationStorageBytes() const noexcept {
+        return unplacedCredits_.RequestedBytes() + privatePreparedGroups_.RequestedBytes() +
+            privateCommittedGroups_.RequestedBytes() + privateCohortCredits_.RequestedBytes() +
+            privateCohortRequests_.RequestedBytes() + privateCohortGroups_.RequestedBytes();
+    }
+    std::size_t PrivateMaterializationCommittedBytes() const noexcept {
+        return unplacedCredits_.CommittedBytes() + privatePreparedGroups_.CommittedBytes() +
+            privateCommittedGroups_.CommittedBytes() + privateCohortCredits_.CommittedBytes() +
+            privateCohortRequests_.CommittedBytes() + privateCohortGroups_.CommittedBytes();
+    }
+    std::size_t PrivateMaterializationReservedBytes() const noexcept {
+        return unplacedCredits_.ReservedBytes() + privatePreparedGroups_.ReservedBytes() +
+            privateCommittedGroups_.ReservedBytes() + privateCohortCredits_.ReservedBytes() +
+            privateCohortRequests_.ReservedBytes() + privateCohortGroups_.ReservedBytes();
+    }
     std::size_t GroupDirectoryStorageBytes() const noexcept {
         return pageGroupSlots_.capacity() * sizeof(std::size_t) +
             pagePlan03GroupRowStates_.capacity() * sizeof(Plan03GroupRowState) +
@@ -1974,6 +1989,7 @@ private:
     friend struct Engine;
     bool PrepareEventStorage(std::uint64_t additionalEvents,
         bool consumeAcceptedBacking = false) noexcept;
+    bool PreparePrivateMaterializationBacking(const UnplacedBatchCreditRequest& request) noexcept;
     bool PrepareGroupStorage(std::size_t additionalGroups,
         bool consumeAcceptedBacking = false) noexcept;
     Plan03GroupReserveStatus PreparePlan03GroupSliceImpl(
@@ -2570,12 +2586,12 @@ private:
         bool active = false;
         bool materializing = false;
     };
-    std::vector<UnplacedCreditRow> unplacedCredits_;
-    std::vector<PreparedPlan03GroupSlice> privatePreparedGroups_;
-    std::vector<CommittedPlan03GroupSlice> privateCommittedGroups_;
-    std::vector<UnplacedBatchCredit*> privateCohortCredits_;
-    std::vector<TransactionRequest> privateCohortRequests_;
-    std::vector<Plan03GroupSliceInput> privateCohortGroups_;
+    StableRowStorage<UnplacedCreditRow, std::size_t> unplacedCredits_;
+    StableRowStorage<PreparedPlan03GroupSlice, std::size_t> privatePreparedGroups_;
+    StableRowStorage<CommittedPlan03GroupSlice, std::size_t> privateCommittedGroups_;
+    StableRowStorage<UnplacedBatchCredit*, std::size_t> privateCohortCredits_;
+    StableRowStorage<TransactionRequest, std::size_t> privateCohortRequests_;
+    StableRowStorage<Plan03GroupSliceInput, std::size_t> privateCohortGroups_;
     bool privateMaterializationActive_ = false;
     std::uint64_t nextUnplacedCreditGeneration_ = 1;
     std::uint64_t unplacedTransactions_ = 0;

@@ -1231,7 +1231,7 @@ ScheduledTransactionPool::PageGroupMemberBacking::~PageGroupMemberBacking() {
 
 std::size_t ScheduledTransactionPool::PageGroupMemberStorageBytes() const noexcept {
     auto bytes = pageMemberBytes_ + nativeGroupRows_.ConstructedCount() * sizeof(PageGroupMemberSlot) +
-        unplacedCredits_.capacity() * sizeof(std::unique_ptr<PageGroupMemberBacking>);
+        unplacedCredits_.ConstructedCount() * sizeof(std::unique_ptr<PageGroupMemberBacking>);
     for (const auto& credit : unplacedCredits_)
         if (credit.memberBacking != nullptr)
             bytes += sizeof(PageGroupMemberBacking) + credit.memberBacking->members.capacity() *
@@ -3239,15 +3239,24 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     for (std::uint32_t i = config.maxScheduledTransactions; i > 0; --i) {
         freePreparedTransactionClaims_.push_back(i - 1);
     }
-    unplacedCredits_.clear();
-    unplacedCredits_.resize(static_cast<std::size_t>(config.maxScheduledTransactions) + groupRows);
-    privatePreparedGroups_.clear();
-    privatePreparedGroups_.resize(groupRows);
-    privateCommittedGroups_.clear();
-    privateCommittedGroups_.resize(groupRows);
-    privateCohortCredits_.assign(unplacedCredits_.size(), nullptr);
-    privateCohortRequests_.resize(config.maxScheduledTransactions);
-    privateCohortGroups_.resize(groupRows);
+    StableRowStorage<UnplacedCreditRow, std::size_t> creditStorage;
+    StableRowStorage<PreparedPlan03GroupSlice, std::size_t> preparedGroupStorage;
+    StableRowStorage<CommittedPlan03GroupSlice, std::size_t> committedGroupStorage;
+    StableRowStorage<UnplacedBatchCredit*, std::size_t> cohortCreditStorage;
+    StableRowStorage<TransactionRequest, std::size_t> cohortRequestStorage;
+    StableRowStorage<Plan03GroupSliceInput, std::size_t> cohortGroupStorage;
+    const auto creditCapacity = static_cast<std::size_t>(config.maxScheduledTransactions) + groupRows;
+    if (!creditStorage.Reserve(creditCapacity) ||
+        !preparedGroupStorage.Reserve(groupRows) || !committedGroupStorage.Reserve(groupRows) ||
+        !cohortCreditStorage.Reserve(creditCapacity) ||
+        !cohortRequestStorage.Reserve(config.maxScheduledTransactions) ||
+        !cohortGroupStorage.Reserve(groupRows)) return false;
+    unplacedCredits_.Swap(creditStorage);
+    privatePreparedGroups_.Swap(preparedGroupStorage);
+    privateCommittedGroups_.Swap(committedGroupStorage);
+    privateCohortCredits_.Swap(cohortCreditStorage);
+    privateCohortRequests_.Swap(cohortRequestStorage);
+    privateCohortGroups_.Swap(cohortGroupStorage);
     unplacedTransactions_ = 0;
     unplacedPreparedClaims_ = 0;
     unplacedEvents_ = 0;
@@ -3277,6 +3286,29 @@ bool ScheduledTransactionPool::Reset(const Config& config,
 
     terminalState_.store(0, std::memory_order_release);
     return true;
+}
+
+bool ScheduledTransactionPool::PreparePrivateMaterializationBacking(
+    const UnplacedBatchCreditRequest& request) noexcept {
+    std::size_t transactions = request.transactions;
+    std::size_t groups = request.groupHeaders;
+    std::size_t credits = 1;
+    if (transactions > privateCohortRequests_.Capacity() ||
+        groups > privateCohortGroups_.Capacity()) return false;
+    // Materializing holders still own their full rollback and retry backing.
+    for (const auto& row : unplacedCredits_) {
+        if (!row.active) continue;
+        if (row.request.transactions > privateCohortRequests_.Capacity() - transactions ||
+            row.request.groupHeaders > privateCohortGroups_.Capacity() - groups) return false;
+        transactions += row.request.transactions;
+        groups += row.request.groupHeaders;
+        ++credits;
+    }
+    return privatePreparedGroups_.ConstructThrough(groups) &&
+        privateCommittedGroups_.ConstructThrough(groups) &&
+        privateCohortGroups_.ConstructThrough(groups) &&
+        privateCohortRequests_.ConstructThrough(transactions) &&
+        privateCohortCredits_.ConstructThrough(credits);
 }
 
 bool ScheduledTransactionPool::ReserveUnplacedBatchCredit(
@@ -3314,29 +3346,30 @@ bool ScheduledTransactionPool::ReserveUnplacedBatchCredit(
             pageBatchRows_.size() ||
         occupiedGroups + unplacedGroupHeaders_ + request.groupHeaders >
             pagePlan03GroupRowStates_.size()) return false;
-    for (std::size_t slot = 0; slot < unplacedCredits_.size(); ++slot) {
-        auto& row = unplacedCredits_[slot];
-        if (row.active) continue;
-        if (!PrepareEventStorage(request.events) || !PrepareGroupStorage(request.groupHeaders)) return false;
-        auto backing = request.groupHeaders == 0 || config_.maxArmsPerGroup == 0
-            ? nullptr : PreparePageGroupMemberBacking(request.groupHeaders);
-        if (request.groupHeaders != 0 && config_.maxArmsPerGroup != 0 && backing == nullptr) return false;
-        row.memberBacking = std::move(backing);
-        row.request = request;
-        row.generation = nextUnplacedCreditGeneration_++;
-        row.epoch = epoch_;
-        row.chargedQuantum = baseQuantumIndex_;
-        row.active = true;
-        unplacedTransactions_ += request.transactions;
-        unplacedPreparedClaims_ += request.preparedClaims;
-        unplacedEvents_ += request.events;
-        unplacedFrameBatches_ += request.frameBatches;
-        unplacedGroupHeaders_ += request.groupHeaders;
-        unplacedIngressThisQuantum_ += request.transactions;
-        *out = {slot, row.generation, epoch_};
-        return true;
-    }
-    return false;
+    std::size_t slot = 0;
+    while (slot < unplacedCredits_.size() && unplacedCredits_[slot].active) ++slot;
+    if (slot == unplacedCredits_.Capacity() ||
+        !unplacedCredits_.ConstructThrough(slot + 1u) ||
+        !PreparePrivateMaterializationBacking(request) ||
+        !PrepareEventStorage(request.events) || !PrepareGroupStorage(request.groupHeaders)) return false;
+    auto& row = unplacedCredits_[slot];
+    auto backing = request.groupHeaders == 0 || config_.maxArmsPerGroup == 0
+        ? nullptr : PreparePageGroupMemberBacking(request.groupHeaders);
+    if (request.groupHeaders != 0 && config_.maxArmsPerGroup != 0 && backing == nullptr) return false;
+    row.memberBacking = std::move(backing);
+    row.request = request;
+    row.generation = nextUnplacedCreditGeneration_++;
+    row.epoch = epoch_;
+    row.chargedQuantum = baseQuantumIndex_;
+    row.active = true;
+    unplacedTransactions_ += request.transactions;
+    unplacedPreparedClaims_ += request.preparedClaims;
+    unplacedEvents_ += request.events;
+    unplacedFrameBatches_ += request.frameBatches;
+    unplacedGroupHeaders_ += request.groupHeaders;
+    unplacedIngressThisQuantum_ += request.transactions;
+    *out = {slot, row.generation, epoch_};
+    return true;
 }
 
 bool ScheduledTransactionPool::CancelUnplacedBatchCredit(
@@ -3632,7 +3665,8 @@ bool ScheduledTransactionPool::TryMaterializeUnplacedBatch(
             *credit, requests, requestCount, groups, groupCount,
             armTable, publicationFrontier,
             transactionRefusal, groupStatus)) return false;
-    if (groupCount > privatePreparedGroups_.size()) {
+    if (groupCount > privatePreparedGroups_.size() ||
+        groupCount > privateCommittedGroups_.size()) {
         *groupStatus = Plan03GroupReserveStatus::PageGroupCapacity;
         return false;
     }
@@ -3802,7 +3836,9 @@ bool ScheduledTransactionPool::TryMaterializeUnplacedCohort(
         totalBatches > unplacedFrameBatches_ ||
         totalGroups > unplacedGroupHeaders_ ||
         chargedIngress > unplacedIngressThisQuantum_ ||
-        requestCount > UINT32_MAX || groupCount > UINT32_MAX) {
+        requestCount > UINT32_MAX || groupCount > UINT32_MAX ||
+        groupCount > privatePreparedGroups_.size() ||
+        groupCount > privateCommittedGroups_.size()) {
         *transactionRefusal = ReserveRefusal::PoolFull;
         return false;
     }
@@ -4284,14 +4320,14 @@ bool ScheduledTransactionPool::CanResetForEpoch(
         freeTransactions_.capacity() < config_.maxScheduledTransactions ||
         preparedTransactionClaims_.size() !=
             config_.maxScheduledTransactions ||
-        unplacedCredits_.size() !=
+        unplacedCredits_.Capacity() !=
             static_cast<std::size_t>(config_.maxScheduledTransactions) + groupRows ||
-        privatePreparedGroups_.size() != groupRows ||
-        privateCommittedGroups_.size() != groupRows ||
-        privateCohortCredits_.size() != unplacedCredits_.size() ||
-        privateCohortRequests_.size() !=
+        privatePreparedGroups_.Capacity() != groupRows ||
+        privateCommittedGroups_.Capacity() != groupRows ||
+        privateCohortCredits_.Capacity() != unplacedCredits_.Capacity() ||
+        privateCohortRequests_.Capacity() !=
             config_.maxScheduledTransactions ||
-        privateCohortGroups_.size() != groupRows ||
+        privateCohortGroups_.Capacity() != groupRows ||
         freePreparedTransactionClaims_.capacity() <
             config_.maxScheduledTransactions ||
         scratchEventPage_.size() != config_.maxTransactionEvents ||

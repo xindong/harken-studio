@@ -51,6 +51,18 @@ struct ScheduledTransactionPoolCancelTestAccess {
     static void SetNativeGroupCommitPageLimit(ScheduledTransactionPool& pool, std::size_t pages) {
         pool.nativeGroupRows_.SetCommitPageLimitForTests(pages);
     }
+    static void SetPrivateWorkspacePageLimit(ScheduledTransactionPool& pool,
+        std::size_t storage, std::size_t pages) {
+        switch (storage) {
+        case 0: pool.unplacedCredits_.SetCommitPageLimitForTests(pages); break;
+        case 1: pool.privatePreparedGroups_.SetCommitPageLimitForTests(pages); break;
+        case 2: pool.privateCommittedGroups_.SetCommitPageLimitForTests(pages); break;
+        case 3: pool.privateCohortCredits_.SetCommitPageLimitForTests(pages); break;
+        case 4: pool.privateCohortRequests_.SetCommitPageLimitForTests(pages); break;
+        case 5: pool.privateCohortGroups_.SetCommitPageLimitForTests(pages); break;
+        default: FAIL() << "Unknown private workspace storage";
+        }
+    }
     static std::size_t NativeGroupRowBytes() { return sizeof(ScheduledTransactionPool::NativeGroupRow); }
     static void SetCurrentSliceCommitPageLimit(ScheduledTransactionPool& pool, std::size_t pages) {
         for (std::uint32_t page = 0; page < pool.pageCount_; ++page) {
@@ -4450,6 +4462,63 @@ TEST(ScheduledTransactionPool,
     EXPECT_EQ(neighbor.transactionId, consumed[0].transactionId);
 }
 
+TEST(ScheduledTransactionPool, PrivateWorkspaceBackingRefusalDoesNotAcceptPartialCredit) {
+    using Access = harken::detail::ScheduledTransactionPoolCancelTestAccess;
+    Harness h;
+    auto config = MakeConfig();
+    config.maxPlan03GroupHeadersPerPage = 2;
+    config.maxArmsPerGroup = 1;
+    ScheduledTransactionPool pool;
+    harken::TimelineArmTable arms(1);
+    ScheduledEventInput event{};
+    event.executeFrame = 210;
+    TransactionRequest request{};
+    request.transactionId = 13;
+    request.transportEpoch = kEpoch;
+    request.ownerInstanceHandle = h.owner;
+    request.ownerInstanceScheduleEpoch = h.ownerEpoch;
+    request.events = &event;
+    request.eventCount = 1;
+    harken::Plan03GroupSliceInput group{};
+    group.executeFrame = 210;
+    group.decision = {1, 1};
+    for (std::size_t failingStorage = 0; failingStorage < 6; ++failingStorage) {
+        SCOPED_TRACE(failingStorage);
+        ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+        EXPECT_EQ(0u, pool.PrivateMaterializationStorageBytes());
+        EXPECT_EQ(0u, pool.PrivateMaterializationCommittedBytes());
+        harken::UnplacedBatchCredit credit{};
+        Access::SetPrivateWorkspacePageLimit(pool, failingStorage, 0);
+        EXPECT_FALSE(pool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 1}, &credit));
+        EXPECT_FALSE(credit.Valid());
+        EXPECT_EQ(0u, pool.CaptureLivePlan03Groups(nullptr, 0));
+        EXPECT_EQ(0u, pool.LiveTransactionCount());
+        Access::SetPrivateWorkspacePageLimit(pool, failingStorage, SIZE_MAX);
+        ASSERT_TRUE(pool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 1}, &credit));
+        const auto warmBytes = pool.PrivateMaterializationStorageBytes();
+        for (std::size_t storage = 0; storage < 6; ++storage)
+            Access::SetPrivateWorkspacePageLimit(pool, storage, 0);
+        ReserveRefusal refusal = ReserveRefusal::None;
+        harken::Plan03GroupReserveStatus groupStatus = harken::Plan03GroupReserveStatus::Committed;
+        {
+            ScheduledTransactionPool::PrivateMaterializationTransaction initial;
+            ASSERT_TRUE(pool.TryMaterializeUnplacedBatch(&credit, &request, 1, &group, 1,
+                arms, 0, &initial, &refusal, &groupStatus));
+        }
+        ASSERT_TRUE(credit.Valid());
+        ScheduledTransactionPool::PrivateMaterializationTransaction lease;
+        ASSERT_TRUE(pool.TryMaterializeUnplacedBatch(&credit, &request, 1, &group, 1,
+            arms, 0, &lease, &refusal, &groupStatus));
+        ASSERT_TRUE(lease.Commit(21));
+        ASSERT_TRUE(lease.ReleasePublication());
+        EXPECT_FALSE(credit.Valid());
+        EXPECT_EQ(warmBytes, pool.PrivateMaterializationStorageBytes());
+        pool.DropPreparedOccupancy();
+        ASSERT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+        EXPECT_EQ(warmBytes, pool.PrivateMaterializationStorageBytes());
+    }
+}
+
 TEST(ScheduledTransactionPool, UnplacedCreditChargesSharedPoolAndReleasesOnCancel) {
     Harness h;
     auto config = MakeConfig();
@@ -5130,8 +5199,6 @@ TEST(ScheduledTransactionPool, CohortMaterializationIncludesGroupOnlyHolder) {
     std::array<harken::UnplacedBatchCredit, 2> credits{};
     ASSERT_TRUE(pool.ReserveUnplacedBatchCredit(
         {1, 1, 1, 1, 1}, &credits[0]));
-    ASSERT_TRUE(pool.ReserveUnplacedBatchCredit(
-        {0, 0, 0, 0, 1}, &credits[1]));
     ScheduledEventInput event{};
     event.executeFrame = 210;
     TransactionRequest request{};
@@ -5147,6 +5214,17 @@ TEST(ScheduledTransactionPool, CohortMaterializationIncludesGroupOnlyHolder) {
         groups[index].decision =
             {static_cast<std::uint32_t>(index + 1u), 1};
     }
+    {
+        ReserveRefusal refusal = ReserveRefusal::None;
+        harken::Plan03GroupReserveStatus groupStatus = harken::Plan03GroupReserveStatus::Committed;
+        ScheduledTransactionPool::PrivateMaterializationTransaction initial;
+        ASSERT_TRUE(pool.TryMaterializeUnplacedBatch(&credits[0], &request, 1,
+            &groups[0], 1, arms, 0, &initial, &refusal, &groupStatus));
+        ASSERT_TRUE(pool.ReserveUnplacedBatchCredit({0, 0, 0, 0, 1}, &credits[1]));
+        ASSERT_TRUE(initial.Group(0)->Valid());
+    }
+    for (std::size_t storage = 0; storage < 6; ++storage)
+        harken::detail::ScheduledTransactionPoolCancelTestAccess::SetPrivateWorkspacePageLimit(pool, storage, 0);
     std::array<harken::UnplacedBatchCohortMember, 2> members{{
         {&credits[0], &request, 1, &groups[0], 1},
         {&credits[1], nullptr, 0, &groups[1], 1},

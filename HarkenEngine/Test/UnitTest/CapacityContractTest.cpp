@@ -932,6 +932,8 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         engine->timelinePool.NativeEventRowCommittedBytes(), engine->timelinePool.NativeEventRowReservedBytes());
     recordStableRows("native_group_rows", engine->timelinePool.NativeGroupRowStorageBytes(),
         engine->timelinePool.NativeGroupRowCommittedBytes(), engine->timelinePool.NativeGroupRowReservedBytes());
+    recordStableRows("private_materialization", engine->timelinePool.PrivateMaterializationStorageBytes(),
+        engine->timelinePool.PrivateMaterializationCommittedBytes(), engine->timelinePool.PrivateMaterializationReservedBytes());
     testing::Test::RecordProperty("page_group_directory_storage_bytes",
         std::to_string(engine->timelinePool.GroupDirectoryStorageBytes()));
     testing::Test::RecordProperty("page_event_directory_storage_bytes",
