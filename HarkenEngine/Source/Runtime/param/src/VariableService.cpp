@@ -209,6 +209,7 @@ VariableServiceV1::VariableServiceV1(
     completionCapacity_ = static_cast<std::uint32_t>(proofs);
     applyPayloadCapacity_ = static_cast<std::uint32_t>(revisions + 2ull * meterProbeCapacity);
     history_.resize(static_cast<std::size_t>(storage));
+    monitorWriteOrigins_.resize(history_.size());
     preparedWritePlacements_.resize(history_.size());
     historyGenerations_.resize(history_.size(), 1);
     sealRows_.resize(history_.size());
@@ -1553,6 +1554,7 @@ VariableAcceptResult VariableServiceV1::Prepare(
     const std::uint32_t slot = freeSlots_.back();
     freeSlots_.pop_back();
     history_[slot] = row;
+    monitorWriteOrigins_[slot] = {};
     ++occupiedRevisions_;
     ++preparedRows_;
     out->owner_ = this;
@@ -2050,7 +2052,9 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
         assert(recycled);
         (void)recycled;
     }
+    result.writeCount_ = batch.count_;
     for (std::uint32_t i = 0; i < batch.count_; ++i) {
+        result.writeSlots_[i] = batch.rows_[i].slot_;
         CommitPreparedWriteImpl(&batch.rows_[i], sequence, nullptr, nullptr, false);
     }
     batch.committed_ = true;
@@ -2059,6 +2063,32 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
     result.result = VN_OK;
     result.ticket.sequence = sequence;
     return result;
+}
+
+void VariableServiceV1::BindMonitorRequest(const VariableAcceptResult& accepted,
+    const MonitorRequestContext& request,
+    const MonitorEmitterOrigin& emitterOrigin, VnObjectId projectId) noexcept {
+    if (accepted.result != VN_OK || accepted.ticket.sequence == 0 ||
+        !request.key.Valid()) return;
+    for (std::uint32_t i = 0; i < accepted.writeCount_; ++i) {
+        const auto slot = accepted.writeSlots_[i];
+        if (slot >= history_.size()) continue;
+        const auto& row = history_[slot];
+        if (row.used && row.ticket.sequence == accepted.ticket.sequence &&
+            row.world == accepted.observation.world &&
+            row.transport == accepted.observation.transport)
+            monitorWriteOrigins_[slot] = {request, emitterOrigin, projectId, 0};
+    }
+}
+
+void VariableServiceV1::BindPreparedMonitorRequest(
+    const PreparedVariableWriteToken& prepared,
+    const MonitorRequestContext& request,
+    const MonitorEmitterOrigin& emitterOrigin,
+    std::uint64_t actionFiring, VnObjectId projectId) noexcept {
+    if (prepared.owner_ != this || !prepared.prepared_ ||
+        prepared.slot_ >= monitorWriteOrigins_.size()) return;
+    monitorWriteOrigins_[prepared.slot_] = {request, emitterOrigin, projectId, actionFiring};
 }
 
 VariableAcceptResult VariableServiceV1::Accept(
@@ -2347,6 +2377,24 @@ void VariableServiceV1::FinalizeRow(WriteRow& row,
     record.emitterGeneration = row.scope.emitterGeneration;
     outcomes_.push_back(record);
     RememberFinalizedTicket(row.ticket.sequence, outcome, row.world, row.transport);
+    const auto& origin = monitorWriteOrigins_[static_cast<std::size_t>(&row - history_.data())];
+    if (origin.request.key.Valid()) {
+        MonitorVariableResultFacts facts{};
+        facts.request = origin.request;
+        facts.emitterOrigin = origin.emitterOrigin;
+        facts.projectId = origin.projectId;
+        facts.variableId = row.variableId;
+        facts.worldGeneration = row.world;
+        facts.logicCommitSequence = row.ticket.sequence;
+        facts.actionFiring = origin.actionFiring;
+        facts.actualFrame = actualFrame;
+        facts.executionOrdinal = origin.actionFiring != 0 ? row.executionOrdinal : UINT32_MAX;
+        facts.outcome = MapPublicOutcome(outcome);
+        facts.result = VN_OK;
+        facts.value = row.value;
+        facts.emitterScope = row.scope.scope == VariableScopeV1::Emitter;
+        ObserveMonitorVariableResult(facts);
+    }
     if (outcome == VariableOutcomeKind::Applied) {
         ++appliedCount_;
     } else if (outcome == VariableOutcomeKind::Superseded) {
@@ -4401,6 +4449,7 @@ std::size_t VariableServiceV1::StorageBytes() const noexcept {
     return ReadCutStorageBytes() + slices_.StorageBytes() +
         censusScratch_.capacity() * sizeof(GatheredTarget) +
         history_.capacity() * sizeof(WriteRow) + freeSlots_.capacity() * sizeof(std::uint32_t) +
+        monitorWriteOrigins_.capacity() * sizeof(MonitorWriteOrigin) +
         outcomes_.capacity() * sizeof(VariableOutcomeRecord) +
         ticketQueryRecords_.capacity() * sizeof(TicketQueryRecord) +
         expiredTicketRecords_.capacity() * sizeof(VnVariableTicketV1) +

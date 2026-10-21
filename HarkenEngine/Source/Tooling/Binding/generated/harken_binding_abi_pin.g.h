@@ -143,6 +143,8 @@ static_assert(static_cast<int>(VN_MONITOR_FACT_SOURCE_APPLIED) == 37, "binding e
 static_assert(static_cast<int>(VN_MONITOR_FACT_SEEK_APPLIED) == 38, "binding enum drift: VN_MONITOR_FACT_SEEK_APPLIED");
 static_assert(static_cast<int>(VN_MONITOR_FACT_RESOURCE_RETIRED) == 39, "binding enum drift: VN_MONITOR_FACT_RESOURCE_RETIRED");
 static_assert(static_cast<int>(VN_MONITOR_FACT_PLAYABLE_STARTED) == 40, "binding enum drift: VN_MONITOR_FACT_PLAYABLE_STARTED");
+static_assert(static_cast<int>(VN_MONITOR_FACT_STEP_EXECUTED) == 41, "binding enum drift: VN_MONITOR_FACT_STEP_EXECUTED");
+static_assert(static_cast<int>(VN_MONITOR_FACT_VARIABLE_RESULT) == 42, "binding enum drift: VN_MONITOR_FACT_VARIABLE_RESULT");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_SUBJECT) == 0, "binding enum drift: VN_MONITOR_FACT_FIELD_SUBJECT");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_PROJECT) == 1, "binding enum drift: VN_MONITOR_FACT_FIELD_PROJECT");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_CONTENT_OBJECT) == 2, "binding enum drift: VN_MONITOR_FACT_FIELD_CONTENT_OBJECT");
@@ -217,6 +219,9 @@ static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_TARGET_REVISION) == 70, "bi
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_TARGET_KIND) == 71, "binding enum drift: VN_MONITOR_FACT_FIELD_TARGET_KIND");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_TARGET_CONTENT_KIND) == 72, "binding enum drift: VN_MONITOR_FACT_FIELD_TARGET_CONTENT_KIND");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_TARGET_SCOPE) == 73, "binding enum drift: VN_MONITOR_FACT_FIELD_TARGET_SCOPE");
+static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_ACTIVITY_STEP) == 74, "binding enum drift: VN_MONITOR_FACT_FIELD_ACTIVITY_STEP");
+static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE) == 75, "binding enum drift: VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE");
+static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_ACTION_OUTCOME) == 76, "binding enum drift: VN_MONITOR_FACT_FIELD_ACTION_OUTCOME");
 static_assert(static_cast<int>(VN_MONITOR_SUBJECT_NONE) == 0, "binding enum drift: VN_MONITOR_SUBJECT_NONE");
 static_assert(static_cast<int>(VN_MONITOR_SUBJECT_PLAYABLE) == 1, "binding enum drift: VN_MONITOR_SUBJECT_PLAYABLE");
 static_assert(static_cast<int>(VN_MONITOR_SUBJECT_ACTION) == 2, "binding enum drift: VN_MONITOR_SUBJECT_ACTION");
@@ -233,6 +238,7 @@ static_assert(static_cast<int>(VN_MONITOR_CONTENT_TRACK) == 3, "binding enum dri
 static_assert(static_cast<int>(VN_MONITOR_CONTENT_PIECE) == 4, "binding enum drift: VN_MONITOR_CONTENT_PIECE");
 static_assert(static_cast<int>(VN_MONITOR_CONTENT_ACTION) == 5, "binding enum drift: VN_MONITOR_CONTENT_ACTION");
 static_assert(static_cast<int>(VN_MONITOR_CONTENT_MEDIA) == 6, "binding enum drift: VN_MONITOR_CONTENT_MEDIA");
+static_assert(static_cast<int>(VN_MONITOR_CONTENT_VARIABLE) == 7, "binding enum drift: VN_MONITOR_CONTENT_VARIABLE");
 static_assert(static_cast<int>(VN_MONITOR_TERMINAL_NATURAL_COMPLETION) == 1, "binding enum drift: VN_MONITOR_TERMINAL_NATURAL_COMPLETION");
 static_assert(static_cast<int>(VN_MONITOR_TERMINAL_REQUESTED_STOP) == 2, "binding enum drift: VN_MONITOR_TERMINAL_REQUESTED_STOP");
 static_assert(static_cast<int>(VN_MONITOR_TERMINAL_PARENT_CANCELLATION) == 3, "binding enum drift: VN_MONITOR_TERMINAL_PARENT_CANCELLATION");
@@ -273,6 +279,7 @@ static_assert(static_cast<int>(VN_MONITOR_OPERATION_SET_EMITTER_VALUES) == 13, "
 static_assert(static_cast<int>(VN_MONITOR_OPERATION_POST_ACTION_PINNED) == 14, "binding enum drift: VN_MONITOR_OPERATION_POST_ACTION_PINNED");
 static_assert(static_cast<int>(VN_MONITOR_OPERATION_POST_ACTION_RESOLVED) == 15, "binding enum drift: VN_MONITOR_OPERATION_POST_ACTION_RESOLVED");
 static_assert(static_cast<int>(VN_MONITOR_OPERATION_STOP_EMITTER) == 16, "binding enum drift: VN_MONITOR_OPERATION_STOP_EMITTER");
+static_assert(static_cast<int>(VN_MONITOR_OPERATION_RESET_VALUES) == 19, "binding enum drift: VN_MONITOR_OPERATION_RESET_VALUES");
 static_assert(static_cast<int>(VN_MONITOR_LIFECYCLE_PLAYABLE_START) == 1, "binding enum drift: VN_MONITOR_LIFECYCLE_PLAYABLE_START");
 static_assert(static_cast<int>(VN_MONITOR_LIFECYCLE_PLAYABLE_LOGICAL_COMPLETE) == 2, "binding enum drift: VN_MONITOR_LIFECYCLE_PLAYABLE_LOGICAL_COMPLETE");
 static_assert(static_cast<int>(VN_MONITOR_LIFECYCLE_PLAYABLE_AUDIBLE_RETIRING) == 3, "binding enum drift: VN_MONITOR_LIFECYCLE_PLAYABLE_AUDIBLE_RETIRING");
@@ -737,7 +744,7 @@ static_assert(static_cast<std::uint64_t>(VN_MONITOR_DEFAULT_CAPTURE_BYTE_RATE) =
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_HARD_CAPTURE_BYTE_RATE) == 134217728ull, "binding define drift: VN_MONITOR_HARD_CAPTURE_BYTE_RATE");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_DEFAULT_RAW_AUDIO_BYTE_RATE) == 8388608ull, "binding define drift: VN_MONITOR_DEFAULT_RAW_AUDIO_BYTE_RATE");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE) == 67108864ull, "binding define drift: VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE");
-static_assert(static_cast<std::uint64_t>(VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID) == 18446744073709551614ull, "binding define drift: VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID");
+static_assert(static_cast<std::uint64_t>(VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID) == 1ull, "binding define drift: VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES) == 316ull, "binding define drift: VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_STATE_ENTITY_SLOTS) == 16ull, "binding define drift: VN_MONITOR_STATE_ENTITY_SLOTS");
 
@@ -2267,6 +2274,22 @@ static_assert(offsetof(VnMonitorHostObjectSymbolV1, field) == 48, "binding offse
 static_assert(offsetof(VnMonitorHostObjectSymbolV1, textBytes) == 52, "binding offset drift: VnMonitorHostObjectSymbolV1.textBytes");
 static_assert(offsetof(VnMonitorHostObjectSymbolV1, flags) == 54, "binding offset drift: VnMonitorHostObjectSymbolV1.flags");
 static_assert(offsetof(VnMonitorHostObjectSymbolV1, text) == 56, "binding offset drift: VnMonitorHostObjectSymbolV1.text");
+static_assert(sizeof(VnMonitorFactActivity) == 64, "binding size drift: VnMonitorFactActivity");
+static_assert(offsetof(VnMonitorFactActivity, actionOutcome) == 0, "binding offset drift: VnMonitorFactActivity.actionOutcome");
+static_assert(offsetof(VnMonitorFactActivity, stepIndex) == 4, "binding offset drift: VnMonitorFactActivity.stepIndex");
+static_assert(offsetof(VnMonitorFactActivity, stepExecutionOrdinal) == 8, "binding offset drift: VnMonitorFactActivity.stepExecutionOrdinal");
+static_assert(offsetof(VnMonitorFactActivity, stepOpcode) == 12, "binding offset drift: VnMonitorFactActivity.stepOpcode");
+static_assert(offsetof(VnMonitorFactActivity, reservedStep) == 16, "binding offset drift: VnMonitorFactActivity.reservedStep");
+static_assert(offsetof(VnMonitorFactActivity, stepTargetKind) == 20, "binding offset drift: VnMonitorFactActivity.stepTargetKind");
+static_assert(offsetof(VnMonitorFactActivity, variableValueBits) == 24, "binding offset drift: VnMonitorFactActivity.variableValueBits");
+static_assert(offsetof(VnMonitorFactActivity, variableScope) == 28, "binding offset drift: VnMonitorFactActivity.variableScope");
+static_assert(offsetof(VnMonitorFactActivity, variableOutcome) == 32, "binding offset drift: VnMonitorFactActivity.variableOutcome");
+static_assert(offsetof(VnMonitorFactActivity, reserved0) == 36, "binding offset drift: VnMonitorFactActivity.reserved0");
+static_assert(offsetof(VnMonitorFactActivity, stepTargetId) == 40, "binding offset drift: VnMonitorFactActivity.stepTargetId");
+static_assert(offsetof(VnMonitorFactActivity, variableTicket) == 56, "binding offset drift: VnMonitorFactActivity.variableTicket");
+static_assert(sizeof(VnMonitorExecutionFactV2) == 496, "binding size drift: VnMonitorExecutionFactV2");
+static_assert(offsetof(VnMonitorExecutionFactV2, fact) == 0, "binding offset drift: VnMonitorExecutionFactV2.fact");
+static_assert(offsetof(VnMonitorExecutionFactV2, activity) == 432, "binding offset drift: VnMonitorExecutionFactV2.activity");
 
 // C function-signature pins for the whole API. Taking the address of each
 // function into a pointer of the table-declared signature makes ANY

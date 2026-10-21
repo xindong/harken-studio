@@ -19,7 +19,7 @@ public:
     const Monitor::CapturedEvent* eventAt(int row) const;
     QString details(int row) const;
     static QString levelText(const Monitor::CapturedEvent& event);
-    static QString categoryText(const Monitor::CapturedEvent& event);
+    static QString typeText(const Monitor::CapturedEvent& event);
     static QString description(const Monitor::CapturedEvent& event);
 
 private:

@@ -3188,6 +3188,40 @@ static_assert(offsetof(VnMonitorHostObjectSymbolV1, flags) == 54,
 static_assert(offsetof(VnMonitorHostObjectSymbolV1, text) == 56,
               "wire table offset drift: VnMonitorHostObjectSymbolV1.text");
 
+static_assert(sizeof(VnMonitorFactActivity) == 64,
+              "wire table size drift: VnMonitorFactActivity");
+static_assert(offsetof(VnMonitorFactActivity, actionOutcome) == 0,
+              "wire table offset drift: VnMonitorFactActivity.actionOutcome");
+static_assert(offsetof(VnMonitorFactActivity, stepIndex) == 4,
+              "wire table offset drift: VnMonitorFactActivity.stepIndex");
+static_assert(offsetof(VnMonitorFactActivity, stepExecutionOrdinal) == 8,
+              "wire table offset drift: VnMonitorFactActivity.stepExecutionOrdinal");
+static_assert(offsetof(VnMonitorFactActivity, stepOpcode) == 12,
+              "wire table offset drift: VnMonitorFactActivity.stepOpcode");
+static_assert(offsetof(VnMonitorFactActivity, reservedStep) == 16,
+              "wire table offset drift: VnMonitorFactActivity.reservedStep");
+static_assert(offsetof(VnMonitorFactActivity, stepTargetKind) == 20,
+              "wire table offset drift: VnMonitorFactActivity.stepTargetKind");
+static_assert(offsetof(VnMonitorFactActivity, variableValueBits) == 24,
+              "wire table offset drift: VnMonitorFactActivity.variableValueBits");
+static_assert(offsetof(VnMonitorFactActivity, variableScope) == 28,
+              "wire table offset drift: VnMonitorFactActivity.variableScope");
+static_assert(offsetof(VnMonitorFactActivity, variableOutcome) == 32,
+              "wire table offset drift: VnMonitorFactActivity.variableOutcome");
+static_assert(offsetof(VnMonitorFactActivity, reserved0) == 36,
+              "wire table offset drift: VnMonitorFactActivity.reserved0");
+static_assert(offsetof(VnMonitorFactActivity, stepTargetId) == 40,
+              "wire table offset drift: VnMonitorFactActivity.stepTargetId");
+static_assert(offsetof(VnMonitorFactActivity, variableTicket) == 56,
+              "wire table offset drift: VnMonitorFactActivity.variableTicket");
+
+static_assert(sizeof(VnMonitorExecutionFactV2) == 496,
+              "wire table size drift: VnMonitorExecutionFactV2");
+static_assert(offsetof(VnMonitorExecutionFactV2, fact) == 0,
+              "wire table offset drift: VnMonitorExecutionFactV2.fact");
+static_assert(offsetof(VnMonitorExecutionFactV2, activity) == 432,
+              "wire table offset drift: VnMonitorExecutionFactV2.activity");
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_LAYOUT_ASSERTS_H

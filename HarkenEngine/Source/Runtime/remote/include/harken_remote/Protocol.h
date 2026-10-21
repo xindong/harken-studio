@@ -574,7 +574,7 @@ inline void Encode(Writer &w, const EventCaptureStatusV2 &v) {
 }
 inline bool Decode(Reader &r, EventCaptureStatusV2 &v) {
     return DecodeEventCaptureStatusPrefix(r, v.base) &&
-        r.U32(v.acceptedExecutionFactVersion) && v.acceptedExecutionFactVersion <= 1 &&
+        r.U32(v.acceptedExecutionFactVersion) && v.acceptedExecutionFactVersion <= 2 &&
         r.U32(v.baselineAvailability) && v.baselineAvailability <= 5 &&
         r.U64(v.supportedFactKinds[0]) && r.U64(v.supportedFactKinds[1]) &&
         r.U32(v.requestedPermissionMask) && r.U32(v.acceptedPermissionMask) &&

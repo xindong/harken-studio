@@ -19,6 +19,8 @@ constexpr unsigned LifecycleFactKind(MonitorLifecyclePhase phase) noexcept {
     case MonitorLifecyclePhase::ActionStop: return VN_MONITOR_FACT_ACTION_STOPPED;
     case MonitorLifecyclePhase::ActionResult: return VN_MONITOR_FACT_ACTION_RESULT;
     case MonitorLifecyclePhase::ActionReject: return VN_MONITOR_FACT_ACTION_REJECTED;
+    case MonitorLifecyclePhase::StepExecuted: return VN_MONITOR_FACT_STEP_EXECUTED;
+    case MonitorLifecyclePhase::ActionTerminal: return VN_MONITOR_FACT_ACTION_TERMINAL;
     case MonitorLifecyclePhase::VoicePending: return VN_MONITOR_FACT_VOICE_PENDING;
     case MonitorLifecyclePhase::VoiceLive: return VN_MONITOR_FACT_VOICE_LIVE;
     case MonitorLifecyclePhase::VoicePark: return VN_MONITOR_FACT_VOICE_PARKED;
@@ -151,15 +153,43 @@ inline MonitorExecutionFact CaptureLifecycleFact(MonitorLifecyclePhase phase,
     std::uint64_t world, VnObjectId object, std::uint64_t actionHandle,
     std::uint32_t reason, std::uint8_t playableKind,
     const MonitorLifecycleFacts& source, const MonitorEmitterBinding& binding) noexcept {
-    const bool action = phase >= MonitorLifecyclePhase::ActionAccept && phase <= MonitorLifecyclePhase::ActionReject;
+    const bool action = (phase >= MonitorLifecyclePhase::ActionAccept && phase <= MonitorLifecyclePhase::ActionReject) ||
+        phase == MonitorLifecyclePhase::StepExecuted || phase == MonitorLifecyclePhase::ActionTerminal;
     const bool voice = (phase >= MonitorLifecyclePhase::VoicePending && phase <= MonitorLifecyclePhase::VoiceEnd) ||
         phase == MonitorLifecyclePhase::SelectionCommitted;
     const bool queue = phase == MonitorLifecyclePhase::QueueAdvance || phase == MonitorLifecyclePhase::QueueFail;
     const bool transition = phase >= MonitorLifecyclePhase::TransitionStart && phase <= MonitorLifecyclePhase::TransitionReject;
     const auto subject = action ? VN_MONITOR_SUBJECT_ACTION : voice ? VN_MONITOR_SUBJECT_LOGICAL_VOICE :
         queue ? VN_MONITOR_SUBJECT_QUEUE : transition ? VN_MONITOR_SUBJECT_TRANSITION : VN_MONITOR_SUBJECT_PLAYABLE;
-    return CaptureEntityFact(LifecycleFactKind(phase), subject, engine, handle, generation,
+    auto fact = CaptureEntityFact(LifecycleFactKind(phase), subject, engine, handle, generation,
         world, object, actionHandle, reason, playableKind, source, binding);
+    if ((phase == MonitorLifecyclePhase::ActionResult || phase == MonitorLifecyclePhase::ActionReject) && source.actionOutcome != 0) {
+        fact.terminalKind = 0;
+        fact.result = 0;
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_TERMINAL_KIND, false);
+        SetSourceField(fact, VN_MONITOR_FACT_FIELD_RESULT, false);
+    }
+    if (IsActivityFactKind(fact.kind)) {
+        auto& activity = fact.body.execution.activity;
+        activity = {};
+        activity.logicCommit = source.logicCommitSequence;
+        if (phase == MonitorLifecyclePhase::StepExecuted) {
+            activity.stepIndex = source.stepIndex;
+            activity.stepExecutionOrdinal = source.stepExecutionOrdinal;
+            activity.stepOpcode = source.stepOpcode;
+            activity.stepTargetKind = source.stepTargetKind;
+            activity.stepTargetId = source.stepTargetId;
+            fact.result = source.terminalResult;
+            SetSourceField(fact, VN_MONITOR_FACT_FIELD_RESULT);
+            SetSourceField(fact, VN_MONITOR_FACT_FIELD_TERMINAL_KIND, false);
+            fact.terminalKind = 0;
+            SetSourceField(fact, VN_MONITOR_FACT_FIELD_ACTIVITY_STEP);
+        } else {
+            activity.actionOutcome = source.actionOutcome;
+            SetSourceField(fact, VN_MONITOR_FACT_FIELD_ACTION_OUTCOME);
+        }
+    }
+    return fact;
 }
 
 } // namespace harken::monitor

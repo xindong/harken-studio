@@ -34,7 +34,9 @@ enum class MonitorLifecyclePhase : std::uint8_t {
     EffectReleased = 20,
     SelectionCommitted = 21,
     PreparedCandidate = 22,
-    PlayableStarted = 23
+    PlayableStarted = 23,
+    StepExecuted = 24,
+    ActionTerminal = 25
 };
 
 // Called after the reported Runtime decision succeeds. No-op when Monitor is absent,
@@ -55,6 +57,12 @@ struct MonitorLifecycleFacts {
     std::uint8_t terminalKind = 0;
     std::int32_t terminalResult = 0;
     std::uint32_t terminalReason = 0;
+    std::uint8_t actionOutcome = 0;
+    std::uint32_t stepIndex = 0;
+    std::uint32_t stepExecutionOrdinal = 0;
+    std::uint32_t stepOpcode = 0;
+    VnObjectId stepTargetId{};
+    std::uint32_t stepTargetKind = 0;
     MonitorOccurrenceIdentity occurrenceIdentity{};
     VnObjectId contentObject{};
     std::uint64_t contentWorld = 0;
@@ -96,6 +104,24 @@ void ObserveMonitorLifecycle(MonitorLifecyclePhase phase,
 // Called after a successful non-idempotent CurrentWorld install. Reads the
 // already-committed generation; does not drive world replacement.
 void ObserveMonitorCurrentWorld(std::uint64_t worldGeneration) noexcept;
+
+struct MonitorVariableResultFacts {
+    MonitorRequestContext request{};
+    MonitorEmitterOrigin emitterOrigin{};
+    VnObjectId projectId{};
+    VnObjectId variableId{};
+    std::uint64_t worldGeneration = 0;
+    std::uint64_t logicCommitSequence = 0;
+    std::uint64_t actionFiring = 0;
+    std::uint64_t actualFrame = 0;
+    std::uint32_t executionOrdinal = UINT32_MAX;
+    std::uint32_t outcome = 0;
+    std::int32_t result = 0;
+    float value = 0.0f;
+    bool emitterScope = false;
+};
+
+void ObserveMonitorVariableResult(const MonitorVariableResultFacts& facts) noexcept;
 
 struct MonitorEffectFacts {
     std::uint32_t bypass01 = 0;

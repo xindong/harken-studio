@@ -22,7 +22,7 @@ bool before(const CapturedEvent& a, const CapturedEvent& b)
 std::size_t eventBytes(const CapturedEvent& event)
 {
     return sizeof(CapturedEvent) + static_cast<std::size_t>(
-        event.objectName.size() + event.gameObjectName.size() + event.playbackDescription.size()) * sizeof(QChar);
+        event.objectName.size() + event.actionName.size() + event.gameObjectName.size() + event.playbackDescription.size()) * sizeof(QChar);
 }
 
 QString playableDescription(const CapturedEvent& event)
@@ -64,47 +64,73 @@ quint64 CapturedEvent::timestampNs() const
 int CapturedEvent::level() const
 {
     if (!isExecution()) return detail.level;
+    if (monitorFactHas(execution, kMonitorFactFieldActionOutcome) && activity.actionOutcome == 2) return kLogWarn;
     if ((monitorFactHas(execution, kMonitorFactFieldResult) && execution.result != kOk) ||
         (monitorFactHas(execution, kMonitorFactFieldTerminalKind) &&
-         execution.subjectNamespace == kMonitorSubjectPlayable && execution.terminalKind == kMonitorTerminalFailure) ||
+         execution.terminalKind == kMonitorTerminalFailure) ||
+        (monitorFactHas(execution, kMonitorFactFieldActionOutcome) && activity.actionOutcome == 3) ||
+        (monitorFactHas(execution, kMonitorFactFieldActivityVariable) && activity.variableOutcome == 7) ||
         execution.factKind == kMonitorFactActionRejected || execution.factKind == kMonitorFactQueueFailed ||
         execution.factKind == kMonitorFactTransitionRejected) return kLogError;
     return kLogInfo;
 }
 
-int CapturedEvent::category() const
+DesignerEventType CapturedEvent::type() const
 {
-    if (!isExecution()) return detail.category;
-    if (execution.factKind == kMonitorFactRequestSubmitted || execution.factKind == kMonitorFactRequestReturned ||
-        execution.factKind == kMonitorFactRequestTerminal) return kMonitorEventCategoryOperation;
-    return kMonitorEventCategoryLifecycle;
+    const auto operationType = [](quint32 operation) {
+        switch (operation) {
+        case kMonitorOperationPostAction:
+        case kMonitorOperationPostActionByName:
+        case kMonitorOperationPostActionPinned:
+        case kMonitorOperationPostActionResolved:
+        case kMonitorOperationStopAction: return DesignerEventType::Action;
+        case kMonitorOperationPlayPreview:
+        case kMonitorOperationPlayRawPreview:
+        case kMonitorOperationStopPreview:
+        case kMonitorOperationStopVoice:
+        case kMonitorOperationResetPreview: return DesignerEventType::Playable;
+        case kMonitorOperationSetValue:
+        case kMonitorOperationSetEmitterValue:
+        case kMonitorOperationSetValues:
+        case kMonitorOperationResetValues:
+        case kMonitorOperationSetEmitterValues: return DesignerEventType::Variable;
+        default: return DesignerEventType::None;
+        }
+    };
+    if (!isExecution()) return detail.category == kMonitorEventCategoryOperation
+        ? operationType(detail.code) : diagnosticType;
+    switch (execution.factKind) {
+    case kMonitorFactRequestSubmitted:
+    case kMonitorFactRequestReturned:
+    case kMonitorFactRequestTerminal: return operationType(execution.request.operation);
+    case kMonitorFactStepExecuted: return DesignerEventType::Step;
+    case kMonitorFactVariableResult: return DesignerEventType::Variable;
+    default: break;
+    }
+    switch (execution.subjectNamespace) {
+    case kMonitorSubjectAction: return DesignerEventType::Action;
+    case kMonitorSubjectPlayable:
+    case kMonitorSubjectTransition: return DesignerEventType::Playable;
+    case kMonitorSubjectEmitter: return DesignerEventType::GameObject;
+    default: return DesignerEventType::None;
+    }
 }
 
 bool CapturedEvent::isDesignerEvent() const
 {
+    if (type() == DesignerEventType::None) return false;
     if (!playbackDescription.isEmpty()) return true;
-    if (!isExecution()) {
-        if (detail.category == kMonitorEventCategoryDiagnostic) return detail.level >= kLogWarn;
-        if (detail.category != kMonitorEventCategoryOperation) return false;
-        if (detail.result != kOk) return true;
-        switch (detail.code) {
-        case kMonitorOperationSetValue:
-        case kMonitorOperationSetEmitterValue:
-        case kMonitorOperationSetValues:
-        case kMonitorOperationSetEmitterValues:
-        case kMonitorOperationLoadPack:
-        case kMonitorOperationUnloadPack:
-            return true;
-        default:
-            return false;
-        }
-    }
+    if (!isExecution()) return detail.category == kMonitorEventCategoryDiagnostic && detail.level >= kLogWarn;
     switch (execution.factKind) {
     case kMonitorFactRequestReturned:
         return monitorFactHas(execution, kMonitorFactFieldResult) && execution.result != kOk;
+    case kMonitorFactActionTerminal:
+        return header.recordVersion == 2 && monitorFactHas(execution, kMonitorFactFieldActionOutcome);
     case kMonitorFactActionAccepted:
-    case kMonitorFactActionStopped:
-    case kMonitorFactActionRejected:
+    case kMonitorFactStepExecuted:
+    case kMonitorFactVariableResult:
+    case kMonitorFactEmitterCreated:
+    case kMonitorFactEmitterDestroyed:
     case kMonitorFactTransitionStarted:
     case kMonitorFactTransitionStopped:
     case kMonitorFactTransitionRejected:
@@ -118,6 +144,8 @@ bool CapturedEvent::isDesignerEvent() const
 
 harkenstudio::ObjectId CapturedEvent::objectId() const
 {
+    if (isExecution() && execution.factKind == kMonitorFactStepExecuted &&
+        monitorFactHas(execution, kMonitorFactFieldActivityStep)) return activity.stepTargetId;
     if (!isExecution() || monitorFactHas(execution, kMonitorFactFieldContentObject)) return header.stableId;
     return monitorFactHas(execution, kMonitorFactFieldTargetObject) ? execution.target.objectId : harkenstudio::ObjectId{};
 }
@@ -239,10 +267,11 @@ void EventCaptureController::start()
     }
     MonitorSessionDesc desc{};
 
-    desc.requestedStreamKindMask = kMonitorStreamEvent;
-    desc.requestedPermissionMask = kMonitorPermObserveEvents;
+    desc.requestedStreamKindMask = kMonitorStreamEvent | kMonitorStreamState;
+    desc.requestedPermissionMask = kMonitorPermObserveEvents | kMonitorPermObserveState | kMonitorPermSymbols;
+    desc.requestSymbols = 1;
     desc.consumerQueueBytes = 1048576;
-    desc.requestedExecutionFactVersion = 1;
+    desc.requestedExecutionFactVersion = 2;
     const auto opened = HarkenEditor::Bridge::Monitoring::openEventSession(&desc, &localSession_);
     MonitorEventSessionStatus status{};
 
@@ -261,6 +290,9 @@ void EventCaptureController::begin(quint64 epoch, quint64 timestamp, quint64 ide
     startedNs_ = timestamp;
     targetText_ = pendingTargetText_;
     sourceSequences_.clear();
+    hostNames_.clear();
+    hostNameOrder_.clear();
+    emitterIdentities_.clear();
     sourceDropped_ = deliveryDropped_ = transportDropped_ = trimmed_ = 0;
     identityUnavailable_ = identityUnavailable;
     interrupted_ = false;
@@ -396,10 +428,27 @@ void EventCaptureController::consume(const QByteArray& bytes, quint32 count, qui
         return;
     }
     std::vector<CapturedEvent> incoming;
+    EmitterIdentities changedEmitters;
     auto sequences = sourceSequences_;
+    const auto rememberEmitter = [&](const MonitorRecordHeader& header, const MonitorExecutionFactV1& fact, bool pinIdentity) {
+        const EmitterKey key{header.engineMonitorInstanceId, fact.originEmitter};
+        auto& identity = emitterIdentities_[key];
+        if (identity.hostSession != fact.hostSession || identity.hostSequence != fact.hostLocalSequence ||
+            identity.hostRevision != fact.originHostRevision) {
+            identity = {fact.hostSession, fact.hostLocalSequence, fact.originHostRevision, fact.hostOwnership, {}};
+        }
+        identity.ownership = fact.hostOwnership;
+        const auto name = hostNames_.find({header.engineMonitorInstanceId, fact.originEmitter,
+            identity.hostSession, identity.hostSequence, identity.hostRevision});
+        if (name != hostNames_.end()) identity.name = name->second;
+        auto& firstIdentity = changedEmitters[key];
+        if (pinIdentity && firstIdentity.hostRevision == 0) firstIdentity = identity;
+    };
     for (const auto& record : batch.records) {
         if (record.unknownOptional || (record.header.recordKind != kMonitorRecordEventDetail &&
-                                      record.header.recordKind != kMonitorRecordExecutionFact)) continue;
+                                      record.header.recordKind != kMonitorRecordExecutionFact &&
+                                      record.header.recordKind != kMonitorRecordIdentityFact &&
+                                      record.header.recordKind != kMonitorRecordHostObjectSymbol)) continue;
         CapturedEvent event;
         event.header = record.header;
         auto& sequence = sequences[{event.header.engineMonitorInstanceId, event.header.producerId}];
@@ -407,8 +456,51 @@ void EventCaptureController::consume(const QByteArray& bytes, quint32 count, qui
             fail(tr("Invalid event identity or payload"));
             return;
         }
+        if (record.header.recordKind == kMonitorRecordIdentityFact) {
+            MonitorExecutionFactV1 identity{};
+            if (!decodeIdentityFact(record, &identity)) {
+                fail(tr("Invalid game object identity"));
+                return;
+            }
+            sequence = event.header.sourceSequence;
+            if (identity.subjectNamespace == kMonitorSubjectEmitter &&
+                identity.factKind == kMonitorFactIdentityUpsert &&
+                monitorFactHas(identity, kMonitorFactFieldOriginEmitter) &&
+                monitorFactHas(identity, kMonitorFactFieldHostKey) &&
+                monitorFactHas(identity, kMonitorFactFieldHostRevision) &&
+                !emitterIdentities_.contains({event.header.engineMonitorInstanceId, identity.originEmitter})) {
+                rememberEmitter(event.header, identity, false);
+            }
+            continue;
+        }
+        if (record.header.recordKind == kMonitorRecordHostObjectSymbol) {
+            MonitorHostObjectSymbolV1 symbol{};
+            if (!decodeHostObjectSymbol(record, &symbol)) {
+                fail(tr("Invalid game object identity"));
+                return;
+            }
+            sequence = event.header.sourceSequence;
+            if (symbol.field == kMonitorHostSymbolName) {
+                const HostSymbolKey key{event.header.engineMonitorInstanceId, event.header.instanceHandle,
+                    symbol.hostSession, symbol.hostSequence, symbol.registrationRevision};
+                if (!hostNames_.contains(key)) hostNameOrder_.push_back(key);
+                hostNames_[key] = QString::fromUtf8(reinterpret_cast<const char*>(symbol.text), symbol.textBytes);
+                auto& firstIdentity = changedEmitters[{event.header.engineMonitorInstanceId, event.header.instanceHandle}];
+                if (firstIdentity.hostSession == symbol.hostSession && firstIdentity.hostSequence == symbol.hostSequence &&
+                    firstIdentity.hostRevision == symbol.registrationRevision) firstIdentity.name = hostNames_[key];
+                const auto emitter = emitterIdentities_.find({event.header.engineMonitorInstanceId, event.header.instanceHandle});
+                if (emitter != emitterIdentities_.end() && emitter->second.hostSession == symbol.hostSession &&
+                    emitter->second.hostSequence == symbol.hostSequence &&
+                    emitter->second.hostRevision == symbol.registrationRevision) emitter->second.name = hostNames_[key];
+                while (hostNameOrder_.size() > kMaxRows) {
+                    hostNames_.erase(hostNameOrder_.front());
+                    hostNameOrder_.pop_front();
+                }
+            }
+            continue;
+        }
         if (event.isExecution()) {
-            if (!decodeExecutionFact(record, &event.execution)) {
+            if (!decodeExecutionFact(record, &event.execution, &event.activity)) {
                 fail(tr("Invalid execution record"));
                 return;
             }
@@ -416,25 +508,15 @@ void EventCaptureController::consume(const QByteArray& bytes, quint32 count, qui
             event.playbackDescription = playableDescription(event);
             if (monitorFactHas(fact, kMonitorFactFieldPlaybackRequest))
                 event.playbackRequestSequence = fact.playbackRequest.sequence;
-            if (monitorFactHas(fact, kMonitorFactFieldOriginEmitter))
-                event.emitterObjectId = fact.originEmitter;
-            if (monitorFactHas(fact, kMonitorFactFieldOriginEmitter) &&
+            else if (monitorFactHas(fact, kMonitorFactFieldRequest))
+                event.playbackRequestSequence = fact.request.sequence;
+            if (fact.subjectNamespace == kMonitorSubjectEmitter &&
+                monitorFactHas(fact, kMonitorFactFieldOriginEmitter) &&
                 monitorFactHas(fact, kMonitorFactFieldHostKey) &&
-                monitorFactHas(fact, kMonitorFactFieldHostRevision) &&
-                monitorFactHas(fact, kMonitorFactFieldHostOwnership) &&
-                fact.hostOwnership == kMonitorHostStudioDefaultEmitter) {
-                event.emitterObjectId = kMonitorStudioDefaultGameObjectId;
-                event.gameObjectName = QStringLiteral("Emitter");
+                monitorFactHas(fact, kMonitorFactFieldHostRevision)) {
+                rememberEmitter(event.header, fact, true);
             }
-            if (fact.factKind == kMonitorFactRequestReturned &&
-                monitorFactHas(fact, kMonitorFactFieldResult) && fact.result == kOk &&
-                monitorFactHas(fact, kMonitorFactFieldRequestOperation)) {
-                switch (fact.request.operation) {
-                case kMonitorOperationStopAll: event.playbackDescription = tr("Stop all"); break;
-                case kMonitorOperationStopEmitter: event.playbackDescription = tr("Stop emitter"); break;
-                default: break;
-                }
-            }
+            resolveGameObject(event);
             if (monitorFactHas(fact, kMonitorFactFieldContentObject)) {
                 if (monitorFactHas(fact, kMonitorFactFieldProject)) event.projectGuid = authoringUuid(fact.projectId);
             } else if (monitorFactHas(fact, kMonitorFactFieldTargetProject)) {
@@ -451,15 +533,103 @@ void EventCaptureController::consume(const QByteArray& bytes, quint32 count, qui
         }
         event.objectGuid = authoringUuid(event.objectId());
         if (!event.projectGuid.isNull() && event.projectGuid == projectObjects_.projectGuid()) {
+            if (event.isExecution() && event.execution.factKind == kMonitorFactStepExecuted &&
+                monitorFactHas(event.execution, kMonitorFactFieldContentObject)) {
+                if (const auto* found = projectObjects_.find(event.header.stableId)) event.actionName = found->name;
+            }
             if (const auto* found = projectObjects_.find(event.objectId())) {
                 event.objectName = found->name;
+                if (!event.isExecution() && event.detail.category == kMonitorEventCategoryDiagnostic) {
+                    switch (found->businessKind) {
+                    case ProjectObjectLocation::BusinessKind::Action: event.diagnosticType = DesignerEventType::Action; break;
+                    case ProjectObjectLocation::BusinessKind::Playable: event.diagnosticType = DesignerEventType::Playable; break;
+                    case ProjectObjectLocation::BusinessKind::Variable: event.diagnosticType = DesignerEventType::Variable; break;
+                    default: break;
+                    }
+                }
             }
         }
         sequence = event.header.sourceSequence;
         incoming.push_back(event);
     }
     sourceSequences_ = std::move(sequences);
+    for (auto& event : incoming) {
+        const auto changed = changedEmitters.find({event.header.engineMonitorInstanceId, event.execution.originEmitter});
+        if (changed != changedEmitters.end()) resolveGameObject(event, &changed->second);
+    }
+    refreshGameObjects(changedEmitters);
+    for (const auto& event : incoming)
+        if (event.isExecution() && event.execution.factKind == kMonitorFactEmitterDestroyed)
+            emitterIdentities_.erase({event.header.engineMonitorInstanceId, event.execution.originEmitter});
     append(std::move(incoming));
+}
+
+void EventCaptureController::resolveGameObject(CapturedEvent& event, const EmitterIdentity* firstIdentity)
+{
+    if (!event.isExecution()) return;
+    const auto& fact = event.execution;
+    if (!monitorFactHas(fact, kMonitorFactFieldOriginEmitter)) return;
+    if (event.emitterObjectId == 0) event.emitterObjectId = fact.originEmitter;
+    auto ownership = fact.hostOwnership;
+    if (event.hostRevision == 0) {
+        if (monitorFactHas(fact, kMonitorFactFieldHostKey) && monitorFactHas(fact, kMonitorFactFieldHostRevision)) {
+            event.hostSession = fact.hostSession;
+            event.hostSequence = fact.hostLocalSequence;
+            event.hostRevision = fact.originHostRevision;
+        } else if (fact.factKind == kMonitorFactEmitterCreated || fact.factKind == kMonitorFactEmitterDestroyed) {
+            const auto* identity = firstIdentity;
+            if (!identity || identity->hostRevision == 0) {
+                const auto found = emitterIdentities_.find({event.header.engineMonitorInstanceId, fact.originEmitter});
+                if (found != emitterIdentities_.end()) identity = &found->second;
+            }
+            if (identity) {
+                event.hostSession = identity->hostSession;
+                event.hostSequence = identity->hostSequence;
+                event.hostRevision = identity->hostRevision;
+                ownership = identity->ownership;
+            }
+        }
+    }
+    if (event.hostRevision == 0) return;
+    if (ownership == kMonitorHostStudioDefaultEmitter || event.emitterObjectId == kMonitorStudioDefaultGameObjectId) {
+        event.emitterObjectId = kMonitorStudioDefaultGameObjectId;
+        event.gameObjectName = QStringLiteral("Emitter");
+        return;
+    }
+    const auto found = hostNames_.find({event.header.engineMonitorInstanceId, fact.originEmitter,
+        event.hostSession, event.hostSequence, event.hostRevision});
+    if (found != hostNames_.end()) {
+        event.gameObjectName = found->second;
+    } else if (firstIdentity && firstIdentity->hostSession == event.hostSession &&
+        firstIdentity->hostSequence == event.hostSequence && firstIdentity->hostRevision == event.hostRevision) {
+        event.gameObjectName = firstIdentity->name;
+    } else {
+        const auto emitter = emitterIdentities_.find({event.header.engineMonitorInstanceId, fact.originEmitter});
+        if (emitter != emitterIdentities_.end() && emitter->second.hostSession == event.hostSession &&
+            emitter->second.hostSequence == event.hostSequence && emitter->second.hostRevision == event.hostRevision)
+            event.gameObjectName = emitter->second.name;
+    }
+}
+
+void EventCaptureController::refreshGameObjects(const EmitterIdentities& changedEmitters)
+{
+    if (changedEmitters.empty()) return;
+    int first = -1;
+    int last = -1;
+    for (int row = 0; row < rowCount(); ++row) {
+        auto& event = records_[static_cast<std::size_t>(row)];
+        const auto changed = changedEmitters.find({event.header.engineMonitorInstanceId, event.execution.originEmitter});
+        if (changed == changedEmitters.end()) continue;
+        const auto previousName = event.gameObjectName;
+        const auto previousId = event.emitterObjectId;
+        resolveGameObject(event, &changed->second);
+        if (previousName == event.gameObjectName && previousId == event.emitterObjectId) continue;
+        retainedBytes_ -= previousName.size() * sizeof(QChar);
+        retainedBytes_ += event.gameObjectName.size() * sizeof(QChar);
+        if (first < 0) first = row;
+        last = row;
+    }
+    if (first >= 0) emit recordsUpdated(first, last);
 }
 
 void EventCaptureController::append(std::vector<CapturedEvent> incoming)

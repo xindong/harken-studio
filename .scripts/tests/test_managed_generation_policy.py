@@ -64,6 +64,41 @@ class GenerationPolicyTests(unittest.TestCase):
         self.assertEqual("internal", binding.managed_access(policy, "types", "HarkenNative"))
         self.assertEqual("public", binding.managed_access(policy, "types", "VnResult"))
 
+    def test_excluded_native_contracts_do_not_change_sdk_outputs(self):
+        baseline_policy = self.validate(self.policy)
+        baseline = binding.managed_projection(self.table, baseline_policy)
+        table = copy.deepcopy(self.table)
+        table["types"]["VnMonitorBoundaryProbe"] = {"fields": [["sequence", "u64"]]}
+        table["api"]["enums"]["VnMonitorBoundaryEnum"] = {
+            "backing": "u32", "values": {"VN_MONITOR_BOUNDARY_VALUE": 91}}
+        table["api"]["callbacks"]["VnMonitorBoundaryCallback"] = {"params": [
+            {"name": "context", "kind": "ptr", "ctype": "void*"}]}
+        table["api"]["defines"]["VN_MONITOR_BOUNDARY_LIMIT"] = {"type": "u32", "value": 97}
+        table["api"]["defines"]["VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID"]["value"] = 103
+        table["api"]["results"]["values"]["VN_MONITOR_BOUNDARY_RESULT"] = -991
+        table["functions"].append({"name": "Vn_MonitorBoundaryProbe", "params": [
+            {"name": "desc", "wire": "desc", "type": "VnMonitorBoundaryProbe", "ctype": "const VnMonitorBoundaryProbe*"}]})
+        table.setdefault("binding_overloads", []).append({"name": "Vn_ToolBoundaryAlias",
+            "entryPoint": "Vn_MonitorBoundaryProbe", "params": []})
+        policy = self.validate(self.policy, table)
+        projected = binding.managed_projection(table, policy)
+        for emit in (binding.emit_types, binding.emit_native, binding.emit_abi_cs):
+            with self.subTest(output=emit.__name__):
+                self.assertEqual(emit(baseline, baseline_policy), emit(projected, policy))
+        self.assertIn("VnMonitorBoundaryProbe", binding.emit_cpp_pin(table))
+
+    def test_sdk_dependencies_cannot_cross_excluded_native_boundary(self):
+        for dependency in ("field", "function"):
+            with self.subTest(dependency=dependency):
+                table = copy.deepcopy(self.table)
+                if dependency == "field":
+                    table["types"]["VnConfig"]["fields"].append(["monitor", {"struct": "VnMonitorSessionDesc"}])
+                else:
+                    table["functions"].append({"name": "Vn_SdkBoundaryProbe", "params": [
+                        {"name": "desc", "wire": "desc", "type": "VnMonitorSessionDesc", "ctype": "const VnMonitorSessionDesc*"}]})
+                with self.assertRaisesRegex(ValueError, "SDK projection crosses excluded native type"):
+                    self.validate(self.policy, table)
+
 
 if __name__ == "__main__":
     unittest.main()

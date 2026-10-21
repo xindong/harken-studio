@@ -71,7 +71,8 @@ def verify(sdk, work, native_dir=None, publication=None):
         code, output = run(common + [f"-p:ConsumerSource={source}", "-o", str(work / "negative" / name)],
                            work / f"negative-{name}.log", expect_success=False)
         errors = re.findall(r"error (CS\d+): ([^\r\n]+)", output)
-        if code == 0 or not errors or any(number not in {"CS0122", "CS0117"} or name not in message
+        expected_errors = {"CS0246"} if name == "VnMonitorRecordHeader" else {"CS0122", "CS0117"}
+        if code == 0 or not errors or any(number not in expected_errors or name not in message
                                           for number, message in errors):
             raise RuntimeError(f"{name}: expected only a matching access diagnostic; got\n{output}")
     if (native_dir is None) != (publication is None):

@@ -96,6 +96,7 @@ enum class ActionTerminalReason : std::uint8_t {
 };
 
 struct ActionFiringStepResult {
+    bool monitorExecutionOnCommit = false;
     ActionStepState state = ActionStepState::Pending;
     std::int32_t result = 0;
     ActionTerminalReason terminalReason = ActionTerminalReason::None;
@@ -297,6 +298,7 @@ public:
                                 std::uint32_t* out) const noexcept;
     bool CaptureStep(ActionFiringHandle handle, std::uint32_t index,
                      ActionFiringStepResult* out) const noexcept;
+    void ObserveStepExecution(ActionFiringHandle handle, std::uint32_t index) noexcept;
 
     std::uint32_t Capacity() const noexcept {
         return static_cast<std::uint32_t>(rows_.size());
@@ -340,6 +342,8 @@ private:
         ActionFiringOutcome outcome = ActionFiringOutcome::Pending;
         ActionTerminalReason terminalReason = ActionTerminalReason::None;
         std::int32_t terminalResult = 0;
+        bool monitorTerminalPublished = false;
+        std::uint64_t monitorExecutedSteps = 0;
         ActionFiringHandle parent = 0;
         ActionFiringHandle root = 0;
         ActionFiringHandle firstChild = 0;
@@ -372,6 +376,9 @@ private:
     bool PropagateTerminal(Row& row) noexcept;
     bool TryFinalizeSubtree(ActionFiringHandle handle) noexcept;
     bool TryFinalize(Row& row) noexcept;
+    MonitorLifecycleFacts CaptureMonitorFacts(const Row& row) const noexcept;
+    void ObserveCommittedSubtree(ActionFiringHandle handle) noexcept;
+    void ObserveActionTerminal(Row& row) noexcept;
 
     std::vector<Row> rows_;
     std::vector<ActionFiringStepResult> results_;

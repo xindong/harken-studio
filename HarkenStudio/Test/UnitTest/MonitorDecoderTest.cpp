@@ -4,6 +4,7 @@
 #include "Monitor/support/MonitorFixtureLoader.h"
 #include "MonitorRecordPack.h"
 #include "MonitorExecutionCodec.h"
+#include "MonitorHostSymbolCodec.h"
 
 #include <gtest/gtest.h>
 
@@ -358,5 +359,96 @@ TEST(MonitorDecoder, ExecutionRejectsMalformedIdentityAndPreservesOutputOnFailur
         fact.timestampNs = 997;
         EXPECT_FALSE(VNX::Monitor::decodeExecutionFact(record, &fact));
         EXPECT_EQ(fact.timestampNs, 997u);
+    }
+}
+
+TEST(MonitorDecoder, MixedExecutionVersionsPreserveIndependentBusinessIdentities)
+{
+    std::vector<uint8_t> packed;
+    for (const auto kind : {VN_MONITOR_FACT_PLAYABLE_ACTIVE, VN_MONITOR_FACT_STEP_EXECUTED,
+                            VN_MONITOR_FACT_VARIABLE_RESULT, VN_MONITOR_FACT_ACTION_TERMINAL}) {
+        harken::MonitorExecutionFact source{};
+        source.engine = 19;
+        source.sourceSequence = kind;
+        source.kind = kind;
+        source.body.execution.identity.object = {41, 59};
+        ASSERT_TRUE(harken::monitor::SetSourceField(source, VN_MONITOR_FACT_FIELD_CONTENT_OBJECT));
+        auto& activity = source.body.execution.activity;
+        if (kind == VN_MONITOR_FACT_STEP_EXECUTED) {
+            source.subjectNamespace = VN_MONITOR_SUBJECT_ACTION;
+            activity.stepTargetId = {71, 83};
+            activity.stepIndex = 4;
+            activity.stepExecutionOrdinal = 9;
+            ASSERT_TRUE(harken::monitor::SetSourceField(source, VN_MONITOR_FACT_FIELD_ACTIVITY_STEP));
+        } else if (kind == VN_MONITOR_FACT_VARIABLE_RESULT) {
+            source.contentKind = VN_MONITOR_CONTENT_VARIABLE;
+            activity.variableOutcome = VN_VARIABLE_OUTCOME_APPLIED;
+            activity.variableTicket = 997;
+            ASSERT_TRUE(harken::monitor::SetSourceField(source, VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE));
+        } else if (kind == VN_MONITOR_FACT_ACTION_TERMINAL) {
+            source.subjectNamespace = VN_MONITOR_SUBJECT_ACTION;
+            activity.actionOutcome = VN_ACTION_OUTCOME_SUCCEEDED;
+            ASSERT_TRUE(harken::monitor::SetSourceField(source, VN_MONITOR_FACT_FIELD_ACTION_OUTCOME));
+        }
+        const auto bytes = harken::monitor::IsActivityFactKind(kind)
+            ? harken::monitor::kActivityRecordBytes : harken::monitor::kExecutionRecordBytes;
+        const auto start = packed.size();
+        packed.resize(start + bytes);
+        ASSERT_EQ(harken::monitor::PackExecutionFact(packed.data() + start, bytes, source, 71, 72), bytes);
+    }
+    const auto batch = decodePackedRecords(packed.data(), packed.size(), 4);
+    ASSERT_EQ(batch.status, VN_OK);
+    ASSERT_EQ(batch.records.size(), 4u);
+    for (const auto& record : batch.records) {
+        VNX::Monitor::MonitorExecutionFactV1 fact{};
+        VNX::Monitor::MonitorFactActivity activity{};
+        ASSERT_TRUE(VNX::Monitor::decodeExecutionFact(record, &fact, &activity));
+        EXPECT_EQ(record.header.stableId, (harkenstudio::ObjectId{41, 59}));
+        if (fact.factKind == VN_MONITOR_FACT_STEP_EXECUTED) {
+            EXPECT_EQ(activity.stepTargetId, (harkenstudio::ObjectId{71, 83}));
+            EXPECT_EQ(activity.stepExecutionOrdinal, 9u);
+        }
+        if (fact.factKind == VN_MONITOR_FACT_VARIABLE_RESULT) EXPECT_EQ(activity.variableTicket, 997u);
+        auto corrupted = record;
+        corrupted.payload.pop_back();
+        fact.timestampNs = 123;
+        activity.variableTicket = 456;
+        EXPECT_FALSE(VNX::Monitor::decodeExecutionFact(corrupted, &fact, &activity));
+        EXPECT_EQ(fact.timestampNs, 123u);
+        EXPECT_EQ(activity.variableTicket, 456u);
+    }
+}
+
+TEST(MonitorDecoder, HostSymbolsKeepRegistrationRevisionAcrossStateAndEventStreams)
+{
+    for (const auto cut : {0u, 91u}) {
+        harken::monitor::MonitorHostSymbolSource source{};
+        source.engine = 19;
+        source.sourceSequence = 31;
+        source.boundaryRevision = 41;
+        source.value.emitter = UINT64_C(0x100000003);
+        source.value.sdkSession = 7;
+        source.value.localSequence = 9;
+        source.value.registrationRevision = 13;
+        source.value.field = VN_MONITOR_HOST_SYMBOL_NAME;
+        source.value.factKind = VN_MONITOR_SYMBOL_UPSERT;
+        source.value.textBytes = 6;
+        std::copy_n("Player", 6, source.value.text);
+        std::vector<uint8_t> packed(harken::monitor::kHostSymbolRecordBytes);
+        ASSERT_EQ(harken::monitor::PackHostSymbol(packed.data(), packed.size(), source, cut,
+            cut ? VN_MONITOR_STREAM_STATE : VN_MONITOR_STREAM_EVENT), packed.size());
+        const auto batch = decodePackedRecords(packed.data(), packed.size(), 1);
+        ASSERT_EQ(batch.status, VN_OK);
+        ASSERT_EQ(batch.records.size(), 1u);
+        VNX::Monitor::MonitorHostObjectSymbolV1 symbol{};
+        ASSERT_TRUE(VNX::Monitor::decodeHostObjectSymbol(batch.records.front(), &symbol));
+        EXPECT_EQ(symbol.registrationRevision, 13u);
+        EXPECT_EQ(symbol.stateCutId, cut);
+        EXPECT_EQ(std::string(reinterpret_cast<const char*>(symbol.text), symbol.textBytes), "Player");
+        auto corrupted = batch.records.front();
+        corrupted.payload[56] = 0xff;
+        symbol.registrationRevision = 997;
+        EXPECT_FALSE(VNX::Monitor::decodeHostObjectSymbol(corrupted, &symbol));
+        EXPECT_EQ(symbol.registrationRevision, 997u);
     }
 }

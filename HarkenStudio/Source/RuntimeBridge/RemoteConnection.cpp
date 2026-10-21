@@ -427,9 +427,9 @@ struct RemoteConnection::Impl
             const auto& result = status.base;
             if (execution != eventCaptureUsesExecution || !decoded ||
                 (result.result == VN_OK && (!result.sessionEpoch || !result.startedTimestampNs ||
-                    (execution && (status.acceptedExecutionFactVersion != 1 ||
+                    (execution && (status.acceptedExecutionFactVersion != 2 ||
                         (status.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) == 0)) ||
-                    (result.state != VN_MONITOR_EVENT_SESSION_LIVE &&
+                    ((result.state == VN_MONITOR_EVENT_SESSION_DRAINED || result.stoppedTimestampNs != 0) &&
                      result.stoppedTimestampNs < result.startedTimestampNs)))) {
                 fail(RemoteConnection::tr("Invalid event capture status"));
                 return;
@@ -677,8 +677,10 @@ void RemoteConnection::startEventCapture()
     impl_->eventCaptureUsesExecution = (impl_->target.capabilities & Wire::kCapabilityExecutionObservation) != 0;
     if (impl_->eventCaptureUsesExecution) {
         Wire::EventCaptureRequestV2 request;
-        request.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
-        request.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+        request.executionFactVersion = 2;
+        request.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
+        request.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE | VN_MONITOR_PERM_SYMBOLS;
+        request.requestSymbols = 1;
         request.consumerQueueBytes = 1048576;
         impl_->request(Wire::MakeFrame(Wire::Message::EventStartV2, 0, request), Wire::Message::EventStatusV2);
     } else {

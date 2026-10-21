@@ -10,9 +10,7 @@
 #include <QAction>
 #include <QClipboard>
 #include <QComboBox>
-#include <QFontMetrics>
 #include <QHBoxLayout>
-#include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
@@ -33,7 +31,7 @@ class MonitorCatalogFilter final : public QSortFilterProxyModel
 {
 public:
     using QSortFilterProxyModel::QSortFilterProxyModel;
-    int category = 0;
+    Monitor::DesignerEventType type = Monitor::DesignerEventType::None;
     int level = -1;
     QString search;
     void refresh() { invalidateFilter(); }
@@ -43,7 +41,7 @@ protected:
     {
         const auto* model = static_cast<const MonitorCatalogModel*>(sourceModel());
         const auto* event = model->eventAt(row);
-        if (!event || !event->isDesignerEvent() || (category && event->category() != category) ||
+        if (!event || !event->isDesignerEvent() || (type != Monitor::DesignerEventType::None && event->type() != type) ||
             (level >= 0 && event->level() != level)) return false;
         if (search.isEmpty()) return true;
         for (int column = 0; column < MonitorCatalogModel::ColumnCount; ++column)
@@ -74,13 +72,15 @@ MonitorPanel::MonitorPanel(QWidget* parent)
     levelFilter_->addItem(tr("Warning"), VNX::Monitor::kLogWarn);
     levelFilter_->addItem(tr("Error"), VNX::Monitor::kLogError);
     filters->addWidget(levelFilter_);
-    categoryFilter_ = new QComboBox(this);
-    categoryFilter_->setObjectName(QStringLiteral("MonitorCategoryFilter"));
-    categoryFilter_->addItem(tr("All types"), 0);
-    categoryFilter_->addItem(tr("Operation"), VNX::Monitor::kMonitorEventCategoryOperation);
-    categoryFilter_->addItem(tr("Playback"), VNX::Monitor::kMonitorEventCategoryLifecycle);
-    categoryFilter_->addItem(tr("Diagnostic"), VNX::Monitor::kMonitorEventCategoryDiagnostic);
-    filters->addWidget(categoryFilter_);
+    typeFilter_ = new QComboBox(this);
+    typeFilter_->setObjectName(QStringLiteral("MonitorTypeFilter"));
+    typeFilter_->addItem(tr("All types"), 0);
+    typeFilter_->addItem(tr("Action"), static_cast<int>(Monitor::DesignerEventType::Action));
+    typeFilter_->addItem(tr("Step"), static_cast<int>(Monitor::DesignerEventType::Step));
+    typeFilter_->addItem(tr("Playable"), static_cast<int>(Monitor::DesignerEventType::Playable));
+    typeFilter_->addItem(tr("Variable"), static_cast<int>(Monitor::DesignerEventType::Variable));
+    typeFilter_->addItem(tr("Game Object"), static_cast<int>(Monitor::DesignerEventType::GameObject));
+    filters->addWidget(typeFilter_);
 
     textFilter_ = new QLineEdit(this);
     textFilter_->setObjectName(QStringLiteral("MonitorTextFilter"));
@@ -95,7 +95,6 @@ MonitorPanel::MonitorPanel(QWidget* parent)
     root->addLayout(filters);
 
     tableFrame_ = new TableWidget(TableOptions::display(), this);
-    tableFrame_->setColumnSizing(TableColumnSizing::Scrollable);
     table_ = tableFrame_->createModelView(QStringLiteral("MonitorTable"), nullptr);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -137,7 +136,7 @@ MonitorPanel::MonitorPanel(QWidget* parent)
     copyShortcut->setContext(Qt::WidgetShortcut);
     connect(copyShortcut, &QShortcut::activated, this, &MonitorPanel::copySelected);
 
-    connect(categoryFilter_, &QComboBox::currentIndexChanged, this, [this] { rebuildVisibleRows(); });
+    connect(typeFilter_, &QComboBox::currentIndexChanged, this, [this] { rebuildVisibleRows(); });
     connect(textFilter_, &QLineEdit::textChanged, this, [this] { rebuildVisibleRows(); });
     connect(jumpButton_, &QPushButton::clicked, this, &MonitorPanel::onJumpClicked);
 
@@ -155,17 +154,17 @@ QVariantMap MonitorPanel::snapshotParams() const
     QVariantMap params;
     params.insert(QStringLiteral("filterText"), textFilter_->text());
     params.insert(QStringLiteral("filterLevel"), levelFilter_->currentData());
-    params.insert(QStringLiteral("filterCategory"), categoryFilter_->currentData());
+    params.insert(QStringLiteral("filterType"), typeFilter_->currentData());
     params.insert(QStringLiteral("autoScroll"), autoScroll_->isChecked());
     return params;
 }
 
 void MonitorPanel::restoreParams(const QVariantMap& params)
 {
-    const QSignalBlocker categoryBlocker(categoryFilter_);
+    const QSignalBlocker typeBlocker(typeFilter_);
     const QSignalBlocker levelBlocker(levelFilter_);
     const QSignalBlocker textBlocker(textFilter_);
-    categoryFilter_->setCurrentIndex(std::max(0, categoryFilter_->findData(params.value(QStringLiteral("filterCategory"), 0))));
+    typeFilter_->setCurrentIndex(std::max(0, typeFilter_->findData(params.value(QStringLiteral("filterType"), 0))));
     levelFilter_->setCurrentIndex(std::max(0, levelFilter_->findData(params.value(QStringLiteral("filterLevel"), -1))));
     textFilter_->setText(params.value(QStringLiteral("filterText")).toString());
     autoScroll_->setChecked(params.value(QStringLiteral("autoScroll"), true).toBool());
@@ -180,7 +179,7 @@ int MonitorPanel::visibleRowCount() const
 void MonitorPanel::rebuildVisibleRows()
 {
     if (!filter_) return;
-    filter_->category = categoryFilter_->currentData().toInt();
+    filter_->type = static_cast<Monitor::DesignerEventType>(typeFilter_->currentData().toInt());
     filter_->level = levelFilter_->currentData().toInt();
     filter_->search = textFilter_->text().trimmed();
     filter_->refresh();
@@ -229,20 +228,17 @@ void MonitorPanel::setCaptureController(Monitor::EventCaptureController* capture
     filter_->setSourceModel(model_);
     tableFrame_->setModel(filter_);
     table_->setWordWrap(false);
-    table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
-    const auto metrics = table_->fontMetrics();
-    const auto numericIdWidth = std::max(170, metrics.horizontalAdvance(QStringLiteral("18446744073709551614")) + 20);
-    const auto objectIdWidth = std::max(280, metrics.horizontalAdvance(QStringLiteral("00000000-0000-0000-0000-000000000000")) + 20);
-    table_->setColumnWidth(MonitorCatalogModel::Time, 100);
-    table_->setColumnWidth(MonitorCatalogModel::Level, 70);
-    table_->setColumnWidth(MonitorCatalogModel::Type, 90);
-    table_->setColumnWidth(MonitorCatalogModel::Description, 180);
-    table_->setColumnWidth(MonitorCatalogModel::RequestId, numericIdWidth);
-    table_->setColumnWidth(MonitorCatalogModel::Object, 150);
-    table_->setColumnWidth(MonitorCatalogModel::ObjectId, objectIdWidth);
-    table_->setColumnWidth(MonitorCatalogModel::GameObject, 120);
-    table_->setColumnWidth(MonitorCatalogModel::GameObjectId, numericIdWidth);
-    table_->horizontalHeader()->setStretchLastSection(false);
+    tableFrame_->setViewColumns(QStringLiteral("MonitorTable"), {
+        {QStringLiteral("time"), {}, 10},
+        {QStringLiteral("level"), {}, 7},
+        {QStringLiteral("type"), {}, 9},
+        {QStringLiteral("description"), {}, 18},
+        {QStringLiteral("requestId"), {}, 17},
+        {QStringLiteral("object"), {}, 15},
+        {QStringLiteral("objectId"), {}, 28},
+        {QStringLiteral("gameObject"), {}, 12},
+        {QStringLiteral("gameObjectId"), {}, 17}
+    });
     jumpButton_->setText({});
     jumpButton_->setFixedSize(26, 22);
     jumpButton_->setAccessibleName(tr("Show object in project"));
@@ -262,6 +258,7 @@ void MonitorPanel::setCaptureController(Monitor::EventCaptureController* capture
     });
     connect(filter_, &QAbstractItemModel::rowsRemoved, this, &MonitorPanel::refreshCaptureView);
     connect(filter_, &QAbstractItemModel::modelReset, this, &MonitorPanel::refreshCaptureView);
+    connect(filter_, &QAbstractItemModel::dataChanged, this, &MonitorPanel::refreshDetails);
     connect(table_->selectionModel(), &QItemSelectionModel::selectionChanged, this, &MonitorPanel::refreshDetails);
     connect(table_->selectionModel(), &QItemSelectionModel::currentChanged, this, &MonitorPanel::refreshDetails);
     rebuildVisibleRows();

@@ -6,6 +6,8 @@
 #include "AssetPipeline/AssetRegistry.h"
 #include "Components/VSelection.h"
 #include "Components/VTrack.h"
+#include "Components/VAction.h"
+#include "Components/VVariable.h"
 #include "Core/AudioEngine.h"
 #include "Core/ProjectManager.h"
 #include "Core/RuntimeSyncCoordinator.h"
@@ -60,6 +62,151 @@ void ensureApp()
 }
 } // namespace
 
+TEST(MonitorPanel, GameObjectIdentityKeepsHistoricalNamesWithoutDuplicateRegistration)
+{
+    ensureApp();
+    VnConfig config{};
+    config.structSize = sizeof(config);
+    config.deviceMode = VN_DEVICE_NULL;
+    ASSERT_EQ(VN_OK, Vn_Init(&config));
+    const auto terminate = qScopeGuard([] { Vn_Term(); });
+    VnMonitorHostSessionV1 host{};
+    host.structSize = sizeof(host);
+    ASSERT_EQ(VN_OK, Vn_MonitorBeginHostSession(&host));
+    Monitor::EventCaptureController capture(nullptr);
+    capture.setLocalRuntimeAvailable(true);
+    MonitorPanel panel;
+    panel.setCaptureController(&capture);
+    capture.start();
+    ASSERT_EQ(Monitor::EventCaptureState::Capturing, capture.state());
+    const auto waitFor = [&](const auto& ready) {
+        QElapsedTimer timeout;
+        timeout.start();
+        while (!ready() && timeout.elapsed() < 2000) {
+            Vn_Update();
+            capture.pollLocal();
+            QApplication::processEvents();
+            QThread::msleep(1);
+        }
+        return ready();
+    };
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    ASSERT_TRUE(waitFor([&] { return panel.visibleRowCount() == 1; }));
+    EXPECT_TRUE(panel.table()->model()->index(0, MonitorCatalogModel::GameObject).data().toString().isEmpty());
+    VnMonitorHostRegistrationV2 registration{};
+    registration.structSize = sizeof(registration);
+    registration.ownershipKind = VN_MONITOR_HOST_UNITY_EMITTER;
+    registration.engineInstance = host.engineInstance;
+    registration.sdkSession = host.sdkSession;
+    registration.emitter = emitter;
+    registration.localSequence = 1;
+    registration.registrationRevision = 1;
+    const QByteArray original("Player");
+    registration.nameBytes = original.size();
+    std::copy(original.begin(), original.end(), registration.name);
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    ASSERT_TRUE(waitFor([&] {
+        return panel.visibleRowCount() == 1 && panel.table()->model()->index(0, MonitorCatalogModel::GameObject).data().toString()
+            == QStringLiteral("Player");
+    }));
+    QPersistentModelIndex registered(panel.table()->model()->index(0, MonitorCatalogModel::GameObject));
+    registration.registrationRevision = 2;
+    const QByteArray renamed("Renamed");
+    std::fill(std::begin(registration.name), std::end(registration.name), 0);
+    registration.nameBytes = renamed.size();
+    std::copy(renamed.begin(), renamed.end(), registration.name);
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    ASSERT_TRUE(waitFor([&] {
+        return panel.visibleRowCount() == 2 && panel.table()->model()->index(1, MonitorCatalogModel::GameObject).data().toString()
+            == QStringLiteral("Renamed");
+    }));
+    ASSERT_TRUE(registered.isValid());
+    EXPECT_EQ(registered.data().toString(), QStringLiteral("Player"));
+    for (int row = 0; row < 2; ++row) {
+        EXPECT_EQ(panel.table()->model()->index(row, MonitorCatalogModel::Type).data().toString(), QStringLiteral("Game Object"));
+        EXPECT_EQ(panel.table()->model()->index(row, MonitorCatalogModel::GameObjectId).data().toString(), QString::number(emitter));
+        EXPECT_TRUE(panel.table()->model()->index(row, MonitorCatalogModel::ObjectId).data().toString().isEmpty());
+    }
+    EXPECT_EQ(panel.table()->model()->index(0, MonitorCatalogModel::Description).data().toString(), QStringLiteral("Registered"));
+    EXPECT_EQ(panel.table()->model()->index(1, MonitorCatalogModel::Description).data().toString(), QStringLiteral("Unregistered"));
+
+    VnEmitterHandle batchedEmitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&batchedEmitter));
+    registration.emitter = batchedEmitter;
+    registration.localSequence = 2;
+    registration.registrationRevision = 1;
+    registration.nameBytes = original.size();
+    std::fill(std::begin(registration.name), std::end(registration.name), 0);
+    std::copy(original.begin(), original.end(), registration.name);
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    registration.registrationRevision = 2;
+    registration.nameBytes = renamed.size();
+    std::fill(std::begin(registration.name), std::end(registration.name), 0);
+    std::copy(renamed.begin(), renamed.end(), registration.name);
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    ASSERT_EQ(VN_OK, Vn_MonitorEndHostSession(host.engineInstance, host.sdkSession));
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(batchedEmitter));
+    ASSERT_TRUE(waitFor([&] {
+        return panel.visibleRowCount() == 4 &&
+            panel.table()->model()->index(2, MonitorCatalogModel::GameObject).data().toString() == QStringLiteral("Player") &&
+            panel.table()->model()->index(3, MonitorCatalogModel::GameObject).data().toString() == QStringLiteral("Renamed");
+    }));
+    EXPECT_EQ(registered.data().toString(), QStringLiteral("Player"));
+    for (int row = 2; row < 4; ++row)
+        EXPECT_EQ(panel.table()->model()->index(row, MonitorCatalogModel::GameObjectId).data().toString(), QString::number(batchedEmitter));
+}
+
+TEST(MonitorPanel, GameObjectBaselineDoesNotInventRegistration)
+{
+    ensureApp();
+    VnConfig config{};
+    config.structSize = sizeof(config);
+    config.deviceMode = VN_DEVICE_NULL;
+    ASSERT_EQ(VN_OK, Vn_Init(&config));
+    const auto terminate = qScopeGuard([] { Vn_Term(); });
+    VnMonitorHostSessionV1 host{};
+    host.structSize = sizeof(host);
+    ASSERT_EQ(VN_OK, Vn_MonitorBeginHostSession(&host));
+    VnEmitterHandle emitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    VnMonitorHostRegistrationV2 registration{};
+    registration.structSize = sizeof(registration);
+    registration.ownershipKind = VN_MONITOR_HOST_UNITY_EMITTER;
+    registration.engineInstance = host.engineInstance;
+    registration.sdkSession = host.sdkSession;
+    registration.emitter = emitter;
+    registration.localSequence = 1;
+    registration.registrationRevision = 1;
+    const QByteArray name("Existing");
+    registration.nameBytes = name.size();
+    std::copy(name.begin(), name.end(), registration.name);
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    Monitor::EventCaptureController capture(nullptr);
+    capture.setLocalRuntimeAvailable(true);
+    MonitorPanel panel;
+    panel.setCaptureController(&capture);
+    capture.start();
+    ASSERT_EQ(Monitor::EventCaptureState::Capturing, capture.state());
+    ASSERT_EQ(VN_OK, Vn_MonitorEndHostSession(host.engineInstance, host.sdkSession));
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
+    QElapsedTimer timeout;
+    timeout.start();
+    while (panel.visibleRowCount() == 0 && timeout.elapsed() < 2000) {
+        Vn_Update();
+        capture.pollLocal();
+        QApplication::processEvents();
+        QThread::msleep(1);
+    }
+    ASSERT_EQ(Monitor::EventCaptureState::Capturing, capture.state()) << capture.statusText().toStdString();
+    ASSERT_EQ(panel.visibleRowCount(), 1);
+    EXPECT_EQ(panel.table()->model()->index(0, MonitorCatalogModel::Description).data().toString(), QStringLiteral("Unregistered"));
+    EXPECT_EQ(panel.table()->model()->index(0, MonitorCatalogModel::GameObject).data().toString(), QStringLiteral("Existing"));
+    EXPECT_EQ(panel.table()->model()->index(0, MonitorCatalogModel::GameObjectId).data().toString(), QString::number(emitter));
+}
+
 TEST(MonitorPanel, LocalCaptureKeepsHistoryAcrossPanelLifetime)
 {
     ensureApp();
@@ -85,36 +232,33 @@ TEST(MonitorPanel, LocalCaptureKeepsHistoryAcrossPanelLifetime)
         }
         return ready();
     };
-    const auto completedRequests = [&] {
-        std::set<quint64> submitted, returned;
+    const auto registrations = [&] {
+        int count = 0;
         for (int row = 0; row < capture.rowCount(); ++row) {
             const auto& event = capture.eventAt(row);
-            if (!event.isExecution() || event.execution.request.operation != VN_MONITOR_OPERATION_STOP_ALL)
-                continue;
-            const auto sequence = event.execution.request.sequence;
-            EXPECT_NE(sequence, 0u);
-            if (event.execution.factKind == VN_MONITOR_FACT_REQUEST_SUBMITTED) submitted.insert(sequence);
-            if (event.execution.factKind == VN_MONITOR_FACT_REQUEST_RETURNED) returned.insert(sequence);
+            if (event.isExecution() && event.execution.factKind == VN_MONITOR_FACT_EMITTER_CREATED) ++count;
         }
-        return std::count_if(submitted.begin(), submitted.end(), [&](quint64 sequence) {
-            return returned.contains(sequence);
-        });
+        return count;
     };
-    ASSERT_EQ(VN_OK, Vn_StopAll(19));
-    ASSERT_TRUE(waitFor([&] { return completedRequests() == 1; }));
+    const auto createEmitter = [] {
+        VnEmitterHandle emitter = 0;
+        return Vn_CreateEmitter(&emitter);
+    };
+    ASSERT_EQ(VN_OK, createEmitter());
+    ASSERT_TRUE(waitFor([&] { return registrations() == 1; }));
     ASSERT_GT(panel->visibleRowCount(), 0);
     panel->table()->selectRow(0);
     QPersistentModelIndex selected(panel->table()->currentIndex());
     int resets = 0;
     QObject::connect(panel->table()->model(), &QAbstractItemModel::modelReset, panel.get(), [&] { ++resets; });
-    ASSERT_EQ(VN_OK, Vn_StopAll(23));
-    ASSERT_TRUE(waitFor([&] { return completedRequests() == 2; }));
+    ASSERT_EQ(VN_OK, createEmitter());
+    ASSERT_TRUE(waitFor([&] { return registrations() == 2; }));
     EXPECT_TRUE(selected.isValid());
     EXPECT_EQ(selected, panel->table()->currentIndex());
     EXPECT_EQ(resets, 0);
     panel.reset();
-    ASSERT_EQ(VN_OK, Vn_StopAll(31));
-    ASSERT_TRUE(waitFor([&] { return completedRequests() == 3; }));
+    ASSERT_EQ(VN_OK, createEmitter());
+    ASSERT_TRUE(waitFor([&] { return registrations() == 3; }));
     panel = std::make_unique<MonitorPanel>();
     panel->setCaptureController(&capture);
     const auto visible = panel->visibleRowCount();
@@ -123,19 +267,19 @@ TEST(MonitorPanel, LocalCaptureKeepsHistoryAcrossPanelLifetime)
     ASSERT_TRUE(waitFor([&] { return capture.state() == Monitor::EventCaptureState::Stopped; }));
     const auto retained = capture.rowCount();
     EXPECT_EQ(panel->visibleRowCount(), visible);
-    ASSERT_EQ(VN_OK, Vn_StopAll(37));
+    ASSERT_EQ(VN_OK, createEmitter());
     ASSERT_EQ(VN_OK, Vn_Update());
     capture.pollLocal();
     EXPECT_EQ(capture.rowCount(), retained);
     capture.start();
     EXPECT_EQ(panel->visibleRowCount(), 0);
-    ASSERT_EQ(VN_OK, Vn_StopAll(41));
-    ASSERT_TRUE(waitFor([&] { return completedRequests() == 1; }));
+    ASSERT_EQ(VN_OK, createEmitter());
+    ASSERT_TRUE(waitFor([&] { return registrations() == 1; }));
     panel->findChild<QToolButton*>(QStringLiteral("MonitorClear"))->click();
     EXPECT_EQ(capture.state(), Monitor::EventCaptureState::Capturing);
     EXPECT_EQ(capture.rowCount(), 0);
-    ASSERT_EQ(VN_OK, Vn_StopAll(43));
-    ASSERT_TRUE(waitFor([&] { return completedRequests() == 1; }));
+    ASSERT_EQ(VN_OK, createEmitter());
+    ASSERT_TRUE(waitFor([&] { return registrations() == 1; }));
 }
 
 TEST(MonitorPanel, ConcurrentPreviewKeepsSelectedContentAndPlaybackIdentity)
@@ -402,7 +546,17 @@ TEST(MonitorPanel, ConcurrentPreviewKeepsSelectedContentAndPlaybackIdentity)
         EXPECT_EQ(matches, 1);
     }
     EXPECT_EQ(playbackRequestIds.size(), handles.size());
-    EXPECT_EQ(panel.visibleRowCount(), static_cast<int>(handles.size() * 4));
+    int registeredEmitters = 0;
+    for (int row = 0; row < capture.rowCount(); ++row) {
+        const auto& event = capture.eventAt(row);
+        if (event.type() != Monitor::DesignerEventType::GameObject || !event.isDesignerEvent()) continue;
+        EXPECT_EQ(event.execution.factKind, VN_MONITOR_FACT_EMITTER_CREATED);
+        EXPECT_EQ(event.gameObjectName, QStringLiteral("Emitter"));
+        EXPECT_EQ(event.gameObjectId(), VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID);
+        ++registeredEmitters;
+    }
+    EXPECT_EQ(registeredEmitters, 1);
+    EXPECT_EQ(panel.visibleRowCount(), static_cast<int>(handles.size() * 4) + registeredEmitters);
     capture.stop();
     ASSERT_TRUE(waitFor([&] { return capture.state() == Monitor::EventCaptureState::Stopped; }));
     const Monitor::CapturedEvent* retainedSound = nullptr;
@@ -540,14 +694,14 @@ TEST(MonitorPanel, ConcurrentPreviewKeepsSelectedContentAndPlaybackIdentity)
     EXPECT_FALSE(capture.incomplete());
 }
 
-TEST(MonitorPanel, LiveParamsRestoreCategoryLevelAndScrolling)
+TEST(MonitorPanel, LiveParamsRestoreTypeLevelAndScrolling)
 {
     ensureApp();
     Monitor::EventCaptureController capture(nullptr);
     MonitorPanel panel;
     panel.setCaptureController(&capture);
     QVariantMap params{
-        {QStringLiteral("filterCategory"), VN_MONITOR_EVENT_CATEGORY_DIAGNOSTIC},
+        {QStringLiteral("filterType"), static_cast<int>(Monitor::DesignerEventType::Variable)},
         {QStringLiteral("filterLevel"), VN_LOG_ERROR},
         {QStringLiteral("filterText"), QStringLiteral("overload")},
         {QStringLiteral("autoScroll"), false},
@@ -555,13 +709,13 @@ TEST(MonitorPanel, LiveParamsRestoreCategoryLevelAndScrolling)
     panel.restoreParams(params);
     const auto restored = panel.snapshotParams();
     for (auto it = params.cbegin(); it != params.cend(); ++it) EXPECT_EQ(restored.value(it.key()), it.value());
-    auto* category = panel.findChild<QComboBox*>(QStringLiteral("MonitorCategoryFilter"));
-    ASSERT_NE(category, nullptr);
-    EXPECT_EQ(category->currentData().toInt(), VN_MONITOR_EVENT_CATEGORY_DIAGNOSTIC);
+    auto* type = panel.findChild<QComboBox*>(QStringLiteral("MonitorTypeFilter"));
+    ASSERT_NE(type, nullptr);
+    EXPECT_EQ(type->currentData().toInt(), static_cast<int>(Monitor::DesignerEventType::Variable));
     panel.restoreParams({{QStringLiteral("filterType"), QStringLiteral("All")}});
-    EXPECT_EQ(category->currentIndex(), 0);
-    panel.restoreParams({{QStringLiteral("filterCategory"), 99}});
-    EXPECT_EQ(category->currentIndex(), 0);
+    EXPECT_EQ(type->currentIndex(), 0);
+    panel.restoreParams({{QStringLiteral("filterType"), 99}});
+    EXPECT_EQ(type->currentIndex(), 0);
 }
 
 TEST(MonitorPanel, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
@@ -575,6 +729,7 @@ TEST(MonitorPanel, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     HarkenEditor::Bridge::EngineSessionConfig engineConfig;
     engineConfig.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
     ASSERT_TRUE(engine.initialize(engineConfig));
+    ASSERT_TRUE(engine.startOutput());
     QTemporaryDir directory(QStringLiteral(HARKEN_TEMP_DIR "/event-toolbar-XXXXXX"));
     ASSERT_TRUE(directory.isValid());
     auto window = std::make_unique<MainWindow>();
@@ -643,11 +798,23 @@ TEST(MonitorPanel, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     ASSERT_TRUE(projects.createProject(config));
     auto* variable = projects.createItem(nullptr, QStringLiteral("Intensity"), ProjectItem::Type::Variable);
     ASSERT_NE(variable, nullptr);
+    variable->comp<VVariable>()->writers = 2;
+    auto* action = projects.createItem(nullptr, QStringLiteral("SetIntensity"), ProjectItem::Type::Action);
+    ASSERT_NE(action, nullptr);
+    VActionStep step;
+    step.type = VActionStep::Type::SetVariable;
+    step.targetObjectID = variable->objectID;
+    step.targetName = variable->name;
+    step.value = 0.25f;
+    step.scope = VariableScope::Global;
+    action->comp<VAction>()->steps = {step};
+    ProjectManager::syncProjectToRuntime(projects.currentProject());
     const auto waitFor = [&](const auto& ready) {
         QElapsedTimer timer;
         timer.start();
         while (!ready() && timer.elapsed() < 3000) {
             QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
+            harken::detail::ActiveEngine()->nullBackend.Pump(1);
             capture->pollLocal();
             QApplication::processEvents();
             QThread::msleep(1);
@@ -672,11 +839,18 @@ TEST(MonitorPanel, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     ASSERT_NE(panel, nullptr);
     EXPECT_TRUE(dock->isClosed());
     EXPECT_FALSE(panel->isVisible());
-    ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ToRuntime(variable->runtimeId()), 0.25f));
+    VnPostActionDesc post{};
+    post.structSize = sizeof(post);
+    post.actionId = harkentest::ToRuntime(action->runtimeId());
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    const auto request = harken::detail::ActiveEngine()->monitorRequests.LastSequence();
     ASSERT_TRUE(waitFor([&] { return capture->rowCount() > 0; }));
     const auto matchingRow = [&] {
         for (int i = 0; i < capture->rowCount(); ++i)
-            if (capture->eventAt(i).header.stableId == variable->runtimeId()) return i;
+            if (capture->eventAt(i).isDesignerEvent() &&
+                capture->eventAt(i).type() == Monitor::DesignerEventType::Variable &&
+                capture->eventAt(i).objectId() == variable->runtimeId()) return i;
         return -1;
     };
     ASSERT_TRUE(waitFor([&] { return matchingRow() >= 0; }));
@@ -693,6 +867,33 @@ TEST(MonitorPanel, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     EXPECT_GT(panel->visibleRowCount(), 0);
     auto* proxy = qobject_cast<QAbstractProxyModel*>(panel->table()->model());
     ASSERT_NE(proxy, nullptr);
+    std::set<Monitor::DesignerEventType> observedTypes;
+    for (int i = 0; i < capture->rowCount(); ++i) {
+        const auto& event = capture->eventAt(i);
+        if (!event.isDesignerEvent() || event.playbackRequestId() != request) continue;
+        const auto index = proxy->mapFromSource(proxy->sourceModel()->index(i, 0));
+        ASSERT_TRUE(index.isValid());
+        observedTypes.insert(event.type());
+        EXPECT_EQ(proxy->index(index.row(), MonitorCatalogModel::RequestId).data().toString(), QString::number(request));
+        EXPECT_EQ(proxy->index(index.row(), MonitorCatalogModel::Object).data().toString(),
+            event.type() == Monitor::DesignerEventType::Action ? action->name : variable->name);
+        EXPECT_EQ(event.objectId(), event.type() == Monitor::DesignerEventType::Action
+            ? action->runtimeId() : variable->runtimeId());
+        if (event.type() == Monitor::DesignerEventType::Step)
+            EXPECT_TRUE(proxy->index(index.row(), MonitorCatalogModel::Description).data(Qt::ToolTipRole)
+                .toString().contains(action->name));
+    }
+    EXPECT_EQ((std::set<Monitor::DesignerEventType>{Monitor::DesignerEventType::Action,
+        Monitor::DesignerEventType::Step, Monitor::DesignerEventType::Variable}), observedTypes);
+    const QString actionImagePath = qEnvironmentVariable("HARKEN_MONITOR_ACTION_CAPTURE_IMAGE");
+    if (!actionImagePath.isEmpty()) {
+        MonitorPanel imagePanel;
+        imagePanel.setCaptureController(capture);
+        imagePanel.resize(1400, 360);
+        imagePanel.show();
+        QApplication::processEvents();
+        EXPECT_TRUE(imagePanel.grab().save(actionImagePath));
+    }
     const auto visible = proxy->mapFromSource(proxy->sourceModel()->index(row, 0));
     ASSERT_TRUE(visible.isValid());
     panel->table()->selectRow(visible.row());
@@ -705,7 +906,8 @@ TEST(MonitorPanel, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     dock->toggleView(false);
     EXPECT_EQ(capture->state(), Monitor::EventCaptureState::Capturing);
     const auto count = capture->rowCount();
-    ASSERT_EQ(VN_OK, Vn_StopAll(17));
+    VnEmitterHandle additionalEmitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&additionalEmitter));
     ASSERT_TRUE(waitFor([&] { return capture->rowCount() > count; }));
     ASSERT_TRUE(window->loadNamedLayout(QStringLiteral("MonitorPanelTest")));
     EXPECT_FALSE(dock->isClosed());

@@ -29,7 +29,6 @@ MonitorBusesPanel::MonitorBusesPanel(QWidget* parent)
 
     model_ = new MonitorBusesModel(this);
     auto* tableFrame = new TableWidget(TableOptions::display(), this);
-    tableFrame->setColumnSizing(TableColumnSizing::Scrollable);
     table_ = tableFrame->createModelView(QStringLiteral("MonitorBusesTable"), model_);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
