@@ -40461,14 +40461,18 @@ bool StageInitialQueueSuccessorStartMirrors(harken::Engine& engine,
     // before modifying any successor identity.
     for (std::size_t programIndex = 0; programIndex < queueProgramCount;
          ++programIndex) {
-        const auto& staged = engine.initialQueueTimingProgramsScratch[programIndex];
+        auto& staged = engine.initialQueueTimingProgramsScratch[programIndex];
+        staged.startMirror = {};
         if (staged.frozen == nullptr || staged.frozen->events == nullptr ||
             staged.frozen->runtimeProgram.program == nullptr) return false;
         for (std::uint32_t offset = 0; offset < staged.eventCount; ++offset) {
-            auto& timing = engine.initialQueueTimingEventsScratch[
+            const auto& timing = engine.initialQueueTimingEventsScratch[
                 staged.firstEvent + offset];
             if (timing.payload == nullptr ||
                 timing.payload->kind != harken::TimelineEventKind::Start) continue;
+            if (staged.startMirror.successorProgramIndex != UINT32_MAX) return false;
+            harken::EngineInitialQueueStartMirror mirror{};
+            mirror.startEventOffset = offset;
             auto* holder = findTimingHolder(timing.holder);
             const auto* producer = holder == nullptr || !vcOrigin || attempt.privateVcProducerCount == 0
                 ? nullptr : ResolveRegisteredPrivateVcQueueProducer(engine, attempt, *holder);
@@ -40537,10 +40541,14 @@ bool StageInitialQueueSuccessorStartMirrors(harken::Engine& engine,
             if (matched == UINT32_MAX ||
                 staged.arm.renderSlot >=
                     engine.timelineVoiceInstallIdentities.size()) return false;
-            for (std::size_t earlier = 0; earlier <
-                    staged.firstEvent + offset; ++earlier)
-                if (engine.initialQueueTimingEventsScratch[earlier].holder == holder->identity &&
-                    engine.initialQueueTimingEventsScratch[earlier].successorProgramIndex == matched) return false;
+            for (std::size_t earlier = 0; earlier < programIndex; ++earlier) {
+                const auto& previousProgram = engine.initialQueueTimingProgramsScratch[earlier];
+                const auto& previous = previousProgram.startMirror;
+                if (previous.successorProgramIndex == matched &&
+                    engine.initialQueueTimingEventsScratch[
+                        previousProgram.firstEvent + previous.startEventOffset].holder == holder->identity)
+                    return false;
+            }
             const auto& installation = engine.timelineVoiceInstallIdentities[
                 staged.arm.renderSlot];
             const auto render =
@@ -40684,56 +40692,57 @@ bool StageInitialQueueSuccessorStartMirrors(harken::Engine& engine,
                     source->release.targetSequence != release.targetSequence ||
                     engine.ResolveSourceResourceOwner(source->resourceOwner) != holder) return false;
             }
-            timing.retainedOriginalSuccessor = retainedOriginal;
-            timing.successorProgramIndex = matched;
-            timing.successorMirrorPlane = plane;
-            timing.successorBankAggregate =
+            mirror.retainedOriginalSuccessor = retainedOriginal;
+            mirror.successorProgramIndex = matched;
+            mirror.successorMirrorPlane = plane;
+            mirror.successorBankAggregate =
                 static_cast<std::uint32_t>(bankAggregate);
-            timing.oldPhysicalStartFrame = oldStart;
-            timing.oldCopiedAnchorFrame = copied.entryAnchorFrame;
-            timing.oldAggregateAnchorFrame = aggregate.entryAnchorFrame;
-            timing.oldBankAggregateAnchorFrame =
+            mirror.oldPhysicalStartFrame = oldStart;
+            mirror.oldCopiedAnchorFrame = copied.entryAnchorFrame;
+            mirror.oldAggregateAnchorFrame = aggregate.entryAnchorFrame;
+            mirror.oldBankAggregateAnchorFrame =
                 bank->aggregateSchedules[bankAggregate].entryAnchorFrame;
             if (!shiftedAnchor(copied.entryAnchorFrame, oldStart,
                     timing.newExecuteFrame,
-                    &timing.newCopiedAnchorFrame) ||
+                    &mirror.newCopiedAnchorFrame) ||
                 !shiftedAnchor(aggregate.entryAnchorFrame, oldStart,
                     timing.newExecuteFrame,
-                    &timing.newAggregateAnchorFrame) ||
-                !shiftedAnchor(timing.oldBankAggregateAnchorFrame, oldStart,
+                    &mirror.newAggregateAnchorFrame) ||
+                !shiftedAnchor(mirror.oldBankAggregateAnchorFrame, oldStart,
                     timing.newExecuteFrame,
-                    &timing.newBankAggregateAnchorFrame)) return false;
-            for (std::size_t earlier = 0; earlier <
-                    staged.firstEvent + offset; ++earlier) {
-                const auto& previous =
-                    engine.initialQueueTimingEventsScratch[earlier];
+                    &mirror.newBankAggregateAnchorFrame)) return false;
+            for (std::size_t earlier = 0; earlier < programIndex; ++earlier) {
+                const auto& previousProgram = engine.initialQueueTimingProgramsScratch[earlier];
+                const auto& previous = previousProgram.startMirror;
                 if (previous.successorProgramIndex == UINT32_MAX ||
-                    previous.holder != timing.holder) continue;
+                    engine.initialQueueTimingEventsScratch[
+                        previousProgram.firstEvent + previous.startEventOffset].holder != timing.holder) continue;
                 if (previous.successorMirrorPlane != plane ||
                     previous.oldAggregateAnchorFrame !=
-                        timing.oldAggregateAnchorFrame ||
+                        mirror.oldAggregateAnchorFrame ||
                     previous.newAggregateAnchorFrame !=
-                        timing.newAggregateAnchorFrame ||
+                        mirror.newAggregateAnchorFrame ||
                     (previous.successorBankAggregate == bankAggregate &&
                      (previous.oldBankAggregateAnchorFrame !=
-                          timing.oldBankAggregateAnchorFrame ||
+                          mirror.oldBankAggregateAnchorFrame ||
                       previous.newBankAggregateAnchorFrame !=
-                          timing.newBankAggregateAnchorFrame))) return false;
+                          mirror.newBankAggregateAnchorFrame))) return false;
             }
             const auto& completion = retainedOriginal
                 ? engine.InitialQueueFilingFuture(*holder).queueSuccessorCompletion
                 : member.nativeCompletion;
-            timing.physicalCompletionBound =
+            mirror.physicalCompletionBound =
                 harken::IsBoundKnownCompletionPredicate(completion);
-            if (timing.physicalCompletionBound) {
+            if (mirror.physicalCompletionBound) {
                 if (completion.absoluteLogicalStartFrame != oldStart ||
                     completion.renderGeneration !=
                         staged.arm.renderGeneration ||
                     !harken::ReanchorKnownCompletionBeforePublication(
                         completion, timing.newExecuteFrame,
-                        &timing.newPhysicalCompletion)) return false;
-                timing.oldPhysicalCompletion = completion;
+                        &mirror.newPhysicalCompletion)) return false;
+                mirror.oldPhysicalCompletion = completion;
             }
+            staged.startMirror = mirror;
         }
     }
     return true;
@@ -40752,101 +40761,50 @@ void ApplyInitialQueueSuccessorStartMirrors(harken::Engine& engine,
             });
         return holder == engine.playableServices.end() ? nullptr : &*holder;
     };
-    const auto applyRetained = [&](const harken::EngineInitialQueueTimingProgram& staged,
-                                    const harken::EngineInitialQueueTimingEvent& timing,
-                                    harken::EnginePlayableServiceRow& holder) {
-        auto& future = engine.InitialQueueFilingFuture(holder);
-        assert(engine.OriginalQueueInitialFilingFor(holder) != nullptr &&
-            !engine.IsOriginalQueueFilingSelected(holder) && future.queueSuccessorProgramBank != nullptr);
-        auto& bank = *future.queueSuccessorProgramBank;
-        auto& frozen = *const_cast<harken::ProgramView*>(staged.frozen);
-        frozen.entryAnchorFrame = restore ? timing.oldCopiedAnchorFrame : timing.newCopiedAnchorFrame;
-        bank.aggregateSchedules[timing.successorBankAggregate].entryAnchorFrame = restore
-            ? timing.oldBankAggregateAnchorFrame : timing.newBankAggregateAnchorFrame;
-        future.queueSuccessorSchedule.entryAnchorFrame = restore
-            ? timing.oldAggregateAnchorFrame : timing.newAggregateAnchorFrame;
-        engine.timelineVoiceInstallIdentities[staged.arm.renderSlot].onsetFrame = restore
-            ? timing.oldPhysicalStartFrame : timing.newExecuteFrame;
-        if (timing.physicalCompletionBound) future.queueSuccessorCompletion = restore
-            ? timing.oldPhysicalCompletion : timing.newPhysicalCompletion;
-        if (auto* member = engine.FindQueueProgramMember(&bank, future.queueSuccessorPrograms.first)) {
-            member->startFrame = restore ? timing.oldPhysicalStartFrame : timing.newExecuteFrame;
-            if (timing.physicalCompletionBound) member->nativeCompletion = future.queueSuccessorCompletion;
-        }
-    };
-    if (restore) {
-        for (std::size_t programIndex = 0;
-             programIndex < queueProgramCount; ++programIndex) {
-            const auto& staged =
-                engine.initialQueueTimingProgramsScratch[programIndex];
-            for (std::uint32_t offset = 0;
-                 offset < staged.eventCount; ++offset) {
-                const auto& timing =
-                    engine.initialQueueTimingEventsScratch[
-                        staged.firstEvent + offset];
-                if (timing.successorProgramIndex == UINT32_MAX) continue;
-                auto* holder = findTimingHolder(timing.holder);
-                if (timing.retainedOriginalSuccessor) {
-                    applyRetained(staged, timing, *holder);
-                    continue;
-                }
-                const auto programIndex = timing.successorProgramIndex;
-                auto& future = engine.InitialQueueFilingFuture(*holder);
-                auto* copied = ResolveQueueSuccessorProgram(future, programIndex - future.queueSuccessorPrograms.first);
-                assert(copied != nullptr);
-                auto& aggregate = timing.successorMirrorPlane == 0
-                    ? holder->schedule : engine.InitialQueueFilingFuture(*holder).queueSuccessorSchedule;
-                engine.timelineVoiceInstallIdentities[
-                    staged.arm.renderSlot].onsetFrame =
-                        timing.oldPhysicalStartFrame;
-                copied->entryAnchorFrame = timing.oldCopiedAnchorFrame;
-                aggregate.entryAnchorFrame =
-                    timing.oldAggregateAnchorFrame;
-                engine.InitialQueueFilingFuture(*holder).queueSuccessorProgramBank->aggregateSchedules[
-                    timing.successorBankAggregate].entryAnchorFrame =
-                        timing.oldBankAggregateAnchorFrame;
-                if (auto* member = engine.FindQueueProgramMember(future.queueSuccessorProgramBank,
-                        programIndex)) {
-                    member->startFrame = timing.oldPhysicalStartFrame;
-                    if (timing.physicalCompletionBound) member->nativeCompletion = timing.oldPhysicalCompletion;
-                }
-                engine.ReflectOriginalQueueFiling(*holder);
-            }
-        }
-        return;
-    }
     for (std::size_t mirrorProgramIndex = 0; mirrorProgramIndex < queueProgramCount;
          ++mirrorProgramIndex) {
         const auto& staged = engine.initialQueueTimingProgramsScratch[mirrorProgramIndex];
-        for (std::uint32_t offset = 0; offset < staged.eventCount; ++offset) {
-            const auto& timing = engine.initialQueueTimingEventsScratch[
-                staged.firstEvent + offset];
-            if (timing.successorProgramIndex == UINT32_MAX) continue;
-            auto* holder = findTimingHolder(timing.holder);
-            if (timing.retainedOriginalSuccessor) {
-                applyRetained(staged, timing, *holder);
-                continue;
+        const auto& mirror = staged.startMirror;
+        if (mirror.successorProgramIndex == UINT32_MAX) continue;
+        assert(mirror.startEventOffset < staged.eventCount);
+        const auto& timing = engine.initialQueueTimingEventsScratch[
+            staged.firstEvent + mirror.startEventOffset];
+        auto* holder = findTimingHolder(timing.holder);
+        auto& future = engine.InitialQueueFilingFuture(*holder);
+        const auto startFrame = restore ? mirror.oldPhysicalStartFrame : timing.newExecuteFrame;
+        const auto copiedAnchor = restore ? mirror.oldCopiedAnchorFrame : mirror.newCopiedAnchorFrame;
+        const auto aggregateAnchor = restore ? mirror.oldAggregateAnchorFrame : mirror.newAggregateAnchorFrame;
+        const auto bankAnchor = restore ? mirror.oldBankAggregateAnchorFrame : mirror.newBankAggregateAnchorFrame;
+        const auto& completion = restore ? mirror.oldPhysicalCompletion : mirror.newPhysicalCompletion;
+        if (mirror.retainedOriginalSuccessor) {
+            assert(engine.OriginalQueueInitialFilingFor(*holder) != nullptr &&
+                !engine.IsOriginalQueueFilingSelected(*holder) && future.queueSuccessorProgramBank != nullptr);
+            auto& bank = *future.queueSuccessorProgramBank;
+            auto& frozen = *const_cast<harken::ProgramView*>(staged.frozen);
+            frozen.entryAnchorFrame = copiedAnchor;
+            bank.aggregateSchedules[mirror.successorBankAggregate].entryAnchorFrame = bankAnchor;
+            future.queueSuccessorSchedule.entryAnchorFrame = aggregateAnchor;
+            engine.timelineVoiceInstallIdentities[staged.arm.renderSlot].onsetFrame = startFrame;
+            if (mirror.physicalCompletionBound) future.queueSuccessorCompletion = completion;
+            if (auto* member = engine.FindQueueProgramMember(&bank, future.queueSuccessorPrograms.first)) {
+                member->startFrame = startFrame;
+                if (mirror.physicalCompletionBound) member->nativeCompletion = future.queueSuccessorCompletion;
             }
-            const auto programIndex = timing.successorProgramIndex;
-            auto& future = engine.InitialQueueFilingFuture(*holder);
-            auto* copied = ResolveQueueSuccessorProgram(future, programIndex - future.queueSuccessorPrograms.first);
-            assert(copied != nullptr);
-            auto& aggregate = timing.successorMirrorPlane == 0
-                ? holder->schedule : engine.InitialQueueFilingFuture(*holder).queueSuccessorSchedule;
-            engine.timelineVoiceInstallIdentities[
-                staged.arm.renderSlot].onsetFrame = timing.newExecuteFrame;
-            copied->entryAnchorFrame = timing.newCopiedAnchorFrame;
-            aggregate.entryAnchorFrame = timing.newAggregateAnchorFrame;
-            engine.InitialQueueFilingFuture(*holder).queueSuccessorProgramBank->aggregateSchedules[
-                timing.successorBankAggregate].entryAnchorFrame =
-                    timing.newBankAggregateAnchorFrame;
-            if (auto* member = engine.FindQueueProgramMember(future.queueSuccessorProgramBank,
-                    programIndex)) {
-                member->startFrame = timing.newExecuteFrame;
-                if (timing.physicalCompletionBound) member->nativeCompletion = timing.newPhysicalCompletion;
-            }
-            engine.ReflectOriginalQueueFiling(*holder);
+            continue;
         }
+        const auto programIndex = mirror.successorProgramIndex;
+        auto* copied = ResolveQueueSuccessorProgram(future, programIndex - future.queueSuccessorPrograms.first);
+        assert(copied != nullptr);
+        auto& aggregate = mirror.successorMirrorPlane == 0 ? holder->schedule : future.queueSuccessorSchedule;
+        engine.timelineVoiceInstallIdentities[staged.arm.renderSlot].onsetFrame = startFrame;
+        copied->entryAnchorFrame = copiedAnchor;
+        aggregate.entryAnchorFrame = aggregateAnchor;
+        future.queueSuccessorProgramBank->aggregateSchedules[mirror.successorBankAggregate].entryAnchorFrame = bankAnchor;
+        if (auto* member = engine.FindQueueProgramMember(future.queueSuccessorProgramBank, programIndex)) {
+            member->startFrame = startFrame;
+            if (mirror.physicalCompletionBound) member->nativeCompletion = completion;
+        }
+        engine.ReflectOriginalQueueFiling(*holder);
     }
 }
 

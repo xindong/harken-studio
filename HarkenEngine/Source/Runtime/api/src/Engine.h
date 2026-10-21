@@ -924,16 +924,6 @@ struct EngineInitialQueueTimingMember {
     std::uint64_t conditionalLogicalCompletionFrame = 0;
 };
 
-struct EngineInitialQueueTimingProgram {
-    const ProgramView* frozen = nullptr;
-    std::uint64_t newEntryFrame = 0;
-    std::uint64_t newArmStartFrame = 0;
-    std::uint64_t newArmDeadline = 0;
-    TimelineArmToken arm{};
-    std::size_t firstEvent = 0;
-    std::uint32_t eventCount = 0;
-};
-
 struct EngineInitialQueueTimingEvent {
     const EventTemplate* frozen = nullptr;
     const TimelineEventPayload* payload = nullptr;
@@ -943,6 +933,10 @@ struct EngineInitialQueueTimingEvent {
     std::uint64_t newExecuteFrame = 0;
     std::uint64_t newEnvelopeStartFrame = 0;
     std::uint64_t newEnvelopeEndFrame = 0;
+};
+
+struct EngineInitialQueueStartMirror {
+    std::uint32_t startEventOffset = UINT32_MAX;
     std::uint32_t successorProgramIndex = UINT32_MAX;
     std::uint8_t successorMirrorPlane = 0;
     std::uint32_t successorBankAggregate = UINT32_MAX;
@@ -957,6 +951,17 @@ struct EngineInitialQueueTimingEvent {
     KnownCompletionPredicateV1 newPhysicalCompletion{};
     bool physicalCompletionBound = false;
     bool retainedOriginalSuccessor = false;
+};
+
+struct EngineInitialQueueTimingProgram {
+    const ProgramView* frozen = nullptr;
+    std::uint64_t newEntryFrame = 0;
+    std::uint64_t newArmStartFrame = 0;
+    std::uint64_t newArmDeadline = 0;
+    TimelineArmToken arm{};
+    std::size_t firstEvent = 0;
+    std::uint32_t eventCount = 0;
+    EngineInitialQueueStartMirror startMirror{};
 };
 
 struct EngineFrontierQueueCurrentOwnerContext;

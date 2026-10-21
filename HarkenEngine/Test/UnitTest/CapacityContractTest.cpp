@@ -797,6 +797,13 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     harken::Engine* engine = session.Engine();
     ASSERT_NE(nullptr, engine);
     EXPECT_EQ(0u, engine->PrivateImmediateEntryResultStorageBytes());
+    testing::Test::RecordProperty("queue_timing_event_bytes", std::to_string(sizeof(harken::EngineInitialQueueTimingEvent)));
+    testing::Test::RecordProperty("queue_timing_program_bytes", std::to_string(sizeof(harken::EngineInitialQueueTimingProgram)));
+    testing::Test::RecordProperty("queue_timing_event_capacity", std::to_string(engine->initialQueueTimingEventsScratch.capacity()));
+    testing::Test::RecordProperty("queue_timing_program_capacity", std::to_string(engine->initialQueueTimingProgramsScratch.capacity()));
+    testing::Test::RecordProperty("queue_timing_storage_bytes", std::to_string(
+        engine->initialQueueTimingEventsScratch.capacity() * sizeof(harken::EngineInitialQueueTimingEvent) +
+        engine->initialQueueTimingProgramsScratch.capacity() * sizeof(harken::EngineInitialQueueTimingProgram)));
     testing::Test::RecordProperty("removed_prebuilt_private_entry_result_bytes", std::to_string(
         static_cast<std::uint64_t>(engine->playableServices.Capacity()) *
         engine->immediateActionLane.EventsPerAttempt() * sizeof(harken::ImmediateLanePrivateEntryResultCell)));
