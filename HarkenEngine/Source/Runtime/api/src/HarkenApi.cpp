@@ -255,7 +255,7 @@ std::size_t Engine::PendingSelectionStorageBytes() const noexcept {
         preparedPendingVariableGroups.RequestedBytes() + preparedPendingVariableGroups.DirectoryBytes() +
         acceptedPendingVariableGroups.RequestedBytes() + pendingVariableLeafSources.RequestedBytes() +
         pendingVariableFutureSources.RequestedBytes() + pendingVariableFutureNodes.RequestedBytes() +
-        pendingVariableQueueNativeOrigins.RequestedBytes() + column(originalPlayableServiceLifetimeHolders) +
+        pendingVariableQueueNativeOrigins.RequestedBytes() + originalPlayableServiceLifetimeHolders.RequestedBytes() +
         PrivateImmediateEntryResultStorageBytes();
     for (const auto& ordinary : pendingOrdinarySelections) bytes += ordinary.nativeReplacement.RequestedBytes();
     const auto addGroups = [&](const auto& groups) noexcept {

@@ -5875,7 +5875,6 @@ public:
               resolved.maxKnownScheduleLeaves * 4u)),
           decisionRetirements(decisions.Capacity()),
           playableStarts(resolved.maxPlayableInstances),
-          originalPlayableServiceLifetimeHolders(resolved.maxPlayableInstances),
           frontierExpansion(resolved.maxPlayableInstances),
           ordinaryRetiringSources(resolved.maxPlayableInstances),
           ordinaryRetiringLeaves(resolved.maxPlayableInstances),
@@ -6003,6 +6002,7 @@ public:
             playableStarts[index].slot = static_cast<std::uint32_t>(index);
         }
         if (!originalPlayableLifetimeHolders.Reserve(resolved.maxPlayableInstances) ||
+            !originalPlayableServiceLifetimeHolders.Reserve(resolved.maxPlayableInstances) ||
             !originalSingleCurrentHolders.Reserve(resolved.maxPlayableInstances) ||
             !authoredStopResources.Reserve(resolved.maxScheduledTransactions) ||
             !queueContinuationRecords.Reserve(static_cast<std::uint32_t>(QueueContinuationRecordCapacity(resolved))) ||
@@ -6194,9 +6194,15 @@ public:
         if (groupScratchCount > UINT32_MAX ||
             groupScratchCount > std::numeric_limits<std::size_t>::max() / sizeof(Plan03PageGroupView))
             throw std::bad_alloc{};
-        if (!timelineGroupCaptureScratch.Reserve(static_cast<std::uint32_t>(groupScratchCount)) ||
-            !timelineGroupCaptureScratch.ConstructThrough(static_cast<std::uint32_t>(pageGroupRows)))
+        if (!timelineGroupCaptureScratch.Reserve(static_cast<std::uint32_t>(groupScratchCount)))
             throw std::bad_alloc{};
+        if (!PrepareTimelineGroupCaptureStorage(
+                timelinePool.CapturePendingEventStorageDemand().nativeGroups, 0))
+            throw std::bad_alloc{};
+        timelinePool.AttachPendingEventStorage(timelineGroupCapturePreparation, this,
+            [](void* context, ScheduledTransactionPool::PendingEventStorageDemand demand) noexcept {
+                return static_cast<Engine*>(context)->PrepareTimelineGroupCaptureStorage(demand.nativeGroups, 0);
+            });
         publishedFrontierProgramRefsScratch.resize(
             static_cast<std::size_t>(playableStorage.initialProgramStride) + 1u);
         const auto queueEventCapacity =
@@ -6221,10 +6227,7 @@ public:
         if (!timelinePool.AttachImmediateLaneRowStoragePreparation(this,
                 [](void* context, std::uint32_t required) noexcept {
                     auto& engine = *static_cast<Engine*>(context);
-                    const auto captures = static_cast<std::uint64_t>(engine.timelinePool.PageCount()) *
-                        engine.config.maxPlan03GroupHeadersPerPage + required;
-                    return captures <= engine.timelineGroupCaptureScratch.Capacity() &&
-                        engine.timelineGroupCaptureScratch.ConstructThrough(static_cast<std::uint32_t>(captures)) &&
+                    return engine.PrepareTimelineGroupCaptureStorage(0, required) &&
                         engine.initialQueueLaneGroupsScratch.ConstructThrough(required) &&
                         engine.originalQueueGroupHolders.ConstructThrough(required);
                 })) throw std::bad_alloc{};
@@ -9282,6 +9285,7 @@ public:
     }
 
     ~Engine() {
+        timelineGroupCapturePreparation.Detach();
         timelinePool.DetachImmediateLaneRowStoragePreparation();
         timelinePool.SetImmediateLaneGroupDisposalObserver(nullptr, nullptr);
         InvalidateProjectGenerationReservations();
@@ -12889,6 +12893,7 @@ public:
             PreparePlayablePublicationStorage();
     }
     bool PreparePlayableServiceDependencies(std::uint32_t required) noexcept {
+        if (!originalPlayableServiceLifetimeHolders.ConstructThrough(required)) return false;
         // One service contributes one selected future. Its source and successor
         // programs contain at most Start/Envelope or Envelope/Stop events.
         const auto programs = std::min<std::uint64_t>(initialQueueTimingProgramsScratch.Capacity(),
@@ -12957,7 +12962,7 @@ public:
         return identity.Valid() ? &playableServices[identity.slot] : nullptr;
     }
     // Production Current borrowing remains closed while this seed is collecting.
-    std::vector<OriginalPlayableServiceLifetimeHolder> originalPlayableServiceLifetimeHolders;
+    StableRowStorage<OriginalPlayableServiceLifetimeHolder> originalPlayableServiceLifetimeHolders;
     StableRowStorage<OriginalPendingVariableQueueNativeOrigin> pendingVariableQueueNativeOrigins;
     StableSlotStorage<OriginalPendingOrdinarySelectionHolder> pendingOrdinarySelections;
     StableSlotStorage<OriginalPendingVariableGroupHolder> preparedPendingVariableGroups;
@@ -13156,6 +13161,20 @@ public:
         return true;
     }
     StableRowStorage<Plan03PageGroupView> timelineGroupCaptureScratch;
+    ScheduledTransactionPool::PendingEventStorageRegistration timelineGroupCapturePreparation;
+    std::uint32_t preparedPageGroupCaptures = 0;
+    std::uint32_t preparedLaneGroupCaptures = 0;
+    bool PrepareTimelineGroupCaptureStorage(std::uint64_t pageGroups, std::uint64_t laneGroups) noexcept {
+        pageGroups = std::max<std::uint64_t>(pageGroups, preparedPageGroupCaptures);
+        laneGroups = std::max<std::uint64_t>(laneGroups, preparedLaneGroupCaptures);
+        const auto capacity = timelineGroupCaptureScratch.Capacity();
+        if (pageGroups > capacity || laneGroups > capacity - pageGroups ||
+            !timelineGroupCaptureScratch.ConstructThrough(static_cast<std::uint32_t>(pageGroups + laneGroups)))
+            return false;
+        preparedPageGroupCaptures = static_cast<std::uint32_t>(pageGroups);
+        preparedLaneGroupCaptures = static_cast<std::uint32_t>(laneGroups);
+        return true;
+    }
     std::vector<TimelineTransactionProgramRef> publishedFrontierProgramRefsScratch;
     StableRowStorage<ScheduledEventInput, std::size_t> initialFrontierEvents;
     StableRowStorage<TransactionRequest, std::size_t> initialFrontierRequests;

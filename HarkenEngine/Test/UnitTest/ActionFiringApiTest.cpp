@@ -6372,7 +6372,7 @@ TEST(ActionFiringApi, PostResolvesOnlyCanonicalCurrentWorldActions) {
 }
 
 TEST(ActionFiringApi, InitialQueueCompanionBackingFailureDoesNotAcceptAndCanRecover) {
-    for (unsigned refusedStorage = 0; refusedStorage < 13u; ++refusedStorage) {
+    for (unsigned refusedStorage = 0; refusedStorage < 14u; ++refusedStorage) {
         SCOPED_TRACE(refusedStorage);
         harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -6402,6 +6402,7 @@ TEST(ActionFiringApi, InitialQueueCompanionBackingFailureDoesNotAcceptAndCanReco
         if (refusedStorage == 10) engine.initialQueueCurrentCompositeProofsScratch.SetCommitPageLimitForTests(0);
         if (refusedStorage == 11) engine.initialQueueSuccessorCompositeProofsScratch.SetCommitPageLimitForTests(0);
         if (refusedStorage == 12) engine.actionQueueReplacementScratch.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 13) engine.originalPlayableServiceLifetimeHolders.SetCommitPageLimitForTests(0);
         VnActionFiringHandle firing = 99;
         const auto refused = Vn_PostAction(&desc, &firing);
         engine.timelineGroupCaptureScratch.SetCommitPageLimitForTests(SIZE_MAX);
@@ -6417,6 +6418,7 @@ TEST(ActionFiringApi, InitialQueueCompanionBackingFailureDoesNotAcceptAndCanReco
         engine.initialQueueCurrentCompositeProofsScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.initialQueueSuccessorCompositeProofsScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.actionQueueReplacementScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.originalPlayableServiceLifetimeHolders.SetCommitPageLimitForTests(SIZE_MAX);
         ASSERT_EQ(refusedStorage < 3u ? VN_BACKPRESSURE : VN_NO_VOICE, refused);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
