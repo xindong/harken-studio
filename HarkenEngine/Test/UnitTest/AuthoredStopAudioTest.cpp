@@ -7476,6 +7476,7 @@ namespace {
 struct OriginalControlHeaderHarness : MixerPendingControlHarness {
     bool Prepare() {
         auto& engine = *audio.engine;
+        if (!engine.authoredStopResources.ConstructThrough(1)) return false;
         control.record.input.renderSlot = static_cast<std::uint32_t>(render);
         control.record.input.renderGeneration = static_cast<std::uint32_t>(render >> 32);
         if (!control.PrepareControl(engine.timelineArms) ||

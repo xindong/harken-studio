@@ -253,8 +253,8 @@ std::size_t Engine::PendingSelectionStorageBytes() const noexcept {
     };
     auto bytes = pendingOrdinarySelections.RequestedBytes() + pendingOrdinarySelections.DirectoryBytes() +
         preparedPendingVariableGroups.RequestedBytes() + preparedPendingVariableGroups.DirectoryBytes() +
-        acceptedPendingVariableGroups.RequestedBytes() + column(pendingVariableLeafSources) +
-        column(pendingVariableFutureSources) + column(pendingVariableFutureNodes) +
+        acceptedPendingVariableGroups.RequestedBytes() + pendingVariableLeafSources.RequestedBytes() +
+        pendingVariableFutureSources.RequestedBytes() + pendingVariableFutureNodes.RequestedBytes() +
         pendingVariableQueueNativeOrigins.RequestedBytes() + column(originalPlayableServiceLifetimeHolders) +
         PrivateImmediateEntryResultStorageBytes();
     for (const auto& ordinary : pendingOrdinarySelections) bytes += ordinary.nativeReplacement.RequestedBytes();
@@ -9019,7 +9019,7 @@ bool PrepareAuthoredStopResource(
             installation->renderHandle != (nativeReplacement != nullptr
                 ? nativeReplacement->successorStarts[0].renderHandle : originalPlainSource->voiceStarts[0].renderHandle))
             return false;
-        resource.installation = *installation;
+        resource.installation = {installation->renderHandle, installation->target, installation->releaseObserver};
         resource.originalPlainEventCapacity = root.fadeStartFrame < identity.stopFrame ? 2u : 1u;
         const auto input = OriginalPlainControlInput(engine, resource);
         const auto* holder = nativeReplacement == nullptr ? nullptr : engine.OriginalQueueReplacementFor(*nativeReplacement);
@@ -9041,7 +9041,7 @@ bool PrepareAuthoredStopResource(
     }
     std::uint32_t eventCount = 0;
     if (installation != nullptr) {
-        resource.installation = *installation;
+        resource.installation = {installation->renderHandle, installation->target, installation->releaseObserver};
         resource.dispatchFrame = std::min(identity.stopFrame,
             std::max(root.fadeStartFrame, installation->onsetFrame));
         const auto deadline = resource.dispatchFrame / engine.config.blockFrames *
@@ -43739,7 +43739,6 @@ bool PublishNativeQueueResetStops(harken::Engine& engine,
             }
             control.runtime.payloadCount = count;
             control.dispatchFrame = control.events[0].executeFrame;
-            control.installation.onsetFrame = onset;
             const harken::TimelineArmTable::AuthoredControlInput final{&*root.operation,
                 {control.runtime.generation, &control.runtime}, control.events.data(), count,
                 onset, root.fadeStartFrame, control.originalPlainSource.renderSlot,
@@ -69502,6 +69501,10 @@ PlayableStartResult PrepareDirectPlayableExecution(
         result.status = PlayableStartStatus::Backpressure;
         return result;
     }
+    if (!engine.PreparePlayableStateStorage()) {
+        result.status = PlayableStartStatus::Backpressure;
+        return result;
+    }
     EnginePlayableServiceRow* targetRow = engine.PrepareFreePlayableService();
     if (targetRow == nullptr || engine.playableInstances.FreeCount() == 0) {
         result.status = PlayableStartStatus::Capacity;
@@ -75223,12 +75226,51 @@ void TransferImmediateActionPlanOwnerLeases(
     }
 }
 
+std::uint32_t CountActionOperations(const ImmediateActionPlan& plan,
+    const harken::ActionStepProgramViewV1& step, harken::ActionOpcodeV1 opcode,
+    std::uint32_t depth, std::uint32_t limit) noexcept {
+    if (step.opcode == opcode) return 1;
+    if (step.opcode != harken::ActionOpcodeV1::PostAction) return 0;
+    const auto* child = FindCanonicalActionProgram(
+        *plan.engine, step.target.stableId, plan.pinnedPublished);
+    // Unresolved descendants and long deferred chains retain the full allowance.
+    // Storage accounting must not introduce a new Action acceptance restriction.
+    if (child == nullptr || child->programSemanticFingerprint != step.target.expectedProgramSemanticFingerprint ||
+        depth >= plan.engine->config.maxTriggerDepth ||
+        (child->stepCount != 0 && child->steps == nullptr)) return limit;
+    std::uint32_t count = 0;
+    for (std::uint32_t index = 0; index < child->stepCount && count < limit; ++index)
+        count += std::min(limit - count,
+            CountActionOperations(plan, child->steps[index], opcode, depth + 1u, limit));
+    return count;
+}
+
 bool ReserveImmediateActionFirings(void* opaque,
                                    std::uint32_t count) noexcept {
     auto* plan = static_cast<ImmediateActionPlan*>(opaque);
     if (plan == nullptr || plan->engine == nullptr ||
         count != plan->firingCount || count == 0) {
         return false;
+    }
+    auto& engine = *plan->engine;
+    if (plan->deferredParentFiring == 0) {
+        bool needsPlayableStorage = false;
+        bool needsStopStorage = false;
+        for (std::uint32_t index = 0; index < plan->stepCount; ++index) {
+            const auto& planned = engine.actionStepPlanScratch[index];
+            if (planned.step == nullptr || planned.cooldownSuppressed || planned.quantizeSuppressed) continue;
+            needsPlayableStorage |= planned.step->opcode == harken::ActionOpcodeV1::Play ||
+                planned.step->opcode == harken::ActionOpcodeV1::PostAction;
+            if (!needsStopStorage && engine.authoredStopResources.size() < engine.authoredStopResources.Capacity())
+                needsStopStorage = CountActionOperations(*plan, *planned.step,
+                    harken::ActionOpcodeV1::Stop, planned.depth, 1) != 0;
+        }
+        // Deferred children and later successors reuse this backing without growth.
+        if ((needsPlayableStorage && !engine.PreparePlayableStateStorage()) ||
+            (needsStopStorage && !engine.authoredStopResources.ConstructThrough(engine.authoredStopResources.Capacity()))) {
+            plan->result = VN_BACKPRESSURE;
+            return false;
+        }
     }
     bool hasImmediatePlay = false;
     for (std::uint32_t stepIndex = 0;
@@ -75327,25 +75369,6 @@ bool ReserveImmediateActionFirings(void* opaque,
     }
     plan->result = VN_OK;
     return true;
-}
-
-std::uint32_t CountActionOperations(const ImmediateActionPlan& plan,
-    const harken::ActionStepProgramViewV1& step, harken::ActionOpcodeV1 opcode,
-    std::uint32_t depth, std::uint32_t limit) noexcept {
-    if (step.opcode == opcode) return 1;
-    if (step.opcode != harken::ActionOpcodeV1::PostAction) return 0;
-    const auto* child = FindCanonicalActionProgram(
-        *plan.engine, step.target.stableId, plan.pinnedPublished);
-    // Unresolved descendants and long deferred chains retain the full allowance.
-    // Storage accounting must not introduce a new Action acceptance restriction.
-    if (child == nullptr || child->programSemanticFingerprint != step.target.expectedProgramSemanticFingerprint ||
-        depth >= plan.engine->config.maxTriggerDepth ||
-        (child->stepCount != 0 && child->steps == nullptr)) return limit;
-    std::uint32_t count = 0;
-    for (std::uint32_t index = 0; index < child->stepCount && count < limit; ++index)
-        count += std::min(limit - count,
-            CountActionOperations(plan, child->steps[index], opcode, depth + 1u, limit));
-    return count;
 }
 
 bool ReserveImmediateActionDeferred(void* opaque,

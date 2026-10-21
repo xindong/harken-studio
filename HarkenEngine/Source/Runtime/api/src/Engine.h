@@ -2869,7 +2869,11 @@ struct EngineAuthoredStopResource {
     std::uint64_t generation = 0;
     std::uint32_t operationSlot = UINT32_MAX;
     std::uint32_t nextResource = UINT32_MAX;
-    EngineTimelineVoiceInstallIdentity installation{};
+    struct VoiceIdentity {
+        VnVoiceHandle renderHandle = 0;
+        TimelineSemanticTarget target{};
+        VoiceReleaseObserver releaseObserver{};
+    } installation;
     TimelineArmToken arm{};
     std::array<TimelineEventPayload, 2> payloads{};
     std::array<ScheduledEventInput, 2> events{};
@@ -5823,7 +5827,6 @@ public:
                 &biquadTrig),
           actionCommitBundle(16),
           authoredStopRoots(resolved.maxPlayableInstances),
-          authoredStopResources(resolved.maxScheduledTransactions),
           params(resolved, 0),
           variables(resolved.maxEmitters + 1u, resolved.emitterVariableSlots,
                      resolved.maxPropertiesPerCurrentSlice,
@@ -5878,14 +5881,9 @@ public:
               resolved.maxKnownScheduleLeaves * 4u)),
           pendingImmediateFutureRequestsScratch(resolved.maxPlayableInstances),
           pendingImmediateFutureEventsScratch(resolved.maxPlayableInstances),
-          queueContinuationRecords(
-              QueueContinuationRecordCapacity(resolved)),
-          queueFutureRecords(resolved.maxPlayableInstances),
           decisionRetirements(decisions.Capacity()),
           playableStarts(resolved.maxPlayableInstances),
           originalPlayableServiceLifetimeHolders(resolved.maxPlayableInstances),
-          pendingVariableLeafSources(timelineArms.Capacity()),
-          pendingVariableFutureSources(timelineArms.Capacity()),
           frontierExpansion(resolved.maxPlayableInstances),
           ordinaryRetiringSources(resolved.maxPlayableInstances),
           ordinaryRetiringLeaves(resolved.maxPlayableInstances),
@@ -6012,7 +6010,12 @@ public:
         for (std::size_t index = 0; index < playableStarts.size(); ++index) {
             playableStarts[index].slot = static_cast<std::uint32_t>(index);
         }
-        if (!playableServices.Reserve(resolved.maxPlayableInstances) ||
+        if (!authoredStopResources.Reserve(resolved.maxScheduledTransactions) ||
+            !queueContinuationRecords.Reserve(static_cast<std::uint32_t>(QueueContinuationRecordCapacity(resolved))) ||
+            !queueFutureRecords.Reserve(resolved.maxPlayableInstances) ||
+            !pendingVariableLeafSources.Reserve(timelineArms.Capacity()) ||
+            !pendingVariableFutureSources.Reserve(timelineArms.Capacity()) ||
+            !playableServices.Reserve(resolved.maxPlayableInstances) ||
             !acceptedPendingVariableGroups.Reserve(resolved.maxPlayableInstances)) throw std::bad_alloc{};
         const auto playSlotCapacity = ActionPreparationSlotCapacity(resolved);
         const auto queueBankCapacity = QueueProgramBankCapacity(resolved);
@@ -6174,7 +6177,7 @@ public:
         if (timelinePool.MaxArmsPerGroup() == 0)
             throw std::bad_alloc{};
         if (!pendingVariableQueueNativeOrigins.Reserve(originalQueueGroupCapacity)) throw std::bad_alloc{};
-        pendingVariableFutureNodes.resize(playableInstances.Capacity());
+        if (!pendingVariableFutureNodes.Reserve(playableInstances.Capacity())) throw std::bad_alloc{};
         timelinePool.SetImmediateLaneGroupDisposalObserver(this, &ObservePendingVariableQueueNativeDisposal);
         const auto plainCapacity = immediateActionLane.EventsPerAttempt();
         const auto plainRows = static_cast<std::uint64_t>(resolved.maxActionFirings) * plainCapacity;
@@ -6229,8 +6232,8 @@ public:
                         engine.initialQueueLaneGroupsScratch.ConstructThrough(required) &&
                         engine.originalQueueGroupHolders.ConstructThrough(required);
                 })) throw std::bad_alloc{};
-        initialFrontierEvents.resize(4ull * resolved.maxPlayableInstances + 1u);
-        initialFrontierRequests.resize(initialFrontierEvents.size());
+        if (!initialFrontierEvents.Reserve(4ull * resolved.maxPlayableInstances + 1u) ||
+            !initialFrontierRequests.Reserve(initialFrontierEvents.Capacity())) throw std::bad_alloc{};
         const std::uint64_t frontierNodes = resolved.maxPlayableInstances;
         const auto boundedFrontierCount = [](std::uint64_t proposed, std::uint32_t limit) {
             return static_cast<std::uint32_t>(std::min<std::uint64_t>(proposed, limit));
@@ -8966,9 +8969,9 @@ public:
         return preparedPendingVariableGroups.RequestedBytes() +
             acceptedPendingVariableGroups.RequestedBytes() +
             pendingOrdinarySelections.RequestedBytes() +
-            pendingVariableLeafSources.capacity() * sizeof(OriginalPendingVariableLeafSource) +
-            pendingVariableFutureSources.capacity() * sizeof(OriginalPendingVariableFutureSource) +
-            pendingVariableFutureNodes.capacity() * sizeof(OriginalPendingVariableFutureNode) +
+            pendingVariableLeafSources.RequestedBytes() +
+            pendingVariableFutureSources.RequestedBytes() +
+            pendingVariableFutureNodes.RequestedBytes() +
             pendingVariableQueueNativeOrigins.RequestedBytes() +
             actionPlayStorage.ConstructedCount() * sizeof(OriginalPendingVariableProducerRetention) +
             actionPlayScratch.ConstructedCount() * kMaxKnownScheduleLeaves *
@@ -12255,7 +12258,7 @@ public:
     // Lane fence references must be destroyed before their original backing.
     std::vector<EngineAuthoredStopRoot> authoredStopRoots;
     std::uint32_t authoredStopRootPrefixCount = 0;
-    std::vector<EngineAuthoredStopResource> authoredStopResources;
+    StableRowStorage<EngineAuthoredStopResource> authoredStopResources;
     ImmediateActionLane immediateActionLane;
     VariableSliceTable variableSlices;
     ParamSystem params;
@@ -12341,8 +12344,8 @@ public:
         }
         attempt.active = active;
     }
-    std::vector<EngineQueueContinuationRecord> queueContinuationRecords;
-    std::vector<EngineQueueFutureRecord> queueFutureRecords;
+    StableRowStorage<EngineQueueContinuationRecord> queueContinuationRecords;
+    StableRowStorage<EngineQueueFutureRecord> queueFutureRecords;
     void (*voiceCommandBatchPublishHookForTest)(Engine&, void*) = nullptr;
     void* voiceCommandBatchPublishHookContextForTest = nullptr;
     void (*immediateEntryAfterPublishHookForTest)(Engine&, void*) = nullptr;
@@ -12864,6 +12867,15 @@ public:
             row.invocationGeneration = playableStarts[slot].generation;
         }
     }
+    bool PreparePlayableStateStorage() noexcept {
+        return initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
+            initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&
+            queueContinuationRecords.ConstructThrough(queueContinuationRecords.Capacity()) &&
+            queueFutureRecords.ConstructThrough(queueFutureRecords.Capacity()) &&
+            pendingVariableLeafSources.ConstructThrough(pendingVariableLeafSources.Capacity()) &&
+            pendingVariableFutureSources.ConstructThrough(pendingVariableFutureSources.Capacity()) &&
+            pendingVariableFutureNodes.ConstructThrough(pendingVariableFutureNodes.Capacity());
+    }
     bool PreparePlayableServiceDependencies(std::uint32_t required) noexcept {
         // One service contributes one selected future. Its source and successor
         // programs contain at most Start/Envelope or Envelope/Stop events.
@@ -12941,9 +12953,9 @@ public:
     bool pendingVariableGroupReplacementActive = false;
     bool deferRegisteredPendingVariableSelectionReplacementForTest = false;
     bool deferPendingImmediateEntriesForTest = false;
-    std::vector<OriginalPendingVariableLeafSource> pendingVariableLeafSources;
+    StableRowStorage<OriginalPendingVariableLeafSource> pendingVariableLeafSources;
     std::uint32_t pendingVariableLeafSourceCount = 0;
-    std::vector<OriginalPendingVariableFutureSource> pendingVariableFutureSources;
+    StableRowStorage<OriginalPendingVariableFutureSource> pendingVariableFutureSources;
     bool PreparePendingVariableQueueOriginBacking(std::uint32_t count,
         StableStoragePreparation* out) noexcept {
         auto occupied = pendingVariableQueueNativeOrigins.ConstructedCount();
@@ -12951,7 +12963,7 @@ public:
         return pendingVariableQueueNativeOrigins.PrepareBacking(
             std::min(count, pendingVariableQueueNativeOrigins.Capacity()), occupied, out);
     }
-    std::vector<OriginalPendingVariableFutureNode> pendingVariableFutureNodes;
+    StableRowStorage<OriginalPendingVariableFutureNode> pendingVariableFutureNodes;
     void (*pendingVariableGroupPlacementHookForTest)(Engine&, EngineActionPlayScratch&,
         EngineImmediateEntryAttempt&, const PrivateImmediateLanePlacementProof&,
         VariableReadCutReader, void*) noexcept = nullptr;
@@ -13133,8 +13145,8 @@ public:
     }
     StableRowStorage<Plan03PageGroupView> timelineGroupCaptureScratch;
     std::vector<TimelineTransactionProgramRef> publishedFrontierProgramRefsScratch;
-    std::vector<ScheduledEventInput> initialFrontierEvents;
-    std::vector<TransactionRequest> initialFrontierRequests;
+    StableRowStorage<ScheduledEventInput, std::size_t> initialFrontierEvents;
+    StableRowStorage<TransactionRequest, std::size_t> initialFrontierRequests;
     bool initialFrontierWorkspaceOccupied = false;
     // Serial producer leaves delegate before acquiring this exclusive scratch.
     EngineTimelineStartScratch timelineStartScratch{};

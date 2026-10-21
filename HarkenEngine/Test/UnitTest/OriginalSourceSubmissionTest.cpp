@@ -6304,6 +6304,7 @@ struct SelectedSourceStop {
 
     void Prepare(harken::Engine& engine, HiddenBoundNativeFuture& future,
         GenuinePreparedSingleEpisode& source) {
+        ASSERT_TRUE(engine.authoredStopResources.ConstructThrough(1));
         const auto stopFrame = future.old.anchor + kFrames + kFrames / 2u;
         const auto epoch = engine.playableInstances.Classify(source.parent).scheduleEpoch;
         operation.emplace(harken::AuthoredStopOperationIdentity{0, 1, source.parent, epoch, 57, 1, stopFrame});

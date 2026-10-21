@@ -7853,18 +7853,19 @@ static void CheckDistantStopContainerSuccessors(std::uint32_t sourceFrames, bool
     while (engine->mixer.BlocksRendered() * blockFrames < stopFrame / blockFrames * blockFrames) {
         ASSERT_EQ(VN_OK, Vn_Update());
         for (const auto& resource : engine->authoredStopResources) {
+            harken::EngineTimelineVoiceInstallIdentity installation{};
             if (!resource.committed || resource.retiring ||
-                resource.installation.rootInstance != root ||
                 resource.installation.renderHandle == 0 ||
                 resource.installation.renderHandle == initialRender ||
-                resource.installation.onsetFrame < successorOnset) continue;
+                !engine->CaptureTimelineVoiceInstallIdentity(resource.installation.renderHandle, &installation) ||
+                installation.rootInstance != root || installation.onsetFrame < successorOnset) continue;
             inherited = true;
             if (successor != resource.installation.renderHandle) successorAudible = false;
             successor = resource.installation.renderHandle;
             successorRelease = resource.installation.releaseObserver;
-            successorOnset = resource.installation.onsetFrame;
-            EXPECT_GT(resource.installation.onsetFrame, 0u);
-            EXPECT_LT(resource.installation.onsetFrame, stopFrame);
+            successorOnset = installation.onsetFrame;
+            EXPECT_GT(installation.onsetFrame, 0u);
+            EXPECT_LT(installation.onsetFrame, stopFrame);
             ASSERT_LT(resource.operationSlot, engine->authoredStopRoots.size());
             EXPECT_EQ(stopFrame, engine->authoredStopRoots[resource.operationSlot].operation->Identity().stopFrame);
         }
@@ -8372,6 +8373,10 @@ static void CheckDelayedStopMatchEnteringNestedDecision(bool refuseLastArm) {
     const auto originalChildren = row.variableControlChildInstances;
     const auto originalInstances = engine->playableInstances.LiveCount();
     const auto originalDecisions = engine->decisions.LiveCount();
+    std::vector<VnVoiceHandle> originalStopVoices;
+    for (const auto& resource : engine->authoredStopResources)
+        if (resource.committed && resource.installation.renderHandle != 0)
+            originalStopVoices.push_back(resource.installation.renderHandle);
     const auto originalResources = std::count_if(engine->authoredStopResources.begin(),
         engine->authoredStopResources.end(), [](const auto& resource) {
             return resource.prepared || resource.committed;
@@ -8428,12 +8433,18 @@ static void CheckDelayedStopMatchEnteringNestedDecision(bool refuseLastArm) {
     EXPECT_FALSE(engine->runtimeRecreateRequired);
     const auto voice = std::find_if(engine->authoredStopResources.begin(),
         engine->authoredStopResources.end(), [&](const auto& resource) {
-            return resource.committed && resource.installation.rootInstance == root &&
-                resource.installation.renderHandle != 0 && resource.installation.onsetFrame > 1024;
+            harken::EngineTimelineVoiceInstallIdentity installation{};
+            return resource.committed && resource.installation.renderHandle != 0 &&
+                std::find(originalStopVoices.begin(), originalStopVoices.end(),
+                    resource.installation.renderHandle) == originalStopVoices.end() &&
+                engine->CaptureTimelineVoiceInstallIdentity(resource.installation.renderHandle, &installation) &&
+                installation.rootInstance == root && installation.onsetFrame > 1024;
         });
     ASSERT_NE(engine->authoredStopResources.end(), voice);
+    harken::EngineTimelineVoiceInstallIdentity installation{};
+    ASSERT_TRUE(engine->CaptureTimelineVoiceInstallIdentity(voice->installation.renderHandle, &installation));
     CheckCapturedStopAudioAndRetirement(*engine, root, voice->installation.renderHandle,
-        voice->installation.releaseObserver, voice->installation.onsetFrame, 15000);
+        voice->installation.releaseObserver, installation.onsetFrame, 15000);
     EXPECT_FALSE(engine->decisions.Contains(incoming));
     VnActionStepResult result{};
     result.structSize = sizeof(result);
@@ -9238,8 +9249,10 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
     ASSERT_NE(engine->authoredStopResources.end(), inheritedDecision);
     EXPECT_FALSE(engine->runtimeRecreateRequired);
     const auto stopFrame = engine->authoredStopRoots[inheritedVoice->operationSlot].operation->Identity().stopFrame;
+    harken::EngineTimelineVoiceInstallIdentity installation{};
+    ASSERT_TRUE(engine->CaptureTimelineVoiceInstallIdentity(inheritedVoice->installation.renderHandle, &installation));
     CheckCapturedStopAudioAndRetirement(*engine, root, inheritedVoice->installation.renderHandle,
-        inheritedVoice->installation.releaseObserver, inheritedVoice->installation.onsetFrame, stopFrame);
+        inheritedVoice->installation.releaseObserver, installation.onsetFrame, stopFrame);
     ASSERT_EQ(VN_OK, Vn_QueryActionStep(stopFiring, 1, &stopResult));
     EXPECT_EQ(VN_ACTION_STEP_SUCCEEDED, stopResult.state);
     EXPECT_EQ(0u, stopResult.remainingPlayableCount);
@@ -15278,7 +15291,30 @@ TEST(ActionFiringApi,
     desc.actionId = image.actions[9].actionStableId;
     desc.callerSeed = 12345;
     VnActionFiringHandle firing = 0;
+    const auto refuseBacking = [&](auto& rows) {
+        rows.SetCommitPageLimitForTests(0);
+        EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+        EXPECT_EQ(0u, firing);
+        EXPECT_EQ(0u, engine->actionFirings.LiveCount());
+        EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+        EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
+        rows.SetCommitPageLimitForTests(SIZE_MAX);
+    };
+    refuseBacking(engine->initialFrontierEvents);
+    refuseBacking(engine->initialFrontierRequests);
+    refuseBacking(engine->queueContinuationRecords);
+    refuseBacking(engine->queueFutureRecords);
+    refuseBacking(engine->pendingVariableLeafSources);
+    refuseBacking(engine->pendingVariableFutureSources);
+    refuseBacking(engine->pendingVariableFutureNodes);
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    engine->initialFrontierEvents.SetCommitPageLimitForTests(0);
+    engine->initialFrontierRequests.SetCommitPageLimitForTests(0);
+    engine->queueContinuationRecords.SetCommitPageLimitForTests(0);
+    engine->queueFutureRecords.SetCommitPageLimitForTests(0);
+    engine->pendingVariableLeafSources.SetCommitPageLimitForTests(0);
+    engine->pendingVariableFutureSources.SetCommitPageLimitForTests(0);
+    engine->pendingVariableFutureNodes.SetCommitPageLimitForTests(0);
     DrainActionDeferred(engine);
 
     VnActionStepResult step{};
@@ -15883,7 +15919,15 @@ TEST(ActionFiringApi, DelayedStopCapturesTheEarlierPlayAtAdmission) {
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle firing = 0;
+    engine->authoredStopResources.SetCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, firing);
+    EXPECT_EQ(0u, engine->actionFirings.LiveCount());
+    EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
+    engine->authoredStopResources.SetCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    engine->authoredStopResources.SetCommitPageLimitForTests(0);
     ASSERT_EQ(1u, engine->playableInstances.LiveCount());
     ASSERT_EQ(1u, engine->actionDeferredRecords.LiveCount());
 
@@ -49260,9 +49304,11 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
             const auto& owned = child.pendingVariableReplacementQueueLanes[0];
             ASSERT_TRUE(owned.natural);
             ASSERT_EQ(expectContinuation, owned.continuation);
+            ASSERT_LT(owned.recordIndex, owned.continuation
+                ? actual.queueContinuationRecords.size() : actual.queueFutureRecords.size());
             const auto& record = owned.continuation
-                ? harken::EngineQueueLaneRecordView(actual.queueContinuationRecords.at(owned.recordIndex))
-                : harken::EngineQueueLaneRecordView(actual.queueFutureRecords.at(owned.recordIndex));
+                ? harken::EngineQueueLaneRecordView(actual.queueContinuationRecords[owned.recordIndex])
+                : harken::EngineQueueLaneRecordView(actual.queueFutureRecords[owned.recordIndex]);
             ASSERT_TRUE(record.occupied);
             ASSERT_EQ(owned.recordGeneration, record.generation);
             groups = {record.primaryGroup, record.prerequisiteMember, record.conditionalMember, record.targetMember};

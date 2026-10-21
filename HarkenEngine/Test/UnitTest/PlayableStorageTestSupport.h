@@ -28,8 +28,8 @@ auto StorageIdentity(const harken::StableSlotStorage<T>& rows) {
     return std::pair<const void*, std::size_t>{rows.BackingAddress(), rows.size()};
 }
 
-template <typename T>
-auto StorageIdentity(const harken::StableRowStorage<T>& rows) {
+template <typename T, typename Index>
+auto StorageIdentity(const harken::StableRowStorage<T, Index>& rows) {
     return std::pair<const void*, std::size_t>{rows.data(), rows.Capacity()};
 }
 
