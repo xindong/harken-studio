@@ -21601,10 +21601,10 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
                 << " lifecycle=" << static_cast<int>(service.controlLifecycle)
                 << " retiring=" << service.partitionRetiring << " queueEnd=" << service.queueNaturalEnd
                 << " frontier=" << service.frontierEntry.Valid();
-            for (const auto& ref : engine.playableMemberReferences) {
-                if (ref.service.token == service.identity)
-                    ADD_FAILURE() << "reference slot=" << (&ref - engine.playableMemberReferences.data());
-            }
+            for (auto& reader : engine.playableServices)
+                engine.VisitPlayableMemberReferences(reader, [&](std::size_t slot, const auto& ref) {
+                    if (ref.service.token == service.identity) ADD_FAILURE() << "reference slot=" << slot;
+                });
         }
     }
     if (!stopThisRun || !replayAtFiringTerminal) {
@@ -23205,7 +23205,7 @@ void RunContainerMatrixEntry(ContainerModeV1 mode, ContainerMatrixChild childKin
         observedSchedule->eventCount == 0) {
         ASSERT_NE(0u, row->scheduleLeafCount);
         if (mode == ContainerModeV1::VariableControl) {
-            const auto* record = engine->ResolveMemberProgram(engine->playableMemberReferences[row->scheduleStorageBase]);
+            const auto* record = engine->ResolveMemberProgram(engine->ReadPlayableMemberReference(row->scheduleStorageBase));
             ASSERT_NE(nullptr, record);
             observedSchedule = &record->schedule;
         } else {

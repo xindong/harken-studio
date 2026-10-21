@@ -6409,7 +6409,7 @@ TEST(PlayableStart,
     ASSERT_EQ(7u,
               engine->ReadPlayableMember(base).voice.Facts().target.occurrenceOrdinal);
 
-    const auto initialLeaf = engine->playableMemberReferences[base].leaf;
+    const auto initialLeaf = engine->ReadPlayableMemberReference(base).leaf;
     harken::MonitorContentIdentity initialContent{};
     ASSERT_TRUE(engine->playableInstances.CaptureContentIdentity(initialLeaf, &initialContent));
     EXPECT_EQ(harkentest::ObjectId(kSound), initialContent.stableId);
@@ -6438,7 +6438,7 @@ TEST(PlayableStart,
     }
     EXPECT_TRUE(sawEnteringBeforeExit);
     ASSERT_TRUE(changed);
-    const auto replacementLeaf = engine->playableMemberReferences[base].leaf;
+    const auto replacementLeaf = engine->ReadPlayableMemberReference(base).leaf;
     EXPECT_NE(initialLeaf, replacementLeaf);
     harken::MonitorContentIdentity replacementContent{};
     ASSERT_TRUE(engine->playableInstances.CaptureContentIdentity(replacementLeaf, &replacementContent));
@@ -8140,7 +8140,7 @@ TEST(PlayableStart,
     for (std::uint32_t index = 0; index < engine->playableStorage.memberStride; ++index) {
         EXPECT_EQ(0u, engine->ReadPlayableMember(reusedBase + index).dynamic);
         EXPECT_EQ(0u, engine->ReadPlayableMember(reusedBase + index).render);
-        EXPECT_FALSE(engine->playableMemberReferences[reusedBase + index].service.Valid());
+        EXPECT_FALSE(engine->ReadPlayableMemberReference(reusedBase + index).service.Valid());
     }
     harken::VariableControlInstanceSnapshot control{};
     EXPECT_FALSE(engine->variableControlInstances.Capture(
@@ -15998,9 +15998,9 @@ TEST(PlayableStart,
         engine->ReadPlayableMember(physicalSlot).completion.resourcesRetired);
     ASSERT_NE(nullptr, engine->voices.Resolve(
                            engine->ReadPlayableMember(physicalSlot).render));
-    ASSERT_EQ(7u, engine->playableMemberReferences[
+    ASSERT_EQ(7u, engine->ReadPlayableMemberReference(
                       row->scheduleStorageBase +
-                      row->variableControlContinuousMemberOffset]
+                      row->variableControlContinuousMemberOffset)
                       .authoredChildOrdinal);
     const std::uint64_t retainedBoundary =
         row->variableControlContinuousLogicalCompletionFrames[0];
@@ -23449,7 +23449,7 @@ TEST(PlayableStart,
     ASSERT_EQ(0u, engine->voices.ActiveCount());
     const auto partition = row->partition;
     const auto service = row->identity;
-    const auto* record = engine->ResolveMemberProgram(engine->playableMemberReferences[row->scheduleStorageBase]);
+    const auto* record = engine->ResolveMemberProgram(engine->ReadPlayableMemberReference(row->scheduleStorageBase));
     ASSERT_NE(nullptr, record);
     const auto program = record->schedule.runtimeProgram;
     ASSERT_NE(0u, program.programGeneration);

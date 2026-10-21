@@ -1001,6 +1001,17 @@ struct EnginePlayableMemberReference {
     std::uint32_t authoredChildOrdinal = 0;
 };
 
+// Installed relations retain the target generation; owner facts belong to that service.
+struct EnginePlayableMemberRelation {
+    EnginePlayableServiceToken service{};
+    PlayableInstanceHandle leaf = 0;
+    std::uint64_t leafEpoch = 0;
+    std::uint32_t logicalOffset = 0;
+    std::uint32_t memberOffset = UINT32_MAX;
+    std::uint32_t authoredChildOrdinal = 0;
+    std::uint32_t next = UINT32_MAX;
+};
+
 struct EngineMemberProgramToken {
     std::uint32_t slot = UINT32_MAX;
     std::uint64_t generation = 0;
@@ -1592,6 +1603,8 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint32_t scheduleLeafCount = 0;
     std::vector<EngineMemberProgramToken> memberPrograms;
     std::vector<EnginePlayableMemberToken> members;
+    std::uint32_t memberRelationHead = UINT32_MAX;
+    std::uint32_t memberRelationCount = 0;
     std::uint32_t childLiveCount = 0;
     std::uint32_t childAudibleRetiringCount = 0;
     std::uint32_t pendingFutureCount = 0;
@@ -2071,6 +2084,7 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     void Reset() noexcept {
         const auto serviceIdentity = identity;
         const bool exhausted = quarantined;
+        assert(memberRelationHead == UINT32_MAX && memberRelationCount == 0);
         assert(std::none_of(memberPrograms.begin(), memberPrograms.end(),
             [](const auto& token) noexcept { return token.Valid(); }));
         auto programDirectory = std::move(memberPrograms);
@@ -4582,6 +4596,7 @@ struct EngineActionQueueReplacementScratch {
     EngineQueueProgramBank* programBank = nullptr;
     EngineActionPlayScratch* successorTree = nullptr;
     std::vector<EnginePlayableMemberReference> successorMembers;
+    StableStoragePreparation successorRelationBacking;
     PreparedTransactionBatch transactions{};
     PreparedDecisionReservation decision{};
     PreparedDecisionReservation successorDecision{};
@@ -4705,6 +4720,10 @@ struct ProjectGenerationReservationDomainV1 {
 
 
 struct Engine {
+    // Outlives every preparation that holds physical relation backing.
+    StableRowStorage<EnginePlayableMemberRelation> memberRelations;
+    std::uint32_t freeMemberRelation = UINT32_MAX;
+    std::uint32_t occupiedMemberRelations = 0;
     enum class OriginalPlayableServicePackDuty : std::uint8_t {
         Unbound, WorldNoPack, OriginalScratchOwns, OriginalDeferredRecordOwns,
         OriginalInvocationOwns, Released
@@ -4833,6 +4852,7 @@ struct Engine {
         StableStoragePreparation nativeVoiceBacking;
         StableSlotStorage<EngineActionPlayScratch>::Preparation nativePlayBacking;
         StableSlotStorage<EnginePlayableMemberRecord>::Preparation nativeMemberBacking;
+        StableStoragePreparation nativeRelationBacking;
         StableSlotStorage<EngineQueueProgramBank>::Preparation nativeProgramBacking;
         EngineQueueScheduleStorage::Preparation nativeScheduleBacking;
         EngineFrontierAttemptToken replacement{};
@@ -4850,7 +4870,8 @@ struct Engine {
                 !body.Valid() && !arm.Valid() && !release.Valid() && !retirement.Valid() &&
                 nativeReplacement.Empty() && !replacementVoice.HasStorage() &&
                 !nativeVoiceBacking.Valid() && !nativePlayBacking.Valid() &&
-                !nativeMemberBacking.Valid() && !nativeProgramBacking.Valid() && !nativeScheduleBacking.Valid() &&
+                !nativeMemberBacking.Valid() && !nativeRelationBacking.Valid() &&
+                !nativeProgramBacking.Valid() && !nativeScheduleBacking.Valid() &&
                 !replacement.Valid() && retiredServiceCount == 0 && retiredChild == 0 &&
                 retiredChildEpoch == 0 && !sourceRetired && !accepted;
         }
@@ -4920,6 +4941,7 @@ struct Engine {
         StableSlotStorage<EngineActionPlayScratch>::Preparation actionPlays;
         StableSlotStorage<EngineMemberProgramRecord>::Preparation memberPrograms;
         StableSlotStorage<EnginePlayableMemberRecord>::Preparation members;
+        StableStoragePreparation relations;
         StableSlotStorage<EngineQueueProgramBank>::Preparation queueBanks;
         EngineQueueScheduleStorage::Preparation queueSchedules;
         QueueInstanceTable::BackingPreparation queues;
@@ -4937,6 +4959,7 @@ struct Engine {
         StableSlotStorage<EngineActionPlayScratch>::PreparedUse actionPlays;
         StableSlotStorage<EngineMemberProgramRecord>::PreparedUse memberPrograms;
         StableSlotStorage<EnginePlayableMemberRecord>::PreparedUse members;
+        StableStoragePreparedUse relations;
         StableSlotStorage<EngineQueueProgramBank>::PreparedUse queueBanks;
         EngineQueueScheduleStorage::PreparedUse queueSchedules;
         QueueInstanceTable::BackingUse queues;
@@ -4958,6 +4981,7 @@ struct Engine {
                   : backing->memberPrograms.Use()),
               members(backing == nullptr ? StableSlotStorage<EnginePlayableMemberRecord>::PreparedUse{}
                   : backing->members.Use()),
+              relations(backing == nullptr ? StableStoragePreparedUse{} : backing->relations.Use()),
               queueBanks(backing == nullptr ? StableSlotStorage<EngineQueueProgramBank>::PreparedUse{}
                   : backing->queueBanks.Use()),
               queueSchedules(backing == nullptr ? EngineQueueScheduleStorage::PreparedUse{}
@@ -5773,7 +5797,6 @@ public:
           frontierExpansion(resolved.maxPlayableInstances),
           ordinaryRetiringSources(resolved.maxPlayableInstances),
           ordinaryRetiringLeaves(resolved.maxPlayableInstances),
-          playableMemberReferences(playableStorage.memberCount),
           variableControlInitialContinuousArms(
               playableStorage.continuousCount),
           queueSelectionChildScratch(resolved.maxQueueChildren),
@@ -5917,6 +5940,7 @@ public:
             playableStorage.continuousCount > UINT32_MAX ||
             !memberProgramRecords.Reserve(static_cast<std::uint32_t>(playableStorage.initialProgramCount)) ||
             !playableMemberRecords.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
+            !memberRelations.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
             !variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions) ||
             !memberOnsets.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
             !playableServiceWork.Reserve(resolved.maxPlayableInstances) ||
@@ -7542,6 +7566,7 @@ public:
         holder.nativeVoiceBacking.Release();
         holder.nativePlayBacking.Release();
         holder.nativeMemberBacking.Release();
+        holder.nativeRelationBacking.Release();
         holder.nativeProgramBacking.Release();
         holder.nativeScheduleBacking.Release();
         // Disposition may already be ending the root; its original loan still identifies it.
@@ -12241,6 +12266,176 @@ public:
     std::uint32_t retiredMemberProgramCount = 0;
     StableSlotStorage<EnginePlayableMemberRecord> playableMemberRecords;
 
+    EnginePlayableServiceRow* MemberRelationOwner(std::size_t logicalSlot) noexcept {
+        if (logicalSlot >= playableStorage.memberCount || playableStorage.memberStride == 0) return nullptr;
+        const auto partition = static_cast<std::uint32_t>(logicalSlot / playableStorage.memberStride);
+        const auto token = playablePartitions.CaptureOwner(partition);
+        if (!token.Valid() || token.slot >= playableServices.size()) return nullptr;
+        auto& row = playableServices[token.slot];
+        return row.identity == token && row.partition.slot == partition ? &row : nullptr;
+    }
+    std::uint32_t* MemberRelationLink(EnginePlayableServiceRow& row, std::uint32_t offset) noexcept {
+        auto* link = &row.memberRelationHead;
+        while (*link != UINT32_MAX && memberRelations[*link].logicalOffset < offset)
+            link = &memberRelations[*link].next;
+        return link;
+    }
+    EnginePlayableMemberReference ReadPlayableMemberReference(std::size_t logicalSlot) const noexcept {
+        auto& engine = *const_cast<Engine*>(this);
+        auto* row = engine.MemberRelationOwner(logicalSlot);
+        if (row == nullptr) return {};
+        const auto offset = static_cast<std::uint32_t>(logicalSlot % playableStorage.memberStride);
+        const auto link = *engine.MemberRelationLink(*row, offset);
+        if (link == UINT32_MAX || memberRelations[link].logicalOffset != offset) return {};
+        return ExpandMemberRelation(memberRelations[link]);
+    }
+    EnginePlayableMemberReference ExpandMemberRelation(const EnginePlayableMemberRelation& node) const noexcept {
+        EnginePlayableMemberReference reference{};
+        reference.service.token = node.service;
+        reference.memberOffset = node.memberOffset;
+        reference.leaf = node.leaf;
+        reference.leafEpoch = node.leafEpoch;
+        reference.authoredChildOrdinal = node.authoredChildOrdinal;
+        // A relation remains a reader even after its leaf stops resolving.
+        if (node.service.slot < playableServices.size()) {
+            const auto& target = playableServices[node.service.slot];
+            if (target.identity == node.service) {
+                reference.service.owner = target.ownerInstance;
+                reference.service.epoch = target.ownerEpoch;
+                reference.service.invocationGeneration = target.invocationGeneration;
+                reference.partitionGeneration = target.partition.generation;
+            }
+        }
+        return reference;
+    }
+    void InitializeMemberRelations(std::uint32_t previous) noexcept {
+        for (auto index = previous; index < memberRelations.ConstructedCount(); ++index) {
+            memberRelations[index].next = freeMemberRelation;
+            freeMemberRelation = index;
+        }
+    }
+    bool PrepareMemberRelationBacking(std::uint32_t count, StableStoragePreparation* out) noexcept {
+        const auto previous = memberRelations.ConstructedCount();
+        const bool prepared = memberRelations.PrepareBacking(
+            std::min(count, memberRelations.Capacity()), occupiedMemberRelations, out,
+            [&](std::uint32_t required) noexcept {
+                return required <= previous || AllowNativeBackingAllocation();
+            });
+        InitializeMemberRelations(previous);
+        return prepared;
+    }
+    bool PrepareMemberRelationWrite(std::uint32_t count, StableStoragePreparation* out) noexcept {
+        // An enclosing native preparation already covers its publication writes.
+        return memberRelations.PreparedUseActive() || PrepareMemberRelationBacking(count, out);
+    }
+    void RemoveMemberRelation(EnginePlayableServiceRow& row, std::uint32_t* link) noexcept {
+        const auto index = *link;
+        auto& node = memberRelations[index];
+        *link = node.next;
+        node = {};
+        node.next = freeMemberRelation;
+        freeMemberRelation = index;
+        --row.memberRelationCount;
+        --occupiedMemberRelations;
+    }
+    void ClearPlayableMemberRelations(EnginePlayableServiceRow& row) noexcept {
+        while (row.memberRelationHead != UINT32_MAX) RemoveMemberRelation(row, &row.memberRelationHead);
+    }
+    void ClearPlayableMemberReferences(std::size_t base, std::size_t count) noexcept {
+        if (count == 0 || base >= playableStorage.memberCount) return;
+        const auto end = base + std::min(count, playableStorage.memberCount - base);
+        while (base < end) {
+            const auto partitionBase = base - base % playableStorage.memberStride;
+            const auto limit = std::min(end, partitionBase + playableStorage.memberStride);
+            if (auto* row = MemberRelationOwner(base)) {
+                auto* link = MemberRelationLink(*row, static_cast<std::uint32_t>(base - partitionBase));
+                while (*link != UINT32_MAX && memberRelations[*link].logicalOffset < limit - partitionBase)
+                    RemoveMemberRelation(*row, link);
+            }
+            base = limit;
+        }
+    }
+    bool SetPlayableMemberReference(std::size_t logicalSlot,
+        const EnginePlayableMemberReference& reference) noexcept {
+        auto* row = MemberRelationOwner(logicalSlot);
+        if (row == nullptr) return !reference.service.token.Valid();
+        const auto offset = static_cast<std::uint32_t>(logicalSlot % playableStorage.memberStride);
+        auto* link = MemberRelationLink(*row, offset);
+        const bool existing = *link != UINT32_MAX && memberRelations[*link].logicalOffset == offset;
+        if (!reference.service.token.Valid()) {
+            if (existing) RemoveMemberRelation(*row, link);
+            return true;
+        }
+        if (reference.service.token.slot >= playableServices.size()) return false;
+        const auto& target = playableServices[reference.service.token.slot];
+        if (target.identity != reference.service.token || target.ownerInstance != reference.service.owner ||
+            target.ownerEpoch != reference.service.epoch || target.invocationGeneration != reference.service.invocationGeneration ||
+            target.partition.generation != reference.partitionGeneration) return false;
+        if (!existing) {
+            if (occupiedMemberRelations == memberRelations.Capacity()) return false;
+            const auto previous = memberRelations.ConstructedCount();
+            if (!memberRelations.ConstructThrough(occupiedMemberRelations + 1u,
+                    [&](std::uint32_t required) noexcept {
+                        return required <= previous || AllowNativeBackingAllocation();
+                    })) return false;
+            InitializeMemberRelations(previous);
+            if (freeMemberRelation == UINT32_MAX) return false;
+            const auto index = freeMemberRelation;
+            freeMemberRelation = memberRelations[index].next;
+            memberRelations[index].next = *link;
+            memberRelations[index].logicalOffset = offset;
+            *link = index;
+            ++row->memberRelationCount;
+            ++occupiedMemberRelations;
+        }
+        auto& node = memberRelations[*link];
+        node.service = reference.service.token;
+        node.leaf = reference.leaf;
+        node.leafEpoch = reference.leafEpoch;
+        node.memberOffset = reference.memberOffset;
+        node.authoredChildOrdinal = reference.authoredChildOrdinal;
+        return true;
+    }
+    void SetPlayableMemberOrdinal(std::size_t logicalSlot, std::uint32_t ordinal) noexcept {
+        auto* row = MemberRelationOwner(logicalSlot);
+        if (row == nullptr) return;
+        const auto offset = static_cast<std::uint32_t>(logicalSlot % playableStorage.memberStride);
+        const auto link = *MemberRelationLink(*row, offset);
+        if (link != UINT32_MAX && memberRelations[link].logicalOffset == offset)
+            memberRelations[link].authoredChildOrdinal = ordinal;
+    }
+    void MovePlayableMemberReference(std::size_t from, std::size_t to) noexcept {
+        if (from == to) return;
+        auto* source = MemberRelationOwner(from);
+        auto* target = MemberRelationOwner(to);
+        assert(source != nullptr && target != nullptr);
+        if (source == nullptr || target == nullptr) { runtimeRecreateRequired = true; return; }
+        ClearPlayableMemberReferences(to, 1);
+        const auto sourceOffset = static_cast<std::uint32_t>(from % playableStorage.memberStride);
+        auto* sourceLink = MemberRelationLink(*source, sourceOffset);
+        if (*sourceLink == UINT32_MAX || memberRelations[*sourceLink].logicalOffset != sourceOffset) return;
+        const auto index = *sourceLink;
+        auto& node = memberRelations[index];
+        *sourceLink = node.next;
+        --source->memberRelationCount;
+        node.logicalOffset = static_cast<std::uint32_t>(to % playableStorage.memberStride);
+        auto* targetLink = MemberRelationLink(*target, node.logicalOffset);
+        node.next = *targetLink;
+        *targetLink = index;
+        ++target->memberRelationCount;
+    }
+    template<class Visitor>
+    void VisitPlayableMemberReferences(EnginePlayableServiceRow& row, Visitor&& visitor) noexcept {
+        const auto base = playableStorage.MemberBase(row.partition.slot);
+        auto index = row.memberRelationHead;
+        while (index != UINT32_MAX) {
+            const auto& node = memberRelations[index];
+            const auto slot = base + node.logicalOffset;
+            index = node.next;
+            visitor(slot, ExpandMemberRelation(node));
+        }
+    }
+
     bool PreparePlayableMemberDirectory(EnginePlayableServiceRow& row) noexcept {
         if (row.members.size() == playableStorage.memberStride) return true;
         if (memguard::IsAudioTagged() || playableMemberRecords.PreparedUseActive()) return false;
@@ -12362,13 +12557,14 @@ public:
         if (offset < row.memberPrograms.size() && row.memberPrograms[offset].Valid()) return false;
         auto* record = FindPlayableMember(row, offset);
         if (record == nullptr) return false;
-        auto& reference = playableMemberReferences[record->physicalSlot];
+        const auto reference = ReadPlayableMemberReference(record->physicalSlot);
         if (reference.service.token == row.identity &&
             reference.service.owner == row.ownerInstance && reference.service.epoch == row.ownerEpoch &&
             reference.service.invocationGeneration == row.invocationGeneration &&
             reference.partitionGeneration == row.partition.generation && reference.memberOffset == offset &&
             reference.leaf == record->completion.leafInstance &&
-            reference.leafEpoch == record->completion.leafEpoch) reference = {};
+            reference.leafEpoch == record->completion.leafEpoch)
+            ClearPlayableMemberReferences(record->physicalSlot, 1);
         RemovePlayableMemberOnset(record->physicalSlot);
         record->primaryOwned = false;
         record->physicalSlot = UINT32_MAX;
@@ -12723,9 +12919,9 @@ public:
     }
 
     bool ResolvePlayableMemberSlot(std::size_t logicalSlot, std::size_t* physicalSlot) noexcept {
-        if (physicalSlot == nullptr || logicalSlot >= playableMemberReferences.size()) return false;
-        const auto& reference = playableMemberReferences[logicalSlot];
-        if (!reference.service.Valid()) {
+        if (physicalSlot == nullptr || logicalSlot >= playableStorage.memberCount) return false;
+        const auto& reference = ReadPlayableMemberReference(logicalSlot);
+        if (!reference.service.token.Valid()) {
             *physicalSlot = logicalSlot;
             return true;
         }
@@ -12793,8 +12989,8 @@ public:
     template <std::size_t Capacity>
     bool ResolvePlayableMemberSlots(std::size_t logicalBase, std::size_t count,
                                    std::array<std::size_t, Capacity>& physicalSlots) noexcept {
-        if (count > Capacity || logicalBase > playableMemberReferences.size() ||
-            count > playableMemberReferences.size() - logicalBase) return false;
+        if (count > Capacity || logicalBase > playableStorage.memberCount ||
+            count > playableStorage.memberCount - logicalBase) return false;
         for (std::size_t index = 0; index < count; ++index) {
             if (!ResolvePlayableMemberSlot(logicalBase + index, &physicalSlots[index])) return false;
         }
@@ -12805,13 +13001,13 @@ public:
                                        std::size_t logicalSlot,
                                        EnginePlayableMemberReference* output) noexcept {
         if (output == nullptr || !playablePartitions.Owns(service.partition, service.identity) ||
-            logicalSlot >= playableMemberReferences.size()) return false;
-        if (playableMemberReferences[logicalSlot].service.Valid()) {
+            logicalSlot >= playableStorage.memberCount) return false;
+        if (ReadPlayableMemberReference(logicalSlot).service.token.Valid()) {
             EnginePlayableServiceRow* owner = nullptr;
             std::size_t physicalSlot = 0;
-            if (!ResolvePlayableMember(playableMemberReferences[logicalSlot], &owner, &physicalSlot))
+            if (!ResolvePlayableMember(ReadPlayableMemberReference(logicalSlot), &owner, &physicalSlot))
                 return false;
-            *output = playableMemberReferences[logicalSlot];
+            *output = ReadPlayableMemberReference(logicalSlot);
             return true;
         }
         const auto base = playableStorage.MemberBase(service.partition.slot);
@@ -12879,7 +13075,6 @@ public:
         record->monitorSelection = {};
         RefreshPlayableMemberOnset(slot);
     }
-    std::vector<EnginePlayableMemberReference> playableMemberReferences;
     std::vector<TimelineArmToken> variableControlInitialContinuousArms;
     StableRowStorage<EngineControlProgramRecord> variableControlRetargetPrograms;
     bool VariableControlRetargetProgramHasReaders(const EngineControlProgramRecord& record) const noexcept {

@@ -39,7 +39,7 @@ inline auto CapturePlayableStorage(const harken::Engine& engine) {
         StorageIdentity(engine.initialFrontierEvents),
         StorageIdentity(engine.initialFrontierRequests),
         StorageIdentity(engine.playableServices),
-        StorageIdentity(engine.playableMemberReferences),
+        StorageIdentity(engine.memberRelations),
         StorageIdentity(engine.playableMemberRecords),
         StorageIdentity(engine.memberProgramRecords),
         StorageIdentity(engine.variableControlInitialContinuousArms),

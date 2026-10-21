@@ -811,7 +811,10 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         harken::EngineQueueProgramBankBody::kProgramCapacity, engine->playableMemberRecords.size());
     EXPECT_EQ(0u, engine->playableMemberRecords.ConstructedCount());
     EXPECT_EQ(0u, engine->playableMemberRecords.RequestedBytes());
-    EXPECT_EQ(layout.memberCount, engine->playableMemberReferences.size());
+    EXPECT_EQ(layout.memberCount, engine->memberRelations.Capacity());
+    EXPECT_EQ(0u, engine->memberRelations.ConstructedCount());
+    EXPECT_EQ(0u, engine->memberRelations.RequestedBytes());
+    EXPECT_EQ(0u, engine->occupiedMemberRelations);
     EXPECT_EQ(engine->config.maxPlayableInstances, engine->sourceTerminals.Capacity());
 
     EXPECT_EQ(layout.initialProgramCount, engine->memberProgramRecords.size());
@@ -824,7 +827,8 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(0u, engine->variableControlRetargetPrograms.ConstructedCount());
     EXPECT_EQ(0u, engine->variableControlRetargetPrograms.RequestedBytes());
 
-    const std::uint64_t memberBytesPerSlot = sizeof(engine->playableMemberReferences[0]);
+    const std::uint64_t removedReferenceBytesPerSlot = sizeof(harken::EnginePlayableMemberReference);
+    EXPECT_LE(sizeof(harken::EnginePlayableMemberRelation), 48u);
     const std::uint64_t removedMemberBytesPerSlot =
         sizeof(harken::CapturedTimelineVoiceInstall) + sizeof(harken::PlayableRefV1) +
         sizeof(harken::TimelineArmToken) + sizeof(VnVoiceHandle) + sizeof(harken::VoiceReleaseObserver) +
@@ -870,13 +874,10 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(sizeof(harken::TimelineArmToken), continuousBytesPerSlot);
 
     const std::uint64_t totalBytes =
-        layout.memberCount * memberBytesPerSlot +
         layout.continuousCount * continuousBytesPerSlot;
     EXPECT_EQ(static_cast<std::uint64_t>(engine->config.maxPlayableInstances) * sizeof(harken::SourceTerminalRecord),
               static_cast<std::uint64_t>(engine->sourceTerminals.Capacity()) * sizeof(harken::SourceTerminalRecord));
 
-    EXPECT_EQ(layout.memberCount * memberBytesPerSlot,
-              StorageBytes(engine->playableMemberReferences));
     EXPECT_EQ(layout.continuousCount * continuousBytesPerSlot,
               StorageBytes(engine->variableControlInitialContinuousArms));
     testing::Test::RecordProperty("removed_prebuilt_continuous_cut_bytes", std::to_string(
@@ -900,8 +901,9 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("removed_prebuilt_control_program_bytes", std::to_string(
         layout.continuousCount * (currentEventBytesPerSlot + initialProgramBytesPerSlot)));
     testing::Test::RecordProperty("control_program_record_bytes", std::to_string(sizeof(harken::EngineControlProgramRecord)));
-    testing::Test::RecordProperty("member_reference_capacity_bytes",
-        std::to_string(StorageBytes(engine->playableMemberReferences)));
+    testing::Test::RecordProperty("removed_prebuilt_member_reference_bytes",
+        std::to_string(layout.memberCount * removedReferenceBytesPerSlot));
+    testing::Test::RecordProperty("member_relation_bytes", std::to_string(sizeof(harken::EnginePlayableMemberRelation)));
     testing::Test::RecordProperty("facade_capacity_bytes", std::to_string(StorageBytes(engine->playableStarts)));
     testing::Test::RecordProperty("service_capacity_bytes", std::to_string(engine->playableServices.RequestedBytes()));
     testing::Test::RecordProperty("partition_capacity_bytes", std::to_string(engine->playablePartitions.StorageBytes()));
@@ -926,6 +928,8 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         engine->memberProgramRecords.CommittedBytes(), engine->memberProgramRecords.ReservedBytes());
     recordStableRows("playable_member_rows", engine->playableMemberRecords.RequestedBytes(),
         engine->playableMemberRecords.CommittedBytes(), engine->playableMemberRecords.ReservedBytes());
+    recordStableRows("member_relation_rows", engine->memberRelations.RequestedBytes(),
+        engine->memberRelations.CommittedBytes(), engine->memberRelations.ReservedBytes());
     recordStableRows("control_program_rows", engine->variableControlRetargetPrograms.RequestedBytes(),
         engine->variableControlRetargetPrograms.CommittedBytes(), engine->variableControlRetargetPrograms.ReservedBytes());
     testing::Test::RecordProperty("action_play_directory_bytes", std::to_string(engine->ActionPlayDirectoryBytes()));

@@ -1142,7 +1142,7 @@ void ExpectVariableControlTree(
                  ? index
                  : row.variableControlContinuousMemberOffset +
                        index - row.variableControlDiscreteMemberCount);
-        const auto* record = engine.ResolveMemberProgram(engine.playableMemberReferences[logicalSlot]);
+        const auto* record = engine.ResolveMemberProgram(engine.ReadPlayableMemberReference(logicalSlot));
         ASSERT_NE(nullptr, record);
         const auto& schedule = record->schedule;
         EXPECT_EQ(leaf, schedule.ownerInstance);
@@ -20294,7 +20294,7 @@ void ExpectDeferredNestedQueueCompositeSuccessor(
                 if (!row.queueMode || !row.partition.Valid() || row.scheduleLeafCount != 2 ||
                     row.variableControlNestedQueueSuccessorInstance == 0) continue;
                 ASSERT_NE(row.variableControlNestedQueueSuccessorInstance,
-                    engine.playableMemberReferences[row.scheduleStorageBase + 1u].leaf) << block;
+                    engine.ReadPlayableMemberReference(row.scheduleStorageBase + 1u).leaf) << block;
             }
         }
         if (refuseSecondLeaf && !refused && trace.heard.size() == 1u) {
@@ -20546,9 +20546,9 @@ void ExpectImmediateNestedQueueActionBatch(NestedQueueBatchCase testCase, bool o
                 fault.externalSlot = edge.logicalSlot + 1u;
                 ASSERT_LT(fault.externalSlot, current.playableStorage.MemberBase(scratch.row->partition.slot) +
                     current.playableStorage.memberStride);
-                ASSERT_LT(fault.externalSlot, current.playableMemberReferences.size());
-                ASSERT_FALSE(current.playableMemberReferences[fault.externalSlot].service.Valid());
-                current.playableMemberReferences[fault.externalSlot] = edge.reference;
+                ASSERT_LT(fault.externalSlot, current.playableStorage.memberCount);
+                ASSERT_FALSE(current.ReadPlayableMemberReference(fault.externalSlot).service.Valid());
+                ASSERT_TRUE(current.SetPlayableMemberReference(fault.externalSlot, edge.reference));
             } else {
                 ASSERT_NE(UINT32_MAX, edge.reference.service.token.generation);
                 ++edge.reference.service.token.generation;
@@ -20663,16 +20663,16 @@ void ExpectImmediateNestedQueueActionBatch(NestedQueueBatchCase testCase, bool o
                 EXPECT_TRUE(engine.playablePartitions.Owns(childPartition, edge.reference.service.token));
                 if (mappingFault.external) {
                     EXPECT_EQ(edge.reference.service.token,
-                        engine.playableMemberReferences[mappingFault.externalSlot].service.token);
+                        engine.ReadPlayableMemberReference(mappingFault.externalSlot).service.token);
                 } else {
                     EXPECT_FALSE(pending->storage.variableControlRollbackEdges[0].detached);
                     EXPECT_EQ(edge.reference.service.token.generation + 1u,
                         pending->storage.variableControlRollbackEdges[0].reference.service.token.generation);
                     EXPECT_EQ(edge.reference.service.token,
-                        engine.playableMemberReferences[edge.logicalSlot].service.token);
+                        engine.ReadPlayableMemberReference(edge.logicalSlot).service.token);
                 }
             }
-            if (mappingFault.external) engine.playableMemberReferences[mappingFault.externalSlot] = {};
+            if (mappingFault.external) engine.ClearPlayableMemberReferences(mappingFault.externalSlot, 1);
             else pending->storage.variableControlRollbackEdges[0] = edge;
             for (std::uint32_t block = 0; block < 16 && pending->row != nullptr; ++block) {
                 ASSERT_EQ(VN_OK, Vn_Update());
@@ -22294,7 +22294,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
         queueService->identity, queueService->ownerInstance,
         queueService->ownerEpoch, queueService->invocationGeneration};
     EXPECT_EQ(&*queueService, engine->ResolvePlayableService(queueReference));
-    const auto memberReference = engine->playableMemberReferences[row->scheduleStorageBase];
+    const auto memberReference = engine->ReadPlayableMemberReference(row->scheduleStorageBase);
     EXPECT_EQ(queueService->identity, memberReference.service.token);
     std::size_t initialMemberSlot = 0;
     ASSERT_TRUE(engine->ResolvePlayableMemberSlot(row->scheduleStorageBase, &initialMemberSlot));
@@ -23580,7 +23580,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
     std::uint64_t naturalFirstInstallOnset = UINT64_MAX;
     std::uint64_t naturalFirstPositiveFrame = UINT64_MAX;
     std::uint64_t naturalFirstNegativeFrame = UINT64_MAX;
-    const auto naturalFirstLeaf = engine->playableMemberReferences[naturalRow->scheduleStorageBase].leaf;
+    const auto naturalFirstLeaf = engine->ReadPlayableMemberReference(naturalRow->scheduleStorageBase).leaf;
     harken::PlayableInstanceHandle naturalSuccessor = 0;
     harken::TimelineArmToken naturalSuccessorArm{};
     bool naturalSuccessorStarted = false;
@@ -25422,8 +25422,8 @@ static void ExpectImmediateVariableControlNestedRetargetPromotesCompleteInstance
     const auto* sourceRecord = engine->sourceTerminals.Resolve(incomingSource.token);
     ASSERT_NE(nullptr, sourceRecord);
     EXPECT_EQ(resourceService, engine->ResolveSourceResourceOwner(sourceRecord->resourceOwner));
-    const auto incomingReference = engine->playableMemberReferences[
-        row->scheduleStorageBase + row->variableControlDiscreteTransitionOffset];
+    const auto incomingReference = engine->ReadPlayableMemberReference(
+        row->scheduleStorageBase + row->variableControlDiscreteTransitionOffset);
     harken::EnginePlayableServiceRow* referenceOwner = nullptr;
     std::size_t incomingPhysicalSlot = 0;
     ASSERT_TRUE(engine->ResolvePlayableMember(incomingReference, &referenceOwner, &incomingPhysicalSlot));
@@ -25456,7 +25456,7 @@ static void ExpectImmediateVariableControlNestedRetargetPromotesCompleteInstance
               row->variableControlNestedContainerCount);
     EXPECT_EQ(incomingRoot, row->variableControlNestedContainerInstances[0]);
     EXPECT_EQ(incomingLeaf, row->variableControlLeafInstances[0]);
-    const auto promotedReference = engine->playableMemberReferences[row->scheduleStorageBase];
+    const auto promotedReference = engine->ReadPlayableMemberReference(row->scheduleStorageBase);
     EXPECT_EQ(incomingReference.service.token, promotedReference.service.token);
     EXPECT_EQ(incomingReference.partitionGeneration, promotedReference.partitionGeneration);
     EXPECT_EQ(incomingReference.memberOffset, promotedReference.memberOffset);
@@ -26019,8 +26019,8 @@ void CheckInitialOuterVariableControlSelectionProducer(bool outerSequence, bool 
                                                 : CanonicalActionWorld::kSecondSound,
                           row->leaf.stableId);
             } else {
-                ASSERT_LT(row->scheduleStorageBase, engine.playableMemberReferences.size());
-                const auto& member = engine.playableMemberReferences[row->scheduleStorageBase];
+                ASSERT_LT(row->scheduleStorageBase, engine.playableStorage.memberCount);
+                const auto& member = engine.ReadPlayableMemberReference(row->scheduleStorageBase);
                 ASSERT_TRUE(member.service.Valid());
                 ASSERT_NE(0u, member.leaf);
                 harken::EnginePlayableServiceRow* resourceOwner = nullptr;
@@ -26595,7 +26595,7 @@ void ExpectVariableControlToVariableControlInitial(bool direct) {
     ASSERT_NE(nullptr, originalRecord);
     EXPECT_EQ(innerService, engine->ResolveSourceResourceOwner(originalRecord->resourceOwner));
     const auto logicalSlot = engine->playableStorage.MemberBase(row->partition.slot);
-    const auto reference = engine->playableMemberReferences[logicalSlot];
+    const auto reference = engine->ReadPlayableMemberReference(logicalSlot);
     const auto innerServiceReference = reference.service;
     harken::EnginePlayableServiceRow* resourceOwner = nullptr;
     std::size_t physicalSlot = 0;
@@ -39800,7 +39800,7 @@ void ExpectImmediateSequenceQueueCompositeChildCompletes(bool pieceChild) {
         EXPECT_NE(nullptr,
                   engine->voices.Resolve(
                       engine->ReadPlayableMember(base + index).render));
-        const auto leafInstance = engine->playableMemberReferences[base + index].leaf;
+        const auto leafInstance = engine->ReadPlayableMemberReference(base + index).leaf;
         harken::MonitorContentIdentity content{};
         ASSERT_TRUE(engine->playableInstances.CaptureContentIdentity(leafInstance, &content));
         const auto& authored = engine->ReadPlayableMember(base + index).leaf;
@@ -44352,7 +44352,7 @@ static void CheckNativeBackingReservationFailures(harken::Engine& engine,
     const auto publishedHead = engine.commands.PublishedHead();
     ASSERT_TRUE(engine.queueScheduleStorage.CollectUnused());
     const auto coldScheduleBytes = engine.queueScheduleStorage.StorageBytes();
-    const auto allocationsBefore = engine.nativeBackingAllocationCountForTest;
+    const auto coldAllocationsBefore = engine.nativeBackingAllocationCountForTest;
     {
         std::vector<harken::Engine::NativeReplacementSlot> candidate;
         std::vector<harken::Engine::QueueRoleReservationSlot> queueCandidate;
@@ -44401,6 +44401,21 @@ static void CheckNativeBackingReservationFailures(harken::Engine& engine,
         ::testing::Test::RecordProperty("native_reservation_rows", std::to_string(rows));
         ::testing::Test::RecordProperty("native_reservation_nonzero_sides", std::to_string(nonzeroSides));
         ::testing::Test::RecordProperty("native_reservation_old_owned_bytes", std::to_string(backingBytes));
+    }
+    ::testing::Test::RecordProperty("native_reservation_cold_allocation_gates",
+        std::to_string(engine.nativeBackingAllocationCountForTest - coldAllocationsBefore));
+    ASSERT_TRUE(engine.queueScheduleStorage.CollectUnused());
+    // Stable physical rows survive cancellation. Calibrate retries with that reusable backing.
+    const auto allocationsBefore = engine.nativeBackingAllocationCountForTest;
+    {
+        std::vector<harken::Engine::NativeReplacementSlot> candidate;
+        std::vector<harken::Engine::QueueRoleReservationSlot> queueCandidate;
+        std::unique_ptr<harken::Engine::NativeRuntimeBacking> runtimeCandidate;
+        bool waiting = false;
+        ASSERT_TRUE(engine.BuildPendingVariableNativeBacking(attempt,
+            attempt.privateVcProducerCount == 0 ? &producer : nullptr, &candidate, &queueCandidate,
+            &runtimeCandidate, &waiting));
+        ASSERT_FALSE(waiting);
     }
     const auto allocationCount = engine.nativeBackingAllocationCountForTest - allocationsBefore;
     ASSERT_GT(allocationCount, 0u);
@@ -45544,8 +45559,8 @@ static void CheckPendingVariableControlAtActualPlacement(bool requireReselection
                                     EXPECT_EQ(&runtime, schedule.runtimeProgram.program);
                                     EXPECT_EQ(&event, schedule.events);
                                     EXPECT_TRUE(engine.MatchesPendingVariableReplacementMemberStorage(*child, index));
-                                    EXPECT_FALSE(engine.playableMemberReferences[
-                                        engine.playableStorage.MemberBase(row->partition.slot) + index].service.Valid());
+                                    EXPECT_FALSE(engine.ReadPlayableMemberReference(
+                                        engine.playableStorage.MemberBase(row->partition.slot) + index).service.Valid());
                                     EXPECT_EQ(1u, schedule.eventCount);
                                     EXPECT_EQ(instance.Handle(), runtime.generation);
                                     EXPECT_EQ(instance.Handle(), schedule.ownerInstance);
@@ -50291,7 +50306,7 @@ TEST(ActionFiringApi, OrderedVariableDoubleNestedPlayPreservesInitialPcmAndRetir
         if (original.publicGroup.Valid()) ASSERT_TRUE(engine.armGroups.Capture(original.publicGroup, &armGroup));
         if (original.group.Valid()) ASSERT_TRUE(engine.armGroups.Capture(original.group, &armGroup));
         ASSERT_EQ(1u, root->scheduleLeafCount);
-        const auto member = engine.playableMemberReferences[engine.playableStorage.MemberBase(root->partition.slot)];
+        const auto member = engine.ReadPlayableMemberReference(engine.playableStorage.MemberBase(root->partition.slot));
         harken::EnginePlayableServiceRow* owner = nullptr;
         std::size_t physicalSlot = 0;
         ASSERT_TRUE(engine.ResolvePlayableMember(member, &owner, &physicalSlot));

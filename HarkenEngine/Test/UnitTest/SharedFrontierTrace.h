@@ -368,11 +368,11 @@ struct FrontierTrace {
             });
             if (found == heard.end()) {
                 harken::PlayableInstanceHandle leafHandle = 0;
-                for (std::size_t logical = 0; leafHandle == 0 && logical < engine.playableMemberReferences.size(); ++logical) {
+                for (std::size_t logical = 0; leafHandle == 0 && logical < engine.playableStorage.memberCount; ++logical) {
                     std::size_t physical = 0;
                     if (engine.ResolvePlayableMemberSlot(logical, &physical) &&
                         matches(engine.ReadPlayableMember(physical).arm))
-                        leafHandle = engine.playableMemberReferences[logical].leaf;
+                        leafHandle = engine.ReadPlayableMemberReference(logical).leaf;
                 }
                 for (const auto& service : engine.playableServices) {
                     if (leafHandle == 0 && service.partition.Valid() && matches(service.arm) && service.activeLeafInstance != 0) {

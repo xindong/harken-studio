@@ -194,6 +194,7 @@ private:
 
 public:
     std::uint32_t Capacity() const noexcept { return capacity_; }
+    bool PreparedUseActive() const noexcept { return growth_.preparedUsers != 0; }
     bool HasPreparedBacking() const noexcept {
         return growth_.heldRows != 0 || growth_.preparedUsers != 0;
     }

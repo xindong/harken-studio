@@ -79,6 +79,7 @@ struct QueueColumns {
 
 struct Profile {
     std::uint32_t current = 0;
+    std::uint32_t referenceRows = 0;
     std::array<std::uint32_t, kLeafCapacity + 1u> H{};
     std::array<std::uint32_t, kLeafCapacity + 1u> controllerWeights{};
     std::uint32_t rootContinuousMembers = 0;
@@ -222,6 +223,7 @@ inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexce
     if (!b) return b;
     a.flags |= b.flags;
     a.profile.current = SaturatingAdd(a.profile.current, b.profile.current, kLeafCapacity, a.flags);
+    a.profile.referenceRows = SaturatingAdd(a.profile.referenceRows, b.profile.referenceRows, UINT32_MAX, a.flags);
     a.profile.Q = SaturatingAdd(a.profile.Q, b.profile.Q, limits.queueRoleCapacity, a.flags);
     a.profile.controlSides = SaturatingAdd(a.profile.controlSides, b.profile.controlSides,
         kControlSideCapacity, a.flags);
@@ -241,6 +243,7 @@ inline Result Alternative(Result a, const Result& b) noexcept {
     if (!b) return b;
     a.flags |= b.flags;
     a.profile.current = std::max(a.profile.current, b.profile.current);
+    a.profile.referenceRows = std::max(a.profile.referenceRows, b.profile.referenceRows);
     a.profile.Q = std::max(a.profile.Q, b.profile.Q);
     a.profile.controlSides = std::max(a.profile.controlSides, b.profile.controlSides);
     a.profile.voice.Include(b.profile.voice);
@@ -513,6 +516,9 @@ private:
         if (!inserted) return entry->state == MemoState::Visiting
             ? Failure(Status::InvalidInput) : entry->result;
         entry->result = Compute(ref, mode, budget);
+        if (entry->result && ref.kind == PlayableKindV1::Container)
+            entry->result.profile.referenceRows = SaturatingAdd(entry->result.profile.referenceRows,
+                entry->result.profile.current, UINT32_MAX, entry->result.flags);
         if (entry->result && entry->result.profile.voice.path != 0) {
             auto& voice = entry->result.profile.voice;
             if (ref.kind != PlayableKindV1::Sound)
@@ -528,6 +534,7 @@ private:
         if (ref.kind == PlayableKindV1::Sound) {
             Result result{};
             result.profile.current = 1;
+            result.profile.referenceRows = 1;
             result.profile.voice.path = 1;
             const auto* property = content_.Property(ref);
             if (property != nullptr) {
@@ -703,6 +710,7 @@ private:
             currentCapacity = std::max(currentCapacity, current.profile.current);
             current.profile.Q = SaturatingAdd(current.profile.Q, 1, limits_.queueRoleCapacity, current.flags);
             std::uint32_t capacity = 0;
+            std::uint32_t futureReferences = 0;
             for (std::uint32_t j = 0; j < program.childCount; ++j) {
                 const bool possible = program.mode == ContainerModeV1::SequenceQueue
                     ? j > i || (j == 0 && CanWrap(program)) : j != i || CanWrap(program);
@@ -710,10 +718,14 @@ private:
                 const auto next = DirectFuture(program.children[j]);
                 if (!next) return next;
                 capacity = std::max(capacity, next.profile.current);
+                futureReferences = std::max(futureReferences, SaturatingAdd(next.profile.referenceRows,
+                    next.profile.current, UINT32_MAX, current.flags));
                 current.flags |= next.flags;
             }
             targetCapacity = std::max(targetCapacity, capacity);
             AddFuture(current, capacity, limits_);
+            current.profile.referenceRows = SaturatingAdd(current.profile.referenceRows,
+                futureReferences, UINT32_MAX, current.flags);
             result = Alternative(result, current);
             if (!result) return result;
         }
