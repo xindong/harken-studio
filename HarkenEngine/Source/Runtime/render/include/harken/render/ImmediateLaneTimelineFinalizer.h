@@ -17,7 +17,7 @@ class BlockArena;
 struct Plan03ScratchDecisionState;
 
 // Stages every voice in a due bucket before claiming or exposing any Start.
-// All scratch is allocated by Attach, outside the audio callback.
+// Scratch is prepared by Attach or lane admission, outside the audio callback.
 class ImmediateLaneTimelineFinalizer {
 public:
     ImmediateLaneTimelineFinalizer(VoicePool& voices, TimelineArmTable& arms);

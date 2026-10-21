@@ -508,8 +508,9 @@ bool ImmediateActionLane::AcquirePrivatePlainLayoutEditImpl(ImmediateLaneHandle 
     const auto base = static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt;
     for (std::uint32_t i = 0; i < config_.eventsPerAttempt; ++i)
         if (armPins_[base + i].Valid() || fenceReferences_[base + i].Valid() ||
-            groupPins_[base + i].Valid() || decisionPins_[base + i].Valid() ||
-            futureDependentOwned_[base + i] != 0) return false;
+            decisionPins_[base + i].Valid() || futureDependentOwned_[base + i] != 0) return false;
+    for (std::uint32_t i = 0; i < attempt->groupStorageCount; ++i)
+        if (groupPins_[base + i].Valid()) return false;
     for (std::uint32_t i = 0; i < attempt->eventCount; ++i)
         if (EventBase(handle.slot)[i].futureGroupedStart ||
             EventBase(handle.slot)[i].event.frontier.Present()) return false;
@@ -659,12 +660,14 @@ bool ImmediateActionLane::ObserveOriginalUnpublishedStorageOnlyRetention(
             ImmediateLaneBucketState::Cancelled) return false;
     const auto base = static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt;
     for (std::uint32_t i = 0; i < config_.eventsPerAttempt; ++i) {
-        if (armPins_[base + i].Valid() || groupPins_[base + i].Valid() ||
-            decisionPins_[base + i].Valid() || futureDependentOwned_[base + i] != 0) return false;
+        if (armPins_[base + i].Valid() || decisionPins_[base + i].Valid() ||
+            futureDependentOwned_[base + i] != 0) return false;
         const auto& fence = fenceReferences_[base + i];
         if (fence.Valid() && fence.lastReadSequence_ != 0 &&
             completedAudioSequence <= fence.lastReadSequence_) return false;
     }
+    for (std::uint32_t i = 0; i < attempt->groupStorageCount; ++i)
+        if (groupPins_[base + i].Valid()) return false;
     return true;
 }
 
@@ -690,6 +693,8 @@ void ImmediateActionLane::ReturnOriginalAttempt(
 }
 
 bool ImmediateActionLane::Reset(Config config) {
+    static_assert(std::is_trivially_destructible_v<FrontierEntryReceiptRef>);
+    static_assert(std::is_nothrow_default_constructible_v<FrontierEntryReceiptRef>);
     static_assert(std::is_trivially_destructible_v<ImmediateLaneEvent>);
     static_assert(std::is_trivially_destructible_v<ImmediateLaneMemberManifest>);
     static_assert(std::is_nothrow_default_constructible_v<ImmediateLaneEvent>);
@@ -704,21 +709,28 @@ bool ImmediateActionLane::Reset(Config config) {
                 attempts_[i].originalLifetimePins != 0) return false;
     groupPool_ = nullptr;
     valid_ = false;
-    detail::StablePageReservation oldEvents, oldMembers;
+    StableSlotStorage<ImmediateLaneGroupRef> oldGroups;
+    StableSlotStorage<ImmediateLaneDeclaredGroup> oldDeclaredGroups;
+    StableSlotStorage<Plan03GroupReaderPin> oldGroupPins;
+    StableSlotStorage<SourceWaitEntry> oldSourceWaitEntries;
+    groups_.Swap(oldGroups);
+    declaredGroups_.Swap(oldDeclaredGroups);
+    groupPins_.Swap(oldGroupPins);
+    sourceWaitEntries_.Swap(oldSourceWaitEntries);
+    detail::StablePageReservation oldEvents, oldMembers, oldWaitingScratch;
     eventStorage_.Swap(oldEvents);
     memberStorage_.Swap(oldMembers);
-    eventStorageBytes_ = memberStorageBytes_ = 0;
+    waitingScratchStorage_.Swap(oldWaitingScratch);
+    eventStorageBytes_ = memberStorageBytes_ = waitingScratchBytes_ = 0;
+    waitingScratch_ = nullptr;
     attempts_.reset();
     events_ = nullptr;
-    groups_.reset();
-    declaredGroups_.reset();
     eventPlacementOrder_.reset();
     groupPlacementOrder_.reset();
     members_ = nullptr;
     privateEntryDirectory_.reset();
     privateOwnedGroupIndices_.reset();
     privateEntryBuckets_.reset();
-    sourceWaitEntries_.reset();
     eventPrivateEntries_.reset();
     groupPrivateEntries_.reset();
     memberOrder_.reset();
@@ -732,11 +744,12 @@ bool ImmediateActionLane::Reset(Config config) {
     scopeLastCaptureSequence_.reset();
     capturedEventAdmission_.reset();
     conditionalEventScopes_.reset();
-    groupPins_.reset();
     decisionPins_.reset();
     futureDependentOwned_.reset();
     if (config.attempts == 0 || config.eventsPerAttempt == 0 ||
         config.maxEventsPerQuantum == 0 || config.quantumFrames == 0 ||
+        config.maxEventsPerQuantum > static_cast<std::size_t>(PTRDIFF_MAX) /
+            sizeof(FrontierEntryReceiptRef) / config.attempts ||
         config.eventsPerAttempt > SIZE_MAX / config.attempts ||
         static_cast<std::size_t>(config.attempts) * config.eventsPerAttempt > SIZE_MAX / 2u)
         return false;
@@ -745,26 +758,31 @@ bool ImmediateActionLane::Reset(Config config) {
     const auto slots = static_cast<std::size_t>(config.attempts) *
                        config.eventsPerAttempt;
     StableRowStorage<PrivateEntryAssociation> privateEntries;
-    if (slots > UINT32_MAX || !privateEntries.Reserve(static_cast<std::uint32_t>(slots)))
+    if (slots > UINT32_MAX || !privateEntries.Reserve(static_cast<std::uint32_t>(slots)) ||
+        !groups_.Reserve(static_cast<std::uint32_t>(slots)) ||
+        !declaredGroups_.Reserve(static_cast<std::uint32_t>(slots)) ||
+        !groupPins_.Reserve(static_cast<std::uint32_t>(slots)) ||
+        !sourceWaitEntries_.Reserve(static_cast<std::uint32_t>(slots)))
         return false;
     if (slots > static_cast<std::size_t>(PTRDIFF_MAX) / sizeof(ImmediateLaneEvent) ||
         slots > static_cast<std::size_t>(PTRDIFF_MAX) / sizeof(ImmediateLaneMemberManifest) ||
         !eventStorage_.Reserve(slots * sizeof(ImmediateLaneEvent), alignof(ImmediateLaneEvent), true) ||
         !memberStorage_.Reserve(slots * sizeof(ImmediateLaneMemberManifest),
-            alignof(ImmediateLaneMemberManifest), true)) return false;
+            alignof(ImmediateLaneMemberManifest), true) ||
+        !waitingScratchStorage_.Reserve(static_cast<std::size_t>(config.attempts) *
+            config.maxEventsPerQuantum * sizeof(FrontierEntryReceiptRef),
+            alignof(FrontierEntryReceiptRef), true)) return false;
+    waitingScratch_ = static_cast<FrontierEntryReceiptRef*>(waitingScratchStorage_.Address());
     events_ = static_cast<ImmediateLaneEvent*>(eventStorage_.Address());
     members_ = static_cast<ImmediateLaneMemberManifest*>(memberStorage_.Address());
     try {
         attempts_ = std::make_unique<ImmediateLaneAttempt[]>(config.attempts);
-        groups_ = std::make_unique<ImmediateLaneGroupRef[]>(slots);
-        declaredGroups_ = std::make_unique<ImmediateLaneDeclaredGroup[]>(slots);
         eventPlacementOrder_ = std::make_unique<std::uint32_t[]>(slots);
         groupPlacementOrder_ = std::make_unique<std::uint32_t[]>(slots);
         privateEntryDirectory_ = std::make_unique<std::uint32_t[]>(slots);
         std::fill_n(privateEntryDirectory_.get(), slots, UINT32_MAX);
         privateOwnedGroupIndices_ = std::make_unique<std::uint32_t[]>(slots);
         privateEntryBuckets_ = std::make_unique<PrivateEntryBucket[]>(2u * slots);
-        sourceWaitEntries_ = std::make_unique<SourceWaitEntry[]>(slots);
         eventPrivateEntries_ = std::make_unique<std::uint32_t[]>(slots);
         groupPrivateEntries_ = std::make_unique<std::uint32_t[]>(slots);
         memberOrder_ = std::make_unique<std::uint32_t[]>(slots);
@@ -778,21 +796,17 @@ bool ImmediateActionLane::Reset(Config config) {
         scopeLastCaptureSequence_ = std::make_unique<std::uint64_t[]>(slots);
         capturedEventAdmission_ = std::make_unique<std::uint8_t[]>(slots);
         conditionalEventScopes_ = std::make_unique<std::uint8_t[]>(slots);
-        groupPins_ = std::make_unique<Plan03GroupReaderPin[]>(slots);
         decisionPins_ = std::make_unique<DecisionFuturePin[]>(slots);
         futureDependentOwned_ = std::make_unique<std::uint8_t[]>(slots);
     } catch (const std::bad_alloc&) {
         attempts_.reset();
         events_ = nullptr;
-        groups_.reset();
-        declaredGroups_.reset();
         eventPlacementOrder_.reset();
         groupPlacementOrder_.reset();
         members_ = nullptr;
         privateEntryDirectory_.reset();
         privateOwnedGroupIndices_.reset();
         privateEntryBuckets_.reset();
-        sourceWaitEntries_.reset();
         eventPrivateEntries_.reset();
         groupPrivateEntries_.reset();
         memberOrder_.reset();
@@ -805,8 +819,7 @@ bool ImmediateActionLane::Reset(Config config) {
         eventWithdrawalLeader_.reset();
         scopeLastCaptureSequence_.reset();
         capturedEventAdmission_.reset();
-    conditionalEventScopes_.reset();
-        groupPins_.reset();
+        conditionalEventScopes_.reset();
         decisionPins_.reset();
         futureDependentOwned_.reset();
         return false;
@@ -827,9 +840,16 @@ bool ImmediateActionLane::PreparePrivateEntryBacking(std::uint32_t count,
 }
 
 bool ImmediateActionLane::PrepareAttemptStorage(std::uint32_t slot,
-    std::uint32_t events, std::uint32_t members) noexcept {
+    ImmediateLaneDemand demand) noexcept {
     auto& attempt = attempts_[slot];
-    if (events <= attempt.eventStorageCount && members <= attempt.memberStorageCount) return true;
+    const auto events = demand.events;
+    const auto members = demand.members;
+    const auto entries = static_cast<std::uint64_t>(events) + demand.groups;
+    const auto waits = static_cast<std::uint32_t>(std::min<std::uint64_t>(config_.eventsPerAttempt, entries));
+    const auto waitingScratch = static_cast<std::uint32_t>(std::min<std::uint64_t>(config_.maxEventsPerQuantum, entries));
+    if (events <= attempt.eventStorageCount && members <= attempt.memberStorageCount &&
+        demand.groups <= attempt.groupStorageCount && waits <= attempt.sourceWaitStorageCount &&
+        waitingScratch <= attempt.waitingScratchStorageCount) return true;
     if (memguard::IsAudioTagged() || payloadGrowth_.preparedUsers != 0) return false;
     const auto base = static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
     if (events > attempt.eventStorageCount) {
@@ -848,6 +868,27 @@ bool ImmediateActionLane::PrepareAttemptStorage(std::uint32_t slot,
         memberStorageBytes_ += (members - attempt.memberStorageCount) * sizeof(ImmediateLaneMemberManifest);
         attempt.memberStorageCount = members;
     }
+    while (attempt.groupStorageCount < demand.groups) {
+        const auto index = static_cast<std::uint32_t>(base) + attempt.groupStorageCount;
+        if (!groups_.Emplace(index) || !declaredGroups_.Emplace(index) ||
+            !groupPins_.Emplace(index)) return false;
+        ++attempt.groupStorageCount;
+    }
+    while (attempt.sourceWaitStorageCount < waits) {
+        if (!sourceWaitEntries_.Emplace(static_cast<std::uint32_t>(base) +
+                attempt.sourceWaitStorageCount)) return false;
+        ++attempt.sourceWaitStorageCount;
+    }
+    if (waitingScratch > attempt.waitingScratchStorageCount) {
+        const auto waitBase = static_cast<std::size_t>(slot) * config_.maxEventsPerQuantum;
+        if (!waitingScratchStorage_.CommitRange((waitBase + attempt.waitingScratchStorageCount) *
+                sizeof(FrontierEntryReceiptRef), (waitingScratch - attempt.waitingScratchStorageCount) *
+                sizeof(FrontierEntryReceiptRef))) return false;
+        for (auto index = attempt.waitingScratchStorageCount; index < waitingScratch; ++index)
+            std::construct_at(waitingScratch_ + waitBase + index);
+        waitingScratchBytes_ += (waitingScratch - attempt.waitingScratchStorageCount) * sizeof(FrontierEntryReceiptRef);
+        attempt.waitingScratchStorageCount = waitingScratch;
+    }
     return true;
 }
 
@@ -865,7 +906,8 @@ bool ImmediateActionLane::EnsureAttemptBacking(std::uint64_t count,
     const bool all = count > available;
     for (std::uint32_t slot = 0; slot < config_.attempts && (all || count != 0); ++slot) {
         if (!all && !free(slot)) continue;
-        if (!PrepareAttemptStorage(slot, config_.eventsPerAttempt, config_.eventsPerAttempt)) return false;
+        if (!PrepareAttemptStorage(slot, {config_.eventsPerAttempt, config_.eventsPerAttempt,
+                config_.eventsPerAttempt, config_.eventsPerAttempt})) return false;
         if (!all) --count;
     }
     return true;
@@ -938,7 +980,7 @@ const ImmediateLaneMemberManifest* ImmediateActionLane::MemberBase(std::uint32_t
 
 ImmediateLaneGroupRef* ImmediateActionLane::GroupBase(
     std::uint32_t slot) noexcept {
-    return groups_.get() + static_cast<std::size_t>(slot) *
+    return groups_.data() + static_cast<std::size_t>(slot) *
                            config_.eventsPerAttempt;
 }
 
@@ -1000,8 +1042,12 @@ bool ImmediateActionLane::Reserve(std::uint64_t root,
             attempt.generation == UINT32_MAX) continue;
         if (payloadGrowth_.preparedUsers != 0 &&
             (attempt.eventStorageCount != config_.eventsPerAttempt ||
-             attempt.memberStorageCount != config_.eventsPerAttempt)) continue;
-        if (!PrepareAttemptStorage(slot, demand.events, demand.members) ||
+             attempt.memberStorageCount != config_.eventsPerAttempt ||
+             attempt.groupStorageCount != config_.eventsPerAttempt ||
+             attempt.sourceWaitStorageCount != config_.eventsPerAttempt ||
+             attempt.waitingScratchStorageCount != std::min<std::uint64_t>(
+                 config_.maxEventsPerQuantum, 2ull * config_.eventsPerAttempt))) continue;
+        if (!PrepareAttemptStorage(slot, demand) ||
             (payloadGrowth_.preparedUsers == 0 &&
                 !EnsureAttemptBacking(payloadGrowth_.heldRows, slot))) return false;
         ++attempt.generation;
@@ -1424,7 +1470,7 @@ bool ImmediateActionLane::DeclareAcceptedPrivateVariableControlEntry(
         scope.groupCount < 3u || scope.groupCount > originalDemand.groups) return false;
     const auto offset = static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt;
     const auto* members = MemberBase(handle.slot);
-    const auto* declaredGroups = declaredGroups_.get() + offset;
+    const auto* declaredGroups = declaredGroups_.data() + offset;
     auto* matchedGroups = groupPlacementOrder_.get() + offset;
     auto entries = PrivateEntries(handle.slot);
     std::uint32_t firstOwnedGroup = 0;
@@ -1798,7 +1844,7 @@ bool ImmediateActionLane::DeclareGroup(
         !group.identity.Exact() || !ValidTimeSpec(group) ||
         attempt->declaredGroupCount >= attempt->groupCredit)
         return false;
-    auto* groups = declaredGroups_.get() +
+    auto* groups = declaredGroups_.data() +
         static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt;
     std::uint32_t position = attempt->declaredGroupCount;
     for (std::uint32_t index = 0;
@@ -1891,7 +1937,7 @@ bool ImmediateActionLane::PinGroups(ImmediateLaneHandle handle,
         attempt->state.load(std::memory_order_acquire) !=
             ImmediateLaneAttemptState::Prepared) return false;
     InvalidatePrivateEntryMappings(handle);
-    auto* groupPins = groupPins_.get() + static_cast<std::size_t>(handle.slot) *
+    auto* groupPins = groupPins_.data() + static_cast<std::size_t>(handle.slot) *
                                         config_.eventsPerAttempt;
     auto* decisionPins = decisionPins_.get() + static_cast<std::size_t>(handle.slot) *
                                               config_.eventsPerAttempt;
@@ -1909,7 +1955,7 @@ bool ImmediateActionLane::PinGroups(ImmediateLaneHandle handle,
             return false;
     if (attempt->declaredGroupCount != 0) {
         if (liveCount != attempt->declaredGroupCount) return false;
-        const auto* declared = declaredGroups_.get() +
+        const auto* declared = declaredGroups_.data() +
             static_cast<std::size_t>(handle.slot) *
                 config_.eventsPerAttempt;
         for (std::uint32_t group = 0; group < liveCount; ++group) {
@@ -2788,7 +2834,7 @@ bool ImmediateActionLane::BuildPrivateVariableControlEntryMapping(
         static_cast<std::uint64_t>(entry.firstMember) + entry.memberCount > attempt.memberCount)
         return false;
     const auto offset = static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt;
-    const auto* groupPins = groupPins_.get() + offset;
+    const auto* groupPins = groupPins_.data() + offset;
     const auto* decisionPins = decisionPins_.get() + offset;
     const auto* members = MemberBase(handle.slot) + entry.firstMember;
     const auto* groups = GroupBase(handle.slot);
@@ -2990,7 +3036,7 @@ bool ImmediateActionLane::BuildAcceptedPrivateEntryMapping(
         entry.memberCount > attempt.memberCount - entry.firstMember) return false;
     const auto offset = static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt;
     const auto* owned = privateOwnedGroupIndices_.get() + offset + entry.firstOwnedGroup;
-    const auto* declaredGroups = declaredGroups_.get() + offset;
+    const auto* declaredGroups = declaredGroups_.data() + offset;
     const auto* groups = GroupBase(handle.slot);
     const auto* events = EventBase(handle.slot);
     const auto* members = MemberBase(handle.slot) + entry.firstMember;
@@ -3399,7 +3445,7 @@ bool ImmediateActionLane::ReleasePrivatePinGroupOwnership(
     InvalidatePrivateEntryMappings(handle);
     auto* owned = futureDependentOwned_.get() +
         static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt;
-    auto* groupPins = groupPins_.get() +
+    auto* groupPins = groupPins_.data() +
         static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt;
     auto* decisionPins = decisionPins_.get() +
         static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt;
@@ -3570,7 +3616,7 @@ bool ImmediateActionLane::ReleaseCancelledPrivateInitialPins(
                 ImmediateLaneBucketState::Cancelled) return false;
     const auto base = static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt;
     auto* armPins = armPins_.get() + base;
-    auto* groupPins = groupPins_.get() + base;
+    auto* groupPins = groupPins_.data() + base;
     auto* decisionPins = decisionPins_.get() + base;
     auto* owned = futureDependentOwned_.get() + base;
     auto* groups = GroupBase(handle.slot);
@@ -3719,7 +3765,7 @@ bool ImmediateActionLane::CandidateFits(std::uint32_t slot,
     const auto& attempt = attempts_[slot];
     const auto* events = EventBase(slot);
     const auto base = static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
-    const auto* groups = declaredGroups_.get() + base;
+    const auto* groups = declaredGroups_.data() + base;
     auto* eventOrder = eventPlacementOrder_.get() + base;
     auto* groupOrder = groupPlacementOrder_.get() + base;
     for (std::uint32_t index = 0; index < attempt.eventCount; ++index) {
@@ -3891,7 +3937,7 @@ void ImmediateActionLane::InstallPlacement(ImmediateLaneHandle handle,
     auto* attempt = Resolve(handle);
     auto* events = EventBase(handle.slot);
     const auto base = static_cast<std::size_t>(handle.slot) * config_.eventsPerAttempt;
-    auto* groups = declaredGroups_.get() + base;
+    auto* groups = declaredGroups_.data() + base;
     auto* eventOrder = eventPlacementOrder_.get() + base;
     auto* groupOrder = groupPlacementOrder_.get() + base;
     auto* pins = armPins_.get() + base;
@@ -4245,6 +4291,19 @@ bool ImmediateActionLane::CapturedSourceWaitQuantum(std::uint32_t slot,
     return true;
 }
 
+std::span<FrontierEntryReceiptRef> ImmediateActionLane::CapturedSourceWaitScratch(
+    std::uint32_t slot, const ImmediateLaneBucket* bucket) noexcept {
+    if (!valid_ || slot >= config_.attempts || bucket == nullptr) return {};
+    const auto& attempt = attempts_[slot];
+    if (!attempt.captureActive.load(std::memory_order_acquire) ||
+        attempt.capturedBucketOrdinal >= attempt.bucketCount ||
+        bucket != BucketBase(slot) + attempt.capturedBucketOrdinal ||
+        bucket->attemptGeneration != attempt.generation) return {};
+    const auto count = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+        config_.maxEventsPerQuantum, static_cast<std::uint64_t>(attempt.eventCredit) + attempt.groupCredit));
+    return {waitingScratch_ + static_cast<std::size_t>(slot) * config_.maxEventsPerQuantum, count};
+}
+
 bool ImmediateActionLane::SuspendCaptureForSourceWait(std::uint32_t slot,
     const ImmediateLaneBucket* bucket, const FrontierEntryReceiptRef* waitingEntries,
     std::uint32_t waitingEntryCount) noexcept {
@@ -4260,7 +4319,7 @@ bool ImmediateActionLane::SuspendCaptureForSourceWait(std::uint32_t slot,
         attempt.state.load(std::memory_order_acquire) != ImmediateLaneAttemptState::Committed ||
         bucket->state.load(std::memory_order_acquire) != ImmediateLaneBucketState::Committed ||
         attempt.capturedAudioSequence == 0 || AllCapturedEntriesWithdrawing(slot, bucket)) return false;
-    auto* waits = sourceWaitEntries_.get() + static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
+    auto* waits = sourceWaitEntries_.data() + static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
     const auto originalCount = attempt.sourceWaitEntryCount;
     const auto fail = [&]() noexcept {
         while (attempt.sourceWaitEntryCount > originalCount)
@@ -4314,7 +4373,7 @@ bool ImmediateActionLane::SuspendCaptureForSourceWait(std::uint32_t slot,
 
 void ImmediateActionLane::PreserveSourceWaitSuccessors(std::uint32_t slot) noexcept {
     const auto& attempt = attempts_[slot];
-    const auto* waits = sourceWaitEntries_.get() + static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
+    const auto* waits = sourceWaitEntries_.data() + static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
     const auto retained = [&](const FrontierEntryReceiptRef& entry) noexcept {
         for (std::uint32_t index = 0; index < attempt.sourceWaitEntryCount; ++index)
             if (waits[index].entry == entry) return true;
@@ -4345,7 +4404,7 @@ bool ImmediateActionLane::CapturedEntrySourceWait(std::uint32_t slot, const Imme
     std::uint64_t quantum = 0;
     if (!identity.Valid() || !CapturedSourceWaitQuantum(slot, bucket, &quantum)) return false;
     const auto& attempt = attempts_[slot];
-    const auto* waits = sourceWaitEntries_.get() + static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
+    const auto* waits = sourceWaitEntries_.data() + static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
     for (std::uint32_t index = 0; index < attempt.sourceWaitEntryCount; ++index)
         if (waits[index].entry == identity && waits[index].sequence != 0 &&
             waits[index].sequence <= quantum + 1u) return true;
@@ -5210,7 +5269,7 @@ bool ImmediateActionLane::Retire(ImmediateLaneHandle handle,
         if (pins[index].Valid() &&
             !pins[index].Release(completedAudioSequence))
             return false;
-    auto* groupPins = groupPins_.get() + static_cast<std::size_t>(handle.slot) *
+    auto* groupPins = groupPins_.data() + static_cast<std::size_t>(handle.slot) *
                                         config_.eventsPerAttempt;
     auto* groups = GroupBase(handle.slot);
     auto* futureOwned = futureDependentOwned_.get() +

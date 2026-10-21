@@ -49,7 +49,6 @@ struct ImmediateLaneTimelineFinalizer::Impl {
     std::unique_ptr<ControlScratch[]> controls;
     std::unique_ptr<FenceScratch[]> fences;
     std::unique_ptr<Receipt[]> receipts;
-    std::unique_ptr<FrontierEntryReceiptRef[]> waitingEntries;
     std::unique_ptr<std::uint32_t[]> controlRenderGenerations;
     std::uint32_t renderCapacity = 0;
 };
@@ -72,8 +71,6 @@ bool ImmediateLaneTimelineFinalizer::Attach(
     state->controls = std::make_unique<Impl::ControlScratch[]>(state->eventCapacity);
     state->fences = std::make_unique<Impl::FenceScratch[]>(state->eventCapacity);
     state->receipts = std::make_unique<Impl::Receipt[]>(lane.AttemptCapacity());
-    state->waitingEntries = std::make_unique<FrontierEntryReceiptRef[]>(
-        static_cast<std::size_t>(lane.AttemptCapacity()) * state->eventCapacity);
     state->renderCapacity = voices_.Capacity();
     state->controlRenderGenerations =
         std::make_unique<std::uint32_t[]>(state->renderCapacity);
@@ -213,13 +210,14 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
         std::uint64_t resumeQuantum = 0;
         const bool resuming = state.lane->CapturedSourceWaitQuantum(slot, bucket, &resumeQuantum) &&
             resumeQuantum == quantum;
-        auto* waitingEntries = state.waitingEntries.get() +
-            static_cast<std::size_t>(receiptIndex) * state.eventCapacity;
+        const auto waiting = state.lane->CapturedSourceWaitScratch(slot, bucket);
+        auto* waitingEntries = waiting.data();
+        const auto waitingCapacity = static_cast<std::uint32_t>(waiting.size());
         const auto recordWaiting = [&](const FrontierEntryReceiptRef& entry) noexcept {
             if (!entry.Valid()) return true;
             for (std::uint32_t index = 0; index < receipt.waitingEntryCount; ++index)
                 if (waitingEntries[index] == entry) return true;
-            if (receipt.waitingEntryCount == state.eventCapacity) return false;
+            if (receipt.waitingEntryCount == waitingCapacity) return false;
             waitingEntries[receipt.waitingEntryCount++] = entry;
             return true;
         };
@@ -304,7 +302,7 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
             }
         }
         auto sources = grouped && state.frontier != nullptr
-            ? state.frontier->VariableSourcesStatus(waitingEntries, state.eventCapacity,
+            ? state.frontier->VariableSourcesStatus(waitingEntries, waitingCapacity,
                 &receipt.waitingEntryCount) : VariableReadCutStatus::Applied;
         bool waitingShape = valid;
         bool publicationWaiting = false;
@@ -715,8 +713,8 @@ void ImmediateLaneTimelineFinalizer::Finish() noexcept {
     auto& state = *impl_;
     for (std::uint32_t i = 0; i < state.receiptCount; ++i) {
         const auto& receipt = state.receipts[i];
-        const auto* waitingEntries = state.waitingEntries.get() +
-            static_cast<std::size_t>(i) * state.eventCapacity;
+        const auto waiting = state.lane->CapturedSourceWaitScratch(receipt.slot, receipt.bucket);
+        const auto* waitingEntries = waiting.data();
         if (receipt.sourceWaiting && state.lane->SuspendCaptureForSourceWait(receipt.slot, receipt.bucket,
                 waitingEntries, receipt.waitingEntryCount))
             continue;

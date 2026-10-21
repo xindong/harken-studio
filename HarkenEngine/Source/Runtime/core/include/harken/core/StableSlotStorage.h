@@ -157,6 +157,20 @@ public:
     std::size_t CommittedBytes() const noexcept { return reservation_.CommittedBytes(); }
     std::size_t ReservedBytes() const noexcept { return reservation_.ReservedBytes(); }
     const void* BackingAddress() const noexcept { return reservation_.Address(); }
+    T* data() noexcept { return static_cast<T*>(reservation_.Address()); }
+    const T* data() const noexcept { return static_cast<const T*>(reservation_.Address()); }
+    void Swap(StableSlotStorage& other) noexcept {
+        if (memguard::IsAudioTagged()) std::terminate();
+        assert(!HasPreparedBacking() && !other.HasPreparedBacking());
+        reservation_.Swap(other.reservation_);
+        directory_.swap(other.directory_);
+        std::swap(directoryWords_, other.directoryWords_);
+        std::swap(capacity_, other.capacity_);
+        const auto previous = constructed_.load(std::memory_order_relaxed);
+        constructed_.store(other.constructed_.load(std::memory_order_relaxed),
+                           std::memory_order_relaxed);
+        other.constructed_.store(previous, std::memory_order_relaxed);
+    }
     void SetCommitPageLimitForTests(std::size_t pages) noexcept { reservation_.SetCommitPageLimitForTests(pages); }
 
     std::uint32_t IndexOf(const T& row) const noexcept {

@@ -1009,6 +1009,12 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(engine->ledger.Capacity(), engine->parkRecords.size());
     EXPECT_EQ(0u, engine->pendingStarts.ConstructedCount());
     EXPECT_EQ(0u, engine->parkRecords.ConstructedCount());
+    EXPECT_EQ(0u, engine->immediateActionLane.MetadataStorageBytes());
+    recordStableRows("immediate_lane_metadata", engine->immediateActionLane.MetadataStorageBytes(),
+        engine->immediateActionLane.MetadataCommittedBytes(), engine->immediateActionLane.MetadataReservedBytes());
+    testing::Test::RecordProperty("immediate_lane_metadata_directory_bytes",
+        std::to_string(engine->immediateActionLane.MetadataDirectoryBytes()));
+    testing::Test::RecordProperty("immediate_lane_attempt_bytes", std::to_string(sizeof(harken::ImmediateLaneAttempt)));
     recordStableRows("pending_voice_rows", engine->pendingStarts.RequestedBytes(),
         engine->pendingStarts.CommittedBytes(), engine->pendingStarts.ReservedBytes());
     recordStableRows("parked_voice_rows", engine->parkRecords.RequestedBytes(),
