@@ -1325,6 +1325,8 @@ public:
     struct PendingEventStorageDemand {
         std::uint64_t nativeEvents = 0;
         std::uint64_t retiredEvents = 0;
+        std::uint64_t nativeGroups = 0;
+        std::uint64_t retiredGroups = 0;
     };
     // Registrations are stationary and attach/detach only at consumer quiescence.
     class PendingEventStorageRegistration {
@@ -1349,6 +1351,9 @@ public:
         void* context, PendingEventStorageRegistration::Prepare prepare) const noexcept;
     std::uint64_t RetiredPageEventCount() const noexcept {
         return retiredPageEvents_.load(std::memory_order_acquire);
+    }
+    std::uint64_t RetiredPageGroupCount() const noexcept {
+        return retiredPageGroups_.load(std::memory_order_acquire);
     }
 
     // Sizes all storage from the config and opens the window at startFrame with
@@ -2005,6 +2010,7 @@ private:
         const PreparedPageGroupTransferScope* transferScope,
         bool consumeAcceptedBacking) noexcept;
     void RecordRetiredPageEvents(std::uint64_t count) noexcept;
+    void RecordRetiredPageGroups(std::uint64_t count) noexcept;
     bool IsOrdinaryOriginalQueueFutureGroupRegistrationFor(
         const OriginalQueueFutureGroupRegistration& original,
         const Plan03GroupSliceIdentity& expected, std::uint64_t root) const noexcept {
@@ -2514,6 +2520,7 @@ private:
     Config config_{};
     mutable PendingEventStorageRegistration* pendingEventStorage_ = nullptr;
     std::atomic<std::uint64_t> retiredPageEvents_{0};
+    std::atomic<std::uint64_t> retiredPageGroups_{0};
     void* immediateLaneGroupDisposalContext_ = nullptr;
     ImmediateLaneGroupDisposalObserver immediateLaneGroupDisposalObserver_ = nullptr;
     std::uint32_t pageCount_ = 0;

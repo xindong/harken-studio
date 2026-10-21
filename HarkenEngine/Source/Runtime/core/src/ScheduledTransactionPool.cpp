@@ -1245,8 +1245,14 @@ bool ScheduledTransactionPool::PrepareGroupStorage(std::size_t additionalGroups,
     if (occupiedGroupSlots_ > capacity || unplacedGroupHeaders_ > capacity - occupiedGroupSlots_ ||
         additionalGroups > capacity - occupiedGroupSlots_ - unplacedGroupHeaders_) return false;
     const auto required = occupiedGroupSlots_ + unplacedGroupHeaders_ + additionalGroups;
-    return consumeAcceptedBacking ? required <= nativeGroupRows_.ConstructedCount()
-                                  : nativeGroupRows_.ConstructThrough(required);
+    if (consumeAcceptedBacking) return required <= nativeGroupRows_.ConstructedCount();
+    if (!nativeGroupRows_.ConstructThrough(required)) return false;
+    auto demand = CapturePendingEventStorageDemand();
+    demand.nativeGroups = required;
+    for (auto* registration = pendingEventStorage_; registration != nullptr;
+         registration = registration->next_)
+        if (!registration->prepare_(registration->context_, demand)) return false;
+    return true;
 }
 
 void ScheduledTransactionPool::AcquirePageGroup(std::size_t index) noexcept {
@@ -1260,6 +1266,8 @@ void ScheduledTransactionPool::AcquirePageGroup(std::size_t index) noexcept {
 }
 
 void ScheduledTransactionPool::ReleasePageGroup(std::size_t index) noexcept {
+    if (pagePlan03GroupRowStates_[index] == Plan03GroupRowState::Live)
+        RecordRetiredPageGroups(1);
     auto& storage = PageGroupData(index);
     assert(storage.readers.pins.load(std::memory_order_acquire) == 0 &&
         storage.lease.Capture().state == AudioSliceState::Ready &&
@@ -2950,7 +2958,8 @@ void ScheduledTransactionPool::PendingEventStorageRegistration::Detach() noexcep
 
 ScheduledTransactionPool::PendingEventStorageDemand
 ScheduledTransactionPool::CapturePendingEventStorageDemand() const noexcept {
-    PendingEventStorageDemand demand{unplacedEvents_, RetiredPageEventCount()};
+    PendingEventStorageDemand demand{unplacedEvents_, RetiredPageEventCount(),
+        occupiedGroupSlots_ + unplacedGroupHeaders_, RetiredPageGroupCount()};
     for (std::size_t page = 0; page < pageEventCount_.size(); ++page)
         demand.nativeEvents += static_cast<std::uint64_t>(pageEventCount_[page]) +
             pagePreparedEventCount_[page];
@@ -3011,6 +3020,12 @@ void ScheduledTransactionPool::ReleasePageEvent(std::size_t index) noexcept {
 void ScheduledTransactionPool::RecordRetiredPageEvents(std::uint64_t count) noexcept {
     const auto previous = retiredPageEvents_.load(std::memory_order_relaxed);
     retiredPageEvents_.store(previous + std::min(count, UINT64_MAX - previous),
+        std::memory_order_release);
+}
+
+void ScheduledTransactionPool::RecordRetiredPageGroups(std::uint64_t count) noexcept {
+    const auto previous = retiredPageGroups_.load(std::memory_order_relaxed);
+    retiredPageGroups_.store(previous + std::min(count, UINT64_MAX - previous),
         std::memory_order_release);
 }
 
@@ -3191,6 +3206,9 @@ bool ScheduledTransactionPool::Reset(const Config& config,
                         config_.maxArmsPerGroup) {
         return false;
     }
+    std::uint64_t retiredGroups = 0;
+    for (const auto count : pagePlan03GroupCount_) retiredGroups += count;
+    RecordRetiredPageGroups(retiredGroups);
     pagePlan03GroupCount_.assign(pageCount_, 0);
     pagePreparedPlan03GroupCount_.assign(pageCount_, 0);
     StableRowStorage<NativeGroupRow, std::size_t> groupStorage;
@@ -4459,6 +4477,9 @@ bool ScheduledTransactionPool::ResetForEpoch(
     std::fill(pageEventOrder_.begin(), pageEventOrder_.end(), 0);
     for (std::uint32_t page = 0; page < pageCount_; ++page)
         RecycleCurrentSlicePage(page);
+    std::uint64_t retiredGroups = 0;
+    for (const auto count : pagePlan03GroupCount_) retiredGroups += count;
+    RecordRetiredPageGroups(retiredGroups);
     std::fill(pagePlan03GroupCount_.begin(), pagePlan03GroupCount_.end(), 0);
     std::fill(pagePreparedPlan03GroupCount_.begin(),
               pagePreparedPlan03GroupCount_.end(), 0);

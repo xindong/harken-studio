@@ -1116,7 +1116,12 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     ASSERT_TRUE(engine->timelinePool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &pendingCredit));
     EXPECT_EQ(preparedFinalizerBytes, finalizer.StorageBytes());
     ASSERT_TRUE(engine->timelinePool.CancelUnplacedBatchCredit(&pendingCredit));
+    finalizer.SetPendingEventCommitPageLimitForTest(0);
+    EXPECT_FALSE(engine->timelinePool.ReserveUnplacedBatchCredit({0, 0, 0, 0, 1}, &pendingCredit));
+    EXPECT_FALSE(pendingCredit.Valid());
     finalizer.SetPendingEventCommitPageLimitForTest(SIZE_MAX);
+    ASSERT_TRUE(engine->timelinePool.ReserveUnplacedBatchCredit({0, 0, 0, 0, 1}, &pendingCredit));
+    ASSERT_TRUE(engine->timelinePool.CancelUnplacedBatchCredit(&pendingCredit));
 
     harken::ImmediateActionLane lane;
     ASSERT_TRUE(lane.Reset({2, 2, 2, engine->config.blockFrames}));

@@ -4967,15 +4967,23 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
     ScheduledTransactionPool::PendingEventStorageRegistration pendingStorage;
-    unsigned preparations = 0;
-    pool.AttachPendingEventStorage(pendingStorage, &preparations,
+    struct StoragePreparation {
+        unsigned calls = 0;
+        bool allowed = true;
+    } storage;
+    const auto& preparations = storage.calls;
+    pool.AttachPendingEventStorage(pendingStorage, &storage,
         [](void* context, ScheduledTransactionPool::PendingEventStorageDemand) noexcept {
-            return ++*static_cast<unsigned*>(context) == 1;
+            auto& state = *static_cast<StoragePreparation*>(context);
+            ++state.calls;
+            return state.allowed;
         });
     harken::TimelineArmTable arms(1);
     harken::UnplacedBatchCredit credit{};
     ASSERT_TRUE(pool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 1}, &credit));
-    ASSERT_EQ(1u, preparations);
+    ASSERT_GT(preparations, 0u);
+    const auto preparationsAtAcceptance = preparations;
+    storage.allowed = false;
     ScheduledEventInput event{};
     event.executeFrame = 210;
     TransactionRequest request{};
@@ -5007,16 +5015,16 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
         independent.transactionId = 14;
         EXPECT_EQ(ReserveRefusal::PageEventCapacity,
             pool.Reserve(independent, PrePublishLatePolicy::Refuse).refusal);
-        EXPECT_EQ(2u, preparations);
+        EXPECT_EQ(preparationsAtAcceptance + 1u, preparations);
         harken::PreparedTransactionBatch prepared;
         EXPECT_EQ(ReserveRefusal::PageEventCapacity,
             pool.PrepareTransactionBatch(&independent, 1, 0, &prepared));
         EXPECT_FALSE(prepared.Valid());
-        EXPECT_EQ(3u, preparations);
+        EXPECT_EQ(preparationsAtAcceptance + 2u, preparations);
         harken::UnplacedBatchCredit independentCredit{};
         EXPECT_FALSE(pool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &independentCredit));
         EXPECT_FALSE(independentCredit.Valid());
-        EXPECT_EQ(4u, preparations);
+        EXPECT_EQ(preparationsAtAcceptance + 3u, preparations);
         preparationsAfterRefusals = preparations;
         EXPECT_TRUE(lease.Transactions()->Valid());
         EXPECT_TRUE(lease.Group(0)->Valid());

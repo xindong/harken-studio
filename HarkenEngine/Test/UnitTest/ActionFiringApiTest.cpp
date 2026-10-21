@@ -6371,7 +6371,7 @@ TEST(ActionFiringApi, PostResolvesOnlyCanonicalCurrentWorldActions) {
 }
 
 TEST(ActionFiringApi, InitialQueueCompanionBackingFailureDoesNotAcceptAndCanRecover) {
-    for (unsigned refusedStorage = 0; refusedStorage < 7u; ++refusedStorage) {
+    for (unsigned refusedStorage = 0; refusedStorage < 13u; ++refusedStorage) {
         SCOPED_TRACE(refusedStorage);
         harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -6395,6 +6395,12 @@ TEST(ActionFiringApi, InitialQueueCompanionBackingFailureDoesNotAcceptAndCanReco
         if (refusedStorage == 4) engine.initialQueueTimingProgramsScratch.SetCommitPageLimitForTests(0);
         if (refusedStorage == 5) engine.initialQueueTimingEventsScratch.SetCommitPageLimitForTests(0);
         if (refusedStorage == 6) engine.initialQueueTimingGroupsScratch.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 7) engine.initialQueueTimingMembersScratch.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 8) engine.initialQueueTransitionTimingProofsScratch.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 9) engine.initialQueueConditionalTimingProofsScratch.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 10) engine.initialQueueCurrentCompositeProofsScratch.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 11) engine.initialQueueSuccessorCompositeProofsScratch.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 12) engine.actionQueueReplacementScratch.SetCommitPageLimitForTests(0);
         VnActionFiringHandle firing = 99;
         const auto refused = Vn_PostAction(&desc, &firing);
         engine.timelineGroupCaptureScratch.SetCommitPageLimitForTests(SIZE_MAX);
@@ -6404,6 +6410,12 @@ TEST(ActionFiringApi, InitialQueueCompanionBackingFailureDoesNotAcceptAndCanReco
         engine.initialQueueTimingProgramsScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.initialQueueTimingEventsScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.initialQueueTimingGroupsScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.initialQueueTimingMembersScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.initialQueueTransitionTimingProofsScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.initialQueueConditionalTimingProofsScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.initialQueueCurrentCompositeProofsScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.initialQueueSuccessorCompositeProofsScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.actionQueueReplacementScratch.SetCommitPageLimitForTests(SIZE_MAX);
         ASSERT_EQ(refusedStorage < 3u ? VN_BACKPRESSURE : VN_NO_VOICE, refused);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
@@ -13510,7 +13522,7 @@ static void CheckOriginalResetBodyUsesRealEngineOwners(bool afterBinding, bool m
     ASSERT_EQ(harken::LogicCommitCoordinator::IssueStatus::Issued, engine.logicCommits.PrepareIssue(&issue));
     auto foreign = std::make_unique<harken::EngineActionQueueReplacementScratch>();
     EXPECT_FALSE(engine.BeginOriginalQueueReplacement(*foreign, row, issue));
-    ASSERT_FALSE(engine.actionQueueReplacementScratch.empty());
+    ASSERT_NE(0u, engine.actionQueueReplacementScratch.size());
     auto& scratch = engine.actionQueueReplacementScratch[0];
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     if (materializeSource) {

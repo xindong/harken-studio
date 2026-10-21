@@ -5876,17 +5876,11 @@ public:
           initialLaneDemandGroupQuantaScratch(std::max(
               resolved.maxTransactionEvents,
               resolved.maxKnownScheduleLeaves * 4u)),
-          initialQueueTimingMembersScratch(resolved.maxPlayableInstances),
-          initialQueueTransitionTimingProofsScratch(resolved.maxPlayableInstances),
-          initialQueueConditionalTimingProofsScratch(resolved.maxPlayableInstances),
-          initialQueueCurrentCompositeProofsScratch(resolved.maxPlayableInstances),
-          initialQueueSuccessorCompositeProofsScratch(resolved.maxPlayableInstances),
           pendingImmediateFutureRequestsScratch(resolved.maxPlayableInstances),
           pendingImmediateFutureEventsScratch(resolved.maxPlayableInstances),
           queueContinuationRecords(
               QueueContinuationRecordCapacity(resolved)),
           queueFutureRecords(resolved.maxPlayableInstances),
-          actionQueueReplacementScratch(resolved.maxPlayableInstances),
           decisionRetirements(decisions.Capacity()),
           playableStarts(resolved.maxPlayableInstances),
           originalPlayableServiceLifetimeHolders(resolved.maxPlayableInstances),
@@ -6146,6 +6140,13 @@ public:
                 static_cast<Engine*>(context)->params.NoteVariableWrite(variable, emitter);
             });
         mixer.InitializeVariableSliceConsumptionStorage();
+        if (!initialQueueTimingMembersScratch.Reserve(resolved.maxPlayableInstances) ||
+            !initialQueueTransitionTimingProofsScratch.Reserve(resolved.maxPlayableInstances) ||
+            !initialQueueConditionalTimingProofsScratch.Reserve(resolved.maxPlayableInstances) ||
+            !initialQueueCurrentCompositeProofsScratch.Reserve(resolved.maxPlayableInstances) ||
+            !initialQueueSuccessorCompositeProofsScratch.Reserve(resolved.maxPlayableInstances) ||
+            !actionQueueReplacementScratch.Reserve(resolved.maxPlayableInstances))
+            throw std::bad_alloc{};
         if (!originalQueueBankHolders.Reserve(queueProgramBanks.size()) ||
             !originalQueueLifetimeHolders.Reserve(queueInstances.Capacity()) ||
             !originalQueueFactoryLifetimeHolders.Reserve(queueInstances.Capacity()))
@@ -10897,7 +10898,14 @@ public:
     }
 
     bool PrepareQueueInstanceHolders(std::uint32_t count) noexcept {
-        return originalQueueLifetimeHolders.ConstructThrough(count) &&
+        const auto workspaces = std::min(count, config.maxPlayableInstances);
+        return initialQueueTimingMembersScratch.ConstructThrough(workspaces) &&
+            initialQueueTransitionTimingProofsScratch.ConstructThrough(workspaces) &&
+            initialQueueConditionalTimingProofsScratch.ConstructThrough(workspaces) &&
+            initialQueueCurrentCompositeProofsScratch.ConstructThrough(workspaces) &&
+            initialQueueSuccessorCompositeProofsScratch.ConstructThrough(workspaces) &&
+            actionQueueReplacementScratch.ConstructThrough(workspaces) &&
+            originalQueueLifetimeHolders.ConstructThrough(count) &&
             originalQueueFactoryLifetimeHolders.ConstructThrough(count) &&
             (queueInstances.originalConditionalCapacity_ == 0 ||
                 (originalQueueConditionalHolders.ConstructThrough(count) &&
@@ -12300,15 +12308,15 @@ public:
     std::vector<ImmediateLaneEvent> pendingImmediateLaneEventsScratch;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandEventQuantaScratch;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandGroupQuantaScratch;
-    std::vector<EngineInitialQueueTimingMember>
+    StableRowStorage<EngineInitialQueueTimingMember>
         initialQueueTimingMembersScratch;
-    std::vector<TransitionInstancePool::PrivateTimingProof>
+    StableRowStorage<TransitionInstancePool::PrivateTimingProof>
         initialQueueTransitionTimingProofsScratch;
-    std::vector<QueueInstanceTable::PrivateConditionalTimingProof>
+    StableRowStorage<QueueInstanceTable::PrivateConditionalTimingProof>
         initialQueueConditionalTimingProofsScratch;
-    std::vector<CompositeCompletionOwnerPool::PrivateReanchorProof>
+    StableRowStorage<CompositeCompletionOwnerPool::PrivateReanchorProof>
         initialQueueCurrentCompositeProofsScratch;
-    std::vector<CompositeCompletionOwnerPool::PrivateReanchorProof>
+    StableRowStorage<CompositeCompletionOwnerPool::PrivateReanchorProof>
         initialQueueSuccessorCompositeProofsScratch;
     StableRowStorage<EngineInitialQueueTimingProgram>
         initialQueueTimingProgramsScratch;
@@ -12339,7 +12347,7 @@ public:
     void* voiceCommandBatchPublishHookContextForTest = nullptr;
     void (*immediateEntryAfterPublishHookForTest)(Engine&, void*) = nullptr;
     void* immediateEntryAfterPublishContextForTest = nullptr;
-    std::vector<EngineActionQueueReplacementScratch>
+    StableRowStorage<EngineActionQueueReplacementScratch>
         actionQueueReplacementScratch;
     // Tokens and descriptor pins must be destroyed before their owning tables.
     std::vector<EngineDecisionRetirement> decisionRetirements;

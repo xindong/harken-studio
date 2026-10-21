@@ -3016,6 +3016,15 @@ const PackFrozenClosure& PackComposition::FrozenClosure(
     return frozenClosures_[LeaseIndex(row)];
 }
 
+const ContainerWorldInstallViewV1* PackComposition::DefinitionView(
+    const LeaseRow& row) const noexcept {
+    const auto& closure = FrozenClosure(row);
+    if (closure.ownerStore == nullptr ||
+        closure.rootOwnerIndex >= closure.ownerStore->owners.size()) return nullptr;
+    const auto& snapshot = closure.ownerStore->owners[closure.rootOwnerIndex].snapshot;
+    return snapshot.definitionBody != nullptr ? &snapshot.definitionView : nullptr;
+}
+
 std::size_t PackComposition::SliceCapacity(PackLeaseSlice slice) const noexcept {
     return slice == PackLeaseSlice::Playable ? playableCapacity_
                                              : sharedCapacity_;
@@ -3126,8 +3135,6 @@ VnResult PackComposition::PrepareLease(const PublishedOwner& owner,
     available.tag = slice;
     available.lease = lease;
     available.refs = 0;
-    available.definitionBody = owner.body;
-    available.definitionView = owner.view;
     ++SliceOccupied(slice);
     if (original != nullptr) {
         auto& record = originalLeaseRecords_[availableIndex];
@@ -3288,13 +3295,13 @@ const ActionProgramViewV1* PackComposition::FindActionAtLease(
     const PackPartitionLease& lease, VnObjectId actionId) const noexcept {
     for (const LeaseRow& row : leases_) {
         if (row.state != LeaseState::Live || row.refs == 0 ||
-            !SameLease(row.lease, lease) ||
-            row.definitionBody == nullptr ||
-            row.definitionView.actions == nullptr) {
+            !SameLease(row.lease, lease)) {
             continue;
         }
-        for (std::uint32_t i = 0; i < row.definitionView.actionCount; ++i) {
-            const ActionProgramViewV1& action = row.definitionView.actions[i];
+        const auto* definition = DefinitionView(row);
+        if (definition == nullptr || definition->actions == nullptr) continue;
+        for (std::uint32_t i = 0; i < definition->actionCount; ++i) {
+            const ActionProgramViewV1& action = definition->actions[i];
             if (action.actionStableId == actionId) {
                 return &action;
             }
@@ -3309,14 +3316,14 @@ const ContainerProgramViewV3* PackComposition::FindContainerAtLease(
     VnObjectId containerStableId) const noexcept {
     for (const LeaseRow& row : leases_) {
         if (row.state != LeaseState::Live || row.refs == 0 ||
-            !SameLease(row.lease, lease) ||
-            row.definitionBody == nullptr ||
-            row.definitionView.containers == nullptr) {
+            !SameLease(row.lease, lease)) {
             continue;
         }
-        for (std::uint32_t i = 0; i < row.definitionView.containerCount; ++i) {
+        const auto* definition = DefinitionView(row);
+        if (definition == nullptr || definition->containers == nullptr) continue;
+        for (std::uint32_t i = 0; i < definition->containerCount; ++i) {
             const ContainerProgramViewV3& container =
-                row.definitionView.containers[i];
+                definition->containers[i];
             if (container.containerStableId == containerStableId) {
                 return &container;
             }
@@ -3334,27 +3341,29 @@ bool PackComposition::PlayableWorldAtLease(
     *out = {};
     for (const LeaseRow& row : leases_) {
         if (row.state != LeaseState::Live || row.refs == 0 ||
-            !SameLease(row.lease, lease) || row.definitionBody == nullptr) {
+            !SameLease(row.lease, lease)) {
             continue;
         }
+        const auto* definition = DefinitionView(row);
+        if (definition == nullptr) continue;
         out->generation = lease.compositeGeneration;
-        out->identity = row.definitionView.identity;
-        out->properties = row.definitionView.playableProperties;
-        out->propertyCount = row.definitionView.playablePropertyCount;
-        out->occurrences = row.definitionView.playableOccurrences;
-        out->occurrenceCount = row.definitionView.playableOccurrenceCount;
-        out->trackSchedules = row.definitionView.trackSchedules;
-        out->trackScheduleCount = row.definitionView.trackScheduleCount;
-        out->pieceSchedules = row.definitionView.pieceSchedules;
-        out->pieceScheduleCount = row.definitionView.pieceScheduleCount;
+        out->identity = definition->identity;
+        out->properties = definition->playableProperties;
+        out->propertyCount = definition->playablePropertyCount;
+        out->occurrences = definition->playableOccurrences;
+        out->occurrenceCount = definition->playableOccurrenceCount;
+        out->trackSchedules = definition->trackSchedules;
+        out->trackScheduleCount = definition->trackScheduleCount;
+        out->pieceSchedules = definition->pieceSchedules;
+        out->pieceScheduleCount = definition->pieceScheduleCount;
         out->maxKnownScheduleLeaves =
-            row.definitionView.capacity.maxKnownScheduleLeaves;
+            definition->capacity.maxKnownScheduleLeaves;
         out->maxTrackPieceScheduleDepth =
-            row.definitionView.capacity.maxTrackPieceScheduleDepth;
-        out->containers = row.definitionView.containers;
-        out->containerCount = row.definitionView.containerCount;
-        out->transitions = row.definitionView.transitions;
-        out->transitionCount = row.definitionView.transitionCount;
+            definition->capacity.maxTrackPieceScheduleDepth;
+        out->containers = definition->containers;
+        out->containerCount = definition->containerCount;
+        out->transitions = definition->transitions;
+        out->transitionCount = definition->transitionCount;
         return true;
     }
     return false;

@@ -250,12 +250,13 @@ struct FrontierTimelineFinalizer::Impl {
     struct PendingEventSnapshot {
         std::uint64_t count = 0;
         std::uint64_t retiredEvents = 0;
+        std::uint64_t groups = 0;
+        std::uint64_t retiredGroups = 0;
     };
     PinnedSnapshot3<PendingEventSnapshot> pendingEventSnapshot;
     PendingEventSnapshot capturedPendingEvents{};
     ScheduledTransactionPool::PendingEventStorageRegistration pendingEventRegistration;
-    std::unique_ptr<PendingGroup[]> pendingGroups;
-    std::uint32_t pendingGroupCapacity = 0;
+    StableRowStorage<PendingGroup> pendingGroups;
     std::uint32_t pendingEventCount = 0;
     std::uint32_t pendingGroupCount = 0;
     std::uint64_t nextPendingWork = 1;
@@ -282,17 +283,22 @@ struct FrontierTimelineFinalizer::Impl {
         PendingEventSnapshot latest{};
         if (self.pendingEventSnapshot.Capture(latest)) self.capturedPendingEvents = latest;
         const auto& captured = self.capturedPendingEvents;
-        const auto required = [&](std::uint32_t capacity) noexcept {
-            std::uint64_t count = std::min<std::uint64_t>(capacity, captured.count);
-            if (demand.retiredEvents == UINT64_MAX || demand.retiredEvents < captured.retiredEvents)
-                return capacity;
-            count += std::min<std::uint64_t>(capacity - count,
-                demand.retiredEvents - captured.retiredEvents);
-            count += std::min<std::uint64_t>(capacity - count, demand.nativeEvents);
+        const auto required = [](std::uint32_t capacity, std::uint64_t capturedCount,
+            std::uint64_t capturedRetired, std::uint64_t native, std::uint64_t retired) noexcept {
+            std::uint64_t count = std::min<std::uint64_t>(capacity, capturedCount);
+            if (retired == UINT64_MAX || retired < capturedRetired) return capacity;
+            count += std::min<std::uint64_t>(capacity - count, retired - capturedRetired);
+            count += std::min<std::uint64_t>(capacity - count, native);
             return static_cast<std::uint32_t>(count);
         };
-        const auto eventCount = required(self.events.Capacity());
-        return self.pendingEvents.ConstructThrough(required(self.pendingEvents.Capacity())) &&
+        const auto requiredEvents = [&](std::uint32_t capacity) noexcept {
+            return required(capacity, captured.count, captured.retiredEvents,
+                demand.nativeEvents, demand.retiredEvents);
+        };
+        const auto eventCount = requiredEvents(self.events.Capacity());
+        return self.pendingEvents.ConstructThrough(requiredEvents(self.pendingEvents.Capacity())) &&
+            self.pendingGroups.ConstructThrough(required(self.pendingGroups.Capacity(),
+                captured.groups, captured.retiredGroups, demand.nativeGroups, demand.retiredGroups)) &&
             self.order.ConstructThrough(std::max(eventCount, self.events.ConstructedCount()) +
                 self.groupCapacity) && self.events.ConstructThrough(eventCount);
     }
@@ -711,7 +717,7 @@ struct FrontierTimelineFinalizer::Impl {
         for (std::uint32_t i = 0; i < eventCount; ++i) eventTotal += includesEvent(events[i]);
         for (std::uint32_t i = 0; i < groupCount; ++i) groupTotal += includesGroup(i);
         if (eventTotal > pendingEvents.size() - pendingEventCount ||
-            groupTotal > pendingGroupCapacity - pendingGroupCount) return false;
+            groupTotal > pendingGroups.size() - pendingGroupCount) return false;
         const auto work = nextPendingWork++;
         for (std::uint32_t i = 0; i < groupCount; ++i) {
             if (!includesGroup(i)) continue;
@@ -2943,6 +2949,7 @@ std::uint32_t FrontierTimelineFinalizer::GroupCapacityForTest() const noexcept {
 
 void FrontierTimelineFinalizer::SetPendingEventCommitPageLimitForTest(std::size_t pages) noexcept {
     impl_->pendingEvents.SetCommitPageLimitForTests(pages);
+    impl_->pendingGroups.SetCommitPageLimitForTests(pages);
     impl_->events.SetCommitPageLimitForTests(pages);
     impl_->order.SetCommitPageLimitForTests(pages);
 }
@@ -2993,6 +3000,7 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
         pendingGroupCapacity > SIZE_MAX / sizeof(Impl::PendingGroup)) return false;
     auto& self = *impl_;
     StableRowStorage<Impl::PendingEvent> pendingEvents;
+    StableRowStorage<Impl::PendingGroup> pendingGroups;
     StableRowStorage<Impl::Event> events;
     StableRowStorage<Impl::StagedLaneStart> stagedLaneStarts;
     StableRowStorage<Impl::OrderRef> order;
@@ -3002,6 +3010,9 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
     if (!pendingEvents.Reserve(static_cast<std::uint32_t>(pendingEventCapacity)) ||
         !pendingEvents.ConstructThrough(static_cast<std::uint32_t>(
             std::min<std::uint64_t>(pendingEventCapacity, demand.nativeEvents))) ||
+        !pendingGroups.Reserve(static_cast<std::uint32_t>(pendingGroupCapacity)) ||
+        !pendingGroups.ConstructThrough(static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(pendingGroupCapacity, demand.nativeGroups))) ||
         !events.Reserve(static_cast<std::uint32_t>(eventCapacity)) ||
         !events.ConstructThrough(preparedEvents) ||
         !stagedLaneStarts.Reserve(laneOnly ? static_cast<std::uint32_t>(eventCapacity) : 0u) ||
@@ -3010,7 +3021,6 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
         return false;
     auto groups = std::make_unique<Impl::Group[]>(groupCapacity);
     auto laneClaims = laneOnly ? std::make_unique<ImmediateLaneFrontierClaim[]>(groupCapacity) : nullptr;
-    auto pendingGroups = std::make_unique<Impl::PendingGroup[]>(pendingGroupCapacity);
     const auto participantCapacity = decisions.MaxParticipantsPerDecision();
     auto participants = std::make_unique<DecisionParticipantRef[]>(participantCapacity);
     const auto completionCapacity = pool.MaxArmsPerGroup();
@@ -3024,8 +3034,7 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
     self.groups = std::move(groups);
     self.order.Swap(order);
     self.laneClaims = std::move(laneClaims);
-    self.pendingGroups = std::move(pendingGroups);
-    self.pendingGroupCapacity = static_cast<std::uint32_t>(pendingGroupCapacity);
+    self.pendingGroups.Swap(pendingGroups);
     self.pendingEventCount = self.pendingGroupCount = 0;
     self.eventCount = self.groupCount = 0;
     self.nextPendingWork = 1;
@@ -3038,7 +3047,7 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
     self.laneOnly = laneOnly;
     self.decisions = &decisions;
     self.pool = &pool;
-    self.capturedPendingEvents = {0, demand.retiredEvents};
+    self.capturedPendingEvents = {0, demand.retiredEvents, 0, demand.retiredGroups};
     self.pendingEventSnapshot.BeginWrite() = self.capturedPendingEvents;
     self.pendingEventSnapshot.EndWrite();
     if (!laneOnly)
@@ -3436,7 +3445,8 @@ void FrontierTimelineFinalizer::Finish() noexcept {
     // A stale complete snapshot is safe: removed page rows bridge any work
     // copied after it. Never publish the temporary drop during RestorePending.
     if (!self.laneMode && self.pool != nullptr) {
-        self.pendingEventSnapshot.BeginWrite() = {self.pendingEventCount, self.pool->RetiredPageEventCount()};
+        self.pendingEventSnapshot.BeginWrite() = {self.pendingEventCount, self.pool->RetiredPageEventCount(),
+            self.pendingGroupCount, self.pool->RetiredPageGroupCount()};
         self.pendingEventSnapshot.EndWrite();
     }
 }
@@ -4374,8 +4384,7 @@ std::uint64_t FrontierTimelineFinalizer::StorageBytes() const noexcept {
         static_cast<std::uint64_t>(self.completionCapacity) * sizeof(TimelineArmTable::BoundAudioProof) +
         static_cast<std::uint64_t>(self.groupCapacity) * sizeof(Impl::Group) +
         (self.laneOnly ? static_cast<std::uint64_t>(self.groupCapacity) * sizeof(ImmediateLaneFrontierClaim) : 0u) +
-        self.pendingEvents.RequestedBytes() +
-        static_cast<std::uint64_t>(self.pendingGroupCapacity) * sizeof(Impl::PendingGroup);
+        self.pendingEvents.RequestedBytes() + self.pendingGroups.RequestedBytes();
 }
 
 } // namespace harken

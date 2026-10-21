@@ -405,8 +405,6 @@ private:
         PackLeaseSlice tag = PackLeaseSlice::SharedActionAndDeferred;
         PackPartitionLease lease{};
         std::uint32_t refs = 0;
-        std::shared_ptr<const CurrentWorldBodyImage> definitionBody;
-        ContainerWorldInstallViewV1 definitionView{};
     };
 
     static bool SameIdentity(const IdentityIndexEntry& a,
@@ -424,6 +422,7 @@ private:
     std::size_t LeaseIndex(const LeaseRow& row) const noexcept;
     PackFrozenClosure& FrozenClosure(LeaseRow& row) const noexcept;
     const PackFrozenClosure& FrozenClosure(const LeaseRow& row) const noexcept;
+    const ContainerWorldInstallViewV1* DefinitionView(const LeaseRow& row) const noexcept;
     void ClearLeaseRow(LeaseRow& row) const noexcept;
     VnResult SnapshotFrozenClosure(const PublishedOwner& root,
                                    LeaseRow& row) const noexcept;
