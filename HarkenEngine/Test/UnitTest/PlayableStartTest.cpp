@@ -25213,6 +25213,14 @@ TEST(PlayableStart, SequenceLoopCompositeProgramsSurviveOldReaderAndReclaimAfter
     const auto initialGeneration = initial->Generation();
     const auto initialOwner = initial->schedules[0].ownerInstance;
     const auto* const initialPayloads = initial->runtimes[0].payloads;
+    const std::array<harken::EnginePlayableMemberToken, 2> initialMembers{
+        initial->members[0], initial->members[1]};
+    std::array<VnVoiceHandle, 2> initialRenders{};
+    for (std::uint32_t index = 0; index < initialMembers.size(); ++index) {
+        const auto* member = engine.FindPlayableMember(initialMembers[index]);
+        ASSERT_NE(nullptr, member);
+        initialRenders[index] = member->render;
+    }
     auto* const original = engine.OriginalQueueBankHolderFor(initial);
     ASSERT_NE(nullptr, original);
     harken::EngineQueueProgramBank::OriginalLifetimePin reader;
@@ -25235,6 +25243,12 @@ TEST(PlayableStart, SequenceLoopCompositeProgramsSurviveOldReaderAndReclaimAfter
         EXPECT_EQ(initialGeneration, initial->Generation());
         EXPECT_EQ(initialOwner, initial->schedules[0].ownerInstance);
         EXPECT_EQ(initialPayloads, initial->runtimes[0].payloads);
+        for (std::uint32_t index = 0; index < initialMembers.size(); ++index) {
+            const auto* member = engine.FindPlayableMember(initialMembers[index]);
+            ASSERT_NE(nullptr, member);
+            EXPECT_EQ(initialRenders[index], member->render);
+            if (observedPrograms > 1) EXPECT_FALSE(member->primaryOwned);
+        }
         EXPECT_FALSE(engine.runtimeRecreateRequired);
         engine.nullBackend.Pump(1);
         completed = !engine.playableInstances.Classify(started.instance).live;
@@ -25246,6 +25260,7 @@ TEST(PlayableStart, SequenceLoopCompositeProgramsSurviveOldReaderAndReclaimAfter
     reader.Release();
     ASSERT_TRUE(PumpBlocks(engine, 8));
     EXPECT_FALSE(initial->occupied);
+    for (const auto token : initialMembers) EXPECT_EQ(nullptr, engine.FindPlayableMember(token));
     for (const auto& bank : engine.queueProgramBanks) EXPECT_FALSE(bank.occupied);
     ASSERT_TRUE(engine.queueScheduleStorage.CollectUnused());
     EXPECT_EQ(0u, engine.timelinePool.LiveTransactionCount());
@@ -27633,12 +27648,44 @@ TEST(PlayableStart, BlendOrdinaryLoopSoundAndTrackSuccessorsKeepChildGain) {
                 engine->ResolvePlayableService(row.parentService) == &*parent &&
                 !row.variableControlInstance.Valid() && !row.queueMode; });
         ASSERT_NE(engine->playableServices.end(), ordinary);
+        auto* const initialProgram = engine->FindMemberProgram(*ordinary, 0);
+        ASSERT_NE(nullptr, initialProgram);
+        const auto initialMember = initialProgram->memberToken;
+        const auto initialLeaf = initialProgram->member.leaf;
+        const auto initialProgramGeneration = initialProgram->generation;
+        const auto program = initialProgram->schedule.runtimeProgram;
+        harken::ScheduledEventInput heldEvent{};
+        heldEvent.executeFrame = engine->timelinePool.WindowEndFrame() - 1u;
+        harken::TransactionRequest heldRequest{};
+        heldRequest.transactionId = UINT64_MAX - 1u;
+        heldRequest.transportEpoch = engine->timelinePool.Epoch();
+        heldRequest.program = program;
+        heldRequest.events = &heldEvent;
+        heldRequest.eventCount = 1;
+        harken::PreparedTransactionBatch heldReference{};
+        ASSERT_EQ(harken::ReserveRefusal::None,
+            engine->timelinePool.PrepareTransactionBatch(&heldRequest, 1,
+                engine->timelinePool.PublishCutoffFrame(), &heldReference));
+        bool returnedReader = false;
         std::array<VnVoiceHandle, 3> renders{};
         unsigned renderCount = 0;
         for (unsigned block = 0; block < 160; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
             engine->nullBackend.Pump(1);
             ASSERT_FALSE(engine->runtimeRecreateRequired);
+            if (!returnedReader && ordinary->members[0] != initialMember) {
+                EXPECT_TRUE(initialProgram->occupied);
+                EXPECT_FALSE(initialProgram->directoryOwned);
+                EXPECT_EQ(initialProgramGeneration, initialProgram->generation);
+                const auto* retained = engine->FindPlayableMember(initialMember);
+                ASSERT_NE(nullptr, retained);
+                EXPECT_EQ(initialLeaf, retained->completion.leafInstance);
+                EXPECT_FALSE(retained->primaryOwned);
+                EXPECT_TRUE(engine->RetiredMemberProgramsHoldService(*ordinary));
+                EXPECT_TRUE(engine->RetiredMemberProgramsHoldService(*parent));
+                ASSERT_TRUE(engine->timelinePool.CancelPreparedTransactionBatch(&heldReference));
+                returnedReader = true;
+            }
             const auto render = ordinary->renderHandle;
             const auto* voice = engine->voices.Resolve(render);
             if (voice == nullptr || voice->srcCursor < 256 ||
@@ -27652,6 +27699,9 @@ TEST(PlayableStart, BlendOrdinaryLoopSoundAndTrackSuccessorsKeepChildGain) {
                 harkentest::Peak(engine->nullBackend.LastBlock(), 512), 0.001f);
         }
         EXPECT_EQ(3u, renderCount);
+        EXPECT_TRUE(returnedReader);
+        EXPECT_EQ(nullptr, engine->FindPlayableMember(initialMember));
+        EXPECT_EQ(0u, engine->retiredMemberProgramCount);
         EXPECT_FALSE(engine->playableInstances.Classify(started.instance).live);
         EXPECT_EQ(0u, engine->voices.ActiveCount());
         EXPECT_EQ(0u, engine->variableControlInstances.LiveCount());

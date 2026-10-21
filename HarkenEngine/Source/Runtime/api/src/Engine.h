@@ -1014,7 +1014,10 @@ struct EngineMemberProgramRecord {
     TimelineProgramView runtime{};
     ProgramView schedule{};
     EnginePlayableMemberReference member{};
+    EnginePlayableMemberToken memberToken{};
+    TimelineProgramReadFence readFence;
     std::uint64_t generation = 0;
+    bool directoryOwned = false;
     bool occupied = false;
 };
 
@@ -12202,6 +12205,7 @@ public:
     std::vector<EnginePlayableStartRow> playableStarts;
     StableRowStorage<EnginePlayableServiceRow> playableServices;
     StableSlotStorage<EngineMemberProgramRecord> memberProgramRecords;
+    std::uint32_t retiredMemberProgramCount = 0;
     StableSlotStorage<EnginePlayableMemberRecord> playableMemberRecords;
 
     bool PreparePlayableMemberDirectory(EnginePlayableServiceRow& row) noexcept {
@@ -12275,14 +12279,30 @@ public:
         record = {};
         record.generation = generation;
     }
-    bool BindPlayableMember(EnginePlayableServiceRow& row, std::uint32_t offset,
+    bool CanBindPlayableMember(EnginePlayableServiceRow& row, std::uint32_t offset,
         EnginePlayableMemberToken token) noexcept {
         if (offset >= row.members.size() || !row.InvocationValid() || row.quarantined ||
             !playablePartitions.Owns(row.partition, row.identity)) return false;
         auto* record = FindPlayableMember(token);
         if (record == nullptr) return false;
         if (row.members[offset] == token) return FindPlayableMember(row, offset) == record;
-        if (record->primaryOwned || !ReleasePlayableMember(row, offset)) return false;
+        if (record->primaryOwned) return false;
+        if (row.members[offset].Valid() && FindPlayableMember(row, offset) == nullptr) return false;
+        return offset >= row.memberPrograms.size() || !row.memberPrograms[offset].Valid() ||
+            FindMemberProgram(row, offset) != nullptr;
+    }
+    bool BindPlayableMember(EnginePlayableServiceRow& row, std::uint32_t offset,
+        EnginePlayableMemberToken token) noexcept {
+        if (!CanBindPlayableMember(row, offset, token)) return false;
+        if (row.members[offset] == token) return true;
+        if (offset < row.memberPrograms.size() && row.memberPrograms[offset].Valid()) {
+            auto* program = FindMemberProgram(row, offset);
+            program->directoryOwned = false;
+            ++retiredMemberProgramCount;
+            row.memberPrograms[offset] = {};
+        }
+        if (!ReleasePlayableMember(row, offset)) return false;
+        auto* record = FindPlayableMember(token);
         record->service = row.identity;
         record->partitionGeneration = row.partition.generation;
         record->physicalSlot = static_cast<std::uint32_t>(playableStorage.MemberBase(row.partition.slot) + offset);
@@ -12395,7 +12415,8 @@ public:
         if (!token.Valid() || !memberProgramRecords.IsConstructed(token.slot)) return nullptr;
         auto& record = memberProgramRecords[token.slot];
         const auto& reference = record.member;
-        return record.occupied && record.generation == token.generation &&
+        return record.occupied && record.directoryOwned && record.generation == token.generation &&
+            offset < row.members.size() && record.memberToken == row.members[offset] &&
             reference.service.token == row.identity && reference.service.owner == row.ownerInstance &&
             reference.service.epoch == row.ownerEpoch &&
             reference.service.invocationGeneration == row.invocationGeneration &&
@@ -12414,6 +12435,8 @@ public:
             return record != nullptr && record->member.leaf == reference.leaf &&
                 record->member.leafEpoch == reference.leafEpoch ? record : nullptr;
         }
+        auto* member = FindPlayableMember(row, reference.memberOffset);
+        if (member == nullptr || member->programOwners == UINT32_MAX) return nullptr;
         for (std::uint32_t slot = 0; slot < memberProgramRecords.size(); ++slot) {
             if (!memberProgramRecords.IsConstructed(slot)) {
                 if (memberProgramRecords.PreparedUseActive()) continue;
@@ -12424,6 +12447,9 @@ public:
             if (!memberProgramRecords.ProtectBackingForAcquire(slot, MemberProgramReusable,
                     [this](std::uint32_t next) noexcept { return memberProgramRecords.Emplace(next); })) return nullptr;
             record.member = reference;
+            record.memberToken = row.members[reference.memberOffset];
+            ++member->programOwners;
+            record.directoryOwned = true;
             record.occupied = true;
             ++record.generation;
             token = {slot, record.generation};
@@ -12442,18 +12468,67 @@ public:
     const EngineMemberProgramRecord* ResolveMemberProgram(const EnginePlayableMemberReference& reference) const noexcept {
         return const_cast<Engine*>(this)->ResolveMemberProgram(reference);
     }
+    bool MemberProgramHasReaders(const EngineMemberProgramRecord& record) const noexcept {
+        return !record.readFence.ReadCompleted(mixer.BlocksRendered()) ||
+            timelinePool.HasProgramReference(record.schedule.runtimeProgram) ||
+            immediateActionLane.HasProgramReference(record.schedule.runtimeProgram) ||
+            timelinePlanner.HasProgramReference(record.schedule.runtimeProgram);
+    }
+    bool RecycleMemberProgram(EngineMemberProgramRecord& record) noexcept {
+        auto* member = FindPlayableMember(record.memberToken);
+        if (member == nullptr || member->programOwners == 0) return false;
+        if (!record.directoryOwned) {
+            if (retiredMemberProgramCount == 0) return false;
+            --retiredMemberProgramCount;
+        }
+        record.payloads = {};
+        record.events = {};
+        record.runtime = {};
+        record.schedule = {};
+        record.member = {};
+        record.memberToken = {};
+        record.readFence.ResetAfterSafeRetirement();
+        record.directoryOwned = false;
+        record.occupied = false;
+        --member->programOwners;
+        RecyclePlayableMember(*member);
+        return true;
+    }
+    void ServiceRetiredMemberPrograms() noexcept {
+        if (retiredMemberProgramCount == 0) return;
+        for (auto& record : memberProgramRecords) {
+            if (!record.occupied || record.directoryOwned || MemberProgramHasReaders(record)) continue;
+            const auto* member = FindPlayableMember(record.memberToken);
+            if (member == nullptr) {
+                runtimeRecreateRequired = true;
+                continue;
+            }
+            if (member->release.Valid() && !voices.ReleaseObserved(member->release)) continue;
+            if (!RecycleMemberProgram(record)) runtimeRecreateRequired = true;
+        }
+    }
+    bool RetiredMemberProgramsHoldService(const EnginePlayableServiceRow& row) noexcept {
+        if (retiredMemberProgramCount == 0) return false;
+        for (const auto& record : memberProgramRecords) {
+            if (!record.occupied || record.directoryOwned) continue;
+            auto* owner = ResolvePlayableService(record.member.service);
+            for (std::size_t depth = 0;; ++depth) {
+                if (owner == nullptr || depth == playableServices.size()) {
+                    runtimeRecreateRequired = true;
+                    return true;
+                }
+                if (owner == &row) return true;
+                if (!owner->parentService.Valid()) break;
+                owner = ResolvePlayableService(owner->parentService);
+            }
+        }
+        return false;
+    }
     bool ReleaseMemberProgram(EnginePlayableServiceRow& row, std::uint32_t offset) noexcept {
         if (offset >= row.memberPrograms.size()) return false;
         if (!row.memberPrograms[offset].Valid()) return true;
         auto* record = FindMemberProgram(row, offset);
-        if (record == nullptr || timelinePool.HasProgramReference(record->schedule.runtimeProgram) ||
-            timelinePlanner.HasProgramReference(record->schedule.runtimeProgram)) return false;
-        record->payloads = {};
-        record->events = {};
-        record->runtime = {};
-        record->schedule = {};
-        record->member = {};
-        record->occupied = false;
+        if (record == nullptr || MemberProgramHasReaders(*record) || !RecycleMemberProgram(*record)) return false;
         row.memberPrograms[offset] = {};
         return true;
     }

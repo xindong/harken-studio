@@ -59713,7 +59713,8 @@ static void ExpectCapturedScheduleReinstallAndRetirement(
     for (std::uint32_t index = 0; index < leafCount; ++index)
         EXPECT_EQ(frozen[index], row->capturedScheduleVoices[index].Input().facts);
     pin.Return();
-    for (unsigned block = 0; block < 128 && !row->capturedScheduleVoices.empty(); ++block) {
+    for (unsigned block = 0; block < 128 &&
+            (!row->capturedScheduleVoices.empty() || engine.CapturedVoiceStorageBytes() != baselineCaptureBytes); ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine.nullBackend.Pump(1);
     }
