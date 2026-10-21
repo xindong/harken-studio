@@ -27,6 +27,8 @@
 #include <DockWidget.h>
 
 #include <QApplication>
+#include <QEventLoop>
+#include <QTimer>
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
@@ -184,8 +186,24 @@ TEST_F(BlueprintOutGraphTest, MainWindowVisibilityMenuPreservesCanvasAndDoesNotS
     ASSERT_NE(panel, nullptr);
     for (auto* ancestor = panel->parentWidget(); ancestor && ancestor != dock; ancestor = ancestor->parentWidget())
         EXPECT_EQ(qobject_cast<QScrollArea*>(ancestor), nullptr);
-    window->resize(1200, 600);
+    QEventLoop startup;
+    bool presentationFinished = false;
+    bool presentationShown = false;
+    QObject::connect(window.get(), &VNX::MainWindow::startupPresentationFinished,
+                     &startup, [&](bool shown) {
+        presentationFinished = true;
+        presentationShown = shown;
+        startup.quit();
+    });
     window->show();
+    if (!presentationFinished) {
+        QTimer::singleShot(3000, &startup, &QEventLoop::quit);
+        startup.exec();
+    }
+    ASSERT_TRUE(presentationFinished);
+    ASSERT_TRUE(presentationShown);
+    window->showNormal();
+    window->resize(1200, 600);
     window->revealDock(dock);
     drainEvents();
     auto* canvas = panel->canvas();

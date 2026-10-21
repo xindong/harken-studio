@@ -218,13 +218,24 @@ TEST(EditorWorkspaceWindowContract, LegacyPresentationMigrationDiscardsPosition)
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
     QSettings settings(directory.filePath("window.ini"), QSettings::IniFormat);
-    QWidget legacy;
-    legacy.resize(640, 480);
-    legacy.move(-3839, 27);
-    settings.setValue("geometry", legacy.saveGeometry());
-    const auto migrated = readWindowPresentation(settings);
-    EXPECT_EQ(migrated.normalSize, QSize(640, 480));
-    EXPECT_EQ(migrated.state, Qt::WindowNoState);
+    for (const auto state : {Qt::WindowNoState, Qt::WindowMaximized, Qt::WindowFullScreen}) {
+        SCOPED_TRACE(int(state));
+        settings.clear();
+        QWidget legacy;
+        legacy.resize(640, 480);
+        legacy.move(-3839, 27);
+        legacy.setWindowState(state);
+        settings.setValue("geometry", legacy.saveGeometry());
+        const auto migrated = readWindowPresentation(settings);
+        EXPECT_EQ(migrated.normalSize, QSize(640, 480));
+        EXPECT_EQ(migrated.state, state);
+        EXPECT_EQ(settings.allKeys(), (QStringList{"geometry"}));
+        saveWindowPresentation(settings, legacy, migrated.normalSize);
+        EXPECT_EQ(settings.value("normalSize").toSize(), QSize(640, 480));
+        EXPECT_EQ(settings.value("presentationState").toInt(), int(state));
+        EXPECT_FALSE(settings.contains("geometry"));
+    }
+    settings.clear();
     settings.setValue("geometry", QByteArray("invalid"));
     EXPECT_EQ(readWindowPresentation(settings).normalSize, kDefaultStudioWindowSize);
 }
