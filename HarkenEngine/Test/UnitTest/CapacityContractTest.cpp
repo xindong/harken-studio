@@ -1005,6 +1005,18 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         engine->ledger.EntryCommittedBytes(), engine->ledger.EntryReservedBytes());
     recordStableRows("voice_ledger_receipts", engine->ledger.MonitorReceiptStorageBytes(),
         engine->ledger.MonitorReceiptCommittedBytes(), engine->ledger.MonitorReceiptReservedBytes());
+    EXPECT_EQ(engine->ledger.Capacity(), engine->pendingStarts.size());
+    EXPECT_EQ(engine->ledger.Capacity(), engine->parkRecords.size());
+    EXPECT_EQ(0u, engine->pendingStarts.ConstructedCount());
+    EXPECT_EQ(0u, engine->parkRecords.ConstructedCount());
+    recordStableRows("pending_voice_rows", engine->pendingStarts.RequestedBytes(),
+        engine->pendingStarts.CommittedBytes(), engine->pendingStarts.ReservedBytes());
+    recordStableRows("parked_voice_rows", engine->parkRecords.RequestedBytes(),
+        engine->parkRecords.CommittedBytes(), engine->parkRecords.ReservedBytes());
+    testing::Test::RecordProperty("pending_voice_row_bytes", std::to_string(sizeof(harken::PendingStartRecord)));
+    testing::Test::RecordProperty("parked_voice_row_bytes", std::to_string(sizeof(harken::ParkRecord)));
+    testing::Test::RecordProperty("direct_voice_directory_bytes",
+        std::to_string(engine->pendingStarts.DirectoryBytes() + engine->parkRecords.DirectoryBytes()));
     testing::Test::RecordProperty("variable_slice_retained_legacy_bytes",
         std::to_string(engine->variableSlices.StorageBytes() - engine->variableSlices.RowStorageBytes()));
     EXPECT_EQ(2u * (static_cast<std::size_t>(engine->timelineArms.Capacity()) + engine->ledger.Capacity()),

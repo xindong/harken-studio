@@ -148,12 +148,16 @@ std::size_t VoiceLedger::MonitorSelectionStorageBytes() const noexcept {
 
 VoiceLedger::VoiceLedger(std::uint32_t capacity,
                          std::uint32_t renderCapacity,
-                         std::size_t monitorSelectionCapacity)
+                         std::size_t monitorSelectionCapacity,
+                         DirectVoiceStoragePreparation prepareDirectVoiceStorage,
+                         void* directVoiceStorageContext)
     : m_renderOwners(renderCapacity == 0
                          ? (capacity == 0 ? 1 : capacity)
                          : renderCapacity),
       m_monitorSelections(std::make_shared<MonitorSelectionStorage>(monitorSelectionCapacity == 0
-          ? 2 * static_cast<std::size_t>(capacity == 0 ? 1 : capacity) : monitorSelectionCapacity)) {
+          ? 2 * static_cast<std::size_t>(capacity == 0 ? 1 : capacity) : monitorSelectionCapacity)),
+      m_prepareDirectVoiceStorage(prepareDirectVoiceStorage),
+      m_directVoiceStorageContext(directVoiceStorageContext) {
     const auto logicalCapacity = capacity == 0 ? 1 : capacity;
     if (!m_monitorControlReceipts.Reserve(logicalCapacity) || !m_entries.Reserve(logicalCapacity))
         throw std::bad_alloc();
@@ -352,7 +356,8 @@ bool VoiceLedger::Acquire(VnVoiceHandle* outPublicHandle,
                           std::uint32_t* outLedgerSlot,
                           const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin, VnObjectId media) {
     const auto i = FindReusableSlot();
-    if (i == UINT32_MAX) return false;
+    if (i == UINT32_MAX || (m_prepareDirectVoiceStorage != nullptr &&
+        !m_prepareDirectVoiceStorage(m_directVoiceStorageContext, i))) return false;
     Entry& entry = m_entries[i];
     // Reap already advanced an Ended slot's generation. Clear prior steal
     // metadata so a reused entry never inherits its previous tenant's flags.
@@ -924,7 +929,8 @@ bool VoiceLedger::AcquirePending(VnVoiceHandle* outPublicHandle,
                                  std::uint32_t priority,
                                  const MonitorRequestContext& request, const MonitorEmitterOrigin& emitterOrigin, VnObjectId media) {
     const auto i = FindReusableSlot();
-    if (i == UINT32_MAX) return false;
+    if (i == UINT32_MAX || (m_prepareDirectVoiceStorage != nullptr &&
+        !m_prepareDirectVoiceStorage(m_directVoiceStorageContext, i))) return false;
     Entry& entry = m_entries[i];
     entry.state = EntryState::PendingStart;
     entry.playbackRequest = request;

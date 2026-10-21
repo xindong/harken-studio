@@ -157,6 +157,62 @@ TEST(VoiceLedger, AllIssuersPreserveOutputsOnReceiptAndEntryCommitFailureAndReco
     }
 }
 
+TEST(VoiceLedger, DirectVoiceBackingRefusalPreservesAdmissionAndSkipsInternalSlots) {
+    for (const bool pending : {false, true}) {
+        SCOPED_TRACE(pending);
+        auto config = MakeNullConfig(2, kBlock, 48000);
+        config.maxParkedVoices = 2;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        std::array<std::uint32_t, 2> internal{};
+        ASSERT_TRUE(engine.ledger.AcquirePlayableOwned({7, 9}, &internal[0]));
+        ASSERT_TRUE(engine.ledger.PreparePlayableOwned({7, 9}, &internal[1]));
+        EXPECT_EQ(0u, engine.pendingStarts.ConstructedCount());
+        EXPECT_EQ(0u, engine.parkRecords.ConstructedCount());
+        VnVoiceHandle handle = 41;
+        std::uint32_t slot = 43;
+        const auto acquire = [&] {
+            return pending ? engine.ledger.AcquirePending(&handle, &slot, 128)
+                           : engine.ledger.Acquire(&handle, &slot);
+        };
+        engine.pendingStarts.SetCommitPageLimitForTests(0);
+        engine.parkRecords.SetCommitPageLimitForTests(0);
+        EXPECT_FALSE(acquire());
+        EXPECT_EQ(41u, handle);
+        EXPECT_EQ(43u, slot);
+        EXPECT_EQ(2u, engine.ledger.AvailableEntryCount());
+        EXPECT_EQ(0u, engine.ledger.PendingStartCount());
+        EXPECT_EQ(0u, engine.pendingStarts.RequestedBytes());
+        engine.pendingStarts.SetCommitPageLimitForTests(SIZE_MAX);
+        EXPECT_FALSE(acquire());
+        EXPECT_EQ(41u, handle);
+        EXPECT_EQ(43u, slot);
+        EXPECT_EQ(2u, engine.ledger.AvailableEntryCount());
+        EXPECT_EQ(1u, engine.pendingStarts.ConstructedCount());
+        EXPECT_EQ(0u, engine.parkRecords.ConstructedCount());
+        engine.parkRecords.SetCommitPageLimitForTests(SIZE_MAX);
+        ASSERT_TRUE(acquire());
+        EXPECT_EQ(2u, slot);
+        EXPECT_EQ(1u, engine.pendingStarts.ConstructedCount());
+        EXPECT_EQ(1u, engine.parkRecords.ConstructedCount());
+        auto* preparedPending = &engine.pendingStarts[slot];
+        auto* preparedParked = &engine.parkRecords[slot];
+        const auto oldHandle = handle;
+        engine.ledger.Release(slot);
+        engine.pendingStarts.SetCommitPageLimitForTests(0);
+        engine.parkRecords.SetCommitPageLimitForTests(0);
+        ASSERT_TRUE(acquire());
+        EXPECT_NE(oldHandle, handle);
+        EXPECT_EQ(preparedPending, &engine.pendingStarts[slot]);
+        EXPECT_EQ(preparedParked, &engine.parkRecords[slot]);
+        engine.ledger.Release(slot);
+        engine.ledger.Release(internal[0]);
+        ASSERT_TRUE(engine.ledger.CancelPreparedPlayableOwned(internal[1]));
+        EXPECT_EQ(engine.ledger.Capacity(), engine.ledger.AvailableEntryCount());
+    }
+}
+
 TEST(VoiceLedger, AudioTaggedIssuersAndGenerationPreparationCannotConstructNativeRows) {
     harken::VoiceLedger ledger(8);
     VnVoiceHandle publicOut = 41;

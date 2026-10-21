@@ -5826,7 +5826,11 @@ public:
           ledger(resolved.voiceCapacity.Logical(),
                  resolved.voiceCapacity.Render(),
                  2 * (static_cast<std::size_t>(TimelineArmCapacity(resolved)) +
-                      resolved.voiceCapacity.Logical())),
+                      resolved.voiceCapacity.Logical()),
+                 [](void* context, std::uint32_t slot) noexcept {
+                     auto& engine = *static_cast<Engine*>(context);
+                     return engine.pendingStarts.Emplace(slot) && engine.parkRecords.Emplace(slot);
+                 }, this),
           playablePartitions(resolved.maxPlayableInstances),
            actionPlayAttemptTokens(1),
            initialPendingVariableOwnerScratch(1),
@@ -6322,7 +6326,7 @@ public:
         effectSlotConfig.assign(resolved.voiceCapacity.Render(), emptyConfig);
         // One staging record per Logical Voice entry, indexed by ledger slot;
         // only deferred starts are active.
-        pendingStarts.resize(resolved.voiceCapacity.Logical());
+        if (!pendingStarts.Reserve(resolved.voiceCapacity.Logical())) throw std::bad_alloc();
         voiceBindingCatalogScratch.reserve(resolved.maxBindingAttachments);
         // Per-render-slot origin playable id (0 = none), reset at each play.
         voiceOriginPlayable.assign(resolved.voiceCapacity.Render(), VnObjectId{});
@@ -6331,7 +6335,7 @@ public:
         playbackPaths.resize(resolved.voiceCapacity.Render());
         // One park record per Logical Voice entry, indexed by ledger slot; only
         // Virtual Voices are active.
-        parkRecords.resize(resolved.voiceCapacity.Logical());
+        if (!parkRecords.Reserve(resolved.voiceCapacity.Logical())) throw std::bad_alloc();
         {
             const std::uint64_t logicalVoices = resolved.voiceCapacity.Logical();
             const std::uint64_t planSlots =
@@ -13510,7 +13514,7 @@ public:
     // record owns its replay state and virtual clock, so voices parked in
     // different updates do not share an entry-time assumption. Counters surface
     // in the snapshot; parkedVoiceCount is the live ledger.ParkedCount().
-    std::vector<ParkRecord> parkRecords;
+    StableSlotStorage<ParkRecord> parkRecords;
     std::uint64_t parkedHighWater = 0;
     std::uint64_t voiceParkedCount = 0;    // cumulative park transitions
     std::uint64_t voiceReturnedCount = 0;  // cumulative return transitions
@@ -13536,7 +13540,7 @@ public:
 
     // Per-ledger-slot staging for steal-deferred starts (see
     // PendingStartRecord). Logic thread only.
-    std::vector<PendingStartRecord> pendingStarts;
+    StableSlotStorage<PendingStartRecord> pendingStarts;
 
     // Session-trace state (all logic thread only; the audio thread has no
     // structural connection to any of it). `trace` is the live recorder or

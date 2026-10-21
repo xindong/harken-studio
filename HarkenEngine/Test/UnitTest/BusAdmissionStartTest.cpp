@@ -2510,8 +2510,8 @@ TEST(BusAdmissionStart, PreviewCommitMigratesPublishedIdentityAndFactsOffDeadSlo
     const auto childGeneration = engine->buses.GenerationAt(childSlot);
     const auto grandGeneration = engine->buses.GenerationAt(grandSlot);
     ASSERT_FALSE(engine->voicePlayFacts.empty());
-    ASSERT_FALSE(engine->pendingStarts.empty());
-    ASSERT_FALSE(engine->parkRecords.empty());
+    ASSERT_TRUE(engine->pendingStarts.Emplace(0));
+    ASSERT_TRUE(engine->parkRecords.Emplace(0));
     ASSERT_FALSE(engine->timelineVoiceInstallIdentities.empty());
     auto& facts = engine->voicePlayFacts[0];
     facts.valid = true;

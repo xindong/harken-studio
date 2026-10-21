@@ -4894,8 +4894,8 @@ VnResult CapturePropertyBindings(Engine& engine, VnPropertyBindingInfo* out,
         row.stateFlags = VN_PROPERTY_BINDING_PENDING;
         emit(row);
     };
-    for (std::size_t slot = 0; slot < engine.parkRecords.size(); ++slot) {
-        const ParkRecord& rec = engine.parkRecords[slot];
+    for (const ParkRecord& rec : engine.parkRecords) {
+        const auto slot = engine.parkRecords.IndexOf(rec);
         if (!rec.active) {
             continue;
         }
@@ -64498,7 +64498,7 @@ bool ApplyStreamParkOutcome(harken::Engine& engine,
     const harken::VoiceLedger::Resolved resolved =
         engine.ledger.Classify(outcome.publicHandle);
     if (resolved.kind != harken::VoiceLedger::HandleKind::Parked ||
-        resolved.ledgerSlot >= engine.parkRecords.size()) {
+        !engine.parkRecords.IsConstructed(resolved.ledgerSlot)) {
         releaseUnadoptedToken();
         return false;
     }
@@ -65647,9 +65647,9 @@ bool StopTargetSetTouchesGuardedVoice(harken::Engine& engine,
                                                                    &binding) ||
                 CompletionMutationBindingBlocks(engine, binding);
         });
-    for (std::uint32_t slot = 0;
-         !blocked && slot < engine.pendingStarts.size(); ++slot) {
-        const harken::PendingStartRecord& rec = engine.pendingStarts[slot];
+    for (const auto& rec : engine.pendingStarts) {
+        if (blocked) break;
+        const auto slot = engine.pendingStarts.IndexOf(rec);
         if (!rec.active || !pendingMatch(slot, rec)) {
             continue;
         }
@@ -65658,9 +65658,9 @@ bool StopTargetSetTouchesGuardedVoice(harken::Engine& engine,
             !engine.ledger.CaptureCompletionMutationForSlot(slot, &binding) ||
             CompletionMutationBindingBlocks(engine, binding);
     }
-    for (std::uint32_t slot = 0;
-         !blocked && slot < engine.parkRecords.size(); ++slot) {
-        const harken::ParkRecord& rec = engine.parkRecords[slot];
+    for (const auto& rec : engine.parkRecords) {
+        if (blocked) break;
+        const auto slot = engine.parkRecords.IndexOf(rec);
         if (!rec.active || !parkedMatch(slot, rec)) {
             continue;
         }
@@ -65711,13 +65711,15 @@ VnResult StopAllCore(harken::Engine& engine, std::uint32_t fadeMs,
             engine.ledger.MarkTerminating(render, cause);
             (void)engine.commands.TryPush(stop);
         });
-    for (std::uint32_t slot = 0; slot < engine.pendingStarts.size(); ++slot) {
-        if (engine.pendingStarts[slot].active) {
+    for (const auto& rec : engine.pendingStarts) {
+        if (rec.active) {
+            const auto slot = engine.pendingStarts.IndexOf(rec);
             CancelPendingStart(engine, slot, fadeMs, cause);
         }
     }
-    for (std::uint32_t slot = 0; slot < engine.parkRecords.size(); ++slot) {
-        if (engine.parkRecords[slot].active) {
+    for (const auto& rec : engine.parkRecords) {
+        if (rec.active) {
+            const auto slot = engine.parkRecords.IndexOf(rec);
             EndParkedVoice(engine, slot,
                            engine.ledger.PublicHandleForSlot(slot), fadeMs, cause);
         }
@@ -66395,9 +66397,9 @@ bool BindingReplaceTouchesGuardedVoice(harken::Engine& engine,
                                                                &binding) ||
             CompletionMutationBindingBlocks(engine, binding);
     });
-    for (std::uint32_t slot = 0;
-         !blocked && slot < engine.parkRecords.size(); ++slot) {
-        const harken::ParkRecord& rec = engine.parkRecords[slot];
+    for (const auto& rec : engine.parkRecords) {
+        if (blocked) break;
+        const auto slot = engine.parkRecords.IndexOf(rec);
         if (!rec.active) {
             continue;
         }
@@ -66414,9 +66416,9 @@ bool BindingReplaceTouchesGuardedVoice(harken::Engine& engine,
             !engine.ledger.CaptureCompletionMutationForSlot(slot, &binding) ||
             CompletionMutationBindingBlocks(engine, binding);
     }
-    for (std::uint32_t slot = 0;
-         !blocked && slot < engine.pendingStarts.size(); ++slot) {
-        const harken::PendingStartRecord& rec = engine.pendingStarts[slot];
+    for (const auto& rec : engine.pendingStarts) {
+        if (blocked) break;
+        const auto slot = engine.pendingStarts.IndexOf(rec);
         if (!rec.active) {
             continue;
         }
@@ -66453,9 +66455,9 @@ bool BindingDetachTouchesGuardedVoice(harken::Engine& engine,
                           row.handle, &binding) ||
                       CompletionMutationBindingBlocks(engine, binding);
         });
-    for (std::uint32_t slot = 0;
-         !blocked && slot < engine.parkRecords.size(); ++slot) {
-        const harken::ParkRecord& rec = engine.parkRecords[slot];
+    for (const auto& rec : engine.parkRecords) {
+        if (blocked) break;
+        const auto slot = engine.parkRecords.IndexOf(rec);
         if (!rec.active) {
             continue;
         }
@@ -66504,9 +66506,9 @@ bool CurrentPcmGenerationTouchesGuardedVoice(
                           render, &binding) ||
                       CompletionMutationBindingBlocks(engine, binding);
         });
-    for (std::uint32_t slot = 0;
-         !blocked && slot < engine.pendingStarts.size(); ++slot) {
-        const harken::PendingStartRecord& rec = engine.pendingStarts[slot];
+    for (const auto& rec : engine.pendingStarts) {
+        if (blocked) break;
+        const auto slot = engine.pendingStarts.IndexOf(rec);
         if (!rec.active || rec.isStream || !rec.heldPcmRef ||
             rec.view.useCount != generation) {
             continue;
@@ -66516,9 +66518,9 @@ bool CurrentPcmGenerationTouchesGuardedVoice(
             !engine.ledger.CaptureCompletionMutationForSlot(slot, &binding) ||
             CompletionMutationBindingBlocks(engine, binding);
     }
-    for (std::uint32_t slot = 0;
-         !blocked && slot < engine.parkRecords.size(); ++slot) {
-        const harken::ParkRecord& rec = engine.parkRecords[slot];
+    for (const auto& rec : engine.parkRecords) {
+        if (blocked) break;
+        const auto slot = engine.parkRecords.IndexOf(rec);
         if (!rec.active || rec.facts.isStream || !rec.heldPcmRef ||
             rec.facts.view.useCount != generation) {
             continue;
@@ -102134,16 +102136,16 @@ static VnResult StopEmitterObserved(VnEmitterHandle handle, uint32_t fadeMs,
     // Pending-start voices attached to this emitter never claimed a slot:
     // cancel them (their deferred start is abandoned and staged effects are
     // released), just as Vn_Stop cancels a pending voice.
-    for (std::uint32_t slot = 0; slot < engine->pendingStarts.size(); ++slot) {
-        harken::PendingStartRecord& rec = engine->pendingStarts[slot];
+    for (auto& rec : engine->pendingStarts) {
+        const auto slot = engine->pendingStarts.IndexOf(rec);
         if (rec.active && rec.emitterHandle == handle) {
             CancelPendingStart(*engine, slot, fadeMs, cause);
         }
     }
     // Parked voices attached to this emitter hold no render slot: end them
     // directly (command-free), so a parked voice is reached by the same stop.
-    for (std::uint32_t slot = 0; slot < engine->parkRecords.size(); ++slot) {
-        harken::ParkRecord& rec = engine->parkRecords[slot];
+    for (auto& rec : engine->parkRecords) {
+        const auto slot = engine->parkRecords.IndexOf(rec);
         if (rec.active && rec.stateEmitter == handle) {
             EndParkedVoice(*engine, slot, engine->ledger.PublicHandleForSlot(slot),
                            fadeMs, cause);

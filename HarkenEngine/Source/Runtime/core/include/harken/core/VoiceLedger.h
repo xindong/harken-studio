@@ -52,6 +52,7 @@ class VoiceLedger {
     struct MonitorSelectionStorage;
 public:
     static constexpr std::uint32_t kMaxGeneration = 0x7fffffffu;
+    using DirectVoiceStoragePreparation = bool (*)(void*, std::uint32_t) noexcept;
 
     enum class PublicVisibility : std::uint8_t {
         DirectVoice = 0,
@@ -214,7 +215,9 @@ public:
     // native rows are prepared by the serialized control owner before issuance.
     explicit VoiceLedger(std::uint32_t capacity,
                          std::uint32_t renderCapacity = 0,
-                         std::size_t monitorSelectionCapacity = 0);
+                         std::size_t monitorSelectionCapacity = 0,
+                         DirectVoiceStoragePreparation prepareDirectVoiceStorage = nullptr,
+                         void* directVoiceStorageContext = nullptr);
     ~VoiceLedger();
     VoiceLedger(const VoiceLedger&) = delete;
     VoiceLedger& operator=(const VoiceLedger&) = delete;
@@ -723,6 +726,8 @@ private:
     std::uint64_t m_lastOriginalCompletionMarker = 0;
     std::uint64_t m_nextStartOrder = 1; // monotonic; 0 means "never started"
     std::uint32_t m_quarantinedCount = 0;
+    DirectVoiceStoragePreparation m_prepareDirectVoiceStorage = nullptr;
+    void* m_directVoiceStorageContext = nullptr;
 };
 
 } // namespace harken
