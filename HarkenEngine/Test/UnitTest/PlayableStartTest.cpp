@@ -10797,14 +10797,11 @@ TEST(PlayableStart,
     ASSERT_NE(engine->playableServices.end(), row);
     const std::size_t currentBase = row->scheduleStorageBase +
         row->variableControlContinuousMemberOffset;
-    const std::size_t continuousTransitionBase =
-        row->scheduleStorageBase +
-        row->variableControlContinuousTransitionOffset;
     const std::size_t discreteTransitionSlot =
         row->scheduleStorageBase +
         row->variableControlDiscreteTransitionOffset;
     ASSERT_GE(discreteTransitionSlot,
-              continuousTransitionBase +
+              currentBase +
                   engine->config.maxVariableControlLiveRows);
 
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
@@ -10822,9 +10819,14 @@ TEST(PlayableStart,
                           discreteTransitionSlot).voice.Facts().target.
                           occurrenceOrdinal);
             for (std::uint32_t index = 0; index < 16; ++index) {
+                ASSERT_LT(index, row->variableControlRetargetMembers.size());
+                harken::EnginePlayableServiceRow* owner = nullptr;
+                std::size_t memberSlot = 0;
+                ASSERT_TRUE(engine->ResolvePlayableMember(row->variableControlRetargetMembers[index].reference,
+                    &owner, &memberSlot));
                 EXPECT_EQ(index + 2u,
                           engine->ReadPlayableMember(
-                              CurrentMemberSlot(*engine, continuousTransitionBase + index)).voice.Facts().target.
+                              memberSlot).voice.Facts().target.
                               occurrenceOrdinal);
             }
         }
@@ -23008,10 +23010,6 @@ TEST(PlayableStart,
             return candidate.rootInstance == started.instance;
         });
     ASSERT_NE(engine->playableServices.end(), row);
-    const std::size_t rowIndex = row->partition.slot;
-    const std::size_t continuousBase =
-        engine->playableStorage.ContinuousBase(rowIndex);
-
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 7.0f));
     bool prepared = false;
     for (std::uint32_t block = 0; block < 32 && !prepared; ++block) {
@@ -23020,9 +23018,7 @@ TEST(PlayableStart,
         if (!prepared) engine->nullBackend.Pump(1);
     }
     ASSERT_TRUE(prepared);
-    ASSERT_EQ(1u, row->variableControlRetargetUnionMemberCount);
-    ASSERT_EQ(0u,
-              engine->variableControlRetargetMemberKinds[continuousBase]);
+    ASSERT_EQ(1u, row->variableControlRetargetMembers.size());
     harken::PlayableControlState state{};
     ASSERT_EQ(harken::PlayableControlStatus::Ok,
               harken::QueryPlayable(*engine, started.instance, &state));
@@ -26794,6 +26790,17 @@ TEST(PlayableStart, BlendChangesWeightsWithoutReplacingMembersAndThenCompletes) 
         }
     };
     EXPECT_EQ(0u, engine->variableControlRetargetPrograms.ConstructedCount());
+    ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 7.0f));
+    engine->nativeBackingAllocationFailureCountdownForTest = 0;
+    for (unsigned block = 0; block < 4; ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+    }
+    engine->nativeBackingAllocationFailureCountdownForTest = -1;
+    EXPECT_EQ(0u, service->variableControlRetargetMembers.capacity());
+    EXPECT_FALSE(service->variableControlRetargetPrepared);
+    EXPECT_FLOAT_EQ(1.0f, service->variableControlChildWeights[0].current.endWeight);
+    EXPECT_FLOAT_EQ(0.0f, service->variableControlChildWeights[1].current.endWeight);
     engine->variableControlRetargetPrograms.SetCommitPageLimitForTests(0);
     ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 7.0f));
     for (unsigned block = 0; block < 4; ++block) {
@@ -26801,6 +26808,7 @@ TEST(PlayableStart, BlendChangesWeightsWithoutReplacingMembersAndThenCompletes) 
         engine->nullBackend.Pump(1);
     }
     EXPECT_EQ(0u, engine->variableControlRetargetPrograms.ConstructedCount());
+    EXPECT_EQ(0u, service->variableControlRetargetMembers.capacity());
     EXPECT_TRUE(engine->playableInstances.Classify(leaf).live);
     EXPECT_EQ(2u, engine->voices.ActiveCount());
     EXPECT_FALSE(engine->runtimeRecreateRequired);
@@ -27310,8 +27318,8 @@ TEST(PlayableStart, BlendPendingParentWeightUpdatesExistingNestedMembers) {
     }
     ASSERT_TRUE(committed);
     ASSERT_FALSE(child->variableControlRetargetPrepared);
-    const auto expected = engine->variableControlPendingWeightSegments[
-        engine->playableStorage.ContinuousBase(parent->partition.slot)];
+    ASSERT_FALSE(parent->variableControlRetargetMembers.empty());
+    const auto expected = parent->variableControlRetargetMembers[0].pendingWeight;
     ASSERT_FLOAT_EQ(0.125f, expected.endWeight);
     const std::array<VnObjectId, 2> ids{{variables[0].variableId, variables[1].variableId}};
     std::array<float, 2> values{};
@@ -27956,7 +27964,7 @@ TEST(PlayableStart, BlendQueueAfterLogicalTrackInheritsVariableResponseGain) {
                 << " superseded=" << parent->variableControlRetargetSuperseded
                 << " frame=" << parent->variableControlRetargetFrame
                 << " envelopeEnd=" << parent->variableControlRetargetEnvelopeEndFrame
-                << " members=" << parent->variableControlRetargetUnionMemberCount
+                << " members=" << parent->variableControlRetargetMembers.size()
                 << " decision=" << capturedDecision << '/'
                 << static_cast<unsigned>(retargetDecision.audioState) << '/'
                 << retargetDecision.lastAudioSequence

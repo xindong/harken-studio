@@ -231,7 +231,8 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
             column(scratch.sourceLeafEventCounts) + column(scratch.replacementGroupArms);
     }
     for (const auto& row : playableServices) {
-        bytes += column(row.memberPrograms) + column(row.members) + column(row.variableControlDiscreteRetargetPayloads) +
+        bytes += column(row.memberPrograms) + column(row.members) + column(row.variableControlRetargetMembers) +
+            column(row.variableControlDiscreteRetargetPayloads) +
             column(row.variableControlDiscreteRetargetEnteringPayloads) +
             column(row.variableControlDiscreteRetargetEvents) +
             column(row.variableControlDiscreteRetargetEnteringEvents) +
@@ -10552,10 +10553,8 @@ harken::EnginePlayableServiceRow* PrepareNestedPlayableService(
     service.variableControlWorldUsesCurrentAuthority = parent.variableControlWorldUsesCurrentAuthority;
     service.variableControlWorld = parent.variableControlWorld;
     service.variableControlContinuousMemberOffset = engine.config.maxKnownScheduleLeaves;
-    service.variableControlContinuousTransitionOffset =
-        service.variableControlContinuousMemberOffset + engine.config.maxVariableControlLiveRows;
     service.variableControlDiscreteTransitionOffset =
-        service.variableControlContinuousTransitionOffset + engine.config.maxVariableControlLiveRows;
+        service.variableControlContinuousMemberOffset + engine.config.maxVariableControlLiveRows;
     service.scheduleStorageBase = static_cast<std::uint32_t>(
         engine.playableStorage.MemberBase(service.partition.slot));
     return &service;
@@ -10991,12 +10990,17 @@ void ReplacePlayableMemberReferences(harken::Engine& engine,
     };
     if (aliasOwner == nullptr) {
         for (auto& reference : engine.playableMemberReferences) replace(reference);
+        for (auto& service : engine.playableServices)
+            for (auto& member : service.variableControlRetargetMembers) replace(member.reference);
         return;
     }
     for (std::uint32_t depth = 0; aliasOwner != nullptr && depth < engine.playableServices.size(); ++depth) {
         const auto base = engine.playableStorage.MemberBase(aliasOwner->partition.slot);
         for (std::uint32_t index = 0; index < engine.playableStorage.memberStride; ++index)
             replace(engine.playableMemberReferences[base + index]);
+        auto* service = engine.ResolvePlayableService(PlayableServiceReference(*aliasOwner));
+        if (service != nullptr)
+            for (auto& member : service->variableControlRetargetMembers) replace(member.reference);
         aliasOwner = engine.ResolvePlayableService(aliasOwner->parentService);
     }
 }
@@ -11092,6 +11096,12 @@ bool PlayableMemberStorageHasReaders(
         const auto& reference = engine.playableMemberReferences[index];
         if (reference.service.token == row.identity &&
             reference.partitionGeneration == row.partition.generation) return true;
+    }
+    for (const auto& service : engine.playableServices) {
+        if (&service == &row) continue;
+        for (const auto& member : service.variableControlRetargetMembers)
+            if (member.reference.service.token == row.identity &&
+                member.reference.partitionGeneration == row.partition.generation) return true;
     }
     for (std::uint32_t index = 0; index < row.memberPrograms.size(); ++index) {
         if (!row.memberPrograms[index].Valid()) continue;
@@ -12458,8 +12468,7 @@ void ReleaseVariableControlOccupancy(
     dropStoredArms(engine.variableControlInitialContinuousArms,
                    bases.continuous,
                    row.variableControlInitialContinuousMemberCount);
-    dropStoredArms(engine.variableControlRetargetArms, bases.continuous,
-                   row.variableControlRetargetUnionMemberCount);
+    for (const auto& member : row.variableControlRetargetMembers) dropArm(member.arm);
     for (std::uint32_t index = 0;
          index < row.variableControlDiscreteRetargetGroupMemberCount;
          ++index) {
@@ -12468,6 +12477,12 @@ void ReleaseVariableControlOccupancy(
     dropArm(row.variableControlDiscreteRetargetArm);
     dropArm(row.variableControlDiscreteRetargetEnteringArm);
 
+    const auto retireGroupMember = [&](harken::ArmGroupToken group, harken::TimelineArmToken arm) {
+        harken::TimelineArmObservation member{};
+        const auto tombstone = engine.timelineArms.Observe(arm, &member) && member.tombstoneAudioSequence != 0
+            ? member.tombstoneAudioSequence : observedAudioSequence;
+        (void)engine.armGroups.Tombstone(group, arm, std::max<std::uint64_t>(1u, tombstone));
+    };
     const auto retireGroupMembers =
         [&](harken::ArmGroupToken group, const harken::TimelineArmToken* members,
             std::uint32_t count) {
@@ -12476,15 +12491,7 @@ void ReleaseVariableControlOccupancy(
             }
             (void)engine.armGroups.BeginRetire(group);
             for (std::uint32_t index = 0; index < count; ++index) {
-                harken::TimelineArmObservation member{};
-                const std::uint64_t tombstone =
-                    engine.timelineArms.Observe(members[index], &member) &&
-                            member.tombstoneAudioSequence != 0
-                        ? member.tombstoneAudioSequence
-                        : observedAudioSequence;
-                (void)engine.armGroups.Tombstone(
-                    group, members[index],
-                    std::max<std::uint64_t>(1u, tombstone));
+                retireGroupMember(group, members[index]);
             }
         };
     retireGroupMembers(row.variableControlDiscreteArmGroup,
@@ -12494,10 +12501,11 @@ void ReleaseVariableControlOccupancy(
         row.variableControlContinuousArmGroup,
         engine.variableControlInitialContinuousArms.data() + bases.continuous,
         row.variableControlInitialContinuousMemberCount);
-    retireGroupMembers(
-        row.variableControlRetargetArmGroup,
-        engine.variableControlRetargetArms.data() + bases.continuous,
-        row.variableControlRetargetUnionMemberCount);
+    if (row.variableControlRetargetArmGroup.Valid()) {
+        (void)engine.armGroups.BeginRetire(row.variableControlRetargetArmGroup);
+        for (const auto& member : row.variableControlRetargetMembers)
+            retireGroupMember(row.variableControlRetargetArmGroup, member.arm);
+    }
     retireGroupMembers(row.variableControlDiscreteRetargetArmGroup,
                        row.variableControlDiscreteRetargetGroupArms.data(),
                        row.variableControlDiscreteRetargetGroupMemberCount);
@@ -12966,16 +12974,10 @@ PlayableStartResetResult ResetPlayableStartRow(
           engine.playableStorage.memberStride);
     clear(engine.variableControlWeightSegments, bases.weight,
           engine.playableStorage.weightStride);
-    clear(engine.variableControlPendingWeightSegments, bases.continuous,
-          engine.playableStorage.continuousStride);
     clear(engine.variableControlInitialContinuousArms, bases.continuous,
           engine.playableStorage.continuousStride);
     for (auto& record : engine.variableControlRetargetPrograms)
         if (record.service == row.identity) record = {};
-    clear(engine.variableControlRetargetArms, bases.continuous,
-          engine.playableStorage.continuousStride);
-    clear(engine.variableControlRetargetMemberKinds, bases.continuous,
-          engine.playableStorage.continuousStride);
     auto& invocation = row.Invocation();
     assert(invocation.serviceCount != 0);
     if (--invocation.serviceCount == 0) {
@@ -19043,6 +19045,7 @@ bool BeginVariableControlPrivateRollback(harken::Engine& engine,
         deferred.rollbackRequested = true;
     }
     if (!parentReference.Valid() || !parent->partition.Valid() ||
+        !parent->variableControlRetargetMembers.empty() ||
         engine.ResolvePlayableService(parentReference) != parent ||
         !engine.playablePartitions.Owns(parent->partition, parent->identity))
         return fail();
@@ -21686,7 +21689,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         bases.weight + engine.playableStorage.weightStride >
             engine.variableControlWeightSegments.size() ||
         bases.continuous + engine.playableStorage.continuousStride >
-            engine.variableControlRetargetArms.size()) {
+            engine.variableControlInitialContinuousArms.size()) {
         for (std::uint32_t index = scratch->variableControlChildCount;
              index-- > 0;) {
             (void)engine.playableInstances.CancelPrepared(
@@ -21802,11 +21805,8 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         : 0;
     row.variableControlContinuousMemberOffset =
         engine.config.maxKnownScheduleLeaves;
-    row.variableControlContinuousTransitionOffset =
-        row.variableControlContinuousMemberOffset +
-        engine.config.maxVariableControlLiveRows;
     row.variableControlDiscreteTransitionOffset =
-        row.variableControlContinuousTransitionOffset +
+        row.variableControlContinuousMemberOffset +
         engine.config.maxVariableControlLiveRows;
     row.variableControlContinuousMemberCount = continuousLeafCount;
     row.variableControlInitialContinuousMemberCount = continuousLeafCount;
@@ -33410,24 +33410,17 @@ VariableRetargetPrepareStatus PrepareVariableControlRetarget(
     const std::size_t currentBase =
         bases.member +
         row.variableControlContinuousMemberOffset;
-    const std::size_t transitionBase =
-        bases.member +
-        row.variableControlContinuousTransitionOffset;
     const std::size_t currentWeightBase =
         bases.weight + row.variableControlContinuousMemberOffset;
-    const std::size_t transitionWeightBase =
-        bases.weight + row.variableControlContinuousTransitionOffset;
-    const std::size_t continuousBase = bases.continuous;
     if (weightCount > program.maxActiveRows ||
         weightCount > engine.config.maxVariableControlActiveRows) {
         return VariableRetargetPrepareStatus::Capacity;
     }
-    if (transitionBase + engine.config.maxVariableControlLiveRows >
+    if (!row.variableControlRetargetMembers.empty() ||
+        currentBase + priorMemberCount >
             engine.playableStorage.memberCount ||
-        transitionWeightBase + engine.config.maxVariableControlLiveRows >
-            engine.variableControlWeightSegments.size() ||
-        continuousBase + engine.config.maxVariableControlLiveRows >
-            engine.variableControlRetargetArms.size()) {
+        currentWeightBase + priorMemberCount >
+            engine.variableControlWeightSegments.size()) {
         return VariableRetargetPrepareStatus::Fatal;
     }
     std::array<float, 64> targetWeights{};
@@ -33585,6 +33578,22 @@ VariableRetargetPrepareStatus PrepareVariableControlRetarget(
         return VariableRetargetPrepareStatus::Retry;
     }
 
+    // The cut owns the selected references until publication and retirement finish.
+    // Current weights remain authoritative until its envelope has completed.
+    struct RetargetMemberPreparation {
+        using Members = std::vector<harken::EnginePlayableServiceRow::VariableControlRetargetMember>;
+        Members& members;
+        bool retained = false;
+        ~RetargetMemberPreparation() {
+            if (!retained) Members{}.swap(members);
+        }
+    } memberPreparation{row.variableControlRetargetMembers};
+    if (priorMemberCount != 0) {
+        if (!engine.AllowNativeBackingAllocation()) return VariableRetargetPrepareStatus::Retry;
+        try { row.variableControlRetargetMembers.resize(priorMemberCount); }
+        catch (...) { return VariableRetargetPrepareStatus::Retry; }
+    }
+    auto& retargetMembers = row.variableControlRetargetMembers;
     struct ControlProgramReservations {
         std::array<harken::EngineControlProgramRecord*, 64> records{};
         ~ControlProgramReservations() {
@@ -33617,11 +33626,6 @@ engine.runtimeRecreateRequired = true;
     };
     const auto rollback = [&]() {
         starts.Cancel();
-        for (std::uint32_t index = 0; index < reservedArmCount; ++index) {
-            engine.variableControlRetargetArms[continuousBase + index] = {};
-            auto& reference = engine.playableMemberReferences[transitionBase + index];
-            reference = {};
-        }
         if (decision.Valid()) {
             (void)engine.decisions.Cancel(decision);
             (void)engine.decisions.ReclaimCancelled(decision);
@@ -33655,24 +33659,17 @@ engine.runtimeRecreateRequired = true;
     std::array<harken::TimelineArmToken, 64> audioArms{};
     std::uint16_t audioArmCount = 0;
     for (; reservedArmCount < priorMemberCount; ++reservedArmCount) {
-        const std::size_t logicalMemberSlot = transitionBase + reservedArmCount;
         std::size_t& memberSlot = transitionMemberSlots[reservedArmCount];
-        const std::size_t weightSlot =
-            transitionWeightBase + reservedArmCount;
-        const std::size_t continuousSlot = continuousBase + reservedArmCount;
-        harken::WeightSegmentV1& pending =
-            engine.variableControlPendingWeightSegments[continuousSlot];
+        auto& member = retargetMembers[reservedArmCount];
+        auto& pending = member.pendingWeight;
         const std::uint32_t envelopeFrames =
             program.envelopeFrames == 0 ? 2u : program.envelopeFrames;
         const std::size_t currentSlot =
             currentMemberSlots[reservedArmCount];
-        engine.playableMemberReferences[logicalMemberSlot] = currentReferences[reservedArmCount];
+        member.reference = currentReferences[reservedArmCount];
         memberSlot = currentSlot;
-        engine.variableControlWeightSegments[weightSlot] =
-            currentWeights[reservedArmCount];
         if (engine.ReadPlayableMember(currentSlot).completion.resourcesRetired) {
-            engine.variableControlRetargetArms[continuousSlot] = {};
-            if (harken::RetargetWeightSegment(&engine.variableControlWeightSegments[weightSlot],
+            if (harken::RetargetWeightSegment(&currentWeights[reservedArmCount],
                     decisionFrame, envelopeFrames, targetWeights[reservedArmCount], decision, bank,
                     &pending) != harken::WeightSegmentStatus::Ok) {
                 ++reservedArmCount;
@@ -33690,9 +33687,9 @@ engine.runtimeRecreateRequired = true;
                 engine.ReadPlayableMember(memberSlot).voice.Facts().target,
                 harken::ParentAudioGroupRef{decision},
                 audioArmCount,
-                &engine.variableControlRetargetArms[continuousSlot]) ||
+                &member.arm) ||
             harken::RetargetWeightSegment(
-                &engine.variableControlWeightSegments[weightSlot],
+                &currentWeights[reservedArmCount],
                 decisionFrame, envelopeFrames,
                 targetWeights[reservedArmCount], decision, bank,
                 &pending) != harken::WeightSegmentStatus::Ok) {
@@ -33700,7 +33697,7 @@ engine.runtimeRecreateRequired = true;
             rollback();
             return VariableRetargetPrepareStatus::Fatal;
         }
-        audioArms[audioArmCount++] = engine.variableControlRetargetArms[continuousSlot];
+        audioArms[audioArmCount++] = member.arm;
     }
     if (!starts.PrepareArmGroup(
             decision, audioArms.data(), audioArmCount, &group)) {
@@ -33721,11 +33718,11 @@ engine.runtimeRecreateRequired = true;
 
     for (std::uint32_t index = 0; index < priorMemberCount; ++index) {
         const std::size_t memberSlot = transitionMemberSlots[index];
-        const std::size_t continuousSlot = continuousBase + index;
-        if (!engine.variableControlRetargetArms[continuousSlot].Valid()) continue;
+        const auto& member = retargetMembers[index];
+        if (!member.arm.Valid()) continue;
         harken::EnginePlayableServiceRow* resourceService = nullptr;
         std::size_t checkedSlot = 0;
-        const auto& memberReference = engine.playableMemberReferences[transitionBase + index];
+        const auto& memberReference = member.reference;
         if (!engine.ResolvePlayableMember(memberReference, &resourceService, &checkedSlot) ||
             checkedSlot != memberSlot) {
             rollback();
@@ -33736,7 +33733,7 @@ engine.runtimeRecreateRequired = true;
         payload = {};
         payload.kind = harken::TimelineEventKind::VariableWeight;
         payload.target = engine.ReadPlayableMember(memberSlot).voice.Facts().target;
-        payload.variableWeight = engine.variableControlPendingWeightSegments[continuousSlot];
+        payload.variableWeight = member.pendingWeight;
         if (row.variableControlIndependentFrontier)
             payload.variableWeightOwner = {row.ownerInstance, row.ownerEpoch, 1};
         auto& event = controlProgram.event;
@@ -33746,7 +33743,7 @@ engine.runtimeRecreateRequired = true;
         event.transactionOrdinal = index;
         event.subeventPhase = 30u;
         event.payload = 0;
-        event.armToken = engine.variableControlRetargetArms[continuousSlot];
+        event.armToken = member.arm;
         auto& runtime = controlProgram.runtime;
         runtime = {};
         runtime.generation = row.rootInstance;
@@ -33792,7 +33789,6 @@ engine.runtimeRecreateRequired = true;
     std::array<harken::CommandRecord, harken::kMaxKnownScheduleLeaves> controlCommands{};
     for (std::uint32_t index = 0; index < priorMemberCount; ++index) {
         const std::size_t memberSlot = transitionMemberSlots[index];
-        const std::size_t continuousSlot = continuousBase + index;
         harken::CommandRecord& command = controlCommands[index];
         command = {};
         command.opcode = harken::kOpcodePlay;
@@ -33801,8 +33797,7 @@ engine.runtimeRecreateRequired = true;
         command.payload.play.batch.batchKind =
             harken::PlayLedBatchKind::TimelineControlArm;
         command.payload.play.batch.batchCommandCount = 1;
-        const harken::TimelineArmToken arm =
-            engine.variableControlRetargetArms[continuousSlot];
+        const harken::TimelineArmToken arm = retargetMembers[index].arm;
         command.payload.play.batch.armToken =
             (static_cast<std::uint64_t>(arm.generation) << 32) |
             arm.slot;
@@ -33812,7 +33807,7 @@ engine.runtimeRecreateRequired = true;
             engine.ReadPlayableMember(memberSlot).render;
     }
     for (std::uint32_t index = 0; index < priorMemberCount; ++index) {
-        if (!engine.variableControlRetargetArms[continuousBase + index].Valid()) continue;
+        if (!retargetMembers[index].arm.Valid()) continue;
         if (!starts.AddCommand(controlCommands[index])) {
             rollback();
             return VariableRetargetPrepareStatus::Retry;
@@ -33882,15 +33877,7 @@ engine.runtimeRecreateRequired = true;
                 row.variableControlRetargetLogicalCompletionFrames.begin());
     std::copy_n(pendingLogicalCompleted.begin(), pendingLogicalCount,
                 row.variableControlRetargetLogicalCompleted.begin());
-    row.variableControlRetargetUnionMemberCount = priorMemberCount;
-    row.variableControlRetargetDesiredMemberCount = 0;
-    row.variableControlRetargetIncomingChildCount = 0;
-    row.variableControlRetargetIncomingNestedVariableControlCount = 0;
     PublishPlayableServiceOwnership(engine, &row);
-    for (std::uint32_t index = 0; index < priorMemberCount; ++index) {
-        engine.variableControlRetargetMemberKinds[continuousBase + index] = 0;
-        ++row.variableControlRetargetDesiredMemberCount;
-    }
     row.scheduleLeafCount = row.variableControlDiscreteMemberCount +
         priorMemberCount;
     row.variableControlRetargetPrepared = true;
@@ -33900,6 +33887,7 @@ engine.runtimeRecreateRequired = true;
     row.variableControlRetargetExitsIssued = false;
     row.variableControlRetargetMembershipFinalized = false;
     row.variableControlRetargetSuperseded = false;
+    memberPreparation.retained = true;
     return VariableRetargetPrepareStatus::Prepared;
 }
 
@@ -34085,22 +34073,6 @@ void RefreshPlayableChildObservation(
             add(engine.ReadPlayableMember(slot).arm, engine.ReadPlayableMember(slot).render,
                 &engine.ReadPlayableMember(slot).completion);
         }
-    }
-    const std::size_t transitionBase = storageBases.continuous;
-    for (std::uint32_t index = 0;
-         index < row.variableControlRetargetUnionMemberCount; ++index) {
-        const std::size_t slot = transitionBase + index;
-        if (slot >= engine.variableControlRetargetMemberKinds.size() ||
-            slot >= engine.variableControlRetargetArms.size()) {
-            break;
-        }
-        if (engine.variableControlRetargetMemberKinds[slot] != 2) continue;
-        const harken::TimelineArmToken arm =
-            engine.variableControlRetargetArms[slot];
-        std::size_t memberSlot = 0;
-        if (!engine.ResolvePlayableMemberSlot(base + row.variableControlContinuousTransitionOffset + index,
-                &memberSlot)) break;
-        add(arm, renderForArm(arm), &engine.ReadPlayableMember(memberSlot).completion);
     }
     row.childLiveCount = liveCount;
     row.childAudibleRetiringCount = retiringCount;
@@ -48559,15 +48531,13 @@ engine.runtimeRecreateRequired = true;
                 ? UINT64_MAX : observedAudioSequence * blockFrames;
             if (observedFrame >= row.variableControlRetargetEnvelopeEndFrame) {
                 const auto currentBase = storageBases.member + row.variableControlContinuousMemberOffset;
-                const auto preparedBase = storageBases.member + row.variableControlContinuousTransitionOffset;
                 const auto currentWeightBase = storageBases.weight + row.variableControlContinuousMemberOffset;
-                const auto preparedWeightBase = storageBases.weight + row.variableControlContinuousTransitionOffset;
-                const auto memberCount = row.variableControlRetargetUnionMemberCount;
+                const auto memberCount = static_cast<std::uint32_t>(row.variableControlRetargetMembers.size());
                 for (std::uint32_t index = 0; index < memberCount; ++index) {
-                    const auto& reference = engine.playableMemberReferences[preparedBase + index];
+                    const auto& member = row.variableControlRetargetMembers[index];
+                    const auto& reference = member.reference;
                     engine.playableMemberReferences[currentBase + index] = reference;
-                    engine.variableControlWeightSegments[currentWeightBase + index] =
-                        engine.variableControlWeightSegments[preparedWeightBase + index];
+                    engine.variableControlWeightSegments[currentWeightBase + index] = member.pendingWeight;
                     const auto leafIndex = row.variableControlDiscreteMemberCount + index;
                     row.variableControlLeafInstances[leafIndex] = reference.leaf;
                     row.variableControlLeafEpochs[leafIndex] = reference.leafEpoch;
@@ -48592,16 +48562,8 @@ engine.runtimeRecreateRequired = true;
                                           observedAudioSequence) &&
             TransferDecisionRetirement(engine, row.variableControlRetargetDecision,
                 !row.variableControlRetargetDecisionCommitted, row.variableControlRetargetArmGroup)) {
-            const std::size_t retargetBase =
-                storageBases.continuous;
-            for (std::uint32_t index = 0;
-                 index < row.variableControlRetargetUnionMemberCount;
-                 ++index) {
-                engine.variableControlRetargetArms[
-                    retargetBase + index] = {};
-                engine.playableMemberReferences[storageBases.member +
-                    row.variableControlContinuousTransitionOffset + index] = {};
-            }
+            std::vector<harken::EnginePlayableServiceRow::VariableControlRetargetMember>{}.swap(
+                row.variableControlRetargetMembers);
             const harken::ContainerProgramViewV3* program =
                 ResolveVariableControlProgram(engine, row);
             row.variableControlNextEvaluationFrame =
@@ -48628,8 +48590,6 @@ engine.runtimeRecreateRequired = true;
             row.variableControlRetargetLogicalCompletionFrames = {};
             row.variableControlRetargetLogicalCompleted = {};
             row.variableControlRetargetLogicalCount = 0;
-            row.variableControlRetargetUnionMemberCount = 0;
-            row.variableControlRetargetDesiredMemberCount = 0;
             row.variableControlRetargetPrepared = false;
             row.variableControlRetargetDecisionCommitted = false;
             row.variableControlRetargetApplied = false;
@@ -48642,25 +48602,22 @@ engine.runtimeRecreateRequired = true;
         }
         if (!startedRootSound && row.variableControlRetargetPrepared &&
             row.variableControlRetargetDecision.Valid()) {
-            const std::size_t retargetBase =
-                storageBases.continuous;
-            const std::size_t retargetMemberBase =
-                storageBases.member +
-                row.variableControlContinuousTransitionOffset;
-            const std::size_t retargetWeightBase =
-                storageBases.weight +
-                row.variableControlContinuousTransitionOffset;
-            const std::uint32_t memberCount =
-                row.variableControlRetargetUnionMemberCount;
+            const auto& retargetMembers = row.variableControlRetargetMembers;
+            const auto memberCount = static_cast<std::uint32_t>(retargetMembers.size());
             std::array<std::size_t, 64> retargetMemberSlots{};
-            if (!engine.ResolvePlayableMemberSlots(retargetMemberBase, memberCount, retargetMemberSlots)) {
+            bool membersValid = memberCount <= retargetMemberSlots.size();
+            for (std::uint32_t index = 0; index < memberCount && membersValid; ++index) {
+                harken::EnginePlayableServiceRow* owner = nullptr;
+                membersValid = engine.ResolvePlayableMember(retargetMembers[index].reference,
+                    &owner, &retargetMemberSlots[index]);
+            }
+            if (!membersValid) {
 engine.runtimeRecreateRequired = true;
                 continue;
             }
             const auto audioMemberCount = static_cast<std::uint32_t>(std::count_if(
-                engine.variableControlRetargetArms.begin() + retargetBase,
-                engine.variableControlRetargetArms.begin() + retargetBase + memberCount,
-                [](const auto& arm) { return arm.Valid(); }));
+                retargetMembers.begin(), retargetMembers.end(),
+                [](const auto& member) { return member.arm.Valid(); }));
             requirePublication(row.variableControlRetargetFrame);
             const bool continuousAlreadySuperseded =
                 row.variableControlRetargetSuperseded;
@@ -48753,8 +48710,7 @@ engine.runtimeRecreateRequired = true;
                 for (std::uint32_t index = 0; index < memberCount && !row.variableControlRetargetApplied; ++index) {
                     const auto physical = retargetMemberSlots[index];
                     const auto& source = engine.ReadPlayableMember(physical).completion;
-                    if (engine.variableControlRetargetMemberKinds[retargetBase + index] != 0 ||
-                        !engine.variableControlRetargetArms[retargetBase + index].Valid() ||
+                    if (!retargetMembers[index].arm.Valid() ||
                         source.completedSource.kind != harken::SourceTerminalKind::Natural ||
                         source.completedSource.frame > row.variableControlRetargetFrame ||
                         source.sourceCompletionSequence == 0 || source.sourceCompletionSequence > observedAudioSequence ||
@@ -48818,10 +48774,9 @@ engine.runtimeRecreateRequired = true;
             std::array<harken::TimelineArmObservation, 64> observations{};
             bool allObserved = true;
             for (std::uint32_t index = 0; index < memberCount; ++index) {
-                if (!engine.variableControlRetargetArms[retargetBase + index].Valid()) continue;
+                if (!retargetMembers[index].arm.Valid()) continue;
                 allObserved = engine.timelineArms.Observe(
-                                  engine.variableControlRetargetArms[
-                                      retargetBase + index],
+                                  retargetMembers[index].arm,
                                   &observations[index]) &&
                               allObserved;
             }
@@ -48833,23 +48788,10 @@ engine.runtimeRecreateRequired = true;
                         ? std::max<std::uint64_t>(1u, observedAudioSequence)
                         : 0;
                 for (std::uint32_t index = 0; index < memberCount; ++index) {
-                    const std::size_t slot = retargetBase + index;
                     const harken::TimelineArmToken member =
-                        engine.variableControlRetargetArms[slot];
+                        retargetMembers[index].arm;
                     if (!member.Valid()) continue;
                     (void)AbortTimelineArm(engine, member);
-                    if (engine.variableControlRetargetMemberKinds[slot] == 2) {
-                        const VnVoiceHandle render =
-                            engine.ReadPlayableMember(
-                                retargetMemberSlots[index]).render;
-                        const harken::VoiceRenderContext* voice =
-                            engine.voices.Resolve(render);
-                        if (voice != nullptr && voice->timelineGated) {
-                            (void)engine.voices.CancelTimelineBinding(
-                                static_cast<std::uint32_t>(render),
-                                static_cast<std::uint32_t>(render >> 32));
-                        }
-                    }
                     (void)engine.timelineArms.Tombstone(
                         member, std::max<std::uint64_t>(1u, observedAudioSequence));
                     harken::TimelineArmObservation cancelled{};
@@ -48883,16 +48825,15 @@ engine.runtimeRecreateRequired = true;
                          engine.armGroups.BeginRetire(row.variableControlRetargetArmGroup));
                     for (std::uint32_t index = 0;
                          index < memberCount && retiring; ++index) {
-                        if (!engine.variableControlRetargetArms[retargetBase + index].Valid() ||
+                        if (!retargetMembers[index].arm.Valid() ||
                             observations[index].tombstoneAudioSequence == 0) continue;
                         std::uint64_t recordedSequence = 0;
                         if (CaptureRecordedMemberTombstone(engine, row.variableControlRetargetDecision,
-                                row.variableControlRetargetArmGroup, engine.variableControlRetargetArms[retargetBase + index],
+                                row.variableControlRetargetArmGroup, retargetMembers[index].arm,
                                 &recordedSequence)) continue;
                         retiring = engine.armGroups.Tombstone(
                             row.variableControlRetargetArmGroup,
-                            engine.variableControlRetargetArms[
-                                retargetBase + index],
+                            retargetMembers[index].arm,
                             observations[index].tombstoneAudioSequence);
                     }
                     harken::ArmGroupSnapshot retiringGroup{};
@@ -48930,50 +48871,6 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
                     } else {
                         row.variableControlRetargetCleanupStarted = true;
-                        for (std::uint32_t index = 0;
-                             index <
-                             row.variableControlRetargetIncomingChildCount;
-                             ++index) {
-                            const auto child =
-                                row.variableControlRetargetIncomingChildren[index];
-                            if (child != 0) {
-                                RetirePlayableInstanceTree(
-                                    engine, child,
-                                    harken::PlayableTerminalKind::ParentCancellation);
-                            }
-                        }
-                        row.variableControlRetargetIncomingChildCount = 0;
-                        for (std::uint32_t index = 0;
-                             index < row.variableControlRetargetIncomingNestedVariableControlCount;
-                             ++index) {
-                            if (row.variableControlRetargetIncomingNestedServices[index].Valid()) {
-                                if (!RetireNestedVariableControlService(engine,
-                                        row.variableControlRetargetIncomingNestedServices[index], true)) {
-engine.runtimeRecreateRequired = true;
-                                    return;
-                                }
-                                row.variableControlRetargetIncomingNestedVariableControls[index] = {};
-                                row.variableControlRetargetIncomingNestedVariableControlDecisions[index] = {};
-                                continue;
-                            }
-                                 if (row.variableControlRetargetIncomingNestedVariableControls[index].Valid()) {
-                                     (void)engine.variableControlInstances.Release(
-                                         row.variableControlRetargetIncomingNestedVariableControls[index]);
-                                     row.variableControlRetargetIncomingNestedVariableControls[index] = {};
-                                 }
-                            const auto nestedDecision =
-                                row.variableControlRetargetIncomingNestedVariableControlDecisions[
-                                    index];
-                            if (nestedDecision.Valid()) {
-                                if (!RetireNestedVariableControlDecision(engine, nestedDecision)) {
-engine.runtimeRecreateRequired = true;
-                                    return;
-                                }
-                                row.variableControlRetargetIncomingNestedVariableControlDecisions[
-                                    index] = {};
-                            }
-                        }
-                        row.variableControlRetargetIncomingNestedVariableControlCount = 0;
                         row.variableControlRetargetExitsIssued = true;
                         row.variableControlRetargetMembershipFinalized = true;
                         row.scheduleLeafCount =
@@ -49010,7 +48907,7 @@ engine.runtimeRecreateRequired = true;
                 bool ready = allObserved;
                 for (std::uint32_t index = 0;
                      index < memberCount && ready; ++index) {
-                    if (!engine.variableControlRetargetArms[retargetBase + index].Valid()) continue;
+                    if (!retargetMembers[index].arm.Valid()) continue;
                     ready = observations[index].state ==
                                 harken::ArmState::Armed &&
                             observations[index].armedCompletionSequence != 0;
@@ -49021,11 +48918,10 @@ engine.runtimeRecreateRequired = true;
                     bool acknowledged = true;
                     for (std::uint32_t index = 0; index < memberCount;
                          ++index) {
-                        if (!engine.variableControlRetargetArms[retargetBase + index].Valid()) continue;
+                        if (!retargetMembers[index].arm.Valid()) continue;
                         acknowledged = engine.armGroups.Acknowledge(
                                            row.variableControlRetargetArmGroup,
-                                           engine.variableControlRetargetArms[
-                                               retargetBase + index],
+                                           retargetMembers[index].arm,
                                            observations[index].
                                                armedCompletionSequence) &&
                                        acknowledged;
@@ -49038,10 +48934,9 @@ engine.runtimeRecreateRequired = true;
                     bool published = acknowledged;
                     for (std::uint32_t index = 0;
                          index < memberCount && published; ++index) {
-                        if (!engine.variableControlRetargetArms[retargetBase + index].Valid()) continue;
+                        if (!retargetMembers[index].arm.Valid()) continue;
                         published = engine.timelineArms.Publish(
-                            engine.variableControlRetargetArms[
-                                retargetBase + index]);
+                            retargetMembers[index].arm);
                     }
                     harken::DecisionParticipantRef participant{};
                     participant.kind =
@@ -49075,19 +48970,11 @@ engine.runtimeRecreateRequired = true;
                            decision.audioState ==
                                harken::AudioGroupState::PostStartInvalidated) {
                     if (!row.variableControlRetargetApplied) {
-                        for (std::uint32_t index = 0;
-                             index < memberCount; ++index) {
-                            engine.variableControlWeightSegments[
-                                retargetWeightBase + index] =
-                                engine.variableControlPendingWeightSegments[
-                                    retargetBase + index];
-                        }
                         for (std::uint32_t index = 0; index < row.variableControlChildWeightCount; ++index)
                             row.variableControlChildWeights[index].current = row.variableControlChildWeights[index].pending;
                         row.variableControlRetargetApplied = true;
                         if (!ObserveRetargetNestedControllerEntry(engine,
-                                row.variableControlRetargetIncomingNestedServices.data(),
-                                row.variableControlRetargetIncomingNestedVariableControlCount, decision,
+                                nullptr, 0, decision,
                                 row.variableControlRetargetFrame,
                                 observedAudioSequence, 0)) {
 engine.runtimeRecreateRequired = true;
@@ -49101,8 +48988,7 @@ engine.runtimeRecreateRequired = true;
                     for (std::uint32_t index = 0; index < memberCount;
                          ++index) {
                         const auto member =
-                            engine.variableControlRetargetArms[
-                                retargetBase + index];
+                            retargetMembers[index].arm;
                         if (!member.Valid()) continue;
                         if (!engine.timelineArms.Observe(
                                 member, &observations[index])) {
@@ -49131,15 +49017,14 @@ engine.runtimeRecreateRequired = true;
                              engine.armGroups.BeginRetire(row.variableControlRetargetArmGroup));
                         for (std::uint32_t index = 0;
                              index < memberCount && retiring; ++index) {
-                            if (!engine.variableControlRetargetArms[retargetBase + index].Valid()) continue;
+                            if (!retargetMembers[index].arm.Valid()) continue;
                             std::uint64_t recordedSequence = 0;
                             if (CaptureRecordedMemberTombstone(engine, row.variableControlRetargetDecision,
-                                    row.variableControlRetargetArmGroup, engine.variableControlRetargetArms[retargetBase + index],
+                                    row.variableControlRetargetArmGroup, retargetMembers[index].arm,
                                     &recordedSequence)) continue;
                             retiring = engine.armGroups.Tombstone(
                                 row.variableControlRetargetArmGroup,
-                                engine.variableControlRetargetArms[
-                                    retargetBase + index],
+                                retargetMembers[index].arm,
                                 observations[index].
                                     tombstoneAudioSequence);
                         }
@@ -49151,49 +49036,6 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
                         } else {
                             row.variableControlRetargetCleanupStarted = true;
-                            for (std::uint32_t index = 0;
-                                 index <
-                                 row.variableControlRetargetIncomingChildCount;
-                                 ++index) {
-                                const auto child =
-                                    row.variableControlRetargetIncomingChildren[index];
-                                if (child != 0) {
-                                    RetirePlayableInstanceTree(
-                                        engine, child,
-                                        harken::PlayableTerminalKind::ParentCancellation);
-                                }
-                            }
-                            row.variableControlRetargetIncomingChildCount = 0;
-                            for (std::uint32_t index = 0;
-                                 index < row.variableControlRetargetIncomingNestedVariableControlCount;
-                                 ++index) {
-                                if (row.variableControlRetargetIncomingNestedServices[index].Valid()) {
-                                    if (!RetireNestedVariableControlService(engine, row.variableControlRetargetIncomingNestedServices[index])) {
-engine.runtimeRecreateRequired = true;
-                                        return;
-                                    }
-                                    row.variableControlRetargetIncomingNestedVariableControls[index] = {};
-                                    row.variableControlRetargetIncomingNestedVariableControlDecisions[index] = {};
-                                    continue;
-                                }
-                                 if (row.variableControlRetargetIncomingNestedVariableControls[index].Valid()) {
-                                     (void)engine.variableControlInstances.Release(
-                                         row.variableControlRetargetIncomingNestedVariableControls[index]);
-                                     row.variableControlRetargetIncomingNestedVariableControls[index] = {};
-                                 }
-                                 const auto nestedDecision =
-                                     row.variableControlRetargetIncomingNestedVariableControlDecisions[
-                                         index];
-                                 if (nestedDecision.Valid()) {
-                                     if (!RetireNestedVariableControlDecision(engine, nestedDecision)) {
-engine.runtimeRecreateRequired = true;
-                                         return;
-                                     }
-                                     row.variableControlRetargetIncomingNestedVariableControlDecisions[
-                                         index] = {};
-                                 }
-                            }
-                            row.variableControlRetargetIncomingNestedVariableControlCount = 0;
                         }
                     }
                 }
@@ -50946,7 +50788,7 @@ engine.runtimeRecreateRequired = true;
             const bool membershipTransitionLive =
                 row.variableControlInstance.Valid() &&
                 row.variableControlRetargetDecision.Valid() &&
-                row.variableControlRetargetUnionMemberCount >
+                row.variableControlRetargetMembers.size() >
                     row.variableControlContinuousMemberCount;
             if (membershipTransitionLive && continuousMemberLive &&
                 !allTombstoned) {
@@ -85745,9 +85587,6 @@ bool PrepareScheduledActionStop(
     }
     for (std::uint32_t index = 0; index < row.variableControlNestedVariableControlCount; ++index) {
         if (!captureDecision(row.variableControlNestedDecisions[index])) return false;
-    }
-    for (std::uint32_t index = 0; index < row.variableControlRetargetIncomingNestedVariableControlCount; ++index) {
-        if (!captureDecision(row.variableControlRetargetIncomingNestedVariableControlDecisions[index])) return false;
     }
     for (std::uint32_t index = 0; index < row.variableControlDiscreteRetargetIncomingNestedVariableControlCount; ++index) {
         if (!captureDecision(row.variableControlDiscreteRetargetIncomingNestedVariableControlDecisions[index])) return false;

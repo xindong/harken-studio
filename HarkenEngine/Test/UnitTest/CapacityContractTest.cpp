@@ -763,24 +763,24 @@ TEST(CapacityContract, PlayableStorageUsesSevenCheckedFamilies) {
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
 
     const harken::PlayableStorageLayout layout(resolved);
-    EXPECT_EQ(192u, layout.memberStride);
+    EXPECT_EQ(160u, layout.memberStride);
     EXPECT_EQ(128u, layout.pairedStride);
     EXPECT_EQ(128u, layout.currentEventStride);
     EXPECT_EQ(96u, layout.initialProgramStride);
     EXPECT_EQ(64u, layout.endpointStride);
-    EXPECT_EQ(128u, layout.weightStride);
+    EXPECT_EQ(96u, layout.weightStride);
     EXPECT_EQ(32u, layout.continuousStride);
 
-    EXPECT_EQ(49'152u, layout.memberCount);
+    EXPECT_EQ(40'960u, layout.memberCount);
     EXPECT_EQ(32'768u, layout.pairedCount);
     EXPECT_EQ(32'768u, layout.currentEventCount);
     EXPECT_EQ(24'576u, layout.initialProgramCount);
     EXPECT_EQ(16'384u, layout.endpointCount);
-    EXPECT_EQ(32'768u, layout.weightCount);
+    EXPECT_EQ(24'576u, layout.weightCount);
     EXPECT_EQ(8'192u, layout.continuousCount);
 
-    EXPECT_EQ(64u, layout.PackedDiscreteTransitionOffset(128u));
-    EXPECT_EQ(127u, layout.PackedDiscreteTransitionOffset(191u));
+    EXPECT_EQ(64u, layout.PackedDiscreteTransitionOffset(96u));
+    EXPECT_EQ(127u, layout.PackedDiscreteTransitionOffset(159u));
 
     harken::EngineConfig overflow = resolved;
     overflow.maxKnownScheduleLeaves =
@@ -824,16 +824,10 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
               engine->variableControlWeightSegments.size());
 
     EXPECT_EQ(layout.continuousCount,
-              engine->variableControlPendingWeightSegments.size());
-    EXPECT_EQ(layout.continuousCount,
               engine->variableControlInitialContinuousArms.size());
     EXPECT_EQ(engine->config.maxScheduledTransactions, engine->variableControlRetargetPrograms.Capacity());
     EXPECT_EQ(0u, engine->variableControlRetargetPrograms.ConstructedCount());
     EXPECT_EQ(0u, engine->variableControlRetargetPrograms.RequestedBytes());
-    EXPECT_EQ(layout.continuousCount,
-              engine->variableControlRetargetArms.size());
-    EXPECT_EQ(layout.continuousCount,
-              engine->variableControlRetargetMemberKinds.size());
 
     const std::uint64_t memberBytesPerSlot = sizeof(engine->playableMemberReferences[0]);
     const std::uint64_t removedMemberBytesPerSlot =
@@ -854,10 +848,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     const std::uint64_t weightBytesPerSlot =
         sizeof(engine->variableControlWeightSegments[0]);
     const std::uint64_t continuousBytesPerSlot =
-        sizeof(engine->variableControlPendingWeightSegments[0]) +
-        sizeof(engine->variableControlInitialContinuousArms[0]) +
-        sizeof(engine->variableControlRetargetArms[0]) +
-        sizeof(engine->variableControlRetargetMemberKinds[0]);
+        sizeof(engine->variableControlInitialContinuousArms[0]);
 
     const auto frontierEventBytes = sizeof(harken::FrontierEventBinding) +
         sizeof(harken::VariableWeightControlIdentity) + sizeof(harken::AuthoredStopOperationIdentity);
@@ -881,9 +872,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(sizeof(harken::CapturedTimelineVoiceInstall),
               sizeof(engine->ReadPlayableMember(0).voice));
     EXPECT_EQ(48u, weightBytesPerSlot);
-    EXPECT_EQ(537u + frontierEventBytes + immediateEntryBytes + programFenceBytes +
-                  monitorControlBytes - currentEventBytesPerSlot - initialProgramBytesPerSlot,
-              continuousBytesPerSlot);
+    EXPECT_EQ(sizeof(harken::TimelineArmToken), continuousBytesPerSlot);
 
     const std::uint64_t totalBytes =
         layout.memberCount * memberBytesPerSlot +
@@ -897,11 +886,10 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(layout.weightCount * weightBytesPerSlot,
               StorageBytes(engine->variableControlWeightSegments));
     EXPECT_EQ(layout.continuousCount * continuousBytesPerSlot,
-              StorageBytes(engine->variableControlPendingWeightSegments) +
-                  StorageBytes(
-                      engine->variableControlInitialContinuousArms) +
-                  StorageBytes(engine->variableControlRetargetArms) +
-                  StorageBytes(engine->variableControlRetargetMemberKinds));
+              StorageBytes(engine->variableControlInitialContinuousArms));
+    testing::Test::RecordProperty("removed_prebuilt_continuous_cut_bytes", std::to_string(
+        layout.continuousCount * (sizeof(harken::EnginePlayableMemberReference) +
+            2u * sizeof(harken::WeightSegmentV1) + sizeof(harken::TimelineArmToken) + sizeof(std::uint8_t))));
     testing::Test::RecordProperty("seven_family_capacity_bytes", std::to_string(totalBytes));
     testing::Test::RecordProperty("removed_successor_fact_capacity_bytes",
         std::to_string(layout.endpointCount * removedSuccessorBytesPerSlot));
@@ -1038,31 +1026,10 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
 
 }
 
-TEST(CapacityContract, CompositeActionStorageIncreaseMatchesBothBlockProfiles) {
+TEST(CapacityContract, CompositeActionCapacityGrowthMatchesBothBlockProfiles) {
     VnConfig config = MakeNullConfig();
     harken::EngineConfig resolved;
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    const harken::PlayableStorageLayout layout(resolved);
-
-    constexpr std::uint64_t kPreviousAllFamilyBytesPerSlot =
-        1'577u + 396u + 240u + 176u + 2'100u + 48u + 501u;
-    constexpr std::uint64_t kPreviousSharedStride =
-        2u * 16u + 2u * 32u;
-    const std::uint64_t previousPlayableBytes =
-        resolved.maxPlayableInstances * kPreviousSharedStride *
-        kPreviousAllFamilyBytesPerSlot;
-    const std::uint64_t currentPlayableBytes =
-        layout.memberCount * 1'753u + layout.pairedCount * 396u +
-        layout.currentEventCount * 240u +
-        layout.initialProgramCount * 176u +
-        layout.endpointCount * 2'276u + layout.weightCount * 48u +
-        layout.continuousCount * 501u;
-    ASSERT_EQ(123'813'888u, previousPlayableBytes);
-    ASSERT_EQ(154'296'320u, currentPlayableBytes);
-    const std::uint64_t playableIncrease =
-        currentPlayableBytes - previousPlayableBytes;
-    ASSERT_EQ(30'482'432u, playableIncrease);
-
     constexpr std::uint64_t kPreviousKnownLeaves = 16u;
     constexpr std::uint64_t kPreviousArmsPerGroup = 64u;
     constexpr std::uint64_t kPreviousFrameBatches = 64u;
@@ -1085,12 +1052,10 @@ TEST(CapacityContract, CompositeActionStorageIncreaseMatchesBothBlockProfiles) {
         std::uint32_t blockFrames;
         std::uint64_t expectedPageMembers;
         std::uint64_t expectedFrameBatches;
-        std::uint64_t expectedTotal;
-        double expectedMiB;
     };
     constexpr std::array<Profile, 2> profiles = {{
-        {256u, 4'194'304u, 32'768u, 37'691'392u, 35.9453125},
-        {64u, 16'777'216u, 131'072u, 50'372'608u, 48.0390625},
+        {256u, 4'194'304u, 32'768u},
+        {64u, 16'777'216u, 131'072u},
     }};
 
     for (const Profile& profile : profiles) {
@@ -1114,15 +1079,6 @@ TEST(CapacityContract, CompositeActionStorageIncreaseMatchesBothBlockProfiles) {
         EXPECT_EQ(profile.expectedPageMembers, pageMemberIncrease)
             << "blockFrames=" << profile.blockFrames;
         EXPECT_EQ(profile.expectedFrameBatches, frameBatchIncrease)
-            << "blockFrames=" << profile.blockFrames;
-        const std::uint64_t totalIncrease =
-            playableIncrease + completionLeafIncrease + armGroupIncrease +
-            pageMemberIncrease + frameBatchIncrease;
-        EXPECT_EQ(profile.expectedTotal, totalIncrease)
-            << "blockFrames=" << profile.blockFrames;
-        EXPECT_DOUBLE_EQ(
-            profile.expectedMiB,
-            static_cast<double>(totalIncrease) / (1024.0 * 1024.0))
             << "blockFrames=" << profile.blockFrames;
     }
 }

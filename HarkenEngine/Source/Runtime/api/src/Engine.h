@@ -1700,34 +1700,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         variableControlChildKinds{};
     std::array<std::uint64_t, kMaxKnownScheduleLeaves + 64u>
         variableControlChildEpochs{};
-    // Incoming continuous retarget members retain their authored child
-    // subtree until the transition is promoted or the row is cancelled.
-    std::uint32_t variableControlRetargetIncomingChildCount = 0;
-    std::array<VariableControlInstanceToken, kMaxKnownScheduleLeaves + 64u>
-        variableControlRetargetIncomingNestedVariableControls{};
-    std::array<EnginePlayableServiceReference, kMaxKnownScheduleLeaves + 64u>
-        variableControlRetargetIncomingNestedServices{};
-    std::array<DecisionToken, kMaxKnownScheduleLeaves + 64u>
-        variableControlRetargetIncomingNestedVariableControlDecisions{};
-    std::array<bool, kMaxKnownScheduleLeaves + 64u>
-        variableControlRetargetIncomingNestedVariableControlDecisionContinuous{};
-    std::array<std::uint32_t, kMaxKnownScheduleLeaves + 64u>
-        variableControlRetargetIncomingNestedVariableControlSelectedChildOrdinals{};
-    std::array<std::uint32_t, kMaxKnownScheduleLeaves + 64u>
-        variableControlRetargetIncomingNestedVariableControlContinuationOrdinals{};
-    std::uint32_t variableControlRetargetIncomingNestedVariableControlCount = 0;
-    std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves + 64u>
-        variableControlRetargetIncomingChildren{};
-    std::array<PlayableKind, kMaxKnownScheduleLeaves + 64u>
-        variableControlRetargetIncomingChildKinds{};
-    std::array<std::uint64_t, kMaxKnownScheduleLeaves + 64u>
-        variableControlRetargetIncomingChildEpochs{};
-    std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves>
-        variableControlRetargetIncomingLeafChildren{};
-    std::array<std::uint64_t, kMaxKnownScheduleLeaves>
-        variableControlRetargetIncomingLeafEpochs{};
-    std::array<std::uint32_t, kMaxKnownScheduleLeaves>
-        variableControlRetargetIncomingMemberChildIndices{};
     // Nested child handles remain indexed after the top-level row members so
     // lifecycle cleanup and diagnostics can enumerate the full subtree.
     std::uint32_t variableControlNestedChildCount = 0;
@@ -1767,7 +1739,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint32_t variableControlNestedQueueSuccessorOrdinal = 0;
     std::uint32_t variableControlChildCount = 0;
     std::uint32_t variableControlContinuousMemberOffset = 0;
-    std::uint32_t variableControlContinuousTransitionOffset = 0;
     std::uint32_t variableControlDiscreteTransitionOffset = 0;
     std::uint32_t variableControlContinuousMemberCount = 0;
     std::uint32_t variableControlInitialContinuousMemberCount = 0;
@@ -1906,8 +1877,12 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::array<std::uint64_t, 64> variableControlRetargetLogicalCompletionFrames{};
     std::array<bool, 64> variableControlRetargetLogicalCompleted{};
     std::uint32_t variableControlRetargetLogicalCount = 0;
-    std::uint32_t variableControlRetargetUnionMemberCount = 0;
-    std::uint32_t variableControlRetargetDesiredMemberCount = 0;
+    struct VariableControlRetargetMember {
+        EnginePlayableMemberReference reference{};
+        WeightSegmentV1 pendingWeight{};
+        TimelineArmToken arm{};
+    };
+    std::vector<VariableControlRetargetMember> variableControlRetargetMembers;
     bool variableControlRetargetPrepared = false;
     bool variableControlRetargetDecisionCommitted = false;
     bool variableControlRetargetApplied = false;
@@ -2590,7 +2565,7 @@ struct PlayableStorageLayout {
     explicit PlayableStorageLayout(const EngineConfig& config)
         : knownLeaves(config.maxKnownScheduleLeaves),
           liveRows(config.maxVariableControlLiveRows),
-          memberStride(CheckedStride(2u, knownLeaves, 2u, liveRows)),
+          memberStride(CheckedStride(2u, knownLeaves, 1u, liveRows)),
           pairedStride(CheckedStride(2u, knownLeaves)),
           currentEventStride(std::max(
               CheckedStride(2u, knownLeaves),
@@ -2599,7 +2574,7 @@ struct PlayableStorageLayout {
               CheckedStride(1u, knownLeaves, 1u, liveRows)),
           endpointStride(knownLeaves),
           weightStride(
-              CheckedStride(1u, knownLeaves, 2u, liveRows)),
+              CheckedStride(1u, knownLeaves, 1u, liveRows)),
           continuousStride(liveRows),
           memberCount(CheckedCount(config.maxPlayableInstances,
                                    memberStride)),
@@ -2640,7 +2615,7 @@ struct PlayableStorageLayout {
     std::size_t PackedDiscreteTransitionOffset(
         std::size_t memberOffset) const noexcept {
         return knownLeaves +
-            (memberOffset - (knownLeaves + 2u * liveRows));
+            (memberOffset - (knownLeaves + liveRows));
     }
 
     const std::uint32_t knownLeaves;
@@ -5745,12 +5720,7 @@ public:
           ordinaryRetiringLeaves(resolved.maxPlayableInstances),
           playableMemberReferences(playableStorage.memberCount),
           variableControlWeightSegments(playableStorage.weightCount),
-          variableControlPendingWeightSegments(
-              playableStorage.continuousCount),
           variableControlInitialContinuousArms(
-              playableStorage.continuousCount),
-          variableControlRetargetArms(playableStorage.continuousCount),
-          variableControlRetargetMemberKinds(
               playableStorage.continuousCount),
           queueSelectionChildScratch(resolved.maxQueueChildren),
           queueRemainingScratch(resolved.maxQueueChildren),
@@ -12857,7 +12827,6 @@ public:
     }
     std::vector<EnginePlayableMemberReference> playableMemberReferences;
     std::vector<WeightSegmentV1> variableControlWeightSegments;
-    std::vector<WeightSegmentV1> variableControlPendingWeightSegments;
     std::vector<TimelineArmToken> variableControlInitialContinuousArms;
     StableRowStorage<EngineControlProgramRecord> variableControlRetargetPrograms;
     bool VariableControlRetargetProgramHasReaders(const EngineControlProgramRecord& record) const noexcept {
@@ -12884,8 +12853,6 @@ public:
         record.reserved = true;
         return &record;
     }
-    std::vector<TimelineArmToken> variableControlRetargetArms;
-    std::vector<std::uint8_t> variableControlRetargetMemberKinds;
     std::vector<SelectionChildV1> queueSelectionChildScratch;
     std::vector<std::uint32_t> queueRemainingScratch;
     std::vector<std::uint32_t> queuePermutationScratch;

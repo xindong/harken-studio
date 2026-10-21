@@ -21822,9 +21822,6 @@ static void CheckVariableControlRetargetFromSoundCompletesNestedQueueTree(
                     nestedEntryQuantum = control.variableControlDiscreteRetargetEnteringSchedule.entryAnchorFrame /
                         engine->config.blockFrames + 1u;
                 }
-                if (control.variableControlRetargetIncomingNestedVariableControlCount != 0) {
-                    nestedEntryQuantum = control.variableControlRetargetFrame / engine->config.blockFrames + 1u;
-                }
             }
             if (nestedEntryQuantum > engine->mixer.BlocksRendered()) {
                 for (const auto& child : engine->playableServices) {
@@ -47009,7 +47006,7 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
             EXPECT_GT(row->variableControlRetargetFrame, firstNewPcmFrame);
             if (newPartialRetarget) {
                 const auto memberBase = engine.playableStorage.MemberBase(row->partition.slot);
-                const auto continuousBase = engine.playableStorage.ContinuousBase(row->partition.slot);
+                ASSERT_FALSE(row->variableControlRetargetMembers.empty());
                 std::size_t zeroSlot = 0;
                 ASSERT_TRUE(engine.ResolvePlayableMemberSlot(memberBase + row->variableControlContinuousMemberOffset, &zeroSlot));
                 const auto& zeroSource = engine.ReadPlayableMember(zeroSlot).completion;
@@ -47017,7 +47014,7 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
                     !row->variableControlRetargetSuperseded && !zeroSource.resourcesRetired &&
                     zeroSource.completedSource.kind == harken::SourceTerminalKind::None) {
                     ASSERT_NE(nullptr, engine.voices.Resolve(engine.ReadPlayableMember(zeroSlot).render));
-                    ASSERT_TRUE(engine.variableControlRetargetArms[continuousBase].Valid());
+                    ASSERT_TRUE(row->variableControlRetargetMembers[0].arm.Valid());
                     cutBeforeNaturalEnd = row->variableControlRetargetDecision;
                     cutBeforeNaturalEndFrame = row->variableControlRetargetFrame;
                 }
@@ -47036,8 +47033,9 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
                     !row->variableControlRetargetSuperseded &&
                     (row->variableControlRetargetDecision.slot != cutBeforeNaturalEnd.slot ||
                      row->variableControlRetargetDecision.generation != cutBeforeNaturalEnd.generation)) {
-                    EXPECT_FALSE(engine.variableControlRetargetArms[continuousBase].Valid());
-                    EXPECT_TRUE(engine.variableControlRetargetArms[continuousBase + 2u].Valid());
+                    ASSERT_GT(row->variableControlRetargetMembers.size(), 2u);
+                    EXPECT_FALSE(row->variableControlRetargetMembers[0].arm.Valid());
+                    EXPECT_TRUE(row->variableControlRetargetMembers[2].arm.Valid());
                     sawLiveMemberRetry = true;
                     liveMemberRetryDecision = row->variableControlRetargetDecision;
                 }

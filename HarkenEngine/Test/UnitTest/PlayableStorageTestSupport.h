@@ -43,11 +43,8 @@ inline auto CapturePlayableStorage(const harken::Engine& engine) {
         StorageIdentity(engine.playableMemberRecords),
         StorageIdentity(engine.memberProgramRecords),
         StorageIdentity(engine.variableControlWeightSegments),
-        StorageIdentity(engine.variableControlPendingWeightSegments),
         StorageIdentity(engine.variableControlInitialContinuousArms),
         StorageIdentity(engine.variableControlRetargetPrograms),
-        StorageIdentity(engine.variableControlRetargetArms),
-        StorageIdentity(engine.variableControlRetargetMemberKinds),
         StorageIdentity(engine.queueProgramBanks)};
 }
 
