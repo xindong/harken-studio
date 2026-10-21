@@ -260,6 +260,10 @@ QString localizeUnityText(const QString& text)
         QRegularExpression expression;
         const char* source;
     } installationMessages[] = {
+        {QRegularExpression(QStringLiteral(R"(^Cannot move directory from (.*) to (.*) \(system error ([0-9]+): (.*)\)\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "Cannot move directory from %1 to %2 (system error %3: %4).")},
+        {QRegularExpression(QStringLiteral(R"(^Check file write protection, directory permissions and processes holding files open at (.*)\. If checkout or unlocking is required, do that first, then retry\. The existing SDK was not changed\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "Check file write protection, directory permissions and processes holding files open at %1. If checkout or unlocking is required, do that first, then retry. The existing SDK was not changed.")},
         {QRegularExpression(QStringLiteral(R"(^Check-only mode did not change (.*)\.$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Check-only mode did not change %1.")},
         {QRegularExpression(QStringLiteral(R"(^Ready to remove (\d+) Harken SDK/runtime file\(s\) and preserve (\d+) project-specific file\(s\)\.$)")),
@@ -331,7 +335,9 @@ QString localizeUnityText(const QString& text)
         const auto match = message.expression.match(text);
         if (!match.hasMatch()) continue;
         const QString translated = QCoreApplication::translate("HarkenHub", message.source);
-        return match.lastCapturedIndex() == 3
+        return match.lastCapturedIndex() == 4
+            ? translated.arg(match.captured(1), match.captured(2), match.captured(3), match.captured(4))
+            : match.lastCapturedIndex() == 3
             ? translated.arg(match.captured(1), match.captured(2), match.captured(3))
             : match.lastCapturedIndex() == 2
             ? translated.arg(match.captured(1), match.captured(2))

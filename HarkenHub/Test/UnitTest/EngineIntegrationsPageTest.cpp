@@ -313,6 +313,10 @@ TEST_F(EngineIntegrationsPageTest, UnrealUsesTheSameProjectAndSdkWorkflowInBothL
         writeFile(QDir(source).filePath("Runtime.bin"), "runtime");
         writeFile(QDir(source).filePath("Source/HarkenCore/Include/harken/Harken.h"), "#include <harken/ObjectId.h>\n");
         writeFile(QDir(source).filePath("Source/HarkenCore/Include/harken/ObjectId.h"), "header");
+        writeFile(source + "/Source/HarkenCore/Lib/Win64/HarkenCoreImport.lib", "import");
+        writeFile(source + "/Binaries/ThirdParty/HarkenCore/Win64/HarkenCore.dll", "runtime");
+        writeFile(source + "/Binaries/ThirdParty/HarkenCore/Mac/libHarkenCore.dylib", "runtime");
+        writeFile(source + "/Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so", "runtime");
         page.reset();
         QTranslator translator;
         if (chinese) {
@@ -429,6 +433,10 @@ TEST_F(EngineIntegrationsPageTest, UnrealUsesTheSameProjectAndSdkWorkflowInBothL
         writeFile(QDir(source).filePath("Runtime.bin"), "updated");
         writeFile(QDir(source).filePath("Source/HarkenCore/Include/harken/Harken.h"), "#include <harken/ObjectId.h>\n");
         writeFile(QDir(source).filePath("Source/HarkenCore/Include/harken/ObjectId.h"), "header");
+        writeFile(source + "/Source/HarkenCore/Lib/Win64/HarkenCoreImport.lib", "import");
+        writeFile(source + "/Binaries/ThirdParty/HarkenCore/Win64/HarkenCore.dll", "runtime");
+        writeFile(source + "/Binaries/ThirdParty/HarkenCore/Mac/libHarkenCore.dylib", "runtime");
+        writeFile(source + "/Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so", "runtime");
         writeFile(QDir(installed).filePath("Config/Custom.ini"), "custom");
         selectSdkFolder(source);
         primary()->click();

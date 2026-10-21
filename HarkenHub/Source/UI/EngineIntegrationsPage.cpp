@@ -1910,6 +1910,11 @@ void EngineIntegrationsPage::updateRemovalButtonState(bool recoverLocation)
         }
     }
     sdkIssueLabel_->setText(issue);
+    sdkIssueLabel_->setStyleSheet(observation.dependencyRestricted
+        ? QStringLiteral("color: #9AA4B5;") : QStringLiteral("color: #F0C36A;"));
+    sdkResolutionButton_->setText(observation.dependencyRestricted
+        ? QCoreApplication::translate("HarkenHub", "View Dependencies...")
+        : QCoreApplication::translate("HarkenHub", "View Resolution..."));
     sdkIssueRow_->setVisible(!issue.isEmpty());
     sdkResolutionButton_->setEnabled(!operationRunning_ && !sdkSelection_);
     changeSdkButton_->setToolTip(observation.canChangeSdk ? QString() : observation.remediation);
@@ -1985,7 +1990,9 @@ void EngineIntegrationsPage::showSdkResolution()
     if (inspectionStopped_) return;
     QDialog dialog(this);
     dialog.setObjectName(QStringLiteral("sdkResolutionDialog"));
-    dialog.setWindowTitle(QCoreApplication::translate("HarkenHub", "SDK Resolution"));
+    dialog.setWindowTitle(observation.dependencyRestricted
+        ? QCoreApplication::translate("HarkenHub", "SDK Dependencies")
+        : QCoreApplication::translate("HarkenHub", "SDK Resolution"));
     dialog.resize(680, 430);
     dialog.setMinimumSize(520, 320);
     auto* layout = new QVBoxLayout(&dialog);
@@ -2049,6 +2056,7 @@ void EngineIntegrationsPage::setOperationRunning(bool running)
 
 void EngineIntegrationsPage::setSummaryText(const QString& text)
 {
+    summaryLabel_->setStyleSheet(QString());
     showingIdleSummary_ = text == QCoreApplication::translate(
         "HarkenHub", "No integration check has run.");
     if (showingIdleSummary_)
@@ -2083,6 +2091,7 @@ void EngineIntegrationsPage::updateIdleSummary()
 
 void EngineIntegrationsPage::clearResults()
 {
+    summaryLabel_->setStyleSheet(QString());
     reviewedUnrealPlan_.reset();
     sdkComparison_ = SdkComparison::Unknown;
     const QSignalBlocker blocker(stepsTable_);
@@ -2160,6 +2169,8 @@ void EngineIntegrationsPage::runCheck()
                 ? QCoreApplication::translate("HarkenHub", "Installed SDK verification passed. No files were changed.")
                 : QCoreApplication::translate("HarkenHub", "Installed SDK verification did not pass. Review the results; no files were changed."),
                 QStringLiteral("verify"));
+            if (success)
+                summaryLabel_->setStyleSheet(QStringLiteral("color: #69D391;"));
             return;
         }
         setSummaryText(QCoreApplication::translate("HarkenHub", "Select a Unity project before checking integration."));

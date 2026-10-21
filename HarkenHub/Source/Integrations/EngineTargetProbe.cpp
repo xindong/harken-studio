@@ -231,9 +231,10 @@ EngineTargetObservation EngineTargetProbe::observe(
         result.canRemoveSdk = discovery.sdkReferences.isEmpty();
         result.canMoveSdk = result.canRemoveSdk;
         if (!result.canRemoveSdk) {
-            result.status = hubTranslate(QStringLiteral("SDK dependency present"));
+            result.dependencyRestricted = true;
+            result.status = hubTranslate(QStringLiteral("Installed; move and uninstall restricted by dependencies"));
             result.error = discovery.sdkReferences.join(QLatin1Char('\n'));
-            result.remediation = hubTranslate(QStringLiteral("Change SDK remains available. Before moving or uninstalling, resolve the SDK dependencies in Unity Package Manager and package manifests so Unity cannot load another referenced copy or lose a package reference."));
+            result.remediation = hubTranslate(QStringLiteral("The SDK is installed. Change SDK remains available. Before moving or uninstalling, resolve the SDK dependencies in Unity Package Manager and package manifests so Unity cannot load another referenced copy or lose a package reference."));
         } else {
             const auto dependencies = package.value(QStringLiteral("dependencies")).toObject();
             bool localDependency = false;
@@ -244,7 +245,8 @@ EngineTargetObservation EngineTargetProbe::observe(
                     || VNX::UnityInstallation::containsPath(reference, packageRoot);
             if (localDependency) {
                 result.canMoveSdk = false;
-                result.status = hubTranslate(QStringLiteral("Local package dependency"));
+                result.dependencyRestricted = true;
+                result.status = hubTranslate(QStringLiteral("Installed; move restricted by local dependencies"));
                 result.remediation = hubTranslate(QStringLiteral("Change and uninstall remain available. Before moving the SDK, resolve local file: dependencies that belong to or reference this installation, then check again."));
             }
         }

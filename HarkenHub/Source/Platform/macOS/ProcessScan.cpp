@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <sys/sysctl.h>
 #include <cstring>
+#include <cerrno>
 
 #include <vector>
 
@@ -108,6 +109,11 @@ QString executablePathForPid(qint64 pid)
     if (proc_pidpath(static_cast<pid_t>(pid), buffer, sizeof(buffer)) <= 0)
         return QString();
     return QDir::cleanPath(QString::fromUtf8(buffer));
+}
+
+bool isProcessRunning(qint64 pid)
+{
+    return pid > 0 && (kill(static_cast<pid_t>(pid), 0) == 0 || errno != ESRCH);
 }
 
 bool terminateProcessById(qint64 pid)

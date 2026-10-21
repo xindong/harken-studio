@@ -3,6 +3,7 @@
 #include "Packaging/PackageReader.h"
 #include "Packaging/PackageVerifier.h"
 #include "Platform/PlatformPaths.h"
+#include "Platform/ProcessScan.h"
 #include "Security/BinaryTrustPolicy.h"
 #include "Security/ManifestVerifier.h"
 #include "Security/TrustAnchors.h"
@@ -32,7 +33,7 @@ RepairOutcome fail(const QString& transactionId, const QString& buildId,
                    const QDateTime& now)
 {
     TransactionJournal::append(transactionId, kProduct, buildId,
-                               QStringLiteral("Failed"), failureCode, now);
+                               QStringLiteral("Failed"), failureCode, now, error);
     RepairOutcome outcome;
     outcome.error = error;
     outcome.failureCode = failureCode;
@@ -80,10 +81,25 @@ bool expectedHashesFor(const QString& packagePath,
 
 }
 
-RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now)
+RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
+                                  const QString& transactionId)
+{
+    return run(buildId, now, [](const QString& path) { return runningExecutablesUnder(path); }, transactionId);
+}
+
+RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now,
+                                  const ProcessProbe& probe, const QString& requestedTransactionId)
 {
     RepairOutcome outcome;
     outcome.buildId = buildId;
+
+    const QString transactionId = requestedTransactionId.isEmpty()
+        ? HandoffArea::newTransactionId() : requestedTransactionId;
+    if (!HandoffArea::isValidTransactionId(transactionId)) {
+        outcome.error = QStringLiteral("Invalid repair transaction id");
+        outcome.failureCode = QStringLiteral("InvalidTransactionId");
+        return outcome;
+    }
 
     if (!ManifestVerifier::isSafeFileToken(buildId)) {
         outcome.error = QStringLiteral("Invalid build id");
@@ -98,12 +114,10 @@ RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now)
     QLockFile installLock(InstallExecutor::lockFilePath());
     installLock.setStaleLockTime(0);
     if (!installLock.tryLock(0)) {
-        outcome.error = QStringLiteral("Another install transaction is running");
-        outcome.failureCode = QStringLiteral("InstallBusy");
-        return outcome;
+        return fail(transactionId, buildId, QStringLiteral("InstallBusy"),
+                    QStringLiteral("Another install transaction is running"), now);
     }
 
-    const QString transactionId = HandoffArea::newTransactionId();
     const InstallIndexSnapshot index = InstallIndex::snapshot();
     if (!index.ok)
         return fail(transactionId, buildId, QStringLiteral("IndexCorrupted"),
@@ -155,6 +169,18 @@ RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now)
         outcome.healthState = QStringLiteral("Installed");
         return outcome;
     }
+
+    const auto inUse = [&]() {
+        return probe ? probe(record->installPath) : runningExecutablesUnder(record->installPath);
+    };
+    const auto runningFailure = [&](const QStringList& processes) {
+        return fail(transactionId, buildId, QStringLiteral("VersionInUse"),
+                    QStringLiteral("HarkenStudio is still running from this version: %1")
+                        .arg(processes.join(QStringLiteral(", "))), now);
+    };
+    const QStringList running = inUse();
+    if (!running.isEmpty())
+        return runningFailure(running);
 
     QString healthError;
     InstallIndex::setHealthState(buildId, QStringLiteral("NeedsRepair"),
@@ -217,6 +243,12 @@ RepairOutcome RepairExecutor::run(const QString& buildId, const QDateTime& now)
             return fail(transactionId, buildId,
                         QStringLiteral("BinaryTrustRejected"), trustError, now);
         }
+    }
+
+    const QStringList startedDuringRepair = inUse();
+    if (!startedDuringRepair.isEmpty()) {
+        QDir(replacement).removeRecursively();
+        return runningFailure(startedDuringRepair);
     }
 
     const bool hadPrevious = QFileInfo::exists(record->installPath);

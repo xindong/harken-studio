@@ -74,6 +74,14 @@ QString analysisFailureText(const QString& code, const QString& studioVersion,
         return hubText("The selected Harken Studio does not contain a complete migration path for this project.");
     if (code == QStringLiteral("PROJECT_UPGRADE_SPACE_INSUFFICIENT"))
         return hubText("There is not enough free space to upgrade and protect this project safely.");
+    if (code == QStringLiteral("PROJECT_UPGRADE_FILES_NOT_WRITABLE")) {
+        QString text = hubText("Some files needed for the project upgrade are read-only or not writable.")
+            + QStringLiteral("\n\n")
+            + hubText("Check file write protection and access permissions, then try again. If your version control workflow requires checkout or unlocking, do that first. No project data was changed.");
+        if (analysis.errorCode == code && !analysis.technicalDetails.isEmpty())
+            text += QStringLiteral("\n\n") + hubText("Affected files:\n%1").arg(analysis.technicalDetails);
+        return text;
+    }
     if (code == QStringLiteral("PROJECT_VOLUME_UNSUPPORTED"))
         return hubText("This project is stored on a volume that cannot be upgraded safely.");
     if (code == QStringLiteral("PROJECT_RECOVERY_VOLUME_UNAVAILABLE"))
@@ -169,6 +177,11 @@ public:
                 return;
             if (monitor_.failureCode() == QStringLiteral("PROJECT_OPEN_CANCELLED")) {
                 finish(ProjectOpenOutcome::Result::Declined);
+            } else if (monitor_.failureCode() == QStringLiteral("PROJECT_UPGRADE_FILES_NOT_WRITABLE")) {
+                auto failure = analysis_;
+                failure.errorCode = monitor_.failureCode();
+                failure.technicalDetails = monitor_.failureDetails();
+                fail(analysisFailureText(failure.errorCode, version_.semanticVersion, failure));
             } else if (monitor_.failureCode().isEmpty() && launcher_.stillRunning()) {
                 loseMonitoring(error);
             } else {
@@ -219,6 +232,11 @@ private:
         if (finished_)
             return;
         analysis_ = analysis;
+        if (analysis.reportValid && !analysis.ok
+            && analysis.errorCode == QStringLiteral("PROJECT_UPGRADE_FILES_NOT_WRITABLE")) {
+            fail(analysisFailureText(analysis.errorCode, version_.semanticVersion, analysis));
+            return;
+        }
         LaunchIntent intent = LaunchIntent::DirectOpenOnly;
         QString approval;
         if (analysis.reportValid && analysis.ok) {

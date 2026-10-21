@@ -3,6 +3,7 @@
 #include "Projects/ProjectStore.h"
 #include "Support/StudioProtocolTestUtils.h"
 #include "Transactions/UninstallExecutor.h"
+#include "Transactions/InstallExecutor.h"
 #include "Update/UpdateStateStore.h"
 
 #include <QComboBox>
@@ -12,7 +13,9 @@
 #include <QFrame>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QLockFile>
 #include <QPushButton>
+#include <QProcess>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QSemaphore>
@@ -229,6 +232,34 @@ TEST_F(VersionsPageIssuesTest, MultipleIssuesExposeTheSelectedCauseAndPreserveSe
     EXPECT_FALSE(page.findChild<QPushButton*>("installationRepairButton")->isEnabled());
     page.refresh();
     EXPECT_EQ(selector->currentData().toString(), second.buildId);
+}
+
+TEST_F(VersionsPageIssuesTest, ActiveInstallDoesNotAppearAsDamagedButInterruptedInstallDoes)
+{
+    install("pending", "Installing");
+    QProcess installer;
+    installer.start(QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE),
+                    {QStringLiteral("--hold-lock"), VNH::InstallExecutor::lockFilePath()});
+    ASSERT_TRUE(installer.waitForStarted());
+    const auto stopInstaller = qScopeGuard([&]() {
+        if (installer.state() != QProcess::NotRunning) {
+            installer.kill();
+            installer.waitForFinished();
+        }
+    });
+    ASSERT_TRUE(installer.waitForReadyRead());
+    ASSERT_EQ(installer.readAllStandardOutput().trimmed(), QByteArrayLiteral("locked"));
+    VersionsPage page(&store);
+    page.refresh();
+    EXPECT_TRUE(page.installedVersions().empty());
+    EXPECT_TRUE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
+    installer.kill();
+    ASSERT_TRUE(installer.waitForFinished());
+    ASSERT_TRUE(QFileInfo::exists(VNH::InstallExecutor::lockFilePath()));
+    page.refresh();
+    EXPECT_FALSE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
+    EXPECT_TRUE(page.findChild<QPushButton*>("installationRepairButton")->isEnabled());
+    EXPECT_TRUE(QFileInfo::exists(VNH::InstallExecutor::lockFilePath()));
 }
 
 TEST_F(VersionsPageIssuesTest, RepairMarkerCanBeCheckedWithoutACachedPackage)

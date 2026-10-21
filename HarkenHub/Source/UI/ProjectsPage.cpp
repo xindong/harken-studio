@@ -198,27 +198,15 @@ QString relativeTime(const QString& isoTimestamp)
     if (!then.isValid())
         return isoTimestamp;
 
-    const QDateTime now = QDateTime::currentDateTime();
-    const qint64 seconds = then.secsTo(now);
-    if (seconds < 60)
-        return QCoreApplication::translate("HarkenHub", "Just now");
-    if (seconds < 3600) {
-        const qint64 minutes = seconds / 60;
-        return minutes == 1 ? QCoreApplication::translate("HarkenHub", "1 minute ago")
-                            : QCoreApplication::translate("HarkenHub", "%1 minutes ago").arg(minutes);
-    }
-    if (then.date() == now.date()) {
-        const qint64 hours = seconds / 3600;
-        return hours == 1 ? QCoreApplication::translate("HarkenHub", "1 hour ago")
-                          : QCoreApplication::translate("HarkenHub", "%1 hours ago").arg(hours);
-    }
-    if (then.date() == now.date().addDays(-1))
-        return QCoreApplication::translate("HarkenHub", "Yesterday");
-
-    const qint64 days = then.date().daysTo(now.date());
-    if (days < 30)
-        return QCoreApplication::translate("HarkenHub", "%1 days ago").arg(days);
-    return then.date().toString(QStringLiteral("yyyy-MM-dd"));
+    const qint64 totalMinutes = qMax<qint64>(0, then.secsTo(QDateTime::currentDateTimeUtc()) / 60);
+    const qint64 days = totalMinutes / (24 * 60);
+    const qint64 hours = totalMinutes / 60 % 24;
+    const qint64 minutes = totalMinutes % 60;
+    if (days > 0)
+        return QCoreApplication::translate("HarkenHub", "%1d %2h %3m ago")
+            .arg(days).arg(hours).arg(minutes);
+    return QCoreApplication::translate("HarkenHub", "%1h %2m ago")
+        .arg(hours).arg(minutes);
 }
 
 QWidget* makeActionCell(

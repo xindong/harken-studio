@@ -12,6 +12,7 @@
 #include "Projects/ProjectStore.h"
 #include "Security/TrustAnchors.h"
 #include "Transactions/HandoffArea.h"
+#include "Transactions/InstallExecutor.h"
 #include "Transactions/InstallPackageCache.h"
 #include "Transactions/TransactionJournal.h"
 #include "Transactions/TransactionDiagnostics.h"
@@ -424,9 +425,11 @@ void VersionsPage::refresh()
 
     const InstallIndexSnapshot index = InstallIndex::snapshot();
     std::vector<InstalledVersionRecord> broken;
+    const bool installInProgress = InstallExecutor::isTransactionActive();
     if (index.ok) {
         for (const auto& record : index.records) {
             if (record.healthState == QStringLiteral("NeedsRepair") ||
+                (record.healthState == QStringLiteral("Installing") && !installInProgress) ||
                 (record.healthState == QStringLiteral("Installed") &&
                  !validBuildIds.contains(record.buildId))) {
                 broken.push_back(record);
@@ -699,7 +702,9 @@ void VersionsPage::updateSelectedIssue()
     QString reason;
     const auto issue = VersionScanner::inspect(*record, nullptr, &reason);
     if (issue == InstallationIssue::None)
-        reason = QCoreApplication::translate("HarkenHub", "The previous operation requires an integrity check.");
+        reason = record->healthState == QStringLiteral("Installing")
+            ? QCoreApplication::translate("HarkenHub", "Installation was interrupted. Choose Repair to verify and finish recovery. Administrator permission may be required.")
+            : QCoreApplication::translate("HarkenHub", "The previous operation requires an integrity check.");
     const bool sourceAvailable = QFileInfo(InstallPackageCache::packagePath(buildId)).isFile()
         && QFileInfo(InstallPackageCache::manifestPath(buildId)).isFile();
     const bool repairable = issue != InstallationIssue::IdentityMismatch
@@ -1393,7 +1398,8 @@ void VersionsPage::beginRepair(const QString& buildId)
     busyBar_->show();
     installStatusLabel_->setText(QCoreApplication::translate("HarkenHub", "Repairing..."));
 
-    const ElevationLaunchResult launch = launchElevatedRepair(buildId);
+    activeTransactionId_ = HandoffArea::newTransactionId();
+    const ElevationLaunchResult launch = launchElevatedRepair(buildId, activeTransactionId_);
     if (!launch.ok) {
         if (!launch.canceled)
             QMessageBox::warning(
@@ -1452,7 +1458,7 @@ void VersionsPage::onElevatedPoll()
                                : mode == ElevatedMode::Uninstall
                                      ? QCoreApplication::translate("HarkenHub", "Uninstall failed")
                                      : QCoreApplication::translate("HarkenHub", "Repair failed"));
-        QString failure = mode == ElevatedMode::Install
+        QString failure = (mode == ElevatedMode::Install || mode == ElevatedMode::Repair)
             ? TransactionDiagnostics::failureMessage(activeTransactionId_, exitCode) : QString();
         if (failure.isEmpty())
             failure = QCoreApplication::translate("HarkenHub",

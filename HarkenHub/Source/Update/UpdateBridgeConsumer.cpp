@@ -205,7 +205,7 @@ void consumeHubEntry(const UpdateQueueEntry& entry,
                       stageTimer.restart(), QString());
 
     StagingCleanup staging;
-    staging.dir = machineDataDir() + QStringLiteral("/staging/") +
+    staging.dir = machineDataDir() + QStringLiteral("/hub-update-staging/") +
                   transactionId;
     if (QDir(staging.dir).exists())
         QDir(staging.dir).removeRecursively();

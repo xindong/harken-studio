@@ -25,6 +25,7 @@ enum class ProjectIssue
     ProjectRequiresNewerStudio,
     ProjectSchemaUnsupported,
     InvalidPlaybackReference,
+    ProjectUpgradeFilesNotWritable,
     InternalFailure,
 };
 

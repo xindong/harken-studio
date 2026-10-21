@@ -536,9 +536,14 @@ int main(int argc, char* argv[])
         }
         if (qstrcmp(argv[i], "--repair-version") == 0) {
             QCoreApplication app(argc, argv);
+            QString transactionId;
+            for (int j = 1; j + 1 < argc; ++j) {
+                if (qstrcmp(argv[j], "--transaction-id") == 0)
+                    transactionId = QString::fromLatin1(argv[j + 1]);
+            }
             const auto outcome = VNH::RepairExecutor::run(
                 QString::fromLatin1(argv[i + 1]),
-                QDateTime::currentDateTimeUtc());
+                QDateTime::currentDateTimeUtc(), transactionId);
             if (!outcome.ok) {
                 qCritical().noquote() << "Repair failed:"
                                       << outcome.failureCode << outcome.error;
@@ -717,6 +722,8 @@ int main(int argc, char* argv[])
 
             const auto reclaim = VNH::TransactionReclaimer::reclaimAtStartup(
                 QDateTime::currentDateTimeUtc());
+            for (const QString& error : reclaim.installRecoveryErrors)
+                qWarning().noquote() << "Install recovery failed:" << error;
             for (const QString& transactionId : reclaim.reclaimedTransactionIds)
                 qInfo().noquote()
                     << "Reclaimed unfinished install transaction"
@@ -1007,6 +1014,8 @@ int main(int argc, char* argv[])
 
     const auto reclaim =
         VNH::TransactionReclaimer::reclaimAtStartup(QDateTime::currentDateTimeUtc());
+    for (const QString& error : reclaim.installRecoveryErrors)
+        qWarning().noquote() << "Install recovery failed:" << error;
     for (const QString& transactionId : reclaim.reclaimedTransactionIds)
         qInfo().noquote() << "Reclaimed unfinished install transaction"
                           << transactionId;

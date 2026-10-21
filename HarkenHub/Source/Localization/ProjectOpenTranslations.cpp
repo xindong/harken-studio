@@ -3,6 +3,9 @@
 namespace {
 
 [[maybe_unused]] constexpr const char* kProjectOpenTranslations[] = {
+    QT_TRANSLATE_NOOP("HarkenHub", "Some files needed for the project upgrade are read-only or not writable."),
+    QT_TRANSLATE_NOOP("HarkenHub", "Check file write protection and access permissions, then try again. If your version control workflow requires checkout or unlocking, do that first. No project data was changed."),
+    QT_TRANSLATE_NOOP("HarkenHub", "Affected files:\n%1"),
     QT_TRANSLATE_NOOP("HarkenHub", "A safe recovery location is not available for this project upgrade."),
     QT_TRANSLATE_NOOP("HarkenHub", "Cancel"),
     QT_TRANSLATE_NOOP("HarkenHub", "Cannot open the launch progress channel."),

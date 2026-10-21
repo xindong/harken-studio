@@ -19,7 +19,7 @@ bool startInstallerDetached(const QString& program,
 ElevationLaunchResult launchElevatedInstall(const QString& transactionId,
                                             bool explicitInstall = false);
 ElevationLaunchResult launchElevatedUninstall(const QString& buildId);
-ElevationLaunchResult launchElevatedRepair(const QString& buildId);
+ElevationLaunchResult launchElevatedRepair(const QString& buildId, const QString& transactionId);
 bool pollElevatedInstall(void* processHandle, int* exitCode);
 void releaseElevatedInstall(void* processHandle);
 
