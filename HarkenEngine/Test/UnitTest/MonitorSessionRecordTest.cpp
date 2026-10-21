@@ -729,6 +729,9 @@ TEST(MonitorTypedRecording, SelectionPoolLossIsFencedBeforeStopAndCannotProduceA
     VnMonitorCaptureControlStatus lease{};
     ASSERT_EQ(VN_OK, Acquire(owner, &lease));
     harken::VoiceLedger ledger(1, 1, 1);
+    harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
+    ASSERT_TRUE(ledger.PrepareMonitorSelectionBacking(
+        static_cast<std::uint32_t>(ledger.MonitorSelectionCapacity()), &monitorBacking));
     VnVoiceHandle voice = 0;
     std::uint32_t slot = 0;
     ASSERT_TRUE(ledger.Acquire(&voice, &slot));

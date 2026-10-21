@@ -326,6 +326,46 @@ public:
         MonitorLifecycleFacts* out) const noexcept;
     // Logic-thread diagnostic aliases retain frozen values, never playback resources.
     // The shared storage can outlive the Ledger during Engine member destruction.
+    class MonitorSelection;
+    class MonitorSelectionBacking;
+    class MonitorSelectionUse {
+    public:
+        MonitorSelectionUse() noexcept = default;
+        MonitorSelectionUse(MonitorSelectionUse&&) noexcept = default;
+        MonitorSelectionUse(const MonitorSelectionUse&) = delete;
+        MonitorSelectionUse& operator=(const MonitorSelectionUse&) = delete;
+    private:
+        friend class MonitorSelectionBacking;
+        MonitorSelectionUse(std::shared_ptr<MonitorSelectionStorage> storage,
+            StableStoragePreparedUse&& use) noexcept
+            : storage_(std::move(storage)), use_(std::move(use)) {}
+        std::shared_ptr<MonitorSelectionStorage> storage_;
+        StableStoragePreparedUse use_;
+    };
+    class MonitorSelectionBacking {
+    public:
+        MonitorSelectionBacking() noexcept = default;
+        MonitorSelectionBacking(MonitorSelectionBacking&& other) noexcept { *this = std::move(other); }
+        MonitorSelectionBacking& operator=(MonitorSelectionBacking&& other) noexcept {
+            if (this != &other) {
+                Release();
+                storage_ = std::move(other.storage_);
+                rows_ = std::move(other.rows_);
+            }
+            return *this;
+        }
+        MonitorSelectionBacking(const MonitorSelectionBacking&) = delete;
+        MonitorSelectionBacking& operator=(const MonitorSelectionBacking&) = delete;
+        bool Valid() const noexcept { return rows_.Valid(); }
+        void Release() noexcept { rows_.Release(); storage_.reset(); }
+        MonitorSelectionUse Use() const noexcept { return {storage_, rows_.Use()}; }
+    private:
+        friend class VoiceLedger;
+        friend class MonitorSelection;
+        bool Prepare(const std::shared_ptr<MonitorSelectionStorage>& storage, std::uint32_t count) noexcept;
+        std::shared_ptr<MonitorSelectionStorage> storage_;
+        StableStoragePreparation rows_;
+    };
     class MonitorSelection {
     public:
         MonitorSelection() noexcept = default;
@@ -338,6 +378,7 @@ public:
         MonitorControlCause Cause() const noexcept;
         void SetCause(const MonitorControlCause& cause) noexcept;
         bool CaptureFacts(MonitorLifecycleFacts* out, std::uint32_t* generation = nullptr) const noexcept;
+        bool PrepareMonitorSelectionBacking(std::uint32_t count, MonitorSelectionBacking* out) const noexcept;
     private:
         friend class VoiceLedger;
         void Reset() noexcept;
@@ -346,12 +387,15 @@ public:
         std::uint32_t generation_ = 0;
     };
     bool CaptureMonitorSelection(std::uint32_t ledgerSlot, VnVoiceHandle render,
-        MonitorSelection* out) const noexcept;
+        MonitorSelection* out, const MonitorControlCause* cause = nullptr) const noexcept;
     void PublishMonitorSelection(MonitorSelection& selection,
         const MonitorControlCause* cause = nullptr) noexcept;
     void RecordMonitorSelection(VnVoiceHandle render, const MonitorControlCause& cause) noexcept;
     std::size_t MonitorSelectionCapacity() const noexcept;
     std::size_t MonitorSelectionStorageBytes() const noexcept;
+    bool PrepareMonitorSelectionBacking(std::uint32_t count, MonitorSelectionBacking* out) noexcept;
+    bool MonitorSelectionPreparedUseActive() const noexcept;
+    void SetMonitorSelectionCommitPageLimitForTests(std::size_t pages) noexcept;
     void RecordMonitorCancellation(VnVoiceHandle render, const MonitorControlCause& cause) noexcept;
     MonitorVoiceControlBinding ArmMonitorControl(std::uint32_t ledgerSlot,
         VnVoiceHandle render) noexcept;

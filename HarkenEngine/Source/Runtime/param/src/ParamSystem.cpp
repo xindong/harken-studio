@@ -54,21 +54,23 @@ std::uint32_t ResolveBindingCapacity(const EngineConfig& config) {
 } // namespace
 
 ParamSystem::ParamSystem(const EngineConfig& config)
-    : m_voiceStates(config.voiceCapacity.Render()),
-      m_retiringTargets(config.maxVariableSliceTargetsTotal),
+    : ParamSystem(config, config.voiceCapacity.Render()) {}
+
+ParamSystem::ParamSystem(const EngineConfig& config, std::uint32_t initialVoiceRows)
+    : m_retiringTargets(config.maxVariableSliceTargetsTotal),
       m_sampleRate(config.mixRate.SampleRate()),
       m_variables(kMaxVariables),
       m_preparationCapacity(ResolvePreparationCapacity(config)),
       m_meterProbeContributions(config.maxBindingAttachments),
       m_instanceSlotsPerVoice(ResolveInstanceSlots(config)) {
-    if (!m_bindings.Reserve(ResolveBindingCapacity(config))) throw std::bad_alloc{};
+    if (!m_bindings.Reserve(ResolveBindingCapacity(config)) ||
+        !m_voiceStates.Reserve(config.voiceCapacity.Render()) ||
+        !PrepareVoiceStorage(initialVoiceRows)) throw std::bad_alloc{};
     m_projectionVariables.resize(m_variables.size());
-    m_projectionVoices.resize(m_voiceStates.size());
 }
 
 ParamSystem::ParamSystem(const ParamSystem& other)
-    : m_voiceStates(other.m_voiceStates),
-      m_retiringTargets(other.m_retiringTargets),
+    : m_retiringTargets(other.m_retiringTargets),
       m_sampleRate(other.m_sampleRate),
       m_variables(other.m_variables),
       m_preparationCapacity(other.m_preparationCapacity),
@@ -79,6 +81,7 @@ ParamSystem::ParamSystem(const ParamSystem& other)
       m_projectionActive(other.m_projectionActive),
       m_projectionVariableCount(other.m_projectionVariableCount),
       m_projectionBindingCount(other.m_projectionBindingCount),
+      m_projectionVoiceCount(other.m_projectionVoiceCount),
       m_projectionForcedRebuilds(other.m_projectionForcedRebuilds),
       m_projectionDirtyTargetCount(other.m_projectionDirtyTargetCount),
       m_projectionPendingInputMarks(other.m_projectionPendingInputMarks),
@@ -95,8 +98,11 @@ ParamSystem::ParamSystem(const ParamSystem& other)
       m_pendingInputMarks(other.m_pendingInputMarks),
       m_capacityPublisher(other.m_capacityPublisher),
       m_capacityLog(other.m_capacityLog) {
-    if (!m_bindings.Reserve(other.m_bindings.Capacity()) ||
+    if (!m_voiceStates.Reserve(other.m_voiceStates.Capacity()) ||
+        !m_voiceStates.ConstructThrough(other.m_voiceStates.size()) ||
+        !m_bindings.Reserve(other.m_bindings.Capacity()) ||
         !m_bindings.ConstructThrough(other.m_bindings.size())) throw std::bad_alloc{};
+    std::copy(other.m_voiceStates.begin(), other.m_voiceStates.end(), m_voiceStates.begin());
     std::copy(other.m_bindings.begin(), other.m_bindings.end(), m_bindings.begin());
     // Private copies evaluate their own facts without borrowing the live index.
     for (auto& binding : m_bindings) {
@@ -106,6 +112,17 @@ ParamSystem::ParamSystem(const ParamSystem& other)
         binding.ownsPreparation = false;
         binding.nextNeutralization = nullptr;
     }
+}
+
+bool ParamSystem::PrepareVoiceStorage(std::uint32_t count) noexcept {
+    if (count <= m_voiceStates.size()) return true;
+    if (m_projectionActive) return false;
+    return m_voiceStates.ConstructThrough(count, [this](std::uint32_t required) noexcept {
+        try {
+            if (m_projectionVoices.size() < required) m_projectionVoices.resize(required);
+            return true;
+        } catch (...) { return false; }
+    });
 }
 
 ParamSystem::PreparedBindingToken::~PreparedBindingToken() {
@@ -352,6 +369,7 @@ bool ParamSystem::BeginVariableProjection() noexcept {
     std::copy(m_variables.begin(), m_variables.end(), m_projectionVariables.begin());
     m_projectionVariableCount = m_variableCount;
     m_projectionBindingCount = m_bindingCount;
+    m_projectionVoiceCount = m_voiceStates.size();
     m_projectionForcedRebuilds = m_forcedRebuilds;
     m_projectionDirtyTargetCount = m_dirtyTargetCount;
     m_projectionPendingInputMarks = m_pendingInputMarks;
@@ -379,6 +397,7 @@ bool ParamSystem::BeginVariableProjection() noexcept {
 void ParamSystem::RestoreVariableProjection() noexcept {
     if (!m_projectionActive) return;
     assert(m_bindingCount == m_projectionBindingCount);
+    assert(m_voiceStates.size() == m_projectionVoiceCount);
     std::copy(m_projectionVariables.begin(), m_projectionVariables.end(), m_variables.begin());
     m_variableCount = m_projectionVariableCount;
     for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
@@ -392,7 +411,7 @@ void ParamSystem::RestoreVariableProjection() noexcept {
         b.definitionChanged = saved.definitionChanged;
         b.neutralizePending = saved.neutralizePending;
     }
-    for (std::size_t i = 0; i < m_voiceStates.size(); ++i) {
+    for (std::uint32_t i = 0; i < m_projectionVoiceCount; ++i) {
         auto& voice = m_voiceStates[i];
         const auto& saved = m_projectionVoices[i];
         assert(voice.handle == saved.handle);

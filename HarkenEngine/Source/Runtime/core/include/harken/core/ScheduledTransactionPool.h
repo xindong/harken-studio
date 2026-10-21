@@ -1390,6 +1390,7 @@ public:
     }
     std::uint64_t CurrentSliceStorageBytes() const noexcept;
     std::size_t NativeEventRowStorageBytes() const noexcept { return nativeEventRows_.RequestedBytes(); }
+    std::size_t NativeEventBackingCount() const noexcept { return nativeEventRows_.ConstructedCount(); }
     std::size_t NativeEventRowReservedBytes() const noexcept { return nativeEventRows_.ReservedBytes(); }
     std::size_t NativeEventRowCommittedBytes() const noexcept { return nativeEventRows_.CommittedBytes(); }
     std::size_t NativeGroupRowStorageBytes() const noexcept { return nativeGroupRows_.RequestedBytes(); }

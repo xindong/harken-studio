@@ -2745,6 +2745,11 @@ TEST(TimelineExecutor,
 TEST(TimelineExecutor, FrozenPageKeepsProgramGenerationLiveUntilReclaim) {
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(), 0, 1));
+    harken::TimelineArmTable arms(1);
+    Sink sink;
+    harken::TimelineExecutor executor;
+    ASSERT_TRUE(executor.Reset(256, 16, &pool, &arms, &sink));
+    EXPECT_EQ(0u, executor.EventStorageBytesForTest());
     harken::ScheduledEventInput event{};
     event.executeFrame = 1;
     harken::TransactionRequest request{};
@@ -2753,8 +2758,14 @@ TEST(TimelineExecutor, FrozenPageKeepsProgramGenerationLiveUntilReclaim) {
     request.program = {7, nullptr};
     request.events = &event;
     request.eventCount = 1;
+    executor.SetDecodedCommitPageLimitForTest(0);
+    EXPECT_NE(pool.Reserve(request, harken::PrePublishLatePolicy::Refuse).status,
+              harken::ReserveStatus::Committed);
+    EXPECT_FALSE(pool.HasLiveProgramGeneration(7));
+    executor.SetDecodedCommitPageLimitForTest(SIZE_MAX);
     ASSERT_EQ(pool.Reserve(request, harken::PrePublishLatePolicy::Refuse).status,
               harken::ReserveStatus::Committed);
+    EXPECT_GT(executor.EventStorageBytesForTest(), 0u);
     pool.Publish(256);
     EXPECT_TRUE(pool.HasLiveProgramGeneration(7));
     pool.ConsumerFrontier().store(1);
@@ -2939,6 +2950,7 @@ TEST(TimelineExecutor, BeforeEndHookGetsActualConsumedPrefixAfterNormalTransacti
         sink.collectPageLimit = expectedPages;
         harken::TimelineExecutor executor;
         ASSERT_TRUE(executor.Reset(256, 16, &pool, &arms, &sink));
+        const auto storageBytes = executor.EventStorageBytesForTest();
         const harken::TimelineExecutionPlan plan{0, 2, harken::TimelinePagePrefixStopReason::ReachedCurrentQuantum};
         const auto result = executor.ExecuteQuantum(1, plan);
         EXPECT_EQ(expectedPages, result.consumedPageCount);
@@ -2946,6 +2958,7 @@ TEST(TimelineExecutor, BeforeEndHookGetsActualConsumedPrefixAfterNormalTransacti
         EXPECT_EQ(1u, sink.beforeEndCount);
         EXPECT_TRUE(sink.hookPrecededEnd);
         EXPECT_EQ(expectedPages != 0, sink.transactionsAppliedBeforeEnd);
+        EXPECT_EQ(storageBytes, executor.EventStorageBytesForTest());
     }
 }
 

@@ -16,14 +16,24 @@ struct VoiceLedger::MonitorSelectionStorage {
         std::uint32_t ledgerSlot = UINT32_MAX;
         std::uint32_t ledgerGeneration = 0;
     };
-    static std::size_t CheckedCapacity(std::size_t capacity) {
+    static std::uint32_t CheckedCapacity(std::size_t capacity) {
         if (capacity > UINT32_MAX) throw std::length_error("monitor selection capacity overflow");
-        return capacity;
+        return static_cast<std::uint32_t>(capacity);
     }
-    explicit MonitorSelectionStorage(std::size_t capacity) : slots(CheckedCapacity(capacity)) {
-        for (std::size_t i = 0; i < slots.size(); ++i)
-            slots[i].next = i + 1 < slots.size() ? static_cast<std::uint32_t>(i + 1) : UINT32_MAX;
-        free = slots.empty() ? UINT32_MAX : 0;
+    explicit MonitorSelectionStorage(std::size_t capacity) {
+        if (!slots.Reserve(CheckedCapacity(capacity))) throw std::bad_alloc();
+    }
+    bool Prepare(std::uint32_t count, StableStoragePreparation* out) noexcept {
+        const auto previous = slots.size();
+        if (!slots.PrepareBacking(count, previous - freeCount, out)) return false;
+        const auto constructed = slots.size();
+        if (previous != constructed) {
+            for (auto i = previous; i < constructed; ++i)
+                slots[i].next = i + 1 < constructed ? i + 1 : free;
+            free = previous;
+            freeCount += constructed - previous;
+        }
+        return true;
     }
     Slot* Resolve(std::uint32_t slot, std::uint32_t generation) noexcept {
         if (slot >= slots.size()) return nullptr;
@@ -38,10 +48,25 @@ struct VoiceLedger::MonitorSelectionStorage {
         ++slot.generation;
         slot.next = free;
         free = index;
+        ++freeCount;
     }
-    std::vector<Slot> slots;
+    StableRowStorage<Slot> slots;
     std::uint32_t free = UINT32_MAX;
+    std::uint32_t freeCount = 0;
 };
+
+bool VoiceLedger::MonitorSelectionBacking::Prepare(
+    const std::shared_ptr<MonitorSelectionStorage>& storage, std::uint32_t count) noexcept {
+    if (Valid() || storage == nullptr || !storage->Prepare(count, &rows_)) return false;
+    storage_ = storage;
+    return true;
+}
+
+bool VoiceLedger::MonitorSelection::PrepareMonitorSelectionBacking(
+    std::uint32_t count, MonitorSelectionBacking* out) const noexcept {
+    return out != nullptr && storage_ != nullptr && storage_->Resolve(slot_, generation_) != nullptr &&
+        out->Prepare(storage_, count);
+}
 
 VoiceLedger::MonitorSelection::~MonitorSelection() { Reset(); }
 
@@ -112,6 +137,7 @@ void VoiceLedger::MonitorSelection::SetCause(const MonitorControlCause& cause) n
         const auto index = storage_->free;
         auto& replacement = storage_->slots[index];
         storage_->free = replacement.next;
+        --storage_->freeCount;
         replacement.facts = slot->facts;
         replacement.ledgerSlot = slot->ledgerSlot;
         replacement.ledgerGeneration = slot->ledgerGeneration;
@@ -141,9 +167,21 @@ bool VoiceLedger::MonitorSelection::CaptureFacts(MonitorLifecycleFacts* out,
     return true;
 }
 
-std::size_t VoiceLedger::MonitorSelectionCapacity() const noexcept { return m_monitorSelections->slots.size(); }
+std::size_t VoiceLedger::MonitorSelectionCapacity() const noexcept { return m_monitorSelections->slots.Capacity(); }
 std::size_t VoiceLedger::MonitorSelectionStorageBytes() const noexcept {
-    return m_monitorSelections->slots.size() * sizeof(MonitorSelectionStorage::Slot);
+    return m_monitorSelections->slots.RequestedBytes();
+}
+
+bool VoiceLedger::PrepareMonitorSelectionBacking(std::uint32_t count, MonitorSelectionBacking* out) noexcept {
+    return out != nullptr && out->Prepare(m_monitorSelections, count);
+}
+
+bool VoiceLedger::MonitorSelectionPreparedUseActive() const noexcept {
+    return m_monitorSelections->slots.PreparedUseActive();
+}
+
+void VoiceLedger::SetMonitorSelectionCommitPageLimitForTests(std::size_t pages) noexcept {
+    m_monitorSelections->slots.SetCommitPageLimitForTests(pages);
 }
 
 VoiceLedger::VoiceLedger(std::uint32_t capacity,
@@ -455,7 +493,7 @@ void VoiceLedger::RecordMonitorSelection(VnVoiceHandle render, const MonitorCont
 }
 
 bool VoiceLedger::CaptureMonitorSelection(std::uint32_t ledgerSlot, VnVoiceHandle render,
-    MonitorSelection* out) const noexcept {
+    MonitorSelection* out, const MonitorControlCause* cause) const noexcept {
     if (out == nullptr) return false;
     *out = {};
     if (ledgerSlot >= m_entries.ConstructedCount() || render == 0) return false;
@@ -472,11 +510,13 @@ bool VoiceLedger::CaptureMonitorSelection(std::uint32_t ledgerSlot, VnVoiceHandl
     const auto index = storage.free;
     auto& slot = storage.slots[index];
     storage.free = slot.next;
+    --storage.freeCount;
     slot.references = 1;
     slot.ledgerSlot = ledgerSlot;
     slot.ledgerGeneration = entry.generation;
     slot.facts = {};
     CaptureMonitorFacts(entry, slot.facts);
+    if (cause != nullptr) slot.facts.selectionCause = *cause;
     slot.facts.renderActivation = render;
     slot.facts.reasonKnown = false;
     out->storage_ = m_monitorSelections;

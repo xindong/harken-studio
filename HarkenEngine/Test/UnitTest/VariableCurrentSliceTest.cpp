@@ -110,7 +110,13 @@ struct VariableServiceTestAccess {
         return service.outcomes_.data();
     }
     static std::array<std::size_t, 3> OutcomeCapacity(const VariableServiceV1& service) {
-        return {service.outcomes_.size(), service.outcomes_.capacity(), service.freeSlots_.size()};
+        return {service.outcomeCount_, service.outcomes_.Capacity(), service.freeSlots_.size()};
+    }
+    static std::size_t OutcomeStorageBytes(const VariableServiceV1& service) {
+        return service.outcomes_.RequestedBytes();
+    }
+    static void LimitOutcomePages(VariableServiceV1& service, std::size_t pages) {
+        service.outcomes_.SetCommitPageLimitForTests(pages);
     }
     static void SeedWorld(VariableServiceV1& service, WorldGeneration world) {
         service.worldGeneration_ = world;
@@ -5372,6 +5378,14 @@ TEST(VariableCurrentSlice, PublicationTerminatesFullRevisionBudgetWithBoundedOut
     InstallVariable(&e);
     const auto firstTicket = e.logicCommits.IssuedCount() + 1;
     const void* storage = Access::OutcomeStorage(e.variables);
+    EXPECT_EQ(0u, Access::OutcomeStorageBytes(e.variables));
+    Access::LimitOutcomePages(e.variables, 0);
+    const auto refused = harken::ObserveVariableCallAt(e.variables.CurrentWorldGeneration(),
+        e.variables.CurrentTransportEpoch(), kBlockFrames, 0, 0);
+    EXPECT_EQ(VN_BACKPRESSURE, e.variables.AcceptGlobal(kVariable, 0.5f, refused,
+        e.params, e.bindings, e.busTargets).result);
+    EXPECT_EQ(0u, e.variables.PendingCount());
+    Access::LimitOutcomePages(e.variables, SIZE_MAX);
     const auto capacity = e.variables.PendingCapacity();
     const auto physicalCapacity = e.variables.RevisionStorageCapacity();
     std::vector<bool> seen(capacity, false);
@@ -5384,12 +5398,15 @@ TEST(VariableCurrentSlice, PublicationTerminatesFullRevisionBudgetWithBoundedOut
             e.params, e.bindings, e.busTargets).result);
     }
     ASSERT_EQ((std::array<std::size_t, 3>{0, physicalCapacity, 8}), Access::OutcomeCapacity(e.variables));
+    const auto bytes = Access::OutcomeStorageBytes(e.variables);
+    EXPECT_GT(bytes, 0u);
     const auto definition = *e.variables.Definition(kVariable);
     const auto world = e.variables.CurrentWorldGeneration();
     harken::VariableServiceV1::PreparedPackDefinitions token;
     ASSERT_EQ(VN_OK, e.variables.PreparePackDefinitions(&definition, 1,
         harken::PackVariablePublicationReason::InitPublication, 987, &token));
     e.variables.CommitPreparedPackDefinitions(&token);
+    EXPECT_EQ(bytes, Access::OutcomeStorageBytes(e.variables));
     EXPECT_EQ(storage, Access::OutcomeStorage(e.variables));
     EXPECT_EQ((std::array<std::size_t, 3>{capacity, physicalCapacity, 8}), Access::OutcomeCapacity(e.variables));
     EXPECT_EQ(capacity, e.variables.TerminationCount());
@@ -8427,6 +8444,7 @@ TEST(VariableCurrentSlice, CapturedReaderPrimesCompleteBuiltinInputsAndPreserves
         {harken::kTargetVoiceLowShelfQ, 0, 1, 2 * harken::kToneDefaultQ},
         {harken::kTargetVoicePan, 0, 0.5f, 0.5f}};
     for (const auto voice : {firstVoice, secondVoice}) {
+        ASSERT_TRUE(e.params.PrepareVoiceStorage(static_cast<std::uint32_t>(voice) + 1u));
         e.params.OnVoiceStarted(voice, 0, 1);
         for (const auto& target : cases) {
             ASSERT_TRUE(e.params.BindVoiceTarget(kVariable, voice, target.target,
@@ -8489,6 +8507,7 @@ TEST(VariableCurrentSlice, CapturedReaderFailureDoesNotFallBackOrPartiallyPrimeT
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
         harkentest::InstallDefinitionsWorld(&e, definitions.data(), 2, 0x43555446).status);
     const VnVoiceHandle voice = std::uint64_t{1} << 32;
+    ASSERT_TRUE(e.params.PrepareVoiceStorage(static_cast<std::uint32_t>(voice) + 1u));
     e.params.OnVoiceStarted(voice, 0, 1);
     ASSERT_TRUE(e.params.BindVoiceTarget(kVariable, voice, harken::kTargetVoiceVolume,
         LinearCurve(0, 0, 1, -12)));
@@ -8528,6 +8547,7 @@ TEST(VariableCurrentSlice, CapturedReaderRejectsInvalidatedPublishedSourceBefore
     auto& e = *session.Engine();
     InstallVariable(&e);
     const VnVoiceHandle voice = std::uint64_t{1} << 32;
+    ASSERT_TRUE(e.params.PrepareVoiceStorage(static_cast<std::uint32_t>(voice) + 1u));
     e.params.OnVoiceStarted(voice, 0, 1);
     ASSERT_TRUE(e.params.BindVoiceTarget(kVariable, voice, harken::kTargetVoiceVolume,
         LinearCurve(0, 0, 1, -12)));

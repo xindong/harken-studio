@@ -692,7 +692,7 @@ public:
     std::uint32_t ConstructedRevisionCount() const noexcept { return history_.ConstructedCount(); }
     std::uint32_t CompletionCapacity() const noexcept { return completionCapacity_; }
     std::uint32_t ApplyPayloadCapacity() const noexcept { return applyPayloadCapacity_; }
-    bool HasStagedOutcomes() const noexcept { return !outcomes_.empty(); }
+    bool HasStagedOutcomes() const noexcept { return outcomeCount_ != 0; }
     bool CaptureCurrentBank(VnEmitterHandle emitter,
                             const VnVariableId* variableIds,
                             std::uint32_t variableCount,
@@ -1477,7 +1477,8 @@ private:
     std::uint32_t timelineReadUseCapacity_ = 0;
     StableRowStorage<TimelineReadUseRow> timelineReadUses_;
     // Terminal records are delivered after each completed logic operation.
-    std::vector<VariableOutcomeRecord> outcomes_;
+    StableRowStorage<VariableOutcomeRecord> outcomes_;
+    std::size_t outcomeCount_ = 0;
     std::vector<TicketQueryRecord> ticketQueryRecords_;
     std::uint32_t ticketQueryBegin_ = 0;
     std::uint32_t ticketQueryCount_ = 0;

@@ -6980,7 +6980,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     harken::VariableReadCutRef* initialVariableCut = nullptr,
     harken::VariablePlaybackOrder initialVariableOrder = {},
     bool shareInitialVariableCut = false,
-    std::uint64_t initialVariableAuthoredOffset = 0) {
+    std::uint64_t initialVariableAuthoredOffset = 0,
+    const harken::MonitorControlCause* selectionCause = nullptr) {
     TimelineVoiceInstallResult result;
     std::uint32_t commandCount = 0;
     const auto shape = TimelineVoiceStartCommandBudget(input, &commandCount);
@@ -7073,6 +7074,10 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         result.status = VN_BACKPRESSURE;
         return result;
     }
+    harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
+    if (!engine.ledger.MonitorSelectionPreparedUseActive())
+        (void)engine.ledger.PrepareMonitorSelectionBacking(1, &monitorBacking);
+    const auto monitorUse = monitorBacking.Use();
     std::uint32_t ledgerSlot = 0;
     harken::VoiceLedger::PreparedPlayableIdentity ledgerPreparationIdentity{};
     harken::VoiceLedger::PlayableParentRef parent{};
@@ -7694,7 +7699,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         } else monitorContent.incomplete = true;
     }
     engine.ledger.RecordMonitorContent(ledgerSlot, monitorContent);
-    (void)engine.ledger.CaptureMonitorSelection(ledgerSlot, render, &result.monitorSelection.observation);
+    (void)engine.ledger.CaptureMonitorSelection(ledgerSlot, render, &result.monitorSelection.observation, selectionCause);
     result.monitorSelection.arm = arm;
     engine.timelineVoiceInstallIdentities[renderSlot] = {
         render, playableRoot, install.target, releaseObserver, startFrame, arm,
@@ -7839,7 +7844,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     harken::VariableReadCutRef* initialVariableCut = nullptr,
     harken::VariablePlaybackOrder initialVariableOrder = {},
     bool shareInitialVariableCut = false,
-    std::uint64_t initialVariableAuthoredOffset = 0) {
+    std::uint64_t initialVariableAuthoredOffset = 0,
+    const harken::MonitorControlCause* selectionCause = nullptr) {
     const LegacyTimelineVoiceInstallProjection projection{install};
     if (projection.Status() != VN_OK) {
         TimelineVoiceInstallResult result;
@@ -7853,7 +7859,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         committedOut, resourceService, variableWeightService,
         pendingImmediateStart, retainOriginalSingleSource,
         retainOriginalQueueSource, deferInheritedStop, initialVariableCut,
-        initialVariableOrder, shareInitialVariableCut, initialVariableAuthoredOffset);
+        initialVariableOrder, shareInitialVariableCut, initialVariableAuthoredOffset, selectionCause);
 }
 
 bool CancelPreparedTimelineVoiceStart(
@@ -25244,7 +25250,7 @@ bool PrepareCompositeQueueContinuation(
                 harken::ParentAudioGroupRef{row.queueDecision},
                 sourceControlCount + index, nullptr, starts.At(index), nullptr,
                 row.parentService.Valid() ? &preparedTree.Resource() : nullptr, &preparedTree.Resource(), row.queueTimingPending,
-                false, false, false, nullptr, {}, false, 0);
+                false, false, false, nullptr, {}, false, 0, &selectionCause);
         if (installed.status != VN_OK ||
             (successorHasContinuation &&
              installed.completionPredictability !=
@@ -25715,10 +25721,6 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
         return false;
     }
-    for (std::uint32_t index = 0; index < materialized.leafCount; ++index)
-        engine.FindQueueProgramMember(starts.QueueBank(), index)->monitorSelection.
-            observation.SetCause(selectionCause);
-    row.queueMonitorSelection.observation.SetCause(selectionCause);
     row.queueSuccessorProgramBank = starts.QueueBank();
     row.queueSuccessorHasZeroWorkCompletion =
         materialized.hasZeroWorkCompletion;
@@ -26550,7 +26552,8 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
             queueOwnerInstance, row.rootInstance, progressOccurrence, completionProgram,
             harken::ParentAudioGroupRef{row.queueDecision},
             static_cast<std::uint16_t>(sourceControlCount), nullptr, starts.At(0), nullptr,
-            row.parentService.Valid() ? &preparedTree.Resource() : nullptr, &preparedTree.Resource());
+            row.parentService.Valid() ? &preparedTree.Resource() : nullptr, &preparedTree.Resource(),
+            false, false, false, false, nullptr, {}, false, 0, &resetObservation.cause);
     if (installed.status != VN_OK) {
         (void)TryReleaseOccurrenceAfterFence(
             engine, row.queueSuccessorOccurrence, 0);
@@ -26965,7 +26968,6 @@ engine.runtimeRecreateRequired = true;
 engine.runtimeRecreateRequired = true;
         return QueueContinuationPrepareStatus::Failed;
     }
-    row.queueMonitorSelection.observation.SetCause(resetObservation.cause);
     row.queueSuccessorProgramBank = starts.QueueBank();
     row.queueSuccessorHasZeroWorkCompletion =
         materializedSchedule.hasZeroWorkCompletion;
@@ -28232,7 +28234,8 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
             queueOwnerInstance, row.rootInstance, nullptr, nullptr,
             {}, UINT16_MAX, nullptr, &preparedVoice, nullptr,
             childService != nullptr ? childService : row.parentService.Valid() ? &row : nullptr,
-            childService != nullptr ? childService : &row);
+            childService != nullptr ? childService : &row,
+            false, false, false, false, nullptr, {}, false, 0, &resetObservation.cause);
     if (installed.status != VN_OK) {
         return QueueContinuationPrepareStatus::Failed;
     }
@@ -28371,7 +28374,6 @@ engine.runtimeRecreateRequired = true;
     row.queueSuccessorLeaf = cut.leaf;
     row.queueSuccessorArm = installed.armToken;
     row.queueMonitorSelection = installed.monitorSelection;
-    row.queueMonitorSelection.observation.SetCause(resetObservation.cause);
     row.queueSuccessorRenderHandle = installed.renderHandle;
     row.queueSuccessorOccurrence = successorOccurrence;
 
@@ -52997,6 +52999,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             !voices.PrepareSlotBacking(static_cast<std::uint32_t>(nativeVoices), &nativeCandidate->voices) ||
             !ledger.PrepareBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(
                 nativeVoices, ledger.Capacity())), &nativeCandidate->ledger) ||
+            !ledger.PrepareMonitorSelectionBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(
+                nativeVoices, ledger.MonitorSelectionCapacity())), &nativeCandidate->monitor) ||
             !selectionMemory.PrepareBacking({
                 static_cast<std::uint32_t>(std::min<std::uint64_t>(nativeSelections, selectionMemory.RowCapacity())),
                 static_cast<std::uint32_t>(std::min<std::uint64_t>(nativeSelections, selectionMemory.DeltaCapacity())),
@@ -53386,6 +53390,7 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
             return Result::Refused;
         const auto preparedVoiceBacking = holder->nativeVoiceBacking.Use();
         const auto preparedLedgerBacking = holder->nativeLedgerBacking.Use();
+        const auto preparedMonitorBacking = holder->nativeMonitorBacking.Use();
         const auto preparedPlayBacking = holder->nativePlayBacking.Use();
         const auto preparedMemberBacking = holder->nativeMemberBacking.Use();
         const auto preparedRelationBacking = holder->nativeRelationBacking.Use();
@@ -62511,6 +62516,7 @@ void TimelineServiceCoordinator::Service() {
                     }
                     const TimelineVoiceInstallResult voice = [&] {
                         const auto preparedLedgerBacking = set->ledgerBacking.Use();
+                        const auto preparedMonitorBacking = set->monitorBacking.Use();
                         return InstallTimelineVoiceStart(engine_, occurrence.voice.Input(),
                                                   set->generation, startFrame,
                                                   occurrence.ownerInstance, 0,
@@ -73434,7 +73440,9 @@ TimelineRuntimeInstallResult InstallTimelineProgram(
             return result;
         }
         if (!engine->ledger.PrepareBacking(static_cast<std::uint32_t>(std::min<std::size_t>(
-                audibleOccurrenceCount, engine->ledger.Capacity())), &set->ledgerBacking)) {
+                audibleOccurrenceCount, engine->ledger.Capacity())), &set->ledgerBacking) ||
+            !engine->ledger.PrepareMonitorSelectionBacking(static_cast<std::uint32_t>(std::min<std::size_t>(
+                audibleOccurrenceCount, engine->ledger.MonitorSelectionCapacity())), &set->monitorBacking)) {
             result.status = TimelineRuntimeInstallStatus::ProgramCapacity;
             return result;
         }
@@ -91187,7 +91195,7 @@ bool PrepareImmediateActionQueueReplacement(
                         scratch.sourceControlCount + index), nullptr,
                     &scratch.successorStarts[index], nullptr,
                     resource, resource, native, native, false, native,
-                    nullptr, {}, false, 0);
+                    nullptr, {}, false, 0, &scratch.resetCause);
             if (installed.status != VN_OK ||
                 (resolution.successorHasContinuation &&
                  installed.completionPredictability !=
@@ -92111,7 +92119,6 @@ void CommitImmediateActionQueueReplacements(
                 ok = CommitPreparedTimelineVoiceStart(
                          engine, &scratch.successorStarts[leafIndex], sequence) &&
                      ok;
-                scratch.successorStarts[leafIndex].monitorSelection.observation.SetCause(scratch.resetCause);
             }
             if (scratch.successorHasContinuation &&
                 scratch.successorLeafCount > 1) {

@@ -231,6 +231,7 @@ TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     EXPECT_EQ(0u, engine.voiceEffectInstanceRefs.RequestedBytes());
     EXPECT_EQ(0u, engine.effectSlotConfig.RequestedBytes());
     EXPECT_EQ(0u, engine.voiceSendConfig.RequestedBytes());
+    EXPECT_EQ(0u, engine.params.VoiceStorageBytes());
     const auto emptyStartBytes = engine.timelineSink.VariableStartStorageBytes();
     harken::VoiceTimelineSink secondSink(engine.voices, engine.timelineArms);
     harken::VoicePool::SlotStorageRegistration refusedStorage;
@@ -260,6 +261,7 @@ TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
     engine.voices.SetProfessionalCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &first));
+    EXPECT_GT(engine.params.VoiceStorageBytes(), 0u);
     ASSERT_EQ(1u, engine.effectSlotTypes.size());
     for (const auto type : engine.effectSlotTypes[0]) EXPECT_EQ(harken::kEffectTypeNone, type);
     EXPECT_GT(engine.timelineSink.VariableStartStorageBytes(), emptyStartBytes);

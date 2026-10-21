@@ -581,6 +581,9 @@ TEST(MonitorExecutionLifecycle, InternalVoiceKeepsRetirementIdentityAndSelection
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto session = OpenIdentityEvents();
     VoiceLedger ledger(1, 2);
+    harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
+    ASSERT_TRUE(ledger.PrepareMonitorSelectionBacking(
+        static_cast<std::uint32_t>(ledger.MonitorSelectionCapacity()), &monitorBacking));
     const auto parent = UINT64_C(1) << 32;
     const auto leaf = parent | 2;
     const auto render = (UINT64_C(4) << 32) | 1;
@@ -642,6 +645,9 @@ TEST(MonitorExecutionLifecycle, DelayedSelectionKeepsOriginalValuesAfterLedgerRe
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto session = OpenIdentityEvents();
     VoiceLedger ledger(1, 2);
+    harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
+    ASSERT_TRUE(ledger.PrepareMonitorSelectionBacking(
+        static_cast<std::uint32_t>(ledger.MonitorSelectionCapacity()), &monitorBacking));
     const auto parent = UINT64_C(1) << 32;
     const auto render = (UINT64_C(4) << 32) | 1;
     const MonitorRequestContext request{{ExecutionEngineInstance(), 125}, MonitorRequestOrigin::StudioPreview,
@@ -697,7 +703,17 @@ TEST(MonitorExecutionLifecycle, DelayedSelectionKeepsOriginalValuesAfterLedgerRe
 }
 
 TEST(MonitorSelectionPool, CauseForkRollbackPreservesTheOriginalAliasAndReturnsStorage) {
-    VoiceLedger ledger(1, 1, 2);
+    VoiceLedger ledger(1, 1, 3);
+    harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
+    EXPECT_EQ(0u, ledger.MonitorSelectionStorageBytes());
+    ledger.SetMonitorSelectionCommitPageLimitForTests(0);
+    EXPECT_FALSE(ledger.PrepareMonitorSelectionBacking(3, &monitorBacking));
+    EXPECT_FALSE(monitorBacking.Valid());
+    ledger.SetMonitorSelectionCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(ledger.PrepareMonitorSelectionBacking(
+        static_cast<std::uint32_t>(ledger.MonitorSelectionCapacity()), &monitorBacking));
+    const auto bytes = ledger.MonitorSelectionStorageBytes();
+    const auto use = monitorBacking.Use();
     std::uint32_t slot = 0;
     ASSERT_TRUE(ledger.AcquirePlayableOwned({0, UINT64_C(1) << 32}, &slot));
     VoiceLedger::MonitorSelection original;
@@ -724,7 +740,10 @@ TEST(MonitorSelectionPool, CauseForkRollbackPreservesTheOriginalAliasAndReturnsS
     alias = {};
     VoiceLedger::MonitorSelection second;
     EXPECT_TRUE(ledger.CaptureMonitorSelection(slot, UINT64_C(1) << 32, &second));
-    EXPECT_EQ(2u, ledger.MonitorSelectionCapacity());
+    VoiceLedger::MonitorSelection third;
+    EXPECT_TRUE(ledger.CaptureMonitorSelection(slot, UINT64_C(1) << 32, &third));
+    EXPECT_EQ(3u, ledger.MonitorSelectionCapacity());
+    EXPECT_EQ(bytes, ledger.MonitorSelectionStorageBytes());
 }
 
 TEST(MonitorSelectionPool, FrozenAliasesOutliveLedgerAndPreserveMoveAndCopyOwnership) {
@@ -732,6 +751,8 @@ TEST(MonitorSelectionPool, FrozenAliasesOutliveLedgerAndPreserveMoveAndCopyOwner
     const auto render = UINT64_C(2) << 32;
     {
         VoiceLedger ledger(1, 1, 2);
+        harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
+        ASSERT_TRUE(ledger.PrepareMonitorSelectionBacking(1, &monitorBacking));
         std::uint32_t slot = 0;
         ASSERT_TRUE(ledger.AcquirePlayableOwned({0, UINT64_C(1) << 32}, &slot));
         ASSERT_TRUE(ledger.CaptureMonitorSelection(slot, render, &retained));
@@ -742,6 +763,17 @@ TEST(MonitorSelectionPool, FrozenAliasesOutliveLedgerAndPreserveMoveAndCopyOwner
     MonitorLifecycleFacts saved{};
     ASSERT_TRUE(retained.CaptureFacts(&saved));
     EXPECT_EQ(render, saved.renderActivation);
+    VoiceLedger::MonitorSelectionBacking laterBacking;
+    ASSERT_TRUE(retained.PrepareMonitorSelectionBacking(1, &laterBacking));
+    const auto laterUse = laterBacking.Use();
+    laterBacking.Release();
+    auto branch = retained;
+    MonitorControlCause cause{};
+    cause.executionOrdinal = 71;
+    branch.SetCause(cause);
+    EXPECT_EQ(71u, branch.Cause().executionOrdinal);
+    EXPECT_NE(71u, retained.Cause().executionOrdinal);
+    branch = {};
     auto alias = retained;
     retained = {};
     EXPECT_EQ(render, alias.RenderActivation());
@@ -756,6 +788,9 @@ TEST(MonitorExecutionLifecycle, PublishedSelectionAliasesCannotReachAReusedDiagn
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto session = OpenIdentityEvents();
     VoiceLedger ledger(1, 1, 1);
+    harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
+    ASSERT_TRUE(ledger.PrepareMonitorSelectionBacking(
+        static_cast<std::uint32_t>(ledger.MonitorSelectionCapacity()), &monitorBacking));
     const auto firstRender = UINT64_C(1) << 32;
     const auto nextRender = UINT64_C(2) << 32;
     std::uint32_t slot = 0;
@@ -792,6 +827,9 @@ TEST(MonitorExecutionLifecycle, SelectionPoolExhaustionReportsLossAndLeavesNativ
     ASSERT_EQ(VN_OK, engine.InitResult());
     const auto session = OpenIdentityEvents();
     VoiceLedger ledger(1, 1, 1);
+    harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
+    ASSERT_TRUE(ledger.PrepareMonitorSelectionBacking(
+        static_cast<std::uint32_t>(ledger.MonitorSelectionCapacity()), &monitorBacking));
     VnVoiceHandle voice = 0;
     std::uint32_t slot = 0;
     ASSERT_TRUE(ledger.Acquire(&voice, &slot));

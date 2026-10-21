@@ -2152,6 +2152,7 @@ enum class TimelinePhysicalAdmissionFault : std::uint8_t {
 
 struct EngineTimelineProgramSet {
     VoiceLedger::BackingPreparation ledgerBacking;
+    VoiceLedger::MonitorSelectionBacking monitorBacking;
     TimelineProgramSet programs;
     std::vector<EngineTimelineOccurrence> occurrences;
     ProgramGeneration generation = 0;
@@ -4891,6 +4892,7 @@ struct Engine {
         CapturedTimelineVoiceInstall replacementVoice;
         StableStoragePreparation nativeVoiceBacking;
         VoiceLedger::BackingPreparation nativeLedgerBacking;
+        VoiceLedger::MonitorSelectionBacking nativeMonitorBacking;
         StableSlotStorage<EngineActionPlayScratch>::Preparation nativePlayBacking;
         StableSlotStorage<EnginePlayableMemberRecord>::Preparation nativeMemberBacking;
         StableStoragePreparation nativeRelationBacking;
@@ -4910,7 +4912,8 @@ struct Engine {
                 !root.Valid() && !source.Valid() &&
                 !body.Valid() && !arm.Valid() && !release.Valid() && !retirement.Valid() &&
                 nativeReplacement.Empty() && !replacementVoice.HasStorage() &&
-                !nativeVoiceBacking.Valid() && nativeLedgerBacking.Empty() && !nativePlayBacking.Valid() &&
+                !nativeVoiceBacking.Valid() && nativeLedgerBacking.Empty() && !nativeMonitorBacking.Valid() &&
+                !nativePlayBacking.Valid() &&
                 !nativeMemberBacking.Valid() && !nativeRelationBacking.Valid() &&
                 !nativeProgramBacking.Valid() && !nativeScheduleBacking.Valid() &&
                 !replacement.Valid() && retiredServiceCount == 0 && retiredChild == 0 &&
@@ -4980,6 +4983,7 @@ struct Engine {
         CompositeCompletionOwnerPool::BackingPreparation completions;
         StableStoragePreparation voices;
         VoiceLedger::BackingPreparation ledger;
+        VoiceLedger::MonitorSelectionBacking monitor;
         SelectionMemoryTableV1::BackingPreparation selectionHistory;
         StableStoragePreparation arms;
         ArmGroupTable::BackingPreparation groups;
@@ -5004,6 +5008,7 @@ struct Engine {
     struct NativeRuntimeBackingUse {
         std::array<StableStoragePreparedUse, 13> columns;
         VoiceLedger::BackingUse ledger;
+        VoiceLedger::MonitorSelectionUse monitor;
         SelectionMemoryTableV1::BackingUse selectionHistory;
         ArmGroupTable::PreparedUse groups;
         ScheduledTransactionPool::ImmediateLaneBackingUse laneGroups;
@@ -5025,6 +5030,7 @@ struct Engine {
                       Use(backing, 4), Use(backing, 5), Use(backing, 6), Use(backing, 7), Use(backing, 8),
                       Use(backing, 9), Use(backing, 10), Use(backing, 11), Use(backing, 12)},
               ledger(backing == nullptr ? VoiceLedger::BackingUse{} : backing->ledger.Use()),
+              monitor(backing == nullptr ? VoiceLedger::MonitorSelectionUse{} : backing->monitor.Use()),
               selectionHistory(backing == nullptr ? SelectionMemoryTableV1::BackingUse{} : backing->selectionHistory.Use()),
               groups(engine.armGroups, backing == nullptr ? nullptr : &backing->groups),
               laneGroups(engine.timelinePool, backing == nullptr ? nullptr : &backing->laneGroups),
@@ -5818,7 +5824,7 @@ public:
           actionCommitBundle(16),
           authoredStopRoots(resolved.maxPlayableInstances),
           authoredStopResources(resolved.maxScheduledTransactions),
-          params(resolved),
+          params(resolved, 0),
           variables(resolved.maxEmitters + 1u, resolved.emitterVariableSlots,
                      resolved.maxPropertiesPerCurrentSlice,
                      resolved.maxActions, logicCommits, transportEpochOwner,
@@ -7547,8 +7553,11 @@ public:
             resourceRow->identity.slot >= originalPlayableServiceLifetimeHolders.size() ||
             !originalPlayableServiceLifetimeHolders[resourceRow->identity.slot].Borrow(&resource)) return false;
         VoiceLedger::BackingPreparation ledgerBacking;
-        if (!ledger.PrepareBacking(1, &ledgerBacking)) return false;
+        VoiceLedger::MonitorSelectionBacking monitorBacking;
+        if (!ledger.PrepareBacking(1, &ledgerBacking) ||
+            !ledger.PrepareMonitorSelectionBacking(1, &monitorBacking)) return false;
         holder->nativeLedgerBacking = std::move(ledgerBacking);
+        holder->nativeMonitorBacking = std::move(monitorBacking);
         holder->engine = this;
         holder->storage = &scratch.storage;
         holder->generation = scratch.storage.generation;
@@ -7569,6 +7578,7 @@ public:
     bool AcceptPendingOrdinarySelection(EngineActionPlayScratch& scratch) noexcept {
         auto* holder = PendingOrdinarySelectionFor(scratch.storage);
         if (holder == nullptr || holder->accepted || !holder->nativeLedgerBacking.Valid() ||
+            !holder->nativeMonitorBacking.Valid() ||
             scratch.row == nullptr || scratch.variableControlCommitted ||
             scratch.row->actionPrepared || !scratch.row->pendingImmediateEntry ||
             scratch.storage.phase != EngineFrontierAttemptPhase::Published ||
@@ -7637,6 +7647,7 @@ public:
         holder.replacementVoice = {};
         holder.nativeVoiceBacking.Release();
         holder.nativeLedgerBacking.Release();
+        holder.nativeMonitorBacking.Release();
         holder.nativePlayBacking.Release();
         holder.nativeMemberBacking.Release();
         holder.nativeRelationBacking.Release();
@@ -13622,7 +13633,8 @@ public:
     VoicePool::SlotStorageRegistration logicVoiceStorageRegistration;
 
     bool PrepareLogicVoiceStorage(std::uint32_t count) noexcept {
-        if (!voiceOriginPlayable.ConstructThrough(count) || !voicePlayFacts.ConstructThrough(count) ||
+        if (!params.PrepareVoiceStorage(count) ||
+            !voiceOriginPlayable.ConstructThrough(count) || !voicePlayFacts.ConstructThrough(count) ||
             !playbackPaths.ConstructThrough(count) || !timelineVoiceInstallIdentities.ConstructThrough(count) ||
             !voiceEffectInstanceRefs.ConstructThrough(count) || !effectSlotConfig.ConstructThrough(count) ||
             !voiceSendConfig.ConstructThrough(count)) return false;

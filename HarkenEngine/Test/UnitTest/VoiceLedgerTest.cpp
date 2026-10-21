@@ -75,7 +75,7 @@ TEST(VoiceLedger, EmptyQueriesKeepNativeBackingUnconstructedAndCapacityAvailable
     EXPECT_EQ(1u, ledger.AvailableEntryCount());
     EXPECT_TRUE(ledger.HasFreeEntry());
     EXPECT_EQ(2u, ledger.MonitorSelectionCapacity());
-    EXPECT_GT(ledger.MonitorSelectionStorageBytes(), 0u);
+    EXPECT_EQ(ledger.MonitorSelectionStorageBytes(), 0u);
     std::array<std::uint64_t, 4> handles{1, 2, 3, 4};
     ledger.FillPublicHandles(handles.data(), handles.size(), [](auto) { return true; });
     EXPECT_EQ((std::array<std::uint64_t, 4>{}), handles);
@@ -1926,6 +1926,9 @@ TEST(VoiceLedger, ObservedSourceWinnerOverridesLaterAcceptedControlWithoutChangi
 
 TEST(VoiceLedger, ResetSelectionAndCancellationKeepPlaybackIdentityAndDoNotChangeOwnership) {
     harken::VoiceLedger ledger(1);
+    harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
+    ASSERT_TRUE(ledger.PrepareMonitorSelectionBacking(
+        static_cast<std::uint32_t>(ledger.MonitorSelectionCapacity()), &monitorBacking));
     harken::MonitorRequestContext playback{};
     playback.key = {9, 3};
     VnVoiceHandle handle = 0;

@@ -54,28 +54,49 @@ bool TimelineExecutor::Reset(std::uint32_t quantumFrames,
         !pool->Valid() || armTable == nullptr || sink == nullptr) {
         return false;
     }
+    const std::size_t decodedCapacity =
+        static_cast<std::size_t>(maxEventsPerQuantum) * 2;
+    StableRowStorage<ConsumedEvent, std::size_t> decoded;
+    StableRowStorage<TimelineDigestRecord, std::size_t> digest;
+    StableRowStorage<std::uint32_t, std::size_t> nextEvent;
+    // Existing backing also covers accepted future work with no placed events yet.
+    const auto initialCount = 2u * std::min<std::size_t>(maxEventsPerQuantum, pool->NativeEventBackingCount());
+    if (!decoded.Reserve(decodedCapacity) || !digest.Reserve(decodedCapacity) ||
+        !nextEvent.Reserve(decodedCapacity) || !decoded.ConstructThrough(initialCount) ||
+        !digest.ConstructThrough(initialCount) || !nextEvent.ConstructThrough(initialCount)) return false;
+    std::vector<TransactionScratch> transactions(pool->MaxScheduledTransactions());
+    std::vector<std::uint32_t> touchedTransactions(pool->MaxScheduledTransactions());
+    std::vector<TimelineSinkEvent> sinkEvents(kTimelineMaxEventsPerVoiceQuantum);
+    std::vector<Plan03PageGroupView> pageGroups(pool->MaxPlan03GroupHeadersPerPage());
+    eventStorageRegistration_.Detach();
+    decoded_.Swap(decoded);
+    deferredDigest_.Swap(digest);
+    nextEvent_.Swap(nextEvent);
+    transactions_.swap(transactions);
+    touchedTransactions_.swap(touchedTransactions);
+    sinkEvents_.swap(sinkEvents);
+    pageGroups_.swap(pageGroups);
     quantumFrames_ = quantumFrames;
     pool_ = pool;
     armTable_ = armTable;
     sink_ = sink;
     decisionTable_ = decisionTable;
-    const std::size_t decodedCapacity =
-        static_cast<std::size_t>(maxEventsPerQuantum) * 2;
-    decoded_.assign(decodedCapacity, ConsumedEvent{});
-    deferredDigest_.assign(decodedCapacity, TimelineDigestRecord{});
-    nextEvent_.assign(decodedCapacity, UINT32_MAX);
-    transactions_.assign(pool->MaxScheduledTransactions(),
-                         TransactionScratch{});
-    touchedTransactions_.assign(pool->MaxScheduledTransactions(), 0);
-    sinkEvents_.assign(kTimelineMaxEventsPerVoiceQuantum,
-                       TimelineSinkEvent{});
-    pageGroups_.assign(pool->MaxPlan03GroupHeadersPerPage(),
-                       Plan03PageGroupView{});
+    pool->AttachPendingEventStorage(eventStorageRegistration_, this,
+        [](void* context, ScheduledTransactionPool::PendingEventStorageDemand demand) noexcept {
+            return static_cast<TimelineExecutor*>(context)->PrepareEventStorage(demand);
+        });
+    deferredDigestCount_ = 0;
+    deferDigest_ = false;
     counters_ = {};
     touchGeneration_ = 1;
     valid_ = true;
     (void)pool_->ConsumerFrontier();
     return true;
+}
+
+bool TimelineExecutor::PrepareEventStorage(ScheduledTransactionPool::PendingEventStorageDemand demand) noexcept {
+    const auto count = 2u * static_cast<std::size_t>(std::min<std::uint64_t>(decoded_.Capacity() / 2u, demand.nativeEvents));
+    return decoded_.ConstructThrough(count) && nextEvent_.ConstructThrough(count) && deferredDigest_.ConstructThrough(count);
 }
 
 void TimelineExecutor::PrepassPlan03Deadlines(

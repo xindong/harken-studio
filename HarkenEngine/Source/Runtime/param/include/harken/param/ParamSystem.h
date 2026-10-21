@@ -135,6 +135,11 @@ class ParamSystem {
 
 public:
     explicit ParamSystem(const EngineConfig& config);
+    ParamSystem(const EngineConfig& config, std::uint32_t initialVoiceRows);
+    bool PrepareVoiceStorage(std::uint32_t count) noexcept;
+    std::size_t VoiceStorageBytes() const noexcept {
+        return m_voiceStates.RequestedBytes() + m_projectionVoices.capacity() * sizeof(VoiceEvaluation);
+    }
     ParamSystem(const ParamSystem& other);
     ParamSystem& operator=(const ParamSystem&) = delete;
 
@@ -1183,7 +1188,7 @@ private:
     // worst-case release when its slot is reused.
     std::uint32_t UniqueBoundTargets(VnVoiceHandle handle) const;
 
-    std::vector<VoiceState> m_voiceStates; // indexed by voice slot
+    StableRowStorage<VoiceState> m_voiceStates; // indexed by voice slot
     std::vector<RetiringTarget> m_retiringTargets;
     std::uint32_t m_sampleRate = 0;
     std::vector<Variable> m_variables;     // fixed capacity, m_variableCount live
@@ -1210,6 +1215,7 @@ private:
     bool m_projectionActive = false;
     std::uint32_t m_projectionVariableCount = 0;
     std::uint32_t m_projectionBindingCount = 0;
+    std::uint32_t m_projectionVoiceCount = 0;
     std::uint32_t m_projectionForcedRebuilds = 0;
     std::uint32_t m_projectionDirtyTargetCount = 0;
     std::uint32_t m_projectionPendingInputMarks = 0;

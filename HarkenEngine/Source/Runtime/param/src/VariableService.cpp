@@ -215,7 +215,7 @@ VariableServiceV1::VariableServiceV1(
         !prefixRows_.Reserve(historyCapacity) || !readCutRows_.Reserve(historyCapacity) ||
         !actionReadCutRows_.Reserve(historyCapacity) || !preparationRows_.Reserve(historyCapacity) ||
         !settledRows_.Reserve(historyCapacity) || !supersedeRows_.Reserve(historyCapacity) ||
-        !scheduledGroups_.Reserve(historyCapacity)) throw std::bad_alloc{};
+        !scheduledGroups_.Reserve(historyCapacity) || !outcomes_.Reserve(historyCapacity)) throw std::bad_alloc{};
     historyGenerations_.resize(historyCapacity, 1);
     dependencyVisited_.resize(completionCapacity_);
     if (readCutCapacity > UINT32_MAX) throw std::length_error("variable read cut capacity overflow");
@@ -227,7 +227,6 @@ VariableServiceV1::VariableServiceV1(
     for (std::uint32_t slot = historyCapacity; slot > 0; --slot) {
         freeSlots_.push_back(slot - 1);
     }
-    outcomes_.reserve(historyCapacity);
     ticketQueryRecords_.assign(queryHistoryCapacity_, TicketQueryRecord{});
     expiredTicketRecords_.assign(queryHistoryCapacity_, VnVariableTicketV1{});
 }
@@ -2027,7 +2026,7 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
         }
     }
     if (occupiedRevisions_ - reusable > revisionCapacity_ ||
-        victimCount > outcomes_.capacity() - outcomes_.size()) {
+        victimCount > outcomes_.Capacity() - outcomeCount_) {
         result.result = VN_VARIABLE_TRANSACTION_EXHAUSTED;
         ++refusalCount_;
         return result;
@@ -2322,10 +2321,9 @@ void VariableServiceV1::FinalizeRow(WriteRow& row,
     if (row.ordinaryEngine != nullptr && row.state != RowState::PageCommitted)
         ResetPreparedRow(*row.ordinaryEngine, row);
     EraseScheduledGroup(row);
-    // Each used history slot finalizes once and is recycled only after delivery.
-    // Queued outcomes plus unfinalized slots therefore fit the reserved storage.
-    assert(outcomes_.size() < history_.size());
-    assert(outcomes_.size() < outcomes_.capacity());
+    // Accepted writes prepare their result storage before a history row can
+    // finalize. The value snapshot survives immediate reuse of that row.
+    assert(outcomeCount_ < outcomes_.size());
     ReleaseEmitterOverrideReservation(row);
     row.state = RowState::Terminal;
     row.finalOutcome = outcome;
@@ -2346,7 +2344,7 @@ void VariableServiceV1::FinalizeRow(WriteRow& row,
     record.variableId = row.variableId;
     record.scope = row.scope.scope;
     record.emitterGeneration = row.scope.emitterGeneration;
-    outcomes_.push_back(record);
+    outcomes_[outcomeCount_++] = record;
     RememberFinalizedTicket(row.ticket.sequence, outcome, row.world, row.transport);
     if (outcome == VariableOutcomeKind::Applied) {
         ++appliedCount_;
@@ -4047,7 +4045,7 @@ void VariableServiceV1::CommitPreparedPackDefinitions(
         }
         assert(captured == prepared->terminations_.size());
 #endif
-        assert(outcomes_.size() + prepared->terminations_.size() <= outcomes_.capacity());
+        assert(outcomeCount_ + prepared->terminations_.size() <= outcomes_.size());
         for (const auto& termination : prepared->terminations_) {
             FinalizeRow(history_[termination.historySlot],
                         VariableOutcomeKind::WorldReplacement, {}, prepared->actualFrame_);
@@ -4306,6 +4304,9 @@ bool VariableServiceV1::EmitterBankActiveForTests(
 
 bool VariableServiceV1::PrepareHistoryBacking(std::uint32_t slot) noexcept {
     if (memguard::IsAudioTagged() || slot >= history_.Capacity()) return false;
+    const auto outcomes = static_cast<std::uint32_t>(std::min<std::uint64_t>(outcomes_.Capacity(),
+        outcomeCount_ + pendingRows_ + preparedRows_ + 1u));
+    if (!outcomes_.ConstructThrough(outcomes)) return false;
     const auto count = slot + 1u;
     if (!history_.ConstructThrough(count) || !preparedWritePlacements_.ConstructThrough(count) ||
         !sealRows_.ConstructThrough(count) || !commitRows_.ConstructThrough(count) ||
@@ -4572,7 +4573,7 @@ std::size_t VariableServiceV1::StorageBytes() const noexcept {
     return ReadCutStorageBytes() + slices_.StorageBytes() +
         censusScratch_.capacity() * sizeof(GatheredTarget) +
         history_.RequestedBytes() + freeSlots_.capacity() * sizeof(std::uint32_t) +
-        outcomes_.capacity() * sizeof(VariableOutcomeRecord) +
+        outcomes_.RequestedBytes() +
         ticketQueryRecords_.capacity() * sizeof(TicketQueryRecord) +
         expiredTicketRecords_.capacity() * sizeof(VnVariableTicketV1) +
         sealRows_.RequestedBytes() + commitRows_.RequestedBytes() + prefixRows_.RequestedBytes() +
@@ -6602,7 +6603,7 @@ bool VariableServiceV1::ScheduledValue(VnEmitterHandle emitter,
 }
 
 bool VariableServiceV1::PopOutcome(VariableOutcomeRecord* out) noexcept {
-    if (out == nullptr || outcomeRead_ >= outcomes_.size()) {
+    if (out == nullptr || outcomeRead_ >= outcomeCount_) {
         return false;
     }
     *out = outcomes_[outcomeRead_++];
@@ -6610,10 +6611,10 @@ bool VariableServiceV1::PopOutcome(VariableOutcomeRecord* out) noexcept {
 }
 
 void VariableServiceV1::MarkOutcomeDeliveryComplete() noexcept {
-    if (outcomes_.empty()) {
+    if (outcomeCount_ == 0) {
         return;
     }
-    deliveredOutcomeCount_ = outcomes_.size();
+    deliveredOutcomeCount_ = outcomeCount_;
     deliveredOutcomeGeneration_ = currentOutcomeGeneration_;
     if (currentOutcomeGeneration_ != UINT64_MAX) {
         ++currentOutcomeGeneration_;
@@ -6629,10 +6630,9 @@ void VariableServiceV1::FinishOutcomeDelivery() noexcept {
                 row.outcomeDelivered = true;
             }
         }
-        outcomes_.erase(
-            outcomes_.begin(),
-            outcomes_.begin() +
-                static_cast<std::ptrdiff_t>(deliveredOutcomeCount_));
+        assert(deliveredOutcomeCount_ <= outcomeCount_);
+        std::move(outcomes_.begin() + deliveredOutcomeCount_, outcomes_.begin() + outcomeCount_, outcomes_.begin());
+        outcomeCount_ -= deliveredOutcomeCount_;
         deliveredOutcomeCount_ = 0;
         deliveredOutcomeGeneration_ = 0;
     }
