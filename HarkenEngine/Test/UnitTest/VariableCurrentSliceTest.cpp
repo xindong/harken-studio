@@ -8565,6 +8565,10 @@ TEST(VariableCurrentSlice, NativeReadCutCalendarRequiresExactConsumedIdentityInE
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& e = *session.Engine();
         InstallVariable(&e);
+        harken::VariableServiceV1::ReadCutBackingPreparation backing;
+        ASSERT_TRUE(e.variables.PrepareReadCutBacking(2, &backing));
+        const auto use = backing.Use();
+        const auto calendarBytes = e.timelinePool.CurrentSliceStorageBytes();
         harken::VariableReadCutRef cut{};
         constexpr auto frame = 4 * kBlockFrames;
         ASSERT_TRUE(e.variables.CaptureReadCut(0, frame, 7, 3, &cut));
@@ -8604,6 +8608,12 @@ TEST(VariableCurrentSlice, NativeReadCutCalendarRequiresExactConsumedIdentityInE
         ASSERT_TRUE(e.variables.AcknowledgeNativeReadCut(identity));
         EXPECT_FALSE(e.variables.ConsumeNativeReadCutCalendar(consumed));
         EXPECT_FALSE(e.variables.HasNativeReadCutsForTransport(identity.transport));
+        harken::VariableReadCutRef next{};
+        ASSERT_TRUE(e.variables.CaptureReadCut(0, frame + kBlockFrames, 8, 3, &next));
+        ASSERT_TRUE(e.variables.ReserveNativeReadCutCalendar(next, 0, &calendar));
+        ASSERT_TRUE(e.variables.CancelNativeReadCutCalendar(next, &calendar));
+        ASSERT_TRUE(e.variables.ReleaseReadCut(next));
+        EXPECT_EQ(calendarBytes, e.timelinePool.CurrentSliceStorageBytes());
     }
 }
 

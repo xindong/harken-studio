@@ -66,6 +66,7 @@
 #ifndef HARKEN_CORE_SCHEDULED_TRANSACTION_POOL_H
 #define HARKEN_CORE_SCHEDULED_TRANSACTION_POOL_H
 
+#include "harken/core/CurrentSliceBacking.h"
 #include "harken/core/LogicCommitCoordinator.h"
 #include "harken/core/Plan03GroupIdentity.h"
 #include "harken/core/OccurrenceStatePool.h"
@@ -1420,7 +1421,7 @@ public:
     }
     std::uint64_t CurrentSliceCommittedBytes() const noexcept;
     std::uint64_t CurrentSliceReservedBytes() const noexcept;
-    bool PrepareNativeStartCalendarBacking(std::uint32_t count) noexcept;
+    bool PrepareCurrentSliceBacking(CurrentSliceBacking* out) noexcept;
     std::uint32_t MaxPlan03GroupHeadersPerPage() const {
         return config_.maxPlan03GroupHeadersPerPage;
     }
@@ -1619,12 +1620,13 @@ public:
         const ScheduledCurrentSliceInput& input,
         PrePublishLatePolicy latePolicy,
         std::uint64_t publicationFrontier,
-        HeldCurrentSliceToken* out);
+        HeldCurrentSliceToken* out, CurrentSliceBacking* backing = nullptr);
     bool CanReleaseHeldCurrentSlice(const HeldCurrentSliceToken& token) const noexcept;
     ReserveResult PreflightHeldCurrentSlice(const ScheduledCurrentSliceInput& input,
         PrePublishLatePolicy latePolicy, std::uint64_t publicationFrontier) const noexcept;
     bool ReleaseHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept;
-    bool CancelHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept;
+    bool CancelHeldCurrentSlice(HeldCurrentSliceToken* token,
+        CurrentSliceBacking* restoreBacking = nullptr) noexcept;
     Plan03GroupReserveStatus PreflightPlan03GroupSlices(
         std::uint64_t executeFrame,
         std::uint32_t additionalGroupCount) const noexcept;
@@ -2401,21 +2403,31 @@ private:
         std::uint64_t rowSequence = 0;
         std::uint32_t executionOrdinal = 0;
         bool publicationHeld = false;
+        std::size_t next = SIZE_MAX;
+        std::size_t previous = SIZE_MAX;
     };
 
     struct CurrentSlicePage {
-        StableRowStorage<CurrentSliceRow> rows;
-        StableRowStorage<std::uint32_t> order;
+        std::size_t first = SIZE_MAX;
+        std::size_t last = SIZE_MAX;
+        std::uint32_t nativeCount = 0;
     };
 
+    friend class CurrentSliceBacking;
+    void ReleaseCurrentSliceBacking(CurrentSliceBacking& backing) noexcept;
+    bool PrepareCurrentSliceRows() noexcept;
+    void ReleaseCurrentSliceRow(std::size_t slot) noexcept;
+    void RecycleCurrentSlicePage(std::uint32_t ring) noexcept;
+    void SortCurrentSlices(std::uint32_t ring) noexcept;
     ReserveResult ReserveCurrentSliceImpl(
         const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
-        std::uint64_t publicationFrontier, HeldCurrentSliceToken* held);
+        std::uint64_t publicationFrontier, HeldCurrentSliceToken* held,
+        CurrentSliceBacking* backing = nullptr);
     ReserveResult PlanCurrentSlicePlacement(const ScheduledCurrentSliceInput& input,
         PrePublishLatePolicy latePolicy, std::uint64_t publicationFrontier,
         bool publicationHeld) const noexcept;
     bool LocateHeldCurrentSlice(const HeldCurrentSliceToken& token,
-        std::uint32_t* ring, std::uint32_t* index) const noexcept;
+        std::uint32_t* ring, std::size_t* index) const noexcept;
     bool HasHeldCurrentSlices() const noexcept;
 
     struct Plan03GroupSliceRow {
@@ -2534,7 +2546,12 @@ private:
     std::size_t issuedEventSlots_ = 0;
     std::vector<std::uint32_t> pageCurrentSliceCount_;
     std::unique_ptr<CurrentSlicePage[]> pageCurrentSliceStorage_;
-    std::uint32_t nativeCalendarBackingCount_ = 0;
+    StableRowStorage<CurrentSliceRow, std::size_t> currentSliceRows_;
+    StableRowStorage<std::size_t> currentSliceOrder_;
+    std::size_t currentSliceBackingHolds_ = 0;
+    std::size_t occupiedCurrentSliceRows_ = 0;
+    std::size_t issuedCurrentSliceRows_ = 0;
+    std::size_t freeCurrentSliceRow_ = SIZE_MAX;
     std::vector<std::uint32_t> pagePlan03GroupCount_;
     std::vector<std::uint32_t> pagePreparedPlan03GroupCount_;
     bool IssueGroupMemberOriginals(const Plan03GroupSliceIdentity& group,

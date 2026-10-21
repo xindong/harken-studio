@@ -1651,6 +1651,7 @@ void ScheduledTransactionPool::ApplyPrivateImmediateLaneGroupsPublication(
 }
 
 ScheduledTransactionPool::~ScheduledTransactionPool() {
+    assert(currentSliceBackingHolds_ == 0);
     assert(selectedFutureDomains_ == 0);
     assert(immediateBackingHolds_ == 0 && activeImmediateLaneBacking_ == nullptr);
     // Device and producer quiescence precedes pool destruction.
@@ -3018,7 +3019,8 @@ bool ScheduledTransactionPool::Reset(const Config& config,
                                      TransportEpoch epoch) {
     if (immediateBackingHolds_ != 0 || activeImmediateLaneBacking_ != nullptr) return false;
     if (laneGroupPublications_ != nullptr) return false;
-    if (HasHeldCurrentSlices() || currentSliceIncarnation_ == UINT64_MAX) return false;
+    if (currentSliceBackingHolds_ != 0 || HasHeldCurrentSlices() ||
+        currentSliceIncarnation_ == UINT64_MAX) return false;
     if (selectedFutureDomains_ != 0 || preparedPageFrontierBindingHolds_ != 0 ||
         privateUnboundPageArmRetirements_ != nullptr || unpublishedGroupArmCancellations_ != nullptr || privateMaterializationActive_) return false;
     if (immediateLaneGroups_.Capacity() != 0)
@@ -3119,17 +3121,15 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     }
 
     auto currentSlices = std::make_unique<CurrentSlicePage[]>(static_cast<std::size_t>(pages));
-    const auto ordinarySlices = config.maxCurrentSlicesPerQuantum == 0
-        ? config.maxEventsPerQuantum : config.maxCurrentSlicesPerQuantum;
-    for (std::uint32_t page = 0; page < pages; ++page) {
-        auto& storage = currentSlices[page];
-        if (!storage.rows.Reserve(static_cast<std::uint32_t>(currentSliceCapacity)) ||
-            !storage.order.Reserve(static_cast<std::uint32_t>(currentSliceCapacity)) ||
-            !storage.rows.ConstructThrough(ordinarySlices) ||
-            !storage.order.ConstructThrough(ordinarySlices)) return false;
-    }
+    StableRowStorage<CurrentSliceRow, std::size_t> currentSliceRows;
+    StableRowStorage<std::size_t> currentSliceOrder;
+    if (!currentSliceRows.Reserve(static_cast<std::size_t>(pages * currentSliceCapacity)) ||
+        !currentSliceOrder.Reserve(static_cast<std::uint32_t>(currentSliceCapacity))) return false;
+    currentSliceRows_.Swap(currentSliceRows);
+    currentSliceOrder_.Swap(currentSliceOrder);
     pageCurrentSliceStorage_ = std::move(currentSlices);
-    nativeCalendarBackingCount_ = 0;
+    issuedCurrentSliceRows_ = occupiedCurrentSliceRows_ = 0;
+    freeCurrentSliceRow_ = SIZE_MAX;
     config_ = config;
     pageCount_ = static_cast<std::uint32_t>(pages);
     quantumFrames_ = config.quantumFrames;
@@ -4302,6 +4302,10 @@ bool ScheduledTransactionPool::CanResetForEpoch(
         freeEventSlots_.size() > issuedEventSlots_ ||
         pageCurrentSliceCount_.size() != pageCount ||
         pageCurrentSliceStorage_ == nullptr ||
+        !exactProduct(pageCount, currentSliceStorageCapacity_, currentSliceRows_.Capacity()) ||
+        currentSliceOrder_.Capacity() != currentSliceStorageCapacity_ ||
+        issuedCurrentSliceRows_ > currentSliceRows_.ConstructedCount() ||
+        occupiedCurrentSliceRows_ > issuedCurrentSliceRows_ ||
         pagePlan03GroupCount_.size() != pageCount ||
         pagePreparedPlan03GroupCount_.size() != pageCount ||
         !exactProduct(pageCount, config_.maxPlan03GroupHeadersPerPage,
@@ -4338,11 +4342,7 @@ bool ScheduledTransactionPool::CanResetForEpoch(
     }
 
     for (std::uint32_t page = 0; page < pageCount_; ++page) {
-        const auto& slices = pageCurrentSliceStorage_[page];
-        if (slices.rows.Capacity() != currentSliceStorageCapacity_ ||
-            slices.order.Capacity() != currentSliceStorageCapacity_ ||
-            slices.rows.ConstructedCount() < pageCurrentSliceCount_[page] ||
-            slices.order.ConstructedCount() < pageCurrentSliceCount_[page]) return false;
+        if (currentSliceOrder_.ConstructedCount() < pageCurrentSliceCount_[page]) return false;
         if (pageHeaders_[page].pageGeneration == UINT64_MAX ||
             pageEventCount_[page] > config_.maxEventsPerQuantum ||
             pagePreparedEventCount_[page] != 0 ||
@@ -4457,12 +4457,8 @@ bool ScheduledTransactionPool::ResetForEpoch(
     freeEventSlots_.clear();
     issuedEventSlots_ = 0;
     std::fill(pageEventOrder_.begin(), pageEventOrder_.end(), 0);
-    std::fill(pageCurrentSliceCount_.begin(), pageCurrentSliceCount_.end(), 0);
-    for (std::uint32_t page = 0; page < pageCount_; ++page) {
-        auto& slices = pageCurrentSliceStorage_[page];
-        std::fill(slices.rows.begin(), slices.rows.end(), CurrentSliceRow{});
-        std::fill(slices.order.begin(), slices.order.end(), 0);
-    }
+    for (std::uint32_t page = 0; page < pageCount_; ++page)
+        RecycleCurrentSlicePage(page);
     std::fill(pagePlan03GroupCount_.begin(), pagePlan03GroupCount_.end(), 0);
     std::fill(pagePreparedPlan03GroupCount_.begin(),
               pagePreparedPlan03GroupCount_.end(), 0);
@@ -4650,30 +4646,8 @@ void ScheduledTransactionPool::Publish(
                 pageHeaders_[ring].frozen = true;
                 pageHeaders_[ring].publishCutoffFrame = cutoffFrame;
                 SortPage(ring);
-                const std::uint32_t sliceCount =
-                    pageCurrentSliceCount_[ring];
-                std::uint32_t* sliceOrder = pageCurrentSliceStorage_[ring].order.data();
-                for (std::uint32_t i = 0; i < sliceCount; ++i) {
-                    sliceOrder[i] = i;
-                }
-                const CurrentSliceRow* sliceRows = pageCurrentSliceStorage_[ring].rows.data();
-                std::sort(sliceOrder, sliceOrder + sliceCount,
-                          [sliceRows](std::uint32_t a, std::uint32_t b) {
-                              const CurrentSliceRow& x = sliceRows[a];
-                              const CurrentSliceRow& y = sliceRows[b];
-                              if (x.executeFrame != y.executeFrame) {
-                                  return x.executeFrame < y.executeFrame;
-                              }
-                              if (x.logicCommitSequence !=
-                                  y.logicCommitSequence) {
-                                  return x.logicCommitSequence <
-                                         y.logicCommitSequence;
-                              }
-                              if (x.executionOrdinal != y.executionOrdinal) {
-                                  return x.executionOrdinal < y.executionOrdinal;
-                              }
-                              return x.rowSequence < y.rowSequence;
-                          });
+                const auto sliceCount = pageCurrentSliceCount_[ring];
+                SortCurrentSlices(ring);
                 pageHeaders_[ring].plan03GroupCount =
                     pagePlan03GroupCount_[ring];
                 const std::size_t base =
@@ -6832,50 +6806,104 @@ bool ScheduledTransactionPool::CancelPreparedTransactionBatch(
 }
 
 std::uint64_t ScheduledTransactionPool::CurrentSliceStorageBytes() const noexcept {
-    std::uint64_t bytes = pageCurrentSliceCount_.capacity() * sizeof(std::uint32_t);
-    if (pageCurrentSliceStorage_ == nullptr) return bytes;
-    bytes += static_cast<std::uint64_t>(pageCount_) * sizeof(CurrentSlicePage);
-    for (std::uint32_t page = 0; page < pageCount_; ++page) {
-        const auto& storage = pageCurrentSliceStorage_[page];
-        bytes += storage.rows.RequestedBytes() + storage.order.RequestedBytes();
-    }
-    return bytes;
+    return pageCurrentSliceCount_.capacity() * sizeof(std::uint32_t) +
+        static_cast<std::uint64_t>(pageCount_) * sizeof(CurrentSlicePage) +
+        currentSliceRows_.RequestedBytes() + currentSliceOrder_.RequestedBytes();
 }
 
 std::uint64_t ScheduledTransactionPool::CurrentSliceCommittedBytes() const noexcept {
-    std::uint64_t bytes = 0;
-    if (pageCurrentSliceStorage_ != nullptr)
-        for (std::uint32_t page = 0; page < pageCount_; ++page) {
-            const auto& storage = pageCurrentSliceStorage_[page];
-            bytes += storage.rows.CommittedBytes() + storage.order.CommittedBytes();
-        }
-    return bytes;
+    return currentSliceRows_.CommittedBytes() + currentSliceOrder_.CommittedBytes();
 }
 
 std::uint64_t ScheduledTransactionPool::CurrentSliceReservedBytes() const noexcept {
-    std::uint64_t bytes = 0;
-    if (pageCurrentSliceStorage_ != nullptr)
-        for (std::uint32_t page = 0; page < pageCount_; ++page) {
-            const auto& storage = pageCurrentSliceStorage_[page];
-            bytes += storage.rows.ReservedBytes() + storage.order.ReservedBytes();
-        }
-    return bytes;
+    return currentSliceRows_.ReservedBytes() + currentSliceOrder_.ReservedBytes();
 }
 
-bool ScheduledTransactionPool::PrepareNativeStartCalendarBacking(std::uint32_t count) noexcept {
-    count = std::min(count, config_.maxNativeStartCalendarsPerQuantum);
-    if (count <= nativeCalendarBackingCount_) return true;
-    if (!Valid() || memguard::IsAudioTagged() || pageCurrentSliceStorage_ == nullptr) return false;
-    const auto required = config_.maxCurrentSlicesPerQuantum + count;
-    // A captured read cut can land in any writable page. Keep ordinary writes
-    // and every physically prepared native cut backed before issuing that cut.
-    for (std::uint32_t page = 0; page < pageCount_; ++page) {
-        auto& storage = pageCurrentSliceStorage_[page];
-        if (!storage.rows.ConstructThrough(required) ||
-            !storage.order.ConstructThrough(required)) return false;
-    }
-    nativeCalendarBackingCount_ = count;
+bool ScheduledTransactionPool::PrepareCurrentSliceRows() noexcept {
+    if (!Valid() || memguard::IsAudioTagged() || currentSliceBackingHolds_ == SIZE_MAX) return false;
+    const auto capacity = currentSliceRows_.Capacity();
+    const auto required = occupiedCurrentSliceRows_ + std::min(
+        capacity - occupiedCurrentSliceRows_, currentSliceBackingHolds_ + 1u);
+    return currentSliceRows_.ConstructThrough(required) &&
+        currentSliceOrder_.ConstructThrough(static_cast<std::uint32_t>(
+            std::min<std::size_t>(required, currentSliceStorageCapacity_)));
+}
+
+bool ScheduledTransactionPool::PrepareCurrentSliceBacking(CurrentSliceBacking* out) noexcept {
+    if (out == nullptr || out->Valid() || !PrepareCurrentSliceRows()) return false;
+    ++currentSliceBackingHolds_;
+    out->owner_ = this;
     return true;
+}
+
+void ScheduledTransactionPool::ReleaseCurrentSliceBacking(CurrentSliceBacking& backing) noexcept {
+    assert(!memguard::IsAudioTagged() && backing.owner_ == this && currentSliceBackingHolds_ != 0);
+    --currentSliceBackingHolds_;
+    backing.owner_ = nullptr;
+}
+
+CurrentSliceBacking::CurrentSliceBacking(CurrentSliceBacking&& other) noexcept {
+    *this = std::move(other);
+}
+
+CurrentSliceBacking& CurrentSliceBacking::operator=(CurrentSliceBacking&& other) noexcept {
+    if (this != &other) {
+        Release();
+        owner_ = std::exchange(other.owner_, nullptr);
+    }
+    return *this;
+}
+
+void CurrentSliceBacking::Release() noexcept {
+    if (owner_ != nullptr) owner_->ReleaseCurrentSliceBacking(*this);
+}
+
+void ScheduledTransactionPool::ReleaseCurrentSliceRow(std::size_t slot) noexcept {
+    auto& row = currentSliceRows_[slot];
+    row = {};
+    row.next = freeCurrentSliceRow_;
+    freeCurrentSliceRow_ = slot;
+    assert(occupiedCurrentSliceRows_ != 0);
+    --occupiedCurrentSliceRows_;
+}
+
+void ScheduledTransactionPool::RecycleCurrentSlicePage(std::uint32_t ring) noexcept {
+    auto& page = pageCurrentSliceStorage_[ring];
+    for (auto slot = page.first; slot != SIZE_MAX;) {
+        const auto next = currentSliceRows_[slot].next;
+        ReleaseCurrentSliceRow(slot);
+        slot = next;
+    }
+    page = {};
+    pageCurrentSliceCount_[ring] = 0;
+}
+
+void ScheduledTransactionPool::SortCurrentSlices(std::uint32_t ring) noexcept {
+    const auto count = pageCurrentSliceCount_[ring];
+    if (count < 2) return;
+    assert(currentSliceOrder_.ConstructedCount() >= count);
+    auto* order = currentSliceOrder_.data();
+    auto& page = pageCurrentSliceStorage_[ring];
+    auto slot = page.first;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        order[index] = slot;
+        slot = currentSliceRows_[slot].next;
+    }
+    std::sort(order, order + count, [this](std::size_t a, std::size_t b) {
+        const auto& x = currentSliceRows_[a];
+        const auto& y = currentSliceRows_[b];
+        if (x.executeFrame != y.executeFrame) return x.executeFrame < y.executeFrame;
+        if (x.logicCommitSequence != y.logicCommitSequence) return x.logicCommitSequence < y.logicCommitSequence;
+        if (x.executionOrdinal != y.executionOrdinal) return x.executionOrdinal < y.executionOrdinal;
+        return x.rowSequence < y.rowSequence;
+    });
+    page.first = order[0];
+    page.last = order[count - 1];
+    for (std::uint32_t index = 0; index < count; ++index) {
+        auto& row = currentSliceRows_[order[index]];
+        row.previous = index == 0 ? SIZE_MAX : order[index - 1];
+        row.next = index + 1 == count ? SIZE_MAX : order[index + 1];
+    }
 }
 
 ReserveResult ScheduledTransactionPool::ReserveCurrentSlice(
@@ -6886,9 +6914,9 @@ ReserveResult ScheduledTransactionPool::ReserveCurrentSlice(
 
 ReserveResult ScheduledTransactionPool::ReserveHeldCurrentSlice(
     const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
-    std::uint64_t publicationFrontier, HeldCurrentSliceToken* out) {
+    std::uint64_t publicationFrontier, HeldCurrentSliceToken* out, CurrentSliceBacking* backing) {
     if (out == nullptr || out->IsHeld()) return {};
-    return ReserveCurrentSliceImpl(input, latePolicy, publicationFrontier, out);
+    return ReserveCurrentSliceImpl(input, latePolicy, publicationFrontier, out, backing);
 }
 
 ReserveResult ScheduledTransactionPool::PreflightHeldCurrentSlice(
@@ -6942,11 +6970,9 @@ ReserveResult ScheduledTransactionPool::PlanCurrentSlicePlacement(
         result.refusal = ReserveRefusal::Late;
         return result;
     }
-    const auto& rows = pageCurrentSliceStorage_[ring].rows;
+    const auto& slices = pageCurrentSliceStorage_[ring];
     const bool native = input.kind == CurrentSliceKind::NativeStartCalendar;
-    std::uint32_t quotaCount = 0;
-    for (std::uint32_t i = 0; i < pageCurrentSliceCount_[ring]; ++i)
-        if ((rows[i].kind == CurrentSliceKind::NativeStartCalendar) == native) ++quotaCount;
+    const auto quotaCount = native ? slices.nativeCount : pageCurrentSliceCount_[ring] - slices.nativeCount;
     const auto quota = native ? config_.maxNativeStartCalendarsPerQuantum : config_.maxCurrentSlicesPerQuantum;
     if (quotaCount >= quota || pageCurrentSliceCount_[ring] >= currentSliceStorageCapacity_ ||
         (publicationHeld && pagePublicationHolds_[ring] == UINT64_MAX)) {
@@ -6967,8 +6993,9 @@ ReserveResult ScheduledTransactionPool::PlanCurrentSlicePlacement(
 
 ReserveResult ScheduledTransactionPool::ReserveCurrentSliceImpl(
     const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
-    std::uint64_t publicationFrontier, HeldCurrentSliceToken* held) {
-    if (input.slice.slot == UINT32_MAX || input.slice.generation == 0) return {};
+    std::uint64_t publicationFrontier, HeldCurrentSliceToken* held, CurrentSliceBacking* backing) {
+    if (memguard::IsAudioTagged() || input.slice.slot == UINT32_MAX || input.slice.generation == 0 ||
+        (backing != nullptr && backing->owner_ != this)) return {};
     auto result = PlanCurrentSlicePlacement(input, latePolicy, publicationFrontier, held != nullptr);
     if (result.status != ReserveStatus::Committed) {
         if (result.status == ReserveStatus::DroppedLate) ++droppedLateCount_;
@@ -6980,17 +7007,31 @@ ReserveResult ScheduledTransactionPool::ReserveCurrentSliceImpl(
     std::uint32_t page = 0;
     if (!PageForFrame(frame, &page)) return {};
     const auto ring = RingIndex(page);
-    auto& rows = pageCurrentSliceStorage_[ring].rows;
-    if (input.kind == CurrentSliceKind::NativeStartCalendar) {
-        std::uint32_t nativeCount = 0;
-        for (std::uint32_t i = 0; i < pageCurrentSliceCount_[ring]; ++i)
-            nativeCount += rows[i].kind == CurrentSliceKind::NativeStartCalendar ? 1u : 0u;
-        if (!PrepareNativeStartCalendarBacking(nativeCount + 1u)) {
-            result.status = ReserveStatus::Refused;
-            return result;
-        }
+    if (backing == nullptr && !PrepareCurrentSliceRows()) {
+        result.status = ReserveStatus::Refused;
+        return result;
     }
-    CurrentSliceRow& row = rows[pageCurrentSliceCount_[ring]++];
+    const auto slot = freeCurrentSliceRow_ == SIZE_MAX ? issuedCurrentSliceRows_ : freeCurrentSliceRow_;
+    assert(slot < currentSliceRows_.ConstructedCount() &&
+        pageCurrentSliceCount_[ring] < currentSliceOrder_.ConstructedCount());
+    if (slot >= currentSliceRows_.ConstructedCount() ||
+        pageCurrentSliceCount_[ring] >= currentSliceOrder_.ConstructedCount()) {
+        result.status = ReserveStatus::Refused;
+        return result;
+    }
+    CurrentSliceRow& row = currentSliceRows_[slot];
+    if (freeCurrentSliceRow_ == SIZE_MAX) ++issuedCurrentSliceRows_;
+    else freeCurrentSliceRow_ = row.next;
+    row = {};
+    auto& slices = pageCurrentSliceStorage_[ring];
+    row.previous = slices.last;
+    if (slices.last == SIZE_MAX) slices.first = slot;
+    else currentSliceRows_[slices.last].next = slot;
+    slices.last = slot;
+    if (input.kind == CurrentSliceKind::NativeStartCalendar) ++slices.nativeCount;
+    ++pageCurrentSliceCount_[ring];
+    ++occupiedCurrentSliceRows_;
+    if (backing != nullptr) backing->Release();
     row.executeFrame = frame;
     row.logicCommitSequence = input.logicCommitSequence;
     row.kind = input.kind;
@@ -7019,15 +7060,15 @@ ReserveResult ScheduledTransactionPool::ReserveCurrentSliceImpl(
 bool ScheduledTransactionPool::HasHeldCurrentSlices() const noexcept {
     if (pageCurrentSliceStorage_ != nullptr)
         for (std::uint32_t page = 0; page < pageCount_; ++page)
-            for (std::uint32_t index = 0; index < pageCurrentSliceCount_[page]; ++index)
-                if (pageCurrentSliceStorage_[page].rows[index].publicationHeld) return true;
+            for (auto slot = pageCurrentSliceStorage_[page].first; slot != SIZE_MAX;
+                 slot = currentSliceRows_[slot].next)
+                if (currentSliceRows_[slot].publicationHeld) return true;
     return false;
 }
 
 bool ScheduledTransactionPool::LocateHeldCurrentSlice(
     const HeldCurrentSliceToken& token, std::uint32_t* ring,
-    std::uint32_t* index) const noexcept {
-    // Terminal geometry remains intact so private reservations can roll back.
+    std::size_t* index) const noexcept {
     if (token.owner_ != this || token.epoch_ != epoch_ ||
         token.incarnation_ != currentSliceIncarnation_ ||
         token.absoluteQuantum_ < baseQuantumIndex_ ||
@@ -7038,15 +7079,14 @@ bool ScheduledTransactionPool::LocateHeldCurrentSlice(
     if (header.frozen || header.absoluteQuantumIndex != token.absoluteQuantum_ ||
         header.pageGeneration != token.pageGeneration_ ||
         pagePublicationHolds_[rowRing] == 0) return false;
-    const auto& rows = pageCurrentSliceStorage_[rowRing].rows;
-    for (std::uint32_t i = 0; i < pageCurrentSliceCount_[rowRing]; ++i) {
-        const auto& row = rows[i];
+    for (auto slot = pageCurrentSliceStorage_[rowRing].first; slot != SIZE_MAX;
+         slot = currentSliceRows_[slot].next) {
+        const auto& row = currentSliceRows_[slot];
         if (row.publicationHeld && row.rowSequence == token.rowSequence_ &&
-            row.executeFrame == token.executeFrame_ &&
-            row.slice.slot == token.slice_.slot &&
-            row.slice.generation == token.slice_.generation) {
+            row.executeFrame == token.executeFrame_ && row.kind == token.kind_ &&
+            row.slice.slot == token.slice_.slot && row.slice.generation == token.slice_.generation) {
             *ring = rowRing;
-            *index = i;
+            *index = slot;
             return true;
         }
     }
@@ -7055,28 +7095,41 @@ bool ScheduledTransactionPool::LocateHeldCurrentSlice(
 
 bool ScheduledTransactionPool::CanReleaseHeldCurrentSlice(
     const HeldCurrentSliceToken& token) const noexcept {
-    std::uint32_t ring = 0, index = 0;
-    return Valid() && LocateHeldCurrentSlice(token, &ring, &index);
+    std::uint32_t ring = 0;
+    std::size_t slot = 0;
+    return Valid() && LocateHeldCurrentSlice(token, &ring, &slot);
 }
 
 bool ScheduledTransactionPool::ReleaseHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept {
-    std::uint32_t ring = 0, index = 0;
-    if (!Valid() || token == nullptr || !LocateHeldCurrentSlice(*token, &ring, &index)) return false;
-    pageCurrentSliceStorage_[ring].rows[index].publicationHeld = false;
+    std::uint32_t ring = 0;
+    std::size_t slot = 0;
+    if (!Valid() || token == nullptr || !LocateHeldCurrentSlice(*token, &ring, &slot)) return false;
+    currentSliceRows_[slot].publicationHeld = false;
     --pagePublicationHolds_[ring];
     token->owner_ = nullptr;
     return true;
 }
 
-bool ScheduledTransactionPool::CancelHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept {
-    std::uint32_t ring = 0, index = 0;
-    if (token == nullptr || !LocateHeldCurrentSlice(*token, &ring, &index)) return false;
-    auto& rows = pageCurrentSliceStorage_[ring].rows;
-    auto& count = pageCurrentSliceCount_[ring];
-    for (std::uint32_t i = index + 1; i < count; ++i)
-        rows[i - 1] = rows[i];
-    rows[--count] = {};
+bool ScheduledTransactionPool::CancelHeldCurrentSlice(HeldCurrentSliceToken* token,
+    CurrentSliceBacking* restoreBacking) noexcept {
+    std::uint32_t ring = 0;
+    std::size_t slot = 0;
+    if (token == nullptr || !LocateHeldCurrentSlice(*token, &ring, &slot) ||
+        (restoreBacking != nullptr && (restoreBacking->Valid() || currentSliceBackingHolds_ == SIZE_MAX))) return false;
+    auto& page = pageCurrentSliceStorage_[ring];
+    const auto& row = currentSliceRows_[slot];
+    if (row.previous == SIZE_MAX) page.first = row.next;
+    else currentSliceRows_[row.previous].next = row.next;
+    if (row.next == SIZE_MAX) page.last = row.previous;
+    else currentSliceRows_[row.next].previous = row.previous;
+    if (row.kind == CurrentSliceKind::NativeStartCalendar) --page.nativeCount;
+    --pageCurrentSliceCount_[ring];
     --pagePublicationHolds_[ring];
+    ReleaseCurrentSliceRow(slot);
+    if (restoreBacking != nullptr) {
+        ++currentSliceBackingHolds_;
+        restoreBacking->owner_ = this;
+    }
     token->owner_ = nullptr;
     return true;
 }
@@ -8017,12 +8070,12 @@ std::size_t ScheduledTransactionPool::ConsumeCurrentSlicesRt(
     if (count > outCapacity || (count != 0 && out == nullptr)) {
         return count;
     }
-    const auto& storage = pageCurrentSliceStorage_[ring];
-    const std::uint32_t* order = storage.order.data();
+    auto slot = pageCurrentSliceStorage_[ring].first;
     for (std::uint32_t i = 0; i < count; ++i) {
-        const CurrentSliceRow& row = storage.rows[order[i]];
+        const CurrentSliceRow& row = currentSliceRows_[slot];
         out[i] = {row.executeFrame, row.logicCommitSequence, row.kind,
                   row.slice, row.executionOrdinal, row.rowSequence};
+        slot = row.next;
     }
     return count;
 }
@@ -10399,7 +10452,7 @@ std::uint32_t ScheduledTransactionPool::Advance() {
     pageEventCount_[leaving] = 0;
     RecordRetiredPageEvents(dropped);
     pagePreparedEventCount_[leaving] = 0;
-    pageCurrentSliceCount_[leaving] = 0;
+    RecycleCurrentSlicePage(leaving);
     for (std::uint32_t group = 0;
          group < config_.maxPlan03GroupHeadersPerPage; ++group) {
         const std::size_t rowIndex = groupRowBase + group;

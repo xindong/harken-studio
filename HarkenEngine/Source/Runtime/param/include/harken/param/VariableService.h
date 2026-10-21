@@ -5,6 +5,7 @@
 #include <harken/Harken.h>
 
 #include "harken/core/CurrentWorld.h"
+#include "harken/core/CurrentSliceBacking.h"
 #include "harken/core/BankVersionToken.h"
 #include "harken/core/LogicCommitCoordinator.h"
 #include "harken/core/ActionFiringTable.h"
@@ -1085,6 +1086,7 @@ private:
         const ActionOrderIdentity& identity);
 
     struct WriteRow {
+        CurrentSliceBacking calendarBacking;
         bool used = false;
         bool reserved = false;
         ActionOrderIdentity preparedIssue{};
@@ -1168,6 +1170,7 @@ private:
         }
     };
     struct ReadCutRow {
+        CurrentSliceBacking calendarBacking;
         std::atomic<std::uint32_t> generation{1};
         std::atomic<ReadCutState> state{ReadCutState::Free};
         WorldGeneration world = 0;

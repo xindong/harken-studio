@@ -1540,13 +1540,13 @@ VariableAcceptResult VariableServiceV1::Prepare(
             static_cast<std::uint32_t>(emitterOverrideSlot);
     }
     const std::uint32_t slot = freeSlots_.back();
-    if (!PrepareHistoryBacking(slot)) {
+    if (!PrepareHistoryBacking(slot) || !timeline_.PrepareCurrentSliceBacking(&row.calendarBacking)) {
         result.result = VN_BACKPRESSURE;
         ++refusalCount_;
         return result;
     }
     freeSlots_.pop_back();
-    history_[slot] = row;
+    history_[slot] = std::move(row);
     ++occupiedRevisions_;
     ++preparedRows_;
     out->owner_ = this;
@@ -1788,7 +1788,7 @@ void VariableServiceV1::CancelPreparedWrite(
     if (row.preparedEngine != nullptr) {
         auto& held = preparedWritePlacements_[prepared->slot_];
         if (held.IsHeld()) {
-            const bool cancelled = timeline_.CancelHeldCurrentSlice(&held);
+            const bool cancelled = timeline_.CancelHeldCurrentSlice(&held, &row.calendarBacking);
             assert(cancelled);
             (void)cancelled;
         }
@@ -3019,7 +3019,7 @@ VariableServiceV1::CaptureCandidateSlice(Engine& engine, WriteRow& row, WorkSpan
 void VariableServiceV1::RejectPreparedRow(Engine& engine,
                                           WriteRow& row) noexcept {
     auto& held = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
-    if (held.IsHeld()) (void)timeline_.CancelHeldCurrentSlice(&held);
+    if (held.IsHeld()) (void)timeline_.CancelHeldCurrentSlice(&held, &row.calendarBacking);
     row.placementHeld = false;
     const auto members = BatchRows(row);
     if (row.slice.Valid()) {
@@ -3041,7 +3041,7 @@ void VariableServiceV1::RejectPreparedRow(Engine& engine,
 void VariableServiceV1::ResetPreparedRow(Engine& engine,
                                          WriteRow& row) noexcept {
     auto& held = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
-    if (held.IsHeld()) (void)timeline_.CancelHeldCurrentSlice(&held);
+    if (held.IsHeld()) (void)timeline_.CancelHeldCurrentSlice(&held, &row.calendarBacking);
     row.placementHeld = false;
     if (row.slice.Valid()) {
         assert(slices_.SourceObserverCount(row.slice) == (row.historySlicePin ? 1u : 0u));
@@ -3604,7 +3604,7 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
             auto& held = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
             if (row.used && row.placementHeld && row.committedFrame < nextOpenFrame) {
                 // Moving the calendar does not invalidate these claims or their captured FIFO frontier.
-                const bool cancelled = timeline_.CancelHeldCurrentSlice(&held);
+                const bool cancelled = timeline_.CancelHeldCurrentSlice(&held, &row.calendarBacking);
                 assert(cancelled);
                 if (!cancelled) return;
                 row.placementHeld = false;
@@ -3624,7 +3624,7 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
                 input.executionOrdinal = row.executionOrdinal;
                 input.slice = {row.slice.slot, row.slice.generation};
                 const auto reserved = timeline_.ReserveHeldCurrentSlice(input,
-                    PrePublishLatePolicy::ExecuteAtEarliestSafeFrame, nextOpenFrame, &held);
+                    PrePublishLatePolicy::ExecuteAtEarliestSafeFrame, nextOpenFrame, &held, &row.calendarBacking);
                 if (reserved.status != ReserveStatus::Committed) {
                     ResetPreparedRow(engine, row);
                     continue;
@@ -3663,7 +3663,7 @@ void VariableServiceV1::PrepareClaimedSlicesImpl(Engine& engine, WorkSpan work,
         WriteRow& row = *rows[index];
         auto& held = preparedWritePlacements_[static_cast<std::size_t>(&row - history_.data())];
         const auto cancelPlacement = [&] {
-            if (held.IsHeld()) (void)timeline_.CancelHeldCurrentSlice(&held);
+            if (held.IsHeld()) (void)timeline_.CancelHeldCurrentSlice(&held, &row.calendarBacking);
             row.placementHeld = false;
         };
         {
@@ -4401,19 +4401,20 @@ bool VariableServiceV1::ConstructReadCut(std::uint32_t slot) noexcept {
         return constructed && ReadCutBackingAvailable(readCuts_[slot]);
     if (!constructed && !readCuts_.Emplace(slot)) return false;
     const auto count = readCuts_.ConstructedCount();
-    if (!timeline_.PrepareNativeStartCalendarBacking(count)) return false;
     try {
         detail::CheckedGrow(capturingCuts_, count,
             detail::LogicAllocSite::VariableReadCutColumns);
         capturingCuts_.reserve(count);
     } catch (...) { return false; }
-    return PrepareReadCutColumns(readCuts_[slot]);
+    auto& cut = readCuts_[slot];
+    return PrepareReadCutColumns(cut) && (cut.calendarBacking.Valid() ||
+        timeline_.PrepareCurrentSliceBacking(&cut.calendarBacking));
 }
 
 bool VariableServiceV1::ReadCutBackingAvailable(const ReadCutRow& cut) const noexcept {
     const auto count = definitions_.size();
     return cut.state.load(std::memory_order_acquire) == ReadCutState::Free &&
-        cut.values.capacity() >= count &&
+        cut.calendarBacking.Valid() && cut.values.capacity() >= count &&
         cut.candidatePins.words.size() >= (history_.size() + 63u) / 64u;
 }
 
@@ -4586,6 +4587,7 @@ void VariableServiceV1::ReleaseUnusedReadCutBacking() noexcept {
     for (auto& cut : readCuts_) {
         const auto state = cut.state.load(std::memory_order_acquire);
         if (state != ReadCutState::Free && state != ReadCutState::Quarantined) continue;
+        cut.calendarBacking.Release();
         std::vector<ReadCutValueRow>().swap(cut.values);
         std::vector<std::uint64_t>().swap(cut.candidatePins.words);
     }
@@ -4634,8 +4636,12 @@ bool VariableServiceV1::CaptureReadCutImpl(
         emitterBanks_[static_cast<std::uint32_t>(emitter)].generation != static_cast<std::uint32_t>(emitter >> 32))) return false;
     std::uint32_t slot = 0;
     for (; slot < readCutCapacity_; ++slot) {
-        if (!readCuts_.IsConstructed(slot) ||
-            readCuts_[slot].state.load(std::memory_order_acquire) == ReadCutState::Free) break;
+        if (!readCuts_.IsConstructed(slot)) {
+            if (!readCuts_.PreparedUseActive()) break;
+            continue;
+        }
+        if (readCuts_[slot].state.load(std::memory_order_acquire) == ReadCutState::Free &&
+            (!readCuts_.PreparedUseActive() || ReadCutBackingAvailable(readCuts_[slot]))) break;
     }
     if (slot == readCutCapacity_ || !ConstructReadCut(slot) ||
         !readCuts_.ProtectBackingForAcquire(slot,
@@ -5085,7 +5091,7 @@ bool VariableServiceV1::ReserveNativeReadCutCalendar(VariableReadCutRef ref,
     input.kind = CurrentSliceKind::NativeStartCalendar;
     input.slice = {ref.slot, ref.generation};
     const auto reserved = timeline_.ReserveHeldCurrentSlice(input, PrePublishLatePolicy::Refuse,
-                                                           publicationFrontier, out);
+                                                           publicationFrontier, out, &cut->calendarBacking);
     if (reserved.status != ReserveStatus::Committed) return false;
     cut->nativeCalendarRequired = true;
     cut->nativeCalendarReservationSequence = out->ReservationSequence();
@@ -5101,7 +5107,7 @@ bool VariableServiceV1::CancelNativeReadCutCalendar(VariableReadCutRef ref,
         held->ExecuteFrame() != cut->executeFrame || !cut->nativeCalendarRequired ||
         held->ReservationSequence() != cut->nativeCalendarReservationSequence ||
         cut->nativeReceipt.load(std::memory_order_acquire) != VariableNativeStartReceipt::None ||
-        !timeline_.CancelHeldCurrentSlice(held)) return false;
+        !timeline_.CancelHeldCurrentSlice(held, &cut->calendarBacking)) return false;
     cut->nativeCalendarRequired = false;
     cut->nativeCalendarReservationSequence = 0;
     return true;
