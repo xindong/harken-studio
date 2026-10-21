@@ -9670,9 +9670,6 @@ TEST_P(ClaimedInitialVariableControlSliceCancellationTest,
     const harken::DecisionToken decision = continuous
         ? row->variableControlContinuousDecision
         : row->variableControlDiscreteDecision;
-    const std::size_t rowIndex = row->partition.slot;
-    const std::size_t continuousBase =
-        engine->playableStorage.ContinuousBase(rowIndex);
     const std::size_t memberBase =
         static_cast<std::size_t>(row->scheduleStorageBase) +
         (continuous ? row->variableControlContinuousMemberOffset : 0u);
@@ -9681,7 +9678,7 @@ TEST_P(ClaimedInitialVariableControlSliceCancellationTest,
         : row->variableControlInitialDiscreteMemberCount;
     ASSERT_EQ(continuous ? continuousImage.children.size() : 1u, memberCount);
     const harken::TimelineArmToken member = continuous
-        ? engine->variableControlInitialContinuousArms[continuousBase]
+        ? row->variableControlInitialArms.Continuous()[0]
         : row->arm;
     ASSERT_TRUE(member.Valid());
     const VnVoiceHandle render =

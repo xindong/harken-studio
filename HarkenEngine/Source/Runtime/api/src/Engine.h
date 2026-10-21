@@ -1571,6 +1571,27 @@ struct EngineVariableMemberWeights {
     }
 };
 
+struct EngineVariableInitialArms {
+    using Values = std::vector<TimelineArmToken>;
+    std::shared_ptr<Values> storage;
+    std::uint32_t continuousOffset = 0;
+
+    std::size_t size() const noexcept { return storage ? storage->size() : 0; }
+    std::span<TimelineArmToken> ValuesView() noexcept {
+        return storage ? std::span<TimelineArmToken>{*storage} : std::span<TimelineArmToken>{};
+    }
+    std::span<const TimelineArmToken> ValuesView() const noexcept {
+        return storage ? std::span<const TimelineArmToken>{*storage} : std::span<const TimelineArmToken>{};
+    }
+    auto Discrete() noexcept { return ValuesView().first(continuousOffset); }
+    auto Discrete() const noexcept { return ValuesView().first(continuousOffset); }
+    auto Continuous() noexcept { return ValuesView().subspan(continuousOffset); }
+    auto Continuous() const noexcept { return ValuesView().subspan(continuousOffset); }
+    std::size_t StorageBytes() const noexcept {
+        return storage ? sizeof(Values) + storage->capacity() * sizeof(TimelineArmToken) : 0;
+    }
+};
+
 struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     struct UnpublishedVariableGroupCancellation {
         EnginePlayableServiceToken service{};
@@ -1715,8 +1736,7 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint32_t variableControlDiscreteMemberCount = 0;
     std::uint32_t variableControlInitialDiscreteMemberCount = 0;
     std::uint32_t variableControlDiscreteCurrentChildOrdinal = 0;
-    std::array<TimelineArmToken, kMaxKnownScheduleLeaves>
-        variableControlInitialDiscreteArms{};
+    EngineVariableInitialArms variableControlInitialArms;
     // One child instance per published VariableControl member.  The root
     // remains the owner of the VariableControl decision state; these handles
     // own the playable voice/schedule lifetime and are retired with the tree.
@@ -4918,12 +4938,18 @@ struct Engine {
         bool discreteMatched = false;
     };
     struct NativeRuntimeBacking {
+        struct RootInitialArms {
+            EnginePlayableServiceToken service{};
+            EngineVariableInitialArms arms;
+        };
         struct RootMemberWeights {
             EnginePlayableServiceToken service{};
             EngineVariableMemberWeights weights;
         };
         std::vector<RootMemberWeights> rootMemberWeights;
         std::vector<EngineVariableMemberWeights> memberWeights;
+        std::vector<RootInitialArms> rootInitialArms;
+        std::vector<EngineVariableInitialArms> initialArms;
         std::vector<EngineActionPlayScratch*> reprepareProducers;
         std::vector<PendingVariableSelectionSnapshot> selections;
         std::vector<EngineActionPlayScratch*> publicationProducers;
@@ -5425,6 +5451,44 @@ struct Engine {
         catch (...) { return false; }
         return true;
     }
+    bool PrepareVariableControlInitialArms(EnginePlayableServiceRow& row, std::uint32_t count) noexcept {
+        if (count > config.maxKnownScheduleLeaves + config.maxVariableControlLiveRows) return false;
+        auto& arms = row.variableControlInitialArms;
+        if (count <= arms.size()) return true;
+        if (memguard::IsAudioTagged()) return false;
+        if (nativeRuntimeBackingInUse != nullptr) {
+            EngineVariableInitialArms* selected = nullptr;
+            for (auto& root : nativeRuntimeBackingInUse->rootInitialArms) {
+                if (root.service != row.identity) continue;
+                if (root.arms.size() < count) return false;
+                selected = &root.arms;
+                break;
+            }
+            if (selected == nullptr) {
+                for (auto& candidate : nativeRuntimeBackingInUse->initialArms) {
+                    if (candidate.storage.use_count() != 1 || candidate.size() < count) continue;
+                    if (selected == nullptr || candidate.size() < selected->size()) selected = &candidate;
+                }
+            }
+            if (selected == nullptr) return false;
+            std::fill(selected->storage->begin(), selected->storage->end(), TimelineArmToken{});
+            if (arms.storage)
+                std::copy(arms.storage->begin(), arms.storage->end(), selected->storage->begin());
+            arms.storage = selected->storage;
+            return true;
+        }
+        try {
+            if (!arms.storage) {
+                if (!AllowNativeBackingAllocation()) return false;
+                arms.storage = std::make_shared<EngineVariableInitialArms::Values>(count);
+            } else {
+                if (count > arms.storage->capacity() && !AllowNativeBackingAllocation()) return false;
+                arms.storage->resize(count);
+            }
+        }
+        catch (...) { return false; }
+        return true;
+    }
     EngineFrontierAttemptToken NativeBackingTokenFor(const EngineActionPlayScratch& scratch) const noexcept;
     EngineActionPlayScratch* NativeBackingParentFor(const EngineActionPlayScratch& future) noexcept;
     OriginalPendingVariableGroupHolder* NativeBackingGroupFor(const EngineActionPlayScratch& child) noexcept;
@@ -5797,8 +5861,6 @@ public:
           frontierExpansion(resolved.maxPlayableInstances),
           ordinaryRetiringSources(resolved.maxPlayableInstances),
           ordinaryRetiringLeaves(resolved.maxPlayableInstances),
-          variableControlInitialContinuousArms(
-              playableStorage.continuousCount),
           queueSelectionChildScratch(resolved.maxQueueChildren),
           queueRemainingScratch(resolved.maxQueueChildren),
           queuePermutationScratch(resolved.maxQueueChildren),
@@ -13075,7 +13137,6 @@ public:
         record->monitorSelection = {};
         RefreshPlayableMemberOnset(slot);
     }
-    std::vector<TimelineArmToken> variableControlInitialContinuousArms;
     StableRowStorage<EngineControlProgramRecord> variableControlRetargetPrograms;
     bool VariableControlRetargetProgramHasReaders(const EngineControlProgramRecord& record) const noexcept {
         const auto program = record.schedule.runtimeProgram;
