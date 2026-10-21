@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <new>
 #include <vector>
 
 namespace harken {
@@ -27,9 +28,16 @@ public:
     VoiceTimelineSink(VoicePool& voices, TimelineArmTable& arms)
         : voices_(voices), arms_(arms), frontier_(voices, arms),
           laneFrontier_(voices, arms), immediate_(voices, arms),
-          pendingVariableStarts_(voices.Capacity()),
           plainResults_(voices.Capacity() * 2u * kTimelineMaxEventsPerVoiceQuantum),
-          retiringPlainArms_(arms.Capacity()), retiringPlainArmSlots_(arms.Capacity()) {}
+          retiringPlainArms_(arms.Capacity()), retiringPlainArmSlots_(arms.Capacity()) {
+        if (!pendingVariableStarts_.Reserve(voices.Capacity()) ||
+            !voices.AttachSlotStoragePreparation(slotStorageRegistration_, this,
+                [](void* context, std::uint32_t count) noexcept {
+                    return static_cast<VoiceTimelineSink*>(context)->pendingVariableStarts_.ConstructThrough(count);
+                })) throw std::bad_alloc{};
+    }
+
+    ~VoiceTimelineSink() override { slotStorageRegistration_.Detach(); }
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     struct FrontierStageRecordForTest {
@@ -269,7 +277,7 @@ public:
     }
 
     std::size_t VariableStartStorageBytes() const noexcept {
-        return pendingVariableStarts_.size() * sizeof(PendingVariableStart) +
+        return pendingVariableStarts_.RequestedBytes() +
             plainResults_.size() * sizeof(PlainTransactionResult) +
             retiringPlainArms_.size() * sizeof(TimelineArmToken) +
             retiringPlainArmSlots_.size() * sizeof(std::uint32_t);
@@ -573,7 +581,7 @@ public:
                           const TimelineSinkEvent* events,
                           std::uint32_t eventCount,
                           TimelineArmToken armToken) noexcept override {
-        if (events == nullptr || eventCount == 0 ||
+        if (events == nullptr || eventCount == 0 || renderSlot >= pendingVariableStarts_.size() ||
             eventCount > kTimelineMaxEventsPerVoiceQuantum ||
             !voices_.CanAppendTimelineEvents(renderSlot, renderGeneration,
                                              quantumIndex, eventCount)) {
@@ -1317,7 +1325,8 @@ private:
     CurrentSliceApplyCallback currentSliceApplyCallback_ = nullptr;
     FrontierTimelineFinalizer laneFrontier_;
     ImmediateLaneTimelineFinalizer immediate_;
-    std::vector<PendingVariableStart> pendingVariableStarts_;
+    StableRowStorage<PendingVariableStart> pendingVariableStarts_;
+    VoicePool::SlotStorageRegistration slotStorageRegistration_;
     std::vector<PlainTransactionResult> plainResults_;
     std::vector<TimelineArmToken> retiringPlainArms_;
     std::vector<std::uint32_t> retiringPlainArmSlots_;

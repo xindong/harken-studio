@@ -74,6 +74,13 @@ TEST(EffectParamTargetStore, SeedComposesBindingOnAuthoredBaseNotNeutral) {
     // directly set), a Multiply 0.5 binding contribution -> resolved 0.5.
     EffectParamTargetStore s = MakeStore();
     const std::vector<float> bases = DelayBases(10.0f, 0.0f, 1.0f, 1.0f);
+    EXPECT_EQ(0u, s.StorageBytes());
+    s.SetRecordCommitPageLimitForTests(0);
+    EXPECT_FALSE(s.SeedInstalledEffect(Scope::Voice, kVoice, kSlot,
+        VN_EFFECT_FEEDBACK_DELAY, bases.data(), harken::kDelayParamCount));
+    EXPECT_EQ(0u, s.ReservedRecordCountForTests());
+    EXPECT_TRUE(s.CanSeedFreshEffects(64));
+    s.SetRecordCommitPageLimitForTests(SIZE_MAX);
     ASSERT_TRUE(s.SeedInstalledEffect(Scope::Voice, kVoice, kSlot,
                                       VN_EFFECT_FEEDBACK_DELAY, bases.data(),
                                       harken::kDelayParamCount));

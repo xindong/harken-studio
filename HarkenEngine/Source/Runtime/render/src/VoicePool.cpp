@@ -17,13 +17,40 @@
 #include <utility>
 
 namespace harken {
+void VoicePool::SlotStorageRegistration::Detach() noexcept {
+    if (owner_ == nullptr) return;
+    if (previous_ != nullptr) previous_->next_ = next_;
+    else owner_->m_slotStorageRegistrations = next_;
+    if (next_ != nullptr) next_->previous_ = previous_;
+    owner_ = nullptr;
+    previous_ = next_ = nullptr;
+    context_ = nullptr;
+    prepare_ = nullptr;
+}
+
+bool VoicePool::AttachSlotStoragePreparation(SlotStorageRegistration& registration,
+    void* context, SlotStorageRegistration::Prepare prepare) noexcept {
+    if (memguard::IsAudioTagged() || prepare == nullptr || registration.owner_ != nullptr ||
+        !prepare(context, m_slots.ConstructedCount())) return false;
+    registration.owner_ = this;
+    registration.context_ = context;
+    registration.prepare_ = prepare;
+    registration.next_ = m_slotStorageRegistrations;
+    if (m_slotStorageRegistrations != nullptr) m_slotStorageRegistrations->previous_ = &registration;
+    m_slotStorageRegistrations = &registration;
+    return true;
+}
+
 bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t channelCount) noexcept {
     if (count > m_slots.Capacity() || channelCount > kMaxChannels) return false;
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
         if (!m_ringStorage[ch].ConstructThrough(count) ||
             !m_monitorPreChainStorage[ch].ConstructThrough(count * m_blockFrames)) return false;
     }
-    return m_firstOutputEndpoints.ConstructThrough(count * m_firstOutputStride);
+    if (!m_firstOutputEndpoints.ConstructThrough(count * m_firstOutputStride)) return false;
+    for (auto* registration = m_slotStorageRegistrations; registration != nullptr; registration = registration->next_)
+        if (!registration->prepare_(registration->context_, count)) return false;
+    return true;
 }
 
 bool VoicePool::RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount) const noexcept {
@@ -202,6 +229,7 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
 }
 
 VoicePool::~VoicePool() {
+    while (m_slotStorageRegistrations != nullptr) m_slotStorageRegistrations->Detach();
     assert(m_liveOriginalVoiceOwners.load(std::memory_order_relaxed) == 0 &&
         "original physical owners must retire before the pool");
     for (const auto& slot : m_slots) {

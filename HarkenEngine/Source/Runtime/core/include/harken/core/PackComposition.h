@@ -327,6 +327,8 @@ public:
         const PackPartitionLease& lease,
         PackResourceRevisionToken* outTokens, std::size_t tokenCapacity,
         std::size_t* outTokenCount) const noexcept;
+    VnResult PreparedResourceClosureBacking(const PackPartitionLease& lease,
+        std::shared_ptr<const std::vector<PackResourceRevisionToken>>* out) const noexcept;
     VnResult CommitPreparedLease(
         PackPartitionLease* lease,
         PackResourceClosureToken resourceClosureToken,

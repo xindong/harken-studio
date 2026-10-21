@@ -5761,7 +5761,6 @@ public:
                           packGenerationFloor),
           packs(resolved.maxPacks, PackRetirementCapacity(resolved),
                 PackIdentityLeaseCapacity(resolved)),
-          packResourceClosureScratch(resolved.maxPacks),
           streams(resolved),
           effectBank(resolved),
           decisions(resolved.maxDecisionRows,
@@ -6515,12 +6514,11 @@ private:
             *out = prepared;
             return prepared.result;
         };
-        std::size_t resourceCount = 0;
-        result = packComposition.BuildResourceClosure(prepared.lease, packResourceClosureScratch.data(),
-            packResourceClosureScratch.size(), &resourceCount);
+        std::shared_ptr<const std::vector<PackResourceRevisionToken>> resourceTokens;
+        result = packComposition.PreparedResourceClosureBacking(prepared.lease, &resourceTokens);
         if (result != VN_OK) return abortBeforeResource(result);
         PackResourceClosureToken closure = 0;
-        result = packs.AcquireResourceClosure(packResourceClosureScratch.data(), resourceCount, &closure);
+        result = packs.AcquirePreparedResourceClosure(resourceTokens, &closure);
         if (result != VN_OK) return abortBeforeResource(result);
         const bool bound = packComposition.BindOriginalResources(native, &packs, closure);
         assert(bound);
@@ -6576,10 +6574,8 @@ public:
             *out = prepared;
             return result;
         }
-        std::size_t resourceCount = 0;
-        result = packComposition.BuildResourceClosure(
-            prepared.lease, packResourceClosureScratch.data(),
-            packResourceClosureScratch.size(), &resourceCount);
+        std::shared_ptr<const std::vector<PackResourceRevisionToken>> resourceTokens;
+        result = packComposition.PreparedResourceClosureBacking(prepared.lease, &resourceTokens);
         if (result != VN_OK) {
             packComposition.AbandonPreparedLease(prepared.lease);
             prepared.result = result;
@@ -6590,8 +6586,7 @@ public:
             return result;
         }
         PackResourceClosureToken closureToken = 0;
-        result = packs.AcquireResourceClosure(packResourceClosureScratch.data(),
-                                              resourceCount, &closureToken);
+        result = packs.AcquirePreparedResourceClosure(resourceTokens, &closureToken);
         if (result != VN_OK) {
             packComposition.AbandonPreparedLease(prepared.lease);
             prepared.result = result;
@@ -12172,7 +12167,6 @@ public:
     PackTable packs; // registry entries of loaded packs reference the
                           // pack buffers; both live for the engine's life,
                           // and teardown never dereferences sample data
-    std::vector<PackResourceRevisionToken> packResourceClosureScratch;
     StreamManager streams; // owns the stream rings voices point into, and
                            // the streaming thread; declared before voices
                            // so it outlives every context holding a ring

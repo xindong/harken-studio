@@ -263,6 +263,25 @@ public:
     }
     std::uint32_t ConstructedSlotCount() const noexcept { return m_slots.ConstructedCount(); }
     std::size_t SlotStorageBytes() const noexcept { return m_slots.RequestedBytes(); }
+    // Attach and detach only while the corresponding consumer is quiescent.
+    class SlotStorageRegistration {
+    public:
+        using Prepare = bool (*)(void*, std::uint32_t) noexcept;
+        SlotStorageRegistration() = default;
+        ~SlotStorageRegistration() { Detach(); }
+        SlotStorageRegistration(const SlotStorageRegistration&) = delete;
+        SlotStorageRegistration& operator=(const SlotStorageRegistration&) = delete;
+        void Detach() noexcept;
+    private:
+        friend class VoicePool;
+        VoicePool* owner_ = nullptr;
+        SlotStorageRegistration* previous_ = nullptr;
+        SlotStorageRegistration* next_ = nullptr;
+        void* context_ = nullptr;
+        Prepare prepare_ = nullptr;
+    };
+    bool AttachSlotStoragePreparation(SlotStorageRegistration& registration,
+        void* context, SlotStorageRegistration::Prepare prepare) noexcept;
     bool PrepareSlotBacking(std::uint32_t count, StableStoragePreparation* out) noexcept;
     bool PrepareSlotWorkingSet(std::uint32_t renderSlot, std::uint32_t channelCount,
         ResampleProfile profile = ResampleProfile::LegacyCompatibility) noexcept;
@@ -1113,6 +1132,7 @@ private:
     bool m_originalBodyMarkerExhausted = false;
     bool m_originalBodyShutdown = false;
     StableRowStorage<Slot> m_slots;
+    SlotStorageRegistration* m_slotStorageRegistrations = nullptr;
     std::vector<OriginalCallbackStorageLease> m_originalCallbackStorage;
     bool m_originalSourceCallbackOpen = false;
     std::vector<StreamParkMailbox> m_streamParkMailboxes;

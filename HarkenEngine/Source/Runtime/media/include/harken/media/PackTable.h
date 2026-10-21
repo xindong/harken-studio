@@ -433,6 +433,9 @@ public:
         const PackResourceRevisionToken* resourceTokens,
         std::size_t resourceTokenCount,
         PackResourceClosureToken* outClosureToken) noexcept;
+    VnResult AcquirePreparedResourceClosure(
+        const std::shared_ptr<const std::vector<PackResourceRevisionToken>>& resourceTokens,
+        PackResourceClosureToken* outClosureToken) noexcept;
     VnResult ValidateResourceClosure(
         PackResourceClosureToken closureToken) const noexcept;
     VnResult ReleaseResourceClosure(
@@ -510,6 +513,7 @@ private:
         ResourceClosureState state = ResourceClosureState::Free;
         std::uint32_t generation = 1;
         std::uint32_t resourceCount = 0;
+        std::shared_ptr<const std::vector<PackResourceRevisionToken>> tokens;
     };
 
     Slot* SlotFor(VnPackHandle handle);
@@ -541,8 +545,7 @@ private:
         PackResourceClosureToken closureToken) const noexcept;
     ResourceClosureRow* ResourceClosureRowFor(
         PackResourceClosureToken closureToken) noexcept;
-    PackResourceRevisionToken* ResourceClosureTokens(
-        std::size_t rowIndex) noexcept;
+    VnResult SelectResourceClosureRow(std::size_t* out) const noexcept;
     const PackResourceRevisionToken* ResourceClosureTokens(
         std::size_t rowIndex) const noexcept;
 
@@ -555,7 +558,6 @@ private:
     std::vector<Slot> m_slots;
     std::vector<RetiringGeneration> m_retiring;
     std::vector<ResourceClosureRow> m_resourceClosures;
-    std::vector<PackResourceRevisionToken> m_resourceClosureTokens;
     std::uint64_t m_staleHandleHits = 0;
     std::uint64_t m_loadedHighWater = 0;
     std::uint64_t m_noPackCount = 0;

@@ -223,6 +223,16 @@ TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     EXPECT_EQ(0u, engine.voices.RenderWorksetCommittedBytes());
     EXPECT_EQ(1u, engine.voices.Capacity());
     EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    const auto emptyStartBytes = engine.timelineSink.VariableStartStorageBytes();
+    harken::VoiceTimelineSink secondSink(engine.voices, engine.timelineArms);
+    harken::VoicePool::SlotStorageRegistration refusedStorage;
+    ASSERT_TRUE(engine.voices.AttachSlotStoragePreparation(refusedStorage, nullptr,
+        [](void*, std::uint32_t count) noexcept { return count == 0; }));
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
+    EXPECT_EQ(0u, first);
+    EXPECT_EQ(0u, engine.voices.ConstructedSlotCount());
+    EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    refusedStorage.Detach();
     engine.voices.SetSlotCommitPageLimitForTests(0);
     EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
     EXPECT_EQ(0u, first);
@@ -236,6 +246,14 @@ TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
     engine.voices.SetProfessionalCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &first));
+    EXPECT_GT(engine.timelineSink.VariableStartStorageBytes(), emptyStartBytes);
+    EXPECT_EQ(engine.timelineSink.VariableStartStorageBytes(), secondSink.VariableStartStorageBytes());
+    {
+        harken::VoiceTimelineSink lateSink(engine.voices, engine.timelineArms);
+        EXPECT_EQ(secondSink.VariableStartStorageBytes(), lateSink.VariableStartStorageBytes());
+        EXPECT_FALSE(engine.voices.AttachSlotStoragePreparation(refusedStorage, nullptr,
+            [](void*, std::uint32_t count) noexcept { return count == 0; }));
+    }
     harken::VoiceReleaseObserver observer{};
     ASSERT_TRUE(engine.voices.CaptureReleaseObserver(first, &observer));
     EXPECT_FALSE(engine.voices.ReleaseObserved(observer));

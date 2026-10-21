@@ -2165,6 +2165,78 @@ VnResult ValidateCrossOwnerReferences(
     return VN_OK;
 }
 
+VnResult BuildPublishedResourceClosure(
+    const PackComposition::PublishedView* published, const PackPartitionLease& lease,
+    PackResourceRevisionToken* outTokens, std::size_t tokenCapacity,
+    std::size_t* outTokenCount) noexcept {
+    using PublishedOwner = PackComposition::PublishedOwner;
+    if (outTokenCount == nullptr ||
+        (tokenCapacity != 0 && outTokens == nullptr)) {
+        return VN_INVALID_ARG;
+    }
+    *outTokenCount = 0;
+    if (published == nullptr || lease.resourceToken == 0) {
+        return VN_CONTENT_NOT_LOADED;
+    }
+    const auto ownerForToken = [&](PackResourceRevisionToken token)
+        -> const PublishedOwner* {
+        for (const PublishedOwner& owner : published->owners) {
+            if (owner.readiness == PackOwnerReadiness::Active &&
+                owner.resourceToken == token) {
+                return &owner;
+            }
+        }
+        return nullptr;
+    };
+    const PublishedOwner* root = ownerForToken(lease.resourceToken);
+    if (root == nullptr || root->handle != lease.handle ||
+        root->packStableId != lease.packStableId) {
+        return VN_CONTENT_NOT_LOADED;
+    }
+    if (tokenCapacity == 0) {
+        return VN_BACKPRESSURE;
+    }
+    outTokens[0] = root->resourceToken;
+    std::size_t count = 1;
+    for (std::size_t cursor = 0; cursor < count; ++cursor) {
+        const PublishedOwner* consumer = ownerForToken(outTokens[cursor]);
+        if (consumer == nullptr) {
+            return VN_CONTENT_NOT_LOADED;
+        }
+        for (const PackDependencyEdge& edge : consumer->dependencyEdges) {
+            const std::uint64_t providerStableId =
+                edge.prerequisitePackStableId;
+            const PublishedOwner* provider = nullptr;
+            for (const PublishedOwner& candidate : published->owners) {
+                if (candidate.readiness == PackOwnerReadiness::Active &&
+                    candidate.packStableId == providerStableId) {
+                    provider = &candidate;
+                    break;
+                }
+            }
+            if (provider == nullptr || provider->resourceToken == 0) {
+                return VN_CONTENT_NOT_LOADED;
+            }
+            bool duplicate = false;
+            for (std::size_t i = 0; i < count; ++i) {
+                if (outTokens[i] == provider->resourceToken) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) {
+                continue;
+            }
+            if (count == tokenCapacity) {
+                return VN_BACKPRESSURE;
+            }
+            outTokens[count++] = provider->resourceToken;
+        }
+    }
+    *outTokenCount = count;
+    return VN_OK;
+}
+
 VnResult BuildPlaybackOwnerStore(PackComposition::PublishedView& published,
                                  std::size_t maxPacks,
                                  std::uint64_t worldSemanticFingerprint,
@@ -2199,6 +2271,19 @@ VnResult BuildPlaybackOwnerStore(PackComposition::PublishedView& published,
             if (member[ownerSlot] != 0) {
                 stored.closureOwnerSlots.push_back(ownerSlot);
             }
+        }
+        if (owner.resourceToken != 0) {
+            auto tokens = std::make_shared<std::vector<PackResourceRevisionToken>>(stored.closureOwnerSlots.size());
+            PackPartitionLease lease{};
+            lease.handle = owner.handle;
+            lease.packStableId = owner.packStableId;
+            lease.resourceToken = owner.resourceToken;
+            std::size_t count = 0;
+            const auto resources = BuildPublishedResourceClosure(&published, lease, tokens->data(), tokens->size(), &count);
+            if (resources == VN_OK) {
+                tokens->resize(count);
+                stored.resourceTokens = std::move(tokens);
+            } else if (resources != VN_CONTENT_NOT_LOADED) return resources;
         }
     }
     published.playbackStore = std::move(store);
@@ -3329,71 +3414,26 @@ VnResult PackComposition::BuildResourceClosure(
     const PackPartitionLease& lease,
     PackResourceRevisionToken* outTokens, std::size_t tokenCapacity,
     std::size_t* outTokenCount) const noexcept {
-    if (outTokenCount == nullptr ||
-        (tokenCapacity != 0 && outTokens == nullptr)) {
-        return VN_INVALID_ARG;
+    return BuildPublishedResourceClosure(published_.get(), lease, outTokens, tokenCapacity, outTokenCount);
+}
+
+VnResult PackComposition::PreparedResourceClosureBacking(const PackPartitionLease& lease,
+    std::shared_ptr<const std::vector<PackResourceRevisionToken>>* out) const noexcept {
+    if (out == nullptr) return VN_INVALID_ARG;
+    out->reset();
+    for (const auto& row : leases_) {
+        if (row.state != LeaseState::Prepared || !SameLeaseIdentity(row.lease, lease)) continue;
+        const auto& closure = FrozenClosure(row);
+        if (closure.ownerStore == nullptr || closure.rootOwnerIndex >= closure.ownerStore->owners.size() ||
+            closure.compositeGeneration != lease.compositeGeneration) return VN_CONTENT_NOT_LOADED;
+        const auto& owner = closure.ownerStore->owners[closure.rootOwnerIndex];
+        if (owner.snapshot.handle != lease.handle || owner.snapshot.packStableId != lease.packStableId ||
+            owner.snapshot.resourceToken != lease.resourceToken || owner.resourceTokens == nullptr ||
+            owner.resourceTokens->empty()) return VN_CONTENT_NOT_LOADED;
+        *out = owner.resourceTokens;
+        return VN_OK;
     }
-    *outTokenCount = 0;
-    if (published_ == nullptr || lease.resourceToken == 0) {
-        return VN_CONTENT_NOT_LOADED;
-    }
-    const auto ownerForToken = [&](PackResourceRevisionToken token)
-        -> const PublishedOwner* {
-        for (const PublishedOwner& owner : published_->owners) {
-            if (owner.readiness == PackOwnerReadiness::Active &&
-                owner.resourceToken == token) {
-                return &owner;
-            }
-        }
-        return nullptr;
-    };
-    const PublishedOwner* root = ownerForToken(lease.resourceToken);
-    if (root == nullptr || root->handle != lease.handle ||
-        root->packStableId != lease.packStableId) {
-        return VN_CONTENT_NOT_LOADED;
-    }
-    if (tokenCapacity == 0) {
-        return VN_BACKPRESSURE;
-    }
-    outTokens[0] = root->resourceToken;
-    std::size_t count = 1;
-    for (std::size_t cursor = 0; cursor < count; ++cursor) {
-        const PublishedOwner* consumer = ownerForToken(outTokens[cursor]);
-        if (consumer == nullptr) {
-            return VN_CONTENT_NOT_LOADED;
-        }
-        for (const PackDependencyEdge& edge : consumer->dependencyEdges) {
-            const std::uint64_t providerStableId =
-                edge.prerequisitePackStableId;
-            const PublishedOwner* provider = nullptr;
-            for (const PublishedOwner& candidate : published_->owners) {
-                if (candidate.readiness == PackOwnerReadiness::Active &&
-                    candidate.packStableId == providerStableId) {
-                    provider = &candidate;
-                    break;
-                }
-            }
-            if (provider == nullptr || provider->resourceToken == 0) {
-                return VN_CONTENT_NOT_LOADED;
-            }
-            bool duplicate = false;
-            for (std::size_t i = 0; i < count; ++i) {
-                if (outTokens[i] == provider->resourceToken) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (duplicate) {
-                continue;
-            }
-            if (count == tokenCapacity) {
-                return VN_BACKPRESSURE;
-            }
-            outTokens[count++] = provider->resourceToken;
-        }
-    }
-    *outTokenCount = count;
-    return VN_OK;
+    return VN_STALE_HANDLE;
 }
 
 PackIdentityLookup PackComposition::Lookup(VnObjectId stableId) const noexcept {

@@ -3895,6 +3895,8 @@ TEST(PackCompositionContract, ResourceClosureCapacityIsAtomicAndStaleSafe) {
     ASSERT_TRUE(
         packs.ActiveRevisionIdentity(handle, &activeKey, &resourceToken));
     ASSERT_EQ(key, activeKey);
+    const auto preparedTokens = std::make_shared<const std::vector<PackResourceRevisionToken>>(
+        std::initializer_list<PackResourceRevisionToken>{resourceToken});
 
     const PackResourceRevisionToken duplicateTokens[] = {
         resourceToken, resourceToken};
@@ -3911,7 +3913,7 @@ TEST(PackCompositionContract, ResourceClosureCapacityIsAtomicAndStaleSafe) {
 
     PackResourceClosureToken refused = 0;
     EXPECT_EQ(VN_BACKPRESSURE,
-              packs.AcquireResourceClosure(&resourceToken, 1, &refused));
+              packs.AcquirePreparedResourceClosure(preparedTokens, &refused));
     EXPECT_EQ(0u, refused);
     EXPECT_EQ(VN_OK, packs.ValidateResourceClosure(first));
     PackRevisionKey keyAfterRefusal{};
@@ -3932,7 +3934,7 @@ TEST(PackCompositionContract, ResourceClosureCapacityIsAtomicAndStaleSafe) {
 
     PackResourceClosureToken second = 0;
     ASSERT_EQ(VN_OK,
-              packs.AcquireResourceClosure(&resourceToken, 1, &second));
+              packs.AcquirePreparedResourceClosure(preparedTokens, &second));
     EXPECT_NE(first, second);
     EXPECT_EQ(VN_STALE_HANDLE, packs.ValidateResourceClosure(first));
     EXPECT_EQ(VN_CONTENT_NOT_LOADED,
