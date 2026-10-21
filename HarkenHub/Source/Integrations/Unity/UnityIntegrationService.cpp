@@ -2,7 +2,7 @@
 #include "Integrations/Unity/UnityIntegrationService.h"
 #include "Integrations/IntegrationProgress.h"
 #include "Integrations/Unity/UnityInstallation.h"
-#include "UnityProjectAccess.h"
+#include "Integrations/Unity/UnityProjectAccess.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>

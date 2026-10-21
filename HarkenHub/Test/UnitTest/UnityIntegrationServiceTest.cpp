@@ -1,7 +1,7 @@
 #include "UnityIntegrationService.h"
 #include "UnityInstallation.h"
 #include "Integrations/HubUnityIntegrationService.h"
-#include "UnityProjectAccess.h"
+#include "Integrations/Unity/UnityProjectAccess.h"
 #include "Support/UnityProjectLock.h"
 
 #include <gtest/gtest.h>
