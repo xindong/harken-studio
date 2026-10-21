@@ -227,8 +227,8 @@ VariableServiceV1::VariableServiceV1(
     for (std::uint32_t slot = historyCapacity; slot > 0; --slot) {
         freeSlots_.push_back(slot - 1);
     }
-    ticketQueryRecords_.assign(queryHistoryCapacity_, TicketQueryRecord{});
-    expiredTicketRecords_.assign(queryHistoryCapacity_, VnVariableTicketV1{});
+    if (!ticketQueryRecords_.Reserve(queryHistoryCapacity_) ||
+        !expiredTicketRecords_.Reserve(queryHistoryCapacity_)) throw std::bad_alloc{};
 }
 
 TransportEpoch VariableServiceV1::CurrentTransportEpoch() const noexcept {
@@ -4304,9 +4304,15 @@ bool VariableServiceV1::EmitterBankActiveForTests(
 
 bool VariableServiceV1::PrepareHistoryBacking(std::uint32_t slot) noexcept {
     if (memguard::IsAudioTagged() || slot >= history_.Capacity()) return false;
+    const auto pending = pendingRows_ + preparedRows_ + 1u;
+    const auto queryDemand = ticketQueryCount_ + pending;
+    const auto queries = static_cast<std::uint32_t>(std::min<std::uint64_t>(queryHistoryCapacity_, queryDemand));
+    const auto expired = static_cast<std::uint32_t>(std::min<std::uint64_t>(queryHistoryCapacity_,
+        expiredTicketCount_ + (queryDemand > queryHistoryCapacity_ ? queryDemand - queryHistoryCapacity_ : 0u)));
     const auto outcomes = static_cast<std::uint32_t>(std::min<std::uint64_t>(outcomes_.Capacity(),
-        outcomeCount_ + pendingRows_ + preparedRows_ + 1u));
-    if (!outcomes_.ConstructThrough(outcomes)) return false;
+        outcomeCount_ + pending));
+    if (!outcomes_.ConstructThrough(outcomes) || !ticketQueryRecords_.ConstructThrough(queries) ||
+        !expiredTicketRecords_.ConstructThrough(expired)) return false;
     const auto count = slot + 1u;
     if (!history_.ConstructThrough(count) || !preparedWritePlacements_.ConstructThrough(count) ||
         !sealRows_.ConstructThrough(count) || !commitRows_.ConstructThrough(count) ||
@@ -4323,6 +4329,27 @@ bool VariableServiceV1::PrepareHistoryBacking(std::uint32_t slot) noexcept {
         }
         return true;
     } catch (...) { return false; }
+}
+
+bool VariableServiceV1::PrepareActionResultBacking(
+    std::uint32_t futureWrites, ActionVariableResultBacking* out) noexcept {
+    if (memguard::IsAudioTagged() || out == nullptr || out->outcomes.Valid() ||
+        out->queries.Valid() || out->expired.Valid()) return false;
+    const auto pending = pendingRows_ + preparedRows_;
+    const auto queryDemand = ticketQueryCount_ + pending;
+    const auto queries = static_cast<std::uint32_t>(std::min<std::uint64_t>(queryHistoryCapacity_, queryDemand));
+    const auto expired = static_cast<std::uint32_t>(std::min<std::uint64_t>(queryHistoryCapacity_,
+        expiredTicketCount_ + (queryDemand > queryHistoryCapacity_ ? queryDemand - queryHistoryCapacity_ : 0u)));
+    const auto outcomes = static_cast<std::uint32_t>(std::min<std::uint64_t>(outcomes_.Capacity(),
+        outcomeCount_ + pending));
+    if (!outcomes_.ConstructThrough(outcomes) || !ticketQueryRecords_.ConstructThrough(queries) ||
+        !expiredTicketRecords_.ConstructThrough(expired)) return false;
+    ActionVariableResultBacking candidate;
+    if (!outcomes_.PrepareBacking(std::min(futureWrites, outcomes_.Capacity()), outcomes, &candidate.outcomes) ||
+        !ticketQueryRecords_.PrepareBacking(std::min(futureWrites, queryHistoryCapacity_), queries, &candidate.queries) ||
+        !expiredTicketRecords_.PrepareBacking(std::min(futureWrites, queryHistoryCapacity_), expired, &candidate.expired)) return false;
+    *out = std::move(candidate);
+    return true;
 }
 
 VariableServiceV1::HistoryRef& VariableServiceV1::ReadCutHistorySource(
@@ -4574,8 +4601,8 @@ std::size_t VariableServiceV1::StorageBytes() const noexcept {
         censusScratch_.capacity() * sizeof(GatheredTarget) +
         history_.RequestedBytes() + freeSlots_.capacity() * sizeof(std::uint32_t) +
         outcomes_.RequestedBytes() +
-        ticketQueryRecords_.capacity() * sizeof(TicketQueryRecord) +
-        expiredTicketRecords_.capacity() * sizeof(VnVariableTicketV1) +
+        ticketQueryRecords_.RequestedBytes() +
+        expiredTicketRecords_.RequestedBytes() +
         sealRows_.RequestedBytes() + commitRows_.RequestedBytes() + prefixRows_.RequestedBytes() +
         readCutRows_.RequestedBytes() + actionReadCutRows_.RequestedBytes() + preparationRows_.RequestedBytes() +
         settledRows_.RequestedBytes() + supersedeRows_.RequestedBytes() +

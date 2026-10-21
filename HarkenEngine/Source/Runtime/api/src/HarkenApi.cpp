@@ -62039,8 +62039,13 @@ engine.runtimeRecreateRequired = true;
         record.intendedBoundaryFrame, record.intendedBoundaryFrame);
     observation.requestedEffectiveFrame = record.intendedBoundaryFrame;
     PreparedVariableWriteToken prepared{};
-    const VariableAcceptResult accepted =
-        record.step.scope == ActionScopeV1::Global
+    VariableAcceptResult accepted{};
+    accepted.result = VN_STALE_HANDLE;
+    if (const auto* backing = engine.actionFirings.VariableResultBackingFor(record.firing)) {
+        auto outcomes = backing->outcomes.Use();
+        auto queries = backing->queries.Use();
+        auto expired = backing->expired.Use();
+        accepted = record.step.scope == ActionScopeV1::Global
             ? engine.variables.PrepareGlobalWrite(
                   record.step.target.stableId,
                   std::bit_cast<float>(record.step.valueBits), observation,
@@ -62051,6 +62056,7 @@ engine.runtimeRecreateRequired = true;
                   std::bit_cast<float>(record.step.valueBits), observation,
                   record.executionOrdinal, engine.emitters, &prepared,
                   VariableWriterIdentityV1::Action);
+    }
     if (accepted.result == VN_BACKPRESSURE ||
         accepted.result == VN_NO_VARIABLE ||
         accepted.result == VN_VARIABLE_TRANSACTION_EXHAUSTED) {
@@ -75323,6 +75329,25 @@ bool ReserveImmediateActionFirings(void* opaque,
     return true;
 }
 
+std::uint32_t CountActionVariableResults(const ImmediateActionPlan& plan,
+    const harken::ActionStepProgramViewV1& step, std::uint32_t depth,
+    std::uint32_t limit) noexcept {
+    if (step.opcode == harken::ActionOpcodeV1::SetVariable) return 1;
+    if (step.opcode != harken::ActionOpcodeV1::PostAction) return 0;
+    const auto* child = FindCanonicalActionProgram(
+        *plan.engine, step.target.stableId, plan.pinnedPublished);
+    // Unresolved descendants and long deferred chains retain the full result allowance.
+    // Storage accounting must not introduce a new Action acceptance restriction.
+    if (child == nullptr || child->programSemanticFingerprint != step.target.expectedProgramSemanticFingerprint ||
+        depth >= plan.engine->config.maxTriggerDepth ||
+        (child->stepCount != 0 && child->steps == nullptr)) return limit;
+    std::uint32_t count = 0;
+    for (std::uint32_t index = 0; index < child->stepCount && count < limit; ++index)
+        count += std::min(limit - count,
+            CountActionVariableResults(plan, child->steps[index], depth + 1u, limit));
+    return count;
+}
+
 bool ReserveImmediateActionDeferred(void* opaque,
                                     std::uint32_t count) noexcept {
     auto* plan = static_cast<ImmediateActionPlan*>(opaque);
@@ -75577,6 +75602,28 @@ engine.runtimeRecreateRequired = true;
                 !engine.PrepareOriginalDeferredPackCommit(scratch)) {
                 plan->result = engine.actionDeferredRecords.PreparedPairIssuerExhausted()
                     ? VN_RUNTIME_RECREATE_REQUIRED : VN_BACKPRESSURE;
+                abandonPrepared();
+                return false;
+            }
+        }
+    }
+    if (plan->deferredParentFiring == 0) {
+        const auto limit = std::max(engine.variables.RevisionStorageCapacity(),
+            engine.variables.HistoryCapacity());
+        std::uint32_t futureWrites = 0;
+        for (std::uint32_t index = 0; index < plan->stepCount && futureWrites < limit; ++index) {
+            const auto& planned = engine.actionStepPlanScratch[index];
+            if (planned.deferred)
+                futureWrites += std::min(limit - futureWrites,
+                    CountActionVariableResults(*plan, *planned.step, planned.depth, limit));
+        }
+        if (futureWrites != 0) {
+            std::unique_ptr<harken::ActionVariableResultBacking> backing{
+                new (std::nothrow) harken::ActionVariableResultBacking};
+            if (backing == nullptr || !engine.variables.PrepareActionResultBacking(futureWrites, backing.get()) ||
+                !engine.actionFirings.AdoptPreparedVariableResultBacking(
+                    engine.actionFiringPlanScratch[0].prepared, std::move(backing))) {
+                plan->result = VN_BACKPRESSURE;
                 abandonPrepared();
                 return false;
             }
@@ -76150,6 +76197,15 @@ bool PrepareImmediateActionVariableWrite(
     }
     auto& token = plan.engine->actionVariableWriteScratch[stepIndex];
     if (token.Valid()) return true;
+    const auto* backing = plan.deferredParentFiring == 0 ? nullptr :
+        plan.engine->actionFirings.VariableResultBackingFor(plan.deferredParentFiring);
+    if (plan.deferredParentFiring != 0 && backing == nullptr) {
+        plan.result = VN_STALE_HANDLE;
+        return false;
+    }
+    auto outcomes = backing == nullptr ? harken::StableStoragePreparedUse{} : backing->outcomes.Use();
+    auto queries = backing == nullptr ? harken::StableStoragePreparedUse{} : backing->queries.Use();
+    auto expired = backing == nullptr ? harken::StableStoragePreparedUse{} : backing->expired.Use();
     harken::VariableCallObservation observed =
         ObserveVariableCall(*plan.engine);
     if (planned.deferredFrame != 0) {

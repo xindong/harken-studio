@@ -9,6 +9,7 @@
 #include "harken/core/StableRowStorage.h"
 
 #include <cstdint>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -136,6 +137,12 @@ struct ActionFiringSnapshot {
     std::uint32_t livePlayableCount = 0;
 };
 
+struct ActionVariableResultBacking {
+    StableStoragePreparation outcomes;
+    StableStoragePreparation queries;
+    StableStoragePreparation expired;
+};
+
 class ActionFiringTable;
 
 class PreparedActionFiring {
@@ -231,6 +238,10 @@ public:
         ChildActivationReceipt* out = nullptr) noexcept;
     bool SetPreparedProgramFingerprint(const PreparedActionFiring& prepared,
                                         std::uint64_t fingerprint) noexcept;
+    bool AdoptPreparedVariableResultBacking(const PreparedActionFiring& prepared,
+        std::unique_ptr<ActionVariableResultBacking> backing) noexcept;
+    const ActionVariableResultBacking* VariableResultBackingFor(
+        ActionFiringHandle handle) const noexcept;
     bool SetPreparedStep(const PreparedActionFiring& prepared,
                          std::uint32_t index,
                          const ActionFiringStepResult& result) noexcept;
@@ -364,6 +375,7 @@ private:
         std::uint32_t ownedDeferredCount = 0;
         // The serialized control owner constructs this before publishing the row.
         std::vector<ActionFiringStepResult> results;
+        std::unique_ptr<ActionVariableResultBacking> variableResultBacking;
     };
 
     static ActionFiringHandle MakeHandle(std::uint32_t slot,

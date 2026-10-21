@@ -118,6 +118,11 @@ struct VariableServiceTestAccess {
     static void LimitOutcomePages(VariableServiceV1& service, std::size_t pages) {
         service.outcomes_.SetCommitPageLimitForTests(pages);
     }
+    static void LimitResultPages(VariableServiceV1& service, unsigned field, std::size_t pages) {
+        if (field == 0 || field == 3) service.outcomes_.SetCommitPageLimitForTests(pages);
+        if (field == 1 || field == 3) service.ticketQueryRecords_.SetCommitPageLimitForTests(pages);
+        if (field == 2 || field == 3) service.expiredTicketRecords_.SetCommitPageLimitForTests(pages);
+    }
     static void SeedWorld(VariableServiceV1& service, WorldGeneration world) {
         service.worldGeneration_ = world;
     }
@@ -165,6 +170,9 @@ struct VariableServiceTestAccess {
 
 bool ReadCutStorageAliveForTest(const VariableServiceV1& service, VariableReadCutRef ref) {
     return VariableServiceTestAccess::ReadCutStorageAlive(service, ref);
+}
+void LimitVariableResultPagesForTest(VariableServiceV1& service, unsigned field, std::size_t pages) {
+    VariableServiceTestAccess::LimitResultPages(service, field, pages);
 }
 bool TimelineReadUseStorageAliveForTest(const VariableServiceV1& service, VariableTimelineReadUseRef ref) {
     return VariableServiceTestAccess::TimelineReadUseStorageAlive(service, ref);

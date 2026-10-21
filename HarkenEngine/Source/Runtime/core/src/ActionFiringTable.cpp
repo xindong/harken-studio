@@ -186,8 +186,11 @@ bool ActionFiringTable::PrepareResults(Row& row, std::uint32_t count) noexcept {
 
 std::uint64_t ActionFiringTable::ResultStorageBytes() const noexcept {
     std::uint64_t bytes = 0;
-    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot)
-        bytes += rows_[slot].results.capacity() * sizeof(ActionFiringStepResult);
+    for (std::uint32_t slot = 0; slot < rows_.ConstructedCount(); ++slot) {
+        const auto& row = rows_[slot];
+        bytes += row.results.capacity() * sizeof(ActionFiringStepResult);
+        if (row.variableResultBacking != nullptr) bytes += sizeof(ActionVariableResultBacking);
+    }
     return bytes;
 }
 
@@ -236,6 +239,25 @@ bool ActionFiringTable::SetPreparedProgramFingerprint(
     if (row == nullptr || fingerprint == 0) return false;
     row->programSemanticFingerprint = fingerprint;
     return true;
+}
+
+bool ActionFiringTable::AdoptPreparedVariableResultBacking(
+    const PreparedActionFiring& prepared,
+    std::unique_ptr<ActionVariableResultBacking> backing) noexcept {
+    auto* row = ResolvePrepared(prepared);
+    if (row == nullptr || row->parent != 0 || row->root != prepared.Handle() ||
+        row->variableResultBacking != nullptr || backing == nullptr ||
+        !backing->outcomes.Valid() || !backing->queries.Valid() || !backing->expired.Valid()) return false;
+    row->variableResultBacking = std::move(backing);
+    return true;
+}
+
+const ActionVariableResultBacking* ActionFiringTable::VariableResultBackingFor(
+    ActionFiringHandle handle) const noexcept {
+    const auto* row = Resolve(handle);
+    const auto* root = row == nullptr ? nullptr : Resolve(row->root);
+    return root != nullptr && root->parent == 0 && root->root == row->root
+        ? root->variableResultBacking.get() : nullptr;
 }
 
 bool ActionFiringTable::PrepareRoot(
@@ -876,6 +898,7 @@ bool ActionFiringTable::TryFinalize(Row& row) noexcept {
     }
     const bool stopping = row.state == SlotState::Stopping;
     row.state = SlotState::TerminalRetained;
+    row.variableResultBacking.reset();
     if (stopping || hasCancellation) {
         row.outcome = ActionFiringOutcome::Cancelled;
         if (row.terminalReason == ActionTerminalReason::None) {
@@ -1081,6 +1104,7 @@ bool ActionFiringTable::Recycle(std::uint32_t slot, Row& row) noexcept {
     row.livePlayableCount = 0;
     row.ownedDeferredCount = 0;
     std::vector<ActionFiringStepResult>{}.swap(row.results);
+    row.variableResultBacking.reset();
     if (row.generation == kMaxActionFiringGeneration) {
         row.state = SlotState::Quarantined;
         ++quarantinedCount_;
@@ -1287,6 +1311,7 @@ bool ActionFiringTable::MarkTerminal(
         child = childRow->nextSibling;
     }
     row->state = SlotState::TerminalRetained;
+    row->variableResultBacking.reset();
     row->outcome = outcome;
     row->terminalReason = reason;
     row->terminalResult = 0;

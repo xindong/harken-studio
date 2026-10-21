@@ -64,6 +64,7 @@ void SetPrivateEntryStopPreflightHookForTest(
 }
 
 namespace harken::detail {
+void LimitVariableResultPagesForTest(VariableServiceV1& service, unsigned field, std::size_t pages);
 bool ReadCutStorageAliveForTest(const VariableServiceV1& service, VariableReadCutRef ref);
 bool TimelineReadUseStorageAliveForTest(const VariableServiceV1& service, VariableTimelineReadUseRef ref);
 bool OriginalSourceOwnersReturnedForTest(const OriginalSourceSubmissionRegistry& registry, TimelineArmToken token);
@@ -6866,6 +6867,7 @@ TEST(ActionFiringApi, DelayedNestedPostActionMaterializesImmediateChildTree) {
         harken::MonitorHostOwnership::UnityEmitter, 7));
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    harken::detail::LimitVariableResultPagesForTest(engine->variables, 3, 0);
     const auto requestSequence = engine->monitorRequests.LastSequence();
     harken::ActionFiringSnapshot rootIdentity{};
     ASSERT_TRUE(engine->actionFirings.Capture(firing, &rootIdentity));
@@ -6989,7 +6991,20 @@ TEST(ActionFiringApi, DelayedSetValueMaterializesThroughTimelineService) {
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle firing = 0;
+    const auto sequenceBefore = engine->logicCommits.IssuedCount();
+    for (unsigned field = 0; field != 3; ++field) {
+        SCOPED_TRACE(field);
+        harken::detail::LimitVariableResultPagesForTest(engine->variables, field, 0);
+        const auto result = Vn_PostAction(&desc, &firing);
+        harken::detail::LimitVariableResultPagesForTest(engine->variables, field, SIZE_MAX);
+        ASSERT_EQ(VN_BACKPRESSURE, result);
+        EXPECT_EQ(0u, firing);
+        EXPECT_EQ(sequenceBefore, engine->logicCommits.IssuedCount());
+        EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
+        EXPECT_EQ(0u, engine->timelineDeferred.Count());
+    }
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    harken::detail::LimitVariableResultPagesForTest(engine->variables, 3, 0);
     ASSERT_NE(0u, firing);
     EXPECT_EQ(1u, engine->actionDeferredRecords.LiveCount());
     EXPECT_EQ(1u, engine->actionFirings.OwnedDeferredCount(firing));

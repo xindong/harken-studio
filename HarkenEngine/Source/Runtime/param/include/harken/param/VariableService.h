@@ -683,6 +683,8 @@ public:
     void AcknowledgeFinishedTimelineReadUses(std::uint64_t completedAudioSequence) noexcept;
     std::uint32_t ReadCutCapacity() const noexcept { return readCutCapacity_; }
     bool PrepareReadCutBacking(std::uint32_t count, ReadCutBackingPreparation* out) noexcept;
+    bool PrepareActionResultBacking(std::uint32_t futureWrites,
+        ActionVariableResultBacking* out) noexcept;
     std::uint32_t TimelineReadUseCapacity() const noexcept { return timelineReadUseCapacity_; }
     std::size_t ReadCutStorageBytes() const noexcept;
     std::size_t StorageBytes() const noexcept;
@@ -1479,10 +1481,10 @@ private:
     // Terminal records are delivered after each completed logic operation.
     StableRowStorage<VariableOutcomeRecord> outcomes_;
     std::size_t outcomeCount_ = 0;
-    std::vector<TicketQueryRecord> ticketQueryRecords_;
+    StableRowStorage<TicketQueryRecord> ticketQueryRecords_;
     std::uint32_t ticketQueryBegin_ = 0;
     std::uint32_t ticketQueryCount_ = 0;
-    std::vector<VnVariableTicketV1> expiredTicketRecords_;
+    StableRowStorage<VnVariableTicketV1> expiredTicketRecords_;
     std::uint32_t expiredTicketBegin_ = 0;
     std::uint32_t expiredTicketCount_ = 0;
     std::size_t outcomeRead_ = 0;
