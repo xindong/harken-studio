@@ -25,6 +25,7 @@ class QVariantAnimation;
 namespace VNH {
 
 class ProjectStore;
+class TableSorting;
 
 class ProjectsPage : public QWidget
 {
@@ -85,6 +86,7 @@ private:
     QWidget* projectsView_ = nullptr;
     QWidget* newProjectView_ = nullptr;
     QTableWidget* table_ = nullptr;
+    TableSorting* sorting_ = nullptr;
     QLabel* countLabel_ = nullptr;
     QLineEdit* projectNameEdit_ = nullptr;
     QLineEdit* projectLocationEdit_ = nullptr;

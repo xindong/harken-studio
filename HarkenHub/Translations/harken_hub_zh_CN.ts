@@ -160,8 +160,16 @@
 <context>
     <name>HubReleaseNotes</name>
     <message>
-        <source>The project list shows elapsed time since the last launch in hours and minutes, adding days after 24 hours instead of using vague labels such as Yesterday.</source>
-        <translation>工程列表的上次启动时间统一显示为小时、分，满 24 小时后显示天、小时、分，不再使用“昨天”等模糊提示。</translation>
+        <source>Click the Project, Last Opened, or Version column header to sort the project list in ascending or descending order. Engine Integrations supports the same sorting for the HARKEN Project and Game Project columns. Each page remembers its sorting preference.</source>
+        <translation>点击工程列表的“工程”“上次启动”或“版本”列标题，可切换升序和降序；引擎集成页的“HARKEN 工程”“游戏工程”列也支持排序。各页面会分别记住排序方式。</translation>
+    </message>
+    <message>
+        <source>The project list shows minutes since the last launch, adds hours after one hour, and adds days after 24 hours instead of using vague labels such as Yesterday.</source>
+        <translation>工程列表的上次启动时间不足 1 小时只显示分，满 1 小时显示小时、分，满 24 小时显示天、小时、分，不再使用“昨天”等模糊提示。</translation>
+    </message>
+    <message>
+        <source>Unity SDK verification reports separately how many files differ from their contents at installation, are missing, or cannot be read, with guidance for each problem.</source>
+        <translation>Unity SDK 验证会分别显示内容与安装时不同、已缺失或无法读取的文件数量，并针对各类问题给出处理建议。</translation>
     </message>
     <message>
         <source>Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged. If recovery needs administrator access, choose Repair in Versions.</source>
@@ -954,8 +962,32 @@ Continue?</source>
         <translation>请从可信备份中恢复安装记录，再重新验证。</translation>
     </message>
     <message>
-        <source>Installed SDK verification data is valid.</source>
-        <translation>已安装 SDK 的校验记录有效。</translation>
+        <source>The installation record is complete. File contents are checked in the next step.</source>
+        <translation>安装时保存的文件校验记录完整，实际文件内容的检查结果见下一项。</translation>
+    </message>
+    <message>
+        <source>%1 SDK file(s) differ from their contents at installation.</source>
+        <translation>%1 个 SDK 文件与安装时的内容不同。</translation>
+    </message>
+    <message>
+        <source>%1 SDK file(s) recorded at installation are missing.</source>
+        <translation>%1 个安装时记录的 SDK 文件已缺失。</translation>
+    </message>
+    <message>
+        <source>%1 SDK file(s) could not be read, so verification could not finish.</source>
+        <translation>%1 个 SDK 文件无法读取，未能完成验证。</translation>
+    </message>
+    <message>
+        <source>Review the listed content differences to confirm whether they were intentional. To restore the original SDK files, use Change SDK and select the complete package for the installed version.</source>
+        <translation>请确认下方文件的内容变化是否符合预期。如需恢复原版 SDK，请通过“更换 SDK”选择与已安装版本对应的完整 SDK 包。</translation>
+    </message>
+    <message>
+        <source>Restore the listed missing files from a matching backup, or use Change SDK and select the complete package for the installed version.</source>
+        <translation>请从对应版本的备份中恢复下方缺失文件，或通过“更换 SDK”选择与已安装版本对应的完整 SDK 包。</translation>
+    </message>
+    <message>
+        <source>Check read permissions and whether another program is preventing access to the listed files, then check the SDK status again.</source>
+        <translation>请检查下方文件的读取权限，以及其他程序是否阻止了文件访问，然后重新点击“检查 SDK 当前状态”。</translation>
     </message>
     <message>
         <source>Installed SDK files do not match the installation record or could not be read.</source>
@@ -970,8 +1002,8 @@ Continue?</source>
         <translation>缺失的 SDK 文件：</translation>
     </message>
     <message>
-        <source>Modified SDK files:</source>
-        <translation>被修改的 SDK 文件：</translation>
+        <source>SDK files with contents different from installation:</source>
+        <translation>内容与安装时不同的 SDK 文件：</translation>
     </message>
     <message>
         <source>Unreadable SDK files:</source>
@@ -1328,6 +1360,10 @@ Error code: %1</source>
     <message>
         <source>%1d %2h %3m ago</source>
         <translation>%1天%2小时%3分前</translation>
+    </message>
+    <message>
+        <source>%1m ago</source>
+        <translation>%1分前</translation>
     </message>
     <message>
         <source>%1h %2m ago</source>

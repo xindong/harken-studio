@@ -119,7 +119,7 @@ VNX::UnityIntegrationService::Result verifyInstalled(
         return finish();
     }
     inspection.status = StepStatus::Succeeded;
-    inspection.summary = QStringLiteral("Installed SDK verification data is valid.");
+    inspection.summary = QStringLiteral("The installation record is complete. File contents are checked in the next step.");
     auto& verification = result.steps[2];
     verification.artifacts << installation.path;
     QStringList missing;
@@ -142,11 +142,25 @@ VNX::UnityIntegrationService::Result verifyInstalled(
     result.changesDetected = !missing.isEmpty() || !modified.isEmpty();
     if (result.changesDetected || !unreadable.isEmpty()) {
         verification.status = StepStatus::Failed;
-        verification.summary = QStringLiteral("Installed SDK files do not match the installation record or could not be read.");
-        verification.remediation = QStringLiteral("Review the listed files and local changes. Restore missing files from backup or use Change SDK with a complete SDK package.");
-        if (!missing.isEmpty()) verification.details << QStringLiteral("Missing SDK files:") << missing.join(QLatin1Char('\n'));
-        if (!modified.isEmpty()) verification.details << QStringLiteral("Modified SDK files:") << modified.join(QLatin1Char('\n'));
-        if (!unreadable.isEmpty()) verification.details << QStringLiteral("Unreadable SDK files:") << unreadable.join(QLatin1Char('\n'));
+        QStringList issues;
+        QStringList guidance;
+        if (!modified.isEmpty()) {
+            issues << QStringLiteral("%1 SDK file(s) differ from their contents at installation.").arg(modified.size());
+            guidance << QStringLiteral("Review the listed content differences to confirm whether they were intentional. To restore the original SDK files, use Change SDK and select the complete package for the installed version.");
+            verification.details << QStringLiteral("SDK files with contents different from installation:") << modified.join(QLatin1Char('\n'));
+        }
+        if (!missing.isEmpty()) {
+            issues << QStringLiteral("%1 SDK file(s) recorded at installation are missing.").arg(missing.size());
+            guidance << QStringLiteral("Restore the listed missing files from a matching backup, or use Change SDK and select the complete package for the installed version.");
+            verification.details << QStringLiteral("Missing SDK files:") << missing.join(QLatin1Char('\n'));
+        }
+        if (!unreadable.isEmpty()) {
+            issues << QStringLiteral("%1 SDK file(s) could not be read, so verification could not finish.").arg(unreadable.size());
+            guidance << QStringLiteral("Check read permissions and whether another program is preventing access to the listed files, then check the SDK status again.");
+            verification.details << QStringLiteral("Unreadable SDK files:") << unreadable.join(QLatin1Char('\n'));
+        }
+        verification.summary = issues.join(QLatin1Char('\n'));
+        verification.remediation = guidance.join(QStringLiteral("\n\n"));
         return finish();
     }
     verification.status = StepStatus::Succeeded;
@@ -260,6 +274,12 @@ QString localizeUnityText(const QString& text)
         QRegularExpression expression;
         const char* source;
     } installationMessages[] = {
+        {QRegularExpression(QStringLiteral(R"(^(\d+) SDK file\(s\) differ from their contents at installation\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "%1 SDK file(s) differ from their contents at installation.")},
+        {QRegularExpression(QStringLiteral(R"(^(\d+) SDK file\(s\) recorded at installation are missing\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "%1 SDK file(s) recorded at installation are missing.")},
+        {QRegularExpression(QStringLiteral(R"(^(\d+) SDK file\(s\) could not be read, so verification could not finish\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "%1 SDK file(s) could not be read, so verification could not finish.")},
         {QRegularExpression(QStringLiteral(R"(^Cannot move directory from (.*) to (.*) \(system error ([0-9]+): (.*)\)\.$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "Cannot move directory from %1 to %2 (system error %3: %4).")},
         {QRegularExpression(QStringLiteral(R"(^Check file write protection, directory permissions and processes holding files open at (.*)\. If checkout or unlocking is required, do that first, then retry\. The existing SDK was not changed\.$)")),

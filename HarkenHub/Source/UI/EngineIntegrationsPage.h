@@ -37,6 +37,7 @@ struct EngineTargetObservation;
 class EngineTargetStore;
 class IntegrationStore;
 class ProjectStore;
+class TableSorting;
 
 class EngineIntegrationsPage final : public QWidget
 {
@@ -101,11 +102,8 @@ private:
 
     void beginNewEditor(const QString& harkenProjectPath = QString());
     void beginExistingEditor(const QString& integrationId);
-    void editIntegration(int row);
-    void removeIntegration(int row);
     void linkProjects();
     void unlinkProjects(const QString& integrationId);
-    void openEngineFolder(int row);
     void browseHarkenProject();
     void browseEngineProject();
     void browseSdkSource();
@@ -183,6 +181,7 @@ private:
     QWidget* editorPage_ = nullptr;
     QWidget* integrationForm_ = nullptr;
     QTableWidget* table_ = nullptr;
+    TableSorting* sorting_ = nullptr;
     QLineEdit* harkenProjectEdit_ = nullptr;
     QLineEdit* engineProjectEdit_ = nullptr;
     QComboBox* sdkSourceCombo_ = nullptr;

@@ -1,4 +1,5 @@
 #include "UI/EngineIntegrationsPage.h"
+#include "UI/ProjectsPage.h"
 #include "UI/IntegrationTaskDialog.h"
 
 #include "Integrations/EngineTargetStore.h"
@@ -8,6 +9,7 @@
 #include "UnityInstallation.h"
 #include "Platform/PlatformPaths.h"
 #include "Projects/ProjectStore.h"
+#include "Settings/HubSettings.h"
 #include "Support/StudioProtocolTestUtils.h"
 #include "Transactions/InstallIndex.h"
 
@@ -25,9 +27,11 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QHeaderView>
 #include <QLineEdit>
 #include <QLabel>
 #include <QMessageBox>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScopeGuard>
@@ -44,6 +48,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QTranslator>
+#include <QToolButton>
 #include <QTreeWidget>
 
 #include <memory>
@@ -454,6 +459,100 @@ TEST_F(EngineIntegrationsPageTest, UnrealUsesTheSameProjectAndSdkWorkflowInBothL
         EXPECT_TRUE(page->findChild<QLineEdit*>("installedSdkPath")->text().isEmpty());
         capture("removed");
     }
+}
+
+TEST_F(EngineIntegrationsPageTest, SortedListKeepsSelectionAndActionTargets)
+{
+    for (const auto* number : {"10", "2"}) {
+        const QString suffix = QString::fromLatin1(number);
+        VNH::ProjectRecord project;
+        project.canonicalPath = dir.filePath("Project" + suffix + ".hsp");
+        project.displayName = "Project" + suffix;
+        writeFile(project.canonicalPath, "{}");
+        ASSERT_TRUE(projects.addProject(project));
+        VNH::EngineTargetRecord target;
+        target.targetId = suffix;
+        target.displayName = "Game" + (suffix == "10" ? QString("2") : QString("10"));
+        target.canonicalRoot = dir.filePath(target.displayName);
+        target.addedAt = "2026-10-21T00:00:00Z";
+        ASSERT_TRUE(targets.add(target));
+        VNH::IntegrationRecord integration;
+        integration.integrationId = suffix;
+        integration.harkenProjectPath = project.canonicalPath;
+        integration.engineTargetId = suffix;
+        integration.createdAt = target.addedAt;
+        integration.updatedAt = target.addedAt;
+        ASSERT_TRUE(integrations.add(integration, false));
+    }
+    page->refresh();
+    QTableWidget* table = nullptr;
+    for (auto* candidate : page->findChildren<QTableWidget*>())
+        if (candidate->columnCount() == 5) table = candidate;
+    ASSERT_NE(table, nullptr);
+    ASSERT_EQ(table->rowCount(), 2);
+    EXPECT_EQ(table->item(0, 0)->text(), "Project2");
+    table->selectRow(0);
+    const auto clickHeader = [&](int column) {
+        auto* header = table->horizontalHeader();
+        QTest::mouseClick(header->viewport(), Qt::LeftButton, Qt::NoModifier,
+                         QPoint(header->sectionViewportPosition(column) + header->sectionSize(column) / 2,
+                                header->height() / 2));
+        QCoreApplication::processEvents();
+        const auto selected = table->selectionModel()->selectedRows(0);
+        ASSERT_EQ(selected.size(), 1);
+        EXPECT_EQ(selected.front().data(Qt::UserRole).toString(), "2");
+    };
+    clickHeader(0);
+    EXPECT_EQ(table->item(0, 0)->text(), "Project10");
+    clickHeader(1);
+    EXPECT_EQ(table->item(0, 1)->text(), "Game2");
+    clickHeader(1);
+    EXPECT_EQ(table->item(0, 1)->text(), "Game10");
+    clickHeader(2);
+    EXPECT_EQ(table->horizontalHeader()->sortIndicatorSection(), 1);
+    EXPECT_EQ(table->horizontalHeader()->sortIndicatorOrder(), Qt::DescendingOrder);
+    page->refresh();
+    EXPECT_EQ(table->item(0, 1)->text(), "Game10");
+    ASSERT_EQ(table->selectionModel()->selectedRows(0).size(), 1);
+    EXPECT_EQ(table->selectionModel()->selectedRows(0).front().data(Qt::UserRole).toString(), "2");
+
+    ASSERT_TRUE(QTest::qWaitFor([]() {
+        const auto sort = VNH::HubSettings::tableSort(QStringLiteral("engineIntegrations"));
+        return sort.column == 1 && sort.order == Qt::DescendingOrder;
+    }, 5000));
+    VNH::EngineIntegrationsPage reopened(&integrations, &targets, &projects);
+    for (auto* candidate : reopened.findChildren<QTableWidget*>()) {
+        if (candidate->columnCount() != 5) continue;
+        EXPECT_EQ(candidate->horizontalHeader()->sortIndicatorSection(), 1);
+        EXPECT_EQ(candidate->horizontalHeader()->sortIndicatorOrder(), Qt::DescendingOrder);
+        EXPECT_EQ(candidate->item(0, 0)->data(Qt::UserRole).toString(), "2");
+    }
+    VNH::ProjectsPage projectsPage(&projects);
+    const auto* projectsTable = projectsPage.findChild<QTableWidget*>();
+    EXPECT_EQ(projectsTable->horizontalHeader()->sortIndicatorSection(), 0);
+    EXPECT_EQ(projectsTable->horizontalHeader()->sortIndicatorOrder(), Qt::AscendingOrder);
+
+    QTimer responder;
+    bool unlink = false;
+    QObject::connect(&responder, &QTimer::timeout, page.get(), [&]() {
+        if (auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget())) {
+            menu->setActiveAction(unlink ? menu->actions().last() : menu->actions().first());
+            QTest::keyClick(menu, Qt::Key_Return);
+        } else if (auto* message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            message->button(QMessageBox::Yes)->click();
+        }
+    });
+    responder.start(10);
+    table->cellWidget(0, 4)->findChild<QToolButton*>()->click();
+    EXPECT_EQ(field("Select a .hsp project file")->text(), dir.filePath("Project2.hsp"));
+    page->showList();
+    unlink = true;
+    table->cellWidget(0, 4)->findChild<QToolButton*>()->click();
+    ASSERT_EQ(integrations.list().size(), 1);
+    EXPECT_EQ(integrations.list().front().integrationId, "10");
+    EXPECT_TRUE(QFileInfo::exists(dir.filePath("Project2.hsp")));
+    EXPECT_EQ(projects.listProjects().size(), 2);
+    EXPECT_EQ(targets.list().size(), 2);
 }
 
 TEST_F(EngineIntegrationsPageTest, ExistingEditorReturnsBeforeVersionCheckAndKeepsStoredSdk)

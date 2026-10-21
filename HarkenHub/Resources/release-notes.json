@@ -9,12 +9,20 @@
     {
       "version": "0.1.61",
       "date": "2026-10-21",
-      "pullRequests": [76],
+      "pullRequests": [76, 80],
       "contributors": ["liuxin2-sys"],
       "changes": [
         {
+          "category": "added",
+          "text": "Click the Project, Last Opened, or Version column header to sort the project list in ascending or descending order. Engine Integrations supports the same sorting for the HARKEN Project and Game Project columns. Each page remembers its sorting preference."
+        },
+        {
           "category": "improved",
-          "text": "The project list shows elapsed time since the last launch in hours and minutes, adding days after 24 hours instead of using vague labels such as Yesterday."
+          "text": "The project list shows minutes since the last launch, adds hours after one hour, and adds days after 24 hours instead of using vague labels such as Yesterday."
+        },
+        {
+          "category": "improved",
+          "text": "Unity SDK verification reports separately how many files differ from their contents at installation, are missing, or cannot be read, with guidance for each problem."
         },
         {
           "category": "improved",
