@@ -7,6 +7,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include "harken/core/StableRowStorage.h"
+
+#include <algorithm>
+#include <array>
 #include <vector>
 
 namespace harken {
@@ -366,6 +370,54 @@ private:
 
 class SelectionMemoryTableV1 {
 public:
+    struct BackingShape {
+        std::uint32_t recent = 0;
+        std::uint32_t permutation = 0;
+        std::uint32_t path = 0;
+        std::uint32_t children = 0;
+        void Include(const BackingShape& other) noexcept {
+            recent = std::max(recent, other.recent);
+            permutation = std::max(permutation, other.permutation);
+            path = std::max(path, other.path);
+            children = std::max(children, other.children);
+        }
+    };
+    struct BackingDemand {
+        std::uint32_t rows = 0;
+        std::uint32_t deltas = 0;
+        std::uint32_t batches = 0;
+        BackingShape shape{};
+    };
+    using BackingUse = std::array<StableStoragePreparedUse, 3>;
+    class BackingPreparation {
+    public:
+        BackingPreparation() = default;
+        ~BackingPreparation() { Release(); }
+        BackingPreparation(const BackingPreparation&) = delete;
+        BackingPreparation& operator=(const BackingPreparation&) = delete;
+        BackingPreparation(BackingPreparation&& other) noexcept { *this = std::move(other); }
+        BackingPreparation& operator=(BackingPreparation&& other) noexcept;
+        bool Valid() const noexcept { return owner_ != nullptr; }
+        void Release() noexcept;
+        BackingUse Use() const noexcept { return {rows_.Use(), deltas_.Use(), batches_.Use()}; }
+    private:
+        friend class SelectionMemoryTableV1;
+        SelectionMemoryTableV1* owner_ = nullptr;
+        BackingPreparation* previous_ = nullptr;
+        BackingPreparation* next_ = nullptr;
+        BackingDemand demand_{};
+        StableStoragePreparation rows_, deltas_, batches_;
+    };
+    bool PrepareBacking(BackingDemand demand, BackingPreparation* out) noexcept;
+    std::uint32_t RowCapacity() const noexcept { return rows_.Capacity(); }
+    std::uint32_t DeltaCapacity() const noexcept { return deltas_.Capacity(); }
+    std::uint32_t BatchCapacity() const noexcept { return batches_.Capacity(); }
+    std::size_t StorageBytes() const noexcept;
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept {
+        rows_.SetCommitPageLimitForTests(pages);
+        deltas_.SetCommitPageLimitForTests(pages);
+        batches_.SetCommitPageLimitForTests(pages);
+    }
     bool Reset(const SelectionMemoryConfigV1& config) noexcept;
     static std::uint64_t EmitterStorageBytes(const SelectionMemoryConfigV1& config) noexcept;
     SelectionAppendResultV1 AppendPlay(
@@ -526,6 +578,7 @@ private:
         SequenceEndPolicyV1 sequenceEndPolicy = SequenceEndPolicyV1::Wrap;
         std::uint32_t initialSequenceCursor = 0;
         std::uint32_t avoidLastN = 0;
+        std::uint32_t selectionChildCount = 0;
         MemoryState state{};
         std::uint32_t head = UINT32_MAX;
         std::uint32_t tail = UINT32_MAX;
@@ -623,8 +676,27 @@ private:
                         const SelectionMemoryKeyV1& b) noexcept;
     bool ValidKey(const SelectionMemoryKeyV1& key) const noexcept;
     std::uint32_t FindRow(const SelectionMemoryKeyV1& key) const noexcept;
-    std::uint32_t FindFreeRow(const SelectionMemoryKeyV1& key) const noexcept;
-    std::uint32_t FindFreeDelta() const noexcept;
+    std::uint32_t FindFreeRow(const SelectionMemoryKeyV1& key, BackingShape shape) noexcept;
+    std::uint32_t FindFreeDelta(BackingShape shape, bool rollback = false) noexcept;
+    std::uint32_t FindFreeBatch() noexcept;
+    static BackingShape ShapeFor(const SelectionPlayRequestV1& request) noexcept;
+    BackingShape ShapeForRow(std::uint32_t row) const noexcept;
+    static bool ReusableDelta(const DeltaRow& delta) noexcept;
+    static bool StateFits(const MemoryState& state, BackingShape shape) noexcept;
+    static bool DeltaFits(const DeltaRow& delta, BackingShape shape, bool rollback) noexcept;
+    bool PrepareState(MemoryState& state, BackingShape shape) noexcept;
+    bool PrepareDelta(DeltaRow& delta, BackingShape shape, bool rollback) noexcept;
+    bool PrepareSharedScratch(BackingShape shape) noexcept;
+    bool PrepareRowIndices(std::uint32_t count) noexcept;
+    bool PrepareDeltaIndices(std::uint32_t count) noexcept;
+    bool PrepareBatchIndices(std::uint32_t count) noexcept;
+    bool ProtectBacking(std::uint32_t excludedRow = UINT32_MAX,
+        std::uint32_t excludedDelta = UINT32_MAX) noexcept;
+    bool PrepareOperation(std::uint32_t row, std::uint32_t delta,
+        BackingShape shape, bool rollback) noexcept;
+    bool CanGrow() const noexcept {
+        return !memguard::IsAudioTagged() && !rows_.PreparedUseActive();
+    }
     bool PendingOrderValid(const Row& row, std::uint64_t ticket,
                            std::uint32_t eventIndex) const noexcept;
     bool CopyState(const MemoryState& source, MemoryState& target) noexcept;
@@ -675,9 +747,10 @@ private:
     DeltaRow* ResolveDelta(SelectionDeltaRefV1 ref) noexcept;
 
     SelectionMemoryConfigV1 config_{};
-    std::vector<Row> rows_;
-    std::vector<DeltaRow> deltas_;
-    std::vector<BatchRow> batches_;
+    StableRowStorage<Row> rows_;
+    StableRowStorage<DeltaRow> deltas_;
+    StableRowStorage<BatchRow> batches_;
+    BackingPreparation* backing_ = nullptr;
     MemoryState pendingScratch_[2];
     MemoryState replacementScratch_[2];
     std::vector<std::uint8_t> replacementAffectedRows_;

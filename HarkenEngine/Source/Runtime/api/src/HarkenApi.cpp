@@ -52695,6 +52695,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
         std::vector<backing::MemoEntry> memo;
         backing::Profile futures{};
         std::uint64_t nativeVoices = 0;
+        std::uint64_t nativeSelections = 0;
+        SelectionMemoryTableV1::BackingShape selectionShape{};
         std::uint64_t nativeRelations = 0;
         std::uint64_t nativeCompletions = 0;
         std::uint64_t nativeGroups = 0;
@@ -52787,6 +52789,10 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             if (nativeLaneMembers > UINT64_MAX - laneMembers) return false;
             nativeLaneMembers += laneMembers;
             nativeVoices += voiceRows;
+            nativeSelections = std::min<std::uint64_t>(
+                std::max(selectionMemory.RowCapacity(), selectionMemory.DeltaCapacity()),
+                nativeSelections + 2ull * result.profile.selectionCount);
+            selectionShape.Include(result.profile.selection);
             nativeRelations += result.profile.referenceRows;
             nativeCompletions += result.profile.Q + result.profile.H[2];
             queueControls += result.profile.Q;
@@ -52947,6 +52953,11 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             !voices.PrepareSlotBacking(static_cast<std::uint32_t>(nativeVoices), &nativeCandidate->voices) ||
             !ledger.PrepareBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(
                 nativeVoices, ledger.Capacity())), &nativeCandidate->ledger) ||
+            !selectionMemory.PrepareBacking({
+                static_cast<std::uint32_t>(std::min<std::uint64_t>(nativeSelections, selectionMemory.RowCapacity())),
+                static_cast<std::uint32_t>(std::min<std::uint64_t>(nativeSelections, selectionMemory.DeltaCapacity())),
+                std::min(producerCount, selectionMemory.BatchCapacity()), selectionShape},
+                &nativeCandidate->selectionHistory) ||
             !timelineArms.PrepareBacking(static_cast<std::uint32_t>(nativeVoices + queueControls),
                 &nativeCandidate->arms) ||
             !variables.PrepareReadCutBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(

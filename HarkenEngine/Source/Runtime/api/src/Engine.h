@@ -4965,6 +4965,7 @@ struct Engine {
         CompositeCompletionOwnerPool::BackingPreparation completions;
         StableStoragePreparation voices;
         VoiceLedger::BackingPreparation ledger;
+        SelectionMemoryTableV1::BackingPreparation selectionHistory;
         StableStoragePreparation arms;
         ArmGroupTable::BackingPreparation groups;
         ScheduledTransactionPool::ImmediateLaneBackingPreparation laneGroups;
@@ -4988,6 +4989,7 @@ struct Engine {
     struct NativeRuntimeBackingUse {
         std::array<StableStoragePreparedUse, 13> columns;
         VoiceLedger::BackingUse ledger;
+        SelectionMemoryTableV1::BackingUse selectionHistory;
         ArmGroupTable::PreparedUse groups;
         ScheduledTransactionPool::ImmediateLaneBackingUse laneGroups;
         StableSlotStorage<EngineActionPlayScratch>::PreparedUse actionPlays;
@@ -5008,6 +5010,7 @@ struct Engine {
                       Use(backing, 4), Use(backing, 5), Use(backing, 6), Use(backing, 7), Use(backing, 8),
                       Use(backing, 9), Use(backing, 10), Use(backing, 11), Use(backing, 12)},
               ledger(backing == nullptr ? VoiceLedger::BackingUse{} : backing->ledger.Use()),
+              selectionHistory(backing == nullptr ? SelectionMemoryTableV1::BackingUse{} : backing->selectionHistory.Use()),
               groups(engine.armGroups, backing == nullptr ? nullptr : &backing->groups),
               laneGroups(engine.timelinePool, backing == nullptr ? nullptr : &backing->laneGroups),
               actionPlays(backing == nullptr ? StableSlotStorage<EngineActionPlayScratch>::PreparedUse{}

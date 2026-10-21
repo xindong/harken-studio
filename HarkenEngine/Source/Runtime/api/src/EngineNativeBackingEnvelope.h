@@ -87,8 +87,10 @@ struct Profile {
     std::uint32_t rootInitialMembers = 0;
     std::uint32_t Q = 0;
     std::uint32_t controlSides = 0;
+    std::uint32_t selectionCount = 0;
     VoiceColumns voice{};
     QueueColumns queue{};
+    SelectionMemoryTableV1::BackingShape selection{};
 };
 
 struct Result {
@@ -231,6 +233,8 @@ inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexce
         kControlSideCapacity, a.flags);
     a.profile.voice.Include(b.profile.voice);
     a.profile.queue.Include(b.profile.queue);
+    a.profile.selectionCount = SaturatingAdd(a.profile.selectionCount, b.profile.selectionCount, UINT32_MAX, a.flags);
+    a.profile.selection.Include(b.profile.selection);
     a.profile.rootContinuousMembers = 0;
     a.profile.rootInitialMembers = 0;
     for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
@@ -253,6 +257,8 @@ inline Result Alternative(Result a, const Result& b) noexcept {
     a.profile.controlSides = std::max(a.profile.controlSides, b.profile.controlSides);
     a.profile.voice.Include(b.profile.voice);
     a.profile.queue.Include(b.profile.queue);
+    a.profile.selectionCount = std::max(a.profile.selectionCount, b.profile.selectionCount);
+    a.profile.selection.Include(b.profile.selection);
     a.profile.rootContinuousMembers = 0;
     a.profile.rootInitialMembers = 0;
     for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
@@ -630,6 +636,11 @@ private:
             result = Alternative(result, Visit(program.children[i].playable, Mode::Frontier, budget));
             if (!result) return result;
         }
+        result.profile.selectionCount = SaturatingAdd(result.profile.selectionCount, 1u, UINT32_MAX, result.flags);
+        result.profile.selection.Include({program.avoidLastN,
+            program.mode == ContainerModeV1::Random && program.randomDiscipline == RandomDisciplineV1::Rotation
+                ? program.childCount : 0u,
+            limits_.seedPrefixCount + budget.frontierDepth - 1u, program.childCount});
         return result;
     }
 

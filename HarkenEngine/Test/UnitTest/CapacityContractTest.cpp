@@ -981,6 +981,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("action_play_directory_bytes", std::to_string(engine->ActionPlayDirectoryBytes()));
     testing::Test::RecordProperty("action_play_dynamic_bytes", std::to_string(engine->ActionPlayDynamicBytes()));
     testing::Test::RecordProperty("pending_selection_owned_bytes", std::to_string(engine->PendingSelectionStorageBytes()));
+    testing::Test::RecordProperty("selection_history_storage_bytes", std::to_string(engine->selectionMemory.StorageBytes()));
     testing::Test::RecordProperty("captured_voice_owned_bytes", std::to_string(engine->CapturedVoiceStorageBytes()));
     testing::Test::RecordProperty("preparation_owned_bytes", std::to_string(engine->PreparationStorageBytes()));
     recordStableRows("composite_rows", engine->compositeCompletionOwners.StorageBytes(),
