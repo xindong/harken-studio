@@ -2019,8 +2019,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     ArmGroupToken queueInitialLaneArmGroup{};
     TimelineArmToken queueArrivalArm{};
     TimelineArmToken queueArrivalSourceArm{};
-    std::array<TimelineArmToken, 2u * kMaxKnownScheduleLeaves>
-        queueArrivalTransitionGroupArms{};
     std::uint32_t queueArrivalSourceControlArmCount = 0;
     std::uint32_t queueArrivalTransitionGroupArmCount = 0;
     TransitionInstanceToken queueArrivalTransition{};

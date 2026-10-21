@@ -12041,7 +12041,6 @@ void ClearQueueArrivalReferences(harken::EnginePlayableServiceRow& row) noexcept
     row.queueArrivalArmGroup = {};
     row.queueArrivalArm = {};
     row.queueArrivalSourceArm = {};
-    row.queueArrivalTransitionGroupArms = {};
     row.queueArrivalSourceControlArmCount = 0;
     row.queueArrivalTransitionGroupArmCount = 0;
     row.queueArrivalTransition = {};
@@ -12195,7 +12194,7 @@ bool TransferActiveQueueArrival(
         !engine.armGroups.Capture(row.queueArrivalArmGroup, &group) ||
         group.parent.slot != decision.slot || group.parent.generation != decision.generation ||
         group.memberCount != row.queueArrivalTransitionGroupArmCount ||
-        group.memberCount > row.queueArrivalTransitionGroupArms.size() ||
+        group.memberCount > 2u * harken::kMaxKnownScheduleLeaves ||
         group.memberCount == 0 || group.ackedCount != group.memberCount) return false;
     const bool bankOwnsGroup = std::any_of(bank->groups.begin(), bank->groups.end(),
         [&](harken::ArmGroupToken candidate) {
@@ -12223,7 +12222,7 @@ bool TransferActiveQueueArrival(
             !engine.transitionInstances.Capture(row.queueArrivalTransition, &transition)) return false;
         for (std::uint16_t index = 0; index < group.memberCount; ++index) {
             harken::ArmGroupMemberSnapshot member{};
-            const auto expected = row.queueArrivalTransitionGroupArms[index];
+            const auto expected = index == 0 ? row.queueArrivalSourceArm : row.queueArrivalArm;
             if (!engine.armGroups.CaptureMember(row.queueArrivalArmGroup, index, &member) ||
                 member.token.slot != expected.slot || member.token.generation != expected.generation ||
                 member.token.renderSlot != expected.renderSlot ||
@@ -12248,11 +12247,7 @@ bool TransferActiveQueueArrival(
     } else {
         for (std::uint16_t index = 0; index < group.memberCount; ++index) {
             harken::ArmGroupMemberSnapshot member{};
-            const auto expected = row.queueArrivalTransitionGroupArms[index];
-            if (!engine.armGroups.CaptureMember(row.queueArrivalArmGroup, index, &member) ||
-                member.token.slot != expected.slot || member.token.generation != expected.generation ||
-                member.token.renderSlot != expected.renderSlot ||
-                member.token.renderGeneration != expected.renderGeneration) return false;
+            if (!engine.armGroups.CaptureMember(row.queueArrivalArmGroup, index, &member)) return false;
             harken::TimelineArmObservation arm{};
             if (!member.tombstoned && !engine.timelineArms.Observe(member.token, &arm)) return false;
         }
@@ -12416,7 +12411,9 @@ bool TransferCanonicalQueueRetirement(harken::Engine& engine,
             return false;
         const auto memberCount = arrival ? row.queueArrivalTransitionGroupArmCount : row.queueTransitionGroupArmCount;
         const auto sourceCount = arrival ? row.queueArrivalSourceControlArmCount : row.queueSourceControlArmCount;
-        const auto& members = arrival ? row.queueArrivalTransitionGroupArms : row.queueTransitionGroupArms;
+        const std::array<harken::TimelineArmToken, 2> members{
+            arrival ? row.queueArrivalSourceArm : row.queueTransitionGroupArms[0],
+            arrival ? row.queueArrivalArm : row.queueTransitionGroupArms[1]};
         if (memberCount != 2u || sourceCount != 1u || arms.memberCount != memberCount) return false;
         for (std::uint16_t index = 0; index < memberCount; ++index) {
             harken::ArmGroupMemberSnapshot member{};
@@ -12443,6 +12440,8 @@ bool TransferCanonicalQueueRetirement(harken::Engine& engine,
     if (arrival) {
         row.queueArrivalDecision = {};
         row.queueArrivalTransition = {};
+        row.queueArrivalTransitionGroupArmCount = 0;
+        row.queueArrivalSourceControlArmCount = 0;
     } else {
         row.queueTransition = {};
     }
@@ -13321,6 +13320,16 @@ bool ReleaseQueueStopNativeOccupancy(
     return true;
 }
 
+bool QueueArrivalGroupParentMatches(
+    const harken::EnginePlayableServiceRow& row,
+    harken::DecisionToken parent) noexcept {
+    return parent.Valid() &&
+        (SameCanonicalDecision(parent, row.queueArrivalDecision) ||
+        (row.initialQueueEntryAttemptGeneration != 0 &&
+         !row.queueFirstContinuationLane &&
+         SameCanonicalDecision(parent, row.initialQueueEntryDecision)));
+}
+
 bool ReleaseQueueStopPhysicalArms(
     harken::Engine& engine,
     harken::EnginePlayableServiceRow& row,
@@ -13350,9 +13359,16 @@ bool ReleaseQueueStopPhysicalArms(
         dropStoredArms(row.queueArrivalScheduleBase, row.queueArrivalScheduleLeafCount);
     dropArm(row.queueArrivalArm);
     dropArm(row.queueArrivalSourceArm);
-    for (std::uint32_t index = 0;
-         index < row.queueArrivalTransitionGroupArmCount; ++index) {
-        dropArm(row.queueArrivalTransitionGroupArms[index]);
+    if (row.queueArrivalTransitionGroupArmCount != 0 && !row.queueArrivalCleanupStarted) {
+        harken::ArmGroupSnapshot group{};
+        if (!engine.armGroups.Capture(row.queueArrivalArmGroup, &group) ||
+            group.memberCount != row.queueArrivalTransitionGroupArmCount ||
+            !QueueArrivalGroupParentMatches(row, group.parent)) return false;
+        for (std::uint16_t index = 0; index < group.memberCount; ++index) {
+            harken::ArmGroupMemberSnapshot member{};
+            if (!engine.armGroups.CaptureMember(row.queueArrivalArmGroup, index, &member)) return false;
+            dropArm(member.token);
+        }
     }
     dropArm(row.queueSourceArm);
     dropArm(row.queueSuccessorArm);
@@ -13420,8 +13436,14 @@ bool TransferQueueStopDecisions(
         (void)engine.armGroups.BeginRetire(group);
         if (engine.armGroups.Reclaim(group, observedAudioSequence)) group = {};
     };
-    if (!sameGroup(row.queueArrivalArmGroup, initialGroup))
+    if (!sameGroup(row.queueArrivalArmGroup, initialGroup)) {
+        const bool hadArrivalGroup = row.queueArrivalArmGroup.Valid();
         reclaimGroup(row.queueArrivalArmGroup);
+        if (hadArrivalGroup && !row.queueArrivalArmGroup.Valid()) {
+            row.queueArrivalTransitionGroupArmCount = 0;
+            row.queueArrivalSourceControlArmCount = 0;
+        }
+    }
     if (!sameGroup(row.queueArmGroup, initialGroup))
         reclaimGroup(row.queueArmGroup);
 
@@ -13459,8 +13481,11 @@ bool TransferQueueStopDecisions(
             return false;
     } else if (row.initialQueueEntryAttemptGeneration != 0 &&
         !dropDecision(row.initialQueueEntryDecision, !initialCommitted, initialGroup)) return false;
-    if (sameGroup(row.queueArrivalArmGroup, initialGroup))
+    if (sameGroup(row.queueArrivalArmGroup, initialGroup)) {
         row.queueArrivalArmGroup = {};
+        row.queueArrivalTransitionGroupArmCount = 0;
+        row.queueArrivalSourceControlArmCount = 0;
+    }
     if (!dropDecision(row.queueArrivalDecision,
             row.queueArrivalDecisionCancelled, row.queueArrivalArmGroup,
             row.queueArrivalTransition)) return false;
@@ -13510,7 +13535,6 @@ bool ReleaseQueueStopFactories(
 
     row.queueArrivalArm = {};
     row.queueArrivalSourceArm = {};
-    row.queueArrivalTransitionGroupArms = {};
     row.queueArrivalSourceControlArmCount = 0;
     row.queueArrivalTransitionGroupArmCount = 0;
     row.queueArrivalTransition = {};
@@ -30932,8 +30956,6 @@ bool FailQueueForInvalidation(
         row.queueArrivalArmGroup = row.queueArmGroup;
         row.queueArrivalArm = arrivalArm;
         row.queueArrivalSourceArm = row.queueSourceArm;
-        row.queueArrivalTransitionGroupArms =
-            row.queueTransitionGroupArms;
         row.queueArrivalSourceControlArmCount =
             row.queueSourceControlArmCount;
         row.queueArrivalTransitionGroupArmCount =
@@ -47251,13 +47273,13 @@ engine.runtimeRecreateRequired = true;
         }
         const PlayableChildObservationRefreshGuard observationRefresh{
             engine, row, row.variableControlInstance.Valid()};
-        const auto captureRetiringGroupTombstones = [&engine](
+        const auto captureRetiringGroupTombstones = [&engine, &row](
             harken::ArmGroupToken group,
-            const harken::TimelineArmToken* members,
             std::uint32_t memberCount,
             harken::ArmGroupSnapshot* out) {
-            if (!group.Valid() || members == nullptr || out == nullptr ||
+            if (!group.Valid() || out == nullptr ||
                 !engine.armGroups.Capture(group, out) ||
+                !QueueArrivalGroupParentMatches(row, out->parent) ||
                 out->memberCount != memberCount) {
                 return false;
             }
@@ -47265,13 +47287,15 @@ engine.runtimeRecreateRequired = true;
                 !engine.armGroups.BeginRetire(group)) {
                 return false;
             }
-            for (std::uint32_t index = 0; index < memberCount; ++index) {
+            for (std::uint16_t index = 0; index < out->memberCount; ++index) {
+                harken::ArmGroupMemberSnapshot member{};
+                if (!engine.armGroups.CaptureMember(group, index, &member)) return false;
                 harken::TimelineArmObservation observation{};
-                if (engine.timelineArms.Observe(members[index],
+                if (engine.timelineArms.Observe(member.token,
                                                 &observation) &&
                     observation.state == harken::ArmState::Tombstoned) {
                     (void)engine.armGroups.Tombstone(
-                        group, members[index],
+                        group, member.token,
                         std::max<std::uint64_t>(
                             1u, observation.tombstoneAudioSequence));
                 }
@@ -49174,7 +49198,6 @@ engine.runtimeRecreateRequired = true;
                 harken::ArmGroupSnapshot arrivalGroup{};
                 if (!captureRetiringGroupTombstones(
                         row.queueArrivalArmGroup,
-                        row.queueArrivalTransitionGroupArms.data(),
                         handoffCount, &arrivalGroup)) {
                     row.controlLifecycle = harken::PlayableControlLifecycle::
                         FailingSourceActive;
@@ -50020,8 +50043,6 @@ engine.runtimeRecreateRequired = true;
                     ? harken::TimelineArmToken{}
                     : row.arm;
                 row.queueArrivalSourceArm = row.queueSourceArm;
-                row.queueArrivalTransitionGroupArms =
-                    row.queueTransitionGroupArms;
                 row.queueArrivalSourceControlArmCount =
                     row.queueSourceControlArmCount;
                 row.queueArrivalTransitionGroupArmCount =
@@ -50058,7 +50079,6 @@ engine.runtimeRecreateRequired = true;
                 harken::ArmGroupSnapshot arrivalGroup{};
                 if (!captureRetiringGroupTombstones(
                         row.queueArrivalArmGroup,
-                        row.queueArrivalTransitionGroupArms.data(),
                         row.queueArrivalTransitionGroupArmCount,
                         &arrivalGroup)) {
                     row.controlLifecycle = harken::PlayableControlLifecycle::
@@ -72498,8 +72518,6 @@ engine.runtimeRecreateRequired = true;
             row->queueArrivalArmGroup = row->queueArmGroup;
             row->queueArrivalArm = arrivalArm;
             row->queueArrivalSourceArm = row->queueSourceArm;
-            row->queueArrivalTransitionGroupArms =
-                row->queueTransitionGroupArms;
             row->queueArrivalSourceControlArmCount =
                 row->queueSourceControlArmCount;
             row->queueArrivalTransitionGroupArmCount =
@@ -92134,7 +92152,6 @@ void CommitImmediateActionQueueReplacements(
         const harken::ArmGroupToken oldArmGroup = row.queueArmGroup;
         const harken::TimelineArmToken oldSuccessorArm =
             row.queueSuccessorArm;
-        const auto oldGroupArms = row.queueTransitionGroupArms;
         const std::uint32_t oldSourceControlCount =
             row.queueSourceControlArmCount;
         const std::uint32_t oldGroupArmCount =
@@ -92211,7 +92228,6 @@ void CommitImmediateActionQueueReplacements(
         row.queueArrivalArm = oldSameProgramKey
             ? harken::TimelineArmToken{} : oldSuccessorArm;
         row.queueArrivalSourceArm = oldSourceArm;
-        row.queueArrivalTransitionGroupArms = oldGroupArms;
         row.queueArrivalSourceControlArmCount = oldSourceControlCount;
         row.queueArrivalTransitionGroupArmCount = oldGroupArmCount;
         row.queueArrivalTransition = oldTransition;
