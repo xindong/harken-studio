@@ -9,7 +9,7 @@
     {
       "version": "0.1.61",
       "date": "2026-10-21",
-      "pullRequests": [76],
+      "pullRequests": [76, 80],
       "contributors": ["liuxin2-sys"],
       "changes": [
         {
