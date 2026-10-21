@@ -40969,16 +40969,16 @@ bool PreparePendingVariableQueueRootTiming(harken::Engine& engine,
                 timing.conditionalLogicalCompletionFrame, &conditional))
             return false;
         if (timing.currentLeafCount != 0 &&
-            !engine.compositeCompletionOwners.ProvePrivateReanchorBeforePublication(
+            !engine.compositeCompletionOwners.ProvePrivateUniformReanchorBeforePublication(
                 holder->queueCurrentCompositeOwner,
-                &engine.initialQueueTimingLeavesScratch[timing.firstCurrentLeaf],
-                timing.currentLeafCount, engine.timelineOccurrences, &current))
+                timing.oldEntryFrame, timing.newEntryFrame,
+                engine.timelineOccurrences, &current))
             return false;
         if (timing.successorLeafCount != 0 &&
-            !engine.compositeCompletionOwners.ProvePrivateReanchorBeforePublication(
+            !engine.compositeCompletionOwners.ProvePrivateUniformReanchorBeforePublication(
                 holder->queueSuccessorCompositeOwner,
-                &engine.initialQueueTimingLeavesScratch[timing.firstSuccessorLeaf],
-                timing.successorLeafCount, engine.timelineOccurrences, &successor))
+                timing.oldEntryFrame, timing.newEntryFrame,
+                engine.timelineOccurrences, &successor))
             return false;
     }
     for (std::size_t index = 0; index < queueMemberCount; ++index) {
@@ -43140,7 +43140,6 @@ bool MatchesPrivateCommittedInitialQueueTimingMember(harken::Engine& engine,
     auto& candidates = engine.initialQueueTimingMembersScratch;
     auto& programs = engine.initialQueueTimingProgramsScratch;
     auto& events = engine.initialQueueTimingEventsScratch;
-    auto& leaves = engine.initialQueueTimingLeavesScratch;
     auto& groups = engine.initialQueueTimingGroupsScratch;
     for (auto& member : engine.playableServices) {
         if (!member.queueTimingPending ||
@@ -43285,22 +43284,20 @@ bool MatchesPrivateCommittedInitialQueueTimingMember(harken::Engine& engine,
                 &candidate.successorCompletionBound)) return false;
         const auto captureComposite = [&](
             harken::CompositeCompletionOwnerToken token,
-            std::size_t* first, std::uint32_t* count) {
+            std::uint32_t* count) {
             if (!token.Valid()) return true;
             harken::CompositeCompletionOwnerInfo info{};
             if (!engine.compositeCompletionOwners.Capture(token, &info) ||
                 info.leafCount == 0 ||
-                info.leafCount > leaves.size() - *outLeafCount)
+                info.leafCount > std::numeric_limits<std::size_t>::max() - *outLeafCount)
                 return false;
-            *first = *outLeafCount;
             *count = info.leafCount;
             for (std::uint32_t index = 0; index < info.leafCount;
                  ++index) {
                 harken::KnownScheduleLeafV1 original{};
                 if (!engine.compositeCompletionOwners.CaptureLeaf(
                         token, index, &original)) return false;
-                auto& staged = leaves[(*outLeafCount)++];
-                staged = original;
+                auto staged = original;
                 if (!ReanchorInitialQueueFrame(
                         original.absoluteLeafStartFrame,
                         oldCohortEntryFrame, finalEntryFrame,
@@ -43309,14 +43306,13 @@ bool MatchesPrivateCommittedInitialQueueTimingMember(harken::Engine& engine,
                         original.predicate,
                         staged.absoluteLeafStartFrame,
                         &staged.predicate)) return false;
+                ++*outLeafCount;
             }
             return true;
         };
         if (!captureComposite(member.queueCurrentCompositeOwner,
-                &candidate.firstCurrentLeaf,
                 &candidate.currentLeafCount) ||
             !captureComposite(engine.InitialQueueFilingFuture(member).queueSuccessorCompositeOwner,
-                &candidate.firstSuccessorLeaf,
                 &candidate.successorLeafCount)) return false;
         if (engine.InitialQueueFilingFuture(member).queueConditional.Valid()) {
             candidate.queue = member.queueInstance;
@@ -46011,20 +46007,16 @@ void ServicePendingImmediateEntries(
                 }
                 if (!filingFailed && timing.currentLeafCount != 0 &&
                     !engine.compositeCompletionOwners.
-                        ProvePrivateReanchorBeforePublication(
+                        ProvePrivateUniformReanchorBeforePublication(
                             holder->queueCurrentCompositeOwner,
-                            &engine.initialQueueTimingLeavesScratch[
-                                timing.firstCurrentLeaf],
-                            timing.currentLeafCount,
+                            timing.oldEntryFrame, timing.newEntryFrame,
                             engine.timelineOccurrences, &current))
                     filingFailed = true;
                 if (!filingFailed && timing.successorLeafCount != 0 &&
                     !engine.compositeCompletionOwners.
-                        ProvePrivateReanchorBeforePublication(
+                        ProvePrivateUniformReanchorBeforePublication(
                             engine.InitialQueueFilingFuture(*holder).queueSuccessorCompositeOwner,
-                            &engine.initialQueueTimingLeavesScratch[
-                                timing.firstSuccessorLeaf],
-                            timing.successorLeafCount,
+                            timing.oldEntryFrame, timing.newEntryFrame,
                             engine.timelineOccurrences, &successor))
                     filingFailed = true;
             }

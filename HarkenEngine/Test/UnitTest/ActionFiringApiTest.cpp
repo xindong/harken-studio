@@ -36381,12 +36381,6 @@ TEST(ActionFiringApi, InitialQueueTimingCandidateRetainsCompositeOffsetsAndPriva
     EXPECT_EQ(composite->oldEntryFrame + 64u, composite->newEntryFrame);
     EXPECT_EQ(0u, composite->conditionalLogicalStartFrame);
     EXPECT_EQ(0u, composite->conditionalLogicalCompletionFrame);
-    const auto& first = engine->initialQueueTimingLeavesScratch[
-        composite->firstCurrentLeaf];
-    const auto& second = engine->initialQueueTimingLeavesScratch[
-        composite->firstCurrentLeaf + 1u];
-    ASSERT_EQ(96u, second.absoluteLeafStartFrame -
-                       first.absoluteLeafStartFrame);
     harken::KnownScheduleLeafV1 originalFirst{};
     harken::KnownScheduleLeafV1 originalSecond{};
     ASSERT_TRUE(engine->compositeCompletionOwners.CaptureLeaf(
@@ -36395,12 +36389,27 @@ TEST(ActionFiringApi, InitialQueueTimingCandidateRetainsCompositeOffsetsAndPriva
     ASSERT_TRUE(engine->compositeCompletionOwners.CaptureLeaf(
         engine->playableServices[composite->service.slot]
             .queueCurrentCompositeOwner, 1, &originalSecond));
+    const auto compositeOwner = engine->playableServices[composite->service.slot].queueCurrentCompositeOwner;
+    harken::CompositeCompletionOwnerPool::PrivateReanchorProof shiftedProof;
+    ASSERT_TRUE(engine->compositeCompletionOwners.ProvePrivateUniformReanchorBeforePublication(
+        compositeOwner, composite->oldEntryFrame, composite->newEntryFrame,
+        engine->timelineOccurrences, &shiftedProof));
+    engine->compositeCompletionOwners.ApplyPrivateReanchorBeforePublication(shiftedProof);
+    harken::KnownScheduleLeafV1 first{}, second{};
+    ASSERT_TRUE(engine->compositeCompletionOwners.CaptureLeaf(compositeOwner, 0, &first));
+    ASSERT_TRUE(engine->compositeCompletionOwners.CaptureLeaf(compositeOwner, 1, &second));
+    ASSERT_EQ(96u, second.absoluteLeafStartFrame - first.absoluteLeafStartFrame);
     EXPECT_EQ(originalFirst.absoluteLeafStartFrame + 64u,
               first.absoluteLeafStartFrame);
     EXPECT_EQ(originalSecond.absoluteLeafStartFrame + 64u,
               second.absoluteLeafStartFrame);
     EXPECT_EQ(originalSecond.predicate.progressBaselineRevision,
               second.predicate.progressBaselineRevision);
+    harken::CompositeCompletionOwnerPool::PrivateReanchorProof restoredProof;
+    ASSERT_TRUE(engine->compositeCompletionOwners.ProvePrivateUniformReanchorBeforePublication(
+        compositeOwner, composite->newEntryFrame, composite->oldEntryFrame,
+        engine->timelineOccurrences, &restoredProof));
+    engine->compositeCompletionOwners.ApplyPrivateReanchorBeforePublication(restoredProof);
     ASSERT_NE(nullptr, composite->successorBank);
     ASSERT_FALSE(composite->successorBank->published);
     ASSERT_GT(composite->transactionCount, 0u);

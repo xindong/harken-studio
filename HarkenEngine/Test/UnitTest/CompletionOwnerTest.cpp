@@ -909,6 +909,37 @@ TEST(CompletionOwner, PrivateCompositeReanchorRejectsChangedOwnerWithoutPartialM
     EXPECT_EQ(1408u, actual.absoluteLeafStartFrame);
     EXPECT_EQ(1664u, actual.predicate.absoluteLogicalCompleteFrame);
     EXPECT_EQ(23u, actual.predicate.playbackFactsRevision);
+    harken::CompositeCompletionOwnerPool::PrivateReanchorProof uniform{};
+    ASSERT_TRUE(pool.ProvePrivateUniformReanchorBeforePublication(token, 0u, 0u, occurrences, &uniform));
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    uniform = {};
+    EXPECT_FALSE(pool.ProvePrivateUniformReanchorBeforePublication(token, 0u, UINT64_MAX, occurrences, &uniform));
+    EXPECT_FALSE(pool.ProvePrivateUniformReanchorBeforePublication(token, 1409u, 0u, occurrences, &uniform));
+    ASSERT_TRUE(pool.Capture(token, &info));
+    EXPECT_EQ(1792u, info.absoluteLogicalCompleteFrame);
+    ASSERT_TRUE(pool.CaptureLeaf(token, 0, &actual));
+    EXPECT_EQ(1280u, actual.absoluteLeafStartFrame);
+    ASSERT_TRUE(pool.ProvePrivateUniformReanchorBeforePublication(token, 1024u, 0u, occurrences, &uniform));
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    ASSERT_TRUE(pool.Capture(token, &info));
+    EXPECT_EQ(768u, info.absoluteLogicalCompleteFrame);
+    ASSERT_TRUE(pool.CaptureLeaf(token, 1, &actual));
+    EXPECT_EQ(384u, actual.absoluteLeafStartFrame);
+    uniform = {};
+    ASSERT_TRUE(pool.ProvePrivateUniformReanchorBeforePublication(token, 0u, UINT64_MAX - 768u, occurrences, &uniform));
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    ASSERT_TRUE(pool.Capture(token, &info));
+    EXPECT_EQ(UINT64_MAX, info.absoluteLogicalCompleteFrame);
+    uniform = {};
+    ASSERT_TRUE(pool.ProvePrivateUniformReanchorBeforePublication(token, UINT64_MAX - 768u, 1024u, occurrences, &uniform));
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    ASSERT_TRUE(pool.CaptureLeaf(token, 1, &actual));
+    EXPECT_EQ(1408u, actual.absoluteLeafStartFrame);
+    EXPECT_EQ(1664u, actual.predicate.absoluteLogicalCompleteFrame);
+    EXPECT_EQ(23u, actual.predicate.playbackFactsRevision);
     harken::CompletionProgressBlockUpdate audible{};
     audible.occurrence = first;
     audible.renderGeneration = 11;
@@ -921,6 +952,8 @@ TEST(CompletionOwner, PrivateCompositeReanchorRejectsChangedOwnerWithoutPartialM
     harken::CompositeCompletionOwnerPool::PrivateReanchorProof afterAudio{};
     EXPECT_FALSE(pool.ProvePrivateReanchorBeforePublication(
         token, candidates.data(), 2, occurrences, &afterAudio));
+    EXPECT_FALSE(pool.ProvePrivateUniformReanchorBeforePublication(
+        token, 0u, 64u, occurrences, &afterAudio));
 }
 
 TEST(CompletionOwner, CompositeCapacityPlusOneHasZeroPartialMutation) {

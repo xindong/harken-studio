@@ -76,6 +76,7 @@ public:
         std::uint32_t slot_ = UINT32_MAX;
         const KnownScheduleLeafV1* leaves_ = nullptr;
         std::uint32_t leafCount_ = 0;
+        std::uint64_t originalCompleteFrame_ = 0;
         std::uint64_t completeFrame_ = 0;
     };
 
@@ -147,6 +148,14 @@ public:
         std::uint32_t leafCount,
         OccurrenceStatePool& occurrences,
         PrivateReanchorProof* out) noexcept;
+    // Uniform reanchors retain the checked shift, without a candidate leaf array.
+    // The same private-owner and serialized producer requirements apply.
+    bool ProvePrivateUniformReanchorBeforePublication(
+        CompositeCompletionOwnerToken token,
+        std::uint64_t oldEntryFrame,
+        std::uint64_t newEntryFrame,
+        OccurrenceStatePool& occurrences,
+        PrivateReanchorProof* out) noexcept;
     void ApplyPrivateReanchorBeforePublication(
         const PrivateReanchorProof& proof) noexcept;
     bool RollbackBeforePublication(
@@ -199,6 +208,14 @@ private:
     };
 
     const Row* Resolve(CompositeCompletionOwnerToken token) const noexcept;
+    bool ProvePrivateReanchor(
+        CompositeCompletionOwnerToken token,
+        const KnownScheduleLeafV1* candidates,
+        std::uint32_t leafCount,
+        std::uint64_t oldEntryFrame,
+        std::uint64_t newEntryFrame,
+        OccurrenceStatePool& occurrences,
+        PrivateReanchorProof* out) noexcept;
     bool PrepareSlotStorage(std::uint32_t slot) noexcept;
     Row* ResolveForRelease(CompositeCompletionOwnerToken token) noexcept;
     void Quarantine(Row& row) noexcept;

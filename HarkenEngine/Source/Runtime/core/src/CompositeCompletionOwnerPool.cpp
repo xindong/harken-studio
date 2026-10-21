@@ -681,18 +681,57 @@ bool CompositeCompletionOwnerPool::ProvePrivateReanchorBeforePublication(
     std::uint32_t leafCount,
     OccurrenceStatePool& occurrences,
     PrivateReanchorProof* out) noexcept {
-    if (out == nullptr || out->Valid() || candidates == nullptr ||
+    return candidates != nullptr && ProvePrivateReanchor(token, candidates, leafCount,
+        0, 0, occurrences, out);
+}
+
+bool CompositeCompletionOwnerPool::ProvePrivateUniformReanchorBeforePublication(
+    CompositeCompletionOwnerToken token,
+    std::uint64_t oldEntryFrame,
+    std::uint64_t newEntryFrame,
+    OccurrenceStatePool& occurrences,
+    PrivateReanchorProof* out) noexcept {
+    return ProvePrivateReanchor(token, nullptr, 0, oldEntryFrame, newEntryFrame, occurrences, out);
+}
+
+bool CompositeCompletionOwnerPool::ProvePrivateReanchor(
+    CompositeCompletionOwnerToken token,
+    const KnownScheduleLeafV1* candidates,
+    std::uint32_t leafCount,
+    std::uint64_t oldEntryFrame,
+    std::uint64_t newEntryFrame,
+    OccurrenceStatePool& occurrences,
+    PrivateReanchorProof* out) noexcept {
+    if (out == nullptr || out->Valid() ||
         !token.Valid() || token.slot >= rows_.ConstructedCount()) return false;
     Row* row = &rows_[token.slot];
     if (row->generation != token.generation ||
         row->state.load(std::memory_order_acquire) != State::Pinned ||
         row->originalOccurrenceReceiver != &occurrences ||
-        leafCount == 0 || leafCount != row->leafCount) return false;
+        row->leafCount == 0 ||
+        (candidates != nullptr && leafCount != row->leafCount)) return false;
+    leafCount = row->leafCount;
     const KnownScheduleLeafV1* original = LeafStorage(token.slot);
+    std::uint64_t originalComplete = 0;
     std::uint64_t complete = 0;
     for (std::uint32_t index = 0; index < leafCount; ++index) {
         const auto& before = original[index];
-        const auto& after = candidates[index];
+        KnownScheduleLeafV1 shifted{};
+        if (candidates == nullptr) {
+            shifted = before;
+            if (newEntryFrame >= oldEntryFrame) {
+                const auto shift = newEntryFrame - oldEntryFrame;
+                if (before.absoluteLeafStartFrame > UINT64_MAX - shift) return false;
+                shifted.absoluteLeafStartFrame += shift;
+            } else {
+                const auto shift = oldEntryFrame - newEntryFrame;
+                if (before.absoluteLeafStartFrame < shift) return false;
+                shifted.absoluteLeafStartFrame -= shift;
+            }
+            if (!ReanchorKnownCompletionBeforePublication(before.predicate,
+                    shifted.absoluteLeafStartFrame, &shifted.predicate)) return false;
+        }
+        const auto& after = candidates != nullptr ? candidates[index] : shifted;
         const auto& oldPredicate = before.predicate;
         const auto& newPredicate = after.predicate;
         const CompletionProgressRow* progressRow =
@@ -748,14 +787,17 @@ bool CompositeCompletionOwnerPool::ProvePrivateReanchorBeforePublication(
                      oldPredicate.progressBaselineCompletedThroughBlockSequence) ||
             !occurrences.CaptureCompletionOwner(before.occurrence, &owner) ||
             !SameCompletionOwner(owner, oldPredicate.owner)) return false;
+        originalComplete = std::max(originalComplete, oldPredicate.absoluteLogicalCompleteFrame);
         complete = std::max(complete,
             newPredicate.absoluteLogicalCompleteFrame);
     }
+    if (originalComplete != row->absoluteLogicalCompleteFrame) return false;
     out->owner_ = this;
     out->row_ = row;
     out->slot_ = token.slot;
     out->leaves_ = candidates;
     out->leafCount_ = leafCount;
+    out->originalCompleteFrame_ = originalComplete;
     out->completeFrame_ = complete;
     return true;
 }
@@ -764,7 +806,25 @@ void CompositeCompletionOwnerPool::ApplyPrivateReanchorBeforePublication(
     const PrivateReanchorProof& proof) noexcept {
     assert(proof.owner_ == this && proof.row_ == &rows_[proof.slot_]);
     auto* row = static_cast<Row*>(proof.row_);
-    std::copy_n(proof.leaves_, proof.leafCount_, LeafStorage(proof.slot_));
+    auto* leaves = LeafStorage(proof.slot_);
+    if (proof.leaves_ != nullptr) {
+        std::copy_n(proof.leaves_, proof.leafCount_, leaves);
+    } else {
+        if (row->absoluteLogicalCompleteFrame == proof.completeFrame_) return;
+        assert(row->absoluteLogicalCompleteFrame == proof.originalCompleteFrame_);
+        const bool forward = proof.completeFrame_ >= proof.originalCompleteFrame_;
+        const auto shift = forward ? proof.completeFrame_ - proof.originalCompleteFrame_
+                                   : proof.originalCompleteFrame_ - proof.completeFrame_;
+        for (std::uint32_t index = 0; index < proof.leafCount_; ++index) {
+            auto& leaf = leaves[index];
+            leaf.absoluteLeafStartFrame = forward ? leaf.absoluteLeafStartFrame + shift
+                                                  : leaf.absoluteLeafStartFrame - shift;
+            leaf.predicate.absoluteLogicalStartFrame = leaf.absoluteLeafStartFrame;
+            leaf.predicate.absoluteLogicalCompleteFrame = forward
+                ? leaf.predicate.absoluteLogicalCompleteFrame + shift
+                : leaf.predicate.absoluteLogicalCompleteFrame - shift;
+        }
+    }
     row->absoluteLogicalCompleteFrame = proof.completeFrame_;
 }
 

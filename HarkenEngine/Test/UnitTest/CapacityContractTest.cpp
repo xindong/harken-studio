@@ -877,6 +877,11 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("removed_prebuilt_initial_continuous_arm_bytes",
         std::to_string(layout.continuousCount * continuousBytesPerSlot));
     testing::Test::RecordProperty("initial_arm_owner_bytes", std::to_string(sizeof(harken::EngineVariableInitialArms)));
+    testing::Test::RecordProperty("removed_prebuilt_queue_timing_leaf_bytes", std::to_string(
+        static_cast<std::uint64_t>(engine->config.maxCompositeCompletionOwners) *
+        engine->config.maxKnownScheduleLeaves * sizeof(harken::KnownScheduleLeafV1)));
+    testing::Test::RecordProperty("private_reanchor_proof_bytes",
+        std::to_string(sizeof(harken::CompositeCompletionOwnerPool::PrivateReanchorProof)));
     testing::Test::RecordProperty("removed_prebuilt_continuous_cut_bytes", std::to_string(
         layout.continuousCount * (sizeof(harken::EnginePlayableMemberReference) +
             2u * sizeof(harken::WeightSegmentV1) + sizeof(harken::TimelineArmToken) + sizeof(std::uint8_t))));

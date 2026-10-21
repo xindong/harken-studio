@@ -910,9 +910,7 @@ struct EngineInitialQueueTimingMember {
     std::uint32_t transactionCount = 0;
     std::size_t firstProgram = 0;
     std::size_t firstGroup = 0;
-    std::size_t firstCurrentLeaf = 0;
     std::uint32_t currentLeafCount = 0;
-    std::size_t firstSuccessorLeaf = 0;
     std::uint32_t successorLeafCount = 0;
     KnownCompletionPredicateV1 currentCompletion{};
     KnownCompletionPredicateV1 successorCompletion{};
@@ -6171,16 +6169,6 @@ public:
             resolved.maxScheduledTransactions);
         initialQueueTimingEventsScratch.resize(
             static_cast<std::size_t>(queueEventCapacity));
-        const auto queueLeafCapacity =
-            static_cast<std::uint64_t>(
-                resolved.maxCompositeCompletionOwners) *
-            resolved.maxKnownScheduleLeaves;
-        if (queueLeafCapacity >
-            std::numeric_limits<std::size_t>::max() /
-                sizeof(KnownScheduleLeafV1))
-            throw std::bad_alloc{};
-        initialQueueTimingLeavesScratch.resize(
-            static_cast<std::size_t>(queueLeafCapacity));
         initialQueueTimingGroupsScratch.resize(
             static_cast<std::size_t>(pageGroupRows));
         static_assert(std::numeric_limits<std::uint32_t>::max() <=
@@ -12291,8 +12279,6 @@ public:
         initialQueueTimingProgramsScratch;
     std::vector<EngineInitialQueueTimingEvent>
         initialQueueTimingEventsScratch;
-    std::vector<KnownScheduleLeafV1>
-        initialQueueTimingLeavesScratch;
     std::vector<Plan03GroupSliceInput>
         initialQueueTimingGroupsScratch;
     std::vector<Plan03ImmediateLaneGroupDescriptor>
