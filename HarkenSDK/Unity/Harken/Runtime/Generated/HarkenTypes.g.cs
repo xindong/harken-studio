@@ -1059,7 +1059,7 @@ namespace Harken
         internal const ulong VN_MONITOR_HARD_CAPTURE_BYTE_RATE = 134217728UL;
         internal const ulong VN_MONITOR_DEFAULT_RAW_AUDIO_BYTE_RATE = 8388608UL;
         internal const ulong VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE = 67108864UL;
-        internal const ulong VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID = 18446744073709551614UL;
+        internal const ulong VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID = 1UL;
         internal const uint VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES = 316u;
         internal const uint VN_MONITOR_STATE_ENTITY_SLOTS = 16u;
     }

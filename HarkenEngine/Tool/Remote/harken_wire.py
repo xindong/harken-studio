@@ -11118,7 +11118,7 @@ TABLE_JSON = r'''
       },
       "VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID": {
         "type": "u64",
-        "value": 18446744073709551614
+        "value": 1
       },
       "VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES": {
         "type": "u32",

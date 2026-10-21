@@ -4746,7 +4746,7 @@ enum {
     VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER = 3
 };
 
-#define VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID 18446744073709551614ull
+#define VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID 1ull
 
 typedef struct VnMonitorHostRegistrationV1 {
     uint32_t structSize;

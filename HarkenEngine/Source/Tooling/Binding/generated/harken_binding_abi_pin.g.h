@@ -737,7 +737,7 @@ static_assert(static_cast<std::uint64_t>(VN_MONITOR_DEFAULT_CAPTURE_BYTE_RATE) =
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_HARD_CAPTURE_BYTE_RATE) == 134217728ull, "binding define drift: VN_MONITOR_HARD_CAPTURE_BYTE_RATE");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_DEFAULT_RAW_AUDIO_BYTE_RATE) == 8388608ull, "binding define drift: VN_MONITOR_DEFAULT_RAW_AUDIO_BYTE_RATE");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE) == 67108864ull, "binding define drift: VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE");
-static_assert(static_cast<std::uint64_t>(VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID) == 18446744073709551614ull, "binding define drift: VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID");
+static_assert(static_cast<std::uint64_t>(VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID) == 1ull, "binding define drift: VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES) == 316ull, "binding define drift: VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_STATE_ENTITY_SLOTS) == 16ull, "binding define drift: VN_MONITOR_STATE_ENTITY_SLOTS");
 

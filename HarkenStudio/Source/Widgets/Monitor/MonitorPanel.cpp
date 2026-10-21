@@ -10,9 +10,7 @@
 #include <QAction>
 #include <QClipboard>
 #include <QComboBox>
-#include <QFontMetrics>
 #include <QHBoxLayout>
-#include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
@@ -95,7 +93,6 @@ MonitorPanel::MonitorPanel(QWidget* parent)
     root->addLayout(filters);
 
     tableFrame_ = new TableWidget(TableOptions::display(), this);
-    tableFrame_->setColumnSizing(TableColumnSizing::Scrollable);
     table_ = tableFrame_->createModelView(QStringLiteral("MonitorTable"), nullptr);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -229,20 +226,17 @@ void MonitorPanel::setCaptureController(Monitor::EventCaptureController* capture
     filter_->setSourceModel(model_);
     tableFrame_->setModel(filter_);
     table_->setWordWrap(false);
-    table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
-    const auto metrics = table_->fontMetrics();
-    const auto numericIdWidth = std::max(170, metrics.horizontalAdvance(QStringLiteral("18446744073709551614")) + 20);
-    const auto objectIdWidth = std::max(280, metrics.horizontalAdvance(QStringLiteral("00000000-0000-0000-0000-000000000000")) + 20);
-    table_->setColumnWidth(MonitorCatalogModel::Time, 100);
-    table_->setColumnWidth(MonitorCatalogModel::Level, 70);
-    table_->setColumnWidth(MonitorCatalogModel::Type, 90);
-    table_->setColumnWidth(MonitorCatalogModel::Description, 180);
-    table_->setColumnWidth(MonitorCatalogModel::RequestId, numericIdWidth);
-    table_->setColumnWidth(MonitorCatalogModel::Object, 150);
-    table_->setColumnWidth(MonitorCatalogModel::ObjectId, objectIdWidth);
-    table_->setColumnWidth(MonitorCatalogModel::GameObject, 120);
-    table_->setColumnWidth(MonitorCatalogModel::GameObjectId, numericIdWidth);
-    table_->horizontalHeader()->setStretchLastSection(false);
+    tableFrame_->setViewColumns(QStringLiteral("MonitorTable"), {
+        {QStringLiteral("time"), {}, 10},
+        {QStringLiteral("level"), {}, 7},
+        {QStringLiteral("type"), {}, 9},
+        {QStringLiteral("description"), {}, 18},
+        {QStringLiteral("requestId"), {}, 17},
+        {QStringLiteral("object"), {}, 15},
+        {QStringLiteral("objectId"), {}, 28},
+        {QStringLiteral("gameObject"), {}, 12},
+        {QStringLiteral("gameObjectId"), {}, 17}
+    });
     jumpButton_->setText({});
     jumpButton_->setFixedSize(26, 22);
     jumpButton_->setAccessibleName(tr("Show object in project"));

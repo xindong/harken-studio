@@ -29,7 +29,6 @@ MonitorEffectsPanel::MonitorEffectsPanel(QWidget* parent)
 
     model_ = new MonitorEffectsModel(this);
     auto* tableFrame = new TableWidget(TableOptions::display(), this);
-    tableFrame->setColumnSizing(TableColumnSizing::Scrollable);
     table_ = tableFrame->createModelView(QStringLiteral("MonitorEffectsTable"), model_);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);

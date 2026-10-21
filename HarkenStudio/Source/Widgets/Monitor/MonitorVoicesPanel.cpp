@@ -55,7 +55,6 @@ MonitorVoicesPanel::MonitorVoicesPanel(QWidget* parent)
 
     model_ = new MonitorVoicesModel(this);
     auto* tableFrame = new TableWidget(TableOptions::display(), this);
-    tableFrame->setColumnSizing(TableColumnSizing::Scrollable);
     table_ = tableFrame->createModelView(QStringLiteral("MonitorVoicesTable"), model_);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     table_->setSelectionMode(QAbstractItemView::SingleSelection);
