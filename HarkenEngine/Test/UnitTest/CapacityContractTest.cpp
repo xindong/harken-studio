@@ -1105,7 +1105,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_FALSE(finalizer.Attach(engine->decisions, engine->timelinePool));
     EXPECT_EQ(preparedFinalizerBytes, finalizer.StorageBytes());
     finalizer.SetPendingEventCommitPageLimitForTest(0);
-    const auto pendingRowBytes = preparedFinalizerBytes - emptyFinalizerBytes;
+    const auto pendingRowBytes = finalizer.PendingEventStorageBytesForTest();
     ASSERT_NE(0u, pendingRowBytes);
     const auto additionalPageRows = static_cast<std::uint32_t>(
         harken::detail::StablePageReservation::SystemPageBytes() / pendingRowBytes + 1u);

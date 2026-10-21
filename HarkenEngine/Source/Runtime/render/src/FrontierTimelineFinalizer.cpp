@@ -239,11 +239,11 @@ struct FrontierTimelineFinalizer::Impl {
     std::uint32_t completionCapacity = 0;
     std::uint32_t completionCount = 0;
     std::uint32_t deferredStartCount = 0;
-    std::unique_ptr<Event[]> events;
+    StableRowStorage<Event> events;
     std::unique_ptr<StagedLaneStart[]> stagedLaneStarts;
     std::uint32_t stagedLaneStartCount = 0;
     std::unique_ptr<Group[]> groups;
-    std::unique_ptr<OrderRef[]> order;
+    StableRowStorage<OrderRef> order;
     std::unique_ptr<ImmediateLaneFrontierClaim[]> laneClaims;
     StableRowStorage<PendingEvent> pendingEvents;
     struct PendingEventSnapshot {
@@ -264,6 +264,7 @@ struct FrontierTimelineFinalizer::Impl {
     std::uint32_t groupCount = 0;
     std::uint64_t quantum = 0;
     std::uint32_t frames = 0;
+    bool laneOnly = false;
     bool laneMode = false;
     bool laneSourceResumed = false;
     std::uint64_t laneOriginalQuantum = 0;
@@ -274,17 +275,20 @@ struct FrontierTimelineFinalizer::Impl {
         auto& self = *static_cast<Impl*>(context);
         PendingEventSnapshot latest{};
         if (self.pendingEventSnapshot.Capture(latest)) self.capturedPendingEvents = latest;
-        const auto capacity = self.pendingEvents.Capacity();
         const auto& captured = self.capturedPendingEvents;
-        std::uint64_t required = std::min<std::uint64_t>(capacity, captured.count);
-        const auto add = [&](std::uint64_t count) noexcept {
-            required += std::min<std::uint64_t>(count, capacity - required);
+        const auto required = [&](std::uint32_t capacity) noexcept {
+            std::uint64_t count = std::min<std::uint64_t>(capacity, captured.count);
+            if (demand.retiredEvents == UINT64_MAX || demand.retiredEvents < captured.retiredEvents)
+                return capacity;
+            count += std::min<std::uint64_t>(capacity - count,
+                demand.retiredEvents - captured.retiredEvents);
+            count += std::min<std::uint64_t>(capacity - count, demand.nativeEvents);
+            return static_cast<std::uint32_t>(count);
         };
-        if (demand.retiredEvents == UINT64_MAX || demand.retiredEvents < captured.retiredEvents)
-            required = capacity;
-        else add(demand.retiredEvents - captured.retiredEvents);
-        add(demand.nativeEvents);
-        return self.pendingEvents.ConstructThrough(static_cast<std::uint32_t>(required));
+        const auto eventCount = required(self.events.Capacity());
+        return self.pendingEvents.ConstructThrough(required(self.pendingEvents.Capacity())) &&
+            self.order.ConstructThrough(std::max(eventCount, self.events.ConstructedCount()) +
+                self.groupCapacity) && self.events.ConstructThrough(eventCount);
     }
     static void DecodeVoiceEvent(Event& event, const TimelineEventPayload& payload,
         std::uint16_t offset) noexcept {
@@ -768,7 +772,8 @@ struct FrontierTimelineFinalizer::Impl {
                         pending.controller;
             }
             if (!valid) { RemovePending(work); continue; }
-            if (eventTotal > pool->MaxEventsPerQuantum() - eventCount ||
+            if (eventTotal > events.ConstructedCount() - eventCount ||
+                eventTotal > pool->MaxEventsPerQuantum() - eventCount ||
                 groupTotal > pool->MaxPlan03GroupHeadersPerPage() - groupCount) break;
             const auto originalGroupCount = groupCount;
             for (std::uint32_t i = 0; i < pendingGroupCount; ++i) {
@@ -2932,6 +2937,12 @@ std::uint32_t FrontierTimelineFinalizer::GroupCapacityForTest() const noexcept {
 
 void FrontierTimelineFinalizer::SetPendingEventCommitPageLimitForTest(std::size_t pages) noexcept {
     impl_->pendingEvents.SetCommitPageLimitForTests(pages);
+    impl_->events.SetCommitPageLimitForTests(pages);
+    impl_->order.SetCommitPageLimitForTests(pages);
+}
+
+std::uint64_t FrontierTimelineFinalizer::PendingEventStorageBytesForTest() const noexcept {
+    return impl_->pendingEvents.RequestedBytes();
 }
 
 #endif
@@ -2976,15 +2987,22 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
         pendingGroupCapacity > SIZE_MAX / sizeof(Impl::PendingGroup)) return false;
     auto& self = *impl_;
     StableRowStorage<Impl::PendingEvent> pendingEvents;
+    StableRowStorage<Impl::Event> events;
+    StableRowStorage<Impl::OrderRef> order;
     const auto demand = pool.CapturePendingEventStorageDemand();
+    const auto preparedEvents = static_cast<std::uint32_t>(laneOnly ? eventCapacity :
+        std::min<std::uint64_t>(eventCapacity, demand.nativeEvents));
     if (!pendingEvents.Reserve(static_cast<std::uint32_t>(pendingEventCapacity)) ||
         !pendingEvents.ConstructThrough(static_cast<std::uint32_t>(
-            std::min<std::uint64_t>(pendingEventCapacity, demand.nativeEvents)))) return false;
-    auto events = std::make_unique<Impl::Event[]>(eventCapacity);
-    auto stagedLaneStarts = std::make_unique<Impl::StagedLaneStart[]>(eventCapacity);
+            std::min<std::uint64_t>(pendingEventCapacity, demand.nativeEvents))) ||
+        !events.Reserve(static_cast<std::uint32_t>(eventCapacity)) ||
+        !events.ConstructThrough(preparedEvents) ||
+        !order.Reserve(laneOnly ? 0u : static_cast<std::uint32_t>(eventCapacity + groupCapacity)) ||
+        !order.ConstructThrough(laneOnly ? 0u : preparedEvents + static_cast<std::uint32_t>(groupCapacity)))
+        return false;
+    auto stagedLaneStarts = laneOnly ? std::make_unique<Impl::StagedLaneStart[]>(eventCapacity) : nullptr;
     auto groups = std::make_unique<Impl::Group[]>(groupCapacity);
-    auto order = std::make_unique<Impl::OrderRef[]>(eventCapacity + groupCapacity);
-    auto laneClaims = std::make_unique<ImmediateLaneFrontierClaim[]>(groupCapacity);
+    auto laneClaims = laneOnly ? std::make_unique<ImmediateLaneFrontierClaim[]>(groupCapacity) : nullptr;
     auto pendingGroups = std::make_unique<Impl::PendingGroup[]>(pendingGroupCapacity);
     const auto participantCapacity = decisions.MaxParticipantsPerDecision();
     auto participants = std::make_unique<DecisionParticipantRef[]>(participantCapacity);
@@ -2993,10 +3011,10 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
 
     self.pendingEventRegistration.Detach();
     self.pendingEvents.Swap(pendingEvents);
-    self.events = std::move(events);
+    self.events.Swap(events);
     self.stagedLaneStarts = std::move(stagedLaneStarts);
     self.groups = std::move(groups);
-    self.order = std::move(order);
+    self.order.Swap(order);
     self.laneClaims = std::move(laneClaims);
     self.pendingGroups = std::move(pendingGroups);
     self.pendingGroupCapacity = static_cast<std::uint32_t>(pendingGroupCapacity);
@@ -3009,6 +3027,7 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
     self.completionProofs = std::move(completionProofs);
     self.eventCapacity = static_cast<std::uint32_t>(eventCapacity);
     self.groupCapacity = static_cast<std::uint32_t>(groupCapacity);
+    self.laneOnly = laneOnly;
     self.decisions = &decisions;
     self.pool = &pool;
     self.capturedPendingEvents = {0, demand.retiredEvents};
@@ -3058,12 +3077,13 @@ void FrontierTimelineFinalizer::Begin(std::uint64_t quantum, std::uint32_t frame
     self.laneMode = false;
     self.laneSourceResumed = false;
     self.immediateLaneBucket = nullptr;
-    if (self.pool != nullptr) self.RestorePending();
+    if (!self.laneOnly && self.pool != nullptr) self.RestorePending();
 }
 
 void FrontierTimelineFinalizer::BeginLane(std::uint64_t quantum, std::uint32_t frames,
     const ImmediateActionLane& lane, const ImmediateLaneBucket* bucket, std::uint32_t slot) noexcept {
     Begin(quantum, frames);
+    if (!impl_->laneOnly) { impl_->frames = 0; return; }
     impl_->immediateLane = &lane;
     impl_->immediateLaneBucket = bucket;
     impl_->immediateLaneSlot = slot;
@@ -3281,7 +3301,7 @@ bool FrontierTimelineFinalizer::PendingBindingValid(const ConsumedEvent& event,
 bool FrontierTimelineFinalizer::CollectEvent(const ConsumedEvent& source,
     const TimelineEventPayload* payload, std::uint8_t disposition) noexcept {
     auto& self = *impl_;
-    if (self.eventCount == self.eventCapacity) return false;
+    if (self.eventCount == self.events.ConstructedCount()) return false;
     const ImmediateLaneEvent* laneSource = nullptr;
     if (self.immediateLaneBucket != nullptr) {
         const auto* original = self.immediateLane->Events(self.immediateLaneSlot, self.immediateLaneBucket);
@@ -3314,7 +3334,7 @@ bool FrontierTimelineFinalizer::CollectLaneStagedStart(const ImmediateLaneEvent&
     const TimelineArmTable::LaneAudioProof& arm, const VoiceTimelineReservationProof& reservation,
     const VariableTimelineInitializerProof& initializer) noexcept {
     auto& self = *impl_;
-    if (self.immediateLane == nullptr || self.immediateLaneBucket == nullptr ||
+    if (!self.laneOnly || self.immediateLane == nullptr || self.immediateLaneBucket == nullptr ||
         self.stagedLaneStartCount == self.eventCapacity ||
         !arm.Valid() || !reservation.Valid()) return false;
     const auto* captured = self.immediateLane->Events(self.immediateLaneSlot, self.immediateLaneBucket);
@@ -3343,7 +3363,7 @@ bool FrontierTimelineFinalizer::CollectStop(const AuthoredStopFenceDescriptor& d
             prior->decision.slot == descriptor.decision.slot &&
             prior->decision.generation == descriptor.decision.generation) return true;
     }
-    if (self.eventCount == self.eventCapacity) return false;
+    if (self.eventCount == self.events.ConstructedCount()) return false;
     auto& event = self.events[self.eventCount++];
     event.stop = &descriptor;
     event.stopIdentity = descriptor.identity;
@@ -3353,7 +3373,7 @@ bool FrontierTimelineFinalizer::CollectStop(const AuthoredStopFenceDescriptor& d
 
 void FrontierTimelineFinalizer::Finish() noexcept {
     auto& self = *impl_;
-    if (self.decisions == nullptr || self.frames == 0 || self.quantum == UINT64_MAX) return;
+    if (self.laneOnly || self.decisions == nullptr || self.frames == 0 || self.quantum == UINT64_MAX) return;
     self.PrepareSpans();
     std::uint32_t ordered = 0;
     for (std::uint32_t i = 0; i < self.groupCount; ++i) {
@@ -3365,7 +3385,7 @@ void FrontierTimelineFinalizer::Finish() noexcept {
         if (self.events[i].stop != nullptr || self.events[i].representative == i)
             self.order[ordered++] = {self.events[i].order, i, false};
     }
-    std::sort(self.order.get(), self.order.get() + ordered, [](const auto& a, const auto& b) {
+    if (ordered > 1) std::sort(self.order.data(), self.order.data() + ordered, [](const auto& a, const auto& b) {
         return a.order < b.order;
     });
     for (std::uint32_t i = 0; i < ordered; ++i) {
@@ -3991,7 +4011,7 @@ bool FrontierTimelineFinalizer::FinishLaneBucketImpl(
     const ImmediateLaneBucket* bucket, std::uint32_t laneSlot,
     std::uint32_t laneGeneration, bool continuation) noexcept {
     auto& self = *impl_;
-    if (self.pool == nullptr || self.decisions == nullptr || self.frames == 0 ||
+    if (!self.laneOnly || self.pool == nullptr || self.decisions == nullptr || self.frames == 0 ||
         self.quantum == UINT64_MAX || claimBucket == nullptr || lane == nullptr ||
         bucket == nullptr || bucket->quantum != self.DueQuantum() ||
         bucket->attemptGeneration != laneGeneration ||
@@ -4328,15 +4348,14 @@ std::uint8_t FrontierTimelineFinalizer::EventDisposition(const ConsumedEvent& so
 
 std::uint64_t FrontierTimelineFinalizer::StorageBytes() const noexcept {
     const auto& self = *impl_;
-    return sizeof(Impl) + static_cast<std::uint64_t>(self.eventCapacity) * sizeof(Impl::Event) +
-        static_cast<std::uint64_t>(self.eventCapacity) * sizeof(Impl::StagedLaneStart) +
+    return sizeof(Impl) + self.events.RequestedBytes() + self.order.RequestedBytes() +
+        (self.laneOnly ? static_cast<std::uint64_t>(self.eventCapacity) * sizeof(Impl::StagedLaneStart) : 0u) +
         static_cast<std::uint64_t>(self.participantCapacity) * sizeof(DecisionParticipantRef) +
         static_cast<std::uint64_t>(self.completionCapacity) * sizeof(TimelineArmTable::BoundAudioProof) +
         static_cast<std::uint64_t>(self.groupCapacity) * sizeof(Impl::Group) +
-        static_cast<std::uint64_t>(self.groupCapacity) * sizeof(ImmediateLaneFrontierClaim) +
+        (self.laneOnly ? static_cast<std::uint64_t>(self.groupCapacity) * sizeof(ImmediateLaneFrontierClaim) : 0u) +
         self.pendingEvents.RequestedBytes() +
-        static_cast<std::uint64_t>(self.pendingGroupCapacity) * sizeof(Impl::PendingGroup) +
-        (static_cast<std::uint64_t>(self.eventCapacity) + self.groupCapacity) * sizeof(Impl::OrderRef);
+        static_cast<std::uint64_t>(self.pendingGroupCapacity) * sizeof(Impl::PendingGroup);
 }
 
 } // namespace harken

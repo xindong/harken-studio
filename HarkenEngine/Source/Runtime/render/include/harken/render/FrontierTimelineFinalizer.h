@@ -27,6 +27,7 @@ public:
     FrontierTimelineFinalizer(VoicePool& voices, TimelineArmTable& arms);
     ~FrontierTimelineFinalizer();
     // Setup and capacity reconfiguration require a quiescent consumer.
+    // Select laneOnly for BeginLane; ordinary page work uses the default mode.
     bool Attach(DecisionTable& decisions, const ScheduledTransactionPool& pool,
                 bool laneOnly = false);
     void AttachVariableControls(VariableControlInstanceTable& instances) noexcept;
@@ -82,6 +83,7 @@ public:
     std::uint32_t EventCapacityForTest() const noexcept;
     std::uint32_t GroupCapacityForTest() const noexcept;
     void SetPendingEventCommitPageLimitForTest(std::size_t pages) noexcept;
+    std::uint64_t PendingEventStorageBytesForTest() const noexcept;
 #endif
 
 private:

@@ -1210,7 +1210,7 @@ TEST(AuthoredStopAudio, LaneBackedVariableEntryAppliesOnlyAfterWholeBucketClaim)
             1, true, &directProof, h.member.frontier));
         directProof.Release();
         harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
-        ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool));
+        ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
         finalizer.AttachArmGroups(h.armGroups);
         finalizer.AttachVariableControls(h.variables);
         const auto* bucket = h.lane.CaptureDue(h.laneHandle.slot, 0);
@@ -1370,7 +1370,7 @@ TEST(AuthoredStopAudio, LaneBucketMissingSecondCoordinatorKeepsFirstUnapplied) {
         false, false, false, false, UINT64_MAX, false, true, true);
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
     harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
-    ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool));
+    ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
     finalizer.AttachArmGroups(h.armGroups);
     finalizer.AttachVariableControls(h.variables);
     const auto* bucket = h.lane.CaptureDue(h.laneHandle.slot, 0);
@@ -1548,7 +1548,7 @@ TEST(AuthoredStopAudio, LaneBucketClaimsAllCoordinatorsOrAbortsAllClaimedLeases)
             false, false, false, false, UINT64_MAX, false, true, false, true);
         ASSERT_FALSE(::testing::Test::HasFatalFailure());
         harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
-        ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool));
+        ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
         finalizer.AttachArmGroups(h.armGroups);
         finalizer.AttachVariableControls(h.variables);
         const auto* bucket = h.lane.CaptureDue(h.laneHandle.slot, 0);
