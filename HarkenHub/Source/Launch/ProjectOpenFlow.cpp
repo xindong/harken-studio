@@ -177,9 +177,11 @@ public:
                 return;
             if (monitor_.failureCode() == QStringLiteral("PROJECT_OPEN_CANCELLED")) {
                 finish(ProjectOpenOutcome::Result::Declined);
-            } else if (monitor_.failureCode() == QStringLiteral("PROJECT_UPGRADE_FILES_NOT_WRITABLE")
-                       && !error.isEmpty()) {
-                fail(error);
+            } else if (monitor_.failureCode() == QStringLiteral("PROJECT_UPGRADE_FILES_NOT_WRITABLE")) {
+                auto failure = analysis_;
+                failure.errorCode = monitor_.failureCode();
+                failure.technicalDetails = monitor_.failureDetails();
+                fail(analysisFailureText(failure.errorCode, version_.semanticVersion, failure));
             } else if (monitor_.failureCode().isEmpty() && launcher_.stillRunning()) {
                 loseMonitoring(error);
             } else {

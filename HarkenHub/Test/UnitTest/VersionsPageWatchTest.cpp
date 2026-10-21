@@ -15,6 +15,7 @@
 #include <QLabel>
 #include <QLockFile>
 #include <QPushButton>
+#include <QProcess>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <QSemaphore>
@@ -236,16 +237,29 @@ TEST_F(VersionsPageIssuesTest, MultipleIssuesExposeTheSelectedCauseAndPreserveSe
 TEST_F(VersionsPageIssuesTest, ActiveInstallDoesNotAppearAsDamagedButInterruptedInstallDoes)
 {
     install("pending", "Installing");
-    QLockFile lock(VNH::InstallExecutor::lockFilePath());
-    ASSERT_TRUE(lock.tryLock());
+    QProcess installer;
+    installer.start(QString::fromUtf8(HARKEN_HUB_STUDIO_FIXTURE),
+                    {QStringLiteral("--hold-lock"), VNH::InstallExecutor::lockFilePath()});
+    ASSERT_TRUE(installer.waitForStarted());
+    const auto stopInstaller = qScopeGuard([&]() {
+        if (installer.state() != QProcess::NotRunning) {
+            installer.kill();
+            installer.waitForFinished();
+        }
+    });
+    ASSERT_TRUE(installer.waitForReadyRead());
+    ASSERT_EQ(installer.readAllStandardOutput().trimmed(), QByteArrayLiteral("locked"));
     VersionsPage page(&store);
     page.refresh();
     EXPECT_TRUE(page.installedVersions().empty());
     EXPECT_TRUE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
-    lock.unlock();
+    installer.kill();
+    ASSERT_TRUE(installer.waitForFinished());
+    ASSERT_TRUE(QFileInfo::exists(VNH::InstallExecutor::lockFilePath()));
     page.refresh();
     EXPECT_FALSE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
     EXPECT_TRUE(page.findChild<QPushButton*>("installationRepairButton")->isEnabled());
+    EXPECT_TRUE(QFileInfo::exists(VNH::InstallExecutor::lockFilePath()));
 }
 
 TEST_F(VersionsPageIssuesTest, RepairMarkerCanBeCheckedWithoutACachedPackage)

@@ -164,8 +164,8 @@
         <translation>工程列表的上次启动时间统一显示为小时、分，满 24 小时后显示天、小时、分，不再使用“昨天”等模糊提示。</translation>
     </message>
     <message>
-        <source>Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged.</source>
-        <translation>Studio 安装记录保存失败时保留恢复信息，Hub 启动时会检查中断的安装。正在安装的版本不再被显示为已损坏。</translation>
+        <source>Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged. If recovery needs administrator access, choose Repair in Versions.</source>
+        <translation>Studio 安装记录保存失败时保留恢复信息，Hub 启动时会检查中断的安装。正在安装的版本不再被显示为已损坏。若恢复需要管理员权限，请在“版本”页选择“修复”。</translation>
     </message>
     <message>
         <source>Studio repair checks for running programs in the installation folder before replacing files and explains which programs need to be closed.</source>
@@ -770,7 +770,8 @@ Continue?</source>
     <message><source>Close Studio and other programs running from this installation, then retry Repair. No installation files were replaced.</source><translation>请关闭此安装目录中的 Studio 及其他正在运行的程序，然后重试“修复”。安装文件未被替换。</translation></message>
     <message><source>Another install transaction is running</source><translation>另一个安装任务正在运行</translation></message>
     <message><source>Cannot move the install into place: %1</source><translation>无法将安装文件移入目标目录：%1</translation></message>
-    <message><source>Installation retained at %1. Restart Hub to recover it.</source><translation>安装文件已保留在 %1。请重启 Hub 恢复安装状态。</translation></message>
+    <message><source>Installation retained at %1. In Versions, choose Repair to recover it.</source><translation>安装文件已保留在 %1。请在“版本”页选择“修复”以恢复安装状态。</translation></message>
+    <message><source>Installation was interrupted. Choose Repair to verify and finish recovery. Administrator permission may be required.</source><translation>安装曾被中断。请选择“修复”进行校验并完成恢复，可能需要管理员授权。</translation></message>
     <message><source>Cannot open the install index for reading: %1 (Qt error %2: %3)</source><translation>无法打开安装索引以供读取：%1（Qt 错误 %2：%3）</translation></message>
     <message><source>Cannot read the install index: %1 (Qt error %2: %3)</source><translation>无法读取安装索引：%1（Qt 错误 %2：%3）</translation></message>
     <message><source>Install index is corrupt: %1 (offset %2: %3)</source><translation>安装索引已损坏：%1（偏移 %2：%3）</translation></message>

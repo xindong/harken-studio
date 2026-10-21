@@ -2,7 +2,7 @@
 
 static const char* const kReleaseNotesStrings[] = {
     QT_TRANSLATE_NOOP("HubReleaseNotes", "The project list shows elapsed time since the last launch in hours and minutes, adding days after 24 hours instead of using vague labels such as Yesterday."),
-    QT_TRANSLATE_NOOP("HubReleaseNotes", "Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged. If recovery needs administrator access, choose Repair in Versions."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Studio repair checks for running programs in the installation folder before replacing files and explains which programs need to be closed."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub update installers are kept separately from temporary Studio installation files so Studio cleanup cannot remove a pending Hub update."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Unity SDK management no longer treats normal embedded-package records as dependency conflicts. Genuine dependency restrictions use neutral text, and successful SDK verification is shown in green in both languages."),

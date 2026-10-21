@@ -19,6 +19,8 @@
 #include <QTemporaryDir>
 #include <QThread>
 #include <QThreadPool>
+#include <QTranslator>
+#include <QScopeGuard>
 #include <QTimer>
 #include <algorithm>
 
@@ -275,16 +277,28 @@ TEST_F(ProjectOpenFlowTest, NonWritableUpgradeFilesBlockBeforeApprovalAndLaunch)
     EXPECT_TRUE(store.listProjects().front().lastOpenedAt.isEmpty());
 }
 
-TEST_F(ProjectOpenFlowTest, WriteAccessChangesAfterApprovalKeepStudioDiagnostics)
+TEST_F(ProjectOpenFlowTest, WriteAccessChangesAfterApprovalKeepPathsInHubLanguage)
 {
     approve = true;
-    const QString failure = QStringLiteral("Project data is not writable: ") + projectPath;
+    QTranslator translator;
+    ASSERT_TRUE(translator.load(QString::fromUtf8(HARKEN_HUB_TRANSLATION_FILE)));
+    const auto removeTranslator = qScopeGuard([&]() {
+        QCoreApplication::removeTranslator(&translator);
+    });
+    beforeConfirmation = [&]() { QCoreApplication::installTranslator(&translator); };
+    const QString files = projectPath + QStringLiteral("\n") + dir.filePath("Layer %2.vp");
+    const QString failure = QStringLiteral("Studio-only English failure");
     open({{"upgrade", true}, {"launch", "failed"},
-          {"errorCode", "PROJECT_UPGRADE_FILES_NOT_WRITABLE"}, {"errorMessage", failure}});
+          {"errorCode", "PROJECT_UPGRADE_FILES_NOT_WRITABLE"}, {"errorMessage", failure},
+          {"failureDetails", files}});
     ASSERT_TRUE(spinUntil([this]() { return completed; }));
     EXPECT_EQ(outcome, VNH::ProjectOpenOutcome::Result::Failed);
     EXPECT_EQ(confirmations, 1);
-    EXPECT_EQ(notificationText, failure);
+    const auto reason = QCoreApplication::translate("HarkenHub", "Some files needed for the project upgrade are read-only or not writable.");
+    EXPECT_NE(reason, QStringLiteral("Some files needed for the project upgrade are read-only or not writable."));
+    EXPECT_TRUE(notificationText.contains(reason));
+    EXPECT_TRUE(notificationText.contains(files));
+    EXPECT_FALSE(notificationText.contains(failure));
     EXPECT_TRUE(store.listProjects().front().lastOpenedAt.isEmpty());
 }
 

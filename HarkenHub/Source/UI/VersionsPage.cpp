@@ -425,7 +425,7 @@ void VersionsPage::refresh()
 
     const InstallIndexSnapshot index = InstallIndex::snapshot();
     std::vector<InstalledVersionRecord> broken;
-    const bool installInProgress = QFileInfo::exists(InstallExecutor::lockFilePath());
+    const bool installInProgress = InstallExecutor::isTransactionActive();
     if (index.ok) {
         for (const auto& record : index.records) {
             if (record.healthState == QStringLiteral("NeedsRepair") ||
@@ -702,7 +702,9 @@ void VersionsPage::updateSelectedIssue()
     QString reason;
     const auto issue = VersionScanner::inspect(*record, nullptr, &reason);
     if (issue == InstallationIssue::None)
-        reason = QCoreApplication::translate("HarkenHub", "The previous operation requires an integrity check.");
+        reason = record->healthState == QStringLiteral("Installing")
+            ? QCoreApplication::translate("HarkenHub", "Installation was interrupted. Choose Repair to verify and finish recovery. Administrator permission may be required.")
+            : QCoreApplication::translate("HarkenHub", "The previous operation requires an integrity check.");
     const bool sourceAvailable = QFileInfo(InstallPackageCache::packagePath(buildId)).isFile()
         && QFileInfo(InstallPackageCache::manifestPath(buildId)).isFile();
     const bool repairable = issue != InstallationIssue::IdentityMismatch

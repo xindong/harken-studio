@@ -6,6 +6,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLocalSocket>
+#include <QLockFile>
 #include <QTextStream>
 #include <QThread>
 #include <QTimer>
@@ -18,6 +19,13 @@ int main(int argc, char* argv[])
         const int index = arguments.indexOf(key);
         return index < 0 ? QString() : arguments.value(index + 1);
     };
+    if (arguments.contains(QStringLiteral("--hold-lock"))) {
+        QLockFile lock(argument(QStringLiteral("--hold-lock")));
+        if (!lock.tryLock())
+            return 2;
+        QTextStream(stdout) << "locked" << Qt::endl;
+        return app.exec();
+    }
     if (arguments.contains(QStringLiteral("--self-test"))) {
         QTextStream(stdout) << QJsonDocument(HarkenHubTest::studioSelfTest()).toJson(QJsonDocument::Compact);
         return 0;
@@ -94,6 +102,7 @@ int main(int argc, char* argv[])
         send({{QStringLiteral("type"), QStringLiteral("stage")},
               {QStringLiteral("stage"), name},
               {QStringLiteral("errorCode"), error},
+              {QStringLiteral("technicalDetails"), config.value(QStringLiteral("failureDetails")).toString()},
               {QStringLiteral("error"), config.value(QStringLiteral("errorMessage")).toString(error)}});
     };
     QObject::connect(&socket, &QLocalSocket::connected, &app, [&]() {

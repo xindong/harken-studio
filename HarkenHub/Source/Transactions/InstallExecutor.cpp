@@ -4,6 +4,7 @@
 #include "Packaging/PackageReader.h"
 #include "Platform/AclHardening.h"
 #include "Platform/PlatformPaths.h"
+#include "Platform/ProcessScan.h"
 #include "Security/BinaryTrustPolicy.h"
 #include "Security/ManifestVerifier.h"
 #include "Transactions/HandoffArea.h"
@@ -169,6 +170,15 @@ int InstallOutcome::exitCode() const
 QString InstallExecutor::lockFilePath()
 {
     return machineDataDir() + QStringLiteral("/install.lock");
+}
+
+bool InstallExecutor::isTransactionActive()
+{
+    QLockFile lock(lockFilePath());
+    qint64 pid = 0;
+    QString hostName;
+    QString applicationName;
+    return lock.getLockInfo(&pid, &hostName, &applicationName) && isProcessRunning(pid);
 }
 
 InstallOutcome InstallExecutor::run(const QString& transactionId,
@@ -395,7 +405,7 @@ InstallOutcome InstallExecutor::run(const QString& transactionId,
         return fail(transactionId, manifest.buildId,
                     QStringLiteral("IndexCommitFailed"),
                     indexError + QLatin1Char('\n') + QStringLiteral(
-                        "Installation retained at %1. Restart Hub to recover it.").arg(targetDir));
+                        "Installation retained at %1. In Versions, choose Repair to recover it.").arg(targetDir));
     }
     cleanup.extractDir.clear();
 

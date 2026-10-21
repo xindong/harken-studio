@@ -232,11 +232,15 @@ TEST_F(InstallExecutorTest, InterruptedActivationIsRecoveredOrRemainsRepairableA
     ASSERT_TRUE(InstallExecutor::run(placeHandoff(payloadForArchive()), keys.publicKey, kNow).ok);
     const auto original = InstallIndex::snapshot().records.front();
     const EnvGuard trustAnchor("HARKEN_HUB_MANIFEST_PUBKEY", QString::fromLatin1(keys.publicKey.toHex()));
-    for (const QString& damage : {QStringLiteral("none"), QStringLiteral("missing"), QStringLiteral("tampered")}) {
+    for (const QString& damage : {QStringLiteral("none"), QStringLiteral("recovery-blocked"),
+                                  QStringLiteral("missing"), QStringLiteral("tampered")}) {
         SCOPED_TRACE(damage.toStdString());
         QString error;
         ASSERT_TRUE(InstallIndex::setHealthState(original.buildId, QStringLiteral("Installing"), &error));
-        if (damage == QStringLiteral("missing")) {
+        const bool recoveryBlocked = damage == QStringLiteral("recovery-blocked");
+        if (recoveryBlocked) {
+            ASSERT_TRUE(QDir().mkpath(InstallExecutor::lockFilePath()));
+        } else if (damage == QStringLiteral("missing")) {
             ASSERT_TRUE(QDir(original.installPath).removeRecursively());
         } else if (damage == QStringLiteral("tampered")) {
             QFile asset(original.installPath + "/data/asset.bin");
@@ -244,13 +248,18 @@ TEST_F(InstallExecutorTest, InterruptedActivationIsRecoveredOrRemainsRepairableA
             asset.write("tampered");
         }
         const auto reclaimed = VNH::TransactionReclaimer::reclaimAtStartup(kNow);
-        ASSERT_TRUE(reclaimed.locked);
-        ASSERT_TRUE(reclaimed.installRecoveryErrors.isEmpty());
+        EXPECT_EQ(reclaimed.locked, !recoveryBlocked);
+        EXPECT_EQ(reclaimed.installRecoveryErrors.isEmpty(), !recoveryBlocked);
         auto index = InstallIndex::snapshot();
         ASSERT_EQ(index.records.size(), 1u);
         EXPECT_EQ(index.records.front().installPath, original.installPath);
         EXPECT_EQ(index.records.front().healthState,
-                  damage == QStringLiteral("none") ? QStringLiteral("Installed") : QStringLiteral("NeedsRepair"));
+                  recoveryBlocked ? QStringLiteral("Installing")
+                      : damage == QStringLiteral("none") ? QStringLiteral("Installed") : QStringLiteral("NeedsRepair"));
+        if (recoveryBlocked) {
+            EXPECT_TRUE(reclaimed.installRecoveryErrors.first().contains(original.installPath));
+            ASSERT_TRUE(QDir().rmdir(InstallExecutor::lockFilePath()));
+        }
         const auto retry = InstallExecutor::run(placeHandoff(payloadForArchive()), keys.publicKey, kNow);
         EXPECT_FALSE(retry.ok);
         EXPECT_EQ(retry.failureCode, QStringLiteral("TargetConflict"));

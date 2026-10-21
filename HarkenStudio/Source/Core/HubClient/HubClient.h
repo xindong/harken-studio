@@ -39,7 +39,8 @@ public:
     void connectAndHelloAsync(int timeoutMs = 5000);
     bool isConnected() const;
     void reportStage(const QString& stage);
-    void reportFailed(const QString& errorCode, const QString& error);
+    void reportFailed(const QString& errorCode, const QString& error,
+                      const QString& technicalDetails = {});
     void reportForwarded(int timeoutMs = 5000);
 
 signals:

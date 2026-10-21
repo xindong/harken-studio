@@ -36,8 +36,17 @@ ReclaimReport TransactionReclaimer::reclaimAtStartup(const QDateTime& now)
 
     QLockFile installLock(InstallExecutor::lockFilePath());
     installLock.setStaleLockTime(0);
-    if (!installLock.tryLock(0))
+    if (!installLock.tryLock(0)) {
+        if (!InstallExecutor::isTransactionActive()) {
+            for (const auto& record : InstallIndex::snapshot().records) {
+                if (record.healthState == QStringLiteral("Installing"))
+                    report.installRecoveryErrors.append(QStringLiteral(
+                        "Installation retained at %1. In Versions, choose Repair to recover it.")
+                        .arg(record.installPath));
+            }
+        }
         return report;
+    }
     report.locked = true;
 
     const auto index = InstallIndex::snapshot();

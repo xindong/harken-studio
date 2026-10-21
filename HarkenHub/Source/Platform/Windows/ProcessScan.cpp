@@ -126,6 +126,18 @@ QString executablePathForPid(qint64 pid)
     return result;
 }
 
+bool isProcessRunning(qint64 pid)
+{
+    if (pid <= 0)
+        return false;
+    HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
+    if (!process)
+        return GetLastError() != ERROR_INVALID_PARAMETER;
+    const bool running = WaitForSingleObject(process, 0) != WAIT_OBJECT_0;
+    CloseHandle(process);
+    return running;
+}
+
 bool terminateProcessById(qint64 pid)
 {
     if (pid <= 0)

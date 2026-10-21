@@ -117,7 +117,7 @@ TEST(HubLocalizationTest, MaintenanceDiagnosticsTranslateWithoutLosingEvidence)
     const QStringList details = {
         QStringLiteral("HarkenStudio is still running from this version: %1").arg(path),
         QStringLiteral("Cannot move the install into place: %1").arg(path),
-        QStringLiteral("Installation retained at %1. Restart Hub to recover it.").arg(path),
+        QStringLiteral("Installation retained at %1. In Versions, choose Repair to recover it.").arg(path),
         QStringLiteral("Cannot open the install index for reading: %1 (Qt error 5: Access denied)").arg(path),
         QStringLiteral("Cannot read the install index: %1 (Qt error 5: Access denied)").arg(path),
         QStringLiteral("Install index is corrupt: %1 (offset 5: invalid JSON)").arg(path),

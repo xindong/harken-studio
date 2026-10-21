@@ -18,7 +18,7 @@
         },
         {
           "category": "improved",
-          "text": "Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged."
+          "text": "Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged. If recovery needs administrator access, choose Repair in Versions."
         },
         {
           "category": "improved",

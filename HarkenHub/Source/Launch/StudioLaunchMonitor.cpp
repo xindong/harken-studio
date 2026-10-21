@@ -269,6 +269,7 @@ void StudioLaunchMonitor::processMessage(const QByteArray& line)
     if (stage == QStringLiteral("failed")) {
         const QString error = message[QStringLiteral("error")].toString();
         failureCode_ = message[QStringLiteral("errorCode")].toString();
+        failureDetails_ = message[QStringLiteral("technicalDetails")].toString();
         if (failureCode_.isEmpty()) {
             rejectClient(hubText(
                 "HarkenStudio reported a failure without an error code"));
