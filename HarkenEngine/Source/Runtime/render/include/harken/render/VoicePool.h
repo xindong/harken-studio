@@ -383,7 +383,9 @@ public:
                                    VoiceTimelineReservation* out) noexcept;
     bool StageReservedTimelineEvent(const VoiceTimelineReservation& reservation,
                                     std::uint32_t index,
-                                    const VoiceTimelineEvent& event) noexcept;
+                                    const VoiceTimelineEvent& event,
+                                    const FrontierEntryReceiptRef& entry,
+                                    const FrontierDueOperationRef& operation) noexcept;
     bool StageReservedLaneTimelineEvent(const VoiceTimelineReservation& reservation,
                                        std::uint32_t index,
                                        const VoiceTimelineEvent& event) noexcept;

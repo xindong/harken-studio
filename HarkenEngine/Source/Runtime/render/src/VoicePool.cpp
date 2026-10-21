@@ -1042,12 +1042,13 @@ VoicePool::Slot* VoicePool::ResolveTimelineReservation(
 }
 
 bool VoicePool::StageReservedTimelineEvent(const VoiceTimelineReservation& reservation,
-    std::uint32_t index, const VoiceTimelineEvent& event) noexcept {
+    std::uint32_t index, const VoiceTimelineEvent& event,
+    const FrontierEntryReceiptRef& entry, const FrontierDueOperationRef& operation) noexcept {
     auto* slot = ResolveTimelineReservation(reservation);
     const auto& guard = event.frontierProof;
     if (slot == nullptr || index >= reservation.count ||
-        guard.state != FrontierEventState::Pending || !guard.entry.Valid() ||
-        !guard.operation.Valid() || guard.quantum != reservation.quantum ||
+        guard.state != FrontierEventState::Pending || !entry.Valid() ||
+        !operation.Valid() || guard.quantum != reservation.quantum ||
         guard.renderGeneration != reservation.renderGeneration) return false;
     const auto position = reservation.first + index;
     const auto mask = 1u << position;
@@ -1055,6 +1056,7 @@ bool VoicePool::StageReservedTimelineEvent(const VoiceTimelineReservation& reser
     if ((slot->timelineFilledMask & mask) != 0 ||
         destination.frontierProof.state != FrontierEventState::Pending) return false;
     destination = event;
+    destination.frontierProof.origin_ = FrozenFrontierEventProof::Origin::Page;
     slot->timelineFilledMask |= mask;
     return true;
 }
@@ -1106,7 +1108,7 @@ bool VoicePool::MatchesHeldLaneStart(std::uint32_t renderSlot,
         actual.authoredRootStop || actual.authoredFadeOutCandidate ||
         actual.envelopeCurve != nullptr || actual.value != 0u || actual.firstOutputDeferred ||
         actual.frontierProof.state != FrontierEventState::Pending ||
-        actual.frontierProof.entry.Valid() || actual.frontierProof.operation.Valid() ||
+        actual.frontierProof.origin_ != FrozenFrontierEventProof::Origin::Lane ||
         actual.frontierProof.quantum != quantum ||
         actual.frontierProof.renderGeneration != renderGeneration) return false;
     VariableTimelineInitializerProof fresh;
@@ -1126,8 +1128,8 @@ bool VoicePool::StageReservedLaneTimelineEvent(
     auto* slot = ResolveTimelineReservation(reservation);
     const auto& guard = event.frontierProof;
     if (slot == nullptr || index >= reservation.count ||
-        guard.state != FrontierEventState::Pending || guard.entry.Valid() ||
-        guard.operation.Valid() || guard.quantum != reservation.quantum ||
+        guard.state != FrontierEventState::Pending ||
+        guard.origin_ == FrozenFrontierEventProof::Origin::Page || guard.quantum != reservation.quantum ||
         guard.renderGeneration != reservation.renderGeneration) return false;
     const auto position = reservation.first + index;
     const auto mask = 1u << position;
@@ -1135,6 +1137,7 @@ bool VoicePool::StageReservedLaneTimelineEvent(
     if ((slot->timelineFilledMask & mask) != 0 ||
         destination.frontierProof.state != FrontierEventState::Pending) return false;
     destination = event;
+    destination.frontierProof.origin_ = FrozenFrontierEventProof::Origin::Lane;
     slot->timelineFilledMask |= mask;
     return true;
 }

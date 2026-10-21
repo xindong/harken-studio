@@ -999,10 +999,6 @@ struct FrontierTimelineFinalizer::Impl {
             const auto& binding = event.source.frontier;
             auto& guard = event.voice.frontierProof;
             guard.state = FrontierEventState::Pending;
-            if (!laneMode) {
-                guard.entry = binding.entry;
-                guard.operation = event.operation;
-            }
             guard.quantum = quantum;
             guard.renderGeneration = event.source.armToken.renderGeneration;
             event.reserved = laneMode
@@ -1012,7 +1008,8 @@ struct FrontierTimelineFinalizer::Impl {
                     event.source.armToken.renderGeneration, quantum, 1, &event.reservation);
             const bool staged = event.reserved && (laneMode
                 ? voices.StageReservedLaneTimelineEvent(event.reservation, 0, event.voice)
-                : voices.StageReservedTimelineEvent(event.reservation, 0, event.voice));
+                : voices.StageReservedTimelineEvent(event.reservation, 0, event.voice,
+                    binding.entry, event.operation));
             if (!staged)
                 event.disposition = kTimelineDispositionProtocolViolation;
         }
