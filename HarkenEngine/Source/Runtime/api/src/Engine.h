@@ -2011,8 +2011,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         queueSourceRuntimeProgram = {};
         queueSourceSchedule = {};
     }
-    std::array<CurveLUT, 2> queueTransitionSourceFadeCurves{};
-    std::array<CurveLUT, 2> queueTransitionTargetFadeCurves{};
     TimelineEventPayload queueSuccessorPayload{};
     TimelineProgramView queueSuccessorRuntimeProgram{};
     EventTemplate queueSuccessorEvent{};
@@ -12624,12 +12622,12 @@ public:
         record = {};
         record.generation = generation;
     }
-    bool CanBindPlayableMember(EnginePlayableServiceRow& row, std::uint32_t offset,
+    bool PreparePlayableMemberBinding(EnginePlayableServiceRow& row, std::uint32_t offset,
         EnginePlayableMemberToken token) noexcept {
-        if (offset >= row.members.size() || !row.InvocationValid() || row.quarantined ||
+        if (offset >= playableStorage.memberStride || !row.InvocationValid() || row.quarantined ||
             !playablePartitions.Owns(row.partition, row.identity)) return false;
         auto* record = FindPlayableMember(token);
-        if (record == nullptr) return false;
+        if (record == nullptr || !PreparePlayableMemberDirectory(row)) return false;
         if (row.members[offset] == token) return FindPlayableMember(row, offset) == record;
         if (record->primaryOwned) return false;
         if (row.members[offset].Valid() && FindPlayableMember(row, offset) == nullptr) return false;
@@ -12638,7 +12636,7 @@ public:
     }
     bool BindPlayableMember(EnginePlayableServiceRow& row, std::uint32_t offset,
         EnginePlayableMemberToken token) noexcept {
-        if (!CanBindPlayableMember(row, offset, token)) return false;
+        if (!PreparePlayableMemberBinding(row, offset, token)) return false;
         if (row.members[offset] == token) return true;
         if (offset < row.memberPrograms.size() && row.memberPrograms[offset].Valid()) {
             auto* program = FindMemberProgram(row, offset);
@@ -12658,8 +12656,9 @@ public:
     }
     EnginePlayableMemberRecord* AcquirePlayableMember(EnginePlayableServiceRow& row,
         std::uint32_t offset) noexcept {
-        if (offset >= row.members.size() || !row.InvocationValid() || row.quarantined ||
-            !playablePartitions.Owns(row.partition, row.identity)) return nullptr;
+        if (offset >= playableStorage.memberStride || !row.InvocationValid() || row.quarantined ||
+            !playablePartitions.Owns(row.partition, row.identity) ||
+            !PreparePlayableMemberDirectory(row)) return nullptr;
         if (row.members[offset].Valid()) return FindPlayableMember(row, offset);
         const auto token = AcquirePlayableMemberRecord();
         auto* record = FindPlayableMember(token);
@@ -12774,7 +12773,8 @@ public:
         EnginePlayableServiceRow* owner = nullptr;
         std::size_t physicalSlot = 0;
         if (!ResolvePlayableMember(reference, &owner, &physicalSlot) || owner != &row ||
-            reference.memberOffset >= row.memberPrograms.size()) return nullptr;
+            reference.memberOffset >= playableStorage.initialProgramStride ||
+            !PrepareMemberProgramDirectory(row)) return nullptr;
         auto& token = row.memberPrograms[reference.memberOffset];
         if (token.Valid()) {
             auto* record = FindMemberProgram(row, reference.memberOffset);
@@ -12953,8 +12953,6 @@ public:
                     return PreparePlayableServiceDependencies(required);
                 })) return nullptr;
         InitializePlayableServiceRows(previous);
-        if (!PrepareMemberProgramDirectory(playableServices[slot]) ||
-            !PreparePlayableMemberDirectory(playableServices[slot])) return nullptr;
         return &playableServices[slot];
     }
     bool PreparePlayableServiceBacking(std::uint32_t count, StableStoragePreparation* out) noexcept {

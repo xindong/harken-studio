@@ -10672,7 +10672,7 @@ bool PrepareQueueInstanceOwner(harken::Engine& engine, harken::EngineQueueInstan
     const harken::EffectiveQueueState& initial, const harken::EffectiveQueueState& resetInitial,
     const harken::RandomQueueSeedContext& seed, bool hasSuccessor,
     harken::EngineActionPlayScratch* checkpointOwner = nullptr) noexcept {
-    if (service.queueInstance.Valid()) return false;
+    if (service.queueInstance.Valid() || !engine.PreparePlayableMemberDirectory(service)) return false;
     QueueEmitterIdentity emitter{};
     if (ResolveQueueEmitterIdentity(program.mode, program.memoryScope, program.resumePosition != 0,
             service.Invocation().invocationEmitter, &emitter) != QueueRootPlanStatus::Ok) return false;
@@ -10998,7 +10998,8 @@ bool PreparePlayableMemberStorage(
     bool memberOnly = false) noexcept {
     if (physicalSlot == nullptr || leaf == 0 || epoch == 0 ||
         logicalSlot >= engine.playableStorage.memberCount ||
-        !engine.playablePartitions.Owns(owner.partition, owner.identity)) return false;
+        !engine.playablePartitions.Owns(owner.partition, owner.identity) ||
+        !engine.PreparePlayableMemberDirectory(owner)) return false;
     const auto base = engine.playableStorage.MemberBase(owner.partition.slot);
     const auto firstOffset = logicalSlot >= base &&
         logicalSlot - base < engine.playableStorage.memberStride ? logicalSlot - base : 0u;
@@ -11037,7 +11038,8 @@ struct PreparedPlayableMemberRecords {
     bool retained = false;
 
     bool Acquire(std::uint32_t offset) noexcept {
-        if (offset >= owner.members.size()) return false;
+        if (offset >= engine.playableStorage.memberStride ||
+            !engine.PreparePlayableMemberDirectory(owner)) return false;
         const bool existing = owner.members[offset].Valid();
         if ((!existing && count == offsets.size()) || engine.AcquirePlayableMember(owner, offset) == nullptr)
             return false;
@@ -13024,7 +13026,7 @@ PlayableStartResetResult ResetPlayableStartRow(
     for (std::uint32_t index = 0; index < row.memberPrograms.size(); ++index)
         if (!engine.ReleaseMemberProgram(row, index)) return PlayableStartResetResult::Deferred;
     (void)engine.ClearTimelineVoiceInstallIdentity(row.renderHandle);
-    for (std::size_t index = 0; index < engine.playableStorage.memberStride;
+    for (std::size_t index = 0; index < row.members.size();
          ++index) {
         const auto render =
             engine.ReadPlayableMember(bases.member + index).render;
@@ -25056,17 +25058,17 @@ bool PrepareCompositeQueueContinuation(
     const std::uint64_t successorStartFrame = pureLogical
         ? completionFrame
         : completionFrame + prepared[0].startOffsetFrames;
+    harken::CurveLUT sourceFadeCurve{};
+    harken::CurveLUT targetFadeCurve{};
     if (transitionRule != nullptr &&
         ((sourceFadeActive &&
           !BakeTransitionFadeCurve(
               program, transitionRule->sourceFade,
-              &row.queueTransitionSourceFadeCurves[
-                  successorProgramPlane])) ||
+              &sourceFadeCurve)) ||
          (targetFadeActive &&
           !BakeTransitionFadeCurve(
               program, transitionRule->targetFade,
-              &row.queueTransitionTargetFadeCurves[
-                  successorProgramPlane])))) {
+              &targetFadeCurve)))) {
         return false;
     }
     if ((naturalEnd &&
@@ -25353,8 +25355,7 @@ bool PrepareCompositeQueueContinuation(
             fade.envelopeStartFrame = startFrame;
             fade.envelopeEndFrame = startFrame + targetFadeFrames;
             fade.envelopeCurve =
-                &row.queueTransitionTargetFadeCurves[
-                    successorProgramPlane];
+                &targetFadeCurve;
             harken::EventTemplate& fadeEvent =
                 successorEventStorage[
                     successorEventBase + eventBase + 1u];
@@ -25574,8 +25575,7 @@ engine.runtimeRecreateRequired = true;
                 fade.envelopeStartFrame = sourcePhaseFrame;
                 fade.envelopeEndFrame = sourceStopFrame;
                 fade.envelopeCurve =
-                    &row.queueTransitionSourceFadeCurves[
-                        successorProgramPlane];
+                    &sourceFadeCurve;
                 fade.authoredFadeOutCandidate = true;
                 auto& event = row.queueSourceEvents[fadeIndex];
                 event.logicCommitSequence = row.queueTicket;
@@ -26390,17 +26390,17 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
         transitionRule != nullptr && naturalEnd && sourceFadeFrames != 0;
     const std::uint8_t successorProgramPlane =
         row.queueCurrentProgramPlane == 0 ? 1 : 0;
+    harken::CurveLUT sourceFadeCurve{};
+    harken::CurveLUT targetFadeCurve{};
     if (transitionRule != nullptr &&
         ((sourceFadeActive &&
           !BakeTransitionFadeCurve(
               program, transitionRule->sourceFade,
-              &row.queueTransitionSourceFadeCurves[
-                  successorProgramPlane])) ||
+              &sourceFadeCurve)) ||
          (targetFadeActive &&
           !BakeTransitionFadeCurve(
               program, transitionRule->targetFade,
-              &row.queueTransitionTargetFadeCurves[
-                  successorProgramPlane])))) {
+              &targetFadeCurve)))) {
         return QueueContinuationPrepareStatus::Failed;
     }
     if ((naturalEnd &&
@@ -26771,7 +26771,7 @@ engine.runtimeRecreateRequired = true;
         fade.envelopeStartFrame = successorStartFrame;
         fade.envelopeEndFrame = targetFadeEndFrame;
         fade.envelopeCurve =
-            &row.queueTransitionTargetFadeCurves[successorProgramPlane];
+            &targetFadeCurve;
         auto& event = successorEvents[1];
         event.logicCommitSequence = row.queueTicket;
         event.eventIndex = 1;
@@ -26825,8 +26825,7 @@ engine.runtimeRecreateRequired = true;
                 fade.envelopeStartFrame = sourcePhaseFrame;
                 fade.envelopeEndFrame = sourceStopFrame;
                 fade.envelopeCurve =
-                    &row.queueTransitionSourceFadeCurves[
-                        successorProgramPlane];
+                    &sourceFadeCurve;
                 fade.authoredFadeOutCandidate = true;
                 auto& event = row.queueSourceEvents[fadeIndex];
                 event.logicCommitSequence = row.queueTicket;
@@ -29758,7 +29757,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         if (commandsReserved && !PrepareVoiceCommandBatch(engine, &commandReservation,
                 {engine.playLedBatchScratch.data(), commandCount})) installFailed = true;
         for (std::uint32_t index = 0; !installFailed && index < scheduleLeafCount; ++index)
-            if (!engine.CanBindPlayableMember(scheduleRow, index, programBank.members[index])) installFailed = true;
+            if (!engine.PreparePlayableMemberBinding(scheduleRow, index, programBank.members[index])) installFailed = true;
         if (installFailed || !treeStep.Validate()) {
             rollbackCreated();
             return ContainerLoopSuccessorStatus::Refused;
@@ -30001,7 +30000,7 @@ engine.runtimeRecreateRequired = true;
     CaptureQueueProgramMember(*member, std::move(captured), cut.leaf, installed, startFrame, {});
     member->completion = {leafInstance, nextSchedule.ownerInstanceScheduleEpoch, installed.sourceTerminal};
     if (FreezeQueueProgram(engine, programBank, nextSchedule) == nullptr ||
-        !engine.CanBindPlayableMember(scheduleRow, 0, programBank.members[0])) {
+        !engine.PreparePlayableMemberBinding(scheduleRow, 0, programBank.members[0])) {
         rollbackCommitted();
         return ContainerLoopSuccessorStatus::Refused;
     }
@@ -44708,7 +44707,7 @@ void ServicePendingImmediateEntries(
                             const auto programIndex = bank.programCount;
                             auto* replacement = engine.AcquireQueueProgramMember(bank, programIndex);
                             if (replacement == nullptr ||
-                                !engine.CanBindPlayableMember(member, 0, bank.members[programIndex])) {
+                                !engine.PreparePlayableMemberBinding(member, 0, bank.members[programIndex])) {
                                 replaced = false;
                                 break;
                             }
@@ -53262,6 +53261,47 @@ static bool PreparePendingOrdinaryVoiceBacking(Engine& engine,
     }
 }
 
+bool PreparePendingOrdinaryMemberDirectories(Engine& engine, EnginePlayableServiceRow& row,
+    const Engine::OriginalPendingOrdinarySelectionHolder& holder, std::uint32_t childCount) noexcept {
+    if (!engine.PreparePlayableMemberDirectory(row)) return false;
+    if (childCount == 0) return true;
+    auto retiring = holder.retiredServices;
+    auto retiringCount = holder.retiredServiceCount;
+    if (retiringCount == 0 && !holder.sourceRetired) {
+        auto next = row.frontierChildService;
+        while (next.Valid()) {
+            auto* service = engine.ResolvePlayableService(next);
+            if (service == nullptr || retiringCount == retiring.size()) return false;
+            retiring[retiringCount++] = next;
+            next = service->frontierChildService;
+        }
+    }
+    // Prepare the slots that the existing first-free policy can reuse after retirement.
+    // Retiring children count toward capacity; they do not need duplicate service slots.
+    for (auto& service : engine.playableServices) {
+        if (&service == &row || service.quarantined) continue;
+        const bool reusable = Engine::PlayableServiceReusable(service) ||
+            (service.identity.generation != UINT64_MAX &&
+             std::any_of(retiring.begin(), retiring.begin() + retiringCount,
+                [&](const EnginePlayableServiceReference& reference) noexcept {
+                    return engine.ResolvePlayableService(reference) == &service;
+                }));
+        if (!reusable) continue;
+        if (!engine.PreparePlayableMemberDirectory(service)) return false;
+        if (--childCount == 0) return true;
+    }
+    const auto previous = engine.playableServices.size();
+    if (childCount > engine.playableServices.Capacity() - previous ||
+        !engine.playableServices.ConstructThrough(previous + childCount,
+            [&](std::uint32_t required) noexcept {
+                return engine.PreparePlayableServiceDependencies(required);
+            })) return false;
+    engine.InitializePlayableServiceRows(previous);
+    for (auto slot = previous; slot < previous + childCount; ++slot)
+        if (!engine.PreparePlayableMemberDirectory(engine.playableServices[slot])) return false;
+    return true;
+}
+
 Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
     EngineImmediateEntryAttempt& attempt, std::uint64_t anchor) noexcept {
     using Result = PendingOrdinarySelectionResult;
@@ -53395,6 +53435,8 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
         }
         const auto preflight = PreflightTimelineVoiceStart(*this, voice);
         if (preflight != VN_OK && !temporary(preflight)) return reject(preflight);
+        if (!PreparePendingOrdinaryMemberDirectories(*this, row, *holder, selectionCount - 1u))
+            return Result::Waiting;
         if (holder->nativeReplacement.Empty()) {
             if (holder->sourceRetired || holder->retirement.Valid()) return Result::Refused;
             if (!holder->nativeReplacement.Construct(1, 0,
@@ -53638,7 +53680,7 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
         schedule.runtimeProgram = {newLeaf, &runtime};
         schedule.events = &event;
         if (FreezeQueueProgram(*this, *child->frontierProgramBank, schedule) == nullptr ||
-            !CanBindPlayableMember(*resource, 0, child->frontierProgramBank->members[0])) return Result::Waiting;
+            !PreparePlayableMemberBinding(*resource, 0, child->frontierProgramBank->members[0])) return Result::Waiting;
         if (!RegisterCurrentFrontierVoiceOwners(*this, *child)) return Result::Waiting;
         child->frontierOwnerLedgerComplete = true;
         auto* actualSource = OriginalSinglePreparationForArm(start.arm);
@@ -70838,7 +70880,7 @@ engine.runtimeRecreateRequired = true;
             queueCheckpointKey.emitterGeneration;
         queueCreate.initial = queueInitialState;
         queueCreate.resetInitial = queueResetInitialState;
-        if (!engine.PrepareOriginalQueueAcquire(
+        if (!engine.PreparePlayableMemberDirectory(row) || !engine.PrepareOriginalQueueAcquire(
                 queueCreate, &directQueuePreparedDummy)) {
             result.status = PlayableStartStatus::Capacity;
             return result;
@@ -78541,7 +78583,7 @@ bool PrepareImmediateActionQueueInstance(
     std::uint64_t worldGeneration,
     std::uint64_t emitter) noexcept {
     if (scratch == nullptr || ownerInstance == 0 ||
-        ownerScheduleEpoch == 0) {
+        ownerScheduleEpoch == 0 || !engine.PreparePlayableMemberDirectory(row)) {
         return false;
     }
     QueueEmitterIdentity emitterIdentity{};
@@ -79252,14 +79294,16 @@ bool PrepareQueueTransitionContinuation(
         ? transitionRule.targetFade.durationFrames : 0;
     const bool naturalEnd = transitionRule.sourceExit ==
         harken::TransitionSourceExitV1::NaturalEnd;
+    harken::CurveLUT sourceFadeCurve{};
+    harken::CurveLUT targetFadeCurve{};
     if ((sourceFadeActive &&
          !BakeTransitionFadeCurve(
              program, transitionRule.sourceFade,
-             &row.queueTransitionSourceFadeCurves[successorPlane])) ||
+             &sourceFadeCurve)) ||
         (targetFadeActive &&
          !BakeTransitionFadeCurve(
              program, transitionRule.targetFade,
-             &row.queueTransitionTargetFadeCurves[successorPlane])) ||
+             &targetFadeCurve)) ||
         (naturalEnd &&
          (row.queueCompletionFrame < row.startFrame ||
           sourceFadeFrames >
@@ -79572,7 +79616,7 @@ bool PrepareQueueTransitionContinuation(
             fadePayload.envelopeEndFrame =
                 startFrame + targetFadeFrames;
             fadePayload.envelopeCurve =
-                &row.queueTransitionTargetFadeCurves[successorPlane];
+                &targetFadeCurve;
             auto& fadeEvent = successorEventStorage[
                 successorEventBase + eventBase + 1u];
             fadeEvent = {};
@@ -79898,7 +79942,7 @@ bool PrepareQueueTransitionContinuation(
             fade.envelopeStartFrame = sourcePhaseFrame;
             fade.envelopeEndFrame = sourceStopFrame;
             fade.envelopeCurve =
-                &row.queueTransitionSourceFadeCurves[successorPlane];
+                &sourceFadeCurve;
             fade.authoredFadeOutCandidate = true;
             auto& event = row.queueSourceEvents[eventIndex];
             event = {};
@@ -92345,11 +92389,6 @@ void CommitImmediateActionQueueReplacements(
                 scratch.successorProgramPlane;
             auto& bank = *scratch.programBank;
             ok = StampQueueProgramBank(bank, sequence) && ok;
-            if (scratch.transition.Valid()) {
-                row.queueTransitionTargetFadeCurves[
-                    row.queueSuccessorProgramPlane] =
-                        bank.curves[1];
-            }
             const auto targetPrograms = harken::EngineQueueProgramRange{
                 scratch.sourceControlCount, scratch.successorLeafCount}.Resolve(&bank);
             if (targetPrograms.size() != scratch.successorLeafCount) {
@@ -92412,9 +92451,6 @@ void CommitImmediateActionQueueReplacements(
                     member->nativeCompletion = scratch.successorCompletion;
             }
             if (scratch.sourceControlCount != 0) {
-                row.queueTransitionSourceFadeCurves[
-                    row.queueSuccessorProgramPlane] =
-                        bank.curves[0];
                 if (BindQueueSourcePrograms(row, bank, 0, 0,
                         scratch.sourceControlCount, scratch.sourceEventCount)) {
                     for (std::uint32_t sourceIndex = 0;

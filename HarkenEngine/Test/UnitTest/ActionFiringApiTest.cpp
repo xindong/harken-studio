@@ -58181,6 +58181,7 @@ TEST(ActionFiringApi,
     image.containers[2].queueCycle = harken::QueueCycleV1::Loop;
     image.containers[2].resumePosition = 1;
     image.EnableImmediateQueueTransition(64, 128);
+    image.transitionCurves[1].curve.handles[0] = {1.0f / 3.0f, 0.0f, 2.0f / 3.0f, 0.0f};
     image.world.identity.runtimeSemanticFingerprint =
         harken::ComputeCurrentWorldFingerprintV4(image.world);
     const auto installed =
@@ -58254,8 +58255,9 @@ TEST(ActionFiringApi,
     ASSERT_NE(bank->curves.begin() + bank->curveCount,
         std::find_if(bank->curves.begin(), bank->curves.begin() + bank->curveCount,
             [&](const auto& curve) { return &curve == stableCurve; }));
-    EXPECT_FLOAT_EQ(row->queueTransitionTargetFadeCurves[row->queueSuccessorProgramPlane].Eval(0.5f),
-                    stableCurve->Eval(0.5f));
+    harken::CurveLUT expectedTargetCurve{};
+    expectedTargetCurve.Bake(image.transitionCurves[1].curve);
+    EXPECT_FLOAT_EQ(expectedTargetCurve.Eval(0.5f), stableCurve->Eval(0.5f));
     for (std::uint32_t leafIndex = 0; leafIndex < 2; ++leafIndex) {
         const auto& program = programs[leafIndex];
         ASSERT_NE(nullptr, program.runtimeProgram.program);
@@ -58302,6 +58304,7 @@ TEST(ActionFiringApi,
     image.containers[2].queueCycle = harken::QueueCycleV1::Loop;
     image.containers[2].resumePosition = 1;
     image.EnableNaturalEndQueueTransition(64, 128);
+    image.transitionCurves[1].curve.handles[0] = {1.0f / 3.0f, 0.0f, 2.0f / 3.0f, 0.0f};
     image.world.identity.runtimeSemanticFingerprint =
         harken::ComputeCurrentWorldFingerprintV4(image.world);
     const auto installed =
@@ -58382,7 +58385,13 @@ TEST(ActionFiringApi,
     EXPECT_EQ(harken::TimelineEnvelopeDirection::FadeOut,
               row->queueSourcePayloads[0].envelopeDirection);
     ASSERT_NE(nullptr, row->queueSourcePayloads[0].envelopeCurve);
-    const auto& expectedSourceCurve = row->queueTransitionSourceFadeCurves[row->queueSuccessorProgramPlane];
+    harken::CurveLUT expectedSourceCurve{};
+    expectedSourceCurve.Bake(image.transitionCurves[0].curve);
+    const auto* bank = row->queueSuccessorProgramBank;
+    ASSERT_NE(nullptr, bank);
+    ASSERT_NE(bank->curves.begin() + bank->curveCount,
+        std::find_if(bank->curves.begin(), bank->curves.begin() + bank->curveCount,
+            [&](const auto& curve) { return &curve == row->queueSourcePayloads[0].envelopeCurve; }));
     for (std::uint32_t index = 0; index <= harken::kCurveLutEntries; ++index)
         EXPECT_FLOAT_EQ(expectedSourceCurve.values[index], row->queueSourcePayloads[0].envelopeCurve->values[index]);
     const std::array<std::uint64_t, 2> sliceFrames = {
@@ -58430,6 +58439,7 @@ TEST(ActionFiringApi,
     image.containers[2].queueCycle = harken::QueueCycleV1::Loop;
     image.containers[2].resumePosition = 1;
     image.EnableNaturalEndQueueTransition(64, 128);
+    image.transitionCurves[1].curve.handles[0] = {1.0f / 3.0f, 0.0f, 2.0f / 3.0f, 0.0f};
     image.world.identity.runtimeSemanticFingerprint =
         harken::ComputeCurrentWorldFingerprintV4(image.world);
     const auto installed =
@@ -58513,6 +58523,8 @@ TEST(ActionFiringApi,
     const auto programs = row->queueSuccessorPrograms.Resolve(bank);
     ASSERT_EQ(2u, programs.size());
     const harken::CurveLUT* targetCurve = nullptr;
+    harken::CurveLUT expectedTargetCurve{};
+    expectedTargetCurve.Bake(image.transitionCurves[1].curve);
     for (const auto& program : programs) {
         ASSERT_NE(nullptr, program.runtimeProgram.program);
         ASSERT_EQ(2u, program.runtimeProgram.program->payloadCount);
@@ -58523,8 +58535,7 @@ TEST(ActionFiringApi,
                 [&](const auto& owned) { return &owned == curve; }));
         if (targetCurve == nullptr) targetCurve = curve;
         EXPECT_EQ(targetCurve, curve);
-        EXPECT_FLOAT_EQ(row->queueTransitionTargetFadeCurves[row->queueSuccessorProgramPlane].Eval(0.5f),
-                        curve->Eval(0.5f));
+        EXPECT_FLOAT_EQ(expectedTargetCurve.Eval(0.5f), curve->Eval(0.5f));
     }
     const std::array<std::uint64_t, 2> sliceFrames = {
         sourceFrame, targetFrame};
