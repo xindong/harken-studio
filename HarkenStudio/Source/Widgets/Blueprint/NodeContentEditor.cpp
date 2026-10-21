@@ -176,6 +176,7 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
             row->binding->setRange(row->property.min.toDouble(), row->property.max.toDouble());
             row->binding->setDecimals(row->property.decimals);
             row->binding->setQuantum(std::pow(10.0, -row->property.decimals));
+            row->binding->setDefaultValue(row->property.def.isValid() ? row->property.def.toDouble() : 0.0);
             row->binding->setUnit(row->property.unit);
             row->editor = new DecimalSpinBox(row->valueStack);
             row->editor->setObjectName(QStringLiteral("nodeEditor_") + row->property.field);
