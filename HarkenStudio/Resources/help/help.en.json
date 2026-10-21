@@ -253,21 +253,29 @@
       "title": "Tool Scope",
       "body": "Choose tools for inspection, authoring, pack export, or live testing. Effective tools counts those allowed by both this profile and the permission mode."
     },
-    "settings.build": {
-      "title": "Build",
-      "body": "Set the project's target platforms, audio languages, and pack output directory."
+    "settings.config": {
+      "title": "Config",
+      "body": "Set the project's target platforms and audio languages."
     },
-    "settings.build.platforms": {
+    "settings.config.platforms": {
       "title": "Target Platforms",
       "body": "Add a platform or double-click one to edit its name, base platform, and build settings. At least one platform must remain."
     },
-    "settings.build.languages": {
+    "settings.config.languages": {
       "title": "Target Languages",
       "body": "Define audio languages for Sounds with Language enabled. Names use A-Z, a-z, digits, and underscores."
     },
-    "settings.build.output": {
+    "settings.publish": {
+      "title": "Publish",
+      "body": "Set the pack output directory and optional waveform export."
+    },
+    "settings.publish.output": {
       "title": "Pack Build Output",
       "body": "Use a path relative to the project; blank uses BuildPacks. The project root and object directories cannot be used."
+    },
+    "settings.publish.waveforms": {
+      "title": "Waveform Export",
+      "body": "Include source waveform previews with exported packs. Use a path relative to the project; blank uses BuildPacks/Waveforms."
     },
     "Blueprint": {
       "title": "Blueprint",

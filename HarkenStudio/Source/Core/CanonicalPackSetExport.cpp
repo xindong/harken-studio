@@ -15,8 +15,10 @@
 #include "ProjectSchemaValidator.h"
 #include "BindingRuntimeLowering.h"
 #include "SoundSourceEditing.h"
+#include "SoundSourceSemantics.h"
 #include "VariableConsumerSemantics.h"
 #include "AssetPipeline/PathUtils.h"
+#include "AssetPipeline/WaveformCache.h"
 
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 #include "RuntimeBridge/PackagingBridge.h"
@@ -1052,6 +1054,121 @@ bool fillInitCompanion(const harkenstudiobuild::ContainerWorldInstallViewV1& wor
     return true;
 }
 
+QStringList companionWaveformFiles(const QJsonObject& companion,
+                                    const QString& companionPath, const QDir& root)
+{
+    QStringList files;
+    const QDir companionDir(QFileInfo(companionPath).absolutePath());
+    for (const auto& value : companion.value(QStringLiteral("waveforms")).toArray()) {
+        const QString absolute = QDir::cleanPath(companionDir.absoluteFilePath(
+            value.toObject().value(QStringLiteral("file")).toString()));
+        const QString relative = root.relativeFilePath(absolute);
+        if (safePublicationPath(root, relative) && QFileInfo(absolute).isFile())
+            files.append(relative);
+    }
+    files.removeDuplicates();
+    return files;
+}
+
+bool fillWaveformCompanion(const CanonicalPackSetExportRequest& request,
+                           const PackMeta& pack, const QString& outputRoot,
+                           QHash<uint32_t, QString>* exportedSources,
+                           QJsonObject* companion, QString* error)
+{
+    QJsonArray waveforms;
+    std::set<harkenstudio::ObjectId> mediaIds;
+    for (const auto& entry : pack.resourceEntries)
+        if (entry.kind == harkenstudiobuild::kPackEntryKindMedia)
+            mediaIds.insert(entry.id);
+    const auto& snapshot = *request.options.snapshot;
+    const auto& project = *request.project;
+    const QDir waveformDir(outputRoot);
+    const QDir companionDir(QFileInfo(QDir(request.outputDir).filePath(pack.fileName)).absolutePath());
+    for (const auto& variant : request.plan->variants) {
+        if (variant.variant.platform != pack.platform || variant.variant.language != pack.language
+            || std::find(pack.actionStableIds.begin(), pack.actionStableIds.end(), variant.actionStableId)
+                == pack.actionStableIds.end()) continue;
+        for (const auto& media : variant.closure.media) {
+            if (!mediaIds.erase(media.soundStableId)) continue;
+            if (request.options.cancelCheck && request.options.cancelCheck()) {
+                *error = QStringLiteral("Export canceled");
+                return false;
+            }
+            const auto* item = findItemByStableId(project, media.soundStableId);
+            const auto* sound = item ? item->comp<VSound>() : nullptr;
+            const auto* source = sound ? SoundSourceSemantics::findEntry(*sound, media.sourceEntryId) : nullptr;
+            const auto conversion = snapshot.media.request(media.authoringSourceId,
+                QUuid(pack.platform), error);
+            if (!source || !conversion) {
+                *error = QStringLiteral("Waveform source is unavailable for Sound %1")
+                    .arg(objectIdString(media.soundStableId));
+                return false;
+            }
+            const auto range = SoundSourceSemantics::effectiveRange(*source, &conversion->asset);
+            if (!range || range->trimEndFrame <= range->trimStartFrame
+                || range->trimEndFrame > SoundSourceSemantics::kMaxSourceFrame) {
+                *error = QStringLiteral("Invalid waveform source range for Sound %1")
+                    .arg(objectIdString(media.soundStableId));
+                return false;
+            }
+            QString fileName = exportedSources->value(media.authoringSourceId);
+            if (fileName.isEmpty()) {
+                const auto& sourcePath = conversion->asset.absolutePath;
+                if (!conversion->sourceMatches()) {
+                    *error = QStringLiteral("Waveform source changed before export: %1").arg(sourcePath);
+                    return false;
+                }
+                WaveformPeakData peaks;
+                if (!WaveformCache::load(sourcePath, peaks)
+                    && (!WaveformCache::generate(sourcePath) || !WaveformCache::load(sourcePath, peaks))) {
+                    *error = QStringLiteral("Cannot generate waveform cache for '%1'").arg(sourcePath);
+                    return false;
+                }
+                QByteArray bytes;
+                if (!readAll(WaveformCache::cachePath(sourcePath), &bytes, error)) return false;
+                if (!conversion->sourceMatches()) {
+                    *error = QStringLiteral("Source changed while exporting waveform '%1'").arg(sourcePath);
+                    return false;
+                }
+                fileName = QString::fromLatin1(QCryptographicHash::hash(bytes,
+                    QCryptographicHash::Sha256).toHex()) + QStringLiteral(".vkd");
+                if (!QDir().mkpath(outputRoot) || !safePublicationPath(waveformDir, fileName)) {
+                    *error = QStringLiteral("Cannot use waveform output directory '%1'").arg(outputRoot);
+                    return false;
+                }
+                const QString output = waveformDir.filePath(fileName);
+                QByteArray existing;
+                if (QFileInfo::exists(output)) {
+                    if (!readAll(output, &existing, error)) return false;
+                    if (existing != bytes) {
+                        *error = QStringLiteral("Waveform output content conflicts with '%1'").arg(output);
+                        return false;
+                    }
+                } else {
+                    QSaveFile file(output);
+                    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
+                        *error = QStringLiteral("Cannot publish waveform '%1'").arg(output);
+                        return false;
+                    }
+                }
+                exportedSources->insert(media.authoringSourceId, fileName);
+            }
+            waveforms.append(QJsonObject{
+                {QStringLiteral("soundGuid"), objectIdString(media.soundStableId)},
+                {QStringLiteral("sourceEntryGuid"), media.sourceEntryId.toString(QUuid::WithoutBraces)},
+                {QStringLiteral("file"), companionDir.relativeFilePath(waveformDir.filePath(fileName))},
+                {QStringLiteral("trimStartFrame"), static_cast<qint64>(range->trimStartFrame)},
+                {QStringLiteral("trimEndFrame"), static_cast<qint64>(range->trimEndFrame)}});
+        }
+    }
+    if (!mediaIds.empty()) {
+        *error = QStringLiteral("Pack '%1' contains media without a waveform source").arg(pack.fileName);
+        return false;
+    }
+    companion->insert(QStringLiteral("waveforms"), waveforms);
+    return true;
+}
+
 std::vector<std::uint8_t> encodeVariableRequirements(
     const std::vector<std::pair<harkenstudio::ObjectId, std::uint64_t>>& rows,
     const std::unordered_map<harkenstudio::ObjectId, std::uint64_t>& labelFingerprints)
@@ -1873,7 +1990,8 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
             if (image.packKind == harkenstudiobuild::kPackKindInit) {
                 if ((selected && initId != 0) || (hasCompanion && path != QStringLiteral("Init.bytes"))
                     || (!platformId.isEmpty() && image.packStableId != fnvName(platformId + QStringLiteral("/Init")))
-                    || companion.size() != 1 || !companion.value(QStringLiteral("variables")).isArray())
+                    || companion.size() != 1 + companion.contains(QStringLiteral("waveforms"))
+                    || !companion.value(QStringLiteral("variables")).isArray())
                     return rejectPair(QStringLiteral("Invalid Init publication in '%1'").arg(directory));
                 name = QStringLiteral("Init");
                 const auto variables = companion.value(QStringLiteral("variables")).toArray();
@@ -1920,7 +2038,8 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                 const QString guid = companion.value(QStringLiteral("guid")).toString();
                 const auto id = runtimeObjectId(QUuid(guid));
                 const QString scope = info.path() == QStringLiteral(".") ? QString() : info.path();
-                if (image.packKind != harkenstudiobuild::kPackKindCanonicalContent || companion.size() != 2
+                if (image.packKind != harkenstudiobuild::kPackKindCanonicalContent
+                    || companion.size() != 2 + companion.contains(QStringLiteral("waveforms"))
                     || !NameValidator::validateItemName(name, ProjectItem::Type::Action)
                     || harkenstudio::IsNull(id) || objectIdString(id) != guid || world.actionCount == 0
                     || std::none_of(world.actions, world.actions + world.actionCount,
@@ -1934,6 +2053,23 @@ bool ReadPackPublication(const QString& directory, const QString& projectId,
                     || (scope.isEmpty() && (localizedNames.contains(name) || localizedActionIds.contains(guid))))))
                     return rejectPair(QStringLiteral("Invalid Action companion '%1'").arg(companionPath));
             }
+            std::set<harkenstudio::ObjectId> waveformSounds;
+            for (const auto& value : companion.value(QStringLiteral("waveforms")).toArray()) {
+                const auto waveform = value.toObject();
+                const auto soundId = runtimeObjectId(QUuid(waveform.value(QStringLiteral("soundGuid")).toString()));
+                const QString file = waveform.value(QStringLiteral("file")).toString();
+                if (!waveformSounds.insert(soundId).second
+                    || std::none_of(image.media.begin(), image.media.end(),
+                        [&](const auto& media) { return media.soundId == soundId; })
+                    || QDir::isAbsolutePath(file) || file.contains(QLatin1Char('\\'))
+                    || file.contains(QLatin1Char(':')) || !file.endsWith(QStringLiteral(".vkd"))
+                    || QDir::cleanPath(file) != file
+                    || waveform.value(QStringLiteral("trimEndFrame")).toInteger()
+                        <= waveform.value(QStringLiteral("trimStartFrame")).toInteger())
+                    return rejectPair(QStringLiteral("Invalid waveform index in '%1'").arg(companionPath));
+            }
+            if (companion.contains(QStringLiteral("waveforms")) && waveformSounds.size() != image.media.size())
+                return rejectPair(QStringLiteral("Waveform index does not cover the Pack media in '%1'").arg(companionPath));
             QJsonArray dependencies;
             for (const auto& edge : image.dependencyEdges)
                 dependencies.append(QString::number(edge.prerequisitePackStableId));
@@ -3051,6 +3187,19 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         reportProgress(pack, 85, PackGenerationStage::Publishing);
     std::vector<PackMeta*> allPacks;
     QStringList companionNames;
+    QHash<uint32_t, QString> exportedWaveformSources;
+    QString waveformOutputRoot;
+    if (project.buildExportWaveforms) {
+        if (request.options.waveformOutputDir.isEmpty()) {
+            if (!PathUtils::isValidWaveformBuildOutputDir(project.buildWaveformOutputDir, project.projectPath))
+                return fail(QStringLiteral("Waveform output must be a valid project-relative directory"));
+            waveformOutputRoot = PathUtils::waveformBuildOutputRoot(project.projectPath, project.buildWaveformOutputDir);
+        } else {
+            waveformOutputRoot = request.options.waveformOutputDir;
+            if (!QDir::isAbsolutePath(waveformOutputRoot))
+                return fail(QStringLiteral("Waveform output override must be an absolute directory"));
+        }
+    }
     QString error;
     for (auto& pack : packs) {
         allPacks.push_back(&pack);
@@ -3065,6 +3214,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         const QFileInfo file(pack.fileName);
         const QString relative = QDir::cleanPath(QDir(file.path()).filePath(
             file.completeBaseName() + QStringLiteral(".json")));
+        if (!pack.retained && project.buildExportWaveforms
+            && !fillWaveformCompanion(request, pack, waveformOutputRoot, &exportedWaveformSources,
+                &pack.companion, &error)) return fail(error);
         const auto schemaErrors = ProjectSchemaValidator::validatePackManifest(
             PackSchema::kPackManifestSchemaVersion, pack.companion, relative);
         if (!schemaErrors.isEmpty()) return fail(schemaErrors.join(QLatin1Char('\n')));
@@ -3131,6 +3283,15 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
     for (const PackMeta* pack : allPacks)
         publishedNames.append(pack->fileName);
     QStringList preservedNames;
+    for (const auto* pack : allPacks) {
+        const auto waveforms = companionWaveformFiles(pack->companion,
+            liveDir.filePath(pack->fileName), liveDir);
+        for (const auto& path : waveforms) {
+            if (!liveNames.contains(path)) liveNames.append(path);
+            if (!publishedNames.contains(path)) publishedNames.append(path);
+            if (!preservedNames.contains(path)) preservedNames.append(path);
+        }
+    }
     for (const auto& pack : packs) {
         if (pack.skipped && pack.fileName == pack.previousRow.value(QStringLiteral("path")).toString())
             preservedNames.append(pack.fileName);
@@ -3263,6 +3424,8 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
             const QFileInfo file(path);
             selectedFiles.append(platform.name + QLatin1Char('/')
                 + QDir::cleanPath(QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json"))));
+            selectedFiles.append(companionWaveformFiles(value.toObject().value(QStringLiteral("companion")).toObject(),
+                platformDir.filePath(path), liveDir));
         }
     }
     QStringList liveNames, previousPackNames;

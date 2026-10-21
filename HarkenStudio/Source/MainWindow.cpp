@@ -63,6 +63,7 @@
 #include "Dialogs/Settings/Pages/LayoutPage.h"
 #include "Dialogs/Settings/PreferencesDialog.h"
 #include "Dialogs/Settings/ProjectSettingsDialog.h"
+#include "Dialogs/Settings/Pages/ProjectPublishPage.h"
 #include "Widgets/ProjectExplorer/ProjectExplorer.h"
 #include "Widgets/Hierarchy/Hierarchy.h"
 #include "Widgets/Inspector/InspectorPanel.h"
@@ -1595,6 +1596,11 @@ void MainWindow::registerWorkspaceSingletonFactories()
             panel->setAcceptDrops(true);
             connect(panel, &PublisherPanel::exportRequested,
                     this, &MainWindow::generateProjectPacks);
+            connect(panel, &PublisherPanel::publishSettingsRequested, this, [this] {
+                ProjectSettingsDialog dialog(this);
+                dialog.showPage(QString::fromLatin1(kSettingsPagePublish));
+                dialog.exec();
+            });
             connect(panel, &PublisherPanel::revealActionRequested,
                     this, [this](uint32_t objectID) {
                 if (auto* item =

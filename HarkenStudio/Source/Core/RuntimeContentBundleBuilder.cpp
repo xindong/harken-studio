@@ -218,6 +218,7 @@ RuntimeContentBundleResult RuntimeContentBundleBuilder::build(
     ProjectPackExporter::ExportOptions options;
     options.platform = result.platform;
     options.snapshot = snapshot;
+    options.waveformOutputDir = buildDir.filePath(QStringLiteral("Waveforms"));
     const QString worldPath = QDir(buildPath).filePath(QStringLiteral("CurrentWorld.vnworld"));
     options.currentWorldOutputPath = worldPath;
     std::vector<ProjectPackExporter::PackBuildRecord> records;
@@ -245,12 +246,26 @@ RuntimeContentBundleResult RuntimeContentBundleBuilder::build(
         return result;
     std::vector<QString> publicationPaths;
     for (const auto& row : publicationRows) {
-        const QFileInfo file(row.toObject().value(QStringLiteral("path")).toString());
+        const auto publication = row.toObject();
+        const QFileInfo file(publication.value(QStringLiteral("path")).toString());
         publicationPaths.push_back(buildDir.absoluteFilePath(file.filePath()));
         publicationPaths.push_back(buildDir.absoluteFilePath(
             QDir(file.path()).filePath(file.completeBaseName() + QStringLiteral(".json"))));
+        const QDir companionDir(buildDir.filePath(file.path()));
+        for (const auto& waveform : publication.value(QStringLiteral("companion")).toObject()
+                 .value(QStringLiteral("waveforms")).toArray()) {
+            const QString path = QDir::cleanPath(companionDir.absoluteFilePath(
+                waveform.toObject().value(QStringLiteral("file")).toString()));
+            const QString relative = buildDir.relativeFilePath(path);
+            if (QDir::isAbsolutePath(relative) || relative.startsWith(QStringLiteral("../"))) {
+                result.error = QStringLiteral("Waveform output escaped the content bundle: %1").arg(path);
+                return result;
+            }
+            publicationPaths.push_back(path);
+        }
     }
     std::sort(publicationPaths.begin(), publicationPaths.end());
+    publicationPaths.erase(std::unique(publicationPaths.begin(), publicationPaths.end()), publicationPaths.end());
 
     const std::uint64_t fingerprint = exported.currentWorldSemanticFingerprint;
     if (fingerprint == 0) {

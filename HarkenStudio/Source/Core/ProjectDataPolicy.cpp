@@ -21,12 +21,13 @@ constexpr Qt::CaseSensitivity kPathCaseSensitivity = Qt::CaseSensitive;
 
 }
 
-ProjectDataPolicy::ProjectDataPolicy(const QString& packBuildOutputDir)
+ProjectDataPolicy::ProjectDataPolicy(const QString& packBuildOutputDir,
+                                   const QString& buildWaveformOutputDir)
     : packOutputPaths_{PathUtils::buildPacksDirName(), QStringLiteral("GeneratedPacks")}
 {
-    const QString path = PathUtils::normalizePackBuildOutputDir(packBuildOutputDir);
-    if (isSafeRelativePath(path)) {
-        packOutputPaths_.append(path);
+    for (const auto& value : {packBuildOutputDir, buildWaveformOutputDir}) {
+        const QString path = PathUtils::normalizePackBuildOutputDir(value);
+        if (isSafeRelativePath(path)) packOutputPaths_.append(path);
     }
 }
 
@@ -42,9 +43,11 @@ ProjectDataPolicy ProjectDataPolicy::forProjectFile(const QString& projectFilePa
         content.value(QStringLiteral("packBuildOutputDir")).toString());
     if (!PathUtils::isValidPackBuildOutputDir(path, location.projectFilePath))
         return ProjectDataPolicy();
+    const QString waveformPath = content.value(QStringLiteral("buildWaveformOutputDir")).toString();
     const QDir projectDirectory(QFileInfo(location.projectFilePath).absolutePath());
     return ProjectDataPolicy(projectDirectory.relativeFilePath(
-        PathUtils::packBuildOutputRoot(location.projectFilePath, path)));
+        PathUtils::packBuildOutputRoot(location.projectFilePath, path)),
+        PathUtils::isValidWaveformBuildOutputDir(waveformPath, location.projectFilePath) ? waveformPath : QString());
 }
 
 QString ProjectDataPolicy::normalizeRelativePath(const QString& path)

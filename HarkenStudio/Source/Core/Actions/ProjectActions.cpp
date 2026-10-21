@@ -2872,6 +2872,44 @@ void registerProjectActions(ActionManager& mgr,
 
     {
         ActionDef def;
+        def.id = "set_build_waveform_settings";
+        def.displayName = "Set Waveform Export Settings";
+        def.category = "project";
+        def.undoable = true;
+        def.paramSchema = QJsonObject{{"enabled", "bool"}, {"path", "string"}};
+        def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
+            if (!projectManager || !projectManager->isProjectOpen())
+                return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
+            const auto* project = projectManager->currentProject();
+            const QJsonValue enabled = args.value("enabled");
+            const QJsonValue path = args.value("path");
+            if (!enabled.isBool() || !path.isString()
+                || !PathUtils::isValidWaveformBuildOutputDir(path.toString(), project->projectPath))
+                return {false, {}, "INVALID_ARGS",
+                    "Waveform output must use a relative directory outside the project root and object directories."};
+            const bool nextEnabled = enabled.toBool();
+            const QString nextPath = PathUtils::normalizePackBuildOutputDir(path.toString());
+            const bool previousEnabled = project->buildExportWaveforms;
+            const QString previousPath = project->buildWaveformOutputDir;
+            ActionResult result;
+            result.success = true;
+            result.data = QJsonObject{{"enabled", nextEnabled}, {"path", nextPath}};
+            if (nextEnabled == previousEnabled && nextPath == previousPath) return result;
+            projectManager->setBuildWaveformSettingsInternal(nextEnabled, nextPath);
+            result.undoFn = [previousEnabled, previousPath]() {
+                ProjectManager::instance().setBuildWaveformSettingsInternal(previousEnabled, previousPath);
+            };
+            result.redoFn = [nextEnabled, nextPath]() {
+                ProjectManager::instance().setBuildWaveformSettingsInternal(nextEnabled, nextPath);
+            };
+            result.undoText = QStringLiteral("Set Waveform Export Settings");
+            return result;
+        };
+        mgr.registerAction(def);
+    }
+
+    {
+        ActionDef def;
         def.id = "set_action_pack_targeting";
         def.displayName = "Set Action Pack Targeting";
         def.category = "project";

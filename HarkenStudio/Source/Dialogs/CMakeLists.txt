@@ -30,8 +30,10 @@ add_library(harken_editor_dialogs STATIC
     Settings/Pages/LayoutPage.h
     Settings/Pages/AIAgentPage.cpp
     Settings/Pages/AIAgentPage.h
-    Settings/Pages/ProjectBuildPage.cpp
-    Settings/Pages/ProjectBuildPage.h
+    Settings/Pages/ProjectConfigPage.cpp
+    Settings/Pages/ProjectConfigPage.h
+    Settings/Pages/ProjectPublishPage.cpp
+    Settings/Pages/ProjectPublishPage.h
     Settings/ProjectPlatformDialog.cpp
     Settings/ProjectPlatformDialog.h
     StartupLoadingWindow.cpp

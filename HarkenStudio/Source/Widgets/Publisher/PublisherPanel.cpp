@@ -15,6 +15,7 @@
 #include "../../Core/ProjectManager.h"
 #include "../../Core/ProjectTypes.h"
 #include "../../Core/ThemeManager.h"
+#include "../../Core/ThemeAssetCatalog.h"
 #include "../../Core/ToastManager.h"
 #include "../Common/LayoutDebugTint.h"
 #include "../Common/ProportionalTreeWidget.h"
@@ -370,7 +371,7 @@ void PublisherPanel::setupUI()
     packTree_->setAccentedColumns({kColResult, kColCost});
     packTree_->setColumnSeparatorBefore(kColResult);
     packTree_->setRowProgressEndColumn(kColResult);
-    packTree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    packTree_->setSelectionMode(QAbstractItemView::NoSelection);
     packTree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     packTree_->setItemDelegate(new PackTreeDelegate(packTree_));
     packTree_->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -406,6 +407,26 @@ QWidget* PublisherPanel::createToolbar()
     row->setSizeConstraint(QLayout::SetNoConstraint);
     row->setContentsMargins(0, 0, 0, 0);
     row->setSpacing(8);
+
+    publishSettingsButton_ = new QToolButton(toolbar);
+    publishSettingsButton_->setObjectName("packPublishSettingsButton");
+    publishSettingsButton_->setToolTip(tr("Project Publish Settings"));
+    publishSettingsButton_->setAccessibleName(tr("Project Publish Settings"));
+    publishSettingsButton_->setAutoRaise(true);
+    publishSettingsButton_->setProperty("flatIconButton", true);
+    const auto updateSettingsIcon = [this] {
+        auto& theme = ThemeManager::instance();
+        publishSettingsButton_->setIcon(theme.resolveIcon(
+            QString::fromLatin1(ThemeAssetIds::Settings)).icon);
+        const int extent = theme.metrics().objectIconExtent;
+        publishSettingsButton_->setIconSize(QSize(extent, extent));
+    };
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, updateSettingsIcon);
+    updateSettingsIcon();
+    connect(publishSettingsButton_, &QToolButton::clicked,
+            this, &PublisherPanel::publishSettingsRequested);
+    row->addWidget(publishSettingsButton_);
 
     auto* platformLabel = new QLabel(tr("Export Platforms:"));
     platformLabel->setObjectName("packPlatformLabel");
@@ -676,7 +697,6 @@ void PublisherPanel::populateProjectPackTable()
 
     packTableDirty_ = false;
     QSet<QString> collapsedKeys;
-    QSet<QString> selectedKeys;
     for (QTreeWidgetItemIterator it(packTree_); *it; ++it) {
         const QString key = treeItemStateKey(*it);
         if (key.isEmpty())
@@ -684,8 +704,6 @@ void PublisherPanel::populateProjectPackTable()
         if (((*it)->childCount() > 0 || (*it)->data(0, TableGroupCollapsibleRole).toBool())
             && !(*it)->isExpanded())
             collapsedKeys.insert(key);
-        if ((*it)->isSelected())
-            selectedKeys.insert(key);
     }
 
     packTreeUpdating_ = true;
@@ -794,7 +812,7 @@ void PublisherPanel::populateProjectPackTable()
             item->setData(0, kObjectIdRole, unit.objectID);
             item->setData(0, kLanguageRole, language);
             packRows_.insert(qMakePair(QStringLiteral("a:") + objectIdString(unit.stableId), language), item);
-            Qt::ItemFlags flags = Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+            Qt::ItemFlags flags = Qt::ItemIsEnabled;
             if (matrixEditable) flags |= Qt::ItemIsUserCheckable;
             item->setFlags(flags);
             const auto included = [&](const QString& platform) {
@@ -844,8 +862,6 @@ void PublisherPanel::populateProjectPackTable()
             continue;
         if (collapsedKeys.contains(key))
             (*it)->setExpanded(false);
-        if (selectedKeys.contains(key))
-            (*it)->setSelected(true);
     }
 
     packTreeUpdating_ = false;
@@ -911,24 +927,13 @@ void PublisherPanel::requestExport(const QStringList& packPaths, bool includeUnc
                          forceReexport, selfCleaning);
 }
 
-QStringList PublisherPanel::selectedPackPaths() const
-{
-    QStringList out;
-    if (!packTree_)
-        return out;
-    for (QTreeWidgetItem* sel : packTree_->selectedItems()) {
-        if (nodeKind(sel) != NodeKind::Action) continue;
-        const QString path = PackBuildPlanning::packFileName(
-            sel->data(0, kLanguageRole).toString(), sel->text(kColName), {});
-        if (!out.contains(path)) out.append(path);
-    }
-    return out;
-}
-
 void PublisherPanel::updateExportButton()
 {
     if (!exportBtn_)
         return;
+    publishSettingsButton_->setEnabled(ProjectManager::instance().isProjectOpen()
+        && !PackGenerationRecordStore::instance().isExporting()
+        && !ProjectPlatformActivity::instance().isBusy());
     if (PackGenerationRecordStore::instance().isExporting()) {
         exportBtn_->setEnabled(true);
         exportBtn_->primaryButton()->setText(cancelRequested_ ? tr("Canceling...") : tr("Cancel export"));
@@ -966,7 +971,7 @@ void PublisherPanel::updateExportButton()
     exportBtn_->primaryButton()->setEnabled(!selectedPlatforms.isEmpty());
     exportAllAction_->setEnabled(enabled);
     exportAllAction_->setVisible(partial);
-    exportBtn_->dropdownButton()->setEnabled(enabled);
+    exportBtn_->dropdownButton()->setEnabled(enabled && partial);
 
     forceReexportBox_->setEnabled(enabled);
     selfCleaningBox_->setEnabled(enabled);
@@ -1076,17 +1081,13 @@ void PublisherPanel::onPackTreeContextMenu(const QPoint& pos)
 
     QMenu menu(this);
 
-    const QStringList units = kind == NodeKind::SystemPack
-        ? QStringList() : selectedPackPaths();
-    if (!units.isEmpty()) {
+    if (kind == NodeKind::Action) {
+        const QStringList units{PackBuildPlanning::packFileName(
+            item->data(0, kLanguageRole).toString(), item->text(kColName), {})};
         const bool enabled = !PackGenerationRecordStore::instance().isExporting()
             && !ProjectPlatformActivity::instance().isBusy();
-        const QString label = units.size() == 1 ? tr("Export")
-            : tr("Export Selected (%1)").arg(units.size());
-        menu.addAction(label, this, [this, units]() { requestExport(units); })->setEnabled(enabled);
-        const QString forceLabel = units.size() == 1 ? tr("Force Re-export")
-            : tr("Force Re-export Selected (%1)").arg(units.size());
-        menu.addAction(forceLabel, this, [this, units]() { requestExport(units, false, true); })->setEnabled(enabled);
+        menu.addAction(tr("Export"), this, [this, units]() { requestExport(units); })->setEnabled(enabled);
+        menu.addAction(tr("Force Re-export"), this, [this, units]() { requestExport(units, false, true); })->setEnabled(enabled);
     }
 
     const uint32_t objectID = item ? item->data(0, kObjectIdRole).toUInt() : 0u;

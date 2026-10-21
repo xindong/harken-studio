@@ -1,8 +1,6 @@
-#include "Dialogs/Settings/Pages/ProjectBuildPage.h"
+#include "Dialogs/Settings/Pages/ProjectConfigPage.h"
 
 #include "Core/ActionManager.h"
-#include "Core/AssetPipeline/AssetTypes.h"
-#include "Core/AssetPipeline/PathUtils.h"
 #include "Core/ContextInfo.h"
 #include "Core/ProjectLanguageSemantics.h"
 #include "Core/ProjectManager.h"
@@ -12,21 +10,16 @@
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
 #include <QTreeWidget>
-#include <QDir>
-#include <QFileDialog>
 #include <QFocusEvent>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonObject>
-#include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMouseEvent>
-#include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
 #include <QSet>
-#include <QSignalBlocker>
 #include <QStyle>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -86,13 +79,13 @@ protected:
 
 }
 
-ProjectBuildPage::ProjectBuildPage(QWidget* parent)
+ProjectConfigPage::ProjectConfigPage(QWidget* parent)
     : SettingsPage(parent)
 {
     auto* body = makePageBody();
 
     auto* platformsGroup = makeSection(tr("Target Platforms"));
-    ContextInfo::tag(platformsGroup, ContextTopic::forPanel(QStringLiteral("settings.build.platforms")));
+    ContextInfo::tag(platformsGroup, ContextTopic::forPanel(QStringLiteral("settings.config.platforms")));
     auto* platformsBox = new TableWidget(platformsGroup);
     platformList_ = platformsBox->createItemView(QStringLiteral("projectPlatformList"),
         {tr("Name"), tr("Base Platform")}, {600, 400});
@@ -105,7 +98,7 @@ ProjectBuildPage::ProjectBuildPage(QWidget* parent)
     platformsGroup->layout()->addWidget(platformsBox);
     connect(add, &QToolButton::clicked, this, [this]() { editPlatform(true); });
     connect(platformList_, &QTreeWidget::itemDoubleClicked, this, [this]() { editPlatform(false); });
-    connect(platformRemoveButton_, &QToolButton::clicked, this, &ProjectBuildPage::removePlatform);
+    connect(platformRemoveButton_, &QToolButton::clicked, this, &ProjectConfigPage::removePlatform);
     connect(platformList_, &QTreeWidget::itemSelectionChanged, this, [this]() {
         const bool selected = !platformList_->selectedItems().isEmpty();
         platformRemoveButton_->setEnabled(selected && draftPlatforms_.size() > 1);
@@ -113,7 +106,7 @@ ProjectBuildPage::ProjectBuildPage(QWidget* parent)
     body->addWidget(platformsGroup);
 
     auto* languagesGroup = makeSection(tr("Target Languages"));
-    ContextInfo::tag(languagesGroup, ContextTopic::forPanel(QStringLiteral("settings.build.languages")));
+    ContextInfo::tag(languagesGroup, ContextTopic::forPanel(QStringLiteral("settings.config.languages")));
     targetLanguagesBox_ = new TableWidget(languagesGroup);
     targetLanguagesBox_->setSelectionClearHandler([this] { selectTargetLanguageRow(-1); });
     targetLanguagesBox_->setRowSelectionHandler([this](QWidget* row) {
@@ -129,59 +122,27 @@ ProjectBuildPage::ProjectBuildPage(QWidget* parent)
     targetLanguageRemoveBtn_ = targetLanguagesFoot->removeButton();
     targetLanguageRemoveBtn_->setObjectName(QStringLiteral("targetLanguageRemoveButton"));
     connect(targetLanguageAddBtn_, &QToolButton::clicked,
-            this, &ProjectBuildPage::onAddTargetLanguageClicked);
+            this, &ProjectConfigPage::onAddTargetLanguageClicked);
     connect(targetLanguageRemoveBtn_, &QToolButton::clicked,
-            this, &ProjectBuildPage::onRemoveTargetLanguageClicked);
+            this, &ProjectConfigPage::onRemoveTargetLanguageClicked);
     languagesGroup->layout()->addWidget(targetLanguagesBox_);
 
     body->addWidget(languagesGroup);
 
-    auto* packGroup = makeSection(tr("Pack Build Output"));
-    ContextInfo::tag(packGroup, ContextTopic::forPanel(QStringLiteral("settings.build.output")));
-    auto* form = makeForm();
-    auto* dirLabel = new QLabel(tr("Relative Directory:"));
-
-    auto* rowWidget = new QWidget();
-    auto* row = new QHBoxLayout(rowWidget);
-    row->setContentsMargins(0, 0, 0, 0);
-    row->setSpacing(8);
-
-    packBuildOutputDirEdit_ = new QLineEdit();
-    packBuildOutputDirEdit_->setObjectName("packBuildOutputDirEdit");
-    packBuildOutputDirEdit_->setPlaceholderText(PathUtils::buildPacksDirName() + '/');
-    packBuildOutputDirEdit_->setValidator(new QRegularExpressionValidator(
-        QRegularExpression(QStringLiteral("[^*?<>|]*")), packBuildOutputDirEdit_));
-    packBuildOutputDirBrowseBtn_ = new QPushButton(tr("Browse..."));
-    packBuildOutputDirBrowseBtn_->setObjectName("packBuildOutputDirBrowseBtn");
-    row->addWidget(packBuildOutputDirEdit_, 1);
-    row->addWidget(packBuildOutputDirBrowseBtn_, 0);
-    form->addRow(dirLabel, rowWidget);
-    static_cast<QVBoxLayout*>(packGroup->layout())->addLayout(form);
-
-    body->addWidget(packGroup);
-
-    connect(packBuildOutputDirEdit_, &QLineEdit::textChanged, this, [this]() {
-        emit dirtyChanged();
-    });
-    connect(packBuildOutputDirEdit_, &QLineEdit::editingFinished,
-            this, &ProjectBuildPage::onPackBuildOutputDirEditingFinished);
-    connect(packBuildOutputDirBrowseBtn_, &QPushButton::clicked,
-            this, &ProjectBuildPage::onPackBuildOutputDirBrowseClicked);
-
     body->addStretch();
 }
 
-QString ProjectBuildPage::pageId() const
+QString ProjectConfigPage::pageId() const
 {
-    return QString::fromLatin1(kSettingsPageBuild);
+    return QString::fromLatin1(kSettingsPageConfig);
 }
 
-QString ProjectBuildPage::categoryLabel() const
+QString ProjectConfigPage::categoryLabel() const
 {
-    return tr("Build");
+    return tr("Config");
 }
 
-QJsonArray ProjectBuildPage::platformDraft() const
+QJsonArray ProjectConfigPage::platformDraft() const
 {
     auto rows = ProjectPlatformSemantics::platformsToJson(draftPlatforms_);
     for (int i = 0; i < rows.size(); ++i) {
@@ -193,7 +154,7 @@ QJsonArray ProjectBuildPage::platformDraft() const
     return rows;
 }
 
-void ProjectBuildPage::refreshPlatforms()
+void ProjectConfigPage::refreshPlatforms()
 {
     const auto* current = platformList_->currentItem();
     const bool selected = current && current->isSelected();
@@ -211,7 +172,7 @@ void ProjectBuildPage::refreshPlatforms()
     platformRemoveButton_->setEnabled(!platformList_->selectedItems().isEmpty() && draftPlatforms_.size() > 1);
 }
 
-void ProjectBuildPage::editPlatform(bool create)
+void ProjectConfigPage::editPlatform(bool create)
 {
     const int index = platformList_->indexOfTopLevelItem(platformList_->currentItem());
     if (!create && index < 0) return;
@@ -236,7 +197,7 @@ void ProjectBuildPage::editPlatform(bool create)
     emit dirtyChanged();
 }
 
-void ProjectBuildPage::removePlatform()
+void ProjectConfigPage::removePlatform()
 {
     const int index = platformList_->indexOfTopLevelItem(platformList_->currentItem());
     if (index < 0 || draftPlatforms_.size() <= 1) return;
@@ -248,7 +209,7 @@ void ProjectBuildPage::removePlatform()
     });
 }
 
-QStringList ProjectBuildPage::targetLanguages() const
+QStringList ProjectConfigPage::targetLanguages() const
 {
     QStringList languages;
     for (QLineEdit* edit : targetLanguageEdits_)
@@ -256,14 +217,13 @@ QStringList ProjectBuildPage::targetLanguages() const
     return languages;
 }
 
-void ProjectBuildPage::rememberBaseline()
+void ProjectConfigPage::rememberBaseline()
 {
     baselinePlatforms_ = platformDraft();
     baselineProjectLanguages_ = targetLanguages();
-    baselinePackBuildOutputDir_ = packBuildOutputDirEdit_->text();
 }
 
-void ProjectBuildPage::clearTargetLanguageRows()
+void ProjectConfigPage::clearTargetLanguageRows()
 {
     selectedTargetLanguageRow_ = -1;
     while (!targetLanguageRows_.isEmpty())
@@ -276,7 +236,7 @@ void ProjectBuildPage::clearTargetLanguageRows()
     updateTargetLanguageRowState();
 }
 
-void ProjectBuildPage::appendTargetLanguageRow(const QString& value)
+void ProjectConfigPage::appendTargetLanguageRow(const QString& value)
 {
     auto* row = new ClickableWidget(targetLanguagesBox_->rowsWidget());
     row->setAttribute(Qt::WA_StyledBackground, true);
@@ -314,7 +274,7 @@ void ProjectBuildPage::appendTargetLanguageRow(const QString& value)
     updateTargetLanguageRowState();
 }
 
-void ProjectBuildPage::setTargetLanguages(const QStringList& value)
+void ProjectConfigPage::setTargetLanguages(const QStringList& value)
 {
     targetLanguagesBox_->clearSelection();
     const bool previous = suppressTargetLanguageDirty_;
@@ -326,7 +286,7 @@ void ProjectBuildPage::setTargetLanguages(const QStringList& value)
     suppressTargetLanguageDirty_ = previous;
 }
 
-void ProjectBuildPage::selectTargetLanguageRow(int index)
+void ProjectConfigPage::selectTargetLanguageRow(int index)
 {
     if (index < 0 || index >= targetLanguageRows_.size())
         selectedTargetLanguageRow_ = -1;
@@ -335,7 +295,7 @@ void ProjectBuildPage::selectTargetLanguageRow(int index)
     updateTargetLanguageRowState();
 }
 
-void ProjectBuildPage::updateTargetLanguageRowState()
+void ProjectConfigPage::updateTargetLanguageRowState()
 {
     for (int i = 0; i < targetLanguageRows_.size(); ++i)
     {
@@ -354,7 +314,7 @@ void ProjectBuildPage::updateTargetLanguageRowState()
         targetLanguageRemoveBtn_->setEnabled(selectedTargetLanguageRow_ >= 0 && targetLanguageRows_.size() > 1);
 }
 
-void ProjectBuildPage::onAddTargetLanguageClicked()
+void ProjectConfigPage::onAddTargetLanguageClicked()
 {
     appendTargetLanguageRow(QString());
     selectTargetLanguageRow(targetLanguageRows_.size() - 1);
@@ -364,7 +324,7 @@ void ProjectBuildPage::onAddTargetLanguageClicked()
         emit dirtyChanged();
 }
 
-void ProjectBuildPage::onRemoveTargetLanguageClicked()
+void ProjectConfigPage::onRemoveTargetLanguageClicked()
 {
     if (selectedTargetLanguageRow_ < 0 || selectedTargetLanguageRow_ >= targetLanguageRows_.size()
         || targetLanguageRows_.size() <= 1)
@@ -385,7 +345,7 @@ void ProjectBuildPage::onRemoveTargetLanguageClicked()
     });
 }
 
-void ProjectBuildPage::load()
+void ProjectConfigPage::load()
 {
     auto& pm = ProjectManager::instance();
     if (projectLease_.lock() != pm.currentProjectLease())
@@ -393,26 +353,34 @@ void ProjectBuildPage::load()
     draftPlatforms_.clear();
     projectLease_ = pm.currentProjectLease();
     QStringList projectLanguages;
-    QString packVal;
-    if (pm.isProjectOpen())
-    {
+    if (pm.isProjectOpen()) {
         draftPlatforms_ = pm.currentProject()->platforms;
         projectLanguages = ProjectLanguageSemantics::buildLanguages(*pm.currentProject());
-        packVal = pm.packBuildOutputDir();
     }
-
     refreshPlatforms();
-
-    {
-        const QSignalBlocker blocker(packBuildOutputDirEdit_);
-        packBuildOutputDirEdit_->setText(packVal);
-    }
-
     setTargetLanguages(projectLanguages);
     rememberBaseline();
 }
 
-bool ProjectBuildPage::applyTargetLanguages()
+bool ProjectConfigPage::hasExternalChanges() const
+{
+    const auto project = projectLease_.lock();
+    return !project || ProjectManager::instance().currentProject() != project.get()
+        || ProjectPlatformSemantics::platformsToJson(project->platforms) != baselinePlatforms_
+        || ProjectLanguageSemantics::buildLanguages(*project) != baselineProjectLanguages_;
+}
+
+bool ProjectConfigPage::validate()
+{
+    const auto languages = ProjectLanguageSemantics::normalize(targetLanguages());
+    if (!languages.ok()) {
+        QMessageBox::warning(this, tr("Target Languages"), languages.error);
+        return false;
+    }
+    return true;
+}
+
+bool ProjectConfigPage::applyTargetLanguages()
 {
     auto& pm = ProjectManager::instance();
     if (!pm.isProjectOpen())
@@ -455,7 +423,7 @@ bool ProjectBuildPage::applyTargetLanguages()
     return true;
 }
 
-bool ProjectBuildPage::applyTargetPlatforms()
+bool ProjectConfigPage::applyTargetPlatforms()
 {
     if (platformDraft() == baselinePlatforms_) return true;
     const auto result = ActionManager::instance().execute(QStringLiteral("apply_project_platforms"),
@@ -470,102 +438,18 @@ bool ProjectBuildPage::applyTargetPlatforms()
     return true;
 }
 
-bool ProjectBuildPage::applyPackBuildOutputDir()
+bool ProjectConfigPage::apply()
 {
-    auto& pm = ProjectManager::instance();
-    if (!pm.isProjectOpen())
-        return true;
-
-    const auto result = ActionManager::instance().execute(
-        QStringLiteral("set_pack_build_output_dir"),
-        QJsonObject{{QStringLiteral("path"), packBuildOutputDirEdit_->text()}},
-        ActionSource::GUI);
-    if (!result.success)
-    {
-        QMessageBox::warning(this, tr("Pack Build Output"), result.errorMessage);
-        return false;
-    }
-    packBuildOutputDirEdit_->setText(pm.packBuildOutputDir());
-    return true;
-}
-
-bool ProjectBuildPage::apply()
-{
-    const auto project = projectLease_.lock();
-    if (!project || ProjectManager::instance().currentProject() != project.get()
-        || ProjectPlatformSemantics::platformsToJson(project->platforms) != baselinePlatforms_) {
-        QMessageBox conflict(QMessageBox::Warning, tr("Build Settings Changed"),
-            tr("The project or its platforms changed. Reload build settings and discard your unapplied changes?"),
-            QMessageBox::Cancel, this);
-        auto* reload = conflict.addButton(tr("Reload"), QMessageBox::AcceptRole);
-        conflict.setDefaultButton(QMessageBox::Cancel);
-        conflict.exec();
-        if (conflict.clickedButton() == reload) {
-            load();
-            emit dirtyChanged();
-        }
-        return false;
-    }
-    const auto languages = ProjectLanguageSemantics::normalize(targetLanguages());
-    if (!languages.ok() || !PathUtils::isValidPackBuildOutputDir(packBuildOutputDirEdit_->text(), project->projectPath)) {
-        QMessageBox::warning(this, tr("Build Settings"), languages.ok()
-            ? tr("Pack output must use a relative directory path. ")
-                + PathUtils::packBuildOutputLocationError() : languages.error);
-        return false;
-    }
-    if (!applyTargetPlatforms())
-        return false;
-    if (!applyTargetLanguages())
-        return false;
-    if (!applyPackBuildOutputDir())
-        return false;
+    if (!applyTargetPlatforms() || !applyTargetLanguages()) return false;
     rememberBaseline();
     emit dirtyChanged();
     return true;
 }
 
-bool ProjectBuildPage::isDirty() const
+bool ProjectConfigPage::isDirty() const
 {
     return platformDraft() != baselinePlatforms_
-        || targetLanguages() != baselineProjectLanguages_
-        || packBuildOutputDirEdit_->text() != baselinePackBuildOutputDir_;
-}
-
-void ProjectBuildPage::onPackBuildOutputDirEditingFinished()
-{
-    const QString normalized = PathUtils::normalizePackBuildOutputDir(packBuildOutputDirEdit_->text());
-    if (normalized != packBuildOutputDirEdit_->text())
-        packBuildOutputDirEdit_->setText(normalized);
-}
-
-void ProjectBuildPage::onPackBuildOutputDirBrowseClicked()
-{
-    auto& pm = ProjectManager::instance();
-    if (!pm.isProjectOpen())
-        return;
-    const QString projectRoot = QFileInfo(pm.currentProject()->projectPath).absolutePath();
-    const QString relative = PathUtils::normalizePackBuildOutputDir(packBuildOutputDirEdit_->text());
-    const QString startDir = PathUtils::isValidPackBuildOutputDir(relative, pm.currentProject()->projectPath)
-        ? PathUtils::toAbsolutePath(relative.isEmpty() ? PathUtils::buildPacksDirName() : relative,
-                                    projectRoot)
-        : projectRoot;
-
-    const QString dir = QFileDialog::getExistingDirectory(
-        this, tr("Select Pack Build Output Directory"), startDir);
-    if (dir.isEmpty())
-        return;
-
-    const QString rel = QDir(projectRoot).relativeFilePath(dir);
-
-    if (!PathUtils::isValidPackBuildOutputDir(rel, pm.currentProject()->projectPath))
-    {
-        QMessageBox::warning(this, tr("Pack Build Output"),
-                             tr("Pack output must use a relative directory path. ")
-                                 + PathUtils::packBuildOutputLocationError());
-        return;
-    }
-
-    packBuildOutputDirEdit_->setText(PathUtils::normalizePackBuildOutputDir(rel));
+        || targetLanguages() != baselineProjectLanguages_;
 }
 
 }

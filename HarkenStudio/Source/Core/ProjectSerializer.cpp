@@ -1094,6 +1094,11 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
         emit errorOccurred(lastError_);
         return false;
     }
+    if (!PathUtils::isValidWaveformBuildOutputDir(project.buildWaveformOutputDir, filePath)) {
+        lastError_ = tr("Waveform output must use a relative directory outside the project root and object directories.");
+        emit errorOccurred(lastError_);
+        return false;
+    }
     if (!validatePlaybackReferences(project, &lastError_)) {
         emit errorOccurred(lastError_);
         return false;
@@ -1206,6 +1211,10 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
     if (!project.packBuildOutputDir.isEmpty()) {
         root["packBuildOutputDir"] = project.packBuildOutputDir;
     }
+    if (project.buildExportWaveforms)
+        root["buildExportWaveforms"] = true;
+    if (!project.buildWaveformOutputDir.isEmpty())
+        root["buildWaveformOutputDir"] = project.buildWaveformOutputDir;
 
     if (!project.actionPublishedNameHistory.empty()) {
         QJsonArray history;
@@ -1511,6 +1520,14 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     }
     if (!PathUtils::isValidPackBuildOutputDir(project.packBuildOutputDir, project.projectPath))
         warnings_.append(PathUtils::packBuildOutputLocationError());
+
+    project.buildExportWaveforms = root["buildExportWaveforms"].toBool(false);
+    project.buildWaveformOutputDir = PathUtils::normalizePackBuildOutputDir(
+        root["buildWaveformOutputDir"].toString());
+    if (!PathUtils::isValidWaveformBuildOutputDir(project.buildWaveformOutputDir, project.projectPath)) {
+        lastError_ = tr("Waveform output must use a relative directory outside the project root and object directories.");
+        return false;
+    }
 
     project.deploymentProfiles.clear();
     if (root.contains("deploymentProfiles")) {

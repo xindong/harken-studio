@@ -6,13 +6,16 @@
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QDir>
 #include <QEventLoop>
 #include <QFontDatabase>
 #include <QHeaderView>
 #include <QImage>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QScopeGuard>
+#include <QStyleOptionButton>
 #include <QTimer>
 
 namespace {
@@ -336,6 +339,71 @@ TEST_F(ProportionalTreeWidgetTest, RowProgressPreservesGroupsAndTrailingCellsAcr
             table.viewport()->update();
             QCoreApplication::processEvents();
             EXPECT_EQ(table.viewport()->grab().toImage(), baseline);
+        }
+    }
+}
+
+TEST_F(ProportionalTreeWidgetTest, RowAndGroupCheckboxesMatchSharedSkinAcrossStates)
+{
+    VNX::ProportionalTreeWidget table({1, 1});
+    auto* group = table.createGroup("Group", {true, true});
+    auto* child = new QTreeWidgetItem(group, {"Item", "Value"});
+    table.resize(300, 180);
+    table.show();
+    QCheckBox reference;
+    reference.ensurePolished();
+    const QSize indicatorSize(reference.style()->pixelMetric(QStyle::PM_IndicatorWidth, nullptr, &reference),
+                              reference.style()->pixelMetric(QStyle::PM_IndicatorHeight, nullptr, &reference));
+    for (Qt::CheckState state : {Qt::Unchecked, Qt::PartiallyChecked, Qt::Checked}) {
+        for (bool enabled : {true, false}) {
+            table.setGroupCheckState(group, state, enabled);
+            child->setCheckState(0, state);
+            child->setFlags(Qt::ItemIsUserCheckable | (enabled ? Qt::ItemIsEnabled : Qt::NoItemFlags));
+            QCoreApplication::processEvents();
+            for (auto* row : {group, child}) {
+                const auto index = table.indexFromItem(row);
+                QStyleOptionViewItem option;
+                option.initFrom(&table);
+                option.widget = &table;
+                option.rect = table.visualRect(index);
+                option.features = QStyleOptionViewItem::HasCheckIndicator | QStyleOptionViewItem::HasDisplay;
+                option.checkState = state;
+                option.text = row->text(0);
+                const QRect check = row == group
+                    ? VNX::TableGroupHeader::checkBoxRect(option.rect, &VNX::ThemeManager::instance(), &table)
+                    : table.style()->subElementRect(QStyle::SE_ItemViewItemCheckIndicator, &option, &table);
+                ASSERT_EQ(check.size(), indicatorSize);
+                const QPoint label = option.rect.center();
+                const QPoint trailing(table.viewport()->width() - 10, check.center().y());
+                for (const QPoint position : {table.viewport()->rect().bottomRight(), label, check.center(), label,
+                                               check.center(), trailing, check.center(), QPoint(-1, -1)}) {
+                    const bool hovered = check.contains(position);
+                    SCOPED_TRACE(::testing::Message() << "group=" << (row == group) << " state=" << state
+                        << " enabled=" << enabled << " hovered=" << hovered);
+                    if (table.viewport()->rect().contains(position)) {
+                        QMouseEvent move(QEvent::MouseMove, position, table.viewport()->mapToGlobal(position),
+                                         Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+                        QApplication::sendEvent(table.viewport(), &move);
+                    } else {
+                        QEvent leave(QEvent::Leave);
+                        QApplication::sendEvent(table.viewport(), &leave);
+                    }
+                    QCoreApplication::processEvents();
+                    QImage expected(indicatorSize, QImage::Format_ARGB32_Premultiplied);
+                    expected.fill(Qt::transparent);
+                    QStyleOptionButton button;
+                    button.initFrom(&reference);
+                    button.rect = expected.rect();
+                    button.state = state == Qt::Checked ? QStyle::State_On
+                        : state == Qt::PartiallyChecked ? QStyle::State_NoChange : QStyle::State_Off;
+                    if (enabled) button.state |= QStyle::State_Enabled;
+                    if (hovered) button.state |= QStyle::State_MouseOver;
+                    QPainter painter(&expected);
+                    reference.style()->drawPrimitive(QStyle::PE_IndicatorCheckBox, &button, &painter, &reference);
+                    painter.end();
+                    EXPECT_EQ(table.viewport()->grab(check).toImage().convertToFormat(expected.format()), expected);
+                }
+            }
         }
     }
 }

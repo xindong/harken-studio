@@ -12,6 +12,7 @@
         <file>Resources/help/help.zh-CN.json</file>
     </qresource>
     <qresource prefix="/icons">
+        <file alias="settings.svg">Resources/icons/settings.svg</file>
         <file alias="mouse-pointer.svg">Resources/icons/mouse-pointer.svg</file>
         <file alias="hand.svg">Resources/icons/hand.svg</file>
         <file alias="magnet.svg">Resources/icons/magnet.svg</file>

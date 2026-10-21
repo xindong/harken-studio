@@ -83,6 +83,10 @@ public:
     static QString packBuildOutputLocationError();
     static QString packBuildOutputRoot(const QString& projectFilePath,
                                        const QString& relativeDir);
+    static QString waveformBuildOutputRoot(const QString& projectFilePath,
+                                           const QString& relativeDir);
+    static bool isValidWaveformBuildOutputDir(const QString& path,
+                                              const QString& projectFilePath = {});
 };
 
 }

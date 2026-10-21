@@ -253,21 +253,29 @@
       "title": "Tool Scope",
       "body": "选择用于查看、编辑、导出或实时测试的工具。Effective tools 显示当前工具范围与权限模式共同允许的工具数量。"
     },
-    "settings.build": {
-      "title": "Build",
-      "body": "设置工程的目标平台、音频语言和数据包输出目录。"
+    "settings.config": {
+      "title": "Config",
+      "body": "设置工程的目标平台和音频语言。"
     },
-    "settings.build.platforms": {
+    "settings.config.platforms": {
       "title": "Target Platforms",
       "body": "添加平台，或双击平台编辑名称、基础平台和构建设置。必须保留至少一个平台。"
     },
-    "settings.build.languages": {
+    "settings.config.languages": {
       "title": "Target Languages",
       "body": "定义启用 Language 的 Sound 可用的音频语言。名称仅使用英文字母、数字和下划线。"
     },
-    "settings.build.output": {
+    "settings.publish": {
+      "title": "Publish",
+      "body": "设置数据包输出目录及可选的波形导出。"
+    },
+    "settings.publish.output": {
       "title": "Pack Build Output",
       "body": "填写相对于工程的输出路径，留空使用 BuildPacks。不能使用工程根目录或对象目录。"
+    },
+    "settings.publish.waveforms": {
+      "title": "Waveform Export",
+      "body": "随数据包导出源音频的波形预览。填写相对于工程的输出路径，留空使用 BuildPacks/Waveforms。"
     },
     "Blueprint": {
       "title": "Blueprint",

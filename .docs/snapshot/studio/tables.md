@@ -16,6 +16,8 @@
 
 业务声明能力，不修改表格内部 layout、滚动条、原生表头的外观，也不查找 ObjectRef 内部标签调整其颜色、尺寸或文本省略。控件 objectName 可用于定位和测试，不应产生业务专用表格皮肤。
 
+表格只管理行背景、选择、边框与布局，不强制覆写内部控件的皮肤或交互状态。勾选框与 ObjectRef 等字段沿用各自的公共控件样式；普通行与分组勾选框仅在指针进入勾选框自身区域时悬停高亮，同一行内移入、移出均即时刷新，不继承整行悬停。悬停、禁用和三态状态由公共皮肤统一绘制。
+
 ## 分类及能力
 
 configTable 编辑当前字段或表单中的配置条目集合。displayTable 枚举已有实体、资源、依赖、查询结果或运行数据，也可以编辑、删除或保存这些实体。是否为空、是否可编辑、是否落盘或是否被动刷新，均不能单独判定类别。
@@ -89,8 +91,8 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 | C07 | config | Sound、Container、Layer、Track、Piece、Bus / Sends | ListFieldDrawer |
 | C08 | config | External Editor / Binding | BindingFieldEditor |
 | C09 | config | Transition Editor / Rules | TransitionEditorWidget |
-| C10 | config | Project Settings / Target Platforms | ProjectBuildPage |
-| C11 | config | Project Settings / Target Languages | ProjectBuildPage |
+| C10 | config | Project Settings / Config / Target Platforms | ProjectConfigPage |
+| C11 | config | Project Settings / Config / Target Languages | ProjectConfigPage |
 | C12 | config | Project Platform / Resample Policies | ProjectPlatformDialog |
 | D01 | display | Bus Inspector / Inputs | ListFieldDrawer |
 | D02 | display | Bus Inspector / Receives | ListFieldDrawer |
@@ -117,7 +119,7 @@ Pack 表格的产物信息跟随主 toolbar 的当前平台。平台归属使用
 
 Export 左侧提供使用公共皮肤的 Force Re-export 和 Self-cleaning 勾选框，Force Re-export 默认关闭，Self-cleaning 默认开启，仅作用于 Export 按钮（含 Export All）。底栏始终保持单行，不约束面板的最小宽度，空间不足时优先压缩平台选择框；未选择任何平台时 Export 主按钮禁用。默认验证已有包并比较内容，未变化的包跳过生成且保留文件时间戳；缺失、损坏或内容变化时重新生成。Force Re-export 强制重新生成本次范围内的包。正常导出按当前选择重建平台与语言清单、Action 发布目录、波形附属数据及平台索引，总索引仅包含本次选择的平台。导出目标目录由导出器整体管理：未勾选 Self-cleaning 时保留退出清单的文件；勾选时，在所选平台全部导出成功后扫描整个目标目录，仅保留本次有效产物，删除其他文件和空目录，包括取消、删除或改名的平台目录、任意后缀文件及 Unity .meta。清理不依赖旧清单或历史导出记录；工程 .cache/pack-inputs 仅按包内容哈希缓存构建输入指纹，可删除重建，不参与清理判断。平台发布与根目录收尾清理均通过发布事务提交并支持失败恢复。
 
-右键提供 Export / Force Re-export，多选时作用于所选行。右键忽略底部两个勾选框且始终不清理旧包，只更新所选包及清单中的对应记录，保留其他已发布包、Init 及其记录；首次输出尚无 Init 时创建 Init。依赖内容只作为编译上下文，不自动导出未选包。单包导出用于快速查看变化，不检查或提示新旧包之间的共享内容兼容性；无法为混合状态生成匹配的波形伴随数据时，不输出该伴随文件。投入游戏前使用常规 Export 刷新整套状态。
+右键提供 Export / Force Re-export，作用于右键点击的 Action 包。Publisher 不提供行选择，常规批量导出范围由勾选框决定。右键忽略底部两个勾选框且始终不清理旧包，只更新当前包及清单中的对应记录，保留其他已发布包、Init 及其记录；首次输出尚无 Init 时创建 Init。依赖内容只作为编译上下文，不自动导出未选包。单包导出用于快速查看变化，不检查或提示新旧包之间的共享内容兼容性；无法为混合状态生成匹配的波形伴随数据时，不输出该伴随文件。投入游戏前使用常规 Export 刷新整套状态。
 
 Init 不包含 Action 发布目录，各语言清单共用平台根目录中的 Init。SDK 从所选清单绑定独立 Action 目录，原生引擎继续校验项目、Init 版本、Action 归属和依赖；常规导出旧发布时移除 Init 中的旧目录，统一语言 Init 引用。
 
@@ -275,9 +277,9 @@ auto* view = table->createCustomView(QStringLiteral("Packs"),
 
 公共分组不增加子条目的视觉缩进：Init、General 和语言分区中的直接条目，以及 Shortcuts 分类下的命令，仍从对应列的正常留白起排。真正的业务父子层级保留内容缩进，绘制、编辑器和点击命中使用同一内容区域；分隔线和选择背景不随内容缩进。未创建公共分组的普通树继续使用原生层级布局。
 
-Publisher 的 General 和语言分区使用实际父子关系，并按语言 ID 恢复折叠状态；Action 行选择同时包含 Action ID 和语言。Init 独立显示且始终包含在发布中，未变化时可复用；各分区同时启用勾选和折叠，聚合当前编辑平台上的可操作包状态。批量操作包含搜索过滤隐藏的包，沿用平台 targeting 命令写入本地缓存，不进入工程撤销栈；不改变导出平台选择。没有可操作包或编辑平台时，勾选框禁用，折叠仍可使用。
+Publisher 的 General 和语言分区使用实际父子关系，并按语言 ID 恢复折叠状态。Init 独立显示且始终包含在发布中，未变化时可复用；各分区同时启用勾选和折叠，聚合当前编辑平台上的可操作包状态。批量操作包含搜索过滤隐藏的包，沿用平台 targeting 命令写入本地缓存，不进入工程撤销栈；不改变导出平台选择。没有可操作包或编辑平台时，勾选框禁用，折叠仍可使用。
 
-Publisher 数据归属：Name 和语言分区由当前工程 Action 及其语言依赖派生。勾选与 Export Platforms 存于 `.cache/pack-export-selection.json`，Built、Size、Modified、File、Version 存于 `.cache/pack-artifacts.json`；产物缓存由成功发布更新，面板刷新不读取产物或 manifest。Built 表示最近成功发布的快照，外部删除或替换产物不会自动同步；Self Cleaning 的已知删除会同步清缓存。CRC32 列已移除。Result 与 Cost 共用会话内结果存储，GUI/IPC 导出按稳定身份更新，工程关闭后清空，不写入缓存或工程文件。两列按 Result、Cost 顺序固定在最右侧，Result 左侧以公共表格竖线分隔表头、数据行和空白区域，遇到整行分组时断开；两列通过公共列强调样式使用略有区别的表头颜色和整列背景（包括表体空白区域），选中态保持整行一致；其他列可在前方移动，所有列仍可调整宽度，开发者列显隐不改变末尾顺序。Cost 为每包资源准备与写包耗时，不包含共享编译和发布阶段。清缓存后默认全选，产物列留空；Build 配置、平台与语言定义仍是工程数据。隐藏面板延后刷新，可见时合并更新，并用共享语言投影代替完整构建计划。
+Publisher 数据归属：Name 和语言分区由当前工程 Action 及其语言依赖派生。勾选与 Export Platforms 存于 `.cache/pack-export-selection.json`，Built、Size、Modified、File、Version 存于 `.cache/pack-artifacts.json`；产物缓存由成功发布更新，面板刷新不读取产物或 manifest。Built 表示最近成功发布的快照，外部删除或替换产物不会自动同步；Self Cleaning 的已知删除会同步清缓存。CRC32 列已移除。Result 与 Cost 共用会话内结果存储，GUI/IPC 导出按稳定身份更新，工程关闭后清空，不写入缓存或工程文件。两列按 Result、Cost 顺序固定在最右侧，Result 左侧以公共表格竖线分隔表头、数据行和空白区域，遇到整行分组时断开；两列通过公共列强调样式使用略有区别的表头颜色和整列背景（包括表体空白区域）；其他列可在前方移动，所有列仍可调整宽度，开发者列显隐不改变末尾顺序。Cost 为每包资源准备与写包耗时，不包含共享编译和发布阶段。清缓存后默认全选，产物列留空；Build 配置、平台与语言定义仍是工程数据。隐藏面板延后刷新，可见时合并更新，并用共享语言投影代替完整构建计划。
 
 Publisher 的 Init 与 Action 行通过公共 `TableRowProgressRole` / `TableRowProgressStateRole` 和 `ProportionalTreeWidget::setRowProgressEndColumn` 绘制连续背景进度，范围从行左边到 Result 左侧，适应前方列换位、调宽及开发者列显隐；分组不填充，Result/Cost 保持独立区域。进度与结果遵循主 toolbar 的 primary 平台、语言和稳定 unitKey，不聚合导出平台。进度仅在当前工程会话内保存，关闭工程或重启即清空；本轮参与打包的行从零开始并清除旧 Result/Cost，未参与的行保留。准备、编译、写入、发布按阶段推进，仅发布成功到 100%；失败及取消冻结当前位置。GUI 与 IPC 共用会话任务身份隔离迟到事件，进度通知仅更新对应行，不重建整表。面板导出在后台执行，取消入口位于原 Export 主按钮，不再显示独立进度弹窗。
 
