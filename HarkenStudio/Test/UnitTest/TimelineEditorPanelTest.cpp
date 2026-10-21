@@ -1,5 +1,6 @@
 #include "Widgets/Timeline/TimelineEditorPanel.h"
 #include "Widgets/Timeline/TimelineCanvas.h"
+#include "Widgets/Timeline/TimelineClipCanvas.h"
 #include "Widgets/Timeline/TimelineHeaderColumn.h"
 #include "Widgets/Timeline/TimelineRuler.h"
 #include "Widgets/Common/TableWidget.h"
@@ -31,11 +32,13 @@
 #include "UndoCommands.h"
 #include "Core/MemorySettingsStorage.h"
 #include "Core/QtControlSkin.h"
+#include "Core/ShortcutManager.h"
 #include "Core/ThemeManager.h"
 
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QClipboard>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QDir>
@@ -60,12 +63,14 @@
 #include <QRegularExpression>
 #include <QScrollBar>
 #include <QScrollArea>
+#include <QScopeGuard>
 #include <QSet>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
+#include <QVBoxLayout>
 #include <QWheelEvent>
 
 #include <limits>
@@ -1090,6 +1095,88 @@ TEST_F(TimelineEditorPanelTest, MarkerCrudEnforcesKindsAndEveryEditRoundtrips)
     VNX::UndoRedoManager::instance().undoStack()->redo();
     EXPECT_EQ(panel.markerCount(), 2);
 
+}
+
+TEST_F(TimelineEditorPanelTest, MarkerRenameKeepsMenuEditsUntilCommitOrCancel)
+{
+    VNX::TimelineEditorPanel panel;
+    panel.bindItem(piece_);
+    ASSERT_TRUE(panel.addMarker(VNX::MarkerKind::Custom, 0, QStringLiteral("Hit")));
+    QWidget window;
+    auto* layout = new QVBoxLayout(&window);
+    VNX::TimelineMarkerRuler ruler(&panel);
+    ruler.setMinimumSize(800, 30);
+    QLineEdit nextField;
+    layout->addWidget(&ruler);
+    layout->addWidget(&nextField);
+    QMenu menu(&window);
+    auto& shortcuts = VNX::ShortcutManager::instance();
+    QAction* copy = shortcuts.createMenuAction(VNX::Shortcuts::Copy, &menu);
+    QAction* cut = shortcuts.createMenuAction(VNX::Shortcuts::Cut, &menu);
+    QAction* paste = shortcuts.createMenuAction(VNX::Shortcuts::Paste, &menu);
+    const QString previousClipboard = QApplication::clipboard()->text();
+    auto restoreClipboard = qScopeGuard([&]() {
+        QApplication::clipboard()->setText(previousClipboard);
+    });
+    window.show();
+    window.activateWindow();
+    drainEvents();
+    auto* history = VNX::UndoRedoManager::instance().undoStack();
+
+    for (Qt::Key completion : {Qt::Key_Return, Qt::Key_Escape, Qt::Key_Tab}) {
+        SCOPED_TRACE(static_cast<int>(completion));
+        history->clear();
+        const QString original = panel.markerName(0);
+        const QString renamed = original + QStringLiteral(" edited");
+        const QPointF point(panel.pixelAtCoordinate(0, panel.markerDisplayPosition(0))
+                                - panel.horizontalScroll(), ruler.height() / 2.0);
+        QMouseEvent doubleClick(QEvent::MouseButtonDblClick, point, ruler.mapToGlobal(point),
+                                Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&ruler, &doubleClick);
+        auto* editor = ruler.findChild<QLineEdit*>();
+        ASSERT_NE(editor, nullptr);
+        ASSERT_TRUE(editor->isVisible());
+        ASSERT_EQ(QApplication::focusWidget(), editor);
+        editor->setText(renamed);
+        editor->selectAll();
+
+        for (QAction* action : {copy, cut, paste}) {
+            menu.popup(window.mapToGlobal(QPoint(0, window.height())));
+            drainEvents();
+            ASSERT_TRUE(menu.isVisible());
+            ASSERT_TRUE(editor->isVisible());
+            ASSERT_TRUE(action->isEnabled());
+            menu.setActiveAction(action);
+            QKeyEvent choose(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+            QApplication::sendEvent(&menu, &choose);
+            drainEvents();
+            EXPECT_FALSE(menu.isVisible());
+            EXPECT_TRUE(editor->isVisible());
+            EXPECT_EQ(editor->text(), action == cut ? QString() : renamed);
+            EXPECT_EQ(QApplication::clipboard()->text(), renamed);
+            EXPECT_EQ(panel.markerName(0), original);
+            EXPECT_EQ(history->count(), 0);
+        }
+
+        if (completion == Qt::Key_Tab) {
+            nextField.setFocus(Qt::TabFocusReason);
+        } else {
+            QKeyEvent finish(QEvent::KeyPress, completion, Qt::NoModifier);
+            QApplication::sendEvent(editor, &finish);
+        }
+        EXPECT_FALSE(editor->isVisible());
+        if (completion == Qt::Key_Escape) {
+            EXPECT_EQ(panel.markerName(0), original);
+            EXPECT_EQ(history->count(), 0);
+        } else {
+            EXPECT_EQ(panel.markerName(0), renamed);
+            ASSERT_EQ(history->count(), 1);
+            history->undo();
+            EXPECT_EQ(panel.markerName(0), original);
+            history->redo();
+            EXPECT_EQ(panel.markerName(0), renamed);
+        }
+    }
 }
 
 TEST_F(TimelineEditorPanelTest, RulerGestureMovesCursorWithoutEditingHiddenMarker)

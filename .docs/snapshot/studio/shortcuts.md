@@ -2,7 +2,7 @@
 
 最近核对：2026-09-10。源码基线：`main` / `66fe38d4f763b2816e7fb32b1e95e7d171d82498`。
 
-Edit 菜单补充核对：2026-10-21，当前工作区。
+Edit 菜单补充核对：2026-10-22，当前工作区。
 
 本篇记录当前快捷键的注册、绑定、设置与验证边界，供后续修改时持续核对。以当前源码为准，行为变化时直接更新对应表项。对象树菜单与快捷键的选区规则见[对象右键菜单快照](object-context-menus.md)。
 
@@ -127,5 +127,5 @@ Edit 菜单补充核对：2026-10-21，当前工作区。
 | 控件 / 场景 | 按键 | 当前行为 | 定位 |
 |---|---|---|---|
 | TimelineCanvas 有活动手势 | `Esc` | `cancelGesture()`，取消拖动、框选或放置预览 | `TimelineCanvas.cpp` / `keyPressEvent()` |
-| Timeline marker 名称编辑框 | Return、`Esc` | `returnPressed` 提交重命名；事件过滤器处理 Esc 取消；失焦也提交 | `TimelineClipCanvas.cpp` / `commitRename()`、`cancelRename()`、`eventFilter()` |
+| Timeline marker 名称编辑框（组件未接入当前主面板） | Return、`Esc` | `returnPressed` 提交重命名；事件过滤器处理 Esc 取消；普通失焦提交，`PopupFocusReason` 保持编辑以支持菜单中的文本操作 | `TimelineClipCanvas.cpp` / `commitRename()`、`cancelRename()`、`eventFilter()` |
 | ValueSegmentedControl 数值编辑框 | Return / Enter、`Esc` | 确认或取消当前数值编辑；失焦按确认处理 | [ValueSegmentedControl.cpp](../../../../HarkenStudio/Source/Widgets/Common/ValueSegmentedControl.cpp) / `eventFilter()` |
