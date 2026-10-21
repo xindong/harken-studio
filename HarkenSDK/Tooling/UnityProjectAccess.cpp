@@ -55,15 +55,15 @@ bool checkUnityProjectClosed(const QString& project, QString* error)
     struct stat info {};
     if (fstat(file, &info) != 0) return failed(errno);
     if (!S_ISREG(info.st_mode)) return failed(EINVAL);
-    if (flock(file, LOCK_EX | LOCK_NB) != 0) {
-        const int code = errno;
-        return code == EWOULDBLOCK || code == EAGAIN ? inUse() : failed(code);
-    }
     struct flock lock {};
     lock.l_type = F_WRLCK;
     lock.l_whence = SEEK_SET;
     if (fcntl(file, F_GETLK, &lock) != 0) return failed(errno);
     if (lock.l_type != F_UNLCK) return inUse();
+    if (flock(file, LOCK_EX | LOCK_NB) != 0) {
+        const int code = errno;
+        return code == EWOULDBLOCK || code == EAGAIN ? inUse() : failed(code);
+    }
 #endif
     return true;
 }
