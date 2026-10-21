@@ -9,6 +9,7 @@
 #include "UnityInstallation.h"
 #include "Platform/PlatformPaths.h"
 #include "Projects/ProjectStore.h"
+#include "Settings/HubSettings.h"
 #include "Support/StudioProtocolTestUtils.h"
 #include "Transactions/InstallIndex.h"
 
@@ -515,7 +516,10 @@ TEST_F(EngineIntegrationsPageTest, SortedListKeepsSelectionAndActionTargets)
     ASSERT_EQ(table->selectionModel()->selectedRows(0).size(), 1);
     EXPECT_EQ(table->selectionModel()->selectedRows(0).front().data(Qt::UserRole).toString(), "2");
 
-    QTest::qWait(300);
+    ASSERT_TRUE(QTest::qWaitFor([]() {
+        const auto sort = VNH::HubSettings::tableSort(QStringLiteral("engineIntegrations"));
+        return sort.column == 1 && sort.order == Qt::DescendingOrder;
+    }, 5000));
     VNH::EngineIntegrationsPage reopened(&integrations, &targets, &projects);
     for (auto* candidate : reopened.findChildren<QTableWidget*>()) {
         if (candidate->columnCount() != 5) continue;
