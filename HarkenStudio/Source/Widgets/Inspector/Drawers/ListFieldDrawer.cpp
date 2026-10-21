@@ -973,8 +973,10 @@ private:
             spin->setKeyboardTracking(false);
             new NumericToolTip(spin, ed.unit);
             spin->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-            if (stretch)
-                spin->setFixedWidth(kFloatReadOnlyWidth);
+            if (stretch) {
+                spin->setMaximumWidth(kFloatReadOnlyWidth);
+                spin->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+            }
             QtControlSkin::setSemanticProperty(spin, "fieldRole",
                                               QStringLiteral("inspectorValue"));
             spin->setValue(v.toDouble());

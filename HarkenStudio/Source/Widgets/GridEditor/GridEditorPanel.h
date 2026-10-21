@@ -46,6 +46,7 @@ public slots:
     void clearEditor();
 
 signals:
+    void auditionTargetRequested(const QUuid& target);
     void panelFocused(int panelId);
     void pinToggled(bool pinned);
     void navigateToItem(uint32_t objectID);

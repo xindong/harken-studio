@@ -4135,7 +4135,7 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
             (UINT64_C(1) << VN_MONITOR_FACT_EMITTER_BINDING_CHANGED) |
             (UINT64_C(1) << VN_MONITOR_FACT_IDENTITY_UPSERT) |
             (UINT64_C(1) << VN_MONITOR_FACT_IDENTITY_TOMBSTONE);
-        for (unsigned phase = 1; phase <= static_cast<unsigned>(MonitorLifecyclePhase::PreparedCandidate); ++phase) {
+        for (unsigned phase = 1; phase <= static_cast<unsigned>(MonitorLifecyclePhase::PlayableStarted); ++phase) {
             const auto kind = LifecycleFactKind(static_cast<MonitorLifecyclePhase>(phase));
             if (kind != 0) slot->supportedFactKinds[0] |= UINT64_C(1) << kind;
         }
@@ -6812,6 +6812,7 @@ std::uint32_t LifecycleEntityKind(MonitorLifecyclePhase phase,
                                   std::uint8_t playableKind) noexcept {
     switch (phase) {
     case MonitorLifecyclePhase::PreparedCandidate:
+    case MonitorLifecyclePhase::PlayableStarted:
     case MonitorLifecyclePhase::SelectionCommitted: return 0;
     case MonitorLifecyclePhase::EffectInstalled:
     case MonitorLifecyclePhase::EffectReleased:
@@ -6849,6 +6850,7 @@ std::uint32_t LifecycleEntityKind(MonitorLifecyclePhase phase,
 std::uint32_t LifecycleEventClass(MonitorLifecyclePhase phase) noexcept {
     switch (phase) {
     case MonitorLifecyclePhase::PreparedCandidate:
+    case MonitorLifecyclePhase::PlayableStarted:
     case MonitorLifecyclePhase::SelectionCommitted: return 0;
     case MonitorLifecyclePhase::EffectInstalled:
         return VN_MONITOR_EVENT_START;

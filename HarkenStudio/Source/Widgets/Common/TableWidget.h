@@ -35,13 +35,19 @@ class TableCell : public QWidget
 public:
     void addWidget(QWidget* widget, int stretch = 1, Qt::Alignment alignment = {});
 
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
+
 private:
     friend class TableWidget;
     explicit TableCell(QWidget* parent, ThemeManager* themeManager);
     void applyTheme();
+    void positionHandle();
 
     ThemeManager* themeManager_;
     QHBoxLayout* layout_;
+    QPointer<QWidget> handle_;
 };
 
 enum class TableKind { Config, Display };
@@ -120,6 +126,7 @@ public:
                      const QString& groupId = {});
     QWidget* rowForWidget(QWidget* widget) const;
     QLabel* createRowNumber(QWidget* row, int index, std::optional<int> displayNumber = {});
+    QWidget* createRowHandle(TableCell* cell, int index);
     void setRowMoveHandler(std::function<void(int, int)> handler,
                            std::function<bool(int, int)> guard = {});
     void setDropHandler(std::function<bool(const QMimeData*)> handler,
@@ -152,6 +159,8 @@ private:
         QPointer<QWidget> widget;
         QList<QPointer<QWidget>> cells;
         QPointer<QWidget> number;
+        QPointer<QWidget> handle;
+        QPointer<QWidget> selectionCell;
         QPointer<QWidget> details;
         QPointer<QFrame> detailsNumber;
         int detailsIndent = 0;

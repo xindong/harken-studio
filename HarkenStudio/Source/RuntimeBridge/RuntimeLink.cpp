@@ -87,6 +87,8 @@ struct RuntimeActionSeek {
 struct RuntimeState {
     bool initialized = false;
     bool outputRunning = false;
+    VnMonitorHostSessionV1 monitorHostSession{};
+    uint64_t monitorHostSequence = 0;
     EngineSessionConfig requestedConfig;
     int sampleRate = 48000;
     int blockFrames = 256;
@@ -476,6 +478,8 @@ bool ensureRuntimeStarted()
 
     g_runtime.initialized = true;
     g_runtime.outputRunning = false;
+    g_runtime.monitorHostSession = {};
+    g_runtime.monitorHostSequence = 0;
     g_runtime.sampleRate = static_cast<int>(c.sampleRate);
     g_runtime.blockFrames = static_cast<int>(c.blockFrames);
     g_runtime.snapshot = VnSnapshot{};
@@ -714,10 +718,16 @@ void runtimeTerm()
     const auto cancelled = discardPendingCurrentWorld();
     if (cancelled)
         qDebug() << "[CurrentWorldSync] cancelled pending world during teardown";
-    if (g_runtime.initialized)
+    if (g_runtime.initialized) {
+        if (g_runtime.monitorHostSession.sdkSession != 0)
+            Vn_MonitorEndHostSession(g_runtime.monitorHostSession.engineInstance,
+                                    g_runtime.monitorHostSession.sdkSession);
         Vn_Term();
+    }
     g_runtime.initialized = false;
     g_runtime.outputRunning = false;
+    g_runtime.monitorHostSession = {};
+    g_runtime.monitorHostSequence = 0;
     g_runtime.snapshotValid = false;
     g_runtime.meterPeaks = {};
     g_runtime.meterPeaksValid = false;
@@ -751,6 +761,42 @@ void runtimeTerm()
 bool runtimeIsActive()
 {
     return g_runtime.initialized;
+}
+
+uint64_t runtimeCreatePreviewEmitter(EngineResult* outResult)
+{
+    VnEmitterHandle emitter = 0;
+    VnResult result = g_runtime.initialized ? Vn_CreateEmitter(&emitter) : VN_NOT_INITIALIZED;
+    if (result == VN_OK && g_runtime.monitorHostSession.sdkSession == 0) {
+        VnMonitorHostSessionV1 session{};
+        session.structSize = sizeof(session);
+        result = Vn_MonitorBeginHostSession(&session);
+        if (result == VN_OK)
+            g_runtime.monitorHostSession = session;
+    }
+    if (result == VN_OK) {
+        if (g_runtime.monitorHostSequence == UINT64_MAX) {
+            result = VN_MONITOR_SEQUENCE_EXHAUSTED;
+        } else {
+            VnMonitorHostRegistrationV2 registration{};
+            registration.structSize = sizeof(registration);
+            registration.ownershipKind = VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER;
+            registration.engineInstance = g_runtime.monitorHostSession.engineInstance;
+            registration.sdkSession = g_runtime.monitorHostSession.sdkSession;
+            registration.emitter = emitter;
+            registration.localSequence = ++g_runtime.monitorHostSequence;
+            registration.registrationRevision = 1;
+            constexpr char name[] = "Emitter";
+            registration.nameBytes = sizeof(name) - 1;
+            std::memcpy(registration.name, name, registration.nameBytes);
+            result = Vn_MonitorRegisterHostV2(&registration);
+        }
+    }
+    if (result != VN_OK && emitter != 0)
+        Vn_DestroyEmitter(emitter);
+    if (outResult != nullptr)
+        *outResult = static_cast<EngineResult>(result);
+    return result == VN_OK ? emitter : 0;
 }
 
 bool runtimeCaptureSnapshot(VnSnapshot& outSnapshot)

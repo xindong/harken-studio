@@ -3,13 +3,15 @@
 #include "NativeValues.h"
 #include "Monitor/MonitorTypes.h"
 #include <harken/Harken.h>
+#include <algorithm>
 
 namespace HarkenEditor::Bridge {
 
-inline VnMonitorSessionDesc toNative(const VNX::Monitor::MonitorSessionDesc& value)
+inline VnMonitorSessionDescV2 toNative(const VNX::Monitor::MonitorSessionDesc& value)
 {
-    VnMonitorSessionDesc out{};
-    out.structSize = sizeof(out);
+    VnMonitorSessionDescV2 out{};
+    out.structSize = value.requestedExecutionFactVersion ? sizeof(out) : sizeof(VnMonitorSessionDesc);
+    out.requestedExecutionFactVersion = value.requestedExecutionFactVersion;
     out.requestedStreamKindMask = value.requestedStreamKindMask;
     out.requestRawAudio = value.requestRawAudio;
     out.requestSymbols = value.requestSymbols;
@@ -130,7 +132,7 @@ inline VnMonitorCapturePlan toNative(const VNX::Monitor::MonitorCapturePlan& val
     return out;
 }
 
-inline VNX::Monitor::MonitorEventSessionStatus fromNative(const VnMonitorEventSessionStatus& value)
+inline VNX::Monitor::MonitorEventSessionStatus fromNative(const VnMonitorEventSessionStatusV2& value)
 {
     VNX::Monitor::MonitorEventSessionStatus out{};
     out.state = value.state;
@@ -139,6 +141,18 @@ inline VNX::Monitor::MonitorEventSessionStatus fromNative(const VnMonitorEventSe
     out.stoppedTimestampNs = value.stoppedTimestampNs;
     out.sourceDroppedRecords = value.sourceDroppedRecords;
     out.deliveryDroppedRecords = value.deliveryDroppedRecords;
+    out.acceptedExecutionFactVersion = value.acceptedExecutionFactVersion;
+    out.baselineAvailability = value.baselineAvailability;
+    out.requestedPermissionMask = value.requestedPermissionMask;
+    out.acceptedPermissionMask = value.acceptedPermissionMask;
+    out.deniedPermissionMask = value.deniedPermissionMask;
+    out.unsupportedPermissionMask = value.unsupportedPermissionMask;
+    out.acceptedStreamKindMask = value.acceptedStreamKindMask;
+    out.symbolsDecision = value.symbolsDecision;
+    out.symbolAvailability = value.symbolAvailability;
+    out.identityUnavailableCount = value.identityUnavailableCount;
+    out.baselineStateCutId = value.baselineStateCutId;
+    std::copy_n(value.supportedFactKinds, 2, out.supportedFactKinds);
     return out;
 }
 

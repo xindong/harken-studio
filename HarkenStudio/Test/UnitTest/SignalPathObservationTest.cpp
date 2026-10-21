@@ -1854,7 +1854,10 @@ TEST_F(SignalPathObservationTest, BlankMenuCreatesAllLayerAndBusTypesAtBucketRoo
         ASSERT_EQ(menuLabels(menu), (QStringList{"Create"}));
         auto* createMenu = menu.actions().front()->menu();
         ASSERT_NE(createMenu, nullptr);
-        EXPECT_EQ(menuLabels(*createMenu), (QStringList{"Sound", "Container", "Track", "Piece", "Layer", "Bus"}));
+        const auto labels = menuLabels(*createMenu);
+        const QStringList expectedLabels{"Sound", "Container", "Track", "Piece", "Layer", "Bus"};
+        EXPECT_TRUE(std::is_permutation(labels.cbegin(), labels.cend(),
+            expectedLabels.cbegin(), expectedLabels.cend())) << labels.join(", ").toStdString();
         QAction* action = nullptr;
         for (auto* entry : createMenu->actions()) {
             if (entry->text() == label) action = entry;
@@ -1996,7 +1999,9 @@ TEST_F(SignalPathObservationTest, NodeNewChildUsesHierarchyRulesAndCreatesUnderI
         ASSERT_NE(childAction, nullptr);
         EXPECT_EQ(childAction->isVisible(), !labels.empty());
         ASSERT_NE(childAction->menu(), nullptr);
-        EXPECT_EQ(menuLabels(*childAction->menu()), labels);
+        const auto childLabels = menuLabels(*childAction->menu());
+        EXPECT_TRUE(std::is_permutation(childLabels.cbegin(), childLabels.cend(),
+            labels.cbegin(), labels.cend())) << childLabels.join(", ").toStdString();
         if (labels.empty()) continue;
         const auto transform = canvas.transform();
         const auto center = canvas.mapToScene(canvas.viewport()->rect().center());

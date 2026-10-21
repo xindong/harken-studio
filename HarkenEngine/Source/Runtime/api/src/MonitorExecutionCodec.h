@@ -102,7 +102,7 @@ inline bool ProjectFactFields(const MonitorExecutionFact& source, std::uint64_t 
     fact = {};
     const bool call = source.BodyKind() == MonitorFactBody::Call;
     if (source.engine == 0 || source.sourceSequence == 0 || producer == 0 || stream == 0 ||
-        source.kind == 0 || source.kind > VN_MONITOR_FACT_RESOURCE_RETIRED ||
+        source.kind == 0 || source.kind > VN_MONITOR_FACT_PLAYABLE_STARTED ||
         (source.flags & ~(kMonitorFactCallBody | kMonitorFactIdentityIncomplete | kMonitorFactControlIncomplete)) != 0 ||
         (source.validity & ~SourceAllowedFields(source.BodyKind())) != 0 ||
         (call && !IsCallFactKind(source.kind)) ||
@@ -252,7 +252,7 @@ inline bool ValidateFactFields(const VnMonitorRecordHeader& header, const VnMoni
     if (header.engineMonitorInstanceId == 0 ||
         header.producerId == 0 || header.sourceSequence == 0 || header.streamId == 0 ||
         header.reserved0 != 0 || header.telemetry.reserved0 != 0 ||
-        fact.structSize != kExecutionPayloadBytes || fact.factKind == 0 || fact.factKind > VN_MONITOR_FACT_RESOURCE_RETIRED ||
+        fact.structSize != kExecutionPayloadBytes || fact.factKind == 0 || fact.factKind > VN_MONITOR_FACT_PLAYABLE_STARTED ||
         fact.subjectNamespace > VN_MONITOR_SUBJECT_TRANSITION || fact.contentKind > VN_MONITOR_CONTENT_MEDIA ||
         fact.reserved0 != 0 || fact.reserved1 != 0 || fact.control.reserved0 != 0 || fact.selection.reserved0 != 0 ||
         fact.target.reserved0 != 0 || (fact.factFlags & ~(VN_MONITOR_FACT_FLAG_IDENTITY_INCOMPLETE | VN_MONITOR_FACT_FLAG_CONTROL_INCOMPLETE)) != 0 ||
@@ -295,8 +295,10 @@ inline bool ValidateFactFields(const VnMonitorRecordHeader& header, const VnMoni
         !nonzero(VN_MONITOR_FACT_FIELD_CONTENT_REVISION, fact.contentRevision) ||
         !optional(VN_MONITOR_FACT_FIELD_TIMESTAMP, fact.timestampNs) ||
         !optional(VN_MONITOR_FACT_FIELD_RESULT, fact.result) || !optional(VN_MONITOR_FACT_FIELD_REASON, header.reason) ||
-        // No terminal vocabulary is advertised until its real producer is installed.
-        has(VN_MONITOR_FACT_FIELD_TERMINAL_KIND) || fact.terminalKind != 0) return false;
+        !optional(VN_MONITOR_FACT_FIELD_TERMINAL_KIND, fact.terminalKind,
+            fact.subjectNamespace == VN_MONITOR_SUBJECT_PLAYABLE &&
+            fact.terminalKind >= VN_MONITOR_TERMINAL_NATURAL_COMPLETION &&
+            fact.terminalKind <= VN_MONITOR_TERMINAL_FAILURE)) return false;
     const auto request = [&](unsigned field, const VnMonitorFactRequest& value) {
         return nonzero(field, value.sequence) && optional(field + 1, value.operation, ValidRequestOperation(value.operation)) &&
             optional(field + 2, value.origin, ValidRequestOrigin(value.origin));
@@ -323,7 +325,8 @@ inline bool ValidateFactFields(const VnMonitorRecordHeader& header, const VnMoni
         !nonzero(VN_MONITOR_FACT_FIELD_HOST_KEY, fact.hostLocalSequence) || !nonzero(VN_MONITOR_FACT_FIELD_HOST_REVISION, fact.originHostRevision) ||
         (has(VN_MONITOR_FACT_FIELD_HOST_REVISION) && !has(VN_MONITOR_FACT_FIELD_HOST_KEY)) ||
         !optional(VN_MONITOR_FACT_FIELD_ORIGIN_KIND, fact.originKind, fact.originKind > 0 && fact.originKind <= 4) ||
-        !optional(VN_MONITOR_FACT_FIELD_HOST_OWNERSHIP, fact.hostOwnership, fact.hostOwnership > 0 && fact.hostOwnership <= 2) ||
+        !optional(VN_MONITOR_FACT_FIELD_HOST_OWNERSHIP, fact.hostOwnership,
+            fact.hostOwnership > 0 && fact.hostOwnership <= VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER) ||
         !handle(VN_MONITOR_FACT_FIELD_CURRENT_STATE_EMITTER, fact.currentStateEmitter, VN_MONITOR_SUBJECT_EMITTER) ||
         !handle(VN_MONITOR_FACT_FIELD_CURRENT_SPATIAL_EMITTER, fact.currentSpatialEmitter, VN_MONITOR_SUBJECT_EMITTER) ||
         !optional(VN_MONITOR_FACT_FIELD_STATE_BINDING, fact.stateBinding, fact.stateBinding <= 2) ||

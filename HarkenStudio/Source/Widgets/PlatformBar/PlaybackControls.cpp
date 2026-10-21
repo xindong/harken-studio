@@ -1,6 +1,7 @@
 #include "PlaybackControls.h"
 
 #include "Core/ContextInfo.h"
+#include "Core/ItemTypeCatalog.h"
 #include "Core/ShortcutManager.h"
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
@@ -56,9 +57,17 @@ PlaybackControls::PlaybackControls(QWidget* parent)
             });
     connect(&ShortcutManager::instance(), &ShortcutManager::shortcutsReset,
             this, &PlaybackControls::refreshShortcuts);
+    setAuditionTarget(nullptr);
     setPlaying(false);
     applyTheme();
     refreshShortcuts();
+}
+
+void PlaybackControls::setAuditionTarget(ProjectItem* item)
+{
+    const bool playable = item && ItemTypeCatalog::isTriggerable(item->type)
+        && ItemTypeCatalog::isUserFacingType(item->type);
+    playBtn_->setEnabled(playable);
 }
 
 void PlaybackControls::setPlaying(bool playing)

@@ -4,6 +4,7 @@
 #include <QAction>
 #include <QCoreApplication>
 #include <QEvent>
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
@@ -117,8 +118,10 @@ TitleBarWidget::TitleBarWidget(QWidget* parent) : QWidget(parent) {
 
     versionLabel_ = new QLabel(this);
     versionLabel_->setObjectName("titleBarVersion");
-    versionLabel_->setText(QStringLiteral("Harken Studio %1").arg(QCoreApplication::applicationVersion()));
+    versionLabel_->setTextFormat(Qt::RichText);
+    versionLabel_->setAlignment(Qt::AlignCenter);
     versionLabel_->setAttribute(Qt::WA_TransparentForMouseEvents);
+    setProjectTitle({}, false);
 
     trackWindow(parentWidget());
     syncChromeMetrics();
@@ -149,6 +152,19 @@ void TitleBarWidget::insertControlWidget(QWidget* widget) {
 void TitleBarWidget::updateMaxButton(bool maximized) {
     btnMax_->setButtonKind(maximized ? TitleBarButtonKind::Restore : TitleBarButtonKind::Maximize);
     btnMax_->setToolTip(maximized ? tr("Restore Down") : tr("Maximize"));
+}
+
+void TitleBarWidget::setProjectTitle(const QString& name, bool modified) {
+    projectName_ = name;
+    projectModified_ = modified;
+    layoutVersionLabel();
+}
+
+bool TitleBarWidget::event(QEvent* event) {
+    const bool handled = QWidget::event(event);
+    if (event->type() == QEvent::LayoutRequest)
+        layoutVersionLabel();
+    return handled;
 }
 
 bool TitleBarWidget::eventFilter(QObject* watched, QEvent* event) {
@@ -194,22 +210,52 @@ void TitleBarWidget::resizeEvent(QResizeEvent* event) {
 void TitleBarWidget::layoutVersionLabel() {
     if (!versionLabel_ || !layout_)
         return;
-    versionLabel_->adjustSize();
-    const QRect target((width() - versionLabel_->width()) / 2,
-                       (height() - versionLabel_->height()) / 2,
-                       versionLabel_->width(), versionLabel_->height());
-    versionLabel_->move(target.topLeft());
-
-    bool clear = true;
+    layout_->activate();
+    QRect available;
     for (int i = 0; i < layout_->count(); ++i) {
-        QWidget* sibling = layout_->itemAt(i)->widget();
-        if (sibling && sibling->isVisible() &&
-            sibling->geometry().adjusted(-12, 0, 12, 0).intersects(target)) {
-            clear = false;
+        if (QSpacerItem* spacer = layout_->itemAt(i)->spacerItem()) {
+            available = spacer->geometry();
             break;
         }
     }
-    versionLabel_->setVisible(clear);
+
+    QString version = QStringLiteral("Harken Studio %1")
+                          .arg(QCoreApplication::applicationVersion());
+    if (!projectName_.isEmpty())
+        version.prepend(QStringLiteral(" - "));
+    const QString suffix = projectModified_ && !projectName_.isEmpty()
+                               ? QStringLiteral(" *") : QString();
+    const QFontMetrics versionMetrics(versionLabel_->font());
+    QFont projectFont = versionLabel_->font();
+    projectFont.setItalic(projectModified_);
+    const QFontMetrics projectMetrics(projectFont);
+    const int versionWidth = versionMetrics.horizontalAdvance(version);
+    const int titleWidth = qMin(qMax(0, available.width()),
+        versionWidth + projectMetrics.horizontalAdvance(projectName_ + suffix) + 2);
+    const int textWidth = qMax(0, titleWidth - 2);
+    QString title;
+    if (projectName_.isEmpty()) {
+        title = versionMetrics.elidedText(version, Qt::ElideRight, textWidth).toHtmlEscaped();
+    } else {
+        const int suffixWidth = projectMetrics.horizontalAdvance(suffix);
+        const int minimumProjectWidth = qMin(projectMetrics.horizontalAdvance(projectName_ + suffix),
+            projectMetrics.horizontalAdvance(QString(QChar(0x2026)) + suffix));
+        if (textWidth < versionWidth + minimumProjectWidth)
+            version.clear();
+        const int projectWidth = textWidth - versionMetrics.horizontalAdvance(version);
+        QString projectTitle = projectWidth < minimumProjectWidth
+            ? projectMetrics.elidedText(projectName_ + suffix, Qt::ElideRight, projectWidth)
+            : projectMetrics.elidedText(projectName_, Qt::ElideRight, projectWidth - suffixWidth) + suffix;
+        projectTitle = projectTitle.toHtmlEscaped();
+        if (projectModified_)
+            projectTitle = QStringLiteral("<i>%1</i>").arg(projectTitle);
+        title = projectTitle + version.toHtmlEscaped();
+    }
+    versionLabel_->setText(title);
+    versionLabel_->setGeometry(qBound(available.left(), (width() - titleWidth) / 2,
+                                     available.x() + available.width() - titleWidth),
+                              0, titleWidth, height());
+    versionLabel_->setVisible(titleWidth > 0);
 }
 
 void TitleBarWidget::trackWindow(QWidget* window) {

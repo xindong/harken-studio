@@ -37,6 +37,8 @@ MonitorDecodeBatch decodePackedRecords(const uint8_t* packedBytes,
                                        uint32_t expectedRecords,
                                        MonitorDecodeAllocator allocator = {});
 
+bool decodeExecutionFact(const MonitorDecodedRecord& record, MonitorExecutionFactV1* out);
+
 bool decodeEventDetail(const MonitorDecodedRecord& record, MonitorEventDetail* out,
                         MonitorEventDetailV2* identity = nullptr);
 

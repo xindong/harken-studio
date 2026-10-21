@@ -119,6 +119,8 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
             this, &GridEditorWidget::drillInto);
     connect(discreteGrid_, &DiscreteGridWidget::drillRequested,
             this, &GridEditorWidget::drillInto);
+    connect(discreteGrid_, &DiscreteGridWidget::auditionTargetRequested,
+            this, &GridEditorWidget::auditionTargetRequested);
     connect(discreteGrid_, &DiscreteGridWidget::navigateToItem,
             this, &GridEditorWidget::navigateToItem);
     connect(discreteGrid_, &DiscreteGridWidget::locateItem,
@@ -129,6 +131,8 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
             this, &GridEditorWidget::locateItem);
     connect(selectionList_, &SelectionListWidget::drillRequested,
             this, &GridEditorWidget::drillInto);
+    connect(selectionList_, &SelectionListWidget::auditionTargetRequested,
+            this, &GridEditorWidget::auditionTargetRequested);
     connect(selectionList_, &SelectionListWidget::navigateToItem,
             this, &GridEditorWidget::navigateToItem);
     connect(selectionList_, &SelectionListWidget::locateItem,
@@ -254,6 +258,7 @@ void GridEditorWidget::drillInto(const QUuid& target)
         return;
     drillPath_.push_back(target);
     refreshFromModel();
+    emit auditionTargetRequested(displayedItemGuid());
 }
 
 void GridEditorWidget::drillBackTo(int depth)
@@ -262,6 +267,7 @@ void GridEditorWidget::drillBackTo(int depth)
         return;
     drillPath_.resize(depth);
     refreshFromModel();
+    emit auditionTargetRequested(displayedItemGuid());
 }
 
 void GridEditorWidget::refreshFromModel()

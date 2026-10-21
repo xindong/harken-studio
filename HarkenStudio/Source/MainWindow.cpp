@@ -461,6 +461,10 @@ void MainWindow::initializeStructure(
                 }
             });
             connect(ed, &GridEditorPanel::locateItem, this, &MainWindow::locateProjectItem);
+            connect(ed, &GridEditorPanel::auditionTargetRequested, this,
+                    [this](const QUuid& target) {
+                setAuditionTarget(ProjectManager::instance().findItemByGuid(target));
+            });
             connect(ed, &GridEditorPanel::sourceEditorRequested, this,
                     [this](const QUuid& soundGuid, const QUuid& entryId) {
                 openExternalEditor(ExternalEditorSelection::source(soundGuid, entryId));
@@ -673,9 +677,7 @@ void MainWindow::initializeStructure(
             [this](ProjectItem* item) {
         standaloneEditorSelection_ = item;
         pushSelectionToStandaloneEditors(item, StandaloneEditorPushReason::SelectionChanged);
-        refreshPlaybackResetEnabled(item);
-        if (controlPanel_)
-            controlPanel_->setItem(item);
+        setAuditionTarget(item);
     });
     {
         LayoutController::Docks d;
@@ -788,6 +790,7 @@ void MainWindow::initializeFinalState()
     setMenuWidget(m_titleBar);
 
     setupTitleBarToggles();
+    updateWindowTitle();
 #endif
 }
 
@@ -945,20 +948,20 @@ void MainWindow::setupAudioEngine()
             aiService_->setConversationScope(
                 aiConversationScope(nullptr));
         standaloneEditorSelection_ = nullptr;
-        refreshPlaybackResetEnabled(nullptr);
+        setAuditionTarget(nullptr);
     });
     connect(&ProjectManager::instance(), &ProjectManager::itemDeleted,
             this, [this](ProjectItem* item) {
         if (item == standaloneEditorSelection_)
             standaloneEditorSelection_ = nullptr;
-        if (item == playbackResetItem_)
-            refreshPlaybackResetEnabled(nullptr);
+        if (!auditionTargetGuid_.isNull() && !auditionTarget())
+            setAuditionTarget(nullptr);
     });
     connect(&ProjectManager::instance(), &ProjectManager::itemPropertyChanged,
             this, [this](ProjectItem* item, const QString& property, const QObject*) {
         if ((property == QStringLiteral("mode") || property == QStringLiteral("playType"))
-            && item == playbackResetItem_)
-            refreshPlaybackResetEnabled(item);
+            && item && item->guid == auditionTargetGuid_)
+            refreshPlaybackResetEnabled();
         if ((property == QStringLiteral("mode") || property == QStringLiteral("playType")) && item
             && item == currentStandaloneEditorSelection())
             pushSelectionToStandaloneEditors(item, StandaloneEditorPushReason::SelectionChanged);
@@ -2177,6 +2180,10 @@ void MainWindow::connectWorkspaceWindowSignals()
                 selectionRouter_, &SelectionRouter::onBlueprintSelectionCleared);
         connect(blueprintCanvas_, &BlueprintCanvasWidget::nodeDoubleClicked,
                 selectionRouter_, &SelectionRouter::onBlueprintNodeDoubleClicked);
+        connect(blueprintCanvas_, &BlueprintCanvasWidget::auditionTargetRequested,
+                this, [this](uint32_t objectID) {
+            setAuditionTarget(ProjectManager::instance().findItemByObjectID(objectID));
+        });
     }
 
     auditionManager_ = new HarkenEditor::AuditionManager(&AudioEngine::instance(), this);
@@ -3493,6 +3500,8 @@ Hierarchy* MainWindow::createHierarchyPanelWithId(int id, bool deferShow, bool d
             selectionRouter_, &SelectionRouter::onProjectItemSelected);
     connect(panel, &Hierarchy::objectSelectionChanged,
             selectionRouter_, &SelectionRouter::onProjectItemsSelectionChanged);
+    connect(panel, &Hierarchy::auditionTargetRequested,
+            this, &MainWindow::setAuditionTarget);
     connect(panel, &Hierarchy::itemDoubleClicked,
             selectionRouter_, &SelectionRouter::onProjectItemDoubleClicked);
     connect(panel, &Hierarchy::audioFileSelected,
@@ -3570,6 +3579,8 @@ void MainWindow::connectSignals()
             selectionRouter_, &SelectionRouter::onProjectItemSelected);
     connect(projectExplorer_, &ProjectExplorer::objectSelectionChanged,
             selectionRouter_, &SelectionRouter::onProjectItemsSelectionChanged);
+    connect(projectExplorer_, &ProjectExplorer::auditionTargetRequested,
+            this, &MainWindow::setAuditionTarget);
     connect(projectExplorer_, &ProjectExplorer::itemDoubleClicked,
             selectionRouter_, &SelectionRouter::onProjectItemDoubleClicked);
     connect(projectExplorer_, &ProjectExplorer::audioFileSelected,
@@ -3899,17 +3910,21 @@ bool MainWindow::maybeSave()
 
 void MainWindow::updateWindowTitle()
 {
-    QString title = "Harken Studio";
+    QString projectName;
     
     ProjectData* proj = ProjectManager::instance().currentProject();
     if (proj && !proj->name.isEmpty())
     {
-        title += " - " + proj->name;
+        projectName = proj->name;
     }
     else if (!currentProjectPath_.isEmpty())
     {
-        title += " - " + QFileInfo(currentProjectPath_).baseName();
+        projectName = QFileInfo(currentProjectPath_).baseName();
     }
+
+    QString title = "Harken Studio";
+    if (!projectName.isEmpty())
+        title += " - " + projectName;
     
     if (projectModified_)
     {
@@ -3917,6 +3932,10 @@ void MainWindow::updateWindowTitle()
     }
     
     setWindowTitle(title);
+#ifdef HARKEN_HAS_QWINDOWKIT
+    if (m_titleBar)
+        m_titleBar->setProjectTitle(projectName, projectModified_);
+#endif
 }
 
 void MainWindow::setProjectModified(bool modified)
@@ -4684,10 +4703,10 @@ void MainWindow::onPlayRequested()
         return;
     }
 
-    ProjectItem* selectedItem = projectExplorer_->selectedItem();
+    ProjectItem* selectedItem = auditionTarget();
     if (!selectedItem)
     {
-        statusLabel_->setText(tr("No item selected"));
+        statusLabel_->setText(tr("No audition target selected"));
         return;
     }
 
@@ -4789,11 +4808,26 @@ void MainWindow::onStopPressed()
     statusLabel_->setText(tr("Stopped"));
 }
 
-void MainWindow::refreshPlaybackResetEnabled(ProjectItem* item)
+ProjectItem* MainWindow::auditionTarget() const
 {
-    playbackResetItem_ = item;
+    return ProjectManager::instance().findItemByGuid(auditionTargetGuid_);
+}
+
+void MainWindow::setAuditionTarget(ProjectItem* item)
+{
+    auditionTargetGuid_ = item ? item->guid : QUuid();
+    if (playbackControls_)
+        playbackControls_->setAuditionTarget(item);
+    refreshPlaybackResetEnabled();
+    if (controlPanel_)
+        controlPanel_->setItem(item);
+}
+
+void MainWindow::refreshPlaybackResetEnabled()
+{
     if (!playbackControls_)
         return;
+    const auto* item = auditionTarget();
     const auto* selection = item ? item->comp<VSelection>() : nullptr;
     const bool enabled = item
         && item->type == ProjectItem::Type::Container
@@ -4806,8 +4840,8 @@ void MainWindow::refreshPlaybackResetEnabled(ProjectItem* item)
 
 void MainWindow::onResetPressed()
 {
-    ProjectItem* selectedItem = playbackResetItem_;
-    refreshPlaybackResetEnabled(selectedItem);
+    ProjectItem* selectedItem = auditionTarget();
+    refreshPlaybackResetEnabled();
     if (!playbackControls_ || !playbackControls_->isResetEnabled() || !selectedItem)
         return;
     const ActionResult result = ActionManager::instance().execute(

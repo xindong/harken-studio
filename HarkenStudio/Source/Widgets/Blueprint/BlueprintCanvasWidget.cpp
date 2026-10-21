@@ -2054,6 +2054,7 @@ bool BlueprintCanvasWidget::viewportEvent(QEvent* event)
 
 void BlueprintCanvasWidget::mousePressEvent(QMouseEvent* event)
 {
+    auditionClickObjectID_ = 0;
     if (dragSourcePin_) {
         if (event->button() == Qt::RightButton) cancelConnection_();
         event->accept();
@@ -2104,6 +2105,16 @@ void BlueprintCanvasWidget::mousePressEvent(QMouseEvent* event)
             return;
         }
     }
+    if (event->button() == Qt::LeftButton && event->modifiers() == Qt::NoModifier) {
+        auto* node = dynamic_cast<NodeItem*>(itemAt(event->pos()));
+        auto* item = node && node->isSelected() && !node->routeGainMode()
+            ? ProjectManager::instance().findItemByObjectID(node->objectID()) : nullptr;
+        if (item && ItemTypeCatalog::isTriggerable(item->type)
+            && ItemTypeCatalog::isUserFacingType(item->type)) {
+            auditionClickObjectID_ = node->objectID();
+            auditionClickStart_ = event->pos();
+        }
+    }
     BlueprintCanvasView::mousePressEvent(event);
     if (nodeDragOrigin_ && !nodeDragOrigin_->routeGainMode() && nodeDragOrigin_->isSelected()) {
         for (const auto& [key, node] : nodeMap_)
@@ -2117,6 +2128,9 @@ void BlueprintCanvasWidget::mousePressEvent(QMouseEvent* event)
 
 void BlueprintCanvasWidget::mouseMoveEvent(QMouseEvent* event)
 {
+    if (auditionClickObjectID_
+        && (event->pos() - auditionClickStart_).manhattanLength() >= QApplication::startDragDistance())
+        auditionClickObjectID_ = 0;
     if (dragSourcePin_ != nullptr) {
         if (!tempPath_) {
             if ((event->pos() - connectStartPosition_).manhattanLength() < QApplication::startDragDistance()) {
@@ -2141,6 +2155,8 @@ void BlueprintCanvasWidget::mouseMoveEvent(QMouseEvent* event)
 
 void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
 {
+    const uint32_t auditionObjectID = auditionClickObjectID_;
+    auditionClickObjectID_ = 0;
     if (dragSourcePin_ && !tempPath_ && event->button() == Qt::LeftButton
         && (event->pos() - connectStartPosition_).manhattanLength() >= QApplication::startDragDistance())
         beginConnectionDrag_(event->pos());
@@ -2209,6 +2225,12 @@ void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
         return;
     }
     BlueprintCanvasView::mouseReleaseEvent(event);
+    if (auditionObjectID && event->button() == Qt::LeftButton
+        && (event->pos() - auditionClickStart_).manhattanLength() < QApplication::startDragDistance()) {
+        auto* node = dynamic_cast<NodeItem*>(itemAt(event->pos()));
+        if (node && node->isSelected() && node->objectID() == auditionObjectID)
+            emit auditionTargetRequested(auditionObjectID);
+    }
     if (event->button() == Qt::LeftButton && !pathDragStartPositions_.empty()) {
         NodePin* pin = nullptr;
         NodeItem* target = !nodeDragSources_.empty()

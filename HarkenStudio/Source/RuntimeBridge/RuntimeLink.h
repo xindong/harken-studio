@@ -26,6 +26,7 @@ bool runtimeInit(const EngineSessionConfig& config);
 void runtimeTerm();
 bool runtimeIsActive();
 bool runtimeCaptureSnapshot(VnSnapshot& outSnapshot);
+uint64_t runtimeCreatePreviewEmitter(EngineResult* outResult);
 
 void runtimeSetLogHandler(std::function<void(int level, const QString& msg)> handler);
 

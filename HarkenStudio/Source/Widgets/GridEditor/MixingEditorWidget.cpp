@@ -317,7 +317,6 @@ void MixingEditorWidget::buildRow(int index)
     view.children = new TableWidget(TableOptions{TableKind::Config, TableBodySizing::Expanding}, view.page);
     view.children->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     view.children->setColumns(QStringLiteral("mixing.children"), {
-        {QStringLiteral("index"), QStringLiteral("#"), 0},
         {QStringLiteral("target"), tr("Child"), 400},
         {QStringLiteral("waveform"), tr("Waveform"), 600}});
     auto* footer = view.children->footer();
@@ -348,12 +347,10 @@ void MixingEditorWidget::buildRow(int index)
         auto* rowLayout = new QHBoxLayout(childRow);
         rowLayout->setContentsMargins(0, 0, 0, 0);
         rowLayout->setSpacing(0);
-        auto* number = view.children->createRowNumber(childRow, child);
         auto* cell = view.children->createCell(childRow);
+        view.children->createRowHandle(cell, child);
         auto* ref = new ObjectRefWidget(cell);
         ref->setObjectName(QStringLiteral("mixingChildRef"));
-        ref->setCompact(true);
-        ref->setCompactPickable(true);
         ref->setFilterTypes(ItemTypeCatalog::allowedChildTypesOf(ProjectItem::Type::Container));
         ref->setSelectorTitle(tr("Select Child"));
         ref->setDirectChildParentGuid(boundItem_->guid);
@@ -373,7 +370,6 @@ void MixingEditorWidget::buildRow(int index)
             if (!item || !commitReplaceChild(index, child, item->guid)) setReference(ref, target);
         });
         cell->addWidget(ref);
-        rowLayout->addWidget(number);
         rowLayout->addWidget(cell, 1);
         view.children->rowsLayout()->addWidget(childRow);
         auto* waveformCell = view.children->createCell(childRow);
@@ -383,7 +379,7 @@ void MixingEditorWidget::buildRow(int index)
                 this, &MixingEditorWidget::sourceEditorRequested);
         waveformCell->addWidget(waveform);
         rowLayout->addWidget(waveformCell);
-        view.children->registerRow(childRow, {number, cell, waveformCell});
+        view.children->registerRow(childRow, {cell, waveformCell});
         view.childRows.push_back(childRow);
         view.refs.push_back(ref);
         if (selectedChildren_.value(row.guid) == target) view.selected = child;

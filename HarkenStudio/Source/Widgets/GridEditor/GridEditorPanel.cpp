@@ -21,6 +21,8 @@ GridEditorPanel::GridEditorPanel(QWidget* parent)
 
     connect(editor_, &GridEditorWidget::pinToggled,
             this, &GridEditorPanel::pinToggled);
+    connect(editor_, &GridEditorWidget::auditionTargetRequested,
+            this, &GridEditorPanel::auditionTargetRequested);
     connect(editor_, &GridEditorWidget::navigateToItem,
             this, &GridEditorPanel::navigateToItem);
     connect(editor_, &GridEditorWidget::locateItem,

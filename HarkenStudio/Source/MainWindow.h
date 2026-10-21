@@ -181,6 +181,7 @@ public:
     IPCServer* ipcServer() const { return ipcServer_; }
 
     HarkenEditor::AuditionManager* auditionManager() const { return auditionManager_; }
+    ProjectItem* auditionTarget() const;
 
     BlueprintCanvasWidget* blueprintCanvas() const { return blueprintCanvas_; }
 
@@ -284,7 +285,7 @@ private slots:
     void onPlayRequested();
     void onStopPressed();
     void onResetPressed();
-    void refreshPlaybackResetEnabled(ProjectItem* item = nullptr);
+    void refreshPlaybackResetEnabled();
     void onAudioError(const QString& error);
     
     void onSaveProgress(int percent, const QString& message);
@@ -322,6 +323,7 @@ private:
     void connectSignals();
     void enforceDisabledDocks();
     SourceEditorPanel* focusedSourceEditorPanel() const;
+    void setAuditionTarget(ProjectItem* item);
     
     void initEmptyProject();
     bool maybeSave();
@@ -425,7 +427,7 @@ private:
     PlaybackControls* playbackControls_ = nullptr;
     ControlPanel* controlPanel_ = nullptr;
     ads::CDockWidget* controlDock_ = nullptr;
-    ProjectItem* playbackResetItem_ = nullptr;
+    QUuid auditionTargetGuid_;
     
     QAction* undoAction_ = nullptr;
     QAction* redoAction_ = nullptr;

@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 
 #include <QAction>
+#include <QAbstractProxyModel>
 #include <QApplication>
 #include <QComboBox>
 #include <QDialog>
@@ -107,6 +108,7 @@ public:
 
     RemotePeer()
     {
+        identity.capabilities &= ~Wire::kCapabilityExecutionObservation;
         identity.instanceId = 42;
         identity.sessionId = 11;
         identity.applicationName = "Remote game";
@@ -227,7 +229,8 @@ public:
                 status.planGeneration = 1;
             }
             send(Wire::MakeFrame(Wire::Message::MonitorStatus, frame.requestId, status));
-        } else if (frame.type == Wire::Message::EventStart || frame.type == Wire::Message::EventSeal) {
+        } else if (frame.type == Wire::Message::EventStart || frame.type == Wire::Message::EventStartV2 ||
+                   frame.type == Wire::Message::EventSeal) {
             if (eventResponder) eventResponder(frame);
         } else if (frame.type == Wire::Message::Command) {
             Wire::Command command;
@@ -264,12 +267,74 @@ Wire::MonitorRecords eventRecords(quint64 epoch, quint64 firstSequence, int coun
         harken::monitor::PackHeader(packed, header);
         VNX::Monitor::MonitorEventDetail detail{};
         detail.structSize = sizeof(detail);
-        detail.category = VN_MONITOR_EVENT_CATEGORY_OPERATION;
-        detail.code = VN_MONITOR_OPERATION_STOP_ALL;
+        detail.category = VN_MONITOR_EVENT_CATEGORY_DIAGNOSTIC;
+        detail.level = VN_LOG_WARN;
         detail.timestampNs = firstTimestamp + i;
         std::memcpy(packed + VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES, &detail, sizeof(detail));
     }
     return records;
+}
+
+TEST(RemoteConnection, ExecutionCaptureNegotiatesAndSealsWithoutLegacyFallback)
+{
+    ensureRemoteTestApp();
+    using HarkenEditor::Bridge::RemoteEventCaptureState;
+    for (const bool reject : {false, true}) {
+        SCOPED_TRACE(reject);
+        RemotePeer peer;
+        peer.identity.capabilities = Wire::kCapabilityExecutionObservation;
+        RemoteConnection connection;
+        int starts = 0;
+        peer.eventResponder = [&](const Wire::Frame& request) {
+            EXPECT_NE(request.type, Wire::Message::EventStart);
+            Wire::EventCaptureStatusV2 status;
+            status.base.sessionEpoch = 79;
+            status.base.startedTimestampNs = 100;
+            status.acceptedExecutionFactVersion = 1;
+            status.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+            status.acceptedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
+            status.acceptedStreamKindMask = VN_MONITOR_STREAM_EVENT;
+            status.supportedFactKinds[0] = UINT64_C(1) << VN_MONITOR_FACT_REQUEST_SUBMITTED;
+            status.identityUnavailableCount = 3;
+            if (request.type == Wire::Message::EventStartV2) {
+                ++starts;
+                Wire::EventCaptureRequestV2 decoded;
+                ASSERT_TRUE(Wire::DecodePayload(request, decoded));
+                EXPECT_EQ(decoded.executionFactVersion, 1u);
+                EXPECT_EQ(decoded.requestedStreamKindMask, VN_MONITOR_STREAM_EVENT);
+                EXPECT_EQ(decoded.requestedPermissionMask, VN_MONITOR_PERM_OBSERVE_EVENTS);
+                EXPECT_EQ(decoded.requestSymbols, 0u);
+                if (reject) status.base.result = VN_MONITOR_UNSUPPORTED;
+            } else {
+                EXPECT_EQ(request.type, Wire::Message::EventSeal);
+                status.base.state = VN_MONITOR_EVENT_SESSION_DRAINED;
+                status.base.stoppedTimestampNs = 200;
+                status.base.sourceDroppedRecords = 7;
+                status.base.transportDroppedRecords = 5;
+            }
+            peer.send(Wire::MakeFrame(Wire::Message::EventStatusV2, request.requestId, status));
+        };
+        connection.connectTarget(QStringLiteral("127.0.0.1"), peer.server.serverPort());
+        ASSERT_TRUE(waitUntil([&] { return connection.canCaptureEvents(); }));
+        connection.startEventCapture();
+        ASSERT_TRUE(waitUntil([&] {
+            return connection.eventCaptureStatus().state ==
+                (reject ? RemoteEventCaptureState::Failed : RemoteEventCaptureState::Capturing);
+        }));
+        EXPECT_EQ(starts, 1);
+        EXPECT_EQ(connection.state(), RemoteConnectionState::Connected);
+        if (reject) {
+            EXPECT_EQ(connection.eventCaptureStatus().result, VN_MONITOR_UNSUPPORTED);
+            continue;
+        }
+        EXPECT_EQ(connection.eventCaptureStatus().acceptedExecutionFactVersion, 1u);
+        EXPECT_EQ(connection.eventCaptureStatus().identityUnavailableCount, 3u);
+        EXPECT_EQ(connection.eventCaptureStatus().supportedFactKinds[0], UINT64_C(1) << VN_MONITOR_FACT_REQUEST_SUBMITTED);
+        connection.stopEventCapture();
+        ASSERT_TRUE(waitUntil([&] { return connection.eventCaptureStatus().state == RemoteEventCaptureState::Stopped; }));
+        EXPECT_EQ(connection.eventCaptureStatus().sourceDroppedRecords, 7u);
+        EXPECT_EQ(connection.eventCaptureStatus().transportDroppedRecords, 5u);
+    }
 }
 
 TEST(EventCaptureController, RemoteTailRestartFailureAndEpochIsolation)
@@ -359,6 +424,9 @@ TEST(EventCaptureController, BoundsHistoryAndPreservesItOnMalformedPayload)
     ASSERT_TRUE(waitUntil([&] { return capture.state() == EventCaptureState::Capturing; }));
     quint64 sequence = 1;
     QPersistentModelIndex selected;
+    quint64 selectedSequence = 0;
+    auto* proxy = qobject_cast<QAbstractProxyModel*>(panel.table()->model());
+    ASSERT_NE(proxy, nullptr);
     for (int batch = 0; batch < 110; ++batch) {
         peer.send(Wire::MakeFrame(Wire::Message::EventRecords, 0,
                                   eventRecords(99, sequence, 100, sequence + 100)));
@@ -368,22 +436,26 @@ TEST(EventCaptureController, BoundsHistoryAndPreservesItOnMalformedPayload)
                 capture.eventAt(capture.rowCount() - 1).header.sourceSequence == sequence - 1;
         }));
         ASSERT_LE(capture.rowCount(), EventCaptureController::kMaxRows);
+        ASSERT_LE(capture.rowCount() * sizeof(CapturedEvent), EventCaptureController::kMaxBytes);
         ASSERT_EQ(panel.visibleRowCount(), capture.rowCount());
         if (batch == 50) {
             panel.table()->selectRow(panel.visibleRowCount() - 1);
             selected = panel.table()->currentIndex();
+            selectedSequence = capture.eventAt(proxy->mapToSource(selected).row()).header.sourceSequence;
         }
     }
     ASSERT_TRUE(selected.isValid());
-    EXPECT_EQ(selected.row(), 4099);
+    EXPECT_EQ(selectedSequence, capture.eventAt(proxy->mapToSource(selected).row()).header.sourceSequence);
     EXPECT_EQ(selected, panel.table()->currentIndex());
-    EXPECT_EQ(1000u, capture.trimmedRecords());
-    EXPECT_EQ(1001u, capture.eventAt(0).header.sourceSequence);
+    EXPECT_EQ(11000u, capture.trimmedRecords() + capture.rowCount());
+    EXPECT_EQ(capture.trimmedRecords() + 1, capture.eventAt(0).header.sourceSequence);
+    const int retainedRows = capture.rowCount();
     auto invalid = eventRecords(99, sequence, 1, sequence + 100);
     harken::monitor::WriteU32(invalid.bytes.data() + VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES + 52, 193);
     peer.send(Wire::MakeFrame(Wire::Message::EventRecords, 0, invalid));
     ASSERT_TRUE(waitUntil([&] { return capture.state() == EventCaptureState::Failed; }));
-    EXPECT_EQ(EventCaptureController::kMaxRows, capture.rowCount());
+    EXPECT_EQ(retainedRows, capture.rowCount());
+    EXPECT_EQ(11000u, capture.trimmedRecords() + capture.rowCount());
     EXPECT_TRUE(capture.incomplete());
 }
 
@@ -404,19 +476,31 @@ TEST(EventCaptureController, LocalCaptureStopsWhenRemoteTargetConnects)
     ASSERT_EQ(EventCaptureState::Capturing, capture.state());
     EXPECT_EQ(EventCaptureTarget::Local, capture.target());
     ASSERT_EQ(VN_OK, Vn_StopAll(19));
+    const auto hasCompletedStopRequest = [&] {
+        quint64 submitted = 0, returned = 0;
+        for (int row = 0; row < capture.rowCount(); ++row) {
+            const auto& event = capture.eventAt(row);
+            if (!event.isExecution() || event.execution.request.operation != VN_MONITOR_OPERATION_STOP_ALL) continue;
+            if (event.execution.factKind == VN_MONITOR_FACT_REQUEST_SUBMITTED)
+                submitted = event.execution.request.sequence;
+            if (event.execution.factKind == VN_MONITOR_FACT_REQUEST_RETURNED &&
+                monitorFactHas(event.execution, kMonitorFactFieldResult) && event.execution.result == VN_OK)
+                returned = event.execution.request.sequence;
+        }
+        return submitted != 0 && submitted == returned;
+    };
     ASSERT_TRUE(waitUntil([&] {
         Vn_Update();
         capture.pollLocal();
-        return capture.rowCount() == 1;
+        return hasCompletedStopRequest();
     }));
-    EXPECT_EQ(19u, capture.eventAt(0).detail.arg0);
     connection.connectTarget(QStringLiteral("127.0.0.1"), peer.server.serverPort());
     ASSERT_TRUE(waitUntil([&] {
         Vn_Update();
         capture.pollLocal();
         return capture.state() == EventCaptureState::Stopped;
     }));
-    EXPECT_EQ(1, capture.rowCount());
+    EXPECT_TRUE(hasCompletedStopRequest());
     EXPECT_EQ(HarkenEditor::Bridge::RemoteEventCaptureState::Idle, connection.eventCaptureStatus().state);
     EXPECT_TRUE(capture.canStart());
 }
@@ -493,8 +577,8 @@ TEST(EventCaptureController, ProjectAndObjectIdentityGateNamesAndJumps)
         harken::monitor::PackHeader(records.bytes.data(), header);
         VNX::Monitor::MonitorEventDetailV2 detail{};
         detail.structSize = sizeof(detail);
-        detail.category = VN_MONITOR_EVENT_CATEGORY_OPERATION;
-        detail.code = VN_MONITOR_OPERATION_POST_ACTION;
+        detail.category = VN_MONITOR_EVENT_CATEGORY_DIAGNOSTIC;
+        detail.level = VN_LOG_WARN;
         detail.timestampNs = 200 + sequence;
         const auto guid = sourceProject.toRfc4122();
         std::memcpy(detail.projectGuid, guid.constData(), sizeof(detail.projectGuid));
@@ -508,7 +592,7 @@ TEST(EventCaptureController, ProjectAndObjectIdentityGateNamesAndJumps)
     EXPECT_EQ(capture.eventAt(0).objectName, QStringLiteral("Engine Start"));
     EXPECT_TRUE(capture.eventAt(1).objectName.isEmpty());
     EXPECT_EQ(capture.eventAt(2).objectName, QStringLiteral("Engine Start"));
-    EXPECT_EQ(panel.table()->model()->index(0, 3).data().toString(), QStringLiteral("Engine Start"));
+    EXPECT_EQ(panel.table()->model()->index(0, VNX::MonitorCatalogModel::Object).data().toString(), QStringLiteral("Engine Start"));
     auto* search = panel.findChild<QLineEdit*>(QStringLiteral("MonitorTextFilter"));
     search->setText(QStringLiteral("Engine Start"));
     EXPECT_EQ(panel.visibleRowCount(), 2);

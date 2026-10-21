@@ -1,6 +1,6 @@
 # Studio 公共表格规范与治理清单
 
-最近核对：2026-10-17。本文记录已确认的方案、业务边界及实施状态，供后续表格开发长期借鉴。Inspector 字段细节见 [inspector-tables.md](inspector-tables.md)。
+最近核对：2026-10-20。本文记录已确认的方案、业务边界及实施状态，供后续表格开发长期借鉴。Inspector 字段细节见 [inspector-tables.md](inspector-tables.md)。
 
 ## 职责边界
 
@@ -53,8 +53,9 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 - 表头与普通单元格使用 Body 字体，默认 10pt。对象图标使用 objectIconExtent，默认 20 逻辑像素。
 - 字段高度由 QtControlSkin::fieldHeight 计算，默认基准 24 逻辑像素，随字体需要增高。表格行包含字段高度与留白，不等于字段本身的高度。
 - 控件行的单元格通过 `TableWidget::createCell(parent)` 创建，由 `TableCell::addWidget(widget, stretch, alignment)` 放入业务控件。单元格统一读取主题 `table.cellPaddingX`、`table.cellPaddingY`，默认左右各 4、上下至少各 2 逻辑像素，字段在行内垂直居中；内部相邻控件间距为 `2 * cellPaddingX`，默认 8，与相邻两列控件之间的总留白一致。
-- `TableCell` 使用普通横向布局。同一单元格内可伸展的业务控件默认 `stretch=1`，扣除留白与间距后等分可用宽度；共享单元格释放这些控件的横向宽度约束。固定装饰图标、紧凑勾选框和行号等不参与等分，放入单元格时显式使用 `stretch=0`；明确限宽的单编辑器也可使用 `stretch=0` 保留业务对齐。行号独立列继续通过 `createRowNumber` 声明。纯文字标签可直接登记为列，由公共表格应用外层留白。
-- 原生 model/item 视图中的编辑器，包括通过 `setIndexWidget`、`setItemWidget` 插入的控件，由 `TableItemDelegate::updateEditorGeometry` 应用同一组 X/Y 留白并垂直居中。业务直接插入编辑器，不再包 `TableCell`，避免两次留白和字段高度被压缩；原生文字项的留白由公共 QSS 提供。编辑行高度至少容纳 `fieldHeight + 2 * cellPaddingY`，且不小于主题 `table.rowHeight`。
+- `TableCell` 使用普通横向布局。同一单元格内可伸展的业务控件默认 `stretch=1`，扣除留白与间距后等分可用宽度；共享单元格释放这些控件的横向宽度约束。固定装饰图标、紧凑勾选框和行号等不参与等分，放入单元格时显式使用 `stretch=0`；明确限宽的单编辑器也可使用 `stretch=0` 保留业务对齐。行号独立列继续通过 `createRowNumber` 声明；不需要序号时，调用 `createRowHandle(cell, index)` 为共享单元格声明独立六点柄，公共层负责放置，不再通过 `addWidget` 加入字段布局。该单元格与 Matrix 变量表头共用 handle、内容区和选中态绘制规则，handle 与引用控件之间不增加普通字段的 8px 间距；默认 handle 从左侧 4px 开始、宽 22px，引用框从 26px 开始，右侧留白 4px，字段垂直居中。纯文字标签可直接登记为列，由公共表格应用外层留白。
+- 原生 model/item 视图中的编辑器，包括通过 `setIndexWidget`、`setCellWidget`、`setItemWidget` 插入的控件，由 `TableItemDelegate::updateEditorGeometry` 应用同一组 X/Y 留白并垂直居中。业务直接插入编辑器，不再包 `TableCell`，避免两次留白和字段高度被压缩；波形预览与引用、输入字段遵循同一规则。原生文字项的留白由公共 QSS 提供。编辑行高度至少容纳 `fieldHeight + 2 * cellPaddingY`，且不小于主题 `table.rowHeight`。
+- 限宽编辑器用最大宽度表达上限，并允许随列宽收缩；不能以固定宽度或固有最小尺寸挤出单元格。右对齐和宽度上限不改变这一约束。验收检查父容器裁切后的实际可见范围，不能只检查控件自身的高度。
 - `ResizableTableView` 声明 `compositeTable`，用于单元格内承载子表、画布等可伸展内容。公共 delegate 将其嵌入控件铺满单元格，内部布局负责留白，不应用普通字段的固定高度。换主题保留独立行高和最小行高；纵向按像素滚动。选中底色仅绘制在声明的 `#` 列，内部内容保持普通背景。
 - 主行排列各列的 layout 保持零边距、零间距，列宽包含单元格留白。业务不得通过修改字段控件自身或内部 layout 的 margin 补偿表格间距，也不得递归改写 ObjectRef 等复合控件内部布局；展开详情保留其自身布局。
 - slider 与数值编辑器是共享 `ParameterBinding` 的独立编辑入口，不由复合控件锁定二者的布局。试听 Variables 的 Value 单元格放入仅含 slider 的 host、独立 `ParameterValueEditor` 和 Scope 下拉框，三个兄弟控件分别以 `stretch=1` 等分宽度并使用统一间距。`ParameterValueEditor` 随 Smooth/Step 显示数值输入框或选择框；常规 parameter presenter 可以组合 slider 与 value 的布局。
@@ -62,6 +63,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 - 常驻滚动槽以 Settings / Layout 为布局基准：纵向槽从表格内框顶部延伸到表体底部，表头止于槽左缘，整表 footer 位于滚动区之外。控件行可按需创建分组 footer，放在组内行之后并随表体滚动；与整表 footer 复用 ListFooter 的主题、尺寸及动作入口，空组也可提供添加动作，分组 footer 不参与行选择或排序。控件行将表头托管在滚动区的视口上边距内，与原生视图保持相同结构；横纵槽同时存在时使用透明交角。槽位沿用 Explorer 的透明背景和滑块样式，保留槽与表体之间的分隔线，表格外框及交角边线保持连续。普通控件行与原生表体使用相同的表面底色；复合画布保留其自身表面，槽位仍透明。
 - 普通行可选择，无悬停底色。焦点、编辑器边界悬停、有效拖放目标反馈各自独立。ObjectRef 悬停仅边界高亮，禁用态无悬停。
 - 带 `#` 的配置表将选中底色与强调色竖线限制在 `#` 列，并贯穿主行及其展开内容的完整高度；其他列保持普通行背景。行号及 `#` 表头居中。
+- 配置行以单元格内的六点柄代替独立 `#` 时，选中底色和强调线只绘制在承载柄的单元格，其他列保持普通背景；行的选中身份、拖动排序和业务联动仍按整行处理。
 - 业务表达 selected、disabled、error、modified、group、dropTarget 等语义，皮肤决定其视觉。领域波形、曲线等内容不属于应删除的局部表格皮肤。
 - 皮肤替换应同时覆盖原生 model/view 和控件行。换皮肤不改数据、命令与交互；影响布局的皮肤指标通过共享接口提供，不依赖某个业务 QSS selector 才能工作。
 - Inspector 右缘由宿主公共布局处理 columnPadding 与槽位留白，表格核心不感知 Inspector。
@@ -74,7 +76,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 
 ## 全量清单
 
-普通功能表格按用途去重共 25 项：配置表 12 项、展示表 13 项。Sends 在六类对象中的使用展开后，共 30 个页面/对象类型展示位置。不同对象实例、Binding 字段地址或同一对话框的打开位置不重复计数；Monitor 采用运行记录模型。
+普通功能表格按用途去重共 26 项：配置表 12 项、展示表 14 项。Sends 在六类对象中的使用展开后，共 31 个页面/对象类型展示位置。不同对象实例、Binding 字段地址或同一对话框的打开位置不重复计数；Monitor 采用运行记录模型。
 
 | ID | 分类 | 位置 / 用途 | 当前入口 |
 |---|---|---|---|
@@ -103,6 +105,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 | D11 | display | Monitor / Buses | MonitorBusesPanel |
 | D12 | display | Monitor / Effects | MonitorEffectsPanel |
 | D13 | display | Monitor / Events | MonitorPanel |
+| D14 | display | Sources Import / 同名音频冲突选择 | SourcesTreeWidget / sourceImportConflicts |
 
 Inputs/Receives 是路由反向查询，不再适用“所有 Inspector 表都带 #”的旧约定。Shortcuts 枚举命令目录；Layout 枚举已有布局资源，重命名与删除不改变其展示表职责。
 
@@ -122,6 +125,12 @@ Sources 仅在同语言组内移动；Binding 仅编辑本地贡献；Clips 移�
 
 ## 专用编辑面边界
 
+Random、Sequence、Match 的 Selection Editor 行选择可将该行引用的 Child 设为试听目标；编辑器与 Inspector 继续显示当前 Container，不经过全局对象导航。选中只设置目标，播放按钮和播放快捷键使用该目标；Child 本身为 Container 时正常播放该对象自身。用户成功替换已选行的 Child 引用后，试听目标同步为新对象；替换失败、编辑其他行或后台刷新不改变当前试听目标。工具栏只保留播放控制，不显示目标对象；Control 未固定时同步显示该目标的试听参数，固定时保留原绑定，Reset 跟随试听目标。
+
+表内空白、Esc、Match 中 Ctrl 点击已选行或改选 Variable 列等解除行选择的操作，将试听目标恢复为当前编辑器显示的 Container；钻入嵌套对象后恢复的是当前层级，不是最外层绑定对象。点击工具栏、Control 或切换焦点遵循公有表格规则，保留行选择和 Child 试听目标。Hierarchy 中重复点击已选对象也可重新指定目标。绑定、重建、属性刷新和布局恢复不自行取得试听目标；显式进入或返回嵌套 Container 时载入当前显示对象。目标对象或其所属子树删除、工程关闭时清除目标。试听不改变公有选择与拖动规则，选中高亮仍仅出现在 `#` 或承载 handle 的单元格。
+
+子对象试听复核覆盖三种模式的行选择与清选、嵌套编辑层级、编辑面板保持、Control 固定与解除固定、Hierarchy 键盘选择及重复点击、Blueprint 重选、后台刷新、无关目录删除和目标失效。树的实际选中变化独立发布试听请求，被动同步不改变目标。本轮 89 项相关回归全部通过，Release 编辑器与测试目标、RelWithDebInfo 编辑器构建成功，局部 QSS 所有权检查通过。
+
 Match Selection Editor 使用公共 `MatrixTableWidget`，定位与 Config Table 一致。它在 `TableWidget` 基础上提供双维度配置表：托管 QTableWidget、列表头控件和业务列移动请求。真实序号列 `#` 保持主题紧凑宽度，Child、Waveform 与所有条件列通过公共 `TableColumnLayout` 按比例分配剩余宽度，填满可用空间，禁止横向滚动；列边界拖动按相邻列补偿，窗口恢复宽度后保留比例。表体撑满编辑器，行高由主题固定，仅行内容超出时纵向滚动。变量列复用 Display Table 的 `ReorderHeaderView` 动画：拖动表头随指针浮动，相邻表头让位，松手后归位；引用控件随表头移动。完成时先恢复原生视图顺序，再由业务提交变量及整列条件的移动，调整匹配优先级，形成一步可撤销操作；Esc 或刷新表格取消未完成的拖动。序号列、Child 与 Waveform 列固定在左侧，不参与换位。该组件不包含 Variable、Selection 或匹配规则。
 
 Target 单元格和 Variable 表头均使用可编辑的标准 `ObjectRefWidget`，不包含变量试听控件。空表默认四列零行：`#`、`Child`、`Waveform`、一个空 Variable 引用列；空引用只是编辑入口，不写入空 GUID。变量表头支持独立列选择，与行选择互斥；Ctrl 点击已选表头取消选择。控件由公共矩阵层按主题留白定位，左右让出原生列宽拖动区域，随比例列宽及主题切换同步。存在多列变量时，引用控件左侧提供独立的六点拖动柄，悬停显示水平移动箭头，起拖不占用 ObjectRef 区域；列边界显示原生调宽双箭头，调宽期间不切换成移动光标。单击定位、双击导航、选择器、更换引用的对象拖入及右键菜单沿用原有规则。条件单元格使用可输入的下拉框，通配值显示为 `*`，下拉项显示 `* (Any)`，真实名称为 `Any` 的 Label 保留其实际值；范围不超过 64 个整数时列出全部取值，超出时只列出标签，其余整数值直接输入，非整数和越界输入不提交。编辑器沿用 `TableItemDelegate` 的单元格留白，矩阵网格线和表头状态由集中皮肤提供。footer 仅保留右下角标准加减按钮：加号点击弹出菜单，不叠加菜单箭头；菜单提供 New Variable（Smooth / Step）、Select Variable 和 Select Child，减号删除当前所选行或变量列。变量列也可通过列头菜单删除。更换变量保留原匹配值，无法解析或超出新变量范围时拒绝替换。页面默认只有矩阵；双击嵌套 Target 进入其编辑器，并显示返回路径。
@@ -138,11 +147,11 @@ Child 选择器仅展示当前 Container 及类型匹配的直属孩子，父级
 
 匹配结果预览读取 Control 的变量覆盖值，未覆盖时读取变量默认值，并应用变量范围与离散读取规则；它不依赖播放开始，也不追踪引擎内已经播放的实例。当前胜出行的条件单元格显示预览底色。条件与更早行完全相同的行，其行号显示警告色：Target 相同为重复行，Target 不同为无法胜出的行。单元格和 Target 提示显示具体原因与阻挡行号，并保留原有值与引用信息；编辑消除冲突后清除警告，撤销后恢复。预览与诊断不改变用户选择、未提交的编辑值或项目数据。
 
-Blend 模式的 Selection Editor 使用无表头的混合表，结构为 `# | Variable 与 Child 副表 | 混合曲线画布`。每行（row）对应一个可选的 Variable；控制区上方是可编辑的 Variable ObjectRef，下方是公共 `# | Child` 副表。画布横轴与 Variable Binding 共用 Variable 轴配置：Smooth 使用数值刻度与连续曲线，Step 使用整数刻度、Label 和阶梯预览；Kind、Label、Range 变化自动刷新，保留曲线原始坐标。纵轴显示 0–100% 混合比例。公共 `ResizableTableView` 承载跨行统一的比例分区宽度及独立行高，控制区与画布的边界、每行底边分别拖动调宽和调高；`#` 为固定宽度。画布不叠加外框，边界由宿主统一绘制；坐标轴保持 1px。分区边线止于最后一行，表格行外空白区与 Child 副表统一使用公共表体的深色主背景 `bgPrimary`，与其他模式一致。嵌套对象继续使用同一编辑器与返回路径。
+Blend 模式的 Selection Editor 使用无表头的混合表，结构为 `# | Variable 与 Child 副表 | 混合曲线画布`。每行（row）对应一个可选的 Variable；控制区上方是可编辑的 Variable ObjectRef，下方是公共 `Child | Waveform` 副表，不设序号列。画布横轴与 Variable Binding 共用 Variable 轴配置：Smooth 使用数值刻度与连续曲线，Step 使用整数刻度、Label 和阶梯预览；Kind、Label、Range 变化自动刷新，保留曲线原始坐标。纵轴显示 0–100% 混合比例。公共 `ResizableTableView` 承载跨行统一的比例分区宽度及独立行高，控制区与画布的边界、每行底边分别拖动调宽和调高；`#` 为固定宽度。画布不叠加外框，边界由宿主统一绘制；坐标轴保持 1px。分区边线止于最后一行，表格行外空白区与 Child 副表统一使用公共表体的深色主背景 `bgPrimary`，与其他模式一致。嵌套对象继续使用同一编辑器与返回路径。
 
-右下角标准加减号管理混合行：加号菜单为 Add Mixing，添加一行后通过该行的 Variable 引用控件选择变量；减号为 Remove Mixing，移除当前行；外层 `#` 接入公共整行选中、拖动排序、插入位置提示、右键上下移动与键盘操作。整行选中高亮仅限外层 `#`，不覆盖 Variable、Child 副表和画布。每行的 Child 副表在 Child 右侧显示 Waveform，默认比例为 40% / 60%，使用独立的右下角加减号、序号选择与拖动排序，整条曲线随成员移动。标准 ObjectRef 支持更换引用、定位和进入对象。更换 Variable 保留曲线数值坐标。所有业务写入通过 `selections` 命令形成撤销步骤；混合行是统一条目中混合曲线的编辑视图，存档字段 `blendAxes` 保存混合行身份、Variable 引用和行顺序，不另存成员名单。删除曲线保留条目的其他策略数据；调宽、调高属于编辑器布局状态。
+右下角标准加减号管理混合行：加号菜单为 Add Mixing，添加一行后通过该行的 Variable 引用控件选择变量；减号为 Remove Mixing，移除当前行；外层 `#` 接入公共整行选中、拖动排序、插入位置提示、右键上下移动与键盘操作。整行选中高亮仅限外层 `#`，不覆盖 Variable、Child 副表和画布。每行的 Child 副表在 Child 右侧显示 Waveform，默认比例为 40% / 60%，使用独立的右下角加减号；Child 单元格内采用公共六点行拖动柄与标准 ObjectRef，显示对象名称，保留行选择、拖动排序及整条曲线随成员移动。高亮仅限 Child 单元格，Waveform 保持普通背景；handle、引用框布局及选中绘制与 Match 变量表头共用公共皮肤规则。标准 ObjectRef 支持更换引用、定位和进入对象。更换 Variable 保留曲线数值坐标。所有业务写入通过 `selections` 命令形成撤销步骤；混合行是统一条目中混合曲线的编辑视图，存档字段 `blendAxes` 保存混合行身份、Variable 引用和行顺序，不另存成员名单。删除曲线保留条目的其他策略数据；调宽、调高属于编辑器布局状态。
 
-child 的多条曲线叠加显示，未选中统一为暗青色，所选 child 的曲线为亮青色，色彩来自主题的曲线强调色。每条曲线有带 child 名称的容器，标题区横向拖动整个区间，首尾点可单独移动；曲线下方至 0% 的区域使用渐变填充。容器不绘制贯穿全高的左右边框，首尾曲线点到 0% 轴的辅助线使用 1px 虚线。Step 的实际阶梯结果为实线，原始连续曲线作为淡色虚线辅助编辑；选中与未选中曲线、渐变填充和命中检测均采用相同的离散读取规则。点选标题或曲线与 Child 副表选择联动，编辑继续复用公共点与贝塞尔手柄交互。成员列表和曲线区按比例适应宽度，无横向滚动；多行与较长成员列表使用纵向滚动。试听游标读取 Control 的变量覆盖值，各行增益及跨行相乘后的结果通过 Child 提示查看，试听状态不占用序号选择高亮。
+child 的多条曲线叠加显示，未选中统一为暗青色，所选 child 的曲线为亮青色，色彩来自主题的曲线强调色。每条曲线有带 child 名称的容器，标题区横向拖动整个区间，首尾点可单独移动；曲线下方至 0% 的区域使用渐变填充。容器不绘制贯穿全高的左右边框，首尾曲线点到 0% 轴的辅助线使用 1px 虚线。Step 的实际阶梯结果为实线，原始连续曲线作为淡色虚线辅助编辑；选中与未选中曲线、渐变填充和命中检测均采用相同的离散读取规则。点选标题或曲线与 Child 副表选择联动，编辑继续复用公共点与贝塞尔手柄交互。成员列表和曲线区按比例适应宽度，无横向滚动；多行与较长成员列表使用纵向滚动。试听游标读取 Control 的变量覆盖值，各行增益及跨行相乘后的结果通过 Child 提示查看，试听状态不占用行选择高亮。
 
 曲线支持公共点坐标编辑、插入删除、手柄塑形、复制粘贴与撤销。精确数值输入使用公共 `DecimalSpinBox`，百分比在保存和 Pack 编译时转换为线性增益；未改动的坐标保持原有精度。拖动松开提交一步撤销，取消或切换对象丢弃未提交预览。同一行中的同一 child 只允许一条曲线，跨行引用共用播放、增益相乘，成员之间不自动归一化。
 
@@ -156,7 +165,7 @@ Hierarchy、Explorer、Sources、Selector 及 Template Chooser 预览属于导�
 
 - [x] 确认分类、能力配置和皮肤职责边界，建立长期清单。
 - [x] 公共表体布局策略与可选 footer，对控件行和原生视图生效。
-- [x] 25 项普通功能表格全部接入公共 Table 模板或视图适配。
+- [x] 26 项普通功能表格全部接入公共 Table 模板或视图适配。
 - [x] 配置表取消内部滚动，保留业务排序；Binding、平台策略由外层页面滚动。
 - [x] 展示表按需配置 footer、高度和列换位，移除 Inputs/Receives 的 #。
 - [x] Monitor 通过公共选项保留原生列宽调整、横向滚动和现有表头状态恢复。
@@ -179,6 +188,10 @@ Hierarchy、Explorer、Sources、Selector 及 Template Chooser 预览属于导�
 公共创建 API 补充：4 个 Monitor 模型表体、6 个项目设置/Remote/Pack Structure 条目表体均改由 Table 创建；Pack 的特殊子类通过显式工厂接入，控件行表格沿用既有托管表体。移除公开 `setView`，Catalog 模型切换改走公共 `setModel`。默认编辑器及测试目标构建通过，411 项相关离屏回归全部通过，包含模型替换后的编辑与行高更新、列宽恢复、表体所有权及特殊工厂主题传递；本轮未新增原生控件使用门禁或测试框架。
 
 高度与滚动槽复核：随宿主高度变化的表格共 14 类，包括 Control 两表、Monitor 四表、Publisher、Pack Structure、Remote Targets、Settings Shortcuts、Settings Layout、Match 矩阵、混合主表及 Child 子表。Control 两表和混合 Child 原先将表头放在滚动区外，槽位起点与 Layout 的原生视图不同；公共 Table 已改为在滚动区内部预留表头视口边距，并统一两种表体的实际最小高度约束。槽底色已移除，原有分隔线保留；控件行的宽泛后代样式已收窄，滚动条使用公共皮肤。14 类表格已逐类离屏渲染核对槽位起点、透明绘制、分隔线，以及压缩至最小尺寸后的表头和表体留白；编辑器及测试目标构建通过，267 项相关回归通过，局部 QSS 所有权检查通过。
+
+控件嵌入复核：检查 26 项普通功能表格及 Match、Blend、Timeline 的创建、控件嵌入与尺寸声明。Match 的 Waveform 原先在原生字段内部再次包装 TableCell，24px 控件实际只显示 22px；现改为直接插入字段，与 Child 引用保持同一留白，非 Sound 行保持空单元格。Sources 同名音频导入冲突表补入清单并改用公共展示表；ListField 限宽数值框改用最大宽度并允许收缩。没有新增业务专用皮肤或留白补偿。
+
+本次离屏渲染核对 Match、导入冲突对话框、ListField，以及控件行、原生模型表和树形表内的引用、波形、文本、数值、下拉框及快捷键字段。Match 波形完整显示 24px；实际 ListField 数值框在窄列下由 64px 缩至 37px，仍完整可见。扩展现有回归，覆盖实际可见范围、窄列恢复、主题刷新和非 Sound 留空。Release 编辑器与测试目标、RelWithDebInfo 编辑器均构建成功；213 项相关回归批跑通过 212 项，一项音频替换撤销用例间歇失败。两项批跑中曾失败的音频文件用例分别单独复测三次均通过，旧测试产物也复现了替换用例失败，本次未改动文件事务代码。更窄尺寸的数值框回归单独通过，局部 QSS 所有权检查通过。
 
 ## 当前公共入口
 
@@ -207,7 +220,7 @@ Hierarchy、Explorer、Sources、Selector 及 Template Chooser 预览属于导�
 | `ProportionalTreeWidget::setHierarchyIndentation` / `cellContentsRect` | 设置业务子条目的缩进宽度并提供内容区域；创建公共分组后，分组祖先不计入缩进，业务层级仅缩进内容，单元格边框和选择背景仍铺满整行；领域 delegate 和命中区域共用该几何规则 |
 | `setSelectionClearHandler(handler)` / `clearSelection()` | 控件行接入业务取消选择函数；原生表体由公共层清除当前索引和选择；空白、Esc 等交互共用此入口 |
 | `bodyMessage()` | 按需创建公共表体消息标签；字体、边距与最小高度由共享层处理，业务设置文本和可见性 |
-| `createRowNumber` / `setRowNumberColumn` / `setRowMoveHandler(handler, guard)` | 控件行和原生表体显式声明序号列并启用移动，共用光标、插入线、拖动取消、右键上下移与 Alt＋方向键；调用业务命令，guard 保留继承、分组等移动约束 |
+| `createRowNumber` / `createRowHandle` / `setRowNumberColumn` / `setRowMoveHandler(handler, guard)` | 控件行使用序号或单元格内的独立拖动柄，原生表体声明序号列，显式启用移动后共用光标、插入线、拖动取消、右键上下移与 Alt＋方向键；调用业务命令，guard 保留继承、分组等移动约束 |
 | `footer(standardButtons)` | 按需创建，未调用就没有 footer；是否显示标准增删按钮在首次创建时决定 |
 | `createGroupFooter(standardButtons)` | 为控件行创建一个新的 ListFooter 并追加到表体布局；调用方在组内行之后调用，绑定所属组的业务动作；空白取消选择、按钮保留选择的规则与整表 footer 一致 |
 | `registerRow(row, cells, details, groupId)` | 可选的稳定分组 ID，用于删除后在同组恢复选择；默认无分组，分组名与业务含义由调用方管理 |

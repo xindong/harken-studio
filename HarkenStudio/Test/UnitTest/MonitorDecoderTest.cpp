@@ -3,6 +3,7 @@
 #include "Monitor/MonitorDecoder.h"
 #include "Monitor/support/MonitorFixtureLoader.h"
 #include "MonitorRecordPack.h"
+#include "MonitorExecutionCodec.h"
 
 #include <gtest/gtest.h>
 
@@ -294,5 +295,68 @@ TEST(MonitorDecoder, EventDetailVersionsKeepIdentityAndRejectMismatchedPayloads)
         ASSERT_EQ(future.records.size(), 1u);
         EXPECT_TRUE(future.records.front().unknownOptional);
         EXPECT_FALSE(VNX::Monitor::decodeEventDetail(future.records.front(), &decoded));
+    }
+}
+
+TEST(MonitorDecoder, ReadsEngineExecutionIdentityWithoutNativeLayoutAssumptions)
+{
+    for (const auto subject : {VN_MONITOR_SUBJECT_PLAYABLE, VN_MONITOR_SUBJECT_ACTION, VN_MONITOR_SUBJECT_LOGICAL_VOICE}) {
+        SCOPED_TRACE(subject);
+        harken::MonitorExecutionFact source{};
+        source.engine = 19;
+        source.sourceSequence = 31;
+        source.kind = VN_MONITOR_FACT_PLAYABLE_ACTIVE;
+        source.subjectNamespace = subject;
+        source.contentKind = VN_MONITOR_CONTENT_SOUND;
+        const uint64_t generation = subject == VN_MONITOR_SUBJECT_ACTION ? (UINT64_C(1) << 40) + 7 : 7;
+        source.body.execution.identity.handle = (generation << (subject == VN_MONITOR_SUBJECT_ACTION ? 12 : 32)) | 3;
+        source.body.execution.identity.project = {UINT64_C(0x123456789abcdef0), UINT64_C(0x1020304050607080)};
+        source.body.execution.identity.object = {41, 59};
+        source.timestamp = 123456789;
+        for (const auto field : {VN_MONITOR_FACT_FIELD_SUBJECT, VN_MONITOR_FACT_FIELD_PROJECT,
+                                VN_MONITOR_FACT_FIELD_CONTENT_OBJECT, VN_MONITOR_FACT_FIELD_TIMESTAMP})
+            ASSERT_TRUE(harken::monitor::SetSourceField(source, field));
+        std::vector<uint8_t> packed(harken::monitor::kExecutionRecordBytes);
+        ASSERT_EQ(harken::monitor::PackExecutionFact(packed.data(), packed.size(), source, 71, 72), packed.size());
+        const auto batch = decodePackedRecords(packed.data(), packed.size(), 1);
+        ASSERT_EQ(batch.status, VN_OK);
+        ASSERT_EQ(batch.records.size(), 1u);
+        VNX::Monitor::MonitorExecutionFactV1 fact{};
+        ASSERT_TRUE(VNX::Monitor::decodeExecutionFact(batch.records.front(), &fact));
+        EXPECT_EQ(batch.records.front().header.instanceGeneration, generation);
+        EXPECT_EQ(batch.records.front().header.stableId, (harkenstudio::ObjectId{41, 59}));
+        EXPECT_EQ(fact.projectId, (harkenstudio::ObjectId{UINT64_C(0x123456789abcdef0), UINT64_C(0x1020304050607080)}));
+        EXPECT_EQ(fact.timestampNs, source.timestamp);
+        EXPECT_EQ(fact.subjectNamespace, subject);
+        EXPECT_TRUE(VNX::Monitor::monitorFactHas(fact, VNX::Monitor::kMonitorFactFieldContentObject));
+    }
+}
+
+TEST(MonitorDecoder, ExecutionRejectsMalformedIdentityAndPreservesOutputOnFailure)
+{
+    harken::MonitorExecutionFact source{};
+    source.engine = 19;
+    source.sourceSequence = 31;
+    source.kind = VN_MONITOR_FACT_PLAYABLE_ACTIVE;
+    source.subjectNamespace = VN_MONITOR_SUBJECT_PLAYABLE;
+    source.body.execution.identity.handle = UINT64_C(0x100000003);
+    ASSERT_TRUE(harken::monitor::SetSourceField(source, VN_MONITOR_FACT_FIELD_SUBJECT));
+    std::vector<uint8_t> packed(harken::monitor::kExecutionRecordBytes);
+    ASSERT_EQ(harken::monitor::PackExecutionFact(packed.data(), packed.size(), source, 71, 72), packed.size());
+    const auto batch = decodePackedRecords(packed.data(), packed.size(), 1);
+    ASSERT_EQ(batch.status, VN_OK);
+    ASSERT_EQ(batch.records.size(), 1u);
+    for (int corruption = 0; corruption != 5; ++corruption) {
+        SCOPED_TRACE(corruption);
+        auto record = batch.records.front();
+        if (corruption == 0) record.payload.pop_back();
+        if (corruption == 1) record.header.instanceGeneration += 1;
+        if (corruption == 2) record.payload[60] = 1;
+        if (corruption == 3) record.payload[23] = 128;
+        if (corruption == 4) record.payload[64] = 1;
+        VNX::Monitor::MonitorExecutionFactV1 fact{};
+        fact.timestampNs = 997;
+        EXPECT_FALSE(VNX::Monitor::decodeExecutionFact(record, &fact));
+        EXPECT_EQ(fact.timestampNs, 997u);
     }
 }

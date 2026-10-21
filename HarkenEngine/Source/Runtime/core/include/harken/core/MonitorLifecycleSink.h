@@ -33,7 +33,8 @@ enum class MonitorLifecyclePhase : std::uint8_t {
     EffectInstalled = 19,
     EffectReleased = 20,
     SelectionCommitted = 21,
-    PreparedCandidate = 22
+    PreparedCandidate = 22,
+    PlayableStarted = 23
 };
 
 // Called after the reported Runtime decision succeeds. No-op when Monitor is absent,
@@ -51,6 +52,9 @@ struct MonitorLifecycleFacts {
     bool identityObservationIncomplete = false;
     bool publishLegacy = true;
     bool reasonKnown = true;
+    std::uint8_t terminalKind = 0;
+    std::int32_t terminalResult = 0;
+    std::uint32_t terminalReason = 0;
     MonitorOccurrenceIdentity occurrenceIdentity{};
     VnObjectId contentObject{};
     std::uint64_t contentWorld = 0;
@@ -70,6 +74,8 @@ struct MonitorLifecycleFacts {
     std::uint64_t runtimeLineageFingerprint = 0;
     std::uint64_t arrangingInstance = 0;
     std::uint64_t logicCommitSequence = 0;
+    std::uint64_t startedAudioBlock = 0;
+    std::uint64_t startedFrame = 0;
     float volumeDb = 0.0f;
     bool volumeKnown = false;
     std::uint32_t notifyType = 0;

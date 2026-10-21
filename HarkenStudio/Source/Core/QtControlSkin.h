@@ -4,6 +4,7 @@
 
 #include <QPalette>
 #include <QIcon>
+#include <QRect>
 #include <QString>
 #include <QVariant>
 
@@ -18,6 +19,11 @@ class ThemeAssetResolver;
 class QtControlSkin
 {
 public:
+    struct TableHandleLayout {
+        QRect handle;
+        QRect content;
+    };
+
     explicit QtControlSkin(ThemeSnapshotPtr snapshot,
                            ThemeAssetResolver* assetResolver = nullptr);
     static QtControlSkin current();
@@ -30,6 +36,11 @@ public:
     static void setSemanticProperty(QWidget* widget, const char* name,
                                     const QVariant& value);
     static void paintFieldFrame(QPainter& painter, const QWidget* widget);
+    int tableResizeGripWidth(const QWidget* widget) const;
+    TableHandleLayout tableHandleLayout(const QRect& rect, const QWidget* widget,
+                                       bool hasHandle = true) const;
+    void paintDragHandle(QPainter& painter, const QRect& rect, bool enabled = true) const;
+    void paintTableCellSelection(QPainter& painter, const QRect& rect) const;
 
     static QString colorSwatchStyle(const QColor& color);
     QString collapsibleIndicatorStyle(const QColor& color, int alpha,
