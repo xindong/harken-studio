@@ -1644,6 +1644,7 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         EnginePlayableServiceToken service{};
         EnginePlayablePartitionToken partition{};
         std::uint64_t invocationGeneration = 0;
+        std::vector<ImmediateLanePrivateEntryResultCell> results;
         ImmediateLanePrivateEntryResultView shape{};
         ImmediateLanePrivateEntryResultView terminal{};
         bool stopAccepted = false;
@@ -6077,11 +6078,6 @@ public:
                 sizeof(ImmediateLaneEvent));
         pendingImmediateLaneEventsScratch.resize(
             immediateActionLane.EventsPerAttempt());
-        const auto receiverCells = static_cast<std::uint64_t>(playableServices.Capacity()) *
-            immediateActionLane.EventsPerAttempt();
-        if (receiverCells > SIZE_MAX / sizeof(ImmediateLanePrivateEntryResultCell))
-            throw std::bad_alloc{};
-        privateImmediateEntryResults.resize(static_cast<std::size_t>(receiverCells));
         static_assert(std::numeric_limits<std::uint32_t>::max() <=
             std::numeric_limits<std::size_t>::max() /
                 sizeof(Plan03ImmediateLaneGroupDescriptor));
@@ -6922,6 +6918,12 @@ public:
     }
     // Disjoint owned allocations; row requests, committed pages and VA remain separate measures.
     std::size_t ActionPlayDynamicBytes() const noexcept;
+    std::size_t PrivateImmediateEntryResultStorageBytes() const noexcept {
+        std::size_t bytes = 0;
+        for (const auto& service : playableServices)
+            bytes += service.privateImmediateEntry.results.capacity() * sizeof(ImmediateLanePrivateEntryResultCell);
+        return bytes;
+    }
     std::size_t PendingSelectionStorageBytes() const noexcept;
     std::size_t CapturedVoiceStorageBytes() const noexcept;
     mutable std::uint64_t capturedVoiceAccountingEpoch = 0;
@@ -8842,7 +8844,7 @@ public:
                 2u * sizeof(OriginalDecisionLifetimePin)) +
             actionPlayScratch.ConstructedCount() * sizeof(EngineActionPlayScratch::PrivateInitialVcPageCohort) +
             playableServices.size() * sizeof(EnginePlayableServiceRow::PrivateImmediateEntryReceiver) +
-            privateImmediateEntryResults.capacity() * sizeof(ImmediateLanePrivateEntryResultCell) +
+            PrivateImmediateEntryResultStorageBytes() +
             immediateActionLane.PrivateEntryStorageBytes() + censusBytes;
     }
 
@@ -12162,7 +12164,6 @@ public:
     std::vector<TransactionRequest> pendingImmediateRequestsScratch;
     std::vector<ScheduledEventInput> pendingImmediateEventsScratch;
     std::vector<ImmediateLaneEvent> pendingImmediateLaneEventsScratch;
-    std::vector<ImmediateLanePrivateEntryResultCell> privateImmediateEntryResults;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandEventQuantaScratch;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandGroupQuantaScratch;
     std::vector<EngineInitialQueueTimingMember>

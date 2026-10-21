@@ -254,7 +254,7 @@ std::size_t Engine::PendingSelectionStorageBytes() const noexcept {
         column(acceptedPendingVariableGroups) + column(pendingVariableLeafSources) +
         column(pendingVariableFutureSources) + column(pendingVariableFutureNodes) +
         pendingVariableQueueNativeOrigins.RequestedBytes() + column(originalPlayableServiceLifetimeHolders) +
-        column(privateImmediateEntryResults);
+        PrivateImmediateEntryResultStorageBytes();
     for (const auto& ordinary : pendingOrdinarySelections) bytes += ordinary.nativeReplacement.RequestedBytes();
     const auto addGroups = [&](const auto& groups) noexcept {
         for (const auto& group : groups) {
@@ -2902,12 +2902,9 @@ bool IsPlayableServiceDescendant(harken::Engine& engine,
 bool MatchesPrivateImmediateEntryReceiver(harken::Engine& engine,
     const harken::EnginePlayableServiceRow& row, bool requireAssociation = true) noexcept {
     const auto& receiver = row.privateImmediateEntry;
-    const auto capacity = engine.immediateActionLane.EventsPerAttempt();
-    const auto base = static_cast<std::size_t>(row.identity.slot) * capacity;
+    const auto capacity = receiver.results.size();
     return row.identity.slot < engine.playableServices.size() &&
-        base <= engine.privateImmediateEntryResults.size() &&
-        capacity <= engine.privateImmediateEntryResults.size() - base &&
-        receiver.shape.cells == engine.privateImmediateEntryResults.data() + base &&
+        capacity != 0 && receiver.shape.cells == receiver.results.data() &&
         receiver.shape.capacity == capacity && receiver.shape.count <= capacity &&
         (!receiver.projectionReceived || (receiver.terminal.cells == receiver.shape.cells &&
             receiver.terminal.capacity == capacity && receiver.terminal.count == receiver.shape.count &&
@@ -46888,10 +46885,6 @@ void ServicePlayableStarts(harken::Engine& engine,
             continue;
         }
         if (row.privateImmediateEntry.Valid() && !row.frontierEntry.Valid()) {
-            if (row.privateImmediateEntry.shape.cells != nullptr &&
-                row.privateImmediateEntry.shape.count <= row.privateImmediateEntry.shape.capacity)
-                std::fill_n(row.privateImmediateEntry.shape.cells,
-                    row.privateImmediateEntry.shape.count, harken::ImmediateLanePrivateEntryResultCell{});
             row.privateImmediateEntry = {};
         }
         if (row.privateVariableControlRollbackGeneration != 0) continue;
@@ -86288,10 +86281,12 @@ bool ComputeInitialActionLaneDemand(
         return true;
     };
     for (std::uint32_t index = 0; index < preparedCount; ++index) {
-        const auto* play = FindImmediateActionPlay(plan, index);
+        auto* play = FindImmediateActionPlay(plan, index);
         if (play == nullptr || play->row == nullptr ||
             !play->row->pendingImmediateEntry) continue;
-        const auto& row = *play->row;
+        auto& row = *play->row;
+        const auto firstEvent = eventCount;
+        const auto firstGroup = groupCount;
         const auto leaves = row.variableControlIndependentFrontier
             ? row.scheduleLeafCount : std::max(1u, row.scheduleLeafCount);
         for (std::uint32_t leaf = 0; leaf < leaves; ++leaf) {
@@ -86333,6 +86328,10 @@ bool ComputeInitialActionLaneDemand(
                 if (!addEvent(0) || !addGroup(0)) return false;
             if (leaves > eventQuanta.size() - memberCount) return false;
             memberCount += leaves;
+            auto& receiver = row.privateImmediateEntry;
+            const auto resultCount = static_cast<std::uint64_t>(eventCount - firstEvent) + groupCount - firstGroup;
+            if (receiver.Valid() || !receiver.results.empty() || resultCount > UINT32_MAX) return false;
+            receiver.shape.capacity = static_cast<std::uint32_t>(resultCount);
         }
     }
     bool hasInitialQueueHolder = false;
@@ -86382,6 +86381,8 @@ bool ComputeInitialActionLaneDemand(
             (bank == nullptr || bank->published ||
              bank->programCount != holder.queueUnplacedTransactionCount))
             return false;
+        const auto firstEvent = eventCount;
+        const auto firstGroup = groupCount;
         std::uint32_t holderEvents = 0;
         for (std::uint32_t programIndex = 0;
              programIndex < holder.queueUnplacedTransactionCount;
@@ -86430,6 +86431,19 @@ bool ComputeInitialActionLaneDemand(
                     !addGroup(frame - plan.admittedImmediateFrame))
                     return false;
             }
+        }
+        bool receiverFound = false;
+        for (std::uint32_t index = 0; index < preparedCount; ++index) {
+            auto* play = FindImmediateActionPlay(plan, index);
+            if (play == nullptr || play->row == nullptr || !play->row->pendingImmediateEntry ||
+                (!play->variableControlCommitted && !play->variableControl) ||
+                !MatchesPrivateVcProducerService(engine, holder, *play->row)) continue;
+            auto& receiver = play->row->privateImmediateEntry;
+            const auto resultCount = static_cast<std::uint64_t>(receiver.shape.capacity) +
+                eventCount - firstEvent + groupCount - firstGroup;
+            if (receiverFound || resultCount > UINT32_MAX) return false;
+            receiver.shape.capacity = static_cast<std::uint32_t>(resultCount);
+            receiverFound = true;
         }
     }
     if (plan.originalPlainSoundRoute) {
@@ -86488,6 +86502,20 @@ bool ComputeInitialActionLaneDemand(
         if (sameGroups > engine.config.maxPlan03GroupHeadersPerPage)
             return false;
         ++bucketCount;
+    }
+    // Entry results outlive the lane. Reserve only the entry's actual event/group
+    // bound before acceptance; every bucket needs one of those owned records.
+    for (std::uint32_t index = 0; index < preparedCount; ++index) {
+        auto* play = FindImmediateActionPlay(plan, index);
+        if (play == nullptr || play->row == nullptr || !play->row->pendingImmediateEntry ||
+            (!play->variableControlCommitted && !play->variableControl)) continue;
+        auto& receiver = play->row->privateImmediateEntry;
+        const auto capacity = std::min(receiver.shape.capacity, bucketCount);
+        if (capacity == 0 || !engine.AllowNativeBackingAllocation()) return false;
+        try { receiver.results.resize(capacity); }
+        catch (...) { return false; }
+        receiver.shape.cells = receiver.results.data();
+        receiver.shape.capacity = capacity;
     }
     *out = {eventCount, groupCount, memberCount, bucketCount};
     return true;
@@ -89744,16 +89772,6 @@ engine.runtimeRecreateRequired = true;
                         receiver.service = row.identity;
                         receiver.partition = row.partition;
                         receiver.invocationGeneration = row.invocationGeneration;
-                        const auto capacity = engine.immediateActionLane.EventsPerAttempt();
-                        const auto base = static_cast<std::size_t>(row.identity.slot) * capacity;
-                        if (row.identity.slot >= engine.playableServices.size() ||
-                            base > engine.privateImmediateEntryResults.size() ||
-                            capacity > engine.privateImmediateEntryResults.size() - base) {
-                            engine.runtimeRecreateRequired = true;
-                            continue;
-                        }
-                        receiver.shape.cells = engine.privateImmediateEntryResults.data() + base;
-                        receiver.shape.capacity = capacity;
                         if (!MatchesPrivateImmediateEntryReceiver(engine, row))
                             engine.runtimeRecreateRequired = true;
                     }

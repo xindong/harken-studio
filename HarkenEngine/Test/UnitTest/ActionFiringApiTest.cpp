@@ -50221,6 +50221,7 @@ TEST(ActionFiringApi, OrderedVariableDoubleNestedPlayPreservesInitialPcmAndRetir
         EXPECT_EQ(commandHead, engine.commands.PublishedHead());
         EXPECT_EQ(beforeRefusal, CaptureActionReclaimableOwners(engine));
         EXPECT_EQ(0u, NativePreparationBackingBytes(engine));
+        EXPECT_EQ(0u, engine.PrivateImmediateEntryResultStorageBytes());
     }
     ASSERT_NE(0u, firing);
     struct OriginalOwner {
@@ -52772,6 +52773,17 @@ static void CheckRegisteredInitialCompositeCohort(bool piece, bool reselect,
     ASSERT_EQ(2u, attempt->privateVcProducerCount);
     EXPECT_EQ(totalPhysicalCount, attempt->originalLaneDemand.members);
     EXPECT_EQ(totalPhysicalCount + 6u, attempt->originalLaneDemand.events);
+    std::array<const harken::ImmediateLanePrivateEntryResultCell*, 2> resultStorage{};
+    std::size_t resultCells = 0;
+    for (unsigned index = 0; index < services.size(); ++index) {
+        const auto& receiver = engine.playableServices[services[index].slot].privateImmediateEntry;
+        ASSERT_TRUE(receiver.Valid());
+        ASSERT_FALSE(receiver.results.empty());
+        resultStorage[index] = receiver.results.data();
+        resultCells += receiver.results.size();
+    }
+    EXPECT_LE(resultCells, attempt->originalLaneDemand.events + attempt->originalLaneDemand.groups);
+    EXPECT_NE(resultStorage[0], resultStorage[1]);
     struct ActualInitialStart {
         VnVoiceHandle render = 0;
         harken::TimelineArmToken arm{};
@@ -52881,6 +52893,8 @@ static void CheckRegisteredInitialCompositeCohort(bool piece, bool reselect,
             const auto& row = engine.playableServices[services[index].slot];
             if (row.identity != services[index]) continue;
             observedBucketCounts[index] = std::max(observedBucketCounts[index], row.privateImmediateEntry.shape.count);
+            if (row.privateImmediateEntry.Valid())
+                EXPECT_EQ(resultStorage[index], row.privateImmediateEntry.shape.cells);
             for (std::uint32_t slot = 0; slot < engine.sourceTerminals.Capacity(); ++slot) {
                 const auto* actual = engine.sourceTerminals.At(slot);
                 if (!actual->occupied || actual->controller != accepted[index].producedPlayableInstance) continue;
@@ -53106,6 +53120,7 @@ static void CheckRegisteredInitialCompositeCohort(bool piece, bool reselect,
     EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
     ASSERT_NO_FATAL_FAILURE(ExpectBoundSourcesReleased(engine, sourceGenerations));
     EXPECT_FALSE(engine.runtimeRecreateRequired);
+    EXPECT_EQ(0u, engine.PrivateImmediateEntryResultStorageBytes());
 }
 
 TEST(ActionFiringApi, PendingVariableGroupInitialCompositeTrackReselectsBothPlays) {

@@ -798,6 +798,10 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     ASSERT_NE(nullptr, engine);
+    EXPECT_EQ(0u, engine->PrivateImmediateEntryResultStorageBytes());
+    testing::Test::RecordProperty("removed_prebuilt_private_entry_result_bytes", std::to_string(
+        static_cast<std::uint64_t>(engine->playableServices.Capacity()) *
+        engine->immediateActionLane.EventsPerAttempt() * sizeof(harken::ImmediateLanePrivateEntryResultCell)));
     const harken::PlayableStorageLayout& layout = engine->playableStorage;
     EXPECT_EQ(engine->config.maxPlayableInstances, engine->playableStarts.size());
     EXPECT_EQ(engine->config.maxPlayableInstances, engine->playableServices.Capacity());
