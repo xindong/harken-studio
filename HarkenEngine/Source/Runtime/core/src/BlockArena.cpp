@@ -1,13 +1,37 @@
 #include "harken/core/BlockArena.h"
 
+#include <algorithm>
 #include <cstring>
+#include <new>
 
 namespace harken {
 
-BlockArena::BlockArena(std::uint32_t capacityBytes)
-    : m_buffer(std::make_unique<std::byte[]>(capacityBytes)),
-      m_storageCapacity(capacityBytes),
-      m_capacity(capacityBytes) {}
+BlockArena::BlockArena(std::uint32_t capacityBytes, BackingMode mode)
+    : m_storageCapacity(capacityBytes), m_capacity(capacityBytes) {
+    if (!m_buffer.Reserve(std::max<std::size_t>(capacityBytes, alignof(float)), alignof(float), true) ||
+        (mode == BackingMode::Full && !PrepareBacking(capacityBytes, 0))) throw std::bad_alloc{};
+}
+
+bool BlockArena::PrepareBacking(std::uint64_t lowBytes, std::uint64_t highBytes) noexcept {
+    if (memguard::IsAudioTagged()) return false;
+    const auto low = m_lowPrepared.load(std::memory_order_relaxed);
+    const auto high = m_highPrepared.load(std::memory_order_relaxed);
+    const auto nextLow = std::max(low,
+        static_cast<std::uint32_t>(std::min<std::uint64_t>(lowBytes, m_storageCapacity)));
+    const auto nextHigh = std::max(high,
+        static_cast<std::uint32_t>(std::min<std::uint64_t>(highBytes, m_storageCapacity)));
+    if (!m_buffer.CommitRange(low, nextLow - low)) return false;
+    m_lowPrepared.store(nextLow, std::memory_order_release);
+    if (!m_buffer.CommitRange(m_storageCapacity - nextHigh, nextHigh - high)) return false;
+    m_highPrepared.store(nextHigh, std::memory_order_release);
+    return true;
+}
+
+bool BlockArena::BackingReady(std::size_t begin, std::size_t end) const noexcept {
+    const auto low = m_lowPrepared.load(std::memory_order_acquire);
+    const auto highBegin = m_storageCapacity - m_highPrepared.load(std::memory_order_acquire);
+    return end <= low || begin >= highBegin || low >= highBegin;
+}
 
 void BlockArena::NoteHighWater() {
     const std::uint32_t inUse = m_lowUsed + m_highUsed;
@@ -18,7 +42,7 @@ void BlockArena::NoteHighWater() {
 
 void* BlockArena::Alloc(std::size_t bytes, std::size_t alignment,
                         bool fromHighEnd) {
-    const std::size_t base = reinterpret_cast<std::size_t>(m_buffer.get());
+    const std::size_t base = reinterpret_cast<std::size_t>(m_buffer.Address());
     if (bytes == 0) {
         if (!fromHighEnd) {
             const std::size_t current = base + m_lowUsed;
@@ -35,7 +59,7 @@ void* BlockArena::Alloc(std::size_t bytes, std::size_t alignment,
         const std::size_t aligned =
             (current + alignment - 1) & ~(alignment - 1);
         const std::size_t newUsed = (aligned - base) + bytes;
-        if (newUsed + m_highUsed > m_capacity) {
+        if (newUsed + m_highUsed > m_capacity || !BackingReady(aligned - base, newUsed)) {
             ++m_overflows;
             return nullptr;
         }
@@ -53,7 +77,7 @@ void* BlockArena::Alloc(std::size_t bytes, std::size_t alignment,
     }
     const std::size_t limit = base + m_capacity - m_highUsed;
     const std::size_t aligned = (limit - bytes) & ~(alignment - 1);
-    if (aligned < base + m_lowUsed) {
+    if (aligned < base + m_lowUsed || !BackingReady(aligned - base, aligned - base + bytes)) {
         ++m_overflows;
         return nullptr;
     }
@@ -96,9 +120,10 @@ void BlockArena::QuarantineHighEnd() {
 }
 
 void BlockArena::SetCapacityForTests(std::uint32_t capacityBytes) {
-    m_capacity =
-        capacityBytes < m_storageCapacity ? capacityBytes
-                                          : m_storageCapacity;
+    const auto capacity = std::min(capacityBytes, m_storageCapacity);
+    // Moving the high end can place it inside the previously uncommitted gap.
+    if (!PrepareBacking(capacity, 0)) throw std::bad_alloc{};
+    m_capacity = capacity;
 }
 
 void BlockArena::RestoreCapacityForTests() {

@@ -1,5 +1,5 @@
 // Per-block bump arena: the audio thread's only scratch memory source. The
-// backing buffer is allocated once on the logic thread; the audio thread
+// backing pages are prepared on the logic thread at a fixed address; the audio thread
 // bumps a pointer and resets it at block end. Exhaustion never allocates and
 // never crashes: alloc returns nullptr and an overflow counter increments —
 // callers skip the work that needed the scratch (defined degradation).
@@ -27,15 +27,26 @@
 #ifndef HARKEN_CORE_BLOCK_ARENA_H
 #define HARKEN_CORE_BLOCK_ARENA_H
 
+#include "harken/core/StableRowStorage.h"
+
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 
 namespace harken {
 
 class BlockArena {
 public:
-    explicit BlockArena(std::uint32_t capacityBytes);
+    enum class BackingMode { Full, OnDemand };
+    explicit BlockArena(std::uint32_t capacityBytes, BackingMode mode = BackingMode::Full);
+
+    // Serialized control owner only. Prepare both ends before accepting their users.
+    bool PrepareBacking(std::uint64_t lowBytes, std::uint64_t highBytes) noexcept;
+    std::size_t CommittedBytes() const noexcept { return m_buffer.CommittedBytes(); }
+    std::size_t DirectoryBytes() const noexcept { return m_buffer.DirectoryBytes(); }
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_buffer.SetCommitPageLimitForTests(pages);
+    }
 
     // `count` floats from the low end, zero-initialized (scratch consumers mix
     // and accumulate, so a defined starting value is part of the contract).
@@ -94,9 +105,12 @@ private:
     // named end. Returns nullptr when the block does not fit; the overflow
     // counter increments and the arena state is unchanged.
     void* Alloc(std::size_t bytes, std::size_t alignment, bool fromHighEnd);
+    bool BackingReady(std::size_t begin, std::size_t end) const noexcept;
     void NoteHighWater();
 
-    std::unique_ptr<std::byte[]> m_buffer;
+    detail::StablePageReservation m_buffer;
+    std::atomic<std::uint32_t> m_lowPrepared{0};
+    std::atomic<std::uint32_t> m_highPrepared{0};
     std::uint32_t m_storageCapacity = 0;
     std::uint32_t m_capacity = 0;
     std::uint32_t m_lowUsed = 0;

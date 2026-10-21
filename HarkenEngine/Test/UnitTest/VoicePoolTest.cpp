@@ -248,6 +248,12 @@ TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     EXPECT_EQ(0u, engine.voices.ConstructedSlotCount());
     EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
     engine.playbackPaths.SetCommitPageLimitForTests(SIZE_MAX);
+    engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
+    EXPECT_EQ(0u, first);
+    EXPECT_EQ(0u, engine.voices.ConstructedSlotCount());
+    EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    engine.mixer.ArenaForTests().SetCommitPageLimitForTests(SIZE_MAX);
     engine.voices.SetSlotCommitPageLimitForTests(0);
     EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
     EXPECT_EQ(0u, first);
@@ -569,6 +575,7 @@ TEST(VoicePool, SourceTerminalUnjoinedWorkerRetainsSourceAndLeaf) {
         };
         engine.voices.ApplyPlay(voice, voice, 0, 0);
     }
+    engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
     harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
         engine.voices, harken::CpuClockTicksPerSecond() / 20u);
     engine.nullBackend.Pump(1);
@@ -585,6 +592,14 @@ TEST(VoicePool, SourceTerminalUnjoinedWorkerRetainsSourceAndLeaf) {
     EXPECT_TRUE(engine.playableInstances.Classify(unjoined->leaf).live);
     EXPECT_EQ(harken::SourceTerminalKind::None,
         engine.sourceTerminals.Resolve(unjoined->token)->bypassResult.load());
+    VnVoiceHandle following = 0;
+    ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &following));
+    engine.voices.ApplyPlay(following, following, 0, 0);
+    const auto overflows = engine.mixer.Arena().OverflowCount();
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(overflows, engine.mixer.Arena().OverflowCount());
+    EXPECT_EQ(nullptr, engine.voices.Resolve(following));
+    EXPECT_FALSE(gate.exited.load(std::memory_order_acquire));
     gate.release.store(true, std::memory_order_release);
     harken::detail::VoicePoolReleaseTestAccess::JoinWorkers(engine.voices);
     EXPECT_TRUE(gate.exited.load(std::memory_order_acquire));

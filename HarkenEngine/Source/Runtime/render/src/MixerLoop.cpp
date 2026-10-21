@@ -106,7 +106,12 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
                             config.maxBuses,
                         0.0f),
       m_meterGenerationScratch(config.maxBuses, 0),
-      m_arena(config.arenaBytes),
+      m_arena(config.arenaBytes, BlockArena::BackingMode::OnDemand),
+      m_arenaLowBytes(static_cast<std::uint64_t>(config.maxBuses) *
+                      config.mixChannelCount * config.blockFrames * sizeof(float)),
+      m_arenaBytesPerSlot(std::min<std::uint64_t>(config.arenaBytes,
+          static_cast<std::uint64_t>(2u * kMaxChannels + config.mixChannelCount) *
+          config.blockFrames * sizeof(float) * (config.renderWorkerCount == 0 ? 1u : 2u))),
       m_busPlanes(static_cast<std::size_t>(config.maxBuses) *
                       config.mixChannelCount,
                   nullptr),
@@ -116,6 +121,10 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_deviceLayout(config.deviceChannelLayout),
       m_sampleRate(config.mixRate.SampleRate()),
       m_cpuTicksPerSecond(CpuClockTicksPerSecond()) {
+    if (!m_voices.AttachSlotStoragePreparation(m_arenaStorageRegistration, this,
+        [](void* context, std::uint32_t count) noexcept {
+            return static_cast<MixerLoop*>(context)->PrepareVoiceBacking(count);
+        })) throw std::bad_alloc{};
     InitializeVariableSliceConsumptionStorage();
     m_voices.AttachFirstOutputCommandConsumer(this,
         [](void* context, const CommandRecord& command) noexcept {
@@ -168,6 +177,13 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
                 static_cast<MixerLoop*>(context)->ApplyConsumedCurrentSlices(blockIndex, result);
             });
     }
+}
+
+bool MixerLoop::PrepareVoiceBacking(std::uint32_t count) noexcept {
+    if (count > m_voices.Capacity()) return false;
+    // A timed-out worker batch keeps its span; subsequent blocks use the second allowance.
+    const auto highBytes = count == 0 ? 0u : m_arenaBytesPerSlot * count + alignof(float) - 1u;
+    return m_arena.PrepareBacking(m_arenaLowBytes, highBytes);
 }
 
 namespace {

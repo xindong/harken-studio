@@ -64,6 +64,7 @@ public:
     }
     const BlockArena& Arena() const { return m_arena; }
     BlockArena& ArenaForTests() { return m_arena; }
+    bool PrepareVoiceBacking(std::uint32_t count) noexcept;
 
     // The audio-published observability payload: RenderBlock publishes
     // into it at the end of every block; Vn_CaptureSnapshot reads the
@@ -337,6 +338,9 @@ private:
     std::vector<std::uint32_t> m_meterGenerationScratch;
     SnapshotBuffer m_snapshots;
     BlockArena m_arena;
+    std::uint64_t m_arenaLowBytes = 0;
+    std::uint64_t m_arenaBytesPerSlot = 0;
+    VoicePool::SlotStorageRegistration m_arenaStorageRegistration;
     // Per-bus accumulator plane pointers, bus-major (m_mixChannels per bus).
     // Sized once at init; the audio thread only rewrites the pointers each
     // block — the planes themselves come from the arena.

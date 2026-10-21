@@ -12484,7 +12484,13 @@ TEST(ActionFiringApi, DelayedSoundPlayMaterializesThroughTimelineService) {
     VnActionFiringHandle firing = 0;
     const auto capture = harkentest::monitor::OpenIdentityEvents();
     std::vector<harkentest::monitor::IdentityRecord> records;
+    engine->mixer.ArenaForTests().SetCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+    EXPECT_EQ(0u, firing);
+    EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
+    engine->mixer.ArenaForTests().SetCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    engine->mixer.ArenaForTests().SetCommitPageLimitForTests(0);
     harkentest::monitor::CollectIdentityEvents(capture, records);
     ASSERT_NE(0u, firing);
     EXPECT_EQ(1u, engine->actionDeferredRecords.LiveCount());

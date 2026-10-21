@@ -75329,14 +75329,14 @@ bool ReserveImmediateActionFirings(void* opaque,
     return true;
 }
 
-std::uint32_t CountActionVariableResults(const ImmediateActionPlan& plan,
-    const harken::ActionStepProgramViewV1& step, std::uint32_t depth,
-    std::uint32_t limit) noexcept {
-    if (step.opcode == harken::ActionOpcodeV1::SetVariable) return 1;
+std::uint32_t CountActionOperations(const ImmediateActionPlan& plan,
+    const harken::ActionStepProgramViewV1& step, harken::ActionOpcodeV1 opcode,
+    std::uint32_t depth, std::uint32_t limit) noexcept {
+    if (step.opcode == opcode) return 1;
     if (step.opcode != harken::ActionOpcodeV1::PostAction) return 0;
     const auto* child = FindCanonicalActionProgram(
         *plan.engine, step.target.stableId, plan.pinnedPublished);
-    // Unresolved descendants and long deferred chains retain the full result allowance.
+    // Unresolved descendants and long deferred chains retain the full allowance.
     // Storage accounting must not introduce a new Action acceptance restriction.
     if (child == nullptr || child->programSemanticFingerprint != step.target.expectedProgramSemanticFingerprint ||
         depth >= plan.engine->config.maxTriggerDepth ||
@@ -75344,7 +75344,7 @@ std::uint32_t CountActionVariableResults(const ImmediateActionPlan& plan,
     std::uint32_t count = 0;
     for (std::uint32_t index = 0; index < child->stepCount && count < limit; ++index)
         count += std::min(limit - count,
-            CountActionVariableResults(plan, child->steps[index], depth + 1u, limit));
+            CountActionOperations(plan, child->steps[index], opcode, depth + 1u, limit));
     return count;
 }
 
@@ -75611,11 +75611,25 @@ engine.runtimeRecreateRequired = true;
         const auto limit = std::max(engine.variables.RevisionStorageCapacity(),
             engine.variables.HistoryCapacity());
         std::uint32_t futureWrites = 0;
-        for (std::uint32_t index = 0; index < plan->stepCount && futureWrites < limit; ++index) {
+        bool futurePlay = false;
+        for (std::uint32_t index = 0;
+             index < plan->stepCount && (futureWrites < limit || !futurePlay); ++index) {
             const auto& planned = engine.actionStepPlanScratch[index];
-            if (planned.deferred)
-                futureWrites += std::min(limit - futureWrites,
-                    CountActionVariableResults(*plan, *planned.step, planned.depth, limit));
+            if (planned.deferred) {
+                if (!futurePlay)
+                    futurePlay = CountActionOperations(*plan, *planned.step,
+                        harken::ActionOpcodeV1::Play, planned.depth, 1) != 0;
+                if (futureWrites < limit)
+                    futureWrites += CountActionOperations(*plan, *planned.step,
+                        harken::ActionOpcodeV1::SetVariable, planned.depth, limit - futureWrites);
+            }
+        }
+        // Far playback chooses its render slots at materialization. Prepare their
+        // full shared scratch allowance now without claiming any voice identity.
+        if (futurePlay && !engine.mixer.PrepareVoiceBacking(engine.voices.Capacity())) {
+            plan->result = VN_BACKPRESSURE;
+            abandonPrepared();
+            return false;
         }
         if (futureWrites != 0) {
             std::unique_ptr<harken::ActionVariableResultBacking> backing{
