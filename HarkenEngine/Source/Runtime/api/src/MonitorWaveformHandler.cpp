@@ -36,14 +36,12 @@ struct WaveformSlot {
     bool occupied = false;
 };
 
-thread_local std::array<WaveformSlot, VN_MONITOR_HARD_MEASUREMENTS_PER_PLAN>
-    g_slots{};
-thread_local std::array<std::uint8_t, 512> g_pack{};
-thread_local std::array<core::MonitorWaveformBucketResult,
-                        core::kWaveformBucketResultCap>
-    g_results{};
+struct WaveformScratch {
+    std::array<std::uint8_t, 512> pack{};
+    std::array<core::MonitorWaveformBucketResult, core::kWaveformBucketResultCap> results{};
+};
 
-void EmitBucket(const VnMonitorMeasurementRequest& request,
+void EmitBucket(WaveformScratch& scratch, const VnMonitorMeasurementRequest& request,
                 const VnMonitorTapDescriptor& tap,
                 const core::MonitorWaveformBucketResult& item,
                 std::uint64_t sourceSequence,
@@ -69,7 +67,7 @@ void EmitBucket(const VnMonitorMeasurementRequest& request,
         item.complete ? (VN_MONITOR_VALID_ARMED | VN_MONITOR_VALID_NUMERIC)
                       : VN_MONITOR_VALID_ARMED;
     const std::uint32_t bytes = PackWaveformBucketRecord(
-        g_pack.data(), static_cast<std::uint32_t>(g_pack.size()), sourceSequence,
+        scratch.pack.data(), static_cast<std::uint32_t>(scratch.pack.size()), sourceSequence,
         capturePlanGeneration, executeFrame, tap.tapDescriptorId,
         tap.tapDescriptorGeneration, payload, item.minValue, item.maxValue, kind,
         validity);
@@ -77,7 +75,7 @@ void EmitBucket(const VnMonitorMeasurementRequest& request,
         return;
     }
     DerivedEmit emitRec{};
-    emitRec.bytes = g_pack.data();
+    emitRec.bytes = scratch.pack.data();
     emitRec.size = bytes;
     (void)emit(emitCtx, emitRec);
 }
@@ -87,15 +85,15 @@ VnResult ValidateWaveform(const VnMonitorMeasurementRequest& request,
     return core::ValidateWaveformRequest(request);
 }
 
-void ConsumeWaveform(const VnMonitorMeasurementRequest& request,
+void ConsumeWaveform(void* state, void* workspace,
+                     const VnMonitorMeasurementRequest& request,
                      const VnMonitorTapDescriptor& tap,
                      const std::uint8_t* packedAudioChunk,
-                     std::uint32_t packedBytes, std::uint32_t measurementIndex,
+                     std::uint32_t packedBytes,
                      DerivedEmitFn emit, void* emitCtx) {
     if (emit == nullptr || packedAudioChunk == nullptr ||
         packedBytes < VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES +
-                          sizeof(VnMonitorAudioChunk) ||
-        measurementIndex >= g_slots.size()) {
+                          sizeof(VnMonitorAudioChunk)) {
         return;
     }
     VnMonitorAudioChunk chunk{};
@@ -123,7 +121,8 @@ void ConsumeWaveform(const VnMonitorMeasurementRequest& request,
     const std::uint64_t segmentGeneration = ReadPackedU64(
         packedAudioChunk, kPackedMeasurementSegmentGenerationOffset);
 
-    WaveformSlot& slot = g_slots[measurementIndex];
+    auto& slot = *static_cast<WaveformSlot*>(state);
+    auto& scratch = *static_cast<WaveformScratch*>(workspace);
     if (!slot.occupied || slot.tapId != tap.tapDescriptorId ||
         slot.tapGeneration != tap.tapDescriptorGeneration ||
         slot.capturePlanGeneration != capturePlanGeneration ||
@@ -132,7 +131,7 @@ void ConsumeWaveform(const VnMonitorMeasurementRequest& request,
         if (slot.occupied && slot.reducer.filledCount != 0) {
             const core::MonitorWaveformBucketResult discarded =
                 core::FlushWaveformPartial(&slot.reducer);
-            EmitBucket(request, tap, discarded, discarded.sourceSequenceLast,
+            EmitBucket(scratch, request, tap, discarded, discarded.sourceSequenceLast,
                        capturePlanGeneration, executeFrame, emit, emitCtx);
         }
         slot.reducer.Reset(request.bucketFrames, request.channelMode,
@@ -147,7 +146,7 @@ void ConsumeWaveform(const VnMonitorMeasurementRequest& request,
         core::MonitorWaveformBucketResult discarded{};
         core::NoteWaveformSegment(&slot.reducer, segmentGeneration, &discarded);
         if (discarded.discarded) {
-            EmitBucket(request, tap, discarded, discarded.sourceSequenceLast,
+            EmitBucket(scratch, request, tap, discarded, discarded.sourceSequenceLast,
                        capturePlanGeneration, executeFrame, emit, emitCtx);
         }
     }
@@ -155,10 +154,10 @@ void ConsumeWaveform(const VnMonitorMeasurementRequest& request,
     std::uint32_t count = 0;
     (void)core::ReduceWaveformChunk(
         &slot.reducer, samples, frames, chunk.channelCount, chunk.sourceFrameBegin,
-        g_results.data(), static_cast<std::uint32_t>(g_results.size()), &count,
+        scratch.results.data(), static_cast<std::uint32_t>(scratch.results.size()), &count,
         sourceSequence);
     for (std::uint32_t i = 0; i < count; ++i) {
-        EmitBucket(request, tap, g_results[i], sourceSequence,
+        EmitBucket(scratch, request, tap, scratch.results[i], sourceSequence,
                    capturePlanGeneration, executeFrame, emit, emitCtx);
     }
 }
@@ -168,6 +167,13 @@ struct WaveformAutoRegister {
         DerivedHandler handler{};
         handler.validate = &ValidateWaveform;
         handler.consume = &ConsumeWaveform;
+        handler.createState = [](const VnMonitorMeasurementRequest&,
+                                 std::uint32_t) -> std::shared_ptr<void> {
+            return std::make_shared<WaveformSlot>();
+        };
+        handler.createScratch = []() -> std::shared_ptr<void> {
+            return std::make_shared<WaveformScratch>();
+        };
         RegisterDerivedHandler(VN_MONITOR_MEASURE_WAVEFORM, handler);
     }
 };

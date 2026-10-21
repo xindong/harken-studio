@@ -32,6 +32,7 @@ enum class LogicAllocSite : unsigned int {
     VariableReadCutColumns,
     EffectExtraStorage,
     ScheduledGroupMembers,
+    MonitorDerivedStorage,
 };
 
 struct LogicAllocFaultState {
