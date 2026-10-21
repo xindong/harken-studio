@@ -6371,7 +6371,7 @@ TEST(ActionFiringApi, PostResolvesOnlyCanonicalCurrentWorldActions) {
 }
 
 TEST(ActionFiringApi, InitialQueueCompanionBackingFailureDoesNotAcceptAndCanRecover) {
-    for (unsigned refusedStorage = 0; refusedStorage < 3u; ++refusedStorage) {
+    for (unsigned refusedStorage = 0; refusedStorage < 7u; ++refusedStorage) {
         SCOPED_TRACE(refusedStorage);
         harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -6391,12 +6391,20 @@ TEST(ActionFiringApi, InitialQueueCompanionBackingFailureDoesNotAcceptAndCanReco
         if (refusedStorage == 0) engine.timelineGroupCaptureScratch.SetCommitPageLimitForTests(0);
         if (refusedStorage == 1) engine.initialQueueLaneGroupsScratch.SetCommitPageLimitForTests(0);
         if (refusedStorage == 2) engine.originalQueueGroupHolders.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 3) engine.acceptedPendingVariableGroups.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 4) engine.initialQueueTimingProgramsScratch.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 5) engine.initialQueueTimingEventsScratch.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 6) engine.initialQueueTimingGroupsScratch.SetCommitPageLimitForTests(0);
         VnActionFiringHandle firing = 99;
         const auto refused = Vn_PostAction(&desc, &firing);
         engine.timelineGroupCaptureScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.initialQueueLaneGroupsScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.originalQueueGroupHolders.SetCommitPageLimitForTests(SIZE_MAX);
-        ASSERT_EQ(VN_BACKPRESSURE, refused);
+        engine.acceptedPendingVariableGroups.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.initialQueueTimingProgramsScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.initialQueueTimingEventsScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.initialQueueTimingGroupsScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        ASSERT_EQ(refusedStorage < 3u ? VN_BACKPRESSURE : VN_NO_VOICE, refused);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
         ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
@@ -48234,6 +48242,10 @@ struct PendingQueueNativeBackingProbe {
     ~PendingQueueNativeBackingProbe() {
         if (!enabled) return;
         engine.timelinePool.SetImmediateLaneRowCommitPageLimitForTests(SIZE_MAX);
+        engine.acceptedPendingVariableGroups.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.initialQueueTimingProgramsScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.initialQueueTimingEventsScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.initialQueueTimingGroupsScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.timelineGroupCaptureScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.initialQueueLaneGroupsScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.originalQueueGroupHolders.SetCommitPageLimitForTests(SIZE_MAX);
@@ -48301,6 +48313,10 @@ struct PendingQueueNativeBackingProbe {
         allocations = engine.nativeBackingAllocationCountForTest;
         engine.nativeBackingAllocationFailureCountdownForTest = 0;
         engine.timelinePool.SetImmediateLaneRowCommitPageLimitForTests(0);
+        engine.acceptedPendingVariableGroups.SetCommitPageLimitForTests(0);
+        engine.initialQueueTimingProgramsScratch.SetCommitPageLimitForTests(0);
+        engine.initialQueueTimingEventsScratch.SetCommitPageLimitForTests(0);
+        engine.initialQueueTimingGroupsScratch.SetCommitPageLimitForTests(0);
         engine.timelineGroupCaptureScratch.SetCommitPageLimitForTests(0);
         engine.initialQueueLaneGroupsScratch.SetCommitPageLimitForTests(0);
         engine.originalQueueGroupHolders.SetCommitPageLimitForTests(0);

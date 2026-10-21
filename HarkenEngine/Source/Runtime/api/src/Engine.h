@@ -670,7 +670,8 @@ struct EngineOrdinaryRetiringSource {
 
 struct EngineQueueProgramBankBody : EngineQueueScheduleColumns {
     static constexpr std::size_t kProgramCapacity = 2u * kMaxKnownScheduleLeaves;
-    static constexpr std::size_t kEventCapacity = 2u * kProgramCapacity;
+    static constexpr std::size_t kEventsPerProgram = 2u;
+    static constexpr std::size_t kEventCapacity = kEventsPerProgram * kProgramCapacity;
     std::array<TimelineProgramView, 2> aggregateRuntimes{};
     std::array<ProgramView, 2> aggregateSchedules{};
     std::array<CurveLUT, 2> curves{};
@@ -5858,7 +5859,6 @@ public:
           decisionRetirements(decisions.Capacity()),
           playableStarts(resolved.maxPlayableInstances),
           originalPlayableServiceLifetimeHolders(resolved.maxPlayableInstances),
-          acceptedPendingVariableGroups(resolved.maxPlayableInstances),
           pendingVariableLeafSources(timelineArms.Capacity()),
           pendingVariableFutureSources(timelineArms.Capacity()),
           frontierExpansion(resolved.maxPlayableInstances),
@@ -5987,7 +5987,8 @@ public:
         for (std::size_t index = 0; index < playableStarts.size(); ++index) {
             playableStarts[index].slot = static_cast<std::uint32_t>(index);
         }
-        if (!playableServices.Reserve(resolved.maxPlayableInstances)) throw std::bad_alloc{};
+        if (!playableServices.Reserve(resolved.maxPlayableInstances) ||
+            !acceptedPendingVariableGroups.Reserve(resolved.maxPlayableInstances)) throw std::bad_alloc{};
         const auto playSlotCapacity = ActionPreparationSlotCapacity(resolved);
         const auto queueBankCapacity = QueueProgramBankCapacity(resolved);
         const auto playableMemberCapacity = static_cast<std::uint64_t>(playableStorage.memberCount) +
@@ -6168,16 +6169,14 @@ public:
         const auto queueEventCapacity =
             static_cast<std::uint64_t>(timelinePool.PageCount()) *
             resolved.maxEventsPerQuantum;
-        if (queueEventCapacity >
+        if (queueEventCapacity > UINT32_MAX || queueEventCapacity >
             std::numeric_limits<std::size_t>::max() /
                 sizeof(EngineInitialQueueTimingEvent))
             throw std::bad_alloc{};
-        initialQueueTimingProgramsScratch.resize(
-            resolved.maxScheduledTransactions);
-        initialQueueTimingEventsScratch.resize(
-            static_cast<std::size_t>(queueEventCapacity));
-        initialQueueTimingGroupsScratch.resize(
-            static_cast<std::size_t>(pageGroupRows));
+        if (!initialQueueTimingProgramsScratch.Reserve(resolved.maxScheduledTransactions) ||
+            !initialQueueTimingEventsScratch.Reserve(static_cast<std::uint32_t>(queueEventCapacity)) ||
+            !initialQueueTimingGroupsScratch.Reserve(static_cast<std::uint32_t>(pageGroupRows)))
+            throw std::bad_alloc{};
         static_assert(std::numeric_limits<std::uint32_t>::max() <=
             std::numeric_limits<std::size_t>::max() /
                 sizeof(ImmediateLaneEvent));
@@ -8945,7 +8944,7 @@ public:
                 attempt.selectionCommitInputs.capacity() * sizeof(PendingSelectionBatchCommitV1);
         }
         return preparedPendingVariableGroups.RequestedBytes() +
-            acceptedPendingVariableGroups.capacity() * sizeof(OriginalPendingVariableGroupHolder) +
+            acceptedPendingVariableGroups.RequestedBytes() +
             pendingOrdinarySelections.RequestedBytes() +
             pendingVariableLeafSources.capacity() * sizeof(OriginalPendingVariableLeafSource) +
             pendingVariableFutureSources.capacity() * sizeof(OriginalPendingVariableFutureSource) +
@@ -12292,11 +12291,11 @@ public:
         initialQueueCurrentCompositeProofsScratch;
     std::vector<CompositeCompletionOwnerPool::PrivateReanchorProof>
         initialQueueSuccessorCompositeProofsScratch;
-    std::vector<EngineInitialQueueTimingProgram>
+    StableRowStorage<EngineInitialQueueTimingProgram>
         initialQueueTimingProgramsScratch;
-    std::vector<EngineInitialQueueTimingEvent>
+    StableRowStorage<EngineInitialQueueTimingEvent>
         initialQueueTimingEventsScratch;
-    std::vector<Plan03GroupSliceInput>
+    StableRowStorage<Plan03GroupSliceInput>
         initialQueueTimingGroupsScratch;
     StableRowStorage<Plan03ImmediateLaneGroupDescriptor>
         initialQueueLaneGroupsScratch;
@@ -12838,12 +12837,30 @@ public:
             row.invocationGeneration = playableStarts[slot].generation;
         }
     }
+    bool PreparePlayableServiceDependencies(std::uint32_t required) noexcept {
+        // One service contributes one selected future. Its source and successor
+        // programs contain at most Start/Envelope or Envelope/Stop events.
+        const auto programs = std::min<std::uint64_t>(initialQueueTimingProgramsScratch.Capacity(),
+            static_cast<std::uint64_t>(required) * EngineQueueProgramBankBody::kProgramCapacity);
+        const auto events = std::min<std::uint64_t>(initialQueueTimingEventsScratch.Capacity(),
+            programs * EngineQueueProgramBankBody::kEventsPerProgram);
+        const auto groups = std::min<std::uint64_t>(initialQueueTimingGroupsScratch.Capacity(),
+            static_cast<std::uint64_t>(required) *
+                std::tuple_size_v<decltype(EnginePlayableServiceRow::queueUnplacedGroupFrames)>);
+        return acceptedPendingVariableGroups.ConstructThrough(required) &&
+            initialQueueTimingProgramsScratch.ConstructThrough(static_cast<std::uint32_t>(programs)) &&
+            initialQueueTimingEventsScratch.ConstructThrough(static_cast<std::uint32_t>(events)) &&
+            initialQueueTimingGroupsScratch.ConstructThrough(static_cast<std::uint32_t>(groups));
+    }
     EnginePlayableServiceRow* PrepareFreePlayableService() noexcept {
         const auto free = std::find_if(playableServices.begin(), playableServices.end(), PlayableServiceReusable);
         const auto slot = free == playableServices.end() ? playableServices.size() : free->identity.slot;
         if (slot >= playableServices.Capacity()) return nullptr;
         const auto previous = playableServices.size();
-        if (!playableServices.ConstructThrough(slot + 1u)) return nullptr;
+        if (!playableServices.ConstructThrough(slot + 1u,
+                [this](std::uint32_t required) noexcept {
+                    return PreparePlayableServiceDependencies(required);
+                })) return nullptr;
         InitializePlayableServiceRows(previous);
         if (!PrepareMemberProgramDirectory(playableServices[slot]) ||
             !PreparePlayableMemberDirectory(playableServices[slot])) return nullptr;
@@ -12854,7 +12871,10 @@ public:
         for (const auto& row : playableServices)
             if (!PlayableServiceReusable(row)) occupiedPrefix = row.identity.slot + 1u;
         const auto previous = playableServices.size();
-        if (!playableServices.PrepareBacking(count, occupiedPrefix, out)) return false;
+        if (!playableServices.PrepareBacking(count, occupiedPrefix, out,
+                [this](std::uint32_t required) noexcept {
+                    return PreparePlayableServiceDependencies(required);
+                })) return false;
         InitializePlayableServiceRows(previous);
         for (auto& row : playableServices)
             if (!PrepareMemberProgramDirectory(row) || !PreparePlayableMemberDirectory(row)) return false;
@@ -12890,7 +12910,7 @@ public:
     StableRowStorage<OriginalPendingVariableQueueNativeOrigin> pendingVariableQueueNativeOrigins;
     StableSlotStorage<OriginalPendingOrdinarySelectionHolder> pendingOrdinarySelections;
     StableSlotStorage<OriginalPendingVariableGroupHolder> preparedPendingVariableGroups;
-    std::vector<OriginalPendingVariableGroupHolder> acceptedPendingVariableGroups;
+    StableRowStorage<OriginalPendingVariableGroupHolder> acceptedPendingVariableGroups;
     bool pendingVariableGroupReplacementActive = false;
     bool deferRegisteredPendingVariableSelectionReplacementForTest = false;
     bool deferPendingImmediateEntriesForTest = false;

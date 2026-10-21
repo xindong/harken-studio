@@ -799,11 +799,14 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(0u, engine->PrivateImmediateEntryResultStorageBytes());
     testing::Test::RecordProperty("queue_timing_event_bytes", std::to_string(sizeof(harken::EngineInitialQueueTimingEvent)));
     testing::Test::RecordProperty("queue_timing_program_bytes", std::to_string(sizeof(harken::EngineInitialQueueTimingProgram)));
-    testing::Test::RecordProperty("queue_timing_event_capacity", std::to_string(engine->initialQueueTimingEventsScratch.capacity()));
-    testing::Test::RecordProperty("queue_timing_program_capacity", std::to_string(engine->initialQueueTimingProgramsScratch.capacity()));
+    testing::Test::RecordProperty("queue_timing_event_capacity", std::to_string(engine->initialQueueTimingEventsScratch.Capacity()));
+    testing::Test::RecordProperty("queue_timing_program_capacity", std::to_string(engine->initialQueueTimingProgramsScratch.Capacity()));
     testing::Test::RecordProperty("queue_timing_storage_bytes", std::to_string(
-        engine->initialQueueTimingEventsScratch.capacity() * sizeof(harken::EngineInitialQueueTimingEvent) +
-        engine->initialQueueTimingProgramsScratch.capacity() * sizeof(harken::EngineInitialQueueTimingProgram)));
+        engine->initialQueueTimingEventsScratch.RequestedBytes() + engine->initialQueueTimingProgramsScratch.RequestedBytes()));
+    testing::Test::RecordProperty("removed_prebuilt_queue_timing_bytes", std::to_string(
+        static_cast<std::uint64_t>(engine->initialQueueTimingEventsScratch.Capacity()) * sizeof(harken::EngineInitialQueueTimingEvent) +
+        static_cast<std::uint64_t>(engine->initialQueueTimingProgramsScratch.Capacity()) * sizeof(harken::EngineInitialQueueTimingProgram) +
+        static_cast<std::uint64_t>(engine->initialQueueTimingGroupsScratch.Capacity()) * sizeof(harken::Plan03GroupSliceInput)));
     testing::Test::RecordProperty("removed_prebuilt_private_entry_result_bytes", std::to_string(
         static_cast<std::uint64_t>(engine->playableServices.Capacity()) *
         engine->immediateActionLane.EventsPerAttempt() * sizeof(harken::ImmediateLanePrivateEntryResultCell)));
@@ -933,6 +936,18 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         engine->initialQueueLaneGroupsScratch.CommittedBytes(), engine->initialQueueLaneGroupsScratch.ReservedBytes());
     recordStableRows("original_queue_group", engine->originalQueueGroupHolders.RequestedBytes(),
         engine->originalQueueGroupHolders.CommittedBytes(), engine->originalQueueGroupHolders.ReservedBytes());
+    recordStableRows("accepted_variable_group", engine->acceptedPendingVariableGroups.RequestedBytes(),
+        engine->acceptedPendingVariableGroups.CommittedBytes(), engine->acceptedPendingVariableGroups.ReservedBytes());
+    recordStableRows("queue_timing_programs", engine->initialQueueTimingProgramsScratch.RequestedBytes(),
+        engine->initialQueueTimingProgramsScratch.CommittedBytes(), engine->initialQueueTimingProgramsScratch.ReservedBytes());
+    recordStableRows("queue_timing_events", engine->initialQueueTimingEventsScratch.RequestedBytes(),
+        engine->initialQueueTimingEventsScratch.CommittedBytes(), engine->initialQueueTimingEventsScratch.ReservedBytes());
+    recordStableRows("queue_timing_groups", engine->initialQueueTimingGroupsScratch.RequestedBytes(),
+        engine->initialQueueTimingGroupsScratch.CommittedBytes(), engine->initialQueueTimingGroupsScratch.ReservedBytes());
+    EXPECT_EQ(0u, engine->acceptedPendingVariableGroups.size());
+    testing::Test::RecordProperty("removed_prebuilt_accepted_variable_group_bytes", std::to_string(
+        static_cast<std::uint64_t>(engine->acceptedPendingVariableGroups.Capacity()) *
+        sizeof(harken::Engine::OriginalPendingVariableGroupHolder)));
     EXPECT_EQ(0u, engine->initialQueueLaneGroupsScratch.size());
     EXPECT_EQ(0u, engine->originalQueueGroupHolders.size());
     testing::Test::RecordProperty("removed_prebuilt_lane_companion_bytes", std::to_string(

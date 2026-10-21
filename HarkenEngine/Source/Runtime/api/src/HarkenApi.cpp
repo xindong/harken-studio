@@ -253,7 +253,7 @@ std::size_t Engine::PendingSelectionStorageBytes() const noexcept {
     };
     auto bytes = pendingOrdinarySelections.RequestedBytes() + pendingOrdinarySelections.DirectoryBytes() +
         preparedPendingVariableGroups.RequestedBytes() + preparedPendingVariableGroups.DirectoryBytes() +
-        column(acceptedPendingVariableGroups) + column(pendingVariableLeafSources) +
+        acceptedPendingVariableGroups.RequestedBytes() + column(pendingVariableLeafSources) +
         column(pendingVariableFutureSources) + column(pendingVariableFutureNodes) +
         pendingVariableQueueNativeOrigins.RequestedBytes() + column(originalPlayableServiceLifetimeHolders) +
         PrivateImmediateEntryResultStorageBytes();
