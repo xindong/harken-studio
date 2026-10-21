@@ -34825,7 +34825,7 @@ void PublishMonitorPendingCensusSelections(harken::Engine& engine,
 
 harken::EngineImmediateEntryAttempt* AcquireImmediateEntryAttempt(
     harken::Engine& engine, harken::ActionFiringHandle root,
-    std::uint32_t selectionCapacity = 0) noexcept {
+    harken::EngineImmediateEntryStorageDemand storageDemand = {}) noexcept {
     for (std::uint32_t index = 0;
          index < engine.immediateEntryAttempts.Capacity(); ++index) {
         if (!engine.EnsureImmediateEntryAttempt(index)) return nullptr;
@@ -34847,8 +34847,7 @@ harken::EngineImmediateEntryAttempt* AcquireImmediateEntryAttempt(
             attempt.queueContinuationCoordinator.Valid() ||
             attempt.queueContinuationCoordinatorArmGroup.Valid() ||
             attempt.queueContinuationPrimaryGroup.Exact()) continue;
-        if (selectionCapacity != 0 && !engine.PrepareImmediateEntrySelectionStorage(attempt, selectionCapacity))
-            return nullptr;
+        if (!engine.PrepareImmediateEntryStorage(attempt, storageDemand)) return nullptr;
         const auto generation = attempt.generation + 1u;
         if (!engine.ResetInitialSoundQueueCohort(attempt) ||
             !attempt.gate.Prepare(generation)) continue;
@@ -86656,6 +86655,33 @@ bool ComputeInitialActionLaneDemand(
     return true;
 }
 
+bool ComputeImmediateEntryStorageDemand(const ImmediateActionPlan& plan, std::uint32_t preparedCount,
+    harken::EngineImmediateEntryStorageDemand* out) noexcept {
+    const auto& engine = *plan.engine;
+    *out = {};
+    out->selectionProducers = preparedCount;
+    if (!plan.originalPlainSoundRoute) {
+        // Private Queue/VC cleanup must have backing before the Action is accepted.
+        out->privateVoices = engine.voices.Capacity();
+        return true;
+    }
+    out->plainSources = preparedCount;
+    for (std::uint32_t capture = 0; capture < plan.stopCaptureCount; ++capture) {
+        const auto& prepared = engine.actionStopScratch[capture].authoredStop;
+        auto slot = prepared.firstResource;
+        for (std::uint32_t count = 0; count < prepared.resourceCount; ++count) {
+            if (slot >= engine.authoredStopResources.size()) return false;
+            const auto& resource = engine.authoredStopResources[slot];
+            if (resource.originalPlainSelected) {
+                if (out->plainStops == UINT32_MAX) return false;
+                ++out->plainStops;
+            }
+            slot = resource.nextResource;
+        }
+    }
+    return true;
+}
+
 bool CaptureOriginalPlainActionManifest(ImmediateActionPlan& plan,
     harken::EngineImmediateEntryAttempt& attempt) noexcept {
     auto& engine = *plan.engine;
@@ -87077,14 +87103,15 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
     }
     plan->playCommandsReserved = plan->playCommandCount != 0;
     harken::ImmediateLaneDemand laneDemand{};
+    harken::EngineImmediateEntryStorageDemand entryStorageDemand{};
     bool laneDemandComputed = false;
     for (std::uint32_t index = 0; index < preparedCount; ++index) {
         auto* play = FindImmediateActionPlay(*plan, index);
         if (play == nullptr || play->row == nullptr ||
             !play->row->pendingImmediateEntry) continue;
         if (!laneDemandComputed) {
-            if (!ComputeInitialActionLaneDemand(*plan, preparedCount,
-                                                &laneDemand)) {
+            if (!ComputeInitialActionLaneDemand(*plan, preparedCount, &laneDemand) ||
+                !ComputeImmediateEntryStorageDemand(*plan, preparedCount, &entryStorageDemand)) {
                 ReleaseImmediateActionPlays(plan, count);
                 plan->result = VN_BACKPRESSURE;
                 return false;
@@ -87094,7 +87121,7 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
             laneDemandComputed = true;
         }
         plan->reservedCohortAttempt = AcquireImmediateEntryAttempt(
-            engine, plan->rootHandle, preparedCount);
+            engine, plan->rootHandle, entryStorageDemand);
         if (plan->reservedCohortAttempt != nullptr) {
             plan->reservedCohortAttempt->initialService = play->row->identity;
             plan->reservedCohortAttempt->initialInvocationGeneration =

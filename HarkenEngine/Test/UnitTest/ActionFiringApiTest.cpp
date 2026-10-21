@@ -66076,6 +66076,20 @@ static void CheckOriginalPlainTwoSoundsAndFixedStop(bool fade, bool repeated, bo
     auto desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle firing = 0;
+    for (std::size_t allocation = 1; allocation <= 2; ++allocation) {
+        const auto commandHead = engine->commands.PublishedHead();
+        harken::detail::ArmLogicAllocFaultForTests(
+            allocation, harken::detail::LogicAllocSite::ImmediateEntryStorage);
+        const auto refused = Vn_PostAction(&desc, &firing);
+        const auto remaining = harken::detail::g_logicAllocFault.remaining;
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(0u, remaining);
+        ASSERT_EQ(VN_BACKPRESSURE, refused);
+        EXPECT_EQ(0u, firing);
+        EXPECT_EQ(commandHead, engine->commands.PublishedHead());
+        EXPECT_EQ(baseline, CaptureActionReclaimableOwners(*engine));
+        EXPECT_FALSE(engine->runtimeRecreateRequired);
+    }
     const auto capture = harkentest::monitor::OpenIdentityEvents();
     std::vector<harkentest::monitor::IdentityRecord> observedRows;
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));

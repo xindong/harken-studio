@@ -33,6 +33,7 @@ enum class LogicAllocSite : unsigned int {
     EffectExtraStorage,
     ScheduledGroupMembers,
     MonitorDerivedStorage,
+    ImmediateEntryStorage,
 };
 
 struct LogicAllocFaultState {

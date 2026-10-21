@@ -35,6 +35,7 @@
 #include "harken/core/MeterBlockRing.h"
 #include "harken/core/NotificationQueue.h"
 #include "harken/core/LogRing.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/KnownCompletion.h"
 #include "harken/core/Random.h"
 #include "harken/core/SnapshotBuffer.h"
@@ -2509,11 +2510,14 @@ struct EngineSelectionPublicationCell {
     VariableReadCutRef cut{};
 };
 
+struct EngineImmediateEntryStorageDemand {
+    std::uint32_t selectionProducers = 0;
+    std::uint32_t plainSources = 0;
+    std::uint32_t plainStops = 0;
+    std::uint32_t privateVoices = 0;
+};
+
 struct EngineImmediateEntryAttempt {
-    EngineImmediateEntryAttempt() = default;
-    EngineImmediateEntryAttempt(std::uint32_t voices, std::uint32_t events, std::uint32_t producers)
-        : selectionProducers(producers), selectionCommitInputs(producers), selectionPublicationCells(producers),
-          plainSources(events), plainStops(events), privateVoices(voices) {}
     ImmediateLaneHandle lane{};
     // Only the same native Reserve can fill this fixed baseline. It is not
     // an audio admission gate and is consumed only by genuine final Retire.
@@ -6971,10 +6975,22 @@ public:
             return true;
         } catch (...) { return false; }
     }
-    bool PrepareImmediateEntrySelectionStorage(EngineImmediateEntryAttempt& attempt, std::uint32_t count) noexcept {
+    bool PrepareImmediateEntryStorage(EngineImmediateEntryAttempt& attempt,
+                                     EngineImmediateEntryStorageDemand demand) noexcept {
         if (attempt.active || attempt.selectionProducerCount != 0 || attempt.selectionCensusRoot != 0 ||
             attempt.selectionCensusGeneration != 0 || memguard::IsAudioTagged()) return false;
+        for (std::uint32_t source = 0; source < attempt.plainSourceCount; ++source)
+            if (attempt.plainSources[source].bindingReader.Valid()) return false;
         try {
+            const auto grow = [](auto& column, std::uint32_t count) {
+                if (column.size() >= count) return;
+                detail::CheckedGrow(column, count, detail::LogicAllocSite::ImmediateEntryStorage);
+                column.resize(count);
+            };
+            grow(attempt.plainSources, demand.plainSources);
+            grow(attempt.plainStops, demand.plainStops);
+            grow(attempt.privateVoices, demand.privateVoices);
+            const auto count = demand.selectionProducers;
             if (attempt.selectionProducers.size() < count) attempt.selectionProducers.resize(count);
             if (attempt.selectionCommitInputs.size() < count) attempt.selectionCommitInputs.resize(count);
             if (attempt.selectionPublicationCells.size() < count) attempt.selectionPublicationCells.resize(count);
@@ -6984,7 +7000,7 @@ public:
     bool EnsureImmediateEntryAttempt(std::uint32_t slot) noexcept {
         if (slot < immediateEntryAttempts.size()) return true;
         if (slot != immediateEntryAttempts.size()) return false;
-        return immediateEntryAttempts.EmplaceBack(voices.Capacity(), immediateActionLane.EventsPerAttempt(), 0u);
+        return immediateEntryAttempts.EmplaceBack();
     }
     std::size_t ImmediateEntryAttemptStorageBytes() const noexcept {
         auto bytes = immediateEntryAttempts.RequestedBytes();
