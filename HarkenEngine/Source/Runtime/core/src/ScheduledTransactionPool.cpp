@@ -1381,6 +1381,16 @@ bool ScheduledTransactionPool::CanReuseImmediateLaneRow(const LaneGroupRow& row)
         row.lease.Capture().state == AudioSliceState::Ready;
 }
 
+bool ScheduledTransactionPool::AttachImmediateLaneRowStoragePreparation(void* context,
+    bool (*prepare)(void*, std::uint32_t) noexcept) noexcept {
+    if (context == nullptr || prepare == nullptr || immediateLaneRowStorageContext_ != nullptr ||
+        memguard::IsAudioTagged() || immediateLaneGroups_.ConstructedCount() != 0 ||
+        immediateBackingHolds_ != 0) return false;
+    immediateLaneRowStorageContext_ = context;
+    prepareImmediateLaneRowStorage_ = prepare;
+    return true;
+}
+
 bool ScheduledTransactionPool::PrepareImmediateLaneBacking(std::uint32_t groupCount,
     std::uint64_t totalMembers, ImmediateLaneBackingPreparation* out) noexcept {
     if (out == nullptr || out->Valid() || !Valid() || memguard::IsAudioTagged() ||
@@ -1389,7 +1399,11 @@ bool ScheduledTransactionPool::PrepareImmediateLaneBacking(std::uint32_t groupCo
     auto occupied = immediateLaneGroups_.ConstructedCount();
     while (occupied != 0 && CanReuseImmediateLaneRow(immediateLaneGroups_[occupied - 1u])) --occupied;
     ImmediateLaneBackingPreparation candidate;
-    if (!immediateLaneGroups_.PrepareBacking(groupCount, occupied, &candidate.rows_)) return false;
+    if (!immediateLaneGroups_.PrepareBacking(groupCount, occupied, &candidate.rows_,
+            [this](std::uint32_t required) noexcept {
+                return prepareImmediateLaneRowStorage_ == nullptr ||
+                    prepareImmediateLaneRowStorage_(immediateLaneRowStorageContext_, required);
+            })) return false;
     try {
         const auto nonempty = static_cast<std::uint32_t>(std::min<std::uint64_t>(groupCount, totalMembers));
         candidate.members_.reserve(nonempty);
@@ -9109,7 +9123,8 @@ bool ScheduledTransactionPool::CancelImmediateLaneGroupsInDomain(
     if (cohortRoot == 0 ||
         (originalBaselines == nullptr && originalBaselineCapacity != 0) ||
         (originalBaselines != nullptr &&
-            originalBaselineCapacity != config_.maxImmediateLaneGroupRows)) return false;
+            (originalBaselineCapacity < immediateLaneGroups_.ConstructedCount() ||
+             originalBaselineCapacity > config_.maxImmediateLaneGroupRows))) return false;
     bool complete = true;
     // Entry members must dispose while their genuine primary is still alive.
     // A busy member keeps that primary for the next native retry.
@@ -9249,7 +9264,11 @@ bool ScheduledTransactionPool::ReserveImmediateLaneGroupInDomain(
         if (next == config_.maxImmediateLaneGroupRows) return false;
         freeRow = next;
     }
-    if (!immediateLaneGroups_.ConstructThrough(static_cast<std::uint32_t>(freeRow) + 1u)) return false;
+    if (!immediateLaneGroups_.ConstructThrough(static_cast<std::uint32_t>(freeRow) + 1u,
+            [this](std::uint32_t required) noexcept {
+                return prepareImmediateLaneRowStorage_ == nullptr ||
+                    prepareImmediateLaneRowStorage_(immediateLaneRowStorageContext_, required);
+            })) return false;
     auto& row = immediateLaneGroups_[freeRow];
     if (row.generation == UINT32_MAX ||
         row.readers.pins.load(std::memory_order_acquire) != 0 ||

@@ -36264,7 +36264,7 @@ bool ProveUnboundInitialVariableControlAbort(
                 original.attemptGeneration != attempt.generation || service == nullptr ||
                 service->partition.slot != original.partition.slot || service->partition.generation != original.partition.generation ||
                 service->queueInstance.slot != original.queue.slot || service->queueInstance.generation != original.queue.generation ||
-                original.identity.committedRow >= engine.originalQueueGroupCapacity ||
+                original.identity.committedRow >= engine.originalQueueGroupHolders.size() ||
                 !engine.timelinePool.PrivatePlan03GroupBindable(original.identity) ||
                 !engine.timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
                     engine.originalQueueGroupHolders[original.identity.committedRow], original.identity, attempt.root) ||
@@ -38873,7 +38873,7 @@ bool DeclarePendingPrivateVcLaneMember(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch,
     harken::EngineImmediateEntryAttempt& attempt,
     harken::ImmediateLaneMemberManifest member) noexcept {
-    if (member.group.committedRow >= engine.originalQueueGroupCapacity) return false;
+    if (member.group.committedRow >= engine.originalQueueGroupHolders.size()) return false;
     const auto& original = engine.originalQueueGroupHolders[member.group.committedRow];
     harken::OriginalQueueFutureGroupScope scope{};
     if (original.Identity() != member.group ||
@@ -38908,7 +38908,7 @@ bool DeclarePendingPrivateVcLaneGroup(harken::Engine& engine,
     auto& groups = scratch.storage.privateInitialVcLaneGroups;
     harken::ImmediateLaneAcceptedPrivateGroup captured{};
     if (held.laneAcceptedOriginals) {
-        if (held.laneOwnedGroupCount >= groups.size() || identity.committedRow >= engine.originalQueueGroupCapacity)
+        if (held.laneOwnedGroupCount >= groups.size() || identity.committedRow >= engine.originalQueueGroupHolders.size())
             return false;
         captured.original = &engine.originalQueueGroupHolders[identity.committedRow];
         captured.schedule = schedule;
@@ -41026,11 +41026,11 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
             service.identity.slot, service.identity.generation};
     };
     if (attempt.queueContinuationCount != 0) {
-        if (engine.config.blockFrames == 0 ||
+        if (engine.config.blockFrames == 0 || engine.initialQueueLaneGroupsScratch.Capacity() == 0 ||
             scratch.initialFrontierSideCount >
-                engine.initialQueueLaneGroupsScratch.size() - 1u ||
+                engine.initialQueueLaneGroupsScratch.Capacity() - 1u ||
             queueGroupCount + attempt.queueContinuationCount >
-                engine.initialQueueLaneGroupsScratch.size() - 1u -
+                engine.initialQueueLaneGroupsScratch.Capacity() - 1u -
                     scratch.initialFrontierSideCount)
             return false;
         const auto expectedCount = 1u +
@@ -41040,7 +41040,8 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
         const auto capturedCount =
             engine.timelinePool.CaptureImmediateLaneCohortGroups(
                 attempt.root, captured.data(), captured.size());
-        if (capturedCount != (attempt.privateVcProducerCount == 0 ? expectedCount : attempt.originalLaneDemand.groups))
+        if (capturedCount > captured.size() ||
+            capturedCount != (attempt.privateVcProducerCount == 0 ? expectedCount : attempt.originalLaneDemand.groups))
             return false;
         if (scratch.privateInitialVcPageCohort.laneAcceptedOriginals) {
             const auto& held = scratch.privateInitialVcPageCohort;
@@ -44979,7 +44980,7 @@ void ServicePendingImmediateEntries(
             const auto count = engine.timelinePool.CaptureImmediateLaneCohortGroups(
                 attempt->root, groups.data(), groups.size());
             std::size_t primaryMatches = 0;
-            for (std::size_t index = 0; index < std::min(count, groups.size()); ++index)
+            for (std::size_t index = 0; index < std::min<std::size_t>(count, groups.size()); ++index)
                 primaryMatches += groups[index].identity == attempt->initialQueuePrimaryGroup;
             if (initialCoordinator.continuationGeneration != attempt->generation ||
                 initialCoordinator.ticket.sequence != row.ticket ||
@@ -45070,7 +45071,7 @@ void ServicePendingImmediateEntries(
                 if (attempt->queueContinuationCoordinator.Valid()) {
                     std::size_t continuationMatches = 0;
                     for (std::size_t index = 0;
-                         index < capturedCount; ++index)
+                         queueManifestReady && index < capturedCount; ++index)
                         continuationMatches += captured[index].identity ==
                             attempt->queueContinuationPrimaryGroup;
                     queueManifestReady = queueManifestReady &&
@@ -53745,7 +53746,7 @@ bool Engine::MatchesPendingVariableRetiredNativeScope(const OriginalPendingVaria
             service->Invocation().variableControlOuterRootInstance != 0
                 ? service->Invocation().variableControlOuterRootInstance : service->rootInstance) ||
         !playableInstances.IsOriginalLifetimeCurrent(group.root) || service->Invocation().actionFiring != root ||
-        !PendingVariableGroupSourcesSettled(group) || identity.committedRow >= originalQueueGroupCapacity ||
+        !PendingVariableGroupSourcesSettled(group) || identity.committedRow >= originalQueueGroupHolders.size() ||
         input.sourceControlCount > input.memberCount || (input.memberCount != 0 && input.members == nullptr) ||
         !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
             originalQueueGroupHolders[identity.committedRow], identity, root)) return false;
@@ -53904,7 +53905,7 @@ bool Engine::CapturePendingVariableQueueNativeOrigins(EngineActionPlayScratch& s
             if (candidate.recordKind == Origin::RecordKind::None ||
                 ++matches != 1 || !playablePartitions.Owns(service.partition, service.identity) ||
                 !playableInstances.MatchesPreparedOriginalAncestry(links, service.ownerInstance,
-                    group->root.OriginalHandle()) || identity.committedRow >= originalQueueGroupCapacity) return false;
+                    group->root.OriginalHandle()) || identity.committedRow >= originalQueueGroupHolders.size()) return false;
             auto& baseline = originalQueueGroupHolders[identity.committedRow];
             Plan03PageGroupView native{};
             if (!timelinePool.IsOriginalQueueFutureGroupRegistrationFor(baseline, identity, attempt->root) ||
@@ -54036,7 +54037,7 @@ bool Engine::CanTransferPendingVariableQueueNativeOrigins(EngineActionPlayScratc
             service == nullptr || service->partition.slot != original.partition.slot ||
             service->partition.generation != original.partition.generation ||
             service->queueInstance.slot != original.queue.slot || service->queueInstance.generation != original.queue.generation ||
-            original.identity.committedRow >= originalQueueGroupCapacity ||
+            original.identity.committedRow >= originalQueueGroupHolders.size() ||
             !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(originalQueueGroupHolders[original.identity.committedRow],
                 original.identity, attempt.root) ||
             !originalQueueGroupHolders[original.identity.committedRow].MatchesOriginalScope(original.scope.cohortRoot,
@@ -54386,7 +54387,7 @@ bool Engine::SealPendingVariableGroupInitialSideNativeGroup(EngineActionPlayScra
         !variableControlInstances.MatchesOriginalInitialSideReceipt(original->original,
             original->instance, original->side, input.decision, original->bank) ||
         (original->group.Valid() && !(original->group == identity)) ||
-        !identity.Exact() || identity.committedRow >= originalQueueGroupCapacity ||
+        !identity.Exact() || identity.committedRow >= originalQueueGroupHolders.size() ||
         !SameCanonicalDecision(identity.decision, input.decision) || identity.sliceIndex != input.sliceIndex ||
         !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
             originalQueueGroupHolders[identity.committedRow], identity, scratch.row->Invocation().actionFiring) ||
@@ -56629,7 +56630,7 @@ bool Engine::CancelPendingVariableReplacementQueueLaneRecords(EngineActionPlaySc
             const auto& identity = child.pendingVariableReplacementGroups[owned.groupOffset + native];
             Plan03PageGroupView live{};
             if (identity.Valid() && (timelinePool.ResolvePlan03GroupSliceProducer(identity, &live) ||
-                    identity.committedRow >= originalQueueGroupCapacity || originalQueueGroupHolders[identity.committedRow].Valid()))
+                    identity.committedRow >= originalQueueGroupHolders.size() || originalQueueGroupHolders[identity.committedRow].Valid()))
                 return false;
         }
         const auto cancel = [&](auto& records, std::uint32_t& head, std::uint32_t& count) noexcept {
@@ -57219,7 +57220,7 @@ bool Engine::CancelRegisteredPendingVariableCohortLane(EngineImmediateEntryAttem
             if (!MatchesPendingVariableReplacementProducer(*child, *producer, attempt)) return false;
             for (const auto& native : child->pendingVariableReplacementGroups) {
                 if (!native.Valid()) continue;
-                if (native.committedRow >= originalQueueGroupCapacity ||
+                if (native.committedRow >= originalQueueGroupHolders.size() ||
                     !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
                         originalQueueGroupHolders[native.committedRow], native, attempt.root)) return false;
                 ++expectedGroups;
@@ -58406,7 +58407,7 @@ bool Engine::PublishRegisteredPendingVariableCohortReplacement(EngineImmediateEn
             if (children[index] != nullptr)
                 matches += static_cast<std::uint32_t>(std::count(children[index]->pendingVariableReplacementGroups.begin(),
                     children[index]->pendingVariableReplacementGroups.end(), identity));
-        if (matches != 1 || identity.committedRow >= originalQueueGroupCapacity ||
+        if (matches != 1 || identity.committedRow >= originalQueueGroupHolders.size() ||
             !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
                 originalQueueGroupHolders[identity.committedRow], identity, attempt.root)) return false;
     }
@@ -59413,7 +59414,7 @@ bool Engine::BindPrivatePendingVariableQueueEntries(EngineActionPlayScratch& chi
         PrivatePendingQueueFrontierBinding queueBinding;
         if (original == nullptr || !queueInstances.CapturePrivatePendingFrontierBinding(*original,
                 originalQueueLifetimeHolders[record.queue.slot], *native.frontier, timelinePool, transitionInstances, &queueBinding) ||
-            record.conditionalMember.committedRow >= originalQueueGroupCapacity || outer.primary.committedRow >= originalQueueGroupCapacity)
+            record.conditionalMember.committedRow >= originalQueueGroupHolders.size() || outer.primary.committedRow >= originalQueueGroupHolders.size())
             return false;
         for (std::uint32_t member = 0; member < future->queueSuccessorVoiceStartCount; ++member) {
             const auto arm = future->queueSuccessorVoiceStarts[member].arm;
@@ -60104,7 +60105,7 @@ bool Engine::BeginRegisteredPendingVariableCohortReprepare(EngineImmediateEntryA
             }
             token = producer->privateInitialVcPageCohort.rootProducerNext;
         }
-        if (matches != 1 || token.Valid() || !identity.Exact() || identity.committedRow >= originalQueueGroupCapacity ||
+        if (matches != 1 || token.Valid() || !identity.Exact() || identity.committedRow >= originalQueueGroupHolders.size() ||
             !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(originalQueueGroupHolders[identity.committedRow], identity, attempt.root) ||
             !timelinePool.PrivatePlan03GroupBindable(identity) ||
             !timelinePool.ResolvePlan03GroupSliceProducer(identity, &native) || native.frontier != nullptr ||
@@ -60225,7 +60226,7 @@ bool Engine::ServiceRegisteredPendingVariableCohortReprepare(EngineImmediateEntr
                     group.reprepare_.nativeGroups.end(), identity));
                 token = group.reprepare_.cohortNext;
             }
-            if (matches != 1 || identity.committedRow >= originalQueueGroupCapacity ||
+            if (matches != 1 || identity.committedRow >= originalQueueGroupHolders.size() ||
                 !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
                     originalQueueGroupHolders[identity.committedRow], identity, attempt.root)) return false;
         }
@@ -60461,7 +60462,7 @@ bool Engine::CanBeginPendingVariableQueueReprepare(EngineActionPlayScratch& scra
                 origin.partition.slot != queue->partition.slot || origin.partition.generation != queue->partition.generation ||
                 origin.queue.slot != queue->queueInstance.slot || origin.queue.generation != queue->queueInstance.generation ||
                 origin.scope.cohortRoot != attempt.root || origin.scope.selectedFutureDomain != 0 ||
-                origin.identity.committedRow >= originalQueueGroupCapacity ||
+                origin.identity.committedRow >= originalQueueGroupHolders.size() ||
                 !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
                     originalQueueGroupHolders[origin.identity.committedRow], origin.identity, attempt.root) ||
                 (settled ? !MatchesPendingVariableRetiredNativeScope(group, origin.identity, origin.scope.cohortRoot,
@@ -60846,7 +60847,7 @@ bool Engine::ServicePendingVariableGroupReprepare(EngineActionPlayScratch& scrat
         for (std::size_t index = 0; index < count; ++index) {
             const auto& identity = captures[index].identity;
             if (std::count(issued.nativeGroups.begin(), issued.nativeGroups.end(), identity) != 1 ||
-                identity.committedRow >= originalQueueGroupCapacity ||
+                identity.committedRow >= originalQueueGroupHolders.size() ||
                 !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
                     originalQueueGroupHolders[identity.committedRow], identity, attempt.root)) return false;
         }

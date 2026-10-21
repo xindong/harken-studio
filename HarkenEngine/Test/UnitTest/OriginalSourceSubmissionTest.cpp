@@ -6799,7 +6799,7 @@ void CheckAcceptedQueueSelectionKeepsOriginalClock(bool bindBeforeSelection, boo
     future.owner.Release();
     if (publishSelected) {
         ASSERT_TRUE(selectedDomain.CancelGroups(engine.mixer.BlocksRendered(),
-            engine.originalQueueGroupHolders.get(), engine.originalQueueGroupCapacity));
+            engine.originalQueueGroupHolders.data(), engine.originalQueueGroupHolders.size()));
         ASSERT_TRUE(selectedDomain.Return());
     } else ASSERT_TRUE(engine.CancelOriginalQueueLaneGroups(future.root, engine.mixer.BlocksRendered()));
     for (std::uint32_t i = 0; i < 2; ++i) {

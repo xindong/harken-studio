@@ -6370,6 +6370,58 @@ TEST(ActionFiringApi, PostResolvesOnlyCanonicalCurrentWorldActions) {
     EXPECT_EQ(0u, firing);
 }
 
+TEST(ActionFiringApi, InitialQueueCompanionBackingFailureDoesNotAcceptAndCanRecover) {
+    for (unsigned refusedStorage = 0; refusedStorage < 3u; ++refusedStorage) {
+        SCOPED_TRACE(refusedStorage);
+        harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        std::vector<float> samples(4096, 0.25f);
+        const auto pcm = harkentest::MonoDesc(samples, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &pcm));
+        CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
+            engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
+        image.MakeImmediateSequenceQueuePlayAction();
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+        auto desc = ValidPostDesc();
+        desc.actionId = image.actions[9].actionStableId;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&desc.emitter));
+        const auto baseline = CaptureActionReclaimableOwners(engine);
+        if (refusedStorage == 0) engine.timelineGroupCaptureScratch.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 1) engine.initialQueueLaneGroupsScratch.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 2) engine.originalQueueGroupHolders.SetCommitPageLimitForTests(0);
+        VnActionFiringHandle firing = 99;
+        const auto refused = Vn_PostAction(&desc, &firing);
+        engine.timelineGroupCaptureScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.initialQueueLaneGroupsScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.originalQueueGroupHolders.SetCommitPageLimitForTests(SIZE_MAX);
+        ASSERT_EQ(VN_BACKPRESSURE, refused);
+        EXPECT_EQ(0u, firing);
+        EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
+        ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+        ASSERT_NE(0u, firing);
+        ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+        VnActionFiringInfo info{};
+        info.structSize = sizeof(info);
+        for (unsigned block = 0; block < 128u; ++block) {
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+            if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
+        }
+        ASSERT_EQ(VN_ACTION_FIRING_TERMINAL_RETAINED, info.state);
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        for (unsigned block = 0; block < 128u && CaptureActionReclaimableOwners(engine) != baseline; ++block) {
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+        EXPECT_EQ(0u, engine.mixer.CommandProtocolViolationCount());
+    }
+}
+
 TEST(ActionFiringApi, FrontierAttemptSparseBackingKeepsHighSlotAndCompetingAllowancesStable) {
     harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -22361,7 +22413,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
         EXPECT_EQ(firing, captured.scope.cohortRoot);
         EXPECT_FALSE(captured.disposed);
         harken::OriginalQueueFutureGroupScope borrowed{};
-        ASSERT_LT(captured.identity.committedRow, engine->originalQueueGroupCapacity);
+        ASSERT_LT(captured.identity.committedRow, engine->originalQueueGroupHolders.size());
         const auto& baseline = engine->originalQueueGroupHolders[captured.identity.committedRow];
         ASSERT_TRUE(baseline.CaptureOriginalScope(engine->timelinePool, engine->timelineArms, &borrowed));
         if (captured.scope.input.memberCount != 0)
@@ -48182,6 +48234,9 @@ struct PendingQueueNativeBackingProbe {
     ~PendingQueueNativeBackingProbe() {
         if (!enabled) return;
         engine.timelinePool.SetImmediateLaneRowCommitPageLimitForTests(SIZE_MAX);
+        engine.timelineGroupCaptureScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.initialQueueLaneGroupsScratch.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.originalQueueGroupHolders.SetCommitPageLimitForTests(SIZE_MAX);
         engine.timelinePool.SetImmediateLaneMemberAllocationLimitForTests(UINT16_MAX);
         engine.actionPlayStorage.SetCommitPageLimitForTests(SIZE_MAX);
         engine.actionPlayScratch.SetCommitPageLimitForTests(SIZE_MAX);
@@ -48246,6 +48301,9 @@ struct PendingQueueNativeBackingProbe {
         allocations = engine.nativeBackingAllocationCountForTest;
         engine.nativeBackingAllocationFailureCountdownForTest = 0;
         engine.timelinePool.SetImmediateLaneRowCommitPageLimitForTests(0);
+        engine.timelineGroupCaptureScratch.SetCommitPageLimitForTests(0);
+        engine.initialQueueLaneGroupsScratch.SetCommitPageLimitForTests(0);
+        engine.originalQueueGroupHolders.SetCommitPageLimitForTests(0);
         engine.timelinePool.SetImmediateLaneMemberAllocationLimitForTests(0);
         engine.actionPlayStorage.SetCommitPageLimitForTests(0);
         engine.actionPlayScratch.SetCommitPageLimitForTests(0);
@@ -48847,7 +48905,7 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
                     ASSERT_TRUE(origin.identity.Exact());
                     ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceProducer(origin.identity, &native));
                     EXPECT_EQ(origin.identity, native.identity);
-                    ASSERT_LT(origin.identity.committedRow, engine.originalQueueGroupCapacity);
+                    ASSERT_LT(origin.identity.committedRow, engine.originalQueueGroupHolders.size());
                     EXPECT_TRUE(engine.timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
                         engine.originalQueueGroupHolders[origin.identity.committedRow], origin.identity, firing));
                     ++nativeCount;
@@ -50717,7 +50775,7 @@ static void CheckPendingOriginalQueueCompositionReselectsPcm(bool nestedControl,
     }
     const auto queueOwners = [&]() {
         std::uint64_t registrations = 0;
-        for (std::uint32_t index = 0; index < engine.originalQueueGroupCapacity; ++index)
+        for (std::uint32_t index = 0; index < engine.originalQueueGroupHolders.size(); ++index)
             registrations += engine.originalQueueGroupHolders[index].Valid();
         return std::array<std::uint64_t, 7>{
             CaptureActionPreparationOwners(engine).occupiedQueueProgramBanks,
@@ -50840,7 +50898,7 @@ static void CheckPendingOriginalQueueCompositionReselectsPcm(bool nestedControl,
         harken::Plan03PageGroupView native{};
         ASSERT_TRUE(engine.timelinePool.ResolvePlan03GroupSliceProducer(origin.identity, &native));
         ASSERT_EQ(origin.identity, native.identity);
-        ASSERT_LT(origin.identity.committedRow, engine.originalQueueGroupCapacity);
+        ASSERT_LT(origin.identity.committedRow, engine.originalQueueGroupHolders.size());
         ASSERT_TRUE(engine.timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
             engine.originalQueueGroupHolders[origin.identity.committedRow], origin.identity, firing));
         if (origin.role == harken::Engine::OriginalPendingVariableQueueNativeOrigin::Role::Primary) ++primaryCount;

@@ -927,6 +927,18 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     };
     recordStableRows("decision_rows", engine->decisions.RowStorageBytes(),
         engine->decisions.RowCommittedBytes(), engine->decisions.RowReservedBytes());
+    recordStableRows("timeline_group_capture", engine->timelineGroupCaptureScratch.RequestedBytes(),
+        engine->timelineGroupCaptureScratch.CommittedBytes(), engine->timelineGroupCaptureScratch.ReservedBytes());
+    recordStableRows("initial_queue_lane_capture", engine->initialQueueLaneGroupsScratch.RequestedBytes(),
+        engine->initialQueueLaneGroupsScratch.CommittedBytes(), engine->initialQueueLaneGroupsScratch.ReservedBytes());
+    recordStableRows("original_queue_group", engine->originalQueueGroupHolders.RequestedBytes(),
+        engine->originalQueueGroupHolders.CommittedBytes(), engine->originalQueueGroupHolders.ReservedBytes());
+    EXPECT_EQ(0u, engine->initialQueueLaneGroupsScratch.size());
+    EXPECT_EQ(0u, engine->originalQueueGroupHolders.size());
+    testing::Test::RecordProperty("removed_prebuilt_lane_companion_bytes", std::to_string(
+        static_cast<std::uint64_t>(engine->originalQueueGroupCapacity) *
+        (sizeof(harken::Plan03PageGroupView) + sizeof(harken::Plan03ImmediateLaneGroupDescriptor) +
+            sizeof(harken::OriginalQueueFutureGroupRegistration))));
     recordStableRows("immediate_entry_rows", engine->immediateEntryAttempts.RequestedBytes(),
         engine->immediateEntryAttempts.CommittedBytes(), engine->immediateEntryAttempts.ReservedBytes());
     testing::Test::RecordProperty("immediate_entry_payload_bytes",

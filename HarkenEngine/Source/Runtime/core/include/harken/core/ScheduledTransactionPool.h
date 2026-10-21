@@ -1232,6 +1232,13 @@ public:
     };
     bool PrepareImmediateLaneBacking(std::uint32_t groupCount, std::uint64_t totalMembers,
         ImmediateLaneBackingPreparation* out) noexcept;
+    // Attach before preparing rows; the producer callback must not re-enter this pool.
+    bool AttachImmediateLaneRowStoragePreparation(void* context,
+        bool (*prepare)(void*, std::uint32_t) noexcept) noexcept;
+    void DetachImmediateLaneRowStoragePreparation() noexcept {
+        immediateLaneRowStorageContext_ = nullptr;
+        prepareImmediateLaneRowStorage_ = nullptr;
+    }
     std::size_t ImmediateLaneRowStorageBytes() const noexcept { return immediateLaneGroups_.RequestedBytes(); }
     std::size_t ImmediateLaneRowCommittedBytes() const noexcept { return immediateLaneGroups_.CommittedBytes(); }
     std::size_t ImmediateLaneRowReservedBytes() const noexcept { return immediateLaneGroups_.ReservedBytes(); }
@@ -2443,6 +2450,8 @@ private:
     std::uint32_t immediateBackingHolds_ = 0;
     std::uint16_t immediateMemberAllocationLimitForTests_ = UINT16_MAX;
     ImmediateLaneBackingPreparation* activeImmediateLaneBacking_ = nullptr;
+    void* immediateLaneRowStorageContext_ = nullptr;
+    bool (*prepareImmediateLaneRowStorage_)(void*, std::uint32_t) noexcept = nullptr;
     StableRowStorage<LaneGroupRow> immediateLaneGroups_;
     std::unique_ptr<LaneFrontierGate[]> immediateLaneOwnerGates_;
     std::unique_ptr<LaneFrontierGate[]> immediateLaneDecisionGates_;

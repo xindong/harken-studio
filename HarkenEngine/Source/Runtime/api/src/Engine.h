@@ -6136,9 +6136,8 @@ public:
                     return static_cast<Engine*>(context)->PrepareQueueInstanceHolders(count);
                 })) throw std::bad_alloc{};
         originalQueueGroupCapacity = timelinePoolConfig.maxImmediateLaneGroupRows;
-        if (originalQueueGroupCapacity != 0)
-            originalQueueGroupHolders =
-                std::make_unique<OriginalQueueFutureGroupRegistration[]>(originalQueueGroupCapacity);
+        if (!originalQueueGroupHolders.Reserve(timelinePoolConfig.maxImmediateLaneGroupRows))
+            throw std::bad_alloc{};
         if (timelinePool.MaxArmsPerGroup() == 0)
             throw std::bad_alloc{};
         if (!pendingVariableQueueNativeOrigins.Reserve(originalQueueGroupCapacity)) throw std::bad_alloc{};
@@ -6158,9 +6157,12 @@ public:
             throw std::bad_alloc{};
         const auto groupScratchCount = pageGroupRows +
             timelinePoolConfig.maxImmediateLaneGroupRows;
-        if (groupScratchCount > std::numeric_limits<std::size_t>::max() / sizeof(Plan03PageGroupView))
+        if (groupScratchCount > UINT32_MAX ||
+            groupScratchCount > std::numeric_limits<std::size_t>::max() / sizeof(Plan03PageGroupView))
             throw std::bad_alloc{};
-        timelineGroupCaptureScratch.resize(static_cast<std::size_t>(groupScratchCount));
+        if (!timelineGroupCaptureScratch.Reserve(static_cast<std::uint32_t>(groupScratchCount)) ||
+            !timelineGroupCaptureScratch.ConstructThrough(static_cast<std::uint32_t>(pageGroupRows)))
+            throw std::bad_alloc{};
         publishedFrontierProgramRefsScratch.resize(
             static_cast<std::size_t>(playableStorage.initialProgramStride) + 1u);
         const auto queueEventCapacity =
@@ -6184,11 +6186,20 @@ public:
         static_assert(std::numeric_limits<std::uint32_t>::max() <=
             std::numeric_limits<std::size_t>::max() /
                 sizeof(Plan03ImmediateLaneGroupDescriptor));
-        initialQueueLaneGroupsScratch.resize(
-            timelinePoolConfig.maxImmediateLaneGroupRows);
+        if (!initialQueueLaneGroupsScratch.Reserve(timelinePoolConfig.maxImmediateLaneGroupRows))
+            throw std::bad_alloc{};
+        if (!timelinePool.AttachImmediateLaneRowStoragePreparation(this,
+                [](void* context, std::uint32_t required) noexcept {
+                    auto& engine = *static_cast<Engine*>(context);
+                    const auto captures = static_cast<std::uint64_t>(engine.timelinePool.PageCount()) *
+                        engine.config.maxPlan03GroupHeadersPerPage + required;
+                    return captures <= engine.timelineGroupCaptureScratch.Capacity() &&
+                        engine.timelineGroupCaptureScratch.ConstructThrough(static_cast<std::uint32_t>(captures)) &&
+                        engine.initialQueueLaneGroupsScratch.ConstructThrough(required) &&
+                        engine.originalQueueGroupHolders.ConstructThrough(required);
+                })) throw std::bad_alloc{};
         initialFrontierEvents.resize(4ull * resolved.maxPlayableInstances + 1u);
         initialFrontierRequests.resize(initialFrontierEvents.size());
-        if (groupScratchCount > UINT32_MAX) throw std::bad_alloc{};
         const std::uint64_t frontierNodes = resolved.maxPlayableInstances;
         const auto boundedFrontierCount = [](std::uint64_t proposed, std::uint32_t limit) {
             return static_cast<std::uint32_t>(std::min<std::uint64_t>(proposed, limit));
@@ -8729,7 +8740,7 @@ public:
             if (registered && std::count(nativeGroups.begin(), nativeGroups.end(), identity) == 0) continue;
             Plan03PageGroupView native{};
             if (std::count(nativeGroups.begin(), nativeGroups.end(), identity) != 1 ||
-                identity.committedRow >= originalQueueGroupCapacity ||
+                identity.committedRow >= originalQueueGroupHolders.size() ||
                 !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(
                     originalQueueGroupHolders[identity.committedRow], identity, attempt.root) ||
                 !timelinePool.PrivatePlan03GroupBindable(identity) ||
@@ -9263,6 +9274,7 @@ public:
     }
 
     ~Engine() {
+        timelinePool.DetachImmediateLaneRowStoragePreparation();
         timelinePool.SetImmediateLaneGroupDisposalObserver(nullptr, nullptr);
         InvalidateProjectGenerationReservations();
         // The scheduling-domain transaction spans two members, so declaration
@@ -9410,7 +9422,7 @@ public:
                     originalQueueConditionalHolders[index].clock));
         // These are storage baselines, not fabricated audio completion fences.
         // Every external loan must have returned before the owning Engine dies.
-        for (std::size_t index = 0; index < originalQueueGroupCapacity; ++index)
+        for (std::size_t index = 0; index < originalQueueGroupHolders.size(); ++index)
             originalQueueGroupHolders[index].Release();
         for (auto& holder : originalQueueLifetimeHolders) holder.Release();
         for (auto& holder : originalQueueBankHolders) {
@@ -10116,7 +10128,7 @@ public:
         for (const auto* original : originals) {
             if (original == nullptr || !original->Valid()) return false;
             const auto identity = original->Identity();
-            if (identity.committedRow >= originalQueueGroupCapacity ||
+            if (identity.committedRow >= originalQueueGroupHolders.size() ||
                 &originalQueueGroupHolders[identity.committedRow] != original ||
                 !timelinePool.IsOriginalQueueFutureGroupRegistrationFor(*original, identity, attempt.root)) return false;
         }
@@ -10526,7 +10538,7 @@ private:
             !timelinePool.IsOrdinaryOriginalQueueFutureGroupRegistrationFor(actual, actual.Identity(), attempt.root) ||
             !actual.MatchesOriginalScope(attempt.root, anchor, input, timelineArms)) return false;
         const auto identity = actual.Identity();
-        if (identity.committedRow >= originalQueueGroupCapacity ||
+        if (identity.committedRow >= originalQueueGroupHolders.size() ||
             &originalQueueGroupHolders[identity.committedRow] != &actual) return false;
         for (const auto& old : record.groups_) if (old.Exact() && old == identity) return false;
         if (role != 0 && anchor != record.provisionalAnchor_) return false;
@@ -11365,7 +11377,7 @@ public:
         }
         holder.selected.Release();
         if (holder.domain.Valid() && (!holder.domain.CancelGroups(completed,
-                originalQueueGroupHolders.get(), originalQueueGroupCapacity) || !holder.domain.Return())) return false;
+                originalQueueGroupHolders.data(), originalQueueGroupHolders.size()) || !holder.domain.Return())) return false;
         if (holder.decisions[0].Valid()) {
             (void)decisions.Invalidate(holder.decisions[0]);
             if (!decisions.Retire(holder.decisions[0], completed) || !decisions.ReclaimRetired(holder.decisions[0]))
@@ -11440,7 +11452,7 @@ public:
         holder.memberTicket.Release();
         holder.coordinatorTicket.Release();
         if (holder.domain.Valid() && (!holder.domain.CancelGroups(mixer.BlocksRendered(),
-                originalQueueGroupHolders.get(), originalQueueGroupCapacity) || !holder.domain.Return())) return false;
+                originalQueueGroupHolders.data(), originalQueueGroupHolders.size()) || !holder.domain.Return())) return false;
         if (holder.coordinator.Valid() && !decisions.CancelPreparedReservation(&holder.coordinator)) return false;
         if (holder.ticketsConsumed && holder.decisions[0].Valid()) {
             if (!decisions.ReclaimCancelled(holder.decisions[0]) &&
@@ -11600,7 +11612,7 @@ public:
                 attempt.generation != scratch.initialOriginalGroupAttemptGeneration ||
                 attempt.queueContinuationService != row.identity ||
                 !attempt.queueContinuationPrimaryGroup.Exact() ||
-                attempt.queueContinuationPrimaryGroup.committedRow >= originalQueueGroupCapacity)
+                attempt.queueContinuationPrimaryGroup.committedRow >= originalQueueGroupHolders.size())
                 return false;
             const auto& primary = originalQueueGroupHolders[
                 attempt.queueContinuationPrimaryGroup.committedRow];
@@ -12058,8 +12070,8 @@ public:
         PrivateImmediateLaneGroupTransferProof&& proof,
         OriginalQueueFutureGroupRegistration** issued = nullptr) noexcept {
         const auto identity = proof.Identity();
-        if ((issued != nullptr && *issued != nullptr) || !identity.Exact() || identity.committedRow >= originalQueueGroupCapacity ||
-            originalQueueGroupHolders == nullptr) return {};
+        if ((issued != nullptr && *issued != nullptr) || !identity.Exact() || identity.committedRow >= originalQueueGroupHolders.size() ||
+            originalQueueGroupHolders.data() == nullptr) return {};
         auto& original = originalQueueGroupHolders[identity.committedRow];
         if (!timelinePool.ConsumePrivateImmediateLaneGroupTransfer(std::move(proof), &original))
             return {};
@@ -12097,7 +12109,7 @@ public:
 
     bool CancelOriginalQueueLaneGroup(std::uint64_t cohortRoot,
         const Plan03GroupSliceIdentity& identity) noexcept {
-        if (identity.committedRow >= originalQueueGroupCapacity) return false;
+        if (identity.committedRow >= originalQueueGroupHolders.size()) return false;
         auto& original = originalQueueGroupHolders[identity.committedRow];
         return timelinePool.CancelPrivateImmediateLaneGroup(cohortRoot, identity,
             original.Valid() ? &original : nullptr);
@@ -12106,7 +12118,7 @@ public:
     bool CancelOriginalQueueLaneGroups(std::uint64_t cohortRoot,
         std::uint64_t completedAudioSequence) noexcept {
         return timelinePool.CancelImmediateLaneGroups(cohortRoot, completedAudioSequence,
-            originalQueueGroupHolders.get(), originalQueueGroupCapacity);
+            originalQueueGroupHolders.data(), originalQueueGroupHolders.size());
     }
 
     bool BorrowOriginalQueueFutureGroup(const EnginePlayableServiceReference& service,
@@ -12115,7 +12127,7 @@ public:
         auto* row = ResolvePlayableService(service);
         if (row == nullptr || !row->InvocationValid() ||
             !playablePartitions.Owns(row->partition, row->identity) ||
-            identity.committedRow >= originalQueueGroupCapacity) return false;
+            identity.committedRow >= originalQueueGroupHolders.size()) return false;
         const auto sameDecision = [](DecisionToken left, DecisionToken right) noexcept {
             return left.Valid() && right.Valid() && left.slot == right.slot &&
                 left.generation == right.generation;
@@ -12212,7 +12224,7 @@ public:
     std::unique_ptr<OriginalConditionalReplacementBatch> originalQueueReplacementBatch;
     std::uint32_t originalQueueReplacementAbandonCount = 0;
     std::uint32_t originalQueueReplacementCount = 0;
-    std::unique_ptr<OriginalQueueFutureGroupRegistration[]> originalQueueGroupHolders;
+    StableRowStorage<OriginalQueueFutureGroupRegistration> originalQueueGroupHolders;
     std::size_t originalQueueGroupCapacity = 0;
     // Lane fence references must be destroyed before their original backing.
     std::vector<EngineAuthoredStopRoot> authoredStopRoots;
@@ -12286,7 +12298,7 @@ public:
         initialQueueTimingEventsScratch;
     std::vector<Plan03GroupSliceInput>
         initialQueueTimingGroupsScratch;
-    std::vector<Plan03ImmediateLaneGroupDescriptor>
+    StableRowStorage<Plan03ImmediateLaneGroupDescriptor>
         initialQueueLaneGroupsScratch;
     std::vector<TransactionRequest> pendingImmediateFutureRequestsScratch;
     std::vector<ScheduledEventInput> pendingImmediateFutureEventsScratch;
@@ -13072,7 +13084,7 @@ public:
             member.leafInstance, member.leafEpoch};
         return true;
     }
-    std::vector<Plan03PageGroupView> timelineGroupCaptureScratch;
+    StableRowStorage<Plan03PageGroupView> timelineGroupCaptureScratch;
     std::vector<TimelineTransactionProgramRef> publishedFrontierProgramRefsScratch;
     std::vector<ScheduledEventInput> initialFrontierEvents;
     std::vector<TransactionRequest> initialFrontierRequests;
