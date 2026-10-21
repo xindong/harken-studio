@@ -59,7 +59,6 @@ AIAgentConfig AIAgentConfig::effectiveSnapshot() const
     result.baseUrl = result.baseUrl.trimmed();
     result.model = result.model.trimmed();
     result.permissionProfile = parsePermissionMode(toId(result.permissionProfile));
-    result.toolProfile = result.toolProfile.trimmed();
     if (result.contextWindowTokens < kMinContextWindowTokens
         || result.contextWindowTokens > kMaxContextWindowTokens)
     {
@@ -79,7 +78,6 @@ bool AIAgentConfig::operator==(const AIAgentConfig& other) const
 {
     return baseUrl == other.baseUrl && model == other.model
         && permissionProfile == other.permissionProfile
-        && toolProfile == other.toolProfile
         && contextWindowTokens == other.contextWindowTokens
         && maxTokens == other.maxTokens
         && requestTimeoutMs == other.requestTimeoutMs;
@@ -94,8 +92,6 @@ AIAgentConfig AIAgentConfigStore::load() const
     config.model = readValue(valueLoader_, *storage_, QStringLiteral("model"), defaults.model).toString();
     config.permissionProfile = parsePermissionMode(readValue(valueLoader_, *storage_, QStringLiteral("permission_mode"),
                                          toId(defaults.permissionProfile)).toString());
-    config.toolProfile = readValue(valueLoader_, *storage_, QStringLiteral("tool_profile"),
-                                   defaults.toolProfile).toString();
     config.contextWindowTokens =
         readValue(valueLoader_, *storage_, QStringLiteral("context_window_tokens"),
                   defaults.contextWindowTokens).toInt();
@@ -125,7 +121,6 @@ bool AIAgentConfigStore::save(const AIAgentConfig& config) const
     storage_->setValue(QStringLiteral("base_url"), next.baseUrl);
     storage_->setValue(QStringLiteral("model"), next.model);
     storage_->setValue(QStringLiteral("permission_mode"), toId(next.permissionProfile));
-    storage_->setValue(QStringLiteral("tool_profile"), next.toolProfile);
     storage_->setValue(QStringLiteral("context_window_tokens"),
                        next.contextWindowTokens);
     storage_->setValue(QStringLiteral("max_tokens"), next.maxTokens);

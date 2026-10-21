@@ -2,8 +2,6 @@
 #include "Dialogs/Settings/Pages/AIAgentPage.h"
 
 #include "Core/AI/AIAgentConfig.h"
-#include "Core/AI/AICommandCatalog.h"
-#include "Core/AI/AICommandValidator.h"
 #include "Core/AI/AIEndpointValidation.h"
 #include "Core/AI/AIPermissionModel.h"
 #include "Core/AI/OpenAICompatibleLLMProvider.h"
@@ -49,22 +47,7 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
     aiApiKeyEdit_->setObjectName("aiApiKeyEdit");
     aiApiKeyEdit_->setEchoMode(QLineEdit::Password);
     aiApiKeyEdit_->setPlaceholderText(tr("API key"));
-
-    auto* apiKeyRowWidget = new QWidget();
-    auto* apiKeyRow = new QHBoxLayout(apiKeyRowWidget);
-    apiKeyRow->setContentsMargins(0, 0, 0, 0);
-    apiKeyRow->setSpacing(8);
-    apiKeyRow->addWidget(aiApiKeyEdit_, 1);
-
-    aiApiKeyClearButton_ = new QPushButton(tr("Clear Saved Key"));
-    aiApiKeyClearButton_->setObjectName("aiApiKeyClearButton");
-    apiKeyRow->addWidget(aiApiKeyClearButton_);
-    credForm->addRow(tr("API Key:"), apiKeyRowWidget);
-
-    aiApiKeyStatusLabel_ = new QLabel();
-    aiApiKeyStatusLabel_->setObjectName("aiApiKeyStatusLabel");
-    aiApiKeyStatusLabel_->setWordWrap(true);
-    credForm->addRow(tr("Stored Key:"), aiApiKeyStatusLabel_);
+    credForm->addRow(tr("API Key:"), aiApiKeyEdit_);
 
     aiModelEdit_ = new QLineEdit();
     aiModelEdit_->setObjectName("aiModelEdit");
@@ -96,8 +79,6 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
     connectionTestRow->addWidget(aiConnectionTestLabel_, 1);
     credForm->addRow(QString(), connectionTestWidget);
 
-    connect(aiApiKeyClearButton_, &QPushButton::clicked,
-            this, &AIAgentPage::onAIApiKeyClearClicked);
     connect(aiConnectionTestButton_, &QPushButton::clicked,
             this, &AIAgentPage::onAIConnectionTestClicked);
 
@@ -117,53 +98,14 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
 
     layout->addWidget(permGroup);
 
-    auto* scopeGroup = makeSection(tr("Tool Scope"));
-    ContextInfo::tag(scopeGroup, ContextTopic::forPanel(QStringLiteral("settings.ai_agent.tools")));
-    auto* scopeForm = makeForm();
-    aiToolProfileCombo_ = new QComboBox();
-    aiToolProfileCombo_->setObjectName("aiToolProfileCombo");
-    for (const auto& metadata : toolProfileMetadata())
-        aiToolProfileCombo_->addItem(tr(metadata.label), toId(metadata.profile));
-    scopeForm->addRow(tr("Profile:"), aiToolProfileCombo_);
-
-    aiToolVisibilityLabel_ = new QLabel();
-    aiToolVisibilityLabel_->setObjectName(QStringLiteral("aiToolVisibilityLabel"));
-    aiToolVisibilityLabel_->setWordWrap(true);
-    scopeForm->addRow(tr("Effective tools:"), aiToolVisibilityLabel_);
-    static_cast<QVBoxLayout*>(scopeGroup->layout())->addLayout(scopeForm);
-    layout->addWidget(scopeGroup);
-
-    auto* resetRow = new QHBoxLayout();
-    auto* resetBtn = new QPushButton(tr("Reset to Defaults"));
-    resetBtn->setObjectName(QStringLiteral("aiResetDefaultsButton"));
-    connect(resetBtn, &QPushButton::clicked, this, [this]() {
-        resetAIAgentSettings();
-    });
-    resetRow->addWidget(resetBtn);
-    resetRow->addStretch();
-    layout->addLayout(resetRow);
-
-    connect(aiToolProfileCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AIAgentPage::refreshAIToolVisibility);
-    connect(aiPermissionModeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AIAgentPage::refreshAIToolVisibility);
-
     connect(aiBaseUrlEdit_, &QLineEdit::textChanged, this, &AIAgentPage::notifyDirty);
     connect(aiModelEdit_, &QLineEdit::textChanged, this, &AIAgentPage::notifyDirty);
     connect(aiContextWindowSpin_, QOverload<int>::of(&QSpinBox::valueChanged),
             this, &AIAgentPage::notifyDirty);
     connect(aiPermissionModeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &AIAgentPage::notifyDirty);
-    connect(aiToolProfileCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &AIAgentPage::notifyDirty);
-    connect(aiApiKeyEdit_, &QLineEdit::textChanged, this, [this]() {
-        if (!aiApiKeyEdit_->text().isEmpty())
-            apiKeyClearStaged_ = false;
-        refreshAIApiKeyStatus();
-        notifyDirty();
-    });
+    connect(aiApiKeyEdit_, &QLineEdit::textChanged, this, &AIAgentPage::notifyDirty);
 
-    refreshAIToolVisibility();
     layout->addStretch();
 }
 
@@ -182,20 +124,13 @@ void AIAgentPage::notifyDirty()
     emit dirtyChanged();
 }
 
-bool AIAgentPage::vaultHasKey() const
-{
-    return !secretStore_.load(QStringLiteral("HarkenStudio.ai"),
-                              QStringLiteral("api_key")).isEmpty();
-}
-
 void AIAgentPage::rememberBaseline()
 {
     baselineBaseUrl_ = aiBaseUrlEdit_->text();
+    baselineApiKey_ = aiApiKeyEdit_->text();
     baselineModel_ = aiModelEdit_->text();
     baselineContextWindow_ = aiContextWindowSpin_->value();
     baselinePermissionMode_ = aiPermissionModeCombo_->currentData().toString();
-    baselineToolProfile_ = aiToolProfileCombo_->currentData().toString();
-    apiKeyClearStaged_ = false;
 }
 
 void AIAgentPage::load()
@@ -207,24 +142,16 @@ void AIAgentPage::load()
     const QSignalBlocker b3(aiModelEdit_);
     const QSignalBlocker b4(aiContextWindowSpin_);
     const QSignalBlocker b5(aiPermissionModeCombo_);
-    const QSignalBlocker b6(aiToolProfileCombo_);
 
     aiBaseUrlEdit_->setText(config.baseUrl);
-    aiApiKeyEdit_->clear();
+    aiApiKeyEdit_->setText(secretStore_.load(QStringLiteral("HarkenStudio.ai"),
+                                            QStringLiteral("api_key")));
     aiModelEdit_->setText(config.model);
     aiContextWindowSpin_->setValue(config.contextWindowTokens);
 
     int idx = aiPermissionModeCombo_->findData(toId(config.permissionProfile));
     aiPermissionModeCombo_->setCurrentIndex(idx);
 
-    int pidx = aiToolProfileCombo_->findData(config.toolProfile);
-    if (pidx < 0)
-        pidx = aiToolProfileCombo_->findData(QStringLiteral("authoring"));
-    aiToolProfileCombo_->setCurrentIndex(pidx < 0 ? 0 : pidx);
-
-    apiKeyClearStaged_ = false;
-    refreshAIToolVisibility();
-    refreshAIApiKeyStatus();
     if (aiConnectionTestLabel_)
         aiConnectionTestLabel_->clear();
     rememberBaseline();
@@ -237,7 +164,6 @@ bool AIAgentPage::apply()
     const QString newModel = aiModelEdit_->text().trimmed();
     const int newContextWindowTokens = aiContextWindowSpin_->value();
     const QString newMode = aiPermissionModeCombo_->currentData().toString();
-    const QString newProfile = aiToolProfileCombo_->currentData().toString();
 
     AIAgentConfigStore configStore;
     AIAgentConfig config = configStore.load();
@@ -245,41 +171,33 @@ bool AIAgentPage::apply()
     config.model = newModel;
     config.contextWindowTokens = newContextWindowTokens;
     config.permissionProfile = parsePermissionMode(newMode);
-    config.toolProfile = newProfile;
 
-    bool keyChanged = false;
-    if (apiKeyClearStaged_)
+    const bool keyChanged = newApiKey != baselineApiKey_;
+    if (keyChanged && newApiKey.isEmpty())
     {
         if (!secretStore_.erase(QStringLiteral("HarkenStudio.ai"),
                                 QStringLiteral("api_key")))
         {
             QMessageBox::warning(this, tr("API Key"),
                                  tr("The saved API key could not be cleared."));
-            refreshAIApiKeyStatus();
             return false;
         }
-        keyChanged = true;
-        apiKeyClearStaged_ = false;
-        aiApiKeyEdit_->clear();
     }
-    else if (!newApiKey.isEmpty())
+    else if (keyChanged)
     {
         if (!secretStore_.store(QStringLiteral("HarkenStudio.ai"),
                                 QStringLiteral("api_key"), newApiKey))
         {
             QMessageBox::warning(this, tr("API Key"),
                                  tr("The API key could not be saved."));
-            refreshAIApiKeyStatus();
             return false;
         }
-        keyChanged = true;
-        aiApiKeyEdit_->clear();
     }
 
     const bool settingsChanged = configStore.save(config);
 
+    aiApiKeyEdit_->setText(newApiKey);
     rememberBaseline();
-    refreshAIApiKeyStatus();
     emit dirtyChanged();
     if (settingsChanged || keyChanged)
         emit aiAgentConfigApplied();
@@ -292,45 +210,7 @@ bool AIAgentPage::isDirty() const
         || aiModelEdit_->text() != baselineModel_
         || aiContextWindowSpin_->value() != baselineContextWindow_
         || aiPermissionModeCombo_->currentData().toString() != baselinePermissionMode_
-        || aiToolProfileCombo_->currentData().toString() != baselineToolProfile_
-        || !aiApiKeyEdit_->text().isEmpty()
-        || apiKeyClearStaged_;
-}
-
-void AIAgentPage::refreshAIApiKeyStatus()
-{
-    if (!aiApiKeyStatusLabel_)
-        return;
-
-    const bool typed = aiApiKeyEdit_ && !aiApiKeyEdit_->text().trimmed().isEmpty();
-    if (apiKeyClearStaged_ && !typed)
-    {
-        QtControlSkin::setSemanticProperty(aiApiKeyStatusLabel_, "settingsRole",
-                                           QStringLiteral("statusWarning"));
-        aiApiKeyStatusLabel_->setText(tr("Removal pending"));
-        return;
-    }
-    if (typed)
-    {
-        QtControlSkin::setSemanticProperty(aiApiKeyStatusLabel_, "settingsRole",
-                                           QStringLiteral("hint"));
-        aiApiKeyStatusLabel_->setText(
-            vaultHasKey() ? tr("Replacement pending")
-                          : tr("Save pending"));
-        return;
-    }
-
-    QtControlSkin::setSemanticProperty(aiApiKeyStatusLabel_, "settingsRole",
-                                       QString());
-    aiApiKeyStatusLabel_->setText(vaultHasKey() ? tr("Saved") : tr("Not saved"));
-}
-
-void AIAgentPage::onAIApiKeyClearClicked()
-{
-    apiKeyClearStaged_ = true;
-    aiApiKeyEdit_->clear();
-    refreshAIApiKeyStatus();
-    notifyDirty();
+        || aiApiKeyEdit_->text() != baselineApiKey_;
 }
 
 void AIAgentPage::onAIConnectionTestClicked()
@@ -348,15 +228,10 @@ void AIAgentPage::onAIConnectionTestClicked()
         return;
     }
 
-    QString apiKey = aiApiKeyEdit_->text().trimmed();
+    const QString apiKey = aiApiKeyEdit_->text().trimmed();
     if (apiKey.isEmpty())
     {
-        apiKey = secretStore_.load(
-            QStringLiteral("HarkenStudio.ai"), QStringLiteral("api_key"));
-    }
-    if (apiKey.isEmpty())
-    {
-        finishAIConnectionTest(tr("Enter or save an API key before testing."), false);
+        finishAIConnectionTest(tr("Enter an API key before testing."), false);
         return;
     }
 
@@ -409,45 +284,6 @@ void AIAgentPage::finishAIConnectionTest(const QString& message, bool success)
         aiConnectionTestLabel_, "settingsRole",
         success ? QStringLiteral("statusSuccess") : QStringLiteral("statusError"));
     aiConnectionTestLabel_->setText(message.left(640));
-}
-
-void AIAgentPage::resetAIAgentSettings()
-{
-    const QSignalBlocker b1(aiBaseUrlEdit_);
-    const QSignalBlocker b2(aiApiKeyEdit_);
-    const QSignalBlocker b3(aiModelEdit_);
-    const QSignalBlocker b4(aiContextWindowSpin_);
-    const QSignalBlocker b5(aiPermissionModeCombo_);
-    const QSignalBlocker b6(aiToolProfileCombo_);
-    aiBaseUrlEdit_->clear();
-    aiApiKeyEdit_->clear();
-    aiModelEdit_->clear();
-    aiContextWindowSpin_->setValue(AIAgentConfig::defaults().contextWindowTokens);
-    aiPermissionModeCombo_->setCurrentIndex(
-        aiPermissionModeCombo_->findData(QStringLiteral("ask")));
-    aiToolProfileCombo_->setCurrentIndex(
-        aiToolProfileCombo_->findData(QStringLiteral("authoring")));
-    apiKeyClearStaged_ = false;
-    refreshAIToolVisibility();
-    refreshAIApiKeyStatus();
-    notifyDirty();
-}
-
-void AIAgentPage::refreshAIToolVisibility()
-{
-    if (!aiToolVisibilityLabel_ || !aiToolProfileCombo_ || !aiPermissionModeCombo_)
-        return;
-
-    const QString profile = aiToolProfileCombo_->currentData().toString();
-    const QString permission = AICommandValidator::normalizePermissionProfile(
-        aiPermissionModeCombo_->currentData().toString());
-    const auto selection = AICommandCatalog::selectTools(profile, permission);
-    if (!selection.valid)
-    {
-        aiToolVisibilityLabel_->setText(tr("Unavailable"));
-        return;
-    }
-    aiToolVisibilityLabel_->setText(QString::number(selection.tools.size()));
 }
 
 }

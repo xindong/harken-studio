@@ -23,7 +23,6 @@ struct AICommandSpec
     Confirmation confirmation = Confirmation::None;
     ChangeSupport changeSupport = ChangeSupport::None;
     Source source = Source::CommandHandler;
-    AIToolProfileSet toolProfiles;
     int toolPriority = 0;
     QJsonObject argumentSchema;
     QString description;
@@ -32,22 +31,11 @@ struct AICommandSpec
 class AICommandCatalog
 {
 public:
-    struct ToolSelection
-    {
-        QList<AICommandSpec> tools;
-        bool valid = true;
-        QString statusCode;
-    };
-
     static const QList<AICommandSpec>& all();
     static const AICommandSpec* find(const QString& cmd);
     static QList<AICommandSpec> enabled();
-    static ToolSelection selectTools(const QString& profile = QStringLiteral("authoring"),
-                                     const QString& permission = QStringLiteral("ask"),
-                                     int cap = 33);
-    static ToolSelection selectTools(AIToolProfile profile,
-                                     AIPermissionMode permission = AIPermissionMode::Ask,
-                                     int cap = 33);
+    static QList<AICommandSpec> selectTools(const QString& permission = QStringLiteral("ask"));
+    static QList<AICommandSpec> selectTools(AIPermissionMode permission);
 };
 
 }

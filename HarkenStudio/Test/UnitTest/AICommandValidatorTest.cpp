@@ -43,7 +43,6 @@ AICommandValidator syntheticWriteValidator()
     write.confirmation = AICommandSpec::Confirmation::Always;
     write.changeSupport = AICommandSpec::ChangeSupport::ChangeSet;
     write.source = AICommandSpec::Source::ActionManager;
-    write.toolProfiles = QStringList{QStringLiteral("authoring")};
     write.argumentSchema = QJsonObject{
         {QStringLiteral("type"), QStringLiteral("object")},
         {QStringLiteral("additionalProperties"), false}
@@ -58,7 +57,6 @@ AICommandValidator syntheticPolicyWriteValidator()
     write.effect = AICommandSpec::Effect::ProjectState;
     write.availability = AICommandSpec::Availability::Enabled;
     write.confirmation = AICommandSpec::Confirmation::WhenPolicyRequires;
-    write.toolProfiles = QStringList{QStringLiteral("authoring")};
     write.argumentSchema = QJsonObject{
         {QStringLiteral("type"), QStringLiteral("object")},
         {QStringLiteral("additionalProperties"), false}

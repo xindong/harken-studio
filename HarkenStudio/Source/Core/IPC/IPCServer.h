@@ -54,7 +54,6 @@ public:
         DispatchOrigin origin = DispatchOrigin::Internal;
         QString requestId;
         QString permissionProfile;
-        QString toolProfile;
         QString grantId;
         bool preview = false;
         // When true, AI-origin dispatches skip the AI dispatch policy gates.
