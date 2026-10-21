@@ -288,19 +288,22 @@ public:
     std::size_t SlotCommittedBytes() const noexcept { return m_slots.CommittedBytes(); }
     std::size_t SlotReservedBytes() const noexcept { return m_slots.ReservedBytes(); }
     std::size_t RenderWorksetStorageBytes() const noexcept {
-        std::size_t bytes = m_firstOutputEndpoints.RequestedBytes() + m_professionalStorage.RequestedBytes();
+        std::size_t bytes = m_firstOutputEndpoints.RequestedBytes() + m_firstOutputWeights.RequestedBytes() +
+            m_professionalStorage.RequestedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
             bytes += m_ringStorage[ch].RequestedBytes() + m_monitorPreChainStorage[ch].RequestedBytes();
         return bytes;
     }
     std::size_t RenderWorksetCommittedBytes() const noexcept {
-        std::size_t bytes = m_firstOutputEndpoints.CommittedBytes() + m_professionalStorage.CommittedBytes();
+        std::size_t bytes = m_firstOutputEndpoints.CommittedBytes() + m_firstOutputWeights.CommittedBytes() +
+            m_professionalStorage.CommittedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
             bytes += m_ringStorage[ch].CommittedBytes() + m_monitorPreChainStorage[ch].CommittedBytes();
         return bytes;
     }
     std::size_t RenderWorksetReservedBytes() const noexcept {
-        std::size_t bytes = m_firstOutputEndpoints.ReservedBytes() + m_professionalStorage.ReservedBytes();
+        std::size_t bytes = m_firstOutputEndpoints.ReservedBytes() + m_firstOutputWeights.ReservedBytes() +
+            m_professionalStorage.ReservedBytes();
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
             bytes += m_ringStorage[ch].ReservedBytes() + m_monitorPreChainStorage[ch].ReservedBytes();
         return bytes;
@@ -926,10 +929,14 @@ private:
         std::uint32_t targetRevision = 0;
         VariableNativeEffectIdentity nativeEffect{};
         VariableToneBandValues toneBand{};
+        CommandRecord command{};
+    };
+    struct DeferredFirstOutputWeight {
+        bool valid = false;
+        VariablePlaybackOrder order{};
         VariableWeightControlIdentity weightOwner{};
         WeightSegmentV1 weightSegment{};
         bool weightRemoved = false;
-        CommandRecord command{};
     };
     struct Slot {
         std::atomic<SlotState> state{SlotState::Free};
@@ -977,6 +984,9 @@ private:
     static constexpr std::uint32_t kFirstOutputBuiltinEndpoints = 11;
     std::uint32_t m_firstOutputStride = 0;
     StableRowStorage<DeferredFirstOutputEndpoint> m_firstOutputEndpoints;
+    StableRowStorage<DeferredFirstOutputWeight> m_firstOutputWeights;
+    bool FirstOutputBackingReady(std::uint32_t count) const noexcept;
+    bool PrepareFirstOutputBacking(std::uint32_t count) noexcept;
     void* m_firstOutputCommandContext = nullptr;
     void (*m_firstOutputCommandConsumer)(void*, const CommandRecord&) noexcept = nullptr;
     void ClearFirstOutput(Slot& slot) noexcept;
@@ -985,7 +995,7 @@ private:
     void SupersedeDeferredFirstOutput(const CommandRecord& command,
         VnVoiceHandle initializingVoice = 0) noexcept;
     void ApplyDeferredFirstOutput(Slot& slot) noexcept;
-    DeferredFirstOutputEndpoint* FindFirstOutputWeightEndpoint(Slot& slot,
+    DeferredFirstOutputWeight* FindFirstOutputWeightEndpoint(Slot& slot,
         VariableWeightControlIdentity owner, bool create) noexcept;
     void PrepareFirstOutputTimelineWeights(Slot& slot) noexcept;
     static bool FirstOutputProtected(const Slot& slot) noexcept;
@@ -1137,7 +1147,8 @@ private:
     bool m_originalSourceCallbackOpen = false;
     std::vector<StreamParkMailbox> m_streamParkMailboxes;
     StableRowStorage<StreamParkTokenSlot> m_streamParkTokens;
-    bool PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t channelCount) noexcept;
+    bool PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t channelCount,
+        bool firstOutput) noexcept;
     bool RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount) const noexcept;
     std::array<StableRowStorage<std::array<float, kResampleFifoFrames>>, kMaxChannels> m_ringStorage;
     StableSlotStorage<MultirateResamplerCandidate> m_professionalStorage;

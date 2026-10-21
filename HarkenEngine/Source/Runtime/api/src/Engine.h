@@ -1858,7 +1858,7 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     BankVersionToken variableControlDiscreteRetargetBank{};
     TimelineArmToken variableControlDiscreteRetargetArm{};
     TimelineArmToken variableControlDiscreteRetargetEnteringArm{};
-    std::array<TimelineArmToken, 2u * kMaxKnownScheduleLeaves>
+    std::vector<TimelineArmToken>
         variableControlDiscreteRetargetGroupArms{};
     std::uint32_t variableControlDiscreteRetargetGroupMemberCount = 0;
     std::uint32_t variableControlDiscreteRetargetSourceMemberCount = 0;

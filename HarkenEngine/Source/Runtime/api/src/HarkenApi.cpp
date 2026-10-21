@@ -234,6 +234,7 @@ std::size_t Engine::ActionPlayDynamicBytes() const noexcept {
         bytes += column(row.memberPrograms) + column(row.members) + column(row.variableControlRetargetMembers) +
             row.variableControlMemberWeights.StorageBytes() + row.variableControlInitialArms.StorageBytes() +
             row.variableControlRetargetIncoming.StorageBytes() +
+            column(row.variableControlDiscreteRetargetGroupArms) +
             column(row.variableControlDiscreteRetargetPayloads) +
             column(row.variableControlDiscreteRetargetEnteringPayloads) +
             column(row.variableControlDiscreteRetargetEvents) +
@@ -31124,7 +31125,8 @@ bool PrepareDiscreteRetargetStorage(harken::Engine& engine,
             std::fill(column.begin(), column.end(), Value{});
             return true;
         };
-        if (!(prepare(row.variableControlDiscreteRetargetPayloads, sourceEvents) &&
+        if (!(prepare(row.variableControlDiscreteRetargetGroupArms, sourcePrograms + enteringPrograms) &&
+            prepare(row.variableControlDiscreteRetargetPayloads, sourceEvents) &&
             prepare(row.variableControlDiscreteRetargetEvents, sourceEvents) &&
             prepare(row.variableControlDiscreteRetargetRuntimePrograms, sourcePrograms) &&
             prepare(row.variableControlDiscreteRetargetSchedules, sourcePrograms) &&
@@ -31530,7 +31532,7 @@ engine.runtimeRecreateRequired = true;
     row.variableControlDiscreteRetargetBank = bank;
     row.variableControlDiscreteRetargetArm = exitingArms[0];
     row.variableControlDiscreteRetargetEnteringArm = {};
-    row.variableControlDiscreteRetargetGroupArms = {};
+    std::ranges::fill(row.variableControlDiscreteRetargetGroupArms, harken::TimelineArmToken{});
     for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
         row.variableControlDiscreteRetargetGroupArms[index] =
             exitingArms[index];
@@ -32263,7 +32265,7 @@ engine.runtimeRecreateRequired = true;
             : installedTargets[0].armToken;
     row.variableControlDiscreteRetargetEnteringArm =
         row.variableControlDiscreteRetargetArm;
-    row.variableControlDiscreteRetargetGroupArms = {};
+    std::ranges::fill(row.variableControlDiscreteRetargetGroupArms, harken::TimelineArmToken{});
     for (std::uint32_t index = 0; index < targetSchedule.leafCount;
          ++index) {
         row.variableControlDiscreteRetargetGroupArms[index] =
@@ -32930,7 +32932,7 @@ engine.runtimeRecreateRequired = true;
         rollbackBeforeInstall();
         return VariableRetargetPrepareStatus::Retry;
     }
-    row.variableControlDiscreteRetargetGroupArms = {};
+    std::ranges::fill(row.variableControlDiscreteRetargetGroupArms, harken::TimelineArmToken{});
     for (std::uint32_t index = 0; index < sourceMemberCount; ++index) {
         row.variableControlDiscreteRetargetGroupArms[index] =
             exitingArms[index];
@@ -47719,7 +47721,7 @@ engine.runtimeRecreateRequired = true;
             row.variableControlDiscreteRetargetBank = {};
             row.variableControlDiscreteRetargetArm = {};
             row.variableControlDiscreteRetargetEnteringArm = {};
-            row.variableControlDiscreteRetargetGroupArms = {};
+            std::ranges::fill(row.variableControlDiscreteRetargetGroupArms, harken::TimelineArmToken{});
             row.variableControlDiscreteRetargetGroupMemberCount = 0;
             row.variableControlDiscreteRetargetSourceMemberCount = 0;
             row.variableControlDiscreteRetargetTargetMemberCount = 0;
