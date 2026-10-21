@@ -5914,7 +5914,7 @@ public:
           meterProbes(resolved.maxBindingAttachments,
                       resolved.maxPropertiesPerCurrentSlice),
           meterRing(resolved.meterRingBlocks, resolved.maxBuses),
-          spatial(resolved),
+          spatial(resolved, 0),
           emitters(resolved),
           monitorEmitters(emitters, resolved.maxEmitters, monitorRequests.EngineInstance()),
           rng(resolved.randomSeed == 0 ? harken::SplitMix64::kDefaultSeed
@@ -6360,21 +6360,9 @@ public:
         // One park record per Logical Voice entry, indexed by ledger slot; only
         // Virtual Voices are active.
         if (!parkRecords.Reserve(resolved.voiceCapacity.Logical())) throw std::bad_alloc();
-        {
-            const std::uint64_t logicalVoices = resolved.voiceCapacity.Logical();
-            const std::uint64_t planSlots =
-                resolved.topologyPlanPoolCapacity == 0
-                    ? 4ull
-                    : resolved.topologyPlanPoolCapacity;
-            const std::uint64_t retainSlots = planSlots * 64ull;
-            const std::uint64_t retainKeyBound =
-                64ull + 3ull * logicalVoices + retainSlots;
-            if (retainKeyBound <=
-                static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
-                retainedProfileKeyScratch.reserve(
-                    static_cast<std::size_t>(retainKeyBound));
-            }
-        }
+        spatial.AttachRetainedProfileStorage(this, [](void* context) noexcept {
+            return static_cast<Engine*>(context)->PrepareRetainedProfileKeyStorage();
+        });
         // Logic-side source of truth for bus->bus send-edge membership, one row
         // of busSendSlotsPerBus target dense indices per bus (kInvalidBusIndex =
         // empty). The topology planner reads it (with the tree parents) to
@@ -12886,7 +12874,8 @@ public:
             queueFutureRecords.ConstructThrough(queueFutureRecords.Capacity()) &&
             pendingVariableLeafSources.ConstructThrough(pendingVariableLeafSources.Capacity()) &&
             pendingVariableFutureSources.ConstructThrough(pendingVariableFutureSources.Capacity()) &&
-            pendingVariableFutureNodes.ConstructThrough(pendingVariableFutureNodes.Capacity());
+            pendingVariableFutureNodes.ConstructThrough(pendingVariableFutureNodes.Capacity()) &&
+            spatial.PrepareVoiceStorage(config.voiceCapacity.Render());
     }
     bool PreparePlayableServiceDependencies(std::uint32_t required) noexcept {
         // One service contributes one selected future. Its source and successor
@@ -13665,8 +13654,16 @@ public:
         voiceSendConfig;
     VoicePool::SlotStorageRegistration logicVoiceStorageRegistration;
 
+    bool PrepareRetainedProfileKeyStorage() noexcept {
+        const std::uint64_t count = kMaxAttenuationProfiles +
+            3ull * config.voiceCapacity.Logical() + spatial.RetainStorageCapacity();
+        if (count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) return false;
+        try { retainedProfileKeyScratch.reserve(static_cast<std::size_t>(count)); }
+        catch (...) { return false; }
+        return true;
+    }
     bool PrepareLogicVoiceStorage(std::uint32_t count) noexcept {
-        if (!params.PrepareVoiceStorage(count) ||
+        if (!params.PrepareVoiceStorage(count) || !spatial.PrepareVoiceStorage(count) ||
             !voiceOriginPlayable.ConstructThrough(count) || !voicePlayFacts.ConstructThrough(count) ||
             !playbackPaths.ConstructThrough(count) || !timelineVoiceInstallIdentities.ConstructThrough(count) ||
             !voiceEffectInstanceRefs.ConstructThrough(count) || !effectSlotConfig.ConstructThrough(count) ||

@@ -9,6 +9,7 @@
 #include "harken/core/PackPlaybackView.h"
 #include "harken/core/PackReadinessContract.h"
 #include "harken/core/PlayablePropertyCut.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/media/PackLogicImage.h"
 
 #include <cstddef>
@@ -315,6 +316,12 @@ public:
         return retagBackpressureCountForTests_;
     }
     VnResult SetNextLeaseTokenForTests(std::uint64_t nextToken) noexcept;
+    void SetLeaseStorageCommitPageLimitsForTests(std::size_t leases,
+        std::size_t originals, std::size_t closures) noexcept {
+        leases_.SetCommitPageLimitForTests(leases);
+        originalLeaseRecords_.SetCommitPageLimitForTests(originals);
+        frozenClosures_.SetCommitPageLimitForTests(closures);
+    }
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     mutable bool refuseOriginalLeaseCommitOnceForTest = false;
 #endif
@@ -419,6 +426,7 @@ private:
     VnResult PrepareLease(const PublishedOwner& owner, PackLeaseSlice slice,
                           PackPartitionLease* out,
                           OriginalLeaseEpisode* original) const noexcept;
+    bool PrepareLeaseStorage() const noexcept;
     std::size_t LeaseIndex(const LeaseRow& row) const noexcept;
     PackFrozenClosure& FrozenClosure(LeaseRow& row) const noexcept;
     const PackFrozenClosure& FrozenClosure(const LeaseRow& row) const noexcept;
@@ -437,11 +445,11 @@ private:
     std::uint64_t generationFloor_ = 0;
     mutable std::size_t sharedOccupied_ = 0;
     mutable std::size_t playableOccupied_ = 0;
-    mutable std::vector<LeaseRow> leases_;
-    mutable std::vector<OriginalLeaseRecord> originalLeaseRecords_;
+    mutable StableRowStorage<LeaseRow, std::size_t> leases_;
+    mutable StableRowStorage<OriginalLeaseRecord, std::size_t> originalLeaseRecords_;
     std::uint64_t originalLeaseIncarnation_ = 0;
     mutable bool originalLeasesQuiesced_ = false;
-    mutable std::vector<PackFrozenClosure> frozenClosures_;
+    mutable StableRowStorage<PackFrozenClosure, std::size_t> frozenClosures_;
     mutable std::uint64_t nextLeaseToken_ = 1;
     std::uint64_t retagBackpressureCountForTests_ = 0;
     mutable bool leaseTokensExhausted_ = false;

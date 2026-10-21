@@ -648,6 +648,12 @@ TEST(CanonicalPackSetActivate, PendingVoiceRecipePinsPackAttenuationGeneration) 
     EXPECT_EQ(1u, spatial.attenuationGeneration);
     EXPECT_EQ(VN_OK, engine->spatial.BindVoice(
                          harkentest::RenderHandle(engine, incoming), atten, 1));
+    ASSERT_EQ(VN_OK, Vn_StopAll(0));
+    for (unsigned step = 0; step < 4; ++step) {
+        engine->nullBackend.Pump(2);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(nullptr, engine->spatial.FindProfile(atten, 1));
 }
 
 TEST(CanonicalPackSetActivate, ContentWrongInitTripleIsStaleRevision) {

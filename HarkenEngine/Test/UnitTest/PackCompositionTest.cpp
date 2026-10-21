@@ -3876,7 +3876,16 @@ TEST(PackCompositionContract, ResourceClosureCapacityIsAtomicAndStaleSafe) {
     PCMRegistry registry;
     PackTable packs(1, 1, 1);
     PackTable::PreparedLoadToken load;
+    for (const bool refuseClosure : {true, false}) {
+        packs.SetStorageCommitPageLimitsForTests(refuseClosure ? SIZE_MAX : 0,
+            refuseClosure ? 0 : SIZE_MAX, SIZE_MAX);
+        EXPECT_EQ(VN_BACKPRESSURE, packs.PrepareLoad(&load));
+        EXPECT_EQ(0u, load.Handle());
+        EXPECT_EQ(0u, packs.LoadedCount());
+    }
+    packs.SetStorageCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX, SIZE_MAX);
     ASSERT_EQ(VN_OK, packs.PrepareLoad(&load));
+    packs.SetStorageCommitPageLimitsForTests(0, 0, SIZE_MAX);
     const VnPackHandle handle = load.Handle();
     PackRevisionKey key{};
     key.handle = handle;
@@ -6353,7 +6362,15 @@ TEST(PackComposition, CombinedThreeTermLeaseSaturation) {
         kPackStableId, 1, 7,
         LegalContainerPartitionPayload(kPackStableId, 7, kContainerId));
     PackComposition composition(1, 1, 1);
+    for (unsigned stage = 0; stage < 3; ++stage) {
+        composition.SetLeaseStorageCommitPageLimitsForTests(stage == 2 ? 0 : SIZE_MAX,
+            stage == 0 ? 0 : SIZE_MAX, stage == 1 ? 0 : SIZE_MAX);
+        EXPECT_EQ(VN_BACKPRESSURE, CommitParsedPack(&composition, bytes, kPackHandle, 8));
+        EXPECT_EQ(nullptr, composition.PublishedHandle());
+    }
+    composition.SetLeaseStorageCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX, SIZE_MAX);
     ASSERT_EQ(VN_OK, CommitParsedPack(&composition, bytes, kPackHandle, 8));
+    composition.SetLeaseStorageCommitPageLimitsForTests(0, 0, 0);
     PackIdentityLookup shared;
     PackIdentityLookup playable;
     ASSERT_EQ(VN_OK, composition.PrepareLookup(kContainerId, &shared));

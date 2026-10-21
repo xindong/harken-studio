@@ -127,12 +127,18 @@ void PackTable::AlignedDeleter::operator()(std::uint8_t* p) const {
 
 PackTable::PackTable(std::uint32_t capacity,
                      std::size_t retirementCapacity,
-                     std::size_t resourceClosureCapacity)
-    : m_slots(capacity),
-      m_retiring(retirementCapacity != 0 ? retirementCapacity : capacity),
-      m_resourceClosures(resourceClosureCapacity) {
+                     std::size_t resourceClosureCapacity) {
     if (resourceClosureCapacity > UINT32_MAX)
         throw std::length_error("pack resource closure capacity overflow");
+    if (!m_slots.Reserve(capacity) ||
+        !m_retiring.Reserve(retirementCapacity != 0 ? retirementCapacity : capacity) ||
+        !m_resourceClosures.Reserve(static_cast<std::uint32_t>(resourceClosureCapacity)))
+        throw std::bad_alloc{};
+}
+
+bool PackTable::PrepareContentStorage() noexcept {
+    return m_resourceClosures.ConstructThrough(m_resourceClosures.Capacity()) &&
+        m_slots.ConstructThrough(m_slots.Capacity());
 }
 
 VnResult PackTable::PrepareRetiringRow(
@@ -169,8 +175,11 @@ VnResult PackTable::PrepareRetiringRow(
             break;
         }
     }
+    if (selected == m_retiring.size() && selected < m_retiring.Capacity()) {
+        if (!m_retiring.ConstructThrough(selected + 1u)) return VN_BACKPRESSURE;
+    }
     if (selected == m_retiring.size()) {
-        return !m_retiring.empty() && !anyReusable
+        return m_retiring.size() != 0 && !anyReusable
                    ? VN_RUNTIME_RECREATE_REQUIRED
                    : VN_BACKPRESSURE;
     }
@@ -284,14 +293,14 @@ const PackResourceRevisionToken* PackTable::ResourceClosureTokens(
 }
 
 VnResult PackTable::SelectResourceClosureRow(std::size_t* out) const noexcept {
-    if (m_slots.empty()) return VN_BACKPRESSURE;
+    if (m_slots.size() == 0) return VN_BACKPRESSURE;
     bool anyReusable = false;
     for (std::size_t i = 0; i < m_resourceClosures.size(); ++i) {
         const auto& row = m_resourceClosures[i];
         anyReusable = anyReusable || row.state != ResourceClosureState::Quarantined;
         if (row.state == ResourceClosureState::Free) { *out = i; return VN_OK; }
     }
-    return !m_resourceClosures.empty() && !anyReusable ? VN_RUNTIME_RECREATE_REQUIRED : VN_BACKPRESSURE;
+    return m_resourceClosures.size() != 0 && !anyReusable ? VN_RUNTIME_RECREATE_REQUIRED : VN_BACKPRESSURE;
 }
 
 VnResult PackTable::AcquireResourceClosure(
@@ -353,9 +362,11 @@ VnResult PackTable::ValidateResourceClosure(
 
 VnResult PackTable::SetResourceClosureGenerationForTests(
     std::size_t rowIndex, std::uint32_t generation) noexcept {
-    if (rowIndex >= m_resourceClosures.size() || generation == 0) {
+    if (rowIndex >= m_resourceClosures.Capacity() || generation == 0) {
         return VN_INVALID_ARG;
     }
+    if (!m_resourceClosures.ConstructThrough(static_cast<std::uint32_t>(rowIndex + 1u)))
+        return VN_BACKPRESSURE;
     ResourceClosureRow& row = m_resourceClosures[rowIndex];
     if (row.state != ResourceClosureState::Free) {
         return VN_IN_USE;
@@ -369,9 +380,11 @@ VnResult PackTable::SetResourceClosureGenerationForTests(
 
 VnResult PackTable::SetSlotGenerationForTests(
     std::size_t rowIndex, std::uint32_t generation) noexcept {
-    if (rowIndex >= m_slots.size() || generation == 0) {
+    if (rowIndex >= m_slots.Capacity() || generation == 0) {
         return VN_INVALID_ARG;
     }
+    if (!m_slots.ConstructThrough(static_cast<std::uint32_t>(rowIndex + 1u)))
+        return VN_BACKPRESSURE;
     Slot& slot = m_slots[rowIndex];
     if (slot.loaded || generation < slot.generation) {
         return VN_IN_USE;
@@ -479,6 +492,7 @@ VnResult PackTable::ReadAndValidate(
 VnResult PackTable::Load(const char* utf8Path, PCMRegistry& registry,
                               VnPackHandle* outHandle,
                               ReservedIdFn isReserved, void* reservedCtx) {
+    if (!PrepareContentStorage()) return VN_BACKPRESSURE;
     const std::uint32_t capacity =
         static_cast<std::uint32_t>(m_slots.size());
     std::uint32_t slotIndex = 0;
@@ -989,6 +1003,7 @@ VnResult PackTable::PrepareLoad(PreparedLoadToken* out) noexcept {
         return VN_INVALID_ARG;
     }
     *out = PreparedLoadToken{};
+    if (!PrepareContentStorage()) return VN_BACKPRESSURE;
     const std::uint32_t capacity =
         static_cast<std::uint32_t>(m_slots.size());
     std::uint32_t slotIndex = 0;
@@ -1065,9 +1080,10 @@ VnResult PackTable::PrepareCanonicalSet(
     if (out->IsPrepared() || m_pendingSetMutation || registry.m_pendingSetMutation) {
         return VN_IN_USE;
     }
-    if (members.size() > m_slots.size()) {
+    if (members.size() > m_slots.Capacity()) {
         return VN_INVALID_ARG;
     }
+    if (!PrepareContentStorage()) return VN_BACKPRESSURE;
     *out = PreparedSetMutation{};
     m_conflictingSoundId = {};
     if (!members.empty() &&

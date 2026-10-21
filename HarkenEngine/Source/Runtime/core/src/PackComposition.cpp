@@ -2307,10 +2307,15 @@ PackComposition::PackComposition(std::size_t sharedActionDeferredCapacity,
         throw std::length_error("pack lease pool overflow");
     }
     const std::size_t leaseCount = static_cast<std::size_t>(leaseTotal);
-    leases_.resize(leaseCount);
-    originalLeaseRecords_.resize(leaseCount);
+    if (!leases_.Reserve(leaseCount) || !originalLeaseRecords_.Reserve(leaseCount) ||
+        !frozenClosures_.Reserve(leaseCount)) throw std::bad_alloc{};
     originalLeaseIncarnation_ = IssueOriginalPackIncarnation();
-    frozenClosures_.resize(leaseCount);
+}
+
+bool PackComposition::PrepareLeaseStorage() const noexcept {
+    return originalLeaseRecords_.ConstructThrough(originalLeaseRecords_.Capacity()) &&
+        frozenClosures_.ConstructThrough(frozenClosures_.Capacity()) &&
+        leases_.ConstructThrough(leases_.Capacity());
 }
 
 PackComposition::~PackComposition() {
@@ -2968,6 +2973,7 @@ VnResult PackComposition::PrepareCommit(
     if (playbackStore != VN_OK) {
         return playbackStore;
     }
+    if (!next->index.empty() && !PrepareLeaseStorage()) return VN_BACKPRESSURE;
     prepared.facts_.compositeGeneration = next->compositeGeneration;
     prepared.facts_.activationFrame = serviceFrame;
     prepared.owner_ = this;
@@ -2997,7 +3003,7 @@ void PackComposition::RestorePublished(
 }
 
 std::size_t PackComposition::LeaseIndex(const LeaseRow& row) const noexcept {
-    if (leases_.empty()) {
+    if (leases_.size() == 0) {
         return 0;
     }
     const LeaseRow* data = leases_.data();
@@ -3098,6 +3104,7 @@ VnResult PackComposition::PrepareLease(const PublishedOwner& owner,
     if (SliceOccupied(slice) >= SliceCapacity(slice)) {
         return VN_BACKPRESSURE;
     }
+    if (!PrepareLeaseStorage()) return VN_BACKPRESSURE;
     std::size_t availableIndex = leases_.size();
     for (std::size_t i = 0; i < leases_.size(); ++i) {
         if (leases_[i].state == LeaseState::Free && !originalLeaseRecords_[i].active) {

@@ -4880,12 +4880,20 @@ TEST(PlayableStart, DirectStartRemainsAudibleWhenAudioOutrunsLogicService) {
     refuseBacking(engine->playableInstances);
     refuseBacking(engine->originalPlayableLifetimeHolders);
     refuseBacking(engine->originalSingleCurrentHolders);
+    engine->spatial.SetVoiceCommitPageLimitForTests(0);
+    const auto refusedSpatial = harken::StartPlayable(*engine, request);
+    EXPECT_EQ(harken::PlayableStartStatus::Backpressure, refusedSpatial.status);
+    EXPECT_EQ(0u, refusedSpatial.instance);
+    EXPECT_EQ(freeInstances, engine->playableInstances.FreeCount());
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
+    engine->spatial.SetVoiceCommitPageLimitForTests(SIZE_MAX);
     const harken::PlayableStartResult started =
         harken::StartPlayable(*engine, request);
     ASSERT_EQ(started.status, harken::PlayableStartStatus::Accepted);
     engine->playableInstances.SetCommitPageLimitForTests(0);
     engine->originalPlayableLifetimeHolders.SetCommitPageLimitForTests(0);
     engine->originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
+    engine->spatial.SetVoiceCommitPageLimitForTests(0);
 
     const auto row = std::find_if(
         engine->playableServices.begin(), engine->playableServices.end(),
