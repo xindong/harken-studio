@@ -1349,6 +1349,28 @@ public:
     PendingEventStorageDemand CapturePendingEventStorageDemand() const noexcept;
     void AttachPendingEventStorage(PendingEventStorageRegistration& registration,
         void* context, PendingEventStorageRegistration::Prepare prepare) const noexcept;
+    class CurrentSliceStorageRegistration {
+    public:
+        using Prepare = bool (*)(void*, std::size_t) noexcept;
+        CurrentSliceStorageRegistration() = default;
+        ~CurrentSliceStorageRegistration() { Detach(); }
+        CurrentSliceStorageRegistration(const CurrentSliceStorageRegistration&) = delete;
+        CurrentSliceStorageRegistration& operator=(const CurrentSliceStorageRegistration&) = delete;
+        void Detach() noexcept;
+    private:
+        friend class ScheduledTransactionPool;
+        const ScheduledTransactionPool* owner_ = nullptr;
+        CurrentSliceStorageRegistration* previous_ = nullptr;
+        CurrentSliceStorageRegistration* next_ = nullptr;
+        void* context_ = nullptr;
+        Prepare prepare_ = nullptr;
+    };
+    std::size_t PreparedCurrentSliceRowCount() const noexcept {
+        return currentSliceRows_.ConstructedCount();
+    }
+    // Control-only. Prepare the existing high-water mark before attaching.
+    void AttachCurrentSliceStorage(CurrentSliceStorageRegistration& registration,
+        void* context, CurrentSliceStorageRegistration::Prepare prepare) const noexcept;
     std::uint64_t RetiredPageEventCount() const noexcept {
         return retiredPageEvents_.load(std::memory_order_acquire);
     }
@@ -1422,8 +1444,16 @@ public:
             pagePlan03GroupClaimGenerations_.capacity() * sizeof(std::uint32_t);
     }
     std::size_t PageEventDirectoryStorageBytes() const noexcept {
-        return (pageEventSlots_.capacity() + pageEventOrder_.capacity() +
-            freeEventSlots_.capacity()) * sizeof(std::size_t);
+        return pageEventSlots_.RequestedBytes() + pageEventOrder_.RequestedBytes() +
+            freeEventSlots_.RequestedBytes() + pageBatchRows_.RequestedBytes();
+    }
+    std::size_t PageEventDirectoryCommittedBytes() const noexcept {
+        return pageEventSlots_.CommittedBytes() + pageEventOrder_.CommittedBytes() +
+            freeEventSlots_.CommittedBytes() + pageBatchRows_.CommittedBytes();
+    }
+    std::size_t PageEventDirectoryReservedBytes() const noexcept {
+        return pageEventSlots_.ReservedBytes() + pageEventOrder_.ReservedBytes() +
+            freeEventSlots_.ReservedBytes() + pageBatchRows_.ReservedBytes();
     }
     std::uint64_t CurrentSliceCommittedBytes() const noexcept;
     std::uint64_t CurrentSliceReservedBytes() const noexcept;
@@ -2519,6 +2549,7 @@ private:
 
     Config config_{};
     mutable PendingEventStorageRegistration* pendingEventStorage_ = nullptr;
+    mutable CurrentSliceStorageRegistration* currentSliceStorage_ = nullptr;
     std::atomic<std::uint64_t> retiredPageEvents_{0};
     std::atomic<std::uint64_t> retiredPageGroups_{0};
     void* immediateLaneGroupDisposalContext_ = nullptr;
@@ -2539,7 +2570,7 @@ private:
     std::uint64_t consumeTick_ = 0;
 
     // Per-page storage, indexed by ring index. Events and batch frames are packed
-    // into per-page spans of the flat vectors.
+    // into stable per-page spans.
     std::vector<HorizonPageHeader> pageHeaders_;
     std::vector<std::uint32_t> pageEventCount_;
     std::vector<std::uint32_t> pagePreparedEventCount_;
@@ -2548,9 +2579,10 @@ private:
     std::unique_ptr<std::atomic<std::uint64_t>[]> pageQuantumStamp_;
     std::unique_ptr<std::atomic<std::uint64_t>[]> pageEmptyQuantumStamp_;
     StableRowStorage<EventRow, std::size_t> nativeEventRows_;
-    std::vector<std::size_t> pageEventSlots_;
-    std::vector<std::size_t> pageEventOrder_;
-    std::vector<std::size_t> freeEventSlots_;
+    StableRowStorage<std::size_t, std::size_t> pageEventSlots_;
+    StableRowStorage<std::size_t, std::size_t> pageEventOrder_;
+    StableRowStorage<std::size_t, std::size_t> freeEventSlots_;
+    std::size_t freeEventSlotCount_ = 0;
     std::size_t issuedEventSlots_ = 0;
     std::vector<std::uint32_t> pageCurrentSliceCount_;
     std::unique_ptr<CurrentSlicePage[]> pageCurrentSliceStorage_;
@@ -2595,7 +2627,7 @@ private:
     bool plan03ArmTableEstablishedByPrepared_ = false;
     std::vector<std::uint32_t> pageBatchCount_;
     std::vector<std::uint32_t> pageBatchOccupiedCount_;
-    std::vector<FrameBatchRow> pageBatchRows_;
+    StableRowStorage<FrameBatchRow, std::size_t> pageBatchRows_;
 
     std::vector<TransactionRecord> transactions_;
     std::vector<std::uint32_t> freeTransactions_; // stack of free slot indices

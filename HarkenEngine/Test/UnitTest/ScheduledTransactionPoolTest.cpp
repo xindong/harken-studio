@@ -48,6 +48,16 @@ struct ScheduledTransactionPoolCancelTestAccess {
         pool.nativeEventRows_.SetCommitPageLimitForTests(pages);
     }
     static std::size_t NativeEventRowBytes() { return sizeof(ScheduledTransactionPool::EventRow); }
+    static void SetEventDirectoryCommitPageLimit(ScheduledTransactionPool& pool,
+        std::size_t storage, std::size_t pages) {
+        switch (storage) {
+        case 0: pool.pageEventSlots_.SetCommitPageLimitForTests(pages); break;
+        case 1: pool.pageEventOrder_.SetCommitPageLimitForTests(pages); break;
+        case 2: pool.pageBatchRows_.SetCommitPageLimitForTests(pages); break;
+        case 3: pool.freeEventSlots_.SetCommitPageLimitForTests(pages); break;
+        default: FAIL() << "Unknown event directory storage";
+        }
+    }
     static void SetNativeGroupCommitPageLimit(ScheduledTransactionPool& pool, std::size_t pages) {
         pool.nativeGroupRows_.SetCommitPageLimitForTests(pages);
     }
@@ -4643,6 +4653,23 @@ TEST(ScheduledTransactionPool, NativeEventBackingFailurePreservesAcceptedWorkAnd
     request.ownerInstanceScheduleEpoch = h.ownerEpoch;
     request.events = events.data();
     request.eventCount = 1;
+    EXPECT_EQ(0u, pool.PageEventDirectoryStorageBytes());
+    EXPECT_EQ(0u, pool.PageEventDirectoryCommittedBytes());
+    for (std::size_t storage = 0; storage < 4; ++storage) {
+        Access::SetEventDirectoryCommitPageLimit(pool, storage, 0);
+        EXPECT_EQ(ReserveRefusal::PageEventCapacity,
+            pool.Reserve(request, PrePublishLatePolicy::Refuse).refusal);
+        PreparedTransactionBatch refused;
+        EXPECT_EQ(ReserveRefusal::PageEventCapacity, pool.PrepareTransactionBatch(&request, 1, 0, &refused));
+        EXPECT_FALSE(refused.Valid());
+        harken::UnplacedBatchCredit credit;
+        EXPECT_FALSE(pool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &credit));
+        EXPECT_FALSE(credit.Valid());
+        EXPECT_EQ(0u, pool.LiveTransactionCount());
+        EXPECT_EQ(0u, pool.IngressThisQuantum());
+        EXPECT_TRUE(pool.CanResetForEpoch(0, kEpoch + 1));
+        Access::SetEventDirectoryCommitPageLimit(pool, storage, SIZE_MAX);
+    }
     ASSERT_EQ(ReserveStatus::Committed, pool.Reserve(request, PrePublishLatePolicy::Refuse).status);
 
     Access::SetNativeEventCommitPageLimit(pool, 0);
@@ -4981,6 +5008,9 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
     harken::TimelineArmTable arms(1);
     harken::UnplacedBatchCredit credit{};
     ASSERT_TRUE(pool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 1}, &credit));
+    for (std::size_t storageIndex = 0; storageIndex < 4; ++storageIndex)
+        harken::detail::ScheduledTransactionPoolCancelTestAccess::SetEventDirectoryCommitPageLimit(
+            pool, storageIndex, 0);
     ASSERT_GT(preparations, 0u);
     const auto preparationsAtAcceptance = preparations;
     storage.allowed = false;
@@ -5632,12 +5662,20 @@ TEST(ScheduledTransactionPool, PreparedCurrentSliceBackingSurvivesPageCommitRefu
     EXPECT_FALSE(spare.Valid());
     ASSERT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
     Access::SetCurrentSliceCommitPageLimit(pool, SIZE_MAX);
+    bool allowConsumerBacking = false;
+    ScheduledTransactionPool::CurrentSliceStorageRegistration consumer;
+    pool.AttachCurrentSliceStorage(consumer, &allowConsumerBacking,
+        [](void* context, std::size_t) noexcept { return *static_cast<bool*>(context); });
+    EXPECT_FALSE(pool.PrepareCurrentSliceBacking(&spare));
+    EXPECT_FALSE(spare.Valid());
+    allowConsumerBacking = true;
     std::vector<harken::CurrentSliceBacking> backing(129u * pool.PageCount());
     for (auto& credit : backing) ASSERT_TRUE(pool.PrepareCurrentSliceBacking(&credit));
     ASSERT_TRUE(pool.PrepareCurrentSliceBacking(&spare));
     EXPECT_FALSE(pool.Reset(config, 0, kEpoch));
     const auto committed = pool.CurrentSliceCommittedBytes();
     Access::SetCurrentSliceCommitPageLimit(pool, 0);
+    allowConsumerBacking = false;
     for (std::uint32_t page = 0; page < pool.PageCount(); ++page) {
         harken::ScheduledCurrentSliceInput input{};
         input.executeFrame = static_cast<std::uint64_t>(page) * config.quantumFrames;

@@ -1664,6 +1664,7 @@ ScheduledTransactionPool::~ScheduledTransactionPool() {
     assert(immediateBackingHolds_ == 0 && activeImmediateLaneBacking_ == nullptr);
     // Device and producer quiescence precedes pool destruction.
     while (pendingEventStorage_ != nullptr) pendingEventStorage_->Detach();
+    while (currentSliceStorage_ != nullptr) currentSliceStorage_->Detach();
     while (laneGroupPublications_ != nullptr) laneGroupPublications_->Release();
     while (unpublishedGroupArmCancellations_ != nullptr)
         unpublishedGroupArmCancellations_->Release();
@@ -2979,16 +2980,55 @@ void ScheduledTransactionPool::AttachPendingEventStorage(
     pendingEventStorage_ = &registration;
 }
 
+void ScheduledTransactionPool::CurrentSliceStorageRegistration::Detach() noexcept {
+    if (owner_ == nullptr) return;
+    if (previous_ != nullptr) previous_->next_ = next_;
+    else owner_->currentSliceStorage_ = next_;
+    if (next_ != nullptr) next_->previous_ = previous_;
+    owner_ = nullptr;
+    previous_ = next_ = nullptr;
+    context_ = nullptr;
+    prepare_ = nullptr;
+}
+
+void ScheduledTransactionPool::AttachCurrentSliceStorage(
+    CurrentSliceStorageRegistration& registration, void* context,
+    CurrentSliceStorageRegistration::Prepare prepare) const noexcept {
+    assert(!memguard::IsAudioTagged() && Valid() && prepare != nullptr);
+    registration.Detach();
+    registration.owner_ = this;
+    registration.context_ = context;
+    registration.prepare_ = prepare;
+    registration.next_ = currentSliceStorage_;
+    if (currentSliceStorage_ != nullptr) currentSliceStorage_->previous_ = &registration;
+    currentSliceStorage_ = &registration;
+}
+
 bool ScheduledTransactionPool::PrepareEventStorage(std::uint64_t additionalEvents,
     bool consumeAcceptedBacking) noexcept {
     auto demand = CapturePendingEventStorageDemand();
     if (demand.nativeEvents > nativeEventRows_.Capacity() ||
         additionalEvents > nativeEventRows_.Capacity() - demand.nativeEvents) return false;
     demand.nativeEvents += additionalEvents;
+    const auto nativeDemand = static_cast<std::size_t>(demand.nativeEvents);
+    const auto freeDemand = std::max(nativeDemand, issuedEventSlots_);
     if (consumeAcceptedBacking)
-        return demand.nativeEvents <= nativeEventRows_.ConstructedCount();
-    if (!nativeEventRows_.ConstructThrough(static_cast<std::size_t>(demand.nativeEvents)))
+        return nativeDemand <= nativeEventRows_.ConstructedCount() &&
+            freeDemand <= freeEventSlots_.ConstructedCount() &&
+            (nativeDemand == 0 ||
+                (pageEventSlots_.ConstructedCount() == pageEventSlots_.Capacity() &&
+                 pageEventOrder_.ConstructedCount() == pageEventOrder_.Capacity() &&
+                 pageBatchRows_.ConstructedCount() == pageBatchRows_.Capacity()));
+    if (!nativeEventRows_.ConstructThrough(nativeDemand))
         return false;
+    if (nativeDemand != 0) {
+        const auto previous = pageEventSlots_.ConstructedCount();
+        if (!pageEventSlots_.ConstructThrough(pageEventSlots_.Capacity())) return false;
+        std::fill(pageEventSlots_.begin() + previous, pageEventSlots_.end(), SIZE_MAX);
+        if (!pageEventOrder_.ConstructThrough(pageEventOrder_.Capacity()) ||
+            !pageBatchRows_.ConstructThrough(pageBatchRows_.Capacity())) return false;
+    }
+    if (!freeEventSlots_.ConstructThrough(freeDemand)) return false;
     for (auto* registration = pendingEventStorage_; registration != nullptr;
          registration = registration->next_)
         if (!registration->prepare_(registration->context_, demand)) return false;
@@ -2998,23 +3038,23 @@ bool ScheduledTransactionPool::PrepareEventStorage(std::uint64_t additionalEvent
 void ScheduledTransactionPool::AcquirePageEvent(std::size_t index) noexcept {
     assert(!memguard::IsAudioTagged() && pageEventSlots_[index] == SIZE_MAX);
     std::size_t slot = issuedEventSlots_;
-    if (freeEventSlots_.empty()) {
+    if (freeEventSlotCount_ == 0) {
         assert(slot < nativeEventRows_.ConstructedCount());
+        assert(slot < freeEventSlots_.ConstructedCount());
         ++issuedEventSlots_;
     } else {
-        slot = freeEventSlots_.back();
-        freeEventSlots_.pop_back();
+        slot = freeEventSlots_[--freeEventSlotCount_];
     }
     pageEventSlots_[index] = slot;
 }
 
 void ScheduledTransactionPool::ReleasePageEvent(std::size_t index) noexcept {
     assert(!memguard::IsAudioTagged() && pageEventSlots_[index] < issuedEventSlots_);
-    assert(freeEventSlots_.size() < freeEventSlots_.capacity());
+    assert(freeEventSlotCount_ < freeEventSlots_.ConstructedCount());
     const auto slot = pageEventSlots_[index];
     nativeEventRows_[slot] = {};
     pageEventSlots_[index] = SIZE_MAX;
-    freeEventSlots_.push_back(slot);
+    freeEventSlots_[freeEventSlotCount_++] = slot;
 }
 
 void ScheduledTransactionPool::RecordRetiredPageEvents(std::uint64_t count) noexcept {
@@ -3180,12 +3220,13 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     }
     const auto eventRows = static_cast<std::size_t>(pageCount_) * config.maxEventsPerQuantum;
     StableRowStorage<EventRow, std::size_t> nativeEvents;
-    if (!nativeEvents.Reserve(eventRows)) return false;
-    pageEventSlots_.assign(eventRows, SIZE_MAX);
-    pageEventOrder_.assign(eventRows, 0);
-    freeEventSlots_.clear();
-    freeEventSlots_.reserve(eventRows);
-    issuedEventSlots_ = 0;
+    StableRowStorage<std::size_t, std::size_t> eventSlots, eventOrder, freeSlots;
+    if (!nativeEvents.Reserve(eventRows) || !eventSlots.Reserve(eventRows) ||
+        !eventOrder.Reserve(eventRows) || !freeSlots.Reserve(eventRows)) return false;
+    pageEventSlots_.Swap(eventSlots);
+    pageEventOrder_.Swap(eventOrder);
+    freeEventSlots_.Swap(freeSlots);
+    freeEventSlotCount_ = issuedEventSlots_ = 0;
     nativeEventRows_.Swap(nativeEvents);
     if (config_.maxCurrentSlicesPerQuantum == 0) {
         config_.maxCurrentSlicesPerQuantum = config_.maxEventsPerQuantum;
@@ -3234,9 +3275,10 @@ bool ScheduledTransactionPool::Reset(const Config& config,
         std::make_unique<LaneFrontierGate[]>(config_.maxImmediateLaneDecisionGates);
     pageBatchCount_.assign(pageCount_, 0);
     pageBatchOccupiedCount_.assign(pageCount_, 0);
-    pageBatchRows_.assign(static_cast<std::size_t>(pageCount_) *
-                              config.maxFrameBatchesPerQuantum,
-                          FrameBatchRow{});
+    StableRowStorage<FrameBatchRow, std::size_t> batchRows;
+    if (!batchRows.Reserve(static_cast<std::size_t>(pageCount_) *
+            config.maxFrameBatchesPerQuantum)) return false;
+    pageBatchRows_.Swap(batchRows);
     for (std::uint32_t p = 0; p < pageCount_; ++p) {
         pageHeaders_[p].transportEpoch = epoch;
         pageHeaders_[p].absoluteQuantumIndex = baseQuantumIndex_ + p;
@@ -3361,7 +3403,7 @@ bool ScheduledTransactionPool::ReserveUnplacedBatchCredit(
         occupiedGroups += state != Plan03GroupRowState::Free ? 1u : 0u;
     if (occupiedEvents + unplacedEvents_ + request.events > nativeEventRows_.Capacity() ||
         occupiedBatches + unplacedFrameBatches_ + request.frameBatches >
-            pageBatchRows_.size() ||
+            pageBatchRows_.Capacity() ||
         occupiedGroups + unplacedGroupHeaders_ + request.groupHeaders >
             pagePlan03GroupRowStates_.size()) return false;
     std::size_t slot = 0;
@@ -4250,8 +4292,8 @@ ReserveRefusal ScheduledTransactionPool::CheckUnplacedPageBudget(
     if (occupiedEvents > nativeEventRows_.Capacity() ||
         additionalEvents > nativeEventRows_.Capacity() - occupiedEvents)
         return ReserveRefusal::PageEventCapacity;
-    if (occupiedBatches > pageBatchRows_.size() ||
-        additionalBatches > pageBatchRows_.size() - occupiedBatches)
+    if (occupiedBatches > pageBatchRows_.Capacity() ||
+        additionalBatches > pageBatchRows_.Capacity() - occupiedBatches)
         return ReserveRefusal::PageBatchCapacity;
     return ReserveRefusal::None;
 }
@@ -4313,11 +4355,12 @@ bool ScheduledTransactionPool::CanResetForEpoch(
         pageSorted_.size() != pageCount ||
         !exactProduct(pageCount, config_.maxEventsPerQuantum,
                       nativeEventRows_.Capacity()) ||
-        pageEventSlots_.size() != nativeEventRows_.Capacity() ||
-        pageEventOrder_.size() != nativeEventRows_.Capacity() ||
-        freeEventSlots_.capacity() < nativeEventRows_.Capacity() ||
+        pageEventSlots_.Capacity() != nativeEventRows_.Capacity() ||
+        pageEventOrder_.Capacity() != nativeEventRows_.Capacity() ||
+        freeEventSlots_.Capacity() < nativeEventRows_.Capacity() ||
         issuedEventSlots_ > nativeEventRows_.ConstructedCount() ||
-        freeEventSlots_.size() > issuedEventSlots_ ||
+        issuedEventSlots_ > freeEventSlots_.ConstructedCount() ||
+        freeEventSlotCount_ > issuedEventSlots_ ||
         pageCurrentSliceCount_.size() != pageCount ||
         pageCurrentSliceStorage_ == nullptr ||
         !exactProduct(pageCount, currentSliceStorageCapacity_, currentSliceRows_.Capacity()) ||
@@ -4337,7 +4380,7 @@ bool ScheduledTransactionPool::CanResetForEpoch(
         pageBatchCount_.size() != pageCount ||
         pageBatchOccupiedCount_.size() != pageCount ||
         !exactProduct(pageCount, config_.maxFrameBatchesPerQuantum,
-                      pageBatchRows_.size()) ||
+                      pageBatchRows_.Capacity()) ||
         transactions_.size() != config_.maxScheduledTransactions ||
         freeTransactions_.capacity() < config_.maxScheduledTransactions ||
         preparedTransactionClaims_.size() !=
@@ -4472,7 +4515,7 @@ bool ScheduledTransactionPool::ResetForEpoch(
     std::fill(pageSorted_.begin(), pageSorted_.end(), 1);
     std::fill(nativeEventRows_.begin(), nativeEventRows_.end(), EventRow{});
     std::fill(pageEventSlots_.begin(), pageEventSlots_.end(), SIZE_MAX);
-    freeEventSlots_.clear();
+    freeEventSlotCount_ = 0;
     issuedEventSlots_ = 0;
     std::fill(pageEventOrder_.begin(), pageEventOrder_.end(), 0);
     for (std::uint32_t page = 0; page < pageCount_; ++page)
@@ -4725,6 +4768,10 @@ void ScheduledTransactionPool::SortPage(std::uint32_t ring) {
         return;
     }
     const std::uint32_t count = pageEventCount_[ring];
+    if (count == 0) {
+        pageSorted_[ring] = 1;
+        return;
+    }
     const std::size_t base =
         static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
     std::size_t* order = &pageEventOrder_[base];
@@ -6845,9 +6892,14 @@ bool ScheduledTransactionPool::PrepareCurrentSliceRows() noexcept {
     const auto capacity = currentSliceRows_.Capacity();
     const auto required = occupiedCurrentSliceRows_ + std::min(
         capacity - occupiedCurrentSliceRows_, currentSliceBackingHolds_ + 1u);
-    return currentSliceRows_.ConstructThrough(required) &&
-        currentSliceOrder_.ConstructThrough(static_cast<std::uint32_t>(
-            std::min<std::size_t>(required, currentSliceStorageCapacity_)));
+    if (!currentSliceRows_.ConstructThrough(required) ||
+        !currentSliceOrder_.ConstructThrough(static_cast<std::uint32_t>(
+            std::min<std::size_t>(required, currentSliceStorageCapacity_)))) return false;
+    const auto demand = std::max(required, currentSliceRows_.ConstructedCount());
+    for (auto* registration = currentSliceStorage_; registration != nullptr;
+         registration = registration->next_)
+        if (!registration->prepare_(registration->context_, demand)) return false;
+    return true;
 }
 
 bool ScheduledTransactionPool::PrepareCurrentSliceBacking(CurrentSliceBacking* out) noexcept {
@@ -7916,6 +7968,7 @@ std::size_t ScheduledTransactionPool::ConsumePage(
     ++consumeTick_; // a fresh memo epoch for the per-transaction stale cache
 
     const std::uint32_t count = pageEventCount_[ring];
+    if (count == 0) return 0;
     const std::size_t eventBase =
         static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
     const std::size_t* order = &pageEventOrder_[eventBase];
@@ -8044,6 +8097,7 @@ std::size_t ScheduledTransactionPool::ConsumePageRt(
     const std::uint32_t ring = static_cast<std::uint32_t>(
         (absoluteQuantum - sessionBaseQuantumIndex_) % pageCount_);
     const std::uint32_t count = pageEventCount_[ring];
+    if (count == 0) return 0;
     const std::size_t base =
         static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
     const std::size_t* order = &pageEventOrder_[base];
@@ -10492,15 +10546,15 @@ std::uint32_t ScheduledTransactionPool::Advance() {
                 : Plan03GroupRowState::Free;
     }
     pagePlan03GroupCount_[leaving] = 0;
+    const auto occupiedBatches = pageBatchOccupiedCount_[leaving];
     pageBatchCount_[leaving] = 0;
     pageBatchOccupiedCount_[leaving] = 0;
     const std::size_t batchBase =
         static_cast<std::size_t>(leaving) *
         config_.maxFrameBatchesPerQuantum;
-    std::fill(pageBatchRows_.begin() + batchBase,
-              pageBatchRows_.begin() + batchBase +
-                  config_.maxFrameBatchesPerQuantum,
-              FrameBatchRow{});
+    if (occupiedBatches != 0)
+        std::fill(pageBatchRows_.begin() + batchBase,
+                  pageBatchRows_.begin() + batchBase + occupiedBatches, FrameBatchRow{});
     pageSorted_[leaving] = 1;
 
     // Reopen the leaving slot at the far end: a new generation and the next

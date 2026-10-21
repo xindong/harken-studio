@@ -97,11 +97,6 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_installAckSideTable(ackSideTable),
       m_installAckSideTableCapacity(ackSideTableCapacity),
       m_installAckRing(installAckRing),
-      m_currentSliceScratch(timelinePool != nullptr
-                                ? CurrentSliceScratchCapacity(
-                                      config)
-                                : 0),
-      m_currentSliceScratchLimitForTest(m_currentSliceScratch.size()),
       m_meterTapScratch(static_cast<std::size_t>(kMeterTapLaneCount) *
                             config.maxBuses,
                         0.0f),
@@ -121,6 +116,9 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_deviceLayout(config.deviceChannelLayout),
       m_sampleRate(config.mixRate.SampleRate()),
       m_cpuTicksPerSecond(CpuClockTicksPerSecond()) {
+    if (!m_currentSliceScratch.Reserve(timelinePool != nullptr ? CurrentSliceScratchCapacity(config) : 0))
+        throw std::bad_alloc{};
+    m_currentSliceScratchLimitForTest = m_currentSliceScratch.Capacity();
     if (!m_voices.AttachSlotStoragePreparation(m_arenaStorageRegistration, this,
         [](void* context, std::uint32_t count) noexcept {
             return static_cast<MixerLoop*>(context)->PrepareVoiceBacking(count);
@@ -501,15 +499,34 @@ void MixerLoop::ApplyConsumedCurrentSlices(std::uint64_t blockIndex,
 }
 
 void MixerLoop::InitializeVariableSliceConsumptionStorage() {
+    assert(!memguard::IsAudioTagged() && m_pendingSliceCount == 0 && m_stagedCurrentSliceCount == 0);
     const auto capacity = m_variableSlices == nullptr ? 0u : m_variableSlices->Capacity();
-    m_pendingSliceConsumptions.resize(capacity);
-    m_pendingSliceOrder.resize(capacity);
-    m_pendingSliceCount = 0;
+    if (capacity != m_pendingSliceConsumptions.Capacity()) {
+        StableRowStorage<PendingSliceConsumption> consumptions;
+        StableRowStorage<std::uint32_t> order;
+        if (!consumptions.Reserve(capacity) || !order.Reserve(capacity)) throw std::bad_alloc{};
+        m_pendingSliceConsumptions.Swap(consumptions);
+        m_pendingSliceOrder.Swap(order);
+    }
+    if (m_timelinePool != nullptr && m_timelinePool->Valid()) {
+        if (!PrepareCurrentSliceStorage(m_timelinePool->PreparedCurrentSliceRowCount()))
+            throw std::bad_alloc{};
+        m_timelinePool->AttachCurrentSliceStorage(m_currentSliceStorageRegistration, this,
+            [](void* context, std::size_t required) noexcept {
+                return static_cast<MixerLoop*>(context)->PrepareCurrentSliceStorage(required);
+            });
+    }
+}
+
+bool MixerLoop::PrepareCurrentSliceStorage(std::size_t required) noexcept {
+    if (required == 0) return true;
+    return m_currentSliceScratch.ConstructThrough(std::min(required, m_currentSliceScratch.Capacity())) &&
+        m_pendingSliceConsumptions.ConstructThrough(m_pendingSliceConsumptions.Capacity()) &&
+        m_pendingSliceOrder.ConstructThrough(m_pendingSliceOrder.Capacity());
 }
 
 std::size_t MixerLoop::VariableSliceConsumptionStorageBytes() const noexcept {
-    return m_pendingSliceConsumptions.capacity() * sizeof(PendingSliceConsumption) +
-        m_pendingSliceOrder.capacity() * sizeof(std::uint32_t);
+    return m_pendingSliceConsumptions.RequestedBytes() + m_pendingSliceOrder.RequestedBytes();
 }
 
 void MixerLoop::ApplyStagedCurrentSlices(
@@ -544,7 +561,7 @@ void MixerLoop::ApplyStagedCurrentSlices(
         }
         pending = {true, consumed};
     }
-    std::sort(m_pendingSliceOrder.begin(), m_pendingSliceOrder.begin() + m_pendingSliceCount,
+    if (m_pendingSliceCount > 1) std::sort(m_pendingSliceOrder.begin(), m_pendingSliceOrder.begin() + m_pendingSliceCount,
         [&](std::uint32_t a, std::uint32_t b) {
             const auto& lhs = m_pendingSliceConsumptions[a].consumed;
             const auto& rhs = m_pendingSliceConsumptions[b].consumed;

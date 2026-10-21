@@ -17,6 +17,8 @@
 #include "harken/core/LogRing.h"
 #include "harken/core/SnapshotBuffer.h"
 #include "harken/core/SourceCursorMirror.h"
+#include "harken/core/ScheduledTransactionPool.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/TimelineExecutor.h"
 #include "harken/core/VariableSliceTable.h"
@@ -34,7 +36,10 @@
 #include <vector>
 
 namespace harken {
-namespace detail { struct OriginalControlOriginTestAccess; }
+namespace detail {
+struct OriginalControlOriginTestAccess;
+struct MixerCurrentSliceStorageTestAccess;
+}
 
 class MixerLoop {
 public:
@@ -163,10 +168,10 @@ public:
         m_currentSliceScratchLimitForTest = limit;
     }
     void RestoreCurrentSliceScratchLimitForTest() noexcept {
-        m_currentSliceScratchLimitForTest = m_currentSliceScratch.size();
+        m_currentSliceScratchLimitForTest = m_currentSliceScratch.Capacity();
     }
     std::size_t CurrentSliceScratchCapacityForTest() const noexcept {
-        return m_currentSliceScratch.size();
+        return m_currentSliceScratch.Capacity();
     }
     std::size_t EffectiveCurrentSliceCapacity() const noexcept {
         return std::min(m_currentSliceScratch.size(), m_currentSliceScratchLimitForTest);
@@ -176,6 +181,7 @@ public:
 
 private:
     friend struct detail::OriginalControlOriginTestAccess;
+    friend struct detail::MixerCurrentSliceStorageTestAccess;
     // One block's stage timing, measured inside RenderBlock from QPC reads at
     // the stage boundaries and published with that block's payload.
     struct BlockTiming {
@@ -317,13 +323,15 @@ private:
     const ProjectGenerationInstallAckIdentityV1* m_installAckSideTable = nullptr;
     std::uint32_t m_installAckSideTableCapacity = 0;
     ProjectGenerationInstallAckRingV1* m_installAckRing = nullptr;
-    std::vector<ConsumedCurrentSlice> m_currentSliceScratch;
+    StableRowStorage<ConsumedCurrentSlice, std::size_t> m_currentSliceScratch;
     struct PendingSliceConsumption {
         bool active = false;
         ConsumedCurrentSlice consumed{};
     };
-    std::vector<PendingSliceConsumption> m_pendingSliceConsumptions;
-    std::vector<std::uint32_t> m_pendingSliceOrder;
+    StableRowStorage<PendingSliceConsumption> m_pendingSliceConsumptions;
+    StableRowStorage<std::uint32_t> m_pendingSliceOrder;
+    ScheduledTransactionPool::CurrentSliceStorageRegistration m_currentSliceStorageRegistration;
+    bool PrepareCurrentSliceStorage(std::size_t required) noexcept;
     std::size_t m_pendingSliceCount = 0;
     std::size_t m_stagedCurrentSliceCount = 0;
     std::size_t m_currentSliceScratchLimitForTest = 0;

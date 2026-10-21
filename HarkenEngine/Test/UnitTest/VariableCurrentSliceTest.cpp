@@ -25,6 +25,17 @@
 
 namespace harken::detail {
 
+struct MixerCurrentSliceStorageTestAccess {
+    static void SetCommitPageLimit(MixerLoop& mixer, std::size_t storage, std::size_t pages) {
+        switch (storage) {
+        case 0: mixer.m_currentSliceScratch.SetCommitPageLimitForTests(pages); break;
+        case 1: mixer.m_pendingSliceConsumptions.SetCommitPageLimitForTests(pages); break;
+        case 2: mixer.m_pendingSliceOrder.SetCommitPageLimitForTests(pages); break;
+        default: FAIL() << "Unknown CurrentSlice consumer storage";
+        }
+    }
+};
+
 void SetParkedReadCutCapturedHookForTest(
     void (*hook)(Engine&, VariableReadCutRef, void*), void* context) noexcept;
 
@@ -3086,6 +3097,15 @@ TEST(VariableCurrentSlice, EffectiveCapacityCoversTwoFullLegalPages) {
         resolved.maxEventsPerQuantum = 4;
         resolved.maxFrameBatchesPerQuantum = 4;
         auto engine = std::make_unique<harken::Engine>(resolved);
+        using StorageAccess = harken::detail::MixerCurrentSliceStorageTestAccess;
+        EXPECT_EQ(0u, engine->mixer.VariableSliceConsumptionStorageBytes());
+        for (std::size_t storage = 0; storage < 3; ++storage) {
+            StorageAccess::SetCommitPageLimit(engine->mixer, storage, 0);
+            harken::CurrentSliceBacking refused;
+            EXPECT_FALSE(engine->timelinePool.PrepareCurrentSliceBacking(&refused));
+            EXPECT_FALSE(refused.Valid());
+            StorageAccess::SetCommitPageLimit(engine->mixer, storage, SIZE_MAX);
+        }
         std::vector<float> output(kBlockFrames * 2u);
         const auto render = [&] { engine->mixer.RenderBlock(output.data(), kBlockFrames, 2); };
         for (std::uint32_t block = 0; block < engine->timelinePool.PublishLeadQuanta() + 2u &&
@@ -3105,6 +3125,8 @@ TEST(VariableCurrentSlice, EffectiveCapacityCoversTwoFullLegalPages) {
                 index < maximum ? &first : &second, 1, &refs[index]));
         }
         engine->timelinePool.Publish((frontier + 2u) * kBlockFrames);
+        for (std::size_t storage = 0; storage < 3; ++storage)
+            StorageAccess::SetCommitPageLimit(engine->mixer, storage, 0);
         const auto allocated = engine->mixer.CurrentSliceScratchCapacityForTest();
         engine->mixer.SetCurrentSliceScratchLimitForTest(2u * maximum - shortCapacity);
         EXPECT_EQ(allocated, engine->mixer.CurrentSliceScratchCapacityForTest());
