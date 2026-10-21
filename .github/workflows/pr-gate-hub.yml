@@ -8,6 +8,8 @@ on:
   pull_request:
     paths:
       - 'HarkenHub/**'
+      - 'HarkenSDK/Tooling/UnityProjectAccess.*'
+      - 'HarkenSDK/Tooling/CMakeLists.txt'
       - 'cmake/**'
       - 'CMakeLists.txt'
       - 'CMakePresets.json'

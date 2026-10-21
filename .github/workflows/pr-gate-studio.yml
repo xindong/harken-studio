@@ -10,6 +10,8 @@ on:
   pull_request:
     paths:
       - 'HarkenStudio/**'
+      - 'HarkenSDK/Tooling/UnityProjectAccess.*'
+      - 'HarkenSDK/Tooling/CMakeLists.txt'
       - 'cmake/**'
       - 'CMakeLists.txt'
       - 'CMakePresets.json'
