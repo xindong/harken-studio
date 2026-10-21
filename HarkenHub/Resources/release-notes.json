@@ -9,7 +9,7 @@
     {
       "version": "0.1.60",
       "date": "2026-10-20",
-      "pullRequests": [],
+      "pullRequests": [70],
       "contributors": ["liuxin2-sys"],
       "changes": [
         {
@@ -29,7 +29,7 @@
     {
       "version": "0.1.59",
       "date": "2026-10-19",
-      "pullRequests": [49, 56, 59, 61],
+      "pullRequests": [49, 56, 59, 61, 63],
       "contributors": ["liuxin2-sys", "Probus-XD"],
       "changes": [
         {
