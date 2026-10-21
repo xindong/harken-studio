@@ -30,6 +30,7 @@
 #include <optional>
 
 #include "Core/WorkspaceWindowTypes.h"
+#include "Widgets/LogPanel/LogPanel.h"
 #include "Widgets/Monitor/MonitorPerformanceChartSource.h"
 #include "Widgets/Monitor/MonitorBusesSource.h"
 #include "Widgets/Monitor/MonitorDspTimelineSource.h"
@@ -93,6 +94,7 @@ namespace VNX {
 }
 
 class ControlPanel;
+class QPushButton;
 
 namespace HarkenEditor {
     class AuditionManager;
@@ -299,6 +301,7 @@ private:
     void setupMainToolBar();
     void setupTitleBarToggles();
     void setupStatusBar();
+    void setStatusMessage(const QString& message, LogEntry::Level level = LogEntry::Info);
     void setupCentralDocks();
     void setupDockWidgets();
     void configureDockManager();
@@ -451,7 +454,7 @@ private:
     IPCServer* ipcServer_ = nullptr;
     std::unique_ptr<AIAssistantService> aiService_;
 
-    QLabel* statusLabel_ = nullptr;
+    QPushButton* statusButton_ = nullptr;
     QProgressBar* progressBar_ = nullptr;
 
     ExternalDropDispatcher* externalDropDispatcher_ = nullptr;
@@ -461,7 +464,6 @@ private:
     HarkenEditor::Bridge::RemoteConnection* remoteConnection_ = nullptr;
     Monitor::EventCaptureController* eventCaptureController_ = nullptr;
     QPointer<RemoteConnectDialog> remoteConnectDialog_;
-    QLabel* remoteStatusLabel_ = nullptr;
 
     MonitorPerformanceChartSource monitorPerformanceChartSource_;
     MonitorVoicesSource monitorVoicesSource_;

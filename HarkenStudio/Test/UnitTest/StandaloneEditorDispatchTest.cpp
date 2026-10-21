@@ -17,7 +17,6 @@
 #include "Core/PanelInstanceRegistry.h"
 #include "Core/SelectionRouter.h"
 #include "Core/ShortcutManager.h"
-#include "Core/ToastManager.h"
 #include "Core/UndoCommands.h"
 #include "MainWindow.h"
 #include "Monitor/EventCaptureController.h"
@@ -52,6 +51,7 @@
 #include <vector>
 
 #include <QApplication>
+#include <QPushButton>
 #include <QEventLoop>
 #include <QScrollArea>
 #include <QScrollBar>
@@ -195,7 +195,6 @@ protected:
         if (pm.isProjectOpen()) pm.closeProject();
         if (window_)
             QObject::disconnect(&VNX::UndoRedoManager::instance(), nullptr, window_.get(), nullptr);
-        VNX::ToastManager::instance().setParentWidget(nullptr);
         window_.reset();
         VNX::ActionManager::instance().setTransactionCallbacks({});
         VNX::ActionManager::instance().clearAllForTesting();
@@ -482,7 +481,7 @@ TEST_F(EditorDockLayoutTest, PlaybackControlsFollowSelectionWithControlHiddenOrF
     auto* toolbar = window_->findChild<QToolBar*>(QStringLiteral("platformBar"));
     auto* controls = window_->findChild<VNX::PlaybackControls*>();
     auto* router = window_->findChild<VNX::SelectionRouter*>();
-    auto* status = window_->findChild<QLabel*>(QStringLiteral("statusLabel"));
+    auto* status = window_->findChild<QPushButton*>(QStringLiteral("statusLogButton"));
     auto* audition = window_->findChild<HarkenEditor::AuditionManager*>();
     ASSERT_NE(control, nullptr);
     ASSERT_NE(toolbar, nullptr);
@@ -565,7 +564,7 @@ TEST_F(EditorDockLayoutTest, ChildAuditionIsIndependentOfEditingAndFollowsExplic
     ASSERT_NE(controls, nullptr);
     auto* play = controls->findChild<QToolButton*>(QStringLiteral("playBtn"));
     auto* reset = controls->findChild<QToolButton*>(QStringLiteral("resetBtn"));
-    auto* status = window_->findChild<QLabel*>(QStringLiteral("statusLabel"));
+    auto* status = window_->findChild<QPushButton*>(QStringLiteral("statusLogButton"));
     ASSERT_NE(play, nullptr);
     ASSERT_NE(reset, nullptr);
     ASSERT_NE(status, nullptr);
@@ -2014,7 +2013,6 @@ TEST(StandaloneEditorSelectionTest, CreatingObjectsOnlyRefreshesOpenPanels)
         UndoRedoManager::instance().clear();
         if (pm.isProjectOpen()) pm.closeProject();
         QObject::disconnect(&UndoRedoManager::instance(), nullptr, window.get(), nullptr);
-        ToastManager::instance().setParentWidget(nullptr);
         window.reset();
         ActionManager::instance().setTransactionCallbacks({});
         ActionManager::instance().clearAllForTesting();
@@ -2294,7 +2292,6 @@ TEST(StandaloneEditorIpcEventTest,
         if (projects.isProjectOpen())
             projects.closeProject();
         QObject::disconnect(&VNX::UndoRedoManager::instance(), nullptr, window.get(), nullptr);
-        VNX::ToastManager::instance().setParentWidget(nullptr);
         window.reset();
         VNX::ActionManager::instance().setTransactionCallbacks({});
         VNX::ActionManager::instance().clearAllForTesting();

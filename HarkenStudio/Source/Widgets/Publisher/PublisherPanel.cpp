@@ -14,9 +14,10 @@
 #include "../../Core/ProjectPackExporter.h"
 #include "../../Core/ProjectManager.h"
 #include "../../Core/ProjectTypes.h"
+#include "../../Core/QtControlSkin.h"
 #include "../../Core/ThemeManager.h"
 #include "../../Core/ThemeAssetCatalog.h"
-#include "../../Core/ToastManager.h"
+#include "../LogPanel/LogPanel.h"
 #include "../Common/LayoutDebugTint.h"
 #include "../Common/ProportionalTreeWidget.h"
 #include "../Common/TableItemDelegate.h"
@@ -24,6 +25,7 @@
 #include "../Common/SearchField.h"
 #include "../Common/MultiSelectComboBox.h"
 #include "../Common/SplitButton.h"
+#include "../Common/StatusTip.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -918,11 +920,8 @@ void PublisherPanel::requestExport(const QStringList& packPaths, bool includeUnc
         return;
     const QStringList platforms = includeUnchecked
         ? effectivePlatforms(project) : generationPlatforms();
-    if (platforms.isEmpty()) {
-        ToastManager::instance().showToast(
-            tr("Select at least one platform to export"), 2000, ToastType::Info);
+    if (platforms.isEmpty())
         return;
-    }
     emit exportRequested(platforms, packPaths, includeUnchecked,
                          forceReexport, selfCleaning);
 }
@@ -931,10 +930,12 @@ void PublisherPanel::updateExportButton()
 {
     if (!exportBtn_)
         return;
+    const bool exporting = PackGenerationRecordStore::instance().isExporting();
+    QtControlSkin::setSemanticProperty(exportBtn_->primaryButton(), "primaryAction", !exporting);
     publishSettingsButton_->setEnabled(ProjectManager::instance().isProjectOpen()
-        && !PackGenerationRecordStore::instance().isExporting()
+        && !exporting
         && !ProjectPlatformActivity::instance().isBusy());
-    if (PackGenerationRecordStore::instance().isExporting()) {
+    if (exporting) {
         exportBtn_->setEnabled(true);
         exportBtn_->primaryButton()->setText(cancelRequested_ ? tr("Canceling...") : tr("Cancel export"));
         exportBtn_->primaryButton()->setToolTip(tr("Cancel the current export."));
@@ -1034,9 +1035,8 @@ void PublisherPanel::toggleUnitPlatforms(const QList<QTreeWidgetItem*>& items, b
             for (const auto& command : commands) {
                 const auto result = ActionManager::instance().execute(command.first, command.second, ActionSource::GUI);
                 if (!result.success) {
-                    ToastManager::instance().showToast(result.errorMessage.isEmpty()
-                        ? tr("Could not update pack platform targeting") : result.errorMessage,
-                        3000, ToastType::Warning);
+                    showStatusTip(this, result.errorMessage.isEmpty()
+                        ? tr("Could not update pack platform targeting") : result.errorMessage);
                     break;
                 }
             }
@@ -1056,9 +1056,8 @@ void PublisherPanel::showFileInExplorer(const QString& path)
         return;
     const QFileInfo info(path);
     if (!info.exists()) {
-        ToastManager::instance().showToast(
-            tr("File no longer exists: %1").arg(info.fileName()),
-            3000, ToastType::Warning);
+        LogPanel::logWarning(LogCategory::Pack,
+            tr("File no longer exists: %1").arg(info.absoluteFilePath()));
         return;
     }
 #ifdef Q_OS_WIN

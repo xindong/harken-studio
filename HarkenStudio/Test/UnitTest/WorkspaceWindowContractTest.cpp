@@ -2,11 +2,13 @@
 #include "Core/WindowPlacement.h"
 #include "WorkspaceWindowManager.h"
 #include "PanelInstanceRegistry.h"
+#include "Widgets/Common/StatusTip.h"
 #include "Widgets/SourceEditor/SourceEditorPanel.h"
 
 #include <gtest/gtest.h>
 
 #include <QSet>
+#include <QStatusBar>
 #include <QTemporaryDir>
 
 using namespace VNX;
@@ -66,6 +68,28 @@ TEST(EditorWorkspaceWindowContract, DisabledWindowsCannotBeCreatedOrRestored)
     EXPECT_EQ(creations, 0);
     EXPECT_EQ(restorations, 0);
     EXPECT_TRUE(manager.registry().instanceEntries(descriptor.typeId).isEmpty());
+}
+
+TEST(EditorWorkspaceWindowContract, FloatingPanelStatusStaysWithItsOwningWindow)
+{
+    QMainWindow firstWindow;
+    QMainWindow secondWindow;
+    auto* firstStatus = firstWindow.statusBar();
+    auto* secondStatus = secondWindow.statusBar();
+    QWidget firstFloating(&firstWindow, Qt::Window);
+    QWidget firstPanel(&firstFloating);
+    QWidget secondFloating(&secondWindow, Qt::Window);
+    QWidget secondPanel(&secondFloating);
+
+    ASSERT_TRUE(firstFloating.isWindow());
+    ASSERT_TRUE(secondFloating.isWindow());
+    showStatusTip(&firstPanel, QStringLiteral("First panel feedback"));
+    EXPECT_EQ(firstStatus->currentMessage(), QStringLiteral("First panel feedback"));
+    EXPECT_TRUE(secondStatus->currentMessage().isEmpty());
+
+    showStatusTip(&secondPanel, QStringLiteral("Second panel feedback"));
+    EXPECT_EQ(firstStatus->currentMessage(), QStringLiteral("First panel feedback"));
+    EXPECT_EQ(secondStatus->currentMessage(), QStringLiteral("Second panel feedback"));
 }
 
 TEST(EditorWorkspaceWindowContract, MultiInstanceWindowsUseDescriptorRestoreSpecIdentity)

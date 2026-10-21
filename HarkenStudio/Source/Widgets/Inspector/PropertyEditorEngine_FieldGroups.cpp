@@ -6,7 +6,6 @@
 #include "Core/PropertyEditSession.h"
 #include "Core/QtControlSkin.h"
 #include "Core/FieldGroupProjectAdapter.h"
-#include "Core/ToastManager.h"
 #include "Drawers/ListFieldDrawer.h"
 #include "Widgets/Common/CollapsibleSection.h"
 #include "Widgets/Common/ParameterBinding.h"
@@ -530,7 +529,6 @@ void PropertyEditorEngine::executeGroupAction(FieldGroupId group, const QString&
     groupBindings_.at(group).error = error;
     refreshFieldGroups();
     if (result.success) emit fieldGroupChanged();
-    else ToastManager::instance().showToast(error, 6000, ToastType::Warning);
 }
 
 void PropertyEditorEngine::showGroupMenu(FieldGroupId group, const QPoint& globalPosition)

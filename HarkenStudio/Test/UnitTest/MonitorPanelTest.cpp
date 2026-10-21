@@ -11,7 +11,6 @@
 #include "Core/AudioEngine.h"
 #include "Core/ProjectManager.h"
 #include "Core/RuntimeSyncCoordinator.h"
-#include "Core/ToastManager.h"
 #include "Core/UndoCommands.h"
 #include "Core/WorkspaceWindowManager.h"
 #include "MainWindow.h"
@@ -736,7 +735,6 @@ TEST(MonitorPanel, ToolbarCapturesCurrentProjectAcrossPanelAndLayoutChanges)
     const auto cleanup = qScopeGuard([&] {
         projects.closeProject();
         QObject::disconnect(&UndoRedoManager::instance(), nullptr, window.get(), nullptr);
-        ToastManager::instance().setParentWidget(nullptr);
         window.reset();
         ActionManager::instance().setTransactionCallbacks({});
         ActionManager::instance().clearAllForTesting();

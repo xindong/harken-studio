@@ -119,7 +119,6 @@
 #include "Widgets/Monitor/MonitorVoicesSource.h"
 #include "Platform/ExternalDropDispatcher.h"
 #include "Core/AuditionManager.h"
-#include "Core/ToastManager.h"
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
 #include "Core/QtAdsThemeAdapter.h"
@@ -665,7 +664,7 @@ void MainWindow::initializeStructure(
         }, Qt::QueuedConnection);
     });
     connect(layoutController_, &LayoutController::statusMessage, this, [this](const QString& text) {
-        if (statusLabel_) statusLabel_->setText(text);
+        if (statusButton_) setStatusMessage(text);
     });
     connect(layoutController_, &LayoutController::dockStateRestored, this, [this]() {
         if (!externalDropDispatcher_) return;
@@ -673,7 +672,7 @@ void MainWindow::initializeStructure(
                            [d = externalDropDispatcher_]() { d->refresh(); });
     });
     connect(selectionRouter_, &SelectionRouter::statusMessage, this, [this](const QString& text) {
-        if (statusLabel_) statusLabel_->setText(text);
+        if (statusButton_) setStatusMessage(text);
     });
     connect(selectionRouter_, &SelectionRouter::selectionChanged, this,
             [this](ProjectItem* item) {
@@ -759,7 +758,7 @@ void MainWindow::initializeFinalState()
     if (initializeEmptyProject_)
         initEmptyProject();
     
-    statusLabel_->setText(tr("Ready"));
+    setStatusMessage(tr("Ready"));
     
     layoutController_->applyDefaultLayout();
     startupTrace(QStringLiteral("MainWindow: after applyDefaultLayout"));
@@ -878,9 +877,6 @@ void MainWindow::setupAudioEngine()
     connect(&engine, &AudioEngine::errorOccurred, this, &MainWindow::onAudioError, Qt::QueuedConnection);
     connect(&engine, &AudioEngine::logMessage, this, [this](int level, const QString& msg) {
         LogPanel::logEngineMessage(level, msg);
-        if (level >= 1) {
-            statusLabel_->setText(msg);
-        }
     }, Qt::QueuedConnection);
     
     startupTrace(QStringLiteral("MainWindow: before AudioEngine::initialize"));
@@ -893,20 +889,20 @@ void MainWindow::setupAudioEngine()
     {
         if (engine.isSimulationMode())
         {
-            statusLabel_->setText(tr("Audio engine running in SIMULATION MODE (runtime not available)"));
+            setStatusMessage(tr("Audio engine running in SIMULATION MODE (runtime not available)"));
             if (auto* log = logPanel())
                 log->logWarning(LogCategory::Audio, tr("Audio runtime not available - audio playback disabled"));
         }
         else
         {
-            statusLabel_->setText(tr("Audio engine initialized"));
+            setStatusMessage(tr("Audio engine initialized"));
             if (auto* log = logPanel())
                 log->logInfo(LogCategory::Audio, tr("Audio runtime initialized successfully"));
         }
     }
     else
     {
-        statusLabel_->setText(tr("Audio engine failed to initialize"));
+        setStatusMessage(tr("Audio engine failed to initialize"));
         if (auto* log = logPanel())
             log->logError(LogCategory::Audio, tr("Failed to initialize audio engine"));
     }
@@ -1361,27 +1357,26 @@ void MainWindow::setupStatusBar()
 {
     QStatusBar* status = statusBar();
     
-    statusLabel_ = new QLabel(tr("Ready"));
-    statusLabel_->setObjectName(QStringLiteral("statusLabel"));
-    status->addWidget(statusLabel_, 1);
-
-    remoteStatusLabel_ = new QLabel(tr("Remote: Disconnected"), this);
-    remoteStatusLabel_->setObjectName(QStringLiteral("remoteStatusLabel"));
-    remoteStatusLabel_->setMaximumWidth(320);
-    status->addPermanentWidget(remoteStatusLabel_);
-    connect(remoteConnection_, &HarkenEditor::Bridge::RemoteConnection::stateChanged,
-            this, [this] {
-        using HarkenEditor::Bridge::RemoteConnectionState;
-        const auto target = remoteConnection_->target();
-        const QString caption = remoteConnection_->state() == RemoteConnectionState::Connected
-            ? tr("Remote: %1").arg(target.application)
-            : remoteConnection_->state() == RemoteConnectionState::Connecting
-                || remoteConnection_->state() == RemoteConnectionState::Handshaking
-                ? tr("Remote: Connecting")
-                : tr("Remote: Disconnected");
-        remoteStatusLabel_->setText(remoteStatusLabel_->fontMetrics().elidedText(
-            caption, Qt::ElideRight, 310));
-        remoteStatusLabel_->setToolTip(remoteConnection_->statusText());
+    statusButton_ = new QPushButton(status);
+    statusButton_->setObjectName(QStringLiteral("statusLogButton"));
+    statusButton_->setFlat(true);
+    statusButton_->setCursor(Qt::PointingHandCursor);
+    statusButton_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    status->addWidget(statusButton_, 1);
+    setStatusMessage(tr("Ready"));
+    connect(statusButton_, &QPushButton::clicked, this, [this]() {
+        const QString logType = QStringLiteral("Log");
+        const bool opened = workspaceWindowManager_->isSingletonVisible(logType)
+            ? workspaceWindowManager_->focusSingleton(logType)
+            : workspaceWindowManager_->showSingleton(logType);
+        if (!opened)
+            return;
+        auto* dock = workspaceWindowManager_->singletonDock(logType);
+        if (auto* floating = dock->floatingDockContainer()) {
+            floating->setWindowState(floating->windowState() & ~Qt::WindowMinimized);
+            floating->raise();
+            floating->activateWindow();
+        }
     });
 
     progressBar_ = new QProgressBar();
@@ -1392,9 +1387,16 @@ void MainWindow::setupStatusBar()
     progressBar_->hide();
     progressBar_->setProperty("shellRole", QStringLiteral("statusProgress"));
     status->addPermanentWidget(progressBar_);
+}
 
-
-    ToastManager::instance().setParentWidget(this);
+void MainWindow::setStatusMessage(const QString& message, LogEntry::Level level)
+{
+    statusBar()->clearMessage();
+    QString buttonText = message;
+    statusButton_->setText(buttonText.replace(QLatin1Char('&'), QStringLiteral("&&")));
+    statusButton_->setAccessibleName(message);
+    statusButton_->setToolTip(tr("%1\nOpen Log").arg(message));
+    QtControlSkin::setSemanticProperty(statusButton_, "logLevel", LogEntry::levelToString(level));
 }
 
 void MainWindow::setupCentralDocks()
@@ -1565,11 +1567,8 @@ void MainWindow::registerWorkspaceSingletonFactories()
             if (!panel)
                 return;
             panel->setAcceptDrops(true);
-            connect(panel, &LogPanel::errorLogged, [this](const QString& msg) {
-                statusLabel_->setText(tr("Error: %1").arg(msg));
-            });
-            connect(panel, &LogPanel::warningLogged, [this](const QString& msg) {
-                statusLabel_->setText(tr("Warning: %1").arg(msg));
+            connect(panel->model(), &LogModel::entryAdded, this, [this](const LogEntry& entry) {
+                setStatusMessage(entry.message, entry.level);
             });
         }
     });
@@ -2207,7 +2206,7 @@ void MainWindow::connectWorkspaceWindowSignals()
     }
     connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStarted,
             this, [this](uint32_t, const QString& objectName) {
-        statusLabel_->setText(tr("Playing: %1").arg(objectName));
+        setStatusMessage(tr("Playing: %1").arg(objectName));
     });
     connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStartFailed,
             this, [this](uint32_t, const QString& objectName,
@@ -2219,7 +2218,7 @@ void MainWindow::connectWorkspaceWindowSignals()
                  "synchronization (engine result %2).")
                   .arg(objectName)
                   .arg(engineResult);
-        statusLabel_->setText(message);
+        setStatusMessage(message);
         if (auto* log = logPanel()) {
             if (engineResult == 0)
                 log->logInfo(LogCategory::Audio, message);
@@ -3708,8 +3707,8 @@ void MainWindow::connectSignals()
                 if (ipcServer_ && ipcServer_->isDispatchingCommand()) {
                     qWarning("[ProjectManager] error during IPC dispatch "
                              "(modal suppressed): %s", qUtf8Printable(error));
-                    if (statusLabel_)
-                        statusLabel_->setText(userError);
+                    if (statusButton_)
+                        setStatusMessage(userError, LogEntry::Error);
                     return;
                 }
                 QMessageBox::warning(this, tr("Error"), userError);
@@ -3717,8 +3716,6 @@ void MainWindow::connectSignals()
     connect(&ProjectManager::instance(), &ProjectManager::warningOccurred,
             this, [this](const QString& warning) {
                 LogPanel::logWarning(LogCategory::File, warning);
-                if (statusLabel_)
-                    statusLabel_->setText(warning);
             });
 }
 
@@ -4101,7 +4098,7 @@ bool MainWindow::createProjectFromConfig(
     if (startupProgress)
         startupProgress(StartupPhase::RestoringWorkspace);
 
-    statusLabel_->setText(tr("New project created: %1").arg(currentProjectPath_));
+    setStatusMessage(tr("New project created: %1").arg(currentProjectPath_));
     LogPanel::logInfo(LogCategory::File, tr("New project created: %1").arg(currentProjectPath_));
     return true;
 }
@@ -4169,7 +4166,7 @@ void MainWindow::onSaveProject()
 
         saveProjectLayout();
 
-        statusLabel_->setText(tr("Saved: %1").arg(currentProjectPath_));
+        setStatusMessage(tr("Saved: %1").arg(currentProjectPath_));
     }
     else
     {
@@ -4225,7 +4222,7 @@ void MainWindow::onSaveProjectAs()
     manager.m_projectInstance = std::move(acquisition.instance);
     setProjectModified(false);
     saveProjectLayout();
-    statusLabel_->setText(tr("Saved: %1").arg(currentProjectPath_));
+    setStatusMessage(tr("Saved: %1").arg(currentProjectPath_));
     updateWindowTitle();
 }
 
@@ -4532,15 +4529,14 @@ void MainWindow::generateProjectPacks(const QStringList& platforms,
                 LogPanel::logError(LogCategory::Pack, publicationError);
             if (canceled) {
                 LogPanel::logWarning(LogCategory::Pack, tr("Pack export canceled"));
-                ToastManager::instance().showToast(tr("Export canceled"), 3000, ToastType::Warning);
             } else if (failedCount > 0) {
-                ToastManager::instance().showToast(
-                    tr("Export finished — %1 pack(s) failed").arg(failedCount), 4000, ToastType::Error);
+                LogPanel::logError(LogCategory::Pack,
+                    tr("Export finished — %1 pack(s) failed").arg(failedCount));
             } else {
                 QString message = tr("Export finished — %1 built, %2 up to date")
                     .arg(builtCount).arg(skippedCount);
                 if (removedCount > 0) message += tr(", %1 removed").arg(removedCount);
-                ToastManager::instance().showToast(message, 3000, ToastType::Success);
+                LogPanel::logInfo(LogCategory::Pack, message);
             }
         }, Qt::QueuedConnection);
     });
@@ -4726,9 +4722,9 @@ bool MainWindow::resetCurrentLayout()
     if (!ok)
         return false;
     if (layoutController_->hasNamedLayout())
-        statusLabel_->setText(tr("Layout '%1' reloaded").arg(layoutController_->currentNamedLayout()));
+        setStatusMessage(tr("Layout '%1' reloaded").arg(layoutController_->currentNamedLayout()));
     else
-        statusLabel_->setText(tr("Layout reset to default"));
+        setStatusMessage(tr("Layout reset to default"));
     return true;
 }
 
@@ -4757,12 +4753,12 @@ void MainWindow::onPlayPressed()
     if (SourceEditorPanel* editor = focusedSourceEditorPanel()) {
         const bool wasPlaying = editor->isPreviewPlayheadActive();
         if (editor->handlePlayStopShortcut()) {
-            statusLabel_->setText(wasPlaying
+            setStatusMessage(wasPlaying
                                       ? tr("Stopped")
                                       : tr("Playing: %1").arg(editor->previewObjectName()));
             return;
         }
-        statusLabel_->setText(editor->sourceId() == 0
+        setStatusMessage(editor->sourceId() == 0
                                   ? tr("No audio source selected")
                                   : tr("Cannot play audio source"));
         return;
@@ -4782,7 +4778,7 @@ void MainWindow::onPlayRequested()
 
     if (engine.isSimulationMode())
     {
-        statusLabel_->setText(tr("Cannot play: audio runtime unavailable (simulation mode)"));
+        setStatusMessage(tr("Cannot play: audio runtime unavailable (simulation mode)"));
         if (auto* log = logPanel())
             log->logWarning(LogCategory::Audio, tr("Playback disabled in simulation mode"));
         return;
@@ -4791,7 +4787,7 @@ void MainWindow::onPlayRequested()
     ProjectItem* selectedItem = auditionTarget();
     if (!selectedItem)
     {
-        statusLabel_->setText(tr("No audition target selected"));
+        setStatusMessage(tr("No audition target selected"));
         return;
     }
 
@@ -4802,7 +4798,7 @@ void MainWindow::onPlayRequested()
             const QString message =
                 tr("Cannot play '%1': the Container is empty.")
                     .arg(selectedItem->name);
-            statusLabel_->setText(message);
+            setStatusMessage(message);
             if (auto* log = logPanel())
                 log->logInfo(LogCategory::Audio, message);
             return;
@@ -4817,7 +4813,7 @@ void MainWindow::onPlayRequested()
         {
             const auto audition = auditionManager_->getAudition(id);
             if (!audition.bIsPlaying) {
-                statusLabel_->setText(
+                setStatusMessage(
                     tr("Waiting for Runtime synchronization: %1")
                         .arg(selectedItem->name));
                 if (auto* log = logPanel())
@@ -4826,7 +4822,7 @@ void MainWindow::onPlayRequested()
                         tr("Preview queued while Runtime synchronizes: %1")
                             .arg(selectedItem->name));
             } else {
-                statusLabel_->setText(
+                setStatusMessage(
                     tr("Playing: %1").arg(selectedItem->name));
                 if (auto* log = logPanel())
                     log->logInfo(
@@ -4864,7 +4860,7 @@ void MainWindow::onPlayRequested()
             } else {
                 message = tr("No voice produced: %1").arg(selectedItem->name);
             }
-            statusLabel_->setText(message);
+            setStatusMessage(message);
             if (auto* log = logPanel()) {
                 if (failure == PlaybackFailure::NotPlayable) {
                     log->logInfo(LogCategory::Audio, message);
@@ -4883,14 +4879,14 @@ void MainWindow::onPlayRequested()
     }
     else
     {
-        statusLabel_->setText(tr("Selected item is not playable"));
+        setStatusMessage(tr("Selected item is not playable"));
     }
 }
 
 void MainWindow::onStopPressed()
 {
     auditionManager_->stopAll(100);
-    statusLabel_->setText(tr("Stopped"));
+    setStatusMessage(tr("Stopped"));
 }
 
 ProjectItem* MainWindow::auditionTarget() const
@@ -4935,24 +4931,24 @@ void MainWindow::onResetPressed()
           static_cast<qint64>(selectedItem->objectID)}},
         ActionSource::GUI, this);
     if (result.success) {
-        statusLabel_->setText(tr("Reset: %1").arg(selectedItem->name));
+        setStatusMessage(tr("Reset: %1").arg(selectedItem->name));
         return;
     }
     const QString message = result.errorMessage.isEmpty()
         ? tr("Reset failed: %1").arg(selectedItem->name)
         : result.errorMessage;
-    statusLabel_->setText(message);
+    setStatusMessage(message);
 }
 
 void MainWindow::onAudioError(const QString& error)
 {
-    statusLabel_->setText(tr("Audio Error: %1").arg(error));
+    setStatusMessage(tr("Audio Error: %1").arg(error), LogEntry::Error);
     QMessageBox::warning(this, tr("Audio Error"), error);
 }
 
 void MainWindow::onSaveProgress(int percent, const QString& message)
 {
-    statusLabel_->setText(QString("[%1%] %2").arg(percent).arg(message));
+    setStatusMessage(QString("[%1%] %2").arg(percent).arg(message));
 
     if (progressBar_) {
         if (percent <= 0) {
@@ -4998,7 +4994,7 @@ void MainWindow::syncWindowToOpenedProject(const QString& path)
 
     loadProjectLayout();
 
-    statusLabel_->setText(tr("Opened: %1").arg(QFileInfo(path).baseName()));
+    setStatusMessage(tr("Opened: %1").arg(QFileInfo(path).baseName()));
     LogPanel::logInfo(LogCategory::File, tr("Project opened: %1").arg(path));
 }
 
@@ -5018,7 +5014,7 @@ void MainWindow::finishPreparedProject(
     loadProjectLayout();
     if (startupProgress)
         startupProgress(StartupPhase::RestoringWorkspace);
-    statusLabel_->setText(created
+    setStatusMessage(created
                               ? tr("New project created: %1").arg(currentProjectPath_)
                               : tr("Opened: %1").arg(QFileInfo(path).baseName()));
 }

@@ -78,11 +78,14 @@ add_library(harken_editor_common STATIC
     SegmentedControl.h
     SplitButton.cpp
     SplitButton.h
+    StatusTip.h
     SwitchIndicator.h
     SourceRangeThumb.cpp
     SourceRangeThumb.h
     ToggleSwitch.cpp
     ToggleSwitch.h
+    ToastPresenter.cpp
+    ToastPresenter.h
     ValueSegmentedControl.cpp
     ValueSegmentedControl.h
     WaveformRenderer.cpp

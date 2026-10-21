@@ -12,8 +12,8 @@
 #include "../LanguageContextService.h"
 #include "../PlatformContextService.h"
 #include "../SoundSourceEditing.h"
-#include "../ToastManager.h"
 #include "../UndoCommands.h"
+#include "../../Widgets/LogPanel/LogPanel.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -242,8 +242,7 @@ private:
         if (applyBatch(changes, ApplyMode::Record, &error, &rollbackFailed))
             return true;
         setObsolete(rollbackFailed);
-        qWarning().noquote() << error;
-        ToastManager::instance().showToast(error, 5000, ToastType::Error);
+        LogPanel::logError(LogCategory::File, error);
         return false;
     }
 
@@ -296,8 +295,7 @@ private:
             }
             setObsolete(rollbackFailed);
         }
-        qWarning().noquote() << error;
-        ToastManager::instance().showToast(error, 5000, ToastType::Error);
+        LogPanel::logError(LogCategory::File, error);
         return false;
     }
 
@@ -375,8 +373,7 @@ private:
             }
             setObsolete(rollbackFailed);
         }
-        qWarning().noquote() << error;
-        ToastManager::instance().showToast(error, 5000, ToastType::Error);
+        LogPanel::logError(LogCategory::File, error);
         return false;
     }
 

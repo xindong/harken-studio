@@ -16,7 +16,7 @@ add_executable(harken_editor_tests
     UnitTest/ShortcutManagerTest.cpp
     UnitTest/StartupLoadingWindowTest.cpp
     UnitTest/TitleBarWidgetTest.cpp
-    UnitTest/ToastManagerTest.cpp
+    UnitTest/ToastPresenterTest.cpp
     UnitTest/QtAdsThemeAdapterTest.cpp
     UnitTest/QtAdsTabLifecycleTest.cpp
     UnitTest/WorkspaceDockPinTest.cpp

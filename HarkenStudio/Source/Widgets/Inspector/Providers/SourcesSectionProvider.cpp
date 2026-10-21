@@ -10,7 +10,7 @@
 #include "Core/AssetPipeline/ImportSoundSourcesCommand.h"
 #include "Core/AssetPipeline/MediaPool.h"
 #include "Core/AssetPipeline/SourceFileSystem.h"
-#include "Core/ToastManager.h"
+#include "Widgets/LogPanel/LogPanel.h"
 #include "Core/Components/VSound.h"
 #include "Core/LanguageContextService.h"
 #include "Core/PlatformContextService.h"
@@ -419,7 +419,7 @@ private:
         if (command)
             UndoRedoManager::instance().push(command.release());
         else
-            ToastManager::instance().showToast(error, 5000, ToastType::Error);
+            LogPanel::logError(LogCategory::File, error);
     }
 
     int moveTarget(int index, int delta) const

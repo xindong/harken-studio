@@ -328,6 +328,11 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@compactSliderFill@"), rgba(colors().accent, 85));
     replace(QStringLiteral("@nodeContentLabel@"), color(snapshot_->domains.nodeGraphNode.contentLabel));
     replace(QStringLiteral("@nodeContentValue@"), color(snapshot_->domains.nodeGraphNode.contentValue));
+    replace(QStringLiteral("@logDebug@"), color(snapshot_->domains.log.debug));
+    replace(QStringLiteral("@logInfo@"), color(snapshot_->domains.log.info));
+    replace(QStringLiteral("@logWarning@"), color(snapshot_->domains.log.warning));
+    replace(QStringLiteral("@logError@"), color(snapshot_->domains.log.error));
+    replace(QStringLiteral("@logCritical@"), color(snapshot_->domains.log.critical));
     replace(QStringLiteral("@aiBrandAccent@"), color(snapshot_->domains.ai.brandAccent));
     replace(QStringLiteral("@aiBrandAccentSoft@"), rgba(snapshot_->domains.ai.brandAccent, 32));
     replace(QStringLiteral("@aiMessageSeparator@"), rgba(colors().textPrimary, 16));
