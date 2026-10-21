@@ -733,9 +733,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
                          weight < ctx.pendingImmediateWeightCount; ++weight) {
                         if (weight >= ctx.variableWeightControlCount) break;
                         auto& binding = ctx.variableWeightControls[weight];
-                        if (binding.owner != ctx.pendingImmediateWeightOwners[weight] ||
-                            binding.segment.segmentGeneration !=
-                                ctx.pendingImmediateWeightGenerations[weight]) continue;
+                        if (binding.segment.segmentGeneration != binding.initialRebaseGeneration) continue;
                         auto& segment = binding.segment;
                         const bool safe = moveForward
                             ? segment.startFrame <= UINT64_MAX - shift &&

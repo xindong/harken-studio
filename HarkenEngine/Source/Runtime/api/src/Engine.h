@@ -1564,16 +1564,33 @@ struct EngineQueueFutureFilingLayout {
 };
 
 struct EngineVariableMemberWeights {
+    struct ChildWeight {
+        std::uint32_t ordinal = 0;
+        WeightSegmentV1 current{};
+        WeightSegmentV1 pending{};
+    };
     using Values = std::vector<WeightSegmentV1>;
+    using ChildValues = std::vector<ChildWeight>;
     std::shared_ptr<Values> storage;
+    std::shared_ptr<ChildValues> childStorage;
 
     std::size_t size() const noexcept { return storage ? storage->size() : 0; }
     bool empty() const noexcept { return size() == 0; }
     WeightSegmentV1& operator[](std::size_t index) noexcept { return (*storage)[index]; }
     const WeightSegmentV1& operator[](std::size_t index) const noexcept { return (*storage)[index]; }
-    std::size_t StorageBytes() const noexcept {
+    std::span<ChildWeight> Children() noexcept {
+        return childStorage ? std::span<ChildWeight>{*childStorage} : std::span<ChildWeight>{};
+    }
+    std::span<const ChildWeight> Children() const noexcept {
+        return childStorage ? std::span<const ChildWeight>{*childStorage} : std::span<const ChildWeight>{};
+    }
+    std::size_t MemberStorageBytes() const noexcept {
         return storage ? sizeof(Values) + storage->capacity() * sizeof(WeightSegmentV1) : 0;
     }
+    std::size_t ChildStorageBytes() const noexcept {
+        return childStorage ? sizeof(ChildValues) + childStorage->capacity() * sizeof(ChildWeight) : 0;
+    }
+    std::size_t StorageBytes() const noexcept { return MemberStorageBytes() + ChildStorageBytes(); }
 };
 
 struct EngineVariableInitialArms {
@@ -1805,12 +1822,6 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::array<std::uint64_t, 64> variableControlContinuousLogicalCompletionFrames{};
     std::array<bool, 64> variableControlContinuousLogicalCompleted{};
     std::uint32_t variableControlContinuousLogicalCount = 0;
-    struct VariableControlChildWeight {
-        std::uint32_t ordinal = 0;
-        WeightSegmentV1 current{};
-        WeightSegmentV1 pending{};
-    };
-    std::array<VariableControlChildWeight, 64> variableControlChildWeights{};
     std::uint32_t variableControlChildWeightCount = 0;
     BankVersionToken variableControlDiscreteMissedBank{};
     PlayableInstanceHandle variableControlDiscreteMissedSource = 0;
@@ -5448,43 +5459,53 @@ struct Engine {
         if (nativeBackingAllocationFailureCountdownForTest > 0) --nativeBackingAllocationFailureCountdownForTest;
         return true;
     }
-    bool PrepareVariableControlMemberWeights(EnginePlayableServiceRow& row, std::uint32_t count) noexcept {
-        if (count > config.maxVariableControlLiveRows) return false;
-        auto& weights = row.variableControlMemberWeights;
-        if (count <= weights.size()) return true;
+    template <typename Values>
+    bool PrepareVariableControlWeightColumn(EnginePlayableServiceRow& row, std::uint32_t count,
+        std::shared_ptr<Values> EngineVariableMemberWeights::*column) noexcept {
+        auto& storage = row.variableControlMemberWeights.*column;
+        if (count <= (storage ? storage->size() : 0)) return true;
         if (memguard::IsAudioTagged()) return false;
         if (nativeRuntimeBackingInUse != nullptr) {
-            EngineVariableMemberWeights* selected = nullptr;
+            std::shared_ptr<Values>* selected = nullptr;
             for (auto& root : nativeRuntimeBackingInUse->rootMemberWeights) {
                 if (root.service != row.identity) continue;
-                if (root.weights.size() < count) return false;
-                selected = &root.weights;
+                auto& candidate = root.weights.*column;
+                if (!candidate || candidate->size() < count) return false;
+                selected = &candidate;
                 break;
             }
             if (selected == nullptr) {
-                for (auto& candidate : nativeRuntimeBackingInUse->memberWeights) {
-                    if (candidate.storage.use_count() != 1 || candidate.size() < count) continue;
-                    if (selected == nullptr || candidate.size() < selected->size()) selected = &candidate;
+                for (auto& weights : nativeRuntimeBackingInUse->memberWeights) {
+                    auto& candidate = weights.*column;
+                    if (candidate.use_count() != 1 || candidate->size() < count) continue;
+                    if (selected == nullptr || candidate->size() < (*selected)->size()) selected = &candidate;
                 }
             }
             if (selected == nullptr) return false;
-            std::fill(selected->storage->begin(), selected->storage->end(), WeightSegmentV1{});
-            if (weights.storage)
-                std::copy(weights.storage->begin(), weights.storage->end(), selected->storage->begin());
-            weights.storage = selected->storage;
+            std::fill((*selected)->begin(), (*selected)->end(), typename Values::value_type{});
+            if (storage) std::copy(storage->begin(), storage->end(), (*selected)->begin());
+            storage = *selected;
             return true;
         }
         try {
-            if (!weights.storage) {
+            if (!storage) {
                 if (!AllowNativeBackingAllocation()) return false;
-                weights.storage = std::make_shared<EngineVariableMemberWeights::Values>(count);
+                storage = std::make_shared<Values>(count);
             } else {
-                if (count > weights.storage->capacity() && !AllowNativeBackingAllocation()) return false;
-                weights.storage->resize(count);
+                if (count > storage->capacity() && !AllowNativeBackingAllocation()) return false;
+                storage->resize(count);
             }
         }
         catch (...) { return false; }
         return true;
+    }
+    bool PrepareVariableControlMemberWeights(EnginePlayableServiceRow& row, std::uint32_t count) noexcept {
+        return count <= config.maxVariableControlLiveRows &&
+            PrepareVariableControlWeightColumn(row, count, &EngineVariableMemberWeights::storage);
+    }
+    bool PrepareVariableControlChildWeights(EnginePlayableServiceRow& row, std::uint32_t count) noexcept {
+        return count <= kMaxKnownScheduleLeaves &&
+            PrepareVariableControlWeightColumn(row, count, &EngineVariableMemberWeights::childStorage);
     }
     bool PrepareVariableControlInitialArms(EnginePlayableServiceRow& row, std::uint32_t count) noexcept {
         if (count > config.maxKnownScheduleLeaves + config.maxVariableControlLiveRows) return false;

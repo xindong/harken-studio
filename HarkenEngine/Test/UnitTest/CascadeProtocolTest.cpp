@@ -551,6 +551,39 @@ TEST(CascadeProtocol,
     EXPECT_FLOAT_EQ(1.0f, harness.masterL[kBlock - 1]);
 }
 
+TEST(CascadeProtocol, PendingStartRebasesOnlyOriginalWeightGenerations) {
+    const std::vector<float> dc = harkentest::MakeDC(2000, 1.0f);
+    CascadeHarness harness(dc);
+    auto& ctx = harness.ctx;
+    ctx.timelineGated = true;
+    ctx.pendingImmediateWeightRebase = true;
+    ctx.pendingImmediateWeightBaseFrame = 100;
+    ctx.pendingImmediateWeightCount = 2;
+    harken::WeightSegmentV1 original{100, 200, 1.0f, 1.0f, 1, {3, 5}, {7, 11}};
+    const harken::VariableWeightControlIdentity first{101, 7, 1}, second{102, 9, 1};
+    ASSERT_TRUE(ctx.ApplyVariableWeightControl(first, original));
+    ASSERT_TRUE(ctx.ApplyVariableWeightControl(second, original));
+    ctx.variableWeightControls[0].initialRebaseGeneration = 1;
+    ctx.variableWeightControls[1].initialRebaseGeneration = 1;
+    auto update = original;
+    update.segmentGeneration = 2;
+    update.startFrame = 200;
+    update.endFrame = 400;
+    ASSERT_TRUE(ctx.ApplyVariableWeightControl(second, update));
+    ctx.timelineEvents.quantumIndex = 1;
+    ctx.timelineEvents.eventCount = 1;
+    auto& start = ctx.timelineEvents.events[0];
+    start.kind = harken::TimelineEventKind::Start;
+    start.offset = 9;
+    start.frame = kBlock + 9;
+    EXPECT_EQ(kBlock - 9u, harness.RenderBlock().framesProduced);
+    EXPECT_EQ(265u, ctx.variableWeightControls[0].segment.startFrame);
+    EXPECT_EQ(365u, ctx.variableWeightControls[0].segment.endFrame);
+    EXPECT_EQ(200u, ctx.variableWeightControls[1].segment.startFrame);
+    EXPECT_EQ(400u, ctx.variableWeightControls[1].segment.endFrame);
+    EXPECT_FALSE(ctx.pendingImmediateWeightRebase);
+}
+
 TEST(CascadeProtocol, FutureTimelineStopDoesNotAffectEarlierSamples) {
     const std::vector<float> dc = harkentest::MakeDC(2000, 1.0f);
     for (const std::uint16_t eventOffset : {std::uint16_t{1},

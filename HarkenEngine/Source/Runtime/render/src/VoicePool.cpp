@@ -3439,16 +3439,11 @@ bool VoicePool::PrepareVariableWeightControls(VnVoiceHandle handle,
     }
     for (std::uint32_t index = 0; index < count; ++index)
         slot->render.variableWeightControls[index] = {bindings[index].owner, bindings[index].segment, true,
+            slot->render.pendingImmediateWeightRebase ? bindings[index].segment.segmentGeneration : 0u,
             1.0 / static_cast<double>(bindings[index].segment.endFrame - bindings[index].segment.startFrame - 1u)};
     slot->render.variableWeightControlCount = count;
-    if (slot->render.pendingImmediateWeightRebase) {
+    if (slot->render.pendingImmediateWeightRebase)
         slot->render.pendingImmediateWeightCount = count;
-        for (std::uint32_t index = 0; index < count; ++index) {
-            slot->render.pendingImmediateWeightOwners[index] = bindings[index].owner;
-            slot->render.pendingImmediateWeightGenerations[index] =
-                bindings[index].segment.segmentGeneration;
-        }
-    }
     return true;
 }
 

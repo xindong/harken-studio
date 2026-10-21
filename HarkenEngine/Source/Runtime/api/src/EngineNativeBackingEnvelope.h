@@ -82,8 +82,10 @@ struct Profile {
     std::uint32_t referenceRows = 0;
     std::array<std::uint32_t, kLeafCapacity + 1u> H{};
     std::array<std::uint32_t, kLeafCapacity + 1u> controllerWeights{};
+    std::array<std::uint32_t, kLeafCapacity + 1u> controllerChildWeights{};
     std::array<std::uint32_t, kLeafCapacity + 1u> controllerInitialArms{};
     std::uint32_t rootContinuousMembers = 0;
+    std::uint32_t rootContinuousChildren = 0;
     std::uint32_t rootInitialMembers = 0;
     std::uint32_t Q = 0;
     std::uint32_t controlSides = 0;
@@ -236,11 +238,14 @@ inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexce
     a.profile.selectionCount = SaturatingAdd(a.profile.selectionCount, b.profile.selectionCount, UINT32_MAX, a.flags);
     a.profile.selection.Include(b.profile.selection);
     a.profile.rootContinuousMembers = 0;
+    a.profile.rootContinuousChildren = 0;
     a.profile.rootInitialMembers = 0;
     for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
         a.profile.H[t] = SaturatingAdd(a.profile.H[t], b.profile.H[t], limits.immediateFutureSides, a.flags);
         a.profile.controllerWeights[t] = SaturatingAdd(a.profile.controllerWeights[t], b.profile.controllerWeights[t],
             kControlSideCapacity, a.flags);
+        a.profile.controllerChildWeights[t] = SaturatingAdd(a.profile.controllerChildWeights[t],
+            b.profile.controllerChildWeights[t], kControlSideCapacity, a.flags);
         a.profile.controllerInitialArms[t] = SaturatingAdd(a.profile.controllerInitialArms[t],
             b.profile.controllerInitialArms[t], kControlSideCapacity, a.flags);
     }
@@ -260,10 +265,12 @@ inline Result Alternative(Result a, const Result& b) noexcept {
     a.profile.selectionCount = std::max(a.profile.selectionCount, b.profile.selectionCount);
     a.profile.selection.Include(b.profile.selection);
     a.profile.rootContinuousMembers = 0;
+    a.profile.rootContinuousChildren = 0;
     a.profile.rootInitialMembers = 0;
     for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
         a.profile.H[t] = std::max(a.profile.H[t], b.profile.H[t]);
         a.profile.controllerWeights[t] = std::max(a.profile.controllerWeights[t], b.profile.controllerWeights[t]);
+        a.profile.controllerChildWeights[t] = std::max(a.profile.controllerChildWeights[t], b.profile.controllerChildWeights[t]);
         a.profile.controllerInitialArms[t] = std::max(a.profile.controllerInitialArms[t], b.profile.controllerInitialArms[t]);
     }
     return a;
@@ -653,6 +660,7 @@ private:
             if (!discrete) return discrete;
         }
         Result continuous{};
+        std::uint32_t continuousChildren = 0;
         for (std::uint32_t i = 0; i < program.continuousRowCount; ++i) {
             const auto ordinal = program.continuousRows[i].childStableOrdinal;
             bool first = true;
@@ -661,11 +669,16 @@ private:
             if (!first) continue;
             const auto* child = Child(program, ordinal);
             if (child == nullptr) return Failure(Status::MissingContent);
+            continuousChildren = SaturatingAdd(continuousChildren, 1u, kLeafCapacity, continuous.flags);
             continuous = Concurrent(continuous, Visit(child->playable, Mode::Frontier, budget), limits_);
             if (!continuous) return continuous;
         }
         auto result = Concurrent(discrete, continuous, limits_);
         result.profile.rootContinuousMembers = continuous.profile.current;
+        result.profile.rootContinuousChildren = continuousChildren;
+        for (std::uint32_t t = 1; t <= continuousChildren; ++t)
+            result.profile.controllerChildWeights[t] = SaturatingAdd(result.profile.controllerChildWeights[t], 1u,
+                kControlSideCapacity, result.flags);
         result.profile.rootInitialMembers = result.profile.current;
         for (std::uint32_t t = 1; t <= continuous.profile.current; ++t)
             result.profile.controllerWeights[t] = SaturatingAdd(result.profile.controllerWeights[t], 1u,

@@ -278,10 +278,12 @@ std::size_t Engine::PendingSelectionStorageBytes() const noexcept {
                     column(backing.publicationChildren) + column(backing.publicationOwners) +
                     column(backing.rootMemberWeights) + column(backing.memberWeights) +
                     column(backing.rootInitialArms) + column(backing.initialArms);
-                for (const auto& root : backing.rootMemberWeights)
-                    if (root.weights.storage.use_count() == 1) bytes += root.weights.StorageBytes();
-                for (const auto& weights : backing.memberWeights)
-                    if (weights.storage.use_count() == 1) bytes += weights.StorageBytes();
+                const auto addWeights = [&](const EngineVariableMemberWeights& weights) noexcept {
+                    if (weights.storage.use_count() == 1) bytes += weights.MemberStorageBytes();
+                    if (weights.childStorage.use_count() == 1) bytes += weights.ChildStorageBytes();
+                };
+                for (const auto& root : backing.rootMemberWeights) addWeights(root.weights);
+                for (const auto& weights : backing.memberWeights) addWeights(weights);
                 for (const auto& root : backing.rootInitialArms)
                     if (root.arms.storage.use_count() == 1) bytes += root.arms.StorageBytes();
                 for (const auto& arms : backing.initialArms)
@@ -6908,13 +6910,25 @@ void FillStopLeafExitMarker(const harken::Engine& engine,
                          const harken::EnginePlayableServiceRow& row,
                          harken::ResamplerAdvanceState* advance) noexcept;
 
+std::uint32_t CountVariableControlContinuousChildren(const harken::ContainerProgramViewV3& program) noexcept {
+    std::uint32_t count = 0;
+    for (std::uint32_t index = 0; index < program.continuousRowCount; ++index) {
+        bool first = true;
+        for (std::uint32_t prior = 0; prior < index; ++prior)
+            if (program.continuousRows[prior].childStableOrdinal ==
+                program.continuousRows[index].childStableOrdinal) { first = false; break; }
+        if (first) ++count;
+    }
+    return count;
+}
+
 bool AddVariableControlChildWeight(harken::EnginePlayableServiceRow& row,
     std::uint32_t ordinal, float gain, const harken::ContainerProgramViewV3& program,
     std::uint64_t onset, harken::BankVersionToken bank) noexcept {
     const auto duration = std::max(2u, program.envelopeFrames);
-    if (row.variableControlChildWeightCount >= row.variableControlChildWeights.size() ||
+    if (row.variableControlChildWeightCount >= row.variableControlMemberWeights.Children().size() ||
         duration > UINT64_MAX - onset) return false;
-    auto& weight = row.variableControlChildWeights[row.variableControlChildWeightCount++];
+    auto& weight = row.variableControlMemberWeights.Children()[row.variableControlChildWeightCount++];
     weight.ordinal = ordinal;
     weight.current.startFrame = onset;
     weight.current.endFrame = onset + duration;
@@ -6934,7 +6948,7 @@ bool CaptureVariableControlChildWeight(
         !row.variableControlRetargetMembershipFinalized &&
         !row.variableControlRetargetApplied && !row.variableControlRetargetSuperseded;
     for (std::uint32_t index = 0; index < row.variableControlChildWeightCount; ++index) {
-        const auto& child = row.variableControlChildWeights[index];
+        const auto& child = row.variableControlMemberWeights.Children()[index];
         if (child.ordinal != ordinal) continue;
         *weight = pending ? child.pending : child.current;
         return true;
@@ -16774,6 +16788,8 @@ bool PrepareVariableControlRetargetSubtree(
             }
             out->nestedServices[index] = PlayableServiceReference(*service);
             ++out->nestedVariableControlCount;
+            if (!engine.PrepareVariableControlChildWeights(*service,
+                    CountVariableControlContinuousChildren(*nestedProgram))) return false;
             if (nestedProgram->discreteRowCount != 0 && nestedProgram->continuousRowCount != 0) {
                 auto& continuous = out->nestedContinuousDecisions[index];
                 if (!engine.decisions.PrepareReservation(request, &continuous) ||
@@ -20710,6 +20726,8 @@ bool PrepareNestedVariableControlInitialResources(
     }
     scratch.variableControlNestedServices[nestedIndex] = PlayableServiceReference(*service);
     ++scratch.variableControlNestedVariableControlCount;
+    if (!engine.PrepareVariableControlChildWeights(*service,
+            CountVariableControlContinuousChildren(*nestedProgram))) return false;
     if (ownBank.Valid() && nestedProgram->discreteRowCount != 0 && nestedProgram->continuousRowCount != 0) {
         auto& continuousDecision = scratch.storage.nestedContinuousDecisions[nestedIndex];
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
@@ -21884,7 +21902,8 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     row.containerLoopAuthorityKind = packLease != nullptr
         ? harken::PlayableExecutionAuthorityKind::Pack : harken::PlayableExecutionAuthorityKind::CurrentWorld;
     if constexpr (!std::is_same_v<WorldView, harken::PackPlaybackView>) row.containerLoopWorld = world;
-    if (!engine.PrepareVariableControlMemberWeights(row, continuousLeafCount)) {
+    if (!engine.PrepareVariableControlMemberWeights(row, continuousLeafCount) ||
+        !engine.PrepareVariableControlChildWeights(row, continuousCount)) {
         (void)CancelPreparedVariableControlInitial(engine, scratch);
         result.status = harken::PlayableStartStatus::Capacity;
         return result;
@@ -33607,7 +33626,7 @@ VariableRetargetPrepareStatus PrepareVariableControlRetarget(
     std::array<float, 64> childTargetWeights{};
     bool desiredEquivalent = true;
     for (std::uint32_t index = 0; index < row.variableControlChildWeightCount; ++index) {
-        const auto& child = row.variableControlChildWeights[index];
+        const auto& child = row.variableControlMemberWeights.Children()[index];
         const auto desired = std::find_if(weights.begin(), weights.begin() + weightCount,
             [&](const harken::ContinuousGridWeight& weight) { return weight.childStableOrdinal == child.ordinal; });
         if (desired == weights.begin() + weightCount || !std::isfinite(desired->weight) || desired->weight < 0.0f)
@@ -33766,7 +33785,7 @@ engine.runtimeRecreateRequired = true;
         return VariableRetargetPrepareStatus::Fatal;
     }
     for (std::uint32_t index = 0; index < row.variableControlChildWeightCount; ++index) {
-        auto& child = row.variableControlChildWeights[index];
+        auto& child = row.variableControlMemberWeights.Children()[index];
         if (harken::RetargetWeightSegment(&child.current, decisionFrame, std::max(2u, program.envelopeFrames),
                 childTargetWeights[index], decision, bank, &child.pending) != harken::WeightSegmentStatus::Ok) {
             rollback();
@@ -40023,7 +40042,7 @@ bool PendingVariableGroupSelectionChanged(const harken::EnginePlayableServiceRow
         (decision.discreteMatched && decision.discrete.childStableOrdinal != row.variableControlDiscreteCurrentChildOrdinal) ||
         decision.weightCount != row.variableControlChildWeightCount) return true;
     for (std::uint32_t index = 0; index < decision.weightCount; ++index) {
-        const auto& old = row.variableControlChildWeights[index];
+        const auto& old = row.variableControlMemberWeights.Children()[index];
         if (old.ordinal != decision.weights[index].childStableOrdinal ||
             old.current.endWeight != decision.weights[index].weight) return true;
     }
@@ -41179,7 +41198,7 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
         }
         for (std::uint32_t index = 0;
              index < service.variableControlChildWeightCount; ++index) {
-            auto& weight = service.variableControlChildWeights[index];
+            auto& weight = service.variableControlMemberWeights.Children()[index];
             for (auto* segment : {&weight.current, &weight.pending}) {
                 if (segment->endFrame <= segment->startFrame) continue;
                 if (!canShiftRaw(segment->startFrame) ||
@@ -49029,7 +49048,7 @@ engine.runtimeRecreateRequired = true;
                                harken::AudioGroupState::PostStartInvalidated) {
                     if (!row.variableControlRetargetApplied) {
                         for (std::uint32_t index = 0; index < row.variableControlChildWeightCount; ++index)
-                            row.variableControlChildWeights[index].current = row.variableControlChildWeights[index].pending;
+                            row.variableControlMemberWeights.Children()[index].current = row.variableControlMemberWeights.Children()[index].pending;
                         row.variableControlRetargetApplied = true;
                         if (!ObserveRetargetNestedControllerEntry(engine,
                                 nullptr, 0, decision,
@@ -52844,6 +52863,11 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
                 const auto nested = result.profile.controllerWeights[threshold] - root;
                 if (nested > UINT32_MAX - futures.controllerWeights[threshold]) return false;
                 futures.controllerWeights[threshold] += nested;
+                const auto childRoot = threshold <= result.profile.rootContinuousChildren ? 1u : 0u;
+                if (result.profile.controllerChildWeights[threshold] < childRoot) return false;
+                const auto childNested = result.profile.controllerChildWeights[threshold] - childRoot;
+                if (childNested > UINT32_MAX - futures.controllerChildWeights[threshold]) return false;
+                futures.controllerChildWeights[threshold] += childNested;
                 const auto initialRoot = threshold <= result.profile.rootInitialMembers ? 1u : 0u;
                 if (result.profile.controllerInitialArms[threshold] < initialRoot) return false;
                 const auto initialNested = result.profile.controllerInitialArms[threshold] - initialRoot;
@@ -52918,10 +52942,17 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             const auto capacity = std::min(profiles[ordinal].rootContinuousMembers, config.maxVariableControlLiveRows);
             // Roots survive retry cancellation, so each keeps its full allowance separate from new nested services.
             if (producer->row->variableControlMemberWeights.size() >= capacity)
-                root.weights = producer->row->variableControlMemberWeights;
+                root.weights.storage = producer->row->variableControlMemberWeights.storage;
             else {
                 if (!AllowNativeBackingAllocation()) return shortage();
                 root.weights.storage = std::make_shared<EngineVariableMemberWeights::Values>(capacity);
+            }
+            const auto childCapacity = profiles[ordinal].rootContinuousChildren;
+            if (producer->row->variableControlMemberWeights.Children().size() >= childCapacity)
+                root.weights.childStorage = producer->row->variableControlMemberWeights.childStorage;
+            else {
+                if (!AllowNativeBackingAllocation()) return shortage();
+                root.weights.childStorage = std::make_shared<EngineVariableMemberWeights::ChildValues>(childCapacity);
             }
             auto& initial = nativeCandidate->rootInitialArms[ordinal];
             initial.service = producer->row->identity;
@@ -52935,18 +52966,26 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             token = nextToken(*producer, ordinal);
         }
         if (token.Valid()) return false;
-        if (futures.controllerWeights[1] != 0) {
+        const auto weightColumns = std::max(futures.controllerWeights[1], futures.controllerChildWeights[1]);
+        if (weightColumns != 0) {
             if (!AllowNativeBackingAllocation()) return shortage();
-            nativeCandidate->memberWeights.reserve(futures.controllerWeights[1]);
-            if (!backing::EmitDescendingCapacities(futures.controllerWeights, [&](std::uint32_t capacity) noexcept {
+            nativeCandidate->memberWeights.resize(weightColumns);
+            const auto prepareColumn = [&](const auto& counts, auto column, std::uint32_t limit) noexcept {
+                std::uint32_t index = 0;
+                return backing::EmitDescendingCapacities(counts, [&](std::uint32_t capacity) noexcept {
                     if (!AllowNativeBackingAllocation()) return false;
                     try {
-                        auto& weights = nativeCandidate->memberWeights.emplace_back();
-                        weights.storage = std::make_shared<EngineVariableMemberWeights::Values>(
-                            std::min(capacity, config.maxVariableControlLiveRows));
+                        auto& storage = nativeCandidate->memberWeights[index++].*column;
+                        using Values = typename std::remove_reference_t<decltype(storage)>::element_type;
+                        storage = std::make_shared<Values>(std::min(capacity, limit));
                     } catch (...) { return false; }
                     return true;
-                })) return shortage();
+                });
+            };
+            if (!prepareColumn(futures.controllerWeights, &EngineVariableMemberWeights::storage,
+                    config.maxVariableControlLiveRows) ||
+                !prepareColumn(futures.controllerChildWeights, &EngineVariableMemberWeights::childStorage,
+                    backing::kLeafCapacity)) return shortage();
         }
         if (futures.controllerInitialArms[1] != 0) {
             if (!AllowNativeBackingAllocation()) return shortage();
@@ -57896,8 +57935,13 @@ bool Engine::PreparePendingVariableGroupInstallationPublication(EngineActionPlay
             leaf.memberOrdinal != counts[side]++ ||
             ReadPlayableMemberReference(bases.member + logicalOffset).service.Valid()) return false;
     }
-    if (counts[1] > row.variableControlChildWeights.size() || counts[1] > playableStorage.continuousStride) return false;
-    if (!PrepareVariableControlMemberWeights(row, counts[1])) return false;
+    if (counts[1] > playableStorage.continuousStride ||
+        child->pendingVariableReplacementTopCount > child->pendingVariableReplacementTops.size()) return false;
+    std::uint32_t continuousChildren = 0;
+    for (std::uint32_t index = 0; index < child->pendingVariableReplacementTopCount; ++index)
+        if (child->pendingVariableReplacementTops[index].side == VariableControlSide::Continuous) ++continuousChildren;
+    if (!PrepareVariableControlMemberWeights(row, counts[1]) ||
+        !PrepareVariableControlChildWeights(row, continuousChildren)) return false;
     const auto initialCount = child->pendingVariableReplacementControls[0].nativeMemberCount +
         child->pendingVariableReplacementControls[1].nativeMemberCount;
     if (!PrepareVariableControlInitialArms(row, initialCount)) return false;
@@ -58094,7 +58138,7 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
     row.variableControlLeafInstances = {};
     row.variableControlLeafEpochs = {};
     std::ranges::fill(row.variableControlInitialArms.ValuesView(), TimelineArmToken{});
-    row.variableControlChildWeights = {};
+    std::ranges::fill(row.variableControlMemberWeights.Children(), EngineVariableMemberWeights::ChildWeight{});
     row.variableControlDiscreteHasZeroWorkCompletion = false;
     row.variableControlDiscreteZeroWorkCompletionFrame = 0;
     row.variableControlContinuousLogicalOrdinals = {};
@@ -58207,7 +58251,7 @@ bool Engine::TransferPendingVariableGroupReplacementPublication(EngineActionPlay
             row.variableControlDiscreteZeroWorkCompletionFrame = top.hasLogicalCompletion
                 ? anchor + top.logicalCompletionOffset : 0;
         } else {
-            row.variableControlChildWeights[row.variableControlChildWeightCount++] =
+            row.variableControlMemberWeights.Children()[row.variableControlChildWeightCount++] =
                 {top.authoredChildOrdinal, top.weight, {}};
             if (top.hasLogicalCompletion) {
                 const auto marker = row.variableControlContinuousLogicalCount++;

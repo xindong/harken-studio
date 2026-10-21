@@ -26821,8 +26821,8 @@ TEST(PlayableStart, BlendChangesWeightsWithoutReplacingMembersAndThenCompletes) 
     engine->nativeBackingAllocationFailureCountdownForTest = -1;
     EXPECT_EQ(0u, service->variableControlRetargetMembers.capacity());
     EXPECT_FALSE(service->variableControlRetargetPrepared);
-    EXPECT_FLOAT_EQ(1.0f, service->variableControlChildWeights[0].current.endWeight);
-    EXPECT_FLOAT_EQ(0.0f, service->variableControlChildWeights[1].current.endWeight);
+    EXPECT_FLOAT_EQ(1.0f, service->variableControlMemberWeights.Children()[0].current.endWeight);
+    EXPECT_FLOAT_EQ(0.0f, service->variableControlMemberWeights.Children()[1].current.endWeight);
     engine->variableControlRetargetPrograms.SetCommitPageLimitForTests(0);
     ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 7.0f));
     for (unsigned block = 0; block < 4; ++block) {
@@ -26834,12 +26834,12 @@ TEST(PlayableStart, BlendChangesWeightsWithoutReplacingMembersAndThenCompletes) 
     EXPECT_TRUE(engine->playableInstances.Classify(leaf).live);
     EXPECT_EQ(2u, engine->voices.ActiveCount());
     EXPECT_FALSE(engine->runtimeRecreateRequired);
-    EXPECT_FLOAT_EQ(1.0f, service->variableControlChildWeights[0].current.endWeight);
-    EXPECT_FLOAT_EQ(0.0f, service->variableControlChildWeights[1].current.endWeight);
+    EXPECT_FLOAT_EQ(1.0f, service->variableControlMemberWeights.Children()[0].current.endWeight);
+    EXPECT_FLOAT_EQ(0.0f, service->variableControlMemberWeights.Children()[1].current.endWeight);
     engine->variableControlRetargetPrograms.SetCommitPageLimitForTests(SIZE_MAX);
     pump();
-    EXPECT_FLOAT_EQ(0.0f, service->variableControlChildWeights[0].current.endWeight);
-    EXPECT_FLOAT_EQ(1.0f, service->variableControlChildWeights[1].current.endWeight);
+    EXPECT_FLOAT_EQ(0.0f, service->variableControlMemberWeights.Children()[0].current.endWeight);
+    EXPECT_FLOAT_EQ(1.0f, service->variableControlMemberWeights.Children()[1].current.endWeight);
     ASSERT_TRUE(engine->playableInstances.Classify(leaf).live);
     EXPECT_EQ(leaf, engine->playableInstances.Classify(started.instance).firstChild);
     EXPECT_EQ(2u, engine->voices.ActiveCount());
@@ -26851,8 +26851,8 @@ TEST(PlayableStart, BlendChangesWeightsWithoutReplacingMembersAndThenCompletes) 
     ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 3.0f));
     pump();
     EXPECT_EQ(controlRecords, engine->variableControlRetargetPrograms.ConstructedCount());
-    EXPECT_FLOAT_EQ(1.0f, service->variableControlChildWeights[0].current.endWeight);
-    EXPECT_FLOAT_EQ(0.0f, service->variableControlChildWeights[1].current.endWeight);
+    EXPECT_FLOAT_EQ(1.0f, service->variableControlMemberWeights.Children()[0].current.endWeight);
+    EXPECT_FLOAT_EQ(0.0f, service->variableControlMemberWeights.Children()[1].current.endWeight);
     ASSERT_TRUE(engine->playableInstances.Classify(leaf).live);
     EXPECT_EQ(leaf, engine->playableInstances.Classify(started.instance).firstChild);
     EXPECT_EQ(2u, engine->voices.ActiveCount());

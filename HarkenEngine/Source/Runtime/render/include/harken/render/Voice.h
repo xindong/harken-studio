@@ -217,10 +217,6 @@ struct VoiceRenderContext {
     // final anchor is known. The audio owner shifts them at the first Start.
     std::uint64_t pendingImmediateWeightBaseFrame = 0;
     bool pendingImmediateWeightRebase = false;
-    std::array<VariableWeightControlIdentity, kSelectionPathNodeCapacity>
-        pendingImmediateWeightOwners{};
-    std::array<std::uint32_t, kSelectionPathNodeCapacity>
-        pendingImmediateWeightGenerations{};
     std::uint32_t pendingImmediateWeightCount = 0;
     std::uint32_t sourceActivationLoopsRemaining = 1;
 
@@ -366,6 +362,8 @@ struct VoiceRenderContext {
         VariableWeightControlIdentity owner{};
         WeightSegmentV1 segment{};
         bool active = false;
+        // Existing entries keep their owner and position until the voice is reset.
+        std::uint32_t initialRebaseGeneration = 0;
         double inverseSpan = 0.0;
     };
     std::array<OwnedVariableWeight, kSelectionPathNodeCapacity> variableWeightControls{};
@@ -385,7 +383,7 @@ struct VoiceRenderContext {
             return true;
         }
         if (variableWeightControlCount == variableWeightControls.size()) return false;
-        variableWeightControls[variableWeightControlCount++] = {owner, segment, true,
+        variableWeightControls[variableWeightControlCount++] = {owner, segment, true, 0,
             1.0 / static_cast<double>(segment.endFrame - segment.startFrame - 1u)};
         return true;
     }

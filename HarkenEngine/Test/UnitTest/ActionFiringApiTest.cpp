@@ -18705,7 +18705,7 @@ TEST(ActionFiringApi,
               engine->ReadPlayableMember(continuousSlot + 1u).leaf.stableId);
     ASSERT_EQ(2u, row->variableControlChildWeightCount);
     for (std::uint32_t index = 0; index < row->variableControlChildWeightCount; ++index) {
-        const auto& weight = row->variableControlChildWeights[index];
+        const auto& weight = row->variableControlMemberWeights.Children()[index];
         EXPECT_EQ(image.variableControlChildren[index].stableChildOrdinal, weight.ordinal);
         EXPECT_FLOAT_EQ(index == 0 ? 0.0f : 1.0f, weight.current.startWeight);
         EXPECT_FLOAT_EQ(index == 0 ? 0.0f : 1.0f, weight.current.endWeight);
@@ -29776,8 +29776,8 @@ static void CheckEarlierSetValueTwoMixedVcPlaysFirstUpdate(bool late,
         ASSERT_EQ(1u, service->variableControlContinuousMemberCount);
         ASSERT_EQ(1u, service->variableControlChildWeightCount);
         const float expectedWeight = writeBetweenPlays && play == 0 ? 0.0f : 1.0f;
-        EXPECT_FLOAT_EQ(expectedWeight, service->variableControlChildWeights[0].current.startWeight);
-        EXPECT_FLOAT_EQ(expectedWeight, service->variableControlChildWeights[0].current.endWeight);
+        EXPECT_FLOAT_EQ(expectedWeight, service->variableControlMemberWeights.Children()[0].current.startWeight);
+        EXPECT_FLOAT_EQ(expectedWeight, service->variableControlMemberWeights.Children()[0].current.endWeight);
     }
     for (const auto& arm : originalArms) {
         harken::TimelineArmObservation observation{};
@@ -47144,10 +47144,10 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
                 }
                 if (newContinuous) {
                     ASSERT_EQ(2u, row->variableControlChildWeightCount);
-                    EXPECT_FLOAT_EQ(0.0f, row->variableControlChildWeights[0].current.endWeight);
+                    EXPECT_FLOAT_EQ(0.0f, row->variableControlMemberWeights.Children()[0].current.endWeight);
                     EXPECT_EQ(newLeafCount + 1u, row->variableControlContinuousMemberCount);
                     EXPECT_EQ(0u, row->variableControlDiscreteMemberCount);
-                    const auto& weight = row->variableControlChildWeights[1];
+                    const auto& weight = row->variableControlMemberWeights.Children()[1];
                     EXPECT_EQ(image.variableControlChildren[1].stableChildOrdinal, weight.ordinal);
                     EXPECT_FLOAT_EQ(newRetarget ? 0.5f : 1.0f, weight.current.endWeight);
                     for (std::uint32_t leaf = 0; leaf < newLeafCount; ++leaf) {
@@ -47168,12 +47168,12 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
             placed = true;
         }
         if (newRetarget && retargetRequested && row->identity == service && row->variableControlChildWeightCount == 2 &&
-            row->variableControlChildWeights[1].current.endWeight == 0.75f) {
+            row->variableControlMemberWeights.Children()[1].current.endWeight == 0.75f) {
             retargetObserved = true;
-            retargetEnvelopeEnd = row->variableControlChildWeights[1].current.endFrame;
+            retargetEnvelopeEnd = row->variableControlMemberWeights.Children()[1].current.endFrame;
         }
         if (newZeroToPositive && row->identity == service && row->variableControlChildWeightCount == 2 &&
-            row->variableControlChildWeights[0].current.endWeight == 0.0f) {
+            row->variableControlMemberWeights.Children()[0].current.endWeight == 0.0f) {
             std::size_t physical = 0;
             const auto logical = engine.playableStorage.MemberBase(row->partition.slot) + row->variableControlContinuousMemberOffset;
             ASSERT_TRUE(engine.ResolvePlayableMemberSlot(logical, &physical));
@@ -47245,7 +47245,7 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
         if (newRetarget && !newLateRetarget && row->identity == service && row->variableControlRetargetPrepared &&
             !row->variableControlRetargetSuperseded && row->variableControlChildWeightCount == 2) {
             harken::DecisionCommittedSnapshot applied{};
-            const auto& segment = row->variableControlChildWeights[1].pending;
+            const auto& segment = row->variableControlMemberWeights.Children()[1].pending;
             if (engine.decisions.CaptureCommitted(row->variableControlRetargetDecision, &applied) &&
                 (applied.audioState == harken::AudioGroupState::Admitted ||
                  applied.audioState == harken::AudioGroupState::PostStartInvalidated)) {
@@ -47260,7 +47260,7 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
                     heardAdmittedRetry = true;
                 }
                 if (newZeroToPositive) {
-                    directWeight = row->variableControlChildWeights[0].pending;
+                    directWeight = row->variableControlMemberWeights.Children()[0].pending;
                     EXPECT_FLOAT_EQ(1.0f, directWeight.endWeight);
                     EXPECT_EQ(segment.decision.slot, directWeight.decision.slot);
                     EXPECT_EQ(segment.decision.generation, directWeight.decision.generation);
@@ -51006,7 +51006,7 @@ static void CheckPendingOriginalQueueCompositionReselectsPcm(bool nestedControl,
     if (mixed) {
         ASSERT_EQ(2u, root->variableControlChildWeightCount);
         for (std::uint32_t index = 0; index < 2; ++index) {
-            const auto& weight = root->variableControlChildWeights[index];
+            const auto& weight = root->variableControlMemberWeights.Children()[index];
             EXPECT_EQ(image.variableControlChildren[index].stableChildOrdinal, weight.ordinal);
             EXPECT_FLOAT_EQ(index == 0 ? 1.0f : 0.0f, weight.current.startWeight);
             EXPECT_FLOAT_EQ(index == 0 ? 1.0f : 0.0f, weight.current.endWeight);

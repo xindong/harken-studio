@@ -18597,7 +18597,11 @@ TEST(PackComposition, QueueRoleCounterCombinesAlternativesAndConcurrentOccurrenc
     ExpectQueueRoleCounter(fixture.Count(alternatives), 3, 1);
     const auto repeated = fixture.Set(5, Mode::VariableControl, {one, one});
     fixture.Rows(5, {}, {0, 1, 1});
-    ExpectQueueRoleCounter(fixture.Count(repeated), 2, 2);
+    const auto repeatedProfile = fixture.Count(repeated);
+    ExpectQueueRoleCounter(repeatedProfile, 2, 2);
+    EXPECT_EQ(2u, repeatedProfile.profile.rootContinuousChildren);
+    EXPECT_EQ(1u, repeatedProfile.profile.controllerChildWeights[2]);
+    EXPECT_EQ(0u, repeatedProfile.profile.controllerChildWeights[3]);
     const auto two = fixture.Chain(7, 2, fixture.Sound());
     const auto combined = fixture.Set(6, Mode::VariableControl, {two, one, three});
     fixture.Rows(6, {0, 1}, {1, 2, 2});
@@ -18668,8 +18672,12 @@ TEST(PackComposition, QueueRoleCounterUsesIndependentLogicalCapacity) {
     fixture.Rows(5, {}, ordinals);
     auto limits = fixture.Limits();
     limits.immediateFutureSides = 0;
-    ExpectQueueRoleCounter(fixture.Count(root, limits), 80, 0, 0,
-        harken::native_backing::UnprunedSchedule);
+    const auto profile = fixture.Count(root, limits);
+    ExpectQueueRoleCounter(profile, 80, 0, 0, harken::native_backing::UnprunedSchedule);
+    EXPECT_EQ(0u, profile.profile.rootContinuousMembers);
+    EXPECT_EQ(16u, profile.profile.rootContinuousChildren);
+    EXPECT_EQ(1u, profile.profile.controllerChildWeights[16]);
+    EXPECT_EQ(0u, profile.profile.controllerChildWeights[17]);
     limits.queueRoleCapacity = 7;
     ExpectQueueRoleCounter(fixture.Count(root, limits), 7, 0, 0,
         harken::native_backing::UnprunedSchedule | harken::native_backing::SaturatedLegalBound);
