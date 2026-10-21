@@ -20,7 +20,7 @@ HarkenHubUpdateBridge（特权更新桥）。
 | 工程库与登记回流 | `Source/Projects/` ProjectStore（Qt Sql）+ ProjectProbe + IntakeConsumer（FS watcher 接收 Studio 侧登记） | 可用 |
 | 引擎集成 SDK 来源选择 | 安装/更换 SDK 弹窗的源目录控件可直接下拉选择 Hub 已安装 Studio 附带的 SDK，按目标引擎筛选，悬停提示 Studio/SDK 版本；保留手动选文件夹，每次打开刷新候选 | 可用 |
 | SDK 变更检查结果 | 默认显示版本变化及新增/更新/移除/保留数量，按动作分组列出文件，保留项折叠；完整日志独立页签，失败和待处理提醒优先展示，状态与建议分色强调 | 可用 |
-| Unity 工程占用检查 | 安装、更新、卸载、迁移与恢复共用 `HarkenSDK/Tooling/UnityProjectAccess`，Studio 工具层沿用同一检测；Windows 检查独占打开，POSIX 检查文件锁与记录锁。未被占用的残留 `Temp/UnityLockfile` 不阻止操作，检测不改写或删除锁文件；访问失败单独报告，真实占用仍拦截 | 可用 |
+| Unity 工程占用检查 | Hub 的安装、更新、卸载、迁移与恢复共用自身 `Source/Integrations/Unity/UnityProjectAccess` 检测；Windows 检查独占打开，POSIX 检查文件锁与记录锁。未被占用的残留 `Temp/UnityLockfile` 不阻止操作，检测不改写或删除锁文件；访问失败单独报告，真实占用仍拦截 | 可用 |
 | 合规与维护 | `Source/Legal/`（EULA + ConsentStore）+ `Source/Maintenance/`（缓存清理/日志导出/工程钉版本） | 可用 |
 | 平台加固 | `Source/Platform/` Win+mac 双实现：提权、ACL 加固、登录自启、进程扫描、单实例守卫 | 可用 |
 | Authenticode 二进制验证 | `Source/Security/BinaryTrustPolicy.cpp` 发布者/安装器验证两处显式 not implemented | 占位 |

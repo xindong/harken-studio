@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "excludedPullRequests": {
     "versionOnly": [],
-    "noHubUserChange": [74],
+    "noHubUserChange": [74, 85],
     "archivedReleases": []
   },
   "releases": [

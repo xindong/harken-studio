@@ -126,6 +126,8 @@ set(HARKEN_HUB_SOURCES
     Source/Integrations/Unity/UnityInstallation.h
     Source/Integrations/Unity/UnityIntegrationService.cpp
     Source/Integrations/Unity/UnityIntegrationService.h
+    Source/Integrations/Unity/UnityProjectAccess.cpp
+    Source/Integrations/Unity/UnityProjectAccess.h
     Source/Projects/ProjectStore.cpp
     Source/Projects/ProjectProbe.cpp
     Source/Projects/ProjectVersionSelection.cpp
@@ -199,7 +201,6 @@ function(harken_configure_hub_library target)
         Qt6::Network
         Qt6::Svg
         harken_buildinfo
-        harken_unity_project_access
     )
     target_link_libraries(${target} PRIVATE MINIZIP::minizip harken_ed25519)
     if(WIN32)
