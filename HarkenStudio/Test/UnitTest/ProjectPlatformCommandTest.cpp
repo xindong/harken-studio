@@ -43,6 +43,7 @@ protected:
         ProjectConfig config;
         config.name = QStringLiteral("PlatformCommands");
         config.location = directory.path();
+        config.platforms = {{QUuid::createUuid(), QStringLiteral("Windows"), BasePlatform::Windows}};
         ASSERT_TRUE(manager().createProject(config));
         ActionManager::instance().clearAllForTesting();
         registerProjectActions(ActionManager::instance(), &manager(), nullptr, {});

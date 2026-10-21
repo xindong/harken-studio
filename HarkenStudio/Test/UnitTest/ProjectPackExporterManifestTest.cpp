@@ -2853,6 +2853,7 @@ TEST(EditorProjectPackExporterManifest, LanguageTargetingPublishesIndependentPla
          {QStringLiteral("FirstVoice"), 22, kSoloSoundObjectId},
          {QStringLiteral("SecondVoice"), 23, kSoloSoundObjectId}}));
     ASSERT_NO_FATAL_FAILURE(localizeSoloSound(project, voice));
+    project.defaultLanguage = QStringLiteral("English");
     project.platforms = HarkenTest::platforms({"Windows", "macOS"});
     for (auto& sources : project.layers.front().rootItem->children.at(1)->comp<VNX::VSound>()->sources.localized)
         sources.active = sources.entries.front().entryId;

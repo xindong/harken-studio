@@ -78,7 +78,7 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 
 ## 全量清单
 
-普通功能表格按用途去重共 26 项：配置表 12 项、展示表 14 项。Sends 在六类对象中的使用展开后，共 31 个页面/对象类型展示位置。不同对象实例、Binding 字段地址或同一对话框的打开位置不重复计数；Monitor 采用运行记录模型。
+普通功能表格按用途去重共 25 项：配置表 11 项、展示表 14 项。Sends 在六类对象中的使用展开后，共 30 个页面/对象类型展示位置；另列平台标签配置变体。不同对象实例、Binding 字段地址或同一对话框的打开位置不重复计数；Monitor 采用运行记录模型。
 
 | ID | 分类 | 位置 / 用途 | 当前入口 |
 |---|---|---|---|
@@ -91,9 +91,9 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 | C07 | config | Sound、Container、Layer、Track、Piece、Bus / Sends | ListFieldDrawer |
 | C08 | config | External Editor / Binding | BindingFieldEditor |
 | C09 | config | Transition Editor / Rules | TransitionEditorWidget |
-| C10 | config | Project Settings / Config / Target Platforms | ProjectConfigPage |
-| C11 | config | Project Settings / Config / Target Languages | ProjectConfigPage |
-| C12 | config | Project Platform / Resample Policies | ProjectPlatformDialog |
+| C10 | 标签配置（非表格） | Project Settings / General / Platform Configuration：左侧平台标签，右侧配置面板 | ProjectConfigPage / ProjectPlatformEditor |
+| C11 | config | Project Settings / General / Language Configuration | ProjectConfigPage |
+| C12 | config | Project Platform / Resample Policies | ProjectPlatformEditor |
 | D01 | display | Bus Inspector / Inputs | ListFieldDrawer |
 | D02 | display | Bus Inspector / Receives | ListFieldDrawer |
 | D03 | display | Control / Variables | RehearsalTable |
@@ -110,6 +110,10 @@ configTable 编辑当前字段或表单中的配置条目集合。displayTable �
 | D14 | display | Sources Import / 同名音频冲突选择 | SourcesTreeWidget / sourceImportConflicts |
 
 Inputs/Receives 是路由反向查询，不再适用“所有 Inspector 表都带 #”的旧约定。Shortcuts 枚举命令目录；Layout 枚举已有布局资源，重命名与删除不改变其展示表职责。
+
+平台配置没有表头，进入时选中首个平台，选择左侧标签后直接编辑右侧名称、基础平台和转换配置，切换标签保留各平台草稿。平台标签及添加窗口的支持平台列表均通过 `TableWidget::createNavigationView(name)` 创建，使用公共 `footer()`、边框、尺寸与滚动管理，不由业务拼装列表、表脚和滚动条。导航保留当前激活项及 accent 标记，不适用普通表格初始无选择及空白、Esc 清选规则。两处列表按可用高度布局，纵向滚动槽常驻，仅内容溢出时显示滑块，横向不滚动。
+
+左右区域通过零间距横向布局组成整体；右侧公共 `panel` 保留内边距并声明 `joinedEdge=left` 去掉左框，两侧边框均使用 `borderPrimary`，仅以左侧 TableWidget 的右框作为中间分隔线。表脚完整位于 TableWidget 外框内，继承公共控件的布局与样式。策略表仍按内容展开，由外层页面承担滚动。内嵌面板只保留 Reset，修改由项目设置的 Apply 统一提交；Reset 恢复所选基础平台的默认转换配置。左侧加号打开支持平台列表，可预览各平台默认配置后添加。新项目默认按 Windows、Android、macOS、iOS 顺序创建四个平台。
 
 Pack 的 Init 独立显示且始终必选；General 包含不区分语言的 Action，工程中的每种语言各自形成分区，同时显示全部语言，不受 toolbar 当前语言筛选。每个 Action 按平台和语言独立出包，取消自定义合包、成员行、组名编辑及合包拖放。旧工程的合包平台选择迁移到成员 Action。语言变体由完整打包计划决定，即使取消所有平台也保留对应行。每行仅显示当前观察平台下一个包的文件、大小及构建状态，缺失值留空，不再聚合语言或显示横线；发布状态按清单中的 Action 归属核验。
 
@@ -209,6 +213,7 @@ Hierarchy、Explorer、Sources、Selector 及 Template Chooser 预览属于导�
 | `setColumns(key, columns)` / `registerRow(row, cells)` | 控件行入口；列 ID、标题、初始比例及必要最小宽度由调用方声明；编辑器仍由业务创建 |
 | `createCell(parent)` / `TableCell::addWidget(widget, stretch = 1, alignment = {})` | 控件行使用普通横向布局统一单元格外层主题留白及控件间距；默认等分可伸展业务控件宽度，固定装饰控件或明确限宽的单编辑器使用 `stretch=0`，不改业务控件内部布局 |
 | `createModelView(name, model)` | 创建并托管 QTableView；列标题与数据由模型提供，公共层完成表格角色、表头、尺寸和 delegate 接入；模型所有权仍归调用方 |
+| `createNavigationView(name)` | 创建并托管无表头的单选 QListWidget；共用 Table 的外框、尺寸、滚动与 `footer()`，保留导航激活项和 accent 标记，不启用普通表格的清选规则 |
 | `MatrixTableWidget` | 双维度配置表，继承公共 Table 的 footer、主题、原生行选择和单元格规则；`setHeaderWidget` 托管列表头字段，列宽边界和独立移动柄避让字段控件；复用 Display Table 列移动动画，`setColumnsReorderable` 指定可移动列起点，`columnMoveRequested` 将业务排序交给调用方 |
 | `setViewColumns(key, columns)` / `setRowNumberColumn(column)` | 原生 model/item 表体声明稳定列 ID、标题、比例与最小宽度；显式序号列居中，并将行选择底色限制在该列 |
 | `TableActiveRole` / `TableWarningRole` | 原生表体通过行首单元格声明命中或警告，公共 delegate 在数据列底部画独立细线，不占用序号列选择底色 |

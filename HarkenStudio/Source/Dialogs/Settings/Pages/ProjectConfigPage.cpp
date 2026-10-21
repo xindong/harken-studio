@@ -4,12 +4,13 @@
 #include "Core/ContextInfo.h"
 #include "Core/ProjectLanguageSemantics.h"
 #include "Core/ProjectManager.h"
+#include "Core/QtControlSkin.h"
 
 #include "Dialogs/Settings/ProjectPlatformDialog.h"
+#include "Dialogs/Settings/ProjectPlatformEditor.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/TableWidget.h"
-#include "Widgets/Common/ProportionalTreeWidget.h"
-#include <QTreeWidget>
+#include <QListWidget>
 #include <QFocusEvent>
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -20,11 +21,13 @@
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
 #include <QSet>
+#include <QSignalBlocker>
 #include <QStyle>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 #include <functional>
+#include <algorithm>
 
 namespace VNX {
 
@@ -84,28 +87,40 @@ ProjectConfigPage::ProjectConfigPage(QWidget* parent)
 {
     auto* body = makePageBody();
 
-    auto* platformsGroup = makeSection(tr("Target Platforms"));
+    auto* platformsGroup = makeSection(tr("Platform Configuration"));
     ContextInfo::tag(platformsGroup, ContextTopic::forPanel(QStringLiteral("settings.config.platforms")));
-    auto* platformsBox = new TableWidget(platformsGroup);
-    platformList_ = platformsBox->createItemView(QStringLiteral("projectPlatformList"),
-        {tr("Name"), tr("Base Platform")}, {600, 400});
-    platformList_->setSelectionMode(QAbstractItemView::SingleSelection);
-    auto* platformFooter = platformsBox->footer();
+    auto* platformsLayout = new QHBoxLayout();
+    platformsLayout->setContentsMargins(0, 0, 0, 0);
+    platformsLayout->setSpacing(0);
+    auto* platformTabs = new TableWidget(
+        {TableKind::Config, TableBodySizing::Expanding}, platformsGroup);
+    platformTabs->setFixedWidth(150);
+    platformTabs->setMinimumHeight(200);
+    platformList_ = platformTabs->createNavigationView(QStringLiteral("projectPlatformList"));
+    auto* platformFooter = platformTabs->footer();
     auto* add = platformFooter->addButton();
     add->setObjectName(QStringLiteral("projectPlatformAdd"));
     platformRemoveButton_ = platformFooter->removeButton();
     platformRemoveButton_->setObjectName(QStringLiteral("projectPlatformDelete"));
-    platformsGroup->layout()->addWidget(platformsBox);
-    connect(add, &QToolButton::clicked, this, [this]() { editPlatform(true); });
-    connect(platformList_, &QTreeWidget::itemDoubleClicked, this, [this]() { editPlatform(false); });
+    platformsLayout->addWidget(platformTabs);
+    platformEditor_ = new ProjectPlatformEditor(platformsGroup);
+    QtControlSkin::setSemanticProperty(platformEditor_, "joinedEdge", QStringLiteral("left"));
+    platformsLayout->addWidget(platformEditor_, 1);
+    static_cast<QVBoxLayout*>(platformsGroup->layout())->addLayout(platformsLayout);
+    connect(add, &QToolButton::clicked, this, &ProjectConfigPage::addPlatform);
+    connect(platformList_, &QListWidget::currentRowChanged, this, &ProjectConfigPage::selectPlatform);
     connect(platformRemoveButton_, &QToolButton::clicked, this, &ProjectConfigPage::removePlatform);
-    connect(platformList_, &QTreeWidget::itemSelectionChanged, this, [this]() {
-        const bool selected = !platformList_->selectedItems().isEmpty();
-        platformRemoveButton_->setEnabled(selected && draftPlatforms_.size() > 1);
+    connect(platformEditor_, &ProjectPlatformEditor::platformChanged, this, [this]() {
+        const int index = platformList_->currentRow();
+        if (index < 0 || index >= draftPlatforms_.size()) return;
+        draftPlatforms_[index] = platformEditor_->platform();
+        platformList_->item(index)->setText(draftPlatforms_.at(index).name);
+        platformList_->item(index)->setToolTip(draftPlatforms_.at(index).name);
+        emit dirtyChanged();
     });
     body->addWidget(platformsGroup);
 
-    auto* languagesGroup = makeSection(tr("Target Languages"));
+    auto* languagesGroup = makeSection(tr("Language Configuration"));
     ContextInfo::tag(languagesGroup, ContextTopic::forPanel(QStringLiteral("settings.config.languages")));
     targetLanguagesBox_ = new TableWidget(languagesGroup);
     targetLanguagesBox_->setSelectionClearHandler([this] { selectTargetLanguageRow(-1); });
@@ -139,7 +154,7 @@ QString ProjectConfigPage::pageId() const
 
 QString ProjectConfigPage::categoryLabel() const
 {
-    return tr("Config");
+    return tr("General");
 }
 
 QJsonArray ProjectConfigPage::platformDraft() const
@@ -154,59 +169,68 @@ QJsonArray ProjectConfigPage::platformDraft() const
     return rows;
 }
 
-void ProjectConfigPage::refreshPlatforms()
+void ProjectConfigPage::refreshPlatforms(int selectedIndex)
 {
-    const auto* current = platformList_->currentItem();
-    const bool selected = current && current->isSelected();
-    const QUuid selectedId = selected ? current->data(0, Qt::UserRole).toUuid() : QUuid{};
-    const QString selectedName = selected ? current->text(0) : QString{};
-    platformList_->clear();
-    for (const auto& platform : draftPlatforms_) {
-        auto* row = new QTreeWidgetItem(platformList_, {platform.name,
-            ProjectPlatformSemantics::basePlatformName(platform.basePlatform)});
-        row->setData(0, Qt::UserRole, platform.id);
-        row->setToolTip(0, platform.name);
-        if (selected && (selectedId.isNull() ? platform.name == selectedName : platform.id == selectedId))
-            platformList_->setCurrentItem(row);
+    if (selectedIndex < 0) {
+        selectedIndex = platformList_->currentRow();
+        if (const auto* current = platformList_->currentItem()) {
+            const auto id = current->data(Qt::UserRole).toUuid();
+            for (int i = 0; i < draftPlatforms_.size(); ++i) {
+                if (id.isNull() ? draftPlatforms_.at(i).name == current->text()
+                                : draftPlatforms_.at(i).id == id) {
+                    selectedIndex = i;
+                    break;
+                }
+            }
+        }
     }
-    platformRemoveButton_->setEnabled(!platformList_->selectedItems().isEmpty() && draftPlatforms_.size() > 1);
+    const int index = draftPlatforms_.isEmpty()
+        ? -1 : std::clamp(selectedIndex, 0, int(draftPlatforms_.size()) - 1);
+    {
+        const QSignalBlocker blocker(platformList_);
+        platformList_->clear();
+        for (const auto& platform : draftPlatforms_) {
+            auto* row = new QListWidgetItem(platform.name, platformList_);
+            row->setData(Qt::UserRole, platform.id);
+            row->setToolTip(platform.name);
+        }
+        platformList_->setCurrentRow(index);
+    }
+    selectPlatform(index);
 }
 
-void ProjectConfigPage::editPlatform(bool create)
+void ProjectConfigPage::selectPlatform(int index)
 {
-    const int index = platformList_->indexOfTopLevelItem(platformList_->currentItem());
-    if (!create && index < 0) return;
-    ProjectPlatform definition = create ? ProjectPlatform{} : draftPlatforms_.at(index);
-    ProjectPlatformDialog dialog(definition, create, this);
+    const bool selected = index >= 0 && index < draftPlatforms_.size();
+    platformEditor_->setVisible(selected);
+    platformRemoveButton_->setEnabled(selected && draftPlatforms_.size() > 1);
+    if (selected) platformEditor_->setPlatform(draftPlatforms_.at(index));
+}
+
+void ProjectConfigPage::addPlatform()
+{
+    ProjectPlatformDialog dialog(this);
     if (dialog.exec() != QDialog::Accepted) return;
-    definition = dialog.platform();
-    auto next = draftPlatforms_;
-    if (create) next.append(definition);
-    else next[index] = definition;
-    auto validation = next;
-    for (auto& platform : validation)
-        if (platform.id.isNull()) platform.id = QUuid::createUuid();
-    QString error;
-    if (!ProjectPlatformSemantics::validatePlatforms(validation, &error)) {
-        QMessageBox::warning(this, tr("Project Platforms"), error);
-        return;
-    }
-    draftPlatforms_ = next;
-    refreshPlatforms();
-    platformList_->setCurrentItem(platformList_->topLevelItem(create ? draftPlatforms_.size() - 1 : index));
+    auto definition = dialog.platform();
+    const QString baseName = definition.name;
+    int suffix = 2;
+    while (std::any_of(draftPlatforms_.cbegin(), draftPlatforms_.cend(),
+                      [&](const auto& platform) {
+                          return platform.name.compare(definition.name, Qt::CaseInsensitive) == 0;
+                      }))
+        definition.name = QStringLiteral("%1 %2").arg(baseName).arg(suffix++);
+    draftPlatforms_.append(definition);
+    refreshPlatforms(draftPlatforms_.size() - 1);
     emit dirtyChanged();
 }
 
 void ProjectConfigPage::removePlatform()
 {
-    const int index = platformList_->indexOfTopLevelItem(platformList_->currentItem());
+    const int index = platformList_->currentRow();
     if (index < 0 || draftPlatforms_.size() <= 1) return;
-    static_cast<TableWidget*>(platformList_->parentWidget())->removeSelectedRow([this, index] {
-        draftPlatforms_.removeAt(index);
-        refreshPlatforms();
-        emit dirtyChanged();
-        return true;
-    });
+    draftPlatforms_.removeAt(index);
+    refreshPlatforms(index);
+    emit dirtyChanged();
 }
 
 QStringList ProjectConfigPage::targetLanguages() const
@@ -311,7 +335,7 @@ void ProjectConfigPage::updateTargetLanguageRowState()
     }
 
     if (targetLanguageRemoveBtn_)
-        targetLanguageRemoveBtn_->setEnabled(selectedTargetLanguageRow_ >= 0 && targetLanguageRows_.size() > 1);
+        targetLanguageRemoveBtn_->setEnabled(selectedTargetLanguageRow_ >= 0);
 }
 
 void ProjectConfigPage::onAddTargetLanguageClicked()
@@ -326,8 +350,7 @@ void ProjectConfigPage::onAddTargetLanguageClicked()
 
 void ProjectConfigPage::onRemoveTargetLanguageClicked()
 {
-    if (selectedTargetLanguageRow_ < 0 || selectedTargetLanguageRow_ >= targetLanguageRows_.size()
-        || targetLanguageRows_.size() <= 1)
+    if (selectedTargetLanguageRow_ < 0 || selectedTargetLanguageRow_ >= targetLanguageRows_.size())
         return;
 
     targetLanguagesBox_->removeSelectedRow([this] {
@@ -348,8 +371,7 @@ void ProjectConfigPage::onRemoveTargetLanguageClicked()
 void ProjectConfigPage::load()
 {
     auto& pm = ProjectManager::instance();
-    if (projectLease_.lock() != pm.currentProjectLease())
-        static_cast<TableWidget*>(platformList_->parentWidget())->clearSelection();
+    const bool projectChanged = projectLease_.lock() != pm.currentProjectLease();
     draftPlatforms_.clear();
     projectLease_ = pm.currentProjectLease();
     QStringList projectLanguages;
@@ -357,7 +379,7 @@ void ProjectConfigPage::load()
         draftPlatforms_ = pm.currentProject()->platforms;
         projectLanguages = ProjectLanguageSemantics::buildLanguages(*pm.currentProject());
     }
-    refreshPlatforms();
+    refreshPlatforms(projectChanged ? 0 : -1);
     setTargetLanguages(projectLanguages);
     rememberBaseline();
 }
@@ -372,9 +394,17 @@ bool ProjectConfigPage::hasExternalChanges() const
 
 bool ProjectConfigPage::validate()
 {
+    auto platforms = draftPlatforms_;
+    for (auto& platform : platforms)
+        if (platform.id.isNull()) platform.id = QUuid::createUuid();
+    QString error;
+    if (!ProjectPlatformSemantics::validatePlatforms(platforms, &error)) {
+        QMessageBox::warning(this, tr("Platform Configuration"), error);
+        return false;
+    }
     const auto languages = ProjectLanguageSemantics::normalize(targetLanguages());
     if (!languages.ok()) {
-        QMessageBox::warning(this, tr("Target Languages"), languages.error);
+        QMessageBox::warning(this, tr("Language Configuration"), languages.error);
         return false;
     }
     return true;
@@ -389,7 +419,7 @@ bool ProjectConfigPage::applyTargetLanguages()
     const auto normalized = ProjectLanguageSemantics::normalize(targetLanguages());
     if (!normalized.ok())
     {
-        QMessageBox::warning(this, tr("Target Languages"),
+        QMessageBox::warning(this, tr("Language Configuration"),
                              normalized.error.isEmpty()
                                  ? tr("Failed to update target languages.")
                                  : normalized.error);
@@ -412,7 +442,7 @@ bool ProjectConfigPage::applyTargetLanguages()
         ActionSource::GUI);
     if (!result.success)
     {
-        QMessageBox::warning(this, tr("Target Languages"),
+        QMessageBox::warning(this, tr("Language Configuration"),
                              result.errorMessage.isEmpty()
                                  ? tr("Failed to update target languages.")
                                  : result.errorMessage);
@@ -430,7 +460,7 @@ bool ProjectConfigPage::applyTargetPlatforms()
         {{QStringLiteral("platforms"), platformDraft()}, {QStringLiteral("expected_platforms"), baselinePlatforms_}},
         ActionSource::GUI);
     if (!result.success) {
-        QMessageBox::warning(this, tr("Project Platforms"), result.errorMessage);
+        QMessageBox::warning(this, tr("Platform Configuration"), result.errorMessage);
         return false;
     }
     draftPlatforms_ = ProjectManager::instance().currentProject()->platforms;

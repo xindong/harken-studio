@@ -1911,6 +1911,12 @@ QLabel[bindingUnit="cent"] { color: @textMuted@; }
 QWidget[surfaceRole="secondary"],
 QWidget[surfaceRole="popup"] { background-color: @bgSecondary@; }
 
+QWidget[surfaceRole="panel"] {
+    background-color: @bgPrimary@;
+    border: 1px solid @borderPrimary@;
+}
+QWidget[surfaceRole="panel"][joinedEdge="left"] { border-left: none; }
+
 /* ==========================================================================
    Application shell semantic roles
    ========================================================================== */
@@ -2009,6 +2015,10 @@ QWidget#MeterSettingsPopup QComboBox {
 QFrame#listBox QAbstractItemView[tableRole="data"] {
     background-color: @bgPrimary@;
     selection-color: @textPrimary@;
+    border: none;
+}
+QFrame#listBox QAbstractItemView[tableRole="navigation"] {
+    background-color: @bgPrimary@;
     border: none;
 }
 QScrollBar[scrollRole="table"]:vertical {

@@ -22,8 +22,10 @@ add_library(harken_editor_dialogs STATIC
     Settings/PreferencesDialog.h
     Settings/ProjectSettingsDialog.cpp
     Settings/ProjectSettingsDialog.h
-    Settings/Pages/GeneralPage.cpp
-    Settings/Pages/GeneralPage.h
+    Settings/Pages/AppearancePage.cpp
+    Settings/Pages/AppearancePage.h
+    Settings/Pages/ExtensionPage.cpp
+    Settings/Pages/ExtensionPage.h
     Settings/Pages/ShortcutsPage.cpp
     Settings/Pages/ShortcutsPage.h
     Settings/Pages/LayoutPage.cpp
@@ -36,6 +38,8 @@ add_library(harken_editor_dialogs STATIC
     Settings/Pages/ProjectPublishPage.h
     Settings/ProjectPlatformDialog.cpp
     Settings/ProjectPlatformDialog.h
+    Settings/ProjectPlatformEditor.cpp
+    Settings/ProjectPlatformEditor.h
     StartupLoadingWindow.cpp
     StartupLoadingWindow.h
     StartupRenderer.cpp

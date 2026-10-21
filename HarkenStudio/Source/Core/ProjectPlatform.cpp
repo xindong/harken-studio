@@ -280,7 +280,10 @@ Platform mediaPlatform(BasePlatform platform)
 
 QVector<ProjectPlatform> defaultPlatforms()
 {
-    return {{QUuid::createUuid(), QStringLiteral("Windows"), BasePlatform::Windows}};
+    return {{QUuid::createUuid(), QStringLiteral("Windows"), BasePlatform::Windows},
+            {QUuid::createUuid(), QStringLiteral("Android"), BasePlatform::Android},
+            {QUuid::createUuid(), QStringLiteral("macOS"), BasePlatform::macOS},
+            {QUuid::createUuid(), QStringLiteral("iOS"), BasePlatform::iOS}};
 }
 
 bool validateName(const QString& name, QString* error)

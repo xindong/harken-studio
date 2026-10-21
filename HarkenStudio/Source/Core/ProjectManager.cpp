@@ -1886,7 +1886,7 @@ bool ProjectManager::removeProjectLanguage(const QString& languageName)
     if (!normalized.ok()) return false;
     setProjectLanguagesInternal(normalized.value);
     if (m_currentProject->defaultLanguage == languageName)
-        m_currentProject->defaultLanguage = m_currentProject->projectLanguages.first();
+        m_currentProject->defaultLanguage = m_currentProject->projectLanguages.value(0);
     return true;
 }
 
@@ -1898,7 +1898,7 @@ QStringList ProjectManager::getProjectLanguages() const
 
 void ProjectManager::setProjectLanguagesInternal(const QStringList& value)
 {
-    if (!m_currentProject || value.isEmpty()) return;
+    if (!m_currentProject) return;
     if (m_currentProject->projectLanguages == value) return;
     m_currentProject->projectLanguages = value;
     emit projectLanguagesChanged(value);
@@ -1912,7 +1912,7 @@ void ProjectManager::setDefaultLanguage(const QString& languageName)
 
 QString ProjectManager::getDefaultLanguage() const
 {
-    if (!m_currentProject) return "English";
+    if (!m_currentProject) return {};
     return m_currentProject->defaultLanguage;
 }
 
@@ -2316,7 +2316,6 @@ bool ProjectManager::createMainProjectFile(const ProjectConfig& config, const QS
     project.projectPath = QDir(projectRoot).filePath(config.name + ".hsp");
 
     project.platforms = config.platforms;
-    project.projectLanguages = {QStringLiteral("English")};
     project.sampleRate        = config.sampleRate;
     project.channelConfig     = config.channelConfig;
     project.enableLFE         = config.enableLFE;
