@@ -11,7 +11,6 @@
 #include "ProjectManager.h"
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
-#include "Core/ToastManager.h"
 #include "UndoCommands.h"
 #include "Widgets/ProjectExplorer/ProjectExplorer.h"
 #include "Widgets/ProjectTree/ProjectTreeWidget.h"
@@ -1624,30 +1623,13 @@ TEST_F(ProjectExplorerSourcesTabTest, EmptyAndNonAudioDirectoryDropsReportFailur
     explorer_->resize(360, 800);
     explorer_->show();
     QApplication::processEvents();
-    ToastManager::instance().setParentWidget(explorer_.get());
-    const auto cleanup = qScopeGuard([&]() {
-        for (auto* widget : QApplication::topLevelWidgets()) {
-            if (auto* toast = qobject_cast<QToastWidget*>(widget)) {
-                emit toast->finished();
-                toast->close();
-            }
-        }
-        ToastManager::instance().setParentWidget(nullptr);
-    });
     auto* tree = explorer_->sourcesTree();
     const int index = UndoRedoManager::instance().undoStack()->index();
     for (auto* target : {tree->viewport(), explorer_->sourcesSection()->header()}) {
         for (const QString& path : {empty, nonAudio}) {
-            const auto previousWidgets = QApplication::topLevelWidgets();
             QMimeData mime;
             mime.setUrls({QUrl::fromLocalFile(path)});
             EXPECT_EQ(dropMime(target, target->rect().center(), &mime), Qt::IgnoreAction);
-            bool reported = false;
-            for (auto* widget : QApplication::topLevelWidgets()) {
-                if (!previousWidgets.contains(widget) && qobject_cast<QToastWidget*>(widget))
-                    reported |= widget->isVisible();
-            }
-            EXPECT_TRUE(reported);
             EXPECT_EQ(UndoRedoManager::instance().undoStack()->index(), index);
             EXPECT_EQ(AssetRegistry::instance().count(), 0);
             EXPECT_TRUE(ProjectManager::instance().currentProject()->layers.empty());

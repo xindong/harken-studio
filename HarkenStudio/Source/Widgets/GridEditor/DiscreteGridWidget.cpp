@@ -10,9 +10,9 @@
 #include "Core/ProjectManager.h"
 #include "Core/ProjectTypes.h"
 #include "Core/ThemeManager.h"
-#include "Core/ToastManager.h"
 #include "Core/VariableSemantics.h"
 #include "Widgets/Common/ListFooter.h"
+#include "Widgets/Common/StatusTip.h"
 #include "Widgets/Common/TableItemDelegate.h"
 #include "Widgets/Common/MatrixTableWidget.h"
 #include "Widgets/Selector/ObjectRefNavigation.h"
@@ -625,6 +625,11 @@ bool DiscreteGridWidget::commitReplaceAxis(int axis, const QUuid& variableId)
 {
     if (axis == 0 && grid_.axes.empty()) return commitAddAxis(variableId);
     if (axis < 0 || axis >= static_cast<int>(grid_.axes.size())) return false;
+    auto* ref = axisHeaderRefs_[axis];
+    auto* header = table_->horizontalHeaderItem(axis + kFirstAxisColumn);
+    ref->setSupplementalToolTip({});
+    ref->parentWidget()->setToolTip(header->toolTip());
+    matrix_->setHeaderWarning(axis + kFirstAxisColumn, header->foreground().style() != Qt::NoBrush);
     if (grid_.axes[axis] == variableId) return true;
     if (grid_.axisIndex(variableId) >= 0) return false;
     const auto* previous = ProjectManager::instance().findItemByGuid(grid_.axes[axis]);
@@ -633,21 +638,27 @@ bool DiscreteGridWidget::commitReplaceAxis(int axis, const QUuid& variableId)
     const auto* variable = replacement ? replacement->comp<VVariable>() : nullptr;
     if (!variable) return false;
     DiscreteGridDef next = grid_;
+    QString error;
     for (auto& row : next.rows) {
         auto& cell = row.cells[axis];
         if (!cell) continue;
         const auto value = GridSemantics::discreteCellValue(*cell, previousVariable);
         if (!value) {
-            ToastManager::instance().showToast(tr("Resolve the missing match value before replacing this Variable."),
-                                               3500, ToastType::Warning);
-            return false;
+            error = tr("Resolve the missing match value before replacing this Variable.");
+            break;
         }
         if (*value < variable->rangeMin || *value > variable->rangeMax) {
-            ToastManager::instance().showToast(invalidCellMessage(*value, *replacement, *variable),
-                                               3500, ToastType::Warning);
-            return false;
+            error = invalidCellMessage(*value, *replacement, *variable);
+            break;
         }
         cell = DiscreteGridCell(*value);
+    }
+    if (!error.isEmpty()) {
+        const QString message = tr("Variable replacement rejected: %1").arg(error);
+        ref->setSupplementalToolTip(message);
+        ref->parentWidget()->setToolTip(message);
+        matrix_->setHeaderWarning(axis + kFirstAxisColumn, true);
+        return false;
     }
     next.axes[axis] = variableId;
     if (!commitGrid(next, tr("Replace Match Variable"))) return false;
@@ -821,9 +832,7 @@ bool DiscreteGridWidget::commitCellEdit(int row, int axis, std::optional<int> ce
             ProjectManager::instance().findItemByGuid(grid_.axes[axis]);
         const auto* variable = variableItem ? variableItem->comp<VVariable>() : nullptr;
         if (variable && (*cell < variable->rangeMin || *cell > variable->rangeMax)) {
-            ToastManager::instance().showToast(
-                invalidCellMessage(*cell, *variableItem, *variable),
-                3500, ToastType::Warning);
+            showStatusTip(this, invalidCellMessage(*cell, *variableItem, *variable));
             return false;
         }
     }

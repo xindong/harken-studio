@@ -223,8 +223,6 @@ add_library(harken_editor_foundation STATIC
     ThemeAssetCatalog.h
     BuiltinTheme.cpp
     BuiltinTheme.h
-    ToastManager.cpp
-    ToastManager.h
     ComponentCatalog.cpp
     ComponentCatalog.h
     ItemTypeCatalog.cpp

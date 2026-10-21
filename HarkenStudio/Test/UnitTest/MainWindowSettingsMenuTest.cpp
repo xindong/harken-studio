@@ -1,14 +1,20 @@
 #include "ActionManager.h"
 #include "MainWindow.h"
+#include "Core/ThemeManager.h"
 #include "Core/WindowPlacement.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
 #include "UndoCommands.h"
+#include "Widgets/LogPanel/LogPanel.h"
 
 #include "Support/AITestSupport.h"
 #include "Support/ProjectPlatformTestUtils.h"
 
 #include <gtest/gtest.h>
+
+#include <DockAreaWidget.h>
+#include <DockManager.h>
+#include <DockWidget.h>
 
 #include <QAction>
 #include <QApplication>
@@ -145,6 +151,73 @@ TEST(MainWindowSettingsMenu, ExternalChangeChoiceKeepsOrDiscardsTheWholePendingP
     EXPECT_EQ(manager.findItemByGuid(actionGuid), nullptr);
     EXPECT_EQ(manager.currentProject()->findFolderByPath(QStringLiteral("Actions"), QStringLiteral("Pending")), nullptr);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
+}
+
+TEST(MainWindowLogFeedback, StatusSharesLogSeverityAndRevealsTheExistingPanel)
+{
+    TestSupport::ensureApp();
+    ActionManager::instance().clearAllForTesting();
+    auto window = std::make_unique<MainWindow>();
+    const auto cleanup = qScopeGuard([&] {
+        QObject::disconnect(&UndoRedoManager::instance(), nullptr, window.get(), nullptr);
+        window.reset();
+        ActionManager::instance().setTransactionCallbacks({});
+        ActionManager::instance().clearAllForTesting();
+        UndoRedoManager::instance().clear();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QApplication::processEvents();
+    });
+    window->show();
+    QApplication::processEvents();
+    ASSERT_TRUE(ThemeManager::instance().reloadTheme().ok());
+    auto* status = window->findChild<QPushButton*>(QStringLiteral("statusLogButton"));
+    auto* docks = window->findChild<ads::CDockManager*>();
+    ASSERT_NE(status, nullptr);
+    ASSERT_NE(docks, nullptr);
+    auto* log = docks->findDockWidget(QStringLiteral("LogDock"));
+    auto* blueprint = docks->findDockWidget(QStringLiteral("BlueprintDock"));
+    ASSERT_NE(log, nullptr);
+    ASSERT_NE(blueprint, nullptr);
+    QApplication::processEvents();
+
+    for (const auto level : {LogEntry::Trace, LogEntry::Debug, LogEntry::Info,
+                             LogEntry::Warning, LogEntry::Error, LogEntry::Critical,
+                             LogEntry::Info}) {
+        SCOPED_TRACE(static_cast<int>(level));
+        window->statusBar()->showMessage(QStringLiteral("Temporary status"));
+        const QString message = QStringLiteral("Status severity %1").arg(static_cast<int>(level));
+        LogPanel::log(level, LogCategory::GUI, message);
+        status->ensurePolished();
+        EXPECT_TRUE(status->isVisible());
+        EXPECT_TRUE(status->text().contains(message));
+        EXPECT_EQ(status->palette().color(QPalette::Active, QPalette::ButtonText),
+                  LogEntry::levelColor(level));
+        EXPECT_EQ(status->palette().color(QPalette::Inactive, QPalette::ButtonText),
+                  LogEntry::levelColor(level));
+    }
+
+    log->toggleView(false);
+    ASSERT_TRUE(log->isClosed());
+    status->click();
+    QApplication::processEvents();
+    EXPECT_FALSE(log->isClosed());
+    EXPECT_EQ(docks->findDockWidget(QStringLiteral("LogDock")), log);
+    ASSERT_TRUE(log->isInFloatingContainer());
+    QWidget* floatingWindow = log->window();
+    QApplication::setActiveWindow(window.get());
+    status->click();
+    QApplication::processEvents();
+    EXPECT_EQ(log->window(), floatingWindow);
+    EXPECT_EQ(QApplication::activeWindow(), floatingWindow);
+    EXPECT_EQ(log->dockAreaWidget()->currentDockWidget(), log);
+
+    docks->addDockWidget(ads::CenterDockWidgetArea, log, blueprint->dockAreaWidget());
+    blueprint->setAsCurrentTab();
+    status->click();
+    QApplication::processEvents();
+    EXPECT_FALSE(log->isInFloatingContainer());
+    EXPECT_EQ(log->dockAreaWidget()->currentDockWidget(), log);
+    EXPECT_EQ(docks->findDockWidget(QStringLiteral("LogDock")), log);
 }
 
 namespace {

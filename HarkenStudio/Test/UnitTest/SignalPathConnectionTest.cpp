@@ -1,6 +1,7 @@
 #include "Engine.h"
 #include "Core/Components/VSelection.h"
 #include "Widgets/Blueprint/BlueprintCanvasWidget.h"
+#include "Widgets/Blueprint/BlueprintPanel.h"
 #include "Widgets/Blueprint/SignalPathEditing.h"
 #include "Widgets/Blueprint/ConnectionPath.h"
 #include "Core/Components/VMixNode.h"
@@ -10,7 +11,8 @@
 #include "Core/ProjectManager.h"
 #include "Core/FieldGroupProjectAdapter.h"
 #include "Core/ThemeManager.h"
-#include "Core/ToastManager.h"
+#include "Widgets/Common/ToastPresenter.h"
+#include "Widgets/LogPanel/LogPanel.h"
 #include "Core/UndoCommands.h"
 #include "Support/ProjectPlatformTestUtils.h"
 #include "Support/FieldGroupTestUtils.h"
@@ -25,6 +27,7 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QToolTip>
+#include <QWheelEvent>
 
 #include <gtest/gtest.h>
 
@@ -1116,7 +1119,8 @@ TEST_F(SignalPathConnectionTest, GainNodesRejectDropsWithoutMovingOrAuthoring)
 {
     BlueprintCanvasWidget canvas;
     show(canvas);
-    ToastManager::instance().setParentWidget(&canvas);
+    auto* toast = canvas.findChild<ToastPresenter*>();
+    ASSERT_NE(toast, nullptr);
     size_t gainIndex = 0;
     const auto edgeCount = canvas.activeSignalPathSource()->graph().edges.size();
     while (gainIndex < edgeCount && !canvas.signalPathGainNode(gainIndex)) ++gainIndex;
@@ -1148,12 +1152,11 @@ TEST_F(SignalPathConnectionTest, GainNodesRejectDropsWithoutMovingOrAuthoring)
             drainConnectionEvents();
             EXPECT_EQ(node(canvas, s1)->pos(), original);
             EXPECT_EQ(canvas.signalPathGainNode(gainIndex)->pos(), gainPosition);
-            EXPECT_TRUE(canvas.findChildren<QToastWidget*>().empty());
+            EXPECT_FALSE(toast->isVisible());
             EXPECT_EQ(s1->parent, c1);
             EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
         }
     }
-    ToastManager::instance().setParentWidget(nullptr);
 }
 
 TEST_F(SignalPathConnectionTest, CanvasNodeDropChangesHierarchyWithoutLeavingOverlappingNodes)
@@ -1286,6 +1289,83 @@ TEST_F(SignalPathConnectionTest, CanvasRejectsSameSidePinsAndKeepsGainPinsOutOfC
     EXPECT_EQ(gain->pos(), gainPosition);
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
     EXPECT_EQ(output(s1).mainOutputBusRef, toFieldGroupGuid(b1->guid));
+}
+
+TEST_F(SignalPathConnectionTest, TransientFeedbackBelongsToTheOriginatingViewAndNeverToLogsOrApiCalls)
+{
+    LogPanel log;
+    BlueprintPanel panel;
+    BlueprintPanel otherPanel;
+    panel.resize(1400, 900);
+    otherPanel.resize(1400, 900);
+    otherPanel.show();
+    panel.show();
+    auto& canvas = *panel.canvas();
+    canvas.zoomToFit();
+    drainConnectionEvents();
+    auto* toast = panel.findChild<ToastPresenter*>();
+    auto* otherToast = otherPanel.findChild<ToastPresenter*>();
+    auto* toolbar = panel.findChild<QWidget*>(QStringLiteral("BlueprintToolBar"));
+    ASSERT_NE(toast, nullptr);
+    ASSERT_NE(otherToast, nullptr);
+    ASSERT_NE(toolbar, nullptr);
+    const int logCount = log.model()->count();
+    const auto value = canvas.activeSignalPathSource()->graph();
+    const auto invalid = canvas.connectSignalPathNodes(endpoint(value, s1), endpoint(value, s1));
+    EXPECT_FALSE(invalid.success);
+    EXPECT_FALSE(invalid.error.isEmpty());
+    EXPECT_FALSE(toast->isVisible());
+    otherPanel.canvas()->useSignalChain(b1);
+    const auto rejected = otherPanel.canvas()->connectNodes(b1->objectID, master->objectID,
+        QStringLiteral("send"), QStringLiteral("bus"), QStringLiteral("bus"));
+    EXPECT_FALSE(rejected.success);
+    EXPECT_FALSE(rejected.error.isEmpty());
+    EXPECT_FALSE(otherToast->isVisible());
+
+    const auto start = canvas.mapFromScene(node(canvas, s1)->outputPin()->scenePos());
+    const auto target = canvas.mapFromScene(node(canvas, b3)->outputPin()->scenePos());
+    mouse(canvas, QEvent::MouseButtonPress, start, Qt::LeftButton, Qt::LeftButton);
+    mouse(canvas, QEvent::MouseMove, target, Qt::NoButton, Qt::LeftButton);
+    mouse(canvas, QEvent::MouseButtonRelease, target, Qt::LeftButton, Qt::NoButton);
+    drainConnectionEvents();
+    EXPECT_TRUE(toast->isVisible());
+    EXPECT_FALSE(toast->isWindow());
+    EXPECT_FALSE(otherToast->isVisible());
+    EXPECT_GT(toast->mapToGlobal(QPoint()).y(),
+        toolbar->mapToGlobal(toolbar->rect().bottomLeft()).y());
+    const auto screenBounds = [](const QWidget* widget) {
+        return QRect(widget->mapToGlobal(QPoint()), widget->size());
+    };
+    const QRect toastBounds = screenBounds(toast);
+    const QRect toolbarBounds = screenBounds(toolbar);
+    const QPoint panStart = canvas.viewport()->rect().center();
+    const QPoint panEnd = panStart + QPoint(60, 40);
+    for (const auto button : {Qt::RightButton, Qt::LeftButton}) {
+        canvas.setInteractionMode(button == Qt::LeftButton
+            ? BlueprintCanvasView::InteractionMode::Pan : BlueprintCanvasView::InteractionMode::Select);
+        const auto nodePosition = canvas.mapFromScene(node(canvas, s1)->scenePos());
+        mouse(canvas, QEvent::MouseButtonPress, panStart, button, button);
+        mouse(canvas, QEvent::MouseMove, panEnd, Qt::NoButton, button);
+        mouse(canvas, QEvent::MouseButtonRelease, panEnd, button, Qt::NoButton);
+        drainConnectionEvents();
+        EXPECT_NE(canvas.mapFromScene(node(canvas, s1)->scenePos()), nodePosition);
+        EXPECT_TRUE(toast->isVisible());
+        EXPECT_EQ(screenBounds(toast), toastBounds);
+        EXPECT_EQ(screenBounds(toolbar), toolbarBounds);
+    }
+    for (const int delta : {120, -120}) {
+        const auto nodeBounds = canvas.viewportTransform().mapRect(node(canvas, s1)->sceneBoundingRect());
+        QWheelEvent wheel(panStart, canvas.viewport()->mapToGlobal(panStart), {}, QPoint(0, delta),
+            Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(canvas.viewport(), &wheel);
+        drainConnectionEvents();
+        EXPECT_NE(canvas.viewportTransform().mapRect(node(canvas, s1)->sceneBoundingRect()), nodeBounds);
+        EXPECT_TRUE(toast->isVisible());
+        EXPECT_EQ(screenBounds(toast), toastBounds);
+        EXPECT_EQ(screenBounds(toolbar), toolbarBounds);
+    }
+    EXPECT_EQ(log.model()->count(), logCount);
+    EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 0);
 }
 
 TEST_F(SignalPathConnectionTest, CanvasConnectionKeepsPinAndBodyFeedbackSeparateDuringTargetChanges)

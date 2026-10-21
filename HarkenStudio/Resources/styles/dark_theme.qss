@@ -531,6 +531,19 @@ QToolButton[splitButtonPart="dropdown"]:pressed:enabled {
     color: @accentText@;
 }
 
+QPushButton[splitButtonPart="primary"][primaryAction="true"]:enabled {
+    background-color: @accent@;
+    color: @accentText@;
+}
+
+QPushButton[splitButtonPart="primary"][primaryAction="true"]:hover:enabled {
+    background-color: @accentHover@;
+}
+
+QPushButton[splitButtonPart="primary"][primaryAction="true"]:pressed:enabled {
+    background-color: @accent@;
+}
+
 VNX--SplitButton:disabled,
 QPushButton[splitButtonPart="primary"]:disabled,
 QPushButton[splitButtonPart="action"]:disabled,
@@ -2103,6 +2116,31 @@ QStatusBar::item {
 QStatusBar QLabel {
     background-color: transparent;
     color: @textMuted@;
+}
+
+QPushButton#statusLogButton {
+    background-color: transparent;
+    border: none;
+    padding: 0;
+    text-align: left;
+    color: @logInfo@;
+}
+
+QPushButton#statusLogButton[logLevel="TRACE"],
+QPushButton#statusLogButton[logLevel="DEBUG"] {
+    color: @logDebug@;
+}
+
+QPushButton#statusLogButton[logLevel="WARN"] {
+    color: @logWarning@;
+}
+
+QPushButton#statusLogButton[logLevel="ERROR"] {
+    color: @logError@;
+}
+
+QPushButton#statusLogButton[logLevel="CRIT"] {
+    color: @logCritical@;
 }
 
 QSizeGrip {

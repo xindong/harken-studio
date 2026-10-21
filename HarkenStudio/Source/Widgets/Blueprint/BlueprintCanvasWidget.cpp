@@ -27,7 +27,8 @@
 #include "Core/ProjectTypes.h"
 #include "Core/FieldGroupProjectAdapter.h"
 #include "Core/UndoCommands.h"
-#include "Core/ToastManager.h"
+#include "Widgets/Common/ToastPresenter.h"
+#include "Widgets/LogPanel/LogPanel.h"
 #include "Core/ThemeManager.h"
 #include "Core/TransitionRehearsal.h"
 #include "Core/VariableRehearsal.h"
@@ -385,6 +386,7 @@ BlueprintCanvasWidget::BlueprintCanvasWidget(QWidget* parent)
 {
     scene_ = new QGraphicsScene(this);
     setScene(scene_);
+    toast_ = new ToastPresenter(this);
 
     setRenderHint(QPainter::Antialiasing);
     setResizeAnchor(QGraphicsView::AnchorViewCenter);
@@ -1087,10 +1089,10 @@ BlueprintCanvasWidget::connectNodes(uint32_t fromId, uint32_t toId, QString edge
     if (!activeSource_) { r.error = QStringLiteral("no_source"); return r; }
     if (!activeSource_->supportsEditing()) { r.error = QStringLiteral("unsupported"); return r; }
     r.success = activeSource_->onConnect(fromId, toId, edgeType, fromKind, toKind);
+    if (activeSource_ == chainSource_.get()) r = chainSource_->lastConnectResult();
     if (r.success) {
         materializeFromSource_();
     } else {
-        r.error = chainSource_ ? chainSource_->lastError() : QString();
         if (r.error.isEmpty()) r.error = QStringLiteral("unsupported");
     }
     return r;
@@ -1109,7 +1111,10 @@ BlueprintCanvasWidget::ConnectResult BlueprintCanvasWidget::connectSignalPathNod
     if (plan.ok()) {
         result.success = applyConnectPlan_(std::move(plan));
         if (result.success) schedulePathRefresh_();
-        else result.error = tr("The objects changed and could not be connected");
+        else {
+            result.error = tr("The objects changed and could not be connected");
+            result.operationFailed = true;
+        }
     }
     return result;
 }
@@ -1159,7 +1164,10 @@ BlueprintCanvasWidget::ConnectResult BlueprintCanvasWidget::disconnectSignalPath
     }
     result.success = applySignalPathConnect(std::move(plan));
     if (result.success) schedulePathRefresh_();
-    else result.error = tr("The connections could not be deleted");
+    else {
+        result.error = tr("The connections could not be deleted");
+        result.operationFailed = true;
+    }
     return result;
 }
 
@@ -1181,9 +1189,6 @@ bool BlueprintCanvasWidget::setNodeOverride(uint32_t itemId, bool override)
 
     if (autoRoute != 0
         && !ProjectManager::instance().outputBusSelectable(itemId, autoRoute)) {
-        VNX::ToastManager::instance().showToast(
-            tr("Main output would target a bus this item already sends to; override rejected"),
-            3000, VNX::ToastType::Warning);
         return false;
     }
 
@@ -1279,8 +1284,7 @@ void BlueprintCanvasWidget::dropEvent(QDropEvent* event)
             event->accept();
             schedulePathRefresh_();
         } else {
-            ToastManager::instance().showToast(
-                tr("The objects changed and could not be moved"), 2500, ToastType::Warning);
+            LogPanel::logError(LogCategory::GUI, tr("The objects changed and could not be moved"));
         }
         return;
     }
@@ -1307,13 +1311,13 @@ void BlueprintCanvasWidget::dropEvent(QDropEvent* event)
     const ActionResult result =
         ActionManager::instance().execute(QStringLiteral("import_audio_to_canvas"), args);
     if (!result.success) {
-        ToastManager::instance().showToast(result.errorMessage, 2500, ToastType::Warning);
+        if (result.errorCode != QStringLiteral("IMPORT_FAILED"))
+            LogPanel::logError(LogCategory::Import, result.errorMessage);
         return;
     }
     const auto failed = result.data.value(QStringLiteral("fail_count")).toInt();
-    if (failed > 0) ToastManager::instance().showToast(tr("%1 imported; %2 failed")
-        .arg(result.data.value(QStringLiteral("success_count")).toInt()).arg(failed),
-        3000, ToastType::Warning);
+    if (failed > 0) LogPanel::logWarning(LogCategory::Import, tr("%1 imported; %2 failed")
+        .arg(result.data.value(QStringLiteral("success_count")).toInt()).arg(failed));
 
     QList<ProjectItem*> created;
     for (const auto& value : result.data.value(QStringLiteral("created_authoring_handles")).toArray()) {
@@ -1612,8 +1616,8 @@ void BlueprintCanvasWidget::populateContextMenu(QMenu& menu, QContextMenuEvent* 
             : plan.ok() ? plan.description : plan.error);
         connect(action, &QAction::triggered, this, [this, plan = std::move(plan)] {
             if (applySignalPathConnect(plan)) schedulePathRefresh_();
-            else ToastManager::instance().showToast(
-                tr("The connections changed and could not be deleted"), 2500, ToastType::Warning);
+            else LogPanel::logError(LogCategory::GUI,
+                tr("The connections changed and could not be deleted"));
         });
         return;
     }
@@ -2190,10 +2194,10 @@ void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
             auto plan = prepareConnect_(sourcePin, targetNode, targetPin, addSend);
             cancelConnection_();
             if (targetNode) {
-                if (!plan.ok()) ToastManager::instance().showToast(plan.error, 3000, ToastType::Warning);
+                if (!plan.ok()) toast_->showMessage(plan.error);
                 else if (applyConnectPlan_(std::move(plan))) schedulePathRefresh_();
-                else ToastManager::instance().showToast(
-                    tr("The objects changed and could not be connected"), 3000, ToastType::Warning);
+                else LogPanel::logError(LogCategory::GUI,
+                    tr("The objects changed and could not be connected"));
             }
             event->accept();
             return;
@@ -2203,7 +2207,7 @@ void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
         if (targetPin != nullptr && sourcePin != nullptr && targetPin != sourcePin) {
             QString reason;
             if (!evaluateConnect_(sourcePin, targetPin, reason, addSend)) {
-                ToastManager::instance().showToast(reason, 2500, ToastType::Warning);
+                toast_->showMessage(reason);
             } else {
                 auto* srcNode = dynamic_cast<NodeItem*>(sourcePin->parentItem());
                 auto* dstNode = dynamic_cast<NodeItem*>(targetPin->parentItem());
@@ -2214,9 +2218,12 @@ void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
                 const uint32_t toId   = toNode   ? toNode->objectID()   : 0;
                 if (fromId != 0 && toId != 0) {
                     ConnectResult r = connectNodes(fromId, toId);
-                    if (!r.success) {
-                        ToastManager::instance().showToast(
-                            connectErrorText(r.error), 2500, ToastType::Warning);
+                    if (r.operationFailed) {
+                        LogPanel::logError(LogCategory::GUI, tr("The connection could not be applied"));
+                    } else if (!r.success) {
+                        toast_->showMessage(r.feedback.isEmpty() ? connectErrorText(r.error) : r.feedback);
+                    } else if (!r.feedback.isEmpty()) {
+                        toast_->showMessage(r.feedback);
                     }
                 }
             }
@@ -2255,9 +2262,9 @@ void BlueprintCanvasWidget::mouseReleaseEvent(QMouseEvent* event)
             QToolTip::hideText();
             unsetCursor();
             viewport()->unsetCursor();
-            if (!plan.ok()) ToastManager::instance().showToast(plan.error, 3000, ToastType::Warning);
-            else if (!applyConnectPlan_(std::move(plan))) ToastManager::instance().showToast(
-                tr("The objects changed and could not be moved"), 3000, ToastType::Warning);
+            if (!plan.ok()) toast_->showMessage(plan.error);
+            else if (!applyConnectPlan_(std::move(plan))) LogPanel::logError(LogCategory::GUI,
+                tr("The objects changed and could not be moved"));
             pathRefreshPending_ = false;
             schedulePathRefresh_();
             return;
@@ -2661,8 +2668,10 @@ void BlueprintCanvasWidget::keyPressEvent(QKeyEvent* event)
         const auto indices = selectedSignalPathEdges_(true);
         if (!indices.empty()) {
             const auto result = disconnectSignalPathEdges(indices);
-            if (!result.success)
-                ToastManager::instance().showToast(result.error, 2500, ToastType::Warning);
+            if (result.operationFailed)
+                LogPanel::logError(LogCategory::GUI, result.error);
+            else if (!result.success)
+                toast_->showMessage(result.error);
         }
         event->accept();
         return;
@@ -2702,6 +2711,12 @@ QString BlueprintCanvasWidget::connectErrorText(const QString& code) const
     if (code == QLatin1String("send_cycle")) {
         return tr("Send would create a cycle; connection rejected");
     }
+    if (code == QLatin1String("send_rejected")) {
+        return tr("Send target is the main output bus; connection rejected");
+    }
+    if (code == QLatin1String("output_rejected")) {
+        return tr("Target bus already receives a send from this item; connection rejected");
+    }
     if (code == QLatin1String("self_loop")) {
         return tr("Cannot connect a node to itself");
     }
@@ -2737,6 +2752,7 @@ void BlueprintCanvasWidget::setNavigationViewportMargins(const QMargins& margins
 {
     if (navigationViewportMargins_ == margins) return;
     navigationViewportMargins_ = margins;
+    toast_->setViewportMargins(margins);
     viewport()->update();
 }
 
@@ -3052,6 +3068,7 @@ void BlueprintCanvasWidget::useSignalChainForBus(uint32_t busID)
 
 void BlueprintCanvasWidget::clear()
 {
+    toast_->dismiss();
     pathRefreshPending_ = false;
     projectView_ = true;
     selectedPathKeys_.clear();

@@ -1,6 +1,5 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "ActionManager.h"
-#include "Core/ToastManager.h"
 #include "Dialogs/RemoteConnectDialog.h"
 #include "MainWindow.h"
 #include "ProjectManager.h"
@@ -1205,7 +1204,6 @@ TEST(RemoteConnection, MainToolbarOpensWithoutProjectAndReflectsTheActualSession
     const auto cleanup = qScopeGuard([&] {
         VNX::ProjectManager::instance().closeProject();
         QObject::disconnect(&VNX::UndoRedoManager::instance(), nullptr, window.get(), nullptr);
-        VNX::ToastManager::instance().setParentWidget(nullptr);
         window.reset();
         VNX::ActionManager::instance().setTransactionCallbacks({});
         VNX::ActionManager::instance().clearAllForTesting();

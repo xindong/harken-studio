@@ -45,7 +45,7 @@
 #include "PropertyEditSession.h"
 #include "ReferenceSlotResolution.h"
 #include "TemplateApplyService.h"
-#include "ToastManager.h"
+#include "Widgets/LogPanel/LogPanel.h"
 #include "UndoCommands.h"
 #include "Components/VAttenuation.h"
 #include "Components/VAudio.h"
@@ -2811,9 +2811,8 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
     assetRegistry.markAllCommitted();
 
     if (!prepared.integrityReport.issues.empty()) {
-        ToastManager::instance().showToast(
-            IntegrityScanner::summarize(prepared.integrityReport),
-            5000, ToastType::Warning);
+        LogPanel::logWarning(LogCategory::File,
+            IntegrityScanner::summarize(prepared.integrityReport));
     }
 
     for (const QString& diagnostic : prepared.diagnostics)
@@ -2934,11 +2933,10 @@ void ProjectManager::reconcileAssetsOnOpen(int bindingLoadFailures)
     }
 
     if (!reclaim.isEmpty() || trashedFiles > 0) {
-        ToastManager::instance().showToast(
+        LogPanel::logInfo(LogCategory::File,
             tr("Asset cleanup: %1 unused asset(s) and %2 orphaned file(s) moved to %3/")
                 .arg(reclaim.size()).arg(trashedFiles)
-                .arg(QLatin1String(PathUtils::TRASH_DIR)),
-            5000, ToastType::Info);
+                .arg(QLatin1String(PathUtils::TRASH_DIR)));
     }
 
     if (!reclaim.isEmpty()) {

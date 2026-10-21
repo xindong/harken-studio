@@ -42,6 +42,7 @@ class QVariantAnimation;
 
 namespace VNX {
 class SignalPathGainEditSession;
+class ToastPresenter;
 struct SignalPathConnectPlan;
 
 struct ProjectData;
@@ -182,6 +183,7 @@ private slots:
 
 private:
     QGraphicsScene* scene_ = nullptr;
+    ToastPresenter* toast_ = nullptr;
 
     std::unique_ptr<SignalChainSource> chainSource_;
     std::unique_ptr<SignalPathSource> pathSource_;

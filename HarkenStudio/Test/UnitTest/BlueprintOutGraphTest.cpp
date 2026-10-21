@@ -12,7 +12,6 @@
 #include "Core/ReferenceSlotResolution.h"
 #include "Core/FieldGroupProjectAdapter.h"
 #include "Core/TransitionSemantics.h"
-#include "Core/ToastManager.h"
 #include "Core/UndoCommands.h"
 #include "MainWindow.h"
 #include "Widgets/Blueprint/BlueprintCanvasWidget.h"
@@ -173,7 +172,6 @@ TEST_F(BlueprintOutGraphTest, MainWindowVisibilityMenuPreservesCanvasAndDoesNotS
         VNX::UndoRedoManager::instance().clear();
         VNX::ProjectManager::instance().closeProject();
         QObject::disconnect(&VNX::UndoRedoManager::instance(), nullptr, window.get(), nullptr);
-        VNX::ToastManager::instance().setParentWidget(nullptr);
         window.reset();
         VNX::ActionManager::instance().setTransactionCallbacks({});
         VNX::ActionManager::instance().clearAllForTesting();
