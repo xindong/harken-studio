@@ -37,6 +37,8 @@ QString projectIssueCode(ProjectIssue issue)
         return QStringLiteral("PROJECT_SCHEMA_UNSUPPORTED");
     case ProjectIssue::InvalidPlaybackReference:
         return QStringLiteral("PROJECT_INVALID_PLAYBACK_REFERENCE");
+    case ProjectIssue::ProjectUpgradeFilesNotWritable:
+        return QStringLiteral("PROJECT_UPGRADE_FILES_NOT_WRITABLE");
     case ProjectIssue::InternalFailure: return QStringLiteral("PROJECT_INTERNAL_FAILURE");
     }
     return QStringLiteral("PROJECT_INTERNAL_FAILURE");

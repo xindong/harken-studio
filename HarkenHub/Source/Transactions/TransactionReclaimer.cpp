@@ -2,7 +2,11 @@
 
 #include "Transactions/HandoffArea.h"
 #include "Transactions/InstallExecutor.h"
+#include "Transactions/InstallIndex.h"
 #include "Transactions/TransactionJournal.h"
+#include "Security/BinaryTrustPolicy.h"
+#include "Versions/IntegrityChecker.h"
+#include "Versions/VersionScanner.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -35,6 +39,25 @@ ReclaimReport TransactionReclaimer::reclaimAtStartup(const QDateTime& now)
     if (!installLock.tryLock(0))
         return report;
     report.locked = true;
+
+    const auto index = InstallIndex::snapshot();
+    if (!index.ok)
+        report.installRecoveryErrors.append(index.error);
+    for (const auto& record : index.records) {
+        if (record.healthState != QStringLiteral("Installing"))
+            continue;
+        QString error;
+        const bool valid = !record.packageManifestHash.isEmpty()
+            && !record.capabilitiesHash.isEmpty()
+            && VersionScanner::inspect(record, nullptr, &error) == InstallationIssue::None
+            && IntegrityChecker::check(record.installPath, record.packageManifestHash,
+                                       record.capabilitiesHash).ok
+            && (!BinaryTrustPolicy::installedTreeRequired()
+                || BinaryTrustPolicy::verifyInstalledTree(record.installPath, &error));
+        if (!InstallIndex::setHealthState(record.buildId,
+                valid ? QStringLiteral("Installed") : QStringLiteral("NeedsRepair"), &error))
+            report.installRecoveryErrors.append(error);
+    }
 
     const QDir handoffDir(HandoffArea::rootDir());
     if (!handoffDir.exists())

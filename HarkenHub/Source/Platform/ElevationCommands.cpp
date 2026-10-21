@@ -17,10 +17,11 @@ ElevationLaunchResult launchElevatedUninstall(const QString& buildId)
         {QStringLiteral("--uninstall-version"), buildId});
 }
 
-ElevationLaunchResult launchElevatedRepair(const QString& buildId)
+ElevationLaunchResult launchElevatedRepair(const QString& buildId, const QString& transactionId)
 {
     return launchElevatedCommand(
-        {QStringLiteral("--repair-version"), buildId});
+        {QStringLiteral("--repair-version"), buildId,
+         QStringLiteral("--transaction-id"), transactionId});
 }
 
 }

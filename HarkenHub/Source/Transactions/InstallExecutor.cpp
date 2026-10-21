@@ -363,14 +363,6 @@ InstallOutcome InstallExecutor::run(const QString& transactionId,
                                QStringLiteral("Installing"), QString(),
                                QDateTime::currentDateTimeUtc());
 
-    if (!moveDirectoryIntoPlace(cleanup.extractDir, targetDir))
-    {
-        InstallPackageCache::remove(manifest.buildId);
-        return fail(transactionId, manifest.buildId,
-                    QStringLiteral("CommitFailed"),
-                    QStringLiteral("Cannot move the install into place"));
-    }
-
     InstalledVersionRecord record;
     record.buildId = manifest.buildId;
     record.semanticVersion = manifest.version;
@@ -382,20 +374,28 @@ InstallOutcome InstallExecutor::run(const QString& transactionId,
     record.capabilitiesHash = expectedHashes.value(
         QStringLiteral("capabilities.json"));
     record.installedAt = now.toUTC().toString(Qt::ISODateWithMs);
-    record.healthState = QStringLiteral("Installed");
+    record.healthState = QStringLiteral("Installing");
     QString indexError;
     if (!InstallIndex::commitInstallation(record, manifest.releaseSequence,
                                           &indexError)) {
-        const bool detached = moveDirectoryIntoPlace(targetDir, cleanup.extractDir);
-        if (!detached)
-            QDir(targetDir).removeRecursively();
         InstallPackageCache::remove(manifest.buildId);
         return fail(transactionId, manifest.buildId,
+                    QStringLiteral("IndexCommitFailed"), indexError);
+    }
+    if (!moveDirectoryIntoPlace(cleanup.extractDir, targetDir)) {
+        if (InstallIndex::removeRecord(manifest.buildId, &indexError))
+            InstallPackageCache::remove(manifest.buildId);
+        return fail(transactionId, manifest.buildId,
+                    QStringLiteral("CommitFailed"),
+                    QStringLiteral("Cannot move the install into place: %1").arg(targetDir)
+                        + (indexError.isEmpty() ? QString() : QLatin1Char('\n') + indexError));
+    }
+    if (!InstallIndex::setHealthState(manifest.buildId, QStringLiteral("Installed"),
+                                      &indexError)) {
+        return fail(transactionId, manifest.buildId,
                     QStringLiteral("IndexCommitFailed"),
-                    detached
-                        ? indexError
-                        : indexError + QStringLiteral(
-                              "; install rollback could not detach the target"));
+                    indexError + QLatin1Char('\n') + QStringLiteral(
+                        "Installation retained at %1. Restart Hub to recover it.").arg(targetDir));
     }
     cleanup.extractDir.clear();
 

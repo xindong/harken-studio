@@ -3,6 +3,7 @@
 #include "Projects/ProjectStore.h"
 #include "Support/StudioProtocolTestUtils.h"
 #include "Transactions/UninstallExecutor.h"
+#include "Transactions/InstallExecutor.h"
 #include "Update/UpdateStateStore.h"
 
 #include <QComboBox>
@@ -12,6 +13,7 @@
 #include <QFrame>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QLockFile>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTemporaryDir>
@@ -229,6 +231,21 @@ TEST_F(VersionsPageIssuesTest, MultipleIssuesExposeTheSelectedCauseAndPreserveSe
     EXPECT_FALSE(page.findChild<QPushButton*>("installationRepairButton")->isEnabled());
     page.refresh();
     EXPECT_EQ(selector->currentData().toString(), second.buildId);
+}
+
+TEST_F(VersionsPageIssuesTest, ActiveInstallDoesNotAppearAsDamagedButInterruptedInstallDoes)
+{
+    install("pending", "Installing");
+    QLockFile lock(VNH::InstallExecutor::lockFilePath());
+    ASSERT_TRUE(lock.tryLock());
+    VersionsPage page(&store);
+    page.refresh();
+    EXPECT_TRUE(page.installedVersions().empty());
+    EXPECT_TRUE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
+    lock.unlock();
+    page.refresh();
+    EXPECT_FALSE(page.findChild<QFrame*>("installationIssueBanner")->isHidden());
+    EXPECT_TRUE(page.findChild<QPushButton*>("installationRepairButton")->isEnabled());
 }
 
 TEST_F(VersionsPageIssuesTest, RepairMarkerCanBeCheckedWithoutACachedPackage)

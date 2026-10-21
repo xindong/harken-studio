@@ -3,6 +3,9 @@
 <TS version="2.1" language="zh_CN" sourcelanguage="en">
 <context>
     <name>HubLog</name>
+    <message><source>Install recovery failed: %1</source><translation>恢复安装状态失败：%1</translation></message>
+    <message><source>Repair failed: %1 %2</source><translation>修复失败：%1 %2</translation></message>
+    <message><source>Install failed: %1 %2</source><translation>安装失败：%1 %2</translation></message>
     <message>
         <location filename="../Source/UI/LogConsoleDialog.cpp" line="23"/>
         <source>AwaitingBridge</source>
@@ -156,6 +159,34 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message>
+        <source>Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged.</source>
+        <translation>Studio 安装记录保存失败时保留恢复信息，Hub 启动时会检查中断的安装。正在安装的版本不再被显示为已损坏。</translation>
+    </message>
+    <message>
+        <source>Studio repair checks for running programs in the installation folder before replacing files and explains which programs need to be closed.</source>
+        <translation>Studio 修复在替换文件前检查安装目录中的程序是否仍在运行，并提示需要关闭的程序。</translation>
+    </message>
+    <message>
+        <source>Hub update installers are kept separately from temporary Studio installation files so Studio cleanup cannot remove a pending Hub update.</source>
+        <translation>Hub 更新安装包与 Studio 安装临时文件分开存放，避免 Studio 清理临时文件时误删待安装的 Hub 更新。</translation>
+    </message>
+    <message>
+        <source>Unity SDK management no longer treats normal embedded-package records as dependency conflicts. Genuine dependency restrictions use neutral text, and successful SDK verification is shown in green in both languages.</source>
+        <translation>Unity SDK 管理不再将正常的嵌入包记录误判为依赖冲突。实际的依赖限制使用中性提示，SDK 验证成功的提示在中英文下均显示为绿色。</translation>
+    </message>
+    <message>
+        <source>SDK file replacement failures show the affected paths and system error, with guidance for write protection, permissions, files in use, and version-control checkout when applicable. Related Hub prompts and log messages support Chinese and English.</source>
+        <translation>SDK 文件替换失败时显示相关路径和系统错误，并提供写保护、权限、文件占用以及适用情况下版本管理签出的处理指引。相关 Hub 提示和日志信息支持中英文。</translation>
+    </message>
+    <message>
+        <source>Unreal SDK checks detect missing, unreadable, or empty native libraries and core headers for the current platform before installation and when verifying an installed SDK.</source>
+        <translation>Unreal SDK 在安装前和验证已安装 SDK 时，检查当前平台必需的原生库与核心头文件是否缺失、不可读取或为空。</translation>
+    </message>
+    <message>
+        <source>With a Studio build that supports the new checks, project upgrades detect existing files that cannot be written before changing project data. Hub lists the affected files and explains how to restore write access.</source>
+        <translation>配合支持新检查的 Studio 构建，工程升级会在修改工程数据前检查已有文件是否可写。Hub 会列出无法写入的文件，并提示如何恢复写入权限。</translation>
+    </message>
     <message><source>On Windows, new installations default to HarkenStudioHub directly under Program Files, and the main application and setup use the HarkenStudioHub name. Existing installation locations and older Studio launchers remain supported.</source><translation>Windows &#x65b0;&#x5b89;&#x88c5;&#x9ed8;&#x8ba4;&#x76f4;&#x63a5;&#x4f7f;&#x7528; Program Files &#x4e0b;&#x7684; HarkenStudioHub &#x76ee;&#x5f55;&#xff0c;&#x4e3b;&#x7a0b;&#x5e8f;&#x53ca;&#x5b89;&#x88c5;&#x7a0b;&#x5e8f;&#x7edf;&#x4e00;&#x4f7f;&#x7528; HarkenStudioHub &#x540d;&#x79f0;&#x3002;&#x4fdd;&#x7559;&#x73b0;&#x6709;&#x5b89;&#x88c5;&#x4f4d;&#x7f6e;&#xff0c;&#x5e76;&#x517c;&#x5bb9;&#x65e7;&#x7248; Studio &#x7684;&#x542f;&#x52a8;&#x65b9;&#x5f0f;&#x3002;</translation></message>
     <message><source>Windows desktop shortcuts and taskbar icons now display the H logo with crisp images for different icon sizes.</source><translation>&#x4fee;&#x590d; Windows &#x684c;&#x9762;&#x5feb;&#x6377;&#x65b9;&#x5f0f;&#x548c;&#x4efb;&#x52a1;&#x680f;&#x56fe;&#x6807;&#xff0c;&#x4f7f;&#x7528;&#x9002;&#x914d;&#x4e0d;&#x540c;&#x5c3a;&#x5bf8;&#x7684;&#x6e05;&#x6670; H &#x6807;&#x5fd7;&#x3002;</translation></message>
     <message><source>Project association prompts in Engine Integrations now refer only to Unity projects.</source><translation>&#x5f15;&#x64ce;&#x96c6;&#x6210;&#x4e2d;&#x7684;&#x5de5;&#x7a0b;&#x5173;&#x8054;&#x63d0;&#x793a;&#x4ec5;&#x4fdd;&#x7559; Unity &#x5de5;&#x7a0b;&#x4fe1;&#x606f;&#x3002;</translation></message>
@@ -731,6 +762,18 @@ Continue?</source>
 </context>
 <context>
     <name>HarkenHub</name>
+    <message><source>HarkenStudio is still running from this version: %1</source><translation>此版本的 HarkenStudio 仍在运行：%1</translation></message>
+    <message><source>Close Studio and other programs running from this installation, then retry Repair. No installation files were replaced.</source><translation>请关闭此安装目录中的 Studio 及其他正在运行的程序，然后重试“修复”。安装文件未被替换。</translation></message>
+    <message><source>Another install transaction is running</source><translation>另一个安装任务正在运行</translation></message>
+    <message><source>Cannot move the install into place: %1</source><translation>无法将安装文件移入目标目录：%1</translation></message>
+    <message><source>Installation retained at %1. Restart Hub to recover it.</source><translation>安装文件已保留在 %1。请重启 Hub 恢复安装状态。</translation></message>
+    <message><source>Cannot open the install index for reading: %1 (Qt error %2: %3)</source><translation>无法打开安装索引以供读取：%1（Qt 错误 %2：%3）</translation></message>
+    <message><source>Cannot read the install index: %1 (Qt error %2: %3)</source><translation>无法读取安装索引：%1（Qt 错误 %2：%3）</translation></message>
+    <message><source>Install index is corrupt: %1 (offset %2: %3)</source><translation>安装索引已损坏：%1（偏移 %2：%3）</translation></message>
+    <message><source>Cannot create file directory: %1</source><translation>无法创建文件所在目录：%1</translation></message>
+    <message><source>Cannot open file for writing: %1 (Qt error %2: %3)</source><translation>无法打开文件以供写入：%1（Qt 错误 %2：%3）</translation></message>
+    <message><source>Cannot write file: %1 (Qt error %2: %3)</source><translation>无法写入文件：%1（Qt 错误 %2：%3）</translation></message>
+    <message><source>Cannot commit file: %1 (Qt error %2: %3)</source><translation>无法保存文件：%1（Qt 错误 %2：%3）</translation></message>
     <message><source>Cannot create the download directory</source><translation>无法创建下载目录</translation></message>
     <message><source>This package is in use by another operation</source><translation>此安装包正在被另一项操作使用</translation></message>
     <message><source>Cannot lock the download cache</source><translation>无法锁定下载缓存</translation></message>
@@ -5124,9 +5167,9 @@ Uninstall SDK: %3</source><translation>更换 SDK：%1
         <message><source>SDK metadata needs repair</source><translation>SDK 描述文件需要修复</translation></message>
         <message><source>The installation record is available, but package.json or harken-integration.json is missing or invalid.</source><translation>安装记录有效，但 package.json 或 harken-integration.json 缺失或无效。</translation></message>
         <message><source>Use Change SDK with a complete SDK source to repair the managed files. Move and uninstall require readable package metadata, so repair it first. Existing safety checks still run before applying any change.</source><translation>可点击“更换 SDK”，选择完整的 SDK 来源修复文件。迁移和卸载需要有效的包描述文件，请先修复。实际修改前仍须通过安全检查。</translation></message>
-        <message><source>SDK dependency present</source><translation>工程仍有 SDK 包依赖</translation></message>
-        <message><source>Change SDK remains available. Before moving or uninstalling, resolve the SDK dependencies in Unity Package Manager and package manifests so Unity cannot load another referenced copy or lose a package reference.</source><translation>仍可更换 SDK。迁移或卸载前，请先处理 Unity 包管理器和包清单中的 SDK 依赖，避免 Unity 加载另一份 SDK，或出现引用路径失效。</translation></message>
-        <message><source>Local package dependency</source><translation>SDK 存在本地包路径依赖</translation></message>
+        <message><source>Installed; move and uninstall restricted by dependencies</source><translation>已安装；包依赖限制了迁移和卸载</translation></message>
+        <message><source>The SDK is installed. Change SDK remains available. Before moving or uninstalling, resolve the SDK dependencies in Unity Package Manager and package manifests so Unity cannot load another referenced copy or lose a package reference.</source><translation>SDK 已安装，可继续更换或更新。如需迁移或卸载，请先处理 Unity Package Manager 和包清单中的 SDK 依赖，避免 Unity 加载另一份副本或丢失包引用。</translation></message>
+        <message><source>Installed; move restricted by local dependencies</source><translation>已安装；本地包依赖限制了迁移</translation></message>
         <message><source>Change and uninstall remain available. Before moving the SDK, resolve local file: dependencies that belong to or reference this installation, then check again.</source><translation>仍可更换和卸载 SDK。迁移前，请先处理 SDK 自身或指向其位置的 file: 本地包依赖，再重新检查。</translation></message>
         <message><source>The Unreal project descriptor is missing.</source><translation>Unreal 工程的 .uproject 文件不存在。</translation></message>
         <message><source>Restore the .uproject file or select the current Unreal project location, then check again.</source><translation>请恢复 .uproject 文件，或重新选择 Unreal 工程当前的位置，再重新检查。</translation></message>
@@ -5191,5 +5234,17 @@ Close Unreal Editor before continuing. Any paths hard-coded in your project must
 %3
 
 请先关闭此 Unreal 工程。工程中写死的路径需要另行调整。</translation></message>
+        <message><source>View Dependencies...</source><translation>查看依赖…</translation></message>
+        <message><source>SDK Dependencies</source><translation>SDK 包依赖</translation></message>
+        <message><source>Could not back up the existing Unity SDK.</source><translation>无法备份现有 Unity SDK。</translation></message>
+        <message><source>Could not activate the staged Unity SDK.</source><translation>无法启用准备好的 Unity SDK。</translation></message>
+        <message><source>Cannot move directory from %1 to %2 (system error %3: %4).</source><translation>无法将目录从 %1 移动到 %2（系统错误 %3：%4）。</translation></message>
+        <message><source>Check file write protection, directory permissions and processes holding files open at %1. If checkout or unlocking is required, do that first, then retry. The existing SDK was not changed.</source><translation>请检查 %1 下的文件写保护、目录权限及占用文件的进程。如需签出或解锁，请先完成后重试。现有 SDK 未被修改。</translation></message>
+        <message><source>The Unreal SDK is missing a readable, nonempty file required on this platform: %1. Select a complete SDK source.</source><translation>Unreal SDK 缺少当前平台必需的可读取、非空文件：%1。请选择完整的 SDK 来源。</translation></message>
+        <message><source>Some files needed for the project upgrade are read-only or not writable.</source><translation>工程升级需要修改的部分文件处于只读状态或不可写。</translation></message>
+        <message><source>Check file write protection and access permissions, then try again. If your version control workflow requires checkout or unlocking, do that first. No project data was changed.</source><translation>请检查文件写保护和访问权限后重试。如果版本管理流程要求签出或解锁，请先完成相应操作。工程数据未被修改。</translation></message>
+        <message><source>Affected files:
+%1</source><translation>受影响的文件：
+%1</translation></message>
     </context>
 </TS>

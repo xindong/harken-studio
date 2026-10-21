@@ -26,6 +26,7 @@ struct EngineTargetObservation
     QString error;
     QString status;
     QString remediation;
+    bool dependencyRestricted = false;
     bool canChangeSdk = false;
     bool canMoveSdk = false;
     bool canRemoveSdk = false;

@@ -57,8 +57,9 @@ int main(int argc, char* argv[])
             {QStringLiteral("projectPath"), projectPath},
             {QStringLiteral("projectId"), QStringLiteral("11111111-2222-3333-4444-555555555555")},
             {QStringLiteral("ok"), mode != QStringLiteral("failed")},
-            {QStringLiteral("errorCode"), mode == QStringLiteral("failed") ? QStringLiteral("PROJECT_REQUIRES_NEWER_STUDIO") : QString()},
-            {QStringLiteral("technicalDetails"), QString()},
+            {QStringLiteral("errorCode"), mode == QStringLiteral("failed")
+                ? config.value(QStringLiteral("errorCode")).toString(QStringLiteral("PROJECT_REQUIRES_NEWER_STUDIO")) : QString()},
+            {QStringLiteral("technicalDetails"), config.value(QStringLiteral("technicalDetails")).toString()},
             {QStringLiteral("currentSchema"), upgrade ? 1 : 2},
             {QStringLiteral("targetSchema"), 2},
             {QStringLiteral("upgradeRequired"), upgrade},
@@ -93,7 +94,7 @@ int main(int argc, char* argv[])
         send({{QStringLiteral("type"), QStringLiteral("stage")},
               {QStringLiteral("stage"), name},
               {QStringLiteral("errorCode"), error},
-              {QStringLiteral("error"), error}});
+              {QStringLiteral("error"), config.value(QStringLiteral("errorMessage")).toString(error)}});
     };
     QObject::connect(&socket, &QLocalSocket::connected, &app, [&]() {
         send({{QStringLiteral("type"), QStringLiteral("hello")},
@@ -112,7 +113,8 @@ int main(int argc, char* argv[])
             if (mode == QStringLiteral("cancel"))
                 stage(QStringLiteral("failed"), QStringLiteral("PROJECT_OPEN_CANCELLED"));
             else if (mode == QStringLiteral("failed"))
-                stage(QStringLiteral("failed"), QStringLiteral("PROJECT_REQUIRES_NEWER_STUDIO"));
+                stage(QStringLiteral("failed"), config.value(QStringLiteral("errorCode"))
+                    .toString(QStringLiteral("PROJECT_REQUIRES_NEWER_STUDIO")));
             else if (mode == QStringLiteral("forwarded")) {
                 stage(QStringLiteral("forwarded"));
                 return;

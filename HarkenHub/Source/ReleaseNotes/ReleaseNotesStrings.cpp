@@ -1,6 +1,13 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Studio repair checks for running programs in the installation folder before replacing files and explains which programs need to be closed."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Hub update installers are kept separately from temporary Studio installation files so Studio cleanup cannot remove a pending Hub update."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Unity SDK management no longer treats normal embedded-package records as dependency conflicts. Genuine dependency restrictions use neutral text, and successful SDK verification is shown in green in both languages."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "SDK file replacement failures show the affected paths and system error, with guidance for write protection, permissions, files in use, and version-control checkout when applicable. Related Hub prompts and log messages support Chinese and English."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Unreal SDK checks detect missing, unreadable, or empty native libraries and core headers for the current platform before installation and when verifying an installed SDK."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "With a Studio build that supports the new checks, project upgrades detect existing files that cannot be written before changing project data. Hub lists the affected files and explains how to restore write access."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "On Windows, new installations default to HarkenStudioHub directly under Program Files, and the main application and setup use the HarkenStudioHub name. Existing installation locations and older Studio launchers remain supported."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Windows desktop shortcuts and taskbar icons now display the H logo with crisp images for different icon sizes."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Project association prompts in Engine Integrations now refer only to Unity projects."),

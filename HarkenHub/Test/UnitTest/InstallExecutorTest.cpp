@@ -8,6 +8,7 @@
 #include "Transactions/RepairExecutor.h"
 #include "Transactions/UninstallExecutor.h"
 #include "Transactions/TransactionJournal.h"
+#include "Transactions/TransactionReclaimer.h"
 #include "Transactions/TransactionDiagnostics.h"
 #include "Versions/VersionScanner.h"
 #include "ZipTestUtils.h"
@@ -224,6 +225,72 @@ TEST_F(InstallExecutorTest, RepairRestoresTamperedInstallFromVerifiedCache)
               QByteArrayLiteral("payload-data"));
     EXPECT_EQ(InstallIndex::snapshot().records.front().healthState,
               QStringLiteral("Installed"));
+}
+
+TEST_F(InstallExecutorTest, InterruptedActivationIsRecoveredOrRemainsRepairableAtItsOriginalPath)
+{
+    ASSERT_TRUE(InstallExecutor::run(placeHandoff(payloadForArchive()), keys.publicKey, kNow).ok);
+    const auto original = InstallIndex::snapshot().records.front();
+    const EnvGuard trustAnchor("HARKEN_HUB_MANIFEST_PUBKEY", QString::fromLatin1(keys.publicKey.toHex()));
+    for (const QString& damage : {QStringLiteral("none"), QStringLiteral("missing"), QStringLiteral("tampered")}) {
+        SCOPED_TRACE(damage.toStdString());
+        QString error;
+        ASSERT_TRUE(InstallIndex::setHealthState(original.buildId, QStringLiteral("Installing"), &error));
+        if (damage == QStringLiteral("missing")) {
+            ASSERT_TRUE(QDir(original.installPath).removeRecursively());
+        } else if (damage == QStringLiteral("tampered")) {
+            QFile asset(original.installPath + "/data/asset.bin");
+            ASSERT_TRUE(asset.open(QIODevice::WriteOnly));
+            asset.write("tampered");
+        }
+        const auto reclaimed = VNH::TransactionReclaimer::reclaimAtStartup(kNow);
+        ASSERT_TRUE(reclaimed.locked);
+        ASSERT_TRUE(reclaimed.installRecoveryErrors.isEmpty());
+        auto index = InstallIndex::snapshot();
+        ASSERT_EQ(index.records.size(), 1u);
+        EXPECT_EQ(index.records.front().installPath, original.installPath);
+        EXPECT_EQ(index.records.front().healthState,
+                  damage == QStringLiteral("none") ? QStringLiteral("Installed") : QStringLiteral("NeedsRepair"));
+        const auto retry = InstallExecutor::run(placeHandoff(payloadForArchive()), keys.publicKey, kNow);
+        EXPECT_FALSE(retry.ok);
+        EXPECT_EQ(retry.failureCode, QStringLiteral("TargetConflict"));
+        const auto repaired = VNH::RepairExecutor::run(original.buildId, kNow);
+        ASSERT_TRUE(repaired.ok) << repaired.error.toStdString();
+        EXPECT_EQ(readAll(original.installPath + "/data/asset.bin"), "payload-data");
+        EXPECT_EQ(VNH::VersionScanner::scanInstalled().size(), 1u);
+        EXPECT_FALSE(QFileInfo::exists(original.installPath + "-2"));
+    }
+}
+
+TEST_F(InstallExecutorTest, RepairNeverReplacesAReferencedRunningVersion)
+{
+    ASSERT_TRUE(InstallExecutor::run(placeHandoff(payloadForArchive()), keys.publicKey, kNow).ok);
+    const auto record = InstallIndex::snapshot().records.front();
+    const EnvGuard trustAnchor("HARKEN_HUB_MANIFEST_PUBKEY", QString::fromLatin1(keys.publicKey.toHex()));
+    QFile asset(record.installPath + "/data/asset.bin");
+    ASSERT_TRUE(asset.open(QIODevice::WriteOnly));
+    asset.write("original damaged data");
+    asset.close();
+    for (int startAt : {1, 2}) {
+        int probes = 0;
+        const QString repairTransactionId = VNH::HandoffArea::newTransactionId();
+        const auto result = VNH::RepairExecutor::run(record.buildId, kNow, [&](const QString& root) {
+            EXPECT_EQ(root, record.installPath);
+            return ++probes >= startAt ? QStringList{root + '/' + VNH::studioBinaryRelativePath()} : QStringList{};
+        }, repairTransactionId);
+        EXPECT_FALSE(result.ok);
+        EXPECT_EQ(result.failureCode, "VersionInUse");
+        const QString diagnostic = VNH::TransactionDiagnostics::failureMessage(repairTransactionId);
+        EXPECT_TRUE(diagnostic.contains(result.error));
+        EXPECT_TRUE(diagnostic.contains(QStringLiteral("Close Studio")));
+        EXPECT_TRUE(VNH::TransactionDiagnostics::failureMessage(VNH::HandoffArea::newTransactionId()).isEmpty());
+        EXPECT_EQ(readAll(asset.fileName()), "original damaged data");
+        EXPECT_TRUE(QDir(VNH::studioVersionsRoot()).entryList({".repair-*"},
+            QDir::Dirs | QDir::Hidden | QDir::NoDotAndDotDot).isEmpty());
+    }
+    EXPECT_TRUE(VNH::RepairExecutor::run(record.buildId, kNow,
+        [](const QString&) { return QStringList{}; }).ok);
+    EXPECT_EQ(readAll(asset.fileName()), "payload-data");
 }
 
 TEST_F(InstallExecutorTest, FailedRepairVerificationRestoresTheOriginalTreeAndKeepsTheMarker)

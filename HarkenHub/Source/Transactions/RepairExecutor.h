@@ -2,6 +2,9 @@
 
 #include <QDateTime>
 #include <QString>
+#include <QStringList>
+
+#include <functional>
 
 namespace VNH {
 
@@ -17,7 +20,12 @@ struct RepairOutcome
 class RepairExecutor
 {
 public:
-    static RepairOutcome run(const QString& buildId, const QDateTime& now);
+    using ProcessProbe = std::function<QStringList(const QString&)>;
+
+    static RepairOutcome run(const QString& buildId, const QDateTime& now,
+                             const QString& transactionId = {});
+    static RepairOutcome run(const QString& buildId, const QDateTime& now,
+                             const ProcessProbe& probe, const QString& transactionId = {});
 };
 
 }

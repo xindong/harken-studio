@@ -216,6 +216,57 @@ protected:
     QString destination;
 };
 
+TEST_F(UnitySdkMigrationTest, EmbeddedResolutionDoesNotPreventMaintenanceAfterMoveOrRemoval)
+{
+    const QString lockPath = project + "/Packages/packages-lock.json";
+    const QByteArray resolution = R"({"dependencies":{"com.harken.core":{"version":"file:com.harken.core","depth":0,"source":"embedded","dependencies":{}}}})";
+    writeFile(lockPath, resolution);
+    approve();
+    const auto moved = service.run(request);
+    ASSERT_TRUE(moved.success) << moved.steps.back().cause.toStdString();
+    EXPECT_EQ(readFile(lockPath), resolution);
+    const auto discovery = VNX::UnityInstallation::discover(project);
+    EXPECT_TRUE(discovery.errors.isEmpty());
+    EXPECT_TRUE(discovery.sdkReferences.isEmpty());
+    ASSERT_EQ(discovery.installations.size(), 1);
+    EXPECT_TRUE(VNX::UnityInstallation::samePath(discovery.installations.front().path, destination));
+    VNX::UnityIntegrationService::Request remove;
+    remove.unityProjectPath = project;
+    remove.sdkInstallPath = request.migrationTargetPath;
+    remove.removeIntegration = true;
+    remove.confirmRemoval = true;
+    remove.removalBackupPath = dir.filePath("RemovalBackup");
+    ASSERT_TRUE(service.run(remove).success);
+    EXPECT_EQ(readFile(lockPath), resolution);
+    EXPECT_TRUE(VNX::UnityInstallation::discover(project).sdkReferences.isEmpty());
+}
+
+TEST_F(UnitySdkMigrationTest, UnsafeOrNonEmbeddedResolutionsStillBlockMaintenance)
+{
+    const QString lockPath = project + "/Packages/packages-lock.json";
+    for (const QJsonObject& resolution : {
+        QJsonObject{{"version", "file:../External"}, {"depth", 0}, {"source", "embedded"}},
+        QJsonObject{{"version", "file:%2e%2e%2fExternal"}, {"depth", 0}, {"source", "embedded"}},
+        QJsonObject{{"version", "file:D:/External"}, {"depth", 0}, {"source", "embedded"}},
+        QJsonObject{{"version", "file:com.harken.core"}, {"depth", 1}, {"source", "embedded"}},
+        QJsonObject{{"version", "file:com.harken.core"}, {"source", "embedded"}},
+        QJsonObject{{"version", "file:com.harken.core"}, {"depth", 0}, {"source", "local"}},
+        QJsonObject{{"version", "1.2.3"}, {"depth", 0}, {"source", "registry"}}
+    }) {
+        SCOPED_TRACE(QJsonDocument(resolution).toJson().toStdString());
+        const QByteArray bytes = QJsonDocument(QJsonObject{{"dependencies",
+            QJsonObject{{"com.harken.core", resolution}}}}).toJson();
+        writeFile(lockPath, bytes);
+        EXPECT_FALSE(VNX::UnityInstallation::discover(project).sdkReferences.isEmpty());
+        const auto preview = service.run(request);
+        EXPECT_FALSE(preview.success);
+        EXPECT_FALSE(preview.requiresConfirmation);
+        EXPECT_TRUE(QFileInfo::exists(original));
+        EXPECT_FALSE(QFileInfo::exists(destination));
+        EXPECT_EQ(readFile(lockPath), bytes);
+    }
+}
+
 TEST_F(UnitySdkMigrationTest, VerifiesInstalledFilesWithoutSourceAndNeverRewritesThem)
 {
     ASSERT_TRUE(QDir(source).removeRecursively());
@@ -1872,6 +1923,43 @@ TEST(UnityIntegrationService, DoesNotRemoveAnythingWhenBackupCannotStart)
     EXPECT_TRUE(result.steps[2].summary.contains(
         QStringLiteral("already exists")));
 }
+
+#ifdef Q_OS_WIN
+TEST(UnityIntegrationService, BackupFailurePreservesSdkAndReportsSystemDiagnostics)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString project = makeUnityProject(dir.filePath("Game"));
+    const QString source = makeCompleteSdk(dir.filePath("Source"));
+    VNH::UnityIntegrationRequest request;
+    request.unityProjectPath = project;
+    request.sdkSourcePath = source;
+    ASSERT_TRUE(VNH::HubUnityIntegrationService::run(request).success);
+    const QString installed = project + "/Packages/com.harken.core";
+    const QByteArray original = readFile(installed + "/Runtime/Harken.Core.asmdef");
+    QFile held(installed + "/Runtime/Generated/HarkenAbi.g.cs");
+    ASSERT_TRUE(held.open(QIODevice::ReadOnly));
+    writeFile(source + "/Runtime/Harken.Core.asmdef", "updated SDK");
+    request.confirmTargetChanges = true;
+    const auto result = VNH::HubUnityIntegrationService::run(request);
+    EXPECT_FALSE(result.success);
+    bool backupFailed = false;
+    for (const auto& step : result.steps) {
+        if (step.summary != "Could not back up the existing Unity SDK.") continue;
+        backupFailed = true;
+        EXPECT_TRUE(step.cause.contains(installed));
+        EXPECT_TRUE(step.cause.contains(".backup-"));
+        EXPECT_TRUE(step.cause.contains("system error"));
+        EXPECT_TRUE(step.remediation.contains("permissions"));
+        EXPECT_TRUE(step.remediation.contains("processes"));
+    }
+    EXPECT_TRUE(backupFailed);
+    EXPECT_EQ(readFile(installed + "/Runtime/Harken.Core.asmdef"), original);
+    held.close();
+    EXPECT_TRUE(VNH::HubUnityIntegrationService::run(request).success);
+    EXPECT_EQ(readFile(installed + "/Runtime/Harken.Core.asmdef"), "updated SDK");
+}
+#endif
 
 TEST(UnityIntegrationService, RequiresApprovalBeforeReplacingExistingSdk)
 {

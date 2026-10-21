@@ -35,6 +35,33 @@ QString hubTranslate(const QString& source)
     return QCoreApplication::translate("HarkenHub", utf8.constData());
 }
 
+bool validateUnrealRuntime(const QString& root, QString* error)
+{
+    const QStringList required = {
+        QStringLiteral("Source/HarkenCore/Include/harken/Harken.h"),
+        QStringLiteral("Source/HarkenCore/Include/harken/ObjectId.h"),
+#ifdef Q_OS_WIN
+        QStringLiteral("Source/HarkenCore/Lib/Win64/HarkenCoreImport.lib"),
+        QStringLiteral("Binaries/ThirdParty/HarkenCore/Win64/HarkenCore.dll"),
+#elif defined(Q_OS_MACOS)
+        QStringLiteral("Binaries/ThirdParty/HarkenCore/Mac/libHarkenCore.dylib"),
+#else
+        QStringLiteral("Binaries/ThirdParty/HarkenCore/Linux/x86_64/libHarkenCore.so"),
+#endif
+    };
+    for (const auto& relative : required) {
+        QFile file(QDir(root).filePath(relative));
+        if (!QFileInfo(file).isFile() || !file.open(QIODevice::ReadOnly)
+            || file.size() <= 0 || file.read(1).size() != 1) {
+            *error = hubTranslate(QStringLiteral(
+                "The Unreal SDK is missing a readable, nonempty file required on this platform: %1. Select a complete SDK source."))
+                .arg(relative);
+            return false;
+        }
+    }
+    return true;
+}
+
 QString hashFile(const QString& path)
 {
     QFile file(path);
@@ -641,6 +668,7 @@ IntegrationPlan ProjectIntegrationExecutor::inspectUnreal(const EngineTargetReco
         result.error = hubTranslate(QStringLiteral("The existing Unreal plugin has no trusted ownership record"));
         return result;
     }
+    if (verifyContent && !validateUnrealRuntime(result.targetRoot, &result.error)) return result;
     result.version = state.value(QStringLiteral("sdk_version")).toString();
     const auto managed = state.value(QStringLiteral("managed_files")).toObject();
     for (auto it = managed.begin(); verifyContent && it != managed.end(); ++it)
@@ -703,18 +731,7 @@ IntegrationPlan ProjectIntegrationExecutor::planUnreal(
             plan.error = hubTranslate(QStringLiteral("The Unreal SDK version is unavailable"));
             return plan;
         }
-        for (const auto* name : {"Harken.h", "ObjectId.h"}) {
-            const QString relative = QStringLiteral("Source/HarkenCore/Include/harken/")
-                + QLatin1String(name);
-            QFile header(QDir(plan.sourceRoot).filePath(relative));
-            if (!header.open(QIODevice::ReadOnly) || header.size() == 0
-                || header.read(1).size() != 1) {
-                plan.error = hubTranslate(QStringLiteral(
-                    "The Unreal SDK is missing a readable, nonempty header: %1. Select a complete SDK source."))
-                    .arg(relative);
-                return plan;
-            }
-        }
+        if (!validateUnrealRuntime(plan.sourceRoot, &plan.error)) return plan;
     }
     const bool targetExists = QFileInfo::exists(QDir(plan.targetRoot).filePath(QStringLiteral("Harken.uplugin")))
         || QFileInfo::exists(QDir(plan.targetRoot).filePath(QLatin1String(kUnrealReceiptFileName)));

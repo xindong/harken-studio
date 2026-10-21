@@ -252,8 +252,13 @@ void StartupCoordinator::tryCommit()
         if (!prepared_ || prepared_->error.isEmpty()) {
             fail(tr("Harken Studio could not open the project"));
         } else {
-            fail(ProjectUpgradeMessages::userMessage(
-                prepared_->error, !hubArguments_.createProject));
+            const QString message = ProjectUpgradeMessages::userMessage(
+                prepared_->error, !hubArguments_.createProject);
+            const QString writeAccessCode = projectIssueCode(ProjectIssue::ProjectUpgradeFilesNotWritable);
+            if (prepared_->error.startsWith(writeAccessCode + QLatin1Char(':')))
+                fail(message, 3, writeAccessCode);
+            else
+                fail(message);
         }
         return;
     }

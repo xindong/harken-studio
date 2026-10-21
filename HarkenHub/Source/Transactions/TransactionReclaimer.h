@@ -10,6 +10,7 @@ struct ReclaimReport
     bool locked = false;
     QStringList reclaimedTransactionIds;
     QStringList journalWriteFailures;
+    QStringList installRecoveryErrors;
 };
 
 class TransactionReclaimer

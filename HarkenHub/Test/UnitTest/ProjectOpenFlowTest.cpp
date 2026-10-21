@@ -79,6 +79,7 @@ protected:
                         }
                 } else {
                     ++notifications;
+                    notificationText = box->text();
                     box->accept();
                 }
                 return;
@@ -141,6 +142,7 @@ protected:
     bool approve = false;
     int confirmations = 0;
     int notifications = 0;
+    QString notificationText;
     int completionCount = 0;
     std::function<void()> beforeConfirmation;
     VNH::ProjectOpenOutcome::Result outcome = VNH::ProjectOpenOutcome::Result::Unknown;
@@ -255,6 +257,34 @@ TEST_F(ProjectOpenFlowTest, FailedAnalysisLeavesFinalDecisionToStudio)
     EXPECT_EQ(outcome, VNH::ProjectOpenOutcome::Result::Failed);
     EXPECT_FALSE(launchLog().isEmpty());
     EXPECT_FALSE(hasApproval());
+    EXPECT_TRUE(store.listProjects().front().lastOpenedAt.isEmpty());
+}
+
+TEST_F(ProjectOpenFlowTest, NonWritableUpgradeFilesBlockBeforeApprovalAndLaunch)
+{
+    const QString files = projectPath + QStringLiteral("\n") + dir.filePath("Layers/Main.vp");
+    open({{"analysis", "failed"}, {"upgrade", true},
+          {"errorCode", "PROJECT_UPGRADE_FILES_NOT_WRITABLE"}, {"technicalDetails", files}});
+    ASSERT_TRUE(spinUntil([this]() { return completed; }));
+    EXPECT_EQ(outcome, VNH::ProjectOpenOutcome::Result::Failed);
+    EXPECT_TRUE(launchLog().isEmpty());
+    EXPECT_EQ(confirmations, 0);
+    EXPECT_EQ(notifications, 1);
+    EXPECT_TRUE(notificationText.contains(files));
+    EXPECT_TRUE(notificationText.contains("write protection"));
+    EXPECT_TRUE(store.listProjects().front().lastOpenedAt.isEmpty());
+}
+
+TEST_F(ProjectOpenFlowTest, WriteAccessChangesAfterApprovalKeepStudioDiagnostics)
+{
+    approve = true;
+    const QString failure = QStringLiteral("Project data is not writable: ") + projectPath;
+    open({{"upgrade", true}, {"launch", "failed"},
+          {"errorCode", "PROJECT_UPGRADE_FILES_NOT_WRITABLE"}, {"errorMessage", failure}});
+    ASSERT_TRUE(spinUntil([this]() { return completed; }));
+    EXPECT_EQ(outcome, VNH::ProjectOpenOutcome::Result::Failed);
+    EXPECT_EQ(confirmations, 1);
+    EXPECT_EQ(notificationText, failure);
     EXPECT_TRUE(store.listProjects().front().lastOpenedAt.isEmpty());
 }
 

@@ -1349,6 +1349,8 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
         lastError_ = analysis.blockingErrors.isEmpty()
                          ? QStringLiteral("Project governance analysis failed")
                          : analysis.blockingErrors.first();
+        if (analysis.issue == ProjectIssue::ProjectUpgradeFilesNotWritable)
+            lastError_ = projectIssueCode(analysis.issue) + QLatin1Char(':') + analysis.detail;
         emit errorOccurred(ProjectUpgradeMessages::userMessage(lastError_, true));
         return false;
     }
