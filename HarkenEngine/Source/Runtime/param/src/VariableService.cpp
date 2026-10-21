@@ -2052,7 +2052,9 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
         assert(recycled);
         (void)recycled;
     }
+    result.writeCount_ = batch.count_;
     for (std::uint32_t i = 0; i < batch.count_; ++i) {
+        result.writeSlots_[i] = batch.rows_[i].slot_;
         CommitPreparedWriteImpl(&batch.rows_[i], sequence, nullptr, nullptr, false);
     }
     batch.committed_ = true;
@@ -2063,13 +2065,18 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
     return result;
 }
 
-void VariableServiceV1::BindMonitorRequest(LogicCommitTicket ticket,
+void VariableServiceV1::BindMonitorRequest(const VariableAcceptResult& accepted,
     const MonitorRequestContext& request,
     const MonitorEmitterOrigin& emitterOrigin, VnObjectId projectId) noexcept {
-    if (ticket.sequence == 0 || !request.key.Valid()) return;
-    for (std::size_t slot = 0; slot < history_.size(); ++slot) {
+    if (accepted.result != VN_OK || accepted.ticket.sequence == 0 ||
+        !request.key.Valid()) return;
+    for (std::uint32_t i = 0; i < accepted.writeCount_; ++i) {
+        const auto slot = accepted.writeSlots_[i];
+        if (slot >= history_.size()) continue;
         const auto& row = history_[slot];
-        if (row.used && row.ticket.sequence == ticket.sequence)
+        if (row.used && row.ticket.sequence == accepted.ticket.sequence &&
+            row.world == accepted.observation.world &&
+            row.transport == accepted.observation.transport)
             monitorWriteOrigins_[slot] = {request, emitterOrigin, projectId, 0};
     }
 }

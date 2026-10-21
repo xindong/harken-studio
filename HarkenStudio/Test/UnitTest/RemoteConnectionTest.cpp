@@ -9,6 +9,7 @@
 #include "Monitor/EventCaptureController.h"
 #include "Widgets/Monitor/MonitorPanel.h"
 #include "MonitorRecordPack.h"
+#include "MonitorExecutionCodec.h"
 #include "UndoCommands.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
@@ -415,6 +416,7 @@ TEST(EventCaptureController, BoundsHistoryAndPreservesItOnMalformedPayload)
     ensureRemoteTestApp();
     using namespace VNX::Monitor;
     RemotePeer peer;
+    peer.identity.capabilities |= Wire::kCapabilityExecutionObservation;
     RemoteConnection connection;
     EventCaptureController capture(&connection);
     connection.connectTarget(QStringLiteral("127.0.0.1"), peer.server.serverPort());
@@ -423,14 +425,43 @@ TEST(EventCaptureController, BoundsHistoryAndPreservesItOnMalformedPayload)
     panel.setCaptureController(&capture);
     panel.findChild<QToolButton*>(QStringLiteral("MonitorAutoScroll"))->setChecked(false);
     peer.eventResponder = [&](const Wire::Frame& request) {
-        Wire::EventCaptureStatus status;
-        status.sessionEpoch = 99;
-        status.startedTimestampNs = 100;
+        Wire::EventCaptureStatusV2 status;
+        status.base.sessionEpoch = 99;
+        status.base.startedTimestampNs = 100;
+        status.acceptedExecutionFactVersion = 2;
+        status.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE | VN_MONITOR_PERM_SYMBOLS;
+        status.acceptedPermissionMask = status.requestedPermissionMask;
+        status.acceptedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
         if (request.type == Wire::Message::EventSeal) {
-            status.state = VN_MONITOR_EVENT_SESSION_DRAINED;
-            status.stoppedTimestampNs = 100000;
+            status.base.state = VN_MONITOR_EVENT_SESSION_DRAINED;
+            status.base.stoppedTimestampNs = 100000;
         }
-        peer.send(Wire::MakeFrame(Wire::Message::EventStatus, request.requestId, status));
+        peer.send(Wire::MakeFrame(Wire::Message::EventStatusV2, request.requestId, status));
+    };
+    const auto variableRecords = [](quint64 firstSequence, int count) {
+        Wire::MonitorRecords records;
+        records.sessionEpoch = 99;
+        records.recordCount = count;
+        constexpr auto bytes = harken::monitor::kActivityRecordBytes;
+        records.bytes.resize(bytes * count);
+        for (int i = 0; i < count; ++i) {
+            harken::MonitorExecutionFact source{};
+            source.engine = 42;
+            source.sourceSequence = firstSequence + i;
+            source.kind = VN_MONITOR_FACT_VARIABLE_RESULT;
+            source.contentKind = VN_MONITOR_CONTENT_VARIABLE;
+            source.timestamp = firstSequence + i + 100;
+            source.body.execution.identity.object = harkentest::ObjectId(7);
+            source.body.execution.activity.variableOutcome = VN_VARIABLE_OUTCOME_APPLIED;
+            source.body.execution.activity.variableTicket = firstSequence + i;
+            for (const auto field : {VN_MONITOR_FACT_FIELD_CONTENT_OBJECT,
+                    VN_MONITOR_FACT_FIELD_TIMESTAMP, VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE})
+                EXPECT_TRUE(harken::monitor::SetSourceField(source, field));
+            auto* packed = records.bytes.data() + i * bytes;
+            EXPECT_EQ(bytes, harken::monitor::PackExecutionFact(packed, bytes, source, 1, 1));
+            harken::monitor::WriteU64(packed + 64, records.sessionEpoch);
+        }
+        return records;
     };
     capture.start();
     ASSERT_TRUE(waitUntil([&] { return capture.state() == EventCaptureState::Capturing; }));
@@ -441,7 +472,7 @@ TEST(EventCaptureController, BoundsHistoryAndPreservesItOnMalformedPayload)
     ASSERT_NE(proxy, nullptr);
     for (int batch = 0; batch < 110; ++batch) {
         peer.send(Wire::MakeFrame(Wire::Message::EventRecords, 0,
-                                  eventRecords(99, sequence, 100, sequence + 100)));
+                                  variableRecords(sequence, 100)));
         sequence += 100;
         ASSERT_TRUE(waitUntil([&] {
             return capture.rowCount() > 0 &&
@@ -462,8 +493,8 @@ TEST(EventCaptureController, BoundsHistoryAndPreservesItOnMalformedPayload)
     EXPECT_EQ(11000u, capture.trimmedRecords() + capture.rowCount());
     EXPECT_EQ(capture.trimmedRecords() + 1, capture.eventAt(0).header.sourceSequence);
     const int retainedRows = capture.rowCount();
-    auto invalid = eventRecords(99, sequence, 1, sequence + 100);
-    harken::monitor::WriteU32(invalid.bytes.data() + VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES + 52, 193);
+    auto invalid = variableRecords(sequence, 1);
+    invalid.bytes.pop_back();
     peer.send(Wire::MakeFrame(Wire::Message::EventRecords, 0, invalid));
     ASSERT_TRUE(waitUntil([&] { return capture.state() == EventCaptureState::Failed; }));
     EXPECT_EQ(retainedRows, capture.rowCount());

@@ -92,6 +92,8 @@ TEST(MonitorPanel, GameObjectIdentityKeepsHistoricalNamesWithoutDuplicateRegistr
     };
     VnEmitterHandle emitter = 0;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+    ASSERT_TRUE(waitFor([&] { return panel.visibleRowCount() == 1; }));
+    EXPECT_TRUE(panel.table()->model()->index(0, MonitorCatalogModel::GameObject).data().toString().isEmpty());
     VnMonitorHostRegistrationV2 registration{};
     registration.structSize = sizeof(registration);
     registration.ownershipKind = VN_MONITOR_HOST_UNITY_EMITTER;
@@ -116,7 +118,6 @@ TEST(MonitorPanel, GameObjectIdentityKeepsHistoricalNamesWithoutDuplicateRegistr
     std::copy(renamed.begin(), renamed.end(), registration.name);
     ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
     ASSERT_EQ(VN_OK, Vn_Update());
-    ASSERT_EQ(VN_OK, Vn_MonitorEndHostSession(host.engineInstance, host.sdkSession));
     ASSERT_EQ(VN_OK, Vn_DestroyEmitter(emitter));
     ASSERT_TRUE(waitFor([&] {
         return panel.visibleRowCount() == 2 && panel.table()->model()->index(1, MonitorCatalogModel::GameObject).data().toString()
@@ -131,6 +132,31 @@ TEST(MonitorPanel, GameObjectIdentityKeepsHistoricalNamesWithoutDuplicateRegistr
     }
     EXPECT_EQ(panel.table()->model()->index(0, MonitorCatalogModel::Description).data().toString(), QStringLiteral("Registered"));
     EXPECT_EQ(panel.table()->model()->index(1, MonitorCatalogModel::Description).data().toString(), QStringLiteral("Unregistered"));
+
+    VnEmitterHandle batchedEmitter = 0;
+    ASSERT_EQ(VN_OK, Vn_CreateEmitter(&batchedEmitter));
+    registration.emitter = batchedEmitter;
+    registration.localSequence = 2;
+    registration.registrationRevision = 1;
+    registration.nameBytes = original.size();
+    std::fill(std::begin(registration.name), std::end(registration.name), 0);
+    std::copy(original.begin(), original.end(), registration.name);
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    registration.registrationRevision = 2;
+    registration.nameBytes = renamed.size();
+    std::fill(std::begin(registration.name), std::end(registration.name), 0);
+    std::copy(renamed.begin(), renamed.end(), registration.name);
+    ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&registration));
+    ASSERT_EQ(VN_OK, Vn_MonitorEndHostSession(host.engineInstance, host.sdkSession));
+    ASSERT_EQ(VN_OK, Vn_DestroyEmitter(batchedEmitter));
+    ASSERT_TRUE(waitFor([&] {
+        return panel.visibleRowCount() == 4 &&
+            panel.table()->model()->index(2, MonitorCatalogModel::GameObject).data().toString() == QStringLiteral("Player") &&
+            panel.table()->model()->index(3, MonitorCatalogModel::GameObject).data().toString() == QStringLiteral("Renamed");
+    }));
+    EXPECT_EQ(registered.data().toString(), QStringLiteral("Player"));
+    for (int row = 2; row < 4; ++row)
+        EXPECT_EQ(panel.table()->model()->index(row, MonitorCatalogModel::GameObjectId).data().toString(), QString::number(batchedEmitter));
 }
 
 TEST(MonitorPanel, GameObjectBaselineDoesNotInventRegistration)

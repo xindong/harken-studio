@@ -189,6 +189,11 @@ struct VariableAcceptResult {
     VnResult result = VN_INVALID_ARG;
     VariableCallObservation observation{};
     LogicCommitTicket ticket{};
+
+private:
+    friend class VariableServiceV1;
+    std::array<std::uint32_t, kVariableBatchWriteCapacity> writeSlots_{};
+    std::uint32_t writeCount_ = 0;
 };
 
 class VariableServiceV1;
@@ -478,7 +483,7 @@ public:
     bool SealPreparedActionSources(Engine& engine,
         const ActionFiringTable::PreparedChildIdentity& child) noexcept;
     void CancelPreparedWrite(PreparedVariableWriteToken* prepared) noexcept;
-    void BindMonitorRequest(LogicCommitTicket ticket,
+    void BindMonitorRequest(const VariableAcceptResult& accepted,
         const MonitorRequestContext& request,
         const MonitorEmitterOrigin& emitterOrigin, VnObjectId projectId) noexcept;
     void BindPreparedMonitorRequest(const PreparedVariableWriteToken& prepared,

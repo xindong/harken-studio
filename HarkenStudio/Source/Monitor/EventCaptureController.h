@@ -103,6 +103,16 @@ signals:
     void projectObjectsChanged();
 
 private:
+    using EmitterKey = std::pair<quint64, quint64>;
+    struct EmitterIdentity {
+        quint64 hostSession = 0;
+        quint64 hostSequence = 0;
+        quint64 hostRevision = 0;
+        quint32 ownership = 0;
+        QString name;
+    };
+    using EmitterIdentities = std::map<EmitterKey, EmitterIdentity>;
+
     void remoteStateChanged();
     void remoteCaptureChanged();
     void begin(quint64 epoch, quint64 timestamp, quint64 identityUnavailable);
@@ -111,8 +121,8 @@ private:
     void fail(const QString& reason);
     void closeLocal();
     void refreshAvailability();
-    void resolveGameObject(CapturedEvent& event);
-    void refreshGameObjects();
+    void resolveGameObject(CapturedEvent& event, const EmitterIdentity* firstIdentity = nullptr);
+    void refreshGameObjects(const EmitterIdentities& changedEmitters);
 
     QPointer<HarkenEditor::Bridge::RemoteConnection> remote_;
     EventCaptureState state_ = EventCaptureState::Unavailable;
@@ -134,16 +144,9 @@ private:
     quint64 trimmed_ = 0;
     std::map<std::pair<quint64, quint64>, quint64> sourceSequences_;
     using HostSymbolKey = std::tuple<quint64, quint64, quint64, quint64, quint64>;
-    struct EmitterIdentity {
-        quint64 hostSession = 0;
-        quint64 hostSequence = 0;
-        quint64 hostRevision = 0;
-        quint32 ownership = 0;
-        QString name;
-    };
     std::map<HostSymbolKey, QString> hostNames_;
     std::deque<HostSymbolKey> hostNameOrder_;
-    std::map<std::pair<quint64, quint64>, EmitterIdentity> emitterIdentities_;
+    EmitterIdentities emitterIdentities_;
     std::deque<CapturedEvent> records_;
     std::size_t retainedBytes_ = 0;
     ProjectObjectIndex projectObjects_;

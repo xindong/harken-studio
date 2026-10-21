@@ -428,9 +428,11 @@ void EventCaptureController::consume(const QByteArray& bytes, quint32 count, qui
         return;
     }
     std::vector<CapturedEvent> incoming;
+    EmitterIdentities changedEmitters;
     auto sequences = sourceSequences_;
-    const auto rememberEmitter = [&](const MonitorRecordHeader& header, const MonitorExecutionFactV1& fact) {
-        auto& identity = emitterIdentities_[{header.engineMonitorInstanceId, fact.originEmitter}];
+    const auto rememberEmitter = [&](const MonitorRecordHeader& header, const MonitorExecutionFactV1& fact, bool pinIdentity) {
+        const EmitterKey key{header.engineMonitorInstanceId, fact.originEmitter};
+        auto& identity = emitterIdentities_[key];
         if (identity.hostSession != fact.hostSession || identity.hostSequence != fact.hostLocalSequence ||
             identity.hostRevision != fact.originHostRevision) {
             identity = {fact.hostSession, fact.hostLocalSequence, fact.originHostRevision, fact.hostOwnership, {}};
@@ -439,6 +441,8 @@ void EventCaptureController::consume(const QByteArray& bytes, quint32 count, qui
         const auto name = hostNames_.find({header.engineMonitorInstanceId, fact.originEmitter,
             identity.hostSession, identity.hostSequence, identity.hostRevision});
         if (name != hostNames_.end()) identity.name = name->second;
+        auto& firstIdentity = changedEmitters[key];
+        if (pinIdentity && firstIdentity.hostRevision == 0) firstIdentity = identity;
     };
     for (const auto& record : batch.records) {
         if (record.unknownOptional || (record.header.recordKind != kMonitorRecordEventDetail &&
@@ -465,7 +469,7 @@ void EventCaptureController::consume(const QByteArray& bytes, quint32 count, qui
                 monitorFactHas(identity, kMonitorFactFieldHostKey) &&
                 monitorFactHas(identity, kMonitorFactFieldHostRevision) &&
                 !emitterIdentities_.contains({event.header.engineMonitorInstanceId, identity.originEmitter})) {
-                rememberEmitter(event.header, identity);
+                rememberEmitter(event.header, identity, false);
             }
             continue;
         }
@@ -481,6 +485,9 @@ void EventCaptureController::consume(const QByteArray& bytes, quint32 count, qui
                     symbol.hostSession, symbol.hostSequence, symbol.registrationRevision};
                 if (!hostNames_.contains(key)) hostNameOrder_.push_back(key);
                 hostNames_[key] = QString::fromUtf8(reinterpret_cast<const char*>(symbol.text), symbol.textBytes);
+                auto& firstIdentity = changedEmitters[{event.header.engineMonitorInstanceId, event.header.instanceHandle}];
+                if (firstIdentity.hostSession == symbol.hostSession && firstIdentity.hostSequence == symbol.hostSequence &&
+                    firstIdentity.hostRevision == symbol.registrationRevision) firstIdentity.name = hostNames_[key];
                 const auto emitter = emitterIdentities_.find({event.header.engineMonitorInstanceId, event.header.instanceHandle});
                 if (emitter != emitterIdentities_.end() && emitter->second.hostSession == symbol.hostSession &&
                     emitter->second.hostSequence == symbol.hostSequence &&
@@ -507,9 +514,7 @@ void EventCaptureController::consume(const QByteArray& bytes, quint32 count, qui
                 monitorFactHas(fact, kMonitorFactFieldOriginEmitter) &&
                 monitorFactHas(fact, kMonitorFactFieldHostKey) &&
                 monitorFactHas(fact, kMonitorFactFieldHostRevision)) {
-                rememberEmitter(event.header, fact);
-                for (auto& earlier : incoming) resolveGameObject(earlier);
-                refreshGameObjects();
+                rememberEmitter(event.header, fact, true);
             }
             resolveGameObject(event);
             if (monitorFactHas(fact, kMonitorFactFieldContentObject)) {
@@ -548,15 +553,18 @@ void EventCaptureController::consume(const QByteArray& bytes, quint32 count, qui
         incoming.push_back(event);
     }
     sourceSequences_ = std::move(sequences);
-    for (auto& event : incoming) resolveGameObject(event);
-    refreshGameObjects();
+    for (auto& event : incoming) {
+        const auto changed = changedEmitters.find({event.header.engineMonitorInstanceId, event.execution.originEmitter});
+        if (changed != changedEmitters.end()) resolveGameObject(event, &changed->second);
+    }
+    refreshGameObjects(changedEmitters);
     for (const auto& event : incoming)
         if (event.isExecution() && event.execution.factKind == kMonitorFactEmitterDestroyed)
             emitterIdentities_.erase({event.header.engineMonitorInstanceId, event.execution.originEmitter});
     append(std::move(incoming));
 }
 
-void EventCaptureController::resolveGameObject(CapturedEvent& event)
+void EventCaptureController::resolveGameObject(CapturedEvent& event, const EmitterIdentity* firstIdentity)
 {
     if (!event.isExecution()) return;
     const auto& fact = event.execution;
@@ -569,12 +577,16 @@ void EventCaptureController::resolveGameObject(CapturedEvent& event)
             event.hostSequence = fact.hostLocalSequence;
             event.hostRevision = fact.originHostRevision;
         } else if (fact.factKind == kMonitorFactEmitterCreated || fact.factKind == kMonitorFactEmitterDestroyed) {
-            const auto found = emitterIdentities_.find({event.header.engineMonitorInstanceId, fact.originEmitter});
-            if (found != emitterIdentities_.end()) {
-                event.hostSession = found->second.hostSession;
-                event.hostSequence = found->second.hostSequence;
-                event.hostRevision = found->second.hostRevision;
-                ownership = found->second.ownership;
+            const auto* identity = firstIdentity;
+            if (!identity || identity->hostRevision == 0) {
+                const auto found = emitterIdentities_.find({event.header.engineMonitorInstanceId, fact.originEmitter});
+                if (found != emitterIdentities_.end()) identity = &found->second;
+            }
+            if (identity) {
+                event.hostSession = identity->hostSession;
+                event.hostSequence = identity->hostSequence;
+                event.hostRevision = identity->hostRevision;
+                ownership = identity->ownership;
             }
         }
     }
@@ -588,6 +600,9 @@ void EventCaptureController::resolveGameObject(CapturedEvent& event)
         event.hostSession, event.hostSequence, event.hostRevision});
     if (found != hostNames_.end()) {
         event.gameObjectName = found->second;
+    } else if (firstIdentity && firstIdentity->hostSession == event.hostSession &&
+        firstIdentity->hostSequence == event.hostSequence && firstIdentity->hostRevision == event.hostRevision) {
+        event.gameObjectName = firstIdentity->name;
     } else {
         const auto emitter = emitterIdentities_.find({event.header.engineMonitorInstanceId, fact.originEmitter});
         if (emitter != emitterIdentities_.end() && emitter->second.hostSession == event.hostSession &&
@@ -596,15 +611,18 @@ void EventCaptureController::resolveGameObject(CapturedEvent& event)
     }
 }
 
-void EventCaptureController::refreshGameObjects()
+void EventCaptureController::refreshGameObjects(const EmitterIdentities& changedEmitters)
 {
+    if (changedEmitters.empty()) return;
     int first = -1;
     int last = -1;
     for (int row = 0; row < rowCount(); ++row) {
         auto& event = records_[static_cast<std::size_t>(row)];
+        const auto changed = changedEmitters.find({event.header.engineMonitorInstanceId, event.execution.originEmitter});
+        if (changed == changedEmitters.end()) continue;
         const auto previousName = event.gameObjectName;
         const auto previousId = event.emitterObjectId;
-        resolveGameObject(event);
+        resolveGameObject(event, &changed->second);
         if (previousName == event.gameObjectName && previousId == event.emitterObjectId) continue;
         retainedBytes_ -= previousName.size() * sizeof(QChar);
         retainedBytes_ += event.gameObjectName.size() * sizeof(QChar);

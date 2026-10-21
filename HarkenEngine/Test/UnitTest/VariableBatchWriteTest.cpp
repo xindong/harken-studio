@@ -51,13 +51,13 @@ TEST(VariableBatchWrite, MonitorReportsAppliedAndSupersededWithOriginalRequestId
     ASSERT_EQ(VN_OK, session.InitResult());
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
         InstallSmoothDefinitions(session.Engine(), {harkentest::ObjectId(7), harkentest::ObjectId(8)}).status);
-    const auto capture = harkentest::monitor::OpenActivityEvents();
     VnVariableWriteV1 writes[]{{harkentest::ObjectId(7), 0.25f, 0},
         {harkentest::ObjectId(8), 0.5f, 0}};
     const auto desc = MakeBatch(writes, 2);
     VnVariableTicketV1 ticket{};
     ASSERT_EQ(VN_OK, Vn_SetValues(&desc, &ticket));
     const auto batchRequest = session.Engine()->monitorRequests.LastSequence();
+    const auto capture = harkentest::monitor::OpenActivityEvents();
     EXPECT_TRUE(ReadVariableResults(capture).empty());
     ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(7), 0.75f));
     const auto replacementRequest = session.Engine()->monitorRequests.LastSequence();
@@ -100,9 +100,9 @@ TEST(VariableBatchWrite, MonitorKeepsEmitterResultsAndRejectedRequestsDistinct) 
         InstallSmoothDefinitions(session.Engine(), {harkentest::ObjectId(7)}).status);
     VnEmitterHandle emitter = 0;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
-    const auto capture = harkentest::monitor::OpenActivityEvents();
     ASSERT_EQ(VN_OK, Vn_SetEmitterValue(emitter, harkentest::ObjectId(7), 0.25f));
     const auto acceptedRequest = session.Engine()->monitorRequests.LastSequence();
+    const auto capture = harkentest::monitor::OpenActivityEvents();
     EXPECT_TRUE(ReadVariableResults(capture).empty());
     ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(session.Engine()));
     auto records = ReadVariableResults(capture);

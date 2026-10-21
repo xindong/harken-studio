@@ -98156,7 +98156,7 @@ static VnResult SetValueObserved(VnVariableId variableId, float value,
         .U32(static_cast<std::uint32_t>(accepted.result))
         .U32(0);
     if (accepted.result == VN_OK)
-        engine->variables.BindMonitorRequest(accepted.ticket, request,
+        engine->variables.BindMonitorRequest(accepted, request,
             engine->monitorEmitters.CaptureOrigin(0), engine->CurrentProjectId());
     return accepted.result;
 
@@ -98200,7 +98200,7 @@ static VnResult SetValuesObserved(const VnVariableBatchDescV1* desc,
     TraceVariableAccept(trace, accepted);
     FillVariableTicket(accepted, outTicket);
     if (accepted.result == VN_OK)
-        engine->variables.BindMonitorRequest(accepted.ticket, request,
+        engine->variables.BindMonitorRequest(accepted, request,
             engine->monitorEmitters.CaptureOrigin(0), engine->CurrentProjectId());
     return accepted.result;
 
@@ -98244,7 +98244,7 @@ static VnResult ResetValuesObserved(const VnVariableBatchDescV1* desc,
     TraceVariableAccept(trace, accepted);
     FillVariableTicket(accepted, outTicket);
     if (accepted.result == VN_OK)
-        engine->variables.BindMonitorRequest(accepted.ticket, request,
+        engine->variables.BindMonitorRequest(accepted, request,
             engine->monitorEmitters.CaptureOrigin(0), engine->CurrentProjectId());
     return accepted.result;
 
@@ -99474,7 +99474,7 @@ static VnResult SetEmitterValueObserved(VnEmitterHandle handle, VnVariableId var
         .U32(static_cast<std::uint32_t>(accepted.result))
         .U32(0);
     if (accepted.result == VN_OK)
-        engine->variables.BindMonitorRequest(accepted.ticket, request,
+        engine->variables.BindMonitorRequest(accepted, request,
             engine->monitorEmitters.CaptureOrigin(handle), engine->CurrentProjectId());
     return accepted.result;
 
@@ -99528,7 +99528,7 @@ static VnResult SetEmitterValuesObserved(VnEmitterHandle emitter,
     TraceVariableAccept(trace, accepted);
     FillVariableTicket(accepted, outTicket);
     if (accepted.result == VN_OK)
-        engine->variables.BindMonitorRequest(accepted.ticket, request,
+        engine->variables.BindMonitorRequest(accepted, request,
             engine->monitorEmitters.CaptureOrigin(emitter), engine->CurrentProjectId());
     return accepted.result;
 
