@@ -166,7 +166,8 @@ void ProportionalTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewIt
     if (controls.checkable) {
         QStyleOptionViewItem indicator = option;
         indicator.rect = TableGroupHeader::checkBoxRect(rect, themeManager_, this);
-        indicator.state = QStyle::State_None;
+        const auto* delegate = static_cast<const TableItemDelegate*>(itemDelegateForIndex(first));
+        indicator.state = delegate->isCheckIndicatorHovered(indicator.rect) ? QStyle::State_MouseOver : QStyle::State_None;
         if (isEnabled() && first.flags().testFlag(Qt::ItemIsEnabled)
             && first.flags().testFlag(Qt::ItemIsUserCheckable))
             indicator.state |= QStyle::State_Enabled;

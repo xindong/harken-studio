@@ -16,6 +16,7 @@
 #include "RuntimeBridge/PackagingBridge.h"
 #include "Widgets/Common/MultiSelectComboBox.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
+#include "Widgets/Common/SplitButton.h"
 #include "Widgets/Common/TableGroupHeader.h"
 #include "Widgets/Common/TableItemDelegate.h"
 #include "Widgets/Publisher/PublisherPanel.h"
@@ -35,7 +36,10 @@
 #include <QScrollBar>
 #include <QScopeGuard>
 #include <QAbstractButton>
+#include <QAction>
+#include <QPushButton>
 #include <QTemporaryDir>
+#include <QToolButton>
 #include <QTreeWidgetItemIterator>
 #include <QUndoStack>
 
@@ -316,6 +320,10 @@ TEST_F(PublisherLanguageTest, CheckGesturesPreservePlatformScopeWithoutChangingP
     auto* stack = VNX::UndoRedoManager::instance().undoStack();
     ASSERT_NE(stack, nullptr);
     const int undoIndex = stack->index();
+    const QPoint label = tree->visualRect(tree->indexFromItem(actionRow(other))).center();
+    mouse(QEvent::MouseButtonPress, label, Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease, label, Qt::NoButton);
+    EXPECT_TRUE(tree->selectedItems().isEmpty());
     clickCheck(actionRow(other));
     EXPECT_FALSE(included(windows));
     EXPECT_TRUE(included(linuxId));
@@ -358,6 +366,7 @@ TEST_F(PublisherLanguageTest, CheckGesturesPreservePlatformScopeWithoutChangingP
     EXPECT_FALSE(pm.packExportSelection().includesActionPack(action_->runtimeId(), windows, "English"));
     EXPECT_FALSE(included(windows));
     EXPECT_EQ(panel_->generationPlatforms(), exportPlatforms);
+    EXPECT_TRUE(tree->selectedItems().isEmpty());
     EXPECT_FALSE(tree->topLevelItem(0)->data(0, Qt::CheckStateRole).isValid());
 }
 
@@ -466,6 +475,128 @@ TEST_F(PublisherLanguageTest, ExportPlatformSelectorCompressesAndRecoversWithout
         EXPECT_EQ(control->count(), selected.size());
         EXPECT_EQ(panel_->generationPlatforms(), selected);
     }
+}
+
+TEST_F(PublisherLanguageTest, ExportChoiceFollowsCheckedPacksAndPreservesPlatformScope)
+{
+    auto& manager = VNX::ProjectManager::instance();
+    manager.setProjectPlatformsInternal(HarkenTest::platforms({QStringLiteral("Windows"), QStringLiteral("Linux")}));
+    const QString windows = HarkenTest::platformIdString("Windows");
+    const QStringList allPlatforms = manager.currentProject()->platformIds();
+    manager.setPackExportSelectedPlatformsInternal(allPlatforms);
+    panel_->refreshPackList();
+    auto* control = panel_->findChild<VNX::SplitButton*>();
+    ASSERT_NE(control, nullptr);
+    QAction* allAction = nullptr;
+    for (auto* action : control->actions()) {
+        if (action->text() == QStringLiteral("Export All")) allAction = action;
+    }
+    ASSERT_NE(allAction, nullptr);
+    auto* popup = control->findChild<QWidget*>(QStringLiteral("splitButtonPopup"));
+    ASSERT_NE(popup, nullptr);
+    int requests = 0;
+    QStringList requestedPlatforms;
+    bool includeUnchecked = false;
+    QObject::connect(panel_.get(), &VNX::PublisherPanel::exportRequested, panel_.get(),
+        [&](const QStringList& platforms, const QStringList&, bool all, bool, bool) {
+            ++requests;
+            requestedPlatforms = platforms;
+            includeUnchecked = all;
+        });
+    const auto verifyExport = [&](bool all, const QStringList& expectedPlatforms) {
+        EXPECT_EQ(control->primaryButton()->text(), all ? QStringLiteral("Export All") : QStringLiteral("Export Checked"));
+        EXPECT_TRUE(control->primaryButton()->isEnabled());
+        EXPECT_TRUE(control->dropdownButton()->isVisible());
+        EXPECT_EQ(control->dropdownButton()->isEnabled(), !all);
+        EXPECT_EQ(allAction->isVisible(), !all);
+        const int previousRequests = requests;
+        control->primaryButton()->click();
+        EXPECT_EQ(requests, previousRequests + 1);
+        EXPECT_EQ(requestedPlatforms, expectedPlatforms);
+        EXPECT_FALSE(includeUnchecked);
+        control->dropdownButton()->click();
+        QApplication::processEvents();
+        EXPECT_EQ(popup->isVisible(), !all);
+        if (!all) {
+            EXPECT_TRUE(allAction->isEnabled());
+            auto* exportAll = popup->findChild<QPushButton*>();
+            ASSERT_NE(exportAll, nullptr);
+            EXPECT_EQ(exportAll->text(), QStringLiteral("Export All"));
+            exportAll->click();
+            EXPECT_EQ(requests, previousRequests + 2);
+            EXPECT_EQ(requestedPlatforms, allPlatforms);
+            EXPECT_TRUE(includeUnchecked);
+            EXPECT_FALSE(popup->isVisible());
+        } else {
+            EXPECT_EQ(requests, previousRequests + 1);
+        }
+    };
+    for (const int checkedLanguages : {2, 1, 0, 2}) {
+        SCOPED_TRACE(checkedLanguages);
+        manager.setActionPackTargetingInternal({
+            {action_->runtimeId(), checkedLanguages >= 1, {}, QStringLiteral("English")},
+            {action_->runtimeId(), checkedLanguages == 2, {}, QStringLiteral("Japanese")}});
+        panel_->refreshPackList();
+        verifyExport(checkedLanguages == 2, allPlatforms);
+    }
+    manager.setPackExportSelectedPlatformsInternal({windows});
+    panel_->refreshPackList();
+    verifyExport(false, {windows});
+    control->dropdownButton()->click();
+    QApplication::processEvents();
+    ASSERT_TRUE(popup->isVisible());
+    manager.setPackExportSelectedPlatformsInternal(allPlatforms);
+    panel_->refreshPackList();
+    EXPECT_FALSE(popup->isVisible());
+    verifyExport(true, allPlatforms);
+
+    VNX::PlatformContextService::instance().setSelected({HarkenTest::PlatformIds::Windows},
+        HarkenTest::PlatformIds::Windows, false);
+    manager.setActionPackTargetingInternal({{action_->runtimeId(), false, {windows}, std::nullopt}});
+    panel_->refreshPackList();
+    ASSERT_NE(actionRow(nullptr, QStringLiteral("English")), nullptr);
+    ASSERT_NE(actionRow(nullptr, QStringLiteral("Japanese")), nullptr);
+    EXPECT_EQ(actionRow(nullptr, QStringLiteral("English"))->checkState(0), Qt::Checked);
+    EXPECT_EQ(actionRow(nullptr, QStringLiteral("Japanese"))->checkState(0), Qt::Checked);
+    verifyExport(false, allPlatforms);
+    VNX::PlatformContextService::instance().setSelected(
+        {HarkenTest::PlatformIds::Windows, HarkenTest::PlatformIds::Linux},
+        HarkenTest::PlatformIds::Windows, true);
+    panel_->refreshPackList();
+    EXPECT_EQ(actionRow()->checkState(0), Qt::PartiallyChecked);
+    verifyExport(false, allPlatforms);
+    manager.setPackExportSelectedPlatformsInternal({});
+    for (const bool included : {true, false}) {
+        manager.setActionPackTargetingInternal({{action_->runtimeId(), included, {}, std::nullopt}});
+        panel_->refreshPackList();
+        EXPECT_EQ(control->primaryButton()->text(), QStringLiteral("Export Checked"));
+        EXPECT_FALSE(control->primaryButton()->isEnabled());
+        EXPECT_TRUE(allAction->isEnabled());
+        EXPECT_TRUE(allAction->isVisible());
+        EXPECT_TRUE(control->dropdownButton()->isVisible());
+        EXPECT_TRUE(control->dropdownButton()->isEnabled());
+        const int previousRequests = requests;
+        control->primaryButton()->click();
+        EXPECT_EQ(requests, previousRequests);
+        allAction->trigger();
+        EXPECT_EQ(requests, previousRequests + 1);
+        EXPECT_EQ(requestedPlatforms, allPlatforms);
+        EXPECT_TRUE(includeUnchecked);
+    }
+
+    auto cancel = std::make_shared<std::atomic_bool>(false);
+    auto& records = VNX::PackGenerationRecordStore::instance();
+    const auto run = records.beginProgress(cancel);
+    const auto finish = qScopeGuard([&] { records.finishProgress(run, true); });
+    EXPECT_EQ(control->primaryButton()->text(), QStringLiteral("Cancel export"));
+    EXPECT_TRUE(control->dropdownButton()->isVisible());
+    EXPECT_FALSE(control->dropdownButton()->isEnabled());
+    control->dropdownButton()->click();
+    EXPECT_FALSE(popup->isVisible());
+    const int previousRequests = requests;
+    control->primaryButton()->click();
+    EXPECT_TRUE(cancel->load());
+    EXPECT_EQ(requests, previousRequests);
 }
 
 TEST_F(PublisherLanguageTest, CachedArtifactsAndSessionResultsHaveIndependentLifetimes)

@@ -3,7 +3,8 @@
 #include "Core/LanguageContextService.h"
 #include "Core/MemorySettingsStorage.h"
 #include "Core/PlatformContextService.h"
-#include "Dialogs/Settings/Pages/ProjectBuildPage.h"
+#include "Dialogs/Settings/Pages/ProjectConfigPage.h"
+#include "Dialogs/Settings/Pages/ProjectPublishPage.h"
 #include "Dialogs/Settings/ProjectSettingsDialog.h"
 #include "Dialogs/Settings/ProjectPlatformDialog.h"
 #include "ProjectManager.h"
@@ -176,7 +177,7 @@ protected:
 
 }
 
-TEST_F(ProjectSettingsDialogTest, BuildPageShowsInstanceNamesBaseTypesAndStableIds)
+TEST_F(ProjectSettingsDialogTest, ConfigPageShowsInstanceNamesBaseTypesAndStableIds)
 {
     ProjectSettingsDialog dialog;
     auto* list = dialog.findChild<QTreeWidget*>("projectPlatformList");
@@ -188,7 +189,7 @@ TEST_F(ProjectSettingsDialogTest, BuildPageShowsInstanceNamesBaseTypesAndStableI
         EXPECT_EQ(list->topLevelItem(i)->text(1), ProjectPlatformSemantics::basePlatformName(platforms.at(i).basePlatform));
         EXPECT_EQ(list->topLevelItem(i)->data(0, Qt::UserRole).toUuid(), platforms.at(i).id);
     }
-    EXPECT_TRUE(dialog.findChildren<QCheckBox*>().isEmpty());
+    EXPECT_TRUE(list->findChildren<QCheckBox*>().isEmpty());
 }
 
 TEST_F(ProjectSettingsDialogTest, LastPlatformCannotBeDeletedFromTheDraft)
@@ -212,7 +213,7 @@ TEST_F(ProjectSettingsDialogTest, PlatformSelectionStartsEmptyAndCancellationSur
     dialog.show();
     auto* list = dialog.findChild<QTreeWidget*>("projectPlatformList");
     auto* remove = dialog.findChild<QToolButton*>("projectPlatformDelete");
-    auto* page = dialog.findChild<ProjectBuildPage*>();
+    auto* page = dialog.findChild<ProjectConfigPage*>();
     auto* table = qobject_cast<TableWidget*>(list->parentWidget());
     ASSERT_NE(table, nullptr);
     list->setFocus(Qt::TabFocusReason);
@@ -548,6 +549,7 @@ TEST_F(ProjectSettingsDialogTest, InvalidLanguagesRejectApplyBeforeAnyPlatformCh
     edit->setText(QStringLiteral("SFX"));
     list->setCurrentItem(list->topLevelItem(1));
     dialog.findChild<QToolButton*>("projectPlatformDelete")->click();
+    dialog.findChild<QLineEdit*>("packBuildOutputDirEdit")->setText("DraftPacks");
     acceptNextModalDialog();
     apply->click();
 
@@ -555,11 +557,13 @@ TEST_F(ProjectSettingsDialogTest, InvalidLanguagesRejectApplyBeforeAnyPlatformCh
     EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList{QStringLiteral("English")});
     EXPECT_EQ(ProjectManager::instance().getTargetPlatforms(),
               HarkenTest::platformIdStrings({"Windows", "macOS"}));
+    EXPECT_TRUE(ProjectManager::instance().packBuildOutputDir().isEmpty());
 }
 
 TEST_F(ProjectSettingsDialogTest, IllegalCharactersCannotBeTyped)
 {
     ProjectSettingsDialog dialog;
+    ASSERT_TRUE(dialog.showPage(QString::fromLatin1(kSettingsPagePublish)));
     dialog.show();
     auto* edit = dialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
     ASSERT_NE(edit, nullptr);
@@ -577,6 +581,7 @@ TEST_F(ProjectSettingsDialogTest, IllegalCharactersCannotBeTyped)
 TEST_F(ProjectSettingsDialogTest, PackBuildDirectoryIsRelativeAndEmptyRestoresDefault)
 {
     ProjectSettingsDialog dialog;
+    ASSERT_TRUE(dialog.showPage(QString::fromLatin1(kSettingsPagePublish)));
     dialog.show();
     auto* edit = dialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
     auto* apply = applyButton(dialog);
@@ -610,6 +615,7 @@ TEST_F(ProjectSettingsDialogTest, PackBuildDirectoryIsRelativeAndEmptyRestoresDe
               projectRoot.filePath(QStringLiteral("Audio/Packs")));
 
     ProjectSettingsDialog reopen;
+    ASSERT_TRUE(reopen.showPage(QString::fromLatin1(kSettingsPagePublish)));
     reopen.show();
     auto* emptyEdit = reopen.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
     auto* reopenApply = applyButton(reopen);
@@ -626,6 +632,7 @@ TEST_F(ProjectSettingsDialogTest, PackBuildDirectoryIsRelativeAndEmptyRestoresDe
               projectRoot.filePath(QStringLiteral("BuildPacks")));
 
     ProjectSettingsDialog prefixDialog;
+    ASSERT_TRUE(prefixDialog.showPage(QString::fromLatin1(kSettingsPagePublish)));
     prefixDialog.show();
     auto* prefixEdit = prefixDialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
     ASSERT_NE(prefixEdit, nullptr);
@@ -644,6 +651,7 @@ TEST_F(ProjectSettingsDialogTest, ProjectRootAndObjectBucketPackBuildDirectories
                             QStringLiteral("Busses/Packs"), QStringLiteral("Variables/Packs"),
                             QStringLiteral("Attenuations/Packs")}) {
         ProjectSettingsDialog dialog;
+        ASSERT_TRUE(dialog.showPage(QString::fromLatin1(kSettingsPagePublish)));
         dialog.show();
         auto* edit = dialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
         ASSERT_NE(edit, nullptr);
@@ -659,7 +667,10 @@ TEST_F(ProjectSettingsDialogTest, ProjectRootAndObjectBucketPackBuildDirectories
 TEST_F(ProjectSettingsDialogTest, AbsolutePackBuildDirectoryCannotBeApplied)
 {
     ProjectSettingsDialog dialog;
+    ASSERT_TRUE(dialog.showPage(QString::fromLatin1(kSettingsPagePublish)));
     dialog.show();
+    addLanguageButton(dialog)->click();
+    targetLanguageEdit(dialog, 1)->setText("Japanese");
     auto* edit = dialog.findChild<QLineEdit*>(QStringLiteral("packBuildOutputDirEdit"));
     ASSERT_NE(edit, nullptr);
     edit->setText(tempDir_.filePath(QStringLiteral("Packs")));
@@ -667,6 +678,7 @@ TEST_F(ProjectSettingsDialogTest, AbsolutePackBuildDirectoryCannotBeApplied)
     applyButton(dialog)->click();
     EXPECT_TRUE(dialog.isVisible());
     EXPECT_TRUE(ProjectManager::instance().packBuildOutputDir().isEmpty());
+    EXPECT_EQ(ProjectManager::instance().getProjectLanguages(), QStringList{"English"});
 }
 
 namespace {
@@ -869,6 +881,8 @@ TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditCanReloadAllBuildDraftsW
     addLanguageButton(dialog)->click();
     targetLanguageEdit(dialog, 1)->setText("Japanese");
     dialog.findChild<QLineEdit*>("packBuildOutputDirEdit")->setText("DraftPacks");
+    dialog.findChild<QCheckBox*>("buildExportWaveformsCheckBox")->setChecked(true);
+    dialog.findChild<QLineEdit*>("buildWaveformOutputDirEdit")->setText("DraftWaveforms");
     auto& manager = ProjectManager::instance();
     const auto id = manager.currentProject()->platforms.first().id;
     ASSERT_TRUE(ActionManager::instance().execute("rename_project_platform",
@@ -892,8 +906,12 @@ TEST_F(ProjectSettingsDialogTest, ConcurrentPlatformEditCanReloadAllBuildDraftsW
     EXPECT_EQ(list->topLevelItem(0)->text(0), QStringLiteral("External"));
     EXPECT_EQ(targetLanguageValues(dialog), QStringList{"English"});
     EXPECT_TRUE(dialog.findChild<QLineEdit*>("packBuildOutputDirEdit")->text().isEmpty());
+    EXPECT_FALSE(dialog.findChild<QCheckBox*>("buildExportWaveformsCheckBox")->isChecked());
+    EXPECT_TRUE(dialog.findChild<QLineEdit*>("buildWaveformOutputDirEdit")->text().isEmpty());
     EXPECT_EQ(manager.getProjectLanguages(), QStringList{"English"});
     EXPECT_TRUE(manager.packBuildOutputDir().isEmpty());
+    EXPECT_FALSE(manager.currentProject()->buildExportWaveforms);
+    EXPECT_TRUE(manager.currentProject()->buildWaveformOutputDir.isEmpty());
     EXPECT_EQ(UndoRedoManager::instance().undoStack()->count(), 1);
     list->setCurrentItem(list->topLevelItem(0));
     enterPlatform(dialog, "After Reload", "Windows", 0, false);

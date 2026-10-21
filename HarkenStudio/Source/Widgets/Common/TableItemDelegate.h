@@ -30,14 +30,17 @@ public:
     void updateEditorGeometry(QWidget* editor, const QStyleOptionViewItem& option,
                                const QModelIndex& index) const override;
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override;
+    bool isCheckIndicatorHovered(const QRect& rect) const { return rect.contains(hoverPosition_); }
 
 protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const override;
     virtual void paintContents(QPainter* painter, const QStyleOptionViewItem& option,
                                const QModelIndex& index) const;
 
 private:
     ThemeManager* themeManager_;
+    QPoint hoverPosition_{-1, -1};
 };
 
 }

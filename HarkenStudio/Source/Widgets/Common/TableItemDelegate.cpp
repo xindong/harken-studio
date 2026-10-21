@@ -5,6 +5,7 @@
 #include "Core/ThemeManager.h"
 #include "Core/QtControlSkin.h"
 
+#include <QMouseEvent>
 #include <QPainter>
 #include <QTableView>
 
@@ -16,6 +17,33 @@ TableItemDelegate::TableItemDelegate(QObject* parent, ThemeManager* themeManager
     : QStyledItemDelegate(parent),
       themeManager_(themeManager ? themeManager : &ThemeManager::instance())
 {
+    if (auto* view = qobject_cast<QAbstractItemView*>(parent)) {
+        view->setMouseTracking(true);
+        view->viewport()->installEventFilter(this);
+    }
+}
+
+bool TableItemDelegate::eventFilter(QObject* watched, QEvent* event)
+{
+    if (auto* view = qobject_cast<QAbstractItemView*>(parent()); view && watched == view->viewport()) {
+        if (view->itemDelegate() == this
+            && (event->type() == QEvent::MouseMove || event->type() == QEvent::Leave)) {
+            const auto hoverIndex = [&](const QPoint& position) {
+                const auto index = view->indexAt(position);
+                const auto first = index.siblingAtColumn(0);
+                return first.data(TableGroupRole).toBool() ? first : index;
+            };
+            const auto previous = hoverIndex(hoverPosition_);
+            hoverPosition_ = event->type() == QEvent::MouseMove
+                ? static_cast<QMouseEvent*>(event)->position().toPoint() : QPoint(-1, -1);
+            const auto current = hoverIndex(hoverPosition_);
+            if (previous.data(Qt::CheckStateRole).isValid()) view->viewport()->update(view->visualRect(previous));
+            if (current != previous && current.data(Qt::CheckStateRole).isValid())
+                view->viewport()->update(view->visualRect(current));
+        }
+        return false;
+    }
+    return QStyledItemDelegate::eventFilter(watched, event);
 }
 
 QWidget* TableItemDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem& option,
@@ -66,7 +94,6 @@ void TableItemDelegate::initStyleOption(QStyleOptionViewItem* option, const QMod
         option->rect = tree->cellContentsRect(option->rect, index);
         if (tree->rowProgressEndColumn() >= 0) option->backgroundBrush = Qt::NoBrush;
     }
-    option->state &= ~QStyle::State_MouseOver;
     const auto& colors = themeManager_->colors();
     if (index.model()->headerData(index.column(), Qt::Horizontal, TableColumnAccentRole).toBool()
         && !index.siblingAtColumn(0).data(TableGroupRole).toBool())
@@ -85,13 +112,17 @@ void TableItemDelegate::initStyleOption(QStyleOptionViewItem* option, const QMod
     option->palette.setColor(QPalette::Text, text);
     option->palette.setColor(QPalette::HighlightedText, text);
     option->font.setBold(index.data(TableTextRole).toInt() == static_cast<int>(TableTextState::Modified));
+    if (option->widget && option->features.testFlag(QStyleOptionViewItem::HasCheckIndicator)) {
+        const auto rect = option->widget->style()->subElementRect(
+            QStyle::SE_ItemViewItemCheckIndicator, option, option->widget);
+        option->state.setFlag(QStyle::State_MouseOver, isCheckIndicatorHovered(rect));
+    }
 }
 
 void TableItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option,
                              const QModelIndex& index) const
 {
     QStyleOptionViewItem styled = option;
-    styled.state &= ~QStyle::State_MouseOver;
     const auto numberColumn = option.widget ? option.widget->property("rowNumberColumn") : QVariant();
     const bool composite = option.widget && option.widget->property("compositeTable").toBool();
     const bool plain = numberColumn.isValid() ? index.column() != numberColumn.toInt() : composite;

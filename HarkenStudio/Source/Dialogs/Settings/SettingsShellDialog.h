@@ -24,6 +24,7 @@ public:
 protected:
     void addPage(SettingsPage* page);
     void loadPages();
+    virtual bool validateBeforeApply();
 
 private:
     void onApplyClicked();

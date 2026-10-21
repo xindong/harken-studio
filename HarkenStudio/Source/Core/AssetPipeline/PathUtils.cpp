@@ -96,6 +96,22 @@ QString PathUtils::packBuildOutputRoot(const QString& projectFilePath,
                           QFileInfo(projectFilePath).absolutePath());
 }
 
+QString PathUtils::waveformBuildOutputRoot(const QString& projectFilePath,
+                                          const QString& relativeDir)
+{
+    const QString normalized = normalizePackBuildOutputDir(relativeDir);
+    return toAbsolutePath(normalized.isEmpty()
+        ? buildPacksDirName() + QStringLiteral("/Waveforms") : normalized,
+        QFileInfo(projectFilePath).absolutePath());
+}
+
+bool PathUtils::isValidWaveformBuildOutputDir(const QString& path, const QString& projectFilePath)
+{
+    const QString normalized = normalizePackBuildOutputDir(path);
+    return isValidPackBuildOutputDir(normalized.isEmpty()
+        ? buildPacksDirName() + QStringLiteral("/Waveforms") : normalized, projectFilePath);
+}
+
 QString PathUtils::toRelativePath(const QString& absolutePath, const QString& projectRoot)
 {
     QDir projectDir(projectRoot);

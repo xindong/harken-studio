@@ -51,6 +51,7 @@ namespace ProjectPackExporterInternal {
         PackExportSelection selection;
         std::shared_ptr<const ProjectBuildSnapshot> snapshot;
         QString currentWorldOutputPath;
+        QString waveformOutputDir;
         QString language;
         bool    debugStrings = true;
         bool    forceReexport = false;

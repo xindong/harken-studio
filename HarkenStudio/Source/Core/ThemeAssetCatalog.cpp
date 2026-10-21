@@ -35,6 +35,8 @@ const QVector<ThemeAssetCatalogEntry>& themeAssetCatalog()
          ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/monitor-capture.svg")},
         {QString::fromLatin1(PlatformEditAll), ThemeAssetKind::Image,
          ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/platform-edit-all.svg")},
+        {QString::fromLatin1(Settings), ThemeAssetKind::Image,
+         ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/settings.svg")},
         {QString::fromLatin1(DockClose), ThemeAssetKind::Image,
          ThemeBuiltinAssetFallback::File, QStringLiteral(":/icons/close.svg")},
         {QString::fromLatin1(DockPin), ThemeAssetKind::Image,

@@ -396,8 +396,8 @@ TEST_F(ProjectPlatformUiIpc, GlobalContextSeparatesObservationEditingAndExportSc
     panel.resize(1000, 600);
     panel.show();
     tree->expandAll();
-    row()->setSelected(true);
     QApplication::processEvents();
+    EXPECT_TRUE(tree->selectedItems().isEmpty());
     for (const bool forceExport : {false, true}) {
         const QPoint contextPoint = tree->visualItemRect(row()).center();
         QTimer::singleShot(0, &panel, [&] {

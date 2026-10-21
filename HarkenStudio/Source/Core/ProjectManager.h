@@ -536,6 +536,7 @@ public:
     QString packBuildOutputDir() const;
     bool setPackBuildOutputDir(const QString& value);
     void setPackBuildOutputDirInternal(const QString& value);
+    void setBuildWaveformSettingsInternal(bool enabled, const QString& directory);
 
     PackExportSelection packExportSelection() const;
     void setPackExportSelectionInternal(PackExportSelection selection);

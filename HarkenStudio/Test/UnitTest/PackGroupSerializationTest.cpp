@@ -182,6 +182,8 @@ TEST(PackGroupSerialization, PackBuildDirectoryRoundTripsWithoutLegacyDeployment
     auto project = projectWithMaster();
     project.name = QStringLiteral("PackPathsProject");
     project.packBuildOutputDir = QStringLiteral("Exports/Packs");
+    project.buildExportWaveforms = true;
+    project.buildWaveformOutputDir = QStringLiteral("Exports/Waveforms");
 
     VNX::ProjectSerializer serializer;
     const QString path = dir.filePath(QStringLiteral("paths.hsp"));
@@ -193,6 +195,10 @@ TEST(PackGroupSerialization, PackBuildDirectoryRoundTripsWithoutLegacyDeployment
     EXPECT_EQ(loaded.packBuildOutputDir, project.packBuildOutputDir);
     EXPECT_EQ(VNX::PathUtils::packBuildOutputRoot(loaded.projectPath, loaded.packBuildOutputDir),
               dir.filePath(QStringLiteral("Exports/Packs")));
+    EXPECT_EQ(loaded.buildExportWaveforms, project.buildExportWaveforms);
+    EXPECT_EQ(loaded.buildWaveformOutputDir, project.buildWaveformOutputDir);
+    EXPECT_EQ(VNX::PathUtils::waveformBuildOutputRoot(loaded.projectPath, loaded.buildWaveformOutputDir),
+              dir.filePath(QStringLiteral("Exports/Waveforms")));
 
     QFile file(path);
     ASSERT_TRUE(file.open(QIODevice::ReadOnly));
@@ -200,6 +206,18 @@ TEST(PackGroupSerialization, PackBuildDirectoryRoundTripsWithoutLegacyDeployment
     file.close();
     QJsonObject content = document.value(QStringLiteral("content")).toObject();
     content.remove(QStringLiteral("packBuildOutputDir"));
+    content.remove(QStringLiteral("buildExportWaveforms"));
+    content.remove(QStringLiteral("buildWaveformOutputDir"));
+    document.insert(QStringLiteral("content"), content);
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(QJsonDocument(document).toJson());
+    file.close();
+    ASSERT_TRUE(serializer.loadProject(path, loaded)) << serializer.lastError().toStdString();
+    EXPECT_TRUE(loaded.packBuildOutputDir.isEmpty());
+    EXPECT_FALSE(loaded.buildExportWaveforms);
+    EXPECT_TRUE(loaded.buildWaveformOutputDir.isEmpty());
+    EXPECT_EQ(VNX::PathUtils::waveformBuildOutputRoot(loaded.projectPath, loaded.buildWaveformOutputDir),
+              dir.filePath(QStringLiteral("BuildPacks/Waveforms")));
     EXPECT_FALSE(content.contains(QStringLiteral("unityIntegration")));
     EXPECT_FALSE(content.contains(QStringLiteral("unityPackDeployDir")));
     EXPECT_FALSE(content.contains(QStringLiteral("packOutputDir")));

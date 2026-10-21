@@ -10,7 +10,6 @@
 class QTreeWidget;
 class QFrame;
 class QLineEdit;
-class QPushButton;
 class QToolButton;
 class QVBoxLayout;
 
@@ -18,20 +17,22 @@ namespace VNX {
 
 class TableWidget;
 
-inline constexpr const char* kSettingsPageBuild = "build";
+inline constexpr const char* kSettingsPageConfig = "config";
 
-class ProjectBuildPage : public SettingsPage
+class ProjectConfigPage : public SettingsPage
 {
     Q_OBJECT
 
 public:
-    explicit ProjectBuildPage(QWidget* parent = nullptr);
+    explicit ProjectConfigPage(QWidget* parent = nullptr);
 
     QString pageId() const override;
     QString categoryLabel() const override;
     void load() override;
     bool apply() override;
     bool isDirty() const override;
+    bool hasExternalChanges() const;
+    bool validate();
 
 private:
     void rememberBaseline();
@@ -40,11 +41,8 @@ private:
     void removePlatform();
     bool applyTargetLanguages();
     bool applyTargetPlatforms();
-    bool applyPackBuildOutputDir();
     void onAddTargetLanguageClicked();
     void onRemoveTargetLanguageClicked();
-    void onPackBuildOutputDirBrowseClicked();
-    void onPackBuildOutputDirEditingFinished();
     void setTargetLanguages(const QStringList& value);
     void clearTargetLanguageRows();
     void appendTargetLanguageRow(const QString& value);
@@ -65,12 +63,9 @@ private:
     QList<QLineEdit*> targetLanguageEdits_;
     int selectedTargetLanguageRow_ = -1;
     bool suppressTargetLanguageDirty_ = false;
-    QLineEdit* packBuildOutputDirEdit_ = nullptr;
-    QPushButton* packBuildOutputDirBrowseBtn_ = nullptr;
 
     QJsonArray baselinePlatforms_;
     QStringList baselineProjectLanguages_;
-    QString baselinePackBuildOutputDir_;
 };
 
 }

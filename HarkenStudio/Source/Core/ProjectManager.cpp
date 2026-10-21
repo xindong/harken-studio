@@ -1938,6 +1938,13 @@ void ProjectManager::setPackBuildOutputDirInternal(const QString& value)
     emit packBuildOutputDirChanged(value);
 }
 
+void ProjectManager::setBuildWaveformSettingsInternal(bool enabled, const QString& directory)
+{
+    if (!m_currentProject) return;
+    m_currentProject->buildExportWaveforms = enabled;
+    m_currentProject->buildWaveformOutputDir = directory;
+}
+
 PackExportSelection ProjectManager::packExportSelection() const
 {
     return m_currentProject ? PackExportSelectionStore::instance().selection() : PackExportSelection{};

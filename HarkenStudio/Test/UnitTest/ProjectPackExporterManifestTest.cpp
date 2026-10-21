@@ -6,6 +6,7 @@
 #include "AssetPipeline/AssetRegistry.h"
 #include "AssetPipeline/AssetConverter.h"
 #include "AssetPipeline/PathUtils.h"
+#include "AssetPipeline/WaveformCache.h"
 #include "Components/VAction.h"
 #include "Components/VAudio.h"
 #include "Components/VBus.h"
@@ -1117,6 +1118,113 @@ TEST(EditorProjectPackExporterManifest, CompanionsCoverEachExportedAction)
         EXPECT_EQ(companion.keys(), (QStringList{QStringLiteral("guid"), QStringLiteral("name")}));
     }
 
+    VNX::AssetRegistry::instance().clear();
+}
+
+TEST(EditorProjectPackExporterManifest, OptionalWaveformsFollowPublicationLifecycle)
+{
+    qputenv("HARKEN_PACKC_PATH", QByteArray(HARKEN_PACKC_PATH));
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    VNX::AssetRegistry::instance().clear();
+    VNX::AssetRegistry::instance().setProjectRoot(dir.path());
+    const auto sourceId = registerToneAsset(dir.path(), QStringLiteral("shared.wav"), 0.75f);
+    const auto otherId = registerToneAsset(dir.path(), QStringLiteral("other.wav"), 0.25f);
+    VNX::ProjectData project;
+    ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), sourceId, otherId,
+        {{QStringLiteral("Parent"), 21, kSharedSoundObjectId},
+         {QStringLiteral("Child"), 22, kSoloSoundObjectId}}));
+    auto& source = project.layers.front().rootItem->children.at(1)->comp<VNX::VSound>()->sources.plain.entries.front();
+    source.sourceId = sourceId;
+    source.trimStartFrame = 8;
+    source.trimEndFrame = 48;
+    VNX::VActionStep post;
+    post.type = VNX::VActionStep::Type::PostAction;
+    post.targetObjectID = 22;
+    project.actions.front().rootItem->children.front()->comp<VNX::VAction>()->steps.push_back(post);
+    const QString root = QDir(dir.path()).filePath(QStringLiteral("BuildPacks"));
+    const QString output = VNX::ProjectPackExporter::platformOutputDir(root, project.platforms.front());
+    const QString waveformRoot = VNX::PathUtils::waveformBuildOutputRoot(project.projectPath, {});
+    VNX::ProjectPackExporter exporter;
+    VNX::ProjectPackExporter::ExportOptions options;
+    options.platform = HarkenTest::platformIdString("Windows");
+    options.selfCleaning = true;
+    const auto original = exporter.ExportAllPacks(project, output, options);
+    ASSERT_TRUE(original.success) << original.error.toStdString();
+    QMap<QString, QByteArray> binaries;
+    for (const QString& name : {QStringLiteral("Init"), QStringLiteral("Parent"), QStringLiteral("Child")})
+        binaries.insert(name, readFileBytes(QDir(output).filePath(name + QStringLiteral(".bytes"))));
+    EXPECT_FALSE(QDir(waveformRoot).exists());
+    project.buildExportWaveforms = true;
+    const auto enabled = exporter.ExportAllPacks(project, output, options);
+    ASSERT_TRUE(enabled.success) << enabled.error.toStdString();
+    for (auto binary = binaries.cbegin(); binary != binaries.cend(); ++binary)
+        EXPECT_EQ(readFileBytes(QDir(output).filePath(binary.key() + QStringLiteral(".bytes"))), binary.value());
+    const auto publication = readPublication(output);
+    const auto parent = findByName(publication, QStringLiteral("Parent")).value(QStringLiteral("companion")).toObject();
+    const auto child = findByName(publication, QStringLiteral("Child")).value(QStringLiteral("companion")).toObject();
+    const auto parentWaves = parent.value(QStringLiteral("waveforms")).toArray();
+    const auto childWaves = child.value(QStringLiteral("waveforms")).toArray();
+    ASSERT_EQ(parentWaves.size(), 2);
+    ASSERT_EQ(childWaves.size(), 1);
+    QSet<QString> files;
+    for (const auto& value : parentWaves) {
+        const auto row = value.toObject();
+        files.insert(row.value(QStringLiteral("file")).toString());
+        if (QUuid(row.value(QStringLiteral("sourceEntryGuid")).toString()) == source.entryId) {
+            EXPECT_EQ(row.value(QStringLiteral("trimStartFrame")).toInteger(), 8);
+            EXPECT_EQ(row.value(QStringLiteral("trimEndFrame")).toInteger(), 48);
+            EXPECT_EQ(row, childWaves.first().toObject());
+        } else {
+            EXPECT_EQ(row.value(QStringLiteral("trimStartFrame")).toInteger(), 0);
+            EXPECT_EQ(row.value(QStringLiteral("trimEndFrame")).toInteger(), 96);
+        }
+    }
+    ASSERT_EQ(files.size(), 1);
+    const QString waveformPath = QDir::cleanPath(QDir(output).absoluteFilePath(*files.cbegin()));
+    EXPECT_EQ(QFileInfo(waveformPath).absolutePath(), waveformRoot);
+    EXPECT_EQ(readFileBytes(waveformPath), readFileBytes(VNX::WaveformCache::cachePath(
+        VNX::AssetRegistry::instance().getAsset(sourceId)->absolutePath)));
+    const QString orphan = QDir(waveformRoot).filePath(QStringLiteral("unreferenced.vkd"));
+    writeFileBytes(orphan, "unused");
+    const auto finalized = VNX::ProjectPackExporter::FinalizePackExport(
+        root, project.platforms, {options.platform}, true, enabled.artifacts);
+    ASSERT_TRUE(finalized.success) << finalized.error.toStdString();
+    EXPECT_TRUE(QFileInfo::exists(waveformPath));
+    EXPECT_FALSE(QFileInfo::exists(orphan));
+    const auto childJson = readFileBytes(QDir(output).filePath(QStringLiteral("Child.json")));
+    project.buildExportWaveforms = false;
+    options.updateSelectedOnly = true;
+    options.onlyUnits = {QStringLiteral("Parent")};
+    const auto disabled = exporter.ExportAllPacks(project, output, options);
+    ASSERT_TRUE(disabled.success) << disabled.error.toStdString();
+    EXPECT_FALSE(QJsonDocument::fromJson(readFileBytes(QDir(output).filePath(QStringLiteral("Parent.json"))))
+        .object().contains(QStringLiteral("waveforms")));
+    EXPECT_EQ(readFileBytes(QDir(output).filePath(QStringLiteral("Child.json"))), childJson);
+    EXPECT_TRUE(QFileInfo::exists(waveformPath));
+    project.buildExportWaveforms = true;
+    const QString blocked = QDir(dir.path()).filePath(QStringLiteral("blocked"));
+    writeFileBytes(blocked, "file");
+    options.waveformOutputDir = blocked;
+    QMap<QString, QByteArray> beforeFailure;
+    for (const auto& file : publicationFiles(output))
+        beforeFailure.insert(file, readFileBytes(QDir(output).filePath(file)));
+    const auto failed = exporter.ExportAllPacks(project, output, options);
+    EXPECT_FALSE(failed.success);
+    for (auto file = beforeFailure.cbegin(); file != beforeFailure.cend(); ++file)
+        EXPECT_EQ(readFileBytes(QDir(output).filePath(file.key())), file.value());
+    EXPECT_EQ(readFileBytes(QDir(output).filePath(QStringLiteral("Child.json"))), childJson);
+    ASSERT_TRUE(QFile::remove(waveformPath));
+    EXPECT_FALSE(readPublication(output).isEmpty());
+    project.buildExportWaveforms = false;
+    options.updateSelectedOnly = false;
+    options.onlyUnits.clear();
+    options.waveformOutputDir.clear();
+    const auto disabledAll = exporter.ExportAllPacks(project, output, options);
+    ASSERT_TRUE(disabledAll.success) << disabledAll.error.toStdString();
+    for (const auto& value : readPublication(output))
+        EXPECT_FALSE(value.toObject().value(QStringLiteral("companion")).toObject()
+            .contains(QStringLiteral("waveforms")));
     VNX::AssetRegistry::instance().clear();
 }
 
@@ -3148,6 +3256,7 @@ TEST(EditorProjectPackExporterManifest, RuntimeBundlePreservesLanguagePathsThrou
     ASSERT_NO_FATAL_FAILURE(localizeSoloSound(project, englishSourceId));
     project.layers.front().rootItem->children.at(1)->comp<VNX::VSound>()
         ->sources.localized["ja"].entries.front().sourceId = japaneseSourceId;
+    project.buildExportWaveforms = true;
 
     const QString publishRoot = QDir(dir.path()).filePath(QStringLiteral("published"));
     const auto bundle = VNX::RuntimeContentBundleBuilder::build(
@@ -3210,6 +3319,20 @@ TEST(EditorProjectPackExporterManifest, RuntimeBundlePreservesLanguagePathsThrou
             const QString platformRoot = QDir(root).filePath(prefix);
             EXPECT_FALSE(QFileInfo::exists(QDir(platformRoot).filePath(QStringLiteral("HarkenEditorWaveforms.json"))));
             const QJsonArray selected = readPublication(platformRoot, language);
+            const auto spoken = findByName(selected, QStringLiteral("Spoken"));
+            const auto waves = spoken.value(QStringLiteral("companion")).toObject()
+                .value(QStringLiteral("waveforms")).toArray();
+            ASSERT_EQ(waves.size(), 1);
+            const auto wave = waves.first().toObject();
+            const QDir companionDir(QFileInfo(QDir(platformRoot).filePath(
+                spoken.value(QStringLiteral("path")).toString())).absolutePath());
+            const QString waveformPath = QDir::cleanPath(companionDir.absoluteFilePath(
+                wave.value(QStringLiteral("file")).toString()));
+            EXPECT_EQ(QFileInfo(waveformPath).absolutePath(),
+                QDir(platformRoot).absoluteFilePath(QStringLiteral("Waveforms")));
+            const auto sourceId = language == QStringLiteral("English") ? englishSourceId : japaneseSourceId;
+            EXPECT_EQ(readFileBytes(waveformPath), readFileBytes(VNX::WaveformCache::cachePath(
+                VNX::AssetRegistry::instance().getAsset(sourceId)->absolutePath)));
             const auto selectedInit = findByName(selected, QStringLiteral("Init"));
             expectCanonicalPackParsesWithPartition(QDir(platformRoot).filePath(
                 selectedInit.value(QStringLiteral("path")).toString()));

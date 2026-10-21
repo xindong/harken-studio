@@ -18,6 +18,7 @@
 #include "../../Core/PackGenerationRecord.h"
 
 class QAction;
+class QToolButton;
 
 namespace VNX {
 
@@ -54,6 +55,7 @@ signals:
     void exportRequested(const QStringList& platforms, const QStringList& packPaths,
                          bool includeUnchecked, bool forceReexport, bool selfCleaning);
     void revealActionRequested(uint32_t objectID);
+    void publishSettingsRequested();
 
 protected:
     void showEvent(QShowEvent* event) override;
@@ -78,7 +80,6 @@ private:
 
     void commitSelectedPlatforms(const QStringList& platforms);
 
-    QStringList selectedPackPaths() const;
     void requestExport(const QStringList& packPaths, bool includeUnchecked = false,
                        bool forceReexport = false, bool selfCleaning = false);
     void toggleUnitPlatforms(const QList<QTreeWidgetItem*>& items, bool include);
@@ -103,6 +104,7 @@ private:
     QCheckBox*    forceReexportBox_ = nullptr;
     QCheckBox*    selfCleaningBox_ = nullptr;
     MultiSelectComboBox* platformCombo_ = nullptr;
+    QToolButton* publishSettingsButton_ = nullptr;
     QLineEdit*    searchEdit_ = nullptr;
 };
 
