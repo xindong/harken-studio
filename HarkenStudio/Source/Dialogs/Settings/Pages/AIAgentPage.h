@@ -42,37 +42,27 @@ signals:
     void aiAgentConfigApplied();
 
 private:
-    void resetAIAgentSettings();
-    void refreshAIApiKeyStatus();
-    void refreshAIToolVisibility();
-    void onAIApiKeyClearClicked();
     void onAIConnectionTestClicked();
     void finishAIConnectionTest(const QString& message, bool success);
     void rememberBaseline();
-    bool vaultHasKey() const;
     void notifyDirty();
 
     QLineEdit* aiBaseUrlEdit_ = nullptr;
     QLineEdit* aiApiKeyEdit_ = nullptr;
-    QLabel* aiApiKeyStatusLabel_ = nullptr;
-    QPushButton* aiApiKeyClearButton_ = nullptr;
     QPushButton* aiConnectionTestButton_ = nullptr;
     QLabel* aiConnectionTestLabel_ = nullptr;
     QLineEdit* aiModelEdit_ = nullptr;
     QSpinBox* aiContextWindowSpin_ = nullptr;
     QComboBox* aiPermissionModeCombo_ = nullptr;
-    QComboBox* aiToolProfileCombo_ = nullptr;
-    QLabel* aiToolVisibilityLabel_ = nullptr;
     OpenAICompatibleLLMProvider* aiConnectionTestProvider_ = nullptr;
     QString aiConnectionTestRequestId_;
     SecretStoreAccess secretStore_;
-    bool apiKeyClearStaged_ = false;
 
     QString baselineBaseUrl_;
+    QString baselineApiKey_;
     QString baselineModel_;
     int baselineContextWindow_ = 0;
     QString baselinePermissionMode_;
-    QString baselineToolProfile_;
 };
 
 }

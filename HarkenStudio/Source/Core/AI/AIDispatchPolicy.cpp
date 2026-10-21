@@ -36,11 +36,6 @@ QJsonValue canonicalValue(const QJsonValue& value)
     return value;
 }
 
-QString normalizeToolProfile(const QString& profile)
-{
-    return profile.trimmed().toLower();
-}
-
 AIDispatchPolicy::Decision denied(const QString& code, const QString& message)
 {
     return {false, code, message};
@@ -94,8 +89,7 @@ QByteArray AIDispatchPolicy::bindingFor(const Request& request) const
         {QStringLiteral("cmd"), request.cmd},
         {QStringLiteral("contract_version"), contractVersion},
         {QStringLiteral("permission"),
-         AICommandValidator::normalizePermissionProfile(request.permissionProfile)},
-        {QStringLiteral("tool_profile"), normalizeToolProfile(request.toolProfile)}
+         AICommandValidator::normalizePermissionProfile(request.permissionProfile)}
     };
     return QCryptographicHash::hash(
         QJsonDocument(canonicalValue(binding).toObject()).toJson(QJsonDocument::Compact),
@@ -112,11 +106,6 @@ AIDispatchPolicy::Decision AIDispatchPolicy::evaluate(const Request& request,
     if (!spec || spec->availability != AICommandSpec::Availability::Enabled)
         return denied(QStringLiteral("AI_COMMAND_UNAVAILABLE"),
                       QStringLiteral("The requested AI command is unavailable."));
-
-    const QString profile = normalizeToolProfile(request.toolProfile);
-    if (!spec->toolProfiles.contains(profile))
-        return denied(QStringLiteral("AI_PROFILE_DENIED"),
-                      QStringLiteral("The active AI tool profile does not allow this command."));
 
     const AIPermissionMode permission = parsePermissionMode(request.permissionProfile);
     if (spec->effect != AICommandSpec::Effect::Query && !allowsWrites(permission))

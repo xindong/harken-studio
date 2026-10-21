@@ -239,23 +239,19 @@
     },
     "settings.ai_agent": {
       "title": "AI Agent",
-      "body": "Configure Assistant's connection, permissions, and available tools."
+      "body": "Configure Assistant's connection and permissions."
     },
     "settings.ai_agent.credentials": {
       "title": "Credentials",
-      "body": "Set the service URL, model, context size in tokens, and API key. On Apply, a blank key keeps the saved key, a new key replaces it, and Clear Saved Key removes it from the system credential vault."
+      "body": "Set the service URL, model, context size in tokens, and API key. The saved key is masked in the input field. On Apply, editing the key replaces it, and clearing the field removes it from the system credential vault."
     },
     "settings.ai_agent.connection": {
       "title": "Test Connection",
-      "body": "Send a short request with the current URL, model, and entered or saved key, without saving settings."
+      "body": "Send a short request with the current URL, model, and API key from the input field, without saving settings."
     },
     "settings.ai_agent.permission": {
       "title": "Permission",
       "body": "Read-only blocks writes; Ask requires approval. Auto currently also asks for every write; Legacy Bypass behaves as Ask."
-    },
-    "settings.ai_agent.tools": {
-      "title": "Tool Scope",
-      "body": "Choose tools for inspection, authoring, pack export, or live testing. Effective tools counts those allowed by both this profile and the permission mode."
     },
     "settings.config": {
       "title": "General",

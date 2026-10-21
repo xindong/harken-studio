@@ -149,7 +149,6 @@ TEST_F(DispatcherReentryTest, AIDispatchPolicyRejectsUnavailableAndRequiresWrite
     context.origin = IPCServer::DispatchOrigin::AI;
     context.requestId = QStringLiteral("ai-0001");
     context.permissionProfile = QStringLiteral("ask");
-    context.toolProfile = QStringLiteral("authoring");
 
     const QJsonObject read = server.dispatchCommand(QStringLiteral("ping"), {}, context);
     EXPECT_EQ(read.value(QStringLiteral("status")).toString(), QStringLiteral("ok"));
@@ -194,7 +193,6 @@ TEST_F(DispatcherReentryTest, AIWriteGrantExecutesOnceAndRejectsReplayOrMismatch
     context.origin = IPCServer::DispatchOrigin::AI;
     context.requestId = QStringLiteral("ai-0001");
     context.permissionProfile = QStringLiteral("ask");
-    context.toolProfile = QStringLiteral("authoring");
     context.grantId = server.issueAIGrant(QStringLiteral("set_item_property"), args, context);
 
     const QJsonObject success = server.dispatchCommand(
@@ -251,7 +249,6 @@ TEST_F(DispatcherReentryTest, NestedAICommandInheritsOriginAndIsDeniedBeforeSide
     context.origin = IPCServer::DispatchOrigin::AI;
     context.requestId = QStringLiteral("ai-nested");
     context.permissionProfile = QStringLiteral("ask");
-    context.toolProfile = QStringLiteral("authoring");
     context.grantId = server.issueAIGrant(QStringLiteral("set_item_property"), args, context);
 
     const QJsonObject response = server.dispatchCommand(

@@ -14,7 +14,6 @@ AIDispatchPolicy::Request pingRequest()
         QStringLiteral("ping"),
         QJsonObject{},
         QStringLiteral("ask"),
-        QStringLiteral("authoring"),
         QStringLiteral("ai-0001"),
         QString()
     };
@@ -30,7 +29,6 @@ AIDispatchPolicy::Request writeRequest()
             {QStringLiteral("value"), -6.0}
         },
         QStringLiteral("ask"),
-        QStringLiteral("authoring"),
         QStringLiteral("ai-0001"),
         QString()
     };
@@ -43,7 +41,6 @@ AICommandSpec syntheticPolicyWriteSpec()
     spec.effect = AICommandSpec::Effect::ProjectState;
     spec.availability = AICommandSpec::Availability::Enabled;
     spec.confirmation = AICommandSpec::Confirmation::WhenPolicyRequires;
-    spec.toolProfiles = QStringList{QStringLiteral("authoring")};
     spec.argumentSchema = QJsonObject{
         {QStringLiteral("type"), QStringLiteral("object")},
         {QStringLiteral("additionalProperties"), false}
@@ -76,7 +73,7 @@ TEST(AIDispatchPolicyTest, CanonicalBindingSortsObjectsAndPreservesArrayOrder)
     EXPECT_NE(policy.bindingFor(first), policy.bindingFor(reordered));
 }
 
-TEST(AIDispatchPolicyTest, BindingIncludesCommandArgumentsPermissionAndProfile)
+TEST(AIDispatchPolicyTest, BindingIncludesCommandArgumentsAndPermission)
 {
     AIDispatchPolicy policy;
     const auto baseline = writeRequest();
@@ -91,12 +88,9 @@ TEST(AIDispatchPolicyTest, BindingIncludesCommandArgumentsPermissionAndProfile)
     changed = baseline;
     changed.permissionProfile = QStringLiteral("read_only");
     EXPECT_NE(binding, policy.bindingFor(changed));
-    changed = baseline;
-    changed.toolProfile = QStringLiteral("pack");
-    EXPECT_NE(binding, policy.bindingFor(changed));
 }
 
-TEST(AIDispatchPolicyTest, EnforcesAvailabilityProfileSchemaAndConfirmation)
+TEST(AIDispatchPolicyTest, EnforcesAvailabilityPermissionSchemaAndConfirmation)
 {
     AIDispatchPolicy policy;
     EXPECT_TRUE(policy.evaluate(pingRequest()).allowed);
@@ -107,9 +101,9 @@ TEST(AIDispatchPolicyTest, EnforcesAvailabilityProfileSchemaAndConfirmation)
     unavailable.cmd = QStringLiteral("create_pack");
     EXPECT_EQ(policy.evaluate(unavailable).code, QStringLiteral("AI_COMMAND_UNAVAILABLE"));
 
-    auto deniedProfile = writeRequest();
-    deniedProfile.toolProfile = QStringLiteral("pack");
-    EXPECT_EQ(policy.evaluate(deniedProfile).code, QStringLiteral("AI_PROFILE_DENIED"));
+    auto readOnly = writeRequest();
+    readOnly.permissionProfile = QStringLiteral("read_only");
+    EXPECT_EQ(policy.evaluate(readOnly).code, QStringLiteral("AI_PROFILE_DENIED"));
 
     auto invalid = writeRequest();
     invalid.args.remove(QStringLiteral("object_id"));

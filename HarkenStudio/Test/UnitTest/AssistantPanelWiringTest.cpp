@@ -992,35 +992,3 @@ TEST_F(AssistantPanelWiringTest, NewSubmitAbortsPendingConfirmationAndClearsCard
     EXPECT_EQ(visibleConfirmationCardCount(panel), 0);
     EXPECT_FALSE(input->isEnabled());
 }
-
-TEST_F(AssistantPanelWiringTest, InvalidToolProfileDiagnosticShowsBoundedStatus)
-{
-    AIAssistantService service(nullptr);
-    service.setUnrestrictedMode(false);
-    auto* provider = new MockLLMProvider;
-    provider->setAutoDelivery(false);
-    provider->enqueueTextResponse(QStringLiteral("Text only"));
-    service.setProvider(provider);
-    service.setSettingsValueLoaderForTesting(
-        [](const QString& key, const QVariant& defaultValue) {
-        if (key == QLatin1String("base_url"))
-            return QVariant(QStringLiteral("https://example.test/v1"));
-        if (key == QLatin1String("model"))
-            return QVariant(QStringLiteral("test-model"));
-        if (key == QLatin1String("tool_profile"))
-            return QVariant(QStringLiteral("bogus"));
-        return defaultValue;
-    });
-    AssistantPanel panel;
-    panel.setAssistantService(&service);
-    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
-    auto* send = panel.findChild<QPushButton*>(QStringLiteral("assistantSend"));
-    auto* step = panel.findChild<QLabel*>(QStringLiteral("aiStepStatus"));
-    ASSERT_NE(input, nullptr);
-    ASSERT_NE(send, nullptr);
-    ASSERT_NE(step, nullptr);
-
-    input->setText(QStringLiteral("Hello"));
-    send->click();
-    EXPECT_FALSE(step->isHidden());
-}

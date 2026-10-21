@@ -84,7 +84,6 @@ private:
         ILLMProvider::ToolCall call;
         QJsonObject command;
         QString permissionProfile;
-        QString toolProfile;
         QByteArray binding;
         qint64 expiresAtMs = 0;
     };
@@ -145,8 +144,7 @@ private:
     void teardownActiveTurn();
     void clearActiveTurn();
     IPCServer::IPCDispatchContext makeAIDispatchContext(
-        const QString& requestId, const QString& permissionProfile,
-        const QString& toolProfile) const;
+        const QString& requestId, const QString& permissionProfile) const;
     void resetTurnRuntime(TurnState nextState);
     qint64 nowMs() const;
     void emitStepEvent(AIStepPhase phase, const QString& command = QString(),
@@ -167,7 +165,6 @@ private:
     bool unrestrictedMode_ = true;
     QString activeRequestId_;
     QString activePermissionProfile_;
-    QString activeToolProfile_;
     QString activeBaseSystemPrompt_;
     QString activeSystemPrompt_;
     QString conversationScope_;

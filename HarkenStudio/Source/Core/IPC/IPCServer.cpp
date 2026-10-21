@@ -469,7 +469,7 @@ std::optional<QJsonObject> IPCServer::enforceAIPolicyGate(const QString& cmd,
     if (context.unrestricted)
         return std::nullopt;
     const AIDispatchPolicy::Decision decision = aiDispatchPolicy_.evaluate({
-        cmd, args, context.permissionProfile, context.toolProfile,
+        cmd, args, context.permissionProfile,
         context.requestId, context.grantId
     }, consumeGrant);
     if (!decision.allowed)
@@ -482,7 +482,7 @@ QByteArray IPCServer::aiBindingFor(const QString& cmd, const QJsonObject& args,
 {
     assertAIPolicyThread();
     return aiDispatchPolicy_.bindingFor({
-        cmd, args, context.permissionProfile, context.toolProfile,
+        cmd, args, context.permissionProfile,
         context.requestId, context.grantId
     });
 }
@@ -492,7 +492,7 @@ QString IPCServer::issueAIGrant(const QString& cmd, const QJsonObject& args,
 {
     assertAIPolicyThread();
     return aiDispatchPolicy_.issueGrant({
-        cmd, args, context.permissionProfile, context.toolProfile,
+        cmd, args, context.permissionProfile,
         context.requestId, {}
     }, ttlMs);
 }

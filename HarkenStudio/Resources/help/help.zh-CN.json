@@ -239,23 +239,19 @@
     },
     "settings.ai_agent": {
       "title": "AI Agent",
-      "body": "配置 Assistant 的连接、权限和可用工具。"
+      "body": "配置 Assistant 的连接和权限。"
     },
     "settings.ai_agent.credentials": {
       "title": "Credentials",
-      "body": "设置服务地址、模型、上下文 token 数和 API Key。Apply 时，密钥留空则保留原密钥，填入新值则替换，Clear Saved Key 则从系统凭据库中移除。"
+      "body": "设置服务地址、模型、上下文 token 数和 API Key。已保存的密钥会在输入框中以掩码显示。点击 Apply 时，修改密钥会替换原值，清空输入框会从系统凭据库中删除密钥。"
     },
     "settings.ai_agent.connection": {
       "title": "Test Connection",
-      "body": "使用当前地址、模型和填入或已保存的密钥发送简短请求，不保存设置。"
+      "body": "使用当前地址、模型和输入框中的 API Key 发送简短请求，不保存设置。"
     },
     "settings.ai_agent.permission": {
       "title": "Permission",
       "body": "Read-only 禁止写入，Ask 在写入前请求批准。Auto 目前也会逐次请求批准，Legacy Bypass 等同于 Ask。"
-    },
-    "settings.ai_agent.tools": {
-      "title": "Tool Scope",
-      "body": "选择用于查看、编辑、导出或实时测试的工具。Effective tools 显示当前工具范围与权限模式共同允许的工具数量。"
     },
     "settings.config": {
       "title": "General",

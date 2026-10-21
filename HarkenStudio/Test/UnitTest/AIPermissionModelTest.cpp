@@ -13,13 +13,6 @@ TEST(AIPermissionModelTest, PermissionIdsRoundTripAndLegacyValuesClampToAsk)
         EXPECT_EQ(parsePermissionMode(value), AIPermissionMode::Ask);
 }
 
-TEST(AIPermissionModelTest, ToolProfileParserPreservesInvalidity)
-{
-    EXPECT_EQ(parseToolProfile(" AUTHORING "), AIToolProfile::Authoring);
-    EXPECT_FALSE(parseToolProfile("invalid"));
-    EXPECT_FALSE(parseToolProfile(QString()));
-}
-
 TEST(AIPermissionModelTest, AllowsWritesAndConfirmationTruthTable)
 {
     EXPECT_FALSE(allowsWrites(AIPermissionMode::ReadOnly));
@@ -39,5 +32,4 @@ TEST(AIPermissionModelTest, UiMetadataUsesCanonicalIds)
     ASSERT_EQ(permissionMetadata().size(), 4);
     EXPECT_STREQ(permissionMetadata().at(2).id, "auto");
     EXPECT_STREQ(permissionMetadata().at(2).label, "Auto-approve eligible writes");
-    EXPECT_EQ(toolProfileMetadata().size(), 4);
 }

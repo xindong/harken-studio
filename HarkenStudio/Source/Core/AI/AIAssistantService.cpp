@@ -618,15 +618,13 @@ void AIAssistantService::emitStepEvent(AIStepPhase phase, const QString& command
                                     toolExecutions_});
 }
 IPCServer::IPCDispatchContext AIAssistantService::makeAIDispatchContext(
-    const QString& requestId, const QString& permissionProfile,
-    const QString& toolProfile) const
+    const QString& requestId, const QString& permissionProfile) const
 {
     IPCServer::IPCDispatchContext context;
     context.source = ActionSource::Internal;
     context.origin = IPCServer::DispatchOrigin::AI;
     context.requestId = requestId;
     context.permissionProfile = permissionProfile;
-    context.toolProfile = toolProfile;
     context.unrestricted = unrestrictedMode_;
     return context;
 }
@@ -683,7 +681,6 @@ void AIAssistantService::submitUserMessage(const QString& text)
     const QString baseUrl = config.baseUrl;
     activeModel_ = config.model;
     activePermissionProfile_ = toId(config.permissionProfile);
-    activeToolProfile_ = config.toolProfile;
     const int maxTokens = config.maxTokens;
     const int timeout = config.requestTimeoutMs;
 
@@ -718,8 +715,6 @@ void AIAssistantService::submitUserMessage(const QString& text)
         }
     }
 
-    bool selectionValid = true;
-    QString selectionStatusCode;
     if (unrestrictedMode_)
     {
         activeTools_ = unrestrictedTools();
@@ -729,11 +724,7 @@ void AIAssistantService::submitUserMessage(const QString& text)
     }
     else
     {
-        const auto selection = AICommandCatalog::selectTools(activeToolProfile_,
-                                                              activePermissionProfile_);
-        activeTools_ = selection.tools;
-        selectionValid = selection.valid;
-        selectionStatusCode = selection.statusCode;
+        activeTools_ = AICommandCatalog::selectTools(activePermissionProfile_);
         activeBaseSystemPrompt_ = QStringLiteral(
             "Return free text or tool calls. The active permission profile is %1.")
             .arg(activePermissionProfile_);
@@ -748,10 +739,6 @@ void AIAssistantService::submitUserMessage(const QString& text)
     resetTurnRuntime(TurnState::AwaitingModel);
 
     submitModelRound();
-    if (!selectionValid)
-        emit diagnosticReady(AIServiceDiagnostic{
-            selectionStatusCode,
-            QStringLiteral("The configured AI tool profile is invalid; this turn is text-only.")});
 }
 void AIAssistantService::submitModelRound()
 {
@@ -1185,13 +1172,12 @@ void AIAssistantService::processToolQueue()
             if (code == QLatin1String("AI_CONFIRMATION_REQUIRED"))
             {
                 const IPCServer::IPCDispatchContext context = makeAIDispatchContext(
-                    activeRequestId_, activePermissionProfile_, activeToolProfile_);
+                    activeRequestId_, activePermissionProfile_);
                 confirmationWaitStartedMs_ = nowMs();
                 pendingConfirmation_ = {
                     call,
                     envelope,
                     activePermissionProfile_,
-                    activeToolProfile_,
                     ipc_ ? ipc_->aiBindingFor(call.name, call.arguments, context)
                          : QByteArray{},
                     nowMs() + kConfirmationTimeoutMs};
@@ -1217,7 +1203,7 @@ void AIAssistantService::processToolQueue()
         }
 
         executeResolvedCall(call, call.name, call.arguments, makeAIDispatchContext(
-            activeRequestId_, activePermissionProfile_, activeToolProfile_));
+            activeRequestId_, activePermissionProfile_));
     }
 
     if (turnState_ == TurnState::RunningTools)
@@ -1277,7 +1263,7 @@ bool AIAssistantService::executeUnrestrictedCall(const ILLMProvider::ToolCall& c
         return executeMemoryCall(call, cmd, args);
 
     return executeResolvedCall(call, cmd, args, makeAIDispatchContext(
-        activeRequestId_, activePermissionProfile_, activeToolProfile_));
+        activeRequestId_, activePermissionProfile_));
 }
 void AIAssistantService::retrieveDurableMemoryContext(
     const QString& userText)
@@ -1833,7 +1819,7 @@ void AIAssistantService::resolveConfirmation(const QString& requestId, bool appr
     const auto command =
         validator_.normalizeAndValidate(pending.command, policy, &code, &message);
     IPCServer::IPCDispatchContext context = makeAIDispatchContext(
-        requestId, pending.permissionProfile, pending.toolProfile);
+        requestId, pending.permissionProfile);
 
     if (!command
         || !ipc_
@@ -2123,7 +2109,6 @@ void AIAssistantService::clearActiveTurn()
     activeApiKey_.clear();
     activeRequestId_.clear();
     activePermissionProfile_.clear();
-    activeToolProfile_.clear();
     activeBaseSystemPrompt_.clear();
     activeSystemPrompt_.clear();
     activeModel_.clear();

@@ -374,7 +374,6 @@ TEST_F(AIUnrestrictedModeTest, UnrestrictedContextBypassesPolicyGatesAtDispatchL
     context.origin = IPCServer::DispatchOrigin::AI;
     context.requestId = QStringLiteral("ai-test");
     context.permissionProfile = QStringLiteral("ask");
-    context.toolProfile = QStringLiteral("authoring");
 
     context.unrestricted = false;
     const QJsonObject denied = server.dispatchCommand(
