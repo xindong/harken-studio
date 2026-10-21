@@ -15,6 +15,8 @@ TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
 {
     const QString path = QStringLiteral("D:/Game %2/Assets/ThirdParty/Harken SDK");
     const QStringList messages = {
+        QStringLiteral("Cannot check whether this Unity project is open: %1 (system error %2). Check project permissions and try again.")
+            .arg(path, "5"),
         QStringLiteral("Cannot move directory from %1 to %2 (system error %3: %4).")
             .arg(path, path + ".backup", "5", "Access denied"),
         QStringLiteral("Check file write protection, directory permissions and processes holding files open at %1. If checkout or unlocking is required, do that first, then retry. The existing SDK was not changed.").arg(path),

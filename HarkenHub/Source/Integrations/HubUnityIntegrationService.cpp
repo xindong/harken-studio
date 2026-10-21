@@ -3,6 +3,7 @@
 
 #include "Integrations/Unity/UnityIntegrationService.h"
 #include "Integrations/Unity/UnityInstallation.h"
+#include "UnityProjectAccess.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -274,6 +275,8 @@ QString localizeUnityText(const QString& text)
         QRegularExpression expression;
         const char* source;
     } installationMessages[] = {
+        {QRegularExpression(QStringLiteral(R"(^Cannot check whether this Unity project is open: (.*) \(system error ([0-9]+)\)\. Check project permissions and try again\.$)")),
+         QT_TRANSLATE_NOOP("HarkenHub", "Cannot check whether this Unity project is open: %1 (system error %2). Check project permissions and try again.")},
         {QRegularExpression(QStringLiteral(R"(^(\d+) SDK file\(s\) differ from their contents at installation\.$)")),
          QT_TRANSLATE_NOOP("HarkenHub", "%1 SDK file(s) differ from their contents at installation.")},
         {QRegularExpression(QStringLiteral(R"(^(\d+) SDK file\(s\) recorded at installation are missing\.$)")),
@@ -570,15 +573,16 @@ UnityIntegrationStepStatus convertStatus(
 UnityIntegrationResult HubUnityIntegrationService::run(
     const UnityIntegrationRequest& request)
 {
+    QString accessError;
     if (!request.verifyInstalledOnly && !request.unityProjectPath.trimmed().isEmpty()
-        && QFileInfo::exists(QDir(request.unityProjectPath).filePath(QStringLiteral("Temp/UnityLockfile")))) {
+        && !VNX::checkUnityProjectClosed(request.unityProjectPath, &accessError)) {
         UnityIntegrationResult result;
         result.unityProjectPath = QDir::cleanPath(QFileInfo(request.unityProjectPath).absoluteFilePath());
         UnityIntegrationStep step;
         step.id = QStringLiteral("unity_preflight");
         step.title = localizeUnityText(QStringLiteral("Validate Unity project"));
         step.status = UnityIntegrationStepStatus::Failed;
-        step.summary = localizeUnityText(QStringLiteral("This Unity project is open. Close it before changing the SDK, then run the safety check again."));
+        step.summary = localizeUnityText(accessError);
         result.steps.push_back(step);
         return result;
     }

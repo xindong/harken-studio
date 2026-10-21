@@ -199,6 +199,7 @@ function(harken_configure_hub_library target)
         Qt6::Network
         Qt6::Svg
         harken_buildinfo
+        harken_unity_project_access
     )
     target_link_libraries(${target} PRIVATE MINIZIP::minizip harken_ed25519)
     if(WIN32)
