@@ -904,14 +904,12 @@ public:
         FrontierInitialCompletionProof& operator=(const FrontierInitialCompletionProof&) = delete;
         bool Valid() const noexcept { return pool_ != nullptr && claim_.Valid(); }
         void Release() noexcept;
-        const QueueConditionalProof& Completion() const noexcept { return completion_; }
     private:
         friend class QueueInstanceTable;
         const ScheduledTransactionPool* pool_ = nullptr;
         ImmediateLaneFrontierClaim claim_{};
         void* row_ = nullptr;
         AudioSliceLease* lease_ = nullptr;
-        QueueConditionalProof completion_{};
     };
     bool ProveFrontierInitialCompletion(const FrontierGroupBinding& binding,
         const Plan03PageGroupView& source, AudioSliceLease& lease,
@@ -919,7 +917,8 @@ public:
         const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool* composites,
         std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame,
         std::uint64_t completedAudioSequence, FrontierInitialCompletionProof* out,
-        const QueueFrontierSourceWaitContext* sourceWait = nullptr) noexcept;
+        const QueueFrontierSourceWaitContext* sourceWait = nullptr,
+        QueueConditionalProof* outCompletion = nullptr) noexcept;
     void ApplyFrontierInitialCompletion(const FrontierInitialCompletionProof& proof) noexcept;
 
     enum class FrontierConditionalSlice : std::uint8_t { Activation, Prelude, TargetLock };
@@ -931,12 +930,10 @@ public:
         FrontierConditionalProof& operator=(const FrontierConditionalProof&) = delete;
         bool Valid() const noexcept { return row_ != nullptr; }
         void Release() noexcept;
-        const QueueConditionalProof& Completion() const noexcept { return completion_; }
     private:
         friend class QueueInstanceTable;
         void* row_ = nullptr;
         AudioSliceLease* lease_ = nullptr;
-        QueueConditionalProof completion_{};
         FrontierConditionalSlice slice_ = FrontierConditionalSlice::Activation;
     };
 
@@ -952,7 +949,8 @@ public:
         const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool* composites,
         std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame, std::uint64_t completedAudioSequence,
         FrontierConditionalProof* out, FrontierConditionalSlice slice = FrontierConditionalSlice::Activation,
-        const QueueFrontierSourceWaitContext* sourceWait = nullptr) noexcept;
+        const QueueFrontierSourceWaitContext* sourceWait = nullptr,
+        QueueConditionalProof* outCompletion = nullptr) noexcept;
     void ApplyFrontierConditional(const FrontierConditionalProof& proof) noexcept;
     QueueConditionalProofStatus PreflightFrontierSourceWait(
         const FrontierGroupBinding& binding, AudioSliceLease& lease,

@@ -708,7 +708,8 @@ bool QueueInstanceTable::ProveFrontierInitialCompletion(const FrontierGroupBindi
     const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool* composites,
     std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame,
     std::uint64_t completedAudioSequence, FrontierInitialCompletionProof* out,
-    const QueueFrontierSourceWaitContext* sourceWait) noexcept {
+    const QueueFrontierSourceWaitContext* sourceWait, QueueConditionalProof* outCompletion) noexcept {
+    if (outCompletion != nullptr) *outCompletion = {};
     if (out == nullptr || out->Valid() || sourceSequence == 0 || !binding.Valid() ||
         binding.role != FrontierGroupRole::Future || !binding.queueInitial.Valid() ||
         binding.queueConditional.Valid() || binding.variableSide.Valid() ||
@@ -774,12 +775,13 @@ bool QueueInstanceTable::ProveFrontierInitialCompletion(const FrontierGroupBindi
     SourceWaitAuthority authority;
     if (sourceWait != nullptr && !ProveSourceWaitAuthority(binding, lease, pool, *sourceWait,
             quantumStartFrame, quantumEndFrame, completedAudioSequence, &authority)) return fail();
+    QueueConditionalProof localCompletion{};
+    auto& proof = outCompletion != nullptr ? *outCompletion : localCompletion;
     const auto status = ProveConditionalCompletion({conditional.slot, conditional.generation},
         {conditional.pendingVersion}, occurrences,
         composites == nullptr ? EmptyCompositeOwners() : *composites,
-        quantumStartFrame, quantumEndFrame, completedAudioSequence, true, &out->completion_,
+        quantumStartFrame, quantumEndFrame, completedAudioSequence, true, &proof,
         sourceWait == nullptr ? nullptr : &authority);
-    const auto& proof = out->completion_;
     if (status != QueueConditionalProofStatus::ReadyToActivate ||
         (proof.completionMode != QueueConditionalCompletionMode::InQuantum &&
          proof.completionMode != QueueConditionalCompletionMode::SourceWait) ||
@@ -1058,7 +1060,8 @@ bool QueueInstanceTable::ProveFrontierConditional(const FrontierGroupBinding& bi
     const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool* composites,
     std::uint64_t quantumStartFrame, std::uint64_t quantumEndFrame, std::uint64_t completedAudioSequence,
     FrontierConditionalProof* out, FrontierConditionalSlice slice,
-    const QueueFrontierSourceWaitContext* sourceWait) noexcept {
+    const QueueFrontierSourceWaitContext* sourceWait, QueueConditionalProof* outCompletion) noexcept {
+    if (outCompletion != nullptr) *outCompletion = {};
     const auto& identity = binding.queueConditional;
     if (!binding.Valid() || !identity.Valid() || binding.variableSide.Valid() || binding.queueInitial.Valid() ||
         out == nullptr || out->Valid()) return false;
@@ -1098,11 +1101,12 @@ bool QueueInstanceTable::ProveFrontierConditional(const FrontierGroupBinding& bi
         out->Release();
         return false;
     }
+    QueueConditionalProof localCompletion{};
+    auto& proof = outCompletion != nullptr ? *outCompletion : localCompletion;
     const auto status = ProveConditionalCompletion({identity.slot, identity.generation}, {identity.pendingVersion},
         occurrences, composites == nullptr ? EmptyCompositeOwners() : *composites,
-        quantumStartFrame, quantumEndFrame, completedAudioSequence, true, &out->completion_,
+        quantumStartFrame, quantumEndFrame, completedAudioSequence, true, &proof,
         recovering ? &authority : nullptr);
-    const auto& proof = out->completion_;
     if (slice == FrontierConditionalSlice::Prelude) {
         if (!binding.transition.Valid() || binding.operation.group.sliceIndex != 0 ||
             binding.operation.order.executeFrame != binding.transition.audibleFrame ||

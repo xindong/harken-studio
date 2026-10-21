@@ -93,8 +93,43 @@ struct FrontierTimelineFinalizer::Impl {
     };
     struct PendingEvent {
         std::uint64_t work = 0;
-        ConsumedEvent source{};
+        TimelineExecutionOrder order{};
+        TimelineTransactionProgramRef program{};
+        FrontierEventBinding frontier{};
+        TimelineArmToken armToken{};
+        TransactionId transactionId = 0;
+        std::uint64_t payload = 0;
+        std::uint32_t txnSlot = 0;
+        bool frozenTxnValid = false;
+        bool authoredFadeOutCandidate = false;
         bool controller = false;
+
+        PendingEvent() = default;
+        PendingEvent(std::uint64_t pendingWork, const ConsumedEvent& source, bool isController) noexcept
+            : work(pendingWork), order(OrderOf(source)), program(source.program), frontier(source.frontier),
+              armToken(source.armToken), transactionId(source.transactionId), payload(source.payload),
+              txnSlot(source.txnSlot), frozenTxnValid(source.frozenTxnValid),
+              authoredFadeOutCandidate(source.authoredFadeOutCandidate), controller(isController) {}
+
+        ConsumedEvent Restore() const noexcept {
+            ConsumedEvent source{};
+            source.executeFrame = order.executeFrame;
+            source.logicCommitSequence = order.logicCommitSequence;
+            source.executionOrdinal = order.executionOrdinal;
+            source.eventIndex = order.eventIndex;
+            source.transactionOrdinal = order.transactionOrdinal;
+            source.subeventPhase = order.subeventPhase;
+            source.rowSequence = order.rowSequence;
+            source.program = program;
+            source.frontier = frontier;
+            source.armToken = armToken;
+            source.transactionId = transactionId;
+            source.payload = payload;
+            source.txnSlot = txnSlot;
+            source.frozenTxnValid = frozenTxnValid;
+            source.authoredFadeOutCandidate = authoredFadeOutCandidate;
+            return source;
+        }
     };
     struct PendingGroup {
         std::uint64_t work = 0;
@@ -674,7 +709,7 @@ struct FrontierTimelineFinalizer::Impl {
                 if (work == 0 || candidateOrder < first) { work = candidate; first = candidateOrder; }
             };
             for (std::uint32_t i = 0; i < pendingEventCount; ++i)
-                select(pendingEvents[i].work, OrderOf(pendingEvents[i].source));
+                select(pendingEvents[i].work, pendingEvents[i].order);
             for (std::uint32_t i = 0; i < pendingGroupCount; ++i)
                 select(pendingGroups[i].work, pendingGroups[i].order);
             std::uint32_t eventTotal = 0, groupTotal = 0;
@@ -694,18 +729,18 @@ struct FrontierTimelineFinalizer::Impl {
                 ++eventTotal;
                 if (pending.controller) {
                     TimelineTransactionProgramRef original{};
-                    valid = decisions->CaptureFrontierControlProgram(pending.source.frontier.group.decision, &original) &&
-                        original.program == pending.source.program.program &&
-                        original.programGeneration == pending.source.program.programGeneration && valid;
+                    valid = decisions->CaptureFrontierControlProgram(pending.frontier.group.decision, &original) &&
+                        original.program == pending.program.program &&
+                        original.programGeneration == pending.program.programGeneration && valid;
                 } else {
-                    const auto* arm = arms.Resolve(pending.source.armToken);
-                    valid = arm != nullptr && arm->programGeneration == pending.source.program.programGeneration && valid;
+                    const auto* arm = arms.Resolve(pending.armToken);
+                    valid = arm != nullptr && arm->programGeneration == pending.program.programGeneration && valid;
                 }
                 if (!valid) continue;
-                const auto* program = pending.source.program.program;
-                valid = program != nullptr && program->generation == pending.source.program.programGeneration &&
-                    program->payloads != nullptr && pending.source.payload < program->payloadCount &&
-                    (program->payloads[pending.source.payload].kind == TimelineEventKind::ControllerActivation) ==
+                const auto* program = pending.program.program;
+                valid = program != nullptr && program->generation == pending.program.programGeneration &&
+                    program->payloads != nullptr && pending.payload < program->payloadCount &&
+                    (program->payloads[pending.payload].kind == TimelineEventKind::ControllerActivation) ==
                         pending.controller;
             }
             if (!valid) { RemovePending(work); continue; }
@@ -737,7 +772,7 @@ struct FrontierTimelineFinalizer::Impl {
                 const auto& pending = pendingEvents[i];
                 if (pending.work != work) continue;
                 auto& event = events[eventCount++];
-                event.source = pending.source;
+                event.source = pending.Restore();
                 event.order = OrderOf(event.source);
                 DecodeVoiceEvent(event, event.source.program.program->payloads[event.source.payload], 0);
                 event.resumed = true;
@@ -748,9 +783,9 @@ struct FrontierTimelineFinalizer::Impl {
 
     bool EarlierPending(const Event& event) const noexcept {
         for (std::uint32_t i = 0; i < pendingEventCount; ++i) {
-            const auto& prior = pendingEvents[i].source;
+            const auto& prior = pendingEvents[i];
             if (SameArm(prior.armToken, event.source.armToken) &&
-                prior.frontier.owner == event.source.frontier.owner && OrderOf(prior) < event.order) return true;
+                prior.frontier.owner == event.source.frontier.owner && prior.order < event.order) return true;
         }
         for (std::uint32_t i = 0; i < eventCount; ++i) {
             const auto& prior = events[i];
@@ -1765,13 +1800,14 @@ struct FrontierTimelineFinalizer::Impl {
                     !pool->NotePlan03GroupReadRt(descriptor.identity, quantum + 1u)) return false;
             }
             const auto sourceWait = SourceWaitContext();
+            QueueConditionalProof completion{};
             if (occurrences == nullptr || quantum > UINT64_MAX / frames ||
                 quantum * frames > UINT64_MAX - frames || matches != 1u ||
                 !queues->ProveFrontierInitialCompletion(binding,
                     source, *member.view.lease, *pool, decision.lastAudioSequence,
                     *occurrences, composites, quantum * frames, quantum * frames + frames,
-                    quantum, &member.queueCompletionProof, SourceWaitApplies(binding) ? &sourceWait : nullptr) ||
-                !CompletionMatchesPreflight(member, member.queueCompletionProof.Completion())) return false;
+                    quantum, &member.queueCompletionProof, SourceWaitApplies(binding) ? &sourceWait : nullptr,
+                    &completion) || !CompletionMatchesPreflight(member, completion)) return false;
             ArmGroupMemberSnapshot historical{};
             if (!armGroups->CaptureMember(decision.armGroup, 0u, &historical) ||
                 !SameArm(historical.token, member.view.members[0])) return false;
@@ -1808,13 +1844,13 @@ struct FrontierTimelineFinalizer::Impl {
         }
         if (queue) return queues->ProveFrontierInitial(binding, *member.view.lease, quantum + 1u, &member.queueProof);
         const auto sourceWait = SourceWaitContext();
+        QueueConditionalProof proof{};
         if (quantum > UINT64_MAX / frames || quantum * frames > UINT64_MAX - frames ||
             !queues->ProveFrontierConditional(binding, *member.view.lease, *occurrences, composites,
                 quantum * frames, quantum * frames + frames, quantum, &member.conditionalProof, member.queueSlice,
-                SourceWaitApplies(binding) ? &sourceWait : nullptr) ||
-            !CompletionMatchesPreflight(member, member.conditionalProof.Completion())) return false;
+                SourceWaitApplies(binding) ? &sourceWait : nullptr, &proof) ||
+            !CompletionMatchesPreflight(member, proof)) return false;
         if (member.queueSlice != QueueInstanceTable::FrontierConditionalSlice::Activation) return true;
-        const auto& proof = member.conditionalProof.Completion();
         if (proof.completionMode != QueueConditionalCompletionMode::RetiredSource) return true;
         if (member.view.memberCount == 0 ||
             (member.view.sourceControlCount != 0 && !member.conditionalQueueCompletion)) return false;
