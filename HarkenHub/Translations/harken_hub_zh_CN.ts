@@ -160,6 +160,14 @@
 <context>
     <name>HubReleaseNotes</name>
     <message>
+        <source>Unity SDK management no longer reports that a closed project is still open because of a leftover lock file. SDK checks, installation, updates, removal, moves, and recovery can proceed once the project is no longer in use.</source>
+        <translation>修复 Unity 工程关闭后，因残留锁文件仍被误判为正在运行的问题。工程不再被占用后，即可正常检查、安装、更新、卸载、移动和恢复 SDK。</translation>
+    </message>
+    <message>
+        <source>When Hub cannot check whether a Unity project is in use, it reports the access error and affected path instead of claiming that Unity is running.</source>
+        <translation>无法检查 Unity 工程是否被占用时，Hub 会显示访问错误和受影响路径，不再误报 Unity 正在运行。</translation>
+    </message>
+    <message>
         <source>Click the Project, Last Opened, or Version column header to sort the project list in ascending or descending order. Engine Integrations supports the same sorting for the HARKEN Project and Game Project columns. Each page remembers its sorting preference.</source>
         <translation>点击工程列表的“工程”“上次启动”或“版本”列标题，可切换升序和降序；引擎集成页的“HARKEN 工程”“游戏工程”列也支持排序。各页面会分别记住排序方式。</translation>
     </message>
@@ -2997,6 +3005,10 @@ Close Unity before continuing. Any paths hard-coded in your project must be upda
     <message>
         <source>This Unity project is open. Close it before changing the SDK, then run the safety check again.</source>
         <translation>该 Unity 工程仍在运行。请先关闭工程，再重新进行安全检查，通过后才能修改 SDK。</translation>
+    </message>
+    <message>
+        <source>Cannot check whether this Unity project is open: %1 (system error %2). Check project permissions and try again.</source>
+        <translation>无法检查该 Unity 工程是否正在运行：%1（系统错误 %2）。请检查工程访问权限后重试。</translation>
     </message>
     <message>
         <source>The SDK installation location is not safe to use.</source>

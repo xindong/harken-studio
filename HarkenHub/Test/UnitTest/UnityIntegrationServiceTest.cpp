@@ -1,6 +1,8 @@
 #include "UnityIntegrationService.h"
 #include "UnityInstallation.h"
 #include "Integrations/HubUnityIntegrationService.h"
+#include "UnityProjectAccess.h"
+#include "Support/UnityProjectLock.h"
 
 #include <gtest/gtest.h>
 
@@ -216,8 +218,10 @@ protected:
     QString destination;
 };
 
-TEST_F(UnitySdkMigrationTest, EmbeddedResolutionDoesNotPreventMaintenanceAfterMoveOrRemoval)
+TEST_F(UnitySdkMigrationTest, StaleUnityLockAndEmbeddedResolutionDoNotPreventMaintenanceAfterMoveOrRemoval)
 {
+    const QString unityLockPath = project + "/Temp/UnityLockfile";
+    writeFile(unityLockPath, "stale");
     const QString lockPath = project + "/Packages/packages-lock.json";
     const QByteArray resolution = R"({"dependencies":{"com.harken.core":{"version":"file:com.harken.core","depth":0,"source":"embedded","dependencies":{}}}})";
     writeFile(lockPath, resolution);
@@ -237,6 +241,7 @@ TEST_F(UnitySdkMigrationTest, EmbeddedResolutionDoesNotPreventMaintenanceAfterMo
     remove.confirmRemoval = true;
     remove.removalBackupPath = dir.filePath("RemovalBackup");
     ASSERT_TRUE(service.run(remove).success);
+    EXPECT_EQ(readFile(unityLockPath), "stale");
     EXPECT_EQ(readFile(lockPath), resolution);
     EXPECT_TRUE(VNX::UnityInstallation::discover(project).sdkReferences.isEmpty());
 }
@@ -468,9 +473,10 @@ TEST_F(UnitySdkMigrationTest, RequiresReviewedUnchangedPlanClosedUnityAndProject
     EXPECT_FALSE(service.run(request).success);
     EXPECT_FALSE(QFileInfo::exists(request.migrationBackupPath));
     approve();
-    writeFile(QDir(project).filePath("Temp/UnityLockfile"), "open");
+    HarkenHubTest::UnityProjectLock unityLock;
+    ASSERT_TRUE(unityLock.lock(project));
     EXPECT_FALSE(service.run(request).success);
-    ASSERT_TRUE(QFile::remove(QDir(project).filePath("Temp/UnityLockfile")));
+    ASSERT_TRUE(unityLock.unlock());
     QLockFile lock(QDir(project).filePath("Library/HarkenIntegration/integration.lock"));
     ASSERT_TRUE(lock.tryLock());
     EXPECT_FALSE(service.run(request).success);
@@ -484,15 +490,16 @@ TEST_F(UnitySdkMigrationTest, RequiresReviewedUnchangedPlanClosedUnityAndProject
 TEST_F(UnitySdkMigrationTest, RechecksUnityAfterMigrationBackup)
 {
     approve();
+    HarkenHubTest::UnityProjectLock unityLock;
     QObject::connect(&service, &VNX::UnityIntegrationService::stepUpdated,
         [&](int, const VNX::UnityIntegrationService::StepResult& step) {
             if (step.id == "migrate_sdk" && step.status == VNX::UnityIntegrationService::StepStatus::Running)
-                writeFile(QDir(project).filePath("Temp/UnityLockfile"), "opened during backup");
+                ASSERT_TRUE(unityLock.lock(project));
         });
     const auto result = service.run(request);
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.integrationMigrated);
-    EXPECT_TRUE(result.steps.back().cause.contains("Close Unity before migrating or recovering the SDK."));
+    EXPECT_TRUE(result.steps.back().cause.contains("This Unity project is open."));
     EXPECT_TRUE(QDir(original).exists());
     EXPECT_FALSE(QDir(destination).exists());
     EXPECT_TRUE(QFileInfo::exists(request.migrationBackupPath));
@@ -529,6 +536,7 @@ TEST_F(UnitySdkMigrationTest, RechecksAfterBackupAndRollsBackIfFinalProjectVerif
 
 TEST_F(UnitySdkMigrationTest, RecoversInterruptedMigrationAtEachRenameBoundaryAndBlocksOtherOperations)
 {
+    writeFile(QDir(project).filePath("Temp/UnityLockfile"), "stale");
     writeFile(original + ".meta", "guid: sdk-root");
     for (int boundary = 0; boundary < 3; ++boundary) {
         request.migrationBackupPath = dir.filePath(QStringLiteral("Backup%1").arg(boundary));
@@ -548,6 +556,10 @@ TEST_F(UnitySdkMigrationTest, RecoversInterruptedMigrationAtEachRenameBoundaryAn
         VNX::UnityIntegrationService::Request recovery;
         recovery.unityProjectPath = project;
         recovery.recoverMigration = true;
+        HarkenHubTest::UnityProjectLock unityLock;
+        ASSERT_TRUE(unityLock.lock(project));
+        EXPECT_FALSE(service.run(recovery).requiresConfirmation);
+        ASSERT_TRUE(unityLock.unlock());
         const auto preview = service.run(recovery);
         ASSERT_TRUE(preview.requiresConfirmation) << preview.steps.back().cause.toStdString();
         recovery.confirmMigration = true;
@@ -1115,7 +1127,8 @@ TEST(UnityIntegrationService, ChecksCapabilitiesAndSerializesProjectOperations)
     EXPECT_FALSE(result.success);
     EXPECT_TRUE(result.steps.front().cause.contains(QStringLiteral("Another integration")));
     lock.unlock();
-    writeFile(QDir(project).filePath(QStringLiteral("Temp/UnityLockfile")), "open");
+    HarkenHubTest::UnityProjectLock unityLock;
+    ASSERT_TRUE(unityLock.lock(project));
     EXPECT_FALSE(service.run(request).success);
     request.checkOnly = true;
     EXPECT_TRUE(service.run(request).success);
@@ -1131,11 +1144,13 @@ TEST(HubUnityIntegrationService, BlocksAllSdkChangesWhileUnityIsOpenBeforeInspec
     VNH::UnityIntegrationRequest request;
     request.unityProjectPath = project;
     request.sdkSourcePath = source;
+    writeFile(QDir(project).filePath("Temp/UnityLockfile"), "stale");
     ASSERT_TRUE(service.run(request).success);
     const QString installed = QDir(project).filePath("Packages/com.harken.core");
     const QByteArray package = readFile(installed + "/package.json");
     writeFile(installed + ".meta", "guid: unchanged-sdk");
-    writeFile(QDir(project).filePath("Temp/UnityLockfile"), "open");
+    HarkenHubTest::UnityProjectLock unityLock;
+    ASSERT_TRUE(unityLock.lock(project));
     request.sdkSourcePath = dir.filePath("missing-sdk");
     for (const bool confirmed : {false, true}) {
         for (const int operation : {0, 1, 2, 3}) {
@@ -1169,10 +1184,11 @@ TEST(HubUnityIntegrationService, BlocksAllSdkChangesWhileUnityIsOpenBeforeInspec
     request.verifyInstalledOnly = false;
     request.checkOnly = true;
     request.sdkSourcePath = source;
-    ASSERT_TRUE(QFile::remove(QDir(project).filePath("Temp/UnityLockfile")));
+    ASSERT_TRUE(unityLock.unlock());
     const QString otherProject = makeUnityProject(dir.filePath("OtherGame"));
-    writeFile(QDir(otherProject).filePath("Temp/UnityLockfile"), "open");
+    ASSERT_TRUE(unityLock.lock(otherProject));
     EXPECT_TRUE(service.run(request).success);
+    EXPECT_EQ(readFile(QDir(project).filePath("Temp/UnityLockfile")), "stale");
 }
 
 TEST(HubUnityIntegrationService, RechecksUnityAfterSafetyCheckBeforeInstallingUpdatingOrRemovingFiles)
@@ -1200,7 +1216,8 @@ TEST(HubUnityIntegrationService, RechecksUnityAfterSafetyCheckBeforeInstallingUp
         request.removalBackupPath = dir.filePath("Backup");
         const auto preview = service.run(request);
         EXPECT_TRUE(preview.success || preview.requiresConfirmation);
-        writeFile(QDir(project).filePath("Temp/UnityLockfile"), "opened after checking");
+        HarkenHubTest::UnityProjectLock unityLock;
+        ASSERT_TRUE(unityLock.lock(project));
         request.checkOnly = false;
         request.confirmTargetChanges = true;
         request.confirmRemoval = true;
@@ -1217,7 +1234,51 @@ TEST(HubUnityIntegrationService, RechecksUnityAfterSafetyCheckBeforeInstallingUp
             EXPECT_EQ(readFile(installed + "/package.json"), originalPackage);
             EXPECT_EQ(readFile(installed + ".meta"), "guid: unchanged-sdk");
         }
+        ASSERT_TRUE(unityLock.unlock());
+        EXPECT_TRUE(service.run(request).success);
+        EXPECT_TRUE(QFileInfo::exists(QDir(project).filePath("Temp/UnityLockfile")));
     }
+}
+
+TEST(UnityProjectAccess, DistinguishesStaleFilesFromLiveLocksWithoutChangingThem)
+{
+    QTemporaryDir dir(QDir::current().filePath(".temp/unity-project-lock-XXXXXX"));
+    ASSERT_TRUE(dir.isValid());
+    const QString project = dir.filePath("Game %2 with spaces");
+    const QString path = QDir(project).filePath("Temp/UnityLockfile");
+    QString error;
+    EXPECT_TRUE(VNX::checkUnityProjectClosed(project, &error));
+    EXPECT_FALSE(QFileInfo::exists(path));
+    writeFile(path, "stale lock contents");
+    const auto modified = QFileInfo(path).lastModified();
+    EXPECT_TRUE(VNX::checkUnityProjectClosed(project, &error));
+    QStringList modes{QStringLiteral("exclusive")};
+#ifndef Q_OS_WIN
+    modes << QStringLiteral("record");
+#endif
+    for (const QString& mode : modes) {
+        HarkenHubTest::UnityProjectLock unityLock;
+        ASSERT_TRUE(unityLock.lock(project, mode));
+        EXPECT_FALSE(VNX::checkUnityProjectClosed(project, &error));
+        EXPECT_TRUE(error.contains("This Unity project is open."));
+        EXPECT_FALSE(VNX::checkUnityProjectClosed(project, &error));
+        ASSERT_TRUE(unityLock.unlock());
+        EXPECT_TRUE(VNX::checkUnityProjectClosed(project, &error));
+        EXPECT_TRUE(error.isEmpty());
+    }
+    EXPECT_EQ(readFile(path), "stale lock contents");
+    EXPECT_EQ(QFileInfo(path).lastModified(), modified);
+    ASSERT_TRUE(QFile::remove(path));
+    ASSERT_TRUE(QDir().mkpath(path));
+    EXPECT_FALSE(VNX::checkUnityProjectClosed(project, &error));
+    EXPECT_TRUE(error.startsWith("Cannot check whether this Unity project is open:"));
+    EXPECT_TRUE(error.contains(QDir::toNativeSeparators(path)));
+    VNH::UnityIntegrationRequest request;
+    request.unityProjectPath = project;
+    request.removeIntegration = true;
+    const auto result = VNH::HubUnityIntegrationService::run(request);
+    ASSERT_EQ(result.steps.size(), 1);
+    EXPECT_EQ(result.steps.front().summary, error);
 }
 
 TEST(UnityIntegrationService, RechecksForDuplicatesBeforeWriting)

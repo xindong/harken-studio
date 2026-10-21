@@ -2,6 +2,7 @@
 #include <QStandardPaths>
 
 #include <gtest/gtest.h>
+#include "Support/UnityProjectLock.h"
 
 namespace HarkenHubTest { int runStateWriter(const QStringList& arguments); }
 
@@ -17,6 +18,8 @@ int main(int argc, char* argv[])
     QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     QApplication app(argc, argv);
     app.setQuitOnLastWindowClosed(false);
+    if (app.arguments().value(1) == QStringLiteral("--unity-project-lock"))
+        return HarkenHubTest::runUnityProjectLock(app.arguments());
     if (app.arguments().value(1) == QStringLiteral("--update-state-writer"))
         return HarkenHubTest::runStateWriter(app.arguments());
     ::testing::InitGoogleTest(&argc, argv);

@@ -11,6 +11,7 @@
 #include "Projects/ProjectStore.h"
 #include "Settings/HubSettings.h"
 #include "Support/StudioProtocolTestUtils.h"
+#include "Support/UnityProjectLock.h"
 #include "Transactions/InstallIndex.h"
 
 #include <gtest/gtest.h>
@@ -810,9 +811,9 @@ TEST_F(EngineIntegrationsPageTest, RequiresClosedUnityBeforeCheckingAndRechecksA
     page->beginEditForProject(harkenPath, executablePath, unityPath);
     ASSERT_TRUE(waitForVersion());
     startSdkSelection();
-    const QString lockPath = QDir(unityPath).filePath("Temp/UnityLockfile");
     const QString installed = QDir(unityPath).filePath("Packages/com.harken.core");
-    writeFile(lockPath, "open");
+    HarkenHubTest::UnityProjectLock unityLock;
+    ASSERT_TRUE(unityLock.lock(unityPath));
     int confirmations = 0;
     bool reopenUnity = false;
     QTimer respond;
@@ -820,7 +821,7 @@ TEST_F(EngineIntegrationsPageTest, RequiresClosedUnityBeforeCheckingAndRechecksA
         auto* dialog = activeActionDialog();
         if (!dialog) return;
         ++confirmations;
-        if (reopenUnity) writeFile(lockPath, "opened after safety check");
+        if (reopenUnity) EXPECT_TRUE(unityLock.lock(unityPath));
         dialog->accept();
     });
     respond.start(10);
@@ -830,7 +831,7 @@ TEST_F(EngineIntegrationsPageTest, RequiresClosedUnityBeforeCheckingAndRechecksA
     EXPECT_TRUE(checkButton()->isEnabled());
     EXPECT_EQ(steps()->rowCount(), 1);
     EXPECT_FALSE(QDir(installed).exists());
-    ASSERT_TRUE(QFile::remove(lockPath));
+    ASSERT_TRUE(unityLock.unlock());
     checkButton()->click();
     EXPECT_TRUE(primary()->isEnabled());
     EXPECT_FALSE(QDir(installed).exists());
@@ -839,7 +840,7 @@ TEST_F(EngineIntegrationsPageTest, RequiresClosedUnityBeforeCheckingAndRechecksA
     EXPECT_EQ(confirmations, 1);
     EXPECT_FALSE(primary()->isEnabled());
     EXPECT_FALSE(QDir(installed).exists());
-    ASSERT_TRUE(QFile::remove(lockPath));
+    ASSERT_TRUE(unityLock.unlock());
     reopenUnity = false;
     checkButton()->click();
     EXPECT_TRUE(primary()->isEnabled());
@@ -1351,8 +1352,8 @@ TEST_F(EngineIntegrationsPageTest, LocalizedGuidanceUsesSummaryUntilChecking)
         EXPECT_FALSE(page->findChild<QPushButton*>(QStringLiteral("changeSdkLocation"))->isEnabled());
         EXPECT_FALSE(page->findChild<QPushButton*>(QStringLiteral("uninstallSdk"))->isEnabled());
         EXPECT_FALSE(action("unlinkProjects")->isEnabled());
-        const QString unityLock = QDir(unityPath).filePath("Temp/UnityLockfile");
-        writeFile(unityLock, "open");
+        HarkenHubTest::UnityProjectLock unityLock;
+        ASSERT_TRUE(unityLock.lock(unityPath));
         check->click();
         EXPECT_FALSE(primary()->isEnabled());
         EXPECT_EQ(steps()->rowCount(), 1);
@@ -1363,7 +1364,7 @@ TEST_F(EngineIntegrationsPageTest, LocalizedGuidanceUsesSummaryUntilChecking)
             EXPECT_TRUE(sdkDialog->grab().save(QDir(screenshotRoot).filePath(
                 chinese ? QStringLiteral("sdk-check-failed-zh.png") : QStringLiteral("sdk-check-failed-en.png"))));
         }
-        ASSERT_TRUE(QFile::remove(unityLock));
+        ASSERT_TRUE(unityLock.unlock());
         check->click();
         if (!screenshotRoot.isEmpty()) {
             QCoreApplication::processEvents();

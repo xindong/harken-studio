@@ -1,6 +1,8 @@
 #include <QtTranslation>
 
 static const char* const kReleaseNotesStrings[] = {
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "Unity SDK management no longer reports that a closed project is still open because of a leftover lock file. SDK checks, installation, updates, removal, moves, and recovery can proceed once the project is no longer in use."),
+    QT_TRANSLATE_NOOP("HubReleaseNotes", "When Hub cannot check whether a Unity project is in use, it reports the access error and affected path instead of claiming that Unity is running."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "The project list shows elapsed time since the last launch in hours and minutes, adding days after 24 hours instead of using vague labels such as Yesterday."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Studio installations retain recovery information if saving the installation record fails, and Hub checks interrupted installations on startup. Installations in progress are no longer shown as damaged. If recovery needs administrator access, choose Repair in Versions."),
     QT_TRANSLATE_NOOP("HubReleaseNotes", "Studio repair checks for running programs in the installation folder before replacing files and explains which programs need to be closed."),

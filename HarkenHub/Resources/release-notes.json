@@ -7,6 +7,22 @@
   },
   "releases": [
     {
+      "version": "0.1.62",
+      "date": "2026-10-21",
+      "pullRequests": [82],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "Unity SDK management no longer reports that a closed project is still open because of a leftover lock file. SDK checks, installation, updates, removal, moves, and recovery can proceed once the project is no longer in use."
+        },
+        {
+          "category": "improved",
+          "text": "When Hub cannot check whether a Unity project is in use, it reports the access error and affected path instead of claiming that Unity is running."
+        }
+      ]
+    },
+    {
       "version": "0.1.61",
       "date": "2026-10-21",
       "pullRequests": [76, 80],

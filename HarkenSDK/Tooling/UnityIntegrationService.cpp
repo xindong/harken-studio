@@ -1,5 +1,6 @@
 #include "UnityIntegrationService.h"
 #include "UnityInstallation.h"
+#include "UnityProjectAccess.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -404,8 +405,7 @@ bool prepareInstallation(const UnityIntegrationService::Request& request,
         || !lockUnityProject(root, lock, error)) return false;
     if (!UnityInstallation::validateTarget(root, *target, error, request.removeIntegration)) return false;
     if ((!request.checkOnly || request.removeIntegration)
-        && QFileInfo::exists(QDir(root).filePath(QStringLiteral("Temp/UnityLockfile")))) {
-        *error = QStringLiteral("Close Unity before installing, updating or removing the SDK.");
+        && !checkUnityProjectClosed(root, error)) {
         return false;
     }
     return true;
@@ -773,10 +773,7 @@ bool emptyMigrationDestination(const QString& path, QString* error)
 
 bool validateMigration(const QString& project, const QString& from, const QString& to, QString* error)
 {
-    if (QFileInfo::exists(QDir(project).filePath(QStringLiteral("Temp/UnityLockfile")))) {
-        *error = QStringLiteral("Close Unity before migrating or recovering the SDK.");
-        return false;
-    }
+    if (!checkUnityProjectClosed(project, error)) return false;
     if (!UnityInstallation::validateTarget(project, from, error)
         || !UnityInstallation::validatePath(from + QStringLiteral(".meta"), error)) return false;
     if (UnityInstallation::containsPath(from, to) || UnityInstallation::containsPath(to, from)) {
@@ -871,10 +868,7 @@ bool recoverSdkMigration(const QString& project, const QJsonObject& record, bool
         if (error->isEmpty()) *error = QStringLiteral("The SDK migration record is invalid. Restore the verified backup manually.");
         return false;
     }
-    if (QFileInfo::exists(QDir(project).filePath(QStringLiteral("Temp/UnityLockfile")))) {
-        *error = QStringLiteral("Close Unity before migrating or recovering the SDK.");
-        return false;
-    }
+    if (!checkUnityProjectClosed(project, error)) return false;
     if (!validatePath(from + QStringLiteral(".meta"), error)
         || !validatePath(to + QStringLiteral(".meta"), error)) return false;
     const auto sourceOwnership = previousManagedFiles(from);
