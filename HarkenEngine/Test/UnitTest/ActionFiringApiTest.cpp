@@ -6371,8 +6371,8 @@ TEST(ActionFiringApi, PostResolvesOnlyCanonicalCurrentWorldActions) {
     EXPECT_EQ(0u, firing);
 }
 
-TEST(ActionFiringApi, InitialQueueCompanionBackingFailureDoesNotAcceptAndCanRecover) {
-    for (unsigned refusedStorage = 0; refusedStorage < 15u; ++refusedStorage) {
+TEST(ActionFiringApi, InitialContainerCompanionBackingFailureDoesNotAcceptAndCanRecover) {
+    for (unsigned refusedStorage = 0; refusedStorage < 17u; ++refusedStorage) {
         SCOPED_TRACE(refusedStorage);
         harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -6383,7 +6383,8 @@ TEST(ActionFiringApi, InitialQueueCompanionBackingFailureDoesNotAcceptAndCanReco
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &pcm));
         CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
             engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
-        image.MakeImmediateSequenceQueuePlayAction();
+        if (refusedStorage == 3u || refusedStorage >= 15u) image.MakeImmediateVariableControlPlayAction();
+        else image.MakeImmediateSequenceQueuePlayAction();
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
         auto desc = ValidPostDesc();
         desc.actionId = image.actions[9].actionStableId;
@@ -6405,12 +6406,16 @@ TEST(ActionFiringApi, InitialQueueCompanionBackingFailureDoesNotAcceptAndCanReco
         if (refusedStorage == 13) engine.originalPlayableServiceLifetimeHolders.SetCommitPageLimitForTests(0);
         if (refusedStorage == 14) harken::detail::ArmLogicAllocFaultForTests(
             1, harken::detail::LogicAllocSite::ImmediateEntryStorage);
+        if (refusedStorage == 15) engine.queueContinuationRecords.SetCommitPageLimitForTests(0);
+        if (refusedStorage == 16) engine.queueFutureRecords.SetCommitPageLimitForTests(0);
         VnActionFiringHandle firing = 99;
         const auto refused = Vn_PostAction(&desc, &firing);
         if (refusedStorage == 14) {
             EXPECT_EQ(0u, harken::detail::g_logicAllocFault.remaining);
             harken::detail::DisarmLogicAllocFaultForTests();
         }
+        engine.queueContinuationRecords.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.queueFutureRecords.SetCommitPageLimitForTests(SIZE_MAX);
         engine.timelineGroupCaptureScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.initialQueueLaneGroupsScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.originalQueueGroupHolders.SetCommitPageLimitForTests(SIZE_MAX);
@@ -6425,7 +6430,7 @@ TEST(ActionFiringApi, InitialQueueCompanionBackingFailureDoesNotAcceptAndCanReco
         engine.initialQueueSuccessorCompositeProofsScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.actionQueueReplacementScratch.SetCommitPageLimitForTests(SIZE_MAX);
         engine.originalPlayableServiceLifetimeHolders.SetCommitPageLimitForTests(SIZE_MAX);
-        ASSERT_EQ(refusedStorage < 3u || refusedStorage == 14u ? VN_BACKPRESSURE : VN_NO_VOICE, refused);
+        ASSERT_EQ(refusedStorage <= 3u || refusedStorage >= 14u ? VN_BACKPRESSURE : VN_NO_VOICE, refused);
         EXPECT_EQ(0u, firing);
         EXPECT_EQ(baseline, CaptureActionReclaimableOwners(engine));
         ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
@@ -15325,19 +15330,17 @@ TEST(ActionFiringApi,
     refuseBacking(engine->originalSingleCurrentHolders);
     refuseBacking(engine->initialFrontierEvents);
     refuseBacking(engine->initialFrontierRequests);
-    refuseBacking(engine->queueContinuationRecords);
-    refuseBacking(engine->queueFutureRecords);
     refuseBacking(engine->pendingVariableLeafSources);
     refuseBacking(engine->pendingVariableFutureSources);
     refuseBacking(engine->pendingVariableFutureNodes);
+    engine->queueContinuationRecords.SetCommitPageLimitForTests(0);
+    engine->queueFutureRecords.SetCommitPageLimitForTests(0);
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     engine->playableInstances.SetCommitPageLimitForTests(0);
     engine->originalPlayableLifetimeHolders.SetCommitPageLimitForTests(0);
     engine->originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
     engine->initialFrontierEvents.SetCommitPageLimitForTests(0);
     engine->initialFrontierRequests.SetCommitPageLimitForTests(0);
-    engine->queueContinuationRecords.SetCommitPageLimitForTests(0);
-    engine->queueFutureRecords.SetCommitPageLimitForTests(0);
     engine->pendingVariableLeafSources.SetCommitPageLimitForTests(0);
     engine->pendingVariableFutureSources.SetCommitPageLimitForTests(0);
     engine->pendingVariableFutureNodes.SetCommitPageLimitForTests(0);
@@ -22506,7 +22509,7 @@ void ExpectImmediateVariableControlNestedQueueInitialTreeStopsAndReclaims(
         EXPECT_EQ(outerContainer, originalFuture->OriginalParent());
         EXPECT_EQ(futureView.scheduleEpoch, originalFuture->OriginalScheduleEpoch());
     }
-    ASSERT_LT(row->identity.slot, engine->acceptedPendingVariableGroups.size());
+    ASSERT_TRUE(engine->acceptedPendingVariableGroups.IsConstructed(row->identity.slot));
     auto& capturedGroup = engine->acceptedPendingVariableGroups[row->identity.slot];
     ASSERT_EQ(engine, capturedGroup.engine);
     EXPECT_EQ(deferred ? 0u : 1u, capturedGroup.futureSourceCount);
@@ -44081,12 +44084,14 @@ static void CheckOrderedSelectedLeafFirstPcm(bool nested, bool sameAction,
                 if (!service.InvocationValid() || service.Invocation().actionFiring != firings[index]) continue;
                 sourceWaitTrace << " service=" << service.identity.slot << " phase=" << static_cast<unsigned>(service.phase)
                     << " entry=" << service.frontierEntry.Valid() << " start=" << service.startFrame;
-                const auto& group = engine.acceptedPendingVariableGroups[service.identity.slot];
-                sourceWaitTrace << " groupEmpty=" << group.Empty() << " leaves=" << group.leafCount
-                    << " retirement=" << static_cast<unsigned>(group.leafRetirement)
-                    << " reselection=" << group.reselectionRequested << " reprepare=" << group.RepreparePending()
-                    << " ready=" << group.ReprepareReady() << " cut=" << group.cut.Valid()
-                    << " bindingCount=" << engine.params.VoiceBindingCount(service.renderHandle)
+                if (engine.acceptedPendingVariableGroups.IsConstructed(service.identity.slot)) {
+                    const auto& group = engine.acceptedPendingVariableGroups[service.identity.slot];
+                    sourceWaitTrace << " groupEmpty=" << group.Empty() << " leaves=" << group.leafCount
+                        << " retirement=" << static_cast<unsigned>(group.leafRetirement)
+                        << " reselection=" << group.reselectionRequested << " reprepare=" << group.RepreparePending()
+                        << " ready=" << group.ReprepareReady() << " cut=" << group.cut.Valid();
+                }
+                sourceWaitTrace << " bindingCount=" << engine.params.VoiceBindingCount(service.renderHandle)
                     << " nested=" << service.variableControlNestedContainerCount
                     << " child=" << service.variableControlChildCount
                     << " nestedChild=" << service.variableControlNestedChildCount;
@@ -48359,6 +48364,8 @@ struct PendingQueueNativeBackingProbe {
 
     ~PendingQueueNativeBackingProbe() {
         if (!enabled) return;
+        engine.queueContinuationRecords.SetCommitPageLimitForTests(SIZE_MAX);
+        engine.queueFutureRecords.SetCommitPageLimitForTests(SIZE_MAX);
         engine.timelinePool.SetImmediateLaneRowCommitPageLimitForTests(SIZE_MAX);
         engine.acceptedPendingVariableGroups.SetCommitPageLimitForTests(SIZE_MAX);
         engine.initialQueueTimingProgramsScratch.SetCommitPageLimitForTests(SIZE_MAX);
@@ -48399,6 +48406,8 @@ struct PendingQueueNativeBackingProbe {
         const harken::PrivateImmediateLanePlacementProof& placement) {
         ASSERT_EQ(nullptr, producer);
         ASSERT_EQ(0u, entry.privateVcProducerCount);
+        engine.queueContinuationRecords.SetCommitPageLimitForTests(0);
+        engine.queueFutureRecords.SetCommitPageLimitForTests(0);
         ASSERT_NO_FATAL_FAILURE(CheckNativeBackingReservationFailures(engine, source, entry, placement, true));
         bool waiting = false;
         ASSERT_TRUE(engine.EnsurePendingVariableNativeBacking(source, entry, &waiting));

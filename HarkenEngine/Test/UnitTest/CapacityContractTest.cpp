@@ -954,9 +954,9 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         engine->initialQueueTimingEventsScratch.CommittedBytes(), engine->initialQueueTimingEventsScratch.ReservedBytes());
     recordStableRows("queue_timing_groups", engine->initialQueueTimingGroupsScratch.RequestedBytes(),
         engine->initialQueueTimingGroupsScratch.CommittedBytes(), engine->initialQueueTimingGroupsScratch.ReservedBytes());
-    EXPECT_EQ(0u, engine->acceptedPendingVariableGroups.size());
+    EXPECT_EQ(0u, engine->acceptedPendingVariableGroups.ConstructedCount());
     testing::Test::RecordProperty("removed_prebuilt_accepted_variable_group_bytes", std::to_string(
-        static_cast<std::uint64_t>(engine->acceptedPendingVariableGroups.Capacity()) *
+        static_cast<std::uint64_t>(engine->acceptedPendingVariableGroups.size()) *
         sizeof(harken::Engine::OriginalPendingVariableGroupHolder)));
     EXPECT_EQ(0u, engine->initialQueueLaneGroupsScratch.size());
     EXPECT_EQ(0u, engine->originalQueueGroupHolders.size());

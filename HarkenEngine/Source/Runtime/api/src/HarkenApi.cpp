@@ -256,7 +256,8 @@ std::size_t Engine::PendingSelectionStorageBytes() const noexcept {
     };
     auto bytes = pendingOrdinarySelections.RequestedBytes() + pendingOrdinarySelections.DirectoryBytes() +
         preparedPendingVariableGroups.RequestedBytes() + preparedPendingVariableGroups.DirectoryBytes() +
-        acceptedPendingVariableGroups.RequestedBytes() + pendingVariableLeafSources.RequestedBytes() +
+        acceptedPendingVariableGroups.RequestedBytes() +
+        acceptedPendingVariableGroups.DirectoryBytes() + pendingVariableLeafSources.RequestedBytes() +
         pendingVariableFutureSources.RequestedBytes() + pendingVariableFutureNodes.RequestedBytes() +
         pendingVariableQueueNativeOrigins.RequestedBytes() + originalPlayableServiceLifetimeHolders.RequestedBytes() +
         PrivateImmediateEntryResultStorageBytes();
@@ -36827,7 +36828,7 @@ bool CaptureRegisteredPrivateVcAbortVoices(harken::Engine& engine,
                 owner.parent.internalToken != installation.rootInstance) return false;
             if (held.laneAcceptedOriginals) {
                 if (start.slot >= engine.pendingVariableLeafSources.size() || producer->row == nullptr ||
-                    producer->row->identity.slot >= engine.acceptedPendingVariableGroups.size()) return false;
+                    !engine.acceptedPendingVariableGroups.IsConstructed(producer->row->identity.slot)) return false;
                 const auto& original = engine.pendingVariableLeafSources[start.slot];
                 const auto& group = engine.acceptedPendingVariableGroups[producer->row->identity.slot];
                 // A tree's installation root and its resource service controller
@@ -36858,7 +36859,7 @@ bool CaptureRegisteredPrivateVcAbortVoices(harken::Engine& engine,
             return true;
         };
         if (held.laneAcceptedOriginals) {
-            if (producer->row == nullptr || producer->row->identity.slot >= engine.acceptedPendingVariableGroups.size())
+            if (producer->row == nullptr || !engine.acceptedPendingVariableGroups.IsConstructed(producer->row->identity.slot))
                 return false;
             const auto& group = engine.acceptedPendingVariableGroups[producer->row->identity.slot];
             if (group.engine != &engine || !group.accepted || !group.producer.Valid() ||
@@ -36918,7 +36919,7 @@ bool ObserveRegisteredPrivateVcInvalidatedGroups(harken::Engine& engine,
             if (producer == nullptr) return false;
             const auto& held = producer->privateInitialVcPageCohort;
             if (held.laneAcceptedOriginals) {
-                if (producer->row == nullptr || producer->row->identity.slot >= engine.acceptedPendingVariableGroups.size())
+                if (producer->row == nullptr || !engine.acceptedPendingVariableGroups.IsConstructed(producer->row->identity.slot))
                     return false;
                 const auto& original = engine.acceptedPendingVariableGroups[producer->row->identity.slot];
                 if (original.engine != &engine || !original.accepted ||
@@ -37088,7 +37089,7 @@ bool CaptureRegisteredPrivateVcAbortQueues(harken::Engine& engine,
     harken::EngineActionPlayScratch& producer, harken::EngineImmediateEntryAttempt& attempt) noexcept {
     using Origin = harken::Engine::OriginalPendingVariableQueueNativeOrigin;
     if (!producer.privateInitialVcPageCohort.laneAcceptedOriginals) return true;
-    if (producer.row == nullptr || producer.row->identity.slot >= engine.acceptedPendingVariableGroups.size()) return false;
+    if (producer.row == nullptr || !engine.acceptedPendingVariableGroups.IsConstructed(producer.row->identity.slot)) return false;
     auto& group = engine.acceptedPendingVariableGroups[producer.row->identity.slot];
     auto& saved = group.boundAbort;
     if (saved.captured)
@@ -37468,7 +37469,7 @@ bool ServiceAbortingVariableControlProducer(harken::Engine& engine,
         attempt.producerSlot, attempt.producerGeneration};
     auto* producer = FindFrontierAttempt(engine, token);
     if (producer == nullptr) return false;
-    if (producer->row != nullptr && producer->row->identity.slot < engine.acceptedPendingVariableGroups.size()) {
+    if (producer->row != nullptr && engine.acceptedPendingVariableGroups.IsConstructed(producer->row->identity.slot)) {
         auto& group = engine.acceptedPendingVariableGroups[producer->row->identity.slot];
         harken::MonitorControlCause cause{};
         const bool controlled = CaptureServiceControlCause(engine, *producer->row, &cause);
@@ -37636,7 +37637,7 @@ bool ServiceAbortingVariableControlProducer(harken::Engine& engine,
                 return false;
             if (!attempt.producerExposureReleased) {
                 if (producer->row != nullptr &&
-                    producer->row->identity.slot < engine.acceptedPendingVariableGroups.size()) {
+                    engine.acceptedPendingVariableGroups.IsConstructed(producer->row->identity.slot)) {
                     auto& group = engine.acceptedPendingVariableGroups[producer->row->identity.slot];
                     if (group.leafRetirement ==
                             harken::Engine::OriginalPendingVariableGroupHolder::LeafRetirement::Settled) {
@@ -40299,7 +40300,7 @@ bool FilePendingVariableControlLane(harken::Engine& engine,
     if (outWaiting != nullptr) *outWaiting = false;
     std::uint32_t eventCount = 0;
     harken::PrivateImmediateLanePlacementProof placement;
-    auto* group = row.identity.slot < engine.acceptedPendingVariableGroups.size()
+    auto* group = engine.acceptedPendingVariableGroups.IsConstructed(row.identity.slot)
         ? &engine.acceptedPendingVariableGroups[row.identity.slot] : nullptr;
     const bool retiring = group != nullptr && !group->Empty() &&
         group->leafRetirement != harken::Engine::OriginalPendingVariableGroupHolder::LeafRetirement::None;
@@ -40320,7 +40321,7 @@ bool FilePendingVariableControlLane(harken::Engine& engine,
         !PlacePendingVariableControlLane(engine, attempt, eventCount, earliestFrame, outAnchor, &placement)) return false;
     attempt.entryEventCount = eventCount;
     if (!retiring && !SetPendingVariableControlLaneOrder(engine, row, scratch, attempt, eventCount, *outAnchor)) return false;
-    if (row.identity.slot < engine.acceptedPendingVariableGroups.size() &&
+    if (engine.acceptedPendingVariableGroups.IsConstructed(row.identity.slot) &&
         !engine.acceptedPendingVariableGroups[row.identity.slot].Empty()) {
         harken::VariableReadCutReader reader{};
         if (!engine.variables.BeginPendingVariableGroupPlacement(engine, scratch, attempt, placement, &reader))
@@ -44368,7 +44369,7 @@ void ServicePendingImmediateEntries(
             const harken::EngineFrontierAttemptToken token{active->producerSlot, active->producerGeneration};
             auto* producer = FindFrontierAttempt(engine, token);
             if (producer != nullptr && producer->row != nullptr &&
-                producer->row->identity.slot < engine.acceptedPendingVariableGroups.size() &&
+                engine.acceptedPendingVariableGroups.IsConstructed(producer->row->identity.slot) &&
                 engine.acceptedPendingVariableGroups[producer->row->identity.slot].leafRetirement !=
                     harken::Engine::OriginalPendingVariableGroupHolder::LeafRetirement::None) {
                 if (producer->row != &row) continue;
@@ -45188,7 +45189,7 @@ void ServicePendingImmediateEntries(
                         &registeredSourceWaiting));
             traceRegistered(prepared ? 91u : registeredSourceWaiting ? 92u : 93u);
             if (!prepared && registeredSourceWaiting) continue;
-            if (prepared && validProducer && row.identity.slot < engine.acceptedPendingVariableGroups.size() &&
+            if (prepared && validProducer && engine.acceptedPendingVariableGroups.IsConstructed(row.identity.slot) &&
                 engine.acceptedPendingVariableGroups[row.identity.slot].leafRetirement !=
                     harken::Engine::OriginalPendingVariableGroupHolder::LeafRetirement::None &&
                 engine.acceptedPendingVariableGroups[row.identity.slot].leafRetirement !=
@@ -52380,7 +52381,7 @@ Engine::OriginalPendingVariableGroupHolder* Engine::NativeBackingGroupFor(
     const EngineActionPlayScratch& child) noexcept {
     const auto reference = child.pendingVariableReplacementService;
     const auto producerToken = child.pendingVariableReplacementProducer;
-    if (!reference.Valid() || reference.token.slot >= acceptedPendingVariableGroups.size() ||
+    if (!reference.Valid() || !acceptedPendingVariableGroups.IsConstructed(reference.token.slot) ||
         !producerToken.Valid() || !actionPlayScratch.IsConstructed(producerToken.slot)) return nullptr;
     auto& group = acceptedPendingVariableGroups[reference.token.slot];
     const auto& producer = actionPlayScratch[producerToken.slot];
@@ -56222,7 +56223,7 @@ bool Engine::MatchesPendingVariableReplacementQueueIssuer(EngineActionPlayScratc
         child.pendingVariableReplacementEntryGeneration != attemptGeneration ||
         !MatchesPendingVariableReplacementProducer(child, *producer, *attempt)) return false;
     const auto reference = child.pendingVariableReplacementService;
-    if (!reference.Valid() || reference.token.slot >= acceptedPendingVariableGroups.size()) return false;
+    if (!reference.Valid() || !acceptedPendingVariableGroups.IsConstructed(reference.token.slot)) return false;
     auto* group = &acceptedPendingVariableGroups[reference.token.slot];
     const auto& issued = group->reprepare_;
     const auto& retention = producer->storage.originalPendingVariableProducer;
@@ -58633,12 +58634,13 @@ bool Engine::OwnsPrivatePendingVariableReplacementSourceTerminal(
     OriginalPendingVariableGroupHolder* owned = nullptr;
     auto* controller = resource;
     for (std::size_t depth = 0; controller != nullptr && depth < playableServices.size(); ++depth) {
-        if (controller->identity.slot >= acceptedPendingVariableGroups.size()) return false;
-        auto& candidate = acceptedPendingVariableGroups[controller->identity.slot];
-        if (candidate.engine == this && candidate.reference.token == controller->identity &&
-            candidate.reprepare_.engine == this && candidate.reprepare_.replacementChildren.Valid()) {
-            owned = &candidate;
-            break;
+        if (acceptedPendingVariableGroups.IsConstructed(controller->identity.slot)) {
+            auto& candidate = acceptedPendingVariableGroups[controller->identity.slot];
+            if (candidate.engine == this && candidate.reference.token == controller->identity &&
+                candidate.reprepare_.engine == this && candidate.reprepare_.replacementChildren.Valid()) {
+                owned = &candidate;
+                break;
+            }
         }
         if (!controller->parentService.Valid()) break;
         auto* parent = ResolvePlayableService(controller->parentService);
@@ -58710,7 +58712,7 @@ bool Engine::CanCancelPendingVariableReplacementVoiceOwner(
         for (std::uint32_t index = 0; index < child.voiceStartCount; ++index) {
             if (&child.voiceStarts.Owners()[index] != &owner) continue;
             const auto service = child.pendingVariableReplacementService.token;
-            if (service.slot >= acceptedPendingVariableGroups.size()) return false;
+            if (!acceptedPendingVariableGroups.IsConstructed(service.slot)) return false;
             const auto& group = acceptedPendingVariableGroups[service.slot];
             const auto* attempt = group.reprepare_.attempt;
             return owner.engine == this && owner.token == &child.voiceStarts[index] &&
@@ -58742,7 +58744,7 @@ const EngineActionPlayScratch* Engine::OriginalCancelledPendingVariableGroupChil
         (attempt.privateVcProducerCount != 0 ? !MatchesRegisteredPendingVariableCohortReprepare(producer, attempt) :
             !actionPlayScratch.IsConstructed(attempt.producerSlot) || &actionPlayScratch[attempt.producerSlot] != &producer ||
             producer.storage.generation != attempt.producerGeneration) || producer.row == nullptr ||
-        producer.row->identity.slot >= acceptedPendingVariableGroups.size()) return nullptr;
+        !acceptedPendingVariableGroups.IsConstructed(producer.row->identity.slot)) return nullptr;
     const auto* group = &acceptedPendingVariableGroups[producer.row->identity.slot];
     const auto& issued = group->reprepare_;
     if (group->engine != this || !group->accepted || !group->producer.Valid() || !group->ReprepareReady() ||
@@ -60119,7 +60121,7 @@ bool Engine::RegisteredPendingVariableCohortRepreparePending(
         attempt.privateVcProducerCount == 0 || !actionPlayScratch.IsConstructed(attempt.privateVcProducerHead.slot)) return false;
     const auto& producer = actionPlayScratch[attempt.privateVcProducerHead.slot];
     if (producer.storage.generation != attempt.privateVcProducerHead.generation || producer.row == nullptr ||
-        producer.row->identity.slot >= acceptedPendingVariableGroups.size()) return false;
+        !acceptedPendingVariableGroups.IsConstructed(producer.row->identity.slot)) return false;
     const auto& group = acceptedPendingVariableGroups[producer.row->identity.slot];
     return group.reprepare_.cohortHead == &group && group.reprepare_.engine == this &&
         group.reprepare_.attempt == &attempt && group.reprepare_.attemptGeneration == attempt.generation &&
@@ -60138,7 +60140,7 @@ bool Engine::MatchesRegisteredPendingVariableCohortReprepare(const EngineActionP
     for (std::uint32_t index = 0; index < attempt.privateVcProducerCount; ++index) {
         const auto* actual = FindFrontierAttempt(*this, token);
         if (actual == nullptr || actual->row == nullptr ||
-            actual->row->identity.slot >= acceptedPendingVariableGroups.size()) return false;
+            !acceptedPendingVariableGroups.IsConstructed(actual->row->identity.slot)) return false;
         const auto& row = *actual->row;
         const auto& group = acceptedPendingVariableGroups[row.identity.slot];
         const auto& issued = group.reprepare_;
@@ -60405,7 +60407,7 @@ bool Engine::CancelRegisteredPendingVariableCohortReprepare(EngineImmediateEntry
     using Initial = OriginalPendingVariableGroupHolder::InitialReprepare;
     auto* head = FindFrontierAttempt(*this, attempt.privateVcProducerHead);
     if (!attempt.producerAbortPending || head == nullptr || head->row == nullptr ||
-        head->row->identity.slot >= acceptedPendingVariableGroups.size()) return false;
+        !acceptedPendingVariableGroups.IsConstructed(head->row->identity.slot)) return false;
     auto& originalHead = acceptedPendingVariableGroups[head->row->identity.slot];
     if (originalHead.reprepare_.cohortPhase != Initial::CohortPhase::Closing) {
         if (!CancelRegisteredPendingVariableCohortLane(attempt)) return false;
@@ -77806,7 +77808,7 @@ void ServiceCancelledFrontierAttempts(harken::Engine& engine) noexcept {
     for (auto& scratch : engine.actionPlayScratch) {
         if (scratch.storage.phase == harken::EngineFrontierAttemptPhase::PendingVariableChildrenCancelPending) {
             const auto service = scratch.pendingVariableReplacementService.token;
-            if (service.Valid() && service.slot < engine.acceptedPendingVariableGroups.size())
+            if (service.Valid() && engine.acceptedPendingVariableGroups.IsConstructed(service.slot))
                 (void)engine.CancelPendingVariableGroupChildren(engine.acceptedPendingVariableGroups[service.slot]);
             continue;
         }
@@ -87182,8 +87184,11 @@ bool ReserveImmediateActionPlaysImpl(void* opaque,
     if (preparedCount != plan->playCount ||
         preparedStopCount != plan->stopCount ||
         (hasPagePlay && !plan->pageWindowAdmitted) ||
-        (privateLaneEntries != 0 && !engine.immediateActionLane.PreparePrivateEntryBacking(
-            privateLaneEntries, &plan->privateLaneEntryBacking)) ||
+        (privateLaneEntries != 0 &&
+         (!engine.queueContinuationRecords.ConstructThrough(engine.queueContinuationRecords.Capacity()) ||
+          !engine.queueFutureRecords.ConstructThrough(engine.queueFutureRecords.Capacity()) ||
+          !engine.immediateActionLane.PreparePrivateEntryBacking(
+              privateLaneEntries, &plan->privateLaneEntryBacking))) ||
         (currentFrameCount != 0 &&
          engine.timelinePool.PreflightSingleEventTransactionBatch(
              engine.actionPlayFrameScratch.data(), currentFrameCount,

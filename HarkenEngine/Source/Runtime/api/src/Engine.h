@@ -7416,7 +7416,7 @@ public:
             batch = &storage.initialSelectionBatch;
         } else {
             auto* prepared = PreparedPendingVariableGroupFor(storage);
-            if (prepared == nullptr || row->identity.slot >= acceptedPendingVariableGroups.size()) return nullptr;
+            if (prepared == nullptr || !acceptedPendingVariableGroups.IsConstructed(row->identity.slot)) return nullptr;
             auto& accepted = acceptedPendingVariableGroups[row->identity.slot];
             const bool hasPrepared = !prepared->Empty();
             const bool hasAccepted = !accepted.Empty();
@@ -8281,10 +8281,10 @@ public:
         auto* holder = PreparedPendingVariableGroupFor(scratch.storage);
         if (prepared == nullptr || !prepared->Empty() || holder == nullptr || !holder->Empty() ||
             scratch.row == nullptr || !scratch.row->InvocationValid() ||
-            scratch.row->identity.slot >= acceptedPendingVariableGroups.size() ||
-            !acceptedPendingVariableGroups[scratch.row->identity.slot].Empty() ||
             scratch.storage.phase != EngineFrontierAttemptPhase::Preparing) return false;
         auto& row = *scratch.row;
+        if (!acceptedPendingVariableGroups.Emplace(row.identity.slot) ||
+            !acceptedPendingVariableGroups[row.identity.slot].Empty()) return false;
         if (scratch.variableControlNestedVariableControlCount > scratch.variableControlNestedServices.size()) return false;
         std::uint32_t nestedSideCount = 0;
         for (std::uint32_t index = 0; index < scratch.variableControlNestedVariableControlCount; ++index) {
@@ -8409,7 +8409,7 @@ public:
             prepared->reference.owner != scratch.row->ownerInstance ||
             prepared->reference.epoch != scratch.row->ownerEpoch ||
             prepared->reference.invocationGeneration != scratch.row->invocationGeneration ||
-            scratch.row->identity.slot >= acceptedPendingVariableGroups.size()) return false;
+            !acceptedPendingVariableGroups.IsConstructed(scratch.row->identity.slot)) return false;
         auto& accepted = acceptedPendingVariableGroups[scratch.row->identity.slot];
         if (!accepted.Empty() || prepared->initialSelectionBatch.ReplacementPending() ||
             !CanMovePendingVariableGroupSources(*prepared)) return false;
@@ -8458,7 +8458,8 @@ public:
             if (ordinary.storage == nullptr || !MatchesPendingOrdinarySelection(ordinary, *ordinary.storage, row) ||
                 !ClosePendingOrdinarySelection(ordinary)) return false;
         }
-        if (row.identity.slot >= acceptedPendingVariableGroups.size()) return false;
+        if (row.identity.slot >= playableServices.size()) return false;
+        if (!acceptedPendingVariableGroups.IsConstructed(row.identity.slot)) return true;
         auto& holder = acceptedPendingVariableGroups[row.identity.slot];
         if (holder.Empty()) return true;
         return holder.reference.token == row.identity && holder.reference.owner == row.ownerInstance &&
@@ -8541,7 +8542,7 @@ public:
             row.controlLifecycle != PlayableControlLifecycle::Preparing ||
             row.pendingImmediateTimeDomain != ImmediateLaneTimeDomain::RelativeToAnchor ||
             (row.Invocation().actionTerminalReason != ActionTerminalReason::None && !retirementAbort) ||
-            row.identity.slot >= acceptedPendingVariableGroups.size()) return nullptr;
+            !acceptedPendingVariableGroups.IsConstructed(row.identity.slot)) return nullptr;
         auto& group = acceptedPendingVariableGroups[row.identity.slot];
         const auto& original = scratch.storage.originalPendingVariableProducer;
         const auto service = group.service.FactoryReference();
@@ -12919,8 +12920,6 @@ public:
         return PrepareOriginalPlayableStorage() &&
             initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
             initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&
-            queueContinuationRecords.ConstructThrough(queueContinuationRecords.Capacity()) &&
-            queueFutureRecords.ConstructThrough(queueFutureRecords.Capacity()) &&
             pendingVariableLeafSources.ConstructThrough(pendingVariableLeafSources.Capacity()) &&
             pendingVariableFutureSources.ConstructThrough(pendingVariableFutureSources.Capacity()) &&
             pendingVariableFutureNodes.ConstructThrough(pendingVariableFutureNodes.Capacity()) &&
@@ -12938,8 +12937,7 @@ public:
         const auto groups = std::min<std::uint64_t>(initialQueueTimingGroupsScratch.Capacity(),
             static_cast<std::uint64_t>(required) *
                 std::tuple_size_v<decltype(EnginePlayableServiceRow::queueUnplacedGroupFrames)>);
-        return acceptedPendingVariableGroups.ConstructThrough(required) &&
-            initialQueueTimingProgramsScratch.ConstructThrough(static_cast<std::uint32_t>(programs)) &&
+        return initialQueueTimingProgramsScratch.ConstructThrough(static_cast<std::uint32_t>(programs)) &&
             initialQueueTimingEventsScratch.ConstructThrough(static_cast<std::uint32_t>(events)) &&
             initialQueueTimingGroupsScratch.ConstructThrough(static_cast<std::uint32_t>(groups));
     }
@@ -12999,7 +12997,7 @@ public:
     StableRowStorage<OriginalPendingVariableQueueNativeOrigin> pendingVariableQueueNativeOrigins;
     StableSlotStorage<OriginalPendingOrdinarySelectionHolder> pendingOrdinarySelections;
     StableSlotStorage<OriginalPendingVariableGroupHolder> preparedPendingVariableGroups;
-    StableRowStorage<OriginalPendingVariableGroupHolder> acceptedPendingVariableGroups;
+    StableSlotStorage<OriginalPendingVariableGroupHolder> acceptedPendingVariableGroups;
     bool pendingVariableGroupReplacementActive = false;
     bool deferRegisteredPendingVariableSelectionReplacementForTest = false;
     bool deferPendingImmediateEntriesForTest = false;
