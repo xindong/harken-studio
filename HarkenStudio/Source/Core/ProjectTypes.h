@@ -908,7 +908,7 @@ struct ProjectData
 
 
     QStringList projectLanguages;
-    QString     defaultLanguage = "English";
+    QString     defaultLanguage;
 
     std::vector<PackGroup> packGroups;
     std::vector<ActionPublishedNameHistoryRow> actionPublishedNameHistory;

@@ -73,30 +73,42 @@ protected:
     ProjectConfig config;
 };
 
-TEST_F(ProjectPlatformModel, BothCreationPathsStartWithOneWindowsInstance)
+TEST_F(ProjectPlatformModel, BothCreationPathsPreserveDefaultPlatformInstances)
 {
-    ASSERT_EQ(config.platforms.size(), 1);
+    ASSERT_EQ(config.platforms.size(), 4);
+    const QVector<BasePlatform> expectedBases{
+        BasePlatform::Windows, BasePlatform::Android, BasePlatform::macOS, BasePlatform::iOS};
+    QVector<ProjectPlatformId> expectedIds;
+    for (qsizetype index = 0; index < config.platforms.size(); ++index) {
+        const auto& platform = config.platforms.at(index);
+        EXPECT_EQ(platform.basePlatform, expectedBases.at(index));
+        EXPECT_EQ(platform.name, Platforms::basePlatformName(expectedBases.at(index)));
+        expectedIds.append(platform.id);
+    }
+    EXPECT_TRUE(Platforms::validatePlatforms(config.platforms));
+    const auto expected = Platforms::platformsToJson(config.platforms);
     const auto id = config.platforms.first().id;
-    EXPECT_FALSE(id.isNull());
-    EXPECT_EQ(config.platforms.first().name, QStringLiteral("Windows"));
-    EXPECT_EQ(config.platforms.first().basePlatform, BasePlatform::Windows);
     EXPECT_TRUE(ProjectData{}.platforms.isEmpty());
     auto prepared = ProjectManager::prepareProject(config);
     ASSERT_NE(prepared.project, nullptr) << prepared.error.toStdString();
-    EXPECT_EQ(prepared.project->platforms.first().id, id);
+    EXPECT_EQ(Platforms::platformsToJson(prepared.project->platforms), expected);
     ASSERT_TRUE(ProjectManager::instance().commitPreparedProject(std::move(prepared)));
     EXPECT_EQ(ProjectManager::instance().getPackExportCurrentPlatform(), Platforms::idString(id));
-    EXPECT_EQ(ProjectManager::instance().getPackExportSelectedPlatforms(), QStringList{Platforms::idString(id)});
+    EXPECT_EQ(ProjectManager::instance().getPackExportSelectedPlatforms(), Platforms::ids(config.platforms));
     ProjectManager::instance().closeProject();
     config.name = QStringLiteral("Ordinary");
     auto& manager = ProjectManager::instance();
     ASSERT_TRUE(manager.createProject(config));
-    ASSERT_EQ(manager.currentProject()->platforms.size(), 1);
-    EXPECT_EQ(manager.currentProject()->platforms.first().id, id);
+    EXPECT_EQ(Platforms::platformsToJson(manager.currentProject()->platforms), expected);
     EXPECT_EQ(manager.getPackExportCurrentPlatform(), Platforms::idString(id));
     EXPECT_EQ(PlatformContextService::instance().context().primary, id);
-    EXPECT_EQ(PlatformContextService::instance().context().selected, QVector<ProjectPlatformId>{id});
+    EXPECT_EQ(PlatformContextService::instance().context().selected, expectedIds);
     EXPECT_NE(ProjectConfig{}.platforms.first().id, id);
+    const QString projectPath = manager.currentProject()->projectPath;
+    ASSERT_TRUE(manager.saveProject());
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    EXPECT_EQ(Platforms::platformsToJson(manager.currentProject()->platforms), expected);
 }
 
 TEST(ProjectPlatformSemantics, InstancesStoreIndependentBaseDefaultsAndRejectRetiredProfiles)

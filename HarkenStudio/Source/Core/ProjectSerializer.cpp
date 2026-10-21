@@ -1180,8 +1180,9 @@ bool ProjectSerializer::prepareProjectSave(const QString& filePath,
         for (const auto& lang : projectLanguages)
             langArray.append(lang);
         root["projectLanguages"] = langArray;
-        root["defaultLanguage"] = project.defaultLanguage;
     }
+    if (!project.defaultLanguage.isEmpty())
+        root["defaultLanguage"] = project.defaultLanguage;
 
     if (!project.deploymentProfiles.empty()) {
         QJsonArray profiles;
@@ -1510,9 +1511,7 @@ bool ProjectSerializer::loadProject(const QString& filePath, ProjectData& destin
     for (const auto& v : root["projectLanguages"].toArray())
         loadedLanguages.append(v.toString());
     project.projectLanguages = ProjectLanguageSemantics::dropSfxNames(loadedLanguages);
-    if (project.projectLanguages.isEmpty())
-        project.projectLanguages = {QStringLiteral("English")};
-    project.defaultLanguage = root["defaultLanguage"].toString("English");
+    project.defaultLanguage = root["defaultLanguage"].toString();
 
     project.packBuildOutputDir = PathUtils::normalizePackBuildOutputDir(
         root["packBuildOutputDir"].toString());

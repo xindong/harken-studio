@@ -8,12 +8,11 @@ namespace VNX {
 class ProjectPlatformDialog : public BaseDialog
 {
 public:
-    ProjectPlatformDialog(const ProjectPlatform& platform, bool create, QWidget* parent = nullptr);
+    explicit ProjectPlatformDialog(QWidget* parent = nullptr);
     ProjectPlatform platform() const { return platform_; }
 
 private:
     ProjectPlatform platform_;
-    ProjectPlatformProfile profile_;
 };
 
 }

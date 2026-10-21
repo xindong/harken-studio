@@ -17,6 +17,7 @@ class QAbstractScrollArea;
 class QHeaderView;
 class QHBoxLayout;
 class QLabel;
+class QListWidget;
 class QMimeData;
 class QScrollArea;
 class QTableView;
@@ -106,6 +107,7 @@ public:
     TableGroupHeader* createGroupHeader(const QString& text, const TableGroupOptions& options = {});
     ListFooter* createGroupFooter(bool standardButtons = true);
     QTableView* createModelView(const QString& name, QAbstractItemModel* model);
+    QListWidget* createNavigationView(const QString& name);
     ProportionalTreeWidget* createItemView(const QString& name, const QStringList& headers,
                                          const QList<int>& columnWeights);
     template<typename Factory>
@@ -202,6 +204,7 @@ private:
     QLabel* message_ = nullptr;
     ListFooter* footer_ = nullptr;
     QAbstractItemView* view_ = nullptr;
+    bool navigation_ = false;
     QList<QMetaObject::Connection> modelConnections_;
     QList<TableColumn> columns_;
     QList<QLabel*> labels_;

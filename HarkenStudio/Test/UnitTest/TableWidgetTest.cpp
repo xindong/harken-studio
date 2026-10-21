@@ -38,6 +38,7 @@
 #include <QKeyEvent>
 #include <QKeySequenceEdit>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMainWindow>
 #include <QMouseEvent>
 #include <QMenu>
@@ -2485,23 +2486,27 @@ TEST_F(TableWidgetTest, ContentBodiesLetTheContainingPageScrollAcrossViewTypes)
 
 TEST_F(TableWidgetTest, BodySizingKeepsContentVisibleAndScrollGuttersStableAcrossViewTypes)
 {
-    for (int body : {0, 1, 2}) {
+    for (int body : {0, 1, 2, 3}) {
         SCOPED_TRACE(body);
         VNX::TableWidget table(VNX::TableOptions::display());
         QAbstractScrollArea* area = nullptr;
         QStandardItemModel model(0, 2);
         QTreeWidget* tree = nullptr;
+        QListWidget* navigation = nullptr;
         QList<QWidget*> rows;
         if (body == 0) {
             table.setColumns("SizingWidgets", {{"a", "A", 1, 120}, {"b", "B", 1, 120}});
             area = table.scrollArea();
         } else if (body == 1) {
             area = table.createModelView("SizingModel", &model);
-        } else {
+        } else if (body == 2) {
             tree = table.createItemView("SizingTree", {"A", "B"}, {1, 1});
             area = tree;
+        } else {
+            navigation = table.createNavigationView("SizingNavigation");
+            area = navigation;
         }
-        table.footer(false);
+        auto* footer = table.footer(false);
         table.resize(400, 160);
         table.show();
         settle(table);
@@ -2522,6 +2527,9 @@ TEST_F(TableWidgetTest, BodySizingKeepsContentVisibleAndScrollGuttersStableAcros
             } else if (tree) {
                 tree->clear();
                 for (int i = 0; i < count; ++i) new QTreeWidgetItem(tree, {"A", "B"});
+            } else if (navigation) {
+                navigation->clear();
+                for (int i = 0; i < count; ++i) navigation->addItem(QString::number(i));
             } else {
                 model.setRowCount(count);
             }
@@ -2539,9 +2547,13 @@ TEST_F(TableWidgetTest, BodySizingKeepsContentVisibleAndScrollGuttersStableAcros
             QWidget* header = table.header();
             if (auto* native = qobject_cast<QTableView*>(area)) header = native->horizontalHeader();
             else if (tree) header = tree->header();
-            ASSERT_NE(header, nullptr);
-            EXPECT_EQ(header->mapTo(&table, QPoint()).y(), gutter.top());
-            EXPECT_EQ(header->mapTo(&table, QPoint(header->width(), 0)).x(), gutter.left());
+            if (header) {
+                EXPECT_EQ(header->mapTo(&table, QPoint()).y(), gutter.top());
+                EXPECT_EQ(header->mapTo(&table, QPoint(header->width(), 0)).x(), gutter.left());
+            } else {
+                EXPECT_EQ(area->viewport()->mapTo(&table, QPoint()).y(), gutter.top());
+                EXPECT_EQ(area->viewport()->mapTo(&table, QPoint(area->viewport()->width(), 0)).x(), gutter.left());
+            }
             EXPECT_EQ(gutter.bottom() + 1,
                 area->viewport()->mapTo(&table, QPoint(0, area->viewport()->height())).y());
             QImage image(table.size(), QImage::Format_ARGB32);
@@ -2550,6 +2562,13 @@ TEST_F(TableWidgetTest, BodySizingKeepsContentVisibleAndScrollGuttersStableAcros
             EXPECT_EQ(image.pixelColor(0, gutter.center().y()), colors.borderPrimary);
             EXPECT_EQ(image.pixelColor(table.width() - 1, gutter.center().y()), colors.borderPrimary);
             EXPECT_EQ(image.pixelColor(gutter.left(), gutter.center().y()), colors.borderPrimary);
+            EXPECT_TRUE(table.contentsRect().contains(footer->geometry()));
+            EXPECT_EQ(footer->geometry().left(), table.contentsRect().left());
+            EXPECT_EQ(footer->geometry().right(), table.contentsRect().right());
+            EXPECT_EQ(footer->geometry().bottom(), table.contentsRect().bottom());
+            EXPECT_EQ(image.pixelColor(0, footer->geometry().center().y()), colors.borderPrimary);
+            EXPECT_EQ(image.pixelColor(table.width() - 1, footer->geometry().center().y()), colors.borderPrimary);
+            EXPECT_EQ(image.pixelColor(table.width() / 2, table.height() - 1), colors.borderPrimary);
             if (count != 24)
                 EXPECT_EQ(image.pixelColor(gutter.center()), colors.bgPrimary);
             QImage track(vertical->size(), QImage::Format_ARGB32);
@@ -2559,18 +2578,20 @@ TEST_F(TableWidgetTest, BodySizingKeepsContentVisibleAndScrollGuttersStableAcros
             EXPECT_EQ(track.pixelColor(1, track.height() / 2).alpha(), 0);
             if (count != 24) EXPECT_EQ(track.pixelColor(track.rect().center()).alpha(), 0);
             if (count == 24) {
-                table.setColumnSizing(VNX::TableColumnSizing::Scrollable);
-                settle(table);
-                EXPECT_TRUE(horizontal->isVisible());
-                EXPECT_EQ(vertical->mapTo(&table, QPoint()).y(), table.contentsRect().top());
-                const QRect across(horizontal->mapTo(&table, QPoint()), horizontal->size());
-                EXPECT_EQ(across.top(), vertical->mapTo(&table, QPoint(0, vertical->height())).y());
-                EXPECT_EQ(across.right() + 1, vertical->mapTo(&table, QPoint()).x());
-                QImage horizontalTrack(horizontal->size(), QImage::Format_ARGB32);
-                horizontalTrack.fill(Qt::transparent);
-                horizontal->render(&horizontalTrack, QPoint(), QRegion(), QWidget::DrawChildren);
-                EXPECT_EQ(horizontalTrack.pixelColor(horizontalTrack.width() / 2, 0), colors.borderPrimary);
-                EXPECT_EQ(horizontalTrack.pixelColor(horizontalTrack.width() / 2, 1).alpha(), 0);
+                if (!navigation) {
+                    table.setColumnSizing(VNX::TableColumnSizing::Scrollable);
+                    settle(table);
+                    EXPECT_TRUE(horizontal->isVisible());
+                    EXPECT_EQ(vertical->mapTo(&table, QPoint()).y(), table.contentsRect().top());
+                    const QRect across(horizontal->mapTo(&table, QPoint()), horizontal->size());
+                    EXPECT_EQ(across.top(), vertical->mapTo(&table, QPoint(0, vertical->height())).y());
+                    EXPECT_EQ(across.right() + 1, vertical->mapTo(&table, QPoint()).x());
+                    QImage horizontalTrack(horizontal->size(), QImage::Format_ARGB32);
+                    horizontalTrack.fill(Qt::transparent);
+                    horizontal->render(&horizontalTrack, QPoint(), QRegion(), QWidget::DrawChildren);
+                    EXPECT_EQ(horizontalTrack.pixelColor(horizontalTrack.width() / 2, 0), colors.borderPrimary);
+                    EXPECT_EQ(horizontalTrack.pixelColor(horizontalTrack.width() / 2, 1).alpha(), 0);
+                }
                 table.setBodySizing(VNX::TableBodySizing::Content);
                 table.resize(100, 160);
                 settle(table);
@@ -2590,7 +2611,7 @@ TEST_F(TableWidgetTest, BodySizingKeepsContentVisibleAndScrollGuttersStableAcros
         else if (tree) header = tree->header();
         for (bool visible : {false, true}) {
             if (body == 0) table.setHeaderVisible(visible);
-            else header->setVisible(visible);
+            else if (header) header->setVisible(visible);
             table.footer(false)->setVisible(visible);
             for (const QSize size : {QSize(180, 100), QSize(500, 240)}) {
                 table.resize(size);
@@ -2599,7 +2620,7 @@ TEST_F(TableWidgetTest, BodySizingKeepsContentVisibleAndScrollGuttersStableAcros
                 EXPECT_EQ(gutter.top(), table.contentsRect().top());
                 EXPECT_EQ(gutter.right(), table.contentsRect().right());
                 EXPECT_EQ(area->viewport()->mapTo(&table, QPoint()).y(),
-                    table.contentsRect().top() + (visible ? header->height() : 0));
+                    table.contentsRect().top() + (visible && header ? header->height() : 0));
                 EXPECT_EQ(gutter.bottom() + 1, visible ? table.footer(false)->y()
                     : table.contentsRect().bottom() + 1);
             }

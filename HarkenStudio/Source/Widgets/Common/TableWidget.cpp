@@ -22,6 +22,7 @@
 #include <QHeaderView>
 #include <QHelpEvent>
 #include <QLabel>
+#include <QListWidget>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
@@ -42,6 +43,22 @@
 namespace VNX {
 
 namespace {
+
+class TableNavigationList : public QListWidget
+{
+public:
+    using QListWidget::QListWidget;
+
+protected:
+    QItemSelectionModel::SelectionFlags selectionCommand(const QModelIndex& index,
+                                                         const QEvent* event) const override
+    {
+        if (!index.isValid()) return QItemSelectionModel::NoUpdate;
+        const auto command = QListWidget::selectionCommand(index, event);
+        return command.testFlag(QItemSelectionModel::Deselect) || command.testFlag(QItemSelectionModel::Toggle)
+            ? QItemSelectionModel::ClearAndSelect : command;
+    }
+};
 
 class TableRowsScrollArea : public QScrollArea
 {
@@ -323,6 +340,17 @@ QTableView* TableWidget::createModelView(const QString& name, QAbstractItemModel
     return view;
 }
 
+QListWidget* TableWidget::createNavigationView(const QString& name)
+{
+    Q_ASSERT(!rows_ && !view_);
+    navigation_ = true;
+    auto* view = new TableNavigationList(this);
+    view->setObjectName(name);
+    view->setSelectionMode(QAbstractItemView::SingleSelection);
+    attachView(view);
+    return view;
+}
+
 ProportionalTreeWidget* TableWidget::createItemView(const QString& name, const QStringList& headers,
                                                   const QList<int>& columnWeights)
 {
@@ -389,7 +417,8 @@ void TableWidget::attachView(QAbstractItemView* view)
     Q_ASSERT(!rows_ && !view_);
     view_ = view;
     view->setParent(this);
-    QtControlSkin::setSemanticProperty(view, "tableRole", QStringLiteral("data"));
+    QtControlSkin::setSemanticProperty(view, "tableRole",
+        navigation_ ? QStringLiteral("navigation") : QStringLiteral("data"));
     view->setAlternatingRowColors(false);
     view->setMouseTracking(true);
     view->viewport()->installEventFilter(this);
@@ -400,7 +429,7 @@ void TableWidget::attachView(QAbstractItemView* view)
     }
     if (auto* tree = qobject_cast<ProportionalTreeWidget*>(view)) {
         tree->setColumnLayoutKey(view->objectName());
-    } else
+    } else if (!navigation_)
         view->setItemDelegate(new TableItemDelegate(view, themeManager_));
     if (auto* header = viewHeader()) {
         header->installEventFilter(this);
@@ -1135,6 +1164,7 @@ void TableWidget::refreshViewLayout()
                 const auto index = view_->model()->index(row, 0, parent);
                 QStyleOptionViewItem option;
                 option.initFrom(view_);
+                option.widget = view_;
                 height += table ? table->rowHeight(row)
                     : view_->itemDelegateForIndex(index)->sizeHint(option, index).height();
                 if (tree && tree->isExpanded(index)) height += contentHeight(index);
@@ -1400,14 +1430,14 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
         if (view_->viewport()->cursor().shape() != cursor)
             view_->viewport()->setCursor(cursor);
     }
-    if (view_ && watched == view_ && event->type() == QEvent::FocusIn
+    if (!navigation_ && view_ && watched == view_ && event->type() == QEvent::FocusIn
         && !view_->currentIndex().isValid()) {
         const auto mode = view_->selectionMode();
         view_->setSelectionMode(QAbstractItemView::NoSelection);
         view_->setCurrentIndex({});
         view_->setSelectionMode(mode);
     }
-    if (event->type() == QEvent::KeyPress
+    if (!navigation_ && event->type() == QEvent::KeyPress
         && (watched == this || watched == view_ || isNumber)) {
         auto* key = static_cast<QKeyEvent*>(event);
         if (key->key() == Qt::Key_Escape && key->modifiers() == Qt::NoModifier) {
@@ -1421,7 +1451,7 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
             }
         }
     }
-    if (event->type() == QEvent::MouseButtonPress && hasSelection()) {
+    if (!navigation_ && event->type() == QEvent::MouseButtonPress && hasSelection()) {
         auto* mouse = static_cast<QMouseEvent*>(event);
         if (mouse->button() == Qt::LeftButton) {
             const QPoint global = mouse->globalPosition().toPoint();

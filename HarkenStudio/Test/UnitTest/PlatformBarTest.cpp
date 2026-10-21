@@ -65,7 +65,7 @@ TEST(PlatformBar, HiddenWhenNoProject)
     EXPECT_FALSE(all->isVisible());
 }
 
-TEST(PlatformBar, DefaultWindowsKeepsAllVisibleAndAllowsIndependentEditing)
+TEST(PlatformBar, SingleWindowsKeepsAllVisibleAndAllowsIndependentEditing)
 {
     ensureApp();
     auto& pm = VNX::ProjectManager::instance();
@@ -76,8 +76,9 @@ TEST(PlatformBar, DefaultWindowsKeepsAllVisibleAndAllowsIndependentEditing)
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
     VNX::ProjectConfig config;
-    config.name = QStringLiteral("DefaultWindowsBar");
+    config.name = QStringLiteral("SingleWindowsBar");
     config.location = directory.path();
+    config.platforms = HarkenTest::platforms(names({"Windows"}));
     ASSERT_TRUE(pm.createProject(config));
     ASSERT_EQ(pm.currentProject()->platforms.size(), 1);
     const auto id = pm.currentProject()->platforms.front().id;
@@ -417,10 +418,9 @@ TEST(PlatformBar, LanguageSelectionFollowsProjectMembershipAndContext)
     bar.show();
     auto* languages = languagesOf(bar);
     ASSERT_NE(languages, nullptr);
-    EXPECT_EQ(languages->count(), 1);
-    EXPECT_TRUE(languages->isVisible());
-    EXPECT_EQ(languages->currentData().toString(), QStringLiteral("English"));
-    EXPECT_EQ(VNX::LanguageContextService::instance().language(), QStringLiteral("English"));
+    EXPECT_EQ(languages->count(), 0);
+    EXPECT_FALSE(languages->isVisible());
+    EXPECT_TRUE(VNX::LanguageContextService::instance().language().isEmpty());
     auto* platforms = platformsOf(bar);
     auto* all = allButtonOf(bar);
     ASSERT_NE(platforms, nullptr);
@@ -456,13 +456,19 @@ TEST(PlatformBar, LanguageSelectionFollowsProjectMembershipAndContext)
     EXPECT_EQ(VNX::LanguageContextService::instance().language(), QStringLiteral("Korean"));
 
     pm.setProjectLanguagesInternal({});
-    EXPECT_EQ(languages->count(), 2);
-    EXPECT_TRUE(languages->isVisible());
-    EXPECT_EQ(VNX::LanguageContextService::instance().language(), QStringLiteral("Korean"));
+    EXPECT_EQ(languages->count(), 0);
+    EXPECT_FALSE(languages->isVisible());
+    EXPECT_TRUE(VNX::LanguageContextService::instance().language().isEmpty());
     EXPECT_TRUE(bar.isVisible());
     EXPECT_TRUE(platforms->isVisible());
     EXPECT_TRUE(all->isVisible());
     EXPECT_TRUE(all->isChecked());
+
+    EXPECT_TRUE(pm.addProjectLanguage(QStringLiteral("English")));
+    EXPECT_EQ(languages->count(), 1);
+    EXPECT_TRUE(languages->isVisible());
+    EXPECT_EQ(languages->currentData().toString(), QStringLiteral("English"));
+    EXPECT_EQ(VNX::LanguageContextService::instance().language(), QStringLiteral("English"));
 
     pm.closeProject();
     EXPECT_EQ(languages->count(), 0);

@@ -1,12 +1,11 @@
 
-#include "Dialogs/Settings/Pages/GeneralPage.h"
+#include "Dialogs/Settings/Pages/AppearancePage.h"
 
 #include "Core/AppSettings.h"
 #include "Core/ContextInfo.h"
 #include "Core/ThemeManager.h"
 #include "Core/ThemePackageParser.h"
 
-#include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
 #include <QLabel>
@@ -15,7 +14,7 @@
 
 namespace VNX {
 
-GeneralPage::GeneralPage(ThemeManager& themeManager, QWidget* parent)
+AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     : SettingsPage(parent)
     , themeManager_(&themeManager)
 {
@@ -26,7 +25,7 @@ GeneralPage::GeneralPage(ThemeManager& themeManager, QWidget* parent)
     auto* themeLabel = new QLabel(tr("Theme:"));
     themeCombo_ = new QComboBox();
     themeCombo_->setObjectName(QStringLiteral("appearanceThemeCombo"));
-    const auto themeTopic = ContextTopic::forPanel(QStringLiteral("settings.general.theme"),
+    const auto themeTopic = ContextTopic::forPanel(QStringLiteral("settings.appearance.theme"),
         {QDir::toNativeSeparators(themeManager_->userThemesRoot())});
     ContextInfo::tag(themeCombo_, themeTopic);
     ContextInfo::tag(themeLabel, themeTopic);
@@ -36,7 +35,7 @@ GeneralPage::GeneralPage(ThemeManager& themeManager, QWidget* parent)
     auto* languageLabel = new QLabel(tr("Language:"));
     languageCombo_ = new QComboBox();
     languageCombo_->setObjectName(QStringLiteral("appearanceLanguageCombo"));
-    const auto languageTopic = ContextTopic::forPanel(QStringLiteral("settings.general.language"));
+    const auto languageTopic = ContextTopic::forPanel(QStringLiteral("settings.appearance.language"));
     ContextInfo::tag(languageCombo_, languageTopic);
     ContextInfo::tag(languageLabel, languageTopic);
     populateLanguageCombo();
@@ -46,49 +45,37 @@ GeneralPage::GeneralPage(ThemeManager& themeManager, QWidget* parent)
 
     body->addWidget(appearance);
 
-    auto* developer = makeSection(tr("Developer"));
-    auto* developerForm = makeForm();
-    developerModeCheck_ = new QCheckBox();
-    developerModeCheck_->setObjectName(QStringLiteral("developerModeCheck"));
-    ContextInfo::tag(developer, ContextTopic::forPanel(QStringLiteral("settings.general.developer")));
-    developerForm->addRow(tr("Developer mode"), developerModeCheck_);
-    static_cast<QVBoxLayout*>(developer->layout())->addLayout(developerForm);
-    body->addWidget(developer);
-
     body->addStretch();
 
     connect(themeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &GeneralPage::dirtyChanged);
+            this, &AppearancePage::dirtyChanged);
     connect(languageCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &GeneralPage::dirtyChanged);
-    connect(developerModeCheck_, &QCheckBox::toggled,
-            this, &GeneralPage::dirtyChanged);
+            this, &AppearancePage::dirtyChanged);
 }
 
-QString GeneralPage::pageId() const
+QString AppearancePage::pageId() const
 {
-    return QString::fromLatin1(kSettingsPageGeneral);
+    return QString::fromLatin1(kSettingsPageAppearance);
 }
 
-QString GeneralPage::categoryLabel() const
+QString AppearancePage::categoryLabel() const
 {
-    return tr("General");
+    return tr("Appearance");
 }
 
-void GeneralPage::populateLanguageCombo()
+void AppearancePage::populateLanguageCombo()
 {
     languageCombo_->addItem(tr("English"), QStringLiteral("en"));
     languageCombo_->addItem(tr("Chinese (Simplified)"), QStringLiteral("zh-CN"));
 }
 
-void GeneralPage::rememberBaseline()
+void AppearancePage::rememberBaseline()
 {
     baselineThemeId_ = themeCombo_->currentData().toString();
     baselineLanguage_ = languageCombo_->currentData().toString();
-    baselineDeveloperMode_ = developerModeCheck_->isChecked();
 }
 
-void GeneralPage::load()
+void AppearancePage::load()
 {
     themeManager_->refreshThemes();
     {
@@ -124,15 +111,10 @@ void GeneralPage::load()
         languageCombo_->setCurrentIndex(index);
     }
 
-    {
-        const QSignalBlocker blocker(developerModeCheck_);
-        developerModeCheck_->setChecked(AppSettings::instance().developerMode());
-    }
-
     rememberBaseline();
 }
 
-bool GeneralPage::applyTheme()
+bool AppearancePage::applyTheme()
 {
     const QString themeId = themeCombo_->currentData().toString();
     if (themeId.isEmpty() || themeId == themeManager_->currentThemeId())
@@ -161,7 +143,7 @@ bool GeneralPage::applyTheme()
     return false;
 }
 
-void GeneralPage::applyLanguage()
+void AppearancePage::applyLanguage()
 {
     const QString code = languageCombo_->currentData().toString();
     if (code.isEmpty() || code == AppSettings::instance().language())
@@ -169,29 +151,22 @@ void GeneralPage::applyLanguage()
     AppSettings::instance().setLanguage(code);
 }
 
-void GeneralPage::applyDeveloperMode()
-{
-    AppSettings::instance().setDeveloperMode(developerModeCheck_->isChecked());
-}
-
-bool GeneralPage::apply()
+bool AppearancePage::apply()
 {
     revertThemeId_ = themeManager_->currentThemeId();
     revertLanguage_ = AppSettings::instance().language();
-    revertDeveloperMode_ = AppSettings::instance().developerMode();
     canRevert_ = false;
 
     if (!applyTheme())
         return false;
     applyLanguage();
-    applyDeveloperMode();
     canRevert_ = true;
     rememberBaseline();
     emit dirtyChanged();
     return true;
 }
 
-void GeneralPage::revert()
+void AppearancePage::revert()
 {
     if (!canRevert_)
         return;
@@ -199,16 +174,14 @@ void GeneralPage::revert()
     if (themeManager_->currentThemeId() != revertThemeId_)
         themeManager_->selectTheme(revertThemeId_);
     AppSettings::instance().setLanguage(revertLanguage_);
-    AppSettings::instance().setDeveloperMode(revertDeveloperMode_);
     canRevert_ = false;
     emit dirtyChanged();
 }
 
-bool GeneralPage::isDirty() const
+bool AppearancePage::isDirty() const
 {
     return themeCombo_->currentData().toString() != baselineThemeId_
-        || languageCombo_->currentData().toString() != baselineLanguage_
-        || developerModeCheck_->isChecked() != baselineDeveloperMode_;
+        || languageCombo_->currentData().toString() != baselineLanguage_;
 }
 
 }

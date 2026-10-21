@@ -7,7 +7,7 @@
 #include <QList>
 #include <QStringList>
 
-class QTreeWidget;
+class QListWidget;
 class QFrame;
 class QLineEdit;
 class QToolButton;
@@ -16,6 +16,7 @@ class QVBoxLayout;
 namespace VNX {
 
 class TableWidget;
+class ProjectPlatformEditor;
 
 inline constexpr const char* kSettingsPageConfig = "config";
 
@@ -36,8 +37,9 @@ public:
 
 private:
     void rememberBaseline();
-    void refreshPlatforms();
-    void editPlatform(bool create);
+    void refreshPlatforms(int selectedIndex = -1);
+    void addPlatform();
+    void selectPlatform(int index);
     void removePlatform();
     bool applyTargetLanguages();
     bool applyTargetPlatforms();
@@ -51,7 +53,8 @@ private:
     QJsonArray platformDraft() const;
     QStringList targetLanguages() const;
 
-    QTreeWidget* platformList_ = nullptr;
+    QListWidget* platformList_ = nullptr;
+    ProjectPlatformEditor* platformEditor_ = nullptr;
     QToolButton* platformRemoveButton_ = nullptr;
     QVector<ProjectPlatform> draftPlatforms_;
     std::weak_ptr<ProjectData> projectLease_;

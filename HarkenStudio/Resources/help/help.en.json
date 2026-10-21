@@ -209,19 +209,23 @@
       "title": "Cancel",
       "body": "Discard unapplied settings changes and close this window; layout renames and deletions are kept."
     },
-    "settings.general": {
-      "title": "General",
-      "body": "Set the editor theme, Information language, and developer mode."
+    "settings.appearance": {
+      "title": "Appearance",
+      "body": "Set the editor theme and Information language."
     },
-    "settings.general.theme": {
+    "settings.appearance.theme": {
       "title": "Theme",
       "body": "Choose the editor's appearance; Apply activates the theme. Install additional themes in %1."
     },
-    "settings.general.language": {
+    "settings.appearance.language": {
       "title": "Language",
       "body": "Choose the Information help language; the editor interface and project audio languages are unaffected."
     },
-    "settings.general.developer": {
+    "settings.extension": {
+      "title": "Extension",
+      "body": "Configure developer mode."
+    },
+    "settings.extension.developer": {
       "title": "Developer Mode",
       "body": "Show File, Version, CRC32, and Preview Pack Structure in Publisher."
     },
@@ -254,15 +258,15 @@
       "body": "Choose tools for inspection, authoring, pack export, or live testing. Effective tools counts those allowed by both this profile and the permission mode."
     },
     "settings.config": {
-      "title": "Config",
+      "title": "General",
       "body": "Set the project's target platforms and audio languages."
     },
     "settings.config.platforms": {
-      "title": "Target Platforms",
-      "body": "Add a platform or double-click one to edit its name, base platform, and build settings. At least one platform must remain."
+      "title": "Platform Configuration",
+      "body": "Select a platform tab on the left to edit its name, base platform, and build settings on the right. Use + to browse all supported platforms and preview their default settings before adding one. Reset restores the selected base platform's default build settings; Apply saves project changes. At least one platform must remain."
     },
     "settings.config.languages": {
-      "title": "Target Languages",
+      "title": "Language Configuration",
       "body": "Define audio languages for Sounds with Language enabled. Names use A-Z, a-z, digits, and underscores."
     },
     "settings.publish": {

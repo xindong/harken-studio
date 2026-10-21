@@ -1163,6 +1163,7 @@ TEST_F(SourcesSectionProviderTest, OsWavDropOnSourceRefImportsThenAppends)
 }
 TEST_F(SourcesSectionProviderTest, ToggleStartsEmptyAndRestoresPlainSourcesWithUndo)
 {
+    VNX::ProjectManager::instance().setProjectLanguagesInternal({"English"});
     const auto first = makeRow(8101);
     const auto second = makeRow(8102);
     ASSERT_TRUE(applySources({first, second}, {{HarkenTest::platformIdString("Windows"), {second.entryId}}}));

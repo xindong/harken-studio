@@ -48,6 +48,7 @@ protected:
         ProjectConfig config;
         config.name = "PlatformIpc";
         config.location = directory.path();
+        config.platforms = {{QUuid::createUuid(), QStringLiteral("Windows"), BasePlatform::Windows}};
         ASSERT_TRUE(manager.createProject(config));
         server.setProjectManager(&manager);
         server.setAppState(IPCServer::AppState::Ready);

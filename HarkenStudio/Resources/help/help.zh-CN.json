@@ -209,19 +209,23 @@
       "title": "Cancel",
       "body": "放弃尚未应用的设置修改并关闭窗口；布局的重命名和删除仍保留。"
     },
-    "settings.general": {
-      "title": "General",
-      "body": "设置编辑器主题、Information 语言和开发者模式。"
+    "settings.appearance": {
+      "title": "Appearance",
+      "body": "\u8bbe\u7f6e\u7f16\u8f91\u5668\u4e3b\u9898\u548c Information \u8bed\u8a00\u3002"
     },
-    "settings.general.theme": {
+    "settings.appearance.theme": {
       "title": "Theme",
       "body": "选择编辑器外观，Apply 后生效。额外的主题安装在 %1。"
     },
-    "settings.general.language": {
+    "settings.appearance.language": {
       "title": "Language",
       "body": "选择 Information 帮助语言，不影响编辑器界面和工程音频语言。"
     },
-    "settings.general.developer": {
+    "settings.extension": {
+      "title": "Extension",
+      "body": "\u8bbe\u7f6e\u5f00\u53d1\u8005\u6a21\u5f0f\u3002"
+    },
+    "settings.extension.developer": {
       "title": "Developer Mode",
       "body": "在 Publisher 中显示 File、Version、CRC32 列和 Preview Pack Structure 命令。"
     },
@@ -254,15 +258,15 @@
       "body": "选择用于查看、编辑、导出或实时测试的工具。Effective tools 显示当前工具范围与权限模式共同允许的工具数量。"
     },
     "settings.config": {
-      "title": "Config",
+      "title": "General",
       "body": "设置工程的目标平台和音频语言。"
     },
     "settings.config.platforms": {
-      "title": "Target Platforms",
-      "body": "添加平台，或双击平台编辑名称、基础平台和构建设置。必须保留至少一个平台。"
+      "title": "Platform Configuration",
+      "body": "\u9009\u62e9\u5de6\u4fa7\u5e73\u53f0\u6807\u7b7e\uff0c\u5728\u53f3\u4fa7\u7f16\u8f91\u540d\u79f0\u3001\u57fa\u7840\u5e73\u53f0\u548c\u6784\u5efa\u8bbe\u7f6e\u3002\u70b9\u51fb + \u6d4f\u89c8\u6240\u6709\u652f\u6301\u7684\u5e73\u53f0\uff0c\u5e76\u9884\u89c8\u9ed8\u8ba4\u914d\u7f6e\u540e\u6dfb\u52a0\u3002Reset \u6062\u590d\u6240\u9009\u57fa\u7840\u5e73\u53f0\u7684\u9ed8\u8ba4\u6784\u5efa\u8bbe\u7f6e\uff1bApply \u4fdd\u5b58\u5de5\u7a0b\u4fee\u6539\u3002\u5fc5\u987b\u4fdd\u7559\u81f3\u5c11\u4e00\u4e2a\u5e73\u53f0\u3002"
     },
     "settings.config.languages": {
-      "title": "Target Languages",
+      "title": "Language Configuration",
       "body": "定义启用 Language 的 Sound 可用的音频语言。名称仅使用英文字母、数字和下划线。"
     },
     "settings.publish": {
