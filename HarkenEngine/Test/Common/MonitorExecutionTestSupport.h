@@ -11,17 +11,21 @@
 namespace harkentest::monitor {
 using namespace harken::monitor;
 
-struct IdentityRecord {
+template<class Fact>
+struct ExecutionRecord {
     VnMonitorRecordHeader header{};
-    VnMonitorExecutionFactV1 fact{};
+    Fact fact{};
 };
 
-inline VnMonitorSessionHandle OpenIdentityEvents() {
+using IdentityRecord = ExecutionRecord<VnMonitorExecutionFactV1>;
+using ActivityRecord = ExecutionRecord<VnMonitorExecutionFactV2>;
+
+inline VnMonitorSessionHandle OpenIdentityEvents(std::uint32_t version = 1) {
     VnMonitorSessionDescV2 desc{};
     desc.structSize = sizeof(desc);
     desc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT;
     desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
-    desc.requestedExecutionFactVersion = 1;
+    desc.requestedExecutionFactVersion = version;
     desc.consumerQueueBytes = 65536;
     VnMonitorSessionHandle result = 0;
     EXPECT_EQ(VN_OK, Vn_MonitorOpenEventSession(reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &result));
@@ -29,7 +33,12 @@ inline VnMonitorSessionHandle OpenIdentityEvents() {
     return result;
 }
 
-inline std::vector<IdentityRecord> ReadIdentityEvents(VnMonitorSessionHandle session, std::uint32_t* operations = nullptr) {
+inline VnMonitorSessionHandle OpenActivityEvents() {
+    return OpenIdentityEvents(2);
+}
+
+template<class Fact>
+inline std::vector<ExecutionRecord<Fact>> ReadExecutionEvents(VnMonitorSessionHandle session, std::uint32_t* operations = nullptr) {
     DrainOnceForTests();
     std::array<std::uint8_t, 65536> buffer{}, skipped{};
     VnMonitorPollDesc desc{};
@@ -54,13 +63,13 @@ inline std::vector<IdentityRecord> ReadIdentityEvents(VnMonitorSessionHandle ses
     const auto read = vn_monitor_decode_records(legacyInput.data(), result.bytesWritten,
         decoded.data(), static_cast<std::uint32_t>(decoded.size()), skipped.data(), skipped.size());
     EXPECT_EQ(VN_OK, read.status);
-    std::vector<IdentityRecord> records;
+    std::vector<ExecutionRecord<Fact>> records;
     std::uint64_t offset = 0;
     for (const auto& record : decoded) {
         EXPECT_NE(VN_MONITOR_RECORD_DROP_SUMMARY, record.header.recordKind)
             << "Identity assertions require a capture without dropped records";
         if (record.header.recordKind == VN_MONITOR_RECORD_EXECUTION_FACT) {
-            IdentityRecord row{record.header};
+            ExecutionRecord<Fact> row{record.header};
             if (!DecodeExecutionFact(record.header, buffer.data() + offset + kPackedEnvelopeBytes,
                 record.header.payloadBytes, row.fact)) { ADD_FAILURE(); return {}; }
             records.push_back(row);
@@ -74,6 +83,14 @@ inline std::vector<IdentityRecord> ReadIdentityEvents(VnMonitorSessionHandle ses
         offset += record.header.recordBytes;
     }
     return records;
+}
+
+inline std::vector<IdentityRecord> ReadIdentityEvents(VnMonitorSessionHandle session, std::uint32_t* operations = nullptr) {
+    return ReadExecutionEvents<VnMonitorExecutionFactV1>(session, operations);
+}
+
+inline std::vector<ActivityRecord> ReadActivityEvents(VnMonitorSessionHandle session, std::uint32_t* operations = nullptr) {
+    return ReadExecutionEvents<VnMonitorExecutionFactV2>(session, operations);
 }
 
 inline void CollectIdentityEvents(VnMonitorSessionHandle session, std::vector<IdentityRecord>& records) {

@@ -11,8 +11,12 @@ namespace harken::monitor {
 
 inline constexpr std::uint32_t kExecutionPayloadBytes = 432;
 inline constexpr std::uint32_t kExecutionRecordBytes = PackedRecordBytes(kExecutionPayloadBytes);
+inline constexpr std::uint32_t kActivityPayloadBytes = 496;
+inline constexpr std::uint32_t kActivityRecordBytes = PackedRecordBytes(kActivityPayloadBytes);
 static_assert(sizeof(MonitorExecutionFact) <= 384);
 static_assert(sizeof(VnMonitorExecutionFactV1) == kExecutionPayloadBytes);
+static_assert(sizeof(VnMonitorFactActivity) == 64);
+static_assert(sizeof(VnMonitorExecutionFactV2) == kActivityPayloadBytes);
 static_assert(kExecutionPayloadBytes <= 512 && kExecutionRecordBytes <= 832);
 
 inline bool FactHas(const VnMonitorExecutionFactV1& fact, unsigned field) noexcept {
@@ -49,6 +53,14 @@ inline void VisitExecutionPayload(Visitor& visit, Fact& fact) noexcept {
     visit(fact.target.handle); visit(fact.target.projectId); visit(fact.target.objectId);
     visit(fact.target.worldGeneration); visit(fact.target.programSemanticFingerprint); visit(fact.target.contentRevision);
     visit(fact.target.kind); visit(fact.target.contentKind); visit(fact.target.scope); visit(fact.target.reserved0);
+}
+
+template<class Visitor, class Activity>
+inline void VisitActivityPayload(Visitor& visit, Activity& activity) noexcept {
+    visit(activity.actionOutcome); visit(activity.stepIndex); visit(activity.stepExecutionOrdinal);
+    visit(activity.stepOpcode); visit(activity.reservedStep); visit(activity.stepTargetKind);
+    visit(activity.variableValueBits); visit(activity.variableScope); visit(activity.variableOutcome);
+    visit(activity.reserved0); visit(activity.stepTargetId); visit(activity.variableTicket);
 }
 
 struct ExecutionPayloadWriter {
@@ -102,7 +114,7 @@ inline bool ProjectFactFields(const MonitorExecutionFact& source, std::uint64_t 
     fact = {};
     const bool call = source.BodyKind() == MonitorFactBody::Call;
     if (source.engine == 0 || source.sourceSequence == 0 || producer == 0 || stream == 0 ||
-        source.kind == 0 || source.kind > VN_MONITOR_FACT_PLAYABLE_STARTED ||
+        source.kind == 0 || source.kind > VN_MONITOR_FACT_VARIABLE_RESULT ||
         (source.flags & ~(kMonitorFactCallBody | kMonitorFactIdentityIncomplete | kMonitorFactControlIncomplete)) != 0 ||
         (source.validity & ~SourceAllowedFields(source.BodyKind())) != 0 ||
         (call && !IsCallFactKind(source.kind)) ||
@@ -212,6 +224,15 @@ inline bool ProjectFactFields(const MonitorExecutionFact& source, std::uint64_t 
     copy(VN_MONITOR_FACT_FIELD_HOST_OWNERSHIP, fact.hostOwnership, source.hostOwnership);
     copy(VN_MONITOR_FACT_FIELD_STATE_BINDING, fact.stateBinding, source.bindingStates & 15u);
     copy(VN_MONITOR_FACT_FIELD_SPATIAL_BINDING, fact.spatialBinding, source.bindingStates >> 4);
+    if (IsActivityFactKind(source.kind)) {
+        if (call) return false;
+        const auto& activity = source.body.execution.activity;
+        copy(VN_MONITOR_FACT_FIELD_LOGIC_COMMIT, header.telemetry.logicCommitSequence, activity.logicCommit);
+        copy(VN_MONITOR_FACT_FIELD_EXECUTE_FRAME, header.executeFrame, activity.executeFrame);
+        for (unsigned field = VN_MONITOR_FACT_FIELD_ACTIVITY_STEP; field <= VN_MONITOR_FACT_FIELD_ACTION_OUTCOME; ++field)
+            if (has(field)) SetFactField(fact, field);
+        return true;
+    }
     const auto& position = call ? source.body.call.position : source.body.execution.position;
     copy(VN_MONITOR_FACT_FIELD_LOGIC_COMMIT, header.telemetry.logicCommitSequence, position.logicCommit);
     copy(VN_MONITOR_FACT_FIELD_READ_CUT_KEY, fact.readCutKey, position.readCutKey);
@@ -252,20 +273,21 @@ inline bool ValidateFactFields(const VnMonitorRecordHeader& header, const VnMoni
     if (header.engineMonitorInstanceId == 0 ||
         header.producerId == 0 || header.sourceSequence == 0 || header.streamId == 0 ||
         header.reserved0 != 0 || header.telemetry.reserved0 != 0 ||
-        fact.structSize != kExecutionPayloadBytes || fact.factKind == 0 || fact.factKind > VN_MONITOR_FACT_PLAYABLE_STARTED ||
-        fact.subjectNamespace > VN_MONITOR_SUBJECT_TRANSITION || fact.contentKind > VN_MONITOR_CONTENT_MEDIA ||
+        fact.structSize != kExecutionPayloadBytes || fact.factKind == 0 || fact.factKind > VN_MONITOR_FACT_VARIABLE_RESULT ||
+        fact.subjectNamespace > VN_MONITOR_SUBJECT_TRANSITION || fact.contentKind > VN_MONITOR_CONTENT_VARIABLE ||
         fact.reserved0 != 0 || fact.reserved1 != 0 || fact.control.reserved0 != 0 || fact.selection.reserved0 != 0 ||
         fact.target.reserved0 != 0 || (fact.factFlags & ~(VN_MONITOR_FACT_FLAG_IDENTITY_INCOMPLETE | VN_MONITOR_FACT_FLAG_CONTROL_INCOMPLETE)) != 0 ||
-        (fact.validityHi >> (VN_MONITOR_FACT_FIELD_TARGET_SCOPE - 63)) != 0) return false;
+        (fact.validityHi >> (VN_MONITOR_FACT_FIELD_ACTION_OUTCOME - 63)) != 0) return false;
     const auto expectedStream = fact.factKind == VN_MONITOR_FACT_IDENTITY_UPSERT || fact.factKind == VN_MONITOR_FACT_IDENTITY_TOMBSTONE
         ? VN_MONITOR_STREAM_STATE : VN_MONITOR_STREAM_EVENT;
     if (header.streamKind != expectedStream) return false;
+    if (!IsActivityFactKind(fact.factKind) && (fact.validityHi & ~UINT64_C(1023)) != 0) return false;
     bool executionFields = false;
     for (unsigned i = VN_MONITOR_FACT_FIELD_PLAYBACK_REQUEST; i <= VN_MONITOR_FACT_FIELD_PARENT_ACTION; ++i)
         executionFields |= has(i);
     for (unsigned i = VN_MONITOR_FACT_FIELD_SERVICE_LEAF; i <= VN_MONITOR_FACT_FIELD_RENDER_ACTIVATION; ++i)
         executionFields |= has(i);
-    const bool callFields = fact.validityHi != 0 || has(VN_MONITOR_FACT_FIELD_CAUSED_BY_REQUEST) ||
+    const bool callFields = (fact.validityHi & 1023u) != 0 || has(VN_MONITOR_FACT_FIELD_CAUSED_BY_REQUEST) ||
         has(VN_MONITOR_FACT_FIELD_CAUSED_BY_OPERATION) || has(VN_MONITOR_FACT_FIELD_CAUSED_BY_ORIGIN);
     if ((executionFields && callFields) ||
         (executionFields && (fact.factKind == VN_MONITOR_FACT_REQUEST_SUBMITTED || fact.factKind == VN_MONITOR_FACT_REQUEST_RETURNED)))
@@ -296,7 +318,7 @@ inline bool ValidateFactFields(const VnMonitorRecordHeader& header, const VnMoni
         !optional(VN_MONITOR_FACT_FIELD_TIMESTAMP, fact.timestampNs) ||
         !optional(VN_MONITOR_FACT_FIELD_RESULT, fact.result) || !optional(VN_MONITOR_FACT_FIELD_REASON, header.reason) ||
         !optional(VN_MONITOR_FACT_FIELD_TERMINAL_KIND, fact.terminalKind,
-            fact.subjectNamespace == VN_MONITOR_SUBJECT_PLAYABLE &&
+            (fact.subjectNamespace == VN_MONITOR_SUBJECT_PLAYABLE || fact.subjectNamespace == VN_MONITOR_SUBJECT_ACTION) &&
             fact.terminalKind >= VN_MONITOR_TERMINAL_NATURAL_COMPLETION &&
             fact.terminalKind <= VN_MONITOR_TERMINAL_FAILURE)) return false;
     const auto request = [&](unsigned field, const VnMonitorFactRequest& value) {
@@ -350,7 +372,7 @@ inline bool ValidateFactFields(const VnMonitorRecordHeader& header, const VnMoni
         !nonzero(VN_MONITOR_FACT_FIELD_TARGET_SEMANTIC, fact.target.programSemanticFingerprint) ||
         !nonzero(VN_MONITOR_FACT_FIELD_TARGET_REVISION, fact.target.contentRevision) ||
         !optional(VN_MONITOR_FACT_FIELD_TARGET_KIND, fact.target.kind, fact.target.kind > 0 && fact.target.kind <= VN_MONITOR_TARGET_CONTENT) ||
-        !optional(VN_MONITOR_FACT_FIELD_TARGET_CONTENT_KIND, fact.target.contentKind, fact.target.contentKind > 0 && fact.target.contentKind <= VN_MONITOR_CONTENT_MEDIA) ||
+        !optional(VN_MONITOR_FACT_FIELD_TARGET_CONTENT_KIND, fact.target.contentKind, fact.target.contentKind > 0 && fact.target.contentKind <= VN_MONITOR_CONTENT_VARIABLE) ||
         !optional(VN_MONITOR_FACT_FIELD_TARGET_SCOPE, fact.target.scope, fact.target.scope == 1) ||
         (has(VN_MONITOR_FACT_FIELD_TARGET_VALIDATED) && !has(VN_MONITOR_FACT_FIELD_TARGET_HANDLE) && !has(VN_MONITOR_FACT_FIELD_TARGET_OBJECT))) return false;
     if (has(VN_MONITOR_FACT_FIELD_TARGET_VALIDATED)) {
@@ -378,9 +400,33 @@ inline bool ValidateFactFields(const VnMonitorRecordHeader& header, const VnMoni
             if (!ValidSubjectHandle(targetSubject, targetHandle)) return false;
         }
     }
-    if (!IsCallFactKind(fact.factKind) && (fact.validityHi != 0 || has(VN_MONITOR_FACT_FIELD_REQUEST) ||
+    if (!IsCallFactKind(fact.factKind) && ((fact.validityHi & 1023u) != 0 || has(VN_MONITOR_FACT_FIELD_REQUEST) ||
         has(VN_MONITOR_FACT_FIELD_REQUEST_OPERATION) || has(VN_MONITOR_FACT_FIELD_REQUEST_ORIGIN) ||
         has(VN_MONITOR_FACT_FIELD_CAUSED_BY_REQUEST) || has(VN_MONITOR_FACT_FIELD_CAUSED_BY_OPERATION) || has(VN_MONITOR_FACT_FIELD_CAUSED_BY_ORIGIN))) return false;
+    return true;
+}
+
+inline bool ValidateActivityFields(const VnMonitorExecutionFactV2& value) noexcept {
+    const auto& fact = value.fact;
+    const auto& a = value.activity;
+    const bool step = FactHas(fact, VN_MONITOR_FACT_FIELD_ACTIVITY_STEP);
+    const bool variable = FactHas(fact, VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE);
+    const bool action = FactHas(fact, VN_MONITOR_FACT_FIELD_ACTION_OUTCOME);
+    if (a.reserved0 != 0 || a.reservedStep != 0 || step != (fact.factKind == VN_MONITOR_FACT_STEP_EXECUTED) ||
+        variable != (fact.factKind == VN_MONITOR_FACT_VARIABLE_RESULT) ||
+        action != (fact.factKind == VN_MONITOR_FACT_ACTION_TERMINAL)) return false;
+    if (action ? a.actionOutcome == 0 || a.actionOutcome > 4 : a.actionOutcome != 0) return false;
+    if (step) {
+        if (a.stepExecutionOrdinal == UINT32_MAX || a.stepOpcode > VN_ACTION_OPCODE_RESET ||
+            a.stepTargetKind > VN_ACTION_TARGET_BUS ||
+            fact.subjectNamespace != VN_MONITOR_SUBJECT_ACTION) return false;
+    } else if (a.stepIndex != 0 || a.stepExecutionOrdinal != 0 || a.stepOpcode != 0 ||
+        a.stepTargetKind != 0 || a.stepTargetId != VnObjectId{}) return false;
+    if (variable) {
+        if (fact.contentKind != VN_MONITOR_CONTENT_VARIABLE || a.variableScope > 1 ||
+            a.variableOutcome > VN_VARIABLE_OUTCOME_REJECTED_TARGET ||
+            (a.variableOutcome == 0 && (!FactHas(fact, VN_MONITOR_FACT_FIELD_RESULT) || fact.result == VN_OK))) return false;
+    } else if (a.variableValueBits != 0 || a.variableScope != 0 || a.variableOutcome != 0 || a.variableTicket != 0) return false;
     return true;
 }
 
@@ -388,20 +434,55 @@ inline bool ValidateExecutionFact(const VnMonitorRecordHeader& header,
     const VnMonitorExecutionFactV1& fact) noexcept {
     return header.recordKind == VN_MONITOR_RECORD_EXECUTION_FACT && header.recordVersion == 1 &&
         header.flags == VN_MONITOR_RECORD_FLAG_OPTIONAL && header.payloadBytes == kExecutionPayloadBytes &&
-        header.recordBytes == kExecutionRecordBytes && ValidateFactFields(header, fact);
+        header.recordBytes == kExecutionRecordBytes && !IsActivityFactKind(fact.factKind) &&
+        (fact.validityHi & ~UINT64_C(1023)) == 0 && ValidateFactFields(header, fact);
+}
+
+inline bool ValidateExecutionFact(const VnMonitorRecordHeader& header,
+    const VnMonitorExecutionFactV2& value) noexcept {
+    if (header.recordVersion == 1) return ValidateExecutionFact(header, value.fact);
+    return header.recordKind == VN_MONITOR_RECORD_EXECUTION_FACT && header.recordVersion == 2 &&
+        header.flags == VN_MONITOR_RECORD_FLAG_OPTIONAL && header.payloadBytes == kActivityPayloadBytes &&
+        header.recordBytes == kActivityRecordBytes && IsActivityFactKind(value.fact.factKind) &&
+        ValidateFactFields(header, value.fact) && ValidateActivityFields(value);
+}
+
+inline bool ProjectExecutionFact(const MonitorExecutionFact& source, std::uint64_t producer,
+    std::uint64_t stream, VnMonitorRecordHeader& header, VnMonitorExecutionFactV2& value) noexcept {
+    value = {};
+    if (!ProjectExecutionFact(source, producer, stream, header, value.fact)) return false;
+    if (!IsActivityFactKind(source.kind)) return true;
+    header.recordVersion = 2;
+    header.recordBytes = kActivityRecordBytes;
+    header.payloadBytes = kActivityPayloadBytes;
+    const auto& a = source.body.execution.activity;
+    auto& out = value.activity;
+    out.actionOutcome = a.actionOutcome;
+    out.stepIndex = a.stepIndex;
+    out.stepExecutionOrdinal = a.stepExecutionOrdinal;
+    out.stepOpcode = a.stepOpcode;
+    out.stepTargetKind = a.stepTargetKind;
+    out.variableValueBits = a.variableValueBits;
+    out.variableScope = a.variableScope;
+    out.variableOutcome = a.variableOutcome;
+    out.stepTargetId = a.stepTargetId;
+    out.variableTicket = a.variableTicket;
+    return true;
 }
 
 inline std::uint32_t PackExecutionFact(std::uint8_t* out, std::uint32_t capacity,
     const MonitorExecutionFact& source, std::uint64_t producer, std::uint64_t stream) noexcept {
-    if (out == nullptr || capacity < kExecutionRecordBytes) return 0;
+    const auto recordBytes = IsActivityFactKind(source.kind) ? kActivityRecordBytes : kExecutionRecordBytes;
+    if (out == nullptr || capacity < recordBytes) return 0;
     VnMonitorRecordHeader header{};
-    VnMonitorExecutionFactV1 fact{};
+    VnMonitorExecutionFactV2 fact{};
     if (!ProjectExecutionFact(source, producer, stream, header, fact) || !ValidateExecutionFact(header, fact)) return 0;
-    std::memset(out, 0, kExecutionRecordBytes);
+    std::memset(out, 0, recordBytes);
     PackHeader(out, header);
     ExecutionPayloadWriter writer{out + kPackedEnvelopeBytes};
-    VisitExecutionPayload(writer, fact);
-    return writer.offset == kExecutionPayloadBytes ? kExecutionRecordBytes : 0;
+    VisitExecutionPayload(writer, fact.fact);
+    if (header.recordVersion == 2) VisitActivityPayload(writer, fact.activity);
+    return writer.offset == header.payloadBytes ? recordBytes : 0;
 }
 
 inline bool DecodeExecutionFact(const VnMonitorRecordHeader& header, const std::uint8_t* bytes,
@@ -412,6 +493,22 @@ inline bool DecodeExecutionFact(const VnMonitorRecordHeader& header, const std::
     VisitExecutionPayload(reader, fact);
     if (reader.offset != kExecutionPayloadBytes || !ValidateExecutionFact(header, fact)) return false;
     out = fact;
+    return true;
+}
+
+inline bool DecodeExecutionFact(const VnMonitorRecordHeader& header, const std::uint8_t* bytes,
+    std::uint64_t size, VnMonitorExecutionFactV2& out) noexcept {
+    if (header.recordVersion == 1) {
+        out = {};
+        return DecodeExecutionFact(header, bytes, size, out.fact);
+    }
+    if (bytes == nullptr || size != kActivityPayloadBytes) return false;
+    VnMonitorExecutionFactV2 value{};
+    ExecutionPayloadReader reader{bytes};
+    VisitExecutionPayload(reader, value.fact);
+    VisitActivityPayload(reader, value.activity);
+    if (reader.offset != kActivityPayloadBytes || !ValidateExecutionFact(header, value)) return false;
+    out = value;
     return true;
 }
 

@@ -63,6 +63,17 @@ internal static class Program
             FieldInfo field = typeof(VnConstants).GetField(symbol.Name, BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             Require(field != null && field.IsPublic == ExpectedPublic(symbol), "Incorrect constant visibility: " + symbol.Name);
         }
+        JsonElement excluded = policy.GetProperty("managed_projection").GetProperty("excluded_prefixes");
+        void RequireNoExcluded(string category, IEnumerable<string> names)
+        {
+            foreach (JsonElement prefix in excluded.GetProperty(category).EnumerateArray())
+                Require(!names.Any(name => name.StartsWith(prefix.GetString(), StringComparison.Ordinal)),
+                    "Excluded native contract in SDK: " + prefix.GetString());
+        }
+        RequireNoExcluded("types", sdk.GetTypes().Select(type => type.Name));
+        RequireNoExcluded("constants", typeof(VnConstants).GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).Select(field => field.Name));
+        RequireNoExcluded("results", Enum.GetNames(typeof(VnResult)));
+        RequireNoExcluded("functions", sdk.GetType("Harken.HarkenNative", true).GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).Select(method => method.Name));
         Console.WriteLine("Separate, non-friend consumer and all generated type/constant visibility PASS.");
     }
 

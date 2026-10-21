@@ -273,9 +273,10 @@ TEST(MonitorPanel, RemoteGameCallsFromSharedDllAppearInPanel) {
                 }
                 sawSoundStarted |= fact.factKind == VN_MONITOR_FACT_PLAYABLE_STARTED &&
                     event.objectId() == harkentest::remote::kSound;
-            } else if (event.detail.category == VN_MONITOR_EVENT_CATEGORY_OPERATION) {
-                sawVariable |= event.detail.code == VN_MONITOR_OPERATION_SET_VALUE &&
-                    event.header.stableId == harkentest::remote::kVariable && event.detail.result == VN_OK;
+                sawVariable |= fact.factKind == VN_MONITOR_FACT_VARIABLE_RESULT &&
+                    event.objectId() == harkentest::remote::kVariable &&
+                    monitorFactHas(fact, kMonitorFactFieldActivityVariable) &&
+                    event.activity.variableOutcome == VN_VARIABLE_OUTCOME_APPLIED;
             } else if (event.detail.category == VN_MONITOR_EVENT_CATEGORY_LIFECYCLE) {
                 sawEffect |= event.detail.code == VN_MONITOR_LIFECYCLE_EFFECT_INSTALLED &&
                     event.header.stableId == harkentest::remote::kEffect &&
@@ -288,39 +289,48 @@ TEST(MonitorPanel, RemoteGameCallsFromSharedDllAppearInPanel) {
         << ", stderr=" << game.process.readAllStandardError().toStdString()
         << ", observed=" << sawVariable << sawAction << sawRefusal << sawSoundStarted << sawEffect;
     capture.stop();
-    ASSERT_TRUE(waitForRemote([&] { return capture.state() == EventCaptureState::Stopped; }));
+    ASSERT_TRUE(waitForRemote([&] { return capture.state() == EventCaptureState::Stopped; }))
+        << capture.statusText().toStdString() << ", connection=" << connection.statusText().toStdString();
     EXPECT_FALSE(capture.incomplete());
     const auto retained = capture.rowCount();
     EXPECT_GT(retained, 3);
-    bool namedVariable = false, namedAction = false, namedSound = false, namedLifecycleAction = false;
+    bool namedVariable = false, namedAction = false, namedSound = false, namedLifecycleAction = false, namedStep = false;
     int visibleRecords = 0;
     for (int row = 0; row < retained; ++row) {
         const auto& event = capture.eventAt(row);
         visibleRecords += event.isDesignerEvent();
+        if (!event.isDesignerEvent()) continue;
         SCOPED_TRACE(::testing::Message() << "row " << row << " code "
             << (event.isExecution() ? event.execution.factKind : event.detail.code)
             << " world " << event.header.worldGeneration
             << " project " << event.projectGuid.toString().toStdString());
-        if (event.header.stableId == harkentest::remote::kVariable) {
+        if (event.objectId() == harkentest::remote::kVariable) {
             EXPECT_EQ(event.objectName, QStringLiteral("Intensity"));
             namedVariable = true;
         }
-        if (event.header.stableId == harkentest::remote::kPlayAction) {
+        if (event.objectId() == harkentest::remote::kPlayAction) {
             EXPECT_EQ(event.objectName, QStringLiteral("Play Remote Probe"));
             namedAction = true;
-            namedLifecycleAction |= event.isExecution() && event.category() == VN_MONITOR_EVENT_CATEGORY_LIFECYCLE;
+            namedLifecycleAction |= event.isExecution() && event.type() == VNX::Monitor::DesignerEventType::Action;
         }
-        if (event.header.stableId == harkentest::remote::kSound) {
+        if (event.objectId() == harkentest::remote::kSound) {
             EXPECT_EQ(event.objectName, QStringLiteral("Remote Tone"));
             namedSound = true;
         }
+        if (event.isExecution() && event.execution.factKind == VN_MONITOR_FACT_STEP_EXECUTED) {
+            EXPECT_EQ(event.actionName, QStringLiteral("Play Remote Probe"));
+            namedStep = true;
+        }
     }
-    EXPECT_TRUE(namedVariable && namedAction && namedSound && namedLifecycleAction);
+    EXPECT_TRUE(namedVariable && namedAction && namedSound && namedLifecycleAction && namedStep);
     ASSERT_EQ(panel.visibleRowCount(), visibleRecords);
     EXPECT_LT(visibleRecords, retained);
     bool visibleSoundPlayback = false;
     const auto* catalogModel = panel.table()->model();
     for (int row = 0; row < catalogModel->rowCount(); ++row) {
+        if (catalogModel->index(row, VNX::MonitorCatalogModel::Type).data().toString() == QStringLiteral("Step"))
+            EXPECT_TRUE(catalogModel->index(row, VNX::MonitorCatalogModel::Type).data(Qt::ToolTipRole).toString()
+                .contains(QStringLiteral("Action: Play Remote Probe")));
         if (catalogModel->index(row, VNX::MonitorCatalogModel::ObjectId).data().toString() !=
                 VNX::objectIdString(harkentest::ToStudio(harkentest::remote::kSound)) ||
             catalogModel->index(row, VNX::MonitorCatalogModel::Description).data().toString() != QStringLiteral("Playing"))
@@ -337,7 +347,8 @@ TEST(MonitorPanel, RemoteGameCallsFromSharedDllAppearInPanel) {
     search->setText(VNX::objectIdString(harkentest::StudioObjectId(999000111)));
     ASSERT_EQ(panel.visibleRowCount(), 1);
     EXPECT_EQ(panel.table()->model()->index(0, VNX::MonitorCatalogModel::Level).data().toString(), QStringLiteral("Error"));
-    EXPECT_TRUE(panel.table()->model()->index(0, VNX::MonitorCatalogModel::Description).data().toString().contains(QString::number(VN_UNKNOWN_ID)));
+    EXPECT_TRUE(panel.table()->model()->index(0, VNX::MonitorCatalogModel::Description).data().toString().contains(QStringLiteral("Unknown object")));
+    EXPECT_TRUE(panel.table()->model()->index(0, VNX::MonitorCatalogModel::Description).data(Qt::ToolTipRole).toString().contains(QString::number(VN_UNKNOWN_ID)));
     panel.table()->selectRow(0);
     panel.copySelected();
     EXPECT_TRUE(QApplication::clipboard()->text().contains(VNX::objectIdString(harkentest::StudioObjectId(999000111))));

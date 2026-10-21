@@ -38,7 +38,19 @@ ProjectObjectIndex ProjectObjectIndex::fromProject(const ProjectData* project,
             ambiguous.insert(id);
             return;
         }
-        index.objects_.insert(id, {kind, owner.guid, owner.objectID, name});
+        auto businessKind = ProjectObjectLocation::BusinessKind::None;
+        if (kind == ProjectObjectLocation::Kind::Item) {
+            switch (owner.type) {
+            case ProjectItem::Type::Action: businessKind = ProjectObjectLocation::BusinessKind::Action; break;
+            case ProjectItem::Type::Variable: businessKind = ProjectObjectLocation::BusinessKind::Variable; break;
+            case ProjectItem::Type::Sound:
+            case ProjectItem::Type::Container:
+            case ProjectItem::Type::Track:
+            case ProjectItem::Type::Piece: businessKind = ProjectObjectLocation::BusinessKind::Playable; break;
+            default: break;
+            }
+        }
+        index.objects_.insert(id, {kind, owner.guid, owner.objectID, name, businessKind});
     };
     std::function<void(const ProjectItem*)> collect = [&](const ProjectItem* item) {
         if (!item || visited.contains(item) || excluded.contains(item)) return;

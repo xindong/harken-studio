@@ -105,7 +105,25 @@ struct MonitorExecutionBody {
     MonitorFactRequests requests;
     MonitorFactEmitters emitters;
     MonitorFactRelations relations;
-    MonitorFactPosition position;
+    union {
+        MonitorFactPosition position;
+        struct {
+            std::uint64_t logicCommit;
+            std::uint64_t executeFrame;
+            std::uint32_t actionOutcome;
+            std::uint32_t stepIndex;
+            std::uint32_t stepExecutionOrdinal;
+            std::uint32_t stepOpcode;
+            std::uint32_t reservedStep;
+            std::uint32_t stepTargetKind;
+            std::uint32_t variableValueBits;
+            std::uint32_t variableScope;
+            std::uint32_t variableOutcome;
+            std::uint32_t reserved;
+            VnObjectId stepTargetId;
+            std::uint64_t variableTicket;
+        } activity;
+    };
 };
 
 struct MonitorCallBody {

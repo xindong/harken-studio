@@ -836,7 +836,8 @@
             "VN_MONITOR_CONTENT_PIECE": 4,
             "VN_MONITOR_CONTENT_SOUND": 1,
             "VN_MONITOR_CONTENT_TRACK": 3,
-            "VN_MONITOR_CONTENT_UNKNOWN": 0
+            "VN_MONITOR_CONTENT_UNKNOWN": 0,
+            "VN_MONITOR_CONTENT_VARIABLE": 7
           }
         },
         "VnMonitorExecutionFactKind": {
@@ -874,10 +875,12 @@
             "VN_MONITOR_FACT_SELECTION_COMMITTED": 23,
             "VN_MONITOR_FACT_SOURCE_APPLIED": 37,
             "VN_MONITOR_FACT_SOURCE_ENDED": 32,
+            "VN_MONITOR_FACT_STEP_EXECUTED": 41,
             "VN_MONITOR_FACT_TRANSITION_REJECTED": 18,
             "VN_MONITOR_FACT_TRANSITION_STARTED": 16,
             "VN_MONITOR_FACT_TRANSITION_STOPPED": 17,
             "VN_MONITOR_FACT_UNKNOWN": 0,
+            "VN_MONITOR_FACT_VARIABLE_RESULT": 42,
             "VN_MONITOR_FACT_VOICE_ENDED": 22,
             "VN_MONITOR_FACT_VOICE_LIVE": 20,
             "VN_MONITOR_FACT_VOICE_PARKED": 21,
@@ -888,6 +891,9 @@
         "VnMonitorExecutionField": {
           "backing": "u32",
           "values": {
+            "VN_MONITOR_FACT_FIELD_ACTION_OUTCOME": 76,
+            "VN_MONITOR_FACT_FIELD_ACTIVITY_STEP": 74,
+            "VN_MONITOR_FACT_FIELD_ACTIVITY_VARIABLE": 75,
             "VN_MONITOR_FACT_FIELD_ARRANGING": 49,
             "VN_MONITOR_FACT_FIELD_AUDIO_BLOCK": 46,
             "VN_MONITOR_FACT_FIELD_CAUSED_BY_OPERATION": 62,
@@ -1093,6 +1099,7 @@
             "VN_MONITOR_OPERATION_POST_ACTION_BY_NAME": 2,
             "VN_MONITOR_OPERATION_POST_ACTION_PINNED": 14,
             "VN_MONITOR_OPERATION_POST_ACTION_RESOLVED": 15,
+            "VN_MONITOR_OPERATION_RESET_VALUES": 19,
             "VN_MONITOR_OPERATION_SET_EMITTER_VALUE": 9,
             "VN_MONITOR_OPERATION_SET_EMITTER_VALUES": 13,
             "VN_MONITOR_OPERATION_SET_VALUE": 8,
@@ -10578,6 +10585,158 @@
             }
           ],
           "size": 432
+        },
+        "VnMonitorExecutionFactV2": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "fact",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnMonitorExecutionFactV1"
+              },
+              "size": 432
+            },
+            {
+              "alignment": 8,
+              "name": "activity",
+              "offset": 432,
+              "shape": {
+                "kind": "struct",
+                "type": "VnMonitorFactActivity"
+              },
+              "size": 64
+            }
+          ],
+          "size": 496
+        },
+        "VnMonitorFactActivity": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "actionOutcome",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "stepIndex",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "stepExecutionOrdinal",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "stepOpcode",
+              "offset": 12,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reservedStep",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "stepTargetKind",
+              "offset": 20,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "variableValueBits",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "variableScope",
+              "offset": 28,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "variableOutcome",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 36,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "stepTargetId",
+              "offset": 40,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "variableTicket",
+              "offset": 56,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            }
+          ],
+          "size": 64
         },
         "VnMonitorFactCause": {
           "alignment": 8,
@@ -22119,11 +22278,11 @@
       "formatVersion": 7
     }
   },
-  "contractSha256": "db16d3ea371c68268d583133caaedc54e7969561dc01136422fec953d44b70bd",
+  "contractSha256": "c149a0143ccccbaec6c582248bbcc47bec1c80079386e76ed59c1cb9006f17ec",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
-      "sha256": "30010cc60951c49a29294d6c5113b84f74ac5909e317928fd7b3f6c82094852f",
-      "size": 304190
+      "sha256": "f25956cf913ad8695818ea4d83f63c20e127e606842d7bc01f79aa9d0cb79528",
+      "size": 307110
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_desc_meta.h": {
       "sha256": "81999c02d794859c96b7478fd43673b8ba53504c33ea9e6d9fb70b7bccfde244",
@@ -22138,37 +22297,37 @@
       "size": 5406
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_layout_asserts.h": {
-      "sha256": "933ac01faebc1ce736f87d4d72d253027ea95241866406e8e1e424cf0c67ecf0",
-      "size": 218942
+      "sha256": "5a3ca379beba784ceee2eea3ed034beeb23b409bc4151ef8f125723ffa7c0b64",
+      "size": 221222
     },
     "HarkenEngine/Tool/Remote/harken_wire.py": {
-      "sha256": "ba00f7837546e8832e25a51fe483934f21721d96a54932140ad5ce0103516bb7",
-      "size": 236640
+      "sha256": "8bde7c0c6e9bf478427f0bb6a919863138b7be0d63167b464729d184d7221da3",
+      "size": 238248
     },
     "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
-      "sha256": "1def4763a3c25b8f7a60b8e3c6a34a21e8b0561a33885e383679b825425c5794",
-      "size": 184735
+      "sha256": "89f2ead686800f4ebc8483e95e6570213a42d1d83b94936508984e9e20ac7863",
+      "size": 92815
     },
     "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenNative.g.cs": {
-      "sha256": "6cd234881020e5a787a49b3379147c75ceb29ec89f98c7bb0119fdf01e38ad00",
-      "size": 35507
+      "sha256": "fa24faf7a4e5d7f1d72cef31a4a072d0753dbb7c72c8105e758e49a064050273",
+      "size": 27820
     },
     "HarkenSDK/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
-      "sha256": "ca2d1bf879df2060ab72b860d4cede0a2c1d4f348add6486e301976d42ec4be2",
-      "size": 98146
+      "sha256": "821afcb5fe147998b2fc75264140aaa108c94ef380ce15a53d2972fbdae955af",
+      "size": 47302
     }
   },
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "1d024075aed5be80166695bef194b2dc805722e7bbdf74bd799e725c8563d070",
+    "nativeAbiSha256": "88eed77932a8efe6c4c25e7a09a76a954fd49a07a62a863576d1fc72d37c4f62",
     "remoteWireSha256": "d99304d71d24436e14a34fd990b3ded5e6ddd7bca6c13dc2065a9709d53577d3",
     "traceFormatSha256": "c06f2ddb406768176cc45d164a0ecaa66abdb79a1de84f42d52b53e9a0239f9d"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
-      "sha256": "6d73e9492e3260f388125c68479ac35bda0ec00fa67c64c1173685424775b970",
-      "size": 227714
+      "sha256": "4d376f37002b2af198230421c649b1d993c09edacd6a77c568a706133afab7b5",
+      "size": 228567
     },
     "HarkenEngine/Source/Runtime/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
@@ -22183,16 +22342,16 @@
       "size": 56088
     },
     "HarkenEngine/Source/Tooling/Binding/gen_binding.py": {
-      "sha256": "50a88c890d02b0644a694649e6e8e70de9046a1ee128ef353be9668a63a8ba6b",
-      "size": 32627
+      "sha256": "91a11de8e0a67fbc93542447a0050d15b44ba32a6f45e247e67e0161cfc0f2c3",
+      "size": 35276
     },
     "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py": {
       "sha256": "f156dad54894eaa0977a721f237d333593e121f98a1d2053d5e245b5e7f104f8",
       "size": 30774
     },
     "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json": {
-      "sha256": "ac90de44ec83964d640efbf26555600fc9e1a79c378d02f82c3514150f7e56e2",
-      "size": 235395
+      "sha256": "06dbd64fd20ce540b4a0808e46982d971b5979bc69500c43ad2fc53aed659127",
+      "size": 248319
     }
   }
 }

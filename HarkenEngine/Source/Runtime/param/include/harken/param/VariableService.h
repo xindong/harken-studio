@@ -478,6 +478,13 @@ public:
     bool SealPreparedActionSources(Engine& engine,
         const ActionFiringTable::PreparedChildIdentity& child) noexcept;
     void CancelPreparedWrite(PreparedVariableWriteToken* prepared) noexcept;
+    void BindMonitorRequest(LogicCommitTicket ticket,
+        const MonitorRequestContext& request,
+        const MonitorEmitterOrigin& emitterOrigin, VnObjectId projectId) noexcept;
+    void BindPreparedMonitorRequest(const PreparedVariableWriteToken& prepared,
+        const MonitorRequestContext& request,
+        const MonitorEmitterOrigin& emitterOrigin,
+        std::uint64_t actionFiring, VnObjectId projectId) noexcept;
 
     void BeginService(Engine& engine, std::uint64_t blocksRendered,
                       std::uint32_t blockFrames);
@@ -1418,7 +1425,14 @@ private:
     std::vector<EmitterBank> emitterBanks_;
     std::vector<std::uint32_t> emitterBankVersionGenerations_;
     // History reuse requires outcome delivery, zero observers and an audio fence.
+    struct MonitorWriteOrigin {
+        MonitorRequestContext request{};
+        MonitorEmitterOrigin emitterOrigin{};
+        VnObjectId projectId{};
+        std::uint64_t actionFiring = 0;
+    };
     std::vector<WriteRow> history_;
+    std::vector<MonitorWriteOrigin> monitorWriteOrigins_;
     std::vector<HeldCurrentSliceToken> preparedWritePlacements_;
     std::vector<std::uint32_t> historyGenerations_;
     std::vector<std::uint32_t> freeSlots_;

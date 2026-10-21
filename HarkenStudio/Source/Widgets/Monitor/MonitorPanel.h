@@ -51,7 +51,7 @@ private:
     void refreshDetails();
 
     QLabel* gapLabel_ = nullptr;
-    QComboBox* categoryFilter_ = nullptr;
+    QComboBox* typeFilter_ = nullptr;
     QLineEdit* textFilter_ = nullptr;
     QPushButton* jumpButton_ = nullptr;
     TableWidget* tableFrame_ = nullptr;

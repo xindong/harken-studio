@@ -15,6 +15,28 @@ QString unknownToken(std::uint32_t value)
     return QStringLiteral("Unknown(%1)").arg(value);
 }
 
+QString resultDescription(std::int32_t result)
+{
+    switch (result) {
+    case kOk: return MonitorCatalogModel::tr("OK");
+    case kInvalidArg: return MonitorCatalogModel::tr("Invalid arguments");
+    case kUnknownId: return MonitorCatalogModel::tr("Unknown object");
+    case kContentNotLoaded: return MonitorCatalogModel::tr("Content not loaded");
+    case kCapabilityUnavailable: return MonitorCatalogModel::tr("Operation unavailable");
+    case kStaleHandle: return MonitorCatalogModel::tr("Stale instance");
+    case kBackpressure: return MonitorCatalogModel::tr("Queue capacity reached");
+    case kNoVoice: return MonitorCatalogModel::tr("Voice capacity reached");
+    case kNoAction: return MonitorCatalogModel::tr("Action capacity reached");
+    case kNoVariable: return MonitorCatalogModel::tr("Variable not found");
+    case kNoVariableLabel: return MonitorCatalogModel::tr("Variable label not found");
+    case kNotInitialized: return MonitorCatalogModel::tr("Audio engine unavailable");
+    case kInUse: return MonitorCatalogModel::tr("In use");
+    case kVariableWriterForbidden: return MonitorCatalogModel::tr("Variable write forbidden");
+    case kVariableScopeMismatch: return MonitorCatalogModel::tr("Variable scope mismatch");
+    default: return MonitorCatalogModel::tr("Unknown error");
+    }
+}
+
 QString operationName(std::uint32_t operation)
 {
     switch (operation) {
@@ -42,10 +64,48 @@ QString executionDescription(const CapturedEvent& event)
     switch (fact.factKind) {
     case kMonitorFactRequestReturned:
         if (monitorFactHas(fact, kMonitorFactFieldResult) && fact.result != kOk)
-            return MonitorCatalogModel::tr("%1 failed (%2)").arg(operation).arg(fact.result);
+            return MonitorCatalogModel::tr("%1 failed: %2").arg(operation, resultDescription(fact.result));
         return {};
-    case kMonitorFactActionAccepted: return MonitorCatalogModel::tr("Action triggered");
-    case kMonitorFactActionStopped: return MonitorCatalogModel::tr("Action stopping");
+    case kMonitorFactActionAccepted: return MonitorCatalogModel::tr("Triggered");
+    case kMonitorFactActionTerminal:
+        switch (event.activity.actionOutcome) {
+        case 1: return MonitorCatalogModel::tr("Finished");
+        case 2: return MonitorCatalogModel::tr("Finished with errors");
+        case 3: return MonitorCatalogModel::tr("Failed");
+        case 4: return fact.terminalKind == kMonitorTerminalRequestedStop
+            ? MonitorCatalogModel::tr("Stopped") : MonitorCatalogModel::tr("Cancelled");
+        default: return {};
+        }
+    case kMonitorFactStepExecuted: {
+        QString step;
+        switch (event.activity.stepOpcode) {
+        case 0: step = MonitorCatalogModel::tr("Play"); break;
+        case 1: step = MonitorCatalogModel::tr("Stop"); break;
+        case 2: step = MonitorCatalogModel::tr("Post Action"); break;
+        case 3: step = MonitorCatalogModel::tr("Set Variable"); break;
+        case 4: step = MonitorCatalogModel::tr("Reset"); break;
+        default: return {};
+        }
+        return MonitorCatalogModel::tr("Step %1: %2").arg(event.activity.stepIndex + 1).arg(step);
+    }
+    case kMonitorFactVariableResult:
+        switch (event.activity.variableOutcome) {
+        case 0: return MonitorCatalogModel::tr("Setting failed: %1").arg(resultDescription(fact.result));
+        case 1: {
+            float value;
+            std::memcpy(&value, &event.activity.variableValueBits, sizeof(value));
+            return MonitorCatalogModel::tr("Set to %1").arg(value, 0, 'g', 7);
+        }
+        case 2: return MonitorCatalogModel::tr("Not applied: replaced by another value");
+        case 3: return MonitorCatalogModel::tr("Not applied: content changed");
+        case 4: return MonitorCatalogModel::tr("Not applied: playback reset");
+        case 5: return MonitorCatalogModel::tr("Not applied: game object unregistered");
+        case 6: return MonitorCatalogModel::tr("Not applied: session ended");
+        case 7: return MonitorCatalogModel::tr("Not applied: target unavailable");
+        default: return {};
+        }
+    case kMonitorFactEmitterCreated: return MonitorCatalogModel::tr("Registered");
+    case kMonitorFactEmitterDestroyed: return MonitorCatalogModel::tr("Unregistered");
     case kMonitorFactActionRejected: return MonitorCatalogModel::tr("Action rejected");
     case kMonitorFactTransitionStarted: return MonitorCatalogModel::tr("Transition started");
     case kMonitorFactTransitionStopped: return MonitorCatalogModel::tr("Transition stopped");
@@ -69,6 +129,8 @@ MonitorCatalogModel::MonitorCatalogModel(Monitor::EventCaptureController* captur
     connect(capture, &Monitor::EventCaptureController::recordsAboutToRemove, this,
         [this](int first, int last) { beginRemoveRows({}, first, last); });
     connect(capture, &Monitor::EventCaptureController::recordsRemoved, this, [this] { endRemoveRows(); });
+    connect(capture, &Monitor::EventCaptureController::recordsUpdated, this,
+        [this](int first, int last) { emit dataChanged(index(first, 0), index(last, ColumnCount - 1)); });
     connect(capture, &QObject::destroyed, this, [this] { beginResetModel(); endResetModel(); });
 }
 
@@ -119,7 +181,7 @@ QVariant MonitorCatalogModel::data(const QModelIndex& index, int role) const
         return QString::number(elapsed / 1e9, 'f', 6);
     }
     case Level: return levelText(*event);
-    case Type: return categoryText(*event);
+    case Type: return typeText(*event);
     case Description: return description(*event);
     case RequestId:
         if (event->playbackRequestId()) return QString::number(event->playbackRequestId());
@@ -146,13 +208,15 @@ QString MonitorCatalogModel::levelText(const Monitor::CapturedEvent& event)
     }
 }
 
-QString MonitorCatalogModel::categoryText(const Monitor::CapturedEvent& event)
+QString MonitorCatalogModel::typeText(const Monitor::CapturedEvent& event)
 {
-    switch (event.category()) {
-    case VNX::Monitor::kMonitorEventCategoryOperation: return tr("Operation");
-    case VNX::Monitor::kMonitorEventCategoryLifecycle: return tr("Playback");
-    case VNX::Monitor::kMonitorEventCategoryDiagnostic: return tr("Diagnostic");
-    default: return unknownToken(event.category());
+    switch (event.type()) {
+    case DesignerEventType::Action: return tr("Action");
+    case DesignerEventType::Step: return tr("Step");
+    case DesignerEventType::Playable: return tr("Playable");
+    case DesignerEventType::Variable: return tr("Variable");
+    case DesignerEventType::GameObject: return tr("Game Object");
+    default: return {};
     }
 }
 
@@ -211,22 +275,7 @@ QString MonitorCatalogModel::description(const Monitor::CapturedEvent& event)
         detail.code == VNX::Monitor::kMonitorOperationStopAction || detail.code == VNX::Monitor::kMonitorOperationStopAll ||
         detail.code == VNX::Monitor::kMonitorOperationStopEmitter)
         operation += tr("; fade %1 ms").arg(detail.arg0);
-    QString result;
-    switch (detail.result) {
-    case VNX::Monitor::kOk: result = tr("OK"); break;
-    case VNX::Monitor::kInvalidArg: result = tr("Invalid arguments"); break;
-    case VNX::Monitor::kUnknownId: result = tr("Unknown object"); break;
-    case VNX::Monitor::kContentNotLoaded: result = tr("Content not loaded"); break;
-    case VNX::Monitor::kStaleHandle: result = tr("Stale instance"); break;
-    case VNX::Monitor::kBackpressure: result = tr("Queue capacity reached"); break;
-    case VNX::Monitor::kNoVoice: result = tr("Voice capacity reached"); break;
-    case VNX::Monitor::kNoAction: result = tr("Action capacity reached"); break;
-    case VNX::Monitor::kInUse: result = tr("In use"); break;
-    case VNX::Monitor::kVariableWriterForbidden: result = tr("Variable write forbidden"); break;
-    case VNX::Monitor::kVariableScopeMismatch: result = tr("Variable scope mismatch"); break;
-    default: result = tr("Failed"); break;
-    }
-    return tr("%1: %2 (%3)").arg(operation, result).arg(detail.result);
+    return tr("%1: %2 (%3)").arg(operation, resultDescription(detail.result)).arg(detail.result);
 }
 
 QString MonitorCatalogModel::details(int row) const
@@ -242,6 +291,11 @@ QString MonitorCatalogModel::details(int row) const
     if (event->isExecution() && monitorFactHas(event->execution, kMonitorFactFieldResult) &&
         event->execution.result != kOk)
         lines << tr("Error code: %1").arg(event->execution.result);
+    if (event->type() == DesignerEventType::Step) {
+        if (!event->actionName.isEmpty()) lines << tr("Action: %1").arg(event->actionName);
+        if (!harkenstudio::IsNull(event->header.stableId))
+            lines << tr("Action ID: %1").arg(objectIdString(event->header.stableId));
+    }
     return lines.join(QLatin1Char('\n'));
 }
 

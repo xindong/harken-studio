@@ -7,6 +7,7 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <QStringConverter>
 
 namespace VNX {
 namespace Monitor {
@@ -149,7 +150,7 @@ constexpr bool validSubjectHandle(unsigned subject, std::uint64_t handle) noexce
         (handle & (UINT64_C(1) << 63)) == 0;
 }
 
-bool validRequestOperation(uint32_t value) { return value >= kMonitorOperationPostAction && value <= kMonitorOperationPlayRawPreview; }
+bool validRequestOperation(uint32_t value) { return value >= kMonitorOperationPostAction && value <= kMonitorOperationResetValues; }
 bool validRequestOrigin(uint32_t value) { return value >= kMonitorRequestOriginNativeApi && value <= kMonitorRequestOriginStudioPreview; }
 std::uint32_t subjectEntityKind(unsigned subject) noexcept {
     switch (subject) {
@@ -169,11 +170,11 @@ bool validateFactFields(const MonitorRecordHeader& header, const MonitorExecutio
     if (header.engineMonitorInstanceId == 0 ||
         header.producerId == 0 || header.sourceSequence == 0 || header.streamId == 0 ||
         header.reserved0 != 0 || header.telemetry.reserved0 != 0 ||
-        fact.structSize != 432u || fact.factKind == 0 || fact.factKind > kMonitorFactPlayableStarted ||
-        fact.subjectNamespace > kMonitorSubjectTransition || fact.contentKind > kMonitorContentMedia ||
+        fact.structSize != 432u || fact.factKind == 0 || fact.factKind > kMonitorFactVariableResult ||
+        fact.subjectNamespace > kMonitorSubjectTransition || fact.contentKind > kMonitorContentVariable ||
         fact.reserved0 != 0 || fact.reserved1 != 0 || fact.control.reserved0 != 0 || fact.selection.reserved0 != 0 ||
         fact.target.reserved0 != 0 || (fact.factFlags & ~(kMonitorFactFlagIdentityIncomplete | kMonitorFactFlagControlIncomplete)) != 0 ||
-        (fact.validityHi >> (kMonitorFactFieldTargetScope - 63)) != 0) return false;
+        (fact.validityHi >> (kMonitorFactFieldActionOutcome - 63)) != 0) return false;
     const auto expectedStream = fact.factKind == kMonitorFactIdentityUpsert || fact.factKind == kMonitorFactIdentityTombstone
         ? kMonitorStreamState : kMonitorStreamEvent;
     if (header.streamKind != expectedStream) return false;
@@ -182,7 +183,8 @@ bool validateFactFields(const MonitorRecordHeader& header, const MonitorExecutio
         executionFields |= has(i);
     for (unsigned i = kMonitorFactFieldServiceLeaf; i <= kMonitorFactFieldRenderActivation; ++i)
         executionFields |= has(i);
-    const bool callFields = fact.validityHi != 0 || has(kMonitorFactFieldCausedByRequest) ||
+    const auto targetValidity = fact.validityHi & ((UINT64_C(1) << (kMonitorFactFieldTargetScope - 63)) - 1);
+    const bool callFields = targetValidity != 0 || has(kMonitorFactFieldCausedByRequest) ||
         has(kMonitorFactFieldCausedByOperation) || has(kMonitorFactFieldCausedByOrigin);
     if ((executionFields && callFields) ||
         (executionFields && (fact.factKind == kMonitorFactRequestSubmitted || fact.factKind == kMonitorFactRequestReturned)))
@@ -213,7 +215,7 @@ bool validateFactFields(const MonitorRecordHeader& header, const MonitorExecutio
         !optional(kMonitorFactFieldTimestamp, fact.timestampNs) ||
         !optional(kMonitorFactFieldResult, fact.result) || !optional(kMonitorFactFieldReason, header.reason) ||
         !optional(kMonitorFactFieldTerminalKind, fact.terminalKind,
-            fact.subjectNamespace == kMonitorSubjectPlayable &&
+            (fact.subjectNamespace == kMonitorSubjectPlayable || fact.subjectNamespace == kMonitorSubjectAction) &&
             fact.terminalKind >= kMonitorTerminalNaturalCompletion &&
             fact.terminalKind <= kMonitorTerminalFailure)) return false;
     const auto request = [&](unsigned field, const MonitorFactRequest& value) {
@@ -267,7 +269,7 @@ bool validateFactFields(const MonitorRecordHeader& header, const MonitorExecutio
         !nonzero(kMonitorFactFieldTargetSemantic, fact.target.programSemanticFingerprint) ||
         !nonzero(kMonitorFactFieldTargetRevision, fact.target.contentRevision) ||
         !optional(kMonitorFactFieldTargetKind, fact.target.kind, fact.target.kind > 0 && fact.target.kind <= kMonitorTargetContent) ||
-        !optional(kMonitorFactFieldTargetContentKind, fact.target.contentKind, fact.target.contentKind > 0 && fact.target.contentKind <= kMonitorContentMedia) ||
+        !optional(kMonitorFactFieldTargetContentKind, fact.target.contentKind, fact.target.contentKind > 0 && fact.target.contentKind <= kMonitorContentVariable) ||
         !optional(kMonitorFactFieldTargetScope, fact.target.scope, fact.target.scope == 1) ||
         (has(kMonitorFactFieldTargetValidated) && !has(kMonitorFactFieldTargetHandle) && !has(kMonitorFactFieldTargetObject))) return false;
     if (has(kMonitorFactFieldTargetValidated)) {
@@ -294,7 +296,7 @@ bool validateFactFields(const MonitorRecordHeader& header, const MonitorExecutio
             if (!validSubjectHandle(targetSubject, targetHandle)) return false;
         }
     }
-    if (!isCallFactKind(fact.factKind) && (fact.validityHi != 0 || has(kMonitorFactFieldRequest) ||
+    if (!isCallFactKind(fact.factKind) && (targetValidity != 0 || has(kMonitorFactFieldRequest) ||
         has(kMonitorFactFieldRequestOperation) || has(kMonitorFactFieldRequestOrigin) ||
         has(kMonitorFactFieldCausedByRequest) || has(kMonitorFactFieldCausedByOperation) || has(kMonitorFactFieldCausedByOrigin))) return false;
     return true;
@@ -375,9 +377,12 @@ MonitorDecodeBatch decodePackedRecords(const uint8_t* packedBytes,
                 header.recordKind == kMonitorRecordUnknown ||
                 (header.recordKind >= kMonitorRecordInvalid &&
                  header.recordKind != kMonitorRecordEventDetail &&
-                 header.recordKind != kMonitorRecordExecutionFact);
+                 header.recordKind != kMonitorRecordExecutionFact &&
+                 header.recordKind != kMonitorRecordHostObjectSymbol &&
+                 header.recordKind != kMonitorRecordIdentityFact);
             const bool unknownVersion = header.recordVersion != 1u &&
-                !(header.recordKind == kMonitorRecordEventDetail && header.recordVersion == 2u);
+                !((header.recordKind == kMonitorRecordEventDetail ||
+                   header.recordKind == kMonitorRecordExecutionFact) && header.recordVersion == 2u);
             const bool unknown = unknownKind || unknownVersion || reservedFlags != 0;
             if (unknown && required)
                 return fail(kMonitorIncompatible, header.recordBytes);
@@ -431,14 +436,18 @@ MonitorDecodeBatch decodePackedRecords(const uint8_t* packedBytes,
     }
 }
 
-bool decodeExecutionFact(const MonitorDecodedRecord& record, MonitorExecutionFactV1* out)
+bool decodeExecutionFact(const MonitorDecodedRecord& record, MonitorExecutionFactV1* out,
+                         MonitorFactActivity* activity)
 {
     const auto& header = record.header;
+    const bool version2 = header.recordVersion == 2;
+    const unsigned payloadBytes = version2 ? 496u : 432u;
     if (!out || record.unknownOptional || header.recordKind != kMonitorRecordExecutionFact ||
-        header.recordVersion != 1 || header.flags != kMonitorRecordFlagOptional ||
-        header.streamKind != kMonitorStreamEvent || header.payloadBytes != 432 ||
-        header.recordBytes != ((kMonitorRecordEnvelopePackedBytes + 432u + 7u) & ~7u) ||
-        record.payload.size() != 432) return false;
+        (header.recordVersion != 1 && !version2) || header.flags != kMonitorRecordFlagOptional ||
+        (header.streamKind != kMonitorStreamEvent && header.streamKind != kMonitorStreamState) ||
+        header.payloadBytes != payloadBytes ||
+        header.recordBytes != ((kMonitorRecordEnvelopePackedBytes + payloadBytes + 7u) & ~7u) ||
+        record.payload.size() != payloadBytes) return false;
     MonitorExecutionFactV1 fact{};
     size_t offset = 0;
     const auto* bytes = record.payload.data();
@@ -473,9 +482,52 @@ bool decodeExecutionFact(const MonitorDecodedRecord& record, MonitorExecutionFac
     visit(fact.target.handle); visit(fact.target.projectId); visit(fact.target.objectId);
     visit(fact.target.worldGeneration); visit(fact.target.programSemanticFingerprint); visit(fact.target.contentRevision);
     visit(fact.target.kind); visit(fact.target.contentKind); visit(fact.target.scope); visit(fact.target.reserved0);
-    if (offset != 432 || !validateFactFields(header, fact)) return false;
+    MonitorFactActivity fields{};
+    if (version2) {
+        visit(fields.actionOutcome); visit(fields.stepIndex); visit(fields.stepExecutionOrdinal);
+        visit(fields.stepOpcode); visit(fields.reservedStep); visit(fields.stepTargetKind);
+        visit(fields.variableValueBits); visit(fields.variableScope); visit(fields.variableOutcome);
+        visit(fields.reserved0); visit(fields.stepTargetId); visit(fields.variableTicket);
+    }
+    const bool step = monitorFactHas(fact, kMonitorFactFieldActivityStep);
+    const bool variable = monitorFactHas(fact, kMonitorFactFieldActivityVariable);
+    const bool action = monitorFactHas(fact, kMonitorFactFieldActionOutcome);
+    if (offset != payloadBytes || !validateFactFields(header, fact) ||
+        (version2 != (step || variable || action)) || fields.reserved0 != 0 ||
+        (step != (fact.factKind == kMonitorFactStepExecuted)) ||
+        (variable != (fact.factKind == kMonitorFactVariableResult)) ||
+        (action && fact.factKind != kMonitorFactActionTerminal) ||
+        (static_cast<int>(step) + variable + action > 1)) return false;
+    if (step) {
+        if (fact.subjectNamespace != kMonitorSubjectAction || fields.stepOpcode > 4 || fields.stepTargetKind > 6 ||
+            fields.reservedStep != 0 || fields.stepExecutionOrdinal == UINT32_MAX) return false;
+    } else if (fields.stepIndex || fields.stepExecutionOrdinal || fields.stepOpcode || fields.reservedStep ||
+        fields.stepTargetKind || !harkenstudio::IsNull(fields.stepTargetId)) return false;
+    if (variable) {
+        if (fact.contentKind != kMonitorContentVariable || fields.variableScope > 1 || fields.variableOutcome > 7 ||
+            (fields.variableOutcome == 0 && (!monitorFactHas(fact, kMonitorFactFieldResult) || fact.result == kOk))) return false;
+    } else if (fields.variableValueBits || fields.variableScope || fields.variableOutcome || fields.variableTicket) return false;
+    if (action ? fields.actionOutcome == 0 || fields.actionOutcome > 4 : fields.actionOutcome != 0) return false;
     *out = fact;
+    if (activity) *activity = fields;
     return true;
+}
+
+bool decodeIdentityFact(const MonitorDecodedRecord& record, MonitorExecutionFactV1* out)
+{
+    if (!out || record.unknownOptional || record.header.recordKind != kMonitorRecordIdentityFact ||
+        record.header.recordVersion != 1 || record.header.streamKind != kMonitorStreamState ||
+        record.header.payloadBytes != 456 || record.payload.size() != 456 || record.header.recordBytes != 776 ||
+        readU32(record.payload.data()) != 456 || readU32(record.payload.data() + 4) != 0 ||
+        readU64(record.payload.data() + 16) == 0) return false;
+    MonitorDecodedRecord execution;
+    execution.header = record.header;
+    execution.header.recordKind = kMonitorRecordExecutionFact;
+    execution.header.payloadBytes = 432;
+    execution.header.recordBytes = 752;
+    execution.payload.assign(record.payload.begin() + 24, record.payload.end());
+    if (!decodeExecutionFact(execution, out)) return false;
+    return out->factKind == kMonitorFactIdentityUpsert || out->factKind == kMonitorFactIdentityTombstone;
 }
 
 bool decodeEventDetail(const MonitorDecodedRecord& record, MonitorEventDetail* out,
@@ -522,6 +574,45 @@ bool decodeEventDetail(const MonitorDecodedRecord& record, MonitorEventDetail* o
             std::copy_n(p + sizeof(value), 16, identity->projectGuid);
         }
     }
+    return true;
+}
+
+bool decodeHostObjectSymbol(const MonitorDecodedRecord& record, MonitorHostObjectSymbolV1* out)
+{
+    const auto& header = record.header;
+    if (!out || record.unknownOptional || header.recordKind != kMonitorRecordHostObjectSymbol ||
+        header.recordVersion != 1 || header.flags != kMonitorRecordFlagOptional ||
+        (header.streamKind != kMonitorStreamState && header.streamKind != kMonitorStreamEvent) ||
+        header.payloadBytes != 312 || record.payload.size() != 312 || header.recordBytes != 632 ||
+        header.engineMonitorInstanceId == 0 || header.sourceSequence == 0 ||
+        header.instanceGeneration == 0 || header.instanceGeneration != header.instanceHandle >> 32) return false;
+    const auto* bytes = record.payload.data();
+    MonitorHostObjectSymbolV1 value{};
+    value.structSize = readU32(bytes);
+    value.factKind = readU32(bytes + 4);
+    value.stateCutId = readU64(bytes + 8);
+    value.cutRevision = readU64(bytes + 16);
+    value.hostSession = readU64(bytes + 24);
+    value.hostSequence = readU64(bytes + 32);
+    value.registrationRevision = readU64(bytes + 40);
+    value.field = readU32(bytes + 48);
+    value.textBytes = static_cast<uint16_t>(readU32(bytes + 52));
+    value.flags = static_cast<uint16_t>(readU32(bytes + 52) >> 16);
+    const auto limit = value.field == kMonitorHostSymbolName ? 64u :
+        (value.field == kMonitorHostSymbolPath ? 256u : (value.field == kMonitorHostSymbolScene ? 128u : 0u));
+    if (value.structSize != 312 || value.cutRevision == 0 || value.hostSession == 0 ||
+        value.hostSequence == 0 || value.registrationRevision == 0 || limit == 0 || value.textBytes > limit ||
+        (value.flags & ~1u) != 0 || !paddingZero(bytes, 56 + value.textBytes, 312) ||
+        (value.factKind != kMonitorSymbolUpsert &&
+            (value.factKind != kMonitorSymbolTombstone || value.stateCutId != 0)) ||
+        (value.stateCutId != 0 && header.streamKind != kMonitorStreamState) ||
+        header.producerId != (value.stateCutId == 0 ? 7u : 6u) ||
+        header.streamId != (value.stateCutId == 0 ? 205u : 204u)) return false;
+    QStringDecoder decoder(QStringDecoder::Utf8);
+    (void)QString(decoder(QByteArrayView(reinterpret_cast<const char*>(bytes + 56), value.textBytes)));
+    if (decoder.hasError()) return false;
+    std::copy_n(bytes + 56, value.textBytes, value.text);
+    *out = value;
     return true;
 }
 

@@ -8533,6 +8533,8 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
     command.actionId = image.actions[deferred ? 10 : 8].actionStableId;
     command.emitter = emitter;
     VnActionFiringHandle firing = 0;
+    const auto capture = deferred && availableBanks == 0
+        ? harkentest::monitor::OpenActivityEvents() : 0;
     std::vector<harken::EngineQueueProgramBank*> heldBanks;
     std::vector<harken::EngineQueueProgramBank::OriginalLifetimePin> heldBankLoans;
     const auto releaseHeldBanks = [&]() {
@@ -8769,6 +8771,10 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
             EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
             EXPECT_EQ(oldSuccessor, row.queueSuccessorRenderHandle);
             EXPECT_FALSE(engine->runtimeRecreateRequired);
+            for (const auto& event : harkentest::monitor::ReadActivityEvents(capture)) {
+                EXPECT_NE(VN_MONITOR_FACT_STEP_EXECUTED, event.fact.fact.factKind);
+            }
+            EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
             releaseHeldBanks();
             return;
         }
@@ -54844,8 +54850,12 @@ TEST(ActionFiringApi, FarDelayedResetOverlaysSameFramePlayWithoutMutatingSnapsho
     VnPostActionDesc desc = ValidPostDesc();
     desc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle firing = 0;
+    const auto capture = harkentest::monitor::OpenActivityEvents();
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     EXPECT_EQ(2u, engine->actionDeferredRecords.LiveCount());
+    for (const auto& event : harkentest::monitor::ReadActivityEvents(capture)) {
+        EXPECT_NE(VN_MONITOR_FACT_STEP_EXECUTED, event.fact.fact.factKind);
+    }
     EXPECT_EQ(1u, engine->selectionMemory.Snapshot(key).selectionOrdinal);
     EXPECT_EQ(0u, engine->selectionMemory.Snapshot(key).resetEpoch);
     harken::ActionDeferredRecordToken token{};
@@ -54860,6 +54870,17 @@ TEST(ActionFiringApi, FarDelayedResetOverlaysSameFramePlayWithoutMutatingSnapsho
     EXPECT_EQ(1u, engine->selectionMemory.Snapshot(key).resetEpoch);
     EXPECT_LE(engine->selectionMemory.Snapshot(key).selectionOrdinal, 1u);
     EXPECT_EQ(VN_IN_USE, Vn_ReleaseActionFiring(firing));
+    std::uint32_t resetExecutions = 0;
+    for (const auto& event : harkentest::monitor::ReadActivityEvents(capture)) {
+        if (event.fact.fact.factKind != VN_MONITOR_FACT_STEP_EXECUTED ||
+            event.fact.activity.stepOpcode != static_cast<std::uint32_t>(harken::ActionOpcodeV1::Reset)) continue;
+        ++resetExecutions;
+        EXPECT_EQ(firing, event.header.instanceHandle);
+        EXPECT_EQ(0u, event.fact.activity.stepIndex);
+        EXPECT_EQ(program.containerStableId, event.fact.activity.stepTargetId);
+    }
+    EXPECT_EQ(1u, resetExecutions);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(capture));
 }
 
 TEST(ActionFiringApi, ImmediatePlayDoesNotObserveFutureDelayedReset) {

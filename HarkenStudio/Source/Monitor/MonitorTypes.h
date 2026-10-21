@@ -5,8 +5,11 @@
 
 namespace VNX::Monitor {
 
+enum class DesignerEventType { None, Action, Step, Playable, Variable, GameObject };
+
 using MonitorResult = std::int32_t;
 inline constexpr auto kBackpressure = -301;
+inline constexpr auto kCapabilityUnavailable = -327;
 inline constexpr auto kContentNotLoaded = -220;
 inline constexpr auto kInvalidArg = -100;
 inline constexpr auto kInUse = -302;
@@ -160,6 +163,8 @@ inline constexpr auto kMonitorValidWarmup = 4;
 inline constexpr auto kMonitorWrongThread = -330;
 inline constexpr auto kNotInitialized = -303;
 inline constexpr auto kNoAction = -311;
+inline constexpr auto kNoVariable = -306;
+inline constexpr auto kNoVariableLabel = -1206;
 inline constexpr auto kNoVoice = -300;
 inline constexpr auto kOk = 0;
 inline constexpr auto kStaleHandle = -201;
@@ -208,6 +213,8 @@ inline constexpr auto kMonitorFactSourceApplied = 37;
 inline constexpr auto kMonitorFactSeekApplied = 38;
 inline constexpr auto kMonitorFactResourceRetired = 39;
 inline constexpr auto kMonitorFactPlayableStarted = 40;
+inline constexpr auto kMonitorFactStepExecuted = 41;
+inline constexpr auto kMonitorFactVariableResult = 42;
 inline constexpr auto kMonitorFactFieldSubject = 0;
 inline constexpr auto kMonitorFactFieldProject = 1;
 inline constexpr auto kMonitorFactFieldContentObject = 2;
@@ -282,6 +289,9 @@ inline constexpr auto kMonitorFactFieldTargetRevision = 70;
 inline constexpr auto kMonitorFactFieldTargetKind = 71;
 inline constexpr auto kMonitorFactFieldTargetContentKind = 72;
 inline constexpr auto kMonitorFactFieldTargetScope = 73;
+inline constexpr auto kMonitorFactFieldActivityStep = 74;
+inline constexpr auto kMonitorFactFieldActivityVariable = 75;
+inline constexpr auto kMonitorFactFieldActionOutcome = 76;
 inline constexpr auto kMonitorSubjectNone = 0;
 inline constexpr auto kMonitorSubjectPlayable = 1;
 inline constexpr auto kMonitorSubjectAction = 2;
@@ -298,6 +308,7 @@ inline constexpr auto kMonitorContentTrack = 3;
 inline constexpr auto kMonitorContentPiece = 4;
 inline constexpr auto kMonitorContentAction = 5;
 inline constexpr auto kMonitorContentMedia = 6;
+inline constexpr auto kMonitorContentVariable = 7;
 inline constexpr auto kMonitorTerminalNaturalCompletion = 1;
 inline constexpr auto kMonitorTerminalRequestedStop = 2;
 inline constexpr auto kMonitorTerminalParentCancellation = 3;
@@ -316,8 +327,18 @@ inline constexpr auto kMonitorTargetContent = 7;
 inline constexpr auto kMonitorFactFlagIdentityIncomplete = 1;
 inline constexpr auto kMonitorFactFlagControlIncomplete = 2;
 inline constexpr auto kMonitorRecordExecutionFact = 24;
+inline constexpr auto kMonitorRecordIdentityFact = 25;
+inline constexpr auto kMonitorRecordIdentityCutBegin = 26;
+inline constexpr auto kMonitorRecordIdentityCutEnd = 27;
+inline constexpr auto kMonitorRecordHostObjectSymbol = 28;
+inline constexpr auto kMonitorHostSymbolName = 1;
+inline constexpr auto kMonitorHostSymbolPath = 2;
+inline constexpr auto kMonitorHostSymbolScene = 3;
+inline constexpr auto kMonitorSymbolUpsert = 1;
+inline constexpr auto kMonitorSymbolTombstone = 2;
 inline constexpr auto kMonitorOperationResetPreview = 17;
 inline constexpr auto kMonitorOperationPlayRawPreview = 18;
+inline constexpr auto kMonitorOperationResetValues = 19;
 inline constexpr auto kMonitorRequestOriginNativeApi = 1;
 inline constexpr auto kMonitorRequestOriginStudioPreview = 2;
 
@@ -399,6 +420,40 @@ inline bool monitorFactHas(const MonitorExecutionFactV1& fact, unsigned field)
     return field < 128 && ((field < 64 ? fact.validityLo : fact.validityHi) &
         (UINT64_C(1) << (field % 64))) != 0;
 }
+
+struct MonitorFactActivity {
+    uint32_t actionOutcome{};
+    uint32_t stepIndex{};
+    uint32_t stepExecutionOrdinal{};
+    uint32_t stepOpcode{};
+    uint32_t reservedStep{};
+    uint32_t stepTargetKind{};
+    uint32_t variableValueBits{};
+    uint32_t variableScope{};
+    uint32_t variableOutcome{};
+    uint32_t reserved0{};
+    harkenstudio::ObjectId stepTargetId{};
+    uint64_t variableTicket{};
+};
+
+struct MonitorExecutionFactV2 {
+    MonitorExecutionFactV1 fact{};
+    MonitorFactActivity activity{};
+};
+
+struct MonitorHostObjectSymbolV1 {
+    uint32_t structSize{};
+    uint32_t factKind{};
+    uint64_t stateCutId{};
+    uint64_t cutRevision{};
+    uint64_t hostSession{};
+    uint64_t hostSequence{};
+    uint64_t registrationRevision{};
+    uint32_t field{};
+    uint16_t textBytes{};
+    uint16_t flags{};
+    uint8_t text[256]{};
+};
 
 struct MonitorRecordingStatus;
 using MonitorSessionHandle = uint64_t;
