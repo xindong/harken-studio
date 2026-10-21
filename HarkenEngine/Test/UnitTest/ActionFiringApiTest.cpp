@@ -13370,7 +13370,7 @@ TEST(ActionFiringApi, ImmediateQueueOriginalClockBindsActualPlacementWithoutReis
 }
 
 static void CheckOriginalResetBodyUsesRealEngineOwners(bool afterBinding, bool materializeSource = false,
-    bool holdOldCapture = false) {
+    bool holdOldCapture = false, bool wrappedChild = false) {
     (void)Vn_Term();
     harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -13382,6 +13382,16 @@ static void CheckOriginalResetBodyUsesRealEngineOwners(bool afterBinding, bool m
     CanonicalActionWorld image(engine.registry.Lookup(CanonicalActionWorld::kFirstSound).contentRevision,
         engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
     image.MakeImmediateSequenceQueuePlayAction();
+    if (wrappedChild) {
+        const auto& property = image.properties[2];
+        image.queueChildren[0].playable = {harken::PlayableKindV1::Container, 0, property.stableId,
+            property.programSemanticFingerprint, property.contentRevision, property.routeStableId,
+            property.compatibilityFingerprint};
+        image.queueChildren[0].timingHint = {};
+        image.occurrences[2].childPlayable = image.queueChildren[0].playable;
+        image.occurrences[2].occurrenceSemanticFingerprint =
+            harken::ComputePlayableOccurrenceFingerprintV1(image.occurrences[2]);
+    }
     if (materializeSource) {
         image.containers[2].queueCycle = harken::QueueCycleV1::Loop;
         image.containers[2].resumePosition = 1;
@@ -13409,7 +13419,10 @@ static void CheckOriginalResetBodyUsesRealEngineOwners(bool afterBinding, bool m
     }
     VnActionFiringHandle firing = 0;
     ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
-    auto& row = engine.playableServices[0];
+    auto queue = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+        [](const auto& service) { return service.queueMode; });
+    ASSERT_NE(engine.playableServices.end(), queue);
+    auto& row = *queue;
     if (afterBinding) {
         engine.nullBackend.Pump(1);
         ASSERT_EQ(VN_OK, Vn_Update());
@@ -13629,11 +13642,13 @@ TEST(ActionFiringApi, NativeResetBodyRetainsActualEngineCurrentAfterClockBinding
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 TEST(ActionFiringApi, NativeResetPreparesRealReplacementSourceBeforeAckAndReturnsEveryOwner) {
     ASSERT_NO_FATAL_FAILURE(CheckOriginalResetBodyUsesRealEngineOwners(false, true));
+    ASSERT_NO_FATAL_FAILURE(CheckOriginalResetBodyUsesRealEngineOwners(false, true, false, true));
 }
 #endif
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 TEST(ActionFiringApi, NativeResetPreparesRealReplacementSourceAfterClockBindingAndReturnsEveryOwner) {
     ASSERT_NO_FATAL_FAILURE(CheckOriginalResetBodyUsesRealEngineOwners(true, true));
+    ASSERT_NO_FATAL_FAILURE(CheckOriginalResetBodyUsesRealEngineOwners(true, true, false, true));
 }
 #endif
 
@@ -20408,6 +20423,7 @@ TEST(ActionFiringApi, NestedQueuePageResetKeepsLogicalSuccessorIdentity) {
 }
 
 TEST(ActionFiringApi, NestedQueuePageResetPreservesOrdinaryContainerPath) {
+    ExpectDeferredNestedQueueCompositeSuccessor(false, false, false, true, false, 0, 2);
     for (bool piece : {false, true})
         ExpectDeferredNestedQueueCompositeSuccessor(piece, false, false, true, false, 1, piece ? 2u : 1u);
     ExpectDeferredNestedQueueCompositeSuccessor(false, false, true, false, false, 1, 2);

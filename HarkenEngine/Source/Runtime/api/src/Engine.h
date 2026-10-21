@@ -1954,6 +1954,7 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     bool queueCompositeMirrorsCleared = false;
     std::uint8_t queueCurrentProgramPlane = 0;
     EngineQueueProgramBank* queueCurrentProgramBank = nullptr;
+    bool queueCurrentProgramBorrowed = false;
     EngineQueueProgramRange queueCurrentPrograms{};
     std::uint32_t queueCurrentScheduleBase = 0;
     std::uint32_t queueCurrentScheduleLeafCount = 0;
