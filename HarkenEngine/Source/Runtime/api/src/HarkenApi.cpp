@@ -52945,6 +52945,8 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             !decisions.PrepareBacking(static_cast<std::uint32_t>(nativeGroups), &nativeCandidate->decisions) ||
             !compositeCompletionOwners.PrepareBacking(static_cast<std::uint32_t>(nativeCompletions), &nativeCandidate->completions) ||
             !voices.PrepareSlotBacking(static_cast<std::uint32_t>(nativeVoices), &nativeCandidate->voices) ||
+            !ledger.PrepareBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(
+                nativeVoices, ledger.Capacity())), &nativeCandidate->ledger) ||
             !timelineArms.PrepareBacking(static_cast<std::uint32_t>(nativeVoices + queueControls),
                 &nativeCandidate->arms) ||
             !variables.PrepareReadCutBacking(static_cast<std::uint32_t>(std::min<std::uint64_t>(
@@ -53011,7 +53013,7 @@ bool Engine::MatchesPendingVariableNativeBacking(OriginalPendingVariableGroupHol
         !owner.nativeRuntimeBacking->queueBanks.Valid() ||
         !owner.nativeRuntimeBacking->queues.instances.Valid() ||
         !owner.nativeRuntimeBacking->queues.conditionals.Valid() || !owner.nativeRuntimeBacking->checkpoints.Valid() ||
-        !owner.nativeRuntimeBacking->arms.Valid() ||
+        !owner.nativeRuntimeBacking->arms.Valid() || !owner.nativeRuntimeBacking->ledger.Valid() ||
         !owner.nativeRuntimeBacking->bindings.Valid() ||
         !owner.nativeRuntimeBacking->laneAttempts.Valid()) return false;
     for (const auto& slot : owner.queueRoleReservations)
@@ -53328,6 +53330,7 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
         if (CaptureTimelineVoiceInstall(voice, &holder->replacementVoice, true) != PlayableStartStatus::Accepted)
             return Result::Refused;
         const auto preparedVoiceBacking = holder->nativeVoiceBacking.Use();
+        const auto preparedLedgerBacking = holder->nativeLedgerBacking.Use();
         const auto preparedPlayBacking = holder->nativePlayBacking.Use();
         const auto preparedMemberBacking = holder->nativeMemberBacking.Use();
         const auto preparedRelationBacking = holder->nativeRelationBacking.Use();
@@ -62451,8 +62454,9 @@ void TimelineServiceCoordinator::Service() {
                         (void)AbortTimelineArm(engine_, occurrence.arm);
                         continue;
                     }
-                    const TimelineVoiceInstallResult voice =
-                        InstallTimelineVoiceStart(engine_, occurrence.voice.Input(),
+                    const TimelineVoiceInstallResult voice = [&] {
+                        const auto preparedLedgerBacking = set->ledgerBacking.Use();
+                        return InstallTimelineVoiceStart(engine_, occurrence.voice.Input(),
                                                   set->generation, startFrame,
                                                   occurrence.ownerInstance, 0,
                                                   &occurrence.occurrenceToken,
@@ -62460,6 +62464,7 @@ void TimelineServiceCoordinator::Service() {
                                                       occurrence.completionProgram)
                                                       ? &occurrence.completionProgram
                                                       : nullptr);
+                    }();
                     ++occurrence.prepareCount;
                     if (voice.status == VN_BACKPRESSURE) {
                         blockPublication();
@@ -73371,6 +73376,11 @@ TimelineRuntimeInstallResult InstallTimelineProgram(
         }
         if (set->occurrences.empty()) {
             result.status = TimelineRuntimeInstallStatus::InvalidProgram;
+            return result;
+        }
+        if (!engine->ledger.PrepareBacking(static_cast<std::uint32_t>(std::min<std::size_t>(
+                audibleOccurrenceCount, engine->ledger.Capacity())), &set->ledgerBacking)) {
+            result.status = TimelineRuntimeInstallStatus::ProgramCapacity;
             return result;
         }
         const auto rollbackIdentities = [&]() {

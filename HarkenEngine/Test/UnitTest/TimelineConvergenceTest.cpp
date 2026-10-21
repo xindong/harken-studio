@@ -119,6 +119,14 @@ DriverResult RunTimeline(TimelineDriverMode mode) {
     EXPECT_EQ(installed.status,
               harken::TimelineRuntimeInstallStatus::Installed);
 
+    const auto ledgerRows = engine->ledger.ConstructedEntryCount();
+    const auto ledgerBytes = engine->ledger.EntryStorageBytes();
+    const auto receiptBytes = engine->ledger.MonitorReceiptStorageBytes();
+    const auto ledgerPages = engine->ledger.EntryCommittedBytes();
+    const auto receiptPages = engine->ledger.MonitorReceiptCommittedBytes();
+    engine->ledger.SetEntryCommitPageLimitForTests(0);
+    engine->ledger.SetReceiptCommitPageLimitForTests(0);
+
     DigestSink digestSink;
     engine->timelineExecutor.SetDigestSink(&digestSink);
     EXPECT_EQ(Vn_Update(), VN_OK);
@@ -185,6 +193,12 @@ DriverResult RunTimeline(TimelineDriverMode mode) {
     result.digestCount = digestSink.count;
     result.sinkDigest = digestSink.hash;
     result.allocationHitsAfter = harken::memguard::HitCount();
+
+    EXPECT_EQ(ledgerRows, engine->ledger.ConstructedEntryCount());
+    EXPECT_EQ(ledgerBytes, engine->ledger.EntryStorageBytes());
+    EXPECT_EQ(receiptBytes, engine->ledger.MonitorReceiptStorageBytes());
+    EXPECT_EQ(ledgerPages, engine->ledger.EntryCommittedBytes());
+    EXPECT_EQ(receiptPages, engine->ledger.MonitorReceiptCommittedBytes());
 
     return result;
 }

@@ -69,6 +69,11 @@ TEST(ImmediateActionLane, SparsePayloadFailureRetainsNoIdentityAndOnlyActualHigh
     EXPECT_EQ(0u, lane.PayloadCommittedBytes());
     EXPECT_EQ(0u, lane.MetadataStorageBytes());
     EXPECT_EQ(0u, lane.MetadataCommittedBytes());
+    harken::ImmediateLaneHandle refused;
+    lane.SetStateCommitPageLimitForTests(0);
+    EXPECT_FALSE(lane.Reserve(1, {0, 1, 0, 1}, &refused));
+    EXPECT_FALSE(refused.Valid());
+    lane.SetStateCommitPageLimitForTests(SIZE_MAX);
     std::array<harken::ImmediateLaneHandle, 7> empty;
     for (auto& handle : empty) ASSERT_TRUE(lane.Reserve(1, {0, 1, 0, 1}, &handle));
     harken::ImmediateLaneHandle high;
@@ -133,6 +138,7 @@ TEST(ImmediateActionLane, PreparedPayloadBackingProtectsFutureAcquireAndActiveCo
     const auto metadataCommitted = lane.MetadataCommittedBytes();
     lane.SetPayloadCommitPageLimitsForTests(0, 0);
     lane.SetMetadataCommitPageLimitsForTests(0, 0);
+    lane.SetStateCommitPageLimitForTests(0);
     {
         auto use = backing.Use();
         ASSERT_TRUE(lane.Reserve(2, {128, 128, 128, 128}, &native));
@@ -145,6 +151,7 @@ TEST(ImmediateActionLane, PreparedPayloadBackingProtectsFutureAcquireAndActiveCo
     EXPECT_FALSE(secondBacking.Valid());
     lane.SetPayloadCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX);
     lane.SetMetadataCommitPageLimitsForTests(SIZE_MAX, SIZE_MAX);
+    lane.SetStateCommitPageLimitForTests(SIZE_MAX);
     ASSERT_TRUE(lane.PrepareAttemptBacking(&secondBacking));
     EXPECT_EQ(3u * 128u * sizeof(harken::ImmediateLaneEvent), lane.EventStorageBytes());
     EXPECT_FALSE(lane.Reset({1, 1, 1, 64}));

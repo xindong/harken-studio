@@ -2151,6 +2151,7 @@ enum class TimelinePhysicalAdmissionFault : std::uint8_t {
 };
 
 struct EngineTimelineProgramSet {
+    VoiceLedger::BackingPreparation ledgerBacking;
     TimelineProgramSet programs;
     std::vector<EngineTimelineOccurrence> occurrences;
     ProgramGeneration generation = 0;
@@ -4874,6 +4875,7 @@ struct Engine {
         EngineActionPlayScratch::NativeVoiceSide nativeReplacement;
         CapturedTimelineVoiceInstall replacementVoice;
         StableStoragePreparation nativeVoiceBacking;
+        VoiceLedger::BackingPreparation nativeLedgerBacking;
         StableSlotStorage<EngineActionPlayScratch>::Preparation nativePlayBacking;
         StableSlotStorage<EnginePlayableMemberRecord>::Preparation nativeMemberBacking;
         StableStoragePreparation nativeRelationBacking;
@@ -4893,7 +4895,7 @@ struct Engine {
                 !root.Valid() && !source.Valid() &&
                 !body.Valid() && !arm.Valid() && !release.Valid() && !retirement.Valid() &&
                 nativeReplacement.Empty() && !replacementVoice.HasStorage() &&
-                !nativeVoiceBacking.Valid() && !nativePlayBacking.Valid() &&
+                !nativeVoiceBacking.Valid() && nativeLedgerBacking.Empty() && !nativePlayBacking.Valid() &&
                 !nativeMemberBacking.Valid() && !nativeRelationBacking.Valid() &&
                 !nativeProgramBacking.Valid() && !nativeScheduleBacking.Valid() &&
                 !replacement.Valid() && retiredServiceCount == 0 && retiredChild == 0 &&
@@ -4962,6 +4964,7 @@ struct Engine {
         DecisionTable::BackingPreparation decisions;
         CompositeCompletionOwnerPool::BackingPreparation completions;
         StableStoragePreparation voices;
+        VoiceLedger::BackingPreparation ledger;
         StableStoragePreparation arms;
         ArmGroupTable::BackingPreparation groups;
         ScheduledTransactionPool::ImmediateLaneBackingPreparation laneGroups;
@@ -4984,6 +4987,7 @@ struct Engine {
     NativeRuntimeBacking* nativeRuntimeBackingInUse = nullptr;
     struct NativeRuntimeBackingUse {
         std::array<StableStoragePreparedUse, 13> columns;
+        VoiceLedger::BackingUse ledger;
         ArmGroupTable::PreparedUse groups;
         ScheduledTransactionPool::ImmediateLaneBackingUse laneGroups;
         StableSlotStorage<EngineActionPlayScratch>::PreparedUse actionPlays;
@@ -5003,6 +5007,7 @@ struct Engine {
             : columns{Use(backing, 0), Use(backing, 1), Use(backing, 2), Use(backing, 3),
                       Use(backing, 4), Use(backing, 5), Use(backing, 6), Use(backing, 7), Use(backing, 8),
                       Use(backing, 9), Use(backing, 10), Use(backing, 11), Use(backing, 12)},
+              ledger(backing == nullptr ? VoiceLedger::BackingUse{} : backing->ledger.Use()),
               groups(engine.armGroups, backing == nullptr ? nullptr : &backing->groups),
               laneGroups(engine.timelinePool, backing == nullptr ? nullptr : &backing->laneGroups),
               actionPlays(backing == nullptr ? StableSlotStorage<EngineActionPlayScratch>::PreparedUse{}
@@ -7547,6 +7552,9 @@ public:
             resourceRow->invocationGeneration != scratch.row->invocationGeneration ||
             resourceRow->identity.slot >= originalPlayableServiceLifetimeHolders.size() ||
             !originalPlayableServiceLifetimeHolders[resourceRow->identity.slot].Borrow(&resource)) return false;
+        VoiceLedger::BackingPreparation ledgerBacking;
+        if (!ledger.PrepareBacking(1, &ledgerBacking)) return false;
+        holder->nativeLedgerBacking = std::move(ledgerBacking);
         holder->engine = this;
         holder->storage = &scratch.storage;
         holder->generation = scratch.storage.generation;
@@ -7566,7 +7574,8 @@ public:
 
     bool AcceptPendingOrdinarySelection(EngineActionPlayScratch& scratch) noexcept {
         auto* holder = PendingOrdinarySelectionFor(scratch.storage);
-        if (holder == nullptr || holder->accepted || scratch.row == nullptr || scratch.variableControlCommitted ||
+        if (holder == nullptr || holder->accepted || !holder->nativeLedgerBacking.Valid() ||
+            scratch.row == nullptr || scratch.variableControlCommitted ||
             scratch.row->actionPrepared || !scratch.row->pendingImmediateEntry ||
             scratch.storage.phase != EngineFrontierAttemptPhase::Published ||
             !scratch.storage.ownerLedger.Empty() ||
@@ -7633,6 +7642,7 @@ public:
         holder.nativeReplacement = {};
         holder.replacementVoice = {};
         holder.nativeVoiceBacking.Release();
+        holder.nativeLedgerBacking.Release();
         holder.nativePlayBacking.Release();
         holder.nativeMemberBacking.Release();
         holder.nativeRelationBacking.Release();

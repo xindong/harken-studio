@@ -33,6 +33,7 @@
 #include "harken/core/PlayableInstanceTable.h"
 #include "harken/core/StableRowStorage.h"
 
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -223,6 +224,19 @@ public:
     VoiceLedger& operator=(const VoiceLedger&) = delete;
     VoiceLedger(VoiceLedger&&) = delete;
     VoiceLedger& operator=(VoiceLedger&&) = delete;
+
+    using BackingUse = std::array<StableStoragePreparedUse, 2>;
+    struct BackingPreparation {
+        bool Valid() const noexcept { return receipts_.Valid() && entries_.Valid(); }
+        bool Empty() const noexcept { return !receipts_.Valid() && !entries_.Valid(); }
+        void Release() noexcept { entries_.Release(); receipts_.Release(); }
+        BackingUse Use() const noexcept { return {receipts_.Use(), entries_.Use()}; }
+    private:
+        friend class VoiceLedger;
+        StableStoragePreparation receipts_;
+        StableStoragePreparation entries_;
+    };
+    bool PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept;
 
     // Reserves a free entry and forms its public handle. Returns false when
     // every entry is occupied by a live voice — a defined degradation, not a

@@ -171,15 +171,30 @@ VoiceLedger::~VoiceLedger() {
         assert(m_entries[i].originalCompletion.externalCount == 0);
 }
 
+bool VoiceLedger::PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept {
+    if (memguard::IsAudioTagged() || out == nullptr || !out->Empty()) return false;
+    const auto occupied = Capacity() - AvailableEntryCount();
+    BackingPreparation candidate;
+    if (!m_monitorControlReceipts.PrepareBacking(count, occupied, &candidate.receipts_) ||
+        !m_entries.PrepareBacking(count, occupied, &candidate.entries_)) return false;
+    *out = std::move(candidate);
+    return true;
+}
+
 std::uint32_t VoiceLedger::FindReusableSlot() noexcept {
     if (memguard::IsAudioTagged()) return UINT32_MAX;
     const auto constructed = m_entries.ConstructedCount();
-    for (std::uint32_t i = 0; i < constructed; ++i)
-        if (ReusableEntry(m_entries[i])) return i;
-    if (constructed == m_entries.Capacity() ||
-        !m_monitorControlReceipts.ConstructThrough(constructed + 1) ||
-        !m_entries.ConstructThrough(constructed + 1)) return UINT32_MAX;
-    return constructed;
+    std::uint32_t reusable = UINT32_MAX;
+    std::uint32_t occupied = 0;
+    for (std::uint32_t i = 0; i < constructed; ++i) {
+        if (ReusableEntry(m_entries[i])) {
+            if (reusable == UINT32_MAX) reusable = i;
+        } else ++occupied;
+    }
+    if (occupied == m_entries.Capacity() ||
+        !m_monitorControlReceipts.ConstructThrough(occupied + 1) ||
+        !m_entries.ConstructThrough(occupied + 1)) return UINT32_MAX;
+    return reusable == UINT32_MAX ? constructed : reusable;
 }
 
 bool VoiceLedger::OriginalCompletionMutationOwner::Valid() const noexcept {

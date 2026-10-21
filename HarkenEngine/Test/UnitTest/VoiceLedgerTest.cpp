@@ -157,6 +157,59 @@ TEST(VoiceLedger, AllIssuersPreserveOutputsOnReceiptAndEntryCommitFailureAndReco
     }
 }
 
+TEST(VoiceLedger, AcceptedBackingSurvivesOrdinaryReuseAndCommitFailures) {
+    harken::VoiceLedger ledger(8);
+    harken::VoiceLedger::BackingPreparation first, second;
+    ledger.SetReceiptCommitPageLimitForTests(0);
+    EXPECT_FALSE(ledger.PrepareBacking(2, &first));
+    EXPECT_TRUE(first.Empty());
+    ledger.SetReceiptCommitPageLimitForTests(SIZE_MAX);
+    ledger.SetEntryCommitPageLimitForTests(0);
+    EXPECT_FALSE(ledger.PrepareBacking(2, &first));
+    EXPECT_TRUE(first.Empty());
+    ledger.SetEntryCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(ledger.PrepareBacking(2, &first));
+    ASSERT_TRUE(ledger.PrepareBacking(2, &second));
+    EXPECT_EQ(8u, ledger.AvailableEntryCount());
+    const harken::VoiceLedger::PlayableParentRef parent{7, 9};
+    std::array<std::uint32_t, 8> slots{};
+    ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slots[0]));
+    ledger.Release(slots[0]);
+    ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slots[0]));
+    ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slots[1]));
+    const auto constructed = ledger.ConstructedEntryCount();
+    const auto entries = ledger.EntryStorageBytes();
+    const auto receipts = ledger.MonitorReceiptStorageBytes();
+    const auto entryPages = ledger.EntryCommittedBytes();
+    const auto receiptPages = ledger.MonitorReceiptCommittedBytes();
+    ledger.SetReceiptCommitPageLimitForTests(0);
+    ledger.SetEntryCommitPageLimitForTests(0);
+    {
+        const auto use = first.Use();
+        for (auto i = 2u; i != 4u; ++i)
+            ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slots[i]));
+    }
+    {
+        const auto use = second.Use();
+        for (auto i = 4u; i != 6u; ++i)
+            ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slots[i]));
+        EXPECT_EQ(constructed, ledger.ConstructedEntryCount());
+        EXPECT_EQ(entries, ledger.EntryStorageBytes());
+        EXPECT_EQ(receipts, ledger.MonitorReceiptStorageBytes());
+        EXPECT_EQ(entryPages, ledger.EntryCommittedBytes());
+        EXPECT_EQ(receiptPages, ledger.MonitorReceiptCommittedBytes());
+    }
+    for (auto i = 0u; i != 6u; ++i) ledger.Release(slots[i]);
+    first.Release();
+    second.Release();
+    EXPECT_EQ(ledger.Capacity(), ledger.AvailableEntryCount());
+    ledger.SetReceiptCommitPageLimitForTests(SIZE_MAX);
+    ledger.SetEntryCommitPageLimitForTests(SIZE_MAX);
+    for (auto& slot : slots) ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slot));
+    EXPECT_EQ(0u, ledger.AvailableEntryCount());
+    for (const auto slot : slots) ledger.Release(slot);
+}
+
 TEST(VoiceLedger, DirectVoiceBackingRefusalPreservesAdmissionAndSkipsInternalSlots) {
     for (const bool pending : {false, true}) {
         SCOPED_TRACE(pending);

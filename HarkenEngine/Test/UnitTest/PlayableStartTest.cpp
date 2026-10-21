@@ -6451,6 +6451,7 @@ TEST(PlayableStart,
     ExpectTreePlaybackRequest(*engine, started.instance, request.playbackRequest);
     EXPECT_FALSE(engine->runtimeRecreateRequired);
     ASSERT_TRUE(StopUntilStale(*engine, started.instance));
+    harken::monitor::StopDrainForTests();
     harken::monitor::DrainOnceForTests();
     std::array<std::uint8_t, 65536> capture{};
     VnMonitorPollDesc poll{};

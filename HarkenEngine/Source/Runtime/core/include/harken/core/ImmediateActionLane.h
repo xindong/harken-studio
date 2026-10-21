@@ -8,6 +8,7 @@
 #include "harken/core/EngineConfig.h"
 #include "harken/core/StableSlotStorage.h"
 
+#include <algorithm>
 #include <atomic>
 #include <bitset>
 #include <cassert>
@@ -386,6 +387,8 @@ struct ImmediateLaneAttempt {
     std::uint32_t groupStorageCount = 0;
     std::uint32_t sourceWaitStorageCount = 0;
     std::uint32_t waitingScratchStorageCount = 0;
+    std::uint32_t bucketStorageCount = 0;
+    std::size_t privateBucketStorageCount = 0;
     std::uint32_t eventCount = 0;
     std::uint32_t groupCount = 0;
     std::uint32_t pinGroupManifestCount = 0;
@@ -491,12 +494,13 @@ public:
     std::uint32_t AttemptCapacity() const noexcept { return config_.attempts; }
     std::uint32_t EventsPerAttempt() const noexcept { return config_.eventsPerAttempt; }
     std::size_t PrivateEntryStorageBytes() const noexcept {
-        return privateEntries_.RequestedBytes() +
-            static_cast<std::size_t>(config_.attempts) * config_.eventsPerAttempt *
-            (2u * sizeof(PrivateEntryBucket) + 4u * sizeof(std::uint32_t));
+        return privateEntries_.RequestedBytes();
     }
     std::size_t PrivateEntryCommittedBytes() const noexcept { return privateEntries_.CommittedBytes(); }
     std::size_t PrivateEntryReservedBytes() const noexcept { return privateEntries_.ReservedBytes(); }
+    std::size_t PlacementScratchStorageBytes() const noexcept {
+        return static_cast<std::size_t>(config_.eventsPerAttempt) * 2u * sizeof(std::uint32_t);
+    }
     std::size_t EventStorageBytes() const noexcept { return eventStorageBytes_; }
     std::size_t MemberStorageBytes() const noexcept { return memberStorageBytes_; }
     std::size_t PayloadCommittedBytes() const noexcept {
@@ -510,19 +514,27 @@ public:
     }
     std::size_t MetadataStorageBytes() const noexcept {
         return groups_.RequestedBytes() + declaredGroups_.RequestedBytes() +
-            groupPins_.RequestedBytes() + sourceWaitEntries_.RequestedBytes() + waitingScratchBytes_;
+            groupPins_.RequestedBytes() + sourceWaitEntries_.RequestedBytes() + waitingScratchBytes_ +
+            eventState_.RequestedBytes() + groupState_.RequestedBytes() + memberState_.RequestedBytes() + buckets_.RequestedBytes() +
+            privateBucketStorageBytes_;
     }
     std::size_t MetadataCommittedBytes() const noexcept {
         return groups_.CommittedBytes() + declaredGroups_.CommittedBytes() +
-            groupPins_.CommittedBytes() + sourceWaitEntries_.CommittedBytes() + waitingScratchStorage_.CommittedBytes();
+            groupPins_.CommittedBytes() + sourceWaitEntries_.CommittedBytes() + waitingScratchStorage_.CommittedBytes() +
+            eventState_.CommittedBytes() + groupState_.CommittedBytes() + memberState_.CommittedBytes() + buckets_.CommittedBytes() +
+            privateBucketStorage_.CommittedBytes();
     }
     std::size_t MetadataReservedBytes() const noexcept {
         return groups_.ReservedBytes() + declaredGroups_.ReservedBytes() +
-            groupPins_.ReservedBytes() + sourceWaitEntries_.ReservedBytes() + waitingScratchStorage_.ReservedBytes();
+            groupPins_.ReservedBytes() + sourceWaitEntries_.ReservedBytes() + waitingScratchStorage_.ReservedBytes() +
+            eventState_.ReservedBytes() + groupState_.ReservedBytes() + memberState_.ReservedBytes() + buckets_.ReservedBytes() +
+            privateBucketStorage_.ReservedBytes();
     }
     std::size_t MetadataDirectoryBytes() const noexcept {
         return groups_.DirectoryBytes() + declaredGroups_.DirectoryBytes() +
-            groupPins_.DirectoryBytes() + sourceWaitEntries_.DirectoryBytes() + waitingScratchStorage_.DirectoryBytes();
+            groupPins_.DirectoryBytes() + sourceWaitEntries_.DirectoryBytes() + waitingScratchStorage_.DirectoryBytes() +
+            eventState_.DirectoryBytes() + groupState_.DirectoryBytes() + memberState_.DirectoryBytes() + buckets_.DirectoryBytes() +
+            privateBucketStorage_.DirectoryBytes();
     }
     std::span<FrontierEntryReceiptRef> CapturedSourceWaitScratch(std::uint32_t slot,
         const ImmediateLaneBucket* bucket) noexcept;
@@ -534,6 +546,13 @@ public:
         groupPins_.SetCommitPageLimitForTests(groupPages);
         sourceWaitEntries_.SetCommitPageLimitForTests(sourceWaitPages);
         waitingScratchStorage_.SetCommitPageLimitForTests(sourceWaitPages);
+    }
+    void SetStateCommitPageLimitForTests(std::size_t pages) noexcept {
+        eventState_.SetCommitPageLimitForTests(pages);
+        groupState_.SetCommitPageLimitForTests(pages);
+        memberState_.SetCommitPageLimitForTests(pages);
+        buckets_.SetCommitPageLimitForTests(pages);
+        privateBucketStorage_.SetCommitPageLimitForTests(pages);
     }
     void SetPrivateEntryCommitPageLimitForTests(std::size_t pages) noexcept {
         privateEntries_.SetCommitPageLimitForTests(pages);
@@ -890,6 +909,28 @@ private:
     bool AcquirePrivatePlainLayoutEditImpl(ImmediateLaneHandle handle,
         std::uint64_t root, ImmediateLaneDemand originalDemand,
         PrivatePlainLayoutEdit* out, bool pristineReserved) noexcept;
+    struct EventState {
+        TimelineArmReaderPin arm;
+        AuthoredStopFenceLaneReference fence;
+        std::uint64_t lastCaptureSequence = 0;
+        std::uint32_t privateEntry = UINT32_MAX;
+        std::uint32_t withdrawalLeader = 0;
+        std::atomic<std::uint8_t> withdrawal{0};
+        std::uint8_t capturedAdmission = 0;
+        std::uint8_t conditionalScope = 0;
+    };
+    struct GroupState {
+        DecisionFuturePin decision;
+        std::uint32_t privateEntry = UINT32_MAX;
+        std::uint32_t memberBase = 0;
+        std::uint32_t privateOwnedIndex = 0;
+        std::uint16_t memberCount = 0;
+        std::uint8_t futureOwned = 0;
+    };
+    struct MemberState {
+        std::uint32_t order = 0;
+        std::uint32_t privateEntry = UINT32_MAX;
+    };
     struct PrivateEntryBucket {
         std::uint32_t ordinal = UINT32_MAX;
         std::atomic<ImmediateLaneEntryOutcome> outcome{
@@ -922,10 +963,10 @@ private:
         bool inUse = false;
     };
     PrivateEntryAssociation& PrivateEntryAt(std::size_t logical) noexcept {
-        return privateEntries_[privateEntryDirectory_[logical]];
+        return privateEntries_[memberState_[logical].privateEntry];
     }
     const PrivateEntryAssociation& PrivateEntryAt(std::size_t logical) const noexcept {
-        return privateEntries_[privateEntryDirectory_[logical]];
+        return privateEntries_[memberState_[logical].privateEntry];
     }
     template<class Owner>
     struct PrivateEntryView {
@@ -989,6 +1030,11 @@ private:
     const ImmediateLaneEvent* EventBase(std::uint32_t slot) const noexcept;
     ImmediateLaneMemberManifest* MemberBase(std::uint32_t slot) noexcept;
     const ImmediateLaneMemberManifest* MemberBase(std::uint32_t slot) const noexcept;
+    static std::size_t PrivateBucketCapacity(ImmediateLaneDemand demand) noexcept {
+        return static_cast<std::size_t>(std::min<std::uint64_t>(
+            static_cast<std::uint64_t>(demand.events) + demand.groups,
+            static_cast<std::uint64_t>(demand.members) * demand.buckets));
+    }
     bool PrepareAttemptStorage(std::uint32_t slot, ImmediateLaneDemand demand) noexcept;
     bool EnsureAttemptBacking(std::uint64_t count,
         std::uint32_t excluded = UINT32_MAX) noexcept;
@@ -1022,26 +1068,15 @@ private:
     std::unique_ptr<std::uint32_t[]> groupPlacementOrder_;
     ImmediateLaneMemberManifest* members_ = nullptr;
     StableRowStorage<PrivateEntryAssociation> privateEntries_;
-    std::unique_ptr<std::uint32_t[]> privateEntryDirectory_;
-    std::unique_ptr<std::uint32_t[]> privateOwnedGroupIndices_;
-    std::unique_ptr<PrivateEntryBucket[]> privateEntryBuckets_;
+    StableSlotStorage<EventState> eventState_;
+    StableSlotStorage<GroupState> groupState_;
+    StableSlotStorage<MemberState> memberState_;
+    detail::StablePageReservation privateBucketStorage_;
+    PrivateEntryBucket* privateEntryBuckets_ = nullptr;
+    std::size_t privateBucketStorageBytes_ = 0;
     StableSlotStorage<SourceWaitEntry> sourceWaitEntries_;
-    std::unique_ptr<std::uint32_t[]> eventPrivateEntries_;
-    std::unique_ptr<std::uint32_t[]> groupPrivateEntries_;
-    std::unique_ptr<std::uint32_t[]> memberOrder_;
-    std::unique_ptr<std::uint32_t[]> groupMemberBases_;
-    std::unique_ptr<std::uint16_t[]> groupMemberCounts_;
-    std::unique_ptr<ImmediateLaneBucket[]> buckets_;
-    std::unique_ptr<TimelineArmReaderPin[]> armPins_;
-    std::unique_ptr<AuthoredStopFenceLaneReference[]> fenceReferences_;
-    std::unique_ptr<std::atomic<std::uint8_t>[]> eventWithdrawal_;
-    std::unique_ptr<std::uint32_t[]> eventWithdrawalLeader_;
-    std::unique_ptr<std::uint64_t[]> scopeLastCaptureSequence_;
-    std::unique_ptr<std::uint8_t[]> capturedEventAdmission_;
-    std::unique_ptr<std::uint8_t[]> conditionalEventScopes_;
+    StableSlotStorage<ImmediateLaneBucket> buckets_;
     StableSlotStorage<Plan03GroupReaderPin> groupPins_;
-    std::unique_ptr<DecisionFuturePin[]> decisionPins_;
-    std::unique_ptr<std::uint8_t[]> futureDependentOwned_;
     ScheduledTransactionPool* groupPool_ = nullptr;
 #if !defined(HARKEN_RT_QUALIFICATION)
     void (*reserveGateHook_)(void*, std::uint32_t) = nullptr;

@@ -1015,6 +1015,8 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("immediate_lane_metadata_directory_bytes",
         std::to_string(engine->immediateActionLane.MetadataDirectoryBytes()));
     testing::Test::RecordProperty("immediate_lane_attempt_bytes", std::to_string(sizeof(harken::ImmediateLaneAttempt)));
+    testing::Test::RecordProperty("immediate_lane_placement_scratch_bytes",
+        std::to_string(engine->immediateActionLane.PlacementScratchStorageBytes()));
     recordStableRows("pending_voice_rows", engine->pendingStarts.RequestedBytes(),
         engine->pendingStarts.CommittedBytes(), engine->pendingStarts.ReservedBytes());
     recordStableRows("parked_voice_rows", engine->parkRecords.RequestedBytes(),
