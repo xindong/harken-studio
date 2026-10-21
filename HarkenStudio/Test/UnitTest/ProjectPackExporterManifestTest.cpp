@@ -4159,6 +4159,7 @@ void verifyPartialPublication(const QString& directory, void (*verifyActivation)
     std::vector<VNX::ProjectPackExporter::PackBuildRecord> initialRecords;
     const auto initial = exporter.ExportAllPacks(project, live.path(), opts, &initialRecords);
     ASSERT_TRUE(initial.success) << initial.error.toStdString();
+    ASSERT_NO_FATAL_FAILURE(verifyActivation(live.path()));
     const auto old = readPublication(live.path());
     QSet<QString> initialKeys;
     QSet<QString> selectedKeys;
