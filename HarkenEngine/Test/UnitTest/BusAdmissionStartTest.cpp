@@ -2509,10 +2509,11 @@ TEST(BusAdmissionStart, PreviewCommitMigratesPublishedIdentityAndFactsOffDeadSlo
     ASSERT_NE(grandSlot, harken::kInvalidBusIndex);
     const auto childGeneration = engine->buses.GenerationAt(childSlot);
     const auto grandGeneration = engine->buses.GenerationAt(grandSlot);
-    ASSERT_FALSE(engine->voicePlayFacts.empty());
+    ASSERT_TRUE(engine->voices.PrepareSlotWorkingSet(0, 1));
+    ASSERT_NE(0u, engine->voicePlayFacts.size());
     ASSERT_TRUE(engine->pendingStarts.Emplace(0));
     ASSERT_TRUE(engine->parkRecords.Emplace(0));
-    ASSERT_FALSE(engine->timelineVoiceInstallIdentities.empty());
+    ASSERT_NE(0u, engine->timelineVoiceInstallIdentities.size());
     auto& facts = engine->voicePlayFacts[0];
     facts.valid = true;
     facts.busIndex = grandSlot;

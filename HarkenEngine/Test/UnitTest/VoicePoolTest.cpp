@@ -223,6 +223,14 @@ TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     EXPECT_EQ(0u, engine.voices.RenderWorksetCommittedBytes());
     EXPECT_EQ(1u, engine.voices.Capacity());
     EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    EXPECT_EQ(0u, engine.timelineVoiceInstallIdentities.RequestedBytes());
+    EXPECT_EQ(0u, engine.voiceOriginPlayable.RequestedBytes());
+    EXPECT_EQ(0u, engine.voicePlayFacts.RequestedBytes());
+    EXPECT_EQ(0u, engine.playbackPaths.RequestedBytes());
+    EXPECT_EQ(0u, engine.effectSlotTypes.RequestedBytes());
+    EXPECT_EQ(0u, engine.voiceEffectInstanceRefs.RequestedBytes());
+    EXPECT_EQ(0u, engine.effectSlotConfig.RequestedBytes());
+    EXPECT_EQ(0u, engine.voiceSendConfig.RequestedBytes());
     const auto emptyStartBytes = engine.timelineSink.VariableStartStorageBytes();
     harken::VoiceTimelineSink secondSink(engine.voices, engine.timelineArms);
     harken::VoicePool::SlotStorageRegistration refusedStorage;
@@ -233,6 +241,12 @@ TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     EXPECT_EQ(0u, engine.voices.ConstructedSlotCount());
     EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
     refusedStorage.Detach();
+    engine.playbackPaths.SetCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
+    EXPECT_EQ(0u, first);
+    EXPECT_EQ(0u, engine.voices.ConstructedSlotCount());
+    EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    engine.playbackPaths.SetCommitPageLimitForTests(SIZE_MAX);
     engine.voices.SetSlotCommitPageLimitForTests(0);
     EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
     EXPECT_EQ(0u, first);
@@ -246,6 +260,8 @@ TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
     engine.voices.SetProfessionalCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &first));
+    ASSERT_EQ(1u, engine.effectSlotTypes.size());
+    for (const auto type : engine.effectSlotTypes[0]) EXPECT_EQ(harken::kEffectTypeNone, type);
     EXPECT_GT(engine.timelineSink.VariableStartStorageBytes(), emptyStartBytes);
     EXPECT_EQ(engine.timelineSink.VariableStartStorageBytes(), secondSink.VariableStartStorageBytes());
     {

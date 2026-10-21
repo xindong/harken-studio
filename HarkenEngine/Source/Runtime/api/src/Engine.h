@@ -3235,18 +3235,33 @@ struct EngineFrontierQueueEntryDecisionOwnerContext {
     bool registered = false;
 };
 
-struct EngineFrontierQueueOwnerContext {
+struct EngineQueueInstanceOwnerContext {
     Engine* engine = nullptr;
     EnginePlayableServiceReference service{};
     PreparedQueueInstanceV1 prepared{};
+    bool committed = false;
+};
+
+struct EngineFrontierQueueOwnerContext : EngineQueueInstanceOwnerContext {
     const ContainerProgramViewV3* program = nullptr;
     EffectiveQueueState initial{};
     EffectiveQueueState next{};
     bool hasSuccessor = false;
-    bool committed = false;
     EngineFrontierQueueCurrentOwnerContext current{};
     EngineFrontierQueueBindingOwnerContext binding{};
     EngineFrontierQueueEntryDecisionOwnerContext entryDecision{};
+};
+
+// Audible retarget leaves belong to PreparedTimelineStarts. Only a zero-work
+// current needs its own decision and occurrence in the subtree preparation.
+struct EngineRetargetQueueOwnerContext : EngineQueueInstanceOwnerContext {
+    struct Current {
+        PreparedDecisionReservation decision{};
+        OccurrenceToken occurrence{};
+        bool active = false;
+        bool decisionCommitted = false;
+        bool occurrencePrepared = false;
+    } current;
 };
 
 // Directory growth never moves a record or its embedded callback identities.
@@ -4507,7 +4522,7 @@ struct VariableControlRetargetTreeScratch {
     std::vector<const ContainerProgramViewV3*> containerPrograms;
     std::vector<PlayableInstanceHandle> containerActiveChildren;
     std::vector<EnginePlayableServiceReference> containerServices;
-    std::vector<EngineFrontierQueueOwnerContext> containerQueues;
+    std::vector<EngineRetargetQueueOwnerContext> containerQueues;
     PreparedPlayableInstance queueSuccessor{};
     PlayableInstanceHandle queueSuccessorOwner = 0;
     std::uint64_t queueSuccessorOwnerEpoch = 0;
@@ -5798,7 +5813,6 @@ public:
           timelineOccurrences(resolved.maxDeferredIntents),
           voices(resolved, &tables, &multirateTables, &biquadTrig, effectBank,
                  dynamicRoutes, &timelineArms),
-          timelineVoiceInstallIdentities(voices.Capacity()),
           buses(resolved, topologyPlans, effectBank, dynamicRoutes,
                 &biquadTrig),
           actionCommitBundle(16),
@@ -6315,31 +6329,20 @@ public:
             estimate.arg1 = commands.Capacity();
             logicLogRing.Push(estimate);
         }
-        // Logic-side mirror of the effect type installed in each voice slot,
-        // used to validate Vn_SetVoiceEffectParam against the correct type.
-        // An empty slot is kEffectTypeNone (not 0, which is a real type).
-        std::array<std::uint32_t, kMaxFxSlotsPerVoice> emptySlots;
-        emptySlots.fill(kEffectTypeNone);
-        effectSlotTypes.assign(resolved.voiceCapacity.Render(), emptySlots);
-        std::array<EffectInstanceRef, kMaxFxSlotsPerVoice> emptyRefs;
-        emptyRefs.fill(EffectInstanceRef{});
-        voiceEffectInstanceRefs.assign(resolved.voiceCapacity.Render(),
-                                       emptyRefs);
-        // Logic-side mirror of each voice slot's committed effect parameters and
-        // bypass, kept in step with the type mirror above. Audibility parking
-        // captures it to reconstruct the effect configuration on return; the type
-        // lives in effectSlotTypes, the values here.
-        std::array<VoiceEffectSlotConfig, kMaxFxSlotsPerVoice> emptyConfig;
-        effectSlotConfig.assign(resolved.voiceCapacity.Render(), emptyConfig);
         // One staging record per Logical Voice entry, indexed by ledger slot;
         // only deferred starts are active.
         if (!pendingStarts.Reserve(resolved.voiceCapacity.Logical())) throw std::bad_alloc();
         voiceBindingCatalogScratch.reserve(resolved.maxBindingAttachments);
-        // Per-render-slot origin playable id (0 = none), reset at each play.
-        voiceOriginPlayable.assign(resolved.voiceCapacity.Render(), VnObjectId{});
-        voicePlayFacts.assign(resolved.voiceCapacity.Render(),
-                               VoicePlayFacts{});
-        playbackPaths.resize(resolved.voiceCapacity.Render());
+        const auto renderCapacity = resolved.voiceCapacity.Render();
+        if (!voiceOriginPlayable.Reserve(renderCapacity) ||
+            !voicePlayFacts.Reserve(renderCapacity) || !playbackPaths.Reserve(renderCapacity) ||
+            !timelineVoiceInstallIdentities.Reserve(renderCapacity) ||
+            !effectSlotTypes.Reserve(renderCapacity) || !voiceEffectInstanceRefs.Reserve(renderCapacity) ||
+            !effectSlotConfig.Reserve(renderCapacity) || !voiceSendConfig.Reserve(renderCapacity) ||
+            !voices.AttachSlotStoragePreparation(logicVoiceStorageRegistration, this,
+                [](void* context, std::uint32_t count) noexcept {
+                    return static_cast<Engine*>(context)->PrepareLogicVoiceStorage(count);
+                })) throw std::bad_alloc();
         // One park record per Logical Voice entry, indexed by ledger slot; only
         // Virtual Voices are active.
         if (!parkRecords.Reserve(resolved.voiceCapacity.Logical())) throw std::bad_alloc();
@@ -6358,13 +6361,6 @@ public:
                     static_cast<std::size_t>(retainKeyBound));
             }
         }
-        // Logic-side mirror of each render slot's voice sends, reset at each
-        // play (like the effect config mirror), captured at park and staged for
-        // pending starts.
-        std::array<VoiceSendConfig, kMaxVoiceSendSlots> emptyVoiceSends;
-        emptyVoiceSends.fill(VoiceSendConfig{});
-        voiceSendConfig.assign(resolved.voiceCapacity.Render(),
-                               emptyVoiceSends);
         // Logic-side source of truth for bus->bus send-edge membership, one row
         // of busSendSlotsPerBus target dense indices per bus (kInvalidBusIndex =
         // empty). The topology planner reads it (with the tree parents) to
@@ -12213,7 +12209,7 @@ public:
     SourceTerminalRecords sourceTerminals;
     OccurrenceStatePool timelineOccurrences;
     VoicePool voices;
-    std::vector<EngineTimelineVoiceInstallIdentity> timelineVoiceInstallIdentities;
+    StableRowStorage<EngineTimelineVoiceInstallIdentity> timelineVoiceInstallIdentities;
     BusTree buses;
     LogicCommitCoordinator logicCommits;
     ActionCommitBundle actionCommitBundle;
@@ -13510,12 +13506,12 @@ public:
     // Per-render-slot origin playable id (0 = none): the id the play named
     // as a registered Sound. Written at play, reset on slot reuse. Logic
     // thread only.
-    std::vector<VnSoundId> voiceOriginPlayable;
+    StableRowStorage<VnSoundId> voiceOriginPlayable;
 
     // Per-render-slot Play facts retained for audibility parking (see
     // VoicePlayFacts), written at play. Logic thread only.
-    std::vector<VoicePlayFacts> voicePlayFacts;
-    std::vector<PlaybackPathObservation> playbackPaths;
+    StableRowStorage<VoicePlayFacts> voicePlayFacts;
+    StableRowStorage<PlaybackPathObservation> playbackPaths;
 
     // Audibility-parking state (all logic thread only). Each per-ledger-slot
     // record owns its replay state and virtual clock, so voices parked in
@@ -13598,9 +13594,9 @@ public:
     // installed type. A stale voice handle is gated by generation before this
     // is consulted, and reuse resets the entry, so no generational field is
     // needed here. Logic thread only.
-    std::vector<std::array<std::uint32_t, kMaxFxSlotsPerVoice>>
+    StableRowStorage<std::array<std::uint32_t, kMaxFxSlotsPerVoice>>
         effectSlotTypes;
-    std::vector<std::array<EffectInstanceRef, kMaxFxSlotsPerVoice>>
+    StableRowStorage<std::array<EffectInstanceRef, kMaxFxSlotsPerVoice>>
         voiceEffectInstanceRefs;
 
     // One voice slot's committed effect parameters and bypass. The installed
@@ -13614,15 +13610,28 @@ public:
     // [voice slot index][chain slot]. Reset for a slot at each start, written at
     // Vn_SetVoiceEffect / Vn_SetVoiceEffectParam / Vn_SetVoiceEffectBypass, and
     // captured at park. Logic thread only.
-    std::vector<std::array<VoiceEffectSlotConfig, kMaxFxSlotsPerVoice>>
+    StableRowStorage<std::array<VoiceEffectSlotConfig, kMaxFxSlotsPerVoice>>
         effectSlotConfig;
 
     // Logic-side mirror of each render slot's voice sends, indexed [voice slot
     // index][send slot]. Reset for a slot at each start, written at
     // Vn_SetVoiceSend / Vn_ClearVoiceSend / Vn_SetVoiceSendLevel, captured at
     // park, and staged for a pending start. Logic thread only.
-    std::vector<std::array<VoiceSendConfig, kMaxVoiceSendSlots>>
+    StableRowStorage<std::array<VoiceSendConfig, kMaxVoiceSendSlots>>
         voiceSendConfig;
+    VoicePool::SlotStorageRegistration logicVoiceStorageRegistration;
+
+    bool PrepareLogicVoiceStorage(std::uint32_t count) noexcept {
+        if (!voiceOriginPlayable.ConstructThrough(count) || !voicePlayFacts.ConstructThrough(count) ||
+            !playbackPaths.ConstructThrough(count) || !timelineVoiceInstallIdentities.ConstructThrough(count) ||
+            !voiceEffectInstanceRefs.ConstructThrough(count) || !effectSlotConfig.ConstructThrough(count) ||
+            !voiceSendConfig.ConstructThrough(count)) return false;
+        const auto previous = effectSlotTypes.size();
+        if (!effectSlotTypes.ConstructThrough(count)) return false;
+        for (auto index = previous; index < effectSlotTypes.size(); ++index)
+            effectSlotTypes[index].fill(kEffectTypeNone);
+        return true;
+    }
 
     // Bus->bus send-edge membership, the logic source of truth the topology
     // planner sorts. Row-major by from-bus: busSendAdj[from*busSendSlotsPerBus

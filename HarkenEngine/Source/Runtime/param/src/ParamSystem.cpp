@@ -4,6 +4,7 @@
 #include "harken/param/EmitterTable.h"
 #include "harken/param/ParamTargetTable.h"
 
+#include <algorithm>
 #include <cassert>
 #include <exception>
 #include <new>
@@ -44,6 +45,12 @@ std::uint32_t ResolvePreparationCapacity(const EngineConfig& config) {
     return static_cast<std::uint32_t>(capacity);
 }
 
+std::uint32_t ResolveBindingCapacity(const EngineConfig& config) {
+    const auto capacity = std::uint64_t{config.voiceCapacity.Render()} * ResolveInstanceSlots(config);
+    if (capacity > UINT32_MAX) throw std::bad_alloc{};
+    return static_cast<std::uint32_t>(capacity);
+}
+
 } // namespace
 
 ParamSystem::ParamSystem(const EngineConfig& config)
@@ -51,19 +58,11 @@ ParamSystem::ParamSystem(const EngineConfig& config)
       m_retiringTargets(config.maxVariableSliceTargetsTotal),
       m_sampleRate(config.mixRate.SampleRate()),
       m_variables(kMaxVariables),
-      // The instance pool: Render Voice capacity times
-      // voiceBindingInstanceSlots, shared by raw bindings and
-      // definition-backed instances
-      // (the historical fixed table is superseded by this config-driven
-      // bound).
-      m_bindings(static_cast<std::size_t>(config.voiceCapacity.Render()) *
-                 ResolveInstanceSlots(config)),
       m_preparationCapacity(ResolvePreparationCapacity(config)),
       m_meterProbeContributions(config.maxBindingAttachments),
       m_instanceSlotsPerVoice(ResolveInstanceSlots(config)) {
-    m_primingInputs.resize(m_bindings.size());
+    if (!m_bindings.Reserve(ResolveBindingCapacity(config))) throw std::bad_alloc{};
     m_projectionVariables.resize(m_variables.size());
-    m_projectionBindings.resize(m_bindings.size());
     m_projectionVoices.resize(m_voiceStates.size());
 }
 
@@ -72,7 +71,6 @@ ParamSystem::ParamSystem(const ParamSystem& other)
       m_retiringTargets(other.m_retiringTargets),
       m_sampleRate(other.m_sampleRate),
       m_variables(other.m_variables),
-      m_bindings(other.m_bindings),
       m_preparationCapacity(other.m_preparationCapacity),
       m_primingInputs(other.m_primingInputs),
       m_projectionVariables(other.m_projectionVariables),
@@ -97,6 +95,9 @@ ParamSystem::ParamSystem(const ParamSystem& other)
       m_pendingInputMarks(other.m_pendingInputMarks),
       m_capacityPublisher(other.m_capacityPublisher),
       m_capacityLog(other.m_capacityLog) {
+    if (!m_bindings.Reserve(other.m_bindings.Capacity()) ||
+        !m_bindings.ConstructThrough(other.m_bindings.size())) throw std::bad_alloc{};
+    std::copy(other.m_bindings.begin(), other.m_bindings.end(), m_bindings.begin());
     // Private copies evaluate their own facts without borrowing the live index.
     for (auto& binding : m_bindings) {
         binding.dependencySlot = UINT32_MAX;
@@ -138,6 +139,7 @@ ParamSystem::BackingPreparation& ParamSystem::BackingPreparation::operator=(Back
     if (this != &other) {
         Release();
         m_owner = std::exchange(other.m_owner, nullptr);
+        m_bindingRows = std::move(other.m_bindingRows);
         m_dependencies = std::move(other.m_dependencies);
     }
     return *this;
@@ -150,11 +152,13 @@ void ParamSystem::BackingPreparation::Release() noexcept {
         --m_owner->m_backingPreparationCount;
         m_owner = nullptr;
     }
+    m_bindingRows.Release();
     for (auto& hold : m_dependencies) hold.Release();
 }
 
 ParamSystem::PreparedUse::PreparedUse(ParamSystem& owner, const BackingPreparation* backing) noexcept
     : m_owner(backing == nullptr ? nullptr : &owner),
+      m_bindingRows(backing == nullptr ? StableStoragePreparedUse{} : backing->m_bindingRows.Use()),
       m_dependencies(BindingDependencyIndex::UseBacking(backing == nullptr ? nullptr : &backing->m_dependencies)) {
     if (backing != nullptr) {
         if (backing->m_owner != &owner) std::terminate();
@@ -166,9 +170,35 @@ ParamSystem::PreparedUse::~PreparedUse() {
     if (m_owner != nullptr) --m_owner->m_backingUsers;
 }
 
+std::uint32_t ParamSystem::BindingBackingOccupancy() const noexcept {
+    std::uint64_t occupied = std::uint64_t{m_bindingCount} + m_preparedBindingCount;
+    for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
+        const auto& binding = m_bindings[i];
+        if (binding.preparation != nullptr || binding.ownsPreparation) --occupied;
+    }
+    return static_cast<std::uint32_t>(std::min<std::uint64_t>(BindingCapacity(), occupied));
+}
+
+bool ParamSystem::PrepareBindingAuxiliaryStorage(std::uint32_t count) noexcept {
+    try {
+        if (m_primingInputs.size() < count) m_primingInputs.resize(count);
+        if (m_projectionBindings.size() < count) m_projectionBindings.resize(count);
+        return true;
+    } catch (...) { return false; }
+}
+
+bool ParamSystem::PrepareBindingRows(std::uint32_t count) noexcept {
+    return m_bindings.ConstructThrough(count,
+        [this](std::uint32_t required) noexcept { return PrepareBindingAuxiliaryStorage(required); });
+}
+
 bool ParamSystem::PrepareBindingBacking(std::uint32_t count, BackingPreparation* out) noexcept {
     if (out == nullptr || out->Valid() || m_projectionActive || m_backingUsers != 0) return false;
     BackingPreparation candidate;
+    const auto occupied = BindingBackingOccupancy();
+    if (!PrepareBindingRows(occupied) ||
+        !m_bindings.PrepareBacking(std::min(count, BindingCapacity()), occupied, &candidate.m_bindingRows,
+            [this](std::uint32_t required) noexcept { return PrepareBindingAuxiliaryStorage(required); })) return false;
     if (m_dependencies != nullptr) {
         if (!m_dependencies->PrepareBacking(std::min(count, m_preparationCapacity), &candidate.m_dependencies)) return false;
         try {
@@ -194,6 +224,8 @@ bool ParamSystem::AttachBindingDependencies(BindingDependencyIndex* dependencies
 
 bool ParamSystem::PrepareBinding(PreparedBindingToken* out) noexcept {
     if (out == nullptr || out->IsPrepared() || m_projectionActive) return false;
+    if (!PrepareBindingRows(static_cast<std::uint32_t>(std::min<std::uint64_t>(BindingCapacity(),
+            std::uint64_t{BindingBackingOccupancy()} + 1u)))) return false;
     std::uint32_t slot = UINT32_MAX;
     if (m_dependencies != nullptr) {
         const bool append = m_freeDependencySlots.empty();
@@ -966,7 +998,7 @@ ParamSystem::AdmitBindingSlot(VnVoiceHandle handle, std::uint32_t targetId) {
     if (VoiceBindingCount(handle) >= m_instanceSlotsPerVoice) {
         return InstanceBindResult::SlotCeiling;
     }
-    if (m_bindingCount >= m_bindings.size()) {
+    if (m_bindingCount >= BindingCapacity()) {
         return InstanceBindResult::TableFull;
     }
     // Section 10.4: a NEW unique (voice, target) pair on a LIVE voice adds
@@ -1166,7 +1198,7 @@ ParamSystem::InstanceBindResult ParamSystem::CanBindVoiceInstance(
     if (VoiceBindingCount(handle) >= m_instanceSlotsPerVoice) {
         return InstanceBindResult::SlotCeiling;
     }
-    if (m_bindingCount >= m_bindings.size()) {
+    if (m_bindingCount >= BindingCapacity()) {
         return InstanceBindResult::TableFull;
     }
     if (m_capacityPublisher != nullptr && StateFor(handle) != nullptr &&

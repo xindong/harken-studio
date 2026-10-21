@@ -310,6 +310,7 @@ public:
         friend class ParamSystem;
         friend class PreparedUse;
         ParamSystem* m_owner = nullptr;
+        StableStoragePreparation m_bindingRows;
         std::array<StableStoragePreparation, 3> m_dependencies;
     };
 
@@ -321,6 +322,7 @@ public:
         PreparedUse& operator=(const PreparedUse&) = delete;
     private:
         ParamSystem* m_owner = nullptr;
+        StableStoragePreparedUse m_bindingRows;
         std::array<StableStoragePreparedUse, 3> m_dependencies;
     };
 
@@ -421,7 +423,14 @@ public:
     void CommitPreparedPurgeInstances(
         PreparedPurgeToken* token) noexcept;
     std::uint32_t BindingCapacity() const {
-        return static_cast<std::uint32_t>(m_bindings.size());
+        return m_bindings.Capacity();
+    }
+    std::size_t BindingStorageBytes() const noexcept {
+        return m_bindings.RequestedBytes() + m_primingInputs.capacity() * sizeof(PrimingInput) +
+            m_projectionBindings.capacity() * sizeof(BindingEvaluation);
+    }
+    void SetBindingCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_bindings.SetCommitPageLimitForTests(pages);
     }
     std::uint32_t PreparationCapacity() const noexcept { return m_preparationCapacity; }
 
@@ -1182,7 +1191,10 @@ private:
     // section-16 instance pool), m_bindingCount live entries in stable
     // order. Raw bindings and definition-backed instances share it; a
     // slot-reuse purge reclaims the dead occupant's entries.
-    std::vector<Binding> m_bindings;
+    std::uint32_t BindingBackingOccupancy() const noexcept;
+    bool PrepareBindingAuxiliaryStorage(std::uint32_t count) noexcept;
+    bool PrepareBindingRows(std::uint32_t count) noexcept;
+    StableRowStorage<Binding> m_bindings;
     BindingDependencyIndex* m_dependencies = nullptr;
     Binding* m_pendingNeutralizations = nullptr;
     std::vector<std::uint32_t> m_freeDependencySlots;

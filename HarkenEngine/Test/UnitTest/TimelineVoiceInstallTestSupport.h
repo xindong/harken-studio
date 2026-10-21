@@ -12,7 +12,8 @@ inline void ExpectTimelineInstallIdentity(
     std::uint64_t onset, harken::TimelineArmToken arm) {
     harken::EngineTimelineVoiceInstallIdentity captured{};
     ASSERT_TRUE(engine.CaptureTimelineVoiceInstallIdentity(render, &captured));
-    EXPECT_EQ(engine.voices.Capacity(), engine.timelineVoiceInstallIdentities.size());
+    EXPECT_EQ(engine.voices.Capacity(), engine.timelineVoiceInstallIdentities.Capacity());
+    EXPECT_GE(engine.timelineVoiceInstallIdentities.size(), engine.voices.ConstructedSlotCount());
     EXPECT_EQ(render, captured.renderHandle);
     EXPECT_EQ(root, captured.rootInstance);
     EXPECT_EQ(onset, captured.onsetFrame);

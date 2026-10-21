@@ -1699,23 +1699,20 @@ bool CancelPreparedQueueInstanceOwner(void* opaque) noexcept {
     return CancelPreparedServiceOwner(context->engine, context->service);
 }
 
-bool ValidateFrontierQueueOwner(void* opaque) noexcept {
-    const auto* context = static_cast<harken::EngineFrontierQueueOwnerContext*>(opaque);
+bool ValidateQueueInstanceOwner(const harken::EngineQueueInstanceOwnerContext* context) noexcept {
     return context != nullptr && context->engine != nullptr && context->prepared.Valid() &&
         context->engine->ResolvePlayableService(context->service) != nullptr;
 }
 
-bool CommitFrontierQueueOwner(void* opaque, std::uint64_t) noexcept {
-    auto* context = static_cast<harken::EngineFrontierQueueOwnerContext*>(opaque);
-    if (!ValidateFrontierQueueOwner(opaque)) return false;
+bool CommitQueueInstanceOwner(harken::EngineQueueInstanceOwnerContext* context) noexcept {
+    if (!ValidateQueueInstanceOwner(context)) return false;
     auto* service = context->engine->ResolvePlayableService(context->service);
     context->committed = context->engine->queueInstances.CommitPreparedAcquire(
         &context->prepared, &service->queueInstance);
     return context->committed;
 }
 
-bool CancelFrontierQueueOwner(void* opaque) noexcept {
-    auto* context = static_cast<harken::EngineFrontierQueueOwnerContext*>(opaque);
+bool CancelQueueInstanceOwner(harken::EngineQueueInstanceOwnerContext* context) noexcept {
     if (context == nullptr || context->engine == nullptr) return false;
     auto* service = context->engine->ResolvePlayableService(context->service);
     if (service == nullptr) return false;
@@ -1729,6 +1726,18 @@ bool CancelFrontierQueueOwner(void* opaque) noexcept {
         !context->engine->CancelOriginalQueueAcquire(&context->prepared)) return false;
     service->queueInstance = {};
     return true;
+}
+
+bool ValidateFrontierQueueOwner(void* opaque) noexcept {
+    return ValidateQueueInstanceOwner(static_cast<harken::EngineFrontierQueueOwnerContext*>(opaque));
+}
+
+bool CommitFrontierQueueOwner(void* opaque, std::uint64_t) noexcept {
+    return CommitQueueInstanceOwner(static_cast<harken::EngineFrontierQueueOwnerContext*>(opaque));
+}
+
+bool CancelFrontierQueueOwner(void* opaque) noexcept {
+    return CancelQueueInstanceOwner(static_cast<harken::EngineFrontierQueueOwnerContext*>(opaque));
 }
 
 bool ValidatePreparedVariableControlOwner(void* opaque) noexcept {
@@ -2253,6 +2262,37 @@ bool CancelFrontierQueueCurrentOwner(void* opaque) noexcept {
         return true;
     }
     auto* row = engine.ResolvePlayableService(current.service);
+    if (row == nullptr) return false;
+    harken::EngineActionPlayScratch::PreparedDecisionOwnerContext decision{
+        &engine.decisions, &current.decision, &row->queueDecision, &row->ticket, current.decisionCommitted};
+    const bool cancelled = CancelPreparedDecisionOwner(&decision);
+    current.decisionCommitted = decision.committed;
+    return cancelled;
+}
+
+bool CommitRetargetQueueCurrent(harken::EngineRetargetQueueOwnerContext& queue, std::uint64_t ticket) noexcept {
+    auto& engine = *queue.engine;
+    auto& current = queue.current;
+    auto* row = engine.ResolvePlayableService(queue.service);
+    if (row == nullptr) return false;
+    harken::EngineActionPlayScratch::PreparedDecisionOwnerContext decision{
+        &engine.decisions, &current.decision, &row->queueDecision, &row->ticket, current.decisionCommitted};
+    const bool committed = CommitPreparedDecisionOwner(&decision, ticket);
+    current.decisionCommitted = decision.committed;
+    if (!committed) return false;
+    row->queueTicket = ticket;
+    harken::EngineActionPlayScratch::PreparedOccurrenceOwnerContext occurrence{
+        &engine.timelineOccurrences, &current.occurrence, &current.occurrencePrepared};
+    return CommitPreparedOccurrenceOwner(&occurrence, ticket);
+}
+
+bool CancelRetargetQueueCurrent(harken::EngineRetargetQueueOwnerContext& queue) noexcept {
+    auto& engine = *queue.engine;
+    auto& current = queue.current;
+    harken::EngineActionPlayScratch::PreparedOccurrenceOwnerContext occurrence{
+        &engine.timelineOccurrences, &current.occurrence, &current.occurrencePrepared};
+    if (!CancelPreparedOccurrenceOwner(&occurrence)) return false;
+    auto* row = engine.ResolvePlayableService(queue.service);
     if (row == nullptr) return false;
     harken::EngineActionPlayScratch::PreparedDecisionOwnerContext decision{
         &engine.decisions, &current.decision, &row->queueDecision, &row->ticket, current.decisionCommitted};
@@ -10604,10 +10644,9 @@ harken::EnginePlayableServiceRow* PrepareFrontierOrdinaryService(
     return PrepareFrontierPathService(engine, scratch, parent, owner, epoch, program);
 }
 
-bool PrepareFrontierQueueOwner(harken::Engine& engine, harken::EngineFrontierQueueOwnerContext& context,
+bool PrepareQueueInstanceOwner(harken::Engine& engine, harken::EngineQueueInstanceOwnerContext& context,
     harken::EnginePlayableServiceRow& service, const harken::ContainerProgramViewV3& program,
     const harken::EffectiveQueueState& initial, const harken::EffectiveQueueState& resetInitial,
-    const harken::EffectiveQueueState& next,
     const harken::RandomQueueSeedContext& seed, bool hasSuccessor,
     harken::EngineActionPlayScratch* checkpointOwner = nullptr) noexcept {
     if (service.queueInstance.Valid()) return false;
@@ -10616,10 +10655,6 @@ bool PrepareFrontierQueueOwner(harken::Engine& engine, harken::EngineFrontierQue
             service.Invocation().invocationEmitter, &emitter) != QueueRootPlanStatus::Ok) return false;
     context.engine = &engine;
     context.service = PlayableServiceReference(service);
-    context.program = &program;
-    context.initial = initial;
-    context.next = next;
-    context.hasSuccessor = hasSuccessor;
     context.committed = false;
     harken::QueueInstanceCreateRequest create{};
     create.projectId = service.Invocation().projectId;
@@ -10652,6 +10687,20 @@ bool PrepareFrontierQueueOwner(harken::Engine& engine, harken::EngineFrontierQue
     service.queueNaturalEnd = !hasSuccessor;
     service.queueSignalOnlyNoOverlap = hasSuccessor;
     return true;
+}
+
+bool PrepareFrontierQueueOwner(harken::Engine& engine, harken::EngineFrontierQueueOwnerContext& context,
+    harken::EnginePlayableServiceRow& service, const harken::ContainerProgramViewV3& program,
+    const harken::EffectiveQueueState& initial, const harken::EffectiveQueueState& resetInitial,
+    const harken::EffectiveQueueState& next,
+    const harken::RandomQueueSeedContext& seed, bool hasSuccessor,
+    harken::EngineActionPlayScratch* checkpointOwner = nullptr) noexcept {
+    context.program = &program;
+    context.initial = initial;
+    context.next = next;
+    context.hasSuccessor = hasSuccessor;
+    return PrepareQueueInstanceOwner(engine, context, service, program, initial, resetInitial,
+        seed, hasSuccessor, checkpointOwner);
 }
 
 bool PrepareFrontierQueueMode(harken::Engine& engine, harken::EngineActionPlayScratch& scratch,
@@ -16764,9 +16813,9 @@ bool PrepareVariableControlRetargetSubtree(
                 parentService.root.stableId, parentService.variableControlEmitter,
                 out->selectionTicket, out->selectionTicket};
             if (PrepareSharedQueueRootPlan(engine, *program, request, &plan) != QueueRootPlanStatus::Ok ||
-                !PrepareFrontierQueueOwner(engine, out->containerQueues[index], *service, *program,
+                !PrepareQueueInstanceOwner(engine, out->containerQueues[index], *service, *program,
                     plan.frontier.initial, plan.frontier.resetInitial,
-                    plan.frontier.next, plan.randomSeed,
+                    plan.randomSeed,
                     plan.frontier.status == harken::QueueSequenceStepStatus::Successor)) return false;
         }
         return true;
@@ -17068,9 +17117,7 @@ bool PrepareVariableControlRetargetSubtree(
                 service->queueDeferredNeedsFullPreparation = !service->queueNaturalEnd;
                 auto& queue = out->containerQueues[containerIndex];
                 auto& current = queue.current;
-                current.engine = &engine;
-                current.service = queue.service;
-                queue.binding.current = &current;
+                current.active = true;
                 harken::DecisionReserveRequest request{};
                 request.world = service->Invocation().worldGeneration;
                 request.transport = engine.timelinePool.Epoch();
@@ -17142,12 +17189,11 @@ bool CancelVariableControlRetargetSubtree(
     if (tree == nullptr) return false;
     for (std::uint32_t index = tree->containerCount; index-- > 0;) {
         auto& queue = tree->containerQueues[index];
-        if (queue.current.engine != nullptr &&
-            (!CancelFrontierQueueBindings(&queue.binding) || !CancelFrontierQueueCurrentOwner(&queue.current))) {
+        if (queue.current.active && !CancelRetargetQueueCurrent(queue)) {
             engine.runtimeRecreateRequired = true;
             return false;
         }
-        if (queue.engine != nullptr && !CancelFrontierQueueOwner(&queue)) {
+        if (queue.engine != nullptr && !CancelQueueInstanceOwner(&queue)) {
             engine.runtimeRecreateRequired = true;
             return false;
         }
@@ -17236,13 +17282,12 @@ bool CommitVariableControlRetargetSubtree(
         starts.Cancel();
         for (std::uint32_t index = tree->containerCount; index-- > 0;) {
             auto& queue = tree->containerQueues[index];
-            if (queue.current.engine == nullptr) continue;
-            if (!CancelFrontierQueueBindings(&queue.binding) || !CancelFrontierQueueCurrentOwner(&queue.current)) {
+            if (!queue.current.active) continue;
+            if (!CancelRetargetQueueCurrent(queue)) {
 engine.runtimeRecreateRequired = true;
                 return;
             }
             queue.current = {};
-            queue.binding = {};
         }
         // The incoming root is already live when this helper is called. It
         // owns every committed descendant, so retiring it removes the whole
@@ -17390,12 +17435,11 @@ engine.runtimeRecreateRequired = true;
     }
     for (std::uint32_t index = 0; index < tree->containerCount; ++index) {
         auto& queue = tree->containerQueues[index];
-        if (queue.engine != nullptr && !CommitFrontierQueueOwner(&queue, sequence)) {
+        if (queue.engine != nullptr && !CommitQueueInstanceOwner(&queue)) {
             rollbackCommitted();
             return false;
         }
-        if (queue.current.engine != nullptr &&
-            !CommitFrontierQueueCurrentOwner(&queue.current, sequence)) {
+        if (queue.current.active && !CommitRetargetQueueCurrent(queue, sequence)) {
             rollbackCommitted();
             return false;
         }

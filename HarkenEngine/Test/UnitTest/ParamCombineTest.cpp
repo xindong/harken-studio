@@ -99,10 +99,16 @@ TEST(ParamCombine, IndexedPreparationCancelsRefusalsAndConsumesWithoutGrowth) {
     harken::BindingDependencyIndex index;
     ParamSystem params(config);
     AttachIndex(params, index);
+    EXPECT_EQ(0u, params.BindingStorageBytes());
     params.OnVoiceStarted(kVoice0, 0, 1);
     const auto variable = harkentest::ObjectId(7);
     const Curve curve = LinearCurve(0, 0, 1, -6);
     ParamSystem::PreparedBindingToken prepared;
+    params.SetBindingCommitPageLimitForTests(0);
+    EXPECT_FALSE(params.PrepareBinding(&prepared));
+    EXPECT_FALSE(prepared.IsPrepared());
+    EXPECT_EQ(0u, params.VoiceBindingCount(kVoice0));
+    params.SetBindingCommitPageLimitForTests(SIZE_MAX);
     {
         ASSERT_TRUE(params.PrepareBinding(&prepared));
         ParamSystem::PreparedBindingToken moved(std::move(prepared));
@@ -117,9 +123,11 @@ TEST(ParamCombine, IndexedPreparationCancelsRefusalsAndConsumesWithoutGrowth) {
     EXPECT_EQ(0u, params.VoiceBindingCount(kVoice0));
     ASSERT_TRUE(params.PrepareBinding(&prepared));
     bytes = index.StorageBytes();
+    const auto bindingBytes = params.BindingStorageBytes();
     ASSERT_TRUE(params.BindVoiceTarget(variable, kVoice0, harken::kTargetVoiceVolume, curve, &prepared));
     EXPECT_FALSE(prepared.IsPrepared());
     EXPECT_EQ(bytes, index.StorageBytes());
+    EXPECT_EQ(bindingBytes, params.BindingStorageBytes());
     ASSERT_TRUE(params.PrepareBinding(&prepared));
     bytes = index.StorageBytes();
     EXPECT_FALSE(params.BindVoiceTarget(variable, kVoice0, harken::kTargetVoicePitch, curve, &prepared));
@@ -265,6 +273,7 @@ TEST(ParamCombine, IndexedOwnedStagingRetriesFromPhysicalBackingWithoutGrowth) {
         harken::kTargetVoiceVolume, &curve, nullptr, nullptr, true};
     ASSERT_EQ(VN_OK, params.SetInstalledValue(view.variableId, 1));
     const auto bytes = index.StorageBytes();
+    const auto bindingBytes = params.BindingStorageBytes();
     for (std::uint32_t generation = 1; generation <= 8; ++generation) {
         ParamSystem::PreparedUse use(params, &backing);
         const VnVoiceHandle render = static_cast<VnVoiceHandle>(generation) << 32u;
@@ -281,6 +290,7 @@ TEST(ParamCombine, IndexedOwnedStagingRetriesFromPhysicalBackingWithoutGrowth) {
         params.DiscardPreparedVoice(render);
         EXPECT_EQ(0u, DirtyDependencyCount(index));
         EXPECT_EQ(bytes, index.StorageBytes());
+        EXPECT_EQ(bindingBytes, params.BindingStorageBytes());
     }
     constexpr VnVoiceHandle committed = 9ULL << 32u;
     {
