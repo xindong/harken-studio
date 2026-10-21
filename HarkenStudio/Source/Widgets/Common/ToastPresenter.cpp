@@ -132,11 +132,9 @@ void ToastPresenter::paintEvent(QPaintEvent*)
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     QPainterPath background;
-    background.addRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+    background.addRoundedRect(QRectF(rect()),
                               metrics.radiusMedium, metrics.radiusMedium);
     painter.fillPath(background, colors.bgSecondary);
-    painter.setPen(QPen(colors.borderSecondary, 1.0));
-    painter.drawPath(background);
     painter.setPen(colors.textPrimary);
     painter.setFont(font());
     painter.drawText(rect().adjusted(16, 10, -16, -10),
