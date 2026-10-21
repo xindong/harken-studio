@@ -292,13 +292,20 @@ void StartupCoordinator::beginRuntimeSync()
 
 void StartupCoordinator::finish()
 {
-    if (terminal_)
+    if (terminal_ || presentationStarted_)
         return;
-    terminal_ = true;
+    presentationStarted_ = true;
     loading_.setPhase(StartupPhase::ShowingEditor);
-    mainWindow_->show();
-    ProjectInstance::setActivationWindow(mainWindow_.get());
-    QTimer::singleShot(0, this, [this]() {
+    connect(mainWindow_.get(), &MainWindow::startupPresentationFinished,
+            this, [this](bool shown) {
+        if (terminal_)
+            return;
+        if (!shown) {
+            cancelProjectOpen();
+            return;
+        }
+        terminal_ = true;
+        ProjectInstance::setActivationWindow(mainWindow_.get());
         loading_.setPhase(StartupPhase::Ready);
         loading_.close();
         if (hubClient_) {
@@ -308,6 +315,8 @@ void StartupCoordinator::finish()
             hubClient_->reportStage(QStringLiteral("ready"));
         }
     });
+    mainWindow_->prepareWindowForStartup(hubArguments_.createProject, loading_.screen());
+    mainWindow_->show();
 }
 
 void StartupCoordinator::cancelProjectOpen()

@@ -52,6 +52,7 @@
 #include <vector>
 
 #include <QApplication>
+#include <QEventLoop>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QAbstractSocket>
@@ -161,8 +162,24 @@ protected:
         controller_ = window_->findChild<VNX::LayoutController*>();
         ASSERT_NE(controller_, nullptr);
         controller_->loadProjectLayout();
-        window_->resize(1800, 1000);
+        QEventLoop startup;
+        bool presentationFinished = false;
+        bool presentationShown = false;
+        QObject::connect(window_.get(), &VNX::MainWindow::startupPresentationFinished,
+                         &startup, [&](bool shown) {
+            presentationFinished = true;
+            presentationShown = shown;
+            startup.quit();
+        });
         window_->show();
+        if (!presentationFinished) {
+            QTimer::singleShot(3000, &startup, &QEventLoop::quit);
+            startup.exec();
+        }
+        ASSERT_TRUE(presentationFinished);
+        ASSERT_TRUE(presentationShown);
+        window_->showNormal();
+        window_->resize(1800, 1000);
         drainEvents();
         auto* owner = pm.createItem(nullptr, QStringLiteral("TrackPiece"), VNX::ProjectItem::Type::Piece);
         track_ = pm.createItem(owner, QStringLiteral("Track"), VNX::ProjectItem::Type::Track);

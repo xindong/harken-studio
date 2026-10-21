@@ -119,6 +119,7 @@ public:
         QWidget* parent = nullptr,
         std::function<void(StartupPhase)> startupProgress = {},
         InitializationMode initializationMode = InitializationMode::Immediate);
+    void prepareWindowForStartup(bool newProject, QScreen* screen);
     void initializeDeferred(std::function<void(StartupPhase)> startupProgress,
                             std::function<void()> finished);
     ~MainWindow() override;
@@ -252,6 +253,9 @@ public:
 
     int lastFocusedHierarchyPanelId() const;
     bool resetCurrentLayout();
+signals:
+    void startupPresentationFinished(bool shown);
+
 public slots:
     void setLastFocusedInspectorPanelId(int panelId);
     void setLastFocusedHierarchyPanelId(int panelId);
@@ -318,6 +322,8 @@ private:
     void applyDarkPalette();
     void loadSettings();
     void saveSettings();
+    void completeStartupPresentation();
+    void finishStartupPresentation(bool shown);
     void loadProjectLayout();
     void saveProjectLayout();
     void connectSignals();
@@ -349,9 +355,19 @@ private:
 protected:
     void closeEvent(QCloseEvent* event) override;
     void showEvent(QShowEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+    bool startupPresentationPrepared_ = false;
+    bool startupPresentationScheduled_ = false;
+    bool startupPresentationCompleting_ = false;
+    bool startupPresentationDone_ = false;
+    bool startupStateChanged_ = false;
+    QPointer<QScreen> startupScreen_;
+    QSize startupNormalSize_;
+    Qt::WindowState startupState_ = Qt::WindowNoState;
+    QSize normalWindowSize_;
     bool initializeEmptyProject_ = true;
     QString currentProjectPath_;
     bool projectModified_ = false;
