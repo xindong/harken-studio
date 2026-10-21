@@ -23289,7 +23289,8 @@ bool PrepareQueueFutureFactoryOutputs(harken::Engine& engine,
             if (census[node] == nullptr) return false;
         }
         if (!tree.IssueOriginalPreparedInstanceLifetimes(engine.playableInstances,
-                {census.data(), count}, engine.originalPlayableLifetimeHolders) ||
+                {census.data(), count}, {engine.originalPlayableLifetimeHolders.data(),
+                    engine.originalPlayableLifetimeHolders.size()}) ||
             !ProvePreparedQueueFutureVoiceCommits(engine, *child)) return false;
         owner.originalParentLinks = &links;
     }

@@ -685,6 +685,11 @@ public:
     bool PrepareReadCutBacking(std::uint32_t count, ReadCutBackingPreparation* out) noexcept;
     bool PrepareActionResultBacking(std::uint32_t futureWrites,
         ActionVariableResultBacking* out) noexcept;
+    void AttachTargetRetirementStorage(void* context,
+        bool (*prepare)(void*) noexcept) noexcept {
+        targetRetirementStorageContext_ = context;
+        prepareTargetRetirementStorage_ = prepare;
+    }
     std::uint32_t TimelineReadUseCapacity() const noexcept { return timelineReadUseCapacity_; }
     std::size_t ReadCutStorageBytes() const noexcept;
     std::size_t StorageBytes() const noexcept;
@@ -1437,6 +1442,8 @@ private:
     TransportEpochOwner& transport_;
     VariableSliceTable& slices_;
     ScheduledTransactionPool& timeline_;
+    void* targetRetirementStorageContext_ = nullptr;
+    bool (*prepareTargetRetirementStorage_)(void*) noexcept = nullptr;
     std::vector<DefinitionRow> definitions_;
     std::vector<VariableDefinitionV1> definitionViews_;
     std::vector<OwnedPropertyProgram> playableProperties_;

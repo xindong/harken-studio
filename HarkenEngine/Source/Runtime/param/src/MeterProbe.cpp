@@ -849,6 +849,13 @@ VnResult MeterProbeSystem::Attach(Engine& engine, VnObjectId bindingId,
             return VN_STALE_HANDLE;
         }
     }
+    if ((targetScope == VN_TARGET_SCOPE_VOICE &&
+         !engine.params.PrepareRetiringTargetStorage()) ||
+        (targetScope == VN_TARGET_SCOPE_BUS &&
+         !engine.busTargets.PrepareRetiringTargetStorage())) {
+        engine.meterDetectors.NoteRefusal();
+        return VN_BACKPRESSURE;
+    }
     const VnResult result = engine.bindings.AttachProbe(
         bindingId, targetScope, targetStableId, targetInstanceHandle, busIndex, targetGeneration);
     if (result != VN_OK) {

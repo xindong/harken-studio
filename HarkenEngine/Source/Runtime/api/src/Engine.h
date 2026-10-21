@@ -5826,6 +5826,7 @@ public:
           buses(resolved, topologyPlans, effectBank, dynamicRoutes,
                 &biquadTrig),
           actionCommitBundle(16),
+          playableInstances(resolved.maxPlayableInstances),
           authoredStopRoots(resolved.maxPlayableInstances),
           params(resolved, 0),
           variables(resolved.maxEmitters + 1u, resolved.emitterVariableSlots,
@@ -5847,9 +5848,6 @@ public:
            actionQueueCheckpointResetScratch(1),
            actionDeferredScratch(resolved.maxDeferredIntents),
            originalDeferredPackHolders(resolved.maxDeferredIntents),
-          playableInstances(resolved.maxPlayableInstances),
-          originalPlayableLifetimeHolders(resolved.maxPlayableInstances),
-          originalSingleCurrentHolders(resolved.maxPlayableInstances),
           containerPlayback(resolved.maxPlayableInstances),
           variableControlInstances(resolved.maxContainerInstances),
           // A bounded diagnostic budget, independent of playback admission.
@@ -6010,7 +6008,9 @@ public:
         for (std::size_t index = 0; index < playableStarts.size(); ++index) {
             playableStarts[index].slot = static_cast<std::uint32_t>(index);
         }
-        if (!authoredStopResources.Reserve(resolved.maxScheduledTransactions) ||
+        if (!originalPlayableLifetimeHolders.Reserve(resolved.maxPlayableInstances) ||
+            !originalSingleCurrentHolders.Reserve(resolved.maxPlayableInstances) ||
+            !authoredStopResources.Reserve(resolved.maxScheduledTransactions) ||
             !queueContinuationRecords.Reserve(static_cast<std::uint32_t>(QueueContinuationRecordCapacity(resolved))) ||
             !queueFutureRecords.Reserve(resolved.maxPlayableInstances) ||
             !pendingVariableLeafSources.Reserve(timelineArms.Capacity()) ||
@@ -6138,6 +6138,10 @@ public:
         }
         if (!params.AttachBindingDependencies(&bindings.Dependencies())) throw std::bad_alloc{};
         effectParamTargets.AttachBindingDependencies(&bindings.Dependencies());
+        variables.AttachTargetRetirementStorage(this, [](void* context) noexcept {
+            auto& engine = *static_cast<Engine*>(context);
+            return engine.params.PrepareRetiringTargetStorage() && engine.busTargets.PrepareRetiringTargetStorage();
+        });
         emitters.SetVariableChangeObserver(this,
             [](void* context, VnEmitterHandle emitter, VnVariableId variable) noexcept {
                 static_cast<Engine*>(context)->params.NoteVariableWrite(variable, emitter);
@@ -10409,7 +10413,9 @@ public:
     }
     bool IssueOriginalPlayableLifetimes(
         const PlayableInstanceTable::PreparedParentLinksProof& original) noexcept {
-        return playableInstances.IssueOriginalPreparedLifetimeBaselines(original, originalPlayableLifetimeHolders);
+        return PrepareOriginalPlayableStorage() &&
+            playableInstances.IssueOriginalPreparedLifetimeBaselines(original,
+                {originalPlayableLifetimeHolders.data(), originalPlayableLifetimeHolders.size()});
     }
     bool IssueOriginalPlayableTreeLifetimes(PlayableTreeExecutor& tree) noexcept {
         const auto* original = tree.OriginalPreparedParentLinks(playableInstances);
@@ -12255,6 +12261,8 @@ public:
     std::uint32_t originalQueueReplacementCount = 0;
     StableRowStorage<OriginalQueueFutureGroupRegistration> originalQueueGroupHolders;
     std::size_t originalQueueGroupCapacity = 0;
+    // Stop cancellation holders must return before their native table dies.
+    PlayableInstanceTable playableInstances;
     // Lane fence references must be destroyed before their original backing.
     std::vector<EngineAuthoredStopRoot> authoredStopRoots;
     std::uint32_t authoredStopRootPrefixCount = 0;
@@ -12279,11 +12287,9 @@ public:
     EngineOriginalPackIdentityLease originalDeferredTargetPreparation;
     std::vector<EngineActionDeferredScratch> actionDeferredScratch;
     std::vector<EngineOriginalDeferredPackHolder> originalDeferredPackHolders;
-    // Tables outlive both the original scratch caps and their tree executor.
-    PlayableInstanceTable playableInstances;
-    // Fixed startup storage. Native tables outlive every genuine cap and bundle.
-    std::vector<PlayableInstanceTable::OriginalLifetimePin> originalPlayableLifetimeHolders;
-    std::vector<OriginalSingleCurrentHolder> originalSingleCurrentHolders;
+    // Stable backing. Native tables outlive every genuine cap and bundle.
+    StableRowStorage<PlayableInstanceTable::OriginalLifetimePin> originalPlayableLifetimeHolders;
+    StableRowStorage<OriginalSingleCurrentHolder> originalSingleCurrentHolders;
     void (*originalPlayableTreePreparationHookForTest)(Engine&, PlayableTreeExecutor&, void*) = nullptr;
     void* originalPlayableTreePreparationContextForTest = nullptr;
     ContainerPlaybackTable containerPlayback;
@@ -12867,8 +12873,14 @@ public:
             row.invocationGeneration = playableStarts[slot].generation;
         }
     }
+    bool PrepareOriginalPlayableStorage() noexcept {
+        return playableInstances.PrepareStorage() &&
+            originalPlayableLifetimeHolders.ConstructThrough(originalPlayableLifetimeHolders.Capacity()) &&
+            originalSingleCurrentHolders.ConstructThrough(originalSingleCurrentHolders.Capacity());
+    }
     bool PreparePlayableStateStorage() noexcept {
-        return initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
+        return PrepareOriginalPlayableStorage() &&
+            initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
             initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&
             queueContinuationRecords.ConstructThrough(queueContinuationRecords.Capacity()) &&
             queueFutureRecords.ConstructThrough(queueFutureRecords.Capacity()) &&

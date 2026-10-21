@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <new>
 #include <utility>
 
 namespace harken {
@@ -11,7 +12,6 @@ BusTargetStore::BusTargetStore(std::uint32_t maxBuses,
                                std::uint32_t retiringTargetCapacity)
     : m_maxBuses(maxBuses),
       m_activeGenerations(maxBuses, 0),
-      m_retiringTargets(retiringTargetCapacity),
       m_meterProbeAccum(static_cast<std::size_t>(maxBuses) *
                             kBusTargetCount,
                         0.0f),
@@ -23,6 +23,7 @@ BusTargetStore::BusTargetStore(std::uint32_t maxBuses,
       m_meterProbeSeen(static_cast<std::size_t>(maxBuses) *
                            kBusTargetCount,
                        0) {
+    if (!m_retiringTargets.Reserve(retiringTargetCapacity)) throw std::bad_alloc{};
     m_slots.assign(static_cast<std::size_t>(maxBuses) * kBusTargetCount *
                        kSlotCountPerTarget,
                    Slot{});
@@ -39,6 +40,22 @@ BusTargetStore::BusTargetStore(std::uint32_t maxBuses,
                 meta != nullptr ? meta->neutral : 0.0f;
         }
     }
+}
+
+BusTargetStore::BusTargetStore(const BusTargetStore& other)
+    : m_maxBuses(other.m_maxBuses), m_slots(other.m_slots), m_publish(other.m_publish),
+      m_projection(other.m_projection), m_projectionActive(other.m_projectionActive),
+      m_projectionDemandCount(other.m_projectionDemandCount),
+      m_projectionPendingInputMarks(other.m_projectionPendingInputMarks),
+      m_activeGenerations(other.m_activeGenerations), m_meterProbeAccum(other.m_meterProbeAccum),
+      m_meterProbeRampMs(other.m_meterProbeRampMs),
+      m_meterProbeDepartureRampMs(other.m_meterProbeDepartureRampMs),
+      m_meterProbeSeen(other.m_meterProbeSeen), m_demandCount(other.m_demandCount),
+      m_variableSlotCount(other.m_variableSlotCount), m_pendingInputMarks(other.m_pendingInputMarks),
+      m_flushTick(other.m_flushTick), m_flushCursor(other.m_flushCursor) {
+    if (!m_retiringTargets.Reserve(other.m_retiringTargets.Capacity()) ||
+        !m_retiringTargets.ConstructThrough(other.m_retiringTargets.ConstructedCount())) throw std::bad_alloc{};
+    std::copy(other.m_retiringTargets.begin(), other.m_retiringTargets.end(), m_retiringTargets.begin());
 }
 
 bool BusTargetStore::BeginVariableProjection() noexcept {
@@ -503,7 +520,8 @@ bool BusTargetStore::TryClaim(std::uint32_t busIndex,
                               std::uint32_t targetId,
                               TargetClaimOwner owner,
                               std::uint32_t expectedRevision) noexcept {
-    if (!CanClaim(busIndex, busGeneration, targetId, owner, expectedRevision)) return false;
+    if (!CanClaim(busIndex, busGeneration, targetId, owner, expectedRevision) ||
+        !PrepareRetiringTargetStorage()) return false;
     PublishState& state = m_publish[PubIndexOf(busIndex, targetId)];
     if (state.preparedOwner.Valid()) {
         ++state.publicationRefCount;

@@ -4761,6 +4761,16 @@ TEST(VariableCurrentSlice,
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     InstallVariable(engine);
+    const auto sequenceBefore = engine->logicCommits.IssuedCount();
+    const auto refuseRetirementStorage = [&](auto& targets) {
+        targets.SetRetiringTargetCommitPageLimitForTests(0);
+        EXPECT_EQ(VN_BACKPRESSURE, Vn_SetValue(kVariable, 1.0f));
+        EXPECT_EQ(sequenceBefore, engine->logicCommits.IssuedCount());
+        EXPECT_EQ(0u, engine->variables.PendingCount());
+        targets.SetRetiringTargetCommitPageLimitForTests(SIZE_MAX);
+    };
+    refuseRetirementStorage(engine->params);
+    refuseRetirementStorage(engine->busTargets);
     static const std::vector<float> samples(kSampleRate, 0.05f);
     const VnPCMDesc pcm = MonoDesc(samples, kSampleRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(55), &pcm));
@@ -4790,6 +4800,8 @@ TEST(VariableCurrentSlice,
     ASSERT_TRUE(pendingSlice.Valid());
     ASSERT_TRUE(engine->params.ForeignClaim(
         oldRender, harken::kTargetVoiceVolume));
+    engine->params.SetRetiringTargetCommitPageLimitForTests(0);
+    engine->busTargets.SetRetiringTargetCommitPageLimitForTests(0);
 
     const VnPlayDesc incomingPlay = MakePlayDesc(harkentest::ObjectId(56));
     VnVoiceHandle incoming = 0;

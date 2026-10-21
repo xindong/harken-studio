@@ -4304,6 +4304,8 @@ bool VariableServiceV1::EmitterBankActiveForTests(
 
 bool VariableServiceV1::PrepareHistoryBacking(std::uint32_t slot) noexcept {
     if (memguard::IsAudioTagged() || slot >= history_.Capacity()) return false;
+    if (prepareTargetRetirementStorage_ != nullptr &&
+        !prepareTargetRetirementStorage_(targetRetirementStorageContext_)) return false;
     const auto pending = pendingRows_ + preparedRows_ + 1u;
     const auto queryDemand = ticketQueryCount_ + pending;
     const auto queries = static_cast<std::uint32_t>(std::min<std::uint64_t>(queryHistoryCapacity_, queryDemand));
@@ -4335,6 +4337,8 @@ bool VariableServiceV1::PrepareActionResultBacking(
     std::uint32_t futureWrites, ActionVariableResultBacking* out) noexcept {
     if (memguard::IsAudioTagged() || out == nullptr || out->outcomes.Valid() ||
         out->queries.Valid() || out->expired.Valid()) return false;
+    if (futureWrites != 0 && prepareTargetRetirementStorage_ != nullptr &&
+        !prepareTargetRetirementStorage_(targetRetirementStorageContext_)) return false;
     const auto pending = pendingRows_ + preparedRows_;
     const auto queryDemand = ticketQueryCount_ + pending;
     const auto queries = static_cast<std::uint32_t>(std::min<std::uint64_t>(queryHistoryCapacity_, queryDemand));

@@ -57,21 +57,20 @@ ParamSystem::ParamSystem(const EngineConfig& config)
     : ParamSystem(config, config.voiceCapacity.Render()) {}
 
 ParamSystem::ParamSystem(const EngineConfig& config, std::uint32_t initialVoiceRows)
-    : m_retiringTargets(config.maxVariableSliceTargetsTotal),
-      m_sampleRate(config.mixRate.SampleRate()),
+    : m_sampleRate(config.mixRate.SampleRate()),
       m_variables(kMaxVariables),
       m_preparationCapacity(ResolvePreparationCapacity(config)),
       m_meterProbeContributions(config.maxBindingAttachments),
       m_instanceSlotsPerVoice(ResolveInstanceSlots(config)) {
-    if (!m_bindings.Reserve(ResolveBindingCapacity(config)) ||
+    if (!m_retiringTargets.Reserve(config.maxVariableSliceTargetsTotal) ||
+        !m_bindings.Reserve(ResolveBindingCapacity(config)) ||
         !m_voiceStates.Reserve(config.voiceCapacity.Render()) ||
         !PrepareVoiceStorage(initialVoiceRows)) throw std::bad_alloc{};
     m_projectionVariables.resize(m_variables.size());
 }
 
 ParamSystem::ParamSystem(const ParamSystem& other)
-    : m_retiringTargets(other.m_retiringTargets),
-      m_sampleRate(other.m_sampleRate),
+    : m_sampleRate(other.m_sampleRate),
       m_variables(other.m_variables),
       m_preparationCapacity(other.m_preparationCapacity),
       m_primingInputs(other.m_primingInputs),
@@ -98,11 +97,14 @@ ParamSystem::ParamSystem(const ParamSystem& other)
       m_pendingInputMarks(other.m_pendingInputMarks),
       m_capacityPublisher(other.m_capacityPublisher),
       m_capacityLog(other.m_capacityLog) {
-    if (!m_voiceStates.Reserve(other.m_voiceStates.Capacity()) ||
+    if (!m_retiringTargets.Reserve(other.m_retiringTargets.Capacity()) ||
+        !m_retiringTargets.ConstructThrough(other.m_retiringTargets.ConstructedCount()) ||
+        !m_voiceStates.Reserve(other.m_voiceStates.Capacity()) ||
         !m_voiceStates.ConstructThrough(other.m_voiceStates.size()) ||
         !m_bindings.Reserve(other.m_bindings.Capacity()) ||
         !m_bindings.ConstructThrough(other.m_bindings.size())) throw std::bad_alloc{};
     std::copy(other.m_voiceStates.begin(), other.m_voiceStates.end(), m_voiceStates.begin());
+    std::copy(other.m_retiringTargets.begin(), other.m_retiringTargets.end(), m_retiringTargets.begin());
     std::copy(other.m_bindings.begin(), other.m_bindings.end(), m_bindings.begin());
     // Private copies evaluate their own facts without borrowing the live index.
     for (auto& binding : m_bindings) {
@@ -1642,7 +1644,7 @@ bool ParamSystem::CanClaim(VnVoiceHandle handle, std::uint32_t targetId,
 bool ParamSystem::TryClaim(VnVoiceHandle handle, std::uint32_t targetId,
                            TargetClaimOwner owner,
                            std::uint32_t expectedRevision) noexcept {
-    if (!CanClaim(handle, targetId, owner, expectedRevision)) return false;
+    if (!CanClaim(handle, targetId, owner, expectedRevision) || !PrepareRetiringTargetStorage()) return false;
     VoiceState* state = StateFor(handle);
     TargetState& target = state->targets[targetId];
     if (target.preparedOwner.Valid()) {

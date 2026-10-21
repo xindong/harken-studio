@@ -6992,6 +6992,16 @@ TEST(ActionFiringApi, DelayedSetValueMaterializesThroughTimelineService) {
     desc.actionId = image.actions[9].actionStableId;
     VnActionFiringHandle firing = 0;
     const auto sequenceBefore = engine->logicCommits.IssuedCount();
+    const auto refuseRetirementStorage = [&](auto& targets) {
+        targets.SetRetiringTargetCommitPageLimitForTests(0);
+        EXPECT_EQ(VN_BACKPRESSURE, Vn_PostAction(&desc, &firing));
+        EXPECT_EQ(0u, firing);
+        EXPECT_EQ(sequenceBefore, engine->logicCommits.IssuedCount());
+        EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
+        targets.SetRetiringTargetCommitPageLimitForTests(SIZE_MAX);
+    };
+    refuseRetirementStorage(engine->params);
+    refuseRetirementStorage(engine->busTargets);
     for (unsigned field = 0; field != 3; ++field) {
         SCOPED_TRACE(field);
         harken::detail::LimitVariableResultPagesForTest(engine->variables, field, 0);
@@ -7006,6 +7016,8 @@ TEST(ActionFiringApi, DelayedSetValueMaterializesThroughTimelineService) {
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     harken::detail::LimitVariableResultPagesForTest(engine->variables, 3, 0);
     ASSERT_NE(0u, firing);
+    engine->params.SetRetiringTargetCommitPageLimitForTests(0);
+    engine->busTargets.SetRetiringTargetCommitPageLimitForTests(0);
     EXPECT_EQ(1u, engine->actionDeferredRecords.LiveCount());
     EXPECT_EQ(1u, engine->actionFirings.OwnedDeferredCount(firing));
 
@@ -15300,6 +15312,9 @@ TEST(ActionFiringApi,
         EXPECT_EQ(0u, engine->actionDeferredRecords.LiveCount());
         rows.SetCommitPageLimitForTests(SIZE_MAX);
     };
+    refuseBacking(engine->playableInstances);
+    refuseBacking(engine->originalPlayableLifetimeHolders);
+    refuseBacking(engine->originalSingleCurrentHolders);
     refuseBacking(engine->initialFrontierEvents);
     refuseBacking(engine->initialFrontierRequests);
     refuseBacking(engine->queueContinuationRecords);
@@ -15308,6 +15323,9 @@ TEST(ActionFiringApi,
     refuseBacking(engine->pendingVariableFutureSources);
     refuseBacking(engine->pendingVariableFutureNodes);
     ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
+    engine->playableInstances.SetCommitPageLimitForTests(0);
+    engine->originalPlayableLifetimeHolders.SetCommitPageLimitForTests(0);
+    engine->originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
     engine->initialFrontierEvents.SetCommitPageLimitForTests(0);
     engine->initialFrontierRequests.SetCommitPageLimitForTests(0);
     engine->queueContinuationRecords.SetCommitPageLimitForTests(0);

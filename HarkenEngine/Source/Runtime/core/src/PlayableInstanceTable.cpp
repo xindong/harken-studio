@@ -333,7 +333,7 @@ bool PlayableInstanceTable::TryFinishOriginalLifetimeDisposition(OriginalLifetim
 }
 bool PlayableInstanceTable::IssueOriginalPreparedLifetimeBaselines(
     const PreparedParentLinksProof& preparation, std::span<OriginalLifetimePin> stableBaselines) noexcept {
-    if (preparation.owner_ != this || !preparation.Valid() || stableBaselines.size() != m_entries.size()) return false;
+    if (preparation.owner_ != this || !preparation.Valid() || stableBaselines.size() != Capacity()) return false;
     const auto count = preparation.nodeCount_ + preparation.anchorCount_;
     const auto nodeAt = [&preparation](std::size_t index) -> const PreparedParentLinksProof::Node& {
         return index < preparation.nodeCount_ ? preparation.nodes_[index]
@@ -745,7 +745,9 @@ bool DelayedPlayableCancellation::Valid() const noexcept {
 }
 
 PlayableInstanceTable::PlayableInstanceTable(std::uint32_t capacity)
-    : m_entries(capacity) {}
+{
+    if (!m_entries.Reserve(capacity)) throw std::bad_alloc{};
+}
 
 PlayableInstanceTable::~PlayableInstanceTable() {
     for (const auto& entry : m_entries) assert(entry.originalLifetimeCount == 0);
@@ -883,6 +885,7 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
     if (parent != 0 && (Find(parent) == nullptr || ParentLinksHeld(parent))) {
         return 0;
     }
+    if (!PrepareStorage()) return 0;
     for (std::uint32_t slot = 0; slot < m_entries.size(); ++slot) {
         Entry& entry = m_entries[slot];
         if (!Reusable(entry.lifecycle) || entry.quarantined ||
@@ -954,6 +957,7 @@ bool PlayableInstanceTable::PrepareAcquire(
         return false;
     }
     *out = {};
+    if (!PrepareStorage()) return false;
     for (std::uint32_t slot = 0; slot < m_entries.size(); ++slot) {
         Entry& entry = m_entries[slot];
         if (!Reusable(entry.lifecycle) || entry.quarantined ||
@@ -1790,7 +1794,7 @@ bool PlayableInstanceTable::AdvanceLifecycle(PlayableInstanceHandle handle,
 }
 
 std::uint32_t PlayableInstanceTable::FreeCount() const {
-    std::uint32_t free = 0;
+    std::uint32_t free = Capacity() - m_entries.ConstructedCount();
     for (const Entry& entry : m_entries) {
         if (!entry.quarantined && !entry.prepared && entry.originalLifetimeCount == 0 &&
             entry.completedOriginalCancellation.owner_ == nullptr &&

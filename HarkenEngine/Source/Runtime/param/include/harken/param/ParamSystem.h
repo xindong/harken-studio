@@ -787,6 +787,12 @@ public:
                             TargetClaimOwner owner, float resolved,
                             std::uint32_t rampMs, float pan2d = 0.0f) noexcept;
     std::uint32_t RetiringTargetCountForTests() const noexcept;
+    bool PrepareRetiringTargetStorage() noexcept {
+        return m_retiringTargets.ConstructThrough(m_retiringTargets.Capacity());
+    }
+    void SetRetiringTargetCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_retiringTargets.SetCommitPageLimitForTests(pages);
+    }
 
     std::uint64_t CommitCount() const { return m_commits; }
     std::uint32_t VariableCount() const { return m_variableCount; }
@@ -1189,7 +1195,7 @@ private:
     std::uint32_t UniqueBoundTargets(VnVoiceHandle handle) const;
 
     StableRowStorage<VoiceState> m_voiceStates; // indexed by voice slot
-    std::vector<RetiringTarget> m_retiringTargets;
+    StableRowStorage<RetiringTarget> m_retiringTargets;
     std::uint32_t m_sampleRate = 0;
     std::vector<Variable> m_variables;     // fixed capacity, m_variableCount live
     // Fixed capacity (maxVoices x voiceBindingInstanceSlots — the

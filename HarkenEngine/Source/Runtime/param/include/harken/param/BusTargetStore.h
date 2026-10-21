@@ -16,11 +16,12 @@
 //
 // Storage is maxBuses x kBusTargetCount x kSlotCountPerTarget slots plus
 // one publication record per (bus, target), preallocated at construction;
-// no allocation and no locks after init. Logic thread only.
+// retiring targets prepare before their first claim. Logic thread only.
 #ifndef HARKEN_PARAM_BUS_TARGET_STORE_H
 #define HARKEN_PARAM_BUS_TARGET_STORE_H
 
 #include "harken/core/VariableSliceTable.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/param/ParamTargetTable.h"
 
 #include <cstddef>
@@ -44,6 +45,7 @@ public:
 
     explicit BusTargetStore(std::uint32_t maxBuses,
                             std::uint32_t retiringTargetCapacity = 0);
+    BusTargetStore(const BusTargetStore& other);
 
     // Writes / clears one slot of one bus target, addressed by dense bus
     // index. Out-of-range indices are ignored (the callers own bus
@@ -267,6 +269,12 @@ public:
                                  std::uint32_t busGeneration) noexcept;
     std::uint32_t ActiveGeneration(std::uint32_t busIndex) const noexcept;
     std::uint32_t RetiringTargetCountForTests() const noexcept;
+    bool PrepareRetiringTargetStorage() noexcept {
+        return m_retiringTargets.ConstructThrough(m_retiringTargets.Capacity());
+    }
+    void SetRetiringTargetCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_retiringTargets.SetCommitPageLimitForTests(pages);
+    }
 
     // Returns one bus's rows to their initial state: every combine slot
     // inactive and the publication record re-seeded at the neutral base with
@@ -381,7 +389,7 @@ private:
     std::uint32_t m_projectionDemandCount = 0;
     std::uint32_t m_projectionPendingInputMarks = 0;
     std::vector<std::uint32_t> m_activeGenerations;
-    std::vector<RetiringTarget> m_retiringTargets;
+    StableRowStorage<RetiringTarget> m_retiringTargets;
     std::vector<float> m_meterProbeAccum;
     std::vector<std::uint32_t> m_meterProbeRampMs;
     std::vector<std::uint32_t> m_meterProbeDepartureRampMs;
