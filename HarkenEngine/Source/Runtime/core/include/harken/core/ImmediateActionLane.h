@@ -458,6 +458,27 @@ public:
     ImmediateActionLane& operator=(const ImmediateActionLane&) = delete;
     ImmediateActionLane(ImmediateActionLane&&) = delete;
     ImmediateActionLane& operator=(ImmediateActionLane&&) = delete;
+    // Registrations attach and detach only while the audio consumer is quiescent.
+    class EventStorageRegistration {
+    public:
+        using Prepare = bool (*)(void*, std::uint32_t) noexcept;
+        EventStorageRegistration() = default;
+        ~EventStorageRegistration() { Detach(); }
+        EventStorageRegistration(const EventStorageRegistration&) = delete;
+        EventStorageRegistration& operator=(const EventStorageRegistration&) = delete;
+        void Detach() noexcept;
+        bool IsFor(const ImmediateActionLane* lane) const noexcept { return lane != nullptr && owner_ == lane; }
+    private:
+        friend class ImmediateActionLane;
+        const ImmediateActionLane* owner_ = nullptr;
+        EventStorageRegistration* previous_ = nullptr;
+        EventStorageRegistration* next_ = nullptr;
+        void* context_ = nullptr;
+        Prepare prepare_ = nullptr;
+    };
+    std::uint32_t EventStorageHighWater() const noexcept;
+    void AttachEventStorage(EventStorageRegistration& registration,
+        void* context, EventStorageRegistration::Prepare prepare) const noexcept;
     struct Config {
         std::uint32_t attempts = 0;
         std::uint32_t eventsPerAttempt = 0;
@@ -1036,6 +1057,7 @@ private:
             static_cast<std::uint64_t>(demand.members) * demand.buckets));
     }
     bool PrepareAttemptStorage(std::uint32_t slot, ImmediateLaneDemand demand) noexcept;
+    mutable EventStorageRegistration* eventStorageConsumers_ = nullptr;
     bool EnsureAttemptBacking(std::uint64_t count,
         std::uint32_t excluded = UINT32_MAX) noexcept;
     ImmediateLaneGroupRef* GroupBase(std::uint32_t slot) noexcept;

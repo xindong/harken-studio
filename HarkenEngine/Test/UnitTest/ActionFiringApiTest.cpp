@@ -41721,6 +41721,7 @@ void ExpectActualSameKeyC1CoreNegativeControls(
         auto malformed = *originals[conditional].frontier;
         harken::FrontierTimelineFinalizer finalizer(engine.voices, engine.timelineArms);
         ASSERT_TRUE(finalizer.Attach(engine.decisions, engine.timelinePool, true));
+        ASSERT_TRUE(finalizer.AttachLaneEventStorage(engine.immediateActionLane));
         finalizer.AttachVariableControls(engine.variableControlInstances);
         finalizer.AttachQueues(engine.queueInstances);
         finalizer.AttachQueueCompletion(engine.timelineOccurrences,

@@ -2,6 +2,7 @@
 #define HARKEN_RENDER_IMMEDIATE_LANE_TIMELINE_FINALIZER_H
 
 #include "harken/core/NativeTimelineQuantumAdmissionProof.h"
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -23,8 +24,12 @@ public:
     ImmediateLaneTimelineFinalizer(VoicePool& voices, TimelineArmTable& arms);
     ~ImmediateLaneTimelineFinalizer();
     bool Attach(ImmediateActionLane& lane, std::uint32_t blockFrames);
-    void AttachFrontier(FrontierTimelineFinalizer& frontier,
+    bool AttachFrontier(FrontierTimelineFinalizer& frontier,
                         const ScheduledTransactionPool& pool) noexcept;
+    std::uint64_t EventStorageBytes() const noexcept;
+#if !defined(HARKEN_RT_QUALIFICATION)
+    void SetEventCommitPageLimitForTests(std::size_t pages) noexcept;
+#endif
     bool Capture(std::uint64_t quantum) noexcept;
     bool AdmitQuantum(std::uint32_t availableBytes, std::uint32_t blockFrames,
         const DecisionTable* decisions = nullptr,

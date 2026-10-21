@@ -45,12 +45,19 @@ struct ImmediateLaneTimelineFinalizer::Impl {
     std::uint64_t capturedQuantum = 0;
     bool prepared = false;
     NativeTimelineQuantumAdmissionState admission;
-    std::unique_ptr<EventScratch[]> events;
-    std::unique_ptr<ControlScratch[]> controls;
-    std::unique_ptr<FenceScratch[]> fences;
+    StableRowStorage<EventScratch> events;
+    StableRowStorage<ControlScratch> controls;
+    StableRowStorage<FenceScratch> fences;
+    ImmediateActionLane::EventStorageRegistration eventStorageRegistration;
     std::unique_ptr<Receipt[]> receipts;
     std::unique_ptr<std::uint32_t[]> controlRenderGenerations;
     std::uint32_t renderCapacity = 0;
+    static bool PrepareEventStorage(void* context, std::uint32_t demand) noexcept {
+        auto& self = *static_cast<Impl*>(context);
+        const auto count = std::min(self.eventCapacity, demand);
+        return self.events.ConstructThrough(count) && self.controls.ConstructThrough(count) &&
+            self.fences.ConstructThrough(count);
+    }
 };
 
 ImmediateLaneTimelineFinalizer::ImmediateLaneTimelineFinalizer(
@@ -67,27 +74,43 @@ bool ImmediateLaneTimelineFinalizer::Attach(
     state->lane = &lane;
     state->blockFrames = blockFrames;
     state->eventCapacity = lane.MaxEventsPerQuantum();
-    state->events = std::make_unique<Impl::EventScratch[]>(state->eventCapacity);
-    state->controls = std::make_unique<Impl::ControlScratch[]>(state->eventCapacity);
-    state->fences = std::make_unique<Impl::FenceScratch[]>(state->eventCapacity);
+    if (!state->events.Reserve(state->eventCapacity) ||
+        !state->controls.Reserve(state->eventCapacity) ||
+        !state->fences.Reserve(state->eventCapacity) ||
+        !Impl::PrepareEventStorage(state.get(), lane.EventStorageHighWater())) return false;
     state->receipts = std::make_unique<Impl::Receipt[]>(lane.AttemptCapacity());
     state->renderCapacity = voices_.Capacity();
     state->controlRenderGenerations =
         std::make_unique<std::uint32_t[]>(state->renderCapacity);
+    lane.AttachEventStorage(state->eventStorageRegistration, state.get(), Impl::PrepareEventStorage);
     impl_ = std::move(state);
     return true;
 }
 
-void ImmediateLaneTimelineFinalizer::AttachFrontier(
+bool ImmediateLaneTimelineFinalizer::AttachFrontier(
     FrontierTimelineFinalizer& frontier,
     const ScheduledTransactionPool& pool) noexcept {
-    if (impl_ == nullptr) return;
+    if (impl_ == nullptr) return true;
+    if (!impl_->eventStorageRegistration.IsFor(impl_->lane) ||
+        !frontier.AttachLaneEventStorage(*impl_->lane)) return false;
     impl_->frontier = &frontier;
     impl_->pool = &pool;
+    return true;
 }
 
+std::uint64_t ImmediateLaneTimelineFinalizer::EventStorageBytes() const noexcept {
+    return impl_ == nullptr ? 0u : impl_->events.RequestedBytes() +
+        impl_->controls.RequestedBytes() + impl_->fences.RequestedBytes();
+}
+
+#if !defined(HARKEN_RT_QUALIFICATION)
+void ImmediateLaneTimelineFinalizer::SetEventCommitPageLimitForTests(std::size_t pages) noexcept {
+    if (impl_ != nullptr) impl_->events.SetCommitPageLimitForTests(pages);
+}
+#endif
+
 bool ImmediateLaneTimelineFinalizer::Capture(std::uint64_t quantum) noexcept {
-    if (impl_ == nullptr) return false;
+    if (impl_ == nullptr || !impl_->eventStorageRegistration.IsFor(impl_->lane)) return false;
     auto& state = *impl_;
     if (state.prepared) {
         assert(state.capturedQuantum == quantum);
@@ -224,7 +247,9 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
         const auto originalQuantumStart = resuming ? bucket->quantum * state.blockFrames : quantumStart;
         const auto* events = state.lane->Events(slot, bucket);
         bool valid = (events != nullptr || bucket->eventCount == 0) &&
-                     bucket->eventCount <= state.eventCapacity &&
+                     bucket->eventCount <= state.events.ConstructedCount() &&
+                     bucket->eventCount <= state.controls.ConstructedCount() &&
+                     bucket->eventCount <= state.fences.ConstructedCount() &&
                      state.lane->CapturedEntryProjectionValid(slot, bucket);
         std::uint32_t admittedGroups = 0;
         std::uint32_t admittedEvents = 0;

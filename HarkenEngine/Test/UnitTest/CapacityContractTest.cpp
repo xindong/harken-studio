@@ -1117,6 +1117,81 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     EXPECT_EQ(preparedFinalizerBytes, finalizer.StorageBytes());
     ASSERT_TRUE(engine->timelinePool.CancelUnplacedBatchCredit(&pendingCredit));
     finalizer.SetPendingEventCommitPageLimitForTest(SIZE_MAX);
+
+    harken::ImmediateActionLane lane;
+    ASSERT_TRUE(lane.Reset({2, 2, 2, engine->config.blockFrames}));
+    harken::FrontierTimelineFinalizer laneFrontier(engine->voices, engine->timelineArms);
+    ASSERT_TRUE(laneFrontier.Attach(engine->decisions, engine->timelinePool, true));
+    harken::ImmediateLaneTimelineFinalizer laneConsumer(engine->voices, engine->timelineArms);
+    ASSERT_TRUE(laneConsumer.Attach(lane, engine->config.blockFrames));
+    ASSERT_TRUE(laneConsumer.AttachFrontier(laneFrontier, engine->timelinePool));
+    EXPECT_EQ(0u, laneConsumer.EventStorageBytes());
+    harken::ImmediateLaneHandle laneHandle;
+    laneFrontier.SetPendingEventCommitPageLimitForTest(0);
+    EXPECT_FALSE(lane.Reserve(1, {1, 0, 0, 1}, &laneHandle));
+    EXPECT_FALSE(laneHandle.Valid());
+    laneFrontier.SetPendingEventCommitPageLimitForTest(SIZE_MAX);
+    laneConsumer.SetEventCommitPageLimitForTests(0);
+    EXPECT_FALSE(lane.Reserve(1, {1, 0, 0, 1}, &laneHandle));
+    EXPECT_FALSE(laneHandle.Valid());
+    laneConsumer.SetEventCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(lane.Reserve(1, {1, 0, 0, 1}, &laneHandle));
+    EXPECT_EQ(1u, laneHandle.generation);
+    EXPECT_GT(laneConsumer.EventStorageBytes(), 0u);
+    harken::ImmediateLaneTimelineFinalizer lateConsumer(engine->voices, engine->timelineArms);
+    ASSERT_TRUE(lateConsumer.Attach(lane, engine->config.blockFrames));
+    EXPECT_EQ(laneConsumer.EventStorageBytes(), lateConsumer.EventStorageBytes());
+    ASSERT_TRUE(lane.Retire(laneHandle));
+    harken::StableStoragePreparation laneBacking;
+    const auto initialLaneBytes = laneConsumer.EventStorageBytes();
+    const auto initialLaneFrontierBytes = laneFrontier.StorageBytes();
+    ASSERT_TRUE(lane.PrepareAttemptBacking(&laneBacking));
+    const auto preparedLaneBytes = laneConsumer.EventStorageBytes();
+    const auto preparedLaneFrontierBytes = laneFrontier.StorageBytes();
+    EXPECT_GT(preparedLaneBytes, initialLaneBytes);
+    EXPECT_GT(preparedLaneFrontierBytes, initialLaneFrontierBytes);
+    laneConsumer.SetEventCommitPageLimitForTests(0);
+    {
+        const auto use = laneBacking.Use();
+        laneHandle = {};
+        ASSERT_TRUE(lane.Reserve(2, {2, 2, 2, 2}, &laneHandle));
+    }
+    EXPECT_EQ(preparedLaneBytes, laneConsumer.EventStorageBytes());
+    EXPECT_EQ(preparedLaneFrontierBytes, laneFrontier.StorageBytes());
+    ASSERT_TRUE(lane.Retire(laneHandle));
+    EXPECT_FALSE(lane.Reset({3, 2, 2, engine->config.blockFrames}));
+    harken::TimelineProgramView program{};
+    const auto publishLaneWork = [&] {
+        laneHandle = {};
+        ASSERT_TRUE(lane.Reserve(1, {1, 0, 0, 1}, &laneHandle));
+        harken::ImmediateLaneEvent event{};
+        event.event.program.program = &program;
+        ASSERT_TRUE(lane.Prepare(laneHandle, &event, 1));
+        std::uint64_t anchor = 0;
+        ASSERT_TRUE(lane.TryPlace(laneHandle, engine->config.blockFrames, 0, &anchor));
+        ASSERT_TRUE(lane.Publish(laneHandle));
+    };
+    const auto finishLaneWork = [&] {
+        const auto* bucket = lane.CaptureDue(laneHandle.slot, 1);
+        ASSERT_NE(nullptr, bucket);
+        ASSERT_TRUE(lane.Claim(laneHandle, bucket));
+        ASSERT_TRUE(lane.Finish(laneHandle.slot, bucket, true));
+        ASSERT_TRUE(lane.Retire(laneHandle));
+    };
+    publishLaneWork();
+    ASSERT_TRUE(laneConsumer.Capture(1));
+    laneConsumer.Discard();
+    finishLaneWork();
+    laneBacking.Release();
+    ASSERT_TRUE(lane.Reset({3, 2, 2, engine->config.blockFrames}));
+    publishLaneWork();
+    EXPECT_FALSE(laneConsumer.Capture(1));
+    EXPECT_FALSE(lateConsumer.Capture(1));
+    harken::ImmediateLaneTimelineFinalizer newConsumer(engine->voices, engine->timelineArms);
+    ASSERT_TRUE(newConsumer.Attach(lane, engine->config.blockFrames));
+    ASSERT_TRUE(newConsumer.Capture(1));
+    newConsumer.Discard();
+    finishLaneWork();
 }
 
 TEST(CapacityContract, CompositeActionCapacityGrowthMatchesBothBlockProfiles) {

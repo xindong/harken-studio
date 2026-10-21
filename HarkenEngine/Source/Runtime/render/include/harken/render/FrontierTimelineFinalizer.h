@@ -30,6 +30,7 @@ public:
     // Select laneOnly for BeginLane; ordinary page work uses the default mode.
     bool Attach(DecisionTable& decisions, const ScheduledTransactionPool& pool,
                 bool laneOnly = false);
+    bool AttachLaneEventStorage(const ImmediateActionLane& lane) noexcept;
     void AttachVariableControls(VariableControlInstanceTable& instances) noexcept;
     void AttachQueues(QueueInstanceTable& queues) noexcept;
     void AttachQueueCompletion(const OccurrenceStatePool& occurrences,

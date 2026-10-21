@@ -442,6 +442,7 @@ bool ImmediateActionLane::CapturePrivatePlacedEvent(const PrivateImmediateLanePl
 }
 
 ImmediateActionLane::~ImmediateActionLane() {
+    while (eventStorageConsumers_ != nullptr) eventStorageConsumers_->Detach();
     assert(payloadGrowth_.heldRows == 0 && payloadGrowth_.preparedUsers == 0);
     if (attempts_ != nullptr)
         for (std::uint32_t i = 0; i < config_.attempts; ++i)
@@ -711,6 +712,7 @@ bool ImmediateActionLane::Reset(Config config) {
                 attempts_[i].privatePlacementProof != nullptr ||
                 attempts_[i].privatePublicationProof != nullptr ||
                 attempts_[i].originalLifetimePins != 0) return false;
+    while (eventStorageConsumers_ != nullptr) eventStorageConsumers_->Detach();
     groupPool_ = nullptr;
     valid_ = false;
     StableSlotStorage<EventState> oldEventState;
@@ -808,6 +810,37 @@ bool ImmediateActionLane::PreparePrivateEntryBacking(std::uint32_t count,
     return privateEntries_.PrepareBacking(std::min(count, privateEntries_.Capacity()), occupied, out);
 }
 
+void ImmediateActionLane::EventStorageRegistration::Detach() noexcept {
+    if (owner_ == nullptr) return;
+    if (previous_ != nullptr) previous_->next_ = next_;
+    else owner_->eventStorageConsumers_ = next_;
+    if (next_ != nullptr) next_->previous_ = previous_;
+    owner_ = nullptr;
+    previous_ = next_ = nullptr;
+    context_ = nullptr;
+    prepare_ = nullptr;
+}
+
+std::uint32_t ImmediateActionLane::EventStorageHighWater() const noexcept {
+    std::uint32_t count = 0;
+    if (attempts_ != nullptr)
+        for (std::uint32_t slot = 0; slot < config_.attempts; ++slot)
+            count = std::max(count, attempts_[slot].eventStorageCount);
+    return count;
+}
+
+void ImmediateActionLane::AttachEventStorage(EventStorageRegistration& registration,
+    void* context, EventStorageRegistration::Prepare prepare) const noexcept {
+    assert(!memguard::IsAudioTagged() && Valid() && prepare != nullptr);
+    registration.Detach();
+    registration.owner_ = this;
+    registration.context_ = context;
+    registration.prepare_ = prepare;
+    registration.next_ = eventStorageConsumers_;
+    if (eventStorageConsumers_ != nullptr) eventStorageConsumers_->previous_ = &registration;
+    eventStorageConsumers_ = &registration;
+}
+
 bool ImmediateActionLane::PrepareAttemptStorage(std::uint32_t slot,
     ImmediateLaneDemand demand) noexcept {
     auto& attempt = attempts_[slot];
@@ -824,6 +857,8 @@ bool ImmediateActionLane::PrepareAttemptStorage(std::uint32_t slot,
     if (memguard::IsAudioTagged() || payloadGrowth_.preparedUsers != 0) return false;
     const auto base = static_cast<std::size_t>(slot) * config_.eventsPerAttempt;
     if (events > attempt.eventStorageCount) {
+        for (auto* consumer = eventStorageConsumers_; consumer != nullptr; consumer = consumer->next_)
+            if (!consumer->prepare_(consumer->context_, events)) return false;
         for (auto index = attempt.eventStorageCount; index < events; ++index)
             if (!eventState_.Emplace(static_cast<std::uint32_t>(base + index))) return false;
         if (!eventStorage_.CommitRange((base + attempt.eventStorageCount) * sizeof(ImmediateLaneEvent),

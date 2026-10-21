@@ -108342,6 +108342,7 @@ void ReleaseRevisionReservations(Engine& engine,
         }
     }
     revision.dynamicRouteCandidates.clear();
+    revision.dynamicBusTapBacking.Release();
     revision.dynamicRouteRemovals.clear();
     for (const PackBusEffectReservation& reservation :
          revision.busEffectRefs) {
@@ -109672,6 +109673,12 @@ VnResult ReplacePackV2(Engine& engine, VnPackHandle handle,
             return r;
         }
     }
+    if (!revision.dynamicRouteCandidates.empty() &&
+        !engine.dynamicRoutes.PrepareBusTapBacking(
+            revision.dynamicRouteCandidates.size(), &revision.dynamicBusTapBacking)) {
+        ReleaseRevisionReservations(engine, revision);
+        return VN_NO_DYNAMIC_ROUTE;
+    }
     for (const PackEffectDynamicRouteEntry& route :
          revision.removeDynamicRoutes) {
         const DynamicRouteDefinition* live =
@@ -109882,6 +109889,7 @@ void ActivatePendingPackRevisions(Engine& engine) {
                 engine.dynamicRoutes.PlanRevision(
                     revision.dynamicPlanIndex);
             bool tapsReady = true;
+            const auto tapUse = revision.dynamicBusTapBacking.Use();
             for (DynamicRouteDefinition& candidate :
                  revision.dynamicRouteCandidates) {
                 candidate.targetBusIndex =

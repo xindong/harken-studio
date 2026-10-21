@@ -648,9 +648,10 @@ struct FrontierAudioHarness {
                 EXPECT_EQ(3u, bucket->groupCount);
                 ASSERT_TRUE(lane.ReleaseCapture(laneHandle.slot, bucket));
             }
+            ASSERT_TRUE(sink.AttachPlan03ScratchAuthority(decisions, pool));
             ASSERT_TRUE(sink.AttachImmediateLane(lane, kBlock));
         }
-        ASSERT_TRUE(sink.AttachPlan03ScratchAuthority(decisions, pool));
+        if (!laneEntry) ASSERT_TRUE(sink.AttachPlan03ScratchAuthority(decisions, pool));
         if (variable) {
             ASSERT_TRUE(sink.AttachQueueAuthority(queues, armGroups, occurrences));
             ASSERT_TRUE(sink.AttachVariableControlAuthority(variables));
@@ -1211,6 +1212,7 @@ TEST(AuthoredStopAudio, LaneBackedVariableEntryAppliesOnlyAfterWholeBucketClaim)
         directProof.Release();
         harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
         ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+        ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
         finalizer.AttachArmGroups(h.armGroups);
         finalizer.AttachVariableControls(h.variables);
         const auto* bucket = h.lane.CaptureDue(h.laneHandle.slot, 0);
@@ -1312,6 +1314,7 @@ TEST(AuthoredStopAudio, LaneMixedFutureWaitDoesNotGrantIndependentEntryLatePermi
 
     harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
     ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+    ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
     const auto inspect = [&](const harken::ImmediateLaneBucket* bucket, std::uint64_t quantum) {
         finalizer.BeginLane(quantum, kBlock, h.lane, bucket, h.laneHandle.slot);
         const auto* groups = h.lane.Groups(h.laneHandle.slot, bucket);
@@ -1371,6 +1374,7 @@ TEST(AuthoredStopAudio, LaneBucketMissingSecondCoordinatorKeepsFirstUnapplied) {
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
     harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
     ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+    ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
     finalizer.AttachArmGroups(h.armGroups);
     finalizer.AttachVariableControls(h.variables);
     const auto* bucket = h.lane.CaptureDue(h.laneHandle.slot, 0);
@@ -1485,6 +1489,7 @@ TEST(AuthoredStopAudio, LaneStagedStartRequiresExactOriginalAndHeldNativeProofs)
         SCOPED_TRACE(static_cast<unsigned>(fault));
         harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
         ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+        ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
         finalizer.AttachArmGroups(h.armGroups);
         finalizer.AttachVariableControls(h.variables);
         finalizer.BeginLane(0u, kBlock, h.lane, bucket, h.laneHandle.slot);
@@ -1549,6 +1554,7 @@ TEST(AuthoredStopAudio, LaneBucketClaimsAllCoordinatorsOrAbortsAllClaimedLeases)
         ASSERT_FALSE(::testing::Test::HasFatalFailure());
         harken::FrontierTimelineFinalizer finalizer(h.audio.engine->voices, h.arms);
         ASSERT_TRUE(finalizer.Attach(h.decisions, h.pool, true));
+        ASSERT_TRUE(finalizer.AttachLaneEventStorage(h.lane));
         finalizer.AttachArmGroups(h.armGroups);
         finalizer.AttachVariableControls(h.variables);
         const auto* bucket = h.lane.CaptureDue(h.laneHandle.slot, 0);

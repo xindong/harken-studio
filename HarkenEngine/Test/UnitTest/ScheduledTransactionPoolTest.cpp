@@ -2152,7 +2152,7 @@ TEST(ScheduledTransactionPool, PrivateLaneEntryMappingsUseRealInterleavedFutureE
                 frontier.AttachArmGroups(coordinatorGroups);
                 harken::ImmediateLaneTimelineFinalizer finalizer(voices, arms);
                 ASSERT_TRUE(finalizer.Attach(lane, config.quantumFrames));
-                finalizer.AttachFrontier(frontier, pool);
+                ASSERT_TRUE(finalizer.AttachFrontier(frontier, pool));
                 ASSERT_TRUE(finalizer.Capture(firstQuantum));
                 if (mode == 16 || mode == 17) finalizer.Discard(true);
                 else {

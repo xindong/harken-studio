@@ -80,7 +80,8 @@ public:
 #endif
 
     bool AttachImmediateLane(ImmediateActionLane& lane, std::uint32_t blockFrames) {
-        return immediate_.Attach(lane, blockFrames);
+        return immediate_.Attach(lane, blockFrames) &&
+            (pool_ == nullptr || immediate_.AttachFrontier(laneFrontier_, *pool_));
     }
 
     bool CaptureIndependentWork(std::uint64_t quantumIndex) noexcept override {
@@ -115,8 +116,7 @@ public:
         authoredStopFences_.assign(pool.MaxScheduledTransactions(), nullptr);
         if (!frontier_.Attach(decisions, pool) ||
             !laneFrontier_.Attach(decisions, pool, true)) return false;
-        immediate_.AttachFrontier(laneFrontier_, pool);
-        return true;
+        return immediate_.AttachFrontier(laneFrontier_, pool);
     }
 
     bool AttachQueueAuthority(QueueInstanceTable& queues,

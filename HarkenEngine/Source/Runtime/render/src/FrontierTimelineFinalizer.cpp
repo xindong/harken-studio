@@ -240,7 +240,8 @@ struct FrontierTimelineFinalizer::Impl {
     std::uint32_t completionCount = 0;
     std::uint32_t deferredStartCount = 0;
     StableRowStorage<Event> events;
-    std::unique_ptr<StagedLaneStart[]> stagedLaneStarts;
+    StableRowStorage<StagedLaneStart> stagedLaneStarts;
+    ImmediateActionLane::EventStorageRegistration laneEventRegistration;
     std::uint32_t stagedLaneStartCount = 0;
     std::unique_ptr<Group[]> groups;
     StableRowStorage<OrderRef> order;
@@ -270,6 +271,11 @@ struct FrontierTimelineFinalizer::Impl {
     std::uint64_t laneOriginalQuantum = 0;
 
     Impl(VoicePool& v, TimelineArmTable& a) : voices(v), arms(a) {}
+    static bool PrepareLaneEvents(void* context, std::uint32_t demand) noexcept {
+        auto& self = *static_cast<Impl*>(context);
+        const auto count = std::min(self.eventCapacity, demand);
+        return self.stagedLaneStarts.ConstructThrough(count) && self.events.ConstructThrough(count);
+    }
     static bool PreparePendingEvents(void* context,
         ScheduledTransactionPool::PendingEventStorageDemand demand) noexcept {
         auto& self = *static_cast<Impl*>(context);
@@ -2988,19 +2994,20 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
     auto& self = *impl_;
     StableRowStorage<Impl::PendingEvent> pendingEvents;
     StableRowStorage<Impl::Event> events;
+    StableRowStorage<Impl::StagedLaneStart> stagedLaneStarts;
     StableRowStorage<Impl::OrderRef> order;
     const auto demand = pool.CapturePendingEventStorageDemand();
-    const auto preparedEvents = static_cast<std::uint32_t>(laneOnly ? eventCapacity :
+    const auto preparedEvents = static_cast<std::uint32_t>(laneOnly ? 0u :
         std::min<std::uint64_t>(eventCapacity, demand.nativeEvents));
     if (!pendingEvents.Reserve(static_cast<std::uint32_t>(pendingEventCapacity)) ||
         !pendingEvents.ConstructThrough(static_cast<std::uint32_t>(
             std::min<std::uint64_t>(pendingEventCapacity, demand.nativeEvents))) ||
         !events.Reserve(static_cast<std::uint32_t>(eventCapacity)) ||
         !events.ConstructThrough(preparedEvents) ||
+        !stagedLaneStarts.Reserve(laneOnly ? static_cast<std::uint32_t>(eventCapacity) : 0u) ||
         !order.Reserve(laneOnly ? 0u : static_cast<std::uint32_t>(eventCapacity + groupCapacity)) ||
         !order.ConstructThrough(laneOnly ? 0u : preparedEvents + static_cast<std::uint32_t>(groupCapacity)))
         return false;
-    auto stagedLaneStarts = laneOnly ? std::make_unique<Impl::StagedLaneStart[]>(eventCapacity) : nullptr;
     auto groups = std::make_unique<Impl::Group[]>(groupCapacity);
     auto laneClaims = laneOnly ? std::make_unique<ImmediateLaneFrontierClaim[]>(groupCapacity) : nullptr;
     auto pendingGroups = std::make_unique<Impl::PendingGroup[]>(pendingGroupCapacity);
@@ -3010,9 +3017,10 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
     auto completionProofs = std::make_unique<TimelineArmTable::BoundAudioProof[]>(completionCapacity);
 
     self.pendingEventRegistration.Detach();
+    self.laneEventRegistration.Detach();
     self.pendingEvents.Swap(pendingEvents);
     self.events.Swap(events);
-    self.stagedLaneStarts = std::move(stagedLaneStarts);
+    self.stagedLaneStarts.Swap(stagedLaneStarts);
     self.groups = std::move(groups);
     self.order.Swap(order);
     self.laneClaims = std::move(laneClaims);
@@ -3035,6 +3043,14 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
     self.pendingEventSnapshot.EndWrite();
     if (!laneOnly)
         pool.AttachPendingEventStorage(self.pendingEventRegistration, &self, Impl::PreparePendingEvents);
+    return true;
+}
+
+bool FrontierTimelineFinalizer::AttachLaneEventStorage(const ImmediateActionLane& lane) noexcept {
+    auto& self = *impl_;
+    if (!self.laneOnly || !lane.Valid() ||
+        !Impl::PrepareLaneEvents(&self, lane.EventStorageHighWater())) return false;
+    lane.AttachEventStorage(self.laneEventRegistration, &self, Impl::PrepareLaneEvents);
     return true;
 }
 
@@ -3083,7 +3099,11 @@ void FrontierTimelineFinalizer::Begin(std::uint64_t quantum, std::uint32_t frame
 void FrontierTimelineFinalizer::BeginLane(std::uint64_t quantum, std::uint32_t frames,
     const ImmediateActionLane& lane, const ImmediateLaneBucket* bucket, std::uint32_t slot) noexcept {
     Begin(quantum, frames);
-    if (!impl_->laneOnly) { impl_->frames = 0; return; }
+    if (!impl_->laneOnly || !impl_->laneEventRegistration.IsFor(&lane)) {
+        impl_->frames = 0;
+        impl_->immediateLane = nullptr;
+        return;
+    }
     impl_->immediateLane = &lane;
     impl_->immediateLaneBucket = bucket;
     impl_->immediateLaneSlot = slot;
@@ -3335,7 +3355,7 @@ bool FrontierTimelineFinalizer::CollectLaneStagedStart(const ImmediateLaneEvent&
     const VariableTimelineInitializerProof& initializer) noexcept {
     auto& self = *impl_;
     if (!self.laneOnly || self.immediateLane == nullptr || self.immediateLaneBucket == nullptr ||
-        self.stagedLaneStartCount == self.eventCapacity ||
+        self.stagedLaneStartCount == self.stagedLaneStarts.ConstructedCount() ||
         !arm.Valid() || !reservation.Valid()) return false;
     const auto* captured = self.immediateLane->Events(self.immediateLaneSlot, self.immediateLaneBucket);
     if (captured == nullptr || self.immediateLaneBucket->eventCount > self.eventCapacity) return false;
@@ -4349,7 +4369,7 @@ std::uint8_t FrontierTimelineFinalizer::EventDisposition(const ConsumedEvent& so
 std::uint64_t FrontierTimelineFinalizer::StorageBytes() const noexcept {
     const auto& self = *impl_;
     return sizeof(Impl) + self.events.RequestedBytes() + self.order.RequestedBytes() +
-        (self.laneOnly ? static_cast<std::uint64_t>(self.eventCapacity) * sizeof(Impl::StagedLaneStart) : 0u) +
+        self.stagedLaneStarts.RequestedBytes() +
         static_cast<std::uint64_t>(self.participantCapacity) * sizeof(DecisionParticipantRef) +
         static_cast<std::uint64_t>(self.completionCapacity) * sizeof(TimelineArmTable::BoundAudioProof) +
         static_cast<std::uint64_t>(self.groupCapacity) * sizeof(Impl::Group) +

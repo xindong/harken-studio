@@ -9304,6 +9304,7 @@ public:
         (void)device.StopCallback();
         (void)voices.UnbindRealtimeWorkerDomain();
         device.ReleasePrepared();
+        for (auto& revision : logicPacks.pending) revision.dynamicBusTapBacking.Release();
         // Private readers are unread loans, distinct from completed audio fences.
         for (std::uint32_t index = 0; index < immediateEntryAttempts.size(); ++index) {
             auto& attempt = immediateEntryAttempts[index];

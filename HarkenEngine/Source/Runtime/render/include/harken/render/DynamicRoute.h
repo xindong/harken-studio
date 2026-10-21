@@ -1,5 +1,5 @@
 // Effect-private waveform route storage, immutable audio plans, and bounded
-// Bus/Voice tap banks. All memory is allocated at engine construction. Logic
+// Bus/Voice tap banks. Sample storage is prepared before acquiring a tap. Logic
 // owns route definitions, tap references, plan construction, and retirement;
 // audio owns the installed plan, block banks, detector scratch, and status
 // publication.
@@ -11,6 +11,7 @@
 
 #include "harken/core/EngineConfig.h"
 #include "harken/core/PinnedSnapshot3.h"
+#include "harken/core/StableRowStorage.h"
 
 #include <algorithm>
 #include <atomic>
@@ -121,12 +122,6 @@ public:
                      (m_busTapCapacity + m_voiceTapCapacity),
                      kInvalidDynamicTapSlot),
           m_planPinCounts(m_planCapacity, 0),
-          m_busTapSamples(static_cast<std::size_t>(m_busTapCapacity) *
-                              kMaxChannels * m_blockFrames,
-                          0.0f),
-          m_voiceTapSamples(static_cast<std::size_t>(m_voiceTapCapacity) * 2 *
-                                kMaxChannels * m_blockFrames,
-                            0.0f),
           m_detectorScratch(m_blockFrames, 0.0f),
           m_busCaptured(m_busTapCapacity, 0),
           m_voiceWriteCleared(m_voiceTapCapacity, 0),
@@ -139,6 +134,10 @@ public:
           m_tapGenerationMismatch(m_routeCapacity, 0),
           m_audioRouteGeneration(m_routeCapacity, 0),
           m_audioRouteRevision(m_routeCapacity, 0) {
+        if (!m_busTapSamples.Reserve(static_cast<std::size_t>(m_busTapCapacity) *
+                kMaxChannels * m_blockFrames) ||
+            !m_voiceTapSamples.Reserve(static_cast<std::size_t>(m_voiceTapCapacity) * 2u *
+                kMaxChannels * m_blockFrames)) throw std::bad_alloc{};
         m_routeFree.reserve(m_routeCapacity);
         m_busTapFree.reserve(m_busTapCapacity);
         m_voiceTapFree.reserve(m_voiceTapCapacity);
@@ -245,6 +244,15 @@ public:
     std::uint32_t VoiceTapHighWater() const {
         return m_voiceTapHighWater;
     }
+    std::size_t TapSampleStorageBytes() const noexcept {
+        return m_busTapSamples.RequestedBytes() + m_voiceTapSamples.RequestedBytes();
+    }
+#if !defined(HARKEN_RT_QUALIFICATION)
+    void SetTapSampleCommitPageLimitsForTests(std::size_t busPages, std::size_t voicePages) noexcept {
+        m_busTapSamples.SetCommitPageLimitForTests(busPages);
+        m_voiceTapSamples.SetCommitPageLimitForTests(voicePages);
+    }
+#endif
     std::uint64_t PlanGeneration(std::uint32_t planIndex) const {
         return planIndex < m_planCapacity
                    ? m_planGenerations[planIndex]
@@ -335,6 +343,18 @@ public:
         return next == 0 ? 1 : next;
     }
 
+    bool PrepareBusTapBacking(std::size_t additionalTaps,
+                              StableStoragePreparation* out) noexcept {
+        const auto samplesPerTap = static_cast<std::size_t>(kMaxChannels) * m_blockFrames;
+        const auto samples = (std::min)(additionalTaps,
+            static_cast<std::size_t>(m_busTapCapacity)) * samplesPerTap;
+        if (samples > UINT32_MAX) return false;
+        auto occupied = m_busTapCapacity;
+        while (occupied != 0 && !m_busTaps[occupied - 1u].active) --occupied;
+        return m_busTapSamples.PrepareBacking(static_cast<std::uint32_t>(samples),
+            static_cast<std::size_t>(occupied) * samplesPerTap, out);
+    }
+
     bool AcquireRouteTap(DynamicRouteDefinition& candidate) {
         TapSlot* slots = candidate.sourceKind == VN_DYNAMIC_SOURCE_BUS
                              ? m_busTaps.get()
@@ -363,6 +383,10 @@ public:
             return false;
         }
         const std::uint32_t index = free.back();
+        auto& samples = candidate.sourceKind == VN_DYNAMIC_SOURCE_BUS ? m_busTapSamples : m_voiceTapSamples;
+        const auto banks = candidate.sourceKind == VN_DYNAMIC_SOURCE_BUS ? 1u : 2u;
+        if (!samples.ConstructThrough((static_cast<std::size_t>(index) + 1u) * banks *
+                kMaxChannels * m_blockFrames)) return false;
         free.pop_back();
         TapSlot& slot = slots[index];
         slot.active = true;
@@ -1493,8 +1517,8 @@ private:
     std::uint64_t m_installedRevision = 0;
     std::uint32_t m_currentPlanIndex = 0;
 
-    std::vector<float> m_busTapSamples;
-    std::vector<float> m_voiceTapSamples;
+    StableRowStorage<float, std::size_t> m_busTapSamples;
+    StableRowStorage<float, std::size_t> m_voiceTapSamples;
     std::vector<float> m_detectorScratch;
     std::vector<std::uint8_t> m_busCaptured;
     std::vector<std::uint8_t> m_voiceWriteCleared;
