@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <QSet>
+#include <QTemporaryDir>
 
 using namespace VNX;
 
@@ -169,60 +170,79 @@ TEST(EditorWorkspaceWindowContract, SourceEditorPrefixIsUnambiguousAmongPanelTyp
     }
 }
 
-TEST(EditorWorkspaceWindowContract, UnreachableFramesReturnToARealScreenWorkArea)
+TEST(EditorWorkspaceWindowContract, WindowFrameIsCenteredInTheSelectedWorkArea)
 {
-    const QList<QRect> screens{{0, 0, 1920, 1040}, {-1920, 0, 1920, 1040}};
-    const QList<QRect> frames{
-        {1919, 100, 1200, 800},
-        {6000, 100, 1200, 800},
-        {-6000, 100, 1200, 800},
-        {300, -790, 1200, 800},
-        {300, 1039, 1200, 800}};
-    for (const QRect& frame : frames) {
-        const auto placed = visibleWindowPlacement(frame, screens, 0);
-        EXPECT_TRUE(placed.available.contains(placed.frame));
-        EXPECT_EQ(visibleWindowPlacement(placed.frame, screens, 0).frame, placed.frame);
+    for (const QRect& available : QList<QRect>{{0, 40, 1920, 1040},
+                                               {-1920, 40, 1920, 1040},
+                                               {1920, 80, 1536, 824}}) {
+        const QRect frame = centeredWindowFrame({1100, 700}, available);
+        EXPECT_TRUE(available.contains(frame));
+        EXPECT_EQ(frame.size(), QSize(1100, 700));
+        EXPECT_LE(qAbs(frame.center().x() - available.center().x()), 1);
+        EXPECT_LE(qAbs(frame.center().y() - available.center().y()), 1);
     }
 }
 
-TEST(EditorWorkspaceWindowContract, ValidSecondaryAndReachableSpanningPositionsArePreserved)
+TEST(EditorWorkspaceWindowContract, OversizedWindowFramesFitTheSelectedScreen)
 {
-    const QList<QRect> screens{
-        {0, 0, 1920, 1040}, {-1920, 0, 1920, 1040}, {1920, 0, 1920, 1040}};
-    const QList<QRect> frames{
-        {-1800, 80, 1200, 800},
-        {200, 80, 1200, 800},
-        {-600, 80, 1200, 800},
-        {1919, 50, 1200, 800}};
-    for (const QRect& frame : frames)
-        EXPECT_EQ(visibleWindowPlacement(frame, screens, 0).frame, frame);
+    const QRect available(-1920, 40, 1312, 734);
+    EXPECT_EQ(centeredWindowFrame(kDefaultStudioWindowSize, available), available);
+    EXPECT_FALSE(centeredWindowFrame({}, available).isValid());
+    EXPECT_FALSE(centeredWindowFrame({1000, 700}, {}).isValid());
 }
 
-TEST(EditorWorkspaceWindowContract, GapsBetweenScaledScreensAreNotVisibleDesktop)
+TEST(EditorWorkspaceWindowContract, PresentationRoundTripStoresSizeAndStateWithoutCoordinates)
 {
-    const QList<QRect> screens{{0, 0, 1280, 680}, {1920, 0, 1536, 824}};
-    const auto placed = visibleWindowPlacement({1400, 50, 300, 500}, screens, 0);
-    EXPECT_EQ(placed.available, screens[0]);
-    EXPECT_TRUE(screens[0].contains(placed.frame));
-    const QRect secondary(2100, 80, 1100, 700);
-    EXPECT_EQ(visibleWindowPlacement(secondary, screens, 0).frame, secondary);
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QSettings settings(directory.filePath("window.ini"), QSettings::IniFormat);
+    for (const Qt::WindowStates state : {Qt::WindowStates{},
+             Qt::WindowStates(Qt::WindowMaximized), Qt::WindowStates(Qt::WindowFullScreen),
+             Qt::WindowStates(Qt::WindowMinimized | Qt::WindowMaximized)}) {
+        QWidget window;
+        window.resize(640, 480);
+        window.move(-3839, 27);
+        window.setWindowState(state);
+        settings.setValue("geometry", window.saveGeometry());
+        saveWindowPresentation(settings, window);
+        const auto presentation = readWindowPresentation(settings);
+        EXPECT_EQ(presentation.normalSize, QSize(640, 480));
+        EXPECT_EQ(presentation.state, persistentWindowState(state));
+        EXPECT_FALSE(settings.contains("geometry"));
+        EXPECT_EQ(settings.allKeys(), (QStringList{"normalSize", "presentationState"}));
+    }
 }
 
-TEST(EditorWorkspaceWindowContract, OversizedFramesFitAvailableAreaAndRemainStable)
+TEST(EditorWorkspaceWindowContract, LegacyPresentationMigrationDiscardsPosition)
 {
-    const QList<QRect> screens{{0, 40, 1312, 734}};
-    const auto placed = visibleWindowPlacement({300, 100, 1800, 1100}, screens, 0);
-    EXPECT_EQ(placed.frame, screens[0]);
-    EXPECT_EQ(visibleWindowPlacement(placed.frame, screens, 0).frame, placed.frame);
-    EXPECT_EQ(boundedWindowPosition(QRect(placed.frame.topLeft(), QSize(1800, 1100)),
-                                   screens[0]), screens[0].topLeft());
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QSettings settings(directory.filePath("window.ini"), QSettings::IniFormat);
+    QWidget legacy;
+    legacy.resize(640, 480);
+    legacy.move(-3839, 27);
+    settings.setValue("geometry", legacy.saveGeometry());
+    const auto migrated = readWindowPresentation(settings);
+    EXPECT_EQ(migrated.normalSize, QSize(640, 480));
+    EXPECT_EQ(migrated.state, Qt::WindowNoState);
+    settings.setValue("geometry", QByteArray("invalid"));
+    EXPECT_EQ(readWindowPresentation(settings).normalSize, kDefaultStudioWindowSize);
 }
 
-TEST(EditorWorkspaceWindowContract, InvalidScreenEntriesHaveDeterministicFallback)
+TEST(EditorWorkspaceWindowContract, NewPresentationFieldsDoNotMixWithLegacyState)
 {
-    const QRect frame(6000, 100, 1000, 700);
-    EXPECT_EQ(visibleWindowPlacement(frame, {}, -1).frame, frame);
-    const QList<QRect> screens{{}, {-1920, 0, 1920, 1040}, {0, 0, 1920, 1040}};
-    EXPECT_EQ(visibleWindowPlacement(frame, screens, 0).available, screens[1]);
-    EXPECT_EQ(visibleWindowPlacement(frame, screens, 2).available, screens[2]);
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    QSettings settings(directory.filePath("window.ini"), QSettings::IniFormat);
+    QWidget legacy;
+    legacy.resize(640, 480);
+    legacy.setWindowState(Qt::WindowMaximized);
+    settings.setValue("geometry", legacy.saveGeometry());
+    settings.setValue("normalSize", QSize(1100, 700));
+    EXPECT_EQ(readWindowPresentation(settings).normalSize, QSize(1100, 700));
+    EXPECT_EQ(readWindowPresentation(settings).state, Qt::WindowNoState);
+    settings.setValue("normalSize", QStringLiteral("invalid-size"));
+    settings.setValue("presentationState", int(Qt::WindowMinimized));
+    EXPECT_EQ(readWindowPresentation(settings).normalSize, kDefaultStudioWindowSize);
+    EXPECT_EQ(readWindowPresentation(settings).state, Qt::WindowNoState);
 }

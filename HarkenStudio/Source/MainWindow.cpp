@@ -133,6 +133,7 @@
 #include <QApplication>
 #include <QThread>
 #include <QCloseEvent>
+#include <QResizeEvent>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
@@ -259,7 +260,7 @@ MainWindow::MainWindow(
 {
     setWindowTitle("Harken Studio");
     setMinimumSize(800, 600);
-    resize(1800, 1100);
+    resize(kDefaultStudioWindowSize);
     setObjectName(QStringLiteral("MainWindow"));
     setAcceptDrops(true);
     qApp->installEventFilter(this);
@@ -3715,20 +3716,83 @@ void MainWindow::connectSignals()
             });
 }
 
+void MainWindow::finishStartupPresentation(bool shown)
+{
+    if (startupPresentationDone_)
+        return;
+    startupPresentationDone_ = true;
+    startupPresentationCompleting_ = false;
+    emit startupPresentationFinished(shown);
+}
+
+void MainWindow::completeStartupPresentation()
+{
+    if (startupPresentationDone_ || startupPresentationCompleting_)
+        return;
+    startupPresentationCompleting_ = true;
+    if (!isVisible() || !windowHandle()) {
+        finishStartupPresentation(false);
+        return;
+    }
+    if (!startupStateChanged_ && !isMaximized() && !isFullScreen() && !isMinimized()) {
+        resize(startupNormalSize_);
+        const QSize normalSize = centerWindowOnScreen(this, startupScreen_);
+        if (normalSize.isValid() && !normalSize.isEmpty())
+            normalWindowSize_ = normalSize;
+        if (startupState_ != Qt::WindowNoState)
+            setWindowState(startupState_);
+    }
+    finishStartupPresentation(true);
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event)
+{
+    QMainWindow::resizeEvent(event);
+    if (startupPresentationDone_ && !isMaximized() && !isFullScreen() && !isMinimized())
+        normalWindowSize_ = size();
+}
+
+void MainWindow::prepareWindowForStartup(bool newProject, QScreen* screen)
+{
+    if (startupPresentationPrepared_)
+        return;
+    startupScreen_ = startupTargetScreen(screen);
+    QSettings settings;
+    settings.beginGroup("MainWindow");
+    const WindowPresentation presentation = newProject
+        ? WindowPresentation{} : readWindowPresentation(settings);
+    startupNormalSize_ = presentation.normalSize;
+    startupState_ = presentation.state;
+    normalWindowSize_ = presentation.normalSize;
+    setWindowState(Qt::WindowNoState);
+    if (startupScreen_)
+        setScreen(startupScreen_);
+    resize(startupNormalSize_);
+    if (startupScreen_) {
+        const QRect position = centeredWindowFrame(size(), startupScreen_->availableGeometry());
+        if (position.isValid())
+            move(position.topLeft());
+    }
+    startupPresentationPrepared_ = true;
+}
+
 void MainWindow::showEvent(QShowEvent* event)
 {
     QMainWindow::showEvent(event);
-    if (layoutController_->firstShowDone())
-        return;
-    layoutController_->setFirstShowDone(true);
-    ensureWindowVisible(this);
-
-    dockManager_->setFocus(Qt::OtherFocusReason);
-    layoutController_->relayoutDockSplitters(false);
-    QTimer::singleShot(0, this, [this]() {
-        layoutController_->relayoutDockSplitters(!layoutController_->currentLayoutFromCache());
-        ensureWindowVisible(this);
-    });
+    if (!startupPresentationPrepared_)
+        prepareWindowForStartup(false, screen());
+    if (!layoutController_->firstShowDone()) {
+        layoutController_->setFirstShowDone(true);
+        dockManager_->setFocus(Qt::OtherFocusReason);
+        layoutController_->relayoutDockSplitters(false);
+        QTimer::singleShot(0, this, [this]() {
+            layoutController_->relayoutDockSplitters(!layoutController_->currentLayoutFromCache());
+        });
+    }
+    if (!startupPresentationScheduled_ && !startupTargetScreen(startupScreen_)) {
+        startupPresentationScheduled_ = true;
+        QTimer::singleShot(0, this, [this]() { completeStartupPresentation(); });
+    }
 }
 
 
@@ -3759,9 +3823,6 @@ void MainWindow::loadSettings()
     QSettings settings;
     settings.beginGroup("MainWindow");
 
-    if (settings.contains("geometry"))
-        restoreGeometry(settings.value("geometry").toByteArray());
-
     if (settings.contains("windowState"))
         restoreState(settings.value("windowState").toByteArray());
 
@@ -3785,7 +3846,7 @@ void MainWindow::saveSettings()
 {
     QSettings settings;
     settings.beginGroup("MainWindow");
-    settings.setValue("geometry", saveGeometry());
+    saveWindowPresentation(settings, *this, normalWindowSize_);
     settings.setValue("windowState", saveState());
     settings.endGroup();
 }
@@ -3855,6 +3916,8 @@ void MainWindow::closeEvent(QCloseEvent* event)
         saveProjectLayout();
         saveSettings();
         event->accept();
+        if (startupPresentationPrepared_)
+            finishStartupPresentation(false);
     }
     else
     {
@@ -3865,6 +3928,23 @@ void MainWindow::closeEvent(QCloseEvent* event)
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 {
     const auto type = event->type();
+    if (startupPresentationPrepared_ && !startupPresentationDone_
+        && !startupPresentationCompleting_) {
+        if (watched == this && type == QEvent::WindowStateChange) {
+            startupStateChanged_ = true;
+            if (!startupPresentationScheduled_) {
+                startupPresentationScheduled_ = true;
+                QTimer::singleShot(0, this, [this]() { completeStartupPresentation(); });
+            }
+        }
+        if (watched == this && type == QEvent::Hide && !isMinimized())
+            finishStartupPresentation(false);
+        if (watched == windowHandle() && type == QEvent::Expose
+            && windowHandle()->isExposed() && !startupPresentationScheduled_) {
+            startupPresentationScheduled_ = true;
+            QTimer::singleShot(0, this, [this]() { completeStartupPresentation(); });
+        }
+    }
 
     if (type == QEvent::MouseButtonPress || type == QEvent::MouseButtonRelease
         || type == QEvent::Wheel) {

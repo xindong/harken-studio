@@ -1,98 +1,117 @@
 #pragma once
 
 #include <QGuiApplication>
-#include <QList>
 #include <QRect>
 #include <QScreen>
+#include <QSettings>
 #include <QWidget>
 
 namespace VNX {
 
-struct WindowPlacement
+inline constexpr QSize kDefaultStudioWindowSize{1800, 1100};
+
+struct WindowPresentation
 {
-    QRect frame;
-    QRect available;
+    QSize normalSize = kDefaultStudioWindowSize;
+    Qt::WindowState state = Qt::WindowNoState;
 };
 
-inline QPoint boundedWindowPosition(const QRect& frame, const QRect& available)
+inline Qt::WindowState persistentWindowState(Qt::WindowStates state)
 {
-    return {
-        qBound(available.left(), frame.left(),
-               qMax(available.left(), available.right() - frame.width() + 1)),
-        qBound(available.top(), frame.top(),
-               qMax(available.top(), available.bottom() - frame.height() + 1))};
+    if (state.testFlag(Qt::WindowFullScreen))
+        return Qt::WindowFullScreen;
+    if (state.testFlag(Qt::WindowMaximized))
+        return Qt::WindowMaximized;
+    return Qt::WindowNoState;
 }
 
-inline WindowPlacement visibleWindowPlacement(
-    const QRect& frame, const QList<QRect>& screens, int primaryIndex)
+inline WindowPresentation readWindowPresentation(QSettings& settings)
 {
-    if (!frame.isValid())
-        return {frame, {}};
-
-    int firstValid = -1;
-    int selected = -1;
-    qint64 bestArea = 0;
-    bool titleReachable = false;
-    const QRect title(frame.topLeft(), QSize(frame.width(), qMin(32, frame.height())));
-    for (int i = 0; i < screens.size(); ++i) {
-        const QRect& available = screens[i];
-        if (!available.isValid())
-            continue;
-        if (firstValid < 0)
-            firstValid = i;
-        if (available.contains(frame))
-            return {frame, available};
-        const QRect overlap = available.intersected(frame);
-        const qint64 area = overlap.isValid()
-            ? qint64(overlap.width()) * overlap.height() : 0;
-        if (area > bestArea) {
-            bestArea = area;
-            selected = i;
-        }
-        const QRect visibleTitle = available.intersected(title);
-        titleReachable = titleReachable
-            || (visibleTitle.height() == title.height()
-                && visibleTitle.width() >= qMin(160, frame.width()));
+    WindowPresentation result;
+    if (settings.contains("normalSize") || settings.contains("presentationState")) {
+        const QVariant size = settings.value("normalSize");
+        if (size.metaType().id() == QMetaType::QSize && size.toSize().isValid()
+            && !size.toSize().isEmpty())
+            result.normalSize = size.toSize();
+        bool validState = false;
+        const int state = settings.value("presentationState").toInt(&validState);
+        if (validState && (state == Qt::WindowMaximized || state == Qt::WindowFullScreen))
+            result.state = static_cast<Qt::WindowState>(state);
+        return result;
     }
-    if (firstValid < 0)
-        return {frame, {}};
-    if (selected < 0)
-        selected = primaryIndex >= 0 && primaryIndex < screens.size()
-                && screens[primaryIndex].isValid() ? primaryIndex : firstValid;
 
-    const QRect available = screens[selected];
-    if (titleReachable && frame.width() <= available.width()
-        && frame.height() <= available.height())
-        return {frame, available};
-
-    QRect placed(frame.topLeft(), frame.size().boundedTo(available.size()));
-    placed.moveTopLeft(boundedWindowPosition(placed, available));
-    return {placed, available};
+    const QByteArray geometry = settings.value("geometry").toByteArray();
+    if (geometry.isEmpty())
+        return result;
+    QWidget legacy;
+    if (!legacy.restoreGeometry(geometry))
+        return result;
+    const QSize normalSize = legacy.normalGeometry().size();
+    if (normalSize.isValid() && !normalSize.isEmpty())
+        result.normalSize = normalSize;
+    result.state = persistentWindowState(legacy.windowState());
+    return result;
 }
 
-inline void ensureWindowVisible(QWidget* window)
+inline void saveWindowPresentation(QSettings& settings, const QWidget& window,
+                                   QSize normalSize = {})
+{
+    if (!normalSize.isValid() || normalSize.isEmpty())
+        normalSize = window.normalGeometry().size();
+    if (!normalSize.isValid() || normalSize.isEmpty())
+        normalSize = window.size();
+    settings.setValue("normalSize", normalSize);
+    settings.setValue("presentationState", int(persistentWindowState(window.windowState())));
+    settings.sync();
+    if (settings.status() == QSettings::NoError)
+        settings.remove("geometry");
+}
+
+inline QRect centeredWindowFrame(const QSize& requestedSize, const QRect& available)
+{
+    if (!requestedSize.isValid() || requestedSize.isEmpty() || !available.isValid())
+        return {};
+    const QSize size = requestedSize.boundedTo(available.size());
+    const QPoint offset((available.width() - size.width()) / 2,
+                        (available.height() - size.height()) / 2);
+    return {available.topLeft() + offset, size};
+}
+
+inline QScreen* startupTargetScreen(QScreen* preferred)
+{
+    const auto screens = QGuiApplication::screens();
+    if (preferred && screens.contains(preferred))
+        return preferred;
+    return QGuiApplication::primaryScreen();
+}
+
+inline QSize centerWindowOnScreen(QWidget* window, QScreen* preferred)
 {
     if (!window || !window->isWindow() || window->isMaximized()
         || window->isFullScreen() || window->isMinimized())
-        return;
+        return {};
+    QScreen* screen = startupTargetScreen(preferred);
+    if (!screen || !screen->availableGeometry().isValid())
+        return {};
+    if (window->screen() != screen)
+        window->setScreen(screen);
 
-    const auto screens = QGuiApplication::screens();
-    QList<QRect> available;
-    for (QScreen* screen : screens)
-        available.append(screen->availableGeometry());
+    const QRect available = screen->availableGeometry();
     const QRect frame = window->frameGeometry();
-    const auto placement = visibleWindowPlacement(
-        frame, available, screens.indexOf(QGuiApplication::primaryScreen()));
-    if (!placement.available.isValid() || placement.frame == frame)
-        return;
-
+    const QRect placed = centeredWindowFrame(frame.size(), available);
+    if (!placed.isValid())
+        return {};
     const QSize frameMargins = frame.size() - window->size();
-    const QSize clientSize = placement.frame.size() - frameMargins;
+    const QSize clientSize = placed.size() - frameMargins;
     window->resize(qMax(1, clientSize.width()), qMax(1, clientSize.height()));
     const QRect actual = window->frameGeometry();
-    const QPoint position = boundedWindowPosition(
-        QRect(placement.frame.topLeft(), actual.size()), placement.available);
-    window->move(window->pos() + position - actual.topLeft());
+    const QPoint offset(qMax(0, (available.width() - actual.width()) / 2),
+                        qMax(0, (available.height() - actual.height()) / 2));
+    window->move(window->pos() + available.topLeft() + offset - actual.topLeft());
+    const QSize normalSize = window->size();
+    if (actual.width() > available.width() || actual.height() > available.height())
+        window->setWindowState(Qt::WindowMaximized);
+    return normalSize;
 }
 
 }
