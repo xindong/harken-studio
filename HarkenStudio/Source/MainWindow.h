@@ -119,7 +119,7 @@ public:
         QWidget* parent = nullptr,
         std::function<void(StartupPhase)> startupProgress = {},
         InitializationMode initializationMode = InitializationMode::Immediate);
-    void prepareWindowForStartup(bool newProject, QScreen* screen);
+    void prepareWindowForStartup(QScreen* screen);
     void initializeDeferred(std::function<void(StartupPhase)> startupProgress,
                             std::function<void()> finished);
     ~MainWindow() override;
