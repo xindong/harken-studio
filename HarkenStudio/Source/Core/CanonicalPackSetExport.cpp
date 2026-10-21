@@ -1155,7 +1155,6 @@ bool fillWaveformCompanion(const CanonicalPackSetExportRequest& request,
             }
             waveforms.append(QJsonObject{
                 {QStringLiteral("soundGuid"), objectIdString(media.soundStableId)},
-                {QStringLiteral("sourceEntryGuid"), media.sourceEntryId.toString(QUuid::WithoutBraces)},
                 {QStringLiteral("file"), companionDir.relativeFilePath(waveformDir.filePath(fileName))},
                 {QStringLiteral("trimStartFrame"), static_cast<qint64>(range->trimStartFrame)},
                 {QStringLiteral("trimEndFrame"), static_cast<qint64>(range->trimEndFrame)}});
