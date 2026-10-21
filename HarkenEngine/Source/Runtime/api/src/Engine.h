@@ -1547,6 +1547,19 @@ struct EngineQueueFutureFilingLayout {
     bool queueDecisionCommitted = false;
 };
 
+struct EngineVariableMemberWeights {
+    using Values = std::vector<WeightSegmentV1>;
+    std::shared_ptr<Values> storage;
+
+    std::size_t size() const noexcept { return storage ? storage->size() : 0; }
+    bool empty() const noexcept { return size() == 0; }
+    WeightSegmentV1& operator[](std::size_t index) noexcept { return (*storage)[index]; }
+    const WeightSegmentV1& operator[](std::size_t index) const noexcept { return (*storage)[index]; }
+    std::size_t StorageBytes() const noexcept {
+        return storage ? sizeof(Values) + storage->capacity() * sizeof(WeightSegmentV1) : 0;
+    }
+};
+
 struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     struct UnpublishedVariableGroupCancellation {
         EnginePlayableServiceToken service{};
@@ -1883,6 +1896,8 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
         TimelineArmToken arm{};
     };
     std::vector<VariableControlRetargetMember> variableControlRetargetMembers;
+    // Delayed members can have a different envelope onset from their controlling child.
+    EngineVariableMemberWeights variableControlMemberWeights;
     bool variableControlRetargetPrepared = false;
     bool variableControlRetargetDecisionCommitted = false;
     bool variableControlRetargetApplied = false;
@@ -2573,8 +2588,6 @@ struct PlayableStorageLayout {
           initialProgramStride(
               CheckedStride(1u, knownLeaves, 1u, liveRows)),
           endpointStride(knownLeaves),
-          weightStride(
-              CheckedStride(1u, knownLeaves, 1u, liveRows)),
           continuousStride(liveRows),
           memberCount(CheckedCount(config.maxPlayableInstances,
                                    memberStride)),
@@ -2586,8 +2599,6 @@ struct PlayableStorageLayout {
                                            initialProgramStride)),
           endpointCount(CheckedCount(config.maxPlayableInstances,
                                      endpointStride)),
-          weightCount(CheckedCount(config.maxPlayableInstances,
-                                   weightStride)),
           continuousCount(CheckedCount(config.maxPlayableInstances,
                                        continuousStride)) {}
 
@@ -2606,9 +2617,6 @@ struct PlayableStorageLayout {
     std::size_t EndpointBase(std::size_t rowIndex) const noexcept {
         return rowIndex * endpointStride;
     }
-    std::size_t WeightBase(std::size_t rowIndex) const noexcept {
-        return rowIndex * weightStride;
-    }
     std::size_t ContinuousBase(std::size_t rowIndex) const noexcept {
         return rowIndex * continuousStride;
     }
@@ -2625,14 +2633,12 @@ struct PlayableStorageLayout {
     const std::uint32_t currentEventStride;
     const std::uint32_t initialProgramStride;
     const std::uint32_t endpointStride;
-    const std::uint32_t weightStride;
     const std::uint32_t continuousStride;
     const std::size_t memberCount;
     const std::size_t pairedCount;
     const std::size_t currentEventCount;
     const std::size_t initialProgramCount;
     const std::size_t endpointCount;
-    const std::size_t weightCount;
     const std::size_t continuousCount;
 
 private:
@@ -4891,6 +4897,12 @@ struct Engine {
         bool discreteMatched = false;
     };
     struct NativeRuntimeBacking {
+        struct RootMemberWeights {
+            EnginePlayableServiceToken service{};
+            EngineVariableMemberWeights weights;
+        };
+        std::vector<RootMemberWeights> rootMemberWeights;
+        std::vector<EngineVariableMemberWeights> memberWeights;
         std::vector<EngineActionPlayScratch*> reprepareProducers;
         std::vector<PendingVariableSelectionSnapshot> selections;
         std::vector<EngineActionPlayScratch*> publicationProducers;
@@ -4917,6 +4929,7 @@ struct Engine {
         EffectPoolBank::BackingPreparation effects;
         ParamSystem::BackingPreparation bindings;
     };
+    NativeRuntimeBacking* nativeRuntimeBackingInUse = nullptr;
     struct NativeRuntimeBackingUse {
         std::array<StableStoragePreparedUse, 13> columns;
         ArmGroupTable::PreparedUse groups;
@@ -4931,6 +4944,8 @@ struct Engine {
         VariableServiceV1::ReadCutBackingUse readCuts;
         EffectPoolBank::BackingUse effects;
         ParamSystem::PreparedUse bindings;
+        Engine& owner;
+        NativeRuntimeBacking* previous;
         NativeRuntimeBackingUse(Engine& engine, NativeRuntimeBacking* backing) noexcept
             : columns{Use(backing, 0), Use(backing, 1), Use(backing, 2), Use(backing, 3),
                       Use(backing, 4), Use(backing, 5), Use(backing, 6), Use(backing, 7), Use(backing, 8),
@@ -4952,7 +4967,9 @@ struct Engine {
               readCuts(backing == nullptr ? VariableServiceV1::ReadCutBackingUse{}
                   : backing->readCuts.Use()),
               effects(EffectPoolBank::UseBacking(backing == nullptr ? nullptr : &backing->effects)),
-              bindings(engine.params, backing == nullptr ? nullptr : &backing->bindings) {}
+              bindings(engine.params, backing == nullptr ? nullptr : &backing->bindings),
+              owner(engine), previous(std::exchange(engine.nativeRuntimeBackingInUse, backing)) {}
+        ~NativeRuntimeBackingUse() { owner.nativeRuntimeBackingInUse = previous; }
     private:
         static StableStoragePreparedUse Use(NativeRuntimeBacking* backing, std::uint32_t index) noexcept {
             if (backing == nullptr) return {};
@@ -5346,6 +5363,44 @@ struct Engine {
         if (nativeBackingAllocationFailureCountdownForTest > 0) --nativeBackingAllocationFailureCountdownForTest;
         return true;
     }
+    bool PrepareVariableControlMemberWeights(EnginePlayableServiceRow& row, std::uint32_t count) noexcept {
+        if (count > config.maxVariableControlLiveRows) return false;
+        auto& weights = row.variableControlMemberWeights;
+        if (count <= weights.size()) return true;
+        if (memguard::IsAudioTagged()) return false;
+        if (nativeRuntimeBackingInUse != nullptr) {
+            EngineVariableMemberWeights* selected = nullptr;
+            for (auto& root : nativeRuntimeBackingInUse->rootMemberWeights) {
+                if (root.service != row.identity) continue;
+                if (root.weights.size() < count) return false;
+                selected = &root.weights;
+                break;
+            }
+            if (selected == nullptr) {
+                for (auto& candidate : nativeRuntimeBackingInUse->memberWeights) {
+                    if (candidate.storage.use_count() != 1 || candidate.size() < count) continue;
+                    if (selected == nullptr || candidate.size() < selected->size()) selected = &candidate;
+                }
+            }
+            if (selected == nullptr) return false;
+            std::fill(selected->storage->begin(), selected->storage->end(), WeightSegmentV1{});
+            if (weights.storage)
+                std::copy(weights.storage->begin(), weights.storage->end(), selected->storage->begin());
+            weights.storage = selected->storage;
+            return true;
+        }
+        try {
+            if (!weights.storage) {
+                if (!AllowNativeBackingAllocation()) return false;
+                weights.storage = std::make_shared<EngineVariableMemberWeights::Values>(count);
+            } else {
+                if (count > weights.storage->capacity() && !AllowNativeBackingAllocation()) return false;
+                weights.storage->resize(count);
+            }
+        }
+        catch (...) { return false; }
+        return true;
+    }
     EngineFrontierAttemptToken NativeBackingTokenFor(const EngineActionPlayScratch& scratch) const noexcept;
     EngineActionPlayScratch* NativeBackingParentFor(const EngineActionPlayScratch& future) noexcept;
     OriginalPendingVariableGroupHolder* NativeBackingGroupFor(const EngineActionPlayScratch& child) noexcept;
@@ -5719,7 +5774,6 @@ public:
           ordinaryRetiringSources(resolved.maxPlayableInstances),
           ordinaryRetiringLeaves(resolved.maxPlayableInstances),
           playableMemberReferences(playableStorage.memberCount),
-          variableControlWeightSegments(playableStorage.weightCount),
           variableControlInitialContinuousArms(
               playableStorage.continuousCount),
           queueSelectionChildScratch(resolved.maxQueueChildren),
@@ -12826,7 +12880,6 @@ public:
         RefreshPlayableMemberOnset(slot);
     }
     std::vector<EnginePlayableMemberReference> playableMemberReferences;
-    std::vector<WeightSegmentV1> variableControlWeightSegments;
     std::vector<TimelineArmToken> variableControlInitialContinuousArms;
     StableRowStorage<EngineControlProgramRecord> variableControlRetargetPrograms;
     bool VariableControlRetargetProgramHasReaders(const EngineControlProgramRecord& record) const noexcept {

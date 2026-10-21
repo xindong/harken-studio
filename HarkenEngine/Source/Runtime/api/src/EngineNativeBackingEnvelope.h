@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <utility>
 
 namespace harken::native_backing {
 
@@ -79,6 +80,8 @@ struct QueueColumns {
 struct Profile {
     std::uint32_t current = 0;
     std::array<std::uint32_t, kLeafCapacity + 1u> H{};
+    std::array<std::uint32_t, kLeafCapacity + 1u> controllerWeights{};
+    std::uint32_t rootContinuousMembers = 0;
     std::uint32_t Q = 0;
     std::uint32_t controlSides = 0;
     VoiceColumns voice{};
@@ -224,8 +227,12 @@ inline Result Concurrent(Result a, const Result& b, const Limits& limits) noexce
         kControlSideCapacity, a.flags);
     a.profile.voice.Include(b.profile.voice);
     a.profile.queue.Include(b.profile.queue);
-    for (std::uint32_t t = 1; t <= kLeafCapacity; ++t)
+    a.profile.rootContinuousMembers = 0;
+    for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
         a.profile.H[t] = SaturatingAdd(a.profile.H[t], b.profile.H[t], limits.immediateFutureSides, a.flags);
+        a.profile.controllerWeights[t] = SaturatingAdd(a.profile.controllerWeights[t], b.profile.controllerWeights[t],
+            kControlSideCapacity, a.flags);
+    }
     return a;
 }
 
@@ -238,7 +245,11 @@ inline Result Alternative(Result a, const Result& b) noexcept {
     a.profile.controlSides = std::max(a.profile.controlSides, b.profile.controlSides);
     a.profile.voice.Include(b.profile.voice);
     a.profile.queue.Include(b.profile.queue);
-    for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) a.profile.H[t] = std::max(a.profile.H[t], b.profile.H[t]);
+    a.profile.rootContinuousMembers = 0;
+    for (std::uint32_t t = 1; t <= kLeafCapacity; ++t) {
+        a.profile.H[t] = std::max(a.profile.H[t], b.profile.H[t]);
+        a.profile.controllerWeights[t] = std::max(a.profile.controllerWeights[t], b.profile.controllerWeights[t]);
+    }
     return a;
 }
 
@@ -255,16 +266,22 @@ inline std::uint64_t ReservedRows(const Profile& profile) noexcept {
 }
 
 template<class Emit>
-bool EmitDescendingFutureCapacities(const Profile& profile, Emit&& emit) noexcept {
+bool EmitDescendingCapacities(const std::array<std::uint32_t, kLeafCapacity + 1u>& capacities,
+    Emit&& emit) noexcept {
     for (std::uint32_t t = 1; t < kLeafCapacity; ++t)
-        if (profile.H[t] < profile.H[t + 1u]) return false;
+        if (capacities[t] < capacities[t + 1u]) return false;
     std::uint32_t next = 0;
     for (std::uint32_t t = kLeafCapacity; t != 0; --t) {
-        const auto count = profile.H[t] - next;
+        const auto count = capacities[t] - next;
         for (std::uint32_t i = 0; i < count; ++i) if (!emit(t)) return false;
-        next = profile.H[t];
+        next = capacities[t];
     }
     return true;
+}
+
+template<class Emit>
+bool EmitDescendingFutureCapacities(const Profile& profile, Emit&& emit) noexcept {
+    return EmitDescendingCapacities(profile.H, std::forward<Emit>(emit));
 }
 
 enum class Mode : std::uint8_t { Audit, Frontier, StaticSchedule, DirectNested };
@@ -623,6 +640,10 @@ private:
             if (!continuous) return continuous;
         }
         auto result = Concurrent(discrete, continuous, limits_);
+        result.profile.rootContinuousMembers = continuous.profile.current;
+        for (std::uint32_t t = 1; t <= continuous.profile.current; ++t)
+            result.profile.controllerWeights[t] = SaturatingAdd(result.profile.controllerWeights[t], 1u,
+                kControlSideCapacity, result.flags);
         result.profile.controlSides = SaturatingAdd(result.profile.controlSides, 2u,
             kControlSideCapacity, result.flags);
         return result;

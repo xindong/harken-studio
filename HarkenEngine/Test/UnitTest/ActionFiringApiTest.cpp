@@ -18009,12 +18009,12 @@ TEST(ActionFiringApi,
         row->variableControlContinuousMemberOffset;
     ASSERT_LT(continuousSlot,
               engine->playableStorage.memberCount);
-    ASSERT_LT(continuousSlot,
-              engine->variableControlWeightSegments.size());
+    ASSERT_EQ(row->variableControlContinuousMemberCount, row->variableControlMemberWeights.size());
+    ASSERT_FALSE(row->variableControlMemberWeights.empty());
     EXPECT_EQ(CanonicalActionWorld::kSecondSound,
               engine->ReadPlayableMember(continuousSlot).leaf.stableId);
     const harken::WeightSegmentV1 preparedWeight =
-        engine->variableControlWeightSegments[continuousSlot];
+        row->variableControlMemberWeights[0];
     EXPECT_EQ(row->variableControlContinuousDecision.slot,
               preparedWeight.decision.slot);
     EXPECT_EQ(row->variableControlContinuousDecision.generation,
@@ -18357,10 +18357,10 @@ TEST(ActionFiringApi,
               engine->ReadPlayableMember(discreteSlot).leaf.stableId);
     EXPECT_EQ(CanonicalActionWorld::kSecondSound,
               engine->ReadPlayableMember(continuousSlot).leaf.stableId);
-    ASSERT_LT(continuousSlot,
-              engine->variableControlWeightSegments.size());
+    ASSERT_EQ(row->variableControlContinuousMemberCount, row->variableControlMemberWeights.size());
+    ASSERT_FALSE(row->variableControlMemberWeights.empty());
     const harken::WeightSegmentV1 preparedWeight =
-        engine->variableControlWeightSegments[continuousSlot];
+        row->variableControlMemberWeights[0];
     EXPECT_EQ(row->variableControlContinuousDecision.slot,
               preparedWeight.decision.slot);
     EXPECT_EQ(row->variableControlContinuousDecision.generation,
@@ -46962,10 +46962,8 @@ static void CheckPendingVariableSelectionShape(PendingVariableSelectionShape sha
                     const auto& weight = row->variableControlChildWeights[1];
                     EXPECT_EQ(image.variableControlChildren[1].stableChildOrdinal, weight.ordinal);
                     EXPECT_FLOAT_EQ(newRetarget ? 0.5f : 1.0f, weight.current.endWeight);
-                    const auto base = engine.playableStorage.WeightBase(row->partition.slot);
                     for (std::uint32_t leaf = 0; leaf < newLeafCount; ++leaf) {
-                        const auto& segment = engine.variableControlWeightSegments[base +
-                            row->variableControlContinuousMemberOffset + topIndex + leaf];
+                        const auto& segment = row->variableControlMemberWeights[topIndex + leaf];
                         EXPECT_EQ(weight.current.decision.slot, segment.decision.slot);
                         EXPECT_EQ(weight.current.decision.generation, segment.decision.generation);
                         EXPECT_EQ(weight.current.bank.slot, segment.bank.slot);
@@ -48990,15 +48988,24 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
         engine.nativeBackingAllocationFailureCountdownForTest};
 #endif
     struct PlacementInputProbe {
+        harken::Engine& engine;
         unsigned visits = 0;
         VnVariableId selector{};
         float expected = 3.0f;
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
         PendingQueueNativeBackingProbe* native = nullptr;
+        bool checkWeights = false;
+        bool weightsReserved = false;
+        std::uint64_t allocations = 0;
+        std::int32_t savedCountdown = engine.nativeBackingAllocationFailureCountdownForTest;
+        ~PlacementInputProbe() {
+            if (checkWeights) engine.nativeBackingAllocationFailureCountdownForTest = savedCountdown;
+        }
 #endif
-    } placementProbe{0, image.variables[3].variableId, finalSelector};
+    } placementProbe{engine, 0, image.variables[3].variableId, finalSelector};
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     if (nativeFutureProbe) placementProbe.native = &nativeProbe;
+    placementProbe.checkWeights = nestedPolicyShape == NestedReplacementPolicyShape::BothSides && !cancelPreparedNested;
 #endif
     if (nested || queue) {
         engine.pendingVariableGroupPlacementContextForTest = &placementProbe;
@@ -49021,6 +49028,16 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
             if (probe.native != nullptr)
                 ASSERT_NO_FATAL_FAILURE(probe.native->Placement(producer, attempt, placement));
+            if (probe.checkWeights && !probe.weightsReserved &&
+                group->leafRetirement == harken::Engine::OriginalPendingVariableGroupHolder::LeafRetirement::None) {
+                ASSERT_NO_FATAL_FAILURE(CheckNativeBackingReservationFailures(actual, producer, attempt, placement));
+                bool waiting = false;
+                ASSERT_TRUE(actual.EnsurePendingVariableNativeBacking(producer, attempt, &waiting));
+                ASSERT_FALSE(waiting);
+                probe.weightsReserved = true;
+                probe.allocations = actual.nativeBackingAllocationCountForTest;
+                actual.nativeBackingAllocationFailureCountdownForTest = 0;
+            }
 #endif
         };
     }
@@ -49837,6 +49854,13 @@ static void CheckOrderedVariableSubtreeFirstPcm(OrderedVariableSubtreeCase shape
         }
         if (info.state == VN_ACTION_FIRING_TERMINAL_RETAINED) break;
     }
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+    if (placementProbe.checkWeights) {
+        EXPECT_TRUE(placementProbe.weightsReserved);
+        EXPECT_EQ(placementProbe.allocations, engine.nativeBackingAllocationCountForTest);
+        engine.nativeBackingAllocationFailureCountdownForTest = placementProbe.savedCountdown;
+    }
+#endif
     const bool cancelled = cancel || cancelPreparedNested || transitionExit != OrderedQueueTransitionExit::None;
     EXPECT_EQ(cancelled ? 0u : finalPlacement ? (finalSubtree ? first.size() : 0u) :
         nested || queue || sibling ? first.size() : 0u, frames[0]);
