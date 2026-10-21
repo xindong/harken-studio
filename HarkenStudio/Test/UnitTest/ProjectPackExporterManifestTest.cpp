@@ -1134,7 +1134,8 @@ TEST(EditorProjectPackExporterManifest, OptionalWaveformsFollowPublicationLifecy
     ASSERT_NO_FATAL_FAILURE(buildProject(project, dir.path(), sourceId, otherId,
         {{QStringLiteral("Parent"), 21, kSharedSoundObjectId},
          {QStringLiteral("Child"), 22, kSoloSoundObjectId}}));
-    auto& source = project.layers.front().rootItem->children.at(1)->comp<VNX::VSound>()->sources.plain.entries.front();
+    const auto& trimmedSound = project.layers.front().rootItem->children.at(1);
+    auto& source = trimmedSound->comp<VNX::VSound>()->sources.plain.entries.front();
     source.sourceId = sourceId;
     source.trimStartFrame = 8;
     source.trimEndFrame = 48;
@@ -1171,7 +1172,7 @@ TEST(EditorProjectPackExporterManifest, OptionalWaveformsFollowPublicationLifecy
     for (const auto& value : parentWaves) {
         const auto row = value.toObject();
         files.insert(row.value(QStringLiteral("file")).toString());
-        if (QUuid(row.value(QStringLiteral("sourceEntryGuid")).toString()) == source.entryId) {
+        if (QUuid(row.value(QStringLiteral("soundGuid")).toString()) == trimmedSound->guid) {
             EXPECT_EQ(row.value(QStringLiteral("trimStartFrame")).toInteger(), 8);
             EXPECT_EQ(row.value(QStringLiteral("trimEndFrame")).toInteger(), 48);
             EXPECT_EQ(row, childWaves.first().toObject());
@@ -4158,6 +4159,7 @@ void verifyPartialPublication(const QString& directory, void (*verifyActivation)
     std::vector<VNX::ProjectPackExporter::PackBuildRecord> initialRecords;
     const auto initial = exporter.ExportAllPacks(project, live.path(), opts, &initialRecords);
     ASSERT_TRUE(initial.success) << initial.error.toStdString();
+    ASSERT_NO_FATAL_FAILURE(verifyActivation(live.path()));
     const auto old = readPublication(live.path());
     QSet<QString> initialKeys;
     QSet<QString> selectedKeys;

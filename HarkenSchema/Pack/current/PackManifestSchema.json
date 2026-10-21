@@ -30,9 +30,6 @@
         "soundGuid": {
           "$ref": "#/$defs/guid"
         },
-        "sourceEntryGuid": {
-          "$ref": "#/$defs/guid"
-        },
         "file": {
           "type": "string",
           "minLength": 1,
@@ -51,7 +48,6 @@
       },
       "required": [
         "soundGuid",
-        "sourceEntryGuid",
         "file",
         "trimStartFrame",
         "trimEndFrame"
