@@ -588,7 +588,8 @@ BindingTable::BindingTable(std::uint32_t maxDefinitions,
 }
 
 BindingTable::BindingTable(const BindingTable& other)
-    : m_dependencies(other.m_dependencies), m_renderBindingCapacity(other.m_renderBindingCapacity),
+    : m_voiceCatalogContext(nullptr), m_prepareVoiceCatalog(nullptr),
+      m_dependencies(other.m_dependencies), m_renderBindingCapacity(other.m_renderBindingCapacity),
       m_definitions(other.m_definitions), m_attachments(other.m_attachments),
       m_projectionAttachments(other.m_projectionAttachments), m_projectionActive(other.m_projectionActive),
       m_voiceEffectInstances(other.m_voiceEffectInstances),
@@ -645,7 +646,9 @@ BindingDependencyIdentity BindingTable::ReadEffectDependency(const void* fact, B
 }
 
 bool BindingTable::PrepareAttachmentDependency(std::uint32_t slot, std::uint32_t scope) noexcept {
-    return scope == kTargetScopeVoice || m_dependencies.PrepareBinding(m_renderBindingCapacity + slot);
+    if (scope == kTargetScopeVoice)
+        return m_prepareVoiceCatalog == nullptr || m_prepareVoiceCatalog(m_voiceCatalogContext);
+    return m_dependencies.PrepareBinding(m_renderBindingCapacity + slot);
 }
 
 void BindingTable::RegisterAttachmentDependency(Attachment& row) noexcept {

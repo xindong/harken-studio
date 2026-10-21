@@ -338,6 +338,10 @@ public:
                  std::uint32_t maxBuses, std::uint32_t renderBindingCapacity = 0,
                  std::uint32_t targetCapacity = 0);
     BindingTable(const BindingTable& other);
+    void AttachVoiceCatalogStorage(void* context, bool (*prepare)(void*) noexcept) noexcept {
+        m_voiceCatalogContext = context;
+        m_prepareVoiceCatalog = prepare;
+    }
     BindingDependencyIndex& Dependencies() noexcept { return m_dependencies; }
     const BindingDependencyIndex& Dependencies() const noexcept { return m_dependencies; }
 
@@ -1007,6 +1011,8 @@ private:
     void RegisterEffectDependency(VoiceEffectInstance& instance) noexcept;
     void RemoveEffectDependency(VoiceEffectInstance& instance) noexcept;
     bool RefreshEffectDependencyEmitter(VoiceEffectInstance& instance, VnEmitterHandle emitter) noexcept;
+    void* m_voiceCatalogContext = nullptr;
+    bool (*m_prepareVoiceCatalog)(void*) noexcept = nullptr;
     BindingDependencyIndex m_dependencies;
     std::uint32_t m_renderBindingCapacity = 0;
     Definition* FindMutable(BindingId id);

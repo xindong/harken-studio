@@ -415,7 +415,7 @@ struct ImmediateLaneAttempt {
     bool conditionalProjectionCancelled = false;
     bool conditionalProjectionReferencesReturned = false;
     std::array<Plan03GroupSliceIdentity, 2> conditionalProjectionGroups{};
-    std::atomic<std::uint64_t> conditionalProjectionAdmission{0};
+    mutable std::atomic<std::uint64_t> conditionalProjectionAdmission{0};
     std::atomic<std::uint64_t> conditionalProjectionLastUse{0};
     bool capturedConditionalProjection = false;
     OriginalConditionalReplacementBatch* conditionalReplacement = nullptr;
@@ -520,7 +520,9 @@ public:
     std::size_t PrivateEntryCommittedBytes() const noexcept { return privateEntries_.CommittedBytes(); }
     std::size_t PrivateEntryReservedBytes() const noexcept { return privateEntries_.ReservedBytes(); }
     std::size_t PlacementScratchStorageBytes() const noexcept {
-        return static_cast<std::size_t>(config_.eventsPerAttempt) * 2u * sizeof(std::uint32_t);
+        return static_cast<std::size_t>(config_.eventsPerAttempt) * sizeof(std::uint32_t) *
+            (static_cast<std::size_t>(eventPlacementOrder_ != nullptr) +
+             static_cast<std::size_t>(groupPlacementOrder_ != nullptr));
     }
     std::size_t EventStorageBytes() const noexcept { return eventStorageBytes_; }
     std::size_t MemberStorageBytes() const noexcept { return memberStorageBytes_; }
@@ -534,19 +536,19 @@ public:
         return eventStorage_.DirectoryBytes() + memberStorage_.DirectoryBytes();
     }
     std::size_t MetadataStorageBytes() const noexcept {
-        return groups_.RequestedBytes() + declaredGroups_.RequestedBytes() +
+        return attempts_.RequestedBytes() + groups_.RequestedBytes() + declaredGroups_.RequestedBytes() +
             groupPins_.RequestedBytes() + sourceWaitEntries_.RequestedBytes() + waitingScratchBytes_ +
             eventState_.RequestedBytes() + groupState_.RequestedBytes() + memberState_.RequestedBytes() + buckets_.RequestedBytes() +
             privateBucketStorageBytes_;
     }
     std::size_t MetadataCommittedBytes() const noexcept {
-        return groups_.CommittedBytes() + declaredGroups_.CommittedBytes() +
+        return attempts_.CommittedBytes() + groups_.CommittedBytes() + declaredGroups_.CommittedBytes() +
             groupPins_.CommittedBytes() + sourceWaitEntries_.CommittedBytes() + waitingScratchStorage_.CommittedBytes() +
             eventState_.CommittedBytes() + groupState_.CommittedBytes() + memberState_.CommittedBytes() + buckets_.CommittedBytes() +
             privateBucketStorage_.CommittedBytes();
     }
     std::size_t MetadataReservedBytes() const noexcept {
-        return groups_.ReservedBytes() + declaredGroups_.ReservedBytes() +
+        return attempts_.ReservedBytes() + groups_.ReservedBytes() + declaredGroups_.ReservedBytes() +
             groupPins_.ReservedBytes() + sourceWaitEntries_.ReservedBytes() + waitingScratchStorage_.ReservedBytes() +
             eventState_.ReservedBytes() + groupState_.ReservedBytes() + memberState_.ReservedBytes() + buckets_.ReservedBytes() +
             privateBucketStorage_.ReservedBytes();
@@ -560,6 +562,9 @@ public:
     std::span<FrontierEntryReceiptRef> CapturedSourceWaitScratch(std::uint32_t slot,
         const ImmediateLaneBucket* bucket) noexcept;
 #if !defined(HARKEN_RT_QUALIFICATION)
+    void SetAttemptCommitPageLimitForTests(std::size_t pages) noexcept {
+        attempts_.SetCommitPageLimitForTests(pages);
+    }
     void SetMetadataCommitPageLimitsForTests(std::size_t groupPages,
         std::size_t sourceWaitPages) noexcept {
         groups_.SetCommitPageLimitForTests(groupPages);
@@ -1058,6 +1063,7 @@ private:
     }
     bool PrepareAttemptStorage(std::uint32_t slot, ImmediateLaneDemand demand) noexcept;
     mutable EventStorageRegistration* eventStorageConsumers_ = nullptr;
+    bool PrepareAttemptIdentityStorage() noexcept;
     bool EnsureAttemptBacking(std::uint64_t count,
         std::uint32_t excluded = UINT32_MAX) noexcept;
     ImmediateLaneGroupRef* GroupBase(std::uint32_t slot) noexcept;
@@ -1074,7 +1080,7 @@ private:
     void ReturnOriginalAttempt(OriginalImmediateLaneAttemptLifetimePin& original) noexcept;
     std::uint64_t nextOriginalLifetimeMarker_ = 0;
     Config config_{};
-    std::unique_ptr<ImmediateLaneAttempt[]> attempts_;
+    StableRowStorage<ImmediateLaneAttempt> attempts_;
     detail::StablePageReservation eventStorage_;
     detail::StablePageReservation memberStorage_;
     detail::StablePageReservation waitingScratchStorage_;

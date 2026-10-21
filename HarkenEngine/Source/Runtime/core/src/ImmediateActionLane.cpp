@@ -444,11 +444,9 @@ bool ImmediateActionLane::CapturePrivatePlacedEvent(const PrivateImmediateLanePl
 ImmediateActionLane::~ImmediateActionLane() {
     while (eventStorageConsumers_ != nullptr) eventStorageConsumers_->Detach();
     assert(payloadGrowth_.heldRows == 0 && payloadGrowth_.preparedUsers == 0);
-    if (attempts_ != nullptr)
-        for (std::uint32_t i = 0; i < config_.attempts; ++i)
-            assert(attempts_[i].originalLifetimePins == 0);
-    if (attempts_ == nullptr) return;
-    for (std::uint32_t i = 0; i < config_.attempts; ++i) {
+    for (std::uint32_t i = 0; i < attempts_.size(); ++i)
+        assert(attempts_[i].originalLifetimePins == 0);
+    for (std::uint32_t i = 0; i < attempts_.size(); ++i) {
         // Return the exact unpublished short proof before destroying storage.
         if (attempts_[i].privatePublicationProof != nullptr)
             attempts_[i].privatePublicationProof->Release();
@@ -706,12 +704,11 @@ bool ImmediateActionLane::Reset(Config config) {
     static_assert(std::is_nothrow_default_constructible_v<ImmediateLaneMemberManifest>);
     if (memguard::IsAudioTagged() || privateEntries_.HasPreparedBacking() ||
         payloadGrowth_.heldRows != 0 || payloadGrowth_.preparedUsers != 0) return false;
-    if (attempts_ != nullptr)
-        for (std::uint32_t i = 0; i < config_.attempts; ++i)
-            if (attempts_[i].privateLayoutEdit != nullptr ||
-                attempts_[i].privatePlacementProof != nullptr ||
-                attempts_[i].privatePublicationProof != nullptr ||
-                attempts_[i].originalLifetimePins != 0) return false;
+    for (std::uint32_t i = 0; i < attempts_.size(); ++i)
+        if (attempts_[i].privateLayoutEdit != nullptr ||
+            attempts_[i].privatePlacementProof != nullptr ||
+            attempts_[i].privatePublicationProof != nullptr ||
+            attempts_[i].originalLifetimePins != 0) return false;
     while (eventStorageConsumers_ != nullptr) eventStorageConsumers_->Detach();
     groupPool_ = nullptr;
     valid_ = false;
@@ -741,7 +738,8 @@ bool ImmediateActionLane::Reset(Config config) {
     waitingScratchStorage_.Swap(oldWaitingScratch);
     eventStorageBytes_ = memberStorageBytes_ = waitingScratchBytes_ = 0;
     waitingScratch_ = nullptr;
-    attempts_.reset();
+    StableRowStorage<ImmediateLaneAttempt> oldAttempts;
+    attempts_.Swap(oldAttempts);
     events_ = nullptr;
     eventPlacementOrder_.reset();
     groupPlacementOrder_.reset();
@@ -783,18 +781,7 @@ bool ImmediateActionLane::Reset(Config config) {
     waitingScratch_ = static_cast<FrontierEntryReceiptRef*>(waitingScratchStorage_.Address());
     events_ = static_cast<ImmediateLaneEvent*>(eventStorage_.Address());
     members_ = static_cast<ImmediateLaneMemberManifest*>(memberStorage_.Address());
-    try {
-        attempts_ = std::make_unique<ImmediateLaneAttempt[]>(config.attempts);
-        eventPlacementOrder_ = std::make_unique<std::uint32_t[]>(config.eventsPerAttempt);
-        groupPlacementOrder_ = std::make_unique<std::uint32_t[]>(config.eventsPerAttempt);
-    } catch (const std::bad_alloc&) {
-        attempts_.reset();
-        events_ = nullptr;
-        eventPlacementOrder_.reset();
-        groupPlacementOrder_.reset();
-        members_ = nullptr;
-        return false;
-    }
+    if (!attempts_.Reserve(config.attempts)) return false;
     privateEntries_.Swap(privateEntries);
     config_ = config;
     valid_ = true;
@@ -823,9 +810,8 @@ void ImmediateActionLane::EventStorageRegistration::Detach() noexcept {
 
 std::uint32_t ImmediateActionLane::EventStorageHighWater() const noexcept {
     std::uint32_t count = 0;
-    if (attempts_ != nullptr)
-        for (std::uint32_t slot = 0; slot < config_.attempts; ++slot)
-            count = std::max(count, attempts_[slot].eventStorageCount);
+    for (std::uint32_t slot = 0; slot < attempts_.size(); ++slot)
+        count = std::max(count, attempts_[slot].eventStorageCount);
     return count;
 }
 
@@ -916,19 +902,34 @@ bool ImmediateActionLane::PrepareAttemptStorage(std::uint32_t slot,
     return true;
 }
 
+bool ImmediateActionLane::PrepareAttemptIdentityStorage() noexcept {
+    if (attempts_.size() == attempts_.Capacity()) return true;
+    if (memguard::IsAudioTagged() || payloadGrowth_.preparedUsers != 0) return false;
+    try {
+        if (eventPlacementOrder_ == nullptr)
+            eventPlacementOrder_ = std::make_unique<std::uint32_t[]>(config_.eventsPerAttempt);
+        if (groupPlacementOrder_ == nullptr)
+            groupPlacementOrder_ = std::make_unique<std::uint32_t[]>(config_.eventsPerAttempt);
+    } catch (const std::bad_alloc&) {
+        return false;
+    }
+    return attempts_.ConstructThrough(attempts_.Capacity());
+}
+
 bool ImmediateActionLane::EnsureAttemptBacking(std::uint64_t count,
     std::uint32_t excluded) noexcept {
     if (count == 0) return true;
+    if (!PrepareAttemptIdentityStorage()) return false;
     std::uint32_t available = 0;
     const auto free = [&](std::uint32_t slot) noexcept {
         return slot != excluded && attempts_[slot].generation != UINT32_MAX &&
             attempts_[slot].state.load(std::memory_order_acquire) == ImmediateLaneAttemptState::Free;
     };
-    for (std::uint32_t slot = 0; slot < config_.attempts; ++slot)
+    for (std::uint32_t slot = 0; slot < attempts_.size(); ++slot)
         if (free(slot)) ++available;
     // A hold exceeding current free identities must also survive later retirements.
     const bool all = count > available;
-    for (std::uint32_t slot = 0; slot < config_.attempts && (all || count != 0); ++slot) {
+    for (std::uint32_t slot = 0; slot < attempts_.size() && (all || count != 0); ++slot) {
         if (!all && !free(slot)) continue;
         if (!PrepareAttemptStorage(slot, {config_.eventsPerAttempt, config_.eventsPerAttempt,
                 config_.eventsPerAttempt, config_.eventsPerAttempt})) return false;
@@ -972,7 +973,7 @@ void ImmediateActionLane::ReleasePrivateEntries(std::uint32_t slot) noexcept {
 
 ImmediateLaneAttempt* ImmediateActionLane::Resolve(
     ImmediateLaneHandle handle) noexcept {
-    if (!valid_ || !handle.Valid() || handle.slot >= config_.attempts)
+    if (!valid_ || !handle.Valid() || handle.slot >= attempts_.size())
         return nullptr;
     auto& attempt = attempts_[handle.slot];
     return attempt.generation == handle.generation ? &attempt : nullptr;
@@ -1048,7 +1049,8 @@ bool ImmediateActionLane::Reserve(std::uint64_t root,
         demand.buckets == 0 ||
         demand.buckets > config_.eventsPerAttempt)
         return false;
-    for (std::uint32_t slot = 0; slot < config_.attempts; ++slot) {
+    if (!PrepareAttemptIdentityStorage()) return false;
+    for (std::uint32_t slot = 0; slot < attempts_.size(); ++slot) {
         auto& attempt = attempts_[slot];
         // A producer seeking a free slot must never contend with the audio
         // reader of an unrelated committed attempt. CaptureDue has one chance
@@ -1140,7 +1142,7 @@ bool ImmediateActionLane::Reserve(std::uint64_t root,
 
 bool ImmediateActionLane::HasDue(std::uint64_t quantum) const noexcept {
     if (!valid_) return false;
-    for (std::uint32_t slot = 0; slot < config_.attempts; ++slot) {
+    for (std::uint32_t slot = 0; slot < attempts_.size(); ++slot) {
         const auto& attempt = attempts_[slot];
         AttemptReadAccess access(attempt);
         if (!access) continue;
@@ -1617,7 +1619,7 @@ bool ImmediateActionLane::HasProgramReferenceImpl(ProgramGeneration generation,
         return reference.programGeneration == generation &&
             (program == nullptr || reference.program == program);
     };
-    for (std::uint32_t slot = 0; slot < config_.attempts; ++slot) {
+    for (std::uint32_t slot = 0; slot < attempts_.size(); ++slot) {
         const auto& attempt = attempts_[slot];
         const auto state = attempt.state.load(std::memory_order_acquire);
         if (state == ImmediateLaneAttemptState::PrivateLayoutHeld) {
@@ -2698,13 +2700,13 @@ void ImmediateActionLane::EndPrivateEntryAdmission(std::uint32_t slot,
 
 bool ImmediateActionLane::HasRegisteredEntries(std::uint32_t slot,
     std::uint32_t generation) const noexcept {
-    return valid_ && slot < config_.attempts && generation != 0 &&
+    return valid_ && slot < attempts_.size() && generation != 0 &&
         attempts_[slot].generation == generation && attempts_[slot].privateEntryCount != 0;
 }
 
 bool ImmediateActionLane::CapturedEntryProjectionValid(std::uint32_t slot,
     const ImmediateLaneBucket* bucket) const noexcept {
-    if (!valid_ || slot >= config_.attempts || bucket == nullptr) return false;
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr) return false;
     const auto& attempt = attempts_[slot];
     if (!attempt.captureActive.load(std::memory_order_acquire) ||
         attempt.capturedBucketOrdinal >= attempt.bucketCount ||
@@ -2763,7 +2765,7 @@ void ImmediateActionLane::EndEventAdmission(std::uint32_t slot,
 
 bool ImmediateActionLane::IsEventAdmitted(std::uint32_t slot,
     const ImmediateLaneBucket* bucket, std::uint32_t globalIndex) const noexcept {
-    if (!valid_ || slot >= config_.attempts || bucket == nullptr) return false;
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr) return false;
     const auto& attempt = attempts_[slot];
     if (!attempt.captureActive.load(std::memory_order_acquire) ||
         attempt.capturedBucketOrdinal >= attempt.bucketCount ||
@@ -2788,7 +2790,7 @@ bool ImmediateActionLane::IsEventAdmitted(std::uint32_t slot,
 
 bool ImmediateActionLane::IsGroupAdmitted(std::uint32_t slot,
     const ImmediateLaneBucket* bucket, std::uint32_t globalIndex) const noexcept {
-    if (!valid_ || slot >= config_.attempts || bucket == nullptr) return false;
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr) return false;
     const auto& attempt = attempts_[slot];
     if (!attempt.captureActive.load(std::memory_order_acquire) ||
         attempt.capturedBucketOrdinal >= attempt.bucketCount ||
@@ -3841,7 +3843,7 @@ bool ImmediateActionLane::CandidateFits(std::uint32_t slot,
                     occupiedEvents = std::max(occupiedEvents,
                         static_cast<std::uint64_t>(edit.originalBuckets_[i].eventCount));
         }
-        for (std::uint32_t other = 0; other < config_.attempts; ++other) {
+        for (std::uint32_t other = 0; other < attempts_.size(); ++other) {
             if (other == slot) continue;
             const auto& live = attempts_[other];
             const auto state = live.state.load(std::memory_order_acquire);
@@ -4213,7 +4215,7 @@ bool ImmediateActionLane::Cancel(ImmediateLaneHandle handle) noexcept {
 
 const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
     std::uint32_t slot, std::uint64_t quantum) noexcept {
-    if (!valid_ || slot >= config_.attempts || quantum == UINT64_MAX) return nullptr;
+    if (!valid_ || slot >= attempts_.size() || quantum == UINT64_MAX) return nullptr;
     auto& attempt = attempts_[slot];
     if (attempt.state.load(std::memory_order_acquire) == ImmediateLaneAttemptState::Free)
         return nullptr;
@@ -4293,7 +4295,7 @@ const ImmediateLaneBucket* ImmediateActionLane::CaptureDue(
 
 bool ImmediateActionLane::CapturedSourceWaitQuantum(std::uint32_t slot,
     const ImmediateLaneBucket* bucket, std::uint64_t* outQuantum) const noexcept {
-    if (!valid_ || slot >= config_.attempts || bucket == nullptr || outQuantum == nullptr) return false;
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr || outQuantum == nullptr) return false;
     const auto& attempt = attempts_[slot];
     if (!attempt.captureActive.load(std::memory_order_acquire) ||
         attempt.capturedBucketOrdinal >= attempt.bucketCount ||
@@ -4307,7 +4309,7 @@ bool ImmediateActionLane::CapturedSourceWaitQuantum(std::uint32_t slot,
 
 std::span<FrontierEntryReceiptRef> ImmediateActionLane::CapturedSourceWaitScratch(
     std::uint32_t slot, const ImmediateLaneBucket* bucket) noexcept {
-    if (!valid_ || slot >= config_.attempts || bucket == nullptr) return {};
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr) return {};
     const auto& attempt = attempts_[slot];
     if (!attempt.captureActive.load(std::memory_order_acquire) ||
         attempt.capturedBucketOrdinal >= attempt.bucketCount ||
@@ -4321,7 +4323,7 @@ std::span<FrontierEntryReceiptRef> ImmediateActionLane::CapturedSourceWaitScratc
 bool ImmediateActionLane::SuspendCaptureForSourceWait(std::uint32_t slot,
     const ImmediateLaneBucket* bucket, const FrontierEntryReceiptRef* waitingEntries,
     std::uint32_t waitingEntryCount) noexcept {
-    if (!valid_ || slot >= config_.attempts || bucket == nullptr ||
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr ||
         waitingEntryCount > config_.eventsPerAttempt ||
         (waitingEntryCount != 0 && waitingEntries == nullptr)) return false;
     auto& attempt = attempts_[slot];
@@ -4445,7 +4447,7 @@ bool ImmediateActionLane::ClaimImpl(ImmediateLaneHandle handle,
     const ImmediateLaneBucket* bucket, ImmediateLaneBucketClaimReceipt* receipt,
     bool releaseOnRefusal) noexcept {
     if (receipt != nullptr) *receipt = {};
-    if (!valid_ || !handle.Valid() || handle.slot >= config_.attempts ||
+    if (!valid_ || !handle.Valid() || handle.slot >= attempts_.size() ||
         bucket == nullptr)
         return false;
     auto& attempt = attempts_[handle.slot];
@@ -4475,7 +4477,7 @@ bool ImmediateActionLane::ValidateClaimReceipt(
     const ImmediateLaneBucketClaimReceipt& receipt,
     const ImmediateLaneBucket* bucket) const noexcept {
     if (!valid_ || !receipt.Valid() || bucket == nullptr ||
-        receipt.Slot() >= config_.attempts) return false;
+        receipt.Slot() >= attempts_.size()) return false;
     const auto& attempt = attempts_[receipt.Slot()];
     return attempt.generation == receipt.Generation() &&
         attempt.captureActive.load(std::memory_order_acquire) &&
@@ -4495,7 +4497,7 @@ bool ImmediateActionLane::ValidateGroupClaimReceipt(
     std::uint32_t bucketOrdinal,
     std::uint32_t groupIndex) const noexcept {
     if (!valid_ || !receipt.Valid() || !group.Exact() ||
-        receipt.Slot() >= config_.attempts ||
+        receipt.Slot() >= attempts_.size() ||
         receipt.BucketOrdinal() != bucketOrdinal) return false;
     const auto& attempt = attempts_[receipt.Slot()];
     if (!attempt.groupPinsInstalled ||
@@ -4520,7 +4522,7 @@ bool ImmediateActionLane::CapturePublishedGroupDescriptor(
     ImmediateLaneHandle handle, std::uint32_t groupIndex,
     ImmediateLaneGroupRef* out) const noexcept {
     if (!valid_ || out == nullptr || !handle.Valid() ||
-        handle.slot >= config_.attempts) return false;
+        handle.slot >= attempts_.size()) return false;
     const auto& attempt = attempts_[handle.slot];
     if (attempt.generation != handle.generation ||
         attempt.state.load(std::memory_order_acquire) !=
@@ -4548,7 +4550,7 @@ bool ImmediateActionLane::CapturePublishedGroupDescriptor(
 bool ImmediateActionLane::CapturePublishedGroupCount(
     ImmediateLaneHandle handle, std::uint32_t* out) const noexcept {
     if (!valid_ || out == nullptr || !handle.Valid() ||
-        handle.slot >= config_.attempts) return false;
+        handle.slot >= attempts_.size()) return false;
     const auto& attempt = attempts_[handle.slot];
     if (attempt.generation != handle.generation ||
         attempt.state.load(std::memory_order_acquire) !=
@@ -4785,7 +4787,7 @@ bool ImmediateActionLane::ProvePrivateGroupPlacement(
 
 bool ImmediateActionLane::FinishDiscardedPlainWithdrawals(std::uint32_t slot,
     const ImmediateLaneBucket* bucket) noexcept {
-    if (!valid_ || slot >= config_.attempts || bucket == nullptr) return false;
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr) return false;
     auto& attempt = attempts_[slot];
     if (!attempt.captureActive.load(std::memory_order_acquire) || !attempt.pinsInstalled ||
         attempt.state.load(std::memory_order_acquire) != ImmediateLaneAttemptState::Committed ||
@@ -4813,7 +4815,7 @@ bool ImmediateActionLane::FinishDiscardedPlainWithdrawals(std::uint32_t slot,
 
 bool ImmediateActionLane::ReleaseCapture(std::uint32_t slot,
     const ImmediateLaneBucket* bucket) noexcept {
-    if (!valid_ || slot >= config_.attempts || bucket == nullptr) return false;
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr) return false;
     auto& attempt = attempts_[slot];
     if (!attempt.captureActive.load(std::memory_order_relaxed)) return false;
     if (attempt.capturedBucketOrdinal >= attempt.bucketCount ||
@@ -4864,7 +4866,7 @@ bool ImmediateActionLane::ReleaseCapture(std::uint32_t slot,
 bool ImmediateActionLane::RecordAdmissionFailure(
     std::uint32_t slot, const ImmediateLaneBucket* bucket,
     ImmediateLaneAdmissionFailure failure) noexcept {
-    if (!valid_ || slot >= config_.attempts || bucket == nullptr ||
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr ||
         failure != ImmediateLaneAdmissionFailure::ArenaCapacity) return false;
     auto& attempt = attempts_[slot];
     if (!attempt.captureActive.load(std::memory_order_acquire) ||
@@ -4882,7 +4884,7 @@ bool ImmediateActionLane::RecordAdmissionFailure(
 
 bool ImmediateActionLane::RejectCapturedBucket(
     ImmediateLaneHandle handle, const ImmediateLaneBucket* bucket) noexcept {
-    if (!valid_ || !handle.Valid() || handle.slot >= config_.attempts ||
+    if (!valid_ || !handle.Valid() || handle.slot >= attempts_.size() ||
         bucket == nullptr) return false;
     auto& attempt = attempts_[handle.slot];
     if (attempt.generation != handle.generation ||
@@ -4923,7 +4925,7 @@ bool ImmediateActionLane::Finish(std::uint32_t slot,
 
 bool ImmediateActionLane::ClaimCancelledOnly(ImmediateLaneHandle handle,
     const ImmediateLaneBucket* bucket) noexcept {
-    return valid_ && handle.Valid() && handle.slot < config_.attempts &&
+    return valid_ && handle.Valid() && handle.slot < attempts_.size() &&
         attempts_[handle.slot].generation == handle.generation &&
         AllCapturedEntriesWithdrawing(handle.slot, bucket) && Claim(handle, bucket);
 }
@@ -4936,7 +4938,7 @@ bool ImmediateActionLane::FinishCancelledOnly(std::uint32_t slot,
 
 bool ImmediateActionLane::FinishBucket(std::uint32_t slot,
     const ImmediateLaneBucket* bucket, ImmediateLaneBucketState terminal) noexcept {
-    if (!valid_ || slot >= config_.attempts || bucket == nullptr)
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr)
         return false;
     auto& attempt = attempts_[slot];
     if (!attempt.captureActive.load(std::memory_order_relaxed)) return false;
@@ -4982,7 +4984,7 @@ bool ImmediateActionLane::FinishBucket(std::uint32_t slot,
 const TimelineArmReaderPin* ImmediateActionLane::CapturedArmReader(
     ImmediateLaneHandle handle, const ImmediateLaneBucket* bucket,
     std::uint32_t eventIndex) const noexcept {
-    if (!valid_ || !handle.Valid() || handle.slot >= config_.attempts || bucket == nullptr)
+    if (!valid_ || !handle.Valid() || handle.slot >= attempts_.size() || bucket == nullptr)
         return nullptr;
     const auto& attempt = attempts_[handle.slot];
     const auto ordinal = attempt.nextBucket.load(std::memory_order_acquire);
@@ -5001,7 +5003,7 @@ const TimelineArmReaderPin* ImmediateActionLane::CapturedArmReader(
 const AuthoredStopFenceDescriptor* ImmediateActionLane::CapturedNoneFence(
     ImmediateLaneHandle handle, const ImmediateLaneBucket* bucket,
     std::uint32_t eventIndex) const noexcept {
-    if (!valid_ || !handle.Valid() || handle.slot >= config_.attempts || bucket == nullptr)
+    if (!valid_ || !handle.Valid() || handle.slot >= attempts_.size() || bucket == nullptr)
         return nullptr;
     if (!IsEventAdmitted(handle.slot, bucket, eventIndex)) return nullptr;
     const auto& attempt = attempts_[handle.slot];
@@ -5022,7 +5024,7 @@ const AuthoredStopFenceDescriptor* ImmediateActionLane::CapturedNoneFence(
 
 const ImmediateLaneEvent* ImmediateActionLane::Events(
     std::uint32_t slot, const ImmediateLaneBucket* bucket) const noexcept {
-    if (!valid_ || slot >= config_.attempts || bucket == nullptr)
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr)
         return nullptr;
     const auto* base = BucketBase(slot);
     const auto& attempt = attempts_[slot];
@@ -5035,7 +5037,7 @@ const ImmediateLaneEvent* ImmediateActionLane::Events(
 
 const ImmediateLaneGroupRef* ImmediateActionLane::Groups(
     std::uint32_t slot, const ImmediateLaneBucket* bucket) const noexcept {
-    if (!valid_ || slot >= config_.attempts || bucket == nullptr)
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr)
         return nullptr;
     const auto* base = BucketBase(slot);
     const auto& attempt = attempts_[slot];
@@ -5051,7 +5053,7 @@ bool ImmediateActionLane::FutureMember(std::uint32_t slot,
     const Plan03GroupSliceIdentity& group, std::uint16_t memberIndex,
     TimelineArmToken arm, const ImmediateLaneEvent** event,
     std::uint16_t* eventSpanCount) const noexcept {
-    if (!valid_ || slot >= config_.attempts || event == nullptr ||
+    if (!valid_ || slot >= attempts_.size() || event == nullptr ||
         attemptGeneration == 0 ||
         attempts_[slot].generation != attemptGeneration ||
         attempts_[slot].state.load(std::memory_order_acquire) !=
@@ -5207,7 +5209,7 @@ bool ImmediateActionLane::CaptureFrozenFutureTarget(
 
 bool ImmediateActionLane::EntryApplied(std::uint32_t slot,
     std::uint32_t attemptGeneration) const noexcept {
-    if (!valid_ || slot >= config_.attempts ||
+    if (!valid_ || slot >= attempts_.size() ||
         attemptGeneration == 0 ||
         attempts_[slot].generation != attemptGeneration ||
         attempts_[slot].state.load(std::memory_order_acquire) !=
@@ -5411,7 +5413,7 @@ void ImmediateActionLane::EndConditionalProjection(std::uint32_t slot) noexcept 
 
 bool ImmediateActionLane::BeforeConditionalProjectionNativeWrite(
     ImmediateLaneHandle handle, const Plan03GroupSliceIdentity& group) const noexcept {
-    if (!valid_ || !handle.Valid() || handle.slot >= config_.attempts) return false;
+    if (!valid_ || !handle.Valid() || handle.slot >= attempts_.size()) return false;
     auto& row = attempts_[handle.slot];
     if (row.generation != handle.generation) return false;
     if (!row.conditionalProjectionIssued ||
@@ -5425,7 +5427,7 @@ bool ImmediateActionLane::BeforeConditionalProjectionNativeWrite(
 
 bool ImmediateActionLane::FinishDiscardedConditionalWithdrawal(std::uint32_t slot,
     const ImmediateLaneBucket* bucket) noexcept {
-    if (!valid_ || slot >= config_.attempts || bucket == nullptr) return false;
+    if (!valid_ || slot >= attempts_.size() || bucket == nullptr) return false;
     auto& row = attempts_[slot];
     if (!row.captureActive.load(std::memory_order_acquire) ||
         row.capturedBucketOrdinal >= row.bucketCount ||
@@ -6005,7 +6007,7 @@ bool OriginalImmediateLaneConditionalProjection::CapturedWithdrawalExcludesPair(
     const ImmediateLaneBucket* bucket, const ScheduledTransactionPool& pool,
     const DecisionTable& decisions, const ImmediateLaneGroupRef& primary,
     const ImmediateLaneGroupRef& member) noexcept {
-    if (!lane.valid_ || !handle.Valid() || handle.slot >= lane.config_.attempts ||
+    if (!lane.valid_ || !handle.Valid() || handle.slot >= lane.attempts_.size() ||
         bucket == nullptr) return false;
     const auto& row = lane.attempts_[handle.slot];
     if (row.generation != handle.generation || row.root == 0 ||

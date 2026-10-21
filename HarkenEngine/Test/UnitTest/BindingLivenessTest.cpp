@@ -695,6 +695,40 @@ TEST(BindingLiveness, CopiedBindingProjectionOwnsItsFactsAndPreparedAdds) {
     EXPECT_FLOAT_EQ(-12, store.Reduce(0, harken::kBusTargetBusVolume));
 }
 
+TEST(BindingLiveness, VoiceCatalogPreparationIsAtomicAndDoesNotFollowCopies) {
+    harken::BindingTable table(1, 2, 1);
+    const auto binding = harkentest::ObjectId(1);
+    const auto object = harkentest::ObjectId(50);
+    const harken::CurvePoint points[] = {{0, 0}, {1, -6}};
+    const harken::CurveHandlePair handles[] = {{0, 0, 1, -6}};
+    ASSERT_EQ(VN_OK, table.RegisterBinding(binding, harkentest::ObjectId(11),
+        harken::kTargetScopeVoice, harken::kTargetVoiceVolume, points, handles, 2, 0, nullptr));
+    bool ready = false;
+    table.AttachVoiceCatalogStorage(&ready, [](void* context) noexcept {
+        return *static_cast<bool*>(context);
+    });
+    EXPECT_EQ(VN_OK, table.CanAttach(binding, harken::kTargetScopeVoice, object));
+    EXPECT_EQ(harken::kResultNoBinding, table.Attach(binding, harken::kTargetScopeVoice, object, 0, nullptr));
+    harken::BindingTable::PreparedAttachmentToken add;
+    EXPECT_EQ(harken::kResultNoBinding, table.PrepareAttach(binding, harken::kTargetScopeVoice,
+        object, 0, 0, 0, &add));
+    EXPECT_FALSE(add.IsPrepared());
+    EXPECT_EQ(0u, table.AttachmentCount());
+    {
+        harken::BindingTable copy(table);
+        ASSERT_EQ(VN_OK, copy.PrepareAttach(binding, harken::kTargetScopeVoice, object, 0, 0, 0, &add));
+        copy.CommitPreparedAttachment(&add, nullptr);
+        EXPECT_EQ(1u, copy.AttachmentCount());
+    }
+    ready = true;
+    ASSERT_EQ(VN_OK, table.Attach(binding, harken::kTargetScopeVoice, object, 0, nullptr));
+    ASSERT_EQ(VN_OK, table.PrepareAttach(binding, harken::kTargetScopeVoice,
+        harkentest::ObjectId(51), 0, 1, 0, &add));
+    ready = false;
+    table.CommitPreparedAttachment(&add, nullptr);
+    EXPECT_EQ(2u, table.AttachmentCount());
+}
+
 TEST(BindingLiveness, DirtyEffectTargetKeepsOtherContributorsAndReturnsToBase) {
     harken::BindingTable table(2, 2, 1);
     harken::ParamSystem params(harken::EngineConfig{});

@@ -69,7 +69,16 @@ TEST(ImmediateActionLane, SparsePayloadFailureRetainsNoIdentityAndOnlyActualHigh
     EXPECT_EQ(0u, lane.PayloadCommittedBytes());
     EXPECT_EQ(0u, lane.MetadataStorageBytes());
     EXPECT_EQ(0u, lane.MetadataCommittedBytes());
+    EXPECT_EQ(8u, lane.AttemptCapacity());
+    EXPECT_EQ(0u, lane.PlacementScratchStorageBytes());
+    EXPECT_FALSE(lane.HasDue(0));
+    EXPECT_EQ(nullptr, lane.CaptureDue(7, 0));
     harken::ImmediateLaneHandle refused;
+    lane.SetAttemptCommitPageLimitForTests(0);
+    EXPECT_FALSE(lane.Reserve(1, {0, 1, 0, 1}, &refused));
+    EXPECT_FALSE(refused.Valid());
+    EXPECT_EQ(nullptr, lane.CaptureDue(7, 0));
+    lane.SetAttemptCommitPageLimitForTests(SIZE_MAX);
     lane.SetStateCommitPageLimitForTests(0);
     EXPECT_FALSE(lane.Reserve(1, {0, 1, 0, 1}, &refused));
     EXPECT_FALSE(refused.Valid());
@@ -123,6 +132,7 @@ TEST(ImmediateActionLane, PreparedPayloadBackingProtectsFutureAcquireAndActiveCo
     ASSERT_TRUE(lane.Reset({3, 128, 8, 64}));
     harken::StableStoragePreparation backing;
     ASSERT_TRUE(lane.PrepareAttemptBacking(&backing));
+    lane.SetAttemptCommitPageLimitForTests(0);
     harken::ImmediateLaneHandle ordinary;
     ASSERT_TRUE(lane.Reserve(1, {1, 0, 0, 1}, &ordinary));
     EXPECT_EQ(2u * 128u * sizeof(harken::ImmediateLaneEvent), lane.EventStorageBytes());

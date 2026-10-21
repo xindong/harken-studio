@@ -5794,8 +5794,6 @@ public:
           armGroups(resolved.maxArmGroups,
                     resolved.maxArmsPerGroup),
           timelineArms(TimelineArmCapacity(resolved)),
-          initialFrontierArmPins(TimelineArmCapacity(resolved)),
-          initialRootArmPublicationInputs(TimelineArmCapacity(resolved)),
           initialRootArmPublicationRows(TimelineArmCapacity(resolved), nullptr),
           initialRootActivationPublicationProofs(resolved.maxDecisionRows),
           queueInstances(resolved.maxContainerInstances, originalConditionalCapacity),
@@ -5869,16 +5867,12 @@ public:
            variableControlRetargetScratch(resolved.maxPlayableInstances),
           actionStopScratch(resolved.maxPlayableInstances),
           actionPlayFrameScratch(resolved.commandQueueDepth),
-          pendingImmediateRequestsScratch(resolved.maxPlayableInstances),
-          pendingImmediateEventsScratch(resolved.maxPlayableInstances),
           initialLaneDemandEventQuantaScratch(std::max(
               resolved.maxTransactionEvents,
               resolved.maxKnownScheduleLeaves * 4u)),
           initialLaneDemandGroupQuantaScratch(std::max(
               resolved.maxTransactionEvents,
               resolved.maxKnownScheduleLeaves * 4u)),
-          pendingImmediateFutureRequestsScratch(resolved.maxPlayableInstances),
-          pendingImmediateFutureEventsScratch(resolved.maxPlayableInstances),
           decisionRetirements(decisions.Capacity()),
           playableStarts(resolved.maxPlayableInstances),
           originalPlayableServiceLifetimeHolders(resolved.maxPlayableInstances),
@@ -6219,8 +6213,6 @@ public:
         static_assert(std::numeric_limits<std::uint32_t>::max() <=
             std::numeric_limits<std::size_t>::max() /
                 sizeof(ImmediateLaneEvent));
-        pendingImmediateLaneEventsScratch.resize(
-            immediateActionLane.EventsPerAttempt());
         static_assert(std::numeric_limits<std::uint32_t>::max() <=
             std::numeric_limits<std::size_t>::max() /
                 sizeof(Plan03ImmediateLaneGroupDescriptor));
@@ -6346,7 +6338,9 @@ public:
         // One staging record per Logical Voice entry, indexed by ledger slot;
         // only deferred starts are active.
         if (!pendingStarts.Reserve(resolved.voiceCapacity.Logical())) throw std::bad_alloc();
-        voiceBindingCatalogScratch.reserve(resolved.maxBindingAttachments);
+        bindings.AttachVoiceCatalogStorage(this, [](void* context) noexcept {
+            return static_cast<Engine*>(context)->PrepareVoiceBindingCatalogStorage();
+        });
         const auto renderCapacity = resolved.voiceCapacity.Render();
         if (!voiceOriginPlayable.Reserve(renderCapacity) ||
             !voicePlayFacts.Reserve(renderCapacity) || !playbackPaths.Reserve(renderCapacity) ||
@@ -12300,8 +12294,6 @@ public:
     bool servicePreparedScheduleLeavesInUse = false;
     std::vector<EngineActionStopScratch> actionStopScratch;
     std::vector<std::uint64_t> actionPlayFrameScratch;
-    std::vector<TransactionRequest> pendingImmediateRequestsScratch;
-    std::vector<ScheduledEventInput> pendingImmediateEventsScratch;
     std::vector<ImmediateLaneEvent> pendingImmediateLaneEventsScratch;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandEventQuantaScratch;
     std::vector<EngineImmediateLaneDemandQuantum> initialLaneDemandGroupQuantaScratch;
@@ -12323,8 +12315,6 @@ public:
         initialQueueTimingGroupsScratch;
     StableRowStorage<Plan03ImmediateLaneGroupDescriptor>
         initialQueueLaneGroupsScratch;
-    std::vector<TransactionRequest> pendingImmediateFutureRequestsScratch;
-    std::vector<ScheduledEventInput> pendingImmediateFutureEventsScratch;
     StableRowStorage<EngineImmediateEntryAttempt> immediateEntryAttempts;
     std::uint32_t activeImmediateEntryAttemptCount = 0;
     void SetImmediateEntryAttemptActive(EngineImmediateEntryAttempt& attempt,
@@ -12866,6 +12856,26 @@ public:
             originalPlayableLifetimeHolders.ConstructThrough(originalPlayableLifetimeHolders.Capacity()) &&
             originalSingleCurrentHolders.ConstructThrough(originalSingleCurrentHolders.Capacity());
     }
+    bool PreparePlayablePublicationStorage() noexcept {
+        const auto arms = timelineArms.Capacity();
+        const auto events = immediateActionLane.EventsPerAttempt();
+        if (initialFrontierArmPins.size() == arms && initialRootArmPublicationInputs.size() == arms &&
+            pendingImmediateLaneEventsScratch.size() == events) return true;
+        if (memguard::IsAudioTagged()) return false;
+        try {
+            initialFrontierArmPins.resize(arms);
+            initialRootArmPublicationInputs.resize(arms);
+            pendingImmediateLaneEventsScratch.resize(events);
+        } catch (...) { return false; }
+        return true;
+    }
+    bool PrepareVoiceBindingCatalogStorage() noexcept {
+        if (voiceBindingCatalogScratch.capacity() >= config.maxBindingAttachments) return true;
+        if (memguard::IsAudioTagged()) return false;
+        try { voiceBindingCatalogScratch.reserve(config.maxBindingAttachments); }
+        catch (...) { return false; }
+        return true;
+    }
     bool PreparePlayableStateStorage() noexcept {
         return PrepareOriginalPlayableStorage() &&
             initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
@@ -12875,7 +12885,8 @@ public:
             pendingVariableLeafSources.ConstructThrough(pendingVariableLeafSources.Capacity()) &&
             pendingVariableFutureSources.ConstructThrough(pendingVariableFutureSources.Capacity()) &&
             pendingVariableFutureNodes.ConstructThrough(pendingVariableFutureNodes.Capacity()) &&
-            spatial.PrepareVoiceStorage(config.voiceCapacity.Render());
+            spatial.PrepareVoiceStorage(config.voiceCapacity.Render()) &&
+            PreparePlayablePublicationStorage();
     }
     bool PreparePlayableServiceDependencies(std::uint32_t required) noexcept {
         // One service contributes one selected future. Its source and successor
