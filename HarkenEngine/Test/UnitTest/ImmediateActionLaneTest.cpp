@@ -172,6 +172,51 @@ TEST(ImmediateActionLane, PreparedPayloadBackingProtectsFutureAcquireAndActiveCo
     ASSERT_TRUE(lane.Finish(ordinary.slot, bucket, true));
     EXPECT_TRUE(lane.Retire(ordinary));
     EXPECT_TRUE(lane.Retire(native));
+
+    backing.Release();
+    secondBacking.Release();
+    ASSERT_TRUE(lane.Reset({1, 128, 8, 64}));
+    harken::OriginalImmediateLaneAttemptLifetimePin original;
+    ordinary = {};
+    ASSERT_TRUE(lane.Reserve(3, {1, 0, 0, 1}, &ordinary, &original));
+    ASSERT_TRUE(lane.Prepare(ordinary, &event, 1));
+    ASSERT_TRUE(lane.TryPlace(ordinary, 64, 0, &anchor));
+    ASSERT_TRUE(lane.Publish(ordinary));
+    bucket = lane.CaptureDue(ordinary.slot, 1);
+    ASSERT_NE(nullptr, bucket);
+    const auto scratch = lane.CapturedSourceWaitScratch(ordinary.slot, bucket);
+    ASSERT_EQ(1u, scratch.size());
+    lane.SetStateCommitPageLimitForTests(0);
+    EXPECT_FALSE(lane.PrepareAttemptBacking(&backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(scratch.data(), lane.CapturedSourceWaitScratch(ordinary.slot, bucket).data());
+    lane.SetStateCommitPageLimitForTests(SIZE_MAX);
+    ASSERT_TRUE(lane.PrepareAttemptBacking(&backing));
+    ASSERT_TRUE(lane.PrepareAttemptBacking(&secondBacking));
+    EXPECT_EQ(scratch.data(), lane.CapturedSourceWaitScratch(ordinary.slot, bucket).data());
+    EXPECT_EQ(42u, lane.Events(ordinary.slot, bucket)[0].event.executionOrdinal);
+    EXPECT_FALSE(lane.Retire(ordinary));
+    ASSERT_TRUE(lane.Claim(ordinary, bucket));
+    ASSERT_TRUE(lane.Finish(ordinary.slot, bucket, true));
+    EXPECT_FALSE(lane.Retire(ordinary));
+    original.Return();
+    ASSERT_TRUE(lane.Retire(ordinary));
+    backing.Release();
+    const auto preparedMetadata = lane.MetadataCommittedBytes();
+    const auto preparedPayload = lane.PayloadCommittedBytes();
+    lane.SetPayloadCommitPageLimitsForTests(0, 0);
+    lane.SetMetadataCommitPageLimitsForTests(0, 0);
+    lane.SetStateCommitPageLimitForTests(0);
+    native = {};
+    {
+        auto use = secondBacking.Use();
+        ASSERT_TRUE(lane.Reserve(4, {128, 128, 128, 128}, &native));
+        EXPECT_EQ(ordinary.slot, native.slot);
+        EXPECT_NE(ordinary.generation, native.generation);
+        EXPECT_EQ(preparedMetadata, lane.MetadataCommittedBytes());
+        EXPECT_EQ(preparedPayload, lane.PayloadCommittedBytes());
+    }
+    EXPECT_TRUE(lane.Retire(native));
 }
 #endif
 
