@@ -32158,8 +32158,6 @@ engine.runtimeRecreateRequired = true;
     for (std::uint32_t index = 0; index < incomingTree.nestedCount; ++index) {
         row.variableControlDiscreteRetargetIncomingNestedInstances[index] =
             incomingTree.nestedInstances[index].Handle();
-        row.variableControlDiscreteRetargetIncomingNestedEpochs[index] =
-            incomingTree.nestedInstances[index].ScheduleEpoch();
     }
     for (std::uint32_t index = 0; index < incomingTree.containerCount;
          ++index) {
@@ -33278,8 +33276,6 @@ engine.runtimeRecreateRequired = true;
     for (std::uint32_t index = 0; index < incomingTree.nestedCount; ++index) {
         row.variableControlDiscreteRetargetIncomingNestedInstances[index] =
             incomingTree.nestedInstances[index].Handle();
-        row.variableControlDiscreteRetargetIncomingNestedEpochs[index] =
-            incomingTree.nestedInstances[index].ScheduleEpoch();
     }
     for (std::uint32_t index = 0; index < incomingTree.containerCount;
          ++index) {
@@ -33332,8 +33328,6 @@ engine.runtimeRecreateRequired = true;
             incomingTree.selectionPath[index];
     }
     incomingChildCommitted = false;
-    row.variableControlDiscreteRetargetIncomingChildPrepared = {};
-    row.variableControlDiscreteRetargetIncomingLeafPrepared = {};
 
     row.variableControlDiscreteRetargetDecision = decision;
     row.variableControlDiscreteRetargetTransition = transition;
@@ -86657,12 +86651,33 @@ bool ComputeInitialActionLaneDemand(
 
 bool ComputeImmediateEntryStorageDemand(const ImmediateActionPlan& plan, std::uint32_t preparedCount,
     harken::EngineImmediateEntryStorageDemand* out) noexcept {
-    const auto& engine = *plan.engine;
+    auto& engine = *plan.engine;
     *out = {};
     out->selectionProducers = preparedCount;
     if (!plan.originalPlainSoundRoute) {
-        // Private Queue/VC cleanup must have backing before the Action is accepted.
-        out->privateVoices = engine.voices.Capacity();
+        // Cleanup retains this entry's original current and prepared future sources.
+        // Shared references cannot increase the physical voice bound.
+        const auto addVoices = [&](std::uint32_t count) {
+            out->privateVoices += std::min(count, engine.voices.Capacity() - out->privateVoices);
+        };
+        for (std::uint32_t index = 0; index < preparedCount; ++index) {
+            const auto* play = FindImmediateActionPlay(plan, index);
+            if (play == nullptr || !play->prepared ||
+                play->voiceStartCount > play->voiceStarts.size() ||
+                play->queueSuccessorVoiceStartCount > play->queueSuccessorVoiceStarts.size() ||
+                play->queueFutureAttemptCount > play->storage.queueFutureAttempts.size()) return false;
+            addVoices(play->voiceStartCount);
+            addVoices(play->queueSuccessorVoiceStartCount);
+            const auto parentSlot = engine.actionPlayScratch.IndexOf(*play);
+            for (std::uint32_t futureIndex = 0; futureIndex < play->queueFutureAttemptCount; ++futureIndex) {
+                const auto* future = FindFrontierAttempt(engine, play->storage.queueFutureAttempts[futureIndex]);
+                if (future == nullptr || !future->queueFutureExecution ||
+                    future->queueFutureParent.slot != parentSlot ||
+                    future->queueFutureParent.generation != play->storage.generation ||
+                    future->queueSuccessorVoiceStartCount > future->queueSuccessorVoiceStarts.size()) return false;
+                addVoices(future->queueSuccessorVoiceStartCount);
+            }
+        }
         return true;
     }
     out->plainSources = preparedCount;

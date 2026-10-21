@@ -1829,19 +1829,13 @@ struct EnginePlayableServiceRow : EngineQueueFutureFilingLayout {
     std::uint32_t variableControlDiscreteRetargetDesiredChildOrdinal = 0;
     PlayableInstanceHandle variableControlDiscreteRetargetIncomingChild = 0;
     std::uint64_t variableControlDiscreteRetargetIncomingChildEpoch = 0;
-    PreparedPlayableInstance
-        variableControlDiscreteRetargetIncomingChildPrepared{};
     std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves>
         variableControlDiscreteRetargetIncomingLeaves{};
     std::array<std::uint64_t, kMaxKnownScheduleLeaves>
         variableControlDiscreteRetargetIncomingLeafEpochs{};
-    std::array<PreparedPlayableInstance, kMaxKnownScheduleLeaves>
-        variableControlDiscreteRetargetIncomingLeafPrepared{};
     std::uint32_t variableControlDiscreteRetargetIncomingLeafCount = 0;
     std::array<PlayableInstanceHandle, kMaxKnownScheduleLeaves + 64u>
         variableControlDiscreteRetargetIncomingNestedInstances{};
-    std::array<std::uint64_t, kMaxKnownScheduleLeaves + 64u>
-        variableControlDiscreteRetargetIncomingNestedEpochs{};
     std::array<VariableControlInstanceToken, kMaxKnownScheduleLeaves + 64u>
         variableControlDiscreteRetargetIncomingNestedVariableControls{};
     std::array<EnginePlayableServiceReference, kMaxKnownScheduleLeaves + 64u>
