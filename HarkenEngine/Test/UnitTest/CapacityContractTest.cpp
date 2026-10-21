@@ -217,13 +217,13 @@ TEST(EngineQueueScheduleStorage, ZeroShapeAndMovedLoansRespectGlobalCapacity) {
 }
 
 TEST(StableBackingPreparation, DependenciesPrecedePublicationAndPreparedUseCannotGrow) {
-    harken::StableRowStorage<std::uint64_t> rows, dependencies;
+    harken::StableRowStorage<std::uint64_t, std::size_t> rows, dependencies;
     ASSERT_TRUE(rows.Reserve(8));
     ASSERT_TRUE(dependencies.Reserve(8));
     EXPECT_FALSE(rows.ConstructThrough(1, [](std::uint32_t) noexcept { return false; }));
     EXPECT_EQ(0u, rows.ConstructedCount());
     std::uint32_t calls = 0;
-    const auto prepare = [&](std::uint32_t count) noexcept {
+    const auto prepare = [&](std::size_t count) noexcept {
         ++calls;
         EXPECT_LE(rows.ConstructedCount(), dependencies.ConstructedCount());
         return dependencies.ConstructThrough(count);
@@ -928,6 +928,10 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
         testing::Test::RecordProperty(std::string(family) + "_committed_bytes", std::to_string(committed));
         testing::Test::RecordProperty(std::string(family) + "_reserved_bytes", std::to_string(reserved));
     };
+    recordStableRows("native_event_rows", engine->timelinePool.NativeEventRowStorageBytes(),
+        engine->timelinePool.NativeEventRowCommittedBytes(), engine->timelinePool.NativeEventRowReservedBytes());
+    testing::Test::RecordProperty("page_event_directory_storage_bytes",
+        std::to_string(engine->timelinePool.PageEventDirectoryStorageBytes()));
     recordStableRows("decision_rows", engine->decisions.RowStorageBytes(),
         engine->decisions.RowCommittedBytes(), engine->decisions.RowReservedBytes());
     recordStableRows("timeline_group_capture", engine->timelineGroupCaptureScratch.RequestedBytes(),
@@ -1059,6 +1063,33 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     testing::Test::RecordProperty("frontier_event_family_capacity_increase_bytes",
         std::to_string((layout.pairedCount + layout.currentEventCount + layout.continuousCount) * frontierEventBytes));
 
+    const auto emptyFinalizerBytes = finalizer.StorageBytes();
+    harken::UnplacedBatchCredit pendingCredit{};
+    finalizer.SetPendingEventCommitPageLimitForTest(0);
+    EXPECT_FALSE(engine->timelinePool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &pendingCredit));
+    EXPECT_FALSE(pendingCredit.Valid());
+    EXPECT_EQ(emptyFinalizerBytes, finalizer.StorageBytes());
+    finalizer.SetPendingEventCommitPageLimitForTest(SIZE_MAX);
+    ASSERT_TRUE(engine->timelinePool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &pendingCredit));
+    EXPECT_GT(finalizer.StorageBytes(), emptyFinalizerBytes);
+    const auto preparedFinalizerBytes = finalizer.StorageBytes();
+    ASSERT_TRUE(engine->timelinePool.CancelUnplacedBatchCredit(&pendingCredit));
+
+    harken::detail::StablePageReservation::FailNextReservationForTests();
+    EXPECT_FALSE(finalizer.Attach(engine->decisions, engine->timelinePool));
+    EXPECT_EQ(preparedFinalizerBytes, finalizer.StorageBytes());
+    finalizer.SetPendingEventCommitPageLimitForTest(0);
+    const auto pendingRowBytes = preparedFinalizerBytes - emptyFinalizerBytes;
+    ASSERT_NE(0u, pendingRowBytes);
+    const auto additionalPageRows = static_cast<std::uint32_t>(
+        harken::detail::StablePageReservation::SystemPageBytes() / pendingRowBytes + 1u);
+    EXPECT_FALSE(engine->timelinePool.ReserveUnplacedBatchCredit(
+        {1, 1, additionalPageRows, 1, 0}, &pendingCredit));
+    EXPECT_FALSE(pendingCredit.Valid());
+    ASSERT_TRUE(engine->timelinePool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &pendingCredit));
+    EXPECT_EQ(preparedFinalizerBytes, finalizer.StorageBytes());
+    ASSERT_TRUE(engine->timelinePool.CancelUnplacedBatchCredit(&pendingCredit));
+    finalizer.SetPendingEventCommitPageLimitForTest(SIZE_MAX);
 }
 
 TEST(CapacityContract, CompositeActionCapacityGrowthMatchesBothBlockProfiles) {

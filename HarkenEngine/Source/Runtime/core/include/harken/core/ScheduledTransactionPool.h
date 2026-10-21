@@ -1321,6 +1321,35 @@ public:
     ScheduledTransactionPool(ScheduledTransactionPool&&) = delete;
     ScheduledTransactionPool& operator=(ScheduledTransactionPool&&) = delete;
 
+    struct PendingEventStorageDemand {
+        std::uint64_t nativeEvents = 0;
+        std::uint64_t retiredEvents = 0;
+    };
+    // Registrations are stationary and attach/detach only at consumer quiescence.
+    class PendingEventStorageRegistration {
+    public:
+        using Prepare = bool (*)(void*, PendingEventStorageDemand) noexcept;
+        PendingEventStorageRegistration() = default;
+        ~PendingEventStorageRegistration() { Detach(); }
+        PendingEventStorageRegistration(const PendingEventStorageRegistration&) = delete;
+        PendingEventStorageRegistration& operator=(const PendingEventStorageRegistration&) = delete;
+        void Detach() noexcept;
+    private:
+        friend class ScheduledTransactionPool;
+        const ScheduledTransactionPool* owner_ = nullptr;
+        PendingEventStorageRegistration* previous_ = nullptr;
+        PendingEventStorageRegistration* next_ = nullptr;
+        void* context_ = nullptr;
+        Prepare prepare_ = nullptr;
+    };
+    // Control-only. Prepare this existing demand before attaching a consumer.
+    PendingEventStorageDemand CapturePendingEventStorageDemand() const noexcept;
+    void AttachPendingEventStorage(PendingEventStorageRegistration& registration,
+        void* context, PendingEventStorageRegistration::Prepare prepare) const noexcept;
+    std::uint64_t RetiredPageEventCount() const noexcept {
+        return retiredPageEvents_.load(std::memory_order_acquire);
+    }
+
     // Sizes all storage from the config and opens the window at startFrame with
     // the given transport epoch. Returns false (leaving the pool invalid) if the
     // config is degenerate (zero quantum, horizon not a whole number of quanta,
@@ -1359,6 +1388,13 @@ public:
         return config_.maxCurrentSlicesPerQuantum;
     }
     std::uint64_t CurrentSliceStorageBytes() const noexcept;
+    std::size_t NativeEventRowStorageBytes() const noexcept { return nativeEventRows_.RequestedBytes(); }
+    std::size_t NativeEventRowReservedBytes() const noexcept { return nativeEventRows_.ReservedBytes(); }
+    std::size_t NativeEventRowCommittedBytes() const noexcept { return nativeEventRows_.CommittedBytes(); }
+    std::size_t PageEventDirectoryStorageBytes() const noexcept {
+        return (pageEventSlots_.capacity() + pageEventOrder_.capacity() +
+            freeEventSlots_.capacity()) * sizeof(std::size_t);
+    }
     std::uint64_t CurrentSliceCommittedBytes() const noexcept;
     std::uint64_t CurrentSliceReservedBytes() const noexcept;
     bool PrepareNativeStartCalendarBacking(std::uint32_t count) noexcept;
@@ -1928,6 +1964,14 @@ public:
 
 private:
     friend struct Engine;
+    bool PrepareEventStorage(std::uint64_t additionalEvents,
+        bool consumeAcceptedBacking = false) noexcept;
+    ReserveRefusal PrepareTransactionBatchImpl(
+        const TransactionRequest* requests, std::size_t requestCount,
+        std::uint64_t publicationFrontier, PreparedTransactionBatch* out,
+        const PreparedPageGroupTransferScope* transferScope,
+        bool consumeAcceptedBacking) noexcept;
+    void RecordRetiredPageEvents(std::uint64_t count) noexcept;
     bool IsOrdinaryOriginalQueueFutureGroupRegistrationFor(
         const OriginalQueueFutureGroupRegistration& original,
         const Plan03GroupSliceIdentity& expected, std::uint64_t root) const noexcept {
@@ -2381,6 +2425,14 @@ private:
         Retired = 3,
     };
 
+    EventRow& PageEvent(std::size_t index) noexcept {
+        return nativeEventRows_[pageEventSlots_[index]];
+    }
+    const EventRow& PageEvent(std::size_t index) const noexcept {
+        return nativeEventRows_[pageEventSlots_[index]];
+    }
+    void AcquirePageEvent(std::size_t index) noexcept;
+    void ReleasePageEvent(std::size_t index) noexcept;
     std::uint32_t RingIndex(std::uint32_t page) const;
     AudioSliceLease* EffectivePlan03GroupLease(std::size_t rowIndex) const noexcept;
     // Sorts one page's live event indices into the total order, in place.
@@ -2393,6 +2445,8 @@ private:
                           const OccurrenceStatePool& occurrences) const;
 
     Config config_{};
+    mutable PendingEventStorageRegistration* pendingEventStorage_ = nullptr;
+    std::atomic<std::uint64_t> retiredPageEvents_{0};
     void* immediateLaneGroupDisposalContext_ = nullptr;
     ImmediateLaneGroupDisposalObserver immediateLaneGroupDisposalObserver_ = nullptr;
     std::uint32_t pageCount_ = 0;
@@ -2419,8 +2473,11 @@ private:
     std::vector<std::uint8_t> pageSorted_; // 0/1: event order is current
     std::unique_ptr<std::atomic<std::uint64_t>[]> pageQuantumStamp_;
     std::unique_ptr<std::atomic<std::uint64_t>[]> pageEmptyQuantumStamp_;
-    std::vector<EventRow> pageEvents_;     // pageCount_ * maxEventsPerQuantum
-    std::vector<std::uint32_t> pageEventOrder_; // sorted indices, same size
+    StableRowStorage<EventRow, std::size_t> nativeEventRows_;
+    std::vector<std::size_t> pageEventSlots_;
+    std::vector<std::size_t> pageEventOrder_;
+    std::vector<std::size_t> freeEventSlots_;
+    std::size_t issuedEventSlots_ = 0;
     std::vector<std::uint32_t> pageCurrentSliceCount_;
     std::unique_ptr<CurrentSlicePage[]> pageCurrentSliceStorage_;
     std::uint32_t nativeCalendarBackingCount_ = 0;

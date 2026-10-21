@@ -26,6 +26,7 @@ class FrontierTimelineFinalizer {
 public:
     FrontierTimelineFinalizer(VoicePool& voices, TimelineArmTable& arms);
     ~FrontierTimelineFinalizer();
+    // Setup and capacity reconfiguration require a quiescent consumer.
     bool Attach(DecisionTable& decisions, const ScheduledTransactionPool& pool,
                 bool laneOnly = false);
     void AttachVariableControls(VariableControlInstanceTable& instances) noexcept;
@@ -80,6 +81,7 @@ public:
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     std::uint32_t EventCapacityForTest() const noexcept;
     std::uint32_t GroupCapacityForTest() const noexcept;
+    void SetPendingEventCommitPageLimitForTest(std::size_t pages) noexcept;
 #endif
 
 private:

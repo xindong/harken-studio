@@ -44,6 +44,10 @@
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 namespace harken::detail {
 struct ScheduledTransactionPoolCancelTestAccess {
+    static void SetNativeEventCommitPageLimit(ScheduledTransactionPool& pool, std::size_t pages) {
+        pool.nativeEventRows_.SetCommitPageLimitForTests(pages);
+    }
+    static std::size_t NativeEventRowBytes() { return sizeof(ScheduledTransactionPool::EventRow); }
     static void SetCurrentSliceCommitPageLimit(ScheduledTransactionPool& pool, std::size_t pages) {
         for (std::uint32_t page = 0; page < pool.pageCount_; ++page) {
             auto& storage = pool.pageCurrentSliceStorage_[page];
@@ -163,7 +167,7 @@ struct ScheduledTransactionPoolCancelTestAccess {
         const auto base = static_cast<std::size_t>(ring) *
             pool.config_.maxEventsPerQuantum;
         for (std::uint32_t index = 0; index < pool.pageEventCount_[ring]; ++index) {
-            auto& event = pool.pageEvents_[base + index];
+            auto& event = pool.PageEvent(base + index);
             if (event.executeFrame != frame) continue;
             const auto old = event.rowSequence;
             event.rowSequence = value;
@@ -4482,6 +4486,168 @@ TEST(ScheduledTransactionPool, UnplacedCreditChargesSharedPoolAndReleasesOnCance
     EXPECT_TRUE(pool.CancelPreparedTransactionBatch(&prepared));
 }
 
+TEST(ScheduledTransactionPool, NativeEventBackingFailurePreservesAcceptedWorkAndReusesAcrossPages) {
+    using Access = harken::detail::ScheduledTransactionPoolCancelTestAccess;
+    Harness h;
+    auto config = MakeConfig();
+    const auto count = static_cast<std::uint32_t>(
+        harken::detail::StablePageReservation::SystemPageBytes() / Access::NativeEventRowBytes() + 1u);
+    config.maxEventsPerQuantum = config.maxTransactionEvents = count + 1u;
+    config.maxFrameBatchesPerQuantum = 1;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    EXPECT_EQ(0u, pool.NativeEventRowStorageBytes());
+    EXPECT_EQ(0u, pool.NativeEventRowCommittedBytes());
+    std::vector<ScheduledEventInput> events(count);
+    for (auto& event : events) event.executeFrame = 10;
+    TransactionRequest request{};
+    request.transactionId = 1;
+    request.transportEpoch = kEpoch;
+    request.ownerInstanceHandle = h.owner;
+    request.ownerInstanceScheduleEpoch = h.ownerEpoch;
+    request.events = events.data();
+    request.eventCount = 1;
+    ASSERT_EQ(ReserveStatus::Committed, pool.Reserve(request, PrePublishLatePolicy::Refuse).status);
+
+    Access::SetNativeEventCommitPageLimit(pool, 0);
+    request.transactionId = 2;
+    request.eventCount = events.size();
+    for (auto& event : events) event.executeFrame = 110;
+    EXPECT_EQ(ReserveRefusal::PageEventCapacity,
+        pool.Reserve(request, PrePublishLatePolicy::Refuse).refusal);
+    PreparedTransactionBatch batch;
+    EXPECT_EQ(ReserveRefusal::PageEventCapacity, pool.PrepareTransactionBatch(&request, 1, 0, &batch));
+    EXPECT_FALSE(batch.Valid());
+    harken::UnplacedBatchCredit credit{};
+    EXPECT_FALSE(pool.ReserveUnplacedBatchCredit({1, 1, count, 1, 0}, &credit));
+    EXPECT_FALSE(credit.Valid());
+    EXPECT_EQ(1u, pool.LiveTransactionCount());
+    EXPECT_EQ(1u, pool.IngressThisQuantum());
+
+    Access::SetNativeEventCommitPageLimit(pool, SIZE_MAX);
+    ASSERT_EQ(ReserveRefusal::None, pool.PrepareTransactionBatch(&request, 1, 0, &batch));
+    ASSERT_TRUE(pool.CancelPreparedTransactionBatch(&batch));
+    const auto preparedBytes = pool.NativeEventRowStorageBytes();
+    Access::SetNativeEventCommitPageLimit(pool, 0);
+    for (auto& event : events) event.executeFrame = 210;
+    ASSERT_EQ(ReserveStatus::Committed, pool.Reserve(request, PrePublishLatePolicy::Refuse).status);
+    EXPECT_EQ(preparedBytes, pool.NativeEventRowStorageBytes());
+    pool.Publish(300, &h.instances, &h.occurrences);
+    std::vector<ConsumedEvent> consumed(count);
+    {
+        harken::memguard::AudioThreadScope audio;
+        ASSERT_EQ(1u, pool.ConsumePageRt(0, consumed.data(), consumed.size()));
+        EXPECT_EQ(1u, consumed[0].transactionId);
+        ASSERT_EQ(count, pool.ConsumePageRt(2, consumed.data(), consumed.size()));
+    }
+    for (const auto& event : consumed) EXPECT_EQ(2u, event.transactionId);
+    ASSERT_EQ(1u, pool.Advance());
+    ASSERT_EQ(0u, pool.Advance());
+    ASSERT_EQ(count, pool.Advance());
+    request.transactionId = 3;
+    for (auto& event : events) event.executeFrame = 310;
+    ASSERT_EQ(ReserveStatus::Committed, pool.Reserve(request, PrePublishLatePolicy::Refuse).status);
+    EXPECT_EQ(preparedBytes, pool.NativeEventRowStorageBytes());
+    ASSERT_TRUE(pool.ResetForEpoch(0, kEpoch + 1));
+    request.transportEpoch = kEpoch + 1;
+    for (auto& event : events) event.executeFrame = 10;
+    ASSERT_EQ(ReserveStatus::Committed, pool.Reserve(request, PrePublishLatePolicy::Refuse).status);
+    EXPECT_EQ(preparedBytes, pool.NativeEventRowStorageBytes());
+    ASSERT_TRUE(pool.Reset(config, 0, kEpoch + 2));
+    EXPECT_EQ(0u, pool.NativeEventRowStorageBytes());
+    EXPECT_EQ(0u, pool.NativeEventRowCommittedBytes());
+}
+
+TEST(ScheduledTransactionPool, PendingEventStorageRefusalPreservesAcceptedWorkAndRecovers) {
+    Harness h;
+    ScheduledTransactionPool pool;
+    ASSERT_TRUE(pool.Reset(MakeConfig(), 0, kEpoch));
+    bool allow = true;
+    ScheduledTransactionPool::PendingEventStorageRegistration first, second;
+    const auto prepare = [](void* context, ScheduledTransactionPool::PendingEventStorageDemand) noexcept {
+        return *static_cast<bool*>(context);
+    };
+    bool firstAllows = true;
+    pool.AttachPendingEventStorage(first, &firstAllows, prepare);
+    pool.AttachPendingEventStorage(second, &allow, prepare);
+    ScheduledEventInput event{};
+    event.executeFrame = 10;
+    TransactionRequest request{};
+    request.transactionId = 1;
+    request.transportEpoch = kEpoch;
+    request.ownerInstanceHandle = h.owner;
+    request.ownerInstanceScheduleEpoch = h.ownerEpoch;
+    request.events = &event;
+    request.eventCount = 1;
+    ASSERT_EQ(ReserveStatus::Committed, pool.Reserve(request, PrePublishLatePolicy::Refuse).status);
+
+    allow = false;
+    request.transactionId = 2;
+    EXPECT_EQ(ReserveRefusal::PageEventCapacity, pool.Reserve(request, PrePublishLatePolicy::Refuse).refusal);
+    PreparedTransactionBatch batch;
+    EXPECT_EQ(ReserveRefusal::PageEventCapacity, pool.PrepareTransactionBatch(&request, 1, 0, &batch));
+    EXPECT_FALSE(batch.Valid());
+    harken::UnplacedBatchCredit credit{};
+    EXPECT_FALSE(pool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &credit));
+    EXPECT_FALSE(credit.Valid());
+    EXPECT_EQ(1u, pool.LiveTransactionCount());
+    EXPECT_EQ(1u, pool.IngressThisQuantum());
+
+    allow = true;
+    ASSERT_EQ(ReserveRefusal::None, pool.PrepareTransactionBatch(&request, 1, 0, &batch));
+    ASSERT_TRUE(pool.CancelPreparedTransactionBatch(&batch));
+    ASSERT_TRUE(pool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &credit));
+    ASSERT_TRUE(pool.CancelUnplacedBatchCredit(&credit));
+    pool.Publish(100, &h.instances, &h.occurrences);
+    ConsumedEvent consumed{};
+    ASSERT_EQ(1u, pool.ConsumePageRt(0, &consumed, 1));
+    EXPECT_EQ(1u, consumed.transactionId);
+}
+
+TEST(ScheduledTransactionPool, PendingEventStorageAccountsForRemovedPagesAcrossBothResets) {
+    Harness h;
+    auto pool = std::make_unique<ScheduledTransactionPool>();
+    ASSERT_TRUE(pool->Reset(MakeConfig(), 0, kEpoch));
+    ScheduledTransactionPool::PendingEventStorageDemand observed{};
+    ScheduledTransactionPool::PendingEventStorageRegistration registration;
+    const auto prepare = [](void* context, ScheduledTransactionPool::PendingEventStorageDemand demand) noexcept {
+        *static_cast<ScheduledTransactionPool::PendingEventStorageDemand*>(context) = demand;
+        return true;
+    };
+    pool->AttachPendingEventStorage(registration, &observed, prepare);
+    ScheduledEventInput event{};
+    event.executeFrame = 10;
+    TransactionRequest request{};
+    request.transactionId = 1;
+    request.transportEpoch = kEpoch;
+    request.ownerInstanceHandle = h.owner;
+    request.ownerInstanceScheduleEpoch = h.ownerEpoch;
+    request.events = &event;
+    request.eventCount = 1;
+    ASSERT_EQ(ReserveStatus::Committed, pool->Reserve(request, PrePublishLatePolicy::Refuse).status);
+    ASSERT_EQ(1u, pool->Advance());
+    event.executeFrame = 110;
+    request.transactionId = 2;
+    ASSERT_EQ(ReserveStatus::Committed, pool->Reserve(request, PrePublishLatePolicy::Refuse).status);
+    EXPECT_EQ(1u, observed.retiredEvents);
+    ASSERT_TRUE(pool->ResetForEpoch(0, kEpoch + 1));
+    event.executeFrame = 10;
+    request.transportEpoch = kEpoch + 1;
+    ASSERT_EQ(ReserveStatus::Committed, pool->Reserve(request, PrePublishLatePolicy::Refuse).status);
+    EXPECT_EQ(2u, observed.retiredEvents);
+    ASSERT_TRUE(pool->Reset(MakeConfig(), 0, kEpoch + 2));
+    request.transportEpoch = kEpoch + 2;
+    ASSERT_EQ(ReserveStatus::Committed, pool->Reserve(request, PrePublishLatePolicy::Refuse).status);
+    EXPECT_EQ(3u, observed.retiredEvents);
+
+    // A consumer can outlive a quiescent pool and subsequently attach elsewhere.
+    pool.reset();
+    registration.Detach();
+    ScheduledTransactionPool replacement;
+    ASSERT_TRUE(replacement.Reset(MakeConfig(), 0, kEpoch));
+    replacement.AttachPendingEventStorage(registration, &observed, prepare);
+}
+
 TEST(ScheduledTransactionPool, UnplacedCreditPersistsAcrossAdvanceAndOldHandleCannotCancel) {
     auto config = MakeConfig();
     config.maxScheduledTransactions = 1;
@@ -4656,17 +4822,24 @@ TEST(ScheduledTransactionPool, UnplacedHolderPreflightsItsOwnPageBudgetWithoutSp
 TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPageClaims) {
     Harness h;
     auto config = MakeConfig();
-    config.maxScheduledTransactions = 1;
-    config.maxIngressTransactionsPerQuantum = 1;
-    config.maxEventsPerQuantum = 1;
+    config.maxScheduledTransactions = 2;
+    config.maxIngressTransactionsPerQuantum = 2;
+    config.maxEventsPerQuantum = 2;
     config.maxFrameBatchesPerQuantum = 1;
     config.maxPlan03GroupHeadersPerPage = 1;
     config.maxArmsPerGroup = 1;
     ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(config, 0, kEpoch));
+    ScheduledTransactionPool::PendingEventStorageRegistration pendingStorage;
+    unsigned preparations = 0;
+    pool.AttachPendingEventStorage(pendingStorage, &preparations,
+        [](void* context, ScheduledTransactionPool::PendingEventStorageDemand) noexcept {
+            return ++*static_cast<unsigned*>(context) == 1;
+        });
     harken::TimelineArmTable arms(1);
     harken::UnplacedBatchCredit credit{};
     ASSERT_TRUE(pool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 1}, &credit));
+    ASSERT_EQ(1u, preparations);
     ScheduledEventInput event{};
     event.executeFrame = 210;
     TransactionRequest request{};
@@ -4685,6 +4858,7 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
     std::uint32_t page = 0;
     ASSERT_TRUE(pool.PageForFrame(210, &page));
 
+    unsigned preparationsAfterRefusals = 0;
     {
         ScheduledTransactionPool::PrivateMaterializationTransaction lease;
         ASSERT_TRUE(pool.TryMaterializeUnplacedBatch(
@@ -4692,6 +4866,23 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
             &lease, &transactionRefusal, &groupStatus));
         ASSERT_TRUE(lease.Transactions()->Valid());
         ASSERT_NE(nullptr, lease.Group(0));
+        EXPECT_TRUE(lease.Group(0)->Valid());
+        auto independent = request;
+        independent.transactionId = 14;
+        EXPECT_EQ(ReserveRefusal::PageEventCapacity,
+            pool.Reserve(independent, PrePublishLatePolicy::Refuse).refusal);
+        EXPECT_EQ(2u, preparations);
+        harken::PreparedTransactionBatch prepared;
+        EXPECT_EQ(ReserveRefusal::PageEventCapacity,
+            pool.PrepareTransactionBatch(&independent, 1, 0, &prepared));
+        EXPECT_FALSE(prepared.Valid());
+        EXPECT_EQ(3u, preparations);
+        harken::UnplacedBatchCredit independentCredit{};
+        EXPECT_FALSE(pool.ReserveUnplacedBatchCredit({1, 1, 1, 1, 0}, &independentCredit));
+        EXPECT_FALSE(independentCredit.Valid());
+        EXPECT_EQ(4u, preparations);
+        preparationsAfterRefusals = preparations;
+        EXPECT_TRUE(lease.Transactions()->Valid());
         EXPECT_TRUE(lease.Group(0)->Valid());
         EXPECT_FALSE(pool.CancelUnplacedBatchCredit(&credit));
         EXPECT_EQ(0u, pool.Page(page)->committedTransactionCount);
@@ -4715,6 +4906,7 @@ TEST(ScheduledTransactionPool, UnplacedHolderMaterializesAndRollsBackItsExactPag
         ASSERT_TRUE(lease.ReleasePublication());
     }
     EXPECT_FALSE(credit.Valid());
+    EXPECT_EQ(preparationsAfterRefusals, preparations);
     pool.Publish(300, &h.instances, &h.occurrences, &arms);
     std::array<ConsumedEvent, 1> consumed{};
     ASSERT_EQ(1u, pool.ConsumePageRt(2, consumed.data(), consumed.size()));

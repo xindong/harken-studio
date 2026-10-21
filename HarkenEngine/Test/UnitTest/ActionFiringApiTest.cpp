@@ -188,7 +188,7 @@ struct ScheduledTransactionPoolTestAccess {
         const auto eventBase = static_cast<std::size_t>(ring) *
             pool.config_.maxEventsPerQuantum;
         for (std::uint32_t index = 0; index < pool.pageEventCount_[ring]; ++index) {
-            const auto& event = pool.pageEvents_[eventBase + index];
+            const auto& event = pool.PageEvent(eventBase + index);
             const auto& eventRecord = pool.transactions_[event.txnSlot];
             std::cerr << "U1VC_TEMP page_event index=" << index
                       << " frame=" << event.executeFrame
@@ -292,7 +292,7 @@ struct ScheduledTransactionPoolTestAccess {
         probe.pageGeneration = page.pageGeneration;
         probe.pageFrozen = page.frozen;
         for (std::uint32_t index = 0; index < probe.pageEventCount; ++index)
-            if (pool.pageEvents_[base + index].txnSlot == probe.slot)
+            if (pool.PageEvent(base + index).txnSlot == probe.slot)
                 ++probe.matchingPageEvents;
         *out = probe;
         return true;
@@ -56782,7 +56782,7 @@ TEST(ActionFiringApi, DormantNativeSelectionGroupCandidateMoveRefusalPreservesRe
 }
 
 static void CheckFixedSilentVariableControlSourceOutcome(bool invalidateSource, bool stallFifo = false,
-                                                        unsigned waitEnd = 0) {
+                                                        unsigned waitEnd = 0, bool overlapAdmission = false) {
     constexpr std::uint32_t block = 64;
     harkentest::EngineSession session(harkentest::MakeNullConfig(2, block, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -56818,6 +56818,9 @@ static void CheckFixedSilentVariableControlSourceOutcome(bool invalidateSource, 
             engine.variableSlices.Invalidate(source, 1));
     VnActionStepResult play{};
     play.structSize = sizeof(play);
+    VnActionFiringHandle laterFiring = 0;
+    VnActionStepResult laterPlay{};
+    laterPlay.structSize = sizeof(laterPlay);
     if (stallFifo) {
         engine.mixer.SetMaxCommandsPerQuantumForTest(0);
         for (unsigned waiting = 0; waiting < 10; ++waiting) {
@@ -56829,6 +56832,26 @@ static void CheckFixedSilentVariableControlSourceOutcome(bool invalidateSource, 
             EXPECT_GT(engine.variableSlices.SourceObserverCount(source), 0u);
             for (std::uint32_t sample = 0; sample < 2 * block; ++sample)
                 EXPECT_NEAR(0, engine.nullBackend.LastBlock()[sample], 1e-7f);
+        }
+        if (overlapAdmission) {
+            const auto service = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+                [&](const auto& row) { return row.rootInstance == play.producedPlayableInstance; });
+            ASSERT_NE(engine.playableServices.end(), service);
+            const auto* activation = engine.decisions.ResolveFrontierActivation(service->frontierEntry.coordinator);
+            ASSERT_NE(nullptr, activation);
+            ASSERT_NE(0u, activation->SourceWaitSequence(service->frontierEntry, engine.mixer.BlocksRendered()));
+            ASSERT_EQ(VN_OK, Vn_PostAction(&desc, &laterFiring));
+            ASSERT_EQ(VN_OK, Vn_Update());
+            for (unsigned waiting = 0; waiting < 2; ++waiting) {
+                engine.nullBackend.Pump(1);
+                ASSERT_EQ(VN_OK, Vn_Update());
+                ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
+                ASSERT_EQ(VN_OK, Vn_QueryActionStep(laterFiring, 0, &laterPlay));
+                EXPECT_EQ(VN_ACTION_STEP_ACTIVE, play.state);
+                EXPECT_EQ(VN_ACTION_STEP_ACTIVE, laterPlay.state);
+                EXPECT_GT(engine.variableSlices.SourceObserverCount(source), 0u);
+                EXPECT_NEAR(0, harkentest::Peak(engine.nullBackend.LastBlock(), 2 * block), 1e-7f);
+            }
         }
         engine.mixer.SetMaxCommandsPerQuantumForTest(engine.config.maxControlCommandsPerQuantum);
     }
@@ -56847,16 +56870,19 @@ static void CheckFixedSilentVariableControlSourceOutcome(bool invalidateSource, 
             ASSERT_NE(harken::RuntimeTransportResetStatus::RuntimeRecreateRequired, resetStatus);
         }
         ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &play));
+        if (laterFiring != 0) ASSERT_EQ(VN_OK, Vn_QueryActionStep(laterFiring, 0, &laterPlay));
         for (std::uint32_t sample = 0; sample < 2 * block; ++sample)
             EXPECT_NEAR(0, engine.nullBackend.LastBlock()[sample], 1e-7f);
         if ((play.state == VN_ACTION_STEP_SUCCEEDED || play.state == VN_ACTION_STEP_FAILED ||
              play.state == VN_ACTION_STEP_CANCELLED) &&
             engine.variableSlices.SourceObserverCount(source) == 0u &&
+            (laterFiring == 0 || laterPlay.state == VN_ACTION_STEP_SUCCEEDED) &&
             resetStatus == harken::RuntimeTransportResetStatus::Complete) break;
     }
     EXPECT_EQ(waitEnd == 1 || waitEnd == 3 ? VN_ACTION_STEP_CANCELLED :
         invalidateSource || waitEnd == 2 ? VN_ACTION_STEP_FAILED : VN_ACTION_STEP_SUCCEEDED, play.state);
     EXPECT_EQ(0u, engine.variableSlices.SourceObserverCount(source));
+    if (laterFiring != 0) EXPECT_EQ(VN_ACTION_STEP_SUCCEEDED, laterPlay.state);
     EXPECT_FALSE(engine.runtimeRecreateRequired);
 }
 
@@ -56870,6 +56896,10 @@ TEST(ActionFiringApi, FixedSilentVariableControlFailsWhenItsSelectionSourceFails
 
 TEST(ActionFiringApi, FixedSilentVariableControlWaitsAcrossCallbacksForItsSource) {
     CheckFixedSilentVariableControlSourceOutcome(false, true);
+}
+
+TEST(ActionFiringApi, FixedSilentVariableControlSavedWaitSurvivesLaterAdmission) {
+    CheckFixedSilentVariableControlSourceOutcome(false, true, 0, true);
 }
 
 TEST(ActionFiringApi, FixedSilentVariableControlSourceWaitStopReturnsItsReaders) {

@@ -205,7 +205,7 @@ bool ScheduledTransactionPool::MatchesPreparedPageBatchInput(
         const EventRow* actual = nullptr;
         for (std::uint32_t index = pageEventCount_[claim.transferRing];
              index < pageEventCount_[claim.transferRing] + pagePreparedEventCount_[claim.transferRing]; ++index) {
-            const auto& row = pageEvents_[base + index];
+            const auto& row = PageEvent(base + index);
             if (row.txnSlot != slot) continue;
             if (actual != nullptr || row.rowSequence != claim.transferRowSequences[position]) return false;
             actual = &row;
@@ -283,12 +283,12 @@ PreparedTransactionBatch ScheduledTransactionPool::ConsumePreparedPageBatchTrans
         const auto prepared = pool.pagePreparedEventCount_[ring];
         std::uint32_t found = prepared;
         for (std::uint32_t index = 0; index < prepared; ++index)
-            if (pool.pageEvents_[eventBase + live + index].txnSlot == slot) { found = index; break; }
+            if (pool.PageEvent(eventBase + live + index).txnSlot == slot) { found = index; break; }
         // Held claim ownership guarantees existence; the scan only locates moved storage.
         assert(found < prepared);
-        if (found != 0) std::swap(pool.pageEvents_[eventBase + live],
-                                 pool.pageEvents_[eventBase + live + found]);
-        auto& row = pool.pageEvents_[eventBase + live];
+        if (found != 0) std::swap(pool.PageEvent(eventBase + live),
+                                 pool.PageEvent(eventBase + live + found));
+        auto& row = pool.PageEvent(eventBase + live);
         assert(row.rowSequence == claim.transferRowSequences[position]);
         row.frontier = proof.bindings_[position];
         FrameBatchRow* batch = nullptr;
@@ -1617,6 +1617,7 @@ ScheduledTransactionPool::~ScheduledTransactionPool() {
     assert(selectedFutureDomains_ == 0);
     assert(immediateBackingHolds_ == 0 && activeImmediateLaneBacking_ == nullptr);
     // Device and producer quiescence precedes pool destruction.
+    while (pendingEventStorage_ != nullptr) pendingEventStorage_->Detach();
     while (laneGroupPublications_ != nullptr) laneGroupPublications_->Release();
     while (unpublishedGroupArmCancellations_ != nullptr)
         unpublishedGroupArmCancellations_->Release();
@@ -2896,6 +2897,83 @@ std::uint32_t ScheduledTransactionPool::RingIndex(std::uint32_t page) const {
     return pageCount_ == 0 ? 0 : (ringStart_ + page) % pageCount_;
 }
 
+void ScheduledTransactionPool::PendingEventStorageRegistration::Detach() noexcept {
+    if (owner_ == nullptr) return;
+    if (previous_ != nullptr) previous_->next_ = next_;
+    else owner_->pendingEventStorage_ = next_;
+    if (next_ != nullptr) next_->previous_ = previous_;
+    owner_ = nullptr;
+    previous_ = next_ = nullptr;
+    context_ = nullptr;
+    prepare_ = nullptr;
+}
+
+ScheduledTransactionPool::PendingEventStorageDemand
+ScheduledTransactionPool::CapturePendingEventStorageDemand() const noexcept {
+    PendingEventStorageDemand demand{unplacedEvents_, RetiredPageEventCount()};
+    for (std::size_t page = 0; page < pageEventCount_.size(); ++page)
+        demand.nativeEvents += static_cast<std::uint64_t>(pageEventCount_[page]) +
+            pagePreparedEventCount_[page];
+    return demand;
+}
+
+void ScheduledTransactionPool::AttachPendingEventStorage(
+    PendingEventStorageRegistration& registration, void* context,
+    PendingEventStorageRegistration::Prepare prepare) const noexcept {
+    assert(!memguard::IsAudioTagged() && Valid() && prepare != nullptr);
+    registration.Detach();
+    registration.owner_ = this;
+    registration.context_ = context;
+    registration.prepare_ = prepare;
+    registration.next_ = pendingEventStorage_;
+    if (pendingEventStorage_ != nullptr) pendingEventStorage_->previous_ = &registration;
+    pendingEventStorage_ = &registration;
+}
+
+bool ScheduledTransactionPool::PrepareEventStorage(std::uint64_t additionalEvents,
+    bool consumeAcceptedBacking) noexcept {
+    auto demand = CapturePendingEventStorageDemand();
+    if (demand.nativeEvents > nativeEventRows_.Capacity() ||
+        additionalEvents > nativeEventRows_.Capacity() - demand.nativeEvents) return false;
+    demand.nativeEvents += additionalEvents;
+    if (consumeAcceptedBacking)
+        return demand.nativeEvents <= nativeEventRows_.ConstructedCount();
+    if (!nativeEventRows_.ConstructThrough(static_cast<std::size_t>(demand.nativeEvents)))
+        return false;
+    for (auto* registration = pendingEventStorage_; registration != nullptr;
+         registration = registration->next_)
+        if (!registration->prepare_(registration->context_, demand)) return false;
+    return true;
+}
+
+void ScheduledTransactionPool::AcquirePageEvent(std::size_t index) noexcept {
+    assert(!memguard::IsAudioTagged() && pageEventSlots_[index] == SIZE_MAX);
+    std::size_t slot = issuedEventSlots_;
+    if (freeEventSlots_.empty()) {
+        assert(slot < nativeEventRows_.ConstructedCount());
+        ++issuedEventSlots_;
+    } else {
+        slot = freeEventSlots_.back();
+        freeEventSlots_.pop_back();
+    }
+    pageEventSlots_[index] = slot;
+}
+
+void ScheduledTransactionPool::ReleasePageEvent(std::size_t index) noexcept {
+    assert(!memguard::IsAudioTagged() && pageEventSlots_[index] < issuedEventSlots_);
+    assert(freeEventSlots_.size() < freeEventSlots_.capacity());
+    const auto slot = pageEventSlots_[index];
+    nativeEventRows_[slot] = {};
+    pageEventSlots_[index] = SIZE_MAX;
+    freeEventSlots_.push_back(slot);
+}
+
+void ScheduledTransactionPool::RecordRetiredPageEvents(std::uint64_t count) noexcept {
+    const auto previous = retiredPageEvents_.load(std::memory_order_relaxed);
+    retiredPageEvents_.store(previous + std::min(count, UINT64_MAX - previous),
+        std::memory_order_release);
+}
+
 bool ScheduledTransactionPool::Reset(const Config& config,
                                      std::uint64_t startFrame,
                                      TransportEpoch epoch) {
@@ -2976,6 +3054,7 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     if (pages == 0 || pages > 0xFFFFFFFFull) {
         return false;
     }
+    if (pages > SIZE_MAX / config.maxEventsPerQuantum) return false;
     if (config.maxPlan03GroupHeadersPerPage != 0 &&
         pages > (SIZE_MAX - config.maxScheduledTransactions) /
             config.maxPlan03GroupHeadersPerPage) return false;
@@ -3028,7 +3107,10 @@ bool ScheduledTransactionPool::Reset(const Config& config,
     consumeTick_ = 0;
 
     pageHeaders_.assign(pageCount_, HorizonPageHeader{});
+    std::uint64_t retiredEvents = 0;
+    for (const auto count : pageEventCount_) retiredEvents += count;
     pageEventCount_.assign(pageCount_, 0);
+    RecordRetiredPageEvents(retiredEvents);
     pagePreparedEventCount_.assign(pageCount_, 0);
     pagePublicationHolds_.assign(pageCount_, 0);
     pageSorted_.assign(pageCount_, 1);
@@ -3042,12 +3124,15 @@ bool ScheduledTransactionPool::Reset(const Config& config,
         pageEmptyQuantumStamp_[p].store(kUnpublishedQuantumStamp,
                                         std::memory_order_relaxed);
     }
-    pageEvents_.assign(static_cast<std::size_t>(pageCount_) *
-                           config.maxEventsPerQuantum,
-                       EventRow{});
-    pageEventOrder_.assign(static_cast<std::size_t>(pageCount_) *
-                               config.maxEventsPerQuantum,
-                           0);
+    const auto eventRows = static_cast<std::size_t>(pageCount_) * config.maxEventsPerQuantum;
+    StableRowStorage<EventRow, std::size_t> nativeEvents;
+    if (!nativeEvents.Reserve(eventRows)) return false;
+    pageEventSlots_.assign(eventRows, SIZE_MAX);
+    pageEventOrder_.assign(eventRows, 0);
+    freeEventSlots_.clear();
+    freeEventSlots_.reserve(eventRows);
+    issuedEventSlots_ = 0;
+    nativeEventRows_.Swap(nativeEvents);
     if (config_.maxCurrentSlicesPerQuantum == 0) {
         config_.maxCurrentSlicesPerQuantum = config_.maxEventsPerQuantum;
     }
@@ -3189,7 +3274,7 @@ bool ScheduledTransactionPool::ReserveUnplacedBatchCredit(
     std::uint64_t occupiedGroups = 0;
     for (const auto state : pagePlan03GroupRowStates_)
         occupiedGroups += state != Plan03GroupRowState::Free ? 1u : 0u;
-    if (occupiedEvents + unplacedEvents_ + request.events > pageEvents_.size() ||
+    if (occupiedEvents + unplacedEvents_ + request.events > nativeEventRows_.Capacity() ||
         occupiedBatches + unplacedFrameBatches_ + request.frameBatches >
             pageBatchRows_.size() ||
         occupiedGroups + unplacedGroupHeaders_ + request.groupHeaders >
@@ -3197,6 +3282,7 @@ bool ScheduledTransactionPool::ReserveUnplacedBatchCredit(
     for (std::size_t slot = 0; slot < unplacedCredits_.size(); ++slot) {
         auto& row = unplacedCredits_[slot];
         if (row.active) continue;
+        if (!PrepareEventStorage(request.events)) return false;
         auto backing = request.groupHeaders == 0 || config_.maxArmsPerGroup == 0
             ? nullptr : PreparePageGroupMemberBacking(request.groupHeaders);
         if (request.groupHeaders != 0 && config_.maxArmsPerGroup != 0 && backing == nullptr) return false;
@@ -3541,9 +3627,9 @@ bool ScheduledTransactionPool::TryMaterializeUnplacedBatch(
     out->groupCount_ = static_cast<std::uint32_t>(groupCount);
     privateMaterializationActive_ = true;
     if (requestCount != 0) {
-        *transactionRefusal = PrepareTransactionBatch(
+        *transactionRefusal = PrepareTransactionBatchImpl(
             requests, requestCount, publicationFrontier,
-            &out->transactions_);
+            &out->transactions_, nullptr, true);
         if (*transactionRefusal != ReserveRefusal::None) {
             (void)RollbackPrivateMaterialization(out);
             return false;
@@ -3739,9 +3825,9 @@ bool ScheduledTransactionPool::TryMaterializeUnplacedCohort(
     out->groupCount_ = static_cast<std::uint32_t>(groupCount);
     privateMaterializationActive_ = true;
     if (requestCount != 0) {
-        *transactionRefusal = PrepareTransactionBatch(
+        *transactionRefusal = PrepareTransactionBatchImpl(
             privateCohortRequests_.data(), requestCount,
-            publicationFrontier, &out->transactions_);
+            publicationFrontier, &out->transactions_, nullptr, true);
         if (*transactionRefusal != ReserveRefusal::None) {
             (void)RollbackPrivateMaterialization(out);
             return false;
@@ -3818,8 +3904,8 @@ bool ScheduledTransactionPool::CanRollbackPrivateMaterialization(
         std::uint32_t ownedEvents = 0;
         for (std::uint32_t index = 0;
              index < pagePreparedEventCount_[ring]; ++index) {
-            const auto& row = pageEvents_[
-                base + pageEventCount_[ring] + index];
+            const auto& row = PageEvent(
+                base + pageEventCount_[ring] + index);
             if (row.txnSlot >= transactions_.size()) return false;
             const auto& record = transactions_[row.txnSlot];
             if (record.preparedClaimSlot != prepared.claimSlot_ ||
@@ -3850,8 +3936,8 @@ bool ScheduledTransactionPool::CanRollbackPrivateMaterialization(
             std::uint32_t ownedReferences = 0;
             for (std::uint32_t index = 0;
                  index < pagePreparedEventCount_[ring]; ++index) {
-                const auto& row = pageEvents_[
-                    base + pageEventCount_[ring] + index];
+                const auto& row = PageEvent(
+                    base + pageEventCount_[ring] + index);
                 if (row.executeFrame != frameBatch.frame ||
                     row.txnSlot >= transactions_.size()) continue;
                 const auto& record = transactions_[row.txnSlot];
@@ -4070,8 +4156,8 @@ ReserveRefusal ScheduledTransactionPool::CheckUnplacedPageBudget(
         occupiedEvents += pageEventCount_[ring] + pagePreparedEventCount_[ring];
         occupiedBatches += pageBatchOccupiedCount_[ring];
     }
-    if (occupiedEvents > pageEvents_.size() ||
-        additionalEvents > pageEvents_.size() - occupiedEvents)
+    if (occupiedEvents > nativeEventRows_.Capacity() ||
+        additionalEvents > nativeEventRows_.Capacity() - occupiedEvents)
         return ReserveRefusal::PageEventCapacity;
     if (occupiedBatches > pageBatchRows_.size() ||
         additionalBatches > pageBatchRows_.size() - occupiedBatches)
@@ -4135,8 +4221,12 @@ bool ScheduledTransactionPool::CanResetForEpoch(
         pagePublicationHolds_.size() != pageCount ||
         pageSorted_.size() != pageCount ||
         !exactProduct(pageCount, config_.maxEventsPerQuantum,
-                      pageEvents_.size()) ||
-        pageEventOrder_.size() != pageEvents_.size() ||
+                      nativeEventRows_.Capacity()) ||
+        pageEventSlots_.size() != nativeEventRows_.Capacity() ||
+        pageEventOrder_.size() != nativeEventRows_.Capacity() ||
+        freeEventSlots_.capacity() < nativeEventRows_.Capacity() ||
+        issuedEventSlots_ > nativeEventRows_.ConstructedCount() ||
+        freeEventSlots_.size() > issuedEventSlots_ ||
         pageCurrentSliceCount_.size() != pageCount ||
         pageCurrentSliceStorage_ == nullptr ||
         pagePlan03GroupCount_.size() != pageCount ||
@@ -4280,12 +4370,18 @@ bool ScheduledTransactionPool::ResetForEpoch(
         header.absoluteQuantumIndex = baseQuantum + page;
         header.pageGeneration = generation;
     }
+    std::uint64_t retiredEvents = 0;
+    for (const auto count : pageEventCount_) retiredEvents += count;
     std::fill(pageEventCount_.begin(), pageEventCount_.end(), 0);
+    RecordRetiredPageEvents(retiredEvents);
     std::fill(pagePreparedEventCount_.begin(),
               pagePreparedEventCount_.end(), 0);
     std::fill(pagePublicationHolds_.begin(), pagePublicationHolds_.end(), 0);
     std::fill(pageSorted_.begin(), pageSorted_.end(), 1);
-    std::fill(pageEvents_.begin(), pageEvents_.end(), EventRow{});
+    std::fill(nativeEventRows_.begin(), nativeEventRows_.end(), EventRow{});
+    std::fill(pageEventSlots_.begin(), pageEventSlots_.end(), SIZE_MAX);
+    freeEventSlots_.clear();
+    issuedEventSlots_ = 0;
     std::fill(pageEventOrder_.begin(), pageEventOrder_.end(), 0);
     std::fill(pageCurrentSliceCount_.begin(), pageCurrentSliceCount_.end(), 0);
     for (std::uint32_t page = 0; page < pageCount_; ++page) {
@@ -4389,7 +4485,7 @@ std::size_t ScheduledTransactionPool::CapturePageEventsForTest(
     const std::size_t base = static_cast<std::size_t>(ring) *
         config_.maxEventsPerQuantum;
     for (std::size_t index = 0; index < std::min(count, capacity); ++index) {
-        const EventRow& row = pageEvents_[base + index];
+        const EventRow& row = PageEvent(base + index);
         ConsumedEvent& event = out[index];
         event = {};
         event.executeFrame = row.executeFrame;
@@ -4504,12 +4600,12 @@ void ScheduledTransactionPool::Publish(
                     config_.maxEventsPerQuantum;
                 const std::uint32_t count = pageEventCount_[ring];
                 for (std::uint32_t i = 0; i < count; ++i) {
-                    EventRow& row = pageEvents_[base + i];
+                    EventRow& row = PageEvent(base + i);
                     TransactionRecord& transaction = transactions_[row.txnSlot];
                     bool valid = transaction.used && transaction.epoch == epoch_;
                     for (std::uint32_t prior = 0;
                          valid && prior < i; ++prior) {
-                        const EventRow& priorRow = pageEvents_[base + prior];
+                        const EventRow& priorRow = PageEvent(base + prior);
                         if (priorRow.txnSlot == row.txnSlot) {
                             valid = priorRow.frozenTxnValid;
                             break;
@@ -4555,13 +4651,13 @@ void ScheduledTransactionPool::SortPage(std::uint32_t ring) {
     const std::uint32_t count = pageEventCount_[ring];
     const std::size_t base =
         static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
-    std::uint32_t* order = &pageEventOrder_[base];
+    std::size_t* order = &pageEventOrder_[base];
     for (std::uint32_t i = 0; i < count; ++i) {
-        order[i] = i;
+        order[i] = pageEventSlots_[base + i];
     }
-    const EventRow* rows = &pageEvents_[base];
+    const EventRow* rows = nativeEventRows_.data();
     std::sort(order, order + count,
-              [rows](std::uint32_t a, std::uint32_t b) {
+              [rows](std::size_t a, std::size_t b) {
                   const EventRow& x = rows[a];
                   const EventRow& y = rows[b];
                   if (x.executeFrame != y.executeFrame)
@@ -4764,6 +4860,8 @@ ReserveResult ScheduledTransactionPool::Reserve(
     const auto globalBudget = CheckUnplacedPageBudget(
         request.eventCount, reservedNewBatches);
     if (globalBudget != ReserveRefusal::None) return refuse(globalBudget);
+    if (!PrepareEventStorage(request.eventCount))
+        return refuse(ReserveRefusal::PageEventCapacity);
 
     // Every check passed: commit. From here nothing can fail, so there is no
     // half-written state to roll back.
@@ -4796,12 +4894,13 @@ ReserveResult ScheduledTransactionPool::Reserve(
         const std::size_t eventBase =
             static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
         const std::uint32_t liveEventCount = pageEventCount_[ring];
+        AcquirePageEvent(eventBase + liveEventCount + pagePreparedEventCount_[ring]);
         if (pagePreparedEventCount_[ring] != 0) {
-            pageEvents_[eventBase + liveEventCount +
-                        pagePreparedEventCount_[ring]] =
-                pageEvents_[eventBase + liveEventCount];
+            PageEvent(eventBase + liveEventCount +
+                        pagePreparedEventCount_[ring]) =
+                PageEvent(eventBase + liveEventCount);
         }
-        EventRow& row = pageEvents_[eventBase + liveEventCount];
+        EventRow& row = PageEvent(eventBase + liveEventCount);
         row.executeFrame = frame;
         row.logicCommitSequence = in.logicCommitSequence;
         row.executionOrdinal = in.executionOrdinal;
@@ -5040,7 +5139,7 @@ ScheduledTransactionPool::CancelUnpublishedOrdinaryStartExact(
         const std::size_t scanBase =
             static_cast<std::size_t>(scanRing) * config_.maxEventsPerQuantum;
         for (std::uint32_t index = 0; index < scanLive + scanPrepared; ++index) {
-            const EventRow& event = pageEvents_[scanBase + index];
+            const EventRow& event = PageEvent(scanBase + index);
             if (event.txnSlot != ref.slot && sameArm(event.armToken))
                 return OrdinaryStartCancelResult::NotEligible;
             if (event.txnSlot != ref.slot) continue;
@@ -5051,7 +5150,7 @@ ScheduledTransactionPool::CancelUnpublishedOrdinaryStartExact(
     }
     if (found == UINT32_MAX)
         return OrdinaryStartCancelResult::ProtocolViolation;
-    const EventRow& event = pageEvents_[eventBase + found];
+    const EventRow& event = PageEvent(eventBase + found);
     if (event.transactionId != expected.transactionId ||
         event.executeFrame != expected.startFrame ||
         event.armToken.slot != expected.arm.slot ||
@@ -5088,7 +5187,7 @@ ScheduledTransactionPool::CancelUnpublishedOrdinaryStartExact(
     std::uint32_t actualLive = 0;
     std::uint32_t actualPrepared = 0;
     for (std::uint32_t index = 0; index < live + prepared; ++index) {
-        if (pageEvents_[eventBase + index].executeFrame != expected.startFrame)
+        if (PageEvent(eventBase + index).executeFrame != expected.startFrame)
             continue;
         if (index < live) ++actualLive;
         else ++actualPrepared;
@@ -5099,12 +5198,12 @@ ScheduledTransactionPool::CancelUnpublishedOrdinaryStartExact(
 
     std::uint32_t distinctLiveTransactions = 0;
     for (std::uint32_t index = 0; index < live; ++index) {
-        const auto slot = pageEvents_[eventBase + index].txnSlot;
+        const auto slot = PageEvent(eventBase + index).txnSlot;
         if (slot >= transactions_.size() || !transactions_[slot].used)
             return OrdinaryStartCancelResult::ProtocolViolation;
         bool seen = false;
         for (std::uint32_t prior = 0; prior < index; ++prior)
-            seen = seen || pageEvents_[eventBase + prior].txnSlot == slot;
+            seen = seen || PageEvent(eventBase + prior).txnSlot == slot;
         if (!seen) ++distinctLiveTransactions;
     }
     if (distinctLiveTransactions != header.committedTransactionCount)
@@ -5122,7 +5221,7 @@ ScheduledTransactionPool::CancelUnpublishedOrdinaryStartExact(
             std::uint32_t candidatePrepared = 0;
             for (std::uint32_t eventIndex = 0; eventIndex < live + prepared;
                  ++eventIndex) {
-                if (pageEvents_[eventBase + eventIndex].executeFrame !=
+                if (PageEvent(eventBase + eventIndex).executeFrame !=
                     candidate.frame) continue;
                 if (eventIndex < live) ++candidateLive;
                 else ++candidatePrepared;
@@ -5142,10 +5241,10 @@ ScheduledTransactionPool::CancelUnpublishedOrdinaryStartExact(
 
     // All checks precede the single-writer commit. The PageStamp is still absent.
     const std::uint32_t last = live + prepared - 1;
-    pageEvents_[eventBase + found] = pageEvents_[eventBase + live - 1];
+    PageEvent(eventBase + found) = PageEvent(eventBase + live - 1);
     if (prepared != 0)
-        pageEvents_[eventBase + live - 1] = pageEvents_[eventBase + last];
-    pageEvents_[eventBase + last] = {};
+        PageEvent(eventBase + live - 1) = PageEvent(eventBase + last);
+    ReleasePageEvent(eventBase + last);
     --pageEventCount_[ring];
     pageSorted_[ring] = 0;
     if (--batch.liveReferences == 0) --pageBatchCount_[ring];
@@ -5192,7 +5291,7 @@ bool ScheduledTransactionPool::CaptureUnpublishedFrontierStartRowSequence(
     const std::size_t base = static_cast<std::size_t>(ring) *
         config_.maxEventsPerQuantum;
     for (std::uint32_t index = 0; index < live; ++index) {
-        const EventRow& event = pageEvents_[base + index];
+        const EventRow& event = PageEvent(base + index);
         if (event.transactionId != expected.transactionId ||
             event.executeFrame != input.executeFrame ||
             event.logicCommitSequence != input.logicCommitSequence ||
@@ -5332,7 +5431,7 @@ ScheduledTransactionPool::CancelUnpublishedFrontierStartExact(
         const std::size_t scanBase = static_cast<std::size_t>(scanRing) *
             config_.maxEventsPerQuantum;
         for (std::uint32_t index = 0; index < scanLive + scanPrepared; ++index) {
-            if (pageEvents_[scanBase + index].txnSlot != slot) continue;
+            if (PageEvent(scanBase + index).txnSlot != slot) continue;
             if (scanRing != ring || index >= live || found != UINT32_MAX)
                 return Result::ProtocolViolation;
             found = index;
@@ -5341,7 +5440,7 @@ ScheduledTransactionPool::CancelUnpublishedFrontierStartExact(
     if (found == UINT32_MAX) return Result::ProtocolViolation;
     const std::size_t eventBase = static_cast<std::size_t>(ring) *
         config_.maxEventsPerQuantum;
-    const EventRow& event = pageEvents_[eventBase + found];
+    const EventRow& event = PageEvent(eventBase + found);
     if (event.rowSequence != expectedRowSequence ||
         event.transactionId != expected.transactionId ||
         event.executeFrame != input.executeFrame ||
@@ -5387,7 +5486,7 @@ ScheduledTransactionPool::CancelUnpublishedFrontierStartExact(
     std::uint32_t actualLive = 0;
     std::uint32_t actualPrepared = 0;
     for (std::uint32_t index = 0; index < live + prepared; ++index) {
-        if (pageEvents_[eventBase + index].executeFrame != input.executeFrame)
+        if (PageEvent(eventBase + index).executeFrame != input.executeFrame)
             continue;
         if (index < live) ++actualLive;
         else ++actualPrepared;
@@ -5398,10 +5497,10 @@ ScheduledTransactionPool::CancelUnpublishedFrontierStartExact(
 
     // All identity and accounting checks precede the single-writer mutation.
     const std::uint32_t last = live + prepared - 1;
-    pageEvents_[eventBase + found] = pageEvents_[eventBase + live - 1];
+    PageEvent(eventBase + found) = PageEvent(eventBase + live - 1);
     if (prepared != 0)
-        pageEvents_[eventBase + live - 1] = pageEvents_[eventBase + last];
-    pageEvents_[eventBase + last] = {};
+        PageEvent(eventBase + live - 1) = PageEvent(eventBase + last);
+    ReleasePageEvent(eventBase + last);
     --pageEventCount_[ring];
     pageSorted_[ring] = 0;
     FrameBatchRow& changedBatch = pageBatchRows_[batchBase + batchIndex];
@@ -5532,7 +5631,7 @@ ScheduledTransactionPool::CancelUnpublishedFrontierEntryExact(
         const auto base = static_cast<std::size_t>(scanRing) *
             config_.maxEventsPerQuantum;
         for (std::uint32_t index = 0; index < scanLive + scanPrepared; ++index) {
-            const auto& event = pageEvents_[base + index];
+            const auto& event = PageEvent(base + index);
             if (event.frontier.kind == FrontierOperationKind::Entry &&
                 event.frontier.entry == descriptor.entry)
                 ++entryRows;
@@ -5608,7 +5707,7 @@ ScheduledTransactionPool::CancelUnpublishedFrontierEntryExact(
     std::uint32_t actualLive = 0;
     std::uint32_t actualPrepared = 0;
     for (std::uint32_t index = 0; index < live + prepared; ++index) {
-        if (pageEvents_[eventBase + index].executeFrame != expected.executeFrame)
+        if (PageEvent(eventBase + index).executeFrame != expected.executeFrame)
             continue;
         if (index < live) ++actualLive;
         else ++actualPrepared;
@@ -5624,11 +5723,11 @@ ScheduledTransactionPool::CancelUnpublishedFrontierEntryExact(
     for (const auto position : positions) {
         const auto currentLive = pageEventCount_[ring];
         const auto last = currentLive + prepared - 1;
-        pageEvents_[eventBase + position] =
-            pageEvents_[eventBase + currentLive - 1];
+        PageEvent(eventBase + position) =
+            PageEvent(eventBase + currentLive - 1);
         if (prepared != 0)
-            pageEvents_[eventBase + currentLive - 1] = pageEvents_[eventBase + last];
-        pageEvents_[eventBase + last] = {};
+            PageEvent(eventBase + currentLive - 1) = PageEvent(eventBase + last);
+        ReleasePageEvent(eventBase + last);
         --pageEventCount_[ring];
     }
     pageSorted_[ring] = 0;
@@ -5657,8 +5756,8 @@ bool ScheduledTransactionPool::HasFrontierEntryEvent(
         const auto count = pageEventCount_[ring] + pagePreparedEventCount_[ring];
         const auto base = static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
         for (std::uint32_t index = 0; index < count; ++index)
-            if (pageEvents_[base + index].frontier.kind == FrontierOperationKind::Entry &&
-                pageEvents_[base + index].frontier.entry == entry)
+            if (PageEvent(base + index).frontier.kind == FrontierOperationKind::Entry &&
+                PageEvent(base + index).frontier.entry == entry)
                 return true;
     }
     return false;
@@ -6016,6 +6115,16 @@ ReserveRefusal ScheduledTransactionPool::PrepareTransactionBatch(
     std::uint64_t publicationFrontier,
     PreparedTransactionBatch* out,
     const PreparedPageGroupTransferScope* transferScope) noexcept {
+    return PrepareTransactionBatchImpl(requests, requestCount, publicationFrontier,
+        out, transferScope, false);
+}
+
+ReserveRefusal ScheduledTransactionPool::PrepareTransactionBatchImpl(
+    const TransactionRequest* requests, std::size_t requestCount,
+    std::uint64_t publicationFrontier,
+    PreparedTransactionBatch* out,
+    const PreparedPageGroupTransferScope* transferScope,
+    bool consumeAcceptedBacking) noexcept {
     if (out == nullptr || out->Valid() ||
         (transferScope != nullptr && (!transferScope->Valid() || requests == nullptr ||
             requestCount != 5 || privateMaterializationActive_))) {
@@ -6045,6 +6154,14 @@ ReserveRefusal ScheduledTransactionPool::PrepareTransactionBatch(
     if (freePreparedTransactionClaims_.size() <= unplacedPreparedClaims_) {
         refusalCounts_[static_cast<std::size_t>(ReserveRefusal::PoolFull)] += 1;
         return ReserveRefusal::PoolFull;
+    }
+
+    std::uint64_t additionalEvents = 0;
+    for (std::size_t index = 0; index < requestCount; ++index)
+        additionalEvents += requests[index].eventCount;
+    if (!PrepareEventStorage(additionalEvents, consumeAcceptedBacking)) {
+        refusalCounts_[static_cast<std::size_t>(ReserveRefusal::PageEventCapacity)] += 1;
+        return ReserveRefusal::PageEventCapacity;
     }
 
     const std::uint32_t claimSlot =
@@ -6101,9 +6218,10 @@ ReserveRefusal ScheduledTransactionPool::PrepareTransactionBatch(
             const std::size_t eventBase =
                 static_cast<std::size_t>(ring) *
                 config_.maxEventsPerQuantum;
-            EventRow& row = pageEvents_[
+            AcquirePageEvent(eventBase + pageEventCount_[ring] + pagePreparedEventCount_[ring]);
+            EventRow& row = PageEvent(
                 eventBase + pageEventCount_[ring] +
-                pagePreparedEventCount_[ring]];
+                pagePreparedEventCount_[ring]);
             row = {};
             row.executeFrame = input.executeFrame;
             row.logicCommitSequence = input.logicCommitSequence;
@@ -6200,7 +6318,7 @@ bool ScheduledTransactionPool::FreezePreparedTransactionBatch(
         const auto base = static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
         for (std::uint32_t index = pageEventCount_[ring];
              index < pageEventCount_[ring] + pagePreparedEventCount_[ring]; ++index) {
-            auto& row = pageEvents_[base + index];
+            auto& row = PageEvent(base + index);
             const auto& record = transactions_[row.txnSlot];
             if (record.preparedClaimSlot != prepared.claimSlot_ ||
                 record.preparedClaimGeneration != prepared.generation_) continue;
@@ -6225,7 +6343,7 @@ bool ScheduledTransactionPool::CapturePreparedTransactionEvent(
         const auto base = static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
         for (std::uint32_t index = 0;
              index < pageEventCount_[ring] + pagePreparedEventCount_[ring]; ++index) {
-            const auto& row = pageEvents_[base + index];
+            const auto& row = PageEvent(base + index);
             const auto& record = transactions_[row.txnSlot];
             if (record.preparedClaimSlot != prepared.claimSlot_ ||
                 record.preparedClaimGeneration != prepared.generation_ ||
@@ -6269,7 +6387,7 @@ bool ScheduledTransactionPool::MatchesFrozenPreparedTransactionEvents(
         const auto base = static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
         for (std::uint32_t index = pageEventCount_[ring];
              index < pageEventCount_[ring] + pagePreparedEventCount_[ring]; ++index) {
-            const auto& row = pageEvents_[base + index];
+            const auto& row = PageEvent(base + index);
             if (row.txnSlot >= transactions_.size()) return false;
             const auto& record = transactions_[row.txnSlot];
             if (record.preparedClaimSlot != prepared.claimSlot_ ||
@@ -6316,7 +6434,7 @@ bool ScheduledTransactionPool::BindPreparedTransactionEventFrontier(
         const auto base = static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
         for (std::uint32_t index = pageEventCount_[ring];
              index < pageEventCount_[ring] + pagePreparedEventCount_[ring]; ++index) {
-            auto& row = pageEvents_[base + index];
+            auto& row = PageEvent(base + index);
             const auto& record = transactions_[row.txnSlot];
             if (record.preparedClaimSlot != prepared.claimSlot_ ||
                 record.preparedClaimGeneration != prepared.generation_ ||
@@ -6379,7 +6497,7 @@ bool ScheduledTransactionPool::CommitPreparedTransactionBatch(
                 std::uint32_t found = preparedCount;
                 for (std::uint32_t index = 0;
                      index < preparedCount; ++index) {
-                    if (pageEvents_[eventBase + liveCount + index].txnSlot ==
+                    if (PageEvent(eventBase + liveCount + index).txnSlot ==
                         transactionSlot) {
                         found = index;
                         break;
@@ -6389,10 +6507,10 @@ bool ScheduledTransactionPool::CommitPreparedTransactionBatch(
                     break;
                 }
                 if (found != 0) {
-                    std::swap(pageEvents_[eventBase + liveCount],
-                              pageEvents_[eventBase + liveCount + found]);
+                    std::swap(PageEvent(eventBase + liveCount),
+                              PageEvent(eventBase + liveCount + found));
                 }
-                EventRow& row = pageEvents_[eventBase + liveCount];
+                EventRow& row = PageEvent(eventBase + liveCount);
 
                 const std::size_t batchBase =
                     static_cast<std::size_t>(ring) *
@@ -6456,7 +6574,7 @@ void ScheduledTransactionPool::FinishPreparedTransactionClaim(
     for (std::uint32_t ring = 0; ring < pageCount_; ++ring) {
         const auto base = static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
         for (std::uint32_t index = 0; index < pageEventCount_[ring]; ++index) {
-            const auto& row = pageEvents_[base + index];
+            const auto& row = PageEvent(base + index);
             const auto& record = transactions_[row.txnSlot];
             if (record.preparedClaimSlot == prepared->claimSlot_ &&
                 record.preparedClaimGeneration == prepared->generation_) --pagePublicationHolds_[ring];
@@ -6557,7 +6675,7 @@ bool ScheduledTransactionPool::CancelPreparedTransactionBatch(
                 std::uint32_t found = count;
                 for (std::uint32_t index = 0;
                      index < count; ++index) {
-                    if (pageEvents_[eventBase + start + index].txnSlot ==
+                    if (PageEvent(eventBase + start + index).txnSlot ==
                         transactionSlot) {
                         found = index;
                         break;
@@ -6567,7 +6685,7 @@ bool ScheduledTransactionPool::CancelPreparedTransactionBatch(
                     break;
                 }
                 EventRow& row =
-                    pageEvents_[eventBase + start + found];
+                    PageEvent(eventBase + start + found);
                 const std::size_t batchBase =
                     static_cast<std::size_t>(ring) *
                     config_.maxFrameBatchesPerQuantum;
@@ -6596,17 +6714,17 @@ bool ScheduledTransactionPool::CancelPreparedTransactionBatch(
                 const std::uint32_t last =
                     liveCount + preparedCount - 1;
                 if (claim.committed) {
-                    row = pageEvents_[eventBase + liveCount - 1];
+                    row = PageEvent(eventBase + liveCount - 1);
                     if (preparedCount != 0) {
-                        pageEvents_[eventBase + liveCount - 1] = pageEvents_[eventBase + last];
+                        PageEvent(eventBase + liveCount - 1) = PageEvent(eventBase + last);
                     }
                     --pageEventCount_[ring];
                     pageSorted_[ring] = 0;
                 } else {
-                    row = pageEvents_[eventBase + last];
+                    row = PageEvent(eventBase + last);
                     --pagePreparedEventCount_[ring];
                 }
-                pageEvents_[eventBase + last] = {};
+                ReleasePageEvent(eventBase + last);
                 --pagePublicationHolds_[ring];
                 touchesPage = true;
             }
@@ -7634,10 +7752,10 @@ std::size_t ScheduledTransactionPool::ConsumePage(
     const std::uint32_t count = pageEventCount_[ring];
     const std::size_t eventBase =
         static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
-    const std::uint32_t* order = &pageEventOrder_[eventBase];
+    const std::size_t* order = &pageEventOrder_[eventBase];
     std::size_t written = 0;
     for (std::uint32_t k = 0; k < count && written < outCapacity; ++k) {
-        const EventRow& row = pageEvents_[eventBase + order[k]];
+        const EventRow& row = nativeEventRows_[order[k]];
         TransactionRecord& rec = transactions_[row.txnSlot];
         // The row's slot is only reclaimed after its last event leaves, so a live
         // row always names its own live transaction; the id compare is a
@@ -7696,7 +7814,7 @@ bool ScheduledTransactionPool::VerifyImmediateEntryPage(
         config_.maxEventsPerQuantum;
     std::uint32_t events = 0;
     for (std::uint32_t index = 0; index < pageEventCount_[ring]; ++index) {
-        const auto& row = pageEvents_[eventBase + index];
+        const auto& row = PageEvent(eventBase + index);
         const auto& owner = transactions_[row.txnSlot].immediateEntry;
         if (owner.gate != entry.gate ||
             owner.generation != entry.generation) continue;
@@ -7762,10 +7880,10 @@ std::size_t ScheduledTransactionPool::ConsumePageRt(
     const std::uint32_t count = pageEventCount_[ring];
     const std::size_t base =
         static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
-    const std::uint32_t* order = &pageEventOrder_[base];
+    const std::size_t* order = &pageEventOrder_[base];
     std::size_t written = 0;
     for (std::uint32_t i = 0; i < count && written < outCapacity; ++i) {
-        const EventRow& row = pageEvents_[base + order[i]];
+        const EventRow& row = nativeEventRows_[order[i]];
         const TransactionRecord& transaction = transactions_[row.txnSlot];
         if (transaction.immediateEntry.Valid() &&
             !transaction.immediateEntry.gate->AdmitAudio(
@@ -8278,7 +8396,7 @@ void ScheduledTransactionPool::DropPreparedOccupancy() noexcept {
                     std::uint32_t found = preparedCount;
                     for (std::uint32_t index = 0; index < preparedCount;
                          ++index) {
-                        if (pageEvents_[eventBase + liveCount + index]
+                        if (PageEvent(eventBase + liveCount + index)
                                 .txnSlot == transactionSlot) {
                             found = index;
                             break;
@@ -8288,7 +8406,7 @@ void ScheduledTransactionPool::DropPreparedOccupancy() noexcept {
                         break;
                     }
                     EventRow& row =
-                        pageEvents_[eventBase + liveCount + found];
+                        PageEvent(eventBase + liveCount + found);
                     const std::size_t batchBase =
                         static_cast<std::size_t>(ring) *
                         config_.maxFrameBatchesPerQuantum;
@@ -8314,8 +8432,8 @@ void ScheduledTransactionPool::DropPreparedOccupancy() noexcept {
                     }
                     const std::uint32_t lastPrepared =
                         liveCount + preparedCount - 1;
-                    row = pageEvents_[eventBase + lastPrepared];
-                    pageEvents_[eventBase + lastPrepared] = {};
+                    row = PageEvent(eventBase + lastPrepared);
+                    ReleasePageEvent(eventBase + lastPrepared);
                     --pagePreparedEventCount_[ring];
                     --pagePublicationHolds_[ring];
                 }
@@ -10145,24 +10263,25 @@ std::uint32_t ScheduledTransactionPool::Advance() {
         static_cast<std::size_t>(leaving) * config_.maxEventsPerQuantum;
 
     for (std::uint32_t i = 0; i < dropped; ++i) {
-        const EventRow& row = pageEvents_[eventBase + i];
+        const EventRow& row = PageEvent(eventBase + i);
         TransactionRecord& rec = transactions_[row.txnSlot];
-        if (!rec.used || rec.id != row.transactionId) {
-            continue;
-        }
-        if (rec.remainingEvents > 0) {
-            --rec.remainingEvents;
-        }
-        if (rec.remainingEvents == 0) {
-            rec.used = false;
-            freeTransactions_.push_back(row.txnSlot);
-            if (liveTransactionCount_ > 0) {
-                --liveTransactionCount_;
+        if (rec.used && rec.id == row.transactionId) {
+            if (rec.remainingEvents > 0) {
+                --rec.remainingEvents;
+            }
+            if (rec.remainingEvents == 0) {
+                rec.used = false;
+                freeTransactions_.push_back(row.txnSlot);
+                if (liveTransactionCount_ > 0) {
+                    --liveTransactionCount_;
+                }
             }
         }
+        ReleasePageEvent(eventBase + i);
     }
 
     pageEventCount_[leaving] = 0;
+    RecordRetiredPageEvents(dropped);
     pagePreparedEventCount_[leaving] = 0;
     pageCurrentSliceCount_[leaving] = 0;
     for (std::uint32_t group = 0;

@@ -96,7 +96,7 @@ public:
         }
     }
 private:
-    template<class T> friend class StableRowStorage;
+    template<class T, class Index> friend class StableRowStorage;
     friend class ImmediateActionLane;
     StableStorageGrowthState* state_ = nullptr;
     std::uint32_t count_ = 0;
@@ -104,8 +104,9 @@ private:
 
 // One serialized control owner grows a stable prefix. Readers never grow it.
 // Issuer generations and retirement rights remain in the caller's real rows.
-template <class T>
+template <class T, class Index = std::uint32_t>
 class StableRowStorage {
+    static_assert(std::is_unsigned_v<Index> && sizeof(Index) <= sizeof(std::uint64_t));
 public:
     StableRowStorage() = default;
     ~StableRowStorage() {
@@ -118,7 +119,7 @@ public:
     StableRowStorage& operator=(const StableRowStorage&) = delete;
 
     // Called on an empty, private candidate; swap only at quiescence.
-    bool Reserve(std::uint32_t capacity) noexcept {
+    bool Reserve(Index capacity) noexcept {
         static_assert(std::is_nothrow_default_constructible_v<T>);
         static_assert(std::is_nothrow_destructible_v<T>);
         if (memguard::IsAudioTagged() || capacity_ != 0 ||
@@ -131,16 +132,16 @@ public:
         return true;
     }
 
-    bool ConstructThrough(std::uint32_t count) noexcept {
-        return ConstructThrough(count, [](std::uint32_t) noexcept { return true; });
+    bool ConstructThrough(Index count) noexcept {
+        return ConstructThrough(count, [](Index) noexcept { return true; });
     }
 
     template<class PrepareDependencies>
-    bool ConstructThrough(std::uint32_t count, PrepareDependencies&& prepare) noexcept {
+    bool ConstructThrough(Index count, PrepareDependencies&& prepare) noexcept {
         if (count > capacity_) return false;
         if (growth_.preparedUsers != 0) return count <= ConstructedCount();
-        const auto protectedCount = static_cast<std::uint32_t>(std::min<std::uint64_t>(
-            capacity_, static_cast<std::uint64_t>(count) + growth_.heldRows));
+        const auto protectedCount = static_cast<Index>(count + std::min<std::uint64_t>(
+            capacity_ - count, growth_.heldRows));
         if (memguard::IsAudioTagged()) return protectedCount <= ConstructedCount();
         return ConstructUnheldThrough(protectedCount, std::forward<PrepareDependencies>(prepare));
     }
@@ -157,20 +158,20 @@ public:
         return true;
     }
 
-    bool PrepareBacking(std::uint32_t count, std::uint32_t occupiedPrefix,
+    bool PrepareBacking(std::uint32_t count, Index occupiedPrefix,
                         StableStoragePreparation* out) noexcept {
         return PrepareBacking(count, occupiedPrefix, out,
-            [](std::uint32_t) noexcept { return true; });
+            [](Index) noexcept { return true; });
     }
 
     template<class PrepareDependencies>
-    bool PrepareBacking(std::uint32_t count, std::uint32_t occupiedPrefix,
+    bool PrepareBacking(std::uint32_t count, Index occupiedPrefix,
                         StableStoragePreparation* out, PrepareDependencies&& prepare) noexcept {
         if (out == nullptr || out->Valid() || count > capacity_ || occupiedPrefix > ConstructedCount() ||
             memguard::IsAudioTagged() ||
             growth_.preparedUsers != 0 || growth_.heldRows > UINT64_MAX - count) return false;
-        const auto required = static_cast<std::uint32_t>(std::min<std::uint64_t>(
-            capacity_, occupiedPrefix + growth_.heldRows + count));
+        const auto required = static_cast<Index>(occupiedPrefix + std::min<std::uint64_t>(
+            capacity_ - occupiedPrefix, growth_.heldRows + count));
         if (!ConstructUnheldThrough(required, std::forward<PrepareDependencies>(prepare))) return false;
         growth_.heldRows += count;
         out->state_ = &growth_;
@@ -180,7 +181,7 @@ public:
 
 private:
     template<class PrepareDependencies>
-    bool ConstructUnheldThrough(std::uint32_t count, PrepareDependencies&& prepare) noexcept {
+    bool ConstructUnheldThrough(Index count, PrepareDependencies&& prepare) noexcept {
         const auto previous = ConstructedCount();
         if (count > capacity_ || memguard::IsAudioTagged() || !prepare(count)) return false;
         if (count <= previous) return true;
@@ -193,16 +194,16 @@ private:
     }
 
 public:
-    std::uint32_t Capacity() const noexcept { return capacity_; }
+    Index Capacity() const noexcept { return capacity_; }
     bool PreparedUseActive() const noexcept { return growth_.preparedUsers != 0; }
     bool HasPreparedBacking() const noexcept {
         return growth_.heldRows != 0 || growth_.preparedUsers != 0;
     }
-    std::uint32_t ConstructedCount() const noexcept {
+    Index ConstructedCount() const noexcept {
         return constructed_.load(std::memory_order_acquire);
     }
     // Range iteration visits only constructed rows, never the logical capacity.
-    std::uint32_t size() const noexcept { return ConstructedCount(); }
+    Index size() const noexcept { return ConstructedCount(); }
     T* data() noexcept { return static_cast<T*>(reservation_.Address()); }
     const T* data() const noexcept { return static_cast<const T*>(reservation_.Address()); }
     T* begin() noexcept { return data(); }
@@ -215,19 +216,19 @@ public:
     std::size_t ReservedBytes() const noexcept { return reservation_.ReservedBytes(); }
     std::size_t CommittedBytes() const noexcept { return reservation_.CommittedBytes(); }
 
-    T& operator[](std::uint32_t slot) noexcept {
+    T& operator[](Index slot) noexcept {
         assert(slot < ConstructedCount());
         return *std::launder(AddressOf(slot));
     }
-    const T& operator[](std::uint32_t slot) const noexcept {
+    const T& operator[](Index slot) const noexcept {
         assert(slot < ConstructedCount());
         return *std::launder(AddressOf(slot));
     }
-    std::uint32_t IndexOf(const T& row) const noexcept {
+    Index IndexOf(const T& row) const noexcept {
         const auto offset = reinterpret_cast<std::uintptr_t>(&row) -
                             reinterpret_cast<std::uintptr_t>(reservation_.Address());
         assert(offset % sizeof(T) == 0 && offset / sizeof(T) < ConstructedCount());
-        return static_cast<std::uint32_t>(offset / sizeof(T));
+        return static_cast<Index>(offset / sizeof(T));
     }
 
     void Swap(StableRowStorage& other) noexcept {
@@ -246,14 +247,14 @@ public:
     }
 
 private:
-    T* AddressOf(std::uint32_t slot) const noexcept {
+    T* AddressOf(Index slot) const noexcept {
         return reinterpret_cast<T*>(static_cast<std::byte*>(reservation_.Address()) +
                                     static_cast<std::size_t>(slot) * sizeof(T));
     }
 
     detail::StablePageReservation reservation_;
-    std::uint32_t capacity_ = 0;
-    std::atomic<std::uint32_t> constructed_{0};
+    Index capacity_ = 0;
+    std::atomic<Index> constructed_{0};
     StableStorageGrowthState growth_;
 };
 
