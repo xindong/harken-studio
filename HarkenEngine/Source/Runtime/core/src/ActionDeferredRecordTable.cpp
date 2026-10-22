@@ -21,12 +21,9 @@ bool ActionDeferredRecordTable::Reset(std::uint32_t capacity) {
     if (capacity == 0 || preparedPairLoans_ != 0) {
         return false;
     }
-    try {
-        std::vector<Row> rows(capacity);
-        rows_ = std::move(rows);
-    } catch (const std::bad_alloc&) {
-        return false;
-    }
+    StableRowStorage<Row> rows;
+    if (!rows.Reserve(capacity)) return false;
+    rows_.Swap(rows);
     preparedCount_ = 0;
     liveCount_ = 0;
     highWater_ = 0;
@@ -60,6 +57,8 @@ ActionDeferredRecordPrepareResult ActionDeferredRecordTable::Prepare(
         record.lastRowFrame > record.deadlineFrame) {
         return {ActionDeferredRecordPrepareStatus::Invalid, {}};
     }
+    if (!rows_.ConstructThrough(rows_.Capacity()))
+        return {ActionDeferredRecordPrepareStatus::Capacity, {}};
     for (std::uint32_t slot = 0; slot < rows_.size(); ++slot) {
         Row& row = rows_[slot];
         if (row.state != ActionDeferredRecordState::Free) {
@@ -310,6 +309,7 @@ FixedPlayClaimStatus ActionDeferredRecordTable::ClaimFixedPlayPair(
     if (pool == nullptr || outClaim == nullptr || blockFrames == 0) {
         return FixedPlayClaimStatus::ProtocolViolation;
     }
+    if (liveCount_ == 0) return FixedPlayClaimStatus::None;
     DeferredIntentPool::Entry* selected = nullptr;
     DeferredIntentToken selectedToken{};
     for (std::uint32_t slot = 0; slot < rows_.size(); ++slot) {
@@ -679,7 +679,8 @@ ActionDeferredRecordState ActionDeferredRecordTable::State(
 
 bool ActionDeferredRecordTable::SetFreeGenerationForTests(
     std::uint32_t slot, std::uint64_t generation) noexcept {
-    if (slot >= rows_.size() || generation == 0 ||
+    if (slot >= rows_.Capacity() || generation == 0 ||
+        !rows_.ConstructThrough(slot + 1u) ||
         rows_[slot].state != ActionDeferredRecordState::Free) {
         return false;
     }

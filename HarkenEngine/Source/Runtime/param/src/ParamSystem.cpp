@@ -4,8 +4,10 @@
 #include "harken/param/EmitterTable.h"
 #include "harken/param/ParamTargetTable.h"
 
+#include <algorithm>
 #include <cassert>
 #include <exception>
+#include <new>
 #include <type_traits>
 #include <utility>
 
@@ -34,26 +36,334 @@ std::uint32_t ResolveInstanceSlots(const EngineConfig& config) {
     return slots;
 }
 
+std::uint32_t ResolvePreparationCapacity(const EngineConfig& config) {
+    // Pending and live owners share Logical seats; a parked owner can retain
+    // both raw and instance sets, each with the original per-voice ceiling.
+    const auto seats = std::uint64_t{config.voiceCapacity.Logical()} + config.voiceCapacity.Virtual();
+    const auto capacity = seats * ResolveInstanceSlots(config);
+    if (capacity > UINT32_MAX) throw std::bad_alloc{};
+    return static_cast<std::uint32_t>(capacity);
+}
+
+std::uint32_t ResolveBindingCapacity(const EngineConfig& config) {
+    const auto capacity = std::uint64_t{config.voiceCapacity.Render()} * ResolveInstanceSlots(config);
+    if (capacity > UINT32_MAX) throw std::bad_alloc{};
+    return static_cast<std::uint32_t>(capacity);
+}
+
 } // namespace
 
 ParamSystem::ParamSystem(const EngineConfig& config)
-    : m_voiceStates(config.voiceCapacity.Render()),
-      m_retiringTargets(config.maxVariableSliceTargetsTotal),
-      m_sampleRate(config.mixRate.SampleRate()),
+    : ParamSystem(config, config.voiceCapacity.Render()) {}
+
+ParamSystem::ParamSystem(const EngineConfig& config, std::uint32_t initialVoiceRows)
+    : m_sampleRate(config.mixRate.SampleRate()),
       m_variables(kMaxVariables),
-      // The instance pool: Render Voice capacity times
-      // voiceBindingInstanceSlots, shared by raw bindings and
-      // definition-backed instances
-      // (the historical fixed table is superseded by this config-driven
-      // bound).
-      m_bindings(static_cast<std::size_t>(config.voiceCapacity.Render()) *
-                 ResolveInstanceSlots(config)),
+      m_preparationCapacity(ResolvePreparationCapacity(config)),
       m_meterProbeContributions(config.maxBindingAttachments),
       m_instanceSlotsPerVoice(ResolveInstanceSlots(config)) {
-    m_primingInputs.resize(m_bindings.size());
+    if (!m_retiringTargets.Reserve(config.maxVariableSliceTargetsTotal) ||
+        !m_bindings.Reserve(ResolveBindingCapacity(config)) ||
+        !m_voiceStates.Reserve(config.voiceCapacity.Render()) ||
+        !PrepareVoiceStorage(initialVoiceRows)) throw std::bad_alloc{};
     m_projectionVariables.resize(m_variables.size());
-    m_projectionBindings.resize(m_bindings.size());
-    m_projectionVoices.resize(m_voiceStates.size());
+}
+
+ParamSystem::ParamSystem(const ParamSystem& other)
+    : m_sampleRate(other.m_sampleRate),
+      m_variables(other.m_variables),
+      m_preparationCapacity(other.m_preparationCapacity),
+      m_primingInputs(other.m_primingInputs),
+      m_projectionVariables(other.m_projectionVariables),
+      m_projectionBindings(other.m_projectionBindings),
+      m_projectionVoices(other.m_projectionVoices),
+      m_projectionActive(other.m_projectionActive),
+      m_projectionVariableCount(other.m_projectionVariableCount),
+      m_projectionBindingCount(other.m_projectionBindingCount),
+      m_projectionVoiceCount(other.m_projectionVoiceCount),
+      m_projectionForcedRebuilds(other.m_projectionForcedRebuilds),
+      m_projectionDirtyTargetCount(other.m_projectionDirtyTargetCount),
+      m_projectionPendingInputMarks(other.m_projectionPendingInputMarks),
+      m_meterProbeContributions(other.m_meterProbeContributions),
+      m_instanceSlotsPerVoice(other.m_instanceSlotsPerVoice),
+      m_variableCount(other.m_variableCount),
+      m_bindingCount(other.m_bindingCount),
+      m_instanceHighWater(other.m_instanceHighWater),
+      m_commits(other.m_commits),
+      m_flushTick(other.m_flushTick),
+      m_flushCursor(other.m_flushCursor),
+      m_forcedRebuilds(other.m_forcedRebuilds),
+      m_dirtyTargetCount(other.m_dirtyTargetCount),
+      m_pendingInputMarks(other.m_pendingInputMarks),
+      m_capacityPublisher(other.m_capacityPublisher),
+      m_capacityLog(other.m_capacityLog) {
+    if (!m_retiringTargets.Reserve(other.m_retiringTargets.Capacity()) ||
+        !m_retiringTargets.ConstructThrough(other.m_retiringTargets.ConstructedCount()) ||
+        !m_voiceStates.Reserve(other.m_voiceStates.Capacity()) ||
+        !m_voiceStates.ConstructThrough(other.m_voiceStates.size()) ||
+        !m_bindings.Reserve(other.m_bindings.Capacity()) ||
+        !m_bindings.ConstructThrough(other.m_bindings.size())) throw std::bad_alloc{};
+    std::copy(other.m_voiceStates.begin(), other.m_voiceStates.end(), m_voiceStates.begin());
+    std::copy(other.m_retiringTargets.begin(), other.m_retiringTargets.end(), m_retiringTargets.begin());
+    std::copy(other.m_bindings.begin(), other.m_bindings.end(), m_bindings.begin());
+    // Private copies evaluate their own facts without borrowing the live index.
+    for (auto& binding : m_bindings) {
+        binding.dependencySlot = UINT32_MAX;
+        binding.dependencyGeneration = 0;
+        binding.preparation = nullptr;
+        binding.ownsPreparation = false;
+        binding.nextNeutralization = nullptr;
+    }
+}
+
+bool ParamSystem::PrepareVoiceStorage(std::uint32_t count) noexcept {
+    if (count <= m_voiceStates.size()) return true;
+    if (m_projectionActive) return false;
+    return m_voiceStates.ConstructThrough(count, [this](std::uint32_t required) noexcept {
+        try {
+            if (m_projectionVoices.size() < required) m_projectionVoices.resize(required);
+            return true;
+        } catch (...) { return false; }
+    });
+}
+
+ParamSystem::PreparedBindingToken::~PreparedBindingToken() {
+    if (m_owner != nullptr) m_owner->CancelPreparedBinding(this);
+}
+
+ParamSystem::PreparedBindingToken::PreparedBindingToken(PreparedBindingToken&& other) noexcept {
+    if (other.m_stagedBinding != nullptr) std::terminate();
+    m_owner = std::exchange(other.m_owner, nullptr);
+    m_slot = std::exchange(other.m_slot, UINT32_MAX);
+}
+
+ParamSystem::PreparedBindingToken& ParamSystem::PreparedBindingToken::operator=(
+    PreparedBindingToken&& other) noexcept {
+    if (this != &other) {
+        if (m_stagedBinding != nullptr || other.m_stagedBinding != nullptr) std::terminate();
+        if (m_owner != nullptr) m_owner->CancelPreparedBinding(this);
+        m_owner = std::exchange(other.m_owner, nullptr);
+        m_slot = std::exchange(other.m_slot, UINT32_MAX);
+    }
+    return *this;
+}
+
+ParamSystem::BackingPreparation::~BackingPreparation() { Release(); }
+
+ParamSystem::BackingPreparation::BackingPreparation(BackingPreparation&& other) noexcept {
+    *this = std::move(other);
+}
+
+ParamSystem::BackingPreparation& ParamSystem::BackingPreparation::operator=(BackingPreparation&& other) noexcept {
+    if (this != &other) {
+        Release();
+        m_owner = std::exchange(other.m_owner, nullptr);
+        m_bindingRows = std::move(other.m_bindingRows);
+        m_dependencies = std::move(other.m_dependencies);
+    }
+    return *this;
+}
+
+void ParamSystem::BackingPreparation::Release() noexcept {
+    if (m_owner != nullptr) {
+        if (m_owner->m_backingUsers != 0) std::terminate();
+        assert(m_owner->m_backingPreparationCount != 0);
+        --m_owner->m_backingPreparationCount;
+        m_owner = nullptr;
+    }
+    m_bindingRows.Release();
+    for (auto& hold : m_dependencies) hold.Release();
+}
+
+ParamSystem::PreparedUse::PreparedUse(ParamSystem& owner, const BackingPreparation* backing) noexcept
+    : m_owner(backing == nullptr ? nullptr : &owner),
+      m_bindingRows(backing == nullptr ? StableStoragePreparedUse{} : backing->m_bindingRows.Use()),
+      m_dependencies(BindingDependencyIndex::UseBacking(backing == nullptr ? nullptr : &backing->m_dependencies)) {
+    if (backing != nullptr) {
+        if (backing->m_owner != &owner) std::terminate();
+        ++owner.m_backingUsers;
+    }
+}
+
+ParamSystem::PreparedUse::~PreparedUse() {
+    if (m_owner != nullptr) --m_owner->m_backingUsers;
+}
+
+std::uint32_t ParamSystem::BindingBackingOccupancy() const noexcept {
+    std::uint64_t occupied = std::uint64_t{m_bindingCount} + m_preparedBindingCount;
+    for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
+        const auto& binding = m_bindings[i];
+        if (binding.preparation != nullptr || binding.ownsPreparation) --occupied;
+    }
+    return static_cast<std::uint32_t>(std::min<std::uint64_t>(BindingCapacity(), occupied));
+}
+
+bool ParamSystem::PrepareBindingAuxiliaryStorage(std::uint32_t count) noexcept {
+    try {
+        if (m_primingInputs.size() < count) m_primingInputs.resize(count);
+        if (m_projectionBindings.size() < count) m_projectionBindings.resize(count);
+        return true;
+    } catch (...) { return false; }
+}
+
+bool ParamSystem::PrepareBindingRows(std::uint32_t count) noexcept {
+    return m_bindings.ConstructThrough(count,
+        [this](std::uint32_t required) noexcept { return PrepareBindingAuxiliaryStorage(required); });
+}
+
+bool ParamSystem::PrepareBindingBacking(std::uint32_t count, BackingPreparation* out) noexcept {
+    if (out == nullptr || out->Valid() || m_projectionActive || m_backingUsers != 0) return false;
+    BackingPreparation candidate;
+    const auto occupied = BindingBackingOccupancy();
+    if (!PrepareBindingRows(occupied) ||
+        !m_bindings.PrepareBacking(std::min(count, BindingCapacity()), occupied, &candidate.m_bindingRows,
+            [this](std::uint32_t required) noexcept { return PrepareBindingAuxiliaryStorage(required); })) return false;
+    if (m_dependencies != nullptr) {
+        if (!m_dependencies->PrepareBacking(std::min(count, m_preparationCapacity), &candidate.m_dependencies)) return false;
+        try {
+            m_freeDependencySlots.reserve(std::min(m_preparationCapacity, m_dependencies->BackedBindingCapacity()));
+        } catch (...) { return false; }
+    }
+    candidate.m_owner = this;
+    ++m_backingPreparationCount;
+    *out = std::move(candidate);
+    return true;
+}
+
+bool ParamSystem::AttachBindingDependencies(BindingDependencyIndex* dependencies) noexcept {
+    if (dependencies == m_dependencies) return true;
+    if (m_bindingCount != 0 || m_preparedBindingCount != 0 || m_projectionActive ||
+        m_backingPreparationCount != 0 || m_backingUsers != 0 ||
+        (dependencies != nullptr && dependencies->ParamBindingCapacity() < m_preparationCapacity)) return false;
+    m_dependencies = dependencies;
+    m_dependencySlotCount = 0;
+    m_freeDependencySlots.clear();
+    return true;
+}
+
+bool ParamSystem::PrepareBinding(PreparedBindingToken* out) noexcept {
+    if (out == nullptr || out->IsPrepared() || m_projectionActive) return false;
+    if (!PrepareBindingRows(static_cast<std::uint32_t>(std::min<std::uint64_t>(BindingCapacity(),
+            std::uint64_t{BindingBackingOccupancy()} + 1u)))) return false;
+    std::uint32_t slot = UINT32_MAX;
+    if (m_dependencies != nullptr) {
+        const bool append = m_freeDependencySlots.empty();
+        slot = append ? m_dependencySlotCount : m_freeDependencySlots.back();
+        if (slot >= m_preparationCapacity) return false;
+        const auto needed = static_cast<std::size_t>(m_dependencySlotCount) + (append ? 1u : 0u);
+        if (m_backingUsers != 0 && m_freeDependencySlots.capacity() < needed) return false;
+        if (!m_dependencies->PrepareBinding(slot)) return false;
+        try {
+            const auto backed = std::min(m_preparationCapacity, m_dependencies->BackedBindingCapacity());
+            if (m_backingUsers == 0 && m_freeDependencySlots.capacity() < backed)
+                m_freeDependencySlots.reserve(backed);
+        }
+        catch (...) { m_dependencies->CancelBindingPreparation(slot); return false; }
+        if (append) ++m_dependencySlotCount;
+        else m_freeDependencySlots.pop_back();
+    }
+    out->m_owner = this;
+    out->m_slot = slot;
+    ++m_preparedBindingCount;
+    return true;
+}
+
+void ParamSystem::CancelPreparedBinding(PreparedBindingToken* token) noexcept {
+    if (token == nullptr || token->m_owner != this) return;
+    if (token->m_stagedBinding != nullptr) std::terminate();
+    if (token->m_slot != UINT32_MAX) {
+        m_dependencies->CancelBindingPreparation(token->m_slot);
+        m_freeDependencySlots.push_back(token->m_slot);
+    }
+    assert(m_preparedBindingCount != 0);
+    --m_preparedBindingCount;
+    token->m_owner = nullptr;
+    token->m_slot = UINT32_MAX;
+}
+
+BindingDependencyIdentity ParamSystem::ReadBindingDependency(
+    const void* fact, BindingDependencyKind kind) noexcept {
+    const auto& binding = *static_cast<const Binding*>(fact);
+    BindingDependencyIdentity identity{};
+    if (kind == BindingDependencyKind::Target) {
+        identity.object = binding.handle;
+        identity.scope = kTargetScopeVoice;
+        identity.target = binding.targetId;
+    } else if (kind == BindingDependencyKind::Definition) {
+        identity.source = binding.definitionId;
+    } else {
+        identity.source = binding.variableId;
+        if (kind == BindingDependencyKind::Local) identity.object = binding.dependencyEmitter;
+    }
+    return identity;
+}
+
+void ParamSystem::RegisterBindingDependency(Binding& binding, PreparedBindingToken* preparation) noexcept {
+    assert(preparation != nullptr && preparation->m_owner == this);
+    if (m_dependencies != nullptr) {
+        BindingDependencyToken token;
+        const bool registered = m_dependencies->Register(preparation->m_slot, &binding,
+            &ReadBindingDependency, static_cast<std::uint32_t>(&binding - m_bindings.data()),
+            binding.dependencyEmitter != 0, !binding.snapshotOwned && binding.definitionId != VnObjectId{},
+            false, &token);
+        if (!registered) std::terminate();
+        binding.dependencySlot = token.slot;
+        binding.dependencyGeneration = token.generation;
+    }
+    assert(m_preparedBindingCount != 0);
+    --m_preparedBindingCount;
+    preparation->m_owner = nullptr;
+    preparation->m_slot = UINT32_MAX;
+}
+
+void ParamSystem::RemoveBindingDependency(Binding& binding) noexcept {
+    RemovePendingNeutralization(binding);
+    if (binding.preparation != nullptr) {
+        if (binding.preparation->m_stagedBinding != &binding) std::terminate();
+        binding.preparation->m_stagedBinding = nullptr;
+        binding.preparation = nullptr;
+    }
+    if (binding.ownsPreparation) {
+        PreparedBindingToken owned;
+        owned.m_owner = this;
+        owned.m_slot = binding.dependencySlot;
+        binding.ownsPreparation = false;
+        binding.dependencySlot = UINT32_MAX;
+        CancelPreparedBinding(&owned);
+    }
+    if (binding.dependencyGeneration == 0) return;
+    const bool removed = m_dependencies->Remove({binding.dependencySlot, binding.dependencyGeneration});
+    if (!removed) std::terminate();
+    m_freeDependencySlots.push_back(binding.dependencySlot);
+    binding.dependencySlot = UINT32_MAX;
+    binding.dependencyGeneration = 0;
+}
+
+void ParamSystem::RemovePendingNeutralization(Binding& binding) noexcept {
+    if (!binding.neutralizePending || m_dependencies == nullptr) return;
+    auto** link = &m_pendingNeutralizations;
+    while (*link != nullptr && *link != &binding) link = &(*link)->nextNeutralization;
+    if (*link == &binding) *link = binding.nextNeutralization;
+    binding.nextNeutralization = nullptr;
+}
+
+void ParamSystem::MoveBinding(std::uint32_t from, std::uint32_t to) noexcept {
+    if (from == to) return;
+    auto& binding = m_bindings[to];
+    binding = m_bindings[from];
+    if (binding.preparation != nullptr) {
+        if (binding.preparation->m_stagedBinding != &m_bindings[from]) std::terminate();
+        binding.preparation->m_stagedBinding = &binding;
+    }
+    if (binding.dependencyGeneration != 0 && !m_dependencies->Relocate(
+            {binding.dependencySlot, binding.dependencyGeneration}, &binding, &ReadBindingDependency, to))
+        std::terminate();
+    if (binding.neutralizePending && m_dependencies != nullptr) {
+        auto** link = &m_pendingNeutralizations;
+        while (*link != nullptr && *link != &m_bindings[from]) link = &(*link)->nextNeutralization;
+        if (*link == &m_bindings[from]) *link = &binding;
+    }
+    m_bindings[from] = Binding{};
 }
 
 bool ParamSystem::BeginVariableProjection() noexcept {
@@ -61,6 +371,7 @@ bool ParamSystem::BeginVariableProjection() noexcept {
     std::copy(m_variables.begin(), m_variables.end(), m_projectionVariables.begin());
     m_projectionVariableCount = m_variableCount;
     m_projectionBindingCount = m_bindingCount;
+    m_projectionVoiceCount = m_voiceStates.size();
     m_projectionForcedRebuilds = m_forcedRebuilds;
     m_projectionDirtyTargetCount = m_dirtyTargetCount;
     m_projectionPendingInputMarks = m_pendingInputMarks;
@@ -88,6 +399,7 @@ bool ParamSystem::BeginVariableProjection() noexcept {
 void ParamSystem::RestoreVariableProjection() noexcept {
     if (!m_projectionActive) return;
     assert(m_bindingCount == m_projectionBindingCount);
+    assert(m_voiceStates.size() == m_projectionVoiceCount);
     std::copy(m_projectionVariables.begin(), m_projectionVariables.end(), m_variables.begin());
     m_variableCount = m_projectionVariableCount;
     for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
@@ -101,7 +413,7 @@ void ParamSystem::RestoreVariableProjection() noexcept {
         b.definitionChanged = saved.definitionChanged;
         b.neutralizePending = saved.neutralizePending;
     }
-    for (std::size_t i = 0; i < m_voiceStates.size(); ++i) {
+    for (std::uint32_t i = 0; i < m_projectionVoiceCount; ++i) {
         auto& voice = m_voiceStates[i];
         const auto& saved = m_projectionVoices[i];
         assert(voice.handle == saved.handle);
@@ -167,11 +479,10 @@ void ParamSystem::OnVoiceStarted(VnVoiceHandle handle, float baseVolumeDb,
         std::uint32_t write = 0;
         for (std::uint32_t read = 0; read < m_bindingCount; ++read) {
             if (m_bindings[read].handle == state.handle) {
+                RemoveBindingDependency(m_bindings[read]);
                 continue;
             }
-            if (write != read) {
-                m_bindings[write] = m_bindings[read];
-            }
+            MoveBinding(read, write);
             ++write;
         }
         m_bindingCount = write;
@@ -219,6 +530,8 @@ void ParamSystem::RetireVoiceTargets(VnVoiceHandle handle) noexcept {
     if (state.handle != handle || state.retired) {
         return;
     }
+    for (std::uint32_t i = 0; i < m_bindingCount; ++i)
+        if (m_bindings[i].handle == handle) RemoveBindingDependency(m_bindings[i]);
     for (std::uint32_t targetId = 0; targetId < kBuiltinTargetCount;
          ++targetId) {
         TargetState& target = state.targets[targetId];
@@ -275,8 +588,11 @@ void ParamSystem::DiscardPreparedVoice(VnVoiceHandle handle) noexcept {
     if (m_capacityPublisher != nullptr) m_capacityPublisher->ShrinkWorstCase(demand);
     std::uint32_t write = 0;
     for (std::uint32_t read = 0; read < m_bindingCount; ++read) {
-        if (m_bindings[read].handle == handle) continue;
-        if (write != read) m_bindings[write] = m_bindings[read];
+        if (m_bindings[read].handle == handle) {
+            RemoveBindingDependency(m_bindings[read]);
+            continue;
+        }
+        MoveBinding(read, write);
         ++write;
     }
     m_bindingCount = write;
@@ -579,6 +895,7 @@ VnResult ParamSystem::SetInstalledValue(VnVariableId id, float value) noexcept {
 
 void ParamSystem::ClearInstalledValues() noexcept {
     for (std::uint32_t i = 0; i < m_variableCount; ++i) {
+        NoteVariableWrite(m_variables[i].id);
         m_variables[i] = Variable{};
     }
     m_variableCount = 0;
@@ -642,14 +959,16 @@ void ParamSystem::CommitPreparedVariable(
     *token = PreparedVariableToken{};
 }
 
-void ParamSystem::NoteVariableWrite(VnVariableId id) noexcept {
+void ParamSystem::NoteVariableWrite(VnVariableId id, VnEmitterHandle emitter) noexcept {
+    if (m_dependencies != nullptr && !m_projectionActive)
+        m_dependencies->NotifyVariable(id, emitter);
     for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
         Binding& binding = m_bindings[i];
-        if (binding.variableId != id) {
+        if (binding.variableId != id || binding.neutralized) {
             continue;
         }
         VoiceState* state = StateFor(binding.handle);
-        if (state == nullptr) {
+        if (state == nullptr || (emitter != 0 && state->emitterHandle != emitter)) {
             continue; // dead voice: the binding is inert
         }
         // Over-marking is deliberate (a global write may be shadowed by an
@@ -660,6 +979,14 @@ void ParamSystem::NoteVariableWrite(VnVariableId id) noexcept {
     }
 }
 
+void ParamSystem::NoteProbeChanged(VnObjectId stableId, std::uint32_t generation) noexcept {
+    if (m_dependencies == nullptr || m_projectionActive) return;
+    BindingDependencyIdentity identity{};
+    identity.source = stableId;
+    identity.generation = generation;
+    m_dependencies->Notify(BindingDependencyKind::Probe, identity);
+}
+
 void ParamSystem::NoteEmitterDetached(VnEmitterHandle emitter) {
     if (emitter == 0) {
         return;
@@ -667,12 +994,16 @@ void ParamSystem::NoteEmitterDetached(VnEmitterHandle emitter) {
     for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
         Binding& binding = m_bindings[i];
         VoiceState* state = StateFor(binding.handle);
-        if (state == nullptr || state->emitterHandle != emitter) {
+        if (binding.neutralized || state == nullptr || state->emitterHandle != emitter) {
             continue;
         }
         // The voice's scoped reads fall back to global from now on; the
         // next evaluation realizes whichever contributions that moves.
         SetTargetPendingInput(state->targets[binding.targetId]);
+        if (m_dependencies != nullptr && !m_projectionActive && binding.dependencyGeneration != 0 &&
+            !m_dependencies->DetachLocal({binding.dependencySlot, binding.dependencyGeneration}))
+            std::terminate();
+        if (!m_projectionActive) binding.dependencyEmitter = 0;
     }
     for (VoiceState& state : m_voiceStates) {
         if (!state.retired && state.emitterHandle == emitter) {
@@ -688,7 +1019,7 @@ ParamSystem::AdmitBindingSlot(VnVoiceHandle handle, std::uint32_t targetId) {
     if (VoiceBindingCount(handle) >= m_instanceSlotsPerVoice) {
         return InstanceBindResult::SlotCeiling;
     }
-    if (m_bindingCount >= m_bindings.size()) {
+    if (m_bindingCount >= BindingCapacity()) {
         return InstanceBindResult::TableFull;
     }
     // Section 10.4: a NEW unique (voice, target) pair on a LIVE voice adds
@@ -709,11 +1040,20 @@ ParamSystem::AdmitBindingSlot(VnVoiceHandle handle, std::uint32_t targetId) {
 bool ParamSystem::BindVoiceTarget(VnVariableId variableId,
                                   VnVoiceHandle handle,
                                   std::uint32_t targetId,
-                                  const Curve& curve) {
+                                  const Curve& curve,
+                                  PreparedBindingToken* preparation, bool staged) {
+    PreparedBindingToken automatic;
+    auto* prepared = preparation == nullptr ? &automatic : preparation;
+    if (prepared->m_stagedBinding != nullptr ||
+        (staged && prepared->m_owner != this)) return false;
     if (targetId >= kBuiltinTargetCount || curve.pointCount == 0) {
+        if (!staged) CancelPreparedBinding(prepared);
         return false;
     }
+    if ((prepared->IsPrepared() && prepared->m_owner != this) ||
+        (!prepared->IsPrepared() && !PrepareBinding(prepared))) return false;
     if (AdmitBindingSlot(handle, targetId) != InstanceBindResult::Ok) {
+        if (!staged) CancelPreparedBinding(prepared);
         return false;
     }
     Binding& binding = m_bindings[m_bindingCount++];
@@ -727,6 +1067,13 @@ bool ParamSystem::BindVoiceTarget(VnVariableId variableId,
     binding.handle = handle;
     binding.targetId = targetId;
     binding.curve = curve;
+    binding.dependencyEmitter = EmitterHandleOf(handle);
+    if (staged) {
+        binding.preparation = prepared;
+        prepared->m_stagedBinding = &binding;
+    } else {
+        RegisterBindingDependency(binding, prepared);
+    }
     // everEvaluated starts false, so the next flush treats this binding as a
     // change and evaluates it — whether the Variable already has a value
     // (global or emitter-local) or is first set later. On a live voice
@@ -738,9 +1085,50 @@ bool ParamSystem::BindVoiceTarget(VnVariableId variableId,
     return true;
 }
 
-ParamSystem::InstanceBindResult ParamSystem::BindVoiceInstance(
+void ParamSystem::CommitStagedVoiceBindings(VnVoiceHandle handle) noexcept {
+    for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
+        auto& binding = m_bindings[i];
+        if (binding.handle == handle && binding.ownsPreparation) {
+            PreparedBindingToken owned;
+            owned.m_owner = this;
+            owned.m_slot = binding.dependencySlot;
+            binding.ownsPreparation = false;
+            RegisterBindingDependency(binding, &owned);
+            continue;
+        }
+        auto* prepared = binding.preparation;
+        if (binding.handle != handle || prepared == nullptr) continue;
+        if (prepared->m_owner != this || prepared->m_stagedBinding != &binding) std::terminate();
+        binding.preparation = nullptr;
+        prepared->m_stagedBinding = nullptr;
+        RegisterBindingDependency(binding, prepared);
+    }
+}
+
+ParamSystem::InstanceBindResult ParamSystem::StageOwnedVoiceInstance(
     const BindingDefinitionView& view, VnVoiceHandle handle,
     VnObjectId attachmentObjectId, bool viaApply) {
+    PreparedBindingToken owned;
+    if (!PrepareBinding(&owned)) return InstanceBindResult::TableFull;
+    const auto result = BindVoiceInstance(view, handle, attachmentObjectId, viaApply, &owned, true);
+    if (result != InstanceBindResult::Ok) return result;
+    auto& binding = *owned.m_stagedBinding;
+    binding.preparation = nullptr;
+    binding.ownsPreparation = true;
+    binding.dependencySlot = owned.m_slot;
+    owned.m_stagedBinding = nullptr;
+    owned.m_owner = nullptr;
+    owned.m_slot = UINT32_MAX;
+    return result;
+}
+
+ParamSystem::InstanceBindResult ParamSystem::BindVoiceInstance(
+    const BindingDefinitionView& view, VnVoiceHandle handle,
+    VnObjectId attachmentObjectId, bool viaApply, PreparedBindingToken* preparation, bool staged) {
+    PreparedBindingToken automatic;
+    auto* prepared = preparation == nullptr ? &automatic : preparation;
+    if (prepared->m_stagedBinding != nullptr ||
+        (staged && prepared->m_owner != this)) return InstanceBindResult::TableFull;
     // Instance identity is the full (definition, attachment object,
     // viaApply) triple: only an exact-identity duplicate refuses. One
     // definition attached to both the played id and the resolved leaf
@@ -751,6 +1139,7 @@ ParamSystem::InstanceBindResult ParamSystem::BindVoiceInstance(
     // (their contribution is gone; only their slot lingers).
     if (view.snapshotOwned &&
         (view.curve == nullptr || view.curve->pointCount == 0)) {
+        if (!staged) CancelPreparedBinding(prepared);
         return InstanceBindResult::InvalidCurve;
     }
     for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
@@ -758,12 +1147,16 @@ ParamSystem::InstanceBindResult ParamSystem::BindVoiceInstance(
         if (b.handle == handle && b.definitionId == view.definitionId &&
             b.attachmentObjectId == attachmentObjectId &&
             b.viaApply == viaApply && !b.neutralized) {
+            if (!staged) CancelPreparedBinding(prepared);
             return InstanceBindResult::Duplicate;
         }
     }
+    if ((prepared->IsPrepared() && prepared->m_owner != this) ||
+        (!prepared->IsPrepared() && !PrepareBinding(prepared))) return InstanceBindResult::TableFull;
     const InstanceBindResult admitted =
         AdmitBindingSlot(handle, view.targetId);
     if (admitted != InstanceBindResult::Ok) {
+        if (!staged) CancelPreparedBinding(prepared);
         return admitted;
     }
     Binding& binding = m_bindings[m_bindingCount++];
@@ -778,6 +1171,7 @@ ParamSystem::InstanceBindResult ParamSystem::BindVoiceInstance(
     binding.attachmentObjectId = attachmentObjectId;
     binding.viaApply = viaApply;
     binding.snapshotOwned = view.snapshotOwned;
+    binding.dependencyEmitter = EmitterHandleOf(handle);
     if (view.snapshotOwned) {
         binding.curve = *view.curve;
         binding.ownedTransitionMs =
@@ -793,6 +1187,12 @@ ParamSystem::InstanceBindResult ParamSystem::BindVoiceInstance(
         binding.liveRevision = view.revision;
         binding.lastRevision =
             view.revision != nullptr ? *view.revision : 0u;
+    }
+    if (staged) {
+        binding.preparation = prepared;
+        prepared->m_stagedBinding = &binding;
+    } else {
+        RegisterBindingDependency(binding, prepared);
     }
     if (VoiceState* state = StateFor(handle)) {
         SetTargetPendingInput(state->targets[binding.targetId]);
@@ -819,7 +1219,7 @@ ParamSystem::InstanceBindResult ParamSystem::CanBindVoiceInstance(
     if (VoiceBindingCount(handle) >= m_instanceSlotsPerVoice) {
         return InstanceBindResult::SlotCeiling;
     }
-    if (m_bindingCount >= m_bindings.size()) {
+    if (m_bindingCount >= BindingCapacity()) {
         return InstanceBindResult::TableFull;
     }
     if (m_capacityPublisher != nullptr && StateFor(handle) != nullptr &&
@@ -865,12 +1265,17 @@ bool ParamSystem::NeutralizeVoiceInstance(VnVoiceHandle handle,
 }
 
 void ParamSystem::NeutralizeEntry(Binding& binding) {
+    RemoveBindingDependency(binding);
     binding.neutralized = true;
     // One exit evaluation realizes the contribution's departure: the next
     // gather rebuilds the target without this instance and publishes the
     // change ramped with the definition's transitionMs toward neutral
     // (section 9.2's detach rule).
     binding.neutralizePending = true;
+    if (m_dependencies != nullptr) {
+        binding.nextNeutralization = m_pendingNeutralizations;
+        m_pendingNeutralizations = &binding;
+    }
     if (VoiceState* state = StateFor(binding.handle)) {
         TargetState& target = state->targets[binding.targetId];
         SetTargetPendingInput(target);
@@ -912,11 +1317,10 @@ void ParamSystem::PurgeInstancesOf(VnObjectId definitionId) {
                 removed.emplace_back(b.handle, b.targetId);
                 owedExit.push_back(owes);
             }
+            RemoveBindingDependency(b);
             continue;
         }
-        if (write != read) {
-            m_bindings[write] = m_bindings[read];
-        }
+        MoveBinding(read, write);
         ++write;
     }
     m_bindingCount = write;
@@ -1028,11 +1432,10 @@ void ParamSystem::CommitPreparedPurgeInstances(
     std::uint32_t write = 0;
     for (std::uint32_t read = 0; read < m_bindingCount; ++read) {
         if (selected(m_bindings[read].definitionId)) {
+            RemoveBindingDependency(m_bindings[read]);
             continue;
         }
-        if (write != read) {
-            m_bindings[write] = m_bindings[read];
-        }
+        MoveBinding(read, write);
         ++write;
     }
     m_bindingCount = write;
@@ -1072,11 +1475,10 @@ std::uint32_t ParamSystem::PurgeVoiceInstances(VnVoiceHandle handle, bool snapsh
         Binding& b = m_bindings[read];
         if (b.handle == handle && b.definitionId != VnObjectId{} && (!snapshotOnly || b.snapshotOwned)) {
             removed[b.targetId] = true;
+            RemoveBindingDependency(b);
             continue;
         }
-        if (write != read) {
-            m_bindings[write] = m_bindings[read];
-        }
+        MoveBinding(read, write);
         ++write;
     }
     m_bindingCount = write;
@@ -1096,9 +1498,11 @@ std::uint32_t ParamSystem::PurgeVoiceInstances(VnVoiceHandle handle, bool snapsh
 }
 
 void ParamSystem::NoteDefinitionReplaced(VnObjectId definitionId) {
+    if (m_dependencies != nullptr && !m_projectionActive)
+        m_dependencies->NotifyDefinition(definitionId);
     for (std::uint32_t i = 0; i < m_bindingCount; ++i) {
         Binding& b = m_bindings[i];
-        if (b.definitionId != definitionId || b.neutralized) {
+        if (b.definitionId != definitionId || b.neutralized || b.snapshotOwned) {
             continue;
         }
         VoiceState* state = StateFor(b.handle);
@@ -1139,6 +1543,8 @@ bool ParamSystem::RefreshPreviewBindings(VnVoiceHandle handle,
         binding.lastRevision = definition->revision;
         binding.definitionChanged = true;
         SetTargetPendingInput(state->targets[binding.targetId]);
+        if (m_dependencies != nullptr && !m_projectionActive)
+            m_dependencies->Mark({binding.dependencySlot, binding.dependencyGeneration});
     }
     return complete;
 }
@@ -1238,7 +1644,7 @@ bool ParamSystem::CanClaim(VnVoiceHandle handle, std::uint32_t targetId,
 bool ParamSystem::TryClaim(VnVoiceHandle handle, std::uint32_t targetId,
                            TargetClaimOwner owner,
                            std::uint32_t expectedRevision) noexcept {
-    if (!CanClaim(handle, targetId, owner, expectedRevision)) return false;
+    if (!CanClaim(handle, targetId, owner, expectedRevision) || !PrepareRetiringTargetStorage()) return false;
     VoiceState* state = StateFor(handle);
     TargetState& target = state->targets[targetId];
     if (target.preparedOwner.Valid()) {
@@ -1724,6 +2130,7 @@ std::uint32_t ParamSystem::PrimeVoiceBindingsImpl(VnVoiceHandle handle,
         if (b.liveRevision != nullptr) {
             b.lastRevision = *b.liveRevision;
         }
+        if (!m_projectionActive) RemovePendingNeutralization(b);
         b.neutralizePending = false;
         if (b.neutralized || !hasValue) {
             b.lastContribution = 0.0f;
@@ -2017,6 +2424,10 @@ float ParamSystem::Reduce(const VoiceState& state,
 }
 
 void ParamSystem::EvalDirtyBindings(const EmitterTable* emitters) {
+    if (m_dependencies != nullptr && !m_projectionActive) {
+        EvalIndexedBindings(emitters);
+        return;
+    }
     // Contributions accumulate INTO the Variable-bindings slot: several
     // bindings may feed one (voice, target), so when any of them changes the
     // whole slot rebuilds from every binding that feeds it, accumulating in
@@ -2186,6 +2597,91 @@ void ParamSystem::EvalDirtyBindings(const EmitterTable* emitters) {
     // their targets, so a realized change hands its census seat from
     // pending-input to dirty without a gap.
     ConsumePendingInputMarks();
+}
+
+void ParamSystem::EvalIndexedBindings(const EmitterTable* emitters) {
+    // Removed instances no longer belong to a contribution chain, but their
+    // attribution and exit demand settle in the same evaluation as the target.
+    while (m_pendingNeutralizations != nullptr) {
+        Binding& binding = *m_pendingNeutralizations;
+        m_pendingNeutralizations = binding.nextNeutralization;
+        binding.nextNeutralization = nullptr;
+        binding.neutralizePending = false;
+        binding.lastContribution = 0.0f;
+        if (VoiceState* state = StateFor(binding.handle)) state->targets[binding.targetId].rebuild = true;
+    }
+
+    BindingDirtyTarget dirty;
+    for (std::uint32_t cursor = 0; m_dependencies->DirtyTargetAt(cursor, &dirty);) {
+        BindingDependencyIdentity identity;
+        if (!m_dependencies->TargetIdentity(dirty, &identity) ||
+            identity.scope != kTargetScopeVoice || identity.detail != 0) {
+            ++cursor;
+            continue;
+        }
+        const auto version = m_dependencies->TargetVersion(dirty);
+        VoiceState* state = StateFor(identity.object);
+        if (state != nullptr && identity.target < kBuiltinTargetCount) {
+            TargetState& target = state->targets[identity.target];
+            bool changed = target.rebuild;
+            bool active = false;
+            float combined = 0.0f;
+            for (auto token = m_dependencies->FirstContribution(dirty); token.Valid();
+                 token = m_dependencies->NextContribution(token)) {
+                auto& binding = *const_cast<Binding*>(static_cast<const Binding*>(m_dependencies->Fact(token)));
+                float input = 0.0f;
+                const bool hasValue = ResolveScopedValue(emitters, state->emitterHandle, binding.variableId, &input);
+                const bool inputChanged = !binding.everEvaluated || binding.definitionChanged ||
+                    binding.lastHadValue != hasValue || (hasValue && binding.lastInput != input) ||
+                    (binding.liveRevision != nullptr && binding.lastRevision != *binding.liveRevision);
+                const float contribution = hasValue ? EvaluateBinding(binding, input) : 0.0f;
+                if (inputChanged) {
+                    changed = true;
+                    const bool contributionChanged = !binding.everEvaluated ? hasValue :
+                        binding.lastHadValue != hasValue || (hasValue && contribution != binding.lastContribution);
+                    if (contributionChanged && !target.suppressClaimRamp)
+                        target.pendingRampMs = std::max(target.pendingRampMs, BindingTransitionMs(binding));
+                }
+                binding.lastInput = input;
+                binding.lastHadValue = hasValue;
+                binding.everEvaluated = true;
+                binding.definitionChanged = false;
+                if (binding.liveRevision != nullptr) binding.lastRevision = *binding.liveRevision;
+                binding.lastContribution = contribution;
+                if (!hasValue) continue;
+                if (!active) {
+                    active = true;
+                    combined = contribution;
+                    continue;
+                }
+                switch (DomainOfTarget(binding.targetId)) {
+                case CombineDomain::AddDb:
+                case CombineDomain::AddCents:
+                case CombineDomain::Add:
+                case CombineDomain::AddLogHz:
+                case CombineDomain::AddLogQ:
+                    combined += contribution;
+                    break;
+                case CombineDomain::MinHz:
+                    combined = std::min(combined, contribution);
+                    break;
+                case CombineDomain::MaxHz:
+                case CombineDomain::Max:
+                    combined = std::max(combined, contribution);
+                    break;
+                }
+            }
+            changed |= target.active[kSlotVariableBindings] != active ||
+                (active && target.slots[kSlotVariableBindings] != combined);
+            target.active[kSlotVariableBindings] = active;
+            target.slots[kSlotVariableBindings] = combined;
+            target.rebuild = false;
+            if (changed) SetTargetDirty(*state, target);
+            ClearTargetPendingInput(target);
+        }
+        if (!m_dependencies->CommitTarget(dirty, version)) ++cursor;
+    }
+    m_forcedRebuilds = 0;
 }
 
 void ParamSystem::ConsumePendingInputMarks() {

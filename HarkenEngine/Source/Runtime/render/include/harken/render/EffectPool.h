@@ -1,16 +1,14 @@
 // Effect instance pools and the audio->logic retirement channel realizing the
 // M2 audio-thread contract amendment: effect instances are constructed
-// logic-side from these preallocated pools at Set time and handed to the audio
+// logic-side from these bounded pools at Set time and handed to the audio
 // thread by command; the audio thread NEVER constructs or frees an effect. It
 // only installs an already-built instance into a chain slot and, when that
 // instance leaves a slot (voice end, clear, or in-place replace), names it on
 // the retire queue for the logic side to return to its pool.
 //
-// One pool per effect type (fixed capacity from VnConfig, all storage — the
-// delay lines included — preallocated at Init). Instance state pointers are
-// resolved from the pool by (type, index): stable addresses into vectors that
-// are sized once and never resized, so a pointer computed on the audio side
-// equals the one the logic side sees. The freelist is touched only on the
+// One pool per effect type has a fixed logical capacity from VnConfig. State
+// addresses remain stable; extra buffers are built on the logic side before
+// an instance is issued. The freelist is touched only on the
 // logic thread; index->pointer resolution is read-only and used on both.
 //
 // The per-type pools are not hand-written members; they are a bounded table
@@ -26,11 +24,13 @@
 
 #include "harken/core/EngineConfig.h"
 #include "harken/core/PinnedSnapshot3.h"
+#include "harken/core/StableSlotStorage.h"
 #include "harken/render/BuiltinEffects.h"
 #include "harken/render/InsertEffect.h"
 #include "harken/render/generated/harken_effect_registry.g.h"
 
 #include <atomic>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -130,7 +130,20 @@ class EffectPoolBank {
         Free, Prepared, PreparedCommitHeld, Live, Exhausted
     };
     struct PoolTypeSlot;
+    struct ExtraStorage {
+        explicit ExtraStorage(std::size_t count);
+        std::vector<float> samples;
+        bool initialized = false;
+    };
+    using ExtraStorageTable = StableSlotStorage<ExtraStorage>;
 public:
+    using BackingDemand = std::array<std::uint64_t, kEffectRegistryRowCount>;
+    using BackingPreparation = std::array<ExtraStorageTable::Preparation, kEffectRegistryRowCount>;
+    using BackingUse = std::array<ExtraStorageTable::PreparedUse, kEffectRegistryRowCount>;
+
+    bool PrepareBacking(const BackingDemand& demand, BackingPreparation* out) noexcept;
+    static BackingUse UseBacking(const BackingPreparation* backing) noexcept;
+
     class PreparedCommitProof {
     public:
         PreparedCommitProof() = default;
@@ -254,9 +267,8 @@ private:
     // One pooled effect type. State instances live in raw, over-aligned storage
     // (std::max_align_t units, each instance occupying strideUnits whole units so
     // its address satisfies any state alignment the registry allows); the extra
-    // buffer holds per-instance storage the registry row requests (the delay
-    // line). Both vectors are sized once at Init and never resized, so a state
-    // pointer computed by (type, index) is stable for the engine's life.
+    // buffer holds per-instance storage the registry row requests. It is built
+    // before issuing the instance and retained across reuse at a stable address.
     struct PoolTypeSlot {
         struct CompressorRuntimeSlot {
             PinnedSnapshot3<CompressorRuntimePayload> published;
@@ -265,8 +277,11 @@ private:
         std::uint32_t effectType = kEffectTypeNone;
         std::uint32_t strideUnits = 0; // std::max_align_t units per instance
         std::uint32_t capacity = 0;
+        const EffectRegistryRow* registry = nullptr;
+        std::uint32_t extraFramesPerChannel = 0;
+        std::uint32_t sampleRate = 0;
         std::vector<std::max_align_t> storage;
-        std::vector<float> extra;
+        std::unique_ptr<ExtraStorageTable> extra;
         std::vector<std::uint32_t> freeList; // stack of free indices
         std::vector<std::uint64_t> generations;
         std::unique_ptr<std::atomic<InstanceState>[]> states;
@@ -302,6 +317,7 @@ private:
     EffectInstanceRef AcquireWithState(std::uint32_t type,
                                        EffectObjectIdentity identity,
                                        InstanceState state);
+    bool EnsureExtraBacking(PoolTypeSlot& slot, std::uint32_t index) noexcept;
     void Dispose(PoolTypeSlot& slot, const EffectInstanceRef& ref);
 
     // One slot per generated registry row, in registry (effect-type) order.

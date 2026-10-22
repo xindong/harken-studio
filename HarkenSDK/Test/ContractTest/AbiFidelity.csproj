@@ -44,7 +44,7 @@
     <Compile Include="RepositoryPublicationContract.cs" />
     <Content Include="..\Fixtures\EditorMetadata\1\**\*.json"
              Link="EditorMetadata\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="..\Fixtures\EditorMetadata\2\**\*.json"
+    <Content Include="..\Fixtures\EditorMetadata\2\**\*.json;..\Fixtures\EditorMetadata\2\**\*.pack"
              Link="EditorMetadataV2\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\UnityFixture\Data\**\*.json;..\UnityFixture\Data\**\*.pack;..\UnityFixture\Data\**\*.bytes"
              Link="NativePublications\UnityFixture\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

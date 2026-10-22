@@ -142,6 +142,8 @@ void ExpectPcmResampleProfile(std::uint32_t sourceRate,
         session.Engine()->voices.Resolve(render);
     ASSERT_NE(nullptr, context);
     EXPECT_EQ(expected, context->resampler.Profile());
+    EXPECT_EQ(0u, session.Engine()->voices.ProfessionalStorageBytes());
+    EXPECT_EQ(nullptr, context->resampler.professional);
     EXPECT_EQ(expected,
               session.Engine()
                   ->voicePlayFacts[static_cast<std::uint32_t>(render)]
@@ -215,7 +217,67 @@ TEST(VoicePool, ReleaseObserverSurvivesNaturalExitAndSlotReuse) {
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
     auto& engine = *session.Engine();
     VnVoiceHandle first = 0;
+    EXPECT_EQ(0u, engine.voices.SlotStorageBytes());
+    EXPECT_EQ(0u, engine.voices.SlotCommittedBytes());
+    EXPECT_EQ(0u, engine.voices.RenderWorksetStorageBytes());
+    EXPECT_EQ(0u, engine.voices.RenderWorksetCommittedBytes());
+    EXPECT_EQ(1u, engine.voices.Capacity());
+    EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    EXPECT_EQ(0u, engine.timelineVoiceInstallIdentities.RequestedBytes());
+    EXPECT_EQ(0u, engine.voiceOriginPlayable.RequestedBytes());
+    EXPECT_EQ(0u, engine.voicePlayFacts.RequestedBytes());
+    EXPECT_EQ(0u, engine.playbackPaths.RequestedBytes());
+    EXPECT_EQ(0u, engine.effectSlotTypes.RequestedBytes());
+    EXPECT_EQ(0u, engine.voiceEffectInstanceRefs.RequestedBytes());
+    EXPECT_EQ(0u, engine.effectSlotConfig.RequestedBytes());
+    EXPECT_EQ(0u, engine.voiceSendConfig.RequestedBytes());
+    EXPECT_EQ(0u, engine.params.VoiceStorageBytes());
+    const auto emptyStartBytes = engine.timelineSink.VariableStartStorageBytes();
+    harken::VoiceTimelineSink secondSink(engine.voices, engine.timelineArms);
+    harken::VoicePool::SlotStorageRegistration refusedStorage;
+    ASSERT_TRUE(engine.voices.AttachSlotStoragePreparation(refusedStorage, nullptr,
+        [](void*, std::uint32_t count) noexcept { return count == 0; }));
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
+    EXPECT_EQ(0u, first);
+    EXPECT_EQ(0u, engine.voices.ConstructedSlotCount());
+    EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    refusedStorage.Detach();
+    engine.playbackPaths.SetCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
+    EXPECT_EQ(0u, first);
+    EXPECT_EQ(0u, engine.voices.ConstructedSlotCount());
+    EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    engine.playbackPaths.SetCommitPageLimitForTests(SIZE_MAX);
+    engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
+    EXPECT_EQ(0u, first);
+    EXPECT_EQ(0u, engine.voices.ConstructedSlotCount());
+    EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    engine.mixer.ArenaForTests().SetCommitPageLimitForTests(SIZE_MAX);
+    engine.voices.SetSlotCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
+    EXPECT_EQ(0u, first);
+    EXPECT_EQ(0u, engine.voices.ConstructedSlotCount());
+    EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    engine.voices.SetSlotCommitPageLimitForTests(SIZE_MAX);
+    engine.voices.SetProfessionalCommitPageLimitForTests(0);
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &first));
+    EXPECT_EQ(0u, first);
+    EXPECT_EQ(0u, engine.voices.ProfessionalStorageBytes());
+    EXPECT_EQ(1u, engine.voices.AvailableSlotCount());
+    engine.voices.SetProfessionalCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &first));
+    EXPECT_GT(engine.params.VoiceStorageBytes(), 0u);
+    ASSERT_EQ(1u, engine.effectSlotTypes.size());
+    for (const auto type : engine.effectSlotTypes[0]) EXPECT_EQ(harken::kEffectTypeNone, type);
+    EXPECT_GT(engine.timelineSink.VariableStartStorageBytes(), emptyStartBytes);
+    EXPECT_EQ(engine.timelineSink.VariableStartStorageBytes(), secondSink.VariableStartStorageBytes());
+    {
+        harken::VoiceTimelineSink lateSink(engine.voices, engine.timelineArms);
+        EXPECT_EQ(secondSink.VariableStartStorageBytes(), lateSink.VariableStartStorageBytes());
+        EXPECT_FALSE(engine.voices.AttachSlotStoragePreparation(refusedStorage, nullptr,
+            [](void*, std::uint32_t count) noexcept { return count == 0; }));
+    }
     harken::VoiceReleaseObserver observer{};
     ASSERT_TRUE(engine.voices.CaptureReleaseObserver(first, &observer));
     EXPECT_FALSE(engine.voices.ReleaseObserved(observer));
@@ -513,8 +575,10 @@ TEST(VoicePool, SourceTerminalUnjoinedWorkerRetainsSourceAndLeaf) {
         };
         engine.voices.ApplyPlay(voice, voice, 0, 0);
     }
+    engine.mixer.ArenaForTests().SetCommitPageLimitForTests(0);
     harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
         engine.voices, harken::CpuClockTicksPerSecond() / 20u);
+    const auto completed = engine.mixer.BlocksRendered();
     engine.nullBackend.Pump(1);
     ASSERT_TRUE(gate.entered.load(std::memory_order_acquire));
     EXPECT_FALSE(gate.exited.load(std::memory_order_acquire));
@@ -529,12 +593,33 @@ TEST(VoicePool, SourceTerminalUnjoinedWorkerRetainsSourceAndLeaf) {
     EXPECT_TRUE(engine.playableInstances.Classify(unjoined->leaf).live);
     EXPECT_EQ(harken::SourceTerminalKind::None,
         engine.sourceTerminals.Resolve(unjoined->token)->bypassResult.load());
+    VnVoiceHandle following = 0;
+    EXPECT_EQ(VN_NO_VOICE, ClaimObserverVoice(engine, &following));
+    const auto overflows = engine.mixer.Arena().OverflowCount();
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(overflows, engine.mixer.Arena().OverflowCount());
+    EXPECT_EQ(completed, engine.mixer.BlocksRendered());
+    EXPECT_FALSE(gate.exited.load(std::memory_order_acquire));
     gate.release.store(true, std::memory_order_release);
     harken::detail::VoicePoolReleaseTestAccess::JoinWorkers(engine.voices);
     EXPECT_TRUE(gate.exited.load(std::memory_order_acquire));
     EXPECT_FALSE(engine.sourceTerminals.Capture(unjoined->token, UINT64_MAX, &result));
     EXPECT_FALSE(engine.voices.ReleaseObserved(unjoined->release));
     EXPECT_TRUE(engine.playableInstances.HasSourceRetirementHold(unjoined->leaf));
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(completed + 1u, engine.mixer.BlocksRendered());
+    for (const auto& source : sources) {
+        EXPECT_TRUE(engine.voices.ReleaseObserved(source.release));
+        ASSERT_TRUE(engine.sourceTerminals.Capture(source.token,
+            engine.mixer.BlocksRendered(), &result));
+        EXPECT_EQ(harken::SourceTerminalKind::Natural, result.kind);
+        EXPECT_EQ(64u, result.frame);
+    }
+    ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &following));
+    engine.voices.ApplyPlay(following, following, 0, 0);
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(overflows, engine.mixer.Arena().OverflowCount());
+    EXPECT_EQ(nullptr, engine.voices.Resolve(following));
 }
 
 TEST(VoicePool, SourceTerminalCapacityGenerationReuseAndExhaustionStayBounded) {
@@ -1456,6 +1541,127 @@ TEST(VoicePool, DefaultPlayUsesLinearBrickForAllRatePairs) {
     ExpectStreamResampleProfile(
         32000u, 44100u,
         harken::ResampleProfile::LegacyCompatibility);
+}
+
+TEST(VoicePool, ProfessionalWorkingSetSurvivesPreflightSeekAndSlotReuse) {
+    EngineSession session(VoicePoolConfig(1, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto samples = harkentest::MakeDC(8192, 0.25f);
+    const auto desc = MonoDesc(samples, kSampleRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    auto& engine = *session.Engine();
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &voice));
+    engine.voices.ApplyPlay(voice, voice, 0, 0);
+    const auto* context = engine.voices.Resolve(voice);
+    ASSERT_NE(nullptr, context);
+    auto* workspace = context->resampler.professional;
+    ASSERT_NE(nullptr, workspace);
+    EXPECT_EQ(sizeof(harken::MultirateResamplerCandidate), engine.voices.ProfessionalStorageBytes());
+    workspace->UpdateRatio(1.5, 64);
+    ASSERT_TRUE(engine.voices.PrepareSlotWorkingSet(0, 1,
+        harken::ResampleProfile::Professional44148));
+    EXPECT_EQ(64u, workspace->rampRemaining);
+    engine.voices.CommitSeek(voice, 512);
+    EXPECT_EQ(workspace, context->resampler.professional);
+    EXPECT_EQ(64u, context->resampler.RampFramesRemaining());
+    EXPECT_DOUBLE_EQ(1.5, context->resampler.TargetRatio());
+    EXPECT_EQ(512u, context->srcCursor);
+    engine.voices.ApplyStop(voice, 0, 0, engine.notifications, 0);
+    const auto pcm = engine.registry.Lookup(harkentest::ObjectId(1));
+    ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0, 1, 0, false, 0, 0, 0,
+        harken::ResolvePanGains(engine.config.mixChannelLayout, 0),
+        0, pcm.frames, 1, harken::ResampleProfile::LegacyCompatibility, &voice));
+    ASSERT_NE(nullptr, engine.voices.Resolve(voice));
+    EXPECT_EQ(nullptr, engine.voices.Resolve(voice)->resampler.professional);
+    EXPECT_EQ(sizeof(harken::MultirateResamplerCandidate), engine.voices.ProfessionalStorageBytes());
+    engine.voices.ApplyStop(voice, 0, 0, engine.notifications, 0);
+}
+
+TEST(VoicePool, ProfessionalStreamSeekAndParkResumeReuseWorkingSet) {
+    EngineSession session(VoicePoolConfig(1, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    constexpr auto profile = harken::ResampleProfile::Professional44148;
+    std::array<float, 4096> storage;
+    storage.fill(0.25f);
+    float* planes[harken::kMaxChannels] = {storage.data()};
+    std::array<harken::StreamRing, 3> rings;
+    for (auto& ring : rings) {
+        ring.Wire(planes, static_cast<std::uint32_t>(storage.size()));
+        ring.ResetForUse(1);
+        ring.PublishWrite(static_cast<std::uint32_t>(storage.size()));
+        ring.state.store(harken::StreamSlotState::Active);
+    }
+    const auto pan = harken::ResolvePanGains(engine.config.mixChannelLayout, 0);
+    const auto tokenFor = [](const harken::StreamRing& ring, std::uint32_t slot) {
+        return (static_cast<std::uint64_t>(ring.generation.load()) << 32u) | slot;
+    };
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, engine.voices.PlayStream(&rings[0], 1, kSampleRate,
+        kBlockFrames, 0, 1, 0, false, 0, 0, 0, pan,
+        0, 65536, 0, 65536, 1, profile, &voice));
+    ASSERT_TRUE(engine.voices.BindStreamRingToken(voice, &rings[0], tokenFor(rings[0], 1)));
+    engine.voices.ApplyPlay(voice, voice, 0, 0);
+    engine.nullBackend.Pump(1);
+    auto* context = engine.voices.Resolve(voice);
+    ASSERT_NE(nullptr, context);
+    auto* workspace = context->resampler.professional;
+    ASSERT_NE(nullptr, workspace);
+    context->resampler.UpdateRatio(1.5, 64);
+    engine.voices.SetProfessionalCommitPageLimitForTests(0);
+    const auto committed = engine.voices.RenderWorksetCommittedBytes();
+
+    harken::StreamSeekHandoffSnapshot seek;
+    seek.expectedOldRingToken = tokenFor(rings[0], 1);
+    seek.replacementRing = &rings[1];
+    seek.replacementRingToken = tokenFor(rings[1], 2);
+    seek.targetFrame = 512;
+    seek.frameCount = 65536;
+    seek.sourceSampleRate = kSampleRate;
+    seek.prebufferTargetFrames = kBlockFrames;
+    std::uint64_t target = 0;
+    ASSERT_EQ(VN_OK, engine.voices.CanApplySeek(voice, VN_ACTION_SEEK_ABSOLUTE,
+        512, &target, &seek));
+    engine.voices.CommitSeek(voice, target, &seek);
+    EXPECT_EQ(workspace, context->resampler.professional);
+    EXPECT_EQ(64u, context->resampler.RampFramesRemaining());
+    EXPECT_DOUBLE_EQ(1.5, context->resampler.TargetRatio());
+    EXPECT_EQ(&rings[1], context->streamRing);
+    EXPECT_EQ(harken::StreamSlotState::Retired, rings[0].state.load());
+    engine.nullBackend.Pump(1);
+
+    ASSERT_TRUE(engine.voices.ReserveStreamPark(voice, voice, 91, profile));
+    engine.voices.SetStreamParkCommitPageLimitForTests(0);
+    const auto parkedVoice = voice;
+    engine.voices.ApplyStop(voice, 0, kBlockFrames, engine.notifications, 2,
+        harken::kStopModeStreamPark, voice, 91);
+    engine.nullBackend.Pump(1);
+    harken::StreamParkOutcome outcome;
+    bool cancelled = false;
+    ASSERT_TRUE(engine.voices.ConsumeStreamParkOutcomeExact(
+        parkedVoice, parkedVoice, 91, &outcome, &cancelled));
+    ASSERT_FALSE(cancelled);
+    ASSERT_EQ(harken::StreamParkDisposition::ResumeReady, outcome.disposition);
+    const auto* saved = engine.voices.ResolveParkOwnedToken(outcome.token);
+    ASSERT_NE(nullptr, saved);
+    EXPECT_EQ(profile, saved->profile);
+    ASSERT_EQ(VN_OK, engine.voices.PlayStream(&rings[2], 1, kSampleRate,
+        kBlockFrames, 0, 1.5, 0, false, 0, 0, 0, pan,
+        0, 65536, 0, 65536, 1, profile, &voice, 1, UINT32_MAX, 0, &outcome.token));
+    context = engine.voices.Resolve(voice);
+    ASSERT_NE(nullptr, context);
+    EXPECT_EQ(workspace, context->resampler.professional);
+    EXPECT_EQ(saved->resampler.sourceFrame, context->resampler.SourceFrame());
+    EXPECT_DOUBLE_EQ(saved->resampler.sourceFraction, context->resampler.SourceFraction());
+    EXPECT_EQ(committed, engine.voices.RenderWorksetCommittedBytes());
+    engine.voices.ReleaseParkOwnedToken(outcome.token);
+    engine.voices.ApplyPlay(voice, voice, 0, 3);
+    engine.nullBackend.Pump(1);
+    const auto* output = engine.nullBackend.LastBlock();
+    EXPECT_TRUE(std::any_of(output, output + kBlockFrames * 2,
+        [](float sample) { return sample > 0.01f; }));
+    engine.voices.ApplyStop(voice, 0, 0, engine.notifications, 4);
 }
 
 TEST(VoicePool, ProfileIsImmutableAcrossPitchSetterAndSlotReuse) {

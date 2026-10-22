@@ -97,16 +97,16 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_installAckSideTable(ackSideTable),
       m_installAckSideTableCapacity(ackSideTableCapacity),
       m_installAckRing(installAckRing),
-      m_currentSliceScratch(timelinePool != nullptr
-                                ? CurrentSliceScratchCapacity(
-                                      config)
-                                : 0),
-      m_currentSliceScratchLimitForTest(m_currentSliceScratch.size()),
       m_meterTapScratch(static_cast<std::size_t>(kMeterTapLaneCount) *
                             config.maxBuses,
                         0.0f),
       m_meterGenerationScratch(config.maxBuses, 0),
-      m_arena(config.arenaBytes),
+      m_arena(config.arenaBytes, BlockArena::BackingMode::OnDemand),
+      m_arenaLowBytes(static_cast<std::uint64_t>(config.maxBuses) *
+                      config.mixChannelCount * config.blockFrames * sizeof(float)),
+      m_arenaBytesPerSlot(std::min<std::uint64_t>(config.arenaBytes,
+          static_cast<std::uint64_t>(2u * kMaxChannels + config.mixChannelCount) *
+          config.blockFrames * sizeof(float) * (config.renderWorkerCount == 0 ? 1u : 2u))),
       m_busPlanes(static_cast<std::size_t>(config.maxBuses) *
                       config.mixChannelCount,
                   nullptr),
@@ -116,6 +116,13 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_deviceLayout(config.deviceChannelLayout),
       m_sampleRate(config.mixRate.SampleRate()),
       m_cpuTicksPerSecond(CpuClockTicksPerSecond()) {
+    if (!m_currentSliceScratch.Reserve(timelinePool != nullptr ? CurrentSliceScratchCapacity(config) : 0))
+        throw std::bad_alloc{};
+    m_currentSliceScratchLimitForTest = m_currentSliceScratch.Capacity();
+    if (!m_voices.AttachSlotStoragePreparation(m_arenaStorageRegistration, this,
+        [](void* context, std::uint32_t count) noexcept {
+            return static_cast<MixerLoop*>(context)->PrepareVoiceBacking(count);
+        })) throw std::bad_alloc{};
     InitializeVariableSliceConsumptionStorage();
     m_voices.AttachFirstOutputCommandConsumer(this,
         [](void* context, const CommandRecord& command) noexcept {
@@ -127,28 +134,24 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
     const std::uint64_t sampleRate = config.mixRate.SampleRate();
     if (m_cpuTicksPerSecond != 0 && sampleRate != 0 &&
         config.blockFrames != 0) {
-        const std::uint64_t absoluteTicks =
-            (kJobDeadlineMicros * m_cpuTicksPerSecond) / 1000000ull;
+        const std::uint64_t warningTicks =
+            (kJobJitterWarningMicros * m_cpuTicksPerSecond) / 1000000ull;
         const std::uint64_t blockPeriodTicks =
             (static_cast<std::uint64_t>(config.blockFrames) *
              m_cpuTicksPerSecond) /
             sampleRate;
         const std::uint64_t ceilingTicks =
             (blockPeriodTicks * kJobDeadlineBlockPeriodPercent) / 100ull;
-        m_jobDeadlineTicks =
-            ceilingTicks < absoluteTicks ? ceilingTicks : absoluteTicks;
-        if (ceilingTicks < absoluteTicks) {
-            // The ceiling bit. This configuration's blocks are short enough that
-            // the budget had to be cut below the jitter floor the absolute figure
-            // exists to clear, so healthy batches may now be abandoned. Computed,
-            // reported, and allowed: refusing the configuration would be a
-            // judgement about the host's hardware that this layer cannot make.
+        m_jobDeadlineTicks = std::max<std::uint64_t>(1, ceilingTicks);
+        if (ceilingTicks < warningTicks) {
+            // Short periods provide less scheduler headroom. Warn without
+            // extending the cutoff beyond this block's available budget.
             LogRecord record{};
             record.level = VN_LOG_WARN;
             record.code = kLogCodeRenderDeadlineBelowJitterFloor;
             record.arg0 = (ceilingTicks * 1000000ull) /
                           (m_cpuTicksPerSecond != 0 ? m_cpuTicksPerSecond : 1);
-            record.arg1 = kJobDeadlineMicros;
+            record.arg1 = kJobJitterWarningMicros;
             m_logRing.Push(record);
         }
     }
@@ -168,6 +171,13 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
                 static_cast<MixerLoop*>(context)->ApplyConsumedCurrentSlices(blockIndex, result);
             });
     }
+}
+
+bool MixerLoop::PrepareVoiceBacking(std::uint32_t count) noexcept {
+    if (count > m_voices.Capacity()) return false;
+    // A timed-out worker batch keeps its span; subsequent blocks use the second allowance.
+    const auto highBytes = count == 0 ? 0u : m_arenaBytesPerSlot * count + alignof(float) - 1u;
+    return m_arena.PrepareBacking(m_arenaLowBytes, highBytes);
 }
 
 namespace {
@@ -485,14 +495,34 @@ void MixerLoop::ApplyConsumedCurrentSlices(std::uint64_t blockIndex,
 }
 
 void MixerLoop::InitializeVariableSliceConsumptionStorage() {
+    assert(!memguard::IsAudioTagged() && m_pendingSliceCount == 0 && m_stagedCurrentSliceCount == 0);
     const auto capacity = m_variableSlices == nullptr ? 0u : m_variableSlices->Capacity();
-    m_pendingSliceConsumptions.resize(capacity);
-    m_pendingSliceOrder.resize(capacity);
+    if (capacity != m_pendingSliceConsumptions.Capacity()) {
+        StableRowStorage<PendingSliceConsumption> consumptions;
+        StableRowStorage<std::uint32_t> order;
+        if (!consumptions.Reserve(capacity) || !order.Reserve(capacity)) throw std::bad_alloc{};
+        m_pendingSliceConsumptions.Swap(consumptions);
+        m_pendingSliceOrder.Swap(order);
+    }
+    if (m_timelinePool != nullptr && m_timelinePool->Valid()) {
+        if (!PrepareCurrentSliceStorage(m_timelinePool->PreparedCurrentSliceRowCount()))
+            throw std::bad_alloc{};
+        m_timelinePool->AttachCurrentSliceStorage(m_currentSliceStorageRegistration, this,
+            [](void* context, std::size_t required) noexcept {
+                return static_cast<MixerLoop*>(context)->PrepareCurrentSliceStorage(required);
+            });
+    }
+}
+
+bool MixerLoop::PrepareCurrentSliceStorage(std::size_t required) noexcept {
+    if (required == 0) return true;
+    return m_currentSliceScratch.ConstructThrough(std::min(required, m_currentSliceScratch.Capacity())) &&
+        m_pendingSliceConsumptions.ConstructThrough(m_pendingSliceConsumptions.Capacity()) &&
+        m_pendingSliceOrder.ConstructThrough(m_pendingSliceOrder.Capacity());
 }
 
 std::size_t MixerLoop::VariableSliceConsumptionStorageBytes() const noexcept {
-    return m_pendingSliceConsumptions.capacity() * sizeof(PendingSliceConsumption) +
-        m_pendingSliceOrder.capacity() * sizeof(std::uint32_t);
+    return m_pendingSliceConsumptions.RequestedBytes() + m_pendingSliceOrder.RequestedBytes();
 }
 
 void MixerLoop::ApplyStagedCurrentSlices(
@@ -521,13 +551,13 @@ void MixerLoop::ApplyStagedCurrentSlices(
         assert(!pending.active || pending.consumed.slice.generation == consumed.slice.generation ||
             m_variableSlices->State({pending.consumed.slice.slot, pending.consumed.slice.generation}) ==
                 VariableSliceState::Free);
+        if (!pending.active) {
+            assert(m_pendingSliceCount < m_pendingSliceOrder.size());
+            m_pendingSliceOrder[m_pendingSliceCount++] = consumed.slice.slot;
+        }
         pending = {true, consumed};
     }
-    std::size_t pendingCount = 0;
-    for (std::uint32_t i = 0; i < m_pendingSliceConsumptions.size(); ++i) {
-        if (m_pendingSliceConsumptions[i].active) m_pendingSliceOrder[pendingCount++] = i;
-    }
-    std::sort(m_pendingSliceOrder.begin(), m_pendingSliceOrder.begin() + pendingCount,
+    if (m_pendingSliceCount > 1) std::sort(m_pendingSliceOrder.begin(), m_pendingSliceOrder.begin() + m_pendingSliceCount,
         [&](std::uint32_t a, std::uint32_t b) {
             const auto& lhs = m_pendingSliceConsumptions[a].consumed;
             const auto& rhs = m_pendingSliceConsumptions[b].consumed;
@@ -536,7 +566,8 @@ void MixerLoop::ApplyStagedCurrentSlices(
                 return lhs.logicCommitSequence < rhs.logicCommitSequence;
             return lhs.executionOrdinal < rhs.executionOrdinal;
         });
-    for (std::size_t i = 0; i < pendingCount; ++i) {
+    std::size_t retainedCount = 0;
+    for (std::size_t i = 0; i < m_pendingSliceCount; ++i) {
         auto& pending = m_pendingSliceConsumptions[m_pendingSliceOrder[i]];
         const auto& consumed = pending.consumed;
         const VariableSliceRef ref{consumed.slice.slot, consumed.slice.generation};
@@ -585,11 +616,14 @@ void MixerLoop::ApplyStagedCurrentSlices(
                             target.toneBand)) return;
                     mixer->ApplyCommandRecord(target.command, 0);
                 }
-            }, m_commands.SettledFrontier());
+            }, m_commands.SettledFrontier(), m_commands.InitialSourceSettledFrontier());
         const auto state = m_variableSlices->State(ref);
         if (state != VariableSliceState::PageCommitted && state != VariableSliceState::AudioClaimed)
             pending.active = false;
+        else
+            m_pendingSliceOrder[retainedCount++] = m_pendingSliceOrder[i];
     }
+    m_pendingSliceCount = retainedCount;
     m_stagedCurrentSliceCount = 0;
 }
 
@@ -672,12 +706,13 @@ void MixerLoop::FinishControlHeaderAckAfterQuiescence() noexcept {
 }
 
 bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owed,
-    std::uint32_t& applied, std::uint32_t remaining) noexcept {
+    std::uint32_t& applied, std::uint32_t remaining,
+    const CommandQueue::InitialSourceEntry* initial) noexcept {
     using Registry = OriginalSourceSubmissionRegistry;
     auto& registry = *m_originalSources;
     auto* row = registry.pending_;
     if (row == nullptr) {
-        row = registry.BorrowFront();
+        row = initial != nullptr ? registry.BorrowInitialFront(*initial) : registry.BorrowFront();
         if (row == nullptr || blockIndex == UINT64_MAX || row->count_ > remaining ||
             row->count_ > owed) return false;
         // This is the actual frozen front range. Acquire before disposition,
@@ -687,8 +722,9 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
         bool intact = true;
         for (std::uint32_t i = 0; i < row->count_; ++i) {
             CommandRecord wire{};
-            if (!m_commands.PeekAt(i, wire) ||
-                std::memcmp(&wire, &row->body_[i], sizeof(wire)) != 0) intact = false;
+            if (initial != nullptr) wire = initial->facts[i];
+            else if (!m_commands.PeekAt(i, wire)) intact = false;
+            if (std::memcmp(&wire, &row->body_[i], sizeof(wire)) != 0) intact = false;
         }
         row->disposition_ = intact ? Registry::Disposition::Apply : Registry::Disposition::Invalid;
         if (intact && !m_voices.OriginalVoiceReleased(row->voice_)) {
@@ -779,10 +815,12 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
                     command.payload.clearVoiceEffect.slot)) return defer();
         } else if (applyMetadata) ApplyCommandRecord(command, blockIndex);
         access.Release();
-        CommandRecord discarded{};
-        const bool popped = m_commands.TryPop(discarded);
-        assert(popped);
-        if (!popped) return defer();
+        if (initial == nullptr) {
+            CommandRecord discarded{};
+            const bool popped = m_commands.TryPop(discarded);
+            assert(popped);
+            if (!popped) return defer();
+        }
         ++row->progress_;
         --owed;
         ++applied;
@@ -793,7 +831,8 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
         row->incomingDone_[i] = true;
     }
     if (row->disposition_ == Registry::Disposition::Apply) {
-        TimelineArmTable::AcknowledgeSourceCommand(row->rowProof_, row->completion_);
+        TimelineArmTable::AcknowledgeSourceCommand(row->rowProof_, row->completion_,
+            row->range_.PublicationSequence());
         VoicePool::FinishSourceCommandInstallation(row->installProof_);
         row->originalInstallationCompleted_.store(true, std::memory_order_release);
         if (row->groupInstallPublication_.Valid()) {
@@ -823,6 +862,11 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
         TimelineArmTable::TombstoneOriginalSourceCommand(row->rowProof_, blockIndex + 1u);
     }
     row->rowProof_.Release();
+    if (initial != nullptr) {
+        const bool popped = m_commands.PopInitialSource(row->range_);
+        assert(popped);
+        if (!popped) return defer();
+    }
     const bool complete = m_commands.CompleteOriginalRange(row->range_);
     assert(complete);
     (void)complete;
@@ -836,7 +880,36 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
 }
 
 std::uint32_t MixerLoop::DrainCommands(std::uint64_t blockIndex,
-                                       std::uint64_t publishedHead) {
+    const CommandQueue::BlockInputCut& cut) {
+    // Both transports share these counters for this entire block, including
+    // every raw prefix before an initial-installation barrier.
+    std::uint32_t rawApplied = 0;
+    std::uint32_t initialApplied = 0;
+    const auto initialBudget = static_cast<std::uint64_t>(m_voices.Capacity()) * 3u;
+    while (const auto* entry = m_commands.InitialSourceAtFront(cut.initialHead)) {
+        const auto rawLimit = std::min(cut.rawHead, entry->rawBefore);
+        (void)DrainRawCommands(blockIndex, rawLimit, rawApplied);
+        if (m_commands.ConsumedCount() != entry->rawBefore ||
+            m_pendingControlAck.owner != nullptr || m_originalSources == nullptr ||
+            (m_originalSources->pending_ != nullptr &&
+                m_originalSources->pending_->range_.Kind() != CommandQueue::OriginalRangeKind::InitialSource) ||
+            initialBudget - initialApplied < 3u) break;
+        std::uint64_t owed = 3;
+        if (!DrainOriginalSource(blockIndex, owed, initialApplied, 3, entry)) break;
+    }
+    // A waiting initial source is also a barrier for every raw record after it.
+    if (m_commands.InitialSourcesConsumed() == cut.initialHead)
+        (void)DrainRawCommands(blockIndex, cut.rawHead, rawApplied);
+    const auto owed = cut.rawHead - m_commands.ConsumedCount() +
+        (cut.initialHead - m_commands.InitialSourcesConsumed()) * 3u +
+        (m_pendingControlAck.owner != nullptr ? 1u : 0u) +
+        (m_originalSources != nullptr && m_originalSources->pending_ != nullptr &&
+            m_originalSources->pending_->range_.Kind() != CommandQueue::OriginalRangeKind::InitialSource ? 1u : 0u);
+    return static_cast<std::uint32_t>(std::min<std::uint64_t>(owed, UINT32_MAX));
+}
+
+std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
+    std::uint64_t publishedHead, std::uint32_t& applied) {
     CommandRecord command;
     std::uint64_t pendingBatchRevision = 0;
     std::uint32_t pendingBatchCommands = 0;
@@ -856,9 +929,10 @@ std::uint32_t MixerLoop::DrainCommands(std::uint64_t blockIndex,
         return static_cast<std::uint32_t>(total > 0xffffffffull ? 0xffffffffull : total);
     };
     if (!RetryPendingControlAck(blockIndex)) return deferredCount();
-    std::uint32_t applied = 0;
+    const auto remainingAtEntry = m_maxCommandsPerQuantum > applied ? m_maxCommandsPerQuantum - applied : 0;
     if (m_originalSources != nullptr && m_originalSources->pending_ != nullptr &&
-        !DrainOriginalSource(blockIndex, owed, applied, m_maxCommandsPerQuantum)) return deferredCount();
+        m_originalSources->pending_->range_.Kind() != CommandQueue::OriginalRangeKind::InitialSource &&
+        !DrainOriginalSource(blockIndex, owed, applied, remainingAtEntry)) return deferredCount();
     while (owed != 0) {
         const std::uint32_t remaining =
             m_maxCommandsPerQuantum > applied
@@ -1599,13 +1673,16 @@ void MixerLoop::DrainQueuedCommands(std::uint32_t quantumCount) {
     if (quantumCount == 0) {
         return;
     }
+    // Suspend freezes playback time, including a retained render quantum.
+    // Preserve FIFO order until Resume publishes that quantum's actual output.
+    if (m_renderDeferred) return;
     memguard::AudioThreadScope audioScope;
     for (std::uint32_t i = 0; i < quantumCount; ++i) {
         m_logRing.BeginQuantum();
         m_notifications.BeginQuantum();
         m_voices.BeginAudioBlock(m_blocksRendered.load(std::memory_order_relaxed));
         (void)DrainCommands(m_blocksRendered.load(std::memory_order_relaxed),
-                            m_commands.PublishedHead());
+                            m_commands.CaptureBlockInputCut());
         // Serialized drain returns its real readers without an audio fence.
         m_voices.EndAudioBlock();
     }
@@ -1613,6 +1690,7 @@ void MixerLoop::DrainQueuedCommands(std::uint32_t quantumCount) {
 
 void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
                             std::uint32_t channels) {
+    const std::uint64_t ticksEntry = CpuClockTicks();
     floatmode::ScopedFlushDenormals floatModeScope;
     memguard::AudioThreadScope audioScope;
 
@@ -1639,107 +1717,116 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
     // voices window — each window owns the setup immediately ahead of its
     // named work, rather than spending extra clock reads on sub-microsecond
     // slices.
-    const std::uint64_t ticksEntry = CpuClockTicks();
 
     std::memset(interleavedOut, 0,
-                static_cast<std::size_t>(frames) * channels * sizeof(float));
+        static_cast<std::size_t>(frames) * channels * sizeof(float));
+    if (m_renderDeferred &&
+        (frames != m_deferredFrames || !m_voices.DeferredRenderReady())) return;
 
     const std::uint64_t blockIndex =
         m_blocksRendered.load(std::memory_order_relaxed);
 
-    // Commands apply at the block boundary, before any rendering, so a
-    // queued change is either fully in effect for this block or not at all.
-    m_voices.BeginAudioBlock(blockIndex);
-    // Fix the producer's position before draining: anything pushed from here on
-    // is this block's business no longer, so the pass cannot be extended by a
-    // producer that keeps writing while it runs.
-    const std::uint64_t publishedHead = m_commands.PublishedHead();
-    m_commandsDeferred = DrainCommands(blockIndex, publishedHead);
-    if (m_commandsDeferred > m_commandsDeferredHighWater) {
-        m_commandsDeferredHighWater = m_commandsDeferred;
-    }
-    if (m_commandsDeferred == 0) {
-        // Caught up: the episode is over, so a later one is reportable again.
-        m_consecutiveDeferredBlocks = 0;
-        m_deferralEpisodeReported = false;
-    } else {
-        ++m_consecutiveDeferredBlocks;
-        if (m_consecutiveDeferredBlocks >= kDeferralEpisodeBlocks &&
-            !m_deferralEpisodeReported) {
-            // Once per episode. Commands still apply, just later, so a record
-            // per block would bury the fact under its own repetition.
-            LogRecord record{};
-            record.level = VN_LOG_WARN;
-            record.code = kLogCodeCommandBudgetBehind;
-            record.arg0 = m_commandsDeferred;
-            record.arg1 = m_consecutiveDeferredBlocks;
-            m_logRing.Push(record);
-            m_deferralEpisodeReported = true;
-        }
-    }
-    m_dynamicRoutes.BeginBlock();
-
-    const std::uint64_t ticksDrained = CpuClockTicks();
-
-    m_arena.Reset();
-    const std::uint64_t overflowsBefore = m_arena.OverflowCount();
-
-    // Planar accumulators for every live bus. If they do not all fit the
-    // arena the block stays silent — the overflow counter and a degradation
-    // notification record it; nothing allocates and nothing crashes. The
-    // audio-visible count is read here (after DrainCommands, so a create's
-    // plan swap this block is already in effect): a bus not yet swapped in has
-    // no plane and is not folded, and no voice can be routed to it because its
-    // routing command necessarily drains after that swap.
-    const std::uint32_t busCount = m_buses.AudioBusCount();
+    std::uint64_t ticksDrained = ticksEntry;
     bool planesOk = true;
-    for (std::uint32_t i = 0; i < busCount * m_mixChannels; ++i) {
-        m_busPlanes[i] = m_arena.AllocFloats(frames);
-        if (m_busPlanes[i] == nullptr) {
-            planesOk = false;
-            break;
+    if (!m_renderDeferred) {
+        // Commands apply at the block boundary, before any rendering, so a
+        // queued change is either fully in effect for this block or not at all.
+        m_voices.BeginAudioBlock(blockIndex);
+        // Fix the producer's position before draining: anything pushed from here on
+        // is this block's business no longer, so the pass cannot be extended by a
+        // producer that keeps writing while it runs.
+        const auto inputCut = m_commands.CaptureBlockInputCut();
+        if (m_timelineArms != nullptr) m_timelineArms->acceptedSourceTail_ = inputCut.acceptedTail;
+        m_commandsDeferred = DrainCommands(blockIndex, inputCut);
+        if (m_commandsDeferred > m_commandsDeferredHighWater) {
+            m_commandsDeferredHighWater = m_commandsDeferred;
         }
-    }
+        if (m_commandsDeferred == 0) {
+            // Caught up: the episode is over, so a later one is reportable again.
+            m_consecutiveDeferredBlocks = 0;
+            m_deferralEpisodeReported = false;
+        } else {
+            ++m_consecutiveDeferredBlocks;
+            if (m_consecutiveDeferredBlocks >= kDeferralEpisodeBlocks &&
+                !m_deferralEpisodeReported) {
+                // Once per episode. Commands still apply, just later, so a record
+                // per block would bury the fact under its own repetition.
+                LogRecord record{};
+                record.level = VN_LOG_WARN;
+                record.code = kLogCodeCommandBudgetBehind;
+                record.arg0 = m_commandsDeferred;
+                record.arg1 = m_consecutiveDeferredBlocks;
+                m_logRing.Push(record);
+                m_deferralEpisodeReported = true;
+            }
+        }
+        m_dynamicRoutes.BeginBlock();
 
-    const CurrentSliceStagePlan currentSlicePlan =
-        StageCurrentSlices(blockIndex);
-    m_activeCurrentSlicePlan = currentSlicePlan;
-    m_currentSlicesAppliedInExecutor = false;
-#if !defined(HARKEN_RT_QUALIFICATION)
-    if (m_currentSliceFrontierHookForTest != nullptr) {
-        m_currentSliceFrontierHookForTest(
-            m_currentSliceFrontierHookContextForTest,
-            CurrentSliceHookPhaseForTest::AfterStageBeforeExecute,
-            blockIndex, m_stagedCurrentSliceCount,
-            currentSlicePlan.stagedPageCount, currentSlicePlan.stopReason);
-    }
-#endif
-    TimelineExecutionResult timelineResult{};
-    timelineResult.frontier = currentSlicePlan.expectedFrontier;
-    timelineResult.planStopReason = currentSlicePlan.stopReason;
-    if (planesOk && m_timelineExecutor != nullptr &&
-        frames == m_voices.BlockFrames()) {
-        if (m_timelineSink != nullptr) {
-            m_timelineSink->SetArenaAdmission(
-                m_arena.CapacityBytes() >= m_arena.UsedBytes()
-                    ? m_arena.CapacityBytes() - m_arena.UsedBytes()
-                    : 0,
-                frames);
+        ticksDrained = CpuClockTicks();
+
+        m_arena.Reset();
+        m_deferredArenaOverflows = m_arena.OverflowCount();
+        m_deferredFrames = frames;
+
+        // Planar accumulators for every live bus. If they do not all fit the
+        // arena the block stays silent — the overflow counter and a degradation
+        // notification record it; nothing allocates and nothing crashes. The
+        // audio-visible count is read here (after DrainCommands, so a create's
+        // plan swap this block is already in effect): a bus not yet swapped in has
+        // no plane and is not folded, and no voice can be routed to it because its
+        // routing command necessarily drains after that swap.
+        const std::uint32_t busCount = m_buses.AudioBusCount();
+
+        for (std::uint32_t i = 0; i < busCount * m_mixChannels; ++i) {
+            m_busPlanes[i] = m_arena.AllocFloats(frames);
+            if (m_busPlanes[i] == nullptr) {
+                planesOk = false;
+                break;
+            }
         }
-        const TimelineExecutionPlan executionPlan{
-            currentSlicePlan.expectedFrontier,
-            currentSlicePlan.stagedPageCount,
-            currentSlicePlan.stopReason};
-        timelineResult =
-            m_timelineExecutor->ExecuteQuantum(blockIndex, executionPlan);
+
+        const CurrentSliceStagePlan currentSlicePlan =
+            StageCurrentSlices(blockIndex);
+        m_activeCurrentSlicePlan = currentSlicePlan;
+        m_currentSlicesAppliedInExecutor = false;
+    #if !defined(HARKEN_RT_QUALIFICATION)
+        if (m_currentSliceFrontierHookForTest != nullptr) {
+            m_currentSliceFrontierHookForTest(
+                m_currentSliceFrontierHookContextForTest,
+                CurrentSliceHookPhaseForTest::AfterStageBeforeExecute,
+                blockIndex, m_stagedCurrentSliceCount,
+                currentSlicePlan.stagedPageCount, currentSlicePlan.stopReason);
+        }
+    #endif
+        TimelineExecutionResult timelineResult{};
+        timelineResult.frontier = currentSlicePlan.expectedFrontier;
+        timelineResult.planStopReason = currentSlicePlan.stopReason;
+        if (planesOk && m_timelineExecutor != nullptr &&
+            frames == m_voices.BlockFrames()) {
+            if (m_timelineSink != nullptr) {
+                m_timelineSink->SetArenaAdmission(
+                    m_arena.CapacityBytes() >= m_arena.UsedBytes()
+                        ? m_arena.CapacityBytes() - m_arena.UsedBytes()
+                        : 0,
+                    frames);
+            }
+            const TimelineExecutionPlan executionPlan{
+                currentSlicePlan.expectedFrontier,
+                currentSlicePlan.stagedPageCount,
+                currentSlicePlan.stopReason};
+            timelineResult =
+                m_timelineExecutor->ExecuteQuantum(blockIndex, executionPlan);
+        }
+        if (!m_currentSlicesAppliedInExecutor)
+            ApplyConsumedCurrentSlices(blockIndex, timelineResult);
+    #if !defined(HARKEN_RT_QUALIFICATION)
+        if (m_timelineFinalizedHookForTest != nullptr)
+            m_timelineFinalizedHookForTest(m_timelineFinalizedHookContextForTest, blockIndex);
+    #endif
+        m_voices.ActivatePendingNativeVariableStarts(m_notifications, blockIndex);
+
     }
-    if (!m_currentSlicesAppliedInExecutor)
-        ApplyConsumedCurrentSlices(blockIndex, timelineResult);
-#if !defined(HARKEN_RT_QUALIFICATION)
-    if (m_timelineFinalizedHookForTest != nullptr)
-        m_timelineFinalizedHookForTest(m_timelineFinalizedHookContextForTest, blockIndex);
-#endif
-    m_voices.ActivatePendingNativeVariableStarts(m_notifications, blockIndex);
+    const auto overflowsBefore = m_deferredArenaOverflows;
 
     std::uint64_t ticksVoices = ticksDrained;
     std::uint64_t ticksBuses = ticksDrained;
@@ -1747,23 +1834,24 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         const VoicePool::RenderAllResult voicesOutcome =
             m_voices.RenderAll(m_arena, m_busPlanes.data(), frames,
                                m_notifications, blockIndex,
-                               m_jobDeadlineTicks,
+                               ticksEntry + m_jobDeadlineTicks,
                                static_cast<std::uint64_t>(blockIndex) * frames);
-        if (voicesOutcome.batchAbandoned) {
-            // The arena is this object's, so retiring the abandoned block's
-            // descending span is this object's job. It happens inside the block
-            // that abandoned, before the next Reset, so the next block's bus
-            // planes and voice scratch are already allocated clear of anything a
-            // stranded worker holds a pointer into.
-            m_arena.QuarantineHighEnd();
+        if (voicesOutcome.batchDeferred) {
+            m_renderDeferred = true;
+            m_audioCpuPeakUs = std::max(m_audioCpuPeakUs,
+                CpuTicksToMicros(ticksEntry, CpuClockTicks(), m_cpuTicksPerSecond));
             LogRecord record{};
             record.level = VN_LOG_WARN;
-            record.code = kLogCodeRenderBatchAbandoned;
+            record.code = kLogCodeRenderBatchDeferred;
             record.arg0 = CpuTicksToMicros(0, voicesOutcome.overrunTicks,
                                            m_cpuTicksPerSecond);
-            record.arg1 = voicesOutcome.quarantinedVoices;
+            record.arg1 = voicesOutcome.pendingVoices;
             m_logRing.Push(record);
+            // Retain readers and scratch; no voice-ended notification or
+            // logical completion is published for an unfinished quantum.
+            return;
         }
+        m_renderDeferred = false;
 
         ticksVoices = CpuClockTicks();
 
@@ -1901,7 +1989,7 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
             m_arena.HighWaterBytes());
     }
 
-    if (harken::monitor::AudioLiveArmed()) {
+    if (interleavedOut != nullptr && harken::monitor::AudioLiveArmed()) {
         harken::monitor::PublishMasterAudioChunk(
             interleavedOut, frames, channels, m_deviceLayout, m_sampleRate,
             m_buses.AudioGenerationAt(0),

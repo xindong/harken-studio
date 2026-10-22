@@ -24,6 +24,7 @@
 #include <harken/Harken.h>
 
 #include "harken/core/EngineConfig.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/param/Curve.h"
 #include "harken/param/ParamSystem.h"
 
@@ -38,8 +39,7 @@ namespace harken {
 // no ownership.
 class EmitterTable;
 
-// Attenuation profile table capacity, preallocated at init like the
-// Variable table (kMaxVariables precedent).
+// Attenuation profile capacity is independent of its prepared storage.
 inline constexpr std::uint32_t kMaxAttenuationProfiles = 64;
 
 // The distinct targets one spatialized voice's evaluation can dirty in a
@@ -78,6 +78,24 @@ struct AttenuationProfile {
 class Spatializer {
 public:
     explicit Spatializer(const EngineConfig& config);
+    Spatializer(const EngineConfig& config, std::uint32_t initialVoiceRows);
+    bool PrepareVoiceStorage(std::uint32_t count) noexcept {
+        return m_mirrors.ConstructThrough(count);
+    }
+    void AttachRetainedProfileStorage(void* context, bool (*prepare)(void*) noexcept) noexcept {
+        m_retainedStorageContext = context;
+        m_prepareRetainedStorage = prepare;
+    }
+    std::size_t RetainStorageCapacity() const noexcept { return m_retainRing.Capacity(); }
+    void SetProfileCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_profiles.SetCommitPageLimitForTests(pages);
+    }
+    void SetRetainCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_retainRing.SetCommitPageLimitForTests(pages);
+    }
+    void SetVoiceCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_mirrors.SetCommitPageLimitForTests(pages);
+    }
 
     class PreparedProfileToken {
     public:
@@ -330,12 +348,14 @@ private:
     float m_listenerX = 0.0f, m_listenerY = 0.0f, m_listenerZ = 0.0f;
     float m_rightX = 1.0f, m_rightY = 0.0f, m_rightZ = 0.0f;
 
-    std::vector<VoiceMirror> m_mirrors; // indexed by voice slot
-    std::vector<AttenuationProfile> m_profiles; // fixed capacity
+    StableRowStorage<VoiceMirror> m_mirrors; // indexed by prepared voice slot
+    mutable StableRowStorage<AttenuationProfile> m_profiles;
     std::array<std::uint64_t, kMaxAttenuationProfiles> m_profileGenerations{};
     std::array<std::uint8_t, kMaxAttenuationProfiles> m_profileOccupied{};
     std::uint32_t m_profileCount = 0;
-    std::vector<RetainSlot> m_retainRing;
+    StableRowStorage<RetainSlot, std::size_t> m_retainRing;
+    void* m_retainedStorageContext = nullptr;
+    bool (*m_prepareRetainedStorage)(void*) noexcept = nullptr;
     bool m_pendingProfileSet = false;
 };
 

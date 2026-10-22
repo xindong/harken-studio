@@ -9,6 +9,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/RecipePackTestUtil.h"
 #include "Common/TestUtil.h"
+#include "VoicePoolReleaseTestAccess.h"
 
 #include "harken/param/EffectParamLocator.h"
 #include "harken/render/BuiltinEffects.h"
@@ -141,6 +142,45 @@ TEST(Steal, QuietestPicksLowestAudibilityWithSlotTieBreak) {
     // The loud voice was never a victim: it stays resolvable.
     EXPECT_NE(nullptr,
               engine->voices.Resolve(harkentest::RenderHandle(engine, loud)));
+}
+
+TEST(Steal, WiderSuccessorBackingFailurePreservesPlayingVictimAndRetry) {
+    EngineSession session(StealConfig(1, 2));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto samples = LongDc(0.25f);
+    const auto mono = MonoDesc(samples, kRate);
+    auto stereo = mono;
+    stereo.channels = 2;
+    stereo.frames /= 2;
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &mono));
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(2), &stereo));
+    auto play = PlayWith(harkentest::ObjectId(1), 128);
+    VnVoiceHandle incumbent = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &incumbent));
+    engine.nullBackend.Pump(1);
+    const auto original = harkentest::RenderHandle(&engine, incumbent);
+    ASSERT_NE(nullptr, engine.voices.Resolve(original));
+    harken::detail::VoicePoolReleaseTestAccess::SetRingCommitPageLimit(engine.voices, 1, 0);
+    play.soundId = harkentest::ObjectId(2);
+    VnVoiceHandle successor = 0;
+    EXPECT_EQ(VN_NO_VOICE, harkentest::PlayRaw(&play, &successor));
+    EXPECT_EQ(0u, successor);
+    EXPECT_EQ(0u, engine.ledger.PendingStartCount());
+    EXPECT_EQ(0u, Snap().voiceStolenCount);
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_NE(nullptr, engine.voices.Resolve(original));
+    harken::detail::VoicePoolReleaseTestAccess::SetRingCommitPageLimit(engine.voices, 1, SIZE_MAX);
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &successor));
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto* context = engine.voices.Resolve(harkentest::RenderHandle(&engine, successor));
+    ASSERT_NE(nullptr, context);
+    EXPECT_EQ(2u, context->pcm.channelCount);
+    EXPECT_EQ(1u, Snap().voiceStolenCount);
 }
 
 TEST(Steal, OldestPicksLowestStartOrder) {

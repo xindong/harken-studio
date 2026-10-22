@@ -42,9 +42,9 @@ struct ScopeSlot {
     bool occupied = false;
 };
 
-thread_local std::array<ScopeSlot, VN_MONITOR_HARD_MEASUREMENTS_PER_PLAN>
-    g_slots{};
-thread_local std::array<std::uint8_t, 512> g_pack{};
+struct ScopeScratch {
+    std::array<std::uint8_t, 512> pack{};
+};
 
 bool SameOverlay(const core::MonitorScopeOverlay& a,
                  const core::MonitorScopeOverlay& b) {
@@ -91,7 +91,7 @@ void FillPayload(VnMonitorScopeResult* payload,
     payload->tapDescriptorGeneration = tapDescriptorGeneration;
 }
 
-void EmitScope(const core::MonitorScopeOverlay& overlay,
+void EmitScope(ScopeScratch& scratch, const core::MonitorScopeOverlay& overlay,
                const core::MonitorScopeResult& item,
                const VnMonitorTapDescriptor& tap, std::uint64_t sourceSequence,
                std::uint64_t capturePlanGeneration, std::uint64_t executeFrame,
@@ -107,14 +107,14 @@ void EmitScope(const core::MonitorScopeOverlay& overlay,
         item.triggered ? (VN_MONITOR_VALID_ARMED | VN_MONITOR_VALID_NUMERIC)
                        : VN_MONITOR_VALID_ARMED;
     const std::uint32_t bytes = PackScopeResultRecord(
-        g_pack.data(), static_cast<std::uint32_t>(g_pack.size()), sourceSequence,
+        scratch.pack.data(), static_cast<std::uint32_t>(scratch.pack.size()), sourceSequence,
         capturePlanGeneration, executeFrame, tap.tapDescriptorId,
         tap.tapDescriptorGeneration, payload, validity);
     if (bytes == 0) {
         return;
     }
     DerivedEmit emitRec{};
-    emitRec.bytes = g_pack.data();
+    emitRec.bytes = scratch.pack.data();
     emitRec.size = bytes;
     (void)emit(emitCtx, emitRec);
 }
@@ -134,15 +134,15 @@ float MixMonoAverage(const float* interleaved, std::uint32_t frame,
     return static_cast<float>(sum / static_cast<double>(channels));
 }
 
-void ConsumeScope(const VnMonitorMeasurementRequest& request,
+void ConsumeScope(void* state, void* workspace,
+                     const VnMonitorMeasurementRequest& request,
                   const VnMonitorTapDescriptor& tap,
                   const std::uint8_t* packedAudioChunk,
-                  std::uint32_t packedBytes, std::uint32_t measurementIndex,
+                  std::uint32_t packedBytes,
                   DerivedEmitFn emit, void* emitCtx) {
     if (emit == nullptr || packedAudioChunk == nullptr ||
         packedBytes < VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES +
-                          sizeof(VnMonitorAudioChunk) ||
-        measurementIndex >= g_slots.size()) {
+                          sizeof(VnMonitorAudioChunk)) {
         return;
     }
     core::MonitorScopeOverlay overlay{};
@@ -178,7 +178,8 @@ void ConsumeScope(const VnMonitorMeasurementRequest& request,
     const std::uint64_t segmentGeneration = ReadPackedU64(
         packedAudioChunk, kPackedMeasurementSegmentGenerationOffset);
 
-    ScopeSlot& slot = g_slots[measurementIndex];
+    auto& slot = *static_cast<ScopeSlot*>(state);
+    auto& scratch = *static_cast<ScopeScratch*>(workspace);
     if (!slot.occupied || slot.tapId != tap.tapDescriptorId ||
         slot.tapGeneration != tap.tapDescriptorGeneration ||
         slot.capturePlanGeneration != capturePlanGeneration ||
@@ -203,7 +204,7 @@ void ConsumeScope(const VnMonitorMeasurementRequest& request,
         gap.discontinuityFlags = 1u;
         gap.windowBegin = slot.nextSourceFrame;
         gap.windowEnd = chunk.sourceFrameBegin;
-        EmitScope(overlay, gap, tap, sourceSequence, capturePlanGeneration,
+        EmitScope(scratch, overlay, gap, tap, sourceSequence, capturePlanGeneration,
                   executeFrame, segmentGeneration, emit, emitCtx);
     }
     slot.nextSourceFrame = chunk.sourceFrameEnd;
@@ -217,7 +218,7 @@ void ConsumeScope(const VnMonitorMeasurementRequest& request,
         }
         const core::MonitorScopeResult item = core::FeedScopeSample(
             &slot.state, overlay, sample, chunk.sourceFrameBegin + i);
-        EmitScope(overlay, item, tap, sourceSequence, capturePlanGeneration,
+        EmitScope(scratch, overlay, item, tap, sourceSequence, capturePlanGeneration,
                   executeFrame, segmentGeneration, emit, emitCtx);
     }
 }
@@ -227,6 +228,13 @@ struct ScopeAutoRegister {
         DerivedHandler handler{};
         handler.validate = &ValidateScope;
         handler.consume = &ConsumeScope;
+        handler.createState = [](const VnMonitorMeasurementRequest&,
+                                 std::uint32_t) -> std::shared_ptr<void> {
+            return std::make_shared<ScopeSlot>();
+        };
+        handler.createScratch = []() -> std::shared_ptr<void> {
+            return std::make_shared<ScopeScratch>();
+        };
         RegisterDerivedHandler(VN_MONITOR_MEASURE_SCOPE, handler);
     }
 };

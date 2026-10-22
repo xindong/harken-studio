@@ -412,11 +412,21 @@ TEST(BusTargetStore, RetiringOwnerIsExactAcrossDenseSlotGenerations) {
     const std::uint32_t oldRevision =
         store.TargetRevision(kBus, kOldGeneration, kTarget);
     ASSERT_NE(0u, oldRevision);
+    store.SetRetiringTargetCommitPageLimitForTests(0);
+    EXPECT_FALSE(store.TryClaim(kBus, kOldGeneration, kTarget, oldOwner, oldRevision));
+    EXPECT_FALSE(store.ForeignClaim(kBus, kOldGeneration, kTarget));
+    store.SetRetiringTargetCommitPageLimitForTests(SIZE_MAX);
     ASSERT_TRUE(store.TryClaim(kBus, kOldGeneration, kTarget, oldOwner,
                                oldRevision));
+    store.SetRetiringTargetCommitPageLimitForTests(0);
 
     store.RetireBusGeneration(kBus, kOldGeneration);
     ASSERT_EQ(1u, store.RetiringTargetCountForTests());
+    auto copied = store;
+    EXPECT_EQ(1u, copied.RetiringTargetCountForTests());
+    copied.ReleaseClaim(kBus, kOldGeneration, kTarget, oldOwner);
+    EXPECT_EQ(0u, copied.RetiringTargetCountForTests());
+    EXPECT_EQ(1u, store.RetiringTargetCountForTests());
     float resolved = 0.0f;
     std::uint32_t rampMs = 0;
     std::uint32_t revision = 0;

@@ -52,6 +52,7 @@ struct CompositeCompletionOwnerPoolTestAccess {
     static void SeedGeneration(CompositeCompletionOwnerPool& pool,
                                std::uint32_t slot,
                                std::uint32_t generation) {
+        ASSERT_TRUE(pool.PrepareSlotStorage(slot));
         pool.rows_[slot].generation = generation;
     }
     static void SeedNextOriginalMarker(CompositeCompletionOwnerPool& pool, std::uint64_t marker) {
@@ -127,6 +128,17 @@ protected:
 };
 
 TEST_F(OriginalCompositeStorageTest, SamePrepareLoanAllowsActualCommitAndPreservesEveryStrictFence) {
+    EXPECT_EQ(0u, pool.StorageBytes());
+    EXPECT_EQ(0u, pool.CommittedBytes());
+    EXPECT_GT(pool.ReservedBytes(), 0u);
+    pool.SetRowCommitPageLimitForTests(0);
+    EXPECT_EQ(harken::CompositeCompletionAcquireStatus::Capacity, Prepare(&original, &token));
+    EXPECT_FALSE(token.Valid());
+    EXPECT_FALSE(original.Valid());
+    EXPECT_EQ(1u, pool.FreeCount());
+    EXPECT_EQ(0u, pool.ConstructedRowCount());
+    EXPECT_GT(pool.CommittedBytes(), 0u);
+    pool.SetRowCommitPageLimitForTests(SIZE_MAX);
     ASSERT_EQ(harken::CompositeCompletionAcquireStatus::Ok, Prepare(&original, &token));
     EXPECT_FALSE(pool.IsOriginalLifetimePinned(original));
     harken::CompositeCompletionOwnerInfo retained{};
@@ -897,6 +909,37 @@ TEST(CompletionOwner, PrivateCompositeReanchorRejectsChangedOwnerWithoutPartialM
     EXPECT_EQ(1408u, actual.absoluteLeafStartFrame);
     EXPECT_EQ(1664u, actual.predicate.absoluteLogicalCompleteFrame);
     EXPECT_EQ(23u, actual.predicate.playbackFactsRevision);
+    harken::CompositeCompletionOwnerPool::PrivateReanchorProof uniform{};
+    ASSERT_TRUE(pool.ProvePrivateUniformReanchorBeforePublication(token, 0u, 0u, occurrences, &uniform));
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    uniform = {};
+    EXPECT_FALSE(pool.ProvePrivateUniformReanchorBeforePublication(token, 0u, UINT64_MAX, occurrences, &uniform));
+    EXPECT_FALSE(pool.ProvePrivateUniformReanchorBeforePublication(token, 1409u, 0u, occurrences, &uniform));
+    ASSERT_TRUE(pool.Capture(token, &info));
+    EXPECT_EQ(1792u, info.absoluteLogicalCompleteFrame);
+    ASSERT_TRUE(pool.CaptureLeaf(token, 0, &actual));
+    EXPECT_EQ(1280u, actual.absoluteLeafStartFrame);
+    ASSERT_TRUE(pool.ProvePrivateUniformReanchorBeforePublication(token, 1024u, 0u, occurrences, &uniform));
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    ASSERT_TRUE(pool.Capture(token, &info));
+    EXPECT_EQ(768u, info.absoluteLogicalCompleteFrame);
+    ASSERT_TRUE(pool.CaptureLeaf(token, 1, &actual));
+    EXPECT_EQ(384u, actual.absoluteLeafStartFrame);
+    uniform = {};
+    ASSERT_TRUE(pool.ProvePrivateUniformReanchorBeforePublication(token, 0u, UINT64_MAX - 768u, occurrences, &uniform));
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    ASSERT_TRUE(pool.Capture(token, &info));
+    EXPECT_EQ(UINT64_MAX, info.absoluteLogicalCompleteFrame);
+    uniform = {};
+    ASSERT_TRUE(pool.ProvePrivateUniformReanchorBeforePublication(token, UINT64_MAX - 768u, 1024u, occurrences, &uniform));
+    pool.ApplyPrivateReanchorBeforePublication(uniform);
+    ASSERT_TRUE(pool.CaptureLeaf(token, 1, &actual));
+    EXPECT_EQ(1408u, actual.absoluteLeafStartFrame);
+    EXPECT_EQ(1664u, actual.predicate.absoluteLogicalCompleteFrame);
+    EXPECT_EQ(23u, actual.predicate.playbackFactsRevision);
     harken::CompletionProgressBlockUpdate audible{};
     audible.occurrence = first;
     audible.renderGeneration = 11;
@@ -909,6 +952,8 @@ TEST(CompletionOwner, PrivateCompositeReanchorRejectsChangedOwnerWithoutPartialM
     harken::CompositeCompletionOwnerPool::PrivateReanchorProof afterAudio{};
     EXPECT_FALSE(pool.ProvePrivateReanchorBeforePublication(
         token, candidates.data(), 2, occurrences, &afterAudio));
+    EXPECT_FALSE(pool.ProvePrivateUniformReanchorBeforePublication(
+        token, 0u, 64u, occurrences, &afterAudio));
 }
 
 TEST(CompletionOwner, CompositeCapacityPlusOneHasZeroPartialMutation) {

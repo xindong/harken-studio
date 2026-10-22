@@ -4,9 +4,11 @@
 #include "Common/TestUtil.h"
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/TimelineExecutor.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/abi/TimelineStopContract.h"
 #include "harken/core/TimelineProgram.h"
 #include "harken/core/TimelineRuntimeInstall.h"
+#include "harken/param/ParamTargets.h"
 #include "PlayableRuntime.h"
 
 #include <gtest/gtest.h>
@@ -16,7 +18,9 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstring>
 #include <mutex>
+#include <new>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -473,6 +477,7 @@ public:
             offsets[i] = events[i].effectiveOffset;
             orders[i] = events[i].order;
         }
+        if (applyHook != nullptr) applyHook(applyContext);
         return true;
     }
     bool CancelBinding(std::uint32_t,
@@ -514,6 +519,8 @@ public:
     bool hookPrecededEnd = false;
     bool bindingValid = true;
     bool accept = true;
+    void (*applyHook)(void*) = nullptr;
+    void* applyContext = nullptr;
     bool applied = false;
     std::uint32_t count = 0;
     std::uint32_t cancelCount = 0;
@@ -682,6 +689,139 @@ TEST(TimelineExecutor, DeadlinePrepassRunsBeforeAdmissionAndFailsOnce) {
               groups[0].lease->Capture().state);
     EXPECT_EQ(harken::AudioSliceState::SliceInvalidated,
               groups[1].lease->Capture().state);
+}
+
+TEST(TimelineArmTable, EmptyCapacityDoesNotConstructOrCommitNativeRows) {
+    harken::TimelineArmTable table(1024);
+    const auto& view = table;
+    EXPECT_EQ(1024u, table.Capacity());
+    EXPECT_EQ(1024u, table.FreeCount());
+    EXPECT_EQ(0u, table.LiveCount());
+    EXPECT_EQ(0u, table.ConstructedRowCount());
+    EXPECT_EQ(0u, table.RowStorageBytes());
+    EXPECT_EQ(0u, table.RowCommittedBytes());
+    EXPECT_EQ(0u, table.ScopeStorageBytes());
+    EXPECT_EQ(0u, table.ScopeCommittedBytes());
+    EXPECT_GE(table.RowReservedBytes(), 1024u * sizeof(harken::TimelineArmTable::Row));
+    EXPECT_GT(table.ScopeReservedBytes(), 0u);
+    EXPECT_EQ(nullptr, table.RowAt(0));
+    EXPECT_EQ(nullptr, view.RowAt(1023));
+    const harken::TimelineArmToken unissued{1023, 1, 0, 9};
+    EXPECT_EQ(nullptr, table.Resolve(unissued));
+    EXPECT_EQ(nullptr, view.Resolve(unissued));
+    EXPECT_FALSE(table.AcknowledgeApplied(unissued, 1));
+    EXPECT_FALSE(table.AcknowledgeApplied((std::uint64_t{1} << 32) | 1023u, 1));
+    EXPECT_FALSE(table.HasLiveGeneration(7));
+    EXPECT_EQ(0u, table.ReclaimTombstoned(100));
+    EXPECT_EQ(0u, table.ConstructedRowCount());
+    EXPECT_EQ(0u, table.RowCommittedBytes());
+    EXPECT_EQ(0u, table.ScopeCommittedBytes());
+}
+
+TEST(TimelineArmTable, NativeReservationFailurePreservesConstructorFailureContract) {
+    harken::detail::StablePageReservation::FailNextReservationForTests();
+    EXPECT_THROW({ harken::TimelineArmTable table(4); }, std::bad_alloc);
+    harken::TimelineArmTable retry(4);
+    harken::TimelineArmToken token{};
+    EXPECT_TRUE(retry.PreparePendingImmediate(0, 9, 7, {}, &token));
+    EXPECT_TRUE(token.Valid());
+    EXPECT_TRUE(retry.CancelPrepared(token));
+}
+
+TEST(TimelineArmTable, SeparateCommitFailuresKeepPriorRowsAndChargeRetainedBacking) {
+    harken::TimelineArmTable table(4096);
+    harken::TimelineArmToken refused{};
+    table.SetScopeCommitPageLimitForTests(0);
+    EXPECT_FALSE(table.PreparePendingImmediate(0, 9, 7, {}, &refused));
+    EXPECT_FALSE(refused.Valid());
+    EXPECT_EQ(0u, table.ConstructedRowCount());
+    EXPECT_EQ(0u, table.ScopeStorageBytes());
+    EXPECT_EQ(0u, table.ScopeCommittedBytes());
+    EXPECT_EQ(0u, table.RowCommittedBytes());
+
+    table.SetScopeCommitPageLimitForTests(SIZE_MAX);
+    table.SetRowCommitPageLimitForTests(0);
+    EXPECT_FALSE(table.PreparePendingImmediate(0, 9, 7, {}, &refused));
+    EXPECT_FALSE(refused.Valid());
+    const auto scopeBytes = table.ScopeStorageBytes();
+    EXPECT_GT(scopeBytes, 0u);
+    EXPECT_GE(table.ScopeCommittedBytes(), scopeBytes);
+    EXPECT_EQ(0u, table.ConstructedRowCount());
+    EXPECT_EQ(0u, table.RowStorageBytes());
+    EXPECT_EQ(0u, table.RowCommittedBytes());
+    EXPECT_EQ(4096u, table.FreeCount());
+    EXPECT_EQ(nullptr, table.RowAt(0));
+
+    table.SetRowCommitPageLimitForTests(1);
+    std::vector<harken::TimelineArmToken> issued;
+    for (std::uint32_t slot = 0; slot < table.Capacity(); ++slot) {
+        harken::TimelineArmToken token{};
+        if (!table.PreparePendingImmediate(slot, 9, 7, {}, &token)) {
+            EXPECT_FALSE(token.Valid());
+            break;
+        }
+        issued.push_back(token);
+    }
+    ASSERT_FALSE(issued.empty());
+    ASSERT_LT(issued.size(), table.Capacity());
+    EXPECT_EQ(issued.size(), table.ConstructedRowCount());
+    EXPECT_EQ(issued.size() * sizeof(harken::TimelineArmTable::Row), table.RowStorageBytes());
+    EXPECT_LT(table.RowCommittedBytes(), (issued.size() + 1) * sizeof(harken::TimelineArmTable::Row));
+    EXPECT_EQ((issued.size() + 1) * scopeBytes, table.ScopeStorageBytes());
+    EXPECT_EQ(table.Capacity() - issued.size(), table.FreeCount());
+    for (const auto token : issued) {
+        const auto* row = table.Resolve(token);
+        ASSERT_NE(nullptr, row);
+        EXPECT_EQ(1u, token.generation);
+        EXPECT_EQ((std::uint64_t{token.generation} << 32) | token.slot, row->identity.load());
+    }
+    EXPECT_EQ(nullptr, table.RowAt(static_cast<std::uint32_t>(issued.size())));
+
+    table.SetRowCommitPageLimitForTests(SIZE_MAX);
+    harken::TimelineArmToken retry{};
+    ASSERT_TRUE(table.PreparePendingImmediate(999, 9, 7, {}, &retry));
+    EXPECT_EQ(issued.size(), retry.slot);
+    EXPECT_EQ(1u, retry.generation);
+    EXPECT_EQ((issued.size() + 1) * scopeBytes, table.ScopeStorageBytes());
+    EXPECT_EQ(issued.size() + 1, table.ConstructedRowCount());
+    ASSERT_TRUE(table.CancelPrepared(retry));
+    for (const auto token : issued) ASSERT_TRUE(table.CancelPrepared(token));
+    EXPECT_EQ(table.Capacity(), table.FreeCount());
+    EXPECT_GT(table.RowCommittedBytes(), 0u);
+    EXPECT_GT(table.ScopeCommittedBytes(), 0u);
+}
+
+TEST(TimelineArmTable, AudioQueriesNeverConstructAndIssuanceIsControlOnly) {
+    harken::TimelineArmTable table(4);
+    harken::TimelineArmToken refused{};
+    bool firstIssued = true, generationChanged = true;
+    const harken::TimelineArmTable::Row* unissued = nullptr;
+    {
+        harken::memguard::AudioThreadScope audio;
+        firstIssued = table.PreparePendingImmediate(0, 9, 7, {}, &refused);
+        generationChanged = table.SetFreeGenerationForTests(0, 3);
+        unissued = table.RowAt(0);
+    }
+    EXPECT_FALSE(firstIssued);
+    EXPECT_FALSE(generationChanged);
+    EXPECT_EQ(nullptr, unissued);
+    EXPECT_FALSE(refused.Valid());
+    EXPECT_EQ(0u, table.ConstructedRowCount());
+    EXPECT_EQ(0u, table.RowCommittedBytes());
+    EXPECT_EQ(0u, table.ScopeCommittedBytes());
+
+    harken::TimelineArmToken prepared{};
+    ASSERT_TRUE(table.PreparePendingImmediate(0, 9, 7, {}, &prepared));
+    ASSERT_TRUE(table.CancelPrepared(prepared));
+    bool reissued = true;
+    {
+        harken::memguard::AudioThreadScope audio;
+        reissued = table.PreparePendingImmediate(0, 9, 7, {}, &refused);
+    }
+    EXPECT_FALSE(reissued);
+    EXPECT_FALSE(refused.Valid());
+    EXPECT_EQ(1u, table.ConstructedRowCount());
+    EXPECT_EQ(4u, table.FreeCount());
 }
 
 TEST(TimelineArmTable, PreparedCommitProofHoldsRealMutationUntilMoveAndRelease) {
@@ -961,7 +1101,7 @@ TEST(TimelineArmTable, OriginalRowOwnerMoveAndDropRetainIndependentPreparedRows)
 }
 
 TEST(TimelineArmTable, OriginalRowOwnerAllowsRealAckBindStartButBlocksPrematureReclaim) {
-    harken::TimelineArmTable table(1);
+    harken::TimelineArmTable table(4096);
     harken::TimelineArmTable::PreparedCommitInput input{};
     input.programGeneration = 7;
     input.pendingImmediateStart = true;
@@ -972,11 +1112,32 @@ TEST(TimelineArmTable, OriginalRowOwnerAllowsRealAckBindStartButBlocksPrematureR
     ASSERT_TRUE(table.IssueOriginalArmRowOwner(proof, &owner));
     harken::TimelineArmTable::ConsumePreparedCommit(std::move(proof));
     EXPECT_FALSE(table.IssueOriginalArmRowOwner(proof, &owner));
+    const auto* original = table.RowAt(input.arm.slot);
+    const auto identity = original->identity.load();
+    const auto firstRowCommit = table.RowCommittedBytes();
+    const auto firstScopeCommit = table.ScopeCommittedBytes();
+    std::vector<harken::TimelineArmToken> additional;
+    while (table.RowCommittedBytes() == firstRowCommit ||
+           table.ScopeCommittedBytes() == firstScopeCommit) {
+        ASSERT_LT(additional.size() + 1, table.Capacity());
+        harken::TimelineArmToken token{};
+        ASSERT_TRUE(table.PreparePendingImmediate(
+            static_cast<std::uint32_t>(additional.size() + 1), 9, 7, {}, &token));
+        additional.push_back(token);
+    }
+    EXPECT_TRUE(owner.Valid());
+    EXPECT_EQ(original, table.Resolve(input.arm));
+    EXPECT_EQ(identity, original->identity.load());
     harken::TimelineArmTable::SourceCommandRowProof ack;
-    ASSERT_EQ(harken::TimelineArmTable::SourceCommandRowStatus::Ready,
-        table.ProvePendingSourceCommand(input.arm, &ack));
-    harken::TimelineArmTable::AcknowledgeSourceCommand(ack, 2);
-    ack.Release();
+    harken::TimelineArmTable::SourceCommandRowStatus status;
+    {
+        harken::memguard::AudioThreadScope audio;
+        status = table.ProvePendingSourceCommand(input.arm, &ack);
+        if (status == harken::TimelineArmTable::SourceCommandRowStatus::Ready)
+            harken::TimelineArmTable::AcknowledgeSourceCommand(ack, 2);
+        ack.Release();
+    }
+    ASSERT_EQ(harken::TimelineArmTable::SourceCommandRowStatus::Ready, status);
     ASSERT_TRUE(table.BindPendingImmediateStart(input.arm, 512, 512));
     ASSERT_TRUE(table.Publish(input.arm));
     ASSERT_TRUE(table.Start(input.arm, 3));
@@ -992,6 +1153,8 @@ TEST(TimelineArmTable, OriginalRowOwnerAllowsRealAckBindStartButBlocksPrematureR
     EXPECT_FALSE(table.Reclaim(input.arm, 4));
     EXPECT_TRUE(table.Reclaim(input.arm, 5));
     EXPECT_EQ(nullptr, table.Resolve(input.arm));
+    for (const auto token : additional) ASSERT_TRUE(table.CancelPrepared(token));
+    EXPECT_EQ(table.Capacity(), table.FreeCount());
 }
 
 TEST(TimelineArmTable, OriginalRowOwnerAllowsCompletePrivateUnboundStartBinding) {
@@ -1056,7 +1219,7 @@ TEST(TimelineArmTable, OriginalRowOwnerGenericPreparedLifetimeDoesNotMintFrontie
 TEST(TimelineArmTable, OriginalRowOwnerMaximumGenerationQuarantinesOnlyAfterTrueDrop) {
     for (const bool committed : {false, true}) {
         harken::TimelineArmTable table(1);
-        table.RowAt(0)->generation = UINT32_MAX;
+        ASSERT_TRUE(table.SetFreeGenerationForTests(0, UINT32_MAX));
         harken::TimelineArmTable::PreparedCommitInput input{};
         input.programGeneration = 7;
         input.pendingImmediateStart = true;
@@ -1128,7 +1291,7 @@ TEST(TimelineArmTable, VariableReadLifetimeRequiresOriginalProofAndPreservesComm
 TEST(TimelineArmTable, VariableReadLifetimeEveryPrivatePinReturnsBeforeArmReuse) {
     for (const auto generation : {1u, UINT32_MAX}) {
         harken::TimelineArmTable table(1);
-        table.RowAt(0)->generation = generation;
+        ASSERT_TRUE(table.SetFreeGenerationForTests(0, generation));
         harken::TimelineArmTable::PreparedCommitInput input{};
         input.programGeneration = 7;
         input.startFrame = 300;
@@ -2582,6 +2745,11 @@ TEST(TimelineExecutor,
 TEST(TimelineExecutor, FrozenPageKeepsProgramGenerationLiveUntilReclaim) {
     harken::ScheduledTransactionPool pool;
     ASSERT_TRUE(pool.Reset(PoolConfig(), 0, 1));
+    harken::TimelineArmTable arms(1);
+    Sink sink;
+    harken::TimelineExecutor executor;
+    ASSERT_TRUE(executor.Reset(256, 16, &pool, &arms, &sink));
+    EXPECT_EQ(0u, executor.EventStorageBytesForTest());
     harken::ScheduledEventInput event{};
     event.executeFrame = 1;
     harken::TransactionRequest request{};
@@ -2590,8 +2758,14 @@ TEST(TimelineExecutor, FrozenPageKeepsProgramGenerationLiveUntilReclaim) {
     request.program = {7, nullptr};
     request.events = &event;
     request.eventCount = 1;
+    executor.SetDecodedCommitPageLimitForTest(0);
+    EXPECT_NE(pool.Reserve(request, harken::PrePublishLatePolicy::Refuse).status,
+              harken::ReserveStatus::Committed);
+    EXPECT_FALSE(pool.HasLiveProgramGeneration(7));
+    executor.SetDecodedCommitPageLimitForTest(SIZE_MAX);
     ASSERT_EQ(pool.Reserve(request, harken::PrePublishLatePolicy::Refuse).status,
               harken::ReserveStatus::Committed);
+    EXPECT_GT(executor.EventStorageBytesForTest(), 0u);
     pool.Publish(256);
     EXPECT_TRUE(pool.HasLiveProgramGeneration(7));
     pool.ConsumerFrontier().store(1);
@@ -2716,6 +2890,52 @@ TEST(TimelineExecutor, AppliesImpulseOffsetsAtQuantumEdges) {
     }
 }
 
+TEST(TimelineExecutor, ProgramReadFenceSurvivesFrontierAdvanceAndPoolReclamation) {
+    for (const bool stale : {false, true}) {
+        SCOPED_TRACE(stale);
+        harken::ScheduledTransactionPool pool;
+        ASSERT_TRUE(pool.Reset(PoolConfig(), 0, 1));
+        harken::TimelineArmTable arms(1);
+        FiledTimeline filed;
+        FileTimeline(filed, pool, arms, 1, 0);
+        harken::TimelineProgramReadFence fence;
+        filed.program.readFence = &fence;
+        if (stale) ++filed.program.generation;
+        pool.Publish(512);
+        Sink sink;
+        struct Probe {
+            harken::ScheduledTransactionPool* pool;
+            harken::TimelineProgramReadFence* fence;
+            harken::TimelineTransactionProgramRef program;
+            bool visited = false;
+        } probe{&pool, &fence, {1, &filed.program}};
+        sink.applyContext = &probe;
+        sink.applyHook = [](void* context) {
+            auto& current = *static_cast<Probe*>(context);
+            current.visited = true;
+            EXPECT_EQ(2u, current.pool->ConsumerFrontier().load());
+            EXPECT_EQ(1u, current.pool->Advance());
+            EXPECT_FALSE(current.pool->HasProgramReference(current.program));
+            EXPECT_FALSE(current.fence->ReadCompleted(1));
+        };
+        harken::TimelineExecutor executor;
+        ASSERT_TRUE(executor.Reset(256, 16, &pool, &arms, &sink));
+        sink.admit = false;
+        executor.ExecuteQuantum(1);
+        EXPECT_TRUE(fence.ReadCompleted(0));
+        EXPECT_EQ(0u, pool.ConsumerFrontier().load());
+        sink.admit = true;
+        executor.ExecuteQuantum(1);
+        EXPECT_EQ(!stale, probe.visited);
+        EXPECT_FALSE(fence.ReadCompleted(1));
+        EXPECT_TRUE(fence.ReadCompleted(2));
+        (void)pool.Advance();
+        EXPECT_FALSE(pool.HasProgramReference(probe.program));
+        fence.ResetAfterSafeRetirement();
+        EXPECT_TRUE(fence.ReadCompleted(0));
+    }
+}
+
 TEST(TimelineExecutor, BeforeEndHookGetsActualConsumedPrefixAfterNormalTransactions) {
     for (const auto expectedPages : {0u, 1u, 2u}) {
         SCOPED_TRACE(expectedPages);
@@ -2730,6 +2950,7 @@ TEST(TimelineExecutor, BeforeEndHookGetsActualConsumedPrefixAfterNormalTransacti
         sink.collectPageLimit = expectedPages;
         harken::TimelineExecutor executor;
         ASSERT_TRUE(executor.Reset(256, 16, &pool, &arms, &sink));
+        const auto storageBytes = executor.EventStorageBytesForTest();
         const harken::TimelineExecutionPlan plan{0, 2, harken::TimelinePagePrefixStopReason::ReachedCurrentQuantum};
         const auto result = executor.ExecuteQuantum(1, plan);
         EXPECT_EQ(expectedPages, result.consumedPageCount);
@@ -2737,6 +2958,7 @@ TEST(TimelineExecutor, BeforeEndHookGetsActualConsumedPrefixAfterNormalTransacti
         EXPECT_EQ(1u, sink.beforeEndCount);
         EXPECT_TRUE(sink.hookPrecededEnd);
         EXPECT_EQ(expectedPages != 0, sink.transactionsAppliedBeforeEnd);
+        EXPECT_EQ(storageBytes, executor.EventStorageBytesForTest());
     }
 }
 
@@ -2950,10 +3172,17 @@ TEST(TimelineExecutor, CallbackShapesKeepFixedQuantumCount) {
 
 TEST(TimelineExecutor, RepeatedUpdatePreparesOccurrenceExactlyOnce) {
     VnConfig config = TimelineConfig(2, 256, 48000);
+    config.voiceSendSlots = 1;
+    config.fxSlotsPerVoice = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     harken::Engine* engine = session.Engine();
     ASSERT_NE(engine, nullptr);
+    const auto variable = harkentest::ObjectId(800);
+    const auto bindingId = harkentest::ObjectId(801);
+    const auto pathId = harkentest::ObjectId(802);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harkentest::InstallSmoothDefinitions(engine, {variable}, 0.0f, 1.0f).status);
     const std::vector<float> dc(1024, 0.25f);
     const VnPCMDesc desc = harkentest::MonoDesc(dc, 48000);
     ASSERT_EQ(Vn_RegisterPCM(harkentest::ObjectId(1), &desc), VN_OK);
@@ -2981,12 +3210,35 @@ TEST(TimelineExecutor, RepeatedUpdatePreparesOccurrenceExactlyOnce) {
     occurrence.voice.soundId = harkentest::ObjectId(1);
     occurrence.voice.outputBusId = VN_BUS_MASTER;
     occurrence.voice.target = target;
+    occurrence.voice.bindingCount = 1;
+    auto& binding = occurrence.voice.bindingStorage[0];
+    binding.objectId = occurrence.voice.soundId;
+    binding.bindingId = bindingId;
+    binding.variableId = variable;
+    binding.targetId = harken::kTargetVoiceVolume;
+    const harken::CurvePoint points[] = {{0.0f, 0.0f}, {1.0f, -12.0f}};
+    const harken::CurveHandlePair handles[] = {{0.0f, 0.0f, 1.0f, -12.0f}};
+    ASSERT_TRUE(binding.curve.SetPoints(points, handles, 2));
+    occurrence.voice.playbackPath.rowCount = 1;
+    occurrence.voice.playbackPath.rows[0] = {pathId, 7};
+    occurrence.voice.sendCount = 1;
+    occurrence.voice.sends[0] = {VN_BUS_MASTER, -9.0f};
+    occurrence.voice.effectCount = 1;
+    auto& effect = occurrence.voice.effects[0];
+    effect.type = VN_EFFECT_GAIN;
+    effect.descriptorSize = sizeof(VnGainDesc);
+    VnGainDesc gain{};
+    gain.structSize = sizeof(gain);
+    gain.effectId = harkentest::ObjectId(803);
+    gain.gainDb = -6.0f;
+    std::memcpy(effect.descriptor, &gain, sizeof(gain));
     const harken::TimelineProgramInstallView install{&program, &occurrence, 1};
     const harken::TimelineRuntimeInstallResult installed =
         harken::InstallTimelineProgram(install);
     ASSERT_EQ(installed.status,
               harken::TimelineRuntimeInstallStatus::Installed);
 
+    occurrence.voice = {};
     ASSERT_EQ(Vn_Update(), VN_OK);
     ASSERT_EQ(Vn_Update(), VN_OK);
     harken::EngineTimelineOccurrence& live =
@@ -2996,6 +3248,25 @@ TEST(TimelineExecutor, RepeatedUpdatePreparesOccurrenceExactlyOnce) {
     EXPECT_EQ(live.phase,
               harken::EngineTimelineOccurrencePhase::AwaitingArmAck);
     EXPECT_EQ(engine->timelineArms.LiveCount(), 1u);
+    const auto render = (std::uint64_t{live.arm.renderGeneration} << 32) | live.arm.renderSlot;
+    ASSERT_NE(engine->voices.Resolve(render), nullptr);
+    const auto& observation = engine->playbackPaths[live.arm.renderSlot];
+    ASSERT_EQ(1u, observation.path.rowCount);
+    EXPECT_EQ(pathId, observation.path.rows[0].stableId);
+    EXPECT_EQ(7u, observation.path.rows[0].occurrenceOrdinal);
+    ASSERT_EQ(1u, observation.sendCount);
+    EXPECT_FLOAT_EQ(-9.0f, observation.sends[0].levelDb);
+    EXPECT_EQ(1u, engine->effectBank.InUseOf(VN_EFFECT_GAIN));
+    bool bindingFound = false;
+    engine->params.ForEachInstanceOf(bindingId, [&](VnVoiceHandle handle) {
+        bindingFound = bindingFound || handle == render;
+    });
+    EXPECT_TRUE(bindingFound);
+    EXPECT_EQ(target, engine->timelineArms.RowAt(live.arm.slot)->target);
+    RecordProperty("occurrence_inline_bytes", sizeof(harken::EngineTimelineOccurrence));
+    RecordProperty("occurrence_capture_bytes", live.voice.AllocationBytes());
+    RecordProperty("occurrence_vector_capacity",
+        engine->timelineProgramSets[installed.generation & 1u]->occurrences.capacity());
 }
 
 TEST(TimelineExecutor, ProductionServiceFollowsThePerCallStateTable) {
@@ -3123,6 +3394,25 @@ TEST(TimelineExecutor, ProgramInstallRejectsMixedValidAndMalformedAudibleRows) {
     EXPECT_EQ(engine->voices.ActiveCount(), 0u);
     EXPECT_EQ(engine->timelineProgramSets[0], nullptr);
     EXPECT_EQ(engine->timelineProgramSets[1], nullptr);
+
+    rows[1].schedule = &schedule;
+    rows[1].voice.target = target;
+    const auto instances = engine->playableInstances.LiveCount();
+    for (const auto failure : {1u, 2u}) {
+        harken::detail::ArmLogicAllocFaultForTests(
+            failure, harken::detail::LogicAllocSite::CapturedVoiceInstall);
+        const auto refused = harken::InstallTimelineProgram(install);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(harken::TimelineRuntimeInstallStatus::ProgramCapacity, refused.status);
+        EXPECT_EQ(instances, engine->playableInstances.LiveCount());
+        EXPECT_EQ(0u, engine->timelinePrograms.Current());
+        EXPECT_EQ(engine->timelineProgramSets[0], nullptr);
+        EXPECT_EQ(engine->timelineProgramSets[1], nullptr);
+        EXPECT_EQ(0u, engine->CapturedVoiceStorageBytes());
+    }
+    const auto retry = harken::InstallTimelineProgram(install);
+    EXPECT_EQ(harken::TimelineRuntimeInstallStatus::Installed, retry.status);
+    EXPECT_EQ(2u, retry.occurrenceCount);
 }
 
 TEST(TimelineExecutor, TwoVoiceCapacityNeverCreatesAnOrphanSecondArm) {

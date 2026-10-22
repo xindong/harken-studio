@@ -789,7 +789,15 @@ TEST(TimelinePlanner, BeyondHorizonPlayDefersThenMaterializes) {
     in.currentFrame = 0;
     in.transportEpoch = kEpoch;
     in.latePolicy = PrePublishLatePolicy::ExecuteAtEarliestSafeFrame;
-    const PostResult posted = planner.PostPlay(p, in);
+    harken::PreparedDeferredPost prepared{};
+    ASSERT_EQ(planner.PrepareDeferredPlay(p, in, &prepared).status, PostStatus::Deferred);
+    EXPECT_TRUE(planner.HasProgramReference(p.runtimeProgram));
+    EXPECT_FALSE(planner.HasProgramReference({runtime.generation + 1, &runtime}));
+    EXPECT_FALSE(planner.HasProgramReference({runtime.generation, &otherRuntime}));
+    ASSERT_TRUE(planner.AbandonPreparedDeferredPlay(&prepared));
+    EXPECT_FALSE(planner.HasProgramReference(p.runtimeProgram));
+    const PostResult posted = planner.PrepareDeferredPlay(p, in, &prepared);
+    ASSERT_TRUE(planner.CommitPreparedDeferredPlay(&prepared));
     EXPECT_EQ(posted.status, PostStatus::Deferred);
     EXPECT_EQ(deferred.Count(), 1u);
     EXPECT_TRUE(planner.HasProgramReference(p.runtimeProgram));

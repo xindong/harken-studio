@@ -379,6 +379,7 @@ TEST(BusAdmissionStart, PrepareFillsPreparedPlanAndCommitBackpressuresOnConsumer
     ASSERT_NE(engine, nullptr);
     const std::uint32_t liveBefore = engine->topologyPlans.InUse();
     const std::uint32_t commandFreeBefore = engine->commands.FreeSlots();
+    const std::uint32_t instanceFreeBefore = engine->playableInstances.FreeCount();
     const harken::ProjectGenerationInstallViewV1 view =
         MakeInstallView(fixture.image);
     harken::PreparedProjectGenerationV1 prepared;
@@ -388,6 +389,7 @@ TEST(BusAdmissionStart, PrepareFillsPreparedPlanAndCommitBackpressuresOnConsumer
               harken::ProjectGenerationPrepareStatusV1::Ok);
     EXPECT_EQ(engine->topologyPlans.InUse(), liveBefore);
     EXPECT_EQ(engine->commands.FreeSlots(), commandFreeBefore);
+    EXPECT_EQ(engine->playableInstances.FreeCount(), instanceFreeBefore);
     EXPECT_TRUE(prepared.Valid());
     EXPECT_EQ(engine->preparedTopologyPlans.InUse(), 1u);
     EXPECT_NE(engine->preparedTopologyPlans.View(prepared.PreparedPlanIndex())
@@ -400,8 +402,9 @@ TEST(BusAdmissionStart, PrepareFillsPreparedPlanAndCommitBackpressuresOnConsumer
               harken::PlayableStartStatus::Accepted);
     const std::uint32_t liveAfterStart = engine->topologyPlans.InUse();
     const std::uint32_t commandFreeAfterStart = engine->commands.FreeSlots();
+    const std::uint32_t instanceFreeAfterStart = engine->playableInstances.FreeCount();
     EXPECT_EQ(liveAfterStart, liveBefore);
-    EXPECT_LT(commandFreeAfterStart, commandFreeBefore);
+    EXPECT_LT(instanceFreeAfterStart, instanceFreeBefore);
 
     const harken::ProjectGenerationCommitResultV1 committed =
         harken::CommitPreparedProjectGenerationV1(*engine, prepared);
@@ -410,6 +413,7 @@ TEST(BusAdmissionStart, PrepareFillsPreparedPlanAndCommitBackpressuresOnConsumer
     EXPECT_TRUE(prepared.Valid());
     EXPECT_EQ(engine->topologyPlans.InUse(), liveAfterStart);
     EXPECT_EQ(engine->commands.FreeSlots(), commandFreeAfterStart);
+    EXPECT_EQ(engine->playableInstances.FreeCount(), instanceFreeAfterStart);
     EXPECT_EQ(engine->currentWorldReplacementAdmissionClosed, false);
     EXPECT_EQ(harken::StartPlayable(*engine, request).status,
               harken::PlayableStartStatus::Accepted);
@@ -2505,10 +2509,11 @@ TEST(BusAdmissionStart, PreviewCommitMigratesPublishedIdentityAndFactsOffDeadSlo
     ASSERT_NE(grandSlot, harken::kInvalidBusIndex);
     const auto childGeneration = engine->buses.GenerationAt(childSlot);
     const auto grandGeneration = engine->buses.GenerationAt(grandSlot);
-    ASSERT_FALSE(engine->voicePlayFacts.empty());
-    ASSERT_FALSE(engine->pendingStarts.empty());
-    ASSERT_FALSE(engine->parkRecords.empty());
-    ASSERT_FALSE(engine->timelineVoiceInstallIdentities.empty());
+    ASSERT_TRUE(engine->voices.PrepareSlotWorkingSet(0, 1));
+    ASSERT_NE(0u, engine->voicePlayFacts.size());
+    ASSERT_TRUE(engine->pendingStarts.Emplace(0));
+    ASSERT_TRUE(engine->parkRecords.Emplace(0));
+    ASSERT_NE(0u, engine->timelineVoiceInstallIdentities.size());
     auto& facts = engine->voicePlayFacts[0];
     facts.valid = true;
     facts.busIndex = grandSlot;

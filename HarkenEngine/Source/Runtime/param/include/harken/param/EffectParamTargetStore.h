@@ -28,6 +28,7 @@
 
 #include <harken/ObjectId.h>
 #include "harken/core/VariableSliceTable.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/param/EffectParamLocator.h"
 #include "harken/render/generated/harken_effect_registry.g.h"
 
@@ -37,6 +38,8 @@
 #include <vector>
 
 namespace harken {
+
+class BindingDependencyIndex;
 
 class EffectParamTargetStore {
 public:
@@ -70,9 +73,13 @@ public:
 
     // sampleRate resolves the Nyquist clamp for frequency parameters; capacity
     // is the maximum number of concurrently-installed (object, slot, parameter)
-    // records (preallocated, never grown after construction).
+    // records. Physical rows are prepared before a seed can be committed.
     EffectParamTargetStore(std::uint32_t sampleRate, std::uint32_t capacity,
                            std::uint32_t retiringCapacity = 0);
+
+    void AttachBindingDependencies(BindingDependencyIndex* dependencies) noexcept {
+        m_dependencies = dependencies;
+    }
 
     // --- effect lifecycle (install / clear) ---
 
@@ -193,6 +200,9 @@ public:
     // dirty if it changed) and returns any record whose bindings all detached to
     // the neutral contribution (the detach edge -> resolved returns to base).
     void BeginContributionSweep();
+    void BeginTargetContribution(Scope scope, std::uint64_t objectId,
+                                 std::uint32_t slot, std::uint32_t paramIndex,
+                                 std::uint32_t effectType);
     // Folds one binding's curve output into the located record. effectType is
     // the locator's EXPECTED type: if the installed effect at the slot is a
     // different type (a stale/replaced slot), the contribution is skipped, so a
@@ -201,6 +211,9 @@ public:
                            std::uint32_t slot, std::uint32_t paramIndex,
                            std::uint32_t effectType, float curveOutput);
     void EndContributionSweep();
+    void EndTargetContribution(Scope scope, std::uint64_t objectId,
+                               std::uint32_t slot, std::uint32_t paramIndex,
+                               std::uint32_t effectType);
     void BeginMeterProbeSweep();
     void AccumulateMeterProbe(Scope scope, std::uint64_t objectId,
                               std::uint32_t slot, std::uint32_t paramIndex,
@@ -338,6 +351,12 @@ public:
     bool BeginVariableProjection() noexcept;
     void RestoreVariableProjection() noexcept;
     std::uint64_t VariableProjectionStorageBytes() const noexcept;
+    std::size_t StorageBytes() const noexcept {
+        return m_records.RequestedBytes() + m_projection.capacity() * sizeof(VariableEvaluation);
+    }
+    void SetRecordCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_records.SetCommitPageLimitForTests(pages);
+    }
 
 private:
     struct VariableEvaluation {
@@ -393,6 +412,8 @@ private:
                       std::uint32_t objectGeneration,
                       std::uint32_t slot) const noexcept;
     bool AllocateRevision(std::uint32_t* out) noexcept;
+    bool PrepareAdditionalRecords(std::uint32_t count) noexcept;
+    void EndRecordContribution(Record& r);
     float ReduceRecord(const Record& r) const;
     float NeutralOf(EffectParamCombine combine) const {
         return combine == EffectParamCombine::Multiply ? 1.0f : 0.0f;
@@ -415,7 +436,8 @@ private:
     std::uint32_t m_sampleRate = 0;
     std::uint32_t m_activeCapacity = 0;
     std::uint32_t m_totalCapacity = 0;
-    std::vector<Record> m_records;
+    BindingDependencyIndex* m_dependencies = nullptr;
+    StableRowStorage<Record> m_records;
     std::vector<VariableEvaluation> m_projection;
     bool m_projectionActive = false;
     std::size_t m_projectionRecordCount = 0;

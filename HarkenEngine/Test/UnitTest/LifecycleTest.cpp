@@ -178,6 +178,9 @@ TEST(MiniaudioStopHandoff,
 
 TEST(MonitorSelectionPool, CaptureCopiesCauseForkAndCancellationDoNotAllocate) {
     harken::VoiceLedger ledger(1, 1, 3);
+    harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
+    ASSERT_TRUE(ledger.PrepareMonitorSelectionBacking(
+        static_cast<std::uint32_t>(ledger.MonitorSelectionCapacity()), &monitorBacking));
     std::uint32_t slot = 0;
     ASSERT_TRUE(ledger.AcquirePlayableOwned({0, UINT64_C(1) << 32}, &slot));
     ASSERT_FALSE(allocation_probe::enabled);
@@ -189,6 +192,7 @@ TEST(MonitorSelectionPool, CaptureCopiesCauseForkAndCancellationDoNotAllocate) {
     bool captured = false;
     bool forked = false;
     {
+        const auto monitorUse = monitorBacking.Use();
         harken::VoiceLedger::MonitorSelection original;
         captured = ledger.CaptureMonitorSelection(slot, UINT64_C(1) << 32, &original);
         auto alias = original;

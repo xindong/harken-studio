@@ -2,6 +2,7 @@
 #define HARKEN_CORE_ARM_GROUP_TABLE_H
 
 #include "harken/core/DecisionToken.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/core/TimelineArmTable.h"
 
 #include <atomic>
@@ -36,7 +37,39 @@ struct ArmGroupMemberSnapshot {
 };
 
 class ArmGroupTable {
+    struct PreparedMembers;
 public:
+    class BackingPreparation {
+    public:
+        BackingPreparation() = default;
+        ~BackingPreparation();
+        BackingPreparation(const BackingPreparation&) = delete;
+        BackingPreparation& operator=(const BackingPreparation&) = delete;
+        BackingPreparation(BackingPreparation&& other) noexcept;
+        BackingPreparation& operator=(BackingPreparation&& other) noexcept;
+        bool Valid() const noexcept { return rows_.Valid(); }
+        std::size_t DirectoryBytes() const noexcept {
+            return members_.capacity() * sizeof(std::unique_ptr<PreparedMembers>);
+        }
+    private:
+        friend class ArmGroupTable;
+        void Release() noexcept;
+        StableStoragePreparation rows_;
+        std::vector<std::unique_ptr<PreparedMembers>> members_;
+    };
+    class PreparedUse {
+    public:
+        PreparedUse(ArmGroupTable& owner, BackingPreparation* backing) noexcept;
+        ~PreparedUse();
+        PreparedUse(const PreparedUse&) = delete;
+        PreparedUse& operator=(const PreparedUse&) = delete;
+    private:
+        ArmGroupTable& owner_;
+        BackingPreparation* previous_;
+        StableStoragePreparedUse rows_;
+    };
+    bool PrepareBacking(std::uint32_t groupCount, std::uint32_t totalMembers,
+                        BackingPreparation* out) noexcept;
     ArmGroupTable(std::uint32_t capacity,
                   std::uint32_t maxMembersPerGroup);
 
@@ -47,6 +80,16 @@ public:
     std::uint32_t LiveCount() const noexcept;
     std::uint32_t FreeCount() const noexcept;
     std::uint32_t QuarantinedCount() const noexcept;
+    std::size_t RowStorageBytes() const noexcept { return rows_.RequestedBytes(); }
+    std::size_t RowCommittedBytes() const noexcept { return rows_.CommittedBytes(); }
+    std::size_t RowReservedBytes() const noexcept { return rows_.ReservedBytes(); }
+    std::size_t MemberStorageBytes() const noexcept;
+    void SetRowCommitPageLimitForTests(std::size_t pages) noexcept {
+        rows_.SetCommitPageLimitForTests(pages);
+    }
+    void SetMemberAllocationLimitForTests(std::uint16_t count) noexcept {
+        memberAllocationLimitForTests_ = count;
+    }
     bool Reserve(DecisionToken parent, const TimelineArmToken* members,
                  std::uint16_t memberCount,
                  ArmGroupToken* outToken) noexcept;
@@ -84,7 +127,28 @@ private:
         Quarantined = 4,
     };
 
+    struct MemberRow {
+        TimelineArmToken token{};
+        std::atomic<std::uint8_t> acked{0};
+        std::atomic<std::uint8_t> tombstoned{0};
+    };
+
+    struct PreparedMembers {
+        ArmGroupTable* owner = nullptr;
+        std::unique_ptr<MemberRow[]> members;
+        std::uint16_t capacity = 0;
+        bool held = true;
+        bool inUse = false;
+        ~PreparedMembers();
+    };
+
     struct Row {
+        ~Row() noexcept {
+            if (preparedMembers != nullptr) {
+                preparedMembers->inUse = false;
+                if (!preparedMembers->held) delete preparedMembers;
+            }
+        }
         std::atomic<SlotState> slotState{SlotState::Free};
         std::atomic<std::uint64_t> identity{0};
         std::atomic_flag reservation = ATOMIC_FLAG_INIT;
@@ -95,12 +159,9 @@ private:
         std::atomic<std::uint16_t> tombstonedCount{0};
         std::atomic<std::uint64_t> maxTombstoneSequence{0};
         std::atomic<ArmGroupState> state{ArmGroupState::AwaitingAcks};
-    };
-
-    struct MemberRow {
-        TimelineArmToken token{};
-        std::atomic<std::uint8_t> acked{0};
-        std::atomic<std::uint8_t> tombstoned{0};
+        std::unique_ptr<MemberRow[]> members;
+        std::uint16_t memberCapacity = 0;
+        PreparedMembers* preparedMembers = nullptr;
     };
 
     Row* Resolve(ArmGroupToken token) noexcept;
@@ -116,11 +177,14 @@ private:
     const MemberRow* Members(std::uint32_t slot) const noexcept;
     MemberRow* ResolveMember(std::uint32_t slot,
                              TimelineArmToken member) noexcept;
+    void ReturnPreparedMembers(Row& row) noexcept;
 
-    std::unique_ptr<Row[]> rows_;
-    std::unique_ptr<MemberRow[]> members_;
+    std::size_t preparedMemberBytes_ = 0;
+    StableRowStorage<Row> rows_;
     std::uint32_t capacity_ = 0;
     std::uint16_t maxMembersPerGroup_ = 0;
+    std::uint16_t memberAllocationLimitForTests_ = UINT16_MAX;
+    BackingPreparation* activeBacking_ = nullptr;
 };
 
 static_assert(std::atomic<ArmGroupState>::is_always_lock_free);

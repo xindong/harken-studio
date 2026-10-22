@@ -304,8 +304,12 @@ struct FrontierGroupBinding {
 // or mutable receipt is reachable through this proof, including on abandoned jobs.
 struct FrozenFrontierEventProof {
     FrontierEventState state = FrontierEventState::Legacy;
-    FrontierEntryReceiptRef entry{};
-    FrontierDueOperationRef operation{};
+private:
+    friend class VoicePool;
+    // Successful staging records the origin; full identities stay with their receipt owners.
+    enum class Origin : std::uint8_t { Unstaged, Page, Lane };
+    Origin origin_ = Origin::Unstaged;
+public:
     std::uint64_t quantum = 0;
     std::uint32_t renderGeneration = 0;
     std::uint64_t cutoffFrame = UINT64_MAX;
@@ -314,9 +318,10 @@ struct FrozenFrontierEventProof {
     bool Eligible(std::uint64_t currentQuantum, std::uint32_t generation) const noexcept {
         return state == FrontierEventState::Legacy ||
             (state == FrontierEventState::LaneApplied &&
+             origin_ == Origin::Lane &&
              quantum == currentQuantum && renderGeneration == generation) ||
             (state == FrontierEventState::Applied && quantum == currentQuantum &&
-             renderGeneration == generation && entry.Valid() && operation.Valid());
+             renderGeneration == generation && origin_ == Origin::Page);
     }
 };
 

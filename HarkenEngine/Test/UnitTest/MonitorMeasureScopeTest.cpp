@@ -228,7 +228,9 @@ TEST(MonitorMeasure, ScopeDispatchPublishesTriggerAndNoTriggerBytes) {
     struct Collected {
         std::vector<std::vector<std::uint8_t>> records;
     } collected;
-    harken::monitor::DispatchDerivedAudioChunk(
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(
         &request, 1, &tap, 1, packed.data(), packedBytes,
         [](void* raw, const harken::monitor::DerivedEmit& emit) {
             auto* typed = static_cast<Collected*>(raw);
@@ -281,7 +283,7 @@ TEST(MonitorMeasure, ScopeDispatchPublishesTriggerAndNoTriggerBytes) {
     VnMonitorTapDescriptor other = tap;
     other.tapDescriptorId = 99;
     collected.records.clear();
-    harken::monitor::DispatchDerivedAudioChunk(
+    derived.Dispatch(
         &request, 1, &other, 1, packed.data(), packedBytes,
         [](void* raw, const harken::monitor::DerivedEmit& emit) {
             auto* typed = static_cast<Collected*>(raw);
@@ -322,9 +324,11 @@ TEST(MonitorMeasure, ScopePlanGenerationChangeResetsWarmup) {
         }
         return true;
     };
-    harken::monitor::DispatchDerivedAudioChunk(&request, 1, &tap, 1, packedOld.data(),
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(&request, 1, &tap, 1, packedOld.data(),
                                               oldBytes, emit, &collected);
-    harken::monitor::DispatchDerivedAudioChunk(&request, 1, &tap, 1, packedNew.data(),
+    derived.Dispatch(&request, 1, &tap, 1, packedNew.data(),
                                               newBytes, emit, &collected);
     EXPECT_EQ(1u, collected.triggers);
 }
@@ -360,10 +364,12 @@ TEST(MonitorMeasure, ScopeTriggerCompletesAcrossChunks) {
         }
         return true;
     };
-    harken::monitor::DispatchDerivedAudioChunk(&request, 1, &tap, 1, packedFirst.data(),
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(&request, 1, &tap, 1, packedFirst.data(),
                                               firstBytes, emit, &collected);
     EXPECT_EQ(0u, collected.triggers);
-    harken::monitor::DispatchDerivedAudioChunk(&request, 1, &tap, 1, packedSecond.data(),
+    derived.Dispatch(&request, 1, &tap, 1, packedSecond.data(),
                                               secondBytes, emit, &collected);
     EXPECT_EQ(1u, collected.triggers);
     EXPECT_EQ(2u, collected.triggerFrame);
@@ -387,7 +393,9 @@ TEST(MonitorMeasure, ScopePerChannelUsesRequestedIndex) {
         std::uint32_t triggers = 0;
         std::uint32_t channelIndex = 99;
     } collected;
-    harken::monitor::DispatchDerivedAudioChunk(
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(
         &request, 1, &tap, 1, packed.data(), packedBytes,
         [](void* raw, const harken::monitor::DerivedEmit& emit) {
             auto* typed = static_cast<Collected*>(raw);
@@ -436,9 +444,11 @@ TEST(MonitorMeasure, ScopeSourceGapResetsHistoryAndFlagsDiscontinuity) {
         }
         return true;
     };
-    harken::monitor::DispatchDerivedAudioChunk(&request, 1, &tap, 1, packedFirst.data(),
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(&request, 1, &tap, 1, packedFirst.data(),
                                               firstBytes, emit, &collected);
-    harken::monitor::DispatchDerivedAudioChunk(&request, 1, &tap, 1, packedLater.data(),
+    derived.Dispatch(&request, 1, &tap, 1, packedLater.data(),
                                               laterBytes, emit, &collected);
     EXPECT_EQ(1u, collected.gaps);
     EXPECT_EQ(0u, collected.triggers);

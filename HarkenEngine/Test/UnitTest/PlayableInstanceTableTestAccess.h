@@ -2,6 +2,7 @@
 
 #include "harken/core/PlayableInstanceTable.h"
 #include <cassert>
+#include <exception>
 
 namespace harken::detail {
 
@@ -53,7 +54,8 @@ struct PlayableInstanceTableTestAccess {
     static void SeedGeneration(PlayableInstanceTable& table,
                                std::uint32_t slot,
                                std::uint32_t generation) {
-        auto& entry = table.m_entries.at(slot);
+        if (slot >= table.Capacity() || !table.PrepareStorage()) std::terminate();
+        auto& entry = table.m_entries[slot];
         entry.generation = generation;
         entry.quarantined = false;
         entry.lifecycle = PlayableLifecycle::Free;

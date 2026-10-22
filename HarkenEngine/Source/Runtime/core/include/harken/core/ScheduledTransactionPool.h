@@ -45,9 +45,9 @@
 // page slot is reopened at the far end of the window. A reference minted against
 // an old occupant of a ring slot therefore cannot be mistaken for the current one.
 //
-// Capacity is bounded and declared, never elastic. Every pool sizes its storage
-// once at Reset from a fixed set of ceilings and allocates nothing on the steady
-// path; a request over any ceiling is refused with a specific reason and counted,
+// Capacity is bounded and declared, never elastic. Control prepares stable backing
+// before publication within the fixed ceilings; readers never allocate. A request
+// over any ceiling is refused with a specific reason and counted,
 // and each ceiling has a high-water mark. A full pool refuses rather than evicting,
 // because evicting accepted work would silence it.
 //
@@ -66,6 +66,7 @@
 #ifndef HARKEN_CORE_SCHEDULED_TRANSACTION_POOL_H
 #define HARKEN_CORE_SCHEDULED_TRANSACTION_POOL_H
 
+#include "harken/core/CurrentSliceBacking.h"
 #include "harken/core/LogicCommitCoordinator.h"
 #include "harken/core/Plan03GroupIdentity.h"
 #include "harken/core/OccurrenceStatePool.h"
@@ -74,6 +75,7 @@
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/AudioSliceLease.h"
 #include "harken/core/TimelineProgram.h"
+#include "harken/core/StableRowStorage.h"
 
 #include <array>
 #include <atomic>
@@ -1189,14 +1191,69 @@ inline constexpr std::uint32_t kMaxPlan03GroupHeadersPerPageHard = 1024;
 inline constexpr std::uint32_t kMaxPlan03ArmsPerGroupHard = 1024;
 namespace detail {
 struct ScheduledTransactionPoolTestAccess;
-#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+#if !defined(HARKEN_RT_QUALIFICATION)
 struct ScheduledTransactionPoolCancelTestAccess;
+#endif
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 struct ScheduledTransactionPoolOriginalTestAccess;
 #endif
 }
 
 class ScheduledTransactionPool {
+    struct LaneGroupMembers;
 public:
+    class ImmediateLaneBackingPreparation {
+    public:
+        ImmediateLaneBackingPreparation() = default;
+        ~ImmediateLaneBackingPreparation();
+        ImmediateLaneBackingPreparation(const ImmediateLaneBackingPreparation&) = delete;
+        ImmediateLaneBackingPreparation& operator=(const ImmediateLaneBackingPreparation&) = delete;
+        ImmediateLaneBackingPreparation(ImmediateLaneBackingPreparation&& other) noexcept;
+        ImmediateLaneBackingPreparation& operator=(ImmediateLaneBackingPreparation&& other) noexcept;
+        bool Valid() const noexcept { return rows_.Valid(); }
+        std::size_t DirectoryBytes() const noexcept {
+            return members_.capacity() * sizeof(std::unique_ptr<LaneGroupMembers>);
+        }
+    private:
+        friend class ScheduledTransactionPool;
+        void Release() noexcept;
+        ScheduledTransactionPool* owner_ = nullptr;
+        StableStoragePreparation rows_;
+        std::vector<std::unique_ptr<LaneGroupMembers>> members_;
+    };
+    class ImmediateLaneBackingUse {
+    public:
+        ImmediateLaneBackingUse(ScheduledTransactionPool& owner,
+            ImmediateLaneBackingPreparation* backing) noexcept;
+        ~ImmediateLaneBackingUse();
+        ImmediateLaneBackingUse(const ImmediateLaneBackingUse&) = delete;
+        ImmediateLaneBackingUse& operator=(const ImmediateLaneBackingUse&) = delete;
+    private:
+        ScheduledTransactionPool& owner_;
+        ImmediateLaneBackingPreparation* previous_;
+        StableStoragePreparedUse rows_;
+    };
+    bool PrepareImmediateLaneBacking(std::uint32_t groupCount, std::uint64_t totalMembers,
+        ImmediateLaneBackingPreparation* out) noexcept;
+    // Attach before preparing rows; the producer callback must not re-enter this pool.
+    bool AttachImmediateLaneRowStoragePreparation(void* context,
+        bool (*prepare)(void*, std::uint32_t) noexcept) noexcept;
+    void DetachImmediateLaneRowStoragePreparation() noexcept {
+        immediateLaneRowStorageContext_ = nullptr;
+        prepareImmediateLaneRowStorage_ = nullptr;
+    }
+    std::size_t ImmediateLaneRowStorageBytes() const noexcept { return immediateLaneGroups_.RequestedBytes(); }
+    std::size_t ImmediateLaneRowCommittedBytes() const noexcept { return immediateLaneGroups_.CommittedBytes(); }
+    std::size_t ImmediateLaneRowReservedBytes() const noexcept { return immediateLaneGroups_.ReservedBytes(); }
+    std::size_t ImmediateLaneMemberStorageBytes() const noexcept;
+    std::size_t PageGroupMemberStorageBytes() const noexcept;
+    void SetImmediateLaneRowCommitPageLimitForTests(std::size_t pages) noexcept {
+        immediateLaneGroups_.SetCommitPageLimitForTests(pages);
+    }
+    void SetImmediateLaneMemberAllocationLimitForTests(std::uint16_t count) noexcept {
+        immediateMemberAllocationLimitForTests_ = count;
+    }
+
     class PrivateMaterializationTransaction {
     public:
         PrivateMaterializationTransaction() = default;
@@ -1267,6 +1324,62 @@ public:
     ScheduledTransactionPool(ScheduledTransactionPool&&) = delete;
     ScheduledTransactionPool& operator=(ScheduledTransactionPool&&) = delete;
 
+    struct PendingEventStorageDemand {
+        std::uint64_t nativeEvents = 0;
+        std::uint64_t retiredEvents = 0;
+        std::uint64_t nativeGroups = 0;
+        std::uint64_t retiredGroups = 0;
+    };
+    // Registrations are stationary and attach/detach only at consumer quiescence.
+    class PendingEventStorageRegistration {
+    public:
+        using Prepare = bool (*)(void*, PendingEventStorageDemand) noexcept;
+        PendingEventStorageRegistration() = default;
+        ~PendingEventStorageRegistration() { Detach(); }
+        PendingEventStorageRegistration(const PendingEventStorageRegistration&) = delete;
+        PendingEventStorageRegistration& operator=(const PendingEventStorageRegistration&) = delete;
+        void Detach() noexcept;
+    private:
+        friend class ScheduledTransactionPool;
+        const ScheduledTransactionPool* owner_ = nullptr;
+        PendingEventStorageRegistration* previous_ = nullptr;
+        PendingEventStorageRegistration* next_ = nullptr;
+        void* context_ = nullptr;
+        Prepare prepare_ = nullptr;
+    };
+    // Control-only. Prepare this existing demand before attaching a consumer.
+    PendingEventStorageDemand CapturePendingEventStorageDemand() const noexcept;
+    void AttachPendingEventStorage(PendingEventStorageRegistration& registration,
+        void* context, PendingEventStorageRegistration::Prepare prepare) const noexcept;
+    class CurrentSliceStorageRegistration {
+    public:
+        using Prepare = bool (*)(void*, std::size_t) noexcept;
+        CurrentSliceStorageRegistration() = default;
+        ~CurrentSliceStorageRegistration() { Detach(); }
+        CurrentSliceStorageRegistration(const CurrentSliceStorageRegistration&) = delete;
+        CurrentSliceStorageRegistration& operator=(const CurrentSliceStorageRegistration&) = delete;
+        void Detach() noexcept;
+    private:
+        friend class ScheduledTransactionPool;
+        const ScheduledTransactionPool* owner_ = nullptr;
+        CurrentSliceStorageRegistration* previous_ = nullptr;
+        CurrentSliceStorageRegistration* next_ = nullptr;
+        void* context_ = nullptr;
+        Prepare prepare_ = nullptr;
+    };
+    std::size_t PreparedCurrentSliceRowCount() const noexcept {
+        return currentSliceRows_.ConstructedCount();
+    }
+    // Control-only. Prepare the existing high-water mark before attaching.
+    void AttachCurrentSliceStorage(CurrentSliceStorageRegistration& registration,
+        void* context, CurrentSliceStorageRegistration::Prepare prepare) const noexcept;
+    std::uint64_t RetiredPageEventCount() const noexcept {
+        return retiredPageEvents_.load(std::memory_order_acquire);
+    }
+    std::uint64_t RetiredPageGroupCount() const noexcept {
+        return retiredPageGroups_.load(std::memory_order_acquire);
+    }
+
     // Sizes all storage from the config and opens the window at startFrame with
     // the given transport epoch. Returns false (leaving the pool invalid) if the
     // config is degenerate (zero quantum, horizon not a whole number of quanta,
@@ -1304,11 +1417,49 @@ public:
     std::uint32_t MaxVariableCurrentSlicesPerQuantum() const {
         return config_.maxCurrentSlicesPerQuantum;
     }
-    std::uint64_t CurrentSliceStorageBytes() const noexcept {
-        return static_cast<std::uint64_t>(pageCurrentSlices_.capacity()) * sizeof(CurrentSliceRow) +
-            static_cast<std::uint64_t>(pageCurrentSliceOrder_.capacity()) * sizeof(std::uint32_t) +
-            static_cast<std::uint64_t>(pageCurrentSliceCount_.capacity()) * sizeof(std::uint32_t);
+    std::uint64_t CurrentSliceStorageBytes() const noexcept;
+    std::size_t NativeEventRowStorageBytes() const noexcept { return nativeEventRows_.RequestedBytes(); }
+    std::size_t NativeEventBackingCount() const noexcept { return nativeEventRows_.ConstructedCount(); }
+    std::size_t NativeEventRowReservedBytes() const noexcept { return nativeEventRows_.ReservedBytes(); }
+    std::size_t NativeEventRowCommittedBytes() const noexcept { return nativeEventRows_.CommittedBytes(); }
+    std::size_t NativeGroupRowStorageBytes() const noexcept { return nativeGroupRows_.RequestedBytes(); }
+    std::size_t NativeGroupRowReservedBytes() const noexcept { return nativeGroupRows_.ReservedBytes(); }
+    std::size_t NativeGroupRowCommittedBytes() const noexcept { return nativeGroupRows_.CommittedBytes(); }
+    std::size_t PrivateMaterializationStorageBytes() const noexcept {
+        return unplacedCredits_.RequestedBytes() + privatePreparedGroups_.RequestedBytes() +
+            privateCommittedGroups_.RequestedBytes() + privateCohortCredits_.RequestedBytes() +
+            privateCohortRequests_.RequestedBytes() + privateCohortGroups_.RequestedBytes();
     }
+    std::size_t PrivateMaterializationCommittedBytes() const noexcept {
+        return unplacedCredits_.CommittedBytes() + privatePreparedGroups_.CommittedBytes() +
+            privateCommittedGroups_.CommittedBytes() + privateCohortCredits_.CommittedBytes() +
+            privateCohortRequests_.CommittedBytes() + privateCohortGroups_.CommittedBytes();
+    }
+    std::size_t PrivateMaterializationReservedBytes() const noexcept {
+        return unplacedCredits_.ReservedBytes() + privatePreparedGroups_.ReservedBytes() +
+            privateCommittedGroups_.ReservedBytes() + privateCohortCredits_.ReservedBytes() +
+            privateCohortRequests_.ReservedBytes() + privateCohortGroups_.ReservedBytes();
+    }
+    std::size_t GroupDirectoryStorageBytes() const noexcept {
+        return pageGroupSlots_.capacity() * sizeof(std::size_t) +
+            pagePlan03GroupRowStates_.capacity() * sizeof(Plan03GroupRowState) +
+            pagePlan03GroupClaimGenerations_.capacity() * sizeof(std::uint32_t);
+    }
+    std::size_t PageEventDirectoryStorageBytes() const noexcept {
+        return pageEventSlots_.RequestedBytes() + pageEventOrder_.RequestedBytes() +
+            freeEventSlots_.RequestedBytes() + pageBatchRows_.RequestedBytes();
+    }
+    std::size_t PageEventDirectoryCommittedBytes() const noexcept {
+        return pageEventSlots_.CommittedBytes() + pageEventOrder_.CommittedBytes() +
+            freeEventSlots_.CommittedBytes() + pageBatchRows_.CommittedBytes();
+    }
+    std::size_t PageEventDirectoryReservedBytes() const noexcept {
+        return pageEventSlots_.ReservedBytes() + pageEventOrder_.ReservedBytes() +
+            freeEventSlots_.ReservedBytes() + pageBatchRows_.ReservedBytes();
+    }
+    std::uint64_t CurrentSliceCommittedBytes() const noexcept;
+    std::uint64_t CurrentSliceReservedBytes() const noexcept;
+    bool PrepareCurrentSliceBacking(CurrentSliceBacking* out) noexcept;
     std::uint32_t MaxPlan03GroupHeadersPerPage() const {
         return config_.maxPlan03GroupHeadersPerPage;
     }
@@ -1507,12 +1658,13 @@ public:
         const ScheduledCurrentSliceInput& input,
         PrePublishLatePolicy latePolicy,
         std::uint64_t publicationFrontier,
-        HeldCurrentSliceToken* out);
+        HeldCurrentSliceToken* out, CurrentSliceBacking* backing = nullptr);
     bool CanReleaseHeldCurrentSlice(const HeldCurrentSliceToken& token) const noexcept;
     ReserveResult PreflightHeldCurrentSlice(const ScheduledCurrentSliceInput& input,
         PrePublishLatePolicy latePolicy, std::uint64_t publicationFrontier) const noexcept;
     bool ReleaseHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept;
-    bool CancelHeldCurrentSlice(HeldCurrentSliceToken* token) noexcept;
+    bool CancelHeldCurrentSlice(HeldCurrentSliceToken* token,
+        CurrentSliceBacking* restoreBacking = nullptr) noexcept;
     Plan03GroupReserveStatus PreflightPlan03GroupSlices(
         std::uint64_t executeFrame,
         std::uint32_t additionalGroupCount) const noexcept;
@@ -1875,6 +2027,22 @@ public:
 
 private:
     friend struct Engine;
+    bool PrepareEventStorage(std::uint64_t additionalEvents,
+        bool consumeAcceptedBacking = false) noexcept;
+    bool PreparePrivateMaterializationBacking(const UnplacedBatchCreditRequest& request) noexcept;
+    bool PrepareGroupStorage(std::size_t additionalGroups,
+        bool consumeAcceptedBacking = false) noexcept;
+    Plan03GroupReserveStatus PreparePlan03GroupSliceImpl(
+        const Plan03GroupSliceInput& input, const TimelineArmTable& armTable,
+        PreparedPlan03GroupSlice* out, const PreparedPageGroupTransferScope* transferScope,
+        bool consumeAcceptedBacking) noexcept;
+    ReserveRefusal PrepareTransactionBatchImpl(
+        const TransactionRequest* requests, std::size_t requestCount,
+        std::uint64_t publicationFrontier, PreparedTransactionBatch* out,
+        const PreparedPageGroupTransferScope* transferScope,
+        bool consumeAcceptedBacking) noexcept;
+    void RecordRetiredPageEvents(std::uint64_t count) noexcept;
+    void RecordRetiredPageGroups(std::uint64_t count) noexcept;
     bool IsOrdinaryOriginalQueueFutureGroupRegistrationFor(
         const OriginalQueueFutureGroupRegistration& original,
         const Plan03GroupSliceIdentity& expected, std::uint64_t root) const noexcept {
@@ -2008,8 +2176,10 @@ private:
         std::uint64_t cohortRoot, std::uint64_t provisionalAnchorFrame,
         const Plan03GroupSliceInput& input, const TimelineArmTable& armTable) const noexcept;
     friend struct detail::ScheduledTransactionPoolTestAccess;
-#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+#if !defined(HARKEN_RT_QUALIFICATION)
     friend struct detail::ScheduledTransactionPoolCancelTestAccess;
+#endif
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     friend struct detail::ScheduledTransactionPoolOriginalTestAccess;
 #endif
     bool ClaimImmediateLaneFrontierBound(
@@ -2041,7 +2211,7 @@ private:
         const Plan03GroupSliceIdentity& identity) const noexcept;
     struct Plan03GroupReaderState {
         std::atomic<std::uint32_t> pins{0};
-        std::atomic<std::uint64_t> lastAudioSequence{0};
+        mutable std::atomic<std::uint64_t> lastAudioSequence{0};
     };
     enum class LaneGroupState : std::uint8_t { Free, Private, Published, Retired };
     struct LaneFrontierGate {
@@ -2074,7 +2244,69 @@ private:
         bool audio = false) const noexcept;
     bool MatchesInitialSoundQueueCompanionPublished(
         const InitialSoundQueueCompanionAssociation& original) const noexcept;
+    struct LaneGroupMembers {
+        ScheduledTransactionPool* owner = nullptr;
+        std::unique_ptr<TimelineArmToken[]> tokens;
+        std::unique_ptr<TimelineArmTable::OriginalGroupMember[]> originals;
+        std::unique_ptr<std::uint16_t[]> indices;
+        std::uint16_t capacity = 0;
+        bool held = false;
+        bool inUse = false;
+        bool pageBacking = false;
+        ~LaneGroupMembers();
+        std::size_t RequestedBytes() const noexcept {
+            return sizeof(LaneGroupMembers) + static_cast<std::size_t>(capacity) *
+                (sizeof(TimelineArmToken) + sizeof(TimelineArmTable::OriginalGroupMember) +
+                    (indices == nullptr ? 0u : sizeof(std::uint16_t)));
+        }
+    };
+    struct PageGroupMemberSlot {
+        std::unique_ptr<LaneGroupMembers> owned;
+        std::unique_ptr<LaneGroupMembers> replacement;
+        LaneGroupMembers* borrowed = nullptr;
+        ~PageGroupMemberSlot();
+        PageGroupMemberSlot() = default;
+        PageGroupMemberSlot(PageGroupMemberSlot&& other) noexcept;
+        PageGroupMemberSlot(const PageGroupMemberSlot&) = delete;
+        LaneGroupMembers* Storage() const noexcept { return borrowed == nullptr ? owned.get() : borrowed; }
+        void ReturnBorrowed() noexcept;
+    };
+    struct PageGroupMemberBacking {
+        std::vector<std::unique_ptr<LaneGroupMembers>> members;
+        ~PageGroupMemberBacking();
+    };
+    TimelineArmToken* PageGroupTokens(std::size_t row) const noexcept;
+    TimelineArmTable::OriginalGroupMember* PageGroupOriginals(std::size_t row) const noexcept;
+    bool PreparePageGroupMembers(std::size_t row, std::uint16_t count,
+        bool consumeAcceptedBacking = false) noexcept;
+    void ClearPageGroupMembers(std::size_t row, std::uint16_t count) noexcept;
+    std::unique_ptr<LaneGroupMembers> CreatePageGroupMembers(std::uint16_t count) noexcept;
+    std::unique_ptr<PageGroupMemberBacking> PreparePageGroupMemberBacking(std::uint32_t count) noexcept;
     struct LaneGroupRow {
+        ~LaneGroupRow() noexcept {
+            if (preparedMembers != nullptr) {
+                preparedMembers->inUse = false;
+                if (!preparedMembers->held) delete preparedMembers;
+            }
+        }
+        std::unique_ptr<LaneGroupMembers> members;
+        LaneGroupMembers* preparedMembers = nullptr;
+        TimelineArmTable::OriginalGroupIdentity originalIdentity{};
+        LaneGroupMembers* MemberStorage() const noexcept {
+            return preparedMembers != nullptr ? preparedMembers : members.get();
+        }
+        TimelineArmToken* MemberTokens() const noexcept {
+            const auto* storage = MemberStorage();
+            return storage == nullptr ? nullptr : storage->tokens.get();
+        }
+        TimelineArmTable::OriginalGroupMember* MemberOriginals() const noexcept {
+            const auto* storage = MemberStorage();
+            return storage == nullptr ? nullptr : storage->originals.get();
+        }
+        std::uint16_t* MemberIndices() const noexcept {
+            const auto* storage = MemberStorage();
+            return storage == nullptr ? nullptr : storage->indices.get();
+        }
         InitialSoundQueueCompanionAssociation initialSoundQueueCompanion{};
         // Logic-thread-only association and exclusion for the original transfer.
         PreparedPrivateImmediateLaneGroup* transferOriginal = nullptr;
@@ -2106,6 +2338,10 @@ private:
         AudioSliceLease lease{};
         Plan03GroupReaderState readers{};
     };
+    static bool CanReuseImmediateLaneRow(const LaneGroupRow& row) noexcept;
+    bool PrepareImmediateLaneMembers(LaneGroupRow& row, std::uint16_t count) noexcept;
+    void ReturnPreparedImmediateLaneMembers(LaneGroupRow& row) noexcept;
+    std::unique_ptr<LaneGroupMembers> CreateImmediateLaneMembers(std::uint16_t count) noexcept;
     friend class ImmediateActionLane;
     // Producer-only enumeration of the actual selected-domain Lane binding.
     // It does not issue a lifetime, admission, selector or audio read permission.
@@ -2208,16 +2444,31 @@ private:
         std::uint64_t rowSequence = 0;
         std::uint32_t executionOrdinal = 0;
         bool publicationHeld = false;
+        std::size_t next = SIZE_MAX;
+        std::size_t previous = SIZE_MAX;
     };
 
+    struct CurrentSlicePage {
+        std::size_t first = SIZE_MAX;
+        std::size_t last = SIZE_MAX;
+        std::uint32_t nativeCount = 0;
+    };
+
+    friend class CurrentSliceBacking;
+    void ReleaseCurrentSliceBacking(CurrentSliceBacking& backing) noexcept;
+    bool PrepareCurrentSliceRows() noexcept;
+    void ReleaseCurrentSliceRow(std::size_t slot) noexcept;
+    void RecycleCurrentSlicePage(std::uint32_t ring) noexcept;
+    void SortCurrentSlices(std::uint32_t ring) noexcept;
     ReserveResult ReserveCurrentSliceImpl(
         const ScheduledCurrentSliceInput& input, PrePublishLatePolicy latePolicy,
-        std::uint64_t publicationFrontier, HeldCurrentSliceToken* held);
+        std::uint64_t publicationFrontier, HeldCurrentSliceToken* held,
+        CurrentSliceBacking* backing = nullptr);
     ReserveResult PlanCurrentSlicePlacement(const ScheduledCurrentSliceInput& input,
         PrePublishLatePolicy latePolicy, std::uint64_t publicationFrontier,
         bool publicationHeld) const noexcept;
     bool LocateHeldCurrentSlice(const HeldCurrentSliceToken& token,
-        std::uint32_t* ring, std::uint32_t* index) const noexcept;
+        std::uint32_t* ring, std::size_t* index) const noexcept;
     bool HasHeldCurrentSlices() const noexcept;
 
     struct Plan03GroupSliceRow {
@@ -2258,6 +2509,37 @@ private:
         Retired = 3,
     };
 
+    struct NativeGroupRow {
+        Plan03GroupSliceRow value{};
+        mutable AudioSliceLease lease{};
+        Plan03GroupReaderState readers{};
+        TimelineArmTable::OriginalGroupIdentity identity{};
+        PageGroupMemberSlot members{};
+        std::size_t nextFree = SIZE_MAX;
+    };
+
+    bool HasPageGroupStorage(std::size_t index) const noexcept {
+        return index < pageGroupSlots_.size() && pageGroupSlots_[index] != SIZE_MAX;
+    }
+    NativeGroupRow& PageGroupData(std::size_t index) noexcept {
+        assert(HasPageGroupStorage(index));
+        return nativeGroupRows_[pageGroupSlots_[index]];
+    }
+    const NativeGroupRow& PageGroupData(std::size_t index) const noexcept {
+        assert(HasPageGroupStorage(index));
+        return nativeGroupRows_[pageGroupSlots_[index]];
+    }
+    void AcquirePageGroup(std::size_t index) noexcept;
+    void ReleasePageGroup(std::size_t index) noexcept;
+
+    EventRow& PageEvent(std::size_t index) noexcept {
+        return nativeEventRows_[pageEventSlots_[index]];
+    }
+    const EventRow& PageEvent(std::size_t index) const noexcept {
+        return nativeEventRows_[pageEventSlots_[index]];
+    }
+    void AcquirePageEvent(std::size_t index) noexcept;
+    void ReleasePageEvent(std::size_t index) noexcept;
     std::uint32_t RingIndex(std::uint32_t page) const;
     AudioSliceLease* EffectivePlan03GroupLease(std::size_t rowIndex) const noexcept;
     // Sorts one page's live event indices into the total order, in place.
@@ -2270,6 +2552,10 @@ private:
                           const OccurrenceStatePool& occurrences) const;
 
     Config config_{};
+    mutable PendingEventStorageRegistration* pendingEventStorage_ = nullptr;
+    mutable CurrentSliceStorageRegistration* currentSliceStorage_ = nullptr;
+    std::atomic<std::uint64_t> retiredPageEvents_{0};
+    std::atomic<std::uint64_t> retiredPageGroups_{0};
     void* immediateLaneGroupDisposalContext_ = nullptr;
     ImmediateLaneGroupDisposalObserver immediateLaneGroupDisposalObserver_ = nullptr;
     std::uint32_t pageCount_ = 0;
@@ -2288,7 +2574,7 @@ private:
     std::uint64_t consumeTick_ = 0;
 
     // Per-page storage, indexed by ring index. Events and batch frames are packed
-    // into per-page spans of the flat vectors.
+    // into stable per-page spans.
     std::vector<HorizonPageHeader> pageHeaders_;
     std::vector<std::uint32_t> pageEventCount_;
     std::vector<std::uint32_t> pagePreparedEventCount_;
@@ -2296,14 +2582,22 @@ private:
     std::vector<std::uint8_t> pageSorted_; // 0/1: event order is current
     std::unique_ptr<std::atomic<std::uint64_t>[]> pageQuantumStamp_;
     std::unique_ptr<std::atomic<std::uint64_t>[]> pageEmptyQuantumStamp_;
-    std::vector<EventRow> pageEvents_;     // pageCount_ * maxEventsPerQuantum
-    std::vector<std::uint32_t> pageEventOrder_; // sorted indices, same size
+    StableRowStorage<EventRow, std::size_t> nativeEventRows_;
+    StableRowStorage<std::size_t, std::size_t> pageEventSlots_;
+    StableRowStorage<std::size_t, std::size_t> pageEventOrder_;
+    StableRowStorage<std::size_t, std::size_t> freeEventSlots_;
+    std::size_t freeEventSlotCount_ = 0;
+    std::size_t issuedEventSlots_ = 0;
     std::vector<std::uint32_t> pageCurrentSliceCount_;
-    std::vector<CurrentSliceRow> pageCurrentSlices_;
-    std::vector<std::uint32_t> pageCurrentSliceOrder_;
+    std::unique_ptr<CurrentSlicePage[]> pageCurrentSliceStorage_;
+    StableRowStorage<CurrentSliceRow, std::size_t> currentSliceRows_;
+    StableRowStorage<std::size_t> currentSliceOrder_;
+    std::size_t currentSliceBackingHolds_ = 0;
+    std::size_t occupiedCurrentSliceRows_ = 0;
+    std::size_t issuedCurrentSliceRows_ = 0;
+    std::size_t freeCurrentSliceRow_ = SIZE_MAX;
     std::vector<std::uint32_t> pagePlan03GroupCount_;
     std::vector<std::uint32_t> pagePreparedPlan03GroupCount_;
-    std::vector<Plan03GroupSliceRow> pagePlan03Groups_;
     bool IssueGroupMemberOriginals(const Plan03GroupSliceIdentity& group,
         const TimelineArmTable& table, const TimelineArmToken* members,
         std::uint16_t count, TimelineArmTable::OriginalGroupMember* originals,
@@ -2313,28 +2607,31 @@ private:
     void ReturnAllGroupMemberOriginals() noexcept;
     friend struct detail::OriginalGroupMemberTestAccess;
     TimelineArmTable::GroupMemberReceiver groupMemberReceiver_{};
-    std::unique_ptr<TimelineArmTable::OriginalGroupMember[]> pageGroupMemberOriginals_;
-    std::unique_ptr<TimelineArmTable::OriginalGroupMember[]> immediateGroupMemberOriginals_;
+    std::size_t pageMemberBytes_ = 0;
+    StableRowStorage<NativeGroupRow, std::size_t> nativeGroupRows_;
+    std::vector<std::size_t> pageGroupSlots_;
+    std::size_t issuedGroupSlots_ = 0;
+    std::size_t occupiedGroupSlots_ = 0;
+    std::size_t freeGroupSlot_ = SIZE_MAX;
     std::unique_ptr<TimelineArmTable::OriginalGroupMember[]> replacementGroupMemberOriginals_;
-    std::unique_ptr<TimelineArmTable::OriginalGroupIdentity[]> pageGroupIdentities_;
-    std::unique_ptr<TimelineArmTable::OriginalGroupIdentity[]> immediateGroupIdentities_;
     TimelineArmTable::OriginalGroupIdentity replacementGroupIdentity_{};
-    std::vector<TimelineArmToken> pagePlan03GroupMembers_;
     std::vector<Plan03GroupRowState> pagePlan03GroupRowStates_;
     std::vector<std::uint32_t> pagePlan03GroupClaimGenerations_;
-    std::unique_ptr<AudioSliceLease[]> pagePlan03GroupLeases_;
-    std::unique_ptr<Plan03GroupReaderState[]> pagePlan03GroupReaders_;
     std::uint64_t nextOriginalLaneGroupFactoryMarker_ = 0;
-    std::unique_ptr<LaneGroupRow[]> immediateLaneGroups_;
-    std::unique_ptr<TimelineArmToken[]> immediateLaneGroupMembers_;
-    std::unique_ptr<std::uint16_t[]> immediateLaneGroupMemberIndices_;
+    std::size_t immediateMemberBytes_ = 0;
+    std::uint32_t immediateBackingHolds_ = 0;
+    std::uint16_t immediateMemberAllocationLimitForTests_ = UINT16_MAX;
+    ImmediateLaneBackingPreparation* activeImmediateLaneBacking_ = nullptr;
+    void* immediateLaneRowStorageContext_ = nullptr;
+    bool (*prepareImmediateLaneRowStorage_)(void*, std::uint32_t) noexcept = nullptr;
+    StableRowStorage<LaneGroupRow> immediateLaneGroups_;
     std::unique_ptr<LaneFrontierGate[]> immediateLaneOwnerGates_;
     std::unique_ptr<LaneFrontierGate[]> immediateLaneDecisionGates_;
     const TimelineArmTable* plan03ArmTable_ = nullptr;
     bool plan03ArmTableEstablishedByPrepared_ = false;
     std::vector<std::uint32_t> pageBatchCount_;
     std::vector<std::uint32_t> pageBatchOccupiedCount_;
-    std::vector<FrameBatchRow> pageBatchRows_;
+    StableRowStorage<FrameBatchRow, std::size_t> pageBatchRows_;
 
     std::vector<TransactionRecord> transactions_;
     std::vector<std::uint32_t> freeTransactions_; // stack of free slot indices
@@ -2343,18 +2640,19 @@ private:
 
     struct UnplacedCreditRow {
         UnplacedBatchCreditRequest request{};
+        std::unique_ptr<PageGroupMemberBacking> memberBacking;
         std::uint64_t generation = 0;
         TransportEpoch epoch = kInvalidTransportEpoch;
         std::uint64_t chargedQuantum = UINT64_MAX;
         bool active = false;
         bool materializing = false;
     };
-    std::vector<UnplacedCreditRow> unplacedCredits_;
-    std::vector<PreparedPlan03GroupSlice> privatePreparedGroups_;
-    std::vector<CommittedPlan03GroupSlice> privateCommittedGroups_;
-    std::vector<UnplacedBatchCredit*> privateCohortCredits_;
-    std::vector<TransactionRequest> privateCohortRequests_;
-    std::vector<Plan03GroupSliceInput> privateCohortGroups_;
+    StableRowStorage<UnplacedCreditRow, std::size_t> unplacedCredits_;
+    StableRowStorage<PreparedPlan03GroupSlice, std::size_t> privatePreparedGroups_;
+    StableRowStorage<CommittedPlan03GroupSlice, std::size_t> privateCommittedGroups_;
+    StableRowStorage<UnplacedBatchCredit*, std::size_t> privateCohortCredits_;
+    StableRowStorage<TransactionRequest, std::size_t> privateCohortRequests_;
+    StableRowStorage<Plan03GroupSliceInput, std::size_t> privateCohortGroups_;
     bool privateMaterializationActive_ = false;
     std::uint64_t nextUnplacedCreditGeneration_ = 1;
     std::uint64_t unplacedTransactions_ = 0;

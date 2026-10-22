@@ -27,6 +27,14 @@ enum class LogicAllocSite : unsigned int {
     ProjectCommandReserve,
     ProjectFinalPreflight,
     ProjectTraceProjection,
+    CapturedVoiceInstall,
+    CapturedScheduleVoices,
+    VariableReadCutColumns,
+    EffectExtraStorage,
+    ScheduledGroupMembers,
+    MonitorDerivedStorage,
+    ImmediateEntryStorage,
+    RetargetIncomingStorage,
 };
 
 struct LogicAllocFaultState {

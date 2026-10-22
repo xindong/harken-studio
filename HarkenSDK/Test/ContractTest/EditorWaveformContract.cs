@@ -99,6 +99,10 @@ namespace Harken.Test
             string root = Path.Combine(AppContext.BaseDirectory, "EditorMetadataV2");
             foreach (string name in new[] { "golden", "random" })
             {
+                string directory = Path.Combine(root, name);
+                Check(PackManifest.TryLoadManifest(directory, out var packs), "Invalid v2 fixture manifest");
+                foreach (var pack in packs)
+                    Check(PackManifest.VerifyPackFile(directory, pack), "V2 fixture bytes do not match manifest: " + pack.Path);
                 byte[] manifest = File.ReadAllBytes(Path.Combine(root, name, "HarkenPackManifest.json"));
                 byte[] bytes = File.ReadAllBytes(Path.Combine(root, name, HarkenWaveformPublication.FileName));
                 Check(GameplayPublication.Parse(Encoding.UTF8.GetString(manifest), null, null, out var publication, out string error) == VnResult.VN_OK, error);

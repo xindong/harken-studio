@@ -17,6 +17,8 @@
 #include "harken/core/LogRing.h"
 #include "harken/core/SnapshotBuffer.h"
 #include "harken/core/SourceCursorMirror.h"
+#include "harken/core/ScheduledTransactionPool.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/TimelineExecutor.h"
 #include "harken/core/VariableSliceTable.h"
@@ -34,7 +36,10 @@
 #include <vector>
 
 namespace harken {
-namespace detail { struct OriginalControlOriginTestAccess; }
+namespace detail {
+struct OriginalControlOriginTestAccess;
+struct MixerCurrentSliceStorageTestAccess;
+}
 
 class MixerLoop {
 public:
@@ -64,6 +69,7 @@ public:
     }
     const BlockArena& Arena() const { return m_arena; }
     BlockArena& ArenaForTests() { return m_arena; }
+    bool PrepareVoiceBacking(std::uint32_t count) noexcept;
 
     // The audio-published observability payload: RenderBlock publishes
     // into it at the end of every block; Vn_CaptureSnapshot reads the
@@ -123,10 +129,10 @@ public:
     }
     void DrainCommandsForTest() {
         (void)DrainCommands(m_blocksRendered.load(std::memory_order_relaxed),
-                            m_commands.PublishedHead());
+                            m_commands.CaptureBlockInputCut());
     }
     std::uint32_t DrainCommandsForTest(std::uint64_t blockIndex) {
-        return DrainCommands(blockIndex, m_commands.PublishedHead());
+        return DrainCommands(blockIndex, m_commands.CaptureBlockInputCut());
     }
     // Applies queued control, including opcode 15, without rendering.
     void DrainQueuedCommands(std::uint32_t quantumCount);
@@ -162,10 +168,10 @@ public:
         m_currentSliceScratchLimitForTest = limit;
     }
     void RestoreCurrentSliceScratchLimitForTest() noexcept {
-        m_currentSliceScratchLimitForTest = m_currentSliceScratch.size();
+        m_currentSliceScratchLimitForTest = m_currentSliceScratch.Capacity();
     }
     std::size_t CurrentSliceScratchCapacityForTest() const noexcept {
-        return m_currentSliceScratch.size();
+        return m_currentSliceScratch.Capacity();
     }
     std::size_t EffectiveCurrentSliceCapacity() const noexcept {
         return std::min(m_currentSliceScratch.size(), m_currentSliceScratchLimitForTest);
@@ -175,6 +181,7 @@ public:
 
 private:
     friend struct detail::OriginalControlOriginTestAccess;
+    friend struct detail::MixerCurrentSliceStorageTestAccess;
     // One block's stage timing, measured inside RenderBlock from QPC reads at
     // the stage boundaries and published with that block's payload.
     struct BlockTiming {
@@ -187,34 +194,18 @@ private:
     // Applies commands published at or before `publishedHead`, at most
     // m_maxCommandsPerQuantum of them, cutting only between atomic batches.
     // Returns how many records were left behind for a later quantum.
-    // How long the render-worker rendezvous may take before the coordinator
-    // walks away from the batch. An absolute duration, not a share of the block
-    // period: what this has to clear is the machine's own scheduling jitter, and
-    // that is an absolute quantity — measurements across 128, 256 and 480 frame
-    // blocks put the worst observed rendezvous in the same 200-340 us band
-    // regardless of block width. Expressed as a share instead, one number would
-    // mean 2.2x headroom at 128 frames and 8.6x at 480 for no difference in real
-    // risk, and every recalibration would have to be redone per block size.
-    //
-    // A safe starting point, not a measured optimum: about three times the worst
-    // span observed on an idle machine with a null backend, which is a lower
-    // bound on a lower bound — it had no real-time competition, no device, and
-    // did not include worker wake latency. It wants calibration on target
-    // hardware.
-    static constexpr std::uint64_t kJobDeadlineMicros = 1000;
-    // The block period is a ceiling guard only. A budget that outlasts the block
-    // it belongs to would let one late block push the next one late as well, so
-    // the absolute figure is capped here — but the cap never raises it, because
-    // a budget below the jitter floor would abandon healthy batches. Measured
-    // worst case already occupies 11.5% of the shortest block period, with 7.5x
-    // to 9.7x spread above the median, so anything under about a quarter of the
-    // period is known-wrong; half leaves room above that.
+    // Synchronization ends halfway through the block period measured from
+    // callback entry; the rest is reserved for folding, buses and publication.
+    static constexpr std::uint64_t kJobJitterWarningMicros = 1000;
     static constexpr std::uint64_t kJobDeadlineBlockPeriodPercent = 50;
 
     std::uint32_t DrainCommands(std::uint64_t blockIndex,
-                                std::uint64_t publishedHead);
+                                const CommandQueue::BlockInputCut& cut);
+    std::uint32_t DrainRawCommands(std::uint64_t blockIndex,
+        std::uint64_t publishedHead, std::uint32_t& applied);
     bool DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owed,
-        std::uint32_t& applied, std::uint32_t remaining) noexcept;
+        std::uint32_t& applied, std::uint32_t remaining,
+        const CommandQueue::InitialSourceEntry* initial = nullptr) noexcept;
     void ApplyCommandRecord(const CommandRecord& command,
                             std::uint64_t blockIndex) noexcept;
     struct CurrentSliceStagePlan {
@@ -315,13 +306,16 @@ private:
     const ProjectGenerationInstallAckIdentityV1* m_installAckSideTable = nullptr;
     std::uint32_t m_installAckSideTableCapacity = 0;
     ProjectGenerationInstallAckRingV1* m_installAckRing = nullptr;
-    std::vector<ConsumedCurrentSlice> m_currentSliceScratch;
+    StableRowStorage<ConsumedCurrentSlice, std::size_t> m_currentSliceScratch;
     struct PendingSliceConsumption {
         bool active = false;
         ConsumedCurrentSlice consumed{};
     };
-    std::vector<PendingSliceConsumption> m_pendingSliceConsumptions;
-    std::vector<std::uint32_t> m_pendingSliceOrder;
+    StableRowStorage<PendingSliceConsumption> m_pendingSliceConsumptions;
+    StableRowStorage<std::uint32_t> m_pendingSliceOrder;
+    ScheduledTransactionPool::CurrentSliceStorageRegistration m_currentSliceStorageRegistration;
+    bool PrepareCurrentSliceStorage(std::size_t required) noexcept;
+    std::size_t m_pendingSliceCount = 0;
     std::size_t m_stagedCurrentSliceCount = 0;
     std::size_t m_currentSliceScratchLimitForTest = 0;
     CurrentSliceFrontierHookForTest m_currentSliceFrontierHookForTest = nullptr;
@@ -335,6 +329,9 @@ private:
     std::vector<std::uint32_t> m_meterGenerationScratch;
     SnapshotBuffer m_snapshots;
     BlockArena m_arena;
+    std::uint64_t m_arenaLowBytes = 0;
+    std::uint64_t m_arenaBytesPerSlot = 0;
+    VoicePool::SlotStorageRegistration m_arenaStorageRegistration;
     // Per-bus accumulator plane pointers, bus-major (m_mixChannels per bus).
     // Sized once at init; the audio thread only rewrites the pointers each
     // block — the planes themselves come from the arena.
@@ -354,10 +351,12 @@ private:
     // QPC tick rate, fetched once at construction (logic thread) so the
     // audio thread only ever reads the cached value.
     std::uint64_t m_cpuTicksPerSecond = 0;
-    // The render-worker rendezvous budget, resolved once on the logic thread
-    // from the two figures above and the frozen block width. The audio thread
-    // only reads it.
+    // Offset from block entry to the worker cutoff, resolved once from the
+    // frozen block period. It is not a fresh duration after voice processing.
     std::uint64_t m_jobDeadlineTicks = 0;
+    bool m_renderDeferred = false;
+    std::uint32_t m_deferredFrames = 0;
+    std::uint64_t m_deferredArenaOverflows = 0;
     // Highest whole-callback microseconds observed since init; audio-thread
     // owned, published with every block.
     std::uint32_t m_audioCpuPeakUs = 0;

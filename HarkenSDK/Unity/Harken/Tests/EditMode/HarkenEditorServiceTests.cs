@@ -24,12 +24,14 @@ namespace Harken.Unity.Tests
             Directory.CreateDirectory(destDir);
             foreach (string file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
             {
+                if (file.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)) continue;
                 string relative = file.Substring(sourceDir.Length).TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                 string dest = Path.Combine(destDir, relative);
                 if (relative.EndsWith(".pack", StringComparison.OrdinalIgnoreCase)) dest += ".bytes";
                 Directory.CreateDirectory(Path.GetDirectoryName(dest));
                 File.Copy(file, dest, true);
             }
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
         }
 
         private static HarkenEditorCatalog Catalog(string name = "U4Original")

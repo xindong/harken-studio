@@ -103,7 +103,7 @@ enum class TestGatePoint : std::uint32_t {
     BeforeWait = 2,
     // Inside a batch, after the worker has registered the job it claimed and
     // before it runs it. This is the only point that holds a worker in the
-    // state a quarantine exists for: claimed by this generation, not finished.
+    // state a deferred quantum retains: claimed by this generation, not finished.
     BeforeJobFunction = 3,
 };
 
@@ -234,65 +234,33 @@ public:
     bool TryReserveBatch() noexcept;
     void CancelReservedBatch() noexcept;
 
-    // What one Run produced. A completed batch reports busyPeakTicks and
-    // nothing else; an abandoned one reports no busy peak (see below) and names
-    // how much work the caller must treat as still in a stranded worker's
-    // hands.
+    // A timeout retains the batch and its payload until completion. It does
+    // not terminate voices or invalidate the current generation.
     struct RunResult {
-        // Peak busy span, in performance-counter ticks, that any single worker
-        // thread spent in this batch — the raw figure behind the snapshot's
-        // renderWorkerBusyPeakUs (the caller converts to microseconds).
-        //
-        // Always 0 when abandoned == true. The per-worker busy words are
-        // published by each worker's finished increment, and abandonment is
-        // precisely the case where that increment never arrived, so reading
-        // them would be a race, not a measurement.
         std::uint64_t busyPeakTicks = 0;
-        // Ticks by which the rendezvous ran past its deadline before the
-        // coordinator gave up. Not bounded by the poll interval: the
-        // coordinator runs its own share of the jobs before it ever reaches a
-        // wait, so a batch can already be far past the deadline at the first
-        // check. 0 when abandoned == false.
         std::uint64_t overrunTicks = 0;
-        // Jobs of this batch that were not observed finished at the moment the
-        // coordinator classified them. Equal, by construction, to the number of
-        // slots the caller must quarantine: the classification that produced
-        // this count is the same one JobCompletedForLastBatch answers from.
         std::uint32_t unfinishedJobs = 0;
-        // The coordinator left this batch with workers possibly still inside
-        // it. Parallel dispatch is off for the life of this thread set, and the
-        // caller owes the quarantine described in JobCompletedForLastBatch.
-        bool abandoned = false;
+        bool deferred = false;
+        bool accepted = true;
     };
 
-    // Runs `jobCount` jobs across the worker threads and the calling thread.
-    // `fn(userData, j)` runs exactly once for each j in [0, jobCount) unless
-    // the batch is abandoned. Audio thread; must only be called when
-    // WorkerCount() > 0.
-    //
-    // deadlineTicks bounds the whole rendezvous — dispatch plus execution plus
-    // every wait — measured from before the batch is published, so a budget
-    // burned by the coordinator's own share still counts. Every wait a stranded
-    // worker can hold the coordinator in is capped by it, not just the ordinary
-    // completion barrier: a wait that is only reachable after a fault is still
-    // a wait on the audio callback thread. 0 means unbounded, which is correct
-    // only for callers with no deadline to keep (harnesses); the mixer always
-    // passes the budget it computed.
+    // Executes every unclaimed job on the caller, then bounds synchronization
+    // waiting by deadlineTicks. DSP cost is measured by the whole callback,
+    // independently of this wait budget. Zero is for unbounded test callers.
+    // A still-pending prior batch rejects a new call without executing its jobs.
     RunResult Run(std::uint32_t jobCount, JobFn fn, void* userData,
                   std::uint64_t deadlineTicks = 0);
 
-    // Whether job `j` of the last abandoned batch was observed finished. Only
-    // meaningful for j < that batch's jobCount, and only after Run reported
-    // abandoned; every other case answers true, because a batch that reached
-    // its barrier finished every job it claimed.
-    //
-    // The answer comes from the single classification the abandonment took, not
-    // from a fresh read of the progress word. Re-reading would only ever
-    // upgrade a job from unfinished to finished — the abandoned generation can
-    // claim nothing more, so its words move one way — and buying one fewer
-    // quarantined slot with a second racing read would also make the reported
-    // unfinished count stop matching the set the caller actually holds.
-    // Deliberately conservative, one read.
+    // Production callbacks carry one absolute cutoff from block entry. Work
+    // and scheduler delays must not restart the available synchronization time.
+    RunResult RunUntil(std::uint32_t jobCount, JobFn fn, void* userData,
+                       std::uint64_t deadlineAt);
+
+    // Audio owner only: no wait, allocation or publication of another batch.
+    // Payload completion permits folding; the full barrier permits dispatch
+    // storage reuse. A lifecycle join also establishes payload completion.
+    bool PendingJobsCompleted() const noexcept;
+    bool TryCompletePendingBatch() noexcept;
     bool JobCompletedForLastBatch(std::uint32_t j) const;
 
     // Internal deterministic failure-injection seam: when nonzero this budget
@@ -346,14 +314,14 @@ private:
     std::uint64_t SpinUntil(Ready ready, std::uint64_t deadlineAt,
                             std::uint64_t* yieldCounter = nullptr);
 
-    // Walks away from `generation`: voids it, classifies its jobs once, and
-    // selects serial rendering for the rest of this thread set's life. Every
-    // step is a plain store or an atomic RMW — no allocation, no lock, no
-    // system call — so this cannot fail partway and leave the batch half
-    // abandoned.
-    RunResult AbandonBatch(std::uint64_t generation, std::uint32_t jobCount,
+    // Retains the generation and reservation after a bounded wait expires.
+    // The coordinator has exhausted the claim cursor; only workers can still
+    // own payload writes. No later batch may overwrite their descriptors.
+    RunResult DeferBatch(std::uint64_t generation, std::uint32_t jobCount,
                            std::uint64_t deadlineAt,
                            std::uint64_t observedTicks);
+    RunResult RunImpl(std::uint32_t jobCount, JobFn fn, void* userData,
+                      std::uint64_t waitTicks, std::uint64_t deadlineAt);
 
     enum class Command : std::uint8_t {
         None,
@@ -430,44 +398,18 @@ private:
         Command command = Command::None;
     };
 
-    // Two of everything a published batch owns, selected by the generation's
-    // low bit. This is what makes a batch the coordinator has walked away from
-    // harmless: a worker still inside it reads and increments its own
-    // generation's copy, so nothing it does lands in the accounting of the
-    // generation that replaced it.
-    //
-    // Two is exactly sufficient, not a guess. In normal operation generation
-    // g+2 cannot publish until g+1's barrier completed, so the copy it reuses
-    // (g's) has no reader left. After an abandonment parallel dispatch is
-    // permanently disabled, so nothing publishes again and the stranded
-    // worker's copy is never rewritten.
-    //
-    // What this does NOT do: it cannot stop a stranded worker from writing
-    // through pointers it already holds. Memory safety comes from the caller's
-    // quarantine — it retires the descending arena span the batch handed out
-    // and holds every unfinished job's voice slot, its pooled effect instances,
-    // its PCM reference and its stream slot for good, so nothing a stranded
-    // worker can still write is ever handed to someone else. The generation
-    // only keeps a worker from starting new work and keeps its bookkeeping out
-    // of the live batch.
+    // Alternating descriptors remain immutable until the full worker barrier.
+    // A deferred batch retains its generation and reservation. Serial rendering
+    // can continue once its payload is done, without touching this job mapping.
     static constexpr std::uint32_t kGenerationSlots = 2;
     static std::uint32_t SlotOf(std::uint64_t generation) {
         return static_cast<std::uint32_t>(generation &
                                           (kGenerationSlots - 1));
     }
 
-    // Per-job progress, one word per job, carrying the generation that owns it.
-    // The coordinator needs to know WHICH jobs finished -- a count cannot name
-    // the slots a quarantine has to cover.
-    //
-    // The generation in the word means no per-block clearing is needed:
-    // "unclaimed for my generation" is simply "this word's generation is not
-    // mine". That reading is defensive today and has no known reachable path.
-    // The coordinator drains the shared claim cursor before it can reach any
-    // wait, so by the time a batch can be abandoned every job below its count
-    // has already been claimed by this generation and no older generation's
-    // word is left to misread. It becomes load-bearing the moment a batch can
-    // be abandoned with jobs still unclaimed.
+    // Per-job progress is diagnostic; the claim cursor grants execution.
+    // An old word is not proof that nobody claimed a job: a worker may have
+    // claimed its index and not yet published Claimed.
     enum class JobState : std::uint64_t {
         Unclaimed = 0,
         Claimed = 1,
@@ -483,19 +425,10 @@ private:
     BatchDescriptor m_batches[kGenerationSlots];
     std::atomic<std::uint32_t> m_nextJob[kGenerationSlots];
     std::vector<std::atomic<std::uint64_t>> m_jobState;
-    // The abandonment's one classification pass, one byte per job. Coordinator-
-    // owned and written only there, so the count it reported and the verdict a
-    // later query gives cannot drift apart. Sized with m_jobState for each
-    // thread-set creation; the audio thread never grows it.
-    //
-    // Not cleared per batch. m_abandonedGeneration bounds what it may answer
-    // for, which is what keeps a previous abandonment's bytes from leaking into
-    // a later batch without paying a clear on every ordinary block.
-    std::vector<std::uint8_t> m_jobDoneAtAbandonment;
-    // The generation this pool walked away from, 0 when it never has, and that
-    // batch's job count. A published generation is never 0, so 0 is unambiguous.
-    std::uint64_t m_abandonedGeneration = 0;
-    std::uint32_t m_abandonedJobCount = 0;
+    // Fixed timeout observation, separate from the live completion counters.
+    std::vector<std::uint8_t> m_jobDoneAtTimeout;
+    std::uint64_t m_deferredGeneration = 0;
+    std::uint32_t m_deferredJobCount = 0;
     // Test-only budget override; 0 leaves the caller's deadline in force.
     std::uint64_t m_deadlineTicksOverride = 0;
     std::uint32_t m_configuredMaxJobs = 0;

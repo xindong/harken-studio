@@ -9,6 +9,7 @@
 #include "harken/core/ImmediateActionLane.h"
 #include "harken/core/PrivateOriginalQueueGroupClockProof.h"
 #include "harken/core/CommandQueue.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/VoicePool.h"
 #include "harken/render/VoiceTimelineSink.h"
 
@@ -27,9 +28,8 @@ namespace harken::detail {
 struct OriginalGroupMemberTestAccess {
     using Original = TimelineArmTable::OriginalGroupMember;
     static const Original* Member(const ScheduledTransactionPool& pool, const Plan03GroupSliceIdentity& group) {
-        const auto offset = group.committedRow * pool.config_.maxArmsPerGroup;
         return group.backing == Plan03GroupBacking::ImmediateLane ?
-            &pool.immediateGroupMemberOriginals_[offset] : &pool.pageGroupMemberOriginals_[offset];
+            pool.immediateLaneGroups_[group.committedRow].MemberOriginals() : pool.PageGroupOriginals(group.committedRow);
     }
     static std::uint64_t Count(const TimelineArmTable& table, TimelineArmToken arm) {
         const auto& scope = table.groupMemberScopes_[arm.slot];
@@ -43,8 +43,10 @@ struct OriginalGroupMemberTestAccess {
     }
     static Plan03GroupSliceIdentity ObservePreparedOrigin(const ScheduledTransactionPool& pool,
         DecisionToken decision, std::uint32_t slice) {
-        for (std::size_t row = 0; row < pool.pagePlan03Groups_.size(); ++row) {
-            const auto& original = pool.pageGroupMemberOriginals_[row * pool.config_.maxArmsPerGroup];
+        for (std::size_t row = 0; row < pool.pageGroupSlots_.size(); ++row) {
+            if (!pool.HasPageGroupStorage(row)) continue;
+            if (pool.PageGroupData(row).value.memberCount == 0) continue;
+            const auto& original = pool.PageGroupOriginals(row)[0];
             if (original.serial_ != 0 && original.Group().decision.slot == decision.slot &&
                 original.Group().decision.generation == decision.generation && original.Group().sliceIndex == slice)
                 return original.Group();
@@ -74,6 +76,16 @@ TEST(DecisionGroup, CancelledReservationIdentityWaitsForRealReaderAndRejectsReus
     harken::DecisionTable table(1, 1);
     const auto request = MakeRequest();
     harken::DecisionToken token{};
+    EXPECT_EQ(0u, table.RowStorageBytes());
+    EXPECT_EQ(0u, table.RowCommittedBytes());
+    EXPECT_GT(table.RowReservedBytes(), 0u);
+    table.SetRowCommitPageLimitForTests(0);
+    EXPECT_FALSE(table.Reserve(request, &token));
+    EXPECT_FALSE(token.Valid());
+    EXPECT_EQ(0u, table.LiveCount());
+    EXPECT_EQ(0u, table.ConstructedRowCount());
+    EXPECT_GT(table.RowCommittedBytes(), 0u);
+    table.SetRowCommitPageLimitForTests(SIZE_MAX);
     ASSERT_TRUE(table.Reserve(request, &token));
     harken::DecisionFuturePin reader{};
     ASSERT_TRUE(table.AcquireFuturePin(token, &reader));
@@ -1834,6 +1846,77 @@ TEST(DecisionGroup, ImmediateLaneGroupRejectsDuplicateMemberIndexWithoutUsingRow
     ASSERT_TRUE(identity.Exact());
 }
 
+TEST(DecisionGroup, ImmediateLaneBackingSurvivesCompetitionRetryAndOwnerRelease) {
+    harken::ScheduledTransactionPool pool;
+    harken::TimelineArmTable arms(2);
+    auto config = MakePoolConfig();
+    config.maxImmediateLaneGroupRows = 8;
+    config.maxImmediateLaneOwnerGates = 4;
+    config.maxImmediateLaneDecisionGates = 16;
+    ASSERT_TRUE(pool.Reset(config, 0, 9));
+    EXPECT_EQ(0u, pool.ImmediateLaneRowStorageBytes());
+    EXPECT_EQ(0u, pool.ImmediateLaneRowCommittedBytes());
+    EXPECT_EQ(0u, pool.ImmediateLaneMemberStorageBytes());
+    harken::TimelineSemanticTarget target{};
+    target.programSemanticFingerprint = 7;
+    target.subjectId = harkentest::ObjectId(11);
+    const harken::ParentAudioGroupRef parent{{13, 17}};
+    std::array<harken::TimelineArmToken, 2> members{};
+    for (std::uint16_t index = 0; index < members.size(); ++index)
+        ASSERT_TRUE(arms.ReserveGrouped(index + 1u, 1, 120, 200, 29, target,
+            parent, index, &members[index]));
+    harken::Plan03GroupSliceInput input{};
+    input.executeFrame = 120;
+    input.decision = parent.decision;
+    input.members = members.data();
+    input.memberCount = 1;
+    harken::Plan03GroupSliceIdentity old{}, competitor{};
+    ASSERT_TRUE(pool.ReserveImmediateLaneGroup(17, 100, input, arms, &old));
+    const auto oldMembers = pool.ImmediateLaneMemberStorageBytes();
+    harken::ScheduledTransactionPool::ImmediateLaneBackingPreparation backing;
+    pool.SetImmediateLaneRowCommitPageLimitForTests(0);
+    EXPECT_FALSE(pool.PrepareImmediateLaneBacking(7, 14, &backing));
+    EXPECT_FALSE(backing.Valid());
+    pool.SetImmediateLaneRowCommitPageLimitForTests(SIZE_MAX);
+    pool.SetImmediateLaneMemberAllocationLimitForTests(0);
+    EXPECT_FALSE(pool.PrepareImmediateLaneBacking(3, 6, &backing));
+    EXPECT_FALSE(backing.Valid());
+    EXPECT_EQ(oldMembers, pool.ImmediateLaneMemberStorageBytes());
+    pool.SetImmediateLaneMemberAllocationLimitForTests(UINT16_MAX);
+    ASSERT_TRUE(pool.PrepareImmediateLaneBacking(3, 6, &backing));
+    EXPECT_FALSE(pool.ResetForEpoch(0, 10));
+    input.memberCount = 0;
+    ASSERT_TRUE(pool.ReserveImmediateLaneGroup(19, 100, input, arms, &competitor));
+    const auto rowBytes = pool.ImmediateLaneRowStorageBytes();
+    const auto memberBytes = pool.ImmediateLaneMemberStorageBytes();
+    pool.SetImmediateLaneRowCommitPageLimitForTests(0);
+    pool.SetImmediateLaneMemberAllocationLimitForTests(0);
+    input.memberCount = 2;
+    std::array<harken::Plan03GroupSliceIdentity, 3> issued{};
+    {
+        harken::ScheduledTransactionPool::ImmediateLaneBackingUse use(pool, &backing);
+        for (unsigned index = 0; index < issued.size(); ++index)
+            ASSERT_TRUE(pool.ReserveImmediateLaneGroup(23 + index, 100, input, arms, &issued[index]));
+        ASSERT_TRUE(pool.CancelImmediateLaneGroups(23, 0));
+        issued[0] = {};
+        ASSERT_TRUE(pool.ReserveImmediateLaneGroup(23, 100, input, arms, &issued[0]));
+    }
+    EXPECT_EQ(rowBytes, pool.ImmediateLaneRowStorageBytes());
+    EXPECT_EQ(memberBytes, pool.ImmediateLaneMemberStorageBytes());
+    backing = {};
+    for (unsigned index = 0; index < issued.size(); ++index) {
+        harken::Plan03PageGroupView view{};
+        ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(issued[index], &view));
+        ASSERT_EQ(2u, view.memberCount);
+        EXPECT_EQ(members[1].generation, view.members[1].generation);
+        ASSERT_TRUE(pool.CancelImmediateLaneGroups(23 + index, 0));
+    }
+    EXPECT_EQ(oldMembers, pool.ImmediateLaneMemberStorageBytes());
+    ASSERT_TRUE(pool.CancelImmediateLaneGroups(17, 0));
+    ASSERT_TRUE(pool.CancelImmediateLaneGroups(19, 0));
+    EXPECT_TRUE(pool.ResetForEpoch(0, 10));
+}
+
 TEST(DecisionGroup, FrontierReceiptUsesRealLeaseAndCompletedBlockBeforeReconciliation) {
     FrontierReceiptHarness h;
     h.Prepare();
@@ -2288,7 +2371,7 @@ void CheckUnpublishedFrontierRetirement(UnpublishedRetirementArmEnd armEnd) {
     harken::ScheduledTransactionPool pool;
     harken::TimelineArmTable arms(1);
     if (armEnd == UnpublishedRetirementArmEnd::Quarantined)
-        arms.RowAt(0)->generation = UINT32_MAX;
+        ASSERT_TRUE(arms.SetFreeGenerationForTests(0, UINT32_MAX));
     harken::DecisionTable decisions(2, 2);
     auto config = MakePoolConfig();
     config.maxPlan03GroupHeadersPerPage =
@@ -4087,7 +4170,23 @@ TEST(ArmGroup, PreparedMembersRequireExactIdentityAndCompleteOrderedCensus) {
     const harken::DecisionToken parent{29, 31};
     const std::array<harken::TimelineArmToken, 2> members{{{3, 5, 7, 11}, {13, 17, 19, 23}}};
     harken::ArmGroupToken token{};
+    EXPECT_EQ(0u, groups.RowStorageBytes());
+    EXPECT_EQ(0u, groups.RowCommittedBytes());
+    EXPECT_EQ(0u, groups.MemberStorageBytes());
+    EXPECT_EQ(1u, groups.FreeCount());
+    groups.SetRowCommitPageLimitForTests(0);
+    EXPECT_FALSE(groups.Prepare(parent, members.data(), 2, &token));
+    EXPECT_FALSE(token.Valid());
+    groups.SetRowCommitPageLimitForTests(SIZE_MAX);
+    groups.SetMemberAllocationLimitForTests(0);
+    EXPECT_FALSE(groups.Prepare(parent, members.data(), 2, &token));
+    EXPECT_FALSE(token.Valid());
+    EXPECT_EQ(0u, groups.MemberStorageBytes());
+    EXPECT_EQ(1u, groups.FreeCount());
+    groups.SetMemberAllocationLimitForTests(UINT16_MAX);
     ASSERT_TRUE(groups.Prepare(parent, members.data(), 2, &token));
+    EXPECT_GT(groups.RowCommittedBytes(), 0u);
+    EXPECT_GT(groups.MemberStorageBytes(), 0u);
     const auto& view = groups;
     ASSERT_TRUE(view.MatchesPreparedMembers(token, parent, members.data(), 2));
     EXPECT_EQ(0u, groups.LiveCount());
@@ -4118,6 +4217,7 @@ TEST(ArmGroup, PreparedMembersRequireExactIdentityAndCompleteOrderedCensus) {
 
     harken::ArmGroupTable empty(1, 1);
     ASSERT_TRUE(empty.Prepare(parent, nullptr, 0, &token));
+    EXPECT_EQ(0u, empty.MemberStorageBytes());
     EXPECT_TRUE(empty.MatchesPreparedMembers(token, parent, nullptr, 0));
     EXPECT_FALSE(empty.MatchesPreparedMembers(token, parent, members.data(), 1));
     EXPECT_TRUE(empty.CancelPrepared(token));
@@ -4165,6 +4265,50 @@ TEST(ArmGroup, EmptyGroupIsReadyAndReclaimsAfterAudioFence) {
     EXPECT_FALSE(groups.Reclaim(token, 0));
     EXPECT_TRUE(groups.Reclaim(token, 1));
     EXPECT_EQ(0u, groups.LiveCount());
+    EXPECT_EQ(0u, groups.MemberStorageBytes());
+    const auto committed = groups.RowCommittedBytes();
+    {
+        harken::memguard::AudioThreadScope audio;
+        EXPECT_FALSE(groups.Reserve({29, 31}, nullptr, 0, &token));
+        EXPECT_FALSE(groups.Capture({0, 1}, &snapshot));
+    }
+    EXPECT_EQ(committed, groups.RowCommittedBytes());
+}
+
+TEST(ArmGroup, PreparedBackingSurvivesCompetitionRetryAndOwnerRelease) {
+    harken::ArmGroupTable groups(8, 8);
+    const std::array<harken::TimelineArmToken, 2> members{{{3, 5, 7, 11}, {13, 17, 19, 23}}};
+    harken::ArmGroupToken old{}, competitor{};
+    ASSERT_TRUE(groups.Reserve({29, 31}, members.data(), 1, &old));
+    harken::ArmGroupTable::BackingPreparation backing;
+    ASSERT_TRUE(groups.PrepareBacking(3, 6, &backing));
+    ASSERT_TRUE(groups.Reserve({37, 41}, nullptr, 0, &competitor));
+    ASSERT_TRUE(groups.CancelBeforePublication(competitor));
+    const auto rowBytes = groups.RowStorageBytes();
+    const auto memberBytes = groups.MemberStorageBytes();
+    groups.SetRowCommitPageLimitForTests(0);
+    groups.SetMemberAllocationLimitForTests(0);
+    std::array<harken::ArmGroupToken, 3> issued{};
+    {
+        harken::ArmGroupTable::PreparedUse use(groups, &backing);
+        for (auto& token : issued) ASSERT_TRUE(groups.Reserve({43, 47}, members.data(), 2, &token));
+        ASSERT_TRUE(groups.CancelBeforePublication(issued[0]));
+        ASSERT_TRUE(groups.Reserve({43, 47}, members.data(), 2, &issued[0]));
+    }
+    EXPECT_EQ(rowBytes, groups.RowStorageBytes());
+    EXPECT_EQ(memberBytes, groups.MemberStorageBytes());
+    backing = {};
+    for (const auto token : issued) {
+        harken::ArmGroupSnapshot snapshot{};
+        ASSERT_TRUE(groups.Capture(token, &snapshot));
+        EXPECT_EQ(2u, snapshot.memberCount);
+        ASSERT_TRUE(groups.BeginRetire(token));
+        for (const auto arm : members) ASSERT_TRUE(groups.Tombstone(token, arm, 53));
+        EXPECT_FALSE(groups.Reclaim(token, 53));
+        ASSERT_TRUE(groups.Reclaim(token, 54));
+    }
+    EXPECT_LT(groups.MemberStorageBytes(), memberBytes);
+    EXPECT_TRUE(groups.CancelBeforePublication(old));
 }
 
 TEST(ArmGroup, MemberObservationRetainsExactTombstoneAcrossArmAndGroupReuse) {
@@ -4300,9 +4444,9 @@ struct ScheduledTransactionPoolOriginalTestAccess {
     static bool SeedFreeGeneration(ScheduledTransactionPool& pool,
                                   std::uint32_t rowIndex,
                                   std::uint32_t generation) noexcept {
-        if (pool.immediateLaneGroups_ == nullptr ||
-            rowIndex >= pool.config_.maxImmediateLaneGroupRows ||
-            generation != UINT32_MAX - 1u) return false;
+        if (rowIndex >= pool.config_.maxImmediateLaneGroupRows ||
+            generation != UINT32_MAX - 1u ||
+            !pool.immediateLaneGroups_.ConstructThrough(rowIndex + 1u)) return false;
         auto& row = pool.immediateLaneGroups_[rowIndex];
         if (row.state.load(std::memory_order_acquire) !=
                 ScheduledTransactionPool::LaneGroupState::Free ||
@@ -4316,8 +4460,8 @@ struct ScheduledTransactionPoolOriginalTestAccess {
 
     static bool SeedLastMarkerPrerequisite(ScheduledTransactionPool& pool) noexcept {
         if (pool.nextOriginalLaneGroupFactoryMarker_ != 0 ||
-            pool.immediateLaneGroups_ == nullptr) return false;
-        for (std::uint32_t index = 0; index < pool.config_.maxImmediateLaneGroupRows; ++index) {
+            pool.immediateLaneGroups_.Capacity() == 0) return false;
+        for (std::uint32_t index = 0; index < pool.immediateLaneGroups_.ConstructedCount(); ++index) {
             const auto& row = pool.immediateLaneGroups_[index];
             if (row.state.load(std::memory_order_acquire) !=
                     ScheduledTransactionPool::LaneGroupState::Free ||
@@ -4330,18 +4474,18 @@ struct ScheduledTransactionPoolOriginalTestAccess {
 
     static std::uint32_t Generation(const ScheduledTransactionPool& pool,
                                     std::uint32_t index) noexcept {
-        return pool.immediateLaneGroups_[index].generation;
+        return index < pool.immediateLaneGroups_.ConstructedCount() ? pool.immediateLaneGroups_[index].generation : 0;
     }
     static std::uint64_t MarkerBudget(const ScheduledTransactionPool& pool) noexcept {
         return pool.nextOriginalLaneGroupFactoryMarker_;
     }
     static std::uint64_t RowMarker(const ScheduledTransactionPool& pool,
                                   std::uint32_t index) noexcept {
-        return pool.immediateLaneGroups_[index].originalFactoryMarker;
+        return index < pool.immediateLaneGroups_.ConstructedCount() ? pool.immediateLaneGroups_[index].originalFactoryMarker : 0;
     }
     static std::uint32_t PinCount(const ScheduledTransactionPool& pool,
                                  std::uint32_t index) noexcept {
-        return pool.immediateLaneGroups_[index].originalRegistrationPinCount;
+        return index < pool.immediateLaneGroups_.ConstructedCount() ? pool.immediateLaneGroups_[index].originalRegistrationPinCount : 0;
     }
 
     static bool EnterCountLimit(ScheduledTransactionPool& pool,
@@ -5308,7 +5452,7 @@ struct DecisionOriginalLifetimeTestAccess {
         IssuerLimit(DecisionTable& owner, bool zeroBudget) noexcept {
             if (owner.LiveCount() != 0 || owner.originalLifetimeMarkerExhausted_ ||
                 owner.nextOriginalLifetimeMarker_ == 0) return;
-            for (std::uint32_t index = 0; index < owner.capacity_; ++index)
+            for (std::uint32_t index = 0; index < owner.rows_.ConstructedCount(); ++index)
                 if (owner.rows_[index].originalLifetimePinCount != 0) return;
             table = &owner;
             originalNext = owner.nextOriginalLifetimeMarker_;
@@ -6500,6 +6644,12 @@ TEST(DecisionGroup, SelectedFutureDomainRequiresActualOldFamilyAndDistinctLaneRe
 
 namespace {
 using MemberOriginAccess = harken::detail::OriginalGroupMemberTestAccess;
+struct PageMemberAllocationFault {
+    explicit PageMemberAllocationFault(std::size_t nth = 1) {
+        harken::detail::ArmLogicAllocFaultForTests(nth, harken::detail::LogicAllocSite::ScheduledGroupMembers);
+    }
+    ~PageMemberAllocationFault() { harken::detail::DisarmLogicAllocFaultForTests(); }
+};
 struct NativeGroupOriginFixture {
     harken::TimelineArmTable arms{2};
     harken::DecisionTable decisions{2, 2};
@@ -6536,6 +6686,130 @@ struct NativeGroupOriginFixture {
         ASSERT_TRUE(identity.Exact());
     }
 };
+}
+
+TEST(DecisionGroup, AcceptedPageMemberBackingSurvivesAllocationRefusalAndRollback) {
+    NativeGroupOriginFixture f;
+    ASSERT_NO_FATAL_FAILURE(f.Init());
+    harken::UnplacedBatchCredit credit{};
+    {
+        PageMemberAllocationFault fault(2);
+        EXPECT_FALSE(f.pool.ReserveUnplacedBatchCredit({0, 0, 0, 0, 2}, &credit));
+        EXPECT_FALSE(credit.Valid());
+    }
+    ASSERT_TRUE(f.pool.ReserveUnplacedBatchCredit({0, 0, 0, 0, 2}, &credit));
+    const std::array groups{f.Input(0), f.Input(1)};
+    PageMemberAllocationFault fault;
+    harken::PreparedPlan03GroupSlice refused;
+    EXPECT_EQ(harken::Plan03GroupReserveStatus::MemberCapacity,
+        f.pool.PreparePlan03GroupSlice(f.Input(2), f.arms, &refused));
+    EXPECT_FALSE(refused.Valid());
+    for (const bool commit : {false, true}) {
+        PageMemberAllocationFault retryFault;
+        harken::ScheduledTransactionPool::PrivateMaterializationTransaction lease;
+        harken::ReserveRefusal refusal{};
+        harken::Plan03GroupReserveStatus status{};
+        ASSERT_TRUE(f.pool.TryMaterializeUnplacedBatch(&credit, nullptr, 0,
+            groups.data(), groups.size(), f.arms, 0, &lease, &refusal, &status));
+        EXPECT_EQ(2u, MemberOriginAccess::Count(f.arms, f.arm));
+        if (commit) {
+            ASSERT_TRUE(lease.Commit(1));
+            ASSERT_TRUE(lease.ReleasePublication());
+        }
+    }
+    EXPECT_FALSE(credit.Valid());
+    EXPECT_EQ(2u, MemberOriginAccess::Count(f.arms, f.arm));
+    f.pool.DropPreparedOccupancy();
+    EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
+}
+
+TEST(DecisionGroup, IndependentGroupCannotBorrowAnActiveCreditMemberBacking) {
+    NativeGroupOriginFixture f;
+    ASSERT_NO_FATAL_FAILURE(f.Init());
+    harken::UnplacedBatchCredit credit{};
+    ASSERT_TRUE(f.pool.ReserveUnplacedBatchCredit({0, 0, 0, 0, 1}, &credit));
+    auto empty = f.Input(0);
+    empty.members = nullptr;
+    empty.memberCount = 0;
+    harken::ReserveRefusal refusal{};
+    harken::Plan03GroupReserveStatus status{};
+    {
+        harken::ScheduledTransactionPool::PrivateMaterializationTransaction lease;
+        ASSERT_TRUE(f.pool.TryMaterializeUnplacedBatch(&credit, nullptr, 0,
+            &empty, 1, f.arms, 0, &lease, &refusal, &status));
+        harken::PreparedPlan03GroupSlice independent;
+        {
+            PageMemberAllocationFault fault;
+            EXPECT_EQ(harken::Plan03GroupReserveStatus::MemberCapacity,
+                f.pool.PreparePlan03GroupSlice(f.Input(1), f.arms, &independent));
+        }
+        {
+            PageMemberAllocationFault fault;
+            EXPECT_EQ(harken::Plan03GroupReserveStatus::MemberCapacity,
+                f.pool.ReservePlan03GroupSlice(f.Input(1), f.arms));
+        }
+        EXPECT_FALSE(independent.Valid());
+        EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
+    }
+    ASSERT_TRUE(credit.Valid());
+    auto withMember = f.Input(0);
+    {
+        PageMemberAllocationFault fault;
+        harken::ScheduledTransactionPool::PrivateMaterializationTransaction lease;
+        ASSERT_TRUE(f.pool.TryMaterializeUnplacedBatch(&credit, nullptr, 0,
+            &withMember, 1, f.arms, 0, &lease, &refusal, &status));
+        ASSERT_EQ(1u, MemberOriginAccess::Count(f.arms, f.arm));
+        ASSERT_TRUE(lease.Commit(1));
+        ASSERT_TRUE(lease.ReleasePublication());
+    }
+    f.pool.DropPreparedOccupancy();
+    EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
+}
+
+TEST(DecisionGroup, PageMemberReplacementGrowthPreparesBeforeChangingOriginals) {
+    NativeGroupOriginFixture f;
+    ASSERT_NO_FATAL_FAILURE(f.Init());
+    harken::PreparedPlan03GroupSlice prepared;
+    harken::Plan03GroupSliceIdentity identity{};
+    ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 0, prepared, identity));
+    harken::CommittedPlan03GroupSlice committed;
+    ASSERT_TRUE(f.pool.CommitPreparedPlan03GroupSlice(&prepared, &committed));
+    const auto* original = MemberOriginAccess::Member(f.pool, identity);
+    identity = MemberOriginAccess::Group(original);
+    const auto serial = MemberOriginAccess::Serial(original);
+    harken::TimelineArmToken second{};
+    ASSERT_TRUE(f.arms.PreparePendingImmediateGrouped(11, 1, 7, {}, {f.decision}, 1, &second));
+    const std::array members{f.arm, second};
+    auto input = f.Input();
+    input.members = members.data();
+    input.memberCount = static_cast<std::uint16_t>(members.size());
+    harken::PreparedPlan03GroupSliceReplacement replacement;
+    {
+        PageMemberAllocationFault fault;
+        EXPECT_EQ(harken::Plan03GroupReserveStatus::MemberCapacity,
+            f.pool.PreparePlan03GroupSliceReplacement(identity, input, f.arms, &replacement));
+        EXPECT_FALSE(replacement.Valid());
+        EXPECT_EQ(serial, MemberOriginAccess::Serial(original));
+        EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, second));
+    }
+    ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed,
+        f.pool.PreparePlan03GroupSliceReplacement(identity, input, f.arms, &replacement));
+    harken::PreparedPlan03GroupSliceReplacement competing;
+    EXPECT_EQ(harken::Plan03GroupReserveStatus::PageFrozen,
+        f.pool.PreparePlan03GroupSliceReplacement(identity, input, f.arms, &competing));
+    {
+        PageMemberAllocationFault fault;
+        ASSERT_TRUE(f.pool.CommitPreparedPlan03GroupSliceReplacement(&replacement));
+    }
+    EXPECT_EQ(1u, MemberOriginAccess::Count(f.arms, f.arm));
+    EXPECT_EQ(1u, MemberOriginAccess::Count(f.arms, second));
+    const auto* current = MemberOriginAccess::Member(f.pool, identity);
+    EXPECT_NE(serial, MemberOriginAccess::Serial(current));
+    EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, f.arm, std::array{current}));
+    EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, second, std::array{current + 1}));
+    ASSERT_TRUE(f.pool.RollbackCommittedPlan03GroupSlice(&committed));
+    EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
+    EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, second));
 }
 
 TEST(DecisionGroup, NativeMemberOriginsCoverActualPageImmediateAndForeignPoolTogether) {
@@ -6790,6 +7064,47 @@ TEST(DecisionGroup, NativeDetachedMemberEpisodeReturnsWithoutTouchingRealReconst
     EXPECT_TRUE(MemberOriginAccess::Covers(*arms, newArm, std::array{current}));
     ASSERT_TRUE(pool.CancelPreparedPlan03GroupSlice(&newGroup));
     EXPECT_EQ(0u, MemberOriginAccess::Count(*arms, newArm));
+}
+
+TEST(DecisionGroup, JointCancellationRefusesUnissuedReconstructedReceiverWithoutTouchingItsStorage) {
+    NativeGroupOriginFixture f;
+    ASSERT_NO_FATAL_FAILURE(f.Init());
+    harken::PreparedPlan03GroupSlice prepared;
+    harken::Plan03GroupSliceIdentity oldId{};
+    ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 0, prepared, oldId));
+    harken::CommittedPlan03GroupSlice committed;
+    ASSERT_TRUE(f.pool.CommitPreparedPlan03GroupSlice(&prepared, &committed));
+    const auto oldIncarnation = f.arms.Incarnation();
+    std::destroy_at(&f.arms);
+    std::construct_at(&f.arms, 2);
+    ASSERT_NE(oldIncarnation, f.arms.Incarnation());
+    ASSERT_EQ(0u, f.arms.ConstructedRowCount());
+
+    std::array<harken::CommittedPlan03GroupSlice*, 1> originals{&committed};
+    std::array<harken::UnpublishedGroupCancellationHold, 1> groups;
+    std::array<harken::UnpublishedArmCancellationHold, 1> arms;
+    harken::UnpublishedGroupArmCancellationProof proof;
+    EXPECT_EQ(harken::UnpublishedGroupArmCancellationStatus::Busy,
+        f.pool.BeginUnpublishedGroupArmCancellation(originals, f.arms, groups, arms, &proof));
+    EXPECT_FALSE(proof.Valid());
+    EXPECT_TRUE(committed.Valid());
+    EXPECT_EQ(0u, f.arms.ConstructedRowCount());
+    EXPECT_EQ(0u, f.arms.RowStorageBytes());
+    EXPECT_EQ(0u, f.arms.RowCommittedBytes());
+    EXPECT_EQ(0u, f.arms.ScopeStorageBytes());
+    EXPECT_EQ(0u, f.arms.ScopeCommittedBytes());
+
+    ASSERT_TRUE(f.arms.PreparePendingImmediateGrouped(11, 1, 7, {}, {f.decision}, 0, &f.arm));
+    harken::PreparedPlan03GroupSlice fresh;
+    harken::Plan03GroupSliceIdentity freshId{};
+    ASSERT_NO_FATAL_FAILURE(f.Prepare(f.pool, 1, fresh, freshId));
+    const auto* current = MemberOriginAccess::Member(f.pool, freshId);
+    ASSERT_EQ(1u, MemberOriginAccess::Count(f.arms, f.arm));
+    ASSERT_TRUE(f.pool.RollbackCommittedPlan03GroupSlice(&committed));
+    EXPECT_EQ(1u, MemberOriginAccess::Count(f.arms, f.arm));
+    EXPECT_TRUE(MemberOriginAccess::Covers(f.arms, f.arm, std::array{current}));
+    ASSERT_TRUE(f.pool.CancelPreparedPlan03GroupSlice(&fresh));
+    EXPECT_EQ(0u, MemberOriginAccess::Count(f.arms, f.arm));
 }
 
 TEST(DecisionGroup, UnpublishedStorageRetentionRefusesActualGroupAndDecisionReaders) {

@@ -300,6 +300,22 @@ TEST(StreamPlayback, PlaysToEndReleasesSlotAndRecycles) {
     VnVoiceHandle voice = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
 
+    auto* ring = engine->streams.RingOf(0);
+    ASSERT_TRUE(ring->SourceEnded());
+    const auto* originalPlane = ring->planes[0];
+    const std::vector<float> buffered(originalPlane,
+                                       originalPlane + ring->capacity);
+    StreamSpec wider;
+    wider.soundId = harkentest::ObjectId(7199);
+    wider.sampleRate = kRate;
+    wider.channelCount = 2;
+    wider.chunkFrames = 256;
+    const auto widerPath = TempPath("stream_toend_wider.stream");
+    WriteFileBytes(widerPath, BuildStreamBytes(wider, {0.25f, -0.25f}));
+    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(wider.soundId, widerPath.c_str()));
+    EXPECT_EQ(originalPlane, ring->planes[0]);
+    EXPECT_TRUE(std::equal(buffered.begin(), buffered.end(), ring->planes[0]));
+
     Capture capture;
     harkentest::PumpAndCapture(engine, 2000 / kBlockFrames + 3, capture);
     HARKENTEST_ASSERT_NON_SILENT(capture.left);
@@ -2617,9 +2633,18 @@ TEST(StreamPlayback, ParkCaptureAllocationFailureIsAtomic) {
     engine->nullBackend.Pump(1);
     const VnVoiceHandle renderBefore = engine->ledger.ToRender(stream);
     const std::uint32_t commandRoom = engine->commands.FreeSlots();
+    engine->voices.SetStreamParkCommitPageLimitForTests(1);
+    VnVoiceHandle claimant = 0;
+    EXPECT_EQ(VN_NO_VOICE, PlayDefault(harkentest::ObjectId(9784), &claimant));
+    EXPECT_EQ(harken::VoiceLedger::HandleKind::Live,
+              engine->ledger.Classify(stream).kind);
+    EXPECT_EQ(renderBefore, engine->ledger.ToRender(stream));
+    EXPECT_EQ(0u, engine->ledger.ParkedCount());
+    EXPECT_EQ(commandRoom, engine->commands.FreeSlots());
+    EXPECT_EQ(0u, engine->voiceStolenCount);
+    engine->voices.SetStreamParkCommitPageLimitForTests(SIZE_MAX);
     harken::detail::ArmLogicAllocFaultForTests(
         1, harken::detail::LogicAllocSite::ParkCaptureStorage);
-    VnVoiceHandle claimant = 0;
     const VnResult refused = PlayDefault(harkentest::ObjectId(9784), &claimant);
     harken::detail::DisarmLogicAllocFaultForTests();
     EXPECT_EQ(VN_NO_VOICE, refused);
@@ -2629,6 +2654,7 @@ TEST(StreamPlayback, ParkCaptureAllocationFailureIsAtomic) {
     EXPECT_EQ(0u, engine->ledger.ParkedCount());
     EXPECT_EQ(commandRoom, engine->commands.FreeSlots());
     EXPECT_EQ(0u, engine->voiceStolenCount);
+    EXPECT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9784), &claimant));
 }
 
 TEST(StreamPlayback, ReturnSeedFailureLeavesWaiterAndExactPinIntact) {

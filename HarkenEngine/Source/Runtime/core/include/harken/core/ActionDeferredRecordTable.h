@@ -3,10 +3,10 @@
 
 #include "harken/core/ActionFiringTable.h"
 #include "harken/core/DeferredIntentPool.h"
+#include "harken/core/StableRowStorage.h"
 
 #include <cstdint>
 #include <utility>
-#include <vector>
 
 namespace harken {
 
@@ -203,7 +203,7 @@ public:
     ActionDeferredRecordState State(
         ActionDeferredRecordToken token) const noexcept;
     std::uint32_t Capacity() const noexcept {
-        return static_cast<std::uint32_t>(rows_.size());
+        return rows_.Capacity();
     }
     std::uint32_t PreparedCount() const noexcept { return preparedCount_; }
     std::uint32_t LiveCount() const noexcept { return liveCount_; }
@@ -213,6 +213,9 @@ public:
     }
     bool SetFreeGenerationForTests(std::uint32_t slot,
                                    std::uint64_t generation) noexcept;
+    void SetCommitPageLimitForTests(std::size_t pages) noexcept {
+        rows_.SetCommitPageLimitForTests(pages);
+    }
     bool SetTargetFingerprintForTests(ActionDeferredRecordToken token,
                                       std::uint64_t fingerprint) noexcept;
 
@@ -240,7 +243,7 @@ private:
 
     std::uint64_t nextPreparedPairMarker_ = 0;
     std::uint32_t preparedPairLoans_ = 0;
-    std::vector<Row> rows_;
+    StableRowStorage<Row> rows_;
     std::uint32_t preparedCount_ = 0;
     std::uint32_t liveCount_ = 0;
     std::uint32_t highWater_ = 0;

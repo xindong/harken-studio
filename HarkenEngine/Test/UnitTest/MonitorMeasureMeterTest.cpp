@@ -308,7 +308,9 @@ TEST(MonitorMeasure, MeterDispatchPublishesSamplePeak) {
         std::vector<std::uint32_t> validity;
         std::vector<std::uint32_t> lufs;
     } collected;
-    harken::monitor::DispatchDerivedAudioChunk(
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(
         &request, 1, &tap, 1, packed.data(), packedBytes,
         [](void* raw, const harken::monitor::DerivedEmit& emit) {
             auto* typed = static_cast<Collected*>(raw);
@@ -357,7 +359,9 @@ TEST(MonitorMeasure, MeterDispatchTruePeakNumericBeforeRmsWindow) {
     struct Collected {
         std::vector<std::uint32_t> validity;
     } collected;
-    harken::monitor::DispatchDerivedAudioChunk(
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(
         &request, 1, &tap, 1, packed.data(), packedBytes,
         [](void* raw, const harken::monitor::DerivedEmit& emit) {
             auto* typed = static_cast<Collected*>(raw);
@@ -390,6 +394,8 @@ TEST(MonitorMeasure, MomentaryDispatchPublishesWarmupNumericAndRearmsAfterDiscon
         VnMonitorMeterPayload payload{};
         std::uint32_t count = 0;
     } reading;
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
     const auto submit = [&](std::uint64_t begin, std::uint64_t segment, std::uint64_t plan,
                             bool invalid = false) {
         std::array<float, 2048> samples{};
@@ -408,7 +414,7 @@ TEST(MonitorMeasure, MomentaryDispatchPublishesWarmupNumericAndRearmsAfterDiscon
             begin, begin + 1024, samples.data(), 1024, segment);
         ASSERT_NE(0u, bytes);
         const auto count = reading.count;
-        harken::monitor::DispatchDerivedAudioChunk(
+        derived.Dispatch(
             &request, 1, &tap, 1, packed.data(), bytes,
             [](void* raw, const harken::monitor::DerivedEmit& emit) {
                 auto& out = *static_cast<Reading*>(raw);
@@ -478,7 +484,9 @@ TEST(MonitorMeasure, MeterDispatchSkipsGainReductionWithoutIdentity) {
         48000, 1, 0, 0, 4, samples.data(), 4);
     ASSERT_NE(0u, packedBytes);
     std::uint32_t count = 0;
-    harken::monitor::DispatchDerivedAudioChunk(
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(
         &request, 1, &tap, 1, packed.data(), packedBytes,
         [](void* raw, const harken::monitor::DerivedEmit&) {
             ++*static_cast<std::uint32_t*>(raw);
@@ -509,7 +517,9 @@ TEST(MonitorMeasure, MeterDispatchPublishesGainReductionWithIdentity) {
     struct Collected {
         std::vector<std::uint32_t> kinds;
     } collected;
-    harken::monitor::DispatchDerivedAudioChunk(
+    harken::monitor::DerivedDrainState derived;
+    ASSERT_TRUE(derived.Prepare(&request, 1, 48000));
+    derived.Dispatch(
         &request, 1, &tap, 1, packed.data(), packedBytes,
         [](void* raw, const harken::monitor::DerivedEmit& emit) {
             auto* typed = static_cast<Collected*>(raw);

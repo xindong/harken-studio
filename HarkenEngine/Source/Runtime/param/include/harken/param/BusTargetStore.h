@@ -16,11 +16,12 @@
 //
 // Storage is maxBuses x kBusTargetCount x kSlotCountPerTarget slots plus
 // one publication record per (bus, target), preallocated at construction;
-// no allocation and no locks after init. Logic thread only.
+// retiring targets prepare before their first claim. Logic thread only.
 #ifndef HARKEN_PARAM_BUS_TARGET_STORE_H
 #define HARKEN_PARAM_BUS_TARGET_STORE_H
 
 #include "harken/core/VariableSliceTable.h"
+#include "harken/core/StableRowStorage.h"
 #include "harken/param/ParamTargetTable.h"
 
 #include <cstddef>
@@ -44,6 +45,7 @@ public:
 
     explicit BusTargetStore(std::uint32_t maxBuses,
                             std::uint32_t retiringTargetCapacity = 0);
+    BusTargetStore(const BusTargetStore& other);
 
     // Writes / clears one slot of one bus target, addressed by dense bus
     // index. Out-of-range indices are ignored (the callers own bus
@@ -81,6 +83,7 @@ public:
                          std::uint32_t slot, float domainValue) const;
 
     std::uint32_t MaxBuses() const { return m_maxBuses; }
+    bool HasVariableContributions() const noexcept { return m_variableSlotCount != 0; }
 
     // --- publication bookkeeping (sections 9.2 / 10) ---
 
@@ -124,6 +127,10 @@ public:
     // value cleans quietly and publishes nothing.
     template <typename Fn>
     void FlushDirty(Fn&& fn) {
+        if (m_demandCount == 0) {
+            ++m_flushTick;
+            return;
+        }
         const std::size_t targetCount =
             static_cast<std::size_t>(m_maxBuses) * kBusTargetCount;
         std::size_t nextCursor = m_flushCursor;
@@ -262,6 +269,12 @@ public:
                                  std::uint32_t busGeneration) noexcept;
     std::uint32_t ActiveGeneration(std::uint32_t busIndex) const noexcept;
     std::uint32_t RetiringTargetCountForTests() const noexcept;
+    bool PrepareRetiringTargetStorage() noexcept {
+        return m_retiringTargets.ConstructThrough(m_retiringTargets.Capacity());
+    }
+    void SetRetiringTargetCommitPageLimitForTests(std::size_t pages) noexcept {
+        m_retiringTargets.SetCommitPageLimitForTests(pages);
+    }
 
     // Returns one bus's rows to their initial state: every combine slot
     // inactive and the publication record re-seeded at the neutral base with
@@ -376,12 +389,13 @@ private:
     std::uint32_t m_projectionDemandCount = 0;
     std::uint32_t m_projectionPendingInputMarks = 0;
     std::vector<std::uint32_t> m_activeGenerations;
-    std::vector<RetiringTarget> m_retiringTargets;
+    StableRowStorage<RetiringTarget> m_retiringTargets;
     std::vector<float> m_meterProbeAccum;
     std::vector<std::uint32_t> m_meterProbeRampMs;
     std::vector<std::uint32_t> m_meterProbeDepartureRampMs;
     std::vector<std::uint8_t> m_meterProbeSeen;
     std::uint32_t m_demandCount = 0;
+    std::uint32_t m_variableSlotCount = 0;
     std::uint32_t m_pendingInputMarks = 0;
     // Starts above the PublishState default so a never-stamped target can
     // never alias the first tick (the voice-side m_flushTick precedent).
