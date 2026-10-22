@@ -1040,7 +1040,7 @@ TEST_F(EngineIntegrationsPageTest, QuickSdkChangePreservesSafetyAndHandlesSameVe
     auto* table = page->findChild<QTableWidget*>(QStringLiteral("engineIntegrationsTable"));
     ASSERT_NE(table, nullptr);
     ASSERT_TRUE(QTest::qWaitFor([&]() { return table->item(0, 4)->text().contains("1.0.0"); }, 5000));
-    EXPECT_TRUE(table->item(0, 4)->toolTip().contains(studio.buildId));
+    EXPECT_TRUE(table->item(0, 4)->toolTip().isEmpty());
     const QString screenshots = qEnvironmentVariable("HARKEN_HUB_TEST_SCREENSHOT_DIR");
     if (!screenshots.isEmpty())
         EXPECT_TRUE(page->grab().save(QDir(screenshots).filePath("sdk-quick-list-" + language + ".png")));
@@ -1173,24 +1173,25 @@ TEST_F(EngineIntegrationsPageTest, QuickSdkChangePreservesSafetyAndHandlesSameVe
         table->cellWidget(0, table->columnCount() - 1)->findChild<QToolButton*>()->click();
         EXPECT_TRUE(inspected);
     };
-    inspectCurrentSource("Files match installation", "unchanged");
+    inspectCurrentSource("Normal", "unchanged");
     writeFile(QDir(installed).filePath(runtime), "customized-runtime");
     inspectCurrentSource("Files modified", "modified");
-    EXPECT_TRUE(table->item(0, 3)->toolTip().contains(runtime));
+    EXPECT_EQ(table->item(0, 3)->toolTip(), QCoreApplication::translate(
+        "HarkenHub", "Current SDK installation path:\n%1").arg("Packages/com.harken.core"));
     EXPECT_EQ(read(QDir(installed).filePath(runtime)), "customized-runtime");
     const QString manifestPath = installed + "/harken-integration.json";
     const QByteArray manifest = read(manifestPath);
     ASSERT_TRUE(QFile::remove(manifestPath));
     inspectCurrentSource("Files modified and missing", "modified-and-missing");
-    EXPECT_TRUE(table->item(0, 3)->toolTip().contains("harken-integration.json"));
-    EXPECT_TRUE(table->item(0, 3)->toolTip().contains(runtime));
+    EXPECT_EQ(table->item(0, 3)->toolTip(), QCoreApplication::translate(
+        "HarkenHub", "Current SDK installation path:\n%1").arg("Packages/com.harken.core"));
     EXPECT_FALSE(QFileInfo::exists(manifestPath));
     EXPECT_EQ(read(QDir(installed).filePath(runtime)), "customized-runtime");
     writeFile(QDir(installed).filePath(runtime), "updated-runtime");
     inspectCurrentSource("Files missing", "missing");
     EXPECT_FALSE(QFileInfo::exists(manifestPath));
     writeFile(manifestPath, manifest);
-    inspectCurrentSource("Files match installation", "restored");
+    inspectCurrentSource("Normal", "restored");
     writeFile(QDir(installed).filePath(runtime), "customized-runtime");
     const QString receipt = installed + "/.harken-integration-state.json";
     const QByteArray installedReceipt = read(receipt);

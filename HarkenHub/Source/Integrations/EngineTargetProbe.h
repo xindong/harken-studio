@@ -20,6 +20,7 @@ enum class SdkContentState
 {
     NotChecked,
     MatchesInstallation,
+    OptionalFilesMissing,
     Modified,
     Missing,
     ModifiedAndMissing,

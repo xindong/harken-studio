@@ -1,6 +1,7 @@
 #include "UnityIntegrationService.h"
 #include "UnityInstallation.h"
 #include "Integrations/HubUnityIntegrationService.h"
+#include "Integrations/EngineTargetProbe.h"
 #include "Integrations/Unity/UnityProjectAccess.h"
 #include "Support/UnityProjectLock.h"
 #include "Platform/PlatformPaths.h"
@@ -2275,6 +2276,204 @@ TEST(UnityIntegrationService, WriteProtectionBlocksMutationBeforeAndAfterReview)
         request.confirmRemoval = removing;
         EXPECT_TRUE(service.run(request).success);
     }
+}
+
+TEST(UnityIntegrationService, LineEndingConversionsPreserveIntegrityAndReadOnlyContentAcrossUpdates)
+{
+    for (const int installedEnding : {0, 1, 2}) {
+        SCOPED_TRACE(installedEnding);
+        QTemporaryDir dir;
+        ASSERT_TRUE(dir.isValid());
+        const QString project = makeUnityProject(dir.filePath("Game"));
+        const QString source = makeCompleteSdk(dir.filePath("SDK"));
+        const QString relative = "Runtime/Generated/HarkenAbi.g.cs";
+        const QByteArray lf = QByteArray(1024 * 1024 - 1, ' ') + "\nclass Example {}\n";
+        QByteArray crlf = lf;
+        crlf.replace("\n", "\r\n");
+        QByteArray mixed = lf;
+        mixed.replace(mixed.indexOf('\n'), 1, "\r\n");
+        const QList<QByteArray> endings = {lf, crlf, mixed};
+        writeFile(source + "/" + relative, endings[installedEnding]);
+        VNX::UnityIntegrationService service;
+        VNX::UnityIntegrationService::Request request;
+        request.unityProjectPath = project;
+        request.sdkSourcePath = source;
+        ASSERT_TRUE(service.run(request).success);
+        const QString installed = project + "/Packages/com.harken.core";
+        if (installedEnding < 2) {
+            const QString statePath = installed + "/.harken-integration-state.json";
+            auto state = QJsonDocument::fromJson(readFile(statePath)).object();
+            state.remove("text_lf_sha256");
+            writeFile(statePath, QJsonDocument(state).toJson());
+        }
+        const QByteArray converted = endings[(installedEnding + 1) % endings.size()];
+        writeFile(installed + "/" + relative, converted);
+        const auto permissions = QFileInfo(installed + "/" + relative).permissions();
+        const auto restore = qScopeGuard([&]() { QFile::setPermissions(installed + "/" + relative, permissions); });
+        ASSERT_TRUE(QFile::setPermissions(installed + "/" + relative, QFile::ReadOwner | QFile::ReadUser));
+        VNH::UnityIntegrationRequest verify;
+        verify.unityProjectPath = project;
+        verify.verifyInstalledOnly = true;
+        auto inspection = VNH::HubUnityIntegrationService::run(verify);
+        ASSERT_TRUE(inspection.success);
+        EXPECT_FALSE(inspection.hasWarnings);
+        EXPECT_TRUE(inspection.modifiedFiles.isEmpty());
+        EXPECT_EQ(inspection.lineEndingFiles, QStringList{relative});
+        EXPECT_TRUE(inspection.steps.back().details.join('\n').contains("LF/CRLF"));
+        request.checkOnly = true;
+        auto review = service.run(request);
+        ASSERT_TRUE(review.success) << review.steps[2].cause.toStdString();
+        EXPECT_TRUE(review.targetAlreadyCurrent);
+        EXPECT_EQ(review.filesChanged, 0);
+        EXPECT_EQ(review.lineEndingFiles, QStringList{relative});
+        EXPECT_TRUE(review.steps[2].details.join('\n').contains("LF/CRLF"));
+        EXPECT_TRUE(readFile(review.textReportPath).contains("LF/CRLF"));
+        EXPECT_TRUE(readFile(review.textReportPath).contains(relative.toUtf8()));
+        EXPECT_EQ(readFile(installed + "/" + relative), converted);
+        writeFile(source + "/Runtime/Generated/HarkenNative.g.cs", "updated implementation\n");
+        review = service.run(request);
+        ASSERT_TRUE(review.success) << review.steps[2].cause.toStdString();
+        EXPECT_EQ(review.filesChanged, 1);
+        request.checkOnly = false;
+        request.confirmTargetChanges = true;
+        request.approvedPlanHash = review.planHash;
+        const auto updated = service.run(request);
+        ASSERT_TRUE(updated.success) << updated.steps[3].cause.toStdString();
+        EXPECT_EQ(readFile(installed + "/" + relative), converted);
+        EXPECT_EQ(readFile(installed + "/Runtime/Generated/HarkenNative.g.cs"), "updated implementation\n");
+        EXPECT_TRUE(VNH::HubUnityIntegrationService::run(verify).success);
+        ASSERT_TRUE(QFile::setPermissions(installed + "/" + relative, permissions));
+        request.checkOnly = true;
+        request.approvedPlanHash.clear();
+        for (const QByteArray& ending : endings) {
+            writeFile(installed + "/" + relative, ending);
+            inspection = VNH::HubUnityIntegrationService::run(verify);
+            EXPECT_TRUE(inspection.success);
+            EXPECT_TRUE(inspection.modifiedFiles.isEmpty());
+            review = service.run(request);
+            EXPECT_TRUE(review.success);
+            EXPECT_TRUE(review.modifiedFiles.isEmpty());
+            EXPECT_TRUE(review.targetAlreadyCurrent);
+            EXPECT_EQ(review.filesChanged, 0);
+        }
+        writeFile(installed + "/" + relative, "class Modified {}\n");
+        EXPECT_FALSE(VNH::HubUnityIntegrationService::run(verify).success);
+        review = service.run(request);
+        EXPECT_TRUE(review.modifiedFiles.contains(relative));
+        EXPECT_EQ(review.filesChanged, 1);
+    }
+}
+
+TEST(UnityIntegrationService, MissingDocumentationAndSamplesDoNotBlockVerificationOrUpdates)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString project = makeUnityProject(dir.filePath("Game"));
+    const QString source = makeCompleteSdk(dir.filePath("SDK"));
+    const QStringList optional = {"Documentation~/Reference.md", "Samples~/Demo/Sample.cs"};
+    auto manifest = integrationManifest();
+    auto required = manifest["required_files"].toArray();
+    for (const auto& path : optional) {
+        writeFile(source + "/" + path, "example\n");
+        required.append(path);
+    }
+    manifest["required_files"] = required;
+    writeFile(source + "/harken-integration.json", QJsonDocument(manifest).toJson());
+    VNX::UnityIntegrationService service;
+    VNX::UnityIntegrationService::Request request;
+    request.unityProjectPath = project;
+    request.sdkSourcePath = source;
+    ASSERT_TRUE(service.run(request).success);
+    const QString installed = project + "/Packages/com.harken.core";
+    for (const auto& path : optional) ASSERT_TRUE(QFile::remove(installed + "/" + path));
+    VNH::UnityIntegrationRequest verify;
+    verify.unityProjectPath = project;
+    verify.verifyInstalledOnly = true;
+    const auto inspection = VNH::HubUnityIntegrationService::run(verify);
+    ASSERT_TRUE(inspection.success);
+    EXPECT_FALSE(inspection.hasWarnings);
+    EXPECT_TRUE(inspection.missingFiles.isEmpty());
+    EXPECT_EQ(inspection.missingOptionalFiles, optional);
+    EXPECT_TRUE(inspection.steps.back().details.join('\n').contains(optional[0]));
+    VNH::EngineTargetRecord target;
+    ASSERT_TRUE(VNH::EngineTargetProbe::resolve(VNH::EngineKind::Unity, project, &target));
+    const auto observation = VNH::EngineTargetProbe::observe(target, true);
+    EXPECT_EQ(observation.sdkContentState, VNH::SdkContentState::OptionalFilesMissing);
+    EXPECT_TRUE(observation.canChangeSdk);
+    request.checkOnly = true;
+    const auto repair = service.run(request);
+    ASSERT_TRUE(repair.success);
+    EXPECT_TRUE(repair.missingFiles.isEmpty());
+    EXPECT_EQ(repair.filesAdded, optional.size());
+    request.checkOnly = false;
+    request.confirmTargetChanges = true;
+    request.approvedPlanHash = repair.planHash;
+    ASSERT_TRUE(service.run(request).success);
+    for (const auto& path : optional) {
+        EXPECT_EQ(readFile(installed + "/" + path), "example\n");
+        ASSERT_TRUE(QFile::remove(installed + "/" + path));
+    }
+    request.approvedPlanHash.clear();
+    for (const auto& path : optional) ASSERT_TRUE(QFile::remove(source + "/" + path));
+    writeFile(source + "/Runtime/Generated/HarkenNative.g.cs", "updated implementation\n");
+    request.checkOnly = true;
+    auto review = service.run(request);
+    ASSERT_TRUE(review.success) << review.steps[1].cause.toStdString();
+    EXPECT_TRUE(review.missingFiles.isEmpty());
+    EXPECT_EQ(review.missingOptionalFiles, optional);
+    request.checkOnly = false;
+    request.confirmTargetChanges = true;
+    request.approvedPlanHash = review.planHash;
+    ASSERT_TRUE(service.run(request).success);
+    EXPECT_TRUE(VNH::HubUnityIntegrationService::run(verify).success);
+    EXPECT_EQ(readFile(installed + "/Runtime/Generated/HarkenNative.g.cs"), "updated implementation\n");
+    ASSERT_TRUE(QFile::remove(source + "/Runtime/Harken.Core.asmdef"));
+    request.checkOnly = true;
+    EXPECT_FALSE(service.run(request).success);
+    ASSERT_TRUE(QFile::remove(installed + "/Runtime/Harken.Core.asmdef"));
+    const auto missingRequired = VNH::HubUnityIntegrationService::run(verify);
+    EXPECT_FALSE(missingRequired.success);
+    EXPECT_EQ(missingRequired.missingFiles, QStringList{"Runtime/Harken.Core.asmdef"});
+}
+
+TEST(UnityIntegrationService, LineEndingToleranceDoesNotHideBinaryOrActualTextChanges)
+{
+    QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString project = makeUnityProject(dir.filePath("Game"));
+    const QString source = makeCompleteSdk(dir.filePath("SDK"));
+    const QString binary = hostRuntimeRelativePath();
+    const QString text = "Runtime/Generated/HarkenAbi.g.cs";
+    const QString invalidText = "Runtime/Generated/HarkenTypes.g.cs";
+    writeFile(source + "/" + binary, "native\nbytes\n");
+    writeFile(source + "/" + text, "class Original {}\n");
+    writeFile(source + "/" + invalidText, QByteArray("invalid\xff\n", 9));
+    VNX::UnityIntegrationService service;
+    VNX::UnityIntegrationService::Request request;
+    request.unityProjectPath = project;
+    request.sdkSourcePath = source;
+    ASSERT_TRUE(service.run(request).success);
+    const QString installed = project + "/Packages/com.harken.core";
+    writeFile(installed + "/" + binary, "native\r\nbytes\r\n");
+    writeFile(installed + "/" + text, "class Modified {}\r\n");
+    writeFile(installed + "/" + invalidText, QByteArray("invalid\xff\r\n", 10));
+    VNH::UnityIntegrationRequest verify;
+    verify.unityProjectPath = project;
+    verify.verifyInstalledOnly = true;
+    const auto inspection = VNH::HubUnityIntegrationService::run(verify);
+    EXPECT_FALSE(inspection.success);
+    EXPECT_TRUE(inspection.lineEndingFiles.isEmpty());
+    EXPECT_TRUE(inspection.modifiedFiles.contains(binary));
+    EXPECT_TRUE(inspection.modifiedFiles.contains(text));
+    EXPECT_TRUE(inspection.modifiedFiles.contains(invalidText));
+    request.checkOnly = true;
+    const auto review = service.run(request);
+    ASSERT_TRUE(review.success);
+    EXPECT_EQ(review.filesChanged, 3);
+    EXPECT_TRUE(review.modifiedFiles.contains(binary));
+    EXPECT_TRUE(review.modifiedFiles.contains(text));
+    EXPECT_TRUE(review.modifiedFiles.contains(invalidText));
+    EXPECT_EQ(readFile(installed + "/" + binary), "native\r\nbytes\r\n");
 }
 
 TEST(UnityIntegrationService, ReadOnlyFilesOutsideTheChangeSetDoNotBlockSdkOperations)

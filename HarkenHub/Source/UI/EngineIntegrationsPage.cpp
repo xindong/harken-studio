@@ -169,7 +169,8 @@ QString sdkContentText(SdkContentState state)
 {
     switch (state) {
         case SdkContentState::MatchesInstallation:
-            return QCoreApplication::translate("HarkenHub", "Files match installation");
+        case SdkContentState::OptionalFilesMissing:
+            return QCoreApplication::translate("HarkenHub", "Normal");
         case SdkContentState::Modified:
             return QCoreApplication::translate("HarkenHub", "Files modified");
         case SdkContentState::Missing:
@@ -1306,14 +1307,11 @@ void EngineIntegrationsPage::populateList()
                 statusText += contentText;
             }
             auto* statusItem = new QTableWidgetItem(statusText);
-            QString statusDetails = localizeIntegrationText(observation.error);
-            if (observation.error.isEmpty() && !observation.sdkInstallPath.isEmpty())
-                statusDetails = QCoreApplication::translate(
-                    "HarkenHub", "Current SDK installation path:\n%1").arg(observation.sdkInstallPath);
-            if (!observation.sdkContentDetails.isEmpty())
-                statusDetails += QLatin1Char('\n') + observation.sdkContentDetails;
-            statusItem->setToolTip(statusDetails);
+            if (!observation.sdkInstallPath.isEmpty())
+                statusItem->setToolTip(QCoreApplication::translate(
+                    "HarkenHub", "Current SDK installation path:\n%1").arg(observation.sdkInstallPath));
             if (observation.sdkContentState != SdkContentState::NotChecked
+                && observation.sdkContentState != SdkContentState::OptionalFilesMissing
                 && observation.sdkContentState != SdkContentState::MatchesInstallation)
                 statusItem->setForeground(QColor(QStringLiteral("#E3B341")));
             table_->setItem(row, kSdkStatusColumn, statusItem);
@@ -1326,9 +1324,7 @@ void EngineIntegrationsPage::populateList()
                     ? QCoreApplication::translate("HarkenHub", "Not installed")
                     : QCoreApplication::translate("HarkenHub", "Unknown");
             QString newestVersion = observation.integrationVersion;
-            QStringList sourceLabels;
             for (const auto& source : sources) {
-                sourceLabels << source.label;
                 if (compareSdkVersions(source.version, newestVersion) > 0)
                     newestVersion = source.version;
             }
@@ -1339,11 +1335,9 @@ void EngineIntegrationsPage::populateList()
                     "HarkenHub", "Update available: %1").arg(newestVersion);
             auto* versionItem = new QTableWidgetItem(versionText);
             if (newer) versionItem->setForeground(QColor(QStringLiteral("#00D9EF")));
-            versionItem->setToolTip(sourceLabels.isEmpty()
-                ? QCoreApplication::translate("HarkenHub", "No local SDK sources are available.")
-                : QCoreApplication::translate("HarkenHub", "Local SDK packages available: %1").arg(sources.size())
-                    + QLatin1Char('\n') + sourceLabels.join(QLatin1Char('\n')) + QLatin1Char('\n')
-                    + QCoreApplication::translate("HarkenHub", "SDKs with the same version number can contain different files. Select a source to check its contents."));
+            if (newer)
+                versionItem->setToolTip(QCoreApplication::translate(
+                    "HarkenHub", "Latest local SDK version: %1").arg(newestVersion));
             table_->setItem(row, kSdkVersionColumn, versionItem);
         }
 
@@ -1452,6 +1446,7 @@ void EngineIntegrationsPage::populateQuickSdkMenu(QMenu* change, const QString& 
             if (installedSource) {
                 label += QCoreApplication::translate("HarkenHub", " (Installed source)");
                 if (observation.sdkContentState != SdkContentState::NotChecked
+                    && observation.sdkContentState != SdkContentState::OptionalFilesMissing
                     && observation.sdkContentState != SdkContentState::MatchesInstallation)
                     label += QStringLiteral(" — ") + sdkContentText(observation.sdkContentState);
             } else if (sameVersion)
@@ -1474,8 +1469,6 @@ void EngineIntegrationsPage::populateQuickSdkMenu(QMenu* change, const QString& 
                 tooltip += QLatin1Char('\n') + QCoreApplication::translate("HarkenHub", "This is the source recorded for the installed SDK. File verification compares the installed files with their installation record; the source folder may have changed since installation.");
             if (sameVersion)
                 tooltip += QLatin1Char('\n') + QCoreApplication::translate("HarkenHub", "SDKs with the same version number can contain different files. Select a source to check its contents.");
-            if (!observation.sdkContentDetails.isEmpty())
-                tooltip += QLatin1Char('\n') + observation.sdkContentDetails;
             action->setToolTip(tooltip);
         }
         if (sources.isEmpty())
@@ -3222,7 +3215,7 @@ void EngineIntegrationsPage::runUnityRemoval()
         } else if (result.hasWarnings) {
             setSummaryText(QCoreApplication::translate(
                 "HarkenHub",
-                "The Unity SDK and runtimes were backed up and removed with a cleanup warning. Backup: %1")
+                "The Unity SDK and runtimes were backed up and removed. Review is recommended for cleanup details. Backup: %1")
                 .arg(QDir::toNativeSeparators(result.removalBackupPath)));
         } else {
             setSummaryText(QCoreApplication::translate(
@@ -3295,7 +3288,7 @@ bool EngineIntegrationsPage::runUnity(
     } else if (result.targetAlreadyCurrent) {
         summary = QCoreApplication::translate("HarkenHub", "The Unity SDK is already current and passed verification.");
     } else if (result.hasWarnings) {
-        summary = QCoreApplication::translate("HarkenHub", "SDK integration completed with warnings. Review the highlighted steps.");
+        summary = QCoreApplication::translate("HarkenHub", "SDK integration completed. Review is recommended for the highlighted steps.");
     } else {
         summary = updating
             ? QCoreApplication::translate("HarkenHub", "SDK update complete. Installed files passed verification.")
@@ -3554,7 +3547,7 @@ void EngineIntegrationsPage::updateSdkCheckResults()
     sdkSelectionDetails_->setHtml(log);
     sdkResultsTabs_->setTabText(1, sdkPhase_ == SdkPhase::Applying
         ? QCoreApplication::translate("HarkenHub", "Results and Logs")
-        : warnings > 0 ? QCoreApplication::translate("HarkenHub", "Check Log (warnings: %1)").arg(warnings)
+        : warnings > 0 ? QCoreApplication::translate("HarkenHub", "Check Log (review recommended: %1)").arg(warnings)
                        : QCoreApplication::translate("HarkenHub", "Check Log"));
     sdkResultsTabs_->setCurrentIndex(failure || !comparison ? 1 : 0);
     if (failure)
@@ -3640,7 +3633,7 @@ void EngineIntegrationsPage::updateSdkCheckResults()
             .arg(failure->summary.toHtmlEscaped()));
     if (warnings > 0)
         summary << QStringLiteral("<a href='log' style='color:#F0C36A'>%1</a>").arg(
-            QCoreApplication::translate("HarkenHub", "Items needing attention: %1. View check log.")
+            QCoreApplication::translate("HarkenHub", "Review recommended for %1 item(s). View check log.")
                 .arg(warnings).toHtmlEscaped());
     sdkDiffSummary_->setText(summary.join(QStringLiteral("<br>")));
 }
@@ -3734,7 +3727,7 @@ QString EngineIntegrationsPage::statusText(ResultStatus status) const
         case ResultStatus::Succeeded:
             return QCoreApplication::translate("HarkenHub", "Succeeded");
         case ResultStatus::Warning:
-            return QCoreApplication::translate("HarkenHub", "Warning");
+            return QCoreApplication::translate("HarkenHub", "Review recommended");
         case ResultStatus::Failed:
             return QCoreApplication::translate("HarkenHub", "Failed");
         case ResultStatus::Skipped:

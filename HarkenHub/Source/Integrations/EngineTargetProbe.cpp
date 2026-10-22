@@ -341,11 +341,14 @@ EngineTargetObservation EngineTargetProbe::observe(const EngineTargetRecord& rec
         const auto inspection = HubUnityIntegrationService::run(request);
         result.sdkContentState = inspection.success ? SdkContentState::MatchesInstallation
                                                    : SdkContentState::Unverified;
+        if (inspection.success && !inspection.missingOptionalFiles.isEmpty())
+            result.sdkContentState = SdkContentState::OptionalFilesMissing;
         modified = !inspection.modifiedFiles.isEmpty();
         missing = !inspection.missingFiles.isEmpty();
         QStringList details;
         for (const auto& step : inspection.steps) {
-            if (step.status != UnityIntegrationStepStatus::Failed) continue;
+            if (step.status != UnityIntegrationStepStatus::Failed
+                && (inspection.missingOptionalFiles.isEmpty() || step.id != QStringLiteral("verify"))) continue;
             details << step.summary;
             if (!step.cause.isEmpty()) details << step.cause;
             details << step.details;

@@ -159,6 +159,10 @@
 </context>
 <context>
     <name>HubReleaseNotes</name>
+    <message><source>Integration-list tooltips show only the SDK installation path. Version tooltips appear only when a newer local SDK is available and show its version number.</source><translation>集成列表的 SDK 状态悬浮提示仅显示安装路径。版本悬浮提示仅在本地存在可更新 SDK 时出现，并显示最新版本号。</translation></message>
+    <message><source>SDK check logs retain the file list and count for line-ending-only differences. Non-blocking items are labeled Review recommended. The SDK status shows normal for unchanged files, line-ending-only differences, and missing documentation or samples, with details kept in the check log.</source><translation>SDK 检查日志保留纯换行差异的文件列表和数量，非阻塞提示统一表述为“建议关注”。文件一致、仅换行差异或仅文档和示例缺失时，列表统一显示“正常”，详情保留在检查日志中。</translation></message>
+    <message><source>Unity SDK checks and updates recognize LF, CRLF, and mixed line endings as unchanged text, including conversions after an update, avoiding false modification warnings and unnecessary write-access checks. Binary files and actual content changes remain strictly checked.</source><translation>Unity SDK 检查与更新将 LF、CRLF 及混合换行之间的纯换行差异视为内容一致，更新后再次转换换行也不会误报文件修改或触发不必要的写入权限检查。二进制文件和实际内容变化仍严格校验。</translation></message>
+    <message><source>Missing Unity SDK documentation and samples are reported separately and no longer fail SDK verification or block updates. Required SDK files retain their integrity and write-protection checks.</source><translation>Unity SDK 的文档和示例缺失会单独说明，不再导致 SDK 验证失败或阻塞更新。必要 SDK 文件仍保留完整性及写保护检查。</translation></message>
     <message><source>Engine Integrations shows the installed SDK version and file status. The quick-change menu lists local SDK versions and identifies the current source.</source><translation>集成列表显示已安装的 SDK 版本和文件状态。快捷更换菜单列出本地 SDK 版本，并标明当前使用的来源。</translation></message>
     <message><source>SDK changes keep safety checks, confirmation, progress, and results in one window, with clear downgrade warnings and separate lists of modified and missing files.</source><translation>更换 SDK 的安全检查、确认、执行进度和结果集中在同一窗口，明确提示降级，并分别列出已修改和缺失的文件。</translation></message>
     <message><source>SDK updates, repairs, and removal check write protection before confirmation and again before changing files. Failures highlight read-only or inaccessible files and explain how to restore write access.</source><translation>SDK 更新、修复和卸载在确认前及实际修改前检查写入权限。失败时醒目标出只读或无法写入的文件，并说明如何恢复写入权限。</translation></message>
@@ -791,6 +795,10 @@ Continue?</source>
 </context>
 <context>
     <name>HarkenHub</name>
+    <message><source>Latest local SDK version: %1</source><translation>本地最新 SDK 版本：%1</translation></message>
+    <message><source>%1 SDK text file(s) differ only in LF/CRLF line endings; contents are unchanged.</source><translation>%1 个 SDK 文本文件仅换行格式不同（LF/CRLF），内容一致。</translation></message>
+    <message><source>Missing documentation/sample files (does not block SDK updates):</source><translation>缺失的文档/示例文件（不影响 SDK 更新）：</translation></message>
+    <message><source>%1 documentation/sample file(s) are missing; SDK updates can continue.</source><translation>%1 个文档/示例文件缺失，不影响 SDK 更新。</translation></message>
     <message><source>Not a directory: %1</source><translation>此路径不是目录：%1</translation></message>
     <message><source>Directories without required create or rename access:
 %1</source><translation>以下目录缺少创建或重命名所需的权限：
@@ -823,7 +831,7 @@ Reason: %2</source><translation>%1
     <message><source>Current SDK installation path:
 %1</source><translation>SDK 当前安装路径：
 %1</translation></message>
-    <message><source>Files match installation</source><translation>文件与安装时一致</translation></message>
+    <message><source>Normal</source><translation>正常</translation></message>
     <message><source>Checking SDK status...</source><translation>正在检查 SDK 状态…</translation></message>
     <message><source>Files modified</source><translation>文件已修改</translation></message>
     <message><source>Files missing</source><translation>文件缺失</translation></message>
@@ -2631,8 +2639,8 @@ Diagnostic log: %2</source>
         <translation>检查日志</translation>
     </message>
     <message>
-        <source>Check Log (warnings: %1)</source>
-        <translation>检查日志（%1 项提醒）</translation>
+        <source>Check Log (review recommended: %1)</source>
+        <translation>检查日志（%1 项建议关注）</translation>
     </message>
     <message>
         <source>SDK version: %1 → %2</source>
@@ -2659,8 +2667,8 @@ Diagnostic log: %2</source>
         <translation>无需更改 SDK 文件。</translation>
     </message>
     <message>
-        <source>Items needing attention: %1. View check log.</source>
-        <translation>有 %1 项需要留意，查看检查日志。</translation>
+        <source>Review recommended for %1 item(s). View check log.</source>
+        <translation>有 %1 项建议关注，查看检查日志。</translation>
     </message>
     <message>
         <source>SDK check failed. Review the check log for details.</source>
@@ -3476,8 +3484,8 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1142"/>
-        <source>The Unity SDK and runtimes were backed up and removed with a cleanup warning. Backup: %1</source>
-        <translation>Unity SDK 和 Runtime 已备份并移除，但清理过程存在警告。备份：%1</translation>
+        <source>The Unity SDK and runtimes were backed up and removed. Review is recommended for cleanup details. Backup: %1</source>
+        <translation>Unity SDK 和运行库已备份并移除，建议关注清理详情。备份：%1</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1147"/>
@@ -3563,8 +3571,8 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1214"/>
-        <source>SDK integration completed with warnings. Review the highlighted steps.</source>
-        <translation>SDK 集成完成，但存在警告，请查看高亮步骤。</translation>
+        <source>SDK integration completed. Review is recommended for the highlighted steps.</source>
+        <translation>SDK 集成完成，建议关注高亮步骤中的说明。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1216"/>
@@ -3744,8 +3752,8 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1423"/>
-        <source>Warning</source>
-        <translation>警告</translation>
+        <source>Review recommended</source>
+        <translation>建议关注</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1425"/>

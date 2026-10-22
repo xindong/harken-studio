@@ -71,7 +71,9 @@ struct UnityIntegrationResult
     bool changesDetected = false;
     QByteArray planHash;
     QStringList modifiedFiles;
+    QStringList lineEndingFiles;
     QStringList missingFiles;
+    QStringList missingOptionalFiles;
     QStringList unreadableFiles;
     bool integrationMigrated = false;
     bool migrationRecovered = false;
