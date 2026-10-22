@@ -83,6 +83,7 @@ inline VnResult ParsePackCompanion(const std::string& json, const std::string& n
                                     const std::string& language, VnObjectId project,
                                     PackCompanion* out) {
     std::string error;
+    out->metadata = {};
     if (!ParseJson(json, &out->metadata, &error, true) ||
         out->metadata.kind != JsonValue::Kind::Object) return VN_BAD_PACK;
     out->name = name;
@@ -184,7 +185,7 @@ public:
         if (resolved.starts_with(L"\\\\?\\UNC\\")) resolved = L"\\\\" + resolved.substr(8);
         else if (resolved.starts_with(L"\\\\?\\")) resolved.erase(0, 4);
         const std::filesystem::path actual(resolved);
-        if (_wcsicmp(actual.parent_path().c_str(), path.parent_path().c_str()) != 0)
+        if (_wcsicmp(actual.parent_path().c_str(), path.parent_path().make_preferred().c_str()) != 0)
             return VN_PACK_PROVIDER_FAILED;
 #else
         handle_ = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
