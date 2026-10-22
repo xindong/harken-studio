@@ -1,0 +1,78 @@
+{
+    "content": {
+        "children": [
+        ],
+        "components": {
+            "sound": {
+                "distinguishLanguage": true,
+                "sources": {
+                    "localized": {
+                        "English": {
+                            "active": null,
+                            "entries": [
+                                {
+                                    "entryId": "08105924-9b50-447b-bbb6-2d2852af2233",
+                                    "sourceId": 306391139
+                                }
+                            ],
+                            "platforms": {
+                                "7e72321d-1987-4d96-a1fc-64f4bbef57e9": {
+                                    "active": "08105924-9b50-447b-bbb6-2d2852af2233"
+                                }
+                            }
+                        }
+                    },
+                    "plain": {
+                        "active": "b7e0edbc-b3c2-483e-a7d2-bf922554c6cc",
+                        "entries": [
+                            {
+                                "entryId": "b7e0edbc-b3c2-483e-a7d2-bf922554c6cc",
+                                "sourceId": 306391139
+                            }
+                        ],
+                        "platforms": {
+                        }
+                    }
+                }
+            },
+            "spatial": {
+                "spatializationMix": 1
+            }
+        },
+        "expanded": false,
+        "fieldGroups": {
+            "shared": {
+                "mainOutput": {
+                    "inherit": true
+                },
+                "send": {
+                    "inherit": true
+                },
+                "spatialRating": {
+                    "inherit": true
+                }
+            }
+        },
+        "guid": "1ebd3fbf-5944-40a7-a455-559808eefd1c",
+        "name": "Play_Nested_Sound",
+        "objectPath": "\\Sounds\\Play_Nested_Sound",
+        "order": 0,
+        "parentRef": {
+            "documentId": "bd9e3177-f170-412a-883a-3e84fa03742c",
+            "id": "bd9e3177-f170-412a-883a-3e84fa03742c",
+            "kind": "item"
+        },
+        "playableProperties": {
+            "presence": "0000000000000000"
+        },
+        "type": "Sound"
+    },
+    "harkenDocument": {
+        "id": "1ebd3fbf-5944-40a7-a455-559808eefd1c",
+        "projectId": "e0fe14b5-ad1f-4b40-9368-b266cb5014db",
+        "propertyModel": "fieldGroupsV1",
+        "savedStudioVersion": "0.8.0",
+        "schemaVersion": 8,
+        "type": "project.layer"
+    }
+}

@@ -11,6 +11,9 @@ namespace Harken
         private readonly PackBootstrapSession owner;
         private readonly ulong[] ids;
         private readonly Pack[] packs;
+        private readonly string[] names;
+        private readonly PackBootstrapSession.SharedPack[] owners;
+        private bool refresh;
         private int count;
         private bool prepared;
         private bool preparing;
@@ -20,6 +23,14 @@ namespace Harken
             this.owner = owner;
             this.ids = ids;
             packs = new Pack[ids.Length];
+        }
+
+        internal ActionPreparation(PackBootstrapSession owner, string[] names, bool refresh = false)
+        {
+            this.owner = owner;
+            this.names = names;
+            owners = new PackBootstrapSession.SharedPack[names.Length];
+            this.refresh = refresh;
         }
 
         public bool IsPrepared => prepared && owner.IsActive;
@@ -36,6 +47,17 @@ namespace Harken
             preparing = true;
             try
             {
+                if (names != null)
+                {
+                    VnResult result = owner.AcquireCompanions(names, owners, refresh);
+                    if (result == VnResult.VN_OK)
+                    {
+                        count = owners.Length;
+                        prepared = true;
+                        refresh = false;
+                    }
+                    return result;
+                }
                 while (count < ids.Length)
                 {
                     VnResult result = owner.AcquirePack(ids[count], out Pack pack);
@@ -66,23 +88,25 @@ namespace Harken
             while (count > 0)
             {
                 int index = count - 1;
-                VnResult result = owner.ReleasePack(ids[index], packs[index]);
+                VnResult result = owners == null ? owner.ReleasePack(ids[index], packs[index])
+                    : owner.ReleaseCompanion(owners[index]);
                 // Keep dependencies alive while their dependent Pack still belongs to this scope.
                 if (result != VnResult.VN_OK) return LastReleaseResult = result;
-                packs[index] = default;
+                if (owners == null) packs[index] = default;
+                else owners[index] = null;
                 --count;
             }
             return LastReleaseResult = VnResult.VN_OK;
         }
     }
 
-    public sealed class PackBootstrapSession : IDisposable
+    public sealed partial class PackBootstrapSession : IDisposable
     {
         private bool active;
         private enum MutationPhase { Idle, ReadingContent, ApplyingNative }
         private MutationPhase mutationPhase;
         private readonly int ownerThreadId;
-        private readonly Dictionary<ulong, SharedPack> packs = new Dictionary<ulong, SharedPack>();
+        private Dictionary<ulong, SharedPack> packs = new Dictionary<ulong, SharedPack>();
         private readonly HashSet<ulong> acquiringPacks = new HashSet<ulong>();
         private readonly ulong[] startupIds;
         private readonly Pack[] startupPacks;
@@ -91,8 +115,12 @@ namespace Harken
         private readonly byte[] initBytes;
         private readonly Dictionary<ulong, byte[]> contentBytes = new Dictionary<ulong, byte[]>();
 
-        private sealed class SharedPack
+        internal sealed class SharedPack
         {
+            internal ulong StableId;
+            internal ulong ContentHash;
+            internal int ByteCount;
+            internal PackCompanion Names;
             public Pack Handle;
             public int Requests;
             public string Path;
@@ -112,6 +140,7 @@ namespace Harken
             ContainmentRoot = containmentRoot;
             Language = language;
             Publication = publication;
+            ProjectId = publication?.ProjectId;
             this.contentProvider = contentProvider;
             this.providerState = providerState;
             this.initBytes = initBytes;
@@ -127,6 +156,8 @@ namespace Harken
         public string ContainmentRoot { get; }
         public string Language { get; }
         public GameplayPublication Publication { get; }
+        /// <summary>The actual project identified by the session's validated Init Pack.</summary>
+        public string ProjectId { get; private set; }
         public VnResult StartupResult { get; private set; } = VnResult.VN_NOT_INITIALIZED;
         public ulong FailedStartupPackStableId { get; private set; }
         public bool IsStartupComplete
@@ -164,6 +195,7 @@ namespace Harken
 
         public VnResult AcquirePack(ulong packStableId, out Pack pack)
         {
+            if (companionSource != null) return AcquireCompanionPack(packStableId, out pack);
             pack = default;
             if (!active) return VnResult.VN_NOT_INITIALIZED;
             VnResult owner = RequireOwnerThread();
@@ -210,6 +242,7 @@ namespace Harken
         /// <summary>On failure, a non-null scope still owns any references whose rollback could not finish.</summary>
         public VnResult PrepareActions(string[] names, string projectId, out ActionPreparation preparation)
         {
+            if (companionSource != null) return PrepareCompanions(names, projectId, false, out preparation);
             preparation = null;
             if (!active) return VnResult.VN_NOT_INITIALIZED;
             VnResult owner = RequireOwnerThread();
@@ -342,6 +375,7 @@ namespace Harken
 
         public VnResult ReleasePack(ulong packStableId, Pack pack)
         {
+            if (companionSource != null) return ReleaseCompanionPack(packStableId, pack);
             if (!active) return VnResult.VN_NOT_INITIALIZED;
             VnResult owner = RequireOwnerThread();
             if (owner != VnResult.VN_OK) return owner;
@@ -388,6 +422,7 @@ namespace Harken
 
         public VnResult ReplacePack(ulong packStableId, Pack pack)
         {
+            if (companionSource != null) return ReplaceCompanionPack(packStableId, pack);
             if (!active) return VnResult.VN_NOT_INITIALIZED;
             VnResult owner = RequireOwnerThread();
             if (owner != VnResult.VN_OK) return owner;
@@ -475,6 +510,8 @@ namespace Harken
                     active = false;
                     packs.Clear();
                     contentBytes.Clear();
+                    companionNames.Clear();
+                    rawCompanionLeases.Clear();
                     Array.Clear(startupPacks, 0, startupPacks.Length);
                 }
                 return term;
@@ -491,7 +528,7 @@ namespace Harken
         }
     }
 
-    public static class PackBootstrap
+    public static partial class PackBootstrap
     {
         private const uint DefaultMaxPacks = 256;
 
