@@ -2213,6 +2213,7 @@ QDialog QLabel {
     background-color: transparent;
     border: none;
     padding: 0;
+    spacing: 0;
 }
 
 #titleBarMenuBar::item {

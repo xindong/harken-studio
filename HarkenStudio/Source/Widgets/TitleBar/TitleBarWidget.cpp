@@ -80,25 +80,20 @@ TitleBarWidget::TitleBarWidget(QWidget* parent) : QWidget(parent) {
     setObjectName("TitleBarWidget");
 
     layout_ = new QHBoxLayout(this);
-    layout_->setContentsMargins(8, 0, 0, 0);
+    layout_->setContentsMargins(0, 0, 0, 0);
     layout_->setSpacing(6);
+
+    menuLayout_ = new QHBoxLayout;
+    menuLayout_->setContentsMargins(0, 0, 0, 0);
+    menuLayout_->setSpacing(0);
 
     logoLabel_ = new QLabel(this);
     logoLabel_->setObjectName("titleBarLogo");
     logoLabel_->setAccessibleName(QStringLiteral("Harken Studio"));
-    const QSize logoSize(150, 12);
-    logoLabel_->setFixedSize(logoSize);
     logoLabel_->setAlignment(Qt::AlignCenter);
-    const auto logo = ThemeManager::instance().resolveImage(
-        QString::fromLatin1(ThemeAssetIds::AppLogo));
-    if (logo.resource) {
-        QPixmap pixmap = QPixmap::fromImage(logo.resource->image).scaled(
-            logoSize * devicePixelRatioF(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        pixmap.setDevicePixelRatio(devicePixelRatioF());
-        logoLabel_->setPixmap(pixmap);
-    }
 
-    layout_->addWidget(logoLabel_);
+    menuLayout_->addWidget(logoLabel_);
+    layout_->addLayout(menuLayout_);
     layout_->addStretch();
 
     auto makeWinBtn = [this](const QString& name, TitleBarButtonKind kind, const QString& tip) {
@@ -137,7 +132,7 @@ void TitleBarWidget::embedMenuBar(QMenuBar* menuBar) {
     menuBar_->setNativeMenuBar(false);
     menuBar_->setDefaultUp(false);
     menuBar_->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-    layout_->insertWidget(1, menuBar_, 0, Qt::AlignVCenter);
+    menuLayout_->addWidget(menuBar_, 0, Qt::AlignVCenter);
     menuBar_->setVisible(true);
     menuBar_->installEventFilter(this);
     syncChromeMetrics();
@@ -333,6 +328,16 @@ void TitleBarWidget::syncChromeMetrics() {
     }
     const int barHeight = qMax(36, itemHeight);
     setFixedHeight(barHeight);
+    logoLabel_->setFixedSize(barHeight, barHeight);
+    const QSize logoSize(28, 28);
+    const auto logo = ThemeManager::instance().resolveImage(
+        QString::fromLatin1(ThemeAssetIds::AppIcon));
+    if (logo.resource) {
+        QPixmap pixmap = QPixmap::fromImage(logo.resource->image).scaled(
+            logoSize * devicePixelRatioF(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        pixmap.setDevicePixelRatio(devicePixelRatioF());
+        logoLabel_->setPixmap(pixmap);
+    }
     if (menuBar_) {
         menuBar_->setMinimumWidth(contentWidth);
         menuBar_->setFixedHeight(barHeight);

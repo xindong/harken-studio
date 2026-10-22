@@ -105,11 +105,7 @@ public:
                                    const QList<AssetInfo>& assets);
 
 
-    // Assets registered since the last load/save that have not yet been
-    // persisted to assets.json. saveToFile() commits them (clears the set);
-    // discardUncommittedFiles() drops them — deletes their physical files and
-    // records — so closing an unsaved session leaves no import residue behind.
-    int discardUncommittedFiles();
+    void discardUncommittedCaches();
 
     bool isUncommitted(uint32_t sourceID) const;
 

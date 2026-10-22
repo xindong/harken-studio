@@ -8,7 +8,6 @@
 #include <QGuiApplication>
 #include <QHideEvent>
 #include <QHBoxLayout>
-#include <QIcon>
 #include <QLabel>
 #include <QProgressBar>
 #include <QScreen>
@@ -43,7 +42,6 @@ StartupLoadingWindow::StartupLoadingWindow(QWidget* parent)
     setAttribute(Qt::WA_DeleteOnClose, false);
     setFixedSize(kWindowWidth, kWindowHeight);
     setWindowTitle(tr("Harken Studio"));
-    setWindowIcon(QIcon(QStringLiteral(":/Resources/icons/V_256x256.png")));
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);

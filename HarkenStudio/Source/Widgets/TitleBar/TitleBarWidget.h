@@ -49,6 +49,7 @@ private:
     void syncChromeMetrics();
 
     QHBoxLayout* layout_{nullptr};
+    QHBoxLayout* menuLayout_{nullptr};
     QLabel*      logoLabel_{nullptr};
     QLabel*      versionLabel_{nullptr};
     QMenuBar*    menuBar_{nullptr};

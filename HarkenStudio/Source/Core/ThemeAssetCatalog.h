@@ -8,6 +8,7 @@
 namespace VNX {
 
 namespace ThemeAssetIds {
+inline constexpr char AppIcon[] = "app.icon";
 inline constexpr char AppLogo[] = "app.logo";
 inline constexpr char WindowMinimize[] = "window.minimize";
 inline constexpr char WindowMaximize[] = "window.maximize";
