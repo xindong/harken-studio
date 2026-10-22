@@ -207,7 +207,13 @@ namespace Harken
                 else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                 {
                     var buffer = new byte[1024];
-                    if (MacPath(stream.SafeFileHandle.DangerousGetHandle().ToInt32(), 50, buffer) != 0)
+                    int descriptor = stream.SafeFileHandle.DangerousGetHandle().ToInt32();
+                    const int getPath = 50; // F_GETPATH
+                    int result = RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+                        ? MacPathArm64(descriptor, getPath, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero,
+                            IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, buffer)
+                        : MacPathX64(descriptor, getPath, buffer);
+                    if (result != 0)
                         throw new IOException("Cannot resolve Pack file identity.");
                     path = Encoding.UTF8.GetString(buffer, 0, Array.IndexOf(buffer, (byte)0));
                 }
@@ -256,8 +262,14 @@ namespace Harken
             private static extern int MacStat(int descriptor, out MacInfo info);
             [DllImport("libSystem.B.dylib", EntryPoint = "fstat$INODE64", SetLastError = true)]
             private static extern int MacStat64(int descriptor, out MacInfo info);
-            [DllImport("libSystem.B.dylib", EntryPoint = "fcntl", SetLastError = true)]
-            private static extern int MacPath(int descriptor, int command, byte[] path);
+            [DllImport("libSystem.B.dylib", EntryPoint = "fcntl", CallingConvention = CallingConvention.Cdecl, SetLastError = true)]
+            private static extern int MacPathX64(int descriptor, int command, [Out] byte[] path);
+            // Darwin ARM64 passes fcntl's variadic argument on the stack. Occupy x2-x7 so the
+            // path pointer reaches the first stack slot without relying on managed varargs support.
+            // https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms
+            [DllImport("libSystem.B.dylib", EntryPoint = "fcntl", CallingConvention = CallingConvention.Cdecl, SetLastError = true)]
+            private static extern int MacPathArm64(int descriptor, int command, IntPtr x2, IntPtr x3,
+                IntPtr x4, IntPtr x5, IntPtr x6, IntPtr x7, [Out] byte[] path);
         }
     }
 }
