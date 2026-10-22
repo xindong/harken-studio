@@ -348,8 +348,9 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
 }
 
 QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& args,
-                                       const IPCDispatchContext& context)
+                                       const IPCDispatchContext& requestedContext)
 {
+    const IPCDispatchContext context = requestedContext;
     // This 3-argument overload is the single point every dispatch path funnels
     // through (socket handleCommand, in-process AI calls, transaction callbacks,
     // and nested re-dispatch), so the depth guard here marks command execution
