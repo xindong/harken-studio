@@ -109,7 +109,7 @@ bool UpdateNotifier::ensureTray()
         return false;
     if (!tray_) {
         tray_ = new QSystemTrayIcon(this);
-        tray_->setIcon(QIcon(QStringLiteral(":/Resources/icons/HubIcon.png")));
+        tray_->setIcon(QIcon(QStringLiteral(":/Resources/icons/HubIcon.ico")));
         tray_->setToolTip(tr("Harken Studio Hub"));
         connect(tray_, &QSystemTrayIcon::messageClicked, this,
                 &UpdateNotifier::activateVersionsPage);

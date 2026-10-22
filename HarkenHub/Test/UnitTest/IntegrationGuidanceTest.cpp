@@ -302,7 +302,7 @@ private slots:
         QVERIFY(integrations.list().empty());
         const auto* association = page.findChild<QLabel*>("projectAssociationHint");
         QVERIFY(association);
-        const char* associationText = "Association only controls whether this project pair appears in Engine Integrations. SDK checks and management do not require association.";
+        const char* associationText = "Linking adds this project pair to Engine Integrations and establishes a one-to-one relationship in this Hub. Unlink the pair before linking either project to another. SDK checks and management do not require linking.";
         QCOMPARE(association->text(), QCoreApplication::translate("HarkenHub", associationText));
         if (chinese) QVERIFY(association->text() != QString::fromLatin1(associationText));
         QVERIFY(!page.findChild<QPushButton*>("changeSdk")->isEnabled());

@@ -368,8 +368,7 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
                              << integrationStore_->lastError();
     engineIntegrationsPage_ = new EngineIntegrationsPage(
         integrationStore_, engineTargetStore_, store_, this);
-    connect(localBuildRefresh_,
-            &LocalBuildRefreshCoordinator::buildsChanged,
+    connect(versionsPage_, &VersionsPage::versionsRefreshed,
             engineIntegrationsPage_,
             &EngineIntegrationsPage::refreshStudioVersion);
     connect(versionsPage_, &VersionsPage::launchTargetChanged,

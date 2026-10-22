@@ -3,6 +3,7 @@
 #include "Integrations/IntegrationProgress.h"
 #include "Integrations/Unity/UnityInstallation.h"
 #include "Integrations/Unity/UnityProjectAccess.h"
+#include "Platform/PlatformPaths.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -17,6 +18,7 @@
 #include <QMap>
 #include <QLockFile>
 #include <QSaveFile>
+#include <QScopeGuard>
 #include <QSet>
 #include <QStandardPaths>
 #include <QThread>
@@ -24,6 +26,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <filesystem>
 #include <memory>
 
 namespace VNX {
@@ -340,18 +343,14 @@ QString requestedInstallPath(const UnityIntegrationService::Request& request)
 bool lockUnityProject(const QString& root, std::unique_ptr<QLockFile>* lock,
                       QString* error)
 {
-    const QString reportDir = QDir(root).filePath(QStringLiteral("Library/HarkenIntegration"));
-    if (!UnityInstallation::validatePath(reportDir, error)) return false;
-    for (const QString& name : {QStringLiteral("latest.json"), QStringLiteral("latest.md"),
-                               QStringLiteral("latest-removal.json"), QStringLiteral("latest-removal.md"),
-                               QStringLiteral("pending-migration.json")}) {
-        if (!UnityInstallation::validatePath(QDir(reportDir).filePath(name), error)) return false;
-    }
-    if (!QDir().mkpath(reportDir)) {
-        *error = QStringLiteral("Cannot create directory: %1").arg(reportDir);
+    const QString operationDir = QDir(root).filePath(QStringLiteral("Library/HarkenIntegration"));
+    if (!UnityInstallation::validatePath(operationDir, error)
+        || !UnityInstallation::validatePath(QDir(operationDir).filePath(QStringLiteral("pending-migration.json")), error)) return false;
+    if (!QDir().mkpath(operationDir)) {
+        *error = QStringLiteral("Cannot create directory: %1").arg(operationDir);
         return false;
     }
-    const QString lockPath = QDir(reportDir).filePath(QStringLiteral("integration.lock"));
+    const QString lockPath = QDir(operationDir).filePath(QStringLiteral("integration.lock"));
     if (!UnityInstallation::validatePath(lockPath, error)) return false;
     *lock = std::make_unique<QLockFile>(lockPath);
     (*lock)->setStaleLockTime(0);
@@ -360,6 +359,36 @@ bool lockUnityProject(const QString& root, std::unique_ptr<QLockFile>* lock,
         return false;
     }
     return true;
+}
+
+QString integrationReportDirectory(const QString& project, QString* error)
+{
+    const QString userRoot = VNH::userDataDir();
+    if (userRoot.isEmpty() || !QDir().mkpath(userRoot)) {
+        *error = QCoreApplication::translate("HarkenHub", "Cannot create the Hub application-data directory: %1").arg(userRoot);
+        return {};
+    }
+    std::error_code resolutionError;
+    const auto resolvedRoot = std::filesystem::canonical(std::filesystem::path(userRoot.toStdU16String()), resolutionError);
+    if (resolutionError) {
+        *error = QCoreApplication::translate("HarkenHub", "Cannot resolve the Hub application-data directory: %1").arg(userRoot);
+        return {};
+    }
+    const QString canonicalRoot = QString::fromStdU16String(resolvedRoot.generic_u16string());
+    QString identity = QFileInfo(project).canonicalFilePath();
+    if (identity.isEmpty()) identity = QFileInfo(project).absoluteFilePath();
+#ifdef Q_OS_WIN
+    identity = identity.toCaseFolded();
+#endif
+    const QString key = QString::fromLatin1(QCryptographicHash::hash(
+        identity.toUtf8(), QCryptographicHash::Sha256).toHex());
+    return QDir(canonicalRoot).filePath(QStringLiteral("IntegrationReports/Unity/%1").arg(key));
+}
+
+bool writeIntegrationReport(const QString& path, const QByteArray& contents, QString* error)
+{
+    return UnityInstallation::validatePath(path, error)
+        && VNH::writeIntegrationFile(path, contents, error);
 }
 
 bool prepareInstallation(const UnityIntegrationService::Request& request,
@@ -679,7 +708,7 @@ OwnershipRecord previousManagedFiles(const QString& targetRoot)
     return record;
 }
 
-bool migrationSnapshot(const QString& root, QJsonObject* snapshot, QString* error)
+bool sdkSnapshot(const QString& root, QJsonObject* snapshot, QString* error)
 {
     if (!UnityInstallation::validateTree(root, error)) return false;
     QJsonObject hashes;
@@ -691,7 +720,7 @@ bool migrationSnapshot(const QString& root, QJsonObject* snapshot, QString* erro
         const QString path = entries.next();
         const QString relative = QDir(root).relativeFilePath(path);
         if (!isSafeRelativePath(relative)) {
-            *error = QStringLiteral("The SDK contains a path that cannot be migrated safely.");
+            *error = QStringLiteral("The SDK contains an unsafe path.");
             return false;
         }
         if (entries.fileInfo().isDir()) {
@@ -699,7 +728,7 @@ bool migrationSnapshot(const QString& root, QJsonObject* snapshot, QString* erro
         } else {
             const FileDigest digest = sha256File(path);
             if (digest.status != ReadStatus::Ok) {
-                *error = QStringLiteral("Cannot read SDK file for migration: %1").arg(path);
+                *error = QStringLiteral("Cannot read SDK file: %1").arg(path);
                 return false;
             }
             hashes[relative] = QString::fromLatin1(digest.hash);
@@ -711,10 +740,36 @@ bool migrationSnapshot(const QString& root, QJsonObject* snapshot, QString* erro
     return true;
 }
 
+QByteArray sdkChangeFingerprint(const QString& project, const QString& source,
+                               const QString& target, const QMap<QString, QByteArray>& checkedSource,
+                               QJsonObject* targetSnapshot, QString* error)
+{
+    QJsonObject sourceSnapshot;
+    if (!sdkSnapshot(source, &sourceSnapshot, error)) return {};
+    const auto sourceFiles = sourceSnapshot.value(QStringLiteral("files")).toObject();
+    QMap<QString, QByteArray> currentSource;
+    for (auto file = sourceFiles.begin(); file != sourceFiles.end(); ++file)
+        if (!ignoredRelativePath(file.key())) currentSource.insert(file.key(), file.value().toString().toLatin1());
+    if (currentSource != checkedSource) {
+        *error = QStringLiteral("SDK files changed after the safety check. Run the check again before continuing.");
+        return {};
+    }
+    if (QFileInfo::exists(target) && !sdkSnapshot(target, targetSnapshot, error)) return {};
+    const QJsonObject snapshot{
+        {QStringLiteral("project"), project},
+        {QStringLiteral("source"), source},
+        {QStringLiteral("target"), target},
+        {QStringLiteral("targetExists"), QDir(target).exists()},
+        {QStringLiteral("sourceFiles"), sourceSnapshot},
+        {QStringLiteral("targetFiles"), *targetSnapshot}};
+    return QCryptographicHash::hash(QJsonDocument(snapshot).toJson(QJsonDocument::Compact),
+                                    QCryptographicHash::Sha256);
+}
+
 bool matchesMigrationSnapshot(const QString& root, const QJsonObject& expected, QString* error)
 {
     QJsonObject actual;
-    if (!migrationSnapshot(root, &actual, error)) return false;
+    if (!sdkSnapshot(root, &actual, error)) return false;
     if (actual != expected) {
         *error = QStringLiteral("SDK contents changed during migration. No existing files will be overwritten.");
         return false;
@@ -1124,7 +1179,7 @@ UnityIntegrationService::Result UnityIntegrationService::migrateIntegration(cons
             ? defaultIntegrationBackupPath(project) : cleanAbsolutePath(request.migrationBackupPath);
         if (!validateMigrationBackup(project, result.migrationBackupPath, &error)) return fail(error);
         QJsonObject inventory;
-        if (!migrationSnapshot(from, &inventory, &error)) return fail(error);
+        if (!sdkSnapshot(from, &inventory, &error)) return fail(error);
         QByteArray metaHash;
         if (QFileInfo::exists(from + QStringLiteral(".meta"))) {
             const FileDigest digest = sha256File(from + QStringLiteral(".meta"));
@@ -1252,6 +1307,7 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
     QString targetSdk;
     std::unique_ptr<QLockFile> operationLock;
     QStringList removalFiles;
+    QStringList filesToChange;
     QStringList preservedFiles;
     QStringList sdkBackupFiles;
     QStringList installedFiles;
@@ -1434,6 +1490,17 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
         }
         result.filesRemoved = removalFiles.size();
         result.targetOnlyFilesPreserved = preservedFiles.size();
+        for (const QString& relative : removalFiles)
+            filesToChange.append(QDir(targetSdk).filePath(relative));
+        if (preservedFiles.isEmpty()) filesToChange.append(targetSdk + QStringLiteral(".meta"));
+        QString accessError;
+        if (!VNH::checkIntegrationFilesWritable(filesToChange, &accessError)
+            || !VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk}, &accessError)) {
+            step.status = StepStatus::Failed;
+            step.summary = QStringLiteral("SDK file write access check failed.");
+            step.cause = accessError;
+            return;
+        }
         sdkBackupFiles = ownership.managedFiles.values();
         sdkBackupFiles.sort(Qt::CaseSensitive);
         result.removalBackupPath = request.removalBackupPath.trimmed().isEmpty()
@@ -1629,6 +1696,13 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                                            QUuid::createUuid().toString(
                                                QUuid::WithoutBraces));
         const QString stageRoot = packages.filePath(stageName);
+        if (!VNH::checkIntegrationFilesWritable(filesToChange, &backupError)
+            || !VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk}, &backupError)) {
+            step.status = StepStatus::Failed;
+            step.summary = QStringLiteral("SDK file write access check failed.");
+            step.cause = backupError;
+            return;
+        }
         if (!VNH::renameIntegrationDirectory(packages.filePath(targetName), packages.filePath(stageName))) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("Could not detach the installed Harken SDK.");
@@ -1671,12 +1745,16 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
             step.summary = QStringLiteral("No removal report was written because the Unity project was not valid.");
             return;
         }
-        const QString reportDir = QDir(result.unityProjectPath)
-                                      .filePath(QStringLiteral("Library/HarkenIntegration"));
+        const QString reportDir = integrationReportDirectory(result.unityProjectPath, &step.cause);
+        if (reportDir.isEmpty()) {
+            step.status = StepStatus::Failed;
+            step.summary = QStringLiteral("Could not prepare the Hub report directory.");
+            return;
+        }
         result.jsonReportPath = QDir(reportDir).filePath(
             QStringLiteral("latest-removal.json"));
-        result.markdownReportPath = QDir(reportDir).filePath(
-            QStringLiteral("latest-removal.md"));
+        result.textReportPath = QDir(reportDir).filePath(
+            QStringLiteral("latest-removal.txt"));
 
         QJsonObject root;
         root[QStringLiteral("schema_version")] = 1;
@@ -1700,17 +1778,17 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
         root[QStringLiteral("steps")] = steps;
 
         QString jsonFileError;
-        if (!VNH::writeIntegrationFile(result.jsonReportPath,
+        if (!writeIntegrationReport(result.jsonReportPath,
                 QJsonDocument(root).toJson(QJsonDocument::Indented), &jsonFileError)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("The removal report could not be written.");
             step.cause = jsonFileError;
-            step.remediation = QStringLiteral("Check write permission for Unity Library/HarkenIntegration.");
+            step.remediation = QStringLiteral("Check write permission for the Hub report directory: %1").arg(reportDir);
             return;
         }
 
-        QString markdown = QStringLiteral("# Harken Unity integration removal report\n\n");
-        markdown += QStringLiteral("- Generated: %1\n- Unity project: `%2`\n- Safety backup: `%3`\n- Integration removed: %4\n- Harken files removed: %5\n- Project-specific files preserved: %6\n\n")
+        QString reportText = QStringLiteral("Harken Unity integration removal report\n\n");
+        reportText += QStringLiteral("Generated: %1\nUnity project: %2\nSafety backup: %3\nIntegration removed: %4\nHarken files removed: %5\nProject-specific files preserved: %6\n\n")
                         .arg(root[QStringLiteral("generated_at_utc")].toString(),
                              result.unityProjectPath,
                              result.removalBackupPath,
@@ -1718,17 +1796,24 @@ UnityIntegrationService::Result UnityIntegrationService::removeIntegration(
                                                        : QStringLiteral("no"))
                         .arg(result.filesRemoved)
                         .arg(result.targetOnlyFilesPreserved);
-        QString markdownFileError;
-        if (!VNH::writeIntegrationFile(result.markdownReportPath,
-                markdown.toUtf8(), &markdownFileError)) {
+        for (const StepResult& item : result.steps) {
+            reportText += QStringLiteral("%1 - %2\n\n%3\n\n")
+                .arg(item.title, statusName(item.status), item.summary);
+            if (!item.cause.isEmpty()) reportText += QStringLiteral("Cause: %1\n\n").arg(item.cause);
+            if (!item.remediation.isEmpty()) reportText += QStringLiteral("Action: %1\n\n").arg(item.remediation);
+            for (const QString& detail : item.details) reportText += detail + QStringLiteral("\n\n");
+        }
+        QString textFileError;
+        if (!writeIntegrationReport(result.textReportPath,
+                reportText.toUtf8(), &textFileError)) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("JSON report was written, but the Markdown removal report failed.");
-            step.cause = markdownFileError;
-            step.remediation = QStringLiteral("Check write permission for Unity Library/HarkenIntegration.");
+            step.summary = QStringLiteral("JSON report was written, but the text removal report failed.");
+            step.cause = textFileError;
+            step.remediation = QStringLiteral("Check write permission for the Hub report directory: %1").arg(reportDir);
             return;
         }
         step.summary = QStringLiteral("Wrote machine-readable and human-readable removal reports.");
-        step.artifacts << result.jsonReportPath << result.markdownReportPath;
+        step.artifacts << result.jsonReportPath << result.textReportPath;
     }, true);
 
     while (nextStep < result.steps.size()) runStep([](StepResult&) {});
@@ -1765,6 +1850,7 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
     QStringList sourceFiles;
     QStringList preservedFiles;
     QStringList staleFiles;
+    QStringList filesToChange;
     QMap<QString, QString> runtimeMetadataMoves;
     QMap<QString, QByteArray> sourceHashes;
     QSet<QString> declaredOptionalRuntimePaths;
@@ -2043,12 +2129,33 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
     });
 
     runStep([&](StepResult& step) {
+        QJsonObject targetSnapshot;
+        QString snapshotError;
+        result.planHash = sdkChangeFingerprint(result.unityProjectPath, result.sdkSourcePath,
+                                               targetSdk, sourceHashes, &targetSnapshot, &snapshotError);
+        const auto validateReview = qScopeGuard([&]() {
+            if (step.status == StepStatus::Failed) return;
+            if (result.planHash.isEmpty()) {
+                step.status = StepStatus::Failed;
+                step.summary = QStringLiteral("The SDK files could not be checked safely.");
+                step.cause = snapshotError;
+            } else if (!request.approvedPlanHash.isEmpty() && request.approvedPlanHash != result.planHash) {
+                result.requiresConfirmation = true;
+                step.status = StepStatus::Failed;
+                step.summary = QStringLiteral("SDK files changed after the safety check. Run the check again before continuing.");
+            }
+        });
         const bool targetExists = QDir(targetSdk).exists()
             && !QDir(targetSdk).entryList(QDir::AllEntries | QDir::Hidden
                 | QDir::System | QDir::NoDotAndDotDot).isEmpty();
         QVector<FileChange> changes;
         result.targetInstalled = targetExists;
         if (!targetExists) {
+            if (!VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk}, &step.cause)) {
+                step.status = StepStatus::Failed;
+                step.summary = QStringLiteral("SDK file write access check failed.");
+                return;
+            }
             result.filesAdded = sourceFiles.size();
             result.changesDetected = true;
             for (const QString& relative : sourceFiles)
@@ -2070,6 +2177,20 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             step.remediation = QStringLiteral("Restore the ownership record from backup, or resolve file access errors, then check again.");
             return;
         }
+        const QJsonObject installedHashes = readJsonObject(
+            QDir(targetSdk).filePath(QLatin1String(kInstalledState))).object
+                .value(QStringLiteral("sha256")).toObject();
+        const QJsonObject actualHashes = targetSnapshot.value(QStringLiteral("files")).toObject();
+        for (const QString& relative : previousManaged.managedFiles) {
+            if (result.planHash.isEmpty()) break;
+            if (!actualHashes.contains(relative)) result.missingFiles << relative;
+            else if (installedHashes.contains(relative)
+                     && actualHashes.value(relative).toString().compare(
+                         installedHashes.value(relative).toString(), Qt::CaseInsensitive) != 0)
+                result.modifiedFiles << relative;
+        }
+        result.modifiedFiles.sort();
+        result.missingFiles.sort();
         const QSet<QString> previousManagedKeys =
             comparisonPathKeys(previousManaged.managedFiles);
         QStringList targetFiles = allRelativeFiles(targetSdk);
@@ -2199,6 +2320,19 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             return;
         }
 
+        for (const FileChange& change : changes) {
+            if (change.action != QStringLiteral("preserve"))
+                filesToChange.append(QDir(targetSdk).filePath(change.relative));
+        }
+        filesToChange.append(QDir(targetSdk).filePath(QLatin1String(kInstalledState)));
+        QString accessError;
+        if (!VNH::checkIntegrationFilesWritable(filesToChange, &accessError)
+            || !VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk}, &accessError)) {
+            step.status = StepStatus::Failed;
+            step.summary = QStringLiteral("SDK file write access check failed.");
+            step.cause = accessError;
+            return;
+        }
         const QString counts = joinedCountSummary(
             result.filesAdded, result.filesChanged, staleFiles.size(),
             projectSpecificFiles.size(), unityMetadataFiles.size(),
@@ -2311,6 +2445,17 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             return;
         }
 
+        QJsonObject currentTarget;
+        const QByteArray currentHash = sdkChangeFingerprint(result.unityProjectPath,
+            result.sdkSourcePath, targetSdk, sourceHashes, &currentTarget, &safetyError);
+        if (currentHash.isEmpty() || currentHash != result.planHash) {
+            QDir(stageRoot).removeRecursively();
+            result.requiresConfirmation = true;
+            step.status = StepStatus::Failed;
+            step.summary = QStringLiteral("SDK files changed after the safety check. Run the check again before continuing.");
+            step.cause = safetyError;
+            return;
+        }
         const bool hadTarget = QDir(targetSdk).exists();
         if (!UnityInstallation::validateTarget(result.unityProjectPath, targetSdk, &safetyError)) {
             QDir(stageRoot).removeRecursively();
@@ -2320,6 +2465,14 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             return;
         }
         QString moveError;
+        if (!VNH::checkIntegrationFilesWritable(filesToChange, &moveError)
+            || !VNH::checkIntegrationDirectoryChanges({targetSdk}, {targetSdk, stageRoot}, &moveError)) {
+            QDir(stageRoot).removeRecursively();
+            step.status = StepStatus::Failed;
+            step.summary = QStringLiteral("SDK file write access check failed.");
+            step.cause = moveError;
+            return;
+        }
         if (hadTarget && !VNH::renameIntegrationDirectory(packages.filePath(targetName), packages.filePath(backupName), &moveError)) {
             QDir(stageRoot).removeRecursively();
             step.status = StepStatus::Failed;
@@ -2440,13 +2593,17 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
             step.summary = QStringLiteral("No report was written because the Unity project was not valid.");
             return;
         }
-        const QString reportDir = QDir(result.unityProjectPath)
-                                      .filePath(QStringLiteral("Library/HarkenIntegration"));
+        const QString reportDir = integrationReportDirectory(result.unityProjectPath, &step.cause);
+        if (reportDir.isEmpty()) {
+            step.status = StepStatus::Failed;
+            step.summary = QStringLiteral("Could not prepare the Hub report directory.");
+            return;
+        }
         result.jsonReportPath = QDir(reportDir).filePath(QStringLiteral("latest.json"));
-        result.markdownReportPath = QDir(reportDir).filePath(QStringLiteral("latest.md"));
+        result.textReportPath = QDir(reportDir).filePath(QStringLiteral("latest.txt"));
         step.status = StepStatus::Succeeded;
         step.summary = QStringLiteral("Wrote machine-readable and human-readable SDK integration reports.");
-        step.artifacts << result.jsonReportPath << result.markdownReportPath;
+        step.artifacts << result.jsonReportPath << result.textReportPath;
 
         QJsonObject root;
         root[QStringLiteral("schema_version")] = 2;
@@ -2471,40 +2628,40 @@ UnityIntegrationService::Result UnityIntegrationService::run(const Request& requ
         root[QStringLiteral("steps")] = steps;
 
         QString jsonFileError;
-        if (!VNH::writeIntegrationFile(result.jsonReportPath,
+        if (!writeIntegrationReport(result.jsonReportPath,
                 QJsonDocument(root).toJson(QJsonDocument::Indented), &jsonFileError)) {
             step.status = StepStatus::Failed;
             step.summary = QStringLiteral("The integration report could not be written.");
             step.cause = jsonFileError;
-            step.remediation = QStringLiteral("Check write permission for Unity Library/HarkenIntegration.");
+            step.remediation = QStringLiteral("Check write permission for the Hub report directory: %1").arg(reportDir);
             return;
         }
 
-        QString markdown = QStringLiteral("# Harken Unity SDK integration report\n\n");
-        markdown += QStringLiteral("- Generated: %1\n- SDK version: %2\n- SDK source: `%3`\n- Unity project: `%4`\n- Confirmation required: %5\n\n")
+        QString reportText = QStringLiteral("Harken Unity SDK integration report\n\n");
+        reportText += QStringLiteral("Generated: %1\nSDK version: %2\nSDK source: %3\nUnity project: %4\nConfirmation required: %5\n\n")
                         .arg(root[QStringLiteral("generated_at_utc")].toString(),
                              sourceVersion, result.sdkSourcePath,
                              result.unityProjectPath,
                              result.requiresConfirmation ? QStringLiteral("yes")
                                                          : QStringLiteral("no"));
         for (const StepResult& item : result.steps) {
-            markdown += QStringLiteral("## %1 — %2\n\n%3\n\n")
+            reportText += QStringLiteral("%1 — %2\n\n%3\n\n")
                             .arg(item.title, statusName(item.status), item.summary);
             if (!item.cause.isEmpty())
-                markdown += QStringLiteral("Cause: %1\n\n").arg(item.cause);
+                reportText += QStringLiteral("Cause: %1\n\n").arg(item.cause);
             if (!item.remediation.isEmpty())
-                markdown += QStringLiteral("How to fix: %1\n\n").arg(item.remediation);
+                reportText += QStringLiteral("How to fix: %1\n\n").arg(item.remediation);
             if (!item.details.isEmpty())
-                markdown += QStringLiteral("Details:\n\n```text\n%1\n```\n\n")
+                reportText += QStringLiteral("Details:\n%1\n\n")
                                 .arg(jsonArrayText(item.details));
         }
-        QString markdownFileError;
-        if (!VNH::writeIntegrationFile(result.markdownReportPath,
-                markdown.toUtf8(), &markdownFileError)) {
+        QString textFileError;
+        if (!writeIntegrationReport(result.textReportPath,
+                reportText.toUtf8(), &textFileError)) {
             step.status = StepStatus::Failed;
-            step.summary = QStringLiteral("JSON report was written, but the Markdown report failed.");
-            step.cause = markdownFileError;
-            step.remediation = QStringLiteral("Check write permission for Unity Library/HarkenIntegration.");
+            step.summary = QStringLiteral("JSON report was written, but the text report failed.");
+            step.cause = textFileError;
+            step.remediation = QStringLiteral("Check write permission for the Hub report directory: %1").arg(reportDir);
             return;
         }
     }, true);

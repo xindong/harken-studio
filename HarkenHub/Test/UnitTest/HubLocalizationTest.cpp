@@ -24,7 +24,9 @@ TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
         QStringLiteral("An SDK is already installed at %1. Use that location or remove it before installing elsewhere.").arg(path),
         QStringLiteral("Cannot read %1: Access denied").arg(path),
         QStringLiteral("Cannot read SDK file for migration: %1").arg(path),
+        QStringLiteral("Cannot read SDK file: %1").arg(path),
         QStringLiteral("Cannot commit %1: Access denied").arg(path),
+        QStringLiteral("Check write permission for the Hub report directory: %1").arg(path),
         QStringLiteral("Cannot determine the SDK package identity: %1").arg(path),
         QStringLiteral("SDK discovery exceeded its safety limits at %1. Check local package references and reduce the scanned content.").arg(path),
         QStringLiteral("External package discovery exceeded its safety limits at %1. Point file: dependencies at individual package directories and remove unrelated content before retrying.").arg(path),
@@ -225,8 +227,8 @@ TEST(HubLocalizationTest, SimplifiedChineseCatalogIsCompleteAndLoadable)
               QString::fromUtf8("语言"));
     EXPECT_EQ(QCoreApplication::translate("HarkenHub", "Projects"),
               QString::fromUtf8("工程"));
-    EXPECT_EQ(QCoreApplication::translate("HarkenHub", "Edit Integration"),
-              QStringLiteral("\u7f16\u8f91\u96c6\u6210"));
+    EXPECT_EQ(QCoreApplication::translate("HarkenHub", "Manage Integration"),
+              QStringLiteral("\u96c6\u6210\u7ba1\u7406"));
     EXPECT_EQ(QCoreApplication::translate(
                   "HarkenHub", "Project recommendation"),
               QStringLiteral("\u5de5\u7a0b\u63a8\u8350\u7248\u672c"));

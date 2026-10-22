@@ -43,6 +43,7 @@ public:
 
 signals:
     void launchTargetChanged();
+    void versionsRefreshed();
     void projectLaunchGuidanceRequested(const QString& buildId);
 
 protected:

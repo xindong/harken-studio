@@ -68,7 +68,7 @@ private:
     void onAddTemplateClicked();
     QWidget* createNewProjectPage();
     void loadProjectTemplates(const QString& preferredPath = QString());
-    void loadProjectVersions();
+    void loadProjectVersions(const QString& preferredBuildId = QString());
     void validateSelectedTemplate();
     void showTemplatePreview(const QJsonObject& content,
                              const QString& description);
@@ -103,6 +103,7 @@ private:
     QTimer* launchTargetPollTimer_ = nullptr;
     QVariantAnimation* projectLaunchGuidanceAnimation_ = nullptr;
     QString projectLaunchGuidanceBuildId_;
+    QString pendingCreateBuildId_;
     InstalledVersion createTarget_;
     bool creatingProject_ = false;
     std::vector<InstalledVersion> createVersions_;
