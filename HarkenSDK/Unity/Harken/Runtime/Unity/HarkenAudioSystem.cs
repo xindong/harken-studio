@@ -36,7 +36,7 @@ namespace Harken.Unity
     }
 
     [DefaultExecutionOrder(-10000)]
-    public class HarkenAudioSystem : MonoBehaviour
+    public partial class HarkenAudioSystem : MonoBehaviour
     {
         private const int SuccessMessageCacheCapacity = 64;
         [SerializeField] private bool autoInitialize = true;
@@ -850,6 +850,11 @@ namespace Harken.Unity
                 DontDestroyOnLoad(gameObject);
             }
             if (!autoInitialize) return;
+            if (configuredCompanionSource != null)
+            {
+                StartConfiguredCompanion();
+                return;
+            }
             if (preparedPackSource != null || preparedPacks != null)
             {
                 StartRuntime((string)null);
@@ -1644,6 +1649,7 @@ namespace Harken.Unity
             VnResult result;
             try
             {
+                CancelCompanionStartup();
                 if (startupCoroutine != null)
                 {
                     StopCoroutine(startupCoroutine);
@@ -1773,7 +1779,7 @@ namespace Harken.Unity
             {
                 // GameObject deactivation stops coroutines without guaranteeing iterator cleanup.
                 // Disabling only this component leaves its coroutine running in Unity.
-                if ((shutdownWhenDisabled && session != null && session.IsActive) ||
+                if (companionStartup != null || (shutdownWhenDisabled && session != null && session.IsActive) ||
                     (!gameObject.activeInHierarchy && startupCoroutine != null))
                     ShutdownRuntime();
             }

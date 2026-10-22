@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Harken
 {
     public sealed partial class PackBootstrapSession
     {
-        private PackDirectorySource companionSource;
+        private PackSource companionSource;
         private Dictionary<string, SharedPack> companionNames = new Dictionary<string, SharedPack>(StringComparer.Ordinal);
         private Dictionary<(ulong Id, ulong Handle), RawCompanionLease> rawCompanionLeases =
             new Dictionary<(ulong, ulong), RawCompanionLease>();
@@ -18,7 +20,7 @@ namespace Harken
             internal RawCompanionLease(SharedPack owner, int count) { Owner = owner; Count = count; }
         }
 
-        internal void BindCompanionSource(PackDirectorySource source, string project)
+        internal void BindCompanionSource(PackSource source, string project)
         {
             companionSource = source;
             ProjectId = project;
@@ -76,12 +78,23 @@ namespace Harken
         }
 
         internal VnResult AcquireCompanions(string[] names, SharedPack[] acquired, bool refresh, ulong expectedId = 0)
+            => AcquireCompanions(names, acquired, refresh, expectedId, null);
+
+        private VnResult AcquireCompanions(string[] names, SharedPack[] acquired, bool refresh, ulong expectedId,
+            Dictionary<string, CompanionInput> captured, CancellationToken cancellation = default)
         {
             VnResult allowed = CompanionMutationAllowed();
             if (allowed != VnResult.VN_OK) return allowed;
             mutationPhase = MutationPhase.ReadingContent;
             try
             {
+                if (captured != null)
+                    foreach (CompanionInput input in captured.Values)
+                    {
+                        VnResult current = companionSource.Validate(input);
+                        if (!active) return VnResult.VN_NOT_INITIALIZED;
+                        if (current != VnResult.VN_OK) return current;
+                    }
                 bool warm = !refresh;
                 for (int i = 0; warm && i < names.Length; ++i)
                 {
@@ -94,6 +107,7 @@ namespace Harken
                 }
                 if (warm)
                 {
+                    cancellation.ThrowIfCancellationRequested();
                     foreach (SharedPack owner in acquired) ++owner.Requests;
                     return VnResult.VN_OK;
                 }
@@ -111,7 +125,11 @@ namespace Harken
                         acquired[i] = existing;
                         continue;
                     }
-                    VnResult result = companionSource.Capture(name, project, initBytes, out CompanionInput input);
+                    CompanionInput input;
+                    VnResult result;
+                    if (captured != null && captured.TryGetValue(name, out input))
+                        result = companionSource.Validate(input);
+                    else result = companionSource.Capture(name, project, initBytes, out input);
                     if (!active) return VnResult.VN_NOT_INITIALIZED;
                     if (result != VnResult.VN_OK) return result;
                     if (expectedId != 0 && input.Facts.packStableId != expectedId) return VnResult.VN_PACK_STALE_REVISION;
@@ -144,6 +162,13 @@ namespace Harken
                 }
                 if (changes.Count != 0)
                 {
+                    foreach (CompanionInput input in changes.Values)
+                    {
+                        VnResult current = companionSource.Validate(input);
+                        if (!active) return VnResult.VN_NOT_INITIALIZED;
+                        if (current != VnResult.VN_OK) return current;
+                    }
+                    cancellation.ThrowIfCancellationRequested();
                     VnResult result = CommitCompanions(nextPacks, nextNames, changes, null);
                     if (result != VnResult.VN_OK) return result;
                 }
@@ -291,10 +316,43 @@ namespace Harken
                 return VnResult.VN_INVALID_ARG;
             try
             {
-                var source = new PackDirectorySource(platformDirectory, language);
-                VnResult result = source.Capture(null, default, null, out CompanionInput init);
-                if (result != VnResult.VN_OK) return result;
-                result = PackByteProvider.InspectInitPack(init.Facts.packStableId, PackByteProvider.PreparedBytes,
+                return Start(PackSource.FromDirectory(platformDirectory, language), ref config, out session);
+            }
+            catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
+            catch (ArgumentException) { return VnResult.VN_INVALID_ARG; }
+            catch (IOException) { return VnResult.VN_PACK_PROVIDER_FAILED; }
+        }
+
+        /// <summary>Starts an explicitly selected companion source with Init only.</summary>
+        public static VnResult Start(PackSource source, ref VnConfig config, out PackBootstrapSession session)
+        {
+            session = null;
+            if (source == null) return VnResult.VN_INVALID_ARG;
+            VnResult result = source.Capture(null, default, null, out CompanionInput init);
+            return result == VnResult.VN_OK ? StartCaptured(source, init, ref config, out session) : result;
+        }
+
+        public static async Task<PackStartupResult> StartAsync(PackSource source, VnConfig config,
+            CancellationToken cancellation = default)
+        {
+            if (source == null || (source.IsAsync && !PackSource.HasControlContext))
+                return new PackStartupResult(VnResult.VN_INVALID_ARG);
+            int thread = Environment.CurrentManagedThreadId;
+            CompanionCapture captured = await source.CaptureAsync(null, default, null, cancellation);
+            cancellation.ThrowIfCancellationRequested();
+            if (Environment.CurrentManagedThreadId != thread) return new PackStartupResult(VnResult.VN_INVALID_ARG);
+            if (captured.Result != VnResult.VN_OK) return new PackStartupResult(captured.Result);
+            VnResult result = StartCaptured(source, captured.Input, ref config, out PackBootstrapSession session, cancellation);
+            return new PackStartupResult(result, session);
+        }
+
+        internal static VnResult StartCaptured(PackSource source, CompanionInput init, ref VnConfig config,
+            out PackBootstrapSession session, CancellationToken cancellation = default)
+        {
+            session = null;
+            try
+            {
+                VnResult result = PackByteProvider.InspectInitPack(init.Facts.packStableId, PackByteProvider.PreparedBytes,
                     init.Bytes, out InitPackInspection inspection);
                 if (result != VnResult.VN_OK) return result;
                 result = ApplyRecommendations(ref config, inspection, 0);
@@ -304,6 +362,9 @@ namespace Harken
                 candidate.BindCompanionSource(source, init.Facts.projectId.ToString());
                 var members = new[] { new CompanionMember(init.Facts.packStableId,
                     VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT, default, VnConstants.VN_PACK_MEMBER_CONTENT, init.Bytes, init.Names) };
+                result = source.Validate(init);
+                if (result != VnResult.VN_OK) return result;
+                cancellation.ThrowIfCancellationRequested();
                 result = HarkenEngine.Init(config);
                 if (result != VnResult.VN_OK) return result;
                 result = CompanionNative.Activate(members, default, 0, out var report, out _);

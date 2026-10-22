@@ -11,6 +11,7 @@ namespace Harken
         internal byte[] Bytes;
         internal PackCompanion Names;
         internal VnPackInspectReportV1 Facts;
+        internal ulong SourceRevision;
     }
 
     // Only this source knows about filesystem publication. Sessions consume owned snapshots.

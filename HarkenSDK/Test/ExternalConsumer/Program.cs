@@ -17,6 +17,11 @@ internal static class Program
         {
             Require(typeof(HarkenEngine).Assembly != typeof(Program).Assembly, "SDK must be a separate assembly.");
             if (args.Length == 2 && args[0] == "--surface") CheckSurface(args[1]);
+            else if (args.Length == 2 && args[0] == "--companion")
+            {
+                NativeLibrary.SetDllImportResolver(typeof(HarkenEngine).Assembly, ResolveNative);
+                CheckCompanionSource(args[1]);
+            }
             else if (args.Length == 2 && args[0] == "--host")
             {
                 NativeLibrary.SetDllImportResolver(typeof(HarkenEngine).Assembly, ResolveNative);
@@ -27,10 +32,35 @@ internal static class Program
                 CheckHost(args[1], true);
                 Require(Harken.Test.RemoteCommunicationContract.RunNative() == 0, "External host Remote failed.");
             }
-            else throw new ArgumentException("Expected --surface policy.json or --host publication.");
+            else throw new ArgumentException("Expected --surface policy.json, --host publication or --companion directory.");
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    private static void CheckCompanionSource(string directory)
+    {
+        int reads = 0;
+        var source = PackSource.FromReader(path =>
+        {
+            ++reads;
+            string file = Path.Combine(directory, path);
+            return File.Exists(file) ? File.ReadAllBytes(file) : null;
+        });
+        var config = HarkenEngine.DefaultConfig();
+        config.deviceMode = (uint)VnDeviceMode.VN_DEVICE_NULL;
+        Require(PackBootstrap.Start(source, ref config, out PackBootstrapSession session) == VnResult.VN_OK, "Companion startup");
+        using (session)
+        {
+            Require(reads == 2 && session.Publication == null, "Init-only source has no fabricated publication");
+            ActionPreparationResult ready = session.PrepareActionsAsync(new[] { "Play_Head" }, session.ProjectId).GetAwaiter().GetResult();
+            Require(ready.Result == VnResult.VN_OK && reads == 4, "External preparation reads one Action pair");
+            Require(Actions.Resolve("Play_Head", session.ProjectId, out ActionResolved action) == VnResult.VN_OK, "Companion resolve");
+            Require(Actions.Post(in action, Emitter.None, 1, out ActionFiring firing) == VnResult.VN_OK, "Companion post");
+            Require(firing.IsValid, "Accepted firing");
+            Require(ready.Preparation.Release() == VnResult.VN_OK, "Companion lease release");
+        }
+        Console.WriteLine("Separate non-friend companion source, preparation and playback PASS.");
     }
 
     private static IntPtr ResolveNative(string name, Assembly assembly, DllImportSearchPath? search)

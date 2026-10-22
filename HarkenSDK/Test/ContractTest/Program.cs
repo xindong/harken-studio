@@ -115,6 +115,7 @@ namespace Harken.Test
             int remoteNative = RemoteCommunicationContract.RunNative();
             bool repositoryNativeOk = !requireNative || RepositoryPublicationContract.Run();
             bool companionNativeOk = !requireNative || CompanionDirectoryContract.Run();
+            companionNativeOk &= !requireNative || CompanionSourceContract.Run();
 
             Console.WriteLine();
             Console.WriteLine("ABI fidelity : " + (abiOk ? "PASS" : "FAIL"));

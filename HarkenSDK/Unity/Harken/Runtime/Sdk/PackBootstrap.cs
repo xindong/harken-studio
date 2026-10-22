@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Harken
 {
@@ -70,6 +72,30 @@ namespace Harken
                 }
                 prepared = true;
                 return VnResult.VN_OK;
+            }
+            finally { preparing = false; }
+        }
+
+        /// <summary>Prepares on the session's control context. Cancellation never discards a committed lease.</summary>
+        public async Task<VnResult> PrepareAsync(CancellationToken cancellation = default)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            if (!owner.IsActive) return VnResult.VN_NOT_INITIALIZED;
+            if (preparing) return VnResult.VN_IN_USE;
+            if (prepared) return VnResult.VN_OK;
+            if (count != 0) return VnResult.VN_IN_USE;
+            if (names == null) return Prepare();
+            preparing = true;
+            try
+            {
+                VnResult result = await owner.AcquireCompanionsAsync(names, owners, refresh, cancellation);
+                if (result == VnResult.VN_OK)
+                {
+                    count = owners.Length;
+                    prepared = true;
+                    refresh = false;
+                }
+                return result;
             }
             finally { preparing = false; }
         }
@@ -512,6 +538,7 @@ namespace Harken
                     contentBytes.Clear();
                     companionNames.Clear();
                     rawCompanionLeases.Clear();
+                    CancelCompanionReads();
                     Array.Clear(startupPacks, 0, startupPacks.Length);
                 }
                 return term;
