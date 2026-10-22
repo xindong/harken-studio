@@ -687,7 +687,10 @@ TEST(PropertyPressureGolden, SpatialOverflowDegradesToChunksAndConverges) {
     ASSERT_NO_FATAL_FAILURE(
         RunSpatialScene(4, &sink, &constrained, &overflow, &invariant));
     EXPECT_GE(overflow, 1u); // the degradation fired (and did not crash)
-    EXPECT_NE(nullptr, sink.Find(harken::kLogCodePropertyBatchOverflow));
+    const LogCodeSink::Rec* overflowLog =
+        sink.Find(harken::kLogCodePropertyBatchOverflow);
+    ASSERT_NE(nullptr, overflowLog);
+    EXPECT_EQ(static_cast<std::uint32_t>(VN_LOG_ERROR), overflowLog->level);
     EXPECT_TRUE(invariant);
 
     // Convergence: once traffic settles the constrained session's render
@@ -703,14 +706,18 @@ TEST(PropertyPressureGolden, SpatialOverflowDegradesToChunksAndConverges) {
     EXPECT_LT(maxDiff, 1e-6f);
 }
 
-TEST(PropertyPressureGolden, ConfigWorstCaseEstimateWarnsAtInit) {
-    // A config whose simultaneous full-load tick cannot fit the queue
-    // warns once at init with both numbers; a config with headroom warns
-    // not at all. Observability only — nothing is refused.
-    {
+TEST(PropertyPressureGolden, ConfigCapacityEstimateIsInformationalAndNotRuntimePressure) {
+    const struct {
+        std::uint32_t voices;
+        std::uint32_t queueDepth;
+        std::uint64_t estimate;
+        std::uint32_t resolvedQueueDepth;
+    } cases[] = {{0, 0, 1344, 256}, {8, 4, 104, 4}, {1024, 256, 5184, 256}};
+    for (const auto& test : cases) {
+        SCOPED_TRACE(test.voices);
         LogCodeSink sink;
-        VnConfig config = MakeNullConfig(8, kBlockFrames, 48000);
-        config.commandQueueDepth = 4; // 8 * 5 spatial + 32 * 2 bus rows = 104 > 4
+        VnConfig config = MakeNullConfig(test.voices, kBlockFrames, 48000);
+        config.commandQueueDepth = test.queueDepth;
         config.logCallback = &LogCodeSink::Callback;
         config.logUserData = &sink;
         EngineSession session(config);
@@ -719,11 +726,24 @@ TEST(PropertyPressureGolden, ConfigWorstCaseEstimateWarnsAtInit) {
         const LogCodeSink::Rec* rec =
             sink.Find(harken::kLogCodePropertyCapacityEstimate);
         ASSERT_NE(nullptr, rec);
-        EXPECT_EQ(static_cast<std::uint32_t>(VN_LOG_WARN), rec->level);
+        EXPECT_EQ(static_cast<std::uint32_t>(VN_LOG_INFO), rec->level);
         EXPECT_EQ(
-            "property worst-case estimate 104 exceeds command queue "
-            "capacity 4: publication will chunk under full load",
+            "property capacity estimate (not usage): " +
+                std::to_string(test.estimate) + " spatial/bus updates, " +
+                std::to_string(test.resolvedQueueDepth) +
+                " queue slots; full-load updates may need batching",
             rec->text);
+        EXPECT_EQ(nullptr, sink.Find(harken::kLogCodePropertyBatchOverflow));
+        EXPECT_EQ(nullptr, sink.Find(harken::kLogCodePropertyCapacityRefused));
+        sink.records.clear();
+        for (int tick = 0; tick < 3; ++tick) {
+            session.Engine()->nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        EXPECT_EQ(nullptr, sink.Find(harken::kLogCodePropertyCapacityEstimate));
+        EXPECT_EQ(nullptr, sink.Find(harken::kLogCodePropertyBatchOverflow));
+        EXPECT_EQ(nullptr, sink.Find(harken::kLogCodePropertyCapacityRefused));
+        EXPECT_EQ(0u, session.Engine()->paramBatchOverflowCount);
     }
     {
         LogCodeSink sink;

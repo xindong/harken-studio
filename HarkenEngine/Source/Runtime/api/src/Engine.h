@@ -5826,7 +5826,7 @@ public:
         // Config observability: when every voice's spatially drivable
         // targets plus every bus target row exceed the command queue's
         // capacity, one simultaneous full-load tick cannot publish whole
-        // and will chunk. One WARN with both numbers at init; nothing is
+        // and will chunk. One INFO with both numbers at init; nothing is
         // refused and nothing changes behavior.
         const std::uint64_t worstCaseEstimate =
             static_cast<std::uint64_t>(resolved.voiceCapacity.Render()) *
@@ -5834,7 +5834,7 @@ public:
             static_cast<std::uint64_t>(resolved.maxBuses) * kBusTargetCount;
         if (worstCaseEstimate > commands.Capacity()) {
             LogRecord estimate{};
-            estimate.level = VN_LOG_WARN;
+            estimate.level = VN_LOG_INFO;
             estimate.code = kLogCodePropertyCapacityEstimate;
             estimate.arg0 = worstCaseEstimate;
             estimate.arg1 = commands.Capacity();

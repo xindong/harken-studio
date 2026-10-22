@@ -1694,7 +1694,19 @@ namespace Harken.Unity
 
         private void HandleLog(uint level, uint code, string text, object state)
         {
-            Debug.Log("[Harken " + level + "/" + code + "] " + text, this);
+            string message = "[Harken " + level + "/" + code + "] " + text;
+            switch ((VnLogLevel)level)
+            {
+                case VnLogLevel.VN_LOG_WARN:
+                    Debug.LogWarning(message, this);
+                    break;
+                case VnLogLevel.VN_LOG_ERROR:
+                    Debug.LogError(message, this);
+                    break;
+                default:
+                    Debug.Log(message, this);
+                    break;
+            }
         }
 
         private void OnDisable()
