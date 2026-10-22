@@ -3554,8 +3554,8 @@ Close Unity before continuing.</source>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1206"/>
-        <source>Check completed with guidance for additional target platforms.</source>
-        <translation>检查完成，请查看其他目标平台的相关提示。</translation>
+        <source>Check completed. Review is recommended for the highlighted steps.</source>
+        <translation>检查完成，建议关注高亮步骤中的说明。</translation>
     </message>
     <message>
         <location filename="../Source/UI/EngineIntegrationsPage.cpp" line="1208"/>

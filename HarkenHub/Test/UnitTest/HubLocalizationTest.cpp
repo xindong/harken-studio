@@ -69,6 +69,7 @@ TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
                               "SDK version: %1 → %2", "Add %1", "Update %1", "Remove %1", "Keep %1",
                               "No SDK files need to be changed.", "Review recommended for %1 item(s). View check log.",
                               "SDK check failed. Review the check log for details.",
+                              "Check completed. Review is recommended for the highlighted steps.",
                               "Select Game Project", "Select a Unity project", "Uninstall SDK...",
                               "Choose a directory inside this project's Plugins folder, for example Plugins/Audio/Harken.",
                               "The SDK cannot be placed inside another Unreal plugin. Choose a separate directory under Plugins.",

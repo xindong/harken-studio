@@ -3280,7 +3280,7 @@ bool EngineIntegrationsPage::runUnity(
         else if (result.changesDetected)
             summary = QCoreApplication::translate("HarkenHub", "Check completed. Differences were found; no SDK files were changed.");
         else if (result.hasWarnings)
-            summary = QCoreApplication::translate("HarkenHub", "Check completed with guidance for additional target platforms.");
+            summary = QCoreApplication::translate("HarkenHub", "Check completed. Review is recommended for the highlighted steps.");
         else
             summary = QCoreApplication::translate("HarkenHub", "Check completed. The installed Unity SDK matches the selected source.");
     } else if (!result.success) {
