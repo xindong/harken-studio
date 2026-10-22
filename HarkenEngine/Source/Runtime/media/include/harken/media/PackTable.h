@@ -207,6 +207,7 @@ public:
         PackRevisionKey revisionKey{};
         const AlignedBuffer* bytes = nullptr;
         const std::vector<PackTocEntry>* media = nullptr;
+        bool keep = false;
     };
 
     class PreparedSetMutation {

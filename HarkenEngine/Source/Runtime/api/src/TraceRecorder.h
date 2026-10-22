@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <fstream>
 #include <memory>
+#include <map>
 #include <vector>
 
 namespace harken {
@@ -158,6 +159,7 @@ public:
     bool Active() const noexcept { return m_active; }
     std::size_t BufferedBytes() const noexcept { return m_buffer.size(); }
     std::uint64_t NextOrdinal() const noexcept { return m_ordinal; }
+    std::uint64_t RecordPackBytes(const void* bytes, std::uint64_t count) noexcept;
     static bool PrepareProjectGenerationTraceV1(
         Engine& engine, const TopologyPlanView& plan,
         const ContainerWorldInstallViewV1& world,
@@ -261,6 +263,7 @@ private:
     std::vector<std::uint8_t> m_buffer;
     std::vector<VnEmitterHandle> m_emitterHandles;
     std::vector<std::uint64_t> m_previewHandles;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, std::uint64_t> m_packResources;
     bool m_active = false;
     bool m_appendFailed = false;
     bool m_injectWriteFailure = false;

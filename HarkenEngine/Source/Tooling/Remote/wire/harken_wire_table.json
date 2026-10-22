@@ -2503,6 +2503,532 @@
         ]
       ]
     },
+    "VnPackVariableNameV1": {
+      "fields": [
+        [
+          "variableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "utf8Name",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ]
+      ]
+    },
+    "VnPackLabelNameV1": {
+      "fields": [
+        [
+          "variableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "labelId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "utf8Name",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ]
+      ]
+    },
+    "VnPackNamesV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "projectId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "rootActionId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "utf8RootName",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ],
+        [
+          "utf8Language",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ],
+        [
+          "variableCount",
+          "u32"
+        ],
+        [
+          "labelCount",
+          "u32"
+        ],
+        [
+          "variables",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "variableCount",
+              "stride": "VnPackVariableNameV1"
+            },
+            "ctype": "const VnPackVariableNameV1*"
+          }
+        ],
+        [
+          "labels",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "labelCount",
+              "stride": "VnPackLabelNameV1"
+            },
+            "ctype": "const VnPackLabelNameV1*"
+          }
+        ]
+      ]
+    },
+    "VnCanonicalPackSetMemberV2": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "operation",
+          "u32"
+        ],
+        [
+          "source",
+          {
+            "struct": "VnCanonicalPackSetMemberV1"
+          }
+        ],
+        [
+          "names",
+          {
+            "ptr": "opaque",
+            "ctype": "const VnPackNamesV1*"
+          }
+        ]
+      ]
+    },
+    "VnCanonicalPackSetActivationDescV2": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "expectedCurrentInitHandle",
+          "u64"
+        ],
+        [
+          "baseSetRevision",
+          "u64"
+        ],
+        [
+          "setRevision",
+          "u64"
+        ],
+        [
+          "memberCount",
+          "u32"
+        ],
+        [
+          "memberStructSize",
+          "u32"
+        ],
+        [
+          "members",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "memberCount",
+              "stride": "VnCanonicalPackSetMemberV2"
+            },
+            "ctype": "const VnCanonicalPackSetMemberV2*"
+          }
+        ],
+        [
+          "outputMemberCapacity",
+          "u32"
+        ],
+        [
+          "outputMemberStructSize",
+          "u32"
+        ],
+        [
+          "outputMembers",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "outputMemberCapacity",
+              "stride": "VnCanonicalPackSetMemberResultV1"
+            },
+            "ctype": "VnCanonicalPackSetMemberResultV1*"
+          }
+        ]
+      ]
+    },
+    "VnPackVariableFactV1": {
+      "fields": [
+        [
+          "variableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "kind",
+          "u32"
+        ],
+        [
+          "writers",
+          "u32"
+        ],
+        [
+          "rangeMin",
+          "f32"
+        ],
+        [
+          "rangeMax",
+          "f32"
+        ],
+        [
+          "defaultValue",
+          "f32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ],
+        [
+          "executionFingerprint",
+          "u64"
+        ],
+        [
+          "labelMappingFingerprint",
+          "u64"
+        ]
+      ]
+    },
+    "VnPackLabelFactV1": {
+      "fields": [
+        [
+          "variableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "labelId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "anchor",
+          "i32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ]
+      ]
+    },
+    "VnPackMediaFactV1": {
+      "fields": [
+        [
+          "soundId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "mediaChecksum",
+          "u64"
+        ],
+        [
+          "frameCount",
+          "u64"
+        ],
+        [
+          "sampleRate",
+          "u32"
+        ],
+        [
+          "channelCount",
+          "u32"
+        ]
+      ]
+    },
+    "VnPackOccurrenceFactV1": {
+      "fields": [
+        [
+          "rootPlayableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "soundId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "rootPlayableKind",
+          "u32"
+        ],
+        [
+          "childOrdinal",
+          "u32"
+        ],
+        [
+          "rootProgramFingerprint",
+          "u64"
+        ],
+        [
+          "soundProgramFingerprint",
+          "u64"
+        ],
+        [
+          "occurrenceFingerprint",
+          "u64"
+        ],
+        [
+          "mediaChecksum",
+          "u64"
+        ],
+        [
+          "mediaFrameCount",
+          "u64"
+        ],
+        [
+          "sampleRate",
+          "u32"
+        ],
+        [
+          "channelCount",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ],
+        [
+          "fixedGainDb",
+          "f32"
+        ],
+        [
+          "fixedGainLinear",
+          "f32"
+        ],
+        [
+          "durationSeconds",
+          "f64"
+        ]
+      ]
+    },
+    "VnPackInspectDescV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "pack",
+          {
+            "struct": "VnPackByteSpan"
+          }
+        ],
+        [
+          "init",
+          {
+            "struct": "VnPackByteSpan"
+          }
+        ],
+        [
+          "names",
+          {
+            "ptr": "opaque",
+            "ctype": "const VnPackNamesV1*"
+          }
+        ],
+        [
+          "maxInputBytes",
+          "u64"
+        ],
+        [
+          "variableCapacity",
+          "u32"
+        ],
+        [
+          "labelCapacity",
+          "u32"
+        ],
+        [
+          "occurrenceCapacity",
+          "u32"
+        ],
+        [
+          "mediaCapacity",
+          "u32"
+        ],
+        [
+          "variables",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "variableCapacity",
+              "stride": "VnPackVariableFactV1"
+            },
+            "ctype": "VnPackVariableFactV1*"
+          }
+        ],
+        [
+          "labels",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "labelCapacity",
+              "stride": "VnPackLabelFactV1"
+            },
+            "ctype": "VnPackLabelFactV1*"
+          }
+        ],
+        [
+          "occurrences",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "occurrenceCapacity",
+              "stride": "VnPackOccurrenceFactV1"
+            },
+            "ctype": "VnPackOccurrenceFactV1*"
+          }
+        ],
+        [
+          "media",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "mediaCapacity",
+              "stride": "VnPackMediaFactV1"
+            },
+            "ctype": "VnPackMediaFactV1*"
+          }
+        ]
+      ]
+    },
+    "VnPackInspectReportV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "packKind",
+          "u32"
+        ],
+        [
+          "projectId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "rootActionId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "packStableId",
+          "u64"
+        ],
+        [
+          "initPackStableId",
+          "u64"
+        ],
+        [
+          "contentRevision",
+          "u64"
+        ],
+        [
+          "contentHash",
+          "u64"
+        ],
+        [
+          "initContentHash",
+          "u64"
+        ],
+        [
+          "executionFingerprint",
+          "u64"
+        ],
+        [
+          "variableCount",
+          "u32"
+        ],
+        [
+          "labelCount",
+          "u32"
+        ],
+        [
+          "occurrenceCount",
+          "u32"
+        ],
+        [
+          "previewKind",
+          "u32"
+        ],
+        [
+          "mediaCount",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ]
+      ]
+    },
     "VnInitPackInspectReport": {
       "fields": [
         [
@@ -6790,6 +7316,42 @@
   },
   "functions": [
     {
+      "name": "Vn_ActivateCanonicalPackSetV2",
+      "note": "Atomic companion names/content. Process-local providers, no remote opcode.",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnCanonicalPackSetActivationDescV2*",
+          "wire": "desc",
+          "type": "VnCanonicalPackSetActivationDescV2"
+        },
+        {
+          "name": "outReport",
+          "ctype": "VnCanonicalPackSetActivationReportV1*",
+          "wire": "outstruct",
+          "type": "VnCanonicalPackSetActivationReportV1"
+        }
+      ]
+    },
+    {
+      "name": "Vn_InspectCanonicalPackV1",
+      "note": "Inspect immutable Pack spans without an engine. No remote opcode.",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnPackInspectDescV1*",
+          "wire": "desc",
+          "type": "VnPackInspectDescV1"
+        },
+        {
+          "name": "outReport",
+          "ctype": "VnPackInspectReportV1*",
+          "wire": "outstruct",
+          "type": "VnPackInspectReportV1"
+        }
+      ]
+    },
+    {
       "opcode": 1,
       "name": "Vn_Init",
       "policy": "refused-lifecycle",
@@ -10958,6 +11520,38 @@
         "value": 1
       },
       "VN_CANONICAL_PACK_SET_MEMBER_ROOT": {
+        "type": "u32",
+        "value": 2
+      },
+      "VN_PACK_MEMBER_KEEP": {
+        "type": "u32",
+        "value": 0
+      },
+      "VN_PACK_MEMBER_CONTENT": {
+        "type": "u32",
+        "value": 1
+      },
+      "VN_PACK_MEMBER_NAME_ONLY": {
+        "type": "u32",
+        "value": 2
+      },
+      "VN_PACK_PREVIEW_UNSUPPORTED": {
+        "type": "u32",
+        "value": 0
+      },
+      "VN_PACK_PREVIEW_SOUND": {
+        "type": "u32",
+        "value": 1
+      },
+      "VN_PACK_PREVIEW_RANDOM_SOUNDS": {
+        "type": "u32",
+        "value": 2
+      },
+      "VN_PACK_OCCURRENCE_FIXED_GAIN": {
+        "type": "u32",
+        "value": 1
+      },
+      "VN_PACK_OCCURRENCE_DURATION": {
         "type": "u32",
         "value": 2
       },

@@ -1086,9 +1086,11 @@ VnResult PackTable::PrepareCanonicalSet(
     if (!PrepareContentStorage()) return VN_BACKPRESSURE;
     *out = PreparedSetMutation{};
     m_conflictingSoundId = {};
-    if (!members.empty() &&
+    const auto newRevisions = std::count_if(members.begin(), members.end(),
+        [](const auto& member) { return !member.keep; });
+    if (newRevisions != 0 &&
         (m_resourceRevisionTokensExhausted ||
-         members.size() - 1 > UINT64_MAX - m_nextResourceRevisionToken)) {
+         static_cast<std::uint64_t>(newRevisions - 1) > UINT64_MAX - m_nextResourceRevisionToken)) {
         return VN_RUNTIME_RECREATE_REQUIRED;
     }
     PreparedSetMutation prepared;
@@ -1148,8 +1150,21 @@ VnResult PackTable::PrepareCanonicalSet(
                 }
             }
         }
+        std::uint64_t newRevisionOrdinal = 0;
         for (std::size_t i = 0; i < members.size(); ++i) {
             const CanonicalSetMember& member = members[i];
+            if (member.keep) {
+                const auto* slot = SlotFor(member.expectedHandle);
+                if (slot == nullptr || member.bytes != nullptr || member.media != nullptr ||
+                    slot->revisionKey.packStableId != member.revisionKey.packStableId)
+                    return VN_INVALID_ARG;
+                const auto index = static_cast<std::uint32_t>(member.expectedHandle);
+                auto& change = prepared.m_changes[index];
+                change.handle = member.expectedHandle;
+                change.resourceToken = slot->resourceToken;
+                prepared.m_members.push_back(index);
+                continue;
+            }
             if (member.revisionKey.packStableId == 0 || member.media == nullptr ||
                 (!member.media->empty() &&
                  (member.bytes == nullptr || !*member.bytes))) {
@@ -1177,7 +1192,7 @@ VnResult PackTable::PrepareCanonicalSet(
             change.revisionKey = member.revisionKey;
             change.revisionKey.handle = change.handle;
             change.revisionKey.slotGeneration = generation;
-            change.resourceToken = m_nextResourceRevisionToken + i;
+            change.resourceToken = m_nextResourceRevisionToken + newRevisionOrdinal++;
             change.entries.resize(member.media->size());
             for (std::size_t entry = 0; entry < member.media->size(); ++entry) {
                 const auto& media = (*member.media)[entry];
@@ -1230,6 +1245,7 @@ VnResult PackTable::PrepareCanonicalSet(
             return true;
         };
         for (const auto& member : members) {
+            if (member.keep) continue;
             for (const auto& media : *member.media) {
                 MediaSource source{&media, reinterpret_cast<const float*>(
                     member.bytes->get() + media.blobOffset), {}};
@@ -1416,6 +1432,7 @@ void PackTable::CommitPreparedSet(PreparedSetMutation* prepared,
     registry.CommitPreparedPackMutation(&prepared->m_pcm);
     for (const auto index : prepared->m_members) {
         auto& change = prepared->m_changes[index];
+        if (!change.touched) continue;
         auto& slot = m_slots[index];
         slot.generation = static_cast<std::uint32_t>(change.handle >> 32);
         slot.entries = std::move(change.entries);

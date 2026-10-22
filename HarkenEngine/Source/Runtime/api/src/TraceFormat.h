@@ -96,6 +96,9 @@ inline constexpr std::uint16_t kTraceRecordVariableOutcome = 13;
 inline constexpr std::uint16_t kTraceRecordProjectGenerationInstallAck = 14;
 inline constexpr std::uint16_t kTraceRecordPreparedTopologyPlan = 15;
 inline constexpr std::uint16_t kTraceRecordSessionTerminate = 16; // empty payload
+// u64 resource ID, u64 FNV64 checksum, u64 byte count, immutable Pack bytes.
+// Media is embedded in the Pack. Subsequent operations reference the ID.
+inline constexpr std::uint16_t kTraceRecordPackBytes = 17;
 inline constexpr std::uint32_t kTracePreparedTopologyPlanVintage = 1;
 // Token U64×4 + publishedBusFingerprint + compileTargetProfileFingerprint +
 // U32 (publicationVintage or admission). The arithmetic is 52, not 60.
@@ -318,6 +321,9 @@ enum : std::uint16_t {
     kTraceCallReleaseActionSeek = 134,
     kTraceCallActivateCanonicalPackSet = 135,
     kTraceCallSetGameplayCatalog = 136,
+    kTraceCallActivateCanonicalPackSetV2 = 137,
+    kTraceCallUnloadCanonicalPackSet = 138,
+    kTraceCallUnloadCompanionPack = 139,
     kTraceCallSetValues = 192,
     kTraceCallSetEmitterValues = 193,
     kTraceCallClearEmitterValues = 194,

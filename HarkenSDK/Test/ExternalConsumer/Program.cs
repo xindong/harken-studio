@@ -150,7 +150,14 @@ internal static class Program
             File.WriteAllBytes(missing, content);
             Expect(session.PrepareStartupPacks(), VnResult.VN_OK, "Explicit file recovery");
             Require(session.IsStartupComplete, "Restored file must complete the same session.");
-            Expect(Actions.Post(action.Name, Emitter.None, out _), VnResult.VN_OK, "Recovered Action");
+            if (withGameplayCatalog)
+                Expect(Actions.Post(action.Name, Emitter.None, out _), VnResult.VN_OK, "Recovered Action name");
+            else
+            {
+                Expect(Actions.Post(action.Name, Emitter.None, out _), VnResult.VN_CAPABILITY_UNAVAILABLE,
+                    "Legacy name lookup without a catalog");
+                Expect(Actions.Post(action.ActionStableId, Emitter.None, out _), VnResult.VN_OK, "Recovered Action identity");
+            }
             Expect(session.Shutdown(), VnResult.VN_OK, "Recovered session shutdown");
             Console.WriteLine("Missing/corrupt file recovery (gameplay catalog=" + withGameplayCatalog + ") PASS.");
         }
